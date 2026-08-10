@@ -1,0 +1,9 @@
+{
+  "$comment": "GENERATED FILE — DO NOT EDIT. Source of truth: tools/revocations/<ADVISORY-ID>.json. Regenerate with `node tools/build-revocations.mjs`. Only the `signed` member is covered by the signatures below; nothing outside it is authenticated and nothing may be read out of it.",
+  "signatures": [],
+  "signed": {
+    "revocations": [],
+    "schema": "astra.registry.revocations/1",
+    "serial": 1
+  }
+}

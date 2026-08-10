@@ -138,16 +138,35 @@ copies at the next index refresh: `malware` stops the plugin without asking,
 
 ## 8. Review, and how long it takes
 
-Every submission is read by a maintainer today. There is one maintainer, so the
-honest SLA is **best effort**, and this section will carry a number only when
-Phase 3.5's auto-ingest makes the number meaningful — a published SLA that is
-routinely missed is worse than no SLA, because it teaches people the document is
-decoration.
+**Exactly three events take blocking human review**, and the SLA on those three
+is **48 hours**: a first listing, a newly requested high-risk permission
+(`client`, `dom_access`, `send_chat_message`, `set_theme_contribution`), and an
+identity or repository change.
 
-From Phase 3.5, exactly three events take blocking human review: a first
-listing, a newly requested high-risk permission, and an identity or repository
-change. Everything else auto-publishes, with a 24-hour delay for permission
-widening within the non-high-risk set.
+Everything else publishes itself with nobody in the loop — immediately for a
+routine release, and after a 24-hour delay (6 hours for an author with a clean
+release history here) when the permission set grew or when the plugin holds any
+high-risk permission at all.
+
+**And here is what that apparatus does not yet buy.** Every rule above is keyed
+on what a plugin *declares*. Nothing in Astra enforces a declaration at run time
+today: the daemon issues a session token to every plugin it starts and the host
+RPCs check who is calling, not what that plugin was granted — the
+`require_permission` gate PRODUCTION_PLAN §5.6 specifies is Phase 4.1 and does
+not exist yet. So a plugin that declares nothing and calls
+`SetThemeContribution` or `SendChatMessage` anyway is **not blocked on the
+user's machine**; it is caught, if at all, by the registry's string search over
+the bundle's source (§Names' caveat applies here too — it is a heuristic).
+Declaring honestly is currently more expensive than not declaring, which is the
+wrong way round and is a thing this registry can only partly compensate for.
+That sentence stays here until the runtime gate lands.
+
+That number is a commitment about three events precisely because it is three
+events. **`docs/POLICY.md` is the whole publication policy**: every outcome the
+bot can post, what each delay is for and what it honestly buys, how a release
+notification reaches this registry without the author holding any credential for
+it, and — stated there rather than left to be discovered — what happens when the
+SLA slips, which is that auto-publication widens rather than the queue rotting.
 
 ## 9. Appeals and reports
 

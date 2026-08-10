@@ -1,0 +1,288 @@
+name: Withdraw a plugin
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Regenerates, signs and deploys registry/v1/revocations.json — and the
+# catalogue alongside it — and NOTHING ELSE.
+#
+# WHY THIS IS A SEPARATE WORKFLOW
+#
+# Revocation is the only mechanism in this design that helps after a bad plugin
+# is already on somebody's machine, and its value decays by the minute. The
+# target in PRODUCTION_PLAN §6-3.9 is *signed and on the CDN within five
+# minutes*. `build-index.yml` cannot meet that and should not try: it exists to
+# be thorough — self-tests, listing validation, determinism diffs, and in Phase
+# 3.3 attestation verification against the GitHub API — and every one of those
+# is the right trade for publishing a listing and the wrong one for withdrawing
+# a credential stealer.
+#
+# So this workflow bypasses the site build and the ingest pipeline. It keeps
+# exactly the gates that cost seconds and would let a bad deploy through if they
+# were dropped:
+#
+#   * the advisory sources are validated (a `kind` the daemon does not read is a
+#     withdrawal that silently does not happen);
+#   * the deployed document is regenerated and compared, so a digest edited
+#     straight into registry/v1/revocations.json — the highest-value edit anyone
+#     with commit access could make here — is a red build, not a deploy;
+#   * the catalogue is regenerated from plugins/** and compared byte for byte,
+#     because this job pushes it too and must not carry a hand edit along;
+#   * both documents must SIGN and then VERIFY against the published root-signed
+#     trust.json, which is what the daemon will do.
+#
+# It deliberately does NOT run tools/selftest.mjs, the bot's checks, or anything
+# that touches the network beyond the checkout. Those protect the *ingest* path.
+# Nothing on this path adds a listing.
+#
+# WHY IT PUSHES THE CATALOGUE TOO
+#
+# A withdrawal is almost always accompanied by delisting the bad version from
+# plugins/**, and shipping the withdrawal without the catalogue would leave the
+# store still offering the thing that was just withdrawn — the install would be
+# refused, correctly, and the user would file a bug about a broken store. The
+# index generator is deterministic and reads no clock, so regenerating it here
+# is safe: the bytes are a function of plugins/** and the serial.
+#
+# WHY IT RUNS ON A SCHEDULE
+#
+# The withdrawal list carries a SEVEN-day TTL, against the catalogue's thirty
+# (§5.5). Past it the daemon blocks new installs with "Astra can't check whether
+# this plugin has been withdrawn" — the one hard block in the whole freshness
+# policy. So the list has to be re-signed before it expires even when no
+# advisory has changed, and the cron below does that at the SAME serial: the
+# daemon replaces its set on a strictly greater serial and may only ADD on an
+# equal one, so a scheduled re-sign is the safe republication and bumping the
+# serial for it would not be.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/revocations/**"
+      - "tools/lib/revocations.mjs"
+      - "tools/build-revocations.mjs"
+      - "tools/sign-revocations.mjs"
+  schedule:
+    # Every second day at 04:17 UTC. Comfortably inside the seven-day TTL with
+    # room for three consecutive failures, and off the hour so it does not queue
+    # behind everybody else's cron.
+    - cron: "17 4 */2 * *"
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "What is being withdrawn, for the run log"
+        required: false
+        type: string
+
+# Its OWN group, not `registry-index`. Queuing a withdrawal behind a listing
+# build would spend the five-minute budget waiting for a job that is doing
+# something less urgent. `cancel-in-progress: false` because a run already
+# pushing must not be killed half-way.
+concurrency:
+  group: registry-revocations
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  revoke:
+    runs-on: ubuntu-24.04
+    # The signing key lives here, with the maintainer as a required reviewer
+    # (§5.1). On a scheduled run that means the re-sign waits for an approval —
+    # which is the correct trade: an unattended job that can sign is a job that
+    # can sign anything.
+    environment: publish
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Both serials are commit counts. Without full history git counts what
+          # it was given, which is 1, and both documents look like they rolled
+          # back to the beginning of time.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # No `npm ci`. This repository has no dependencies, on purpose: the last
+      # gate before a withdrawal reaches a stranger's machine has to be a gate
+      # that still runs when a package registry is down.
+      - name: Regenerate the withdrawal list from tools/revocations/
+        run: |
+          set -euo pipefail
+          node tools/build-revocations.mjs
+          # If regenerating changed the committed file, somebody edited the
+          # deployed document by hand or forgot to run the generator. Either way
+          # the fix is a commit, not a deploy.
+          if ! git diff --quiet -- registry/v1/revocations.json; then
+            echo "::error::registry/v1/revocations.json was not what the generator produces. Run 'node tools/build-revocations.mjs' and commit the result."
+            git --no-pager diff -- registry/v1/revocations.json
+            exit 1
+          fi
+          node tools/build-revocations.mjs --check
+
+      - name: The committed catalogue is exactly what the generator produces
+        run: |
+          set -euo pipefail
+          node tools/validate.mjs --allow-staging
+          node tools/build-index.mjs --check
+
+      - name: Compute the serials
+        id: serials
+        run: |
+          set -euo pipefail
+          BRANCH="${{ github.event.repository.default_branch }}"
+          INDEX_SERIAL="$(git rev-list --count "origin/${BRANCH}" -- plugins 2>/dev/null \
+                          || git rev-list --count HEAD -- plugins)"
+          # +1 for the same reason tools/lib/revocations.mjs adds it: serial 0 is
+          # reserved for "this daemon has never seen a list", and a document that
+          # claims it cannot be told apart from the absence of one.
+          REV_COMMITS="$(git rev-list --count "origin/${BRANCH}" -- tools/revocations 2>/dev/null \
+                         || git rev-list --count HEAD -- tools/revocations)"
+          echo "index=${INDEX_SERIAL}" >> "$GITHUB_OUTPUT"
+          echo "revocations=$((REV_COMMITS + 1))" >> "$GITHUB_OUTPUT"
+          echo "index serial ${INDEX_SERIAL}, revocations serial $((REV_COMMITS + 1))"
+
+      - name: Build the deploy candidates
+        env:
+          ASTRA_REGISTRY_SERIAL: ${{ steps.serials.outputs.index }}
+          ASTRA_REVOCATIONS_SERIAL: ${{ steps.serials.outputs.revocations }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          node tools/build-index.mjs --stdout > dist/index.json
+          node tools/build-revocations.mjs --stdout > dist/revocations.json
+          echo "revocations: $(node -e 'const d=require("./dist/revocations.json");console.log(d.signed.revocations.length+" entry(ies), serial "+d.signed.serial)')"
+
+      # ── the signatures ────────────────────────────────────────────────────
+      #
+      # Two documents, ONE key, TWO domains. `revocations.json` is signed over
+      # SHA-256("astra.registry.revocations/1" ‖ 0x00 ‖ JCS(signed)) and the
+      # catalogue over the same construction with "astra.registry.index/1". If
+      # they shared a domain, a signature over a catalogue would verify as a
+      # signature over a withdrawal list — and anyone who could get one
+      # catalogue signed could then publish an EMPTY withdrawal list and switch
+      # off the only mechanism that helps after bad code is already installed.
+      # The two signing scripts refuse each other's schemas at the door.
+      - name: Sign both
+        env:
+          ASTRA_INDEX_SIGNING_KEY: ${{ secrets.ASTRA_INDEX_SIGNING_KEY }}
+          ASTRA_INDEX_SIGNING_KEY_ID: ${{ secrets.ASTRA_INDEX_SIGNING_KEY_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ASTRA_INDEX_SIGNING_KEY:-}" ]; then
+            echo "::error::no ASTRA_INDEX_SIGNING_KEY. Refusing to deploy an unsigned withdrawal list — the daemon would reject it, and an unsigned file arriving under the name of a signed one is a downgrade attack the registry performed on itself."
+            exit 1
+          fi
+          # Through the environment, never on a command line: `ps` is readable by
+          # every process on the runner and `set -x` would put the key in the log.
+          node tools/sign-revocations.mjs --in dist/revocations.json --out dist/revocations.signed.json
+          mv dist/revocations.signed.json dist/revocations.json
+          node bot/sign-index.mjs --in dist/index.json --out dist/index.signed.json
+          mv dist/index.signed.json dist/index.json
+
+      # Verified against the CURRENTLY PUBLISHED root-signed trust.json, not
+      # against the key we just signed with. Signing with a key and checking the
+      # signature with the same key proves the crypto library works; checking it
+      # against trust.json proves the daemon will accept it. A key that has
+      # fallen out of its validity window fails here rather than in every user's
+      # client — and on this path, silently failing there would mean the
+      # withdrawal never lands.
+      - name: Verify both the way the daemon will
+        run: |
+          set -euo pipefail
+          if [ ! -f registry/v1/trust.json ]; then
+            echo "::error::registry/v1/trust.json is not published yet, so nothing can check these signatures."
+            exit 1
+          fi
+          node tools/sign-revocations.mjs --verify dist/revocations.json --trust registry/v1/trust.json
+          node bot/sign-index.mjs --verify dist/index.json --trust registry/v1/trust.json
+
+      # A withdrawal list must never be signed by a key whose window closes
+      # before the list expires: the daemon judges the key window with
+      # `max(local, server)` and would refuse the document part-way through its
+      # own TTL, silently reverting to whatever it had before.
+      - name: The signing key outlives this list
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("node:fs");
+            const rev = JSON.parse(fs.readFileSync("dist/revocations.json", "utf8"));
+            const trust = JSON.parse(fs.readFileSync("registry/v1/trust.json", "utf8"));
+            const keyId = rev.signatures[0].key_id;
+            const entry = (trust.signed?.index_keys ?? []).find((k) => k.key_id === keyId);
+            if (!entry) { console.error(`::error::trust.json does not name ${keyId}`); process.exit(1); }
+            if (entry.not_after && new Date(entry.not_after) < new Date(rev.signed.expires_at)) {
+              console.error(`::error::${keyId} expires ${entry.not_after}, before this list does (${rev.signed.expires_at}). Rotate the key first, or the daemon will stop believing this withdrawal before it stops being current.`);
+              process.exit(1);
+            }
+            console.log(`ok  ${keyId} is valid until ${entry.not_after ?? "further notice"}; this list expires ${rev.signed.expires_at}`);
+          '
+
+      # ── deploy ────────────────────────────────────────────────────────────
+      #
+      # The CDN is raw.githubusercontent.com on the default branch, so "deploy"
+      # is a commit. The rebase loop is not defensive programming: build-index.yml
+      # writes the same registry/v1/index.json, and a withdrawal losing a push
+      # race to a listing build is the one failure mode this workflow cannot
+      # tolerate.
+      - name: Deploy revocations and index, and nothing else
+        env:
+          BRANCH: ${{ github.event.repository.default_branch }}
+          REV_SERIAL: ${{ steps.serials.outputs.revocations }}
+          # Through the environment, never interpolated into the script. A
+          # `workflow_dispatch` input pasted straight into a shell command is a
+          # command-injection hole, and this job holds the signing key.
+          REASON: ${{ inputs.reason }}
+        run: |
+          set -euo pipefail
+          git config user.name "astra-registry-bot"
+          git config user.email "noreply@github.com"
+          BASE_INDEX="$(git rev-parse HEAD:registry/v1/index.json)"
+
+          for attempt in 1 2 3 4 5; do
+            git fetch origin "${BRANCH}"
+            git checkout -B deploy "origin/${BRANCH}"
+
+            cp dist/revocations.json registry/v1/revocations.json
+            # The catalogue is only deployed if nobody else moved it while this
+            # job was signing. dist/index.json was generated from the plugins/
+            # tree as it was at checkout, so pushing it over a newer one would
+            # silently roll back a listing that landed in the meantime — and the
+            # newer one is by definition at least as fresh as ours. The
+            # withdrawal is the urgent half; the catalogue can wait for
+            # build-index.yml.
+            NOW_INDEX="$(git rev-parse HEAD:registry/v1/index.json)"
+            if [ "${NOW_INDEX}" = "${BASE_INDEX}" ]; then
+              cp dist/index.json registry/v1/index.json
+            else
+              echo "::notice::the catalogue moved under this job; deploying the withdrawal list only"
+            fi
+
+            git add registry/v1/revocations.json registry/v1/index.json
+            if git diff --cached --quiet; then
+              echo "::notice::nothing changed — the deployed documents are already current"
+              exit 0
+            fi
+            git commit \
+              -m "chore(registry): deploy withdrawal list serial ${REV_SERIAL}" \
+              -m "Signed and pushed by .github/workflows/revoke.yml, bypassing the site build." \
+              -m "${REASON:-No reason given.}"
+            if git push origin "HEAD:${BRANCH}"; then
+              echo "::notice::withdrawal list serial ${REV_SERIAL} is live"
+              exit 0
+            fi
+            echo "push race on attempt ${attempt}; retrying"
+            sleep 5
+          done
+          echo "::error::could not push the withdrawal list after 5 attempts"
+          exit 1
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: registry-revocations-v1
+          path: |
+            dist/revocations.json
+            dist/index.json
+          if-no-files-found: error

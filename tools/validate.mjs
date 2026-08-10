@@ -28,7 +28,15 @@ import crypto from "node:crypto";
 import { validate as validateSchema } from "./lib/jsonschema.mjs";
 import { stableStringify } from "./lib/canonical.mjs";
 import { compareSemver, parseSemver } from "./lib/semver.mjs";
-import { invalidId, unsafePathComponent, foldId, editDistance, unsafeDisplayText } from "./lib/ids.mjs";
+import {
+  editDistance,
+  foldId,
+  foldLookalikeScripts,
+  invalidId,
+  scriptsUsed,
+  unsafeDisplayText,
+  unsafePathComponent,
+} from "./lib/ids.mjs";
 import { loadSources, loadPolicy, loadSchemas, readJson, REPO_ROOT } from "./lib/sources.mjs";
 import { buildIndex, indexContent } from "./build-index.mjs";
 
@@ -418,6 +426,43 @@ function checkSquatting(plugins, ctx) {
         report.warn("plugins/", `${JSON.stringify(ids[i])} and ${JSON.stringify(ids[j])} differ by ${d} character(s)`,
           "Not a rejection — a human decides. POLICY.md §Names says plainly that this heuristic catches accidents, not a determined attacker.");
       }
+    }
+  }
+
+  // ── the DISPLAY NAME, which this validator did not look at at all ──
+  //
+  // `checkSquatting` folded ids and stopped there, so the pull-request path —
+  // the one a hand-written listing takes — held listings to a weaker rule than
+  // the bot held submissions to. The store card renders the NAME; the id is
+  // protected by `[a-z0-9-]` and the name is unconstrained prose, which makes
+  // the name the softer target of the two.
+  //
+  // Same two rules `bot/lib/names.mjs` applies, and warnings rather than errors
+  // for the same reason: a human decides. Two plugins genuinely called "Notes"
+  // is a thing that happens; it is still a thing somebody should look at.
+  const byName = new Map();
+  for (const p of plugins) {
+    const id = p.doc?.id;
+    const name = p.doc?.name;
+    if (typeof id !== "string" || typeof name !== "string" || name === "") continue;
+
+    const scripts = scriptsUsed(name);
+    if (scripts.length > 1) {
+      report.warn(p.file,
+        `the display name ${JSON.stringify(name)} mixes ${scripts.join(" and ")} letters`,
+        "Write the name in one alphabet. A name that borrows one Cyrillic or Greek letter for its Latin " +
+        "shape renders as a name it does not contain, and the id charset cannot catch it. See POLICY.md §Names.");
+    }
+
+    const key = foldLookalikeScripts(name).toLowerCase().replace(/\s+/g, " ").trim();
+    const prev = byName.get(key);
+    if (prev && prev.id !== id) {
+      report.warn(p.file,
+        `the display name ${JSON.stringify(name)} matches ${JSON.stringify(prev.name)} (listed as ${JSON.stringify(prev.id)}) ` +
+        "once case, whitespace and lookalike letters are ignored",
+        "The store shows names, not ids, so two identical names are two identical cards. See POLICY.md §Names.");
+    } else if (!prev) {
+      byName.set(key, { id, name });
     }
   }
 }
