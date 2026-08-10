@@ -1,0 +1,54 @@
+{
+  "$comment": "TEST FIXTURE — signed with a key whose private half is published in astra-registry/tools/testkeys/. astra-daemon embeds these exact bytes in a plugins::trust unit test so the JavaScript signer and the Rust verifier cannot canonicalise differently in silence. Regenerate with `node bot/fixtures/index/regenerate.mjs`.",
+  "signatures": [],
+  "signed": {
+    "plugins": [
+      {
+        "added_at": "2026-08-01",
+        "author": "Astra Team",
+        "capabilities": [
+          "tools"
+        ],
+        "description": "Rolls dice — würfelt, 🎲, in any notation.",
+        "download_url": "",
+        "downloads": 0,
+        "icon_url": "",
+        "id": "dice-roller",
+        "license": "MIT",
+        "name": "Dice Roller",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/dice-roller-v0.1.1/dice-roller-0.1.1-linux-x64.astraplugin"
+        },
+        "releases": [
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "dice-roller-0.1.1-linux-x64.astraplugin",
+                "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+                "size": 4096,
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/dice-roller-v0.1.1/dice-roller-0.1.1-linux-x64.astraplugin"
+              }
+            },
+            "published_at": "2026-08-01T00:00:00Z",
+            "release": {
+              "kind": "github_release",
+              "repo": "mihailinl/AstraPlugins",
+              "tag": "dice-roller-v0.1.1"
+            },
+            "version": "0.1.1"
+          }
+        ],
+        "repository_url": "https://github.com/mihailinl/AstraPlugins",
+        "source": {
+          "kind": "github",
+          "repo": "mihailinl/AstraPlugins"
+        },
+        "stars": 0,
+        "updated_at": "2026-08-01T00:00:00Z",
+        "version": "0.1.1"
+      }
+    ],
+    "schema": "astra.registry.index/1",
+    "serial": 12
+  }
+}

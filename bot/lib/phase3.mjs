@@ -45,9 +45,11 @@ export const PHASE_3_CHECKS = [
     name: "revocation list",
     why: "signed revocations.json does not exist until Phase 3.9.",
   },
-  {
-    code: "E_INDEX_UNSIGNED",
-    name: "index signature",
-    why: "the index this repo publishes is UNSIGNED in Phase 2. The daemon trusts it over HTTPS and nothing more. Phase 3.2 signs it with the index key.",
-  },
+  // `E_INDEX_UNSIGNED` was here, and 3.2 landed it: registry/v1/index.json is a
+  // `{signed, signatures}` envelope, .github/workflows/build-index.yml signs the
+  // deploy candidate with the index key held in the `publish` environment, and
+  // the daemon verifies it against the index keys a root-signed trust.json
+  // delegates to. The row is deleted rather than left saying "done" — a list of
+  // things nobody has checked stops being read the moment it also contains
+  // things somebody has.
 ];

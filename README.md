@@ -31,12 +31,43 @@ bot/                                  submission checks (Phase 2 half)
 https://raw.githubusercontent.com/mihailinl/astra-registry/main/registry/v1/index.json
 ```
 
-One file, unsigned in Phase 2, served over HTTPS. It carries a `sha256` and a
-`size` for every artifact, so the *artifacts* are pinned even though the
-*catalogue* is not yet signed. Phase 3.2 signs the index with the registry key
-and the daemon starts verifying it offline against a root key compiled into the
-binary; until then, HTTPS is the only thing standing behind this file, and
-`bot/lib/phase3.mjs` prints that on every bot run so nobody forgets.
+One file, served over HTTPS. It carries a `sha256` and a `size` for every
+artifact, so the *artifacts* are pinned by digest regardless of what is believed
+about the catalogue itself.
+
+Since Phase 3.2 the catalogue is a **signed envelope** —
+`{ "signatures": [...], "signed": { "schema", "serial", "plugins" } }` — and only
+the `signed` member is covered by a signature. The construction is
+`Ed25519( SHA-256( "astra.registry.index/1" ‖ 0x00 ‖ JCS(signed) ) )` over RFC
+8785 canonical JSON, made by an index key that a **root-signed `trust.json`**
+delegates to. `bot/lib/sign.mjs` is the only place that is written on this side
+and `astra-daemon/src/plugins/trust.rs` the only place on the other; both are
+pinned to RFC 8785's own §3.2.3 vector by the same asserted digest, so the
+signer and the verifier cannot drift apart in silence.
+
+**The trust anchor is the root key, never this hostname.** The index is believed
+because a root key vouched for the key that signed it, not because of where it
+was fetched from. The catalogue can move to another host without a daemon
+change, and an attacker serving their own file from this exact URL gains
+nothing.
+
+Two things are honestly not true yet, and the code says so rather than
+pretending otherwise:
+
+- The **committed** `registry/v1/index.json` carries `signatures: []`. This
+  repository holds no signing key; CI signs the deploy candidate inside the
+  `publish` environment. An empty array says "unsigned" out loud, where an
+  absent member could not be told from a stripped one.
+- The **root ceremony has not been run**, so the daemon's compiled-in root key
+  set is empty and it currently reads every catalogue as `UNSIGNED`. That is the
+  correct fail-closed state for a chain with no anchor, and not a gap to be
+  plugged with the clearly-labelled test keys in `tools/testkeys/`. See
+  [`SECURITY.md`](SECURITY.md) and [`docs/RUNBOOK.md`](docs/RUNBOOK.md) for the
+  ceremony, and [`registry/v1/root.json`](registry/v1/root.json) for the stub
+  that records it as unprovisioned.
+
+`bot/lib/phase3.mjs` still lists every check that does not run yet, by its final
+error code, so nobody forgets which of these is which.
 
 ## Two files per listing, and why
 
@@ -73,7 +104,14 @@ by id, releases by semver precedence, and **no clock read anywhere**. Same
 sources plus same serial gives the same bytes, on any machine, on any rerun.
 `published_at` is recorded data copied from the release, never "now"; a
 generator that stamped the time would make its own output unreproducible, and
-Phase 3 signs these bytes.
+these are the bytes that get signed.
+
+That is also why `issued_at` and `expires_at` are stamped by `bot/sign-index.mjs`
+at **signing** time rather than by the generator: a catalogue nobody edited for
+31 days must not expire itself, and a generator that reads a clock is a
+generator whose output cannot be reproduced. `build-index.mjs --check` therefore
+compares the *content* projection — `signed` minus those two timestamps — so a
+signed file can still be held to being the catalogue the sources describe.
 
 Two flat fields — `version` and `platform_downloads` — are a *projection* of
 `releases[0]`, emitted for the daemon shipping today, which knows only those.
@@ -241,10 +279,17 @@ thing: Node.
 
 Named, so nobody assumes otherwise:
 
-- **No signature on the index.** Phase 3.2.
-- **No `trust.json`, no root key, no key rotation.** Phase 3.1.
+- **No root key yet, so nothing verifies in practice.** The machinery all
+  exists — `trust.json`'s format, the index envelope, the signer, the daemon's
+  verifier, key rotation with validity windows — but the ceremony in
+  `docs/RUNBOOK.md` has not been run, `registry/v1/root.json` is an honest
+  `status: unprovisioned` stub, and the daemon ships with an empty root set.
+  Until then every catalogue reads as `UNSIGNED` and the artifact digest is
+  doing all the work. Phase 3.1's remaining half is an afternoon with an
+  offline machine, not more code.
 - **No `revocations.json`.** There is no kill switch for a listed plugin yet.
-  Phase 3.9.
+  The daemon's enforcement side is live and under test but its set is empty, and
+  nothing here produces the signed list to fill it. Phase 3.9.
 - **No build-provenance verification.** Nothing here proves who produced an
   artifact — only that its bytes match what the listing says. Phase 3.3.
 - **No ownership proof.** That the submitter controls the repository they listed

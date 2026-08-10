@@ -33,6 +33,58 @@ Two properties of that list are worth stating.
 disagree about what a valid listing is, and the only way to guarantee that is
 for there to be one implementation.
 
+## Signing the catalogue
+
+`node bot/sign-index.mjs --in dist/index.json --out dist/index.json`
+
+`registry/v1/index.json` is a `{ "signed": …, "signatures": [ … ] }` envelope.
+The signature is
+
+```
+sig = Ed25519(index_priv, SHA-256("astra.registry.index/1" ‖ 0x00 ‖ JCS(signed)))
+```
+
+where `JCS` is RFC 8785 from `tools/lib/canonical.mjs` — the same canonicaliser
+`trust.json` is signed with, and the one `astra-daemon`'s `plugins/trust.rs`
+reimplements in Rust. `bot/fixtures/index/catalogue-signed.json` is signed here
+and embedded byte-for-byte in a daemon unit test, so the two implementations
+cannot drift apart in silence. Both suites also assert the SHA-256 of the
+canonical form of RFC 8785 §3.2.3's own vector.
+
+Three properties are worth stating.
+
+**Only `signed` is covered.** `$comment`, and the `key_id` on each signature,
+are outside it. `key_id` is a hint for logs and key selection: the verifier
+tries every trusted key against every offered signature, so a document that lies
+about who signed it still verifies if a trusted key actually did, and never
+verifies because it claimed the right name.
+
+**The key never touches a command line.** `ASTRA_INDEX_SIGNING_KEY` (base64 of
+the raw 32-byte seed) and `ASTRA_INDEX_SIGNING_KEY_ID` come from the `publish`
+environment's secrets. A key on a command line is a key in the shell history, in
+`ps` output for every other account on the runner, and in the Actions log the
+first time somebody turns on command tracing. `--test-key` uses the throwaway
+keys in `tools/testkeys/` and refuses to write into `registry/`.
+
+**The generator stamps no time; the signer does.** `issued_at` and `expires_at`
+are properties of the publication, not of the content. Stamping them in
+`tools/build-index.mjs` would make a catalogue nobody edited for 31 days expire
+itself, and would make the generator's output unreproducible — which
+`--check`, CI's determinism diff, and any third party rebuilding the index from
+the git tree all depend on. `--ttl-days` defaults to 30.
+
+What that expiry buys is deliberately bounded, and the daemon is built around
+the bound: a stale catalogue downgrades Browse to a banner and **records already
+pinned by digest stay installable**, because a digest does not expire. The hard
+block lives on `revocations.json` at seven days instead — the one document whose
+staleness means "we may be about to install something already withdrawn".
+
+`--verify FILE --trust FILE` checks a signed catalogue against the index keys a
+root-signed `trust.json` delegates to. CI runs it after signing, against the
+*published* `trust.json` rather than against the key it just signed with: the
+first proves the crypto library works, the second proves the daemon will accept
+the result.
+
 **Nothing extracts anything.** Every archive check runs against bytes in memory,
 through `tools/lib/zip.mjs`, which reads the ZIP central directory and hands
 back an entry table. A hostile bundle never reaches a filesystem here — not the

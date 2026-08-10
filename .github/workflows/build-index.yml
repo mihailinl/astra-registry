@@ -13,14 +13,19 @@ name: Registry index
 #     or a digest straight into the index — the single highest-value edit an
 #     attacker with commit access could make — is a red build, not a merge.
 #   An index that is not reproducible.  The `determinism` step generates twice
-#     and diffs. Phase 3 signs this file; a signature over bytes that a rerun
-#     cannot reproduce is a signature nobody can audit.
+#     and diffs. This file is signed below, and a signature over bytes a rerun
+#     cannot reproduce is a signature nobody can audit. It is also why the
+#     generator stamps no timestamp and bot/sign-index.mjs does: content is
+#     reproducible, publication time is not, and only one of them is generated.
+#   An unsigned catalogue reaching users.  On `main` the signing key must be
+#     present and the signature must verify against the published root-signed
+#     trust.json, or this job fails. An unsigned file arriving at the CDN under
+#     the name of a signed one is a downgrade attack the registry would have
+#     performed on itself.
 #
-# WHAT IT IS NOT.  It does not sign anything, it does not deploy, and it does
-# not prove where any artifact came from. In Phase 2 the daemon's only defence
-# for this catalogue is HTTPS to raw.githubusercontent.com. Phase 3.2 adds the
-# index signature and Phase 3.3 the attestation checks; until then, say so
-# rather than letting a green tick imply more than it means.
+# WHAT IT IS NOT.  It does not deploy, and it does not prove where any artifact
+# came from. Phase 3.3 adds the attestation checks; until then, say so rather
+# than letting a green tick imply more than it means.
 
 on:
   push:
@@ -114,20 +119,64 @@ jobs:
               const errs = validate(schema, doc);
               for (const e of errs) console.error(`${e.path} ${e.message}`);
               if (errs.length) process.exit(1);
-              console.log(`ok  dist/index.json validates, serial ${doc.serial}, ${doc.plugins.length} plugin(s)`);
+              console.log(`ok  dist/index.json validates, serial ${doc.signed.serial}, ${doc.signed.plugins.length} plugin(s)`);
             });
           '
+
+      # ── 3.2: the signature ────────────────────────────────────────────────
+      #
+      # The key lives in the `publish` environment with the maintainer as a
+      # required reviewer (PRODUCTION_PLAN §5.1), so it is unavailable on a pull
+      # request and on a fork by construction — which is the point. This job
+      # therefore has to do something sensible with no key, and "quietly deploy
+      # an unsigned catalogue" is not it: an unsigned file that reaches the CDN
+      # under the same name as a signed one is a downgrade attack the registry
+      # performed on itself.
+      #
+      # So the rule is: on `main`, the key MUST be there and the signature MUST
+      # verify. Anywhere else, sign nothing, say so, and upload the unsigned
+      # candidate as a build artefact only — never as a deploy.
+      - name: Sign the deploy candidate
+        id: sign
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          ASTRA_INDEX_SIGNING_KEY: ${{ secrets.ASTRA_INDEX_SIGNING_KEY }}
+          ASTRA_INDEX_SIGNING_KEY_ID: ${{ secrets.ASTRA_INDEX_SIGNING_KEY_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ASTRA_INDEX_SIGNING_KEY:-}" ]; then
+            echo "::error::no ASTRA_INDEX_SIGNING_KEY on main. Refusing to publish an unsigned catalogue."
+            exit 1
+          fi
+          # The key is passed through the environment and never appears on a
+          # command line: `ps` is readable by every process on the runner and
+          # `set -x` would put it in the log.
+          node bot/sign-index.mjs --in dist/index.json --out dist/index.signed.json
+          mv dist/index.signed.json dist/index.json
+          echo "sha256: $(sha256sum dist/index.json | cut -d' ' -f1)"
+
+      # Verified against the CURRENTLY PUBLISHED root-signed trust.json, not
+      # against the key we just signed with. Signing with a key and then
+      # checking the signature with the same key proves the crypto library
+      # works; checking it against trust.json proves the daemon will accept it.
+      # A key that has fallen out of its validity window fails here rather than
+      # in every user's client.
+      - name: Verify the signature the way the daemon will
+        if: steps.sign.outcome == 'success'
+        run: |
+          set -euo pipefail
+          if [ ! -f registry/v1/trust.json ]; then
+            echo "::error::registry/v1/trust.json is not published yet, so nothing can check this signature."
+            exit 1
+          fi
+          node bot/sign-index.mjs --verify dist/index.json --trust registry/v1/trust.json
+
+      - name: Say plainly that nothing here is signed
+        if: steps.sign.outcome == 'skipped'
+        run: echo "::notice::dist/index.json is UNSIGNED — the signing key is unavailable outside main. This artefact is for inspection, not for deploy."
 
       - uses: actions/upload-artifact@v4
         with:
           name: registry-index-v1
           path: dist/index.json
           if-no-files-found: error
-
-      # Phase 3.2 replaces this comment with: sign dist/index.json with the
-      # index key held in the `publish` environment, emit index.sig, and deploy
-      # both. Deliberately not stubbed — an unsigned deploy step that looks like
-      # a signed one is worse than no deploy step.
-      - name: What is NOT signed here
-        if: always()
-        run: echo "::notice::registry/v1/index.json is UNSIGNED in Phase 2. The daemon's only guarantee is HTTPS. See bot/lib/phase3.mjs."

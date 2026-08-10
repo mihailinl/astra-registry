@@ -16,6 +16,12 @@ import { execFileSync } from "node:child_process";
 
 import { runValidation } from "./validate.mjs";
 import { buildIndex } from "./build-index.mjs";
+import {
+  CATALOG_TTL_DAYS, INDEX_SCHEMA, REVOCATIONS_SCHEMA, TRUST_SCHEMA, verifyEnvelope,
+} from "../bot/lib/sign.mjs";
+import { signIndex, indexKeysFromTrust } from "../bot/sign-index.mjs";
+import { fixtureCatalogue, FIXTURE_ISSUED_AT } from "../bot/fixtures/index/regenerate.mjs";
+import { loadTestRoot } from "./testkeys/regenerate.mjs";
 import { stableStringify, jcs } from "./lib/canonical.mjs";
 import { validate as validateSchema } from "./lib/jsonschema.mjs";
 import { makeFixtures } from "./make-fixtures.mjs";
@@ -27,6 +33,7 @@ import {
   checkBundle, manifestDigest, artifactDigest,
   manifestBytesFromLocalHeader, MANIFEST_DIGEST_DOMAIN,
 } from "../bot/lib/bundle.mjs";
+import { registerSharedVectorTests } from "../tests/shared-vectors.mjs";
 
 const LIMITS = JSON.parse(fs.readFileSync(new URL("../policy/limits.json", import.meta.url), "utf8"));
 
@@ -76,6 +83,67 @@ await test("a non-integer number is refused rather than silently canonicalised",
   let threw = false;
   try { stableStringify({ x: 1.5 }); } catch { threw = true; }
   assert(threw, "1.5 was accepted; RFC 8785 number canonicalisation is not implemented");
+});
+
+// ── RFC 8785's own vectors ──────────────────────────────────────────────────
+//
+// Every assertion below is mirrored in astra-daemon's `plugins::trust` tests,
+// including the SHA-256 of the canonical output. That digest is the drift
+// detector: signer and verifier canonicalising differently is the classic way a
+// signature scheme silently accepts nothing or everything, and neither side's
+// own suite can see it.
+await test("RFC 8785 §3.2.3: keys sort by UTF-16 code unit, not by code point", () => {
+  // The RFC's example document, verbatim, escapes and all.
+  const doc = JSON.parse(`{
+    "\\u20ac": "Euro Sign",
+    "\\r": "Carriage Return",
+    "\\u000a": "Newline",
+    "1": "One",
+    "\\u0080": "Control\\u007f?",
+    "\\ud83d\\ude02": "Smiley",
+    "\\u00f6": "Latin Small Letter O With Diaeresis",
+    "\\ufb33": "Hebrew Letter Dalet With Dagesh",
+    "</script>": "Browser Challenge"
+  }`);
+
+  // Written out rather than pasted, because the interesting part is a place
+  // where the obvious answer is wrong: U+1F602 😂 is the surrogate pair
+  // D83D DE02, so as a UTF-16 code-unit sequence it starts at 0xD83D and sorts
+  // BEFORE U+FB33 דּ — the opposite of code-point order. §3.2.3 specifies code
+  // units, which is also what JavaScript's default sort does and what the Rust
+  // side spells out with `encode_utf16`.
+  //
+  // U+0080 and U+007F stay LITERAL in the output: §3.2.2.2 escapes only `"`, `\`
+  // and U+0000–U+001F. A canonicaliser that helpfully escapes more produces
+  // bytes the other implementation will not reproduce. They are written here as
+  // JavaScript escapes so that this source file survives an editor.
+  const expected =
+    '{"\\n":"Newline","\\r":"Carriage Return","1":"One","</script>":"Browser Challenge",' +
+    '"\u0080":"Control\u007f?","\u00f6":"Latin Small Letter O With Diaeresis","\u20ac":"Euro Sign",' +
+    '"\ud83d\ude02":"Smiley","\ufb33":"Hebrew Letter Dalet With Dagesh"}';
+  assert(jcs(doc) === expected, `\n  got      ${JSON.stringify(jcs(doc))}\n  expected ${JSON.stringify(expected)}`);
+  assert(jcs(doc).includes("\u0080"), "U+0080 must survive as a literal character, not an escape");
+
+  const digest = crypto.createHash("sha256").update(jcs(doc), "utf8").digest("hex");
+  assert(digest === "922a8d820097f8b586beb7fe249dfe2ba26fe491b9780b0ba2e613f54bfcb5d7",
+    `canonical form digest is ${digest} — the Rust verifier asserts the same constant`);
+});
+await test("RFC 8785 §3.2.2.2: the escape set is exactly JSON's, no wider", () => {
+  // Every character that must be escaped, one that must not (`/`, which many
+  // JSON writers escape as `\\/`), and three that stay literal.
+  const doc = { s: 'q"\\\b\t\n\f\r\u001f\u007f\u0080/\u20ac' };
+  const expected = '{"s":"q\\"\\\\\\b\\t\\n\\f\\r\\u001f\u007f\u0080/\u20ac"}';
+  assert(jcs(doc) === expected, `\n  got      ${JSON.stringify(jcs(doc))}\n  expected ${JSON.stringify(expected)}`);
+});
+await test("integers canonicalise as JavaScript prints them, and nothing else is allowed in", () => {
+  assert(jcs({ n: 0 }) === '{"n":0}');
+  assert(jcs({ n: -0 }) === '{"n":0}', "negative zero is zero; two spellings would be two signatures");
+  assert(jcs({ n: 9007199254740991 }) === '{"n":9007199254740991}');
+  for (const bad of [1e30, 0.1, 1.5, -1e-6, Number.MAX_SAFE_INTEGER + 1]) {
+    let threw = false;
+    try { jcs({ n: bad }); } catch { threw = true; }
+    assert(threw, `${bad} was canonicalised; §3.2.2.3 float formatting is deliberately NOT implemented here`);
+  }
 });
 
 console.log("\njson schema subset");
@@ -132,7 +200,7 @@ await test("the fixture bundle is byte-identical on a second build", () => {
 console.log("\nthe real registry");
 await test("index.json is byte-identical to a fresh generation", () => {
   const committed = fs.readFileSync(path.join(REPO_ROOT, "registry/v1/index.json"), "utf8");
-  const regenerated = stableStringify(buildIndex({ serial: JSON.parse(committed).serial }));
+  const regenerated = stableStringify(buildIndex({ serial: JSON.parse(committed).signed.serial }));
   assert(committed === regenerated, "registry/v1/index.json is not what tools/build-index.mjs produces");
 });
 await test("index.json validates against schema/index-v1.json", () => {
@@ -170,7 +238,7 @@ await test("the bootstrap listing is accepted, loudly, WITH --allow-staging", as
 });
 await test("no staging entry offers a download URL to a digest-blind client", () => {
   const doc = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "registry/v1/index.json"), "utf8"));
-  const staged = doc.plugins.filter((p) => p.staging === true);
+  const staged = doc.signed.plugins.filter((p) => p.staging === true);
   assert(staged.length >= 1, "no staging entry in the index, so this test proves nothing");
   // Checked across every staging entry, not one named one: the compatibility
   // fields are exactly what a client that cannot read releases[] would follow,
@@ -209,7 +277,7 @@ await test("a hand-edited index is caught by --check", async () => {
   fs.cpSync(path.join(REPO_ROOT, "plugins"), path.join(dir, "plugins"), { recursive: true });
   fs.mkdirSync(path.join(dir, "registry/v1"), { recursive: true });
   const doc = buildIndex({ root: dir, serial: 7 });
-  doc.plugins[0].platform_downloads = { "linux-x64": "https://github.com/evil/x/releases/download/v1/x.astraplugin" };
+  doc.signed.plugins[0].platform_downloads = { "linux-x64": "https://github.com/evil/x/releases/download/v1/x.astraplugin" };
   fs.writeFileSync(path.join(dir, "registry/v1/index.json"), stableStringify(doc));
   const { report } = await runValidation({ root: dir, allowStaging: true, online: false, artifactsDir: null, index: true });
   assert(errorsMatching(report, "byte-identical").length === 1,
@@ -543,6 +611,174 @@ await test("a bundle whose manifest names another plugin is rejected", () => {
     .map((x) => x.code);
   assert(codes.includes("E_MANIFEST_ID_MISMATCH"),
     "a listing for one id served an archive for another — the confusion §5.3 D closes");
+});
+
+// ── the shared vectors ──────────────────────────────────────────────────────
+//
+// Everything above this line is a fixture this repo builds for itself, which is
+// precisely the arrangement that lets three implementations of one format drift
+// apart while all three suites stay green: each proves it agrees with itself.
+// `tests/vectors/` is a vendored copy of AstraPlugins/testdata/bundles, and the
+// CLI's reader and the daemon's reader answer the same questions about the same
+// bytes with the same expected answers written down beside them.
+//
+// See tests/shared-vectors.mjs, and testdata/bundles/README.md upstream.
+console.log("\nshared bundle vectors (AstraPlugins/testdata/bundles, vendored)");
+await registerSharedVectorTests({ test, assert, limits: LIMITS });
+
+// ── the catalogue signature ─────────────────────────────────────────────────
+//
+// Task 3.2. The daemon believes this catalogue because an index key that a
+// root-signed trust.json delegates to signed it — never because of the host it
+// was fetched from. Everything below is the signing half of that; the verifying
+// half lives in astra-daemon's plugins::trust tests, and bot/fixtures/index/
+// is the one artefact both halves read.
+console.log("\ncatalogue signature");
+
+const TEST_INDEX_KEY = "TEST-ONLY-DO-NOT-TRUST-index-2026a";
+const TEST_STRANGER_KEY = "TEST-ONLY-DO-NOT-TRUST-stranger";
+const trustFixture = JSON.parse(
+  fs.readFileSync(path.join(REPO_ROOT, "tools/testkeys/fixtures/trust-reserve-signed.json"), "utf8"),
+);
+const trustedIndexKeys = indexKeysFromTrust(trustFixture);
+
+function signedFixture(keyId = TEST_INDEX_KEY, serial = 12) {
+  const k = loadTestRoot(keyId);
+  return signIndex(fixtureCatalogue(serial), {
+    signer: { key_id: k.key_id, privateKey: k.privateKey },
+    issuedAt: FIXTURE_ISSUED_AT,
+  });
+}
+
+await test("a signed catalogue verifies under the key trust.json delegates to", () => {
+  const doc = signedFixture();
+  const r = verifyEnvelope(doc, INDEX_SCHEMA, trustedIndexKeys);
+  assert(r.ok, `did not verify: ${r.reason}`);
+  assert(r.key_id === TEST_INDEX_KEY, `verified under ${r.key_id}`);
+});
+await test("a catalogue signed by a key trust.json does not name is refused", () => {
+  // Syntactically perfect, correctly domain-separated, real Ed25519. The only
+  // thing wrong with it is WHOSE key it is, which is the only thing that may
+  // decide the outcome.
+  const doc = signedFixture(TEST_STRANGER_KEY);
+  const r = verifyEnvelope(doc, INDEX_SCHEMA, trustedIndexKeys);
+  assert(!r.ok, "a stranger's signature was accepted");
+  assert(r.offered.includes(TEST_STRANGER_KEY), `the refusal must name what was offered: ${JSON.stringify(r.offered)}`);
+});
+await test("a key_id that lies does not change the outcome", () => {
+  const doc = signedFixture(TEST_STRANGER_KEY);
+  doc.signatures[0].key_id = TEST_INDEX_KEY;   // claim to be the trusted key
+  assert(!verifyEnvelope(doc, INDEX_SCHEMA, trustedIndexKeys).ok,
+    "a document verified because it claimed the right key_id");
+
+  const honest = signedFixture(TEST_INDEX_KEY);
+  honest.signatures[0].key_id = "who-knows";    // and the converse
+  assert(verifyEnvelope(honest, INDEX_SCHEMA, trustedIndexKeys).ok,
+    "a genuine signature was refused because its key_id was wrong");
+});
+await test("one byte edited after signing is refused", () => {
+  const doc = signedFixture();
+  doc.signed.plugins[0].releases[0].artifacts["linux-x64"].sha256 =
+    "2222222222222222222222222222222222222222222222222222222222222222";
+  assert(!verifyEnvelope(doc, INDEX_SCHEMA, trustedIndexKeys).ok,
+    "the digest — the one field the whole chain exists to pin — was editable after signing");
+});
+await test("nothing outside `signed` is covered, and nothing outside it is read", () => {
+  const doc = signedFixture();
+  doc.$comment = "an attacker wrote this";
+  doc.serial = 9999;
+  assert(verifyEnvelope(doc, INDEX_SCHEMA, trustedIndexKeys).ok,
+    "editing an unauthenticated member broke the signature, so something outside `signed` is being hashed");
+});
+await test("a signature cannot be replayed across document types", () => {
+  const doc = signedFixture();
+  assert(!verifyEnvelope(doc, TRUST_SCHEMA, trustedIndexKeys).ok,
+    "an index signature verified as a trust.json signature; the domain separator is not doing its job");
+  assert(!verifyEnvelope(doc, REVOCATIONS_SCHEMA, trustedIndexKeys).ok,
+    "an index signature verified as a revocations.json signature");
+});
+await test("the freshness window is 30 days from the signing instant, not from the content", () => {
+  const doc = signedFixture();
+  assert(doc.signed.issued_at === "2026-08-15T00:00:00Z", doc.signed.issued_at);
+  const days = (Date.parse(doc.signed.expires_at) - Date.parse(doc.signed.issued_at)) / 86400000;
+  assert(days === CATALOG_TTL_DAYS, `${days} days, expected ${CATALOG_TTL_DAYS}`);
+  // And the generator, which reads no clock, stamps neither.
+  assert(buildIndex({ serial: 1 }).signed.issued_at === undefined,
+    "the generator stamped a timestamp; its output is no longer reproducible");
+});
+await test("the signer refuses a document that is not a catalogue", () => {
+  let threw = false;
+  try {
+    signIndex({ signed: { schema: TRUST_SCHEMA, serial: 1 } }, { signer: loadTestRoot(TEST_INDEX_KEY) });
+  } catch { threw = true; }
+  assert(threw, "the index key signed a document under the wrong domain");
+});
+await test("the committed fixtures are exactly what the signer produces", () => {
+  // These bytes are embedded in a daemon unit test. If this repository's JCS
+  // and Rust's ever disagree, one of the two suites has to notice, and a
+  // fixture regenerated silently on every run could not be the one that does.
+  execFileSync("node", ["bot/fixtures/index/regenerate.mjs", "--check"], { cwd: REPO_ROOT, stdio: "pipe" });
+});
+await test("`sign-index.mjs --test-key` will not write into registry/", () => {
+  let status = 0;
+  try {
+    execFileSync("node", [
+      "bot/sign-index.mjs", "--test-key", TEST_INDEX_KEY,
+      "--in", "registry/v1/index.json", "--out", "registry/v1/index.json",
+    ], { cwd: REPO_ROOT, stdio: "pipe" });
+  } catch (e) {
+    status = e.status;
+  }
+  assert(status === 2, `exit ${status}: a catalogue that LOOKS signed and is signed with a published key is worse than an unsigned one`);
+});
+await test("the CI path — key from the environment, verified against trust.json — works end to end", () => {
+  // The real signing route, exercised with a throwaway key: the seed arrives in
+  // ASTRA_INDEX_SIGNING_KEY as base64 and never on a command line. This is the
+  // only test that covers `privateKeyFromSeed`, which is the one piece of the
+  // signer that production uses and the --test-key path does not.
+  const key = loadTestRoot(TEST_INDEX_KEY);
+  const out = path.join(tmp, "ci-index.json");
+  execFileSync("node", ["bot/sign-index.mjs", "--in", "registry/v1/index.json", "--out", out], {
+    cwd: REPO_ROOT,
+    stdio: "pipe",
+    env: {
+      ...process.env,
+      ASTRA_INDEX_SIGNING_KEY: key.seed.toString("base64"),
+      ASTRA_INDEX_SIGNING_KEY_ID: key.key_id,
+    },
+  });
+  const signed = JSON.parse(fs.readFileSync(out, "utf8"));
+  assert(verifyEnvelope(signed, INDEX_SCHEMA, trustedIndexKeys).ok,
+    "a catalogue signed through the environment did not verify");
+
+  // And the verify subcommand CI runs after signing, against a trust.json
+  // rather than against the key it just used.
+  const trustFile = path.join(tmp, "trust.json");
+  fs.writeFileSync(trustFile, JSON.stringify(trustFixture));
+  execFileSync("node", ["bot/sign-index.mjs", "--verify", out, "--trust", trustFile], {
+    cwd: REPO_ROOT, stdio: "pipe",
+  });
+
+  // The content is still exactly what the generator produces — signing adds a
+  // timestamp and a signature and touches nothing else.
+  execFileSync("node", ["tools/build-index.mjs", "--check", "--out", path.relative(REPO_ROOT, out)], {
+    cwd: REPO_ROOT, stdio: "pipe",
+  });
+});
+await test("`sign-index.mjs` with no key at all fails loudly rather than emitting an unsigned file", () => {
+  let status = 0;
+  let stderr = "";
+  try {
+    execFileSync("node", ["bot/sign-index.mjs", "--in", "registry/v1/index.json"], {
+      cwd: REPO_ROOT, stdio: "pipe",
+      env: { ...process.env, ASTRA_INDEX_SIGNING_KEY: "", ASTRA_INDEX_SIGNING_KEY_ID: "" },
+    });
+  } catch (e) {
+    status = e.status;
+    stderr = String(e.stderr);
+  }
+  assert(status === 2, `exit ${status}`);
+  assert(stderr.includes("ASTRA_INDEX_SIGNING_KEY"), stderr);
 });
 
 console.log("\ncli surface");

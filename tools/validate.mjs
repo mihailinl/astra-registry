@@ -30,7 +30,7 @@ import { stableStringify } from "./lib/canonical.mjs";
 import { compareSemver, parseSemver } from "./lib/semver.mjs";
 import { invalidId, unsafePathComponent, foldId, editDistance, unsafeDisplayText } from "./lib/ids.mjs";
 import { loadSources, loadPolicy, loadSchemas, readJson, REPO_ROOT } from "./lib/sources.mjs";
-import { buildIndex } from "./build-index.mjs";
+import { buildIndex, indexContent } from "./build-index.mjs";
 
 const PLATFORM_KEYS = new Set([
   "linux-x64", "windows-x64", "noarch",
@@ -530,25 +530,43 @@ function checkIndex(ctx) {
     report.error(rel, `${e.path} ${e.message}`);
   }
 
+  // Since 3.2 the catalogue is a `{signed, signatures}` envelope: only `signed`
+  // is generated and only `signed` is covered by a signature. The fallback to a
+  // bare document keeps this readable for a tree that predates the envelope —
+  // the fields and their meanings are unchanged, only their depth is.
+  const signed = doc.signed ?? doc;
+
   let regenerated;
   try {
-    regenerated = stableStringify(buildIndex({ root, serial: doc.serial }));
+    regenerated = stableStringify(buildIndex({ root, serial: signed.serial }));
   } catch (e) {
     report.error(rel, `cannot be regenerated from plugins/: ${e.message}`);
     return;
   }
-  if (regenerated !== text) {
-    report.error(rel, "is not byte-identical to a fresh generation from plugins/",
-      "It is a generated file. Run `node tools/build-index.mjs` and commit the result; do not edit it.");
+  // A *published* catalogue carries `issued_at`, `expires_at` and signatures
+  // that no generator holding no key and reading no clock can reproduce, so the
+  // byte comparison holds only for the unsigned committed file — which is what
+  // this validator is pointed at. For a signed one the same defect (a URL or a
+  // digest edited straight into the catalogue) is caught by comparing the
+  // content projection instead.
+  const stamped = signed.issued_at !== undefined || (doc.signatures?.length ?? 0) > 0;
+  if (!stamped) {
+    if (regenerated !== text) {
+      report.error(rel, "is not byte-identical to a fresh generation from plugins/",
+        "It is a generated file. Run `node tools/build-index.mjs` and commit the result; do not edit it.");
+    }
+  } else if (stableStringify(indexContent(doc)) !== stableStringify(indexContent(JSON.parse(regenerated)))) {
+    report.error(rel, "was signed over content that is not a fresh generation from plugins/",
+      "Regenerate with `node tools/build-index.mjs`, then re-sign. Never edit a signed catalogue.");
   }
 
   // Ordering is a property the daemon may lean on and a reviewer definitely
   // does, so assert it rather than trusting the generator that just ran.
-  const ids = doc.plugins?.map((p) => p.id) ?? [];
+  const ids = signed.plugins?.map((p) => p.id) ?? [];
   if ([...ids].sort().join("\u0000") !== ids.join("\u0000")) {
     report.error(rel, "plugins are not sorted by id");
   }
-  for (const p of doc.plugins ?? []) {
+  for (const p of signed.plugins ?? []) {
     const versions = p.releases.map((r) => r.version);
     for (let i = 1; i < versions.length; i++) {
       if (compareSemver(versions[i - 1], versions[i]) <= 0) {

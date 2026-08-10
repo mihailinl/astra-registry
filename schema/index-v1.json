@@ -2,24 +2,59 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://registry.astra.app/schema/index-v1.json",
   "title": "astra.registry.index/1",
-  "description": "registry/v1/index.json — the catalogue the Astra client fetches. GENERATED from plugins/**; never hand-edited. Two audiences share one file: the daemon's current reader, which knows only the flat fields (id/name/version/description/platform_downloads), and everything from Phase 2.9 on, which reads `releases[]` for the per-artifact sha256 and size. The flat fields are a projection of `releases[0]`, produced by the same generator run, so they cannot disagree with it.",
+  "description": "registry/v1/index.json — the catalogue the Astra client fetches. GENERATED from plugins/**; never hand-edited. Since 3.2 it is a SIGNED ENVELOPE: `signed` holds the catalogue and `signatures` holds Ed25519 signatures over SHA-256(\"astra.registry.index/1\" ‖ 0x00 ‖ JCS(signed)), made with an index key that a root-signed trust.json delegates to. Nothing outside `signed` is authenticated — not `$comment`, not the `key_id` fields — and nothing outside it may be read as a fact. Two audiences share `signed`: the daemon's flat reader (id/name/version/description/platform_downloads) and everything from 2.9 on, which reads `releases[]` for the per-artifact sha256 and size. The flat fields are a projection of `releases[0]` from the same generator run, so they cannot disagree with it.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "serial", "plugins"],
+  "required": ["signed", "signatures"],
   "properties": {
     "$comment": { "type": "string" },
-    "schema": { "const": "astra.registry.index/1" },
-    "serial": {
-      "type": "integer",
-      "minimum": 0,
-      "description": "Monotonic. Derived from the commit count of `main`, never read-and-incremented from a file — two merges landing at once would collide on that. The daemon refuses an index whose serial went backwards (PRODUCTION_PLAN §3.2)."
-    },
-    "plugins": {
+    "signatures": {
       "type": "array",
-      "items": { "$ref": "#/$defs/plugin" }
-    }
+      "description": "Empty in the committed tree: this repository holds no signing key, and CI signs the deploy candidate in the `publish` environment. An empty array says 'unsigned' out loud, where an absent member could not be told from a stripped one.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key_id", "sig"],
+        "properties": {
+          "key_id": {
+            "type": "string",
+            "maxLength": 128,
+            "description": "A HINT, for logs and key selection. The verifier tries every trusted key against every offered signature, so this string cannot make a signature verify and cannot stop one from verifying."
+          },
+          "sig": { "type": "string", "pattern": "^[A-Za-z0-9+/]{86}==$", "description": "base64 of the 64-byte Ed25519 signature." }
+        }
+      }
+    },
+    "signed": { "$ref": "#/$defs/signed" }
   },
   "$defs": {
+    "signed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "serial", "plugins"],
+      "properties": {
+        "schema": { "const": "astra.registry.index/1" },
+        "serial": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Monotonic. Derived from the commit count of `main`, never read-and-incremented from a file — two merges landing at once would collide on that. The daemon refuses an index whose serial is lower than the highest it has already accepted (PRODUCTION_PLAN §3.2)."
+        },
+        "issued_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+          "description": "When this catalogue was SIGNED, not when its content changed. Absent in the committed tree; bot/sign-index.mjs stamps it. A generator that stamped it would make a catalogue nobody edited for 31 days expire itself, and would make its own output unreproducible."
+        },
+        "expires_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+          "description": "issued_at + 30 days. Expiry downgrades Browse to a banner; it does NOT stop a cached, digest-pinned record from installing, because the digest is the security property and a digest does not expire. The hard block lives on revocations.json at 7 days (PRODUCTION_PLAN §5.5)."
+        },
+        "plugins": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/plugin" }
+        }
+      }
+    },
     "plugin": {
       "type": "object",
       "additionalProperties": false,

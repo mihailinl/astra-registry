@@ -1,3 +1,29 @@
 node_modules/
 *.astraplugin
+# …except the vendored cross-repo test vectors. They are frozen bytes with
+# their expected verdicts and digests recorded beside them, vendored from
+# AstraPlugins/testdata/bundles by tools/vendor-testdata.sh there. Without this
+# line the selftest's shared-vector half has no fixtures in a fresh checkout.
+!tests/vectors/*.astraplugin
 .DS_Store
+
+# ── private key material ────────────────────────────────────────────────────
+# Defence in depth, not the primary control. The primary control is that
+# tools/keygen-root.sh refuses to run inside a git work tree at all and writes
+# the ceremony directory under $HOME by default; the index signing key never
+# touches a file, only $ASTRA_INDEX_SIGNING_KEY in the `publish` environment.
+# This is here for the one path neither of those covers: a human copying a key
+# in to look at it, and then running `git add -A`.
+#
+# `*.private.pem` is the exact name keygen-root.sh writes. The broader patterns
+# are for anything a hand or another tool produces.
+*.pem
+*.key
+*.private.*
+# …except the TEST keys, which are committed ON PURPOSE. Their private halves
+# are published so the daemon's unit tests and astra-registry's selftest can
+# sign fixtures with the same keys, and both repositories derive them from seed
+# phrases printed in tools/testkeys/README.md. They are named so that no one
+# could mistake them for production material, and the daemon can only compile
+# them in behind a non-default feature that a release profile refuses.
+!tools/testkeys/*.SECRET-TEST-KEY.json

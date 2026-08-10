@@ -31,6 +31,28 @@
 // path-limited so that a commit touching only docs or this generator does not
 // move the catalogue's version number, and so a future bot that regenerates and
 // commits the index cannot trigger itself in a loop.
+//
+// ── 3.2: THE ENVELOPE, AND WHY THE GENERATOR STILL READS NO CLOCK ───────────
+//
+// The catalogue is now `{ "signed": { … }, "signatures": [ … ] }` and the
+// signature covers `SHA-256("astra.registry.index/1" ‖ 0x00 ‖ JCS(signed))`.
+// This file produces the `signed` member and an EMPTY `signatures` array;
+// `bot/sign-index.mjs` stamps the freshness window and signs. The split is not
+// tidiness:
+//
+//   * `issued_at`/`expires_at` are properties of the PUBLICATION, not of the
+//     content. If the generator stamped them, a catalogue nobody has changed in
+//     31 days would expire itself and every user would see a stale banner over a
+//     perfectly current catalogue — which is the freeze attack's symptom
+//     produced by nothing but the passage of time.
+//   * A generator that reads a clock is a generator whose output cannot be
+//     reproduced, and `--check`, the determinism diff in CI, and any third
+//     party rebuilding the index from the git tree all depend on it being
+//     reproducible.
+//
+// So: content here, freshness at signing time, and `--check` compares the
+// content projection so a signed file and a fresh generation can still be held
+// to being the same catalogue.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -39,12 +61,15 @@ import { execFileSync } from "node:child_process";
 import { stableStringify } from "./lib/canonical.mjs";
 import { compareSemver } from "./lib/semver.mjs";
 import { loadSources, REPO_ROOT } from "./lib/sources.mjs";
+import { INDEX_SCHEMA } from "../bot/lib/sign.mjs";
 
 const BANNER =
   "GENERATED FILE — DO NOT EDIT. Source of truth: plugins/<id>/plugin.json and " +
   "plugins/<id>/versions/<semver>.json. Regenerate with `node tools/build-index.mjs`. " +
   "CI (.github/workflows/build-index.yml) fails when this file differs by one byte from " +
-  "what the generator produces, so a hand edit is not a shortcut, it is a red build.";
+  "what the generator produces, so a hand edit is not a shortcut, it is a red build. " +
+  "Only the `signed` member is covered by the signatures below; nothing outside it is " +
+  "authenticated and nothing may be read out of it.";
 
 const PLATFORM_KEYS_FOR_NOARCH = ["linux-x64", "windows-x64"];
 
@@ -198,10 +223,32 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
 
   return {
     $comment: BANNER,
-    schema: "astra.registry.index/1",
-    serial: resolveSerial({ explicit: serial, root }),
-    plugins: entries,
+    // Empty, and written out rather than omitted: a reader that finds no
+    // `signatures` member at all cannot tell "this catalogue is unsigned" from
+    // "somebody stripped the signatures". An empty array says the first one.
+    signatures: [],
+    signed: {
+      schema: INDEX_SCHEMA,
+      serial: resolveSerial({ explicit: serial, root }),
+      plugins: entries,
+    },
   };
+}
+
+/**
+ * The content half of a catalogue: everything the generator is responsible for,
+ * with the publication stamp removed.
+ *
+ * `--check` compares this rather than the whole file so that a signed,
+ * timestamped catalogue can still be held to being byte-for-byte the catalogue
+ * the sources describe. What is being defended is the highest-value edit
+ * anybody with commit access could make — a URL or a digest typed straight into
+ * the index — and that edit lands squarely inside this projection.
+ */
+export function indexContent(doc) {
+  const signed = doc?.signed ?? doc ?? {};
+  const { issued_at, expires_at, ...content } = signed;
+  return content;
 }
 
 function parseArgs(argv) {
@@ -242,21 +289,43 @@ function main(argv) {
     // every listing commit, so comparing it here would fail on every push and
     // teach everyone to ignore this check. What is being checked is that the
     // CONTENT is generated — that nobody hand-edited a URL or a digest into it.
-    let claimed;
+    let parsed;
     try {
-      claimed = JSON.parse(committed).serial;
+      parsed = JSON.parse(committed);
     } catch (e) {
       console.error(`FAIL  ${path.relative(opts.root, outFile)} is not valid JSON: ${e.message}`);
       return 1;
     }
-    const regenerated = stableStringify(buildIndex({ root: opts.root, serial: claimed }));
-    if (regenerated === committed) {
-      console.log(`ok    ${path.relative(opts.root, outFile)} is byte-identical to a fresh generation (serial ${claimed})`);
+    if (!parsed.signed) {
+      console.error(
+        `FAIL  ${path.relative(opts.root, outFile)} has no \`signed\` member. Since 3.2 the ` +
+          "catalogue is a signed envelope. Regenerate with: node tools/build-index.mjs",
+      );
+      return 1;
+    }
+    const claimed = parsed.signed.serial;
+    const fresh = buildIndex({ root: opts.root, serial: claimed });
+    const regenerated = stableStringify(fresh);
+
+    // Two comparisons, and the second is the one that must always hold. A file
+    // that has been through bot/sign-index.mjs carries `issued_at`,
+    // `expires_at` and real signatures — none of which a generator reading no
+    // clock and holding no key can reproduce. Its CONTENT still has to be
+    // exactly what the sources say, and that is where a hand-edited URL or
+    // digest would land.
+    const stamped = parsed.signed.issued_at !== undefined || (parsed.signatures?.length ?? 0) > 0;
+    const committedContent = stableStringify(indexContent(parsed));
+    const freshContent = stableStringify(indexContent(fresh));
+    if (committedContent === freshContent && (stamped || regenerated === committed)) {
+      console.log(
+        `ok    ${path.relative(opts.root, outFile)} is ${stamped ? "content-identical" : "byte-identical"} to a ` +
+          `fresh generation (serial ${claimed}, ${parsed.signatures?.length ?? 0} signature(s))`,
+      );
       return 0;
     }
     console.error(`FAIL  ${path.relative(opts.root, outFile)} is not what the generator produces.`);
-    const a = committed.split("\n");
-    const b = regenerated.split("\n");
+    const a = (stamped ? committedContent : committed).split("\n");
+    const b = (stamped ? freshContent : regenerated).split("\n");
     for (let i = 0; i < Math.max(a.length, b.length); i++) {
       if (a[i] !== b[i]) {
         console.error(`      first difference at line ${i + 1}:`);
