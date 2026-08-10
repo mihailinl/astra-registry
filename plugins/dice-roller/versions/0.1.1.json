@@ -1,0 +1,26 @@
+{
+  "$comment": "STAGING ENTRY — the release named below does not exist yet. It is here so the index is non-empty and the whole pipeline (generate, validate, schema-check, serve) is testable end to end before the first real bundle is published. Because the release does not exist, this entry carries NO sha256 and NO size, which is the only honest thing it can carry: a digest for bytes nobody has produced would be a fabrication, and a listing whose digest cannot be checked is exactly what this registry exists to prevent. Consequences, all deliberate: tools/validate.mjs REJECTS this file unless --allow-staging is passed; the generated index marks the plugin `\"staging\": true`; and the index's `platform_downloads` / `download_url` compatibility fields are left EMPTY, so a client that only understands those fields cannot download anything. TO GO LIVE: publish the release, then replace `staging`/`staging_reason` with the real `sha256`, `size`, `published_at` and `release.commit`, regenerate the index, and drop --allow-staging from .github/workflows/build-index.yml.",
+  "schema": "astra.registry.version/1",
+  "id": "dice-roller",
+  "version": "0.1.1",
+  "published_at": "2026-08-10T00:00:00Z",
+  "staging": true,
+  "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so dice-roller-v0.1.1 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/dice-roller writes the caller workflow, then the tag is pushed.",
+  "release": {
+    "kind": "github_release",
+    "repo": "mihailinl/AstraPlugins",
+    "tag": "dice-roller-v0.1.1"
+  },
+  "protocol": 1,
+  "capabilities": ["actions", "tools", "triggers"],
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/dice-roller-v0.1.1/dice-roller-0.1.1-linux-x64.astraplugin",
+      "filename": "dice-roller-0.1.1-linux-x64.astraplugin"
+    },
+    "windows-x64": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/dice-roller-v0.1.1/dice-roller-0.1.1-windows-x64.astraplugin",
+      "filename": "dice-roller-0.1.1-windows-x64.astraplugin"
+    }
+  }
+}

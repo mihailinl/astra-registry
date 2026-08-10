@@ -1,0 +1,23 @@
+{
+  "$comment": "Seed catalogue (PRODUCTION_PLAN task 2.13). Source: AstraPlugins/examples/telegram-client/plugin.toml at version 0.1.0. `client` is one of the four capabilities the Phase 4 consent sheet gives its own checkbox; the summary and description here are written on the assumption that a user reads them before ticking it.",
+  "schema": "astra.registry.plugin/1",
+  "id": "telegram-client",
+  "name": "Telegram Bot",
+  "summary": "Talk to Astra from Telegram: one forum topic per conversation, synced both ways.",
+  "description": "Bridges a Telegram bot to Astra as a full chat client. /new creates a forum topic and a matching Astra conversation, /list links an existing one, and any message in a linked topic reaches Astra as if you had typed it in the app, with the reply streaming back as it is generated. Sync runs in both directions. Needs a bot token from @BotFather, a Telegram group with Topics enabled and the bot as an administrator, and outbound access to api.telegram.org. Read this part twice: installing it means your Astra conversations are relayed to Telegram, and leaving the allowed-usernames setting empty means anyone who can reach the bot can talk to your Astra.",
+  "author": {
+    "name": "Astra Team",
+    "url": "https://github.com/mihailinl"
+  },
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "mihailinl/AstraPlugins",
+    "subdirectory": "examples/telegram-client"
+  },
+  "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/telegram-client",
+  "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/telegram-client/icon.svg",
+  "categories": ["communication"],
+  "keywords": ["telegram", "bot", "bridge", "chat", "remote"],
+  "added_at": "2026-08-10"
+}

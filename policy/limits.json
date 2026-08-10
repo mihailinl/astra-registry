@@ -1,0 +1,18 @@
+{
+  "$comment": "Numeric policy limits for the registry. Edit here, nowhere else — tools/ and bot/ both read this file. A value with a `<name>_mirrors` sibling MUST equal the constant it names in AstraPlugins/spec/limits.yaml. tools/validate.mjs compares them for real when an AstraPlugins checkout is reachable — $ASTRA_PLUGINS_DIR, else a sibling ../AstraPlugins — and prints a `note` saying the check did not run when neither exists, because a check that quietly did not happen must not look like a check that passed.",
+  "max_artifact_bytes": 268435456,
+  "max_artifact_bytes_note": "256 MiB, the largest .astraplugin the registry will list. Deliberately below max_extract_bytes: a bundle whose COMPRESSED size approaches the daemon's UNCOMPRESSED extraction cap cannot install.",
+  "max_extract_bytes": 524288000,
+  "max_extract_bytes_mirrors": "AstraPlugins/spec/limits.yaml max_extract_bytes",
+  "max_archive_entries": 10000,
+  "max_archive_entries_mirrors": "AstraPlugins/spec/limits.yaml max_archive_entries",
+  "max_versions_per_plugin": 200,
+  "max_artifacts_per_version": 8,
+  "max_name_length": 64,
+  "max_summary_length": 200,
+  "max_description_length": 4000,
+  "max_keywords": 10,
+  "max_keyword_length": 32,
+  "max_categories": 3,
+  "typosquat_flag_distance": 1
+}

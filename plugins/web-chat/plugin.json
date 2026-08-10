@@ -1,0 +1,23 @@
+{
+  "$comment": "Seed catalogue (PRODUCTION_PLAN task 2.13). Source: AstraPlugins/examples/web-chat/plugin.toml at version 0.1.0. A development tool with no authentication on its loopback server; the summary says so, because a store card is the last place a user reads before installing.",
+  "schema": "astra.registry.plugin/1",
+  "id": "web-chat",
+  "name": "Web Chat Client",
+  "summary": "A loopback browser client for Astra, for watching multi-client sync happen.",
+  "description": "Serves a chat interface on http://127.0.0.1:9090 backed by your real Astra conversations, and forwards every chat event in every conversation to the browser over a WebSocket, so a message typed in the Astra window appears in the browser and the reverse, live. The last 10,000 events are replayed to a browser that connects mid-stream; nothing is written to disk. It exists to make event sourcing observable while working on Astra or on your own client. There is no authentication on that server: it binds loopback only, but anything running as you that can reach the port can read your conversations and send messages as you. A development tool, not a remote-access feature.",
+  "author": {
+    "name": "Astra Team",
+    "url": "https://github.com/mihailinl"
+  },
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "mihailinl/AstraPlugins",
+    "subdirectory": "examples/web-chat"
+  },
+  "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/web-chat",
+  "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/web-chat/icon.svg",
+  "categories": ["development", "communication"],
+  "keywords": ["web", "client", "websocket", "sync", "development"],
+  "added_at": "2026-08-10"
+}

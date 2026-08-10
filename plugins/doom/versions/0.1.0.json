@@ -1,0 +1,26 @@
+{
+  "$comment": "STAGING ENTRY — no digest, because the release does not exist. See plugins/dice-roller/versions/0.1.1.json for the full reasoning and the go-live steps. The GPL-2.0 engine under an MIT listing, noted in plugin.json, is a second and independent blocker on publishing this one.",
+  "schema": "astra.registry.version/1",
+  "id": "doom",
+  "version": "0.1.0",
+  "published_at": "2026-08-10T00:00:00Z",
+  "staging": true,
+  "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — doom-v0.1.0 is a tag plugin-release.yml now accepts. What is left upstream: astra-plugin init-ci examples/doom, then push the tag. The GPL-2.0 engine build under an MIT listing is a separate blocker.",
+  "release": {
+    "kind": "github_release",
+    "repo": "mihailinl/AstraPlugins",
+    "tag": "doom-v0.1.0"
+  },
+  "protocol": 1,
+  "capabilities": ["dom_access", "ui_contributions"],
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.0/doom-0.1.0-linux-x64.astraplugin",
+      "filename": "doom-0.1.0-linux-x64.astraplugin"
+    },
+    "windows-x64": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.0/doom-0.1.0-windows-x64.astraplugin",
+      "filename": "doom-0.1.0-windows-x64.astraplugin"
+    }
+  }
+}

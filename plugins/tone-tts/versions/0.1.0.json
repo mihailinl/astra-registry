@@ -1,0 +1,26 @@
+{
+  "$comment": "STAGING ENTRY — no digest, because the release does not exist. See plugins/dice-roller/versions/0.1.1.json for the full reasoning and the go-live steps.",
+  "schema": "astra.registry.version/1",
+  "id": "tone-tts",
+  "version": "0.1.0",
+  "published_at": "2026-08-10T00:00:00Z",
+  "staging": true,
+  "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so tone-tts-v0.1.0 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/tone-tts writes the caller workflow, then the tag is pushed.",
+  "release": {
+    "kind": "github_release",
+    "repo": "mihailinl/AstraPlugins",
+    "tag": "tone-tts-v0.1.0"
+  },
+  "protocol": 1,
+  "capabilities": ["tts"],
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/tone-tts-v0.1.0/tone-tts-0.1.0-linux-x64.astraplugin",
+      "filename": "tone-tts-0.1.0-linux-x64.astraplugin"
+    },
+    "windows-x64": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/tone-tts-v0.1.0/tone-tts-0.1.0-windows-x64.astraplugin",
+      "filename": "tone-tts-0.1.0-windows-x64.astraplugin"
+    }
+  }
+}

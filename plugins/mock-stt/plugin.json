@@ -1,0 +1,23 @@
+{
+  "$comment": "Seed catalogue (PRODUCTION_PLAN task 2.13). Source: AstraPlugins/examples/mock-stt/plugin.toml at version 0.1.0.",
+  "schema": "astra.registry.plugin/1",
+  "id": "mock-stt",
+  "name": "Mock STT",
+  "summary": "A speech-to-text provider that never transcribes. It is a wiring test.",
+  "description": "Registers as a speech-to-text provider and returns one deterministic sentence per utterance describing the audio it was handed: byte count, sample count, sample rate, mean amplitude. No model, no download, no GPU, no delay. If that line reaches your conversation after you speak, the whole path — capture, endpointing, transport, the plugin protocol, the result returning to the chat — works, and anything still wrong is in the model rather than the plumbing. The smallest possible STT plugin: 59 lines.",
+  "author": {
+    "name": "Astra Team",
+    "url": "https://github.com/mihailinl"
+  },
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "mihailinl/AstraPlugins",
+    "subdirectory": "examples/mock-stt"
+  },
+  "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/mock-stt",
+  "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/mock-stt/icon.svg",
+  "categories": ["voice", "development"],
+  "keywords": ["stt", "mock", "testing", "diagnostic"],
+  "added_at": "2026-08-10"
+}

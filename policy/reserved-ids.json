@@ -1,0 +1,28 @@
+{
+  "$comment": "Ids nobody but the maintainers may list, and prefixes nobody but the maintainers may list under. Two reasons: an id that reads as first-party is an impersonation primitive, and the daemon reserves a few names for its own directories. Removing an entry here is a security change, not a cleanup.",
+  "reserved": [
+    "astra",
+    "admin",
+    "core",
+    "daemon",
+    "default",
+    "internal",
+    "official",
+    "plugin",
+    "plugins",
+    "registry",
+    "root",
+    "system",
+    "test",
+    "trust"
+  ],
+  "reserved_prefixes": [
+    "astra-",
+    "official-",
+    "verified-"
+  ],
+  "first_party_repos": [
+    "mihailinl/AstraPlugins",
+    "mihailinl/Astra"
+  ]
+}

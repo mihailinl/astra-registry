@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://registry.astra.app/schema/version-v1.json",
+  "title": "astra.registry.version/1",
+  "description": "plugins/<id>/versions/<semver>.json — one release. One file per plugin per version: two authors publishing at the same moment touch two different files, so there is no merge conflict, the review diff is one whole file, and `git log plugins/<id>/` is the audit trail.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "version", "published_at", "release", "artifacts"],
+  "properties": {
+    "$comment": { "type": "string" },
+    "schema": { "const": "astra.registry.version/1" },
+    "id": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])$" },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$",
+      "description": "Must equal the file's basename."
+    },
+    "published_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$",
+      "description": "The GitHub Release's publication time, UTC, seconds precision. Recorded data, never a clock read at generation time — the index must regenerate byte-identically."
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "description": "Where the bytes are served from, and what the artifact URLs are pinned to. `github_release` is what the public catalogue lists: every URL must sit under github.com/<repo>/releases/download/<tag>/, so a listing cannot point a plugin's downloads somewhere the named release never was. `direct` exists because a self-hosted or staging catalogue serves its artifacts from its own origin — the daemon was built for exactly that case (Astra `PluginManager::artifact_download_policy` adds the artifact URL's own host to the allow-list) and a schema that could not express it would leave that support unreachable. A `direct` release names a `base_url` and every artifact URL must sit under THAT, so the pinning rule is the same rule with a different anchor; what it does not carry is a named GitHub release, which is why tools/validate.mjs warns and POLICY.md keeps it out of the public catalogue.",
+      "properties": {
+        "$comment": { "type": "string" },
+        "kind": { "enum": ["github_release", "direct"] },
+        "repo": { "type": "string", "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$" },
+        "tag": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9._/-]+$" },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "base_url": {
+          "type": "string",
+          "maxLength": 512,
+          "pattern": "^https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?/(?:[^\\s?#]*/)?$",
+          "description": "kind `direct` only. The https prefix every artifact URL of this release must start with, ending in `/`. https and not http because the daemon's download policy is `https_only()` with no loopback exemption: a plaintext URL would be refused at hop zero on the user's machine, after the listing had already promised it."
+        }
+      },
+      "oneOf": [
+        {
+          "title": "github_release",
+          "properties": { "kind": { "const": "github_release" } },
+          "required": ["kind", "repo", "tag"]
+        },
+        {
+          "title": "direct",
+          "properties": { "kind": { "const": "direct" } },
+          "required": ["kind", "base_url"]
+        }
+      ]
+    },
+    "protocol": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535,
+      "description": "Plugin protocol version the bundle speaks (AstraPlugins astra-plugin-sdk/src/protocol.rs PROTOCOL_VERSION)."
+    },
+    "min_astra_version": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$"
+    },
+    "capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "The daemon's vocabulary, verbatim (Astra astra-daemon/src/plugins/manifest.rs `Capabilities`). Ten names, no synonyms — `ui_panels` is not one of them.",
+      "items": {
+        "enum": [
+          "actions", "ai_provider", "client", "dom_access", "event_handlers",
+          "stt", "tools", "triggers", "tts", "ui_contributions"
+        ]
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "description": "Phase 4 territory. Present here so the shape is reserved and a listing can carry it before the daemon enforces it; the index copies it through unchanged.",
+      "patternProperties": {
+        "^[a-z_]{1,64}$": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "$comment": { "type": "string" },
+            "reason": { "type": "string", "maxLength": 140 }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "changelog_url": { "type": "string", "pattern": "^https://" },
+    "yanked": {
+      "type": "boolean",
+      "description": "Author withdrew this version. It stays in git and leaves the index. Not a revocation — a revocation is signed, lives in revocations.json, and arrives in Phase 3."
+    },
+    "staging": {
+      "type": "boolean",
+      "description": "Bootstrap only: the release does not exist yet, so there is no digest to pin. tools/validate.mjs REJECTS a staging entry unless --allow-staging is passed. See README.md §The bootstrap entry."
+    },
+    "staging_reason": { "type": "string", "minLength": 1, "maxLength": 400 },
+    "artifacts": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 8,
+      "description": "Platform key -> artifact. The keys are byte-identical to the CLI's --target strings (AstraPlugins astra-plugin-cli, task 2.1) and to the daemon's platform key (Astra registry_client.rs), so nothing has to agree twice. macos-* and *-arm64 are reserved names: Astra ships no daemon for them, so an artifact under those keys would have no host.",
+      "propertyNames": {
+        "enum": [
+          "linux-x64", "windows-x64", "noarch",
+          "linux-arm64", "windows-arm64", "macos-x64", "macos-arm64"
+        ]
+      },
+      "additionalProperties": { "$ref": "#/$defs/artifact" }
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "filename"],
+      "description": "sha256 and size are REQUIRED in practice; they are optional here only so a staging entry can be expressed at all. Absent digest means the entry is unverifiable and therefore uninstallable — that rule is enforced in tools/validate.mjs, not in this schema, because the error message matters more than the declaration.",
+      "properties": {
+        "$comment": { "type": "string" },
+        "url": {
+          "type": "string",
+          "maxLength": 1024,
+          "pattern": "^https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?/[^\\s]+$",
+          "description": "Any https origin — the release object decides which one. This pattern used to hardcode github.com/<owner>/<repo>/releases/download/, which made the GitHub rule unstateable for anything else and so made a self-hosted or staging catalogue inexpressible even though the daemon supports one. The real pinning check outlived the pattern and is stricter than it ever was: tools/validate.mjs requires every URL to start with the prefix its own `release` implies (the release download prefix for github_release, `base_url` for direct) and to end in the declared filename. https, not http: the daemon refuses plaintext before a byte leaves."
+        },
+        "filename": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.astraplugin$" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "size": { "type": "integer", "minimum": 1, "maximum": 268435456 }
+      }
+    }
+  }
+}

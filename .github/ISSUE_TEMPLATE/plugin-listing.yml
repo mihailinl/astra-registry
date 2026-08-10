@@ -1,0 +1,50 @@
+name: Plugin listing request
+description: List a plugin in the Astra registry
+title: "[listing] <owner>/<repo>"
+labels: ["listing", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        You are asked for **two facts and two confirmations**, and nothing else.
+
+        Everything else — id, version, capabilities, permissions, license,
+        summary, platforms, digests — is read out of the release bundle itself.
+        That data is covered by the build attestation, which makes it strictly
+        more trustworthy than anything typed into a form, and it means there is
+        no such thing here as a "your form disagrees with plugin.toml"
+        rejection. Run `astra-plugin check --strict` in your plugin directory
+        first: it catches the manifest, version and release-workflow problems
+        locally, so you find out before you open this issue.
+
+        In Phase 2 the checks are the crypto-free ones (see `bot/README.md`) and
+        a maintainer reads every submission by hand.
+  - type: input
+    id: repository
+    attributes:
+      label: Source repository
+      description: The repository whose GitHub Release carries the bundle.
+      placeholder: you/dice-roller
+    validations:
+      required: true
+  - type: input
+    id: release_tag
+    attributes:
+      label: Release tag carrying the .astraplugin assets
+      placeholder: v0.2.0
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: What does it do, and why should it be listed?
+      description: A few sentences. This is the only part a human writes and the only part a human reads first.
+  - type: checkboxes
+    id: attest
+    attributes:
+      label: Confirmations
+      options:
+        - label: I own or maintain this repository.
+          required: true
+        - label: I have read POLICY.md, including the data-handling section.
+          required: true

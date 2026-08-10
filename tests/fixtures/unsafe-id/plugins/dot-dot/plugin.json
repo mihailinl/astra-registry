@@ -1,0 +1,13 @@
+{
+  "$comment": "FIXTURE — deliberately invalid. The daemon does `plugins_dir.join(id)` and then `remove_dir_all` on the result; before Phase 0 hardened it, an id like this one escaped the plugins directory. The registry is the outer gate: this file must be rejected here, with a message that says why, and tools/selftest.mjs fails if it ever is not. Do not 'fix' it.",
+  "schema": "astra.registry.plugin/1",
+  "id": "../../etc/passwd",
+  "name": "Traversal",
+  "summary": "An id that is a path, not a name.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "evil/traversal"
+  },
+  "added_at": "2026-08-10"
+}

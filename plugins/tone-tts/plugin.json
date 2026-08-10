@@ -1,0 +1,23 @@
+{
+  "$comment": "Seed catalogue (PRODUCTION_PLAN task 2.13). Source: AstraPlugins/examples/tone-tts/plugin.toml at version 0.1.0.",
+  "schema": "astra.registry.plugin/1",
+  "id": "tone-tts",
+  "name": "Tone TTS",
+  "summary": "A text-to-speech provider that speaks in beeps. It is a wiring test.",
+  "description": "Emits one 120 ms sine tone per word, separated by silence, as a 24 kHz mono WAV the daemon decodes through its normal audio path. Three voices differ only in pitch: 220, 440 and 880 Hz. You will not enjoy listening to it; what it gives you is a TTS provider with no model, no download and no latency, so when nothing comes out of your speakers you can tell in one attempt whether the problem is the voice model or everything else. Also demonstrates the data-driven Voice settings hook: its two config fields are rendered by Astra's generic field component with no per-plugin frontend code.",
+  "author": {
+    "name": "Astra Team",
+    "url": "https://github.com/mihailinl"
+  },
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "mihailinl/AstraPlugins",
+    "subdirectory": "examples/tone-tts"
+  },
+  "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/tone-tts",
+  "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/tone-tts/icon.svg",
+  "categories": ["voice", "development"],
+  "keywords": ["tts", "mock", "testing", "diagnostic"],
+  "added_at": "2026-08-10"
+}

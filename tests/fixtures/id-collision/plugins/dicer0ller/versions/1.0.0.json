@@ -1,0 +1,19 @@
+{
+  "schema": "astra.registry.version/1",
+  "id": "dicer0ller",
+  "version": "1.0.0",
+  "published_at": "2026-08-10T00:00:00Z",
+  "release": {
+    "kind": "github_release",
+    "repo": "someone/dicer0ller",
+    "tag": "v1.0.0"
+  },
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/someone/dicer0ller/releases/download/v1.0.0/dicer0ller-1.0.0-linux-x64.astraplugin",
+      "filename": "dicer0ller-1.0.0-linux-x64.astraplugin",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "size": 2048
+    }
+  }
+}

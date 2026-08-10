@@ -1,0 +1,19 @@
+{
+  "$comment": "SPDX identifiers a listing may declare. An allowlist, not a denylist: a license nobody here has read is not a license this registry can promise anything about. To add one, open a PR against this file with a sentence on why — that PR is the review. See POLICY.md §Licensing.",
+  "allowed": [
+    "0BSD",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unlicense",
+    "Zlib"
+  ],
+  "allowed_expressions": [
+    "Apache-2.0 OR MIT",
+    "MIT OR Apache-2.0"
+  ]
+}

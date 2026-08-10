@@ -1,0 +1,133 @@
+name: Registry index
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Regenerates and validates registry/v1/index.json on every push and every PR.
+#
+# WHAT THIS FILE IS DEFENDING
+#
+#   A listing that nobody can verify.  `validate.mjs` refuses an artifact with
+#     no digest unless --allow-staging is passed, and that flag is passed on
+#     exactly one line below, with a comment naming the day it comes out.
+#   An index somebody edited by hand.  `build-index.mjs --check` regenerates the
+#     committed file from plugins/** and compares byte for byte. Editing a URL
+#     or a digest straight into the index — the single highest-value edit an
+#     attacker with commit access could make — is a red build, not a merge.
+#   An index that is not reproducible.  The `determinism` step generates twice
+#     and diffs. Phase 3 signs this file; a signature over bytes that a rerun
+#     cannot reproduce is a signature nobody can audit.
+#
+# WHAT IT IS NOT.  It does not sign anything, it does not deploy, and it does
+# not prove where any artifact came from. In Phase 2 the daemon's only defence
+# for this catalogue is HTTPS to raw.githubusercontent.com. Phase 3.2 adds the
+# index signature and Phase 3.3 the attestation checks; until then, say so
+# rather than letting a green tick imply more than it means.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# One index build in flight at a time. Two runs racing would each compute a
+# serial and each upload an artifact, and whichever finished second would win —
+# which is not necessarily the newer one. `cancel-in-progress: false` because
+# the run already in flight is doing real work; queue behind it, do not kill it.
+concurrency:
+  group: registry-index
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  index:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The serial is a commit count. Without full history git counts what
+          # it was given, which is 1, and the catalogue looks like it rolled
+          # back to the beginning of time.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # No `npm ci`. This repo has no dependencies, on purpose: the validator
+      # is the last gate before a listing reaches a stranger's machine, and it
+      # has to be a gate that still runs when a registry is down or a lockfile
+      # is being argued about. If you ever add a dependency here, explain in
+      # this comment why the gate is better for it.
+      - name: Self-test (schemas, canonical JSON, the rejections)
+        run: node tools/selftest.mjs
+
+      - name: Validate the listings
+        # --allow-staging tolerates plugins/dice-roller/versions/0.1.1.json,
+        # whose release does not exist yet. REMOVE IT the moment Phase 2.13
+        # publishes that release and the entry gains a real digest. A registry
+        # that keeps this flag on is a registry that lists things it cannot
+        # verify, which is the one thing it exists not to do.
+        run: node tools/validate.mjs --allow-staging
+
+      - name: The committed index is exactly what the generator produces
+        run: node tools/build-index.mjs --check
+
+      - name: Compute the serial from the commit count on the default branch
+        id: serial
+        run: |
+          set -euo pipefail
+          BRANCH="${{ github.event.repository.default_branch }}"
+          # Path-limited to plugins/: the serial is the catalogue's version, and
+          # a commit that touches only docs or tooling did not change the
+          # catalogue. It also means a future bot that regenerates and commits
+          # the index cannot bump the serial and re-trigger itself forever.
+          # Never read-and-increment a counter file: two PRs merging in the same
+          # minute both read N, both write N+1, and the second silently
+          # un-bumps the first. A commit count cannot do that.
+          SERIAL="$(git rev-list --count "origin/${BRANCH}" -- plugins 2>/dev/null \
+                    || git rev-list --count HEAD -- plugins)"
+          echo "serial=${SERIAL}" >> "$GITHUB_OUTPUT"
+          echo "serial ${SERIAL} (commits touching plugins/ on ${BRANCH})"
+
+      - name: Generate the deploy candidate, twice, and diff it
+        env:
+          ASTRA_REGISTRY_SERIAL: ${{ steps.serial.outputs.serial }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          node tools/build-index.mjs --stdout > dist/index.json
+          node tools/build-index.mjs --stdout > dist/index.again.json
+          diff -u dist/index.json dist/index.again.json \
+            || { echo "::error::the index generator is not deterministic"; exit 1; }
+          rm dist/index.again.json
+          echo "bytes: $(wc -c < dist/index.json), sha256: $(sha256sum dist/index.json | cut -d' ' -f1)"
+
+      - name: Validate the deploy candidate against schema/index-v1.json
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("node:fs");
+            import("./tools/lib/jsonschema.mjs").then(({ validate }) => {
+              const schema = JSON.parse(fs.readFileSync("schema/index-v1.json", "utf8"));
+              const doc = JSON.parse(fs.readFileSync("dist/index.json", "utf8"));
+              const errs = validate(schema, doc);
+              for (const e of errs) console.error(`${e.path} ${e.message}`);
+              if (errs.length) process.exit(1);
+              console.log(`ok  dist/index.json validates, serial ${doc.serial}, ${doc.plugins.length} plugin(s)`);
+            });
+          '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: registry-index-v1
+          path: dist/index.json
+          if-no-files-found: error
+
+      # Phase 3.2 replaces this comment with: sign dist/index.json with the
+      # index key held in the `publish` environment, emit index.sig, and deploy
+      # both. Deliberately not stubbed — an unsigned deploy step that looks like
+      # a signed one is worse than no deploy step.
+      - name: What is NOT signed here
+        if: always()
+        run: echo "::notice::registry/v1/index.json is UNSIGNED in Phase 2. The daemon's only guarantee is HTTPS. See bot/lib/phase3.mjs."

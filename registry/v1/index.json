@@ -1,0 +1,731 @@
+{
+  "$comment": "GENERATED FILE — DO NOT EDIT. Source of truth: plugins/<id>/plugin.json and plugins/<id>/versions/<semver>.json. Regenerate with `node tools/build-index.mjs`. CI (.github/workflows/build-index.yml) fails when this file differs by one byte from what the generator produces, so a hand edit is not a shortcut, it is a red build.",
+  "plugins": [
+    {
+      "added_at": "2026-08-10",
+      "author": "Astra Team",
+      "author_url": "https://github.com/mihailinl",
+      "capabilities": [
+        "dom_access",
+        "ui_contributions"
+      ],
+      "categories": [
+        "entertainment"
+      ],
+      "description": "The Bad Apple!! animation as a background effect, in four render styles.",
+      "details": "Plays a 1-bit animation behind the Astra interface at low opacity, from a pre-extracted run-length-encoded frame stream rather than a video decoder. Four renderers: ASCII (blocks, braille, classic or katakana), CRT with scanlines and phosphor glow, drifting particles, and clean silhouette. Opacity, character set, colour mode and looping are configurable. It runs its own JavaScript inside the Astra window, which is what drawing behind the interface requires and why it asks for dom_access.",
+      "download_url": "",
+      "downloads": 0,
+      "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/bad-apple",
+      "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/bad-apple/icon.svg",
+      "id": "bad-apple",
+      "keywords": [
+        "animation",
+        "ascii",
+        "background",
+        "crt",
+        "effect"
+      ],
+      "license": "MIT",
+      "name": "Bad Apple",
+      "platform_downloads": {},
+      "releases": [
+        {
+          "artifacts": {
+            "linux-x64": {
+              "filename": "bad-apple-0.1.0-linux-x64.astraplugin",
+              "url": "https://github.com/mihailinl/AstraPlugins/releases/download/bad-apple-v0.1.0/bad-apple-0.1.0-linux-x64.astraplugin"
+            },
+            "windows-x64": {
+              "filename": "bad-apple-0.1.0-windows-x64.astraplugin",
+              "url": "https://github.com/mihailinl/AstraPlugins/releases/download/bad-apple-v0.1.0/bad-apple-0.1.0-windows-x64.astraplugin"
+            }
+          },
+          "capabilities": [
+            "dom_access",
+            "ui_contributions"
+          ],
+          "protocol": 1,
+          "published_at": "2026-08-10T00:00:00Z",
+          "release": {
+            "kind": "github_release",
+            "repo": "mihailinl/AstraPlugins",
+            "tag": "bad-apple-v0.1.0"
+          },
+          "staging": true,
+          "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so bad-apple-v0.1.0 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/bad-apple writes the caller workflow, then the tag is pushed.",
+          "version": "0.1.0"
+        }
+      ],
+      "repository_url": "https://github.com/mihailinl/AstraPlugins",
+      "source": {
+        "kind": "github",
+        "repo": "mihailinl/AstraPlugins",
+        "subdirectory": "examples/bad-apple"
+      },
+      "staging": true,
+      "stars": 0,
+      "updated_at": "2026-08-10T00:00:00Z",
+      "version": "0.1.0"
+    },
+    {
+      "added_at": "2026-08-10",
+      "author": "Astra Team",
+      "author_url": "https://github.com/mihailinl",
+      "capabilities": [
+        "dom_access",
+        "ui_contributions"
+      ],
+      "categories": [
+        "entertainment"
+      ],
+      "description": "A cat that flies around the Astra window and occasionally says something.",
+      "details": "A small animated cat drifts across the Astra interface, reacts to clicks, and speaks a line drawn at random from a translated phrase list that follows Astra's own language setting. Purely decorative — it changes nothing about your conversations or settings. It runs its own JavaScript inside the Astra window, which is what an in-window overlay means and why it asks for dom_access.",
+      "download_url": "",
+      "downloads": 0,
+      "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/companion",
+      "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/companion/icon.svg",
+      "id": "companion-cat",
+      "keywords": [
+        "cat",
+        "companion",
+        "fun",
+        "overlay"
+      ],
+      "license": "MIT",
+      "name": "Companion Cat",
+      "platform_downloads": {},
+      "releases": [
+        {
+          "artifacts": {
+            "linux-x64": {
+              "filename": "companion-cat-0.1.4-linux-x64.astraplugin",
+              "url": "https://github.com/mihailinl/AstraPlugins/releases/download/companion-cat-v0.1.4/companion-cat-0.1.4-linux-x64.astraplugin"
+            },
+            "windows-x64": {
+              "filename": "companion-cat-0.1.4-windows-x64.astraplugin",
+              "url": "https://github.com/mihailinl/AstraPlugins/releases/download/companion-cat-v0.1.4/companion-cat-0.1.4-windows-x64.astraplugin"
+            }
+          },
+          "capabilities": [
+            "dom_access",
+            "ui_contributions"
+          ],
+          "protocol": 1,
+          "published_at": "2026-08-10T00:00:00Z",
+          "release": {
+            "kind": "github_release",
+            "repo": "mihailinl/AstraPlugins",
+            "tag": "companion-cat-v0.1.4"
+          },
+          "staging": true,
+          "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so companion-cat-v0.1.4 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/companion-cat writes the caller workflow, then the tag is pushed.",
+          "version": "0.1.4"
+        }
+      ],
+      "repository_url": "https://github.com/mihailinl/AstraPlugins",
+      "source": {
+        "kind": "github",
+        "repo": "mihailinl/AstraPlugins",
+        "subdirectory": "examples/companion"
+      },
+      "staging": true,
+      "stars": 0,
+      "updated_at": "2026-08-10T00:00:00Z",
+      "version": "0.1.4"
+    },
+    {
+      "added_at": "2026-08-10",
+      "author": "Astra Team",
+      "author_url": "https://github.com/mihailinl",
+      "capabilities": [
+        "actions",
+        "tools",
+        "triggers"
+      ],
+      "categories": [
+        "entertainment",
+        "utilities"
+      ],
+      "description": "Roll dice and flip coins, with actions and triggers for the command editor.",
+      "details": "Rolls dice of any size and flips coins. Exposes a tool the assistant can call in conversation, actions the command editor can chain, and triggers other commands can fire on. Ships as the smallest complete example of an Astra plugin: one tool, one action, one trigger, and a config field.",
+      "download_url": "",
+      "downloads": 0,
+      "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/dice-roller",
+      "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/dice-roller/icon.svg",
+      "id": "dice-roller",
+      "keywords": [
+        "coin flip",
+        "dice",
+        "random"
+      ],
+      "license": "MIT",
+      "name": "Dice Roller",
+      "platform_downloads": {},
+      "releases": [
+        {
+          "artifacts": {
+            "linux-x64": {
+              "filename": "dice-roller-0.1.1-linux-x64.astraplugin",
+              "url": "https://github.com/mihailinl/AstraPlugins/releases/download/dice-roller-v0.1.1/dice-roller-0.1.1-linux-x64.astraplugin"
+            },
+            "windows-x64": {
+              "filename": "dice-roller-0.1.1-windows-x64.astraplugin",
+              "url": "https://github.com/mihailinl/AstraPlugins/releases/download/dice-roller-v0.1.1/dice-roller-0.1.1-windows-x64.astraplugin"
+            }
+          },
+          "capabilities": [
+            "actions",
+            "tools",
+            "triggers"
+          ],
+          "protocol": 1,
+          "published_at": "2026-08-10T00:00:00Z",
+          "release": {
+            "kind": "github_release",
+            "repo": "mihailinl/AstraPlugins",
+            "tag": "dice-roller-v0.1.1"
+          },
+          "staging": true,
+          "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so dice-roller-v0.1.1 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/dice-roller writes the caller workflow, then the tag is pushed.",
+          "version": "0.1.1"
+        }
+      ],
+      "repository_url": "https://github.com/mihailinl/AstraPlugins",
+      "source": {
+        "kind": "github",
+        "repo": "mihailinl/AstraPlugins",
+        "subdirectory": "examples/dice-roller"
+      },
+      "staging": true,
+      "stars": 0,
+      "updated_at": "2026-08-10T00:00:00Z",
+      "version": "0.1.1"
+    },
+    {
+      "added_at": "2026-08-10",
+      "author": "Astra Team",
+      "author_url": "https://github.com/mihailinl",
+      "capabilities": [
+        "dom_access",
+        "ui_contributions"
+      ],
+      "categories": [
+        "entertainment"
+      ],
+      "description": "Play Doom inside Astra, on the Chocolate Doom engine and Freedoom data.",
+      "details": "Adds a Doom page to Astra's navigation running the Chocolate Doom engine compiled to WebAssembly, with Freedoom as the game data. Everything runs locally in the Astra window; there is no server, no streaming and no account. Scaling is configurable between letterboxed fit, stretch and integer pixel-perfect. At about 15 MB to download and 36 MB on disk it is by far the largest plugin in this catalogue. It runs its own JavaScript inside the Astra window, which is what a WebAssembly game needs and why it asks for dom_access.",
+      "download_url": "",
+      "downloads": 0,
+      "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/doom",
+      "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/doom/icon.svg",
+      "id": "doom",
+      "keywords": [
+        "doom",
+        "freedoom",
+        "game",
+        "webassembly"
+      ],
+      "license": "MIT",
+      "name": "Doom",
+      "platform_downloads": {},
+      "releases": [
+        {
+          "artifacts": {
+            "linux-x64": {
+              "filename": "doom-0.1.0-linux-x64.astraplugin",
+              "url": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.0/doom-0.1.0-linux-x64.astraplugin"
+            },
+            "windows-x64": {
+              "filename": "doom-0.1.0-windows-x64.astraplugin",
+              "url": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.0/doom-0.1.0-windows-x64.astraplugin"
+            }
+          },
+          "capabilities": [
+            "dom_access",
+            "ui_contributions"
+          ],
+          "protocol": 1,
+          "published_at": "2026-08-10T00:00:00Z",
+          "release": {
+            "kind": "github_release",
+            "repo": "mihailinl/AstraPlugins",
+            "tag": "doom-v0.1.0"
+          },
+          "staging": true,
+          "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — doom-v0.1.0 is a tag plugin-release.yml now accepts. What is left upstream: astra-plugin init-ci examples/doom, then push the tag. The GPL-2.0 engine build under an MIT listing is a separate blocker.",
+          "version": "0.1.0"
+        }
+      ],
+      "repository_url": "https://github.com/mihailinl/AstraPlugins",
+      "source": {
+        "kind": "github",
+        "repo": "mihailinl/AstraPlugins",
+        "subdirectory": "examples/doom"
+      },
+      "staging": true,
+      "stars": 0,
+      "updated_at": "2026-08-10T00:00:00Z",
+      "version": "0.1.0"
+    },
+    {
+      "added_at": "2026-08-10",
+      "author": "Astra Team",
+      "author_url": "https://github.com/mihailinl",
+      "capabilities": [
+        "stt"
+      ],
+      "categories": [
+        "development",
+        "voice"
+      ],
+      "description": "A diagnostic STT provider that plays your microphone back instead of transcribing.",
+      "details": "Registers as a speech-to-text provider, plays each audio chunk the daemon streams to it out of the default audio device as it arrives, and returns a transcript describing the audio rather than its content — byte count, sample count, sample rate. It exists to answer one question with your ears: is the daemon sending a plugin the audio you think it is, at the volume you spoke, without gaps. Wear headphones; it plays your microphone through your speakers. Needs an audio output device (ALSA on Linux); with none it keeps running silently.",
+      "download_url": "",
+      "downloads": 0,
+      "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/echo-stt",
+      "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/echo-stt/icon.svg",
+      "id": "echo-stt",
+      "keywords": [
+        "audio",
+        "diagnostic",
+        "playback",
+        "stt"
+      ],
+      "license": "MIT",
+      "name": "Echo STT",
+      "platform_downloads": {},
+      "releases": [
+        {
+          "artifacts": {
+            "linux-x64": {
+              "filename": "echo-stt-0.1.0-linux-x64.astraplugin",
+              "url": "https://github.com/mihailinl/AstraPlugins/releases/download/echo-stt-v0.1.0/echo-stt-0.1.0-linux-x64.astraplugin"
+            },
+            "windows-x64": {
+              "filename": "echo-stt-0.1.0-windows-x64.astraplugin",
+              "url": "https://github.com/mihailinl/AstraPlugins/releases/download/echo-stt-v0.1.0/echo-stt-0.1.0-windows-x64.astraplugin"
+            }
+          },
+          "capabilities": [
+            "stt"
+          ],
+          "protocol": 1,
+          "published_at": "2026-08-10T00:00:00Z",
+          "release": {
+            "kind": "github_release",
+            "repo": "mihailinl/AstraPlugins",
+            "tag": "echo-stt-v0.1.0"
+          },
+          "staging": true,
+          "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so echo-stt-v0.1.0 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/echo-stt writes the caller workflow, then the tag is pushed.",
+          "version": "0.1.0"
+        }
+      ],
+      "repository_url": "https://github.com/mihailinl/AstraPlugins",
+      "source": {
+        "kind": "github",
+        "repo": "mihailinl/AstraPlugins",
+        "subdirectory": "examples/echo-stt"
+      },
+      "staging": true,
+      "stars": 0,
+      "updated_at": "2026-08-10T00:00:00Z",
+      "version": "0.1.0"
+    },
+    {
+      "added_at": "2026-08-10",
+      "author": "Astra Team",
+      "author_url": "https://github.com/mihailinl",
+      "capabilities": [
+        "actions",
+        "tools",
+        "triggers"
+      ],
+      "categories": [
+        "development",
+        "utilities"
+      ],
+      "description": "Format, query and diff JSON, in conversation and in commands.",
+      "details": "Three tools the assistant can call — pretty-print JSON at a chosen indent, extract a value by dot-path, and diff two documents path by path — plus a JSON Transform action for the command editor that formats, minifies, sorts keys or extracts a path and stores the result in a variable. Requires Node.js 18 or newer on the machine running Astra; the bundle declares node as a runtime so the daemon refuses to start it rather than failing halfway.",
+      "download_url": "",
+      "downloads": 0,
+      "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/json-tools",
+      "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/json-tools/icon.svg",
+      "id": "json-tools",
+      "keywords": [
+        "diff",
+        "format",
+        "json",
+        "typescript"
+      ],
+      "license": "MIT",
+      "name": "JSON Tools",
+      "platform_downloads": {},
+      "releases": [
+        {
+          "artifacts": {
+            "noarch": {
+              "filename": "json-tools-0.1.1-noarch.astraplugin",
+              "url": "https://github.com/mihailinl/AstraPlugins/releases/download/json-tools-v0.1.1/json-tools-0.1.1-noarch.astraplugin"
+            }
+          },
+          "capabilities": [
+            "actions",
+            "tools",
+            "triggers"
+          ],
+          "protocol": 1,
+          "published_at": "2026-08-10T00:00:00Z",
+          "release": {
+            "kind": "github_release",
+            "repo": "mihailinl/AstraPlugins",
+            "tag": "json-tools-v0.1.1"
+          },
+          "staging": true,
+          "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so json-tools-v0.1.1 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/json-tools writes the caller workflow, then the tag is pushed.",
+          "version": "0.1.1"
+        }
+      ],
+      "repository_url": "https://github.com/mihailinl/AstraPlugins",
+      "source": {
+        "kind": "github",
+        "repo": "mihailinl/AstraPlugins",
+        "subdirectory": "examples/json-tools"
+      },
+      "staging": true,
+      "stars": 0,
+      "updated_at": "2026-08-10T00:00:00Z",
+      "version": "0.1.1"
+    },
+    {
+      "added_at": "2026-08-10",
+      "author": "Astra Team",
+      "author_url": "https://github.com/mihailinl",
+      "capabilities": [
+        "stt"
+      ],
+      "categories": [
+        "development",
+        "voice"
+      ],
+      "description": "A speech-to-text provider that never transcribes. It is a wiring test.",
+      "details": "Registers as a speech-to-text provider and returns one deterministic sentence per utterance describing the audio it was handed: byte count, sample count, sample rate, mean amplitude. No model, no download, no GPU, no delay. If that line reaches your conversation after you speak, the whole path — capture, endpointing, transport, the plugin protocol, the result returning to the chat — works, and anything still wrong is in the model rather than the plumbing. The smallest possible STT plugin: 59 lines.",
+      "download_url": "",
+      "downloads": 0,
+      "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/mock-stt",
+      "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/mock-stt/icon.svg",
+      "id": "mock-stt",
+      "keywords": [
+        "diagnostic",
+        "mock",
+        "stt",
+        "testing"
+      ],
+      "license": "MIT",
+      "name": "Mock STT",
+      "platform_downloads": {},
+      "releases": [
+        {
+          "artifacts": {
+            "linux-x64": {
+              "filename": "mock-stt-0.1.0-linux-x64.astraplugin",
+              "url": "https://github.com/mihailinl/AstraPlugins/releases/download/mock-stt-v0.1.0/mock-stt-0.1.0-linux-x64.astraplugin"
+            },
+            "windows-x64": {
+              "filename": "mock-stt-0.1.0-windows-x64.astraplugin",
+              "url": "https://github.com/mihailinl/AstraPlugins/releases/download/mock-stt-v0.1.0/mock-stt-0.1.0-windows-x64.astraplugin"
+            }
+          },
+          "capabilities": [
+            "stt"
+          ],
+          "protocol": 1,
+          "published_at": "2026-08-10T00:00:00Z",
+          "release": {
+            "kind": "github_release",
+            "repo": "mihailinl/AstraPlugins",
+            "tag": "mock-stt-v0.1.0"
+          },
+          "staging": true,
+          "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so mock-stt-v0.1.0 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/mock-stt writes the caller workflow, then the tag is pushed.",
+          "version": "0.1.0"
+        }
+      ],
+      "repository_url": "https://github.com/mihailinl/AstraPlugins",
+      "source": {
+        "kind": "github",
+        "repo": "mihailinl/AstraPlugins",
+        "subdirectory": "examples/mock-stt"
+      },
+      "staging": true,
+      "stars": 0,
+      "updated_at": "2026-08-10T00:00:00Z",
+      "version": "0.1.0"
+    },
+    {
+      "added_at": "2026-08-10",
+      "author": "Astra Team",
+      "author_url": "https://github.com/mihailinl",
+      "capabilities": [
+        "client"
+      ],
+      "categories": [
+        "communication"
+      ],
+      "description": "Talk to Astra from Telegram: one forum topic per conversation, synced both ways.",
+      "details": "Bridges a Telegram bot to Astra as a full chat client. /new creates a forum topic and a matching Astra conversation, /list links an existing one, and any message in a linked topic reaches Astra as if you had typed it in the app, with the reply streaming back as it is generated. Sync runs in both directions. Needs a bot token from @BotFather, a Telegram group with Topics enabled and the bot as an administrator, and outbound access to api.telegram.org. Read this part twice: installing it means your Astra conversations are relayed to Telegram, and leaving the allowed-usernames setting empty means anyone who can reach the bot can talk to your Astra.",
+      "download_url": "",
+      "downloads": 0,
+      "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/telegram-client",
+      "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/telegram-client/icon.svg",
+      "id": "telegram-client",
+      "keywords": [
+        "bot",
+        "bridge",
+        "chat",
+        "remote",
+        "telegram"
+      ],
+      "license": "MIT",
+      "name": "Telegram Bot",
+      "platform_downloads": {},
+      "releases": [
+        {
+          "artifacts": {
+            "linux-x64": {
+              "filename": "telegram-client-0.1.0-linux-x64.astraplugin",
+              "url": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.1.0/telegram-client-0.1.0-linux-x64.astraplugin"
+            },
+            "windows-x64": {
+              "filename": "telegram-client-0.1.0-windows-x64.astraplugin",
+              "url": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.1.0/telegram-client-0.1.0-windows-x64.astraplugin"
+            }
+          },
+          "capabilities": [
+            "client"
+          ],
+          "protocol": 1,
+          "published_at": "2026-08-10T00:00:00Z",
+          "release": {
+            "kind": "github_release",
+            "repo": "mihailinl/AstraPlugins",
+            "tag": "telegram-client-v0.1.0"
+          },
+          "staging": true,
+          "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so telegram-client-v0.1.0 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/telegram-client writes the caller workflow, then the tag is pushed.",
+          "version": "0.1.0"
+        }
+      ],
+      "repository_url": "https://github.com/mihailinl/AstraPlugins",
+      "source": {
+        "kind": "github",
+        "repo": "mihailinl/AstraPlugins",
+        "subdirectory": "examples/telegram-client"
+      },
+      "staging": true,
+      "stars": 0,
+      "updated_at": "2026-08-10T00:00:00Z",
+      "version": "0.1.0"
+    },
+    {
+      "added_at": "2026-08-10",
+      "author": "Astra Team",
+      "author_url": "https://github.com/mihailinl",
+      "capabilities": [
+        "actions",
+        "tools",
+        "triggers"
+      ],
+      "categories": [
+        "productivity",
+        "utilities"
+      ],
+      "description": "Word counts, case conversion, regex matching, and a scheduled trigger.",
+      "details": "Counts words, characters and lines; converts case between upper, lower, title, snake and camel; runs a regular expression over text and returns every match. Adds a Transform Text action to the command editor (including Base64 encode and decode) and a Scheduled Time trigger that fires when the machine's local clock reaches a time you name — while Astra is running, so it is not a cron replacement. Requires Python 3.10 or newer on the machine running Astra.",
+      "download_url": "",
+      "downloads": 0,
+      "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/text-utils",
+      "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/text-utils/icon.svg",
+      "id": "text-utils",
+      "keywords": [
+        "base64",
+        "python",
+        "regex",
+        "scheduled",
+        "text"
+      ],
+      "license": "MIT",
+      "name": "Text Utils",
+      "platform_downloads": {},
+      "releases": [
+        {
+          "artifacts": {
+            "noarch": {
+              "filename": "text-utils-0.1.1-noarch.astraplugin",
+              "url": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.1/text-utils-0.1.1-noarch.astraplugin"
+            }
+          },
+          "capabilities": [
+            "actions",
+            "tools",
+            "triggers"
+          ],
+          "protocol": 1,
+          "published_at": "2026-08-10T00:00:00Z",
+          "release": {
+            "kind": "github_release",
+            "repo": "mihailinl/AstraPlugins",
+            "tag": "text-utils-v0.1.1"
+          },
+          "staging": true,
+          "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so text-utils-v0.1.1 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/text-utils writes the caller workflow, then the tag is pushed.",
+          "version": "0.1.1"
+        }
+      ],
+      "repository_url": "https://github.com/mihailinl/AstraPlugins",
+      "source": {
+        "kind": "github",
+        "repo": "mihailinl/AstraPlugins",
+        "subdirectory": "examples/text-utils"
+      },
+      "staging": true,
+      "stars": 0,
+      "updated_at": "2026-08-10T00:00:00Z",
+      "version": "0.1.1"
+    },
+    {
+      "added_at": "2026-08-10",
+      "author": "Astra Team",
+      "author_url": "https://github.com/mihailinl",
+      "capabilities": [
+        "tts"
+      ],
+      "categories": [
+        "development",
+        "voice"
+      ],
+      "description": "A text-to-speech provider that speaks in beeps. It is a wiring test.",
+      "details": "Emits one 120 ms sine tone per word, separated by silence, as a 24 kHz mono WAV the daemon decodes through its normal audio path. Three voices differ only in pitch: 220, 440 and 880 Hz. You will not enjoy listening to it; what it gives you is a TTS provider with no model, no download and no latency, so when nothing comes out of your speakers you can tell in one attempt whether the problem is the voice model or everything else. Also demonstrates the data-driven Voice settings hook: its two config fields are rendered by Astra's generic field component with no per-plugin frontend code.",
+      "download_url": "",
+      "downloads": 0,
+      "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/tone-tts",
+      "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/tone-tts/icon.svg",
+      "id": "tone-tts",
+      "keywords": [
+        "diagnostic",
+        "mock",
+        "testing",
+        "tts"
+      ],
+      "license": "MIT",
+      "name": "Tone TTS",
+      "platform_downloads": {},
+      "releases": [
+        {
+          "artifacts": {
+            "linux-x64": {
+              "filename": "tone-tts-0.1.0-linux-x64.astraplugin",
+              "url": "https://github.com/mihailinl/AstraPlugins/releases/download/tone-tts-v0.1.0/tone-tts-0.1.0-linux-x64.astraplugin"
+            },
+            "windows-x64": {
+              "filename": "tone-tts-0.1.0-windows-x64.astraplugin",
+              "url": "https://github.com/mihailinl/AstraPlugins/releases/download/tone-tts-v0.1.0/tone-tts-0.1.0-windows-x64.astraplugin"
+            }
+          },
+          "capabilities": [
+            "tts"
+          ],
+          "protocol": 1,
+          "published_at": "2026-08-10T00:00:00Z",
+          "release": {
+            "kind": "github_release",
+            "repo": "mihailinl/AstraPlugins",
+            "tag": "tone-tts-v0.1.0"
+          },
+          "staging": true,
+          "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so tone-tts-v0.1.0 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/tone-tts writes the caller workflow, then the tag is pushed.",
+          "version": "0.1.0"
+        }
+      ],
+      "repository_url": "https://github.com/mihailinl/AstraPlugins",
+      "source": {
+        "kind": "github",
+        "repo": "mihailinl/AstraPlugins",
+        "subdirectory": "examples/tone-tts"
+      },
+      "staging": true,
+      "stars": 0,
+      "updated_at": "2026-08-10T00:00:00Z",
+      "version": "0.1.0"
+    },
+    {
+      "added_at": "2026-08-10",
+      "author": "Astra Team",
+      "author_url": "https://github.com/mihailinl",
+      "capabilities": [
+        "client"
+      ],
+      "categories": [
+        "communication",
+        "development"
+      ],
+      "description": "A loopback browser client for Astra, for watching multi-client sync happen.",
+      "details": "Serves a chat interface on http://127.0.0.1:9090 backed by your real Astra conversations, and forwards every chat event in every conversation to the browser over a WebSocket, so a message typed in the Astra window appears in the browser and the reverse, live. The last 10,000 events are replayed to a browser that connects mid-stream; nothing is written to disk. It exists to make event sourcing observable while working on Astra or on your own client. There is no authentication on that server: it binds loopback only, but anything running as you that can reach the port can read your conversations and send messages as you. A development tool, not a remote-access feature.",
+      "download_url": "",
+      "downloads": 0,
+      "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/web-chat",
+      "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/web-chat/icon.svg",
+      "id": "web-chat",
+      "keywords": [
+        "client",
+        "development",
+        "sync",
+        "web",
+        "websocket"
+      ],
+      "license": "MIT",
+      "name": "Web Chat Client",
+      "platform_downloads": {},
+      "releases": [
+        {
+          "artifacts": {
+            "linux-x64": {
+              "filename": "web-chat-0.1.0-linux-x64.astraplugin",
+              "url": "https://github.com/mihailinl/AstraPlugins/releases/download/web-chat-v0.1.0/web-chat-0.1.0-linux-x64.astraplugin"
+            },
+            "windows-x64": {
+              "filename": "web-chat-0.1.0-windows-x64.astraplugin",
+              "url": "https://github.com/mihailinl/AstraPlugins/releases/download/web-chat-v0.1.0/web-chat-0.1.0-windows-x64.astraplugin"
+            }
+          },
+          "capabilities": [
+            "client"
+          ],
+          "protocol": 1,
+          "published_at": "2026-08-10T00:00:00Z",
+          "release": {
+            "kind": "github_release",
+            "repo": "mihailinl/AstraPlugins",
+            "tag": "web-chat-v0.1.0"
+          },
+          "staging": true,
+          "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so web-chat-v0.1.0 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/web-chat writes the caller workflow, then the tag is pushed.",
+          "version": "0.1.0"
+        }
+      ],
+      "repository_url": "https://github.com/mihailinl/AstraPlugins",
+      "source": {
+        "kind": "github",
+        "repo": "mihailinl/AstraPlugins",
+        "subdirectory": "examples/web-chat"
+      },
+      "staging": true,
+      "stars": 0,
+      "updated_at": "2026-08-10T00:00:00Z",
+      "version": "0.1.0"
+    }
+  ],
+  "schema": "astra.registry.index/1",
+  "serial": 0
+}

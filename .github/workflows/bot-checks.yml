@@ -1,0 +1,75 @@
+name: Submission checks
+
+# Runs bot/run-checks.mjs against every listing a pull request touches.
+#
+# Without this file the bot is dead code, and dead code is how a check that
+# everyone believes is running turns out never to have run. It is deliberately
+# small: Phase 3.3 replaces it with `ingest.yml`, which reacts to a release
+# notification rather than to a diff, and which has an attestation to verify.
+#
+# `permissions: contents: read` and nothing else. This job downloads a
+# stranger's release asset and inspects it. It must not be able to write to this
+# repository, comment as the bot, or reach a secret — a registry bot that can
+# push is a registry bot whose compromise is a supply-chain event. Posting the
+# report as a PR comment needs write access and therefore waits for Phase 3,
+# where it runs in a separate, minimal job that consumes this one's output.
+
+on:
+  pull_request:
+    paths:
+      - 'plugins/**'
+  workflow_dispatch:
+    inputs:
+      plugin:
+        description: 'Plugin id to check'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: submission-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Which listings did this change touch
+        id: touched
+        run: |
+          set -euo pipefail
+          if [ -n "${{ github.event.inputs.plugin || '' }}" ]; then
+            echo "${{ github.event.inputs.plugin }}" > touched.txt
+          else
+            BASE="${{ github.event.pull_request.base.sha }}"
+            git diff --name-only "$BASE"...HEAD -- plugins/ \
+              | cut -d/ -f2 | sort -u > touched.txt
+          fi
+          echo "listings:"; cat touched.txt
+
+      - name: Run the checks
+        env:
+          # Rate limit only. The bot never needs write access to anything, and
+          # verifies everything it reads from scratch.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          status=0
+          while read -r id; do
+            [ -n "$id" ] || continue
+            echo "::group::$id"
+            # --allow-staging matches .github/workflows/build-index.yml and goes
+            # away with it, on the day the bootstrap listing gains a digest.
+            node bot/run-checks.mjs --plugin "$id" --allow-staging | tee -a "$GITHUB_STEP_SUMMARY" || status=1
+            echo "::endgroup::"
+          done < touched.txt
+          exit $status

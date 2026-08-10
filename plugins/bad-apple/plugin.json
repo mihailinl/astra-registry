@@ -1,0 +1,23 @@
+{
+  "$comment": "Seed catalogue (PRODUCTION_PLAN task 2.13). Source: AstraPlugins/examples/bad-apple/plugin.toml at version 0.1.0. UNRESOLVED BEFORE THIS GOES PUBLIC: the bundle redistributes the Bad Apple!! audio and a frame set derived from the video. The MIT declared here covers the code in that directory and not that media. See the README's media note.",
+  "schema": "astra.registry.plugin/1",
+  "id": "bad-apple",
+  "name": "Bad Apple",
+  "summary": "The Bad Apple!! animation as a background effect, in four render styles.",
+  "description": "Plays a 1-bit animation behind the Astra interface at low opacity, from a pre-extracted run-length-encoded frame stream rather than a video decoder. Four renderers: ASCII (blocks, braille, classic or katakana), CRT with scanlines and phosphor glow, drifting particles, and clean silhouette. Opacity, character set, colour mode and looping are configurable. It runs its own JavaScript inside the Astra window, which is what drawing behind the interface requires and why it asks for dom_access.",
+  "author": {
+    "name": "Astra Team",
+    "url": "https://github.com/mihailinl"
+  },
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "mihailinl/AstraPlugins",
+    "subdirectory": "examples/bad-apple"
+  },
+  "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/bad-apple",
+  "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/bad-apple/icon.svg",
+  "categories": ["entertainment"],
+  "keywords": ["ascii", "animation", "background", "crt", "effect"],
+  "added_at": "2026-08-10"
+}

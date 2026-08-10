@@ -1,0 +1,22 @@
+{
+  "$comment": "STAGING ENTRY — no digest, because the release does not exist. See plugins/dice-roller/versions/0.1.1.json for the full reasoning and the go-live steps. Python, so one `noarch` artifact: the platform-specific part is the user's interpreter, not the bundle.",
+  "schema": "astra.registry.version/1",
+  "id": "text-utils",
+  "version": "0.1.1",
+  "published_at": "2026-08-10T00:00:00Z",
+  "staging": true,
+  "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so text-utils-v0.1.1 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/text-utils writes the caller workflow, then the tag is pushed.",
+  "release": {
+    "kind": "github_release",
+    "repo": "mihailinl/AstraPlugins",
+    "tag": "text-utils-v0.1.1"
+  },
+  "protocol": 1,
+  "capabilities": ["actions", "tools", "triggers"],
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.1/text-utils-0.1.1-noarch.astraplugin",
+      "filename": "text-utils-0.1.1-noarch.astraplugin"
+    }
+  }
+}

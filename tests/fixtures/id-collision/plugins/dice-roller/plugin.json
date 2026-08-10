@@ -1,0 +1,13 @@
+{
+  "$comment": "FIXTURE — deliberately invalid as a PAIR. `dice-roller` and `dicer0ller` fold to the same string (digit 0 reads as the letter o), so in a store card they are the same plugin. Either one alone is fine; both at once must be rejected. tools/selftest.mjs fails if they are not.",
+  "schema": "astra.registry.plugin/1",
+  "id": "dice-roller",
+  "name": "Dice Roller",
+  "summary": "Two ids, one appearance.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "someone/dice-roller"
+  },
+  "added_at": "2026-08-10"
+}

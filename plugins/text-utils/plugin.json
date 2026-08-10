@@ -1,0 +1,23 @@
+{
+  "$comment": "Seed catalogue (PRODUCTION_PLAN task 2.13). Source: AstraPlugins/examples/text-utils/plugin.toml at version 0.1.1, transcribed by hand. A Python plugin: one noarch artifact, and the user's own interpreter.",
+  "schema": "astra.registry.plugin/1",
+  "id": "text-utils",
+  "name": "Text Utils",
+  "summary": "Word counts, case conversion, regex matching, and a scheduled trigger.",
+  "description": "Counts words, characters and lines; converts case between upper, lower, title, snake and camel; runs a regular expression over text and returns every match. Adds a Transform Text action to the command editor (including Base64 encode and decode) and a Scheduled Time trigger that fires when the machine's local clock reaches a time you name — while Astra is running, so it is not a cron replacement. Requires Python 3.10 or newer on the machine running Astra.",
+  "author": {
+    "name": "Astra Team",
+    "url": "https://github.com/mihailinl"
+  },
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "mihailinl/AstraPlugins",
+    "subdirectory": "examples/text-utils"
+  },
+  "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/text-utils",
+  "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/text-utils/icon.svg",
+  "categories": ["productivity", "utilities"],
+  "keywords": ["text", "regex", "base64", "scheduled", "python"],
+  "added_at": "2026-08-10"
+}

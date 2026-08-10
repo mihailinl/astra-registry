@@ -1,0 +1,23 @@
+{
+  "$comment": "Seed catalogue (PRODUCTION_PLAN task 2.13). Source: AstraPlugins/examples/doom/plugin.toml at version 0.1.0. UNRESOLVED BEFORE THIS GOES PUBLIC: the bundle ships a WebAssembly build of Chocolate Doom, which is GPL-2.0, under a listing that declares MIT. The game data is Freedoom (modified BSD) and is fine. GPL-2.0 is not on policy/spdx-allowlist.json, so the licence cannot simply be corrected here — it needs a decision first.",
+  "schema": "astra.registry.plugin/1",
+  "id": "doom",
+  "name": "Doom",
+  "summary": "Play Doom inside Astra, on the Chocolate Doom engine and Freedoom data.",
+  "description": "Adds a Doom page to Astra's navigation running the Chocolate Doom engine compiled to WebAssembly, with Freedoom as the game data. Everything runs locally in the Astra window; there is no server, no streaming and no account. Scaling is configurable between letterboxed fit, stretch and integer pixel-perfect. At about 15 MB to download and 36 MB on disk it is by far the largest plugin in this catalogue. It runs its own JavaScript inside the Astra window, which is what a WebAssembly game needs and why it asks for dom_access.",
+  "author": {
+    "name": "Astra Team",
+    "url": "https://github.com/mihailinl"
+  },
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "mihailinl/AstraPlugins",
+    "subdirectory": "examples/doom"
+  },
+  "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/doom",
+  "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/doom/icon.svg",
+  "categories": ["entertainment"],
+  "keywords": ["doom", "game", "webassembly", "freedoom"],
+  "added_at": "2026-08-10"
+}

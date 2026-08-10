@@ -1,0 +1,20 @@
+{
+  "$comment": "FIXTURE — see ../plugin.json. Valid on its own; it exists so the listing is structurally complete and the only thing wrong with it is the id.",
+  "schema": "astra.registry.version/1",
+  "id": "../../etc/passwd",
+  "version": "1.0.0",
+  "published_at": "2026-08-10T00:00:00Z",
+  "release": {
+    "kind": "github_release",
+    "repo": "evil/traversal",
+    "tag": "v1.0.0"
+  },
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/evil/traversal/releases/download/v1.0.0/traversal-1.0.0-linux-x64.astraplugin",
+      "filename": "traversal-1.0.0-linux-x64.astraplugin",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 1024
+    }
+  }
+}

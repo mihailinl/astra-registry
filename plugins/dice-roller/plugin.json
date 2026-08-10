@@ -1,0 +1,23 @@
+{
+  "$comment": "The seed listing. Source: AstraPlugins/examples/dice-roller/plugin.toml at version 0.1.1. Everything here is copied from that manifest by hand today; from Phase 3 the bot reads it out of the attested bundle instead, and a human never retypes a field that the bytes already carry.",
+  "schema": "astra.registry.plugin/1",
+  "id": "dice-roller",
+  "name": "Dice Roller",
+  "summary": "Roll dice and flip coins, with actions and triggers for the command editor.",
+  "description": "Rolls dice of any size and flips coins. Exposes a tool the assistant can call in conversation, actions the command editor can chain, and triggers other commands can fire on. Ships as the smallest complete example of an Astra plugin: one tool, one action, one trigger, and a config field.",
+  "author": {
+    "name": "Astra Team",
+    "url": "https://github.com/mihailinl"
+  },
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "mihailinl/AstraPlugins",
+    "subdirectory": "examples/dice-roller"
+  },
+  "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/dice-roller",
+  "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/dice-roller/icon.svg",
+  "categories": ["entertainment", "utilities"],
+  "keywords": ["dice", "random", "coin flip"],
+  "added_at": "2026-08-10"
+}
