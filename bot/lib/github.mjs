@@ -46,6 +46,40 @@ export async function fetchRelease(repo, tag) {
  * credential to whatever host a pull request typed. Exact host match, never a
  * suffix: `evil-github.com` and `github.com.attacker.net` both fail it.
  */
+/**
+ * Ask about an asset without fetching it.
+ *
+ * Two things worth knowing before a byte is spent: what the origin claims the
+ * size is (so a 4 GB "plugin" is refused for the cost of one request rather
+ * than one download), and where the redirect chain ends up — GitHub serves
+ * release assets from `objects.githubusercontent.com`, and a chain that leaves
+ * that namespace is a chain that leaves the repository the listing pins.
+ *
+ * Every hop is required to be https. `fetch` will happily follow an
+ * https→http downgrade, and the daemon's own download policy refuses one; a
+ * registry that verified bytes fetched over a downgrade would be verifying
+ * bytes a user's machine will never accept.
+ *
+ * @param {string} url
+ * @param {typeof fetch} [fetchImpl]
+ */
+export async function headAsset(url, fetchImpl = fetch) {
+  const h = headers();
+  const host = (() => { try { return new URL(url).host.toLowerCase(); } catch { return ""; } })();
+  if (!(host === "github.com" || host.endsWith(".githubusercontent.com"))) delete h.Authorization;
+
+  const res = await fetchImpl(url, { method: "HEAD", headers: h, redirect: "follow" });
+  if (!res.ok) throw new Error(`HTTP ${res.status} for HEAD ${url}`);
+  if (!String(res.url || url).startsWith("https://")) {
+    throw new Error(`the redirect chain left https: ${res.url}`);
+  }
+  return {
+    size: Number(res.headers.get("content-length") ?? "0"),
+    finalUrl: res.url || url,
+    etag: res.headers.get("etag"),
+  };
+}
+
 export async function downloadAsset(url, maxBytes) {
   let host = "";
   try { host = new URL(url).host.toLowerCase(); } catch { /* fetch will fail on it too */ }

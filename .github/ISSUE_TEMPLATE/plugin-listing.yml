@@ -13,12 +13,14 @@ body:
         That data is covered by the build attestation, which makes it strictly
         more trustworthy than anything typed into a form, and it means there is
         no such thing here as a "your form disagrees with plugin.toml"
-        rejection. Run `astra-plugin check --strict` in your plugin directory
-        first: it catches the manifest, version and release-workflow problems
-        locally, so you find out before you open this issue.
+        rejection. Run `astra-plugin publish --dry-run` in your plugin directory
+        first: it runs the local half of the registry's checks, and names the
+        ones only the registry can run.
 
-        In Phase 2 the checks are the crypto-free ones (see `bot/README.md`) and
-        a maintainer reads every submission by hand.
+        A plugin is listed **once, ever**. After this, releases are zero-touch —
+        tag, let CI build and attest, and the registry picks it up.
+        `docs/POLICY.md` says exactly when a release publishes itself, when it
+        waits, and which three things still take a person.
   - type: input
     id: repository
     attributes:

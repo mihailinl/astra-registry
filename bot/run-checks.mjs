@@ -1,5 +1,11 @@
 #!/usr/bin/env node
-// The submission bot — Phase 2 half. Runs every check that needs no crypto.
+// The PULL-REQUEST path: judge a hand-edited listing against its artifacts.
+//
+// The RELEASE path is `bot/ingest.mjs`, which is the trust boundary — two typed
+// facts, everything else read out of an attested bundle, ownership proved, and
+// the listing written rather than reviewed. This file is the other half: a
+// human edited `plugins/**` and something has to check that what they wrote
+// matches the bytes it names. See bot/lib/phase3.mjs for what that leaves out.
 //
 //   node bot/run-checks.mjs --plugin dice-roller
 //   node bot/run-checks.mjs --plugin dice-roller --version 0.1.1
@@ -212,7 +218,7 @@ async function main(argv) {
   lines.push("");
   lines.push(
     f.errors.length === 0
-      ? "**No blocking findings.** Everything a Phase 2 bot can decide is decided; the ⏭️ rows are the checks that arrive with the trust chain in Phase 3 — none of this proves who built these bytes."
+      ? "**No blocking findings.** This report says the listing describes the artifacts it points at. It does **not** say who built them: provenance, ownership and the workflow allowlist live on the release path (`bot/ingest.mjs`), and the ⏭️ rows below name what nobody checked here. On this path the reviewer is the control."
       : `**${f.errors.length} blocking finding(s).** Nothing is listed until they are resolved.`,
   );
   console.log(lines.join("\n"));

@@ -13,6 +13,7 @@ import crypto from "node:crypto";
 
 import { readZip, readEntry, S_IFMT, S_IFLNK, S_IFDIR } from "../../tools/lib/zip.mjs";
 import { platformKeyFromManifest } from "../../tools/lib/platform.mjs";
+import { jcs } from "../../tools/lib/canonical.mjs";
 
 const SHELLS = new Set([
   "sh", "bash", "zsh", "fish", "dash", "csh", "ksh",
@@ -103,22 +104,54 @@ export function manifestBytesFromLocalHeader(buf) {
 }
 
 /**
- * @param {Buffer} buf the whole .astraplugin
- * @param {{id: string, version: string, platformKey: string}} expected
- * @param {{max_archive_entries: number, max_extract_bytes: number}} limits
- * @returns {{level: "error"|"warn", code: string, message: string}[]}
+ * `sha256:` + hex over the RFC 8785 canonical form of the permission map — the
+ * number `MANIFEST.permissions_hash` claims, the consent sheet renders and the
+ * update-diff gate compares (PRODUCTION_PLAN §5.3-D, §4.6).
+ *
+ * Computed with the repository's one canonicaliser, the same one that signs the
+ * index. Three implementations of RFC 8785 have to produce identical bytes for
+ * this map or the hash compares unequal across a repository boundary, which is
+ * a failure that looks like "the user's consent screen is wrong" rather than
+ * like a canonicalisation bug.
+ *
+ * @param {object} permissions
  */
-export function checkBundle(buf, expected, limits) {
+export function permissionsHash(permissions) {
+  return `sha256:${crypto.createHash("sha256").update(Buffer.from(jcs(permissions ?? {}), "utf8")).digest("hex")}`;
+}
+
+/**
+ * Every structural check, plus the bundle's own contents for the callers that
+ * need them.
+ *
+ * `expected` fields are optional. A hand-written listing supplies all three and
+ * the manifest is checked against them; the ingest path (`bot/ingest.mjs`)
+ * supplies none, because there is no listing yet — the listing is *derived from
+ * these bytes*, which is the whole point of PRODUCTION_PLAN §3.5 and is why
+ * there is no "your form disagrees with plugin.toml" rejection class. Comparing
+ * a derived listing against the manifest it was derived from would prove
+ * nothing about anything.
+ *
+ * @param {Buffer} buf the whole .astraplugin
+ * @param {{id?: string|null, version?: string|null, platformKey?: string|null}} expected
+ * @param {{max_archive_entries: number, max_extract_bytes: number}} limits
+ * @returns {{findings: {level: string, code: string, message: string}[],
+ *            manifest: object|null, manifestBytes: Buffer|null,
+ *            files: {name: string, bytes: Buffer}[], platformKey: string|null}}
+ */
+export function inspectBundle(buf, expected, limits) {
   const findings = [];
   const err = (code, message) => findings.push({ level: "error", code, message });
   const warn = (code, message) => findings.push({ level: "warn", code, message });
+  const done = (extra = {}) =>
+    ({ findings, manifest: null, manifestBytes: null, files: [], platformKey: null, ...extra });
 
   let zip;
   try {
     zip = readZip(buf);
   } catch (e) {
     err("E_BUNDLE_UNREADABLE", `${e.message}`);
-    return findings;
+    return done();
   }
   const entries = zip.entries;
 
@@ -134,6 +167,7 @@ export function checkBundle(buf, expected, limits) {
 
   // Path shape and entry kind, before anything is read.
   const seen = new Set();
+  const seenFolded = new Map();
   for (const e of entries) {
     const n = e.name;
     if (seen.has(n)) {
@@ -141,6 +175,22 @@ export function checkBundle(buf, expected, limits) {
         `${n} appears twice — the second copy would overwrite a file that already matched the manifest`);
     }
     seen.add(n);
+    // Case-insensitively too, because two of the three filesystems Astra runs on
+    // are. `bin/x` and `bin/X` are two files on Linux and one on Windows and
+    // macOS, so a bundle carrying both extracts to something the manifest does
+    // not describe — which the daemon refuses. Only a warning here: the
+    // cross-repo vectors record the registry accepting this today
+    // (AstraPlugins testdata/bundles finding F1), and turning it into an error
+    // without updating that file would make the shared corpus disagree with
+    // itself. Said out loud so nobody has to discover it from a user's install
+    // failure.
+    const folded = n.toLowerCase();
+    if (seenFolded.has(folded) && seenFolded.get(folded) !== n) {
+      warn("W_BUNDLE_DUPLICATE_ENTRY_CASE",
+        `${JSON.stringify(n)} and ${JSON.stringify(seenFolded.get(folded))} differ only in case; ` +
+        "Windows and macOS keep one of them and the daemon refuses the bundle there");
+    }
+    seenFolded.set(folded, n);
     if (n.startsWith("/") || /^[A-Za-z]:/.test(n) || n.includes("\\")) {
       err("E_BUNDLE_ABSOLUTE_PATH", `${JSON.stringify(n)} is an absolute or Windows-style path`);
     }
@@ -162,7 +212,7 @@ export function checkBundle(buf, expected, limits) {
   const manifestEntry = entries.find((e) => e.name === "MANIFEST.json");
   if (!manifestEntry) {
     err("E_MANIFEST_MISSING", "MANIFEST.json is not in the archive; this is not a v2 bundle");
-    return findings;
+    return done();
   }
   if (manifestEntry.index !== 0) {
     err("E_MANIFEST_NOT_FIRST", `MANIFEST.json is entry ${manifestEntry.index}, and §5.2 requires it first`);
@@ -187,7 +237,7 @@ export function checkBundle(buf, expected, limits) {
       return null;
     }
   })();
-  if (centralBytes === null) return findings;
+  if (centralBytes === null) return done();
 
   let localBytes = null;
   try {
@@ -207,19 +257,20 @@ export function checkBundle(buf, expected, limits) {
     manifest = JSON.parse(centralBytes.toString("utf8"));
   } catch (e) {
     err("E_MANIFEST_INVALID", `MANIFEST.json is not valid JSON: ${e.message}`);
-    return findings;
+    return done();
   }
 
   if (manifest.schema !== "astra.bundle/2") {
     err("E_MANIFEST_INVALID", `MANIFEST.schema is ${JSON.stringify(manifest.schema)}, expected "astra.bundle/2"`);
   }
   // The cross-check that closes "registry entry foo serves an archive whose
-  // manifest says bar, and bar installs".
-  if (manifest.plugin_id !== expected.id) {
+  // manifest says bar, and bar installs". Skipped when the caller has nothing
+  // to compare against — see this function's doc comment.
+  if (expected.id != null && manifest.plugin_id !== expected.id) {
     err("E_MANIFEST_ID_MISMATCH",
       `MANIFEST.plugin_id is ${JSON.stringify(manifest.plugin_id)} but the listing is ${JSON.stringify(expected.id)}`);
   }
-  if (manifest.version !== expected.version) {
+  if (expected.version != null && manifest.version !== expected.version) {
     err("E_MANIFEST_VERSION_MISMATCH",
       `MANIFEST.version is ${JSON.stringify(manifest.version)} but the listing is ${JSON.stringify(expected.version)}`);
   }
@@ -227,9 +278,35 @@ export function checkBundle(buf, expected, limits) {
   if (key === null) {
     err("E_MANIFEST_PLATFORM_UNKNOWN",
       `MANIFEST.platform ${JSON.stringify(manifest.platform)} maps to no registry platform key`);
-  } else if (key !== expected.platformKey) {
+  } else if (expected.platformKey != null && key !== expected.platformKey) {
     err("E_MANIFEST_PLATFORM_MISMATCH",
       `MANIFEST.platform is ${key} but the listing files it under ${expected.platformKey}`);
+  }
+
+  // `permissions_hash` against `permissions`, in the same document.
+  //
+  // This was a WARNING, on the stated ground that "the shared corpus records
+  // today's answer (AstraPlugins testdata/bundles finding F5) and one repository
+  // must not change it alone". The premise stopped being true in Phase 3a: the
+  // daemon's §5.3-D check recomputes this hash on every install path and blocks
+  // with PERMISSIONS_HASH_MISMATCH. A warning here therefore published a listing
+  // that every Astra daemon then refused to install — the catalogue advertising
+  // a version nobody can have, which is the specific failure this registry is
+  // supposed to make impossible.
+  //
+  // So the corpus was corrected and all three suites moved together, which is
+  // what the shared file exists to force. Do not demote this to a warning again
+  // without first demoting §5.3-D.
+  //
+  // `null` and `{}` are the same request and hash the same, so a packer that
+  // omits the member is not punished for it — matching the daemon exactly.
+  if (typeof manifest.permissions_hash === "string") {
+    const actual = permissionsHash(manifest.permissions ?? {});
+    if (actual !== manifest.permissions_hash) {
+      err("E_PERMISSIONS_HASH_MISMATCH",
+        `MANIFEST.permissions_hash is ${manifest.permissions_hash} but the declared permissions ` +
+        `canonicalise to ${actual}`);
+    }
   }
   if (manifest.protocol !== undefined && !Number.isInteger(manifest.protocol)) {
     err("E_MANIFEST_INVALID", "MANIFEST.protocol is not an integer");
@@ -239,7 +316,7 @@ export function checkBundle(buf, expected, limits) {
   const files = Array.isArray(manifest.files) ? manifest.files : null;
   if (!files) {
     err("E_MANIFEST_INVALID", "MANIFEST.files is missing or not an array");
-    return findings;
+    return done({ manifest, manifestBytes: centralBytes, platformKey: key });
   }
   const sorted = [...files].map((f) => f.path).sort();
   if (sorted.join("\0") !== files.map((f) => f.path).join("\0")) {
@@ -257,6 +334,8 @@ export function checkBundle(buf, expected, limits) {
         `${e.name} is in the archive but not in MANIFEST.files — an unlisted file is a file nothing verifies`);
     }
   }
+  /** @type {{name: string, bytes: Buffer}[]} */
+  const contents = [];
   for (const f of files) {
     const e = entries.find((x) => x.name === f.path);
     if (!e) {
@@ -277,6 +356,23 @@ export function checkBundle(buf, expected, limits) {
     if (f.sha256 !== actual) {
       err("E_MANIFEST_HASH_MISMATCH", `${f.path}: manifest says ${f.sha256}, archive content hashes to ${actual}`);
     }
+    // The mode the daemon will apply, against the mode the archive carries.
+    // §5.3-E applies `MANIFEST.files[].mode`, so a disagreement means the file
+    // on disk is not the file the manifest describes — most visibly, an entry
+    // binary that is `0644` in the archive and `0755` in the manifest, or the
+    // reverse, which is a plugin that installs and then cannot start. Warned,
+    // not blocked: AstraPlugins testdata/bundles finding F3 records the
+    // registry accepting it today, and the shared corpus is changed on both
+    // sides or not at all.
+    if (typeof f.mode === "string" && /^[0-7]{3,4}$/.test(f.mode)) {
+      const declared = parseInt(f.mode, 8) & 0o777;
+      const archived = e.unixMode & 0o777;
+      if (archived !== 0 && archived !== declared) {
+        warn("W_MANIFEST_MODE_MISMATCH",
+          `${f.path}: manifest says mode ${f.mode}, the archive records ${archived.toString(8).padStart(4, "0")}`);
+      }
+    }
+    contents.push({ name: f.path, bytes: data });
   }
   for (const e of entries) {
     if (LEGACY_ENTRIES.has(e.name)) {
@@ -304,5 +400,18 @@ export function checkBundle(buf, expected, limits) {
     }
   }
 
-  return findings;
+  return { findings, manifest, manifestBytes: centralBytes, files: contents, platformKey: key };
+}
+
+/**
+ * The findings alone. `bot/run-checks.mjs` and its tests read this shape; the
+ * ingest path wants the contents too and calls [`inspectBundle`].
+ *
+ * @param {Buffer} buf
+ * @param {{id?: string|null, version?: string|null, platformKey?: string|null}} expected
+ * @param {{max_archive_entries: number, max_extract_bytes: number}} limits
+ * @returns {{level: string, code: string, message: string}[]}
+ */
+export function checkBundle(buf, expected, limits) {
+  return inspectBundle(buf, expected, limits).findings;
 }

@@ -1,0 +1,36 @@
+# The one part of the registry bot that must not be a reimplementation.
+#
+# `astra-plugin-manifest` is the crate the DAEMON parses `plugin.toml` with
+# (PRODUCTION_PLAN task 3.7). This binary links it as a path dependency into a
+# checkout of AstraPlugins, so the registry's answer to "is this manifest valid"
+# is produced by the same code that will run on the user's machine — not by a
+# fourth copy of the rules.
+#
+# There is deliberately NO vendored copy of the crate in this repository. Astra
+# is the source of truth, AstraPlugins vendors it under a byte-equality check
+# (`tools/check-manifest-crate.sh`), and a third copy here would be a third place
+# to drift. `_deps/AstraPlugins` is a symlink locally and an `actions/checkout`
+# pinned by commit SHA in CI; `./link-deps.sh` makes both cases work.
+[package]
+name = "astra-manifest-probe"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Parses plugin.toml with the daemon's own crate and answers in JSON, for the registry bot"
+
+[[bin]]
+name = "astra-manifest-probe"
+path = "src/main.rs"
+
+[dependencies]
+astra-plugin-manifest = { path = "_deps/AstraPlugins/astra-plugin-cli/vendor/astra-plugin-manifest" }
+# The crate's public error type, so `classify` can walk the whole cause chain
+# rather than reading only the outermost sentence.
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+# The bot runs this once per bundle. Compile time matters more than run time.
+opt-level = 1

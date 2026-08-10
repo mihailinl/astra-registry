@@ -1,0 +1,616 @@
+name: Ingest
+
+# The registry bot (PRODUCTION_PLAN tasks 3.3, 3.4 and 3.5), wired to every way
+# this repository can learn that a release exists:
+#
+#   * a listing issue is opened or edited (task 3.3's submission form);
+#   * somebody comments `/recheck` on one;
+#   * a **release ping** — `/release v0.2.0` on a listing issue, or
+#     `/release you/plugin v0.2.0` as a new issue. Task 3.4's first layer: it
+#     carries owner/repo/tag and no authority whatsoever, which is what lets an
+#     author use it with no token for this repository. `bot/triage.mjs` honours
+#     an unlabelled one only for a repository that is already listed, so the
+#     worst a stranger achieves is a re-check of a listing that is already
+#     pinned to a repository identity;
+#   * a **cron backstop** for the ping that never arrived (task 3.4, layer 2):
+#     `releases.atom` with `If-None-Match`, over only the listings that have
+#     been quiet, so an unchanged repository costs one 304;
+#   * a **cron drain** for releases waiting out task 3.5's publication delay;
+#   * `repository_dispatch`, which is where the GitHub App upgrade lands when
+#     the maintainer's account can create one. Same payload, same verification.
+#
+# ── the permission split, which is the point ────────────────────────────────
+#
+# `check` runs a stranger's issue text through a parser, downloads a stranger's
+# release asset, and inspects it. It has `contents: read`, no secrets, and no
+# write access to anything. `comment` posts the result and has `issues: write`;
+# `publish` commits the listing and has `contents: write`. Neither runs a line
+# of submitter-controlled code: one posts a markdown file out of an artifact,
+# the other copies JSON files out of one, revalidates them with this
+# repository's own validator, and commits.
+#
+# That split is the whole security design of this file. A single job with write
+# access that also downloads attacker-controlled archives is one sandbox escape
+# away from a bot that can edit the catalogue, and the catalogue is the thing
+# every Astra trusts.
+#
+# The submission text NEVER reaches a `run:` block through `${{ }}`. Every
+# stranger-controlled value travels via a file or an environment variable, which
+# is the documented way to avoid script injection in GitHub Actions: `${{
+# github.event.issue.body }}` inside a shell command is substituted by the
+# runner before bash parses a single quote.
+#
+# ── why the cron paths are a matrix and not a dispatch ──────────────────────
+#
+# The obvious shape for "the backstop found a release" is for the cron job to
+# fire a `workflow_dispatch` at this same workflow. It does not work, and the
+# reason is worth writing down so nobody rediscovers it: **events triggered with
+# the repository's own `GITHUB_TOKEN` do not start workflow runs.** Doing it that
+# way would need a personal access token with write access to this repository,
+# sitting in a secret, for a job whose entire purpose is to need no credentials.
+# So `triage` emits a JSON array of targets and `check` is a matrix over it —
+# one job definition serving the submission path, the ping, the backstop and the
+# queue drain, which also means all four are verified by exactly the same code.
+
+on:
+  issues:
+    types: [opened, edited, labeled]
+  issue_comment:
+    types: [created]
+  repository_dispatch:
+    types: [plugin-release]
+  schedule:
+    # The queue drain. Hourly, because that is the resolution a publication
+    # delay is quoted at: a release that says it publishes at 14:00 should not
+    # appear at 20:00.
+    - cron: '17 * * * *'
+    # The release backstop. Daily, and it polls only listings that have been
+    # quiet for a week — the ping is the fast path and this is the safety net,
+    # so paying for it more often would buy minutes on a path that is already
+    # measured in days.
+    - cron: '41 5 * * *'
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: 'Source repository (owner/name)'
+        required: true
+      tag:
+        description: 'Release tag'
+        required: true
+      submitter:
+        description: 'GitHub login whose control of the repository is checked'
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: ingest-${{ github.event.issue.number || github.event.client_payload.repo || github.event.schedule || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'issues' || github.event_name == 'issue_comment' }}
+
+env:
+  # The AstraPlugins commit whose `astra-plugin-manifest` this bot validates
+  # manifests with. Pinned by SHA, never by branch: the crate is the daemon's
+  # own parser, and "whatever HEAD says today" is not a thing to decide a
+  # stranger's listing with. Bump it deliberately, in a reviewed commit.
+  #
+  # NOTE: this SHA is the tip of AstraPlugins `feat/plugin-production` and is not
+  # on a remote branch yet, so `link-deps.sh --clone` cannot fetch it until that
+  # branch is pushed. That is a state of the world rather than a bug in this
+  # file: a pin to a commit nobody can fetch fails loudly, which is the right
+  # failure for "the rules this bot judges by are not public yet".
+  ASTRA_PLUGINS_REF: 50eaa616978cb386fc1f0860d775d6819ff452b4
+  ASTRA_PLUGINS_URL: https://github.com/mihailinl/AstraPlugins.git
+
+jobs:
+  # Does this event ask for an ingest at all, and of what? Runs no submitter
+  # code and touches no network beyond the public reads it was already given.
+  triage:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      # A JSON array of `{repo, tag, submitter}`. One entry for a submission or
+      # a ping, N for a cron run, `[]` for an event that asked for nothing.
+      targets: ${{ steps.decide.outputs.targets }}
+      issue: ${{ steps.decide.outputs.issue }}
+      watch: ${{ steps.decide.outputs.watch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Which submission, if any
+        id: decide
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+          # Stranger text. Both go to files, never into a command.
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          DISPATCH_REPO: ${{ github.event.client_payload.repo }}
+          DISPATCH_TAG: ${{ github.event.client_payload.tag }}
+          DISPATCH_SUBMITTER: ${{ github.event.client_payload.submitter }}
+          INPUT_REPO: ${{ github.event.inputs.repo }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          INPUT_SUBMITTER: ${{ github.event.inputs.submitter }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$ISSUE_BODY" > issue-body.md
+          printf '%s' "$COMMENT_BODY" > comment-body.md
+          mkdir -p out
+          echo 'targets=[]' >> "$GITHUB_OUTPUT"
+
+          one_target() {
+            # $1 repo, $2 tag, $3 submitter — as separate argv entries, never
+            # interpolated into a command line.
+            node -e '
+              const [repo, tag, submitter] = process.argv.slice(1);
+              process.stdout.write(JSON.stringify([{ repo, tag, submitter }]));
+            ' "$1" "$2" "$3" > targets.json
+            echo "targets=$(cat targets.json)" >> "$GITHUB_OUTPUT"
+          }
+
+          case "$EVENT" in
+            workflow_dispatch)
+              one_target "$INPUT_REPO" "$INPUT_TAG" "$INPUT_SUBMITTER"
+              ;;
+
+            repository_dispatch)
+              # Where the GitHub App upgrade lands. A dispatch carries
+              # owner/repo/tag and no authority; the submitter it names is the
+              # account that published the release, and is proved against
+              # GitHub downstream exactly like every other path's.
+              one_target "$DISPATCH_REPO" "$DISPATCH_TAG" "$DISPATCH_SUBMITTER"
+              ;;
+
+            schedule)
+              case "$SCHEDULE" in
+                '17 * * * *')
+                  # The publication queue. Reads files this repository wrote.
+                  node bot/watch.mjs --drain --out out
+                  ;;
+                *)
+                  # The release backstop. Polls the quiet listings, writes the
+                  # updated etag memory for `publish` to commit.
+                  node bot/watch.mjs --watch --out out
+                  echo "watch=true" >> "$GITHUB_OUTPUT"
+                  ;;
+              esac
+              echo "targets=$(node -e '
+                const fs = require("node:fs");
+                const list = JSON.parse(fs.readFileSync("out/dispatch.json", "utf8"));
+                process.stdout.write(JSON.stringify(list.map(({ repo, tag, submitter }) => ({ repo, tag, submitter }))));
+              ')" >> "$GITHUB_OUTPUT"
+              ;;
+
+            issues|issue_comment)
+              # `bot/triage.mjs` answers form / ping / none, and resolves a
+              # ping's submitter from the release author. Its answers arrive as
+              # two files; nothing here sources a file written from stranger
+              # text.
+              node bot/triage.mjs \
+                --event "$EVENT" --labels "$LABELS" \
+                --issue-body issue-body.md --comment-body comment-body.md \
+                --mode-file mode.txt --targets-file targets.json
+              case "$(cat mode.txt)" in
+                form)
+                  # The two facts out of the rendered form, with the
+                  # confirmations checked. The submitter is the issue author,
+                  # whose control of the repository is then proved against
+                  # GitHub — this is the path a first listing takes.
+                  node bot/read-submission.mjs --body-file issue-body.md --output form.env
+                  one_target \
+                    "$(grep '^repo=' form.env | head -1 | cut -d= -f2-)" \
+                    "$(grep '^tag=' form.env | head -1 | cut -d= -f2-)" \
+                    "$ISSUE_AUTHOR"
+                  echo "issue=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+                  ;;
+                ping)
+                  echo "targets=$(cat targets.json)" >> "$GITHUB_OUTPUT"
+                  echo "issue=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+                  ;;
+                *)
+                  ;;
+              esac
+              ;;
+          esac
+
+      - uses: actions/upload-artifact@v4
+        if: steps.decide.outputs.watch == 'true'
+        with:
+          name: watch-state
+          path: out/state
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The bot that judges a stranger's release runs its own tests first. A suite
+  # that only runs on pull requests is a suite that is green on the day it
+  # matters and unverified on every other one.
+  selftest:
+    needs: triage
+    if: needs.triage.outputs.targets != '[]'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Fetch the manifest crate the daemon uses
+        run: |
+          set -euo pipefail
+          bot/manifest-probe/link-deps.sh --clone
+
+      - name: Build the manifest probe
+        run: cargo build --release --manifest-path bot/manifest-probe/Cargo.toml
+
+      - name: The probe's own tests — the daemon's manifest rules, asserted
+        run: cargo test --manifest-path bot/manifest-probe/Cargo.toml
+
+      - name: The bot's tests, including every shared bundle vector
+        run: node bot/tests/ingest.test.mjs
+
+      - name: The publication policy's tests, including its published numbers
+        run: node bot/tests/policy.test.mjs
+
+      - name: The listing rules, unchanged
+        run: node tools/selftest.mjs
+
+      - name: The error-code documentation is not stale
+        run: node bot/gen-checks-doc.mjs --check
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: manifest-probe
+          path: bot/manifest-probe/target/release/astra-manifest-probe
+          retention-days: 1
+
+  check:
+    needs: [triage, selftest]
+    if: needs.triage.outputs.targets != '[]'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      # A cron run can carry several releases. Three at a time keeps the
+      # unauthenticated GitHub reads well inside the rate limit.
+      max-parallel: 3
+      matrix:
+        include: ${{ fromJson(needs.triage.outputs.targets) }}
+    # Read, and nothing else. This job downloads a stranger's release asset.
+    permissions:
+      contents: read
+      # `gh attestation verify` reads Sigstore's public transparency log and
+      # GitHub's public attestation API. Neither needs a token beyond rate
+      # limit, and neither writes anything.
+      id-token: none
+      attestations: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: manifest-probe
+          path: probe
+
+      - run: chmod +x probe/astra-manifest-probe
+
+      - name: Ingest, then decide whether it publishes
+        id: ingest
+        env:
+          # Rate limit and public reads. The bot needs no write scope anywhere,
+          # which is what lets task 3.4's release ping be unauthenticated.
+          GITHUB_TOKEN: ${{ github.token }}
+          ASTRA_MANIFEST_PROBE: ${{ github.workspace }}/probe/astra-manifest-probe
+          REPO: ${{ matrix.repo }}
+          TAG: ${{ matrix.tag }}
+          SUBMITTER: ${{ matrix.submitter }}
+          ISSUE: ${{ needs.triage.outputs.issue }}
+        run: |
+          set -uo pipefail
+          mkdir -p out
+          # The three values are attacker-influenced and are passed as separate
+          # argv entries from environment variables, never interpolated into the
+          # command line. bot/ingest.mjs rejects anything that is not
+          # `owner/name` and a conservative tag charset before either reaches a
+          # URL or `gh`.
+          node bot/decide.mjs \
+            --repo "$REPO" --tag "$TAG" --submitter "$SUBMITTER" \
+            ${ISSUE:+--issue "$ISSUE"} \
+            --out out > out/comment.log
+          code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          cat out/comment.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || cat out/comment.log >> "$GITHUB_STEP_SUMMARY"
+          # 0 published · 1 refused · 3 held for a maintainer · 4 delayed, and
+          # it publishes itself · 2 the bot broke. Five outcomes, five exit
+          # codes, and the step itself fails on only two of them: a workflow
+          # that paged somebody every time the process worked as designed would
+          # be turned off within a week.
+          exit 0
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ingest-report-${{ strategy.job-index }}
+          path: out
+          retention-days: 14
+
+      - name: Fail the job when the release was refused, or when the bot did
+        if: steps.ingest.outputs.code != '0' && steps.ingest.outputs.code != '3' && steps.ingest.outputs.code != '4'
+        run: |
+          echo "decide exited ${{ steps.ingest.outputs.code }}; the report is in the job summary." >&2
+          exit 1
+
+  # Posts the report, and — when there is no issue to post it on — makes sure
+  # the author is told anyway.
+  #
+  # Runs no submitter code, touches no archive, and reads markdown and JSON out
+  # of artifacts.
+  #
+  # The second half is not decoration. PRODUCTION_PLAN §5.5's only defence
+  # against a compromised author account is *a publication delay plus an
+  # out-of-band notification*, and a delay nobody is told about is just a delay.
+  # A release that arrived by ping or by the backstop has no submission issue
+  # behind it, so when such a release is held or delayed the bot opens one — the
+  # author is watching this repository's issues for their own listing, and this
+  # is the channel that reaches them without the registry holding a credential
+  # for anything of theirs.
+  #
+  # Routine publications get no issue: they are recorded by the commit and by
+  # the index serial, and an issue per patch release would train everybody to
+  # ignore the notifications that matter. Every release of a plugin holding a
+  # high-risk permission is delayed, so every one of those is announced 24 hours
+  # before it happens.
+  comment:
+    needs: [triage, check]
+    if: always() && needs.triage.outputs.targets != '[]'
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ingest-report-*
+          path: reports
+        continue-on-error: true
+
+      - uses: actions/github-script@v7
+        env:
+          ISSUE: ${{ needs.triage.outputs.issue }}
+        with:
+          script: |
+            const fs = require("node:fs");
+            const issue = Number(process.env.ISSUE) || null;
+            let dirs = [];
+            try {
+              dirs = fs.readdirSync("reports").sort();
+            } catch { /* the check job produced nothing at all */ }
+
+            if (issue && dirs.length === 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: issue,
+                body: "The ingest job did not produce a report. That is a fault in this registry, " +
+                      "not in the submission — the run log is linked above.",
+              });
+              return;
+            }
+
+            for (const dir of dirs) {
+              let body = "";
+              let decision = {};
+              try { body = fs.readFileSync(`reports/${dir}/comment.md`, "utf8"); } catch { continue; }
+              try { decision = JSON.parse(fs.readFileSync(`reports/${dir}/decision.json`, "utf8")); } catch { /* older shape */ }
+
+              if (issue) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner, repo: context.repo.repo, issue_number: issue, body,
+                });
+                continue;
+              }
+              if (decision.outcome !== "delay" && decision.outcome !== "review") continue;
+
+              const what = decision.outcome === "delay"
+                ? `publishes itself at ${decision.publish_after}`
+                : "is held for a maintainer";
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `[notice] ${decision.id} ${decision.version} ${what}`,
+                body:
+                  `\`${decision.repo}@${decision.tag}\` reached the registry without a submission ` +
+                  "issue — a release ping, or the backstop noticing it.\n\n" +
+                  "**If you did not publish this release, say so here now.** This notice, and the " +
+                  "delay it describes, are the only defence this registry has against a compromised " +
+                  "author account (PRODUCTION_PLAN §5.5), and they only work if somebody reads them.\n\n" +
+                  body,
+              });
+            }
+
+  # Commits whatever the decision produced: a listing that publishes now, a
+  # queue entry for one that waits, the backstop's etag memory, and the
+  # regenerated index.
+  #
+  # It reads JSON files out of an artifact and copies them into place. It runs
+  # no submitter code — but the FILES are derived from a submission, so before
+  # anything is committed every path is checked against the shape it is allowed
+  # to have, and `tools/validate.mjs` is run over the result. The bot's output
+  # is held to the rules the bot's input would have been held to; that check
+  # already ran inside `bot/ingest.mjs`, and it runs again here because this is
+  # the job with write access and the one that has to be right.
+  publish:
+    needs: [triage, check]
+    # Also on a backstop run that found nothing: the etag memory it just wrote
+    # is the entire reason the next run is cheap, and a poll whose result is
+    # never committed is a poll that happens again tomorrow.
+    if: >-
+      always() && !cancelled() &&
+      (needs.triage.outputs.targets != '[]' || needs.triage.outputs.watch == 'true')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    # Never two commits to the catalogue at once, and never cancel one that is
+    # already pushing.
+    concurrency:
+      group: registry-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ingest-report-*
+          path: reports
+        continue-on-error: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: watch-state
+          path: watch-state
+        continue-on-error: true
+
+      - name: Apply the decisions
+        id: apply
+        run: |
+          set -euo pipefail
+          changed=0
+
+          # The etag memory the backstop wrote. Not derived from anything a
+          # stranger controls beyond an HTTP header, and it is a cache: the
+          # worst a bad value does is cost one extra poll.
+          if [ -d watch-state ]; then
+            mkdir -p state
+            cp -r watch-state/. state/
+            changed=1
+          fi
+
+          for dir in reports/*/; do
+            [ -d "$dir" ] || continue
+
+            # ── the shape check ───────────────────────────────────────────
+            # A listing directory is `plugins/<id>/` with `plugin.json` and
+            # `versions/<semver>.json` under it, and an id is the charset the
+            # daemon will turn into a directory name on a user's disk. Anything
+            # else in the artifact means the ingest produced something nobody
+            # designed, and the answer to that is to stop, not to commit it.
+            if [ -d "$dir/plugins" ]; then
+              while IFS= read -r p; do
+                rel="${p#"$dir"}"
+                case "$rel" in
+                  plugins/*/plugin.json|plugins/*/versions/*.json) ;;
+                  *) echo "::error::$rel is not a listing file"; exit 1 ;;
+                esac
+                id="$(printf '%s' "$rel" | cut -d/ -f2)"
+                printf '%s' "$id" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$' \
+                  || { echo "::error::$id is not a plugin id"; exit 1; }
+              done < <(find "$dir/plugins" -type f)
+              cp -r "$dir/plugins/." plugins/
+              changed=1
+            fi
+
+            # ── the publication queue ─────────────────────────────────────
+            if [ -d "$dir/state" ]; then
+              while IFS= read -r p; do
+                rel="${p#"$dir"}"
+                case "$rel" in
+                  state/queue/*.json) ;;
+                  *) echo "::error::$rel is not a queue entry"; exit 1 ;;
+                esac
+              done < <(find "$dir/state" -type f)
+              mkdir -p state/queue
+              cp -r "$dir/state/." state/
+              changed=1
+            fi
+
+            # ── and what stops waiting ────────────────────────────────────
+            if [ -s "$dir/remove.txt" ]; then
+              while IFS= read -r rel; do
+                [ -n "$rel" ] || continue
+                case "$rel" in
+                  state/queue/*.json) ;;
+                  *) echo "::error::refusing to delete $rel"; exit 1 ;;
+                esac
+                if [ -f "$rel" ]; then rm -f "$rel"; changed=1; fi
+              done < "$dir/remove.txt"
+            fi
+          done
+
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
+      - name: Hold the result to this repository's own rules
+        if: steps.apply.outputs.changed == '1'
+        run: |
+          set -euo pipefail
+          # --allow-staging matches .github/workflows/build-index.yml and goes
+          # away with it, on the day the bootstrap listing gains a digest.
+          node tools/validate.mjs --allow-staging
+          node tools/selftest.mjs
+
+      - name: Regenerate the index the catalogue is built from
+        if: steps.apply.outputs.changed == '1'
+        run: |
+          set -euo pipefail
+          # build-index.yml asserts on every push that the committed index is
+          # exactly what the generator produces. A publish that added a listing
+          # and left the index alone would turn that assertion into a red build
+          # on somebody else's commit.
+          node tools/build-index.mjs
+          node tools/build-index.mjs --check
+
+      - name: Commit
+        if: steps.apply.outputs.changed == '1'
+        env:
+          MESSAGE: "registry: publish (${{ github.event_name }})"
+        run: |
+          set -euo pipefail
+          git config user.name "astra-registry-bot"
+          git config user.email "bot@users.noreply.github.com"
+          mkdir -p state
+          git add -A plugins state registry/v1/index.json
+          if git diff --cached --quiet; then
+            echo "nothing to commit"
+            exit 0
+          fi
+          git commit -m "$MESSAGE" -m "Decided by bot/decide.mjs in run ${{ github.run_id }}. See docs/POLICY.md."
+          # A cron drain and an issue-driven publish can land in the same
+          # minute. Rebase and retry once rather than failing a publication
+          # somebody is waiting on; a second failure is a real conflict and
+          # should be looked at.
+          git push || { git pull --rebase --autostash && git push; }
+
+  # The review queue, said out loud on every drain.
+  #
+  # A published SLA nobody measures is a wish. POLICY.md's answer to a breach is
+  # to widen auto-publication rather than let the queue rot, and that decision
+  # only ever gets made if the breach is visible without anybody going to look.
+  sla:
+    if: github.event_name == 'schedule' && github.event.schedule == '17 * * * *'
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${{ github.repository }}/issues?state=open&labels=listing&per_page=100" \
+            --jq '[.[] | {number, title, created_at}]' > open-listings.json
+          node bot/watch.mjs --sla open-listings.json | tee -a "$GITHUB_STEP_SUMMARY"

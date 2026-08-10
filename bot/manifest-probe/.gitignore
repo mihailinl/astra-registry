@@ -1,0 +1,9 @@
+# Build output, and the AstraPlugins checkout the manifest crate is read from.
+#
+# `_deps/` is never committed: whichever way it is produced — `link-deps.sh`
+# symlinks a sibling working copy, CI does an `actions/checkout` pinned by SHA —
+# it is a copy of another repository, and a copy of another repository committed
+# into this one is the fourth fork of `plugin.toml` that task 3.7 exists to
+# prevent.
+/target/
+/_deps/
