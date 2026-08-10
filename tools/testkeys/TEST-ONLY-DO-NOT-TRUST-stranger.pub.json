@@ -1,0 +1,11 @@
+{
+  "$banner": "TEST KEY MATERIAL — NOT A PRODUCTION ROOT. The private half of this key is committed to a public repository. Astra trusts it only in a debug build compiled with --features insecure-test-trust-roots, or in the daemon's own unit tests; a release build cannot compile that feature. Never sign anything a user will install with this key.",
+  "algorithm": "ed25519",
+  "comment": "TEST ONLY — deterministic key derived from a phrase published in tools/testkeys/README.md.",
+  "fingerprint_sha256": "b5585338b75bebfc06844fbca19e5f9734addc1a942d6ca09f115159991f843b",
+  "key_id": "TEST-ONLY-DO-NOT-TRUST-stranger",
+  "public_key": "MaLdE8f/DFaxTUPGT4vAo2C4rBc8bC3jj+0C5prJ80M=",
+  "role": "not-a-root",
+  "schema": "astra.registry.root-key/1",
+  "seed_phrase": "astra-registry TEST-ONLY stranger key - NOT A ROOT"
+}

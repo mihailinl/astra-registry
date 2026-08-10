@@ -1,0 +1,28 @@
+{
+  "$banner": "TEST FIXTURE — the `signed` block below is what ../sign-trust.mjs hashes. Every key it names is a TEST-ONLY key from ../README.md. Nothing here is a production trust root.",
+  "signed": {
+    "schema": "astra.registry.trust/1",
+    "serial": 7,
+    "issued_at": "2026-08-10T00:00:00Z",
+    "expires_at": "2027-08-10T00:00:00Z",
+    "index_keys": [
+      {
+        "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026a",
+        "public_key": "U8/3Y8Zz1qd2TQ+JECdqODTMhWolfxvQFmXRySVd41o=",
+        "not_before": "2026-08-01T00:00:00Z",
+        "not_after": "2026-11-01T00:00:00Z",
+        "comment": "TEST ONLY. The outgoing index key; its window overlaps 2026b by 30 days so a rotation never has a gap."
+      },
+      {
+        "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026b",
+        "public_key": "selbz5cJXSydRAAxGZsrsDpL1mKNRUn5eo8p0h2H8lc=",
+        "not_before": "2026-10-02T00:00:00Z",
+        "not_after": "2027-02-01T00:00:00Z",
+        "comment": "TEST ONLY. The incoming index key."
+      }
+    ],
+    "reusable_workflow_shas": [
+      "0000000000000000000000000000000000000000"
+    ]
+  }
+}

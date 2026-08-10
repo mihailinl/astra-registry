@@ -1,0 +1,34 @@
+{
+  "$banner": "TEST FIXTURE — signed by a well-formed key that is NOT a root. Must be rejected as TRUST_NO_ROOT_SIGNATURE and logged.",
+  "signatures": [
+    {
+      "key_id": "TEST-ONLY-DO-NOT-TRUST-stranger",
+      "sig": "feuxZXLkvqHZAThtF/KFPuYzOCTpfVX3mVFB/7TInQ6c8ww0XvSe9T/ukWYnqtKGaNGZvRS68lMl4fVvnW2rDA=="
+    }
+  ],
+  "signed": {
+    "expires_at": "2027-08-10T00:00:00Z",
+    "index_keys": [
+      {
+        "comment": "TEST ONLY. The outgoing index key; its window overlaps 2026b by 30 days so a rotation never has a gap.",
+        "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026a",
+        "not_after": "2026-11-01T00:00:00Z",
+        "not_before": "2026-08-01T00:00:00Z",
+        "public_key": "U8/3Y8Zz1qd2TQ+JECdqODTMhWolfxvQFmXRySVd41o="
+      },
+      {
+        "comment": "TEST ONLY. The incoming index key.",
+        "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026b",
+        "not_after": "2027-02-01T00:00:00Z",
+        "not_before": "2026-10-02T00:00:00Z",
+        "public_key": "selbz5cJXSydRAAxGZsrsDpL1mKNRUn5eo8p0h2H8lc="
+      }
+    ],
+    "issued_at": "2026-08-10T00:00:00Z",
+    "reusable_workflow_shas": [
+      "0000000000000000000000000000000000000000"
+    ],
+    "schema": "astra.registry.trust/1",
+    "serial": 7
+  }
+}

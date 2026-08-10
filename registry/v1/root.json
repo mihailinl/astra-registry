@@ -1,0 +1,14 @@
+{
+  "$comment": "The Astra plugin trust roots — public keys only, and there are none yet. `roots` is EMPTY because the ceremony in tools/keygen-root.sh has not been run: it is run once, by hand, on an offline machine, and its output is copied here afterwards. An empty root set is the correct state for a chain whose anchor does not exist, and astra-daemon behaves accordingly — it compiles in an empty PRODUCTION_ROOT_KEYS, so no trust.json verifies and no catalogue signature is believed. That is fail-closed, not a gap to be filled with a test key. See SECURITY.md.",
+  "schema": "astra.registry.root/1",
+  "status": "unprovisioned",
+  "roots": [],
+  "notes": {
+    "what_a_root_signs": "trust.json, and nothing else. trust.json names the index signing keys and their validity windows, so an index key rotates without shipping a new Astra. A root signature never appears on index.json, on revocations.json, or on a plugin bundle.",
+    "how_many": "Two, generated in the same ceremony: one active, one reserve that is never used until it has to be. Both public halves ship in every Astra binary from day one, so replacing a root is a signature, not a flag day.",
+    "the_anchor_is_the_key": "Astra trusts this catalogue because a root key signed the trust.json that vouches for its signing key — never because of the hostname it was fetched from. `plugins.registry_url` is ordinary configuration and this catalogue may move hosts without changing a single trust decision. The daemon's verification path contains no hostname check and must not grow one.",
+    "signature_construction": "sig = Ed25519(root_private, SHA-256(\"astra.registry.trust/1\" ‖ 0x00 ‖ JCS(signed))), where JCS is RFC 8785 over the document's `signed` member. The verifier supplies the domain string from its own compiled-in constant, never from the `schema` field of the file it is reading.",
+    "test_keys": "tools/testkeys/ holds two clearly-labelled TEST roots whose private halves are committed on purpose. They are not listed here and they are not production roots. astra-daemon can only compile them in behind `--features insecure-test-trust-roots` in a debug profile; asking for that feature in a release profile is a compile error.",
+    "verifying_this_file": "When it is provisioned, the fingerprints below are SHA-256 over the raw 32-byte Ed25519 public key — the same value tools/keygen-root.sh prints and the same value astra-daemon logs when a root signature verifies. This file is not itself signed; a self-signed root document proves nothing that the key compiled into the binary does not already prove. It exists so the two copies can be compared."
+  }
+}
