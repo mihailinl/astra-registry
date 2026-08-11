@@ -58,13 +58,15 @@ pretending otherwise:
   repository holds no signing key; CI signs the deploy candidate inside the
   `publish` environment. An empty array says "unsigned" out loud, where an
   absent member could not be told from a stripped one.
-- The **root ceremony has not been run**, so the daemon's compiled-in root key
-  set is empty and it currently reads every catalogue as `UNSIGNED`. That is the
-  correct fail-closed state for a chain with no anchor, and not a gap to be
-  plugged with the clearly-labelled test keys in `tools/testkeys/`. See
-  [`SECURITY.md`](SECURITY.md) and [`docs/RUNBOOK.md`](docs/RUNBOOK.md) for the
-  ceremony, and [`registry/v1/root.json`](registry/v1/root.json) for the stub
-  that records it as unprovisioned.
+- The **root ceremony has been run** — 2026-08-11, offline.
+  [`registry/v1/root.json`](registry/v1/root.json) publishes the two Ed25519
+  public keys, and `astra-daemon`'s `PRODUCTION_ROOT_KEYS` compiles in the same
+  two. **No `trust.json` has been signed yet**, though, so nothing is delegated,
+  there are no index keys to verify a catalogue against, and the daemon still
+  reads every catalogue as `UNSIGNED`. That is the correct fail-closed state for
+  a chain whose anchor exists and has not vouched for anything, and not a gap to
+  be plugged with the clearly-labelled test keys in `tools/testkeys/`. See
+  [`SECURITY.md`](SECURITY.md) and [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
 
 `bot/lib/phase3.mjs` still lists every check that does not run yet, by its final
 error code, so nobody forgets which of these is which.
@@ -279,21 +281,30 @@ thing: Node.
 
 Named, so nobody assumes otherwise:
 
-- **No root key yet, so nothing verifies in practice.** The machinery all
+- **No signed `trust.json`, so nothing verifies in practice.** The machinery all
   exists — `trust.json`'s format, the index envelope, the signer, the daemon's
-  verifier, key rotation with validity windows — but the ceremony in
-  `docs/RUNBOOK.md` has not been run, `registry/v1/root.json` is an honest
-  `status: unprovisioned` stub, and the daemon ships with an empty root set.
-  Until then every catalogue reads as `UNSIGNED` and the artifact digest is
-  doing all the work. Phase 3.1's remaining half is an afternoon with an
-  offline machine, not more code.
-- **No `revocations.json`.** There is no kill switch for a listed plugin yet.
-  The daemon's enforcement side is live and under test but its set is empty, and
-  nothing here produces the signed list to fill it. Phase 3.9.
-- **No build-provenance verification.** Nothing here proves who produced an
-  artifact — only that its bytes match what the listing says. Phase 3.3.
-- **No ownership proof.** That the submitter controls the repository they listed
-  is currently a maintainer's judgement. Phase 3.3.
+  verifier, key rotation with validity windows — and the root ceremony ran on
+  2026-08-11, so `registry/v1/root.json` is `status: provisioned` and the daemon
+  compiles in the same two keys. But a root key signs `trust.json`, not a
+  catalogue, and no `trust.json` has been signed. With nothing delegated there
+  are no index keys, so every catalogue still reads as `UNSIGNED` and the
+  artifact digest is doing all the work. What remains is one offline signing and
+  an index key in the `publish` environment, not more code.
+- **Nothing intersects a candidate with `revocations.json`.** The document
+  exists, the daemon enforces it at five points, and `tools/build-revocations.mjs`
+  / `tools/sign-revocations.mjs` produce it — but neither bot path checks a
+  *candidate* artifact's digest against it before listing, so this registry can
+  publish a version it has itself withdrawn and the daemon is the only thing that
+  stops it. `E_REVOKED` in `bot/lib/phase3.mjs`.
+- **Build provenance and ownership are checked on ONE of the two paths.**
+  `bot/ingest.mjs` verifies a GitHub build attestation against the
+  reusable-workflow allowlist (`bot/lib/attestation.mjs`) and proves the
+  submitter has admin or maintain permission on the repository
+  (`bot/lib/ownership.mjs`) — on the **release** path. On the **pull-request**
+  path neither runs, because there is no submitter to attribute an attestation
+  to and the maintainer reading the diff is the control. `bot/run-checks.mjs`
+  prints every such unchecked row on every run rather than reporting a clean
+  bill of health.
 - **No download counts, no stars, no telemetry.** The index emits `0` for both
   because the daemon's current reader requires the fields. This registry counts
   nothing about anyone; "popular" sorting will need a source that is not a
