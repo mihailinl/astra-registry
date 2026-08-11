@@ -111,6 +111,28 @@ request is the review.
 The declared licence must be the licence in the repository. A mismatch is a
 removal.
 
+**Open source only, for now.** Every entry on the allowlist is an OSI-approved
+open-source licence, and that is the whole rule today: a plugin whose source
+nobody can read does not get listed here.
+
+This is a policy, not a legal limit, and the distinction matters. The SDKs are
+MPL-2.0 — file-level copyleft that does not reach an author's own code — so
+writing a proprietary plugin for Astra is *permitted by the licence*, and always
+will be. Companies that cannot open their source are expected to integrate with
+Astra eventually, and the licence was chosen so that stays possible.
+
+What is unsettled is how such a plugin would be *listed*. Everything this
+registry promises rests on being able to inspect what it lists: the bot reads the
+manifest out of the bundle, scans for host RPCs the plugin never declared, and a
+human can read the code behind a first listing. None of that survives a binary
+nobody may decompile. A proprietary listing therefore needs something standing in
+its place — a trust relationship, an agreement, an audit — and none of those
+exist yet.
+
+So proprietary plugins are a planned path for trusted publishers, gated on work
+that has not been done. Until it is, this section is the answer, and loosening it
+is a change to this file rather than to anybody's licence.
+
 ## 5. Data handling
 
 If a plugin sends anything off the user's machine, the store card must say so,
