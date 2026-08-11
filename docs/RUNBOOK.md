@@ -101,12 +101,92 @@ Rules the daemon enforces, so get them right before you publish:
 - `reusable_workflow_shas` is the allowlist §5.5 of the plan refers to. Changing
   it is a root ceremony, by construction — that is the point.
 
-Signing, offline, with the private key on removable media:
+### 3.1 First, an index key to delegate to
+
+A `trust.json` that delegates to nothing verifies perfectly and grants nothing —
+every catalogue still reads `UNSIGNED`. So the index key comes first.
+
+```sh
+sh tools/keygen-index.sh --id astra-index-2026a
+```
+
+It writes three files and prints **no secret**: the private key
+(`.private.pem`), the same key as the base64 raw seed the GitHub secret takes
+(`.seed.b64`, mode 0600), and the public half (`.pub.json`) for the next step.
+
+Unlike the root, this key is *meant* to live in CI. It is delegated, so a leak
+costs one re-signing rather than a daemon release — which is the whole reason
+the indirection exists. Generate it wherever you will paste it from.
+
+```sh
+gh secret set ASTRA_INDEX_SIGNING_KEY --env publish \
+  --repo mihailinl/astra-registry < astra-index-2026a.seed.b64
+gh secret set ASTRA_INDEX_SIGNING_KEY_ID --env publish \
+  --repo mihailinl/astra-registry --body astra-index-2026a
+```
+
+### 3.2 Then sign, offline, with the root key on removable media
+
+```sh
+node tools/sign-trust.mjs \
+  --root-key /run/media/$USER/ASTRA-ROOT/keys/astra-root-2026a.private.pem \
+  --index-key-file astra-index-2026a.pub.json \
+  --workflow-sha <40-hex commit of AstraPlugins' plugin-release.yml> \
+  --out registry/v1/trust.json
+```
+
+The tool does no network I/O, so it belongs on the offline machine; carry
+`registry/v1/trust.json` — and only that — back.
+
+It refuses, rather than writes, when:
+
+- the key is **not one of the roots published in `root.json`**. This is the
+  guard worth having: signing with the reserve key, or last year's, produces a
+  document that looks perfect, verifies against itself, and is refused by every
+  daemon. You would hear about it from a user, and fixing it means another trip.
+- no index key was given — §3.1.
+- a `--workflow-sha` is not 40 hex characters. A tag will not do: it can be
+  repointed, and this workflow runs inside every plugin author's repository.
+- the index key is one of the TEST keys whose private half is committed here.
+
+It verifies what it just signed, with the same code the bot uses, before writing.
+
+`--serial` defaults to one more than the published document's. The daemon
+requires **strictly greater**; equal is rejected rather than treated as
+idempotent, because equal serials with differing contents is what a rollback
+looks like.
+
+### 3.3 Verify before you publish
+
+```sh
+node tools/sign-trust.mjs --verify registry/v1/trust.json
+```
+
+It prints the signing root, the serial, the expiry, every delegated index key
+and the workflow allowlist. Read them: a delegation to the wrong key is
+invisible until an install fails.
+
+Then the other side of the wire, a separate implementation of the same
+construction:
+
+```sh
+cargo test -p astra-daemon plugins::trust
+```
+
+`the_production_signers_output_verifies_here` is the one that matters — it feeds
+this tool's output to the daemon's verifier, so a canonicalisation or
+field-shape drift is a red build instead of a wasted ceremony.
+
+### 3.4 By hand, if you ever need to
+
+The tool is a convenience over four steps. They stay written down so that losing
+it is an inconvenience rather than a lockout.
 
 ```sh
 # 1. Write the `signed` block to trust-signed-block.json.
-# 2. Canonicalise and hash it. This is the only step with a subtlety: the digest
-#    is over the domain string, a NUL, and the JCS form of `signed`.
+# 2. Canonicalise and hash it. The digest is over the domain string, a NUL, and
+#    the JCS form of `signed`; that NUL is what stops one domain that is a
+#    prefix of another from colliding with it.
 node -e '
   import("./tools/lib/canonical.mjs").then(({ jcs }) => {
     const fs = require("node:fs"), crypto = require("node:crypto");
@@ -128,19 +208,9 @@ openssl pkeyutl -sign -inkey /run/media/$USER/ASTRA-ROOT/keys/astra-root-2026a.p
 openssl base64 -A -in trust.sig
 ```
 
-Then copy `trust.json` — and only `trust.json` — back to the online machine and
-publish it.
-
-**Verify before you publish**, on the online machine, with the daemon's own
-verifier rather than by eye:
-
-```sh
-cargo run -p astra-daemon --bin astra-daemon -- --help >/dev/null  # ensure it builds
-cargo test -p astra-daemon plugins::trust                          # the vectors still pass
-```
-
-and confirm the fingerprint the daemon logs on acceptance matches the one
-`keygen-root.sh` printed.
+Then copy `trust.json` — and only `trust.json` — back to the online machine,
+verify it as in §3.3, and publish it. Confirm the fingerprint the daemon logs on
+acceptance matches the one `keygen-root.sh` printed.
 
 ---
 
