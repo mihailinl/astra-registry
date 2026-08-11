@@ -167,14 +167,60 @@ digest stay installable**, because a digest does not expire. The hard block live
 on `revocations.json` at seven days instead — the one document whose staleness
 means "we may be about to install something already withdrawn".
 
+## After a listing: moderation, and the nightly asset check
+
+Two programs that run when something has already been published.
+
+`bot/moderation.mjs` builds the transparency log from
+`bot/moderation/<date>-<plugin>-<action>.json`. Four escalating actions — yank,
+delist, deprecate, revoke — ordered by what each costs somebody who **already
+installed** the plugin; the first two are catalogue edits that reach nobody's
+machine, the last two are signed statements that do. An entry claiming a
+`deprecate` or a `revoke` must name an advisory that is actually in the signed
+withdrawal list, with a matching action, or the build fails: a transparency log
+that can claim an unsigned revocation is a tool for scaring people off a
+competitor. `bot/moderation/README.md` is the field guide; `docs/POLICY.md` §8–11
+is the policy, including the triage clock declared in `bot/lib/moderation.mjs`.
+
+`bot/asset-check.mjs` asks nightly whether every artifact the catalogue pins
+still hashes to what the signed index says — with **one conditional request per
+artifact**. `Content-Length` is compared against the `size` the index records
+(which needs no memory of a previous run at all: the index is the memory) and
+`ETag` against what the last run saw (which is the only thing that catches a
+replacement of exactly the same length). A body is downloaded only when a header
+disagrees, at which point the download is the investigation rather than the cost.
+
+```bash
+node bot/asset-check.mjs --index registry/v1/index.json --cache "$RUNNER_TEMP/asset-cache.json"
+node bot/asset-check.mjs --index registry/v1/index.json --full   # what the naive job would cost
+```
+
+The ETag memory is **not committed**: it has no security value — the worst a lost
+or poisoned cache does is cost one extra `HEAD` — so it lives in the Actions
+cache rather than putting a machine-written file into this repository's history
+every night. A mismatch opens an issue and touches nothing; Astra already refuses
+bytes that do not match the pinned digest, so a swapped asset is uninstallable
+rather than dangerous, and which of the four actions follows is a person's call.
+
 ## Tests
 
 ```bash
 node bot/tests/ingest.test.mjs                                  # the bot
+node bot/tests/policy.test.mjs                                  # the publication policy
+node bot/tests/asset-check.test.mjs                             # the nightly check, measured
 cargo test --manifest-path bot/manifest-probe/Cargo.toml        # the manifest rules
+node bot/moderation.mjs --check                                 # the moderation sources
 node tools/selftest.mjs                                         # the listing rules
+node site/selftest.mjs                                          # the website
 node bot/gen-checks-doc.mjs --check                             # the docs
 ```
+
+`bot/tests/asset-check.test.mjs` serves two artifacts totalling 15.9 MB from a
+`node:http` server on loopback and measures the bytes the check actually moves,
+because "kilobytes when nothing changed" is a number and a number should be
+measured rather than asserted. It also proves both detection paths — a length
+change and a same-length swap — and that an entry with no digest is skipped
+rather than fetched.
 
 `bot/tests/ingest.test.mjs` runs the **whole pipeline** over every one of the 27
 shared bundle vectors in `tests/vectors/` — vendored from

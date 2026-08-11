@@ -1,0 +1,8 @@
+{
+  "$comment": "The embargoed-report channel, as it actually exists today. BOTH THE MAILBOX AND THE PGP SLOT ARE EMPTY ON PURPOSE. site/build.mjs renders the security page from this file; while `pgp_fingerprint` is empty it prints, in a box, that there is no key and that an unencrypted vulnerability report must not be sent — pointing at a private GitHub security advisory instead, which is end-to-end today, needs no ceremony, and is the path this registry can honestly offer. This is the same shape as the two compiled-in root key slots, which are also empty and which a default build fails closed on. Publishing an address nobody has registered, or a fingerprint for a key nobody holds, teaches a reporter to trust a channel that does not exist — and a vulnerability report sent into a void is worse than one that was never sent, because the reporter believes they told us. Provisioning is a checklist in docs/POLICY.md: register the mailbox, prove it delivers, generate the key offline, publish the fingerprint here and in SECURITY.md in the same commit, then fill in the three fields below.",
+  "email": "",
+  "email_intended": "security@ the domain the catalogue is served from, once that domain is registered and delivery has been proved",
+  "advisory_url": "https://github.com/mihailinl/astra-registry/security/advisories/new",
+  "pgp_fingerprint": "",
+  "pgp_key_file": ""
+}

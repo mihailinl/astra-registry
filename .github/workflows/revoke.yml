@@ -15,9 +15,9 @@ name: Withdraw a plugin
 # is the right trade for publishing a listing and the wrong one for withdrawing
 # a credential stealer.
 #
-# So this workflow bypasses the site build and the ingest pipeline. It keeps
-# exactly the gates that cost seconds and would let a bad deploy through if they
-# were dropped:
+# So this workflow bypasses the ingest pipeline entirely. It keeps exactly the
+# gates that cost seconds and would let a bad deploy through if they were
+# dropped:
 #
 #   * the advisory sources are validated (a `kind` the daemon does not read is a
 #     withdrawal that silently does not happen);
@@ -81,6 +81,18 @@ concurrency:
   group: registry-revocations
   cancel-in-progress: false
 
+#
+# WHY THE WEBSITE IS LAST
+#
+# The five-minute budget is a budget on the thing a DAEMON reads, and that is
+# `registry/v1/revocations.json` on the default branch — Astra's
+# `DEFAULT_REGISTRY_URL` is a raw.githubusercontent.com URL under `main`
+# (astra-daemon/src/plugins/registry_client.rs), so the git push below IS the
+# deploy. The website is the human surface and is rebuilt from the same signed
+# bytes afterwards, in a step that cannot delay the push because it comes after
+# it. If GitHub Pages is slow, or queued, or down, the withdrawal has already
+# landed.
+
 permissions:
   contents: write
 
@@ -92,7 +104,15 @@ jobs:
     # which is the correct trade: an unattended job that can sign is a job that
     # can sign anything.
     environment: publish
+    outputs:
+      deployed: ${{ steps.deploy.outputs.deployed }}
     steps:
+      # The clock the acceptance criterion is measured against. PRODUCTION_PLAN
+      # §6-3.9 says *signed and on the CDN within five minutes*, and a target
+      # nobody times is a target nobody misses.
+      - id: clock
+        run: echo "start=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v4
         with:
           # Both serials are commit counts. Without full history git counts what
@@ -126,6 +146,14 @@ jobs:
           set -euo pipefail
           node tools/validate.mjs --allow-staging
           node tools/build-index.mjs --check
+
+      # The transparency log is checked here, against the document about to be
+      # signed, rather than at site-build time — because at site-build time the
+      # only available answer to "this entry claims a revocation nobody signed"
+      # is to fail the deploy of a withdrawal that is otherwise correct. Caught
+      # here, it fails before anything is signed, and the fix is a commit.
+      - name: The moderation log does not claim more than the list carries
+        run: node bot/moderation.mjs --revocations registry/v1/revocations.json
 
       - name: Compute the serials
         id: serials
@@ -227,6 +255,7 @@ jobs:
       # race to a listing build is the one failure mode this workflow cannot
       # tolerate.
       - name: Deploy revocations and index, and nothing else
+        id: deploy
         env:
           BRANCH: ${{ github.event.repository.default_branch }}
           REV_SERIAL: ${{ steps.serials.outputs.revocations }}
@@ -262,14 +291,24 @@ jobs:
             git add registry/v1/revocations.json registry/v1/index.json
             if git diff --cached --quiet; then
               echo "::notice::nothing changed — the deployed documents are already current"
+              echo "deployed=unchanged" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             git commit \
               -m "chore(registry): deploy withdrawal list serial ${REV_SERIAL}" \
-              -m "Signed and pushed by .github/workflows/revoke.yml, bypassing the site build." \
+              -m "Signed and pushed by .github/workflows/revoke.yml, bypassing the ingest pipeline." \
               -m "${REASON:-No reason given.}"
             if git push origin "HEAD:${BRANCH}"; then
-              echo "::notice::withdrawal list serial ${REV_SERIAL} is live"
+              ELAPSED=$(( $(date +%s) - ${{ steps.clock.outputs.start }} ))
+              echo "::notice::withdrawal list serial ${REV_SERIAL} is live after ${ELAPSED}s (budget: 300s)"
+              echo "elapsed=${ELAPSED}" >> "$GITHUB_OUTPUT"
+              echo "deployed=true" >> "$GITHUB_OUTPUT"
+              # Loud, and not a failure. Missing the budget is a fact about the
+              # runner queue on the day it happened; failing the job here would
+              # mark a withdrawal that DID land as one that did not.
+              if [ "${ELAPSED}" -gt 300 ]; then
+                echo "::warning::the withdrawal took ${ELAPSED}s, past the five-minute target in PRODUCTION_PLAN §6-3.9"
+              fi
               exit 0
             fi
             echo "push race on attempt ${attempt}; retrying"
@@ -286,3 +325,58 @@ jobs:
             dist/revocations.json
             dist/index.json
           if-no-files-found: error
+
+      # ── 6.5/6.6: the website, after the push ─────────────────────────────
+      #
+      # From the same signed bytes, so the advisory page a user lands on and the
+      # withdrawal their daemon acted on are the same document. `--revocations`
+      # is what turns `bot/moderation/` entries into a transparency log entry
+      # that is allowed to say "revoked": `buildModerationLog` refuses an entry
+      # whose advisory is not in the list it was handed.
+      - name: Rebuild the site from what was just signed
+        run: |
+          set -euo pipefail
+          mkdir -p dist/registry/v1
+          cp dist/index.json dist/registry/v1/index.json
+          cp dist/revocations.json dist/registry/v1/revocations.json
+          for f in trust.json root.json; do
+            [ -f "registry/v1/$f" ] && cp "registry/v1/$f" "dist/registry/v1/$f"
+          done
+          node site/build.mjs \
+            --index dist/registry/v1/index.json \
+            --revocations dist/registry/v1/revocations.json \
+            --registry-dir dist/registry/v1 \
+            --repo "${{ github.repository }}" \
+            --out dist/site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/site
+
+      - name: Say how long the whole thing took
+        if: always()
+        run: |
+          echo "::notice::withdrawal path finished $(( $(date +%s) - ${{ steps.clock.outputs.start }} ))s after the job started"
+
+  # The human surface, and deliberately not on the critical path: the daemon
+  # already has the withdrawal from the push above.
+  #
+  # `cancel-in-progress: true` on the SAME group build-index.yml uses with
+  # `false`. A withdrawal may cancel a listing deploy that is mid-flight; a
+  # listing deploy queues behind a withdrawal. One origin, one urgent job.
+  pages:
+    needs: revoke
+    if: needs.revoke.outputs.deployed != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: true
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

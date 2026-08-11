@@ -766,6 +766,28 @@ await test("docs/POLICY.md quotes the numbers the code enforces", () => {
   }
 });
 
+await test("docs/POLICY.md quotes the triage clock the moderation code declares", async () => {
+  const { TRIAGE_ACK_HOURS, TRIAGE_HARM_HOURS, TRIAGE_DECISION_DAYS, APPEAL_RESPONSE_DAYS, ACTIONS } =
+    await import("../lib/moderation.mjs");
+  const doc = fs.readFileSync(path.join(REPO_ROOT, "docs", "POLICY.md"), "utf8");
+  for (const needle of [
+    `**${TRIAGE_ACK_HOURS} h**`,
+    `**${TRIAGE_HARM_HOURS} h**`,
+    `**${TRIAGE_DECISION_DAYS} days**`,
+    `**${APPEAL_RESPONSE_DAYS} days**`,
+  ]) {
+    assert(doc.includes(needle),
+      `docs/POLICY.md never says "${needle}", so the published triage clock has drifted from the code`);
+  }
+  // The four escalating actions, each named where a reporter will look for it.
+  for (const action of ACTIONS) {
+    const titled = action[0].toUpperCase() + action.slice(1);
+    assert(doc.includes(`**${titled}**`), `docs/POLICY.md does not name the ${action} action`);
+  }
+  // And the appeals template, which is what an author is told to use.
+  assert(doc.includes("[appeal] <plugin-id>"), "docs/POLICY.md carries no appeals template");
+});
+
 await test("POLICY.md points at the detail rather than restating it", () => {
   const doc = fs.readFileSync(path.join(REPO_ROOT, "POLICY.md"), "utf8");
   assert(doc.includes("docs/POLICY.md"), "the listing policy has to link the publication policy");

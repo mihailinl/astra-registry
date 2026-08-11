@@ -33,7 +33,12 @@ deliberately incapable of rejecting a correctly-signed catalogue.
 |---|---|---|---|
 | **Root** — two public keys ship in every Astra binary, one active, one reserve | One person, two copies (§3). Generated offline by `tools/keygen-root.sh`. | `trust.json`, and nothing else | The reserve is already in every shipped binary, so replacing a root is a signature rather than a flag day |
 | **Index** | GitHub Environment secret on this repository, with the maintainer as a required reviewer on the `publish` environment | `index.json`, `revocations.json`, per-release countersignatures | Quarterly, and immediately on suspicion, by publishing a root-signed `trust.json` with a **30-day overlap** between the outgoing and incoming key |
-| **Author** (optional) | The author's own repository secret | the `.astraplugin.minisig` sidecar | Losing it is a non-event: Astra pins the author's *repository identity*, not their key |
+
+**There is no author row, and that is the design.** Astra pins the author's
+*repository identity* and the artifact's SHA-256; it never pins a key the author
+holds, so an author losing or rotating one is a non-event here. The one
+author-signature mechanism this project ever shipped is §2.1, it is retiring,
+and it confers no trust on anybody's plugin.
 
 Two roots exist for one reason. A single root that has to be replaced — because
 the laptop it was generated on turned out to be compromised, because the paper
@@ -44,6 +49,36 @@ Shipping the reserve from day one turns that flag day into a document.
 **A root signs `trust.json` only.** It never appears on `index.json`, on
 `revocations.json`, or on a plugin bundle. That is what keeps the root offline:
 day-to-day publishing needs the index key, and the index key is replaceable.
+
+### 2.1 The in-ZIP pair, which is retiring and proves nothing about an author
+
+`astra-plugin sign` appends a `SIGNATURE`/`PUBKEY` pair *inside* the bundle
+(`astra-plugin-cli/src/commands/sign.rs`; the entries are named in
+`astra-daemon/src/plugins/bundle.rs` as `LEGACY_SIGNATURE_ENTRY` and
+`LEGACY_PUBKEY_ENTRY`). This is the only author-signature artifact the project
+has ever produced. **There is no detached sidecar** — no `.minisig`, no
+`.astraplugin.sig` — and no tool in this repository writes or reads one.
+
+What the daemon does with the pair is narrower than it looks. `verify_signature`
+(`astra-daemon/src/plugins/manager.rs`) checks it against the keys **compiled
+into that binary** — `trust::legacy_bundle_publisher_keys` — and *never* against
+the `PUBKEY` inside the archive, because trusting the archive's own key meant any
+self-minted keypair "verified": integrity without authenticity. It also uses
+`verify_strict`. So the pair can make a bundle signed with Astra's own pinned key
+installable, and can do nothing at all for a third party's — signing your plugin
+with a key you generated is not a trust signal in Astra, and
+`docs/en/publishing.md` says the same thing to authors.
+
+It is on a deletion schedule, not a roadmap. `LEGACY_SIGNATURE_SUNSET` in
+`astra-daemon/src/plugins/trust.rs` names the release —
+**Astra 0.4.0 / astra-plugin 0.5.0** — at which `astra-plugin sign` is removed,
+the daemon's read and its one call site are deleted, and `SIGNATURE`/`PUBKEY`
+stop being names the bundle format knows. The construction is not one to build
+on in any case: it hashes `name₀‖content₀‖name₁‖…` with no delimiters and no
+length prefixes, so an entry named `"ab"` with content `"c"` collides with
+`"a"`/`"bc"`. The read survives two releases only so bundles already on disk and
+on Release pages keep installing while `PRODUCTION_ROOT_KEYS` is empty (§4) and
+the replacement path — a countersigned registry record — cannot yet carry them.
 
 ### What is signed, exactly
 

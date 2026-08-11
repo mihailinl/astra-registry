@@ -1,0 +1,155 @@
+name: Asset check
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Nightly: does every artifact this catalogue lists still hash to what the
+# signed index says?
+#
+# PRODUCTION_PLAN task 6.6, and the reason it is written the way it is: the
+# obvious version of this job downloads every listed artifact every night. For
+# eleven plugins that is tens of megabytes a night and hundreds a week; for a
+# hundred plugins it is gigabytes. It is paid nightly to learn a fact that
+# changes approximately never, and it is the wrong shape besides — the event
+# worth catching is an asset being REPLACED, and a replaced object announces
+# itself in two headers before a byte of body moves:
+#
+#   * `Content-Length`, compared against the `size` the SIGNED INDEX records.
+#     This needs no memory of a previous run at all. It works on a cold runner.
+#   * `ETag`, compared against what the last run saw. This is the only thing
+#     that catches a replacement of exactly the same length.
+#
+# So: one conditional request per artifact, and a body fetch only when a header
+# disagrees — at which point the download is the investigation rather than the
+# cost. Measured in `bot/tests/asset-check.test.mjs` against a real HTTP server:
+# two artifacts totalling 15.9 MB cost 326 bytes of headers and zero bytes of
+# body on a cold run, and 196 bytes warm, against 15.9 MB per run for the
+# unconditional version.
+#
+# THE ETAG MEMORY IS NOT COMMITTED. It lives in the Actions cache, because it
+# has no security value: the worst a lost or poisoned cache can do is cost one
+# extra HEAD, since the `Content-Length`-against-`size` comparison never
+# consults it. Committing it would put a machine-written file with a new
+# timestamp into this repository's history every night, for nothing.
+#
+# WHAT A MISMATCH MEANS. Not that anybody is in danger: Astra pins the digest
+# out of the signed index and refuses bytes that do not match, so a swapped
+# asset is UNINSTALLABLE rather than dangerous. It means the release this
+# catalogue points at is no longer the release that was reviewed. What happens
+# next is one of the four moderation actions, and that is a maintainer's
+# decision — which is why this job opens an issue and does not touch the
+# catalogue.
+
+on:
+  schedule:
+    # 03:23 UTC. Off the hour so it does not queue behind everybody else's cron,
+    # and well clear of revoke.yml's 04:17 so the two never contend.
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Download and hash every artifact, ignoring the headers"
+        type: boolean
+        default: false
+
+concurrency:
+  group: asset-check
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # Keyed by the catalogue serial so a new listing starts from a cold cache
+      # for its own artifacts and a warm one for everybody else's. `restore-keys`
+      # falls back to the newest cache from any serial, which is the whole point:
+      # a cache miss must degrade to a slightly less informative run, never to a
+      # download of everything.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/asset-cache.json
+          key: asset-etags-${{ hashFiles('registry/v1/index.json') }}
+          restore-keys: |
+            asset-etags-
+
+      - name: Check the pinned artifacts
+        id: check
+        run: |
+          set -uo pipefail
+          node bot/asset-check.mjs \
+            --index registry/v1/index.json \
+            --cache "${{ runner.temp }}/asset-cache.json" \
+            --out asset-report.json \
+            ${{ inputs.full && '--full' || '' }} | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: asset-check-report
+          path: asset-report.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # An issue, not a failed job. A red cron nobody is assigned to is a red
+      # cron everybody learns to scroll past; an issue has an owner, a thread and
+      # a place for the decision to be recorded.
+      - name: Open an issue when an artifact no longer matches
+        if: steps.check.outputs.code != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("node:fs");
+            let report = { results: [] };
+            try { report = JSON.parse(fs.readFileSync("asset-report.json", "utf8")); } catch {}
+            const bad = report.results.filter((r) => r.verdict === "mismatch");
+            if (!bad.length) return;
+
+            const title = `[asset] ${bad.length} listed artifact(s) no longer match the signed index`;
+            const open = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo, state: "open", labels: "asset-check",
+            });
+            const body = [
+              "The nightly asset check found artifacts whose bytes are no longer the bytes this",
+              "catalogue pinned.",
+              "",
+              "**Nobody is at risk right now.** Astra verifies the SHA-256 out of the signed index",
+              "before it unpacks anything, so these plugins are uninstallable rather than dangerous.",
+              "What has happened is that the release this catalogue points at is not the release that",
+              "was reviewed.",
+              "",
+              ...bad.map((r) => `- \`${r.id}\` ${r.version} ${r.target} — ${r.why}`),
+              "",
+              "Next: find out why (a re-upload by the author is the common case, a compromised",
+              "account is the one that matters), then pick one of the four actions in",
+              "`docs/POLICY.md`. Yanking the version is usually right for a re-upload; an advisory is",
+              "right when the replacement is hostile.",
+            ].join("\n");
+
+            // One issue, reopened and updated, rather than a new one every night
+            // for the same artifact. A nightly job that files a duplicate issue
+            // per run is a nightly job somebody mutes.
+            const existing = open.data.find((i) => i.title === title);
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: existing.number,
+                body: `Still failing as of ${report.checked_at}.\n\n${body}`,
+              });
+              return;
+            }
+            await github.rest.issues.create({
+              owner: context.repo.owner, repo: context.repo.repo, title, body, labels: ["asset-check"],
+            });
+
+      - name: Fail the job too, so the run history shows it
+        if: steps.check.outputs.code != '0'
+        run: exit 1

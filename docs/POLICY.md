@@ -67,18 +67,31 @@ in the set above. A consent checkbox costs a user one read; blocking review cost
 an author days. `push_to_ui` draws inside a panel the plugin already owns, so a
 first request for it is a widening — see below — not a review.
 
-**What a declaration is worth right now.** All of the above — the four names,
-`R_NEW_HIGH_RISK`, `P_DELAY_HIGH_RISK`, the host-RPC scan — reads what the
-manifest *declares*. **Nothing enforces that declaration at run time yet.** The
-daemon issues a session token to every plugin it starts, and the host RPCs check
-that a caller is a registered plugin, not that the plugin was granted the thing
-it is calling; PRODUCTION_PLAN §5.6's `require_permission` is Phase 4.1 and has
-not landed. So an undeclared call is **not blocked on the user's machine**. The
-registry's only lever against a plugin that declares nothing and calls one of
-the four anyway is the string search over its source, which
-`docs/BOT-CHECKS.md` describes as a heuristic that catches accidents rather than
-a determined author. Read the table above as "who told us what", not as "what
-the daemon will permit", until that sentence is deleted.
+**What a declaration is worth now that Phase 4 has landed.** A declaration is
+enforced at run time. `require_permission` runs at the top of every host RPC
+that needs one: `HOST_RPC_PERMISSIONS` in
+`astra-daemon/src/plugins/host_service.rs` is the table, and it names all ten
+RPCs — six gated (`SubscribeEvents`, `SendChatMessage`, `FireTrigger`,
+`SetVariable`, `SetThemeContribution`, `PushToUi`) and four deliberately not
+(`Register`, `GetPluginSelfConfig`, `PluginLog`, `GetDaemonInfo`, none of which
+acts on anything outside the plugin). A canary reads that table rather than the
+methods, so a new RPC with no gate is a failing test instead of a silent
+omission. `dom_access` and `client` gate no RPC because they are not calls: they
+are *surface*, refused where the surface is handed out — the tier ceiling on
+`PluginStatusMsg` and on the UI-contribution and theme responses.
+
+So an undeclared call is now refused on the user's machine, with
+`permission_denied` and a message naming the permission and where the plugin's
+granted set came from. What that changes here: the string search over a bundle's
+source is no longer the only lever, and declaring honestly is no longer more
+expensive than not declaring — an undeclared authority simply does not work.
+
+**What it still does not buy.** A permission decides what the daemon will do
+*for* a plugin. It decides nothing about what the plugin's own process may do to
+the machine, because there is no sandbox: a plugin is a native process with the
+user's full privileges, and Phase 7 is where that changes. Read the table above
+as "what the daemon will permit", and root `POLICY.md` §0 for the part no
+permission model reaches.
 
 ### The SLA, and what happens when it slips
 
@@ -217,3 +230,204 @@ permission request, not auditing a compiled binary. Being in this catalogue mean
 the bytes are the bytes CI built from a repository somebody proved they control,
 and that this document's rules were applied to the result. Root POLICY.md §0 says
 the rest, and it is the sentence this policy cannot get around.
+
+---
+
+## 8. Taking something back
+
+Four actions, and they escalate by **what they cost somebody who already
+installed the plugin** — which is the only ordering a user cares about. None of
+them is a new mechanism; each is a thing the code already does, and naming them
+in one table is the whole point.
+
+| Action | Expressed as | Signed | A copy already installed | Reversible by |
+|---|---|---|---|---|
+| **Yank** | `"yanked": true` on `plugins/<id>/versions/<semver>.json` | no | **Nothing.** The version leaves the catalogue and stops being offered. | deleting the field |
+| **Delist** | `"unlisted": true` on `plugins/<id>/plugin.json` | no | **Nothing.** The whole plugin leaves the catalogue and stops being offered updates. | deleting the field |
+| **Deprecate** | an advisory with `"action": "warn"` | yes | Badged, and the user is told. Nothing is blocked and nothing is stopped. | a higher serial without it |
+| **Revoke** | an advisory with `"action": "block_install"` or `"disable"` | yes | `block_install` — new installs and updates refused, a running copy left alone. `disable` — also stopped, and it will not start again. | a higher serial without it |
+
+The first two are catalogue edits and reach nobody's machine; the last two are
+signed statements that do. The behaviour in the fourth column is
+`RevocationAction` in `astra-daemon/src/plugins/trust.rs`: `blocks_install()` is
+true for everything except `warn`, and `stops_installed()` is true only for
+`disable`.
+
+**Yanking is the author's tool**, not a moderation action — it means "do not use
+this one". It appears in the log when the registry does it; when an author does
+it, the commit is the record.
+
+**A revocation is deliberately undoable.** The daemon replaces its set on a
+strictly greater serial and may only *add* on an equal one, so a mistaken
+advisory is withdrawn by publishing a higher serial without it. That has to be
+possible, or the only way to correct a mistake would be to delete files and hope.
+
+### How it reaches a machine, and how fast
+
+`.github/workflows/revoke.yml` regenerates, signs and pushes
+`registry/v1/revocations.json` — and it exists as a separate workflow precisely
+so a withdrawal never queues behind a listing build. The target is **signed and
+on the CDN within five minutes**; the job stamps its own elapsed time on every
+run and warns past 300 s, so a miss is a fact in the log rather than a belief.
+
+The document carries a **seven-day** expiry against the catalogue's thirty. Past
+that window Astra blocks new installs outright — "Astra can't check whether this
+plugin has been withdrawn" — which is the one hard block in the whole freshness
+policy, and why the list is re-signed on a schedule even when no advisory has
+changed.
+
+### Advisories
+
+One file per advisory, `tools/revocations/ASTRA-YYYY-NNNN.json`, and the id is
+**stable for as long as the advisory exists**: the file name, the `id` field and
+every entry in the signed document must agree, or the build fails. Each advisory
+carries a severity, exactly one action, a reason a user can act on, and one or
+more keys — a bundle digest, a binary digest, an id, an `id@version`, a version
+range, an author identity, or a publisher key.
+
+At least one key must be one that can match a **sideloaded source directory**
+(`binary`, `id`, `id_version` or `version_range`). A digest-only advisory leaves
+"copy the files into a folder and sideload it" open by default rather than by
+exception, and `tools/lib/revocations.mjs` refuses one.
+
+### The transparency log
+
+Every action above is recorded in `bot/moderation/<date>-<plugin>-<action>.json`
+and published, machine-readable, at `/transparency/moderation-log.json`. An entry
+claiming a `deprecate` or a `revoke` must name an advisory that is **actually in
+the signed withdrawal list**, with a matching action, or the build fails. A
+transparency log that can claim an unsigned revocation is a tool for scaring
+people off a competitor.
+
+What the log does not contain, stated on the page itself: submissions refused
+before they were ever listed (those are public issues), reports received and not
+acted on (publishing those publishes an unsubstantiated accusation), and anything
+about installed copies — this registry has no telemetry and cannot tell you how
+many people are running a withdrawn version.
+
+## 9. Triage: how long a report takes
+
+A report is somebody telling this registry that a **listed** plugin is not what
+it says it is. Reports about behaviour beat every heuristic in this repository,
+and they are the mechanism it actually relies on, so the clock on them is
+published.
+
+| From | To | Target |
+|---|---|---|
+| A report arriving | a human has read it and said so on the thread | **72 h** |
+| A report of active harm becoming credible | the first action taken | **24 h** |
+| Acknowledgement | a decision, for everything that is not active harm | **7 days** |
+| An appeal being filed | a reasoned answer | **7 days** |
+
+"Active harm" means malware, credential harvesting, undisclosed exfiltration of
+conversation content, or a plugin whose behaviour differs from its description in
+a way that costs the user something. Everything else — a licence mismatch, a name
+that looks like impersonation, a disclosure that should have been on the store
+card — is the third row.
+
+**The first action is allowed to be the reversible one.** Delisting inside the
+24 h and deciding afterwards is not a failure of process, it is the process: a
+delist costs an author a listing and is undone in a commit, while `disable` stops
+software on somebody's machine. Speed comes from the reversible end of the table,
+never from the other one.
+
+**And when this slips.** The same answer as §3's review queue, for the same
+reason: the fix is to make fewer things need a person, not to promise harder. One
+maintainer cannot audit binaries and will not pretend to. If triage is
+consistently late, what changes is this table, in a reviewed commit — because a
+published clock nobody meets teaches people the document is decoration, and this
+one is load-bearing.
+
+These four numbers are declared in `bot/lib/moderation.mjs` and asserted against
+this file by `bot/tests/policy.test.mjs`, exactly like §3's and §4's.
+
+### The nightly asset check
+
+Every night, every artifact the catalogue pins is checked against the signed
+index with **one conditional request** — `Content-Length` compared to the `size`
+the index records, and `ETag` compared to what the previous run saw. A body is
+downloaded only when a header disagrees. Measured against a real server in
+`bot/tests/asset-check.test.mjs`: two artifacts totalling 15.9 MB cost 326 bytes
+of headers and no body on a cold run, against 15.9 MB per run for the
+unconditional version of the same job.
+
+A mismatch means the release this catalogue points at is no longer the release
+that was reviewed. It does **not** mean anybody is in danger: Astra verifies the
+digest before it unpacks anything, so a swapped asset is uninstallable rather
+than dangerous. The job opens an issue and touches nothing; what happens next is
+one of the four actions in §8, and that is a person's decision.
+
+## 10. Appeals
+
+Every action in §8 can be appealed, including one that has already taken effect,
+and the answer arrives within **7 days**. Open an issue titled
+`[appeal] <plugin-id>` and use this template:
+
+```
+Plugin id:
+Action being appealed:      yank / delist / deprecate / revoke
+Advisory id (if any):       ASTRA-YYYY-NNNN
+Your relationship to it:    author / co-maintainer / user / other
+
+What the registry said:
+  (paste the reason from the log entry or the advisory)
+
+What you say happened:
+
+What has changed since, if anything:
+  (a new release, a corrected manifest, a licence fix, a disclosure added to
+  the store card)
+
+What you are asking for:
+  (relist / reduce the action to a warning / withdraw the advisory entirely)
+```
+
+What happens: the maintainer answers on the thread, in public, naming the rule
+that was applied and whether it still applies. If the appeal succeeds, the
+correction is a commit — a field deleted, or an advisory withdrawn by publishing
+a higher serial without it — and the moderation log keeps both the original entry
+and the reversal. Nothing is quietly deleted; a log that can be edited is not a
+log.
+
+If the action was taken in error by this registry rather than by a rule, say so
+plainly in the appeal. That is a bug report about the bot or about this document,
+and it is worth filing on its own.
+
+## 11. Embargoed reports
+
+For anything that would let somebody **ship code to a user** — a hole in the
+verification chain, a way to get a listing past the checks, a compromised
+publisher — do not open a public issue.
+
+**Today, the channel is a private GitHub security advisory on this repository.**
+It is end-to-end between you and the maintainer, it needs no key ceremony, and it
+is the path this registry can honestly offer right now.
+
+**There is no PGP key yet, and no `security@` mailbox yet.** Both are slots in
+`bot/security-contact.json`, and both are empty. The security page on the website
+is generated from that file and says so in a box rather than printing a
+fingerprint for a key nobody holds — the same shape as the two compiled-in root
+key slots, which are also empty and which a default Astra build fails closed on.
+A vulnerability report sent into a void is worse than one never sent, because the
+reporter believes they told us.
+
+Provisioning it, when it happens, is this checklist and not fewer steps:
+
+1. Register `security@` on the domain the catalogue is served from, and prove
+   delivery by sending to it from an unrelated account and receiving it.
+2. Generate the key **offline**, on the same machine and with the same custody
+   rules as the root key ceremony in `SECURITY.md` §3 — one person, two copies,
+   one of them physical.
+3. Publish the armored public key in this repository, and the 40-hex fingerprint
+   in `bot/security-contact.json`, `SECURITY.md` and the repository profile, in
+   **one commit**. A fingerprint published in one place and not another is a
+   fingerprint an attacker gets to choose between.
+4. Send yourself an encrypted test report and decrypt it before announcing the
+   address anywhere.
+
+Until step 4 has happened, this section stays as it is.
+
+**What you get for reporting privately:** an acknowledgement inside the §9
+window, a coordinated disclosure date agreed with you rather than announced at
+you, credit in the advisory unless you ask otherwise, and — if the finding leads
+to a withdrawal — a stable `ASTRA-YYYY-NNNN` id that points at what you found.

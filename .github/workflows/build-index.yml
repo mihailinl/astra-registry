@@ -23,9 +23,17 @@ name: Registry index
 #     the name of a signed one is a downgrade attack the registry would have
 #     performed on itself.
 #
-# WHAT IT IS NOT.  It does not deploy, and it does not prove where any artifact
-# came from. Phase 3.3 adds the attestation checks; until then, say so rather
-# than letting a green tick imply more than it means.
+#   A website that disagrees with the catalogue.  Task 6.5. The site is
+#     generated from `dist/index.json` — the SIGNED deploy candidate, in this
+#     job, after the signature — and the same file is published under
+#     `/registry/v1/` inside the site tree. A plugin page therefore exists if
+#     and only if an index entry does, by construction rather than by
+#     discipline; there is no second source for a page to be generated from and
+#     no second job for it to drift in.
+#
+# WHAT IT IS NOT.  It does not prove where any artifact came from. Phase 3.3
+# adds the attestation checks; until then, say so rather than letting a green
+# tick imply more than it means.
 
 on:
   push:
@@ -47,6 +55,8 @@ permissions:
 jobs:
   index:
     runs-on: ubuntu-24.04
+    outputs:
+      deploy: ${{ steps.sign.outcome == 'success' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -66,6 +76,18 @@ jobs:
       # this comment why the gate is better for it.
       - name: Self-test (schemas, canonical JSON, the rejections)
         run: node tools/selftest.mjs
+
+      # The site's own tests, and they run BEFORE the catalogue is built rather
+      # than after the site is. The one they exist for — a page exists iff an
+      # entry does — is asserted in both directions against a synthetic
+      # catalogue, so it is a property of the generator rather than a property
+      # of today's eleven listings.
+      - name: Self-test (the site, the moderation log, the asset check)
+        run: |
+          set -euo pipefail
+          node site/selftest.mjs
+          node bot/moderation.mjs --check
+          node bot/tests/asset-check.test.mjs
 
       - name: Validate the listings
         # --allow-staging tolerates plugins/dice-roller/versions/0.1.1.json,
@@ -180,3 +202,81 @@ jobs:
           name: registry-index-v1
           path: dist/index.json
           if-no-files-found: error
+
+      # ── 6.5: the website, from the file that was just signed ──────────────
+      #
+      # `dist/registry/v1/` is assembled first and `--index` points INTO it, so
+      # the bytes the generator reads and the bytes published under
+      # `/registry/v1/index.json` are one file rather than two copies of one.
+      # That is what makes "a page exists iff an entry does" structural: there
+      # is no second input that could be stale.
+      #
+      # The withdrawal list and the trust documents are taken from the committed
+      # tree — `revoke.yml` owns their generation and signing, and a listing
+      # build that re-signed them would be a second publisher of a document that
+      # must have exactly one.
+      - name: Assemble the deploy tree, then generate the site from it
+        run: |
+          set -euo pipefail
+          mkdir -p dist/registry/v1
+          cp dist/index.json dist/registry/v1/index.json
+          for f in revocations.json trust.json root.json; do
+            [ -f "registry/v1/$f" ] && cp "registry/v1/$f" "dist/registry/v1/$f"
+          done
+          node site/build.mjs \
+            --index dist/registry/v1/index.json \
+            --revocations dist/registry/v1/revocations.json \
+            --registry-dir dist/registry/v1 \
+            --repo "${{ github.repository }}" \
+            --out dist/site
+
+      # The acceptance criterion, asserted against what was actually written
+      # rather than against what the generator says it wrote.
+      - name: A page exists for every entry, and for nothing else
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("node:fs");
+            const ids = JSON.parse(fs.readFileSync("dist/registry/v1/index.json", "utf8"))
+              .signed.plugins.map((p) => p.id).sort();
+            const pages = fs.readdirSync("dist/site/p").sort();
+            const missing = ids.filter((i) => !pages.includes(i));
+            const extra = pages.filter((p) => !ids.includes(p));
+            if (missing.length || extra.length) {
+              console.error(`::error::pages and entries disagree — missing ${missing.join(", ") || "none"}, extra ${extra.join(", ") || "none"}`);
+              process.exit(1);
+            }
+            console.log(`ok  ${ids.length} entr(y/ies), ${pages.length} page(s), and they are the same set`);
+          '
+
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.sign.outcome == 'success'
+        with:
+          path: dist/site
+
+  # Publishing is a separate job because `actions/deploy-pages` needs write
+  # scopes that the job downloading and reading a catalogue has no business
+  # holding. It runs only when the index above was signed, which is only ever
+  # on `main`: an unsigned catalogue reaching the published origin under the
+  # name of a signed one is the downgrade attack this repository spends most of
+  # its CI refusing to perform on itself.
+  deploy:
+    needs: index
+    if: needs.index.outputs.deploy == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # `cancel-in-progress: false`, and the withdrawal path uses `true` on the
+    # same group. A revocation deploy may cancel a listing deploy; a listing
+    # deploy waits behind a revocation. That ordering is the point: the two jobs
+    # publish to one origin and only one of them is urgent.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

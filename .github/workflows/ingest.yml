@@ -260,6 +260,17 @@ jobs:
       - name: The publication policy's tests, including its published numbers
         run: node bot/tests/policy.test.mjs
 
+      # The nightly asset check runs against a stranger's release assets and
+      # decides whether bytes that are already listed still match. Its tests
+      # belong beside the bot's for the same reason the bot's run here at all:
+      # a suite that only runs on pull requests is a suite that is green on the
+      # day it matters and unverified on every other one.
+      - name: The asset check, measured against a real HTTP server
+        run: node bot/tests/asset-check.test.mjs
+
+      - name: The moderation sources, and the log built from them
+        run: node bot/moderation.mjs --check
+
       - name: The listing rules, unchanged
         run: node tools/selftest.mjs
 

@@ -1,0 +1,193 @@
+/* One stylesheet. No build step, no preprocessor, no font download — a page
+   that needs a CDN to be legible is a page that is illegible on the day the CDN
+   is the thing that is broken. System fonts, two colours, and a layout that is
+   a single column at every width a person reads long text at. */
+
+:root {
+  color-scheme: light dark;
+  --fg: #16181d;
+  --dim: #5b6472;
+  --bg: #ffffff;
+  --panel: #f5f6f8;
+  --line: #d9dde3;
+  --link: #0b57d0;
+  --warn-bg: #fff6e0;
+  --warn-line: #e0b95a;
+  --danger-bg: #fdeceb;
+  --danger-line: #d4483b;
+  --danger-fg: #8f2018;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e6e8ec;
+    --dim: #9aa3b2;
+    --bg: #14161a;
+    --panel: #1c1f25;
+    --line: #2c313a;
+    --link: #7aa8ff;
+    --warn-bg: #2a2415;
+    --warn-line: #7a6428;
+    --danger-bg: #2c1917;
+    --danger-line: #a34b40;
+    --danger-fg: #f0a79e;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+main { max-width: 62rem; margin: 0 auto; padding: 1.5rem 1.25rem 4rem; }
+
+a { color: var(--link); }
+a:hover { text-decoration: underline; }
+
+code, pre, .digest {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+code { background: var(--panel); border-radius: 3px; padding: 0.1em 0.3em; word-break: break-all; }
+pre {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+}
+pre code { background: none; padding: 0; word-break: normal; }
+
+h1 { font-size: 1.9rem; line-height: 1.25; margin: 0 0 0.5rem; }
+h2 { font-size: 1.3rem; margin: 2rem 0 0.6rem; }
+h3 { font-size: 1.05rem; margin: 1.5rem 0 0.4rem; }
+hr { border: 0; border-top: 1px solid var(--line); margin: 2rem 0; }
+
+.thin { color: var(--dim); font-size: 0.92rem; }
+.quoted { font-style: italic; }
+
+/* ── chrome ─────────────────────────────────────────────────────────────── */
+
+header.site {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  align-items: baseline;
+  padding: 0.9rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+  max-width: 62rem;
+  margin: 0 auto;
+}
+header.site .brand { font-weight: 700; color: var(--fg); text-decoration: none; }
+header.site nav { display: flex; flex-wrap: wrap; gap: 1rem; }
+header.site nav a { color: var(--dim); text-decoration: none; font-size: 0.95rem; }
+header.site nav a[aria-current] { color: var(--fg); font-weight: 600; }
+
+footer.site {
+  max-width: 62rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+  border-top: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 0.9rem;
+}
+
+/* ── catalogue ──────────────────────────────────────────────────────────── */
+
+.hero p { max-width: 46rem; }
+
+.grid { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr)); margin: 1.5rem 0; }
+
+.card {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: inherit;
+  text-decoration: none;
+}
+.card:hover { border-color: var(--link); text-decoration: none; }
+.card-body { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; }
+.card code { background: none; padding: 0; color: var(--dim); }
+.icon { border-radius: 6px; flex: none; }
+.icon.blank { width: 40px; height: 40px; background: var(--line); border-radius: 6px; display: inline-block; }
+
+.badges { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.3rem; }
+.badge, .tag {
+  font-size: 0.75rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--dim);
+  white-space: nowrap;
+}
+.badge.warn { background: var(--warn-bg); border-color: var(--warn-line); color: inherit; }
+.badge.danger { background: var(--danger-bg); border-color: var(--danger-line); color: var(--danger-fg); }
+.tags { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+
+/* ── plugin page ────────────────────────────────────────────────────────── */
+
+header.plugin { display: flex; gap: 1rem; align-items: flex-start; margin-bottom: 1rem; }
+header.plugin .icon { width: 64px; height: 64px; }
+header.plugin .id { margin: 0.2rem 0; color: var(--dim); }
+.summary { font-size: 1.1rem; }
+
+.release { border-top: 1px solid var(--line); padding-top: 0.5rem; }
+
+.alert {
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin: 1rem 0;
+}
+.alert h2 { margin-top: 0; font-size: 1.05rem; }
+.alert.danger { background: var(--danger-bg); border-color: var(--danger-line); }
+.alert.danger h2 { color: var(--danger-fg); }
+
+.does-not-prove {
+  border: 2px solid var(--line);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin: 1rem 0;
+  background: var(--bg);
+}
+.does-not-prove p { margin: 0; }
+
+/* ── tables ─────────────────────────────────────────────────────────────── */
+
+.scroll { overflow-x: auto; margin: 0.75rem 0; }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; vertical-align: top; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--line); }
+th { color: var(--dim); font-weight: 600; }
+table.kv th { width: 12rem; }
+td.digest code { word-break: break-all; }
+
+/* ── search ─────────────────────────────────────────────────────────────── */
+
+#q {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  font: inherit;
+  color: inherit;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  margin: 0.75rem 0 0.25rem;
+}
+
+/* ── rendered documents ─────────────────────────────────────────────────── */
+
+.doc blockquote {
+  margin: 1rem 0;
+  padding: 0.1rem 1rem;
+  border-left: 3px solid var(--line);
+  color: var(--dim);
+}
+.doc li { margin: 0.2rem 0; }
