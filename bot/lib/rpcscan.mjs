@@ -1,10 +1,10 @@
 // Does the bundle call host RPCs it did not declare?
 //
-// `PluginHostService` is the plugin→daemon direction: ten methods, three of
+// `PluginHostService` is the plugin→daemon direction: ten methods, four of
 // which every plugin may always call (`Register`, `PluginLog`,
-// `GetPluginSelfConfig`) and seven of which act on the user's session. The
-// manifest says which of those a plugin is for. This looks in the shipped files
-// for the names of the others.
+// `GetPluginSelfConfig`, `GetDaemonInfo` — see `ALWAYS_ALLOWED`) and six of
+// which act on the user's session. The manifest says which of those a plugin is
+// for. This looks in the shipped files for the names of the others.
 //
 // ── say plainly what this is ────────────────────────────────────────────────
 //
@@ -60,24 +60,52 @@ export const HOST_RPCS = [
 ];
 
 /**
- * Callable by anything, with no declaration: `EXEMPT_PATHS` in the daemon's
- * auth interceptor contains `Register`, and the other two are how a plugin
- * reports and configures itself. Scanning for them would flag every plugin.
+ * Callable by anything, with no declaration.
+ *
+ * This is the daemon's own always-allowed set, and it is FOUR, not the three
+ * §5.6's prose names. `HOST_RPC_PERMISSIONS` in
+ * `astra-daemon/src/plugins/host_service.rs` is the table Phase 4 task 4.1
+ * shipped, and it maps `Register`, `PluginLog`, `GetPluginSelfConfig` **and
+ * `GetDaemonInfo`** to no permission at all. `GetDaemonInfo` returns version,
+ * state, gRPC port and language — everything `PluginRegisterResponse` already
+ * handed the caller, plus the port it is calling on — so gating it would have
+ * meant inventing a permission id to protect nothing.
+ *
+ * It used to sit in `RPC_RULES` under a `get_daemon_info` permission, which was
+ * fiction in both directions: no such id exists in the shared vocabulary
+ * (`astra-plugin-manifest::PERMISSION_NAMES` has eight and that is not one of
+ * them), so the bot told an author to declare a key the daemon would file as
+ * unrecognised and the consent sheet would render as "not recognised by this
+ * version" — a scary box on a store page, bought for a call that needs no
+ * permission at all.
  */
-const ALWAYS_ALLOWED = new Set(["Register", "PluginLog", "GetPluginSelfConfig"]);
+const ALWAYS_ALLOWED = new Set([
+  "Register",
+  "PluginLog",
+  "GetPluginSelfConfig",
+  "GetDaemonInfo",
+]);
 
 /**
  * Which declaration makes each call legitimate.
  *
- * `permission` is the `[permissions]` key PRODUCTION_PLAN §5.6 introduces and
- * Phase 4 enforces; `capability` is what the manifest can say **today**, before
- * that section exists. Both are accepted, so this check does not have to be
- * rewritten when `[permissions]` lands and does not reject every current plugin
- * in the meantime.
+ * `permission` is the `[permissions]` key from §5.6, which Phase 4 landed and
+ * the daemon now enforces; `capability` is what a manifest written before that
+ * section existed says instead. Both are still accepted, because a plugin
+ * published against the older shape must not start failing this check — the
+ * daemon's own `decide_grants` is the thing that decides, and this is a lint
+ * over shipped source, not a gate.
  *
  * `blocking` is the plan's list, verbatim: these four act outside the plugin —
  * they fire the user's automations, speak as the user in their chat, write the
  * daemon's variables, and restyle the whole application.
+ *
+ * Every `permission` below must be a real id in
+ * `astra-plugin-manifest::PERMISSION_NAMES`. That is pinned from Rust, where
+ * the vocabulary actually lives: `bot/manifest-probe`'s
+ * `every_permission_the_js_half_names_is_a_real_one` reads this literal as text
+ * and fails `cargo test` on an id the daemon does not have. So a hint this file
+ * gives an author is one their daemon will honour.
  */
 export const RPC_RULES = {
   FireTrigger: { permission: "fire_trigger", capability: "triggers", blocking: true },
@@ -86,7 +114,6 @@ export const RPC_RULES = {
   SetThemeContribution: { permission: "set_theme_contribution", capability: "ui_contributions", blocking: true },
   PushToUi: { permission: "push_to_ui", capability: "ui_contributions", blocking: false },
   SubscribeEvents: { permission: "subscribe_events", capability: "event_handlers", blocking: false },
-  GetDaemonInfo: { permission: "get_daemon_info", capability: null, blocking: false },
 };
 
 // ── what "vendored" is allowed to mean ──────────────────────────────────────
@@ -249,9 +276,14 @@ export function scanHostRpcs(files, declared) {
 
   for (const [rpc, where] of [...hits.entries()].sort()) {
     const rule = RPC_RULES[rpc];
+    // `[permissions]` is named FIRST because it is now the declaration the
+    // daemon actually gates on (§5.6, task 4.1); `[capabilities]` is offered
+    // second because a manifest predating that section is still publishable and
+    // still passes this check. Telling an author to reach for the capability
+    // first would hand them the one that no longer buys the call.
     const needs = rule.capability
-      ? `\`[capabilities] ${rule.capability} = true\` (or \`[permissions] ${rule.permission}\` once that section exists)`
-      : `\`[permissions] ${rule.permission}\``;
+      ? `\`[permissions] ${rule.permission} = { reason = "…" }\` (or the older \`[capabilities] ${rule.capability} = true\`)`
+      : `\`[permissions] ${rule.permission} = { reason = "…" }\``;
     if (where.source.length) {
       findings.push({
         level: rule.blocking ? "error" : "warn",

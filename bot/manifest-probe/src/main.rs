@@ -37,7 +37,7 @@
 use std::io::Read;
 
 use astra_plugin_manifest::{
-    CAPABILITY_NAMES, PluginManifest, is_reserved_device_name, platform_key_for,
+    CAPABILITY_NAMES, PERMISSION_NAMES, PluginManifest, is_reserved_device_name, platform_key_for,
 };
 use serde::{Deserialize, Serialize};
 
@@ -604,6 +604,51 @@ id = "sink-panel"
         assert_eq!(m.ui_contribution_ids, vec!["sink-panel"]);
         assert!(m.has_config_schema);
         assert_eq!(m.license, "Apache-2.0");
+    }
+
+    /// Every permission id the JS half puts in front of an author must be one
+    /// the daemon actually has.
+    ///
+    /// `bot/lib/rpcscan.mjs` tells a submitter which declaration would make an
+    /// undeclared host call legitimate. It is JavaScript, so it cannot import
+    /// [`astra_plugin_manifest::PERMISSION_NAMES`], and it drifted exactly the
+    /// way an uncheckable copy does: it carried `get_daemon_info`, an id in no
+    /// vocabulary anywhere. An author following that hint would have declared a
+    /// key the daemon files as unrecognised and §4.3's consent sheet renders as
+    /// "not recognised by this version" — a scary box on a store page, bought
+    /// for a call that needs no permission at all.
+    ///
+    /// This test is in Rust because Rust is where the vocabulary lives. It reads
+    /// the JS as text for the same reason the daemon's consistency canaries do:
+    /// the alternative is a fourth copy of the list.
+    #[test]
+    fn every_permission_the_js_half_names_is_a_real_one() {
+        let js = include_str!("../../lib/rpcscan.mjs");
+        let rules = js
+            .split("export const RPC_RULES")
+            .nth(1)
+            .expect("RPC_RULES must still be exported from rpcscan.mjs");
+        let body = rules.split("};").next().expect("RPC_RULES literal");
+
+        let mut seen = 0;
+        for chunk in body.split("permission: \"").skip(1) {
+            let id = chunk.split('"').next().expect("a closing quote");
+            assert!(
+                PERMISSION_NAMES.contains(&id),
+                "bot/lib/rpcscan.mjs offers `[permissions] {id}`, which is not one of the \
+                 {} ids the daemon knows ({}). An author told to declare it would get a \
+                 permission the daemon treats as inert.",
+                PERMISSION_NAMES.len(),
+                PERMISSION_NAMES.join(", "),
+            );
+            seen += 1;
+        }
+        // A vacuity guard: a rename that emptied the table would otherwise pass.
+        assert!(
+            seen >= 6,
+            "only {seen} permission id(s) found in RPC_RULES — the parse above has \
+             stopped matching the file's shape, so this test is checking nothing"
+        );
     }
 
     /// The response is the bot's whole view of the manifest. If it stops being

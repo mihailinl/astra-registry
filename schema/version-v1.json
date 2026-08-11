@@ -74,14 +74,28 @@
     },
     "permissions": {
       "type": "object",
-      "description": "Phase 4 territory. Present here so the shape is reserved and a listing can carry it before the daemon enforces it; the index copies it through unchanged.",
+      "description": "The plugin's `[permissions]` section, derived from MANIFEST.json and copied through to the index unchanged. Phase 4 made this load-bearing: the daemon's granted set for a registry install is read out of the trust record written from these bytes, and §4.3's consent sheet is rendered from them before any download. The permission ids are the app's vocabulary, not this schema's — the registry ships ids and Astra ships the words, so an id this schema has never heard of is carried rather than rejected.",
       "patternProperties": {
         "^[a-z_]{1,64}$": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
             "$comment": { "type": "string" },
-            "reason": { "type": "string", "maxLength": 140 }
+            "reason": { "type": "string", "maxLength": 140 },
+            "types": {
+              "$comment": "`subscribe_events.types`. An allowlist the daemon enforces per event, where an EMPTY list allows nothing — so a schema that refused this member published plugins whose every subscription the daemon then denied.",
+              "type": "array",
+              "items": { "type": "string", "maxLength": 128 },
+              "maxItems": 64,
+              "uniqueItems": true
+            },
+            "scopes": {
+              "$comment": "`set_variable.scopes`. Reserved — the daemon namespaces every plugin write by plugin id today, so this narrows nothing yet. Accepted so a manifest declaring it is publishable and hashes the same everywhere.",
+              "type": "array",
+              "items": { "type": "string", "maxLength": 128 },
+              "maxItems": 16,
+              "uniqueItems": true
+            }
           }
         }
       },
