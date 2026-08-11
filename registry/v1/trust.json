@@ -1,0 +1,26 @@
+{
+  "$comment": "The Astra registry's delegation document. Signed by a ROOT key; names the index key that signs index.json and revocations.json, and the reusable-workflow commits the bot will accept in a build attestation. Only the `signed` member is covered by the signatures. Produced by tools/sign-trust.mjs; verify with --verify.",
+  "signatures": [
+    {
+      "key_id": "astra-root-2026a",
+      "sig": "t/01KDwfLSmxTyk3c1UqoE7A+08cwdljpABk4L0EFm10oz9SVM626SrjvjV3WiMH4gPVElEd09vdZZTYJQwTDw=="
+    }
+  ],
+  "signed": {
+    "expires_at": "2027-08-11T23:49:05Z",
+    "index_keys": [
+      {
+        "key_id": "astra-index-2026a",
+        "not_before": "2026-08-11T23:49:05Z",
+        "public_key": "qrNK87ZsLPQQK9IUJYk+Q3nFUjBCDVTxD/DgPipcvK8="
+      }
+    ],
+    "issued_at": "2026-08-11T23:49:05Z",
+    "reusable_workflow_shas": [
+      "e3329df252a46d747676cb540ae4b986af68a3ad"
+    ],
+    "schema": "astra.registry.trust/1",
+    "serial": 1
+  }
+}
+
