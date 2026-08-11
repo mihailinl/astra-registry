@@ -55,6 +55,20 @@ permissions:
 jobs:
   index:
     runs-on: ubuntu-24.04
+    # Where the index signing key lives. The "Sign the deploy candidate" step
+    # below has always SAID so; the job never declared it, so
+    # `secrets.ASTRA_INDEX_SIGNING_KEY` resolved against repository secrets and
+    # a key put where the comment, the runbook and `tools/keygen-index.sh` all
+    # send you would have been invisible — the run failing with "no
+    # ASTRA_INDEX_SIGNING_KEY on main", which reads as a missing secret rather
+    # than a misplaced one.
+    #
+    # Declaring it also buys the property PRODUCTION_PLAN §5.1 wanted: an
+    # environment can carry a required reviewer, so signing the catalogue can be
+    # made to need a human. This adds no protection rule — that is a decision
+    # for the repository settings, not for a file — but it is the hook such a
+    # rule attaches to, and without the environment there is nowhere to put one.
+    environment: publish
     outputs:
       deploy: ${{ steps.sign.outcome == 'success' }}
     steps:
