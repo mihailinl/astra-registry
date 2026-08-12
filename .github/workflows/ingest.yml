@@ -102,11 +102,20 @@ env:
   # got "the ingest job did not produce a report", which reads as a fault
   # somewhere in the bot rather than as a one-line pin.
   #
-  # It is now the merged tip of `master`, which is also `plugin-release/v1` and
-  # the one commit `trust.json` allows an attestation from. Those three wanting
-  # to be the same commit is not a coincidence — they are all "the version of
-  # AstraPlugins this registry judges by".
-  ASTRA_PLUGINS_REF: e3329df252a46d747676cb540ae4b986af68a3ad
+  # It was for a while the same commit as `plugin-release/v1` and as the one
+  # `trust.json` allows an attestation from. **They have now diverged, and that
+  # is correct.** This pin says which manifest rules a listing is judged by, and
+  # moving it is a code review. `trust.json`'s allowlist says which builder's
+  # word is worth anything, and moving that is a root-key ceremony. Tying a
+  # cheap decision to an expensive one means either the cheap one stops moving
+  # or the expensive one gets made casually.
+  #
+  # Bumped to `aaf480ea` for `spec/icon-formats.yaml`, which the icon-format
+  # coupling in `tools/validate.mjs` reads. Safe to move: `astra-plugin-manifest`
+  # and `plugin-release.yml` are byte-identical between the two commits
+  # (`git diff --stat e3329df2 aaf480ea -- <path>` is empty for both), so no
+  # manifest is judged differently and no attestation changes meaning.
+  ASTRA_PLUGINS_REF: aaf480ea0b8b70a4cf18ad47646cf40f6efa0520
   ASTRA_PLUGINS_URL: https://github.com/mihailinl/AstraPlugins.git
 
 jobs:
