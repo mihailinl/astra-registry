@@ -40,6 +40,31 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Hourly, for two independent reasons — either alone would justify it.
+  #
+  # 1. THE BOT'S PUBLISH COMMIT DOES NOT TRIGGER THIS FILE. `ingest.yml`'s
+  #    publish job commits with the repository's own `GITHUB_TOKEN`, and GitHub
+  #    does not start workflow runs from events raised by that token — the same
+  #    rule `ingest.yml` documents at the top of itself for its cron paths. So
+  #    the bot would add a listing, regenerate the index in that commit, and the
+  #    SIGNING and the Pages deployment — which live here — would never run. The
+  #    catalogue users actually fetch would sit at the previous listing until a
+  #    human happened to push something unrelated. Measured, not theorised: the
+  #    first successful zero-touch publication landed `dice-roller 0.1.2` in
+  #    `plugins/` and `mihailinl.github.io` kept serving 0.1.1.
+  #
+  # 2. THE CATALOGUE EXPIRES. `CATALOG_TTL_DAYS` is 30, and `issued_at` is
+  #    stamped at signing. A registry nobody edits for a month would serve a
+  #    catalogue past its own expiry and every daemon would be right to complain
+  #    — a freshness window has to be refreshed by something that runs whether
+  #    or not anybody committed.
+  #
+  # Hourly rather than daily because publication latency is the point of the
+  # first reason; hourly rather than every few minutes because the run re-signs
+  # and redeploys, and the publication delay it follows is already measured in
+  # hours. The job is idempotent: same tree, same serial, same content.
+  schedule:
+    - cron: '23 * * * *'
 
 # One index build in flight at a time. Two runs racing would each compute a
 # serial and each upload an artifact, and whichever finished second would win —
