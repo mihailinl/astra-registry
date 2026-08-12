@@ -16,8 +16,16 @@
     "subdirectory": "examples/bad-apple"
   },
   "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/bad-apple",
-  "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/bad-apple/icon.svg",
-  "categories": ["entertainment"],
-  "keywords": ["ascii", "animation", "background", "crt", "effect"],
-  "added_at": "2026-08-10"
+  "categories": [
+    "entertainment"
+  ],
+  "keywords": [
+    "ascii",
+    "animation",
+    "background",
+    "crt",
+    "effect"
+  ],
+  "added_at": "2026-08-10",
+  "icon": "icon.png"
 }

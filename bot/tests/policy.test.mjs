@@ -294,6 +294,40 @@ await test("a failed check is a refusal, and the policy says it never got a say"
 
 section("the delay");
 
+await test("the tree the publish job commits carries the icon and the README", async () => {
+  // There were two writers of a listing: `ingest.mjs`'s, which lays out the
+  // tree the validator checks, and `decide.mjs`'s, which lays out the tree the
+  // workflow commits. When a listing gained presentation files only the first
+  // learned to write them, so validation passed on one tree and the workflow
+  // committed a different one — and the run died on this repository's own rule,
+  // `icon "icon.svg" is named here but the file is not in plugins/dice-roller/`.
+  //
+  // Asserting the FILES, not the fields: `plugin.json` naming an icon it did
+  // not ship is exactly the state that got through.
+  const root = registryTree([{ versions: [{ version: "0.1.0" }] }]);
+  const out = tmp("astra-policy-out-");
+  const r = await run({
+    root,
+    assets: [conforming({
+      extraFiles: [
+        { name: "icon.svg", data: '<svg xmlns="http://www.w3.org/2000/svg"><rect width="16" height="16"/></svg>' },
+        { name: "README.md", data: "# Dice Roller\n\nRolls dice.\n" },
+      ],
+    })],
+  });
+  assertEqual(r.decision.outcome, "publish", JSON.stringify(r.decision.reasons));
+
+  writeOutputs(out, { repo: REPO, tag: TAG, issue: null }, r);
+  const dir = path.join(out, "plugins", "dice-roller");
+  const doc = JSON.parse(fs.readFileSync(path.join(dir, "plugin.json"), "utf8"));
+  assertEqual(doc.icon, "icon.svg", "the document has to name the icon");
+  assertEqual(doc.readme, "README.md", "and the README");
+  assert(fs.existsSync(path.join(dir, "icon.svg")),
+    "plugin.json names an icon the committed tree does not contain");
+  assert(fs.existsSync(path.join(dir, "README.md")),
+    "plugin.json names a README the committed tree does not contain");
+});
+
 await test("a plugin already holding dom_access waits, even with nothing changed", async () => {
   const root = registryTree([{ versions: [{ version: "0.1.0", capabilities: ["dom_access", "tools"] }] }]);
   const r = await run({ root, assets: [conforming({ capabilities: ["tools", "dom_access"] })] });

@@ -16,8 +16,17 @@
     "subdirectory": "examples/web-chat"
   },
   "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/web-chat",
-  "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/web-chat/icon.svg",
-  "categories": ["development", "communication"],
-  "keywords": ["web", "client", "websocket", "sync", "development"],
-  "added_at": "2026-08-10"
+  "categories": [
+    "development",
+    "communication"
+  ],
+  "keywords": [
+    "web",
+    "client",
+    "websocket",
+    "sync",
+    "development"
+  ],
+  "added_at": "2026-08-10",
+  "icon": "icon.webp"
 }

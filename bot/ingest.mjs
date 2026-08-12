@@ -431,7 +431,7 @@ export async function ingest(opts, deps = {}) {
  * @param {string} dir `plugins/<id>` under whichever root
  * @param {{plugin: object, version: object, assets?: {path: string, bytes: Buffer}[]}} derived
  */
-function writeListing(dir, derived) {
+export function writeListing(dir, derived) {
   fs.mkdirSync(path.join(dir, "versions"), { recursive: true });
   fs.writeFileSync(path.join(dir, "plugin.json"), `${JSON.stringify(derived.plugin, null, 2)}\n`);
   fs.writeFileSync(

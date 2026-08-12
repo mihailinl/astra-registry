@@ -16,8 +16,16 @@
     "subdirectory": "examples/tone-tts"
   },
   "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/tone-tts",
-  "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/tone-tts/icon.svg",
-  "categories": ["voice", "development"],
-  "keywords": ["tts", "mock", "testing", "diagnostic"],
-  "added_at": "2026-08-10"
+  "categories": [
+    "voice",
+    "development"
+  ],
+  "keywords": [
+    "tts",
+    "mock",
+    "testing",
+    "diagnostic"
+  ],
+  "added_at": "2026-08-10",
+  "icon": "icon.png"
 }

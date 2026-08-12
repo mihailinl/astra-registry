@@ -4,7 +4,7 @@
   "id": "json-tools",
   "name": "JSON Tools",
   "summary": "Format, query and diff JSON, in conversation and in commands.",
-  "description": "Three tools the assistant can call — pretty-print JSON at a chosen indent, extract a value by dot-path, and diff two documents path by path — plus a JSON Transform action for the command editor that formats, minifies, sorts keys or extracts a path and stores the result in a variable. Requires Node.js 18 or newer on the machine running Astra; the bundle declares node as a runtime so the daemon refuses to start it rather than failing halfway.",
+  "description": "Three tools the assistant can call \u2014 pretty-print JSON at a chosen indent, extract a value by dot-path, and diff two documents path by path \u2014 plus a JSON Transform action for the command editor that formats, minifies, sorts keys or extracts a path and stores the result in a variable. Requires Node.js 18 or newer on the machine running Astra; the bundle declares node as a runtime so the daemon refuses to start it rather than failing halfway.",
   "author": {
     "name": "Astra Team",
     "url": "https://github.com/mihailinl"
@@ -16,8 +16,16 @@
     "subdirectory": "examples/json-tools"
   },
   "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/json-tools",
-  "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/json-tools/icon.svg",
-  "categories": ["development", "utilities"],
-  "keywords": ["json", "format", "diff", "typescript"],
-  "added_at": "2026-08-10"
+  "categories": [
+    "development",
+    "utilities"
+  ],
+  "keywords": [
+    "json",
+    "format",
+    "diff",
+    "typescript"
+  ],
+  "added_at": "2026-08-10",
+  "icon": "icon.svg"
 }

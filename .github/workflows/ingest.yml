@@ -548,15 +548,25 @@ jobs:
 
             # ── the shape check ───────────────────────────────────────────
             # A listing directory is `plugins/<id>/` with `plugin.json` and
-            # `versions/<semver>.json` under it, and an id is the charset the
-            # daemon will turn into a directory name on a user's disk. Anything
-            # else in the artifact means the ingest produced something nobody
-            # designed, and the answer to that is to stop, not to commit it.
+            # `versions/<semver>.json` under it, plus the two presentation
+            # files the bot lifts out of the attested bundle — the icon and the
+            # README. An id is the charset the daemon will turn into a
+            # directory name on a user's disk. Anything else in the artifact
+            # means the ingest produced something nobody designed, and the
+            # answer to that is to stop, not to commit it.
+            #
+            # The icon extensions are listed one by one rather than as
+            # `icon.*`, and must stay in step with
+            # `AstraPlugins/spec/icon-formats.yaml`. A glob here would accept
+            # `icon.sh` out of an artifact this job is about to commit.
             if [ -d "$dir/plugins" ]; then
               while IFS= read -r p; do
                 rel="${p#"$dir/"}"
                 case "$rel" in
                   plugins/*/plugin.json|plugins/*/versions/*.json) ;;
+                  plugins/*/README.md) ;;
+                  plugins/*/icon.png|plugins/*/icon.webp|plugins/*/icon.svg) ;;
+                  plugins/*/icon.jpg|plugins/*/icon.jpeg|plugins/*/icon.ico) ;;
                   *) echo "::error::$rel is not a listing file"; exit 1 ;;
                 esac
                 id="$(printf '%s' "$rel" | cut -d/ -f2)"
