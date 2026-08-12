@@ -526,6 +526,17 @@ jobs:
 
           for dir in reports/*/; do
             [ -d "$dir" ] || continue
+            # `reports/*/` globs WITH a trailing slash, so `$dir/plugins` is
+            # `reports/1//plugins`, `find` prints that doubled separator back
+            # verbatim, and `${p#"$dir"}` then leaves a LEADING SLASH on every
+            # path — `/plugins/x/plugin.json`, which matches neither shape
+            # pattern below. Both guards therefore rejected every file they
+            # were ever handed, and the zero-touch publication this workflow
+            # exists to perform had never once run to completion: the first
+            # listing reached the catalogue through a hand-opened pull request,
+            # so nothing had exercised this path. Normalise once, here, rather
+            # than making each use remember.
+            dir="${dir%/}"
 
             # ── the shape check ───────────────────────────────────────────
             # A listing directory is `plugins/<id>/` with `plugin.json` and
@@ -535,7 +546,7 @@ jobs:
             # designed, and the answer to that is to stop, not to commit it.
             if [ -d "$dir/plugins" ]; then
               while IFS= read -r p; do
-                rel="${p#"$dir"}"
+                rel="${p#"$dir/"}"
                 case "$rel" in
                   plugins/*/plugin.json|plugins/*/versions/*.json) ;;
                   *) echo "::error::$rel is not a listing file"; exit 1 ;;
@@ -551,7 +562,7 @@ jobs:
             # ── the publication queue ─────────────────────────────────────
             if [ -d "$dir/state" ]; then
               while IFS= read -r p; do
-                rel="${p#"$dir"}"
+                rel="${p#"$dir/"}"
                 case "$rel" in
                   state/queue/*.json) ;;
                   *) echo "::error::$rel is not a queue entry"; exit 1 ;;
