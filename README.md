@@ -28,12 +28,19 @@ bot/                                  submission checks (Phase 2 half)
 ## The URL Astra fetches
 
 ```
-https://raw.githubusercontent.com/mihailinl/astra-registry/main/registry/v1/index.json
+https://mihailinl.github.io/astra-registry/registry/v1/index.json
 ```
 
 One file, served over HTTPS. It carries a `sha256` and a `size` for every
 artifact, so the *artifacts* are pinned by digest regardless of what is believed
 about the catalogue itself.
+
+**Not the copy in this branch.** `raw.githubusercontent.com/…/main/registry/v1/index.json`
+serves the committed file, which carries `"signatures": []` permanently and by
+design — see below. The signed catalogue exists only in the deployment, so
+fetching the branch copy gets a catalogue the daemon will classify `UNSIGNED`
+and refuse. That URL was the daemon's default until it was measured against this
+one; `astra-daemon`'s `DEFAULT_REGISTRY_URL` now points here.
 
 Since Phase 3.2 the catalogue is a **signed envelope** —
 `{ "signatures": [...], "signed": { "schema", "serial", "plugins" } }` — and only

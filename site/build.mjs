@@ -27,11 +27,18 @@
 //
 // `/registry/v1/**` is published inside the site tree. `/search/` fetches the
 // catalogue with a relative URL and no CORS preflight, and a reader who wants
-// to check a digest by hand is reading the same bytes from the same host. The
-// daemon's default remains `raw.githubusercontent.com/.../registry/v1/index.json`
-// (Astra `astra-daemon/src/plugins/registry_client.rs` `DEFAULT_REGISTRY_URL`)
-// and is unaffected by any of this: the copy here is a mirror that is
-// byte-identical because it was never a copy in the first place.
+// to check a digest by hand is reading the same bytes from the same host.
+//
+// It is also **where the daemon fetches the catalogue** —
+// `astra-daemon/src/plugins/registry_client.rs` `DEFAULT_REGISTRY_URL`. That
+// pointed at `raw.githubusercontent.com/.../main/registry/v1/index.json`, and
+// this comment claimed the two were "byte-identical". They are not, and cannot
+// be: the committed file carries `signatures: []` by design, because the key
+// that signs the catalogue lives in the `publish` environment and signs the
+// DEPLOY CANDIDATE. What is published here is signed; what is in the branch
+// never is. A daemon reading the branch copy classified every catalogue
+// UNSIGNED and refused it — correctly, having never been sent one that anybody
+// had signed.
 //
 // ── NO astra:// DEEP LINK ───────────────────────────────────────────────────
 //
