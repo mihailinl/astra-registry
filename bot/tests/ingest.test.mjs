@@ -287,14 +287,41 @@ await test("everything except the repository and the tag comes out of the bundle
 
 section("failing closed");
 
-await test("with no root key, nothing is listed and the reason says so", async () => {
+await test("with no signed trust.json, nothing is listed and the reason says so", async () => {
+  // The absent file is named deliberately. This pointed at the REAL
+  // `registry/v1/trust.json` and passed because that file did not exist — so
+  // the day one was signed and published it began failing with
+  // `expected E_TRUST_UNPROVISIONED; the blocking codes were
+  // ["E_WORKFLOW_NOT_ALLOWED"]`. That is the run getting further, correctly:
+  // the test was asserting a state of the world, not a behaviour.
+  //
+  // What it exists for survives. With nothing delegated there is no allowlist
+  // to check an attestation against, and the bot must stop at the anchor rather
+  // than proceed on a catalogue nobody vouched for.
   const r = await run({
     assets: [conformingAsset()],
     rootsFile: path.join(REPO_ROOT, "registry", "v1", "root.json"),
-    trustFile: path.join(REPO_ROOT, "registry", "v1", "trust.json"),
+    trustFile: path.join(REPO_ROOT, "registry", "v1", "trust.json.no-such-file"),
   });
   assertBlockedWith(r, "E_TRUST_UNPROVISIONED");
   assert(r.findings.length === 1, "and it stops there rather than spending a stranger's bandwidth");
+});
+
+await test("the published trust.json delegates a non-empty allowlist", () => {
+  // The other half, assertable only now that one is signed: the committed
+  // document verifies under the committed roots and yields an allowlist. If it
+  // ever stops doing so — expired, a key rotated out, the file edited — every
+  // ingest silently returns to the state above, and the message a submitter
+  // gets says the anchor is missing rather than that it went stale.
+  const verdict = loadWorkflowAllowlist({
+    trustFile: path.join(REPO_ROOT, "registry", "v1", "trust.json"),
+    rootsFile: path.join(REPO_ROOT, "registry", "v1", "root.json"),
+  });
+  assert(verdict.ok, verdict.message ?? "the committed trust.json does not verify under the roots");
+  assert(
+    verdict.allowlist.length > 0,
+    "it verifies but delegates no reusable-workflow commit, so every release ingest would stop at E_WORKFLOW_NOT_ALLOWED",
+  );
 });
 
 await test("a trust.json signed by a stranger is not a trust.json", () => {
@@ -613,7 +640,17 @@ await test("E_ID_RESERVED / E_ID_RESERVED_PREFIX — names that read as first-pa
 section("metadata, licence, platform");
 
 await test("E_LICENSE_NOT_ALLOWED — a licence nobody here has read", async () => {
-  const r = await run({ assets: [conformingAsset({ license: "GPL-3.0-only" })] });
+  // BUSL-1.1, and it has to be a licence that is genuinely absent from
+  // `policy/spdx-allowlist.json` rather than one that merely was. This said
+  // `GPL-3.0-only` and stopped testing anything the day the copyleft family was
+  // added to the allowlist: the fixture kept naming "a licence nobody here has
+  // read" while naming one that had been read and admitted.
+  //
+  // BUSL is a good long-term choice for this. It is a real, widely used licence
+  // and it is source-available rather than open source, so it is not a candidate
+  // for the allowlist while §4 of POLICY.md says open source only — which is
+  // what this check is enforcing.
+  const r = await run({ assets: [conformingAsset({ license: "BUSL-1.1" })] });
   assertBlockedWith(r, "E_LICENSE_NOT_ALLOWED");
 });
 
@@ -986,7 +1023,10 @@ await test("/recheck is a command only when it is the whole line", () => {
 section("the comment a stranger reads");
 
 await test("every blocking finding is followed by what to do about it", async () => {
-  const r = await run({ assets: [conformingAsset({ license: "GPL-3.0-only" })] });
+  // Same licence as the check above, and for the same reason: it has to be one
+  // the allowlist really refuses, or this asserts the text of a finding that
+  // never happens.
+  const r = await run({ assets: [conformingAsset({ license: "BUSL-1.1" })] });
   assert(r.comment.includes("E_LICENSE_NOT_ALLOWED"), "the code is in the comment");
   assert(r.comment.includes(codeDef("E_LICENSE_NOT_ALLOWED").remedy.slice(0, 40)),
     "and so is the sentence that says what to do");
