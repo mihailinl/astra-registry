@@ -268,6 +268,14 @@ jobs:
       - name: The publication policy's tests, including its published numbers
         run: node bot/tests/policy.test.mjs
 
+      # The icon and the README are the only bytes in a listing that Astra
+      # renders BEFORE the user has agreed to anything — they are what somebody
+      # reads in order to reach the consent sheet. So most of what this suite
+      # asserts is not that a picture survives the trip, but what a hostile
+      # picture and a hostile README are turned into on the way.
+      - name: The icon and README derivation, including the hostile cases
+        run: node bot/tests/presentation.test.mjs
+
       # The nightly asset check runs against a stranger's release assets and
       # decides whether bytes that are already listed still match. Its tests
       # belong beside the bot's for the same reason the bot's run here at all:
