@@ -183,6 +183,14 @@ export const POLICY_CODES = {
     title: "The publication delay has elapsed",
     remedy: "Nothing to do. Every check was re-run from scratch just now, against the bytes as they are today.",
   },
+  P_DELAY_BROUGHT_FORWARD: {
+    level: "note",
+    title: "A maintainer waived part of the publication delay",
+    remedy:
+      "Nothing to do, but the shortened window is on the record: somebody with write access to this " +
+      "registry edited `publish_after` in the queue entry, and the commit that did it says who and when. " +
+      "Every check still ran from scratch against today's bytes.",
+  },
   P_UNKNOWN_PERMISSION: {
     level: "warn",
     title: "The manifest declares a permission this registry has no name for",
@@ -526,7 +534,37 @@ export function decide(input) {
   }
 
   const startedAt = sameRelease && sameBytes ? new Date(queued.queued_at) : now;
-  const publishAfter = new Date(startedAt.getTime() + delayHours * HOUR_MS);
+  let publishAfter = new Date(startedAt.getTime() + delayHours * HOUR_MS);
+
+  // A maintainer bringing the publication forward, which every queue entry
+  // tells them they may do: *"edit publish_after to bring it forward."*
+  //
+  // They could not. The line above recomputes the deadline from `queued_at`
+  // and nothing ever read the field, so editing it moved only
+  // `ripeQueueEntries`: triage picked the release up early, the decision
+  // recomputed the same deadline, and it went straight back into the queue.
+  // That instruction has been written into every entry this bot has ever
+  // produced, and it named an action that did nothing.
+  //
+  // Honoured only EARLIER, and only for an entry that still describes this
+  // release and these bytes. Earlier-only, so a mistyped date cannot park a
+  // release indefinitely — the delay is a maximum a maintainer may waive, not
+  // a dial they may turn either way. Same-bytes, so a stale entry can never
+  // shorten the window for a release it was not written for; that question is
+  // already answered above and this reuses the answer.
+  //
+  // It grants no authority that did not already exist. The file lives in this
+  // repository, so moving the date takes a commit from somebody who could
+  // publish the listing by hand regardless — and unlike a hand-published
+  // listing, this path still re-runs every check from scratch first.
+  if (sameRelease && sameBytes && queued.publish_after) {
+    const asked = new Date(queued.publish_after);
+    if (!Number.isNaN(asked.getTime()) && asked.getTime() < publishAfter.getTime()) {
+      publishAfter = asked;
+      add("P_DELAY_BROUGHT_FORWARD",
+        `a maintainer moved publish_after to ${iso(asked)}, earlier than the ${delayHours} h default`);
+    }
+  }
 
   if (publishAfter.getTime() <= now.getTime()) {
     add("P_DELAY_ELAPSED", `queued at ${iso(startedAt)}, ${delayHours} h ago; every check has just been re-run against today's bytes`);

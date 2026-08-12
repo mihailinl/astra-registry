@@ -122,6 +122,14 @@ Some releases publish themselves, but not immediately.
 | The release asks for a permission or capability the previous one did not, inside the non-high-risk set | `P_DELAY_WIDENED` | 24 h |
 | Either of the above, from an author with **5 clean** releases in this registry | `P_TRUSTED_AUTHOR` | 6 h |
 
+A maintainer of this registry can waive part of the window by editing
+`publish_after` in the queue entry, which reports `P_DELAY_BROUGHT_FORWARD`. It
+moves the date **earlier only** — the delay is a maximum that may be waived, not
+a dial — and it takes a commit here, so who shortened it and when is in the
+history. Every check still runs again from scratch first. This grants nobody new
+authority: anyone able to edit that file could publish a listing by hand, and
+that path skips the checks entirely.
+
 While a release waits, `P_DELAY_WAITING` states the exact publication time; when
 the clock runs out, the **entire ingest runs again from scratch** against the
 bytes as they are at that moment, and `P_DELAY_ELAPSED` says so. Nothing is
@@ -218,6 +226,7 @@ exists first; nothing downstream changes when it arrives.
 | `P_TRUSTED_AUTHOR` | Shorter delay: a clean release history in this registry. |
 | `P_DELAY_WAITING` | The publication time, stated. |
 | `P_DELAY_ELAPSED` | The delay is over and every check has just been re-run. |
+| `P_DELAY_BROUGHT_FORWARD` | A maintainer waived part of the window, on the record. |
 | `P_DELAY_BYTES_CHANGED` | The assets changed mid-window, so the clock restarted. |
 | `P_UNKNOWN_PERMISSION` | A permission name this registry cannot describe. Reported, never blocking — the daemon default-denies, so it grants nothing. |
 | `P_SLA` | What happens next, and by when. |
