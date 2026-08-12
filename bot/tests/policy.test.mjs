@@ -353,6 +353,75 @@ await test("when the delay has elapsed the same release publishes, and stops wai
     queueFile("dice-roller", "0.2.0"), "and the queue entry is deleted by the same commit");
 });
 
+// `iso` is declared further down this file, and these run at import time.
+const stamp = (d) => new Date(d).toISOString();
+
+await test("a maintainer can bring the publication forward, which every entry has claimed", async () => {
+  // Every queue entry this bot has ever written says "edit publish_after to
+  // bring it forward". Nothing read the field: the deadline was recomputed
+  // from `queued_at`, so an edited date moved only which entries triage picked
+  // up, and the decision put them straight back. The instruction named an
+  // action that did nothing.
+  const root = registryTree([{ versions: [{ version: "0.1.0", capabilities: ["tools"] }] }]);
+  const asset = conforming({ capabilities: ["tools", "tts"] });
+
+  const first = await run({ root, assets: [asset] });
+  assertEqual(first.decision.outcome, "delay", "it has to be waiting before it can be brought forward");
+
+  const qfile = path.join(root, queueFile("dice-roller", "0.2.0"));
+  fs.mkdirSync(path.dirname(qfile), { recursive: true });
+  fs.writeFileSync(qfile, `${JSON.stringify(
+    { ...first.decision.queue_entry, publish_after: stamp(NOW) }, null, 2,
+  )}\n`);
+
+  const second = await run({ root, assets: [asset], now: new Date(NOW.getTime() + 60_000) });
+  assertEqual(second.decision.outcome, "publish", JSON.stringify(second.decision.reasons));
+  assert(codes(second).includes("P_DELAY_BROUGHT_FORWARD"),
+    `the waiver went unrecorded: ${JSON.stringify(codes(second))}`);
+});
+
+await test("but only earlier — a date pushed out cannot park a release", async () => {
+  // Earlier-only, so a mistyped year is a typo rather than an indefinite hold,
+  // and so this field can never extend a window past what the policy decided.
+  const root = registryTree([{ versions: [{ version: "0.1.0", capabilities: ["tools"] }] }]);
+  const asset = conforming({ capabilities: ["tools", "tts"] });
+
+  const first = await run({ root, assets: [asset] });
+  const qfile = path.join(root, queueFile("dice-roller", "0.2.0"));
+  fs.mkdirSync(path.dirname(qfile), { recursive: true });
+  fs.writeFileSync(qfile, `${JSON.stringify(
+    { ...first.decision.queue_entry, publish_after: stamp(NOW.getTime() + 400 * 24 * 3600000) }, null, 2,
+  )}\n`);
+
+  const later = new Date(NOW.getTime() + (DELAY_HOURS + 1) * 3600000);
+  const second = await run({ root, assets: [asset], now: later });
+  assertEqual(second.decision.outcome, "publish",
+    `a date pushed a year out held the release: ${JSON.stringify(second.decision.reasons)}`);
+});
+
+await test("a stale entry cannot shorten the window for bytes it was not written for", async () => {
+  // An entry naming an earlier date must not survive the assets changing under
+  // it, or swapping the release would inherit a waiver granted for something
+  // else — which would turn the maintainer override into the swap attack the
+  // same-bytes guard exists to stop.
+  const root = registryTree([{ versions: [{ version: "0.1.0", capabilities: ["tools"] }] }]);
+  const first = await run({ root, assets: [conforming({ capabilities: ["tools", "tts"] })] });
+  const qfile = path.join(root, queueFile("dice-roller", "0.2.0"));
+  fs.mkdirSync(path.dirname(qfile), { recursive: true });
+  fs.writeFileSync(qfile, `${JSON.stringify(
+    { ...first.decision.queue_entry, publish_after: stamp(NOW) }, null, 2,
+  )}\n`);
+
+  const swapped = {
+    name: bundleName(),
+    bytes: makeBundle({ capabilities: ["tools", "tts"], extraFiles: [{ name: "extra.txt", data: "surprise" }] }),
+  };
+  const second = await run({ root, assets: [swapped], now: new Date(NOW.getTime() + 60_000) });
+  assertEqual(second.decision.outcome, "delay",
+    `swapped bytes inherited a waiver: ${JSON.stringify(second.decision.reasons)}`);
+  assert(codes(second).includes("P_DELAY_BYTES_CHANGED"), JSON.stringify(codes(second)));
+});
+
 await test("an asset swapped during the window restarts the clock", async () => {
   const root = registryTree([{ versions: [{ version: "0.1.0", capabilities: ["tools"] }] }]);
   const first = await run({ root, assets: [conforming({ capabilities: ["tools", "tts"] })] });
