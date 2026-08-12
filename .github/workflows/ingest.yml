@@ -606,13 +606,28 @@ jobs:
 
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
 
-      - name: Hold the result to this repository's own rules
+      # Three steps, in this order, and the order is the point.
+      #
+      # It used to validate first and regenerate second, which cannot pass: the
+      # committed index does not describe a listing that was added a moment ago,
+      # and `validate.mjs` compares the two. Every publish died on
+      # `registry/v1/index.json: is not byte-identical to a fresh generation`,
+      # having correctly noticed a mismatch the next step existed to remove.
+      # Nothing caught it because no publish had ever got this far.
+      #
+      # The listings are still checked BEFORE the generator runs. Regenerating
+      # first would feed a stranger's freshly derived documents to the
+      # generator ahead of the schema check, which is the wrong way round for
+      # the one step in this workflow that reads submitter-shaped input.
+      - name: Hold the listings to this repository's own rules
         if: steps.apply.outputs.changed == '1'
         run: |
           set -euo pipefail
           # --allow-staging matches .github/workflows/build-index.yml and goes
           # away with it, on the day the bootstrap listing gains a digest.
-          node tools/validate.mjs --allow-staging
+          # --no-index because the index has not been regenerated yet; the run
+          # below checks it once it describes this tree.
+          node tools/validate.mjs --allow-staging --no-index
           node tools/selftest.mjs
 
       - name: Regenerate the index the catalogue is built from
@@ -625,6 +640,10 @@ jobs:
           # on somebody else's commit.
           node tools/build-index.mjs
           node tools/build-index.mjs --check
+
+      - name: And to the index rule, now that the index describes this tree
+        if: steps.apply.outputs.changed == '1'
+        run: node tools/validate.mjs --allow-staging
 
       - name: Commit
         if: steps.apply.outputs.changed == '1'
