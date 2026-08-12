@@ -1,26 +1,33 @@
 {
-  "$comment": "STAGING ENTRY — the release named below does not exist yet. It is here so the index is non-empty and the whole pipeline (generate, validate, schema-check, serve) is testable end to end before the first real bundle is published. Because the release does not exist, this entry carries NO sha256 and NO size, which is the only honest thing it can carry: a digest for bytes nobody has produced would be a fabrication, and a listing whose digest cannot be checked is exactly what this registry exists to prevent. Consequences, all deliberate: tools/validate.mjs REJECTS this file unless --allow-staging is passed; the generated index marks the plugin `\"staging\": true`; and the index's `platform_downloads` / `download_url` compatibility fields are left EMPTY, so a client that only understands those fields cannot download anything. TO GO LIVE: publish the release, then replace `staging`/`staging_reason` with the real `sha256`, `size`, `published_at` and `release.commit`, regenerate the index, and drop --allow-staging from .github/workflows/build-index.yml.",
+  "$comment": "The first listing in this registry to name bytes that exist. Produced by releasing mihailinl/astra-dice-roller v0.1.1 through AstraPlugins/.github/workflows/plugin-release.yml@e3329df2, which is the one reusable-workflow commit the root-signed trust.json allows an attestation from. Both digests below were read back from the release and verified against the attestation with `gh attestation verify --signer-workflow`. This file replaced a staging placeholder that carried no digest because the release it named had never been cut.",
   "schema": "astra.registry.version/1",
   "id": "dice-roller",
   "version": "0.1.1",
-  "published_at": "2026-08-10T00:00:00Z",
-  "staging": true,
-  "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so dice-roller-v0.1.1 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/dice-roller writes the caller workflow, then the tag is pushed.",
+  "published_at": "2026-08-11T23:18:07Z",
   "release": {
     "kind": "github_release",
-    "repo": "mihailinl/AstraPlugins",
-    "tag": "dice-roller-v0.1.1"
+    "repo": "mihailinl/astra-dice-roller",
+    "tag": "v0.1.1",
+    "commit": "69e05d20f5d4f4a8ae45226434f4a5e438d21da4"
   },
   "protocol": 1,
-  "capabilities": ["actions", "tools", "triggers"],
+  "capabilities": [
+    "actions",
+    "tools",
+    "triggers"
+  ],
   "artifacts": {
     "linux-x64": {
-      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/dice-roller-v0.1.1/dice-roller-0.1.1-linux-x64.astraplugin",
-      "filename": "dice-roller-0.1.1-linux-x64.astraplugin"
+      "url": "https://github.com/mihailinl/astra-dice-roller/releases/download/v0.1.1/dice-roller-0.1.1-linux-x64.astraplugin",
+      "filename": "dice-roller-0.1.1-linux-x64.astraplugin",
+      "sha256": "da748dd5fa0dae0038ba246ac4cc4cae924891a1890e97452a957e404337f670",
+      "size": 2869335
     },
     "windows-x64": {
-      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/dice-roller-v0.1.1/dice-roller-0.1.1-windows-x64.astraplugin",
-      "filename": "dice-roller-0.1.1-windows-x64.astraplugin"
+      "url": "https://github.com/mihailinl/astra-dice-roller/releases/download/v0.1.1/dice-roller-0.1.1-windows-x64.astraplugin",
+      "filename": "dice-roller-0.1.1-windows-x64.astraplugin",
+      "sha256": "30d6f9dcf4537da9fae63e33d9893f9a91bf09a25bbe3b2757d2fd8c572f0c6b",
+      "size": 2439436
     }
   }
 }
