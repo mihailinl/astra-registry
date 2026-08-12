@@ -338,6 +338,30 @@ await test("a bundle's icon and README reach the listing as filenames, not URLs"
     "a reviewer must see a picture in the diff, not a blob");
 });
 
+await test("a curator's homepage survives the next release", () => {
+  // It did not, and the deletion was invisible: a maintainer adds `homepage`
+  // once, the next release derives a document without it, and the field is gone
+  // with nothing in the diff to explain it. Categories and keywords were
+  // already carried; this was the same kind of field left out of the same list.
+  const derived = deriveListing({
+    ...baseInput,
+    files: [],
+    existingPlugin: { added_at: "2026-01-01", homepage: "https://dice.example", keywords: ["dice"] },
+  });
+  assertEqual(derived.plugin.homepage, "https://dice.example", "the curated homepage was dropped");
+});
+
+await test("the author's own homepage beats the curator's", () => {
+  const derived = deriveListing({
+    ...baseInput,
+    facts: { ...baseInput.facts, homepage: "https://from-the-manifest.example" },
+    files: [],
+    existingPlugin: { added_at: "2026-01-01", homepage: "https://stale.example" },
+  });
+  assertEqual(derived.plugin.homepage, "https://from-the-manifest.example",
+    "a manifest that states a homepage must not be overridden by an older listing");
+});
+
 await test("a bundle with neither leaves both fields absent", () => {
   const derived = deriveListing({ ...baseInput, files: [{ name: "plugin.toml", bytes: Buffer.from("") }] });
   assertEqual(derived.plugin.icon, undefined, "an icon was invented");

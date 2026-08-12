@@ -210,11 +210,18 @@ export function deriveListing(input) {
   findings.push(...presentation.findings);
   if (presentation.icon) plugin.icon = presentation.icon;
   if (presentation.readme) plugin.readme = presentation.readme;
-  // Categories and keywords are the two fields no bundle carries and no bot can
-  // invent. They stay whatever a human put there, and are absent on a first
-  // listing rather than guessed.
+  // Categories, keywords and homepage are the fields no bundle carries and no
+  // bot can invent. They stay whatever a human put there, and are absent on a
+  // first listing rather than guessed.
+  //
+  // `homepage` joined the other two because leaving it out silently deleted it
+  // on every re-listing: a maintainer adds it once, the next release derives a
+  // document without it, and the field is gone with nothing in the diff
+  // explaining why. It is only carried when the manifest does not declare one —
+  // the author's own answer wins over a curator's.
   if (existingPlugin?.categories) plugin.categories = existingPlugin.categories;
   if (existingPlugin?.keywords) plugin.keywords = existingPlugin.keywords;
+  if (!facts.homepage && existingPlugin?.homepage) plugin.homepage = existingPlugin.homepage;
 
   const version = {
     $comment:
