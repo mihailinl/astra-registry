@@ -93,12 +93,20 @@ env:
   # own parser, and "whatever HEAD says today" is not a thing to decide a
   # stranger's listing with. Bump it deliberately, in a reviewed commit.
   #
-  # NOTE: this SHA is the tip of AstraPlugins `feat/plugin-production` and is not
-  # on a remote branch yet, so `link-deps.sh --clone` cannot fetch it until that
-  # branch is pushed. That is a state of the world rather than a bug in this
-  # file: a pin to a commit nobody can fetch fails loudly, which is the right
-  # failure for "the rules this bot judges by are not public yet".
-  ASTRA_PLUGINS_REF: 50eaa616978cb386fc1f0860d775d6819ff452b4
+  # The note that used to be here said this SHA was the tip of an unpushed
+  # branch, and that a pin nobody can fetch "fails loudly, which is the right
+  # failure". Both halves stopped being true. That branch was rewritten before it
+  # was pushed, so the commit is on no reachable ref and never will be —
+  # `fatal: unable to read tree (50eaa616…)` — and the failure was not loud at
+  # all: `selftest` failed, `check` was skipped, and the first real submission
+  # got "the ingest job did not produce a report", which reads as a fault
+  # somewhere in the bot rather than as a one-line pin.
+  #
+  # It is now the merged tip of `master`, which is also `plugin-release/v1` and
+  # the one commit `trust.json` allows an attestation from. Those three wanting
+  # to be the same commit is not a coincidence — they are all "the version of
+  # AstraPlugins this registry judges by".
+  ASTRA_PLUGINS_REF: e3329df252a46d747676cb540ae4b986af68a3ad
   ASTRA_PLUGINS_URL: https://github.com/mihailinl/AstraPlugins.git
 
 jobs:

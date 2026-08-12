@@ -91,6 +91,39 @@ jobs:
       - name: Self-test (schemas, canonical JSON, the rejections)
         run: node tools/selftest.mjs
 
+      # `ingest.yml` pins the AstraPlugins commit whose `astra-plugin-manifest`
+      # this bot judges a stranger's manifest with. It is a SHA typed by hand,
+      # and for a while it named a commit on a branch that was rewritten before
+      # it was pushed — so it existed nowhere, `link-deps.sh --clone` died with
+      # `fatal: unable to read tree`, and the first real submission was answered
+      # with "the ingest job did not produce a report".
+      #
+      # That answer is honest and it is useless: it points at the whole bot. A
+      # bad pin belongs to whoever pushed it, so it is checked here, on push,
+      # rather than discovered by a stranger opening an issue.
+      - name: The AstraPlugins pin ingest.yml judges manifests by is fetchable
+        run: |
+          set -euo pipefail
+          ref=$(grep -oP '^\s*ASTRA_PLUGINS_REF:\s*\K[0-9a-f]+' .github/workflows/ingest.yml || true)
+          url=$(grep -oP '^\s*ASTRA_PLUGINS_URL:\s*\K\S+' .github/workflows/ingest.yml || true)
+          if ! [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::ASTRA_PLUGINS_REF is not a 40-hex commit: '$ref'"
+            exit 1
+          fi
+          # `--filter=blob:none` fetches the commit and its trees without the
+          # file contents: enough to prove it is reachable, and a fraction of a
+          # clone. A commit on no remote ref fails here exactly as it would in
+          # the bot.
+          tmp=$(mktemp -d)
+          git init -q "$tmp"
+          if ! git -C "$tmp" fetch -q --depth 1 --filter=blob:none "$url" "$ref" 2>/dev/null; then
+            echo "::error::$url has no commit $ref."
+            echo "Nothing can fetch it, so every ingest fails before it reads a manifest."
+            echo "Point ASTRA_PLUGINS_REF at a commit that is on a branch or a tag."
+            exit 1
+          fi
+          echo "ok    $ref is fetchable from $url"
+
       # The site's own tests, and they run BEFORE the catalogue is built rather
       # than after the site is. The one they exist for — a page exists iff an
       # entry does — is asserted in both directions against a synthetic
