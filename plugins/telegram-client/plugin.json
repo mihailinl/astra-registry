@@ -16,8 +16,16 @@
     "subdirectory": "examples/telegram-client"
   },
   "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/telegram-client",
-  "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/telegram-client/icon.svg",
-  "categories": ["communication"],
-  "keywords": ["telegram", "bot", "bridge", "chat", "remote"],
-  "added_at": "2026-08-10"
+  "categories": [
+    "communication"
+  ],
+  "keywords": [
+    "telegram",
+    "bot",
+    "bridge",
+    "chat",
+    "remote"
+  ],
+  "added_at": "2026-08-10",
+  "icon": "icon.svg"
 }

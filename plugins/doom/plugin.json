@@ -1,5 +1,5 @@
 {
-  "$comment": "Seed catalogue (PRODUCTION_PLAN task 2.13). Source: AstraPlugins/examples/doom/plugin.toml at version 0.1.0. UNRESOLVED BEFORE THIS GOES PUBLIC: the bundle ships a WebAssembly build of Chocolate Doom, which is GPL-2.0, under a listing that declares MIT. The game data is Freedoom (modified BSD) and is fine. GPL-2.0 is not on policy/spdx-allowlist.json, so the licence cannot simply be corrected here — it needs a decision first.",
+  "$comment": "Seed catalogue (PRODUCTION_PLAN task 2.13). Source: AstraPlugins/examples/doom/plugin.toml at version 0.1.0. UNRESOLVED BEFORE THIS GOES PUBLIC: the bundle ships a WebAssembly build of Chocolate Doom, which is GPL-2.0, under a listing that declares MIT. The game data is Freedoom (modified BSD) and is fine. GPL-2.0 is not on policy/spdx-allowlist.json, so the licence cannot simply be corrected here \u2014 it needs a decision first.",
   "schema": "astra.registry.plugin/1",
   "id": "doom",
   "name": "Doom",
@@ -16,8 +16,15 @@
     "subdirectory": "examples/doom"
   },
   "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/doom",
-  "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/doom/icon.svg",
-  "categories": ["entertainment"],
-  "keywords": ["doom", "game", "webassembly", "freedoom"],
-  "added_at": "2026-08-10"
+  "categories": [
+    "entertainment"
+  ],
+  "keywords": [
+    "doom",
+    "game",
+    "webassembly",
+    "freedoom"
+  ],
+  "added_at": "2026-08-10",
+  "icon": "icon.png"
 }

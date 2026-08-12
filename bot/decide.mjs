@@ -36,7 +36,7 @@ import path from "node:path";
 
 import { loadSources, REPO_ROOT } from "../tools/lib/sources.mjs";
 
-import { ingest } from "./ingest.mjs";
+import { ingest, writeListing } from "./ingest.mjs";
 import {
   decide,
   queueFile,
@@ -141,14 +141,16 @@ export function writeOutputs(out, opts, result) {
 
   const removals = [];
 
+  // `writeListing`, rather than a second copy of it. There were two writers —
+  // this one, and `ingest.mjs`'s, which lays out the tree the validator checks.
+  // When a listing gained an icon and a README, only one of them learned to
+  // write the files. So the validator passed on a tree that had them and this
+  // function committed one that did not, and the run died on the repository's
+  // own rule: `icon "icon.svg" is named here but the file is not in
+  // plugins/dice-roller/`. That is the check working, on a document this
+  // function had made wrong.
   if (decision.publishes_now && derived) {
-    const dir = path.join(out, "plugins", derived.plugin.id);
-    fs.mkdirSync(path.join(dir, "versions"), { recursive: true });
-    fs.writeFileSync(path.join(dir, "plugin.json"), `${JSON.stringify(derived.plugin, null, 2)}\n`);
-    fs.writeFileSync(
-      path.join(dir, "versions", `${derived.version.version}.json`),
-      `${JSON.stringify(derived.version, null, 2)}\n`,
-    );
+    writeListing(path.join(out, "plugins", derived.plugin.id), derived);
   }
 
   if (decision.queue_entry) {
