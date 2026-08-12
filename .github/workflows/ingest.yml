@@ -627,8 +627,14 @@ jobs:
           # away with it, on the day the bootstrap listing gains a digest.
           # --no-index because the index has not been regenerated yet; the run
           # below checks it once it describes this tree.
+          #
+          # `selftest.mjs` is NOT here, and moved down for the same reason as
+          # the index check itself: it asserts `index.json is byte-identical to
+          # a fresh generation`, which is false by construction between adding a
+          # listing and rebuilding. Splitting only the validator's index check
+          # out and leaving the selftest behind fixed half the ordering and left
+          # the run just as red.
           node tools/validate.mjs --allow-staging --no-index
-          node tools/selftest.mjs
 
       - name: Regenerate the index the catalogue is built from
         if: steps.apply.outputs.changed == '1'
@@ -641,9 +647,12 @@ jobs:
           node tools/build-index.mjs
           node tools/build-index.mjs --check
 
-      - name: And to the index rule, now that the index describes this tree
+      - name: And to every rule about the index, now that it describes this tree
         if: steps.apply.outputs.changed == '1'
-        run: node tools/validate.mjs --allow-staging
+        run: |
+          set -euo pipefail
+          node tools/validate.mjs --allow-staging
+          node tools/selftest.mjs
 
       - name: Commit
         if: steps.apply.outputs.changed == '1'
