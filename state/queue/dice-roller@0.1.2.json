@@ -1,12 +1,12 @@
 {
-  "$comment": "A release waiting out PRODUCTION_PLAN §3.5's publication delay. Nothing here is trusted at publish time: the whole ingest runs again from scratch. Delete this file to cancel the publication; edit publish_after to bring it forward.",
+  "$comment": "A release waiting out PRODUCTION_PLAN \u00a73.5's publication delay. Nothing here is trusted at publish time: the whole ingest runs again from scratch. Delete this file to cancel the publication; edit publish_after to bring it forward.",
   "id": "dice-roller",
   "version": "0.1.2",
   "repo": "mihailinl/astra-dice-roller",
   "tag": "v0.1.2",
   "submitter": "mihailinl",
   "queued_at": "2026-08-12T01:59:12Z",
-  "publish_after": "2026-08-13T01:59:12Z",
+  "publish_after": "2026-08-12T02:31:10Z",
   "delay_hours": 24,
   "reason": "P_DELAY_WIDENED",
   "artifact_digests": [
