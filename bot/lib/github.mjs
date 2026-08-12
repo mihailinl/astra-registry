@@ -17,6 +17,36 @@ function headers() {
   return h;
 }
 
+/**
+ * Headers for a RELEASE ASSET, which carry no token — deliberately.
+ *
+ * `github.com/<repo>/releases/download/<tag>/<file>` is a redirect to a
+ * PRE-SIGNED URL on `objects.githubusercontent.com`, and that host refuses a
+ * request that also carries an `Authorization` header:
+ *
+ *     anonymous HEAD  -> 200
+ *     same HEAD + Bearer -> 401
+ *
+ * `fetch(…, { redirect: "follow" })` carries request headers across the hop, so
+ * attaching a token to the github.com URL attaches it to the signed one. Every
+ * asset came back `E_ASSET_HEAD_FAILED: HTTP 401`, and since the digest cannot
+ * be computed without the bytes, no plugin could be listed at all.
+ *
+ * The code this replaces was guarding the opposite risk — do not leak the token
+ * to a host that is not GitHub — and kept the header for `github.com` for
+ * exactly that reason. The leak it prevented is real; it just also has to not
+ * send the token to the GitHub host that will not take it.
+ *
+ * Sending nothing settles both. A listed repository is public by policy
+ * (POLICY.md §1), so its assets need no credential, and a token that is never
+ * attached cannot travel down a redirect chain. Rate limit is unaffected: the
+ * release API call above still authenticates, and asset hosts do not share the
+ * API's budget.
+ */
+function assetHeaders() {
+  return { "User-Agent": "astra-registry-bot" };
+}
+
 /** @returns {Promise<{tag_name: string, html_url: string, published_at: string, target_commitish: string, assets: {name: string, size: number, browser_download_url: string}[]}>} */
 export async function fetchRelease(repo, tag) {
   const url = `${API}/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`;
@@ -64,11 +94,7 @@ export async function fetchRelease(repo, tag) {
  * @param {typeof fetch} [fetchImpl]
  */
 export async function headAsset(url, fetchImpl = fetch) {
-  const h = headers();
-  const host = (() => { try { return new URL(url).host.toLowerCase(); } catch { return ""; } })();
-  if (!(host === "github.com" || host.endsWith(".githubusercontent.com"))) delete h.Authorization;
-
-  const res = await fetchImpl(url, { method: "HEAD", headers: h, redirect: "follow" });
+  const res = await fetchImpl(url, { method: "HEAD", headers: assetHeaders(), redirect: "follow" });
   if (!res.ok) throw new Error(`HTTP ${res.status} for HEAD ${url}`);
   if (!String(res.url || url).startsWith("https://")) {
     throw new Error(`the redirect chain left https: ${res.url}`);
@@ -80,16 +106,8 @@ export async function headAsset(url, fetchImpl = fetch) {
   };
 }
 
-export async function downloadAsset(url, maxBytes) {
-  let host = "";
-  try { host = new URL(url).host.toLowerCase(); } catch { /* fetch will fail on it too */ }
-  const toGitHub = host === "github.com" ||
-    host === "objects.githubusercontent.com" ||
-    host === "release-assets.githubusercontent.com";
-  const h = headers();
-  if (!toGitHub) delete h.Authorization;
-
-  const res = await fetch(url, { headers: h, redirect: "follow" });
+export async function downloadAsset(url, maxBytes, fetchImpl = fetch) {
+  const res = await fetchImpl(url, { headers: assetHeaders(), redirect: "follow" });
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
   if (!res.url.startsWith("https://")) throw new Error(`redirected off https: ${res.url}`);
   const declared = Number(res.headers.get("content-length") ?? "0");

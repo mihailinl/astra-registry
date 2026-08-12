@@ -15,6 +15,7 @@ import http from "node:http";
 import { createHash } from "node:crypto";
 
 import { runAssetCheck } from "../asset-check.mjs";
+import { headAsset, downloadAsset } from "../lib/github.mjs";
 
 let failures = 0;
 async function test(name, fn) {
@@ -192,6 +193,51 @@ await test("an entry with no digest is skipped rather than fetched", async () =>
   assert.equal(report.results.length, 1);
   assert.equal(report.unpinned.length, 1);
 });
+
+// ── the token that made every asset a 401 ───────────────────────────────────
+
+await test("an asset fetch carries no Authorization header", async () => {
+  // `github.com/<repo>/releases/download/…` redirects to a PRE-SIGNED URL on
+  // `objects.githubusercontent.com`, and that host answers 401 to a request
+  // that also carries a bearer token. `redirect: "follow"` takes request
+  // headers across the hop, so a token attached to the first URL is attached to
+  // the signed one. Measured against the real thing: anonymous HEAD 200, the
+  // same HEAD with `Authorization` 401.
+  //
+  // Every asset therefore failed `E_ASSET_HEAD_FAILED: HTTP 401`, and with no
+  // bytes there is no digest — so no plugin could be listed at all.
+  const saved = process.env.GITHUB_TOKEN;
+  process.env.GITHUB_TOKEN = "ghp_a_token_that_must_not_travel";
+  try {
+    for (const [what, call] of [
+      ["headAsset", (impl) => headAsset("https://github.com/o/r/releases/download/v1/a.astraplugin", impl)],
+      ["downloadAsset", (impl) => downloadAsset("https://github.com/o/r/releases/download/v1/a.astraplugin", 1000, impl)],
+    ]) {
+      let seen = null;
+      const impl = async (_url, init) => {
+        seen = init.headers ?? {};
+        return {
+          ok: true,
+          status: 200,
+          url: "https://objects.githubusercontent.com/signed",
+          headers: new Map([["content-length", "3"]]),
+          arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+        };
+      };
+      // `headers.get` for the Map above; headAsset reads content-length that way.
+      await call(impl);
+      const names = Object.keys(seen).map((k) => k.toLowerCase());
+      assert(
+        !names.includes("authorization"),
+        `${what} sent an Authorization header; the signed asset host answers 401 to one`,
+      );
+    }
+  } finally {
+    if (saved === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = saved;
+  }
+});
+
 
 server.close();
 
