@@ -31,6 +31,14 @@
     "source": { "$ref": "#/$defs/source" },
     "homepage": { "type": "string", "pattern": "^https://" },
     "icon_url": { "type": "string", "pattern": "^https://" },
+    "icon": {
+      "$comment": "A FILENAME beside this document, not a URL. The bytes are committed to the registry so a reviewer sees the actual picture in the pull request diff instead of a base64 blob, and tools/build-index.mjs inlines them into the signed index as a data: URI. Extracted from the attested bundle by bot/ingest.mjs. Takes precedence over `icon_url`, which names a host the plugin author controls and so makes rendering the store a request to a third party once per listing per refresh.",
+      "enum": ["icon.png", "icon.webp", "icon.svg", "icon.jpg", "icon.jpeg", "icon.ico"]
+    },
+    "readme": {
+      "$comment": "Likewise a filename beside this document. Markdown, sanitised when it was derived: no raw HTML, and every image either pinned to the attested commit or dropped to its alt text. bot/lib/assets.mjs says what is removed and why.",
+      "enum": ["README.md"]
+    },
     "categories": {
       "type": "array",
       "maxItems": 3,

@@ -38,6 +38,7 @@ import {
   unsafePathComponent,
 } from "./lib/ids.mjs";
 import { loadSources, loadPolicy, loadSchemas, readJson, REPO_ROOT } from "./lib/sources.mjs";
+import { ALLOWED_IMAGE_HOSTS, ICON_NAMES, MAX_README_CHARS, checkIcon } from "../bot/lib/assets.mjs";
 import { buildIndex, indexContent } from "./build-index.mjs";
 
 const PLATFORM_KEYS = new Set([
@@ -153,6 +154,81 @@ function checkPluginDoc(plugin, ctx) {
     }
     if (value.trim() !== value) report.warn(where, `${field} has leading or trailing whitespace`);
   }
+
+  checkPresentationFiles(plugin, ctx);
+}
+
+/**
+ * The icon and the README, held to the same rules whoever wrote them.
+ *
+ * `bot/lib/assets.mjs` already sanitises what it derives, so on the ingest path
+ * this is a second opinion. It is not redundant: a listing can also be
+ * hand-written or hand-edited, and a maintainer dropping a nicer icon into a
+ * plugin directory after the fact would otherwise bypass every check the bot
+ * makes. The bot's output is validated by this same function
+ * (`bot/ingest.mjs` → `validateDerived`), so the two can never disagree about
+ * what is allowed.
+ */
+function checkPresentationFiles(plugin, ctx) {
+  const { report } = ctx;
+  const where = plugin.file;
+  const dir = path.join(ctx.root, "plugins", plugin.dir);
+
+  const icon = plugin.doc.icon;
+  if (icon !== undefined) {
+    const file = path.join(dir, icon);
+    if (!fs.existsSync(file)) {
+      report.error(where, `icon ${JSON.stringify(icon)} is named here but the file is not in plugins/${plugin.dir}/`,
+        "The bytes are committed beside the listing; the index inlines them at build time.");
+    } else {
+      for (const f of checkIcon({ name: icon, bytes: fs.readFileSync(file) })) {
+        report.error(`plugins/${plugin.dir}/${icon}`, f.message,
+          "An icon is rendered before the user has agreed to anything. See bot/lib/assets.mjs.");
+      }
+    }
+  }
+
+  const readme = plugin.doc.readme;
+  if (readme !== undefined) {
+    const file = path.join(dir, readme);
+    if (!fs.existsSync(file)) {
+      report.error(where, `readme ${JSON.stringify(readme)} is named here but the file is not in plugins/${plugin.dir}/`);
+      return;
+    }
+    const text = fs.readFileSync(file, "utf8");
+    if (text.length > MAX_README_CHARS) {
+      report.error(`plugins/${plugin.dir}/${readme}`,
+        `${text.length} characters, over the ${MAX_README_CHARS} the index allows`,
+        "Trim it, or let bot/ingest.mjs derive it — that path truncates on a line boundary.");
+    }
+    // The two properties the renderer is entitled to assume, checked directly
+    // rather than by re-deriving: this file may have been hand-edited since the
+    // bot wrote it, and what matters is what it says NOW.
+    const prose = stripFences(text);
+    if (/<\/?[a-zA-Z][^>]*>/.test(prose)) {
+      report.error(`plugins/${plugin.dir}/${readme}`, "contains raw HTML outside a code fence",
+        "Astra renders this with raw HTML disabled, so the tags would silently vanish. Remove them.");
+    }
+    for (const m of prose.matchAll(/!\[[^\]]*\]\(\s*<?([^\s)>]+)>?[^)]*\)/g)) {
+      const url = m[1];
+      let host = null;
+      try {
+        host = new URL(url).hostname.toLowerCase();
+      } catch { /* relative, handled below */ }
+      if (host === null) {
+        report.error(`plugins/${plugin.dir}/${readme}`, `image ${JSON.stringify(url)} is a relative path`,
+          "A stored README is rendered far from the repository it came from. Images must be absolute and pinned to a commit — bot/ingest.mjs does that when it derives one.");
+      } else if (!url.startsWith("https://") || !ALLOWED_IMAGE_HOSTS.has(host)) {
+        report.error(`plugins/${plugin.dir}/${readme}`, `image ${JSON.stringify(url)} points at ${host}`,
+          `Only GitHub's own asset hosts are rendered (${[...ALLOWED_IMAGE_HOSTS].join(", ")}), so that opening the store does not announce the user to a third party.`);
+      }
+    }
+  }
+}
+
+/** Everything outside fenced code blocks, for checks that must not read examples. */
+function stripFences(text) {
+  return text.replace(/^\s{0,3}(`{3,}|~{3,})[\s\S]*?^\s{0,3}\1\s*$/gm, "");
 }
 
 /**
@@ -649,6 +725,49 @@ function checkIndex(ctx) {
  *
  * Located by `$ASTRA_PLUGINS_DIR`, else the usual sibling checkout.
  */
+/**
+ * The icon formats this registry accepts, against the ones AstraPlugins packs.
+ *
+ * Same shape of coupling as [`checkMirroredLimits`] and the same reason: two
+ * programs in two repositories, neither able to see the other, agreeing on a
+ * list by hand. Disagreement here is silent in BOTH directions — a format
+ * `astra-plugin build` packs and this repository does not accept is an icon
+ * that reaches the bundle and never reaches a store card, with no error
+ * anywhere; a format accepted here and not packed there never arrives to be
+ * accepted. Either way the author sees a blank card and nothing to act on.
+ *
+ * A missing checkout is reported as a note, never as a pass: a check that
+ * quietly did not run must not look like a check that succeeded.
+ */
+export function checkMirroredIconFormats(ctx) {
+  const where = "bot/lib/assets.mjs";
+  const candidates = [
+    process.env.ASTRA_PLUGINS_DIR,
+    path.resolve(REPO_ROOT, "../AstraPlugins"),
+  ].filter(Boolean);
+  const specFile = candidates
+    .map((d) => path.join(d, "spec/icon-formats.yaml"))
+    .find((f) => fs.existsSync(f));
+
+  if (!specFile) {
+    ctx.report.note(where, "icon formats NOT verified against AstraPlugins: no checkout found",
+      `Looked in ${candidates.join(", ")}. Set ASTRA_PLUGINS_DIR to check them.`);
+    return;
+  }
+
+  const declared = fs.readFileSync(specFile, "utf8")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("#"));
+
+  if (declared.join(",") !== ICON_NAMES.join(",")) {
+    ctx.report.error(where,
+      `ICON_FORMATS is [${ICON_NAMES.join(", ")}] but spec/icon-formats.yaml declares [${declared.join(", ")}]`,
+      "Order matters — it is the preference order used when a bundle ships more than one icon. " +
+      "Change spec/icon-formats.yaml first, then mirror it here and in astra-plugin-cli.");
+  }
+}
+
 export function checkMirroredLimits(ctx) {
   const where = "policy/limits.json";
   const mirrors = Object.entries(ctx.policy.limits ?? ctx.policy)
@@ -736,6 +855,7 @@ export async function runValidation(opts) {
   };
 
   checkMirroredLimits(ctx);
+  checkMirroredIconFormats(ctx);
 
   const { errors, plugins } = loadSources(opts.root);
   for (const e of errors) report.error(e.file, e.message);

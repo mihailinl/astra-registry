@@ -19,6 +19,7 @@
 // output is held to the rules its input would have been.
 
 import { unsafeDisplayText } from "../../tools/lib/ids.mjs";
+import { README_NAME, checkIcon, pickIcon, rewriteReadme } from "./assets.mjs";
 
 /** Trim to a length without cutting a word or leaving a dangling space. */
 function summarise(text, max) {
@@ -69,15 +70,64 @@ export function checkMetadata(fields, limits) {
 }
 
 /**
+ * The two files a plugin ships for a person to look at.
+ *
+ * Both are optional and neither can fail a submission on its own: an author who
+ * ships no icon gets the letter avatar, and one whose SVG is refused gets the
+ * same. What they must never do is reach the store unchecked — see
+ * `bot/lib/assets.mjs` for why this content is treated differently from the
+ * rest of the bundle.
+ *
+ * @param {{name: string, bytes: Buffer}[]} files
+ * @param {{repo: string, commit: string|null}} at
+ * @returns {{assets: {path: string, bytes: Buffer}[], icon: string|null,
+ *            readme: string|null, findings: object[]}}
+ */
+function derivePresentation(files, { repo, commit }) {
+  const findings = [];
+  const assets = [];
+  let icon = null;
+  let readme = null;
+
+  const found = pickIcon(files);
+  if (found) {
+    const problems = checkIcon(found);
+    if (problems.length === 0) {
+      assets.push({ path: found.name, bytes: found.bytes });
+      icon = found.name;
+    } else {
+      // Downgraded to a warning on purpose. The listing is still correct without
+      // an icon, and refusing the whole release over a decorative file would
+      // make a picture a gate on shipping software.
+      findings.push(...problems.map((p) => ({ ...p, level: "warn", code: "W_ICON_DROPPED" })));
+    }
+  }
+
+  const source = files.find((f) => f.name === README_NAME);
+  if (source) {
+    const { markdown, findings: notes } = rewriteReadme(source.bytes.toString("utf8"), { repo, commit });
+    findings.push(...notes);
+    if (markdown.trim().length > 0) {
+      assets.push({ path: README_NAME, bytes: Buffer.from(markdown, "utf8") });
+      readme = README_NAME;
+    }
+  }
+
+  return { assets, icon, readme, findings };
+}
+
+/**
  * @param {{facts: object, manifest: object, repo: string, tag: string,
  *          commit: string|null, publishedAt: string, artifacts: object,
- *          existingPlugin: object|null, policy: object}} input
- * @returns {{findings: object[], plugin: object|null, version: object|null}}
+ *          files: {name: string, bytes: Buffer}[], existingPlugin: object|null,
+ *          policy: object}} input
+ * @returns {{findings: object[], plugin: object|null, version: object|null,
+ *            assets: {path: string, bytes: Buffer}[]}}
  */
 export function deriveListing(input) {
   const {
     facts, manifest, repo, tag, commit, publishedAt, artifacts, existingPlugin, policy,
-    ownershipMethod = null,
+    ownershipMethod = null, files = [],
   } = input;
   const findings = [];
 
@@ -151,6 +201,15 @@ export function deriveListing(input) {
   if (facts.description) plugin.description = facts.description;
   if (facts.author) plugin.author = { name: facts.author };
   if (facts.homepage) plugin.homepage = facts.homepage;
+
+  // The icon and the README are recorded as FILENAMES, not URLs: the bytes are
+  // committed next to this document, so a reviewer sees the actual picture in
+  // the pull request rather than a base64 blob, and nothing outside the
+  // repository is named. `tools/build-index.mjs` inlines them at build time.
+  const presentation = derivePresentation(files, { repo, commit });
+  findings.push(...presentation.findings);
+  if (presentation.icon) plugin.icon = presentation.icon;
+  if (presentation.readme) plugin.readme = presentation.readme;
   // Categories and keywords are the two fields no bundle carries and no bot can
   // invent. They stay whatever a human put there, and are absent on a first
   // listing rather than guessed.
@@ -175,5 +234,5 @@ export function deriveListing(input) {
     version.permissions = manifest.permissions;
   }
 
-  return { findings, plugin, version };
+  return { findings, plugin, version, assets: presentation.assets };
 }
