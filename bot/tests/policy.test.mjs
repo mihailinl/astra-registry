@@ -277,9 +277,16 @@ await test("a check the bot cannot rule on is held with the same SLA", async () 
 });
 
 await test("a failed check is a refusal, and the policy says it never got a say", async () => {
+  // The licence has to be one `policy/spdx-allowlist.json` really refuses, or
+  // there is no failed check and this asserts nothing. It was `GPL-3.0-only`
+  // until the copyleft family joined the allowlist — after which the run went
+  // green, the decision came back `publish`, and the property under test — that
+  // a failed check outranks the policy engine entirely — stopped being
+  // exercised at all. `BUSL-1.1` is source-available rather than open source,
+  // so it stays refused for as long as POLICY.md §4 says open source only.
   const r = await run({
     root: registryTree([{ versions: [{ version: "0.1.0" }] }]),
-    assets: [conforming({ license: "GPL-3.0-only" })],
+    assets: [conforming({ license: "BUSL-1.1" })],
   });
   assertEqual(r.decision.outcome, "refuse", JSON.stringify(r.decision.reasons));
   assertEqual(codes(r).join(","), "P_REFUSED", "one row, and it points at the checks above it");
