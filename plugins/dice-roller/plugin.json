@@ -12,12 +12,18 @@
   "license": "MIT",
   "source": {
     "kind": "github",
-    "repo": "mihailinl/AstraPlugins",
-    "subdirectory": "examples/dice-roller"
+    "repo": "mihailinl/astra-dice-roller"
   },
-  "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/dice-roller",
-  "icon_url": "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/examples/dice-roller/icon.svg",
-  "categories": ["entertainment", "utilities"],
-  "keywords": ["dice", "random", "coin flip"],
+  "homepage": "https://github.com/mihailinl/astra-dice-roller",
+  "icon_url": "https://raw.githubusercontent.com/mihailinl/astra-dice-roller/main/icon.svg",
+  "categories": [
+    "entertainment",
+    "utilities"
+  ],
+  "keywords": [
+    "dice",
+    "random",
+    "coin flip"
+  ],
   "added_at": "2026-08-10"
 }
