@@ -350,11 +350,19 @@ jobs:
           # command line. bot/ingest.mjs rejects anything that is not
           # `owner/name` and a conservative tag charset before either reaches a
           # URL or `gh`.
+          # `|| code=$?` rather than a bare call, because the runner's default
+          # shell is `bash -e {0}` and `set -uo pipefail` above does not turn
+          # that off. Without it, `-e` aborts this script the instant decide
+          # returns anything but 0 — so `code=$?` never ran, the output was
+          # never set, the report never reached the job summary, and the `exit
+          # 0` below was unreachable. Every run that worked exactly as designed
+          # ended in a red X, which is precisely what the note under it says
+          # must not happen. A command on the left of `||` is exempt from `-e`.
+          code=0
           node bot/decide.mjs \
             --repo "$REPO" --tag "$TAG" --submitter "$SUBMITTER" \
             ${ISSUE:+--issue "$ISSUE"} \
-            --out out > out/comment.log
-          code=$?
+            --out out > out/comment.log || code=$?
           echo "code=$code" >> "$GITHUB_OUTPUT"
           cat out/comment.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || cat out/comment.log >> "$GITHUB_STEP_SUMMARY"
           # 0 published · 1 refused · 3 held for a maintainer · 4 delayed, and
