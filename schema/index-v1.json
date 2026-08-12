@@ -76,6 +76,11 @@
           "description": "The one-line card text. Projection of plugin.json's `summary`; named `description` because that is the field the daemon already deserialises."
         },
         "details": { "type": "string", "maxLength": 4000 },
+        "readme": {
+          "type": "string",
+          "maxLength": 16384,
+          "description": "The plugin's own README, for the store's detail view. GitHub-flavoured markdown with NO RAW HTML and no image pointing anywhere but GitHub's asset hosts — both guaranteed by bot/lib/assets.mjs when this was derived, because by the time a client reads this the author is a stranger and the renderer is inside Astra's window. Inlined rather than linked so the bytes are covered by the index signature and so opening the store makes no request to a third party. Absent when the plugin ships no README."
+        },
         "author": { "type": "string", "maxLength": 64 },
         "author_url": { "type": "string", "pattern": "^https://" },
         "license": { "type": "string", "maxLength": 64 },
@@ -84,7 +89,10 @@
         "keywords": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
         "homepage": { "type": "string", "pattern": "^https://" },
         "repository_url": { "type": "string", "pattern": "^https://github\\.com/" },
-        "icon_url": { "type": "string" },
+        "icon_url": {
+          "type": "string",
+          "description": "The store card's picture. A `data:image/png;base64,…` or `data:image/svg+xml;base64,…` URI when the listing committed an icon (the normal case since bot/ingest.mjs started extracting one from the attested bundle), an `https://` URL for an older hand-written listing, and empty when there is neither. Deliberately unpatterned: a client renders whichever it is handed, and both forms have shipped."
+        },
         "source": { "$ref": "#/$defs/source" },
         "downloads": { "type": "integer", "minimum": 0, "description": "Always 0. This registry counts nothing; see README §What is not here." },
         "stars": { "type": "integer", "minimum": 0, "description": "Always 0, same reason." },

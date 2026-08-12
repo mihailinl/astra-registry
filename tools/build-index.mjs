@@ -62,6 +62,7 @@ import { stableStringify } from "./lib/canonical.mjs";
 import { compareSemver } from "./lib/semver.mjs";
 import { loadSources, REPO_ROOT } from "./lib/sources.mjs";
 import { INDEX_SCHEMA } from "../bot/lib/sign.mjs";
+import { MAX_README_CHARS, iconDataUri } from "../bot/lib/assets.mjs";
 
 const BANNER =
   "GENERATED FILE — DO NOT EDIT. Source of truth: plugins/<id>/plugin.json and " +
@@ -167,6 +168,54 @@ function flatDownloads(latest) {
   return { download_url, platform_downloads };
 }
 
+/**
+ * The two presentation files, read off disk and folded into the entry.
+ *
+ * They are committed as real files next to `plugin.json` — a reviewer sees the
+ * picture and the prose in the pull request — and inlined here so that the
+ * shipped catalogue carries them inside the signed envelope. A store that
+ * fetched them at render time would leak one request per listing to a host the
+ * plugin author chose, and would show unauthenticated bytes beside
+ * authenticated ones with nothing marking the difference.
+ *
+ * Reading a file makes this generator's output depend on the working tree,
+ * which it already did for every JSON document here; it stays deterministic
+ * because the same tree yields the same bytes. No clock, no network.
+ */
+function presentation(root, plugin) {
+  const dir = path.join(root, "plugins", plugin.dir);
+  const p = plugin.doc;
+  const out = {};
+
+  if (p.icon) {
+    const file = path.join(dir, p.icon);
+    if (!fs.existsSync(file)) {
+      throw new Error(`plugins/${plugin.dir}/plugin.json names icon ${JSON.stringify(p.icon)}, which is not in the directory`);
+    }
+    out.icon_url = iconDataUri({ name: p.icon, bytes: fs.readFileSync(file) });
+  } else if (p.icon_url !== undefined) {
+    out.icon_url = p.icon_url;
+  } else {
+    out.icon_url = "";
+  }
+
+  if (p.readme) {
+    const file = path.join(dir, p.readme);
+    if (!fs.existsSync(file)) {
+      throw new Error(`plugins/${plugin.dir}/plugin.json names readme ${JSON.stringify(p.readme)}, which is not in the directory`);
+    }
+    const text = fs.readFileSync(file, "utf8");
+    if (text.length > MAX_README_CHARS) {
+      throw new Error(
+        `plugins/${plugin.dir}/${p.readme} is ${text.length} characters, over the ${MAX_README_CHARS} the index allows`,
+      );
+    }
+    out.readme = text;
+  }
+
+  return out;
+}
+
 export function buildIndex({ root = REPO_ROOT, serial } = {}) {
   const { errors, plugins } = loadSources(root);
   if (errors.length) {
@@ -202,7 +251,7 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
       ...(p.keywords !== undefined ? { keywords: [...p.keywords].sort() } : {}),
       ...(p.homepage !== undefined ? { homepage: p.homepage } : {}),
       repository_url: `https://github.com/${p.source.repo}`,
-      icon_url: p.icon_url ?? "",
+      ...presentation(root, plugin),
       source: {
         kind: p.source.kind,
         repo: p.source.repo,

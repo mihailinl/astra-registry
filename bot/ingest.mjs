@@ -386,6 +386,10 @@ export async function ingest(opts, deps = {}) {
     commit: /^[0-9a-f]{40}$/.test(release.target_commitish ?? "") ? release.target_commitish : null,
     publishedAt: normaliseTime(release.published_at),
     artifacts,
+    // The bundle's own contents, for the icon and the README. Taken from the
+    // first bundle because these two files are the plugin's, not the platform's
+    // — a Windows build and a Linux build of one release ship the same picture.
+    files: first.files,
     // Written into the listing's `$comment` so `git log` answers "how did this
     // get in" without re-running anything. The three methods are not equally
     // strong and a listing resting on the weakest one should say so.
@@ -416,6 +420,30 @@ export async function ingest(opts, deps = {}) {
 }
 
 /**
+ * Put a derived listing on disk: the two JSON documents and the presentation
+ * files that go beside them.
+ *
+ * One function, used by both the validation copy and `--out`, so the tree the
+ * bot checks is byte-for-byte the tree the bot proposes. When these were two
+ * blocks of similar code the icon and the README existed in only one of them,
+ * which is a validator that passes because it is looking at a different thing.
+ *
+ * @param {string} dir `plugins/<id>` under whichever root
+ * @param {{plugin: object, version: object, assets?: {path: string, bytes: Buffer}[]}} derived
+ */
+function writeListing(dir, derived) {
+  fs.mkdirSync(path.join(dir, "versions"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "plugin.json"), `${JSON.stringify(derived.plugin, null, 2)}\n`);
+  fs.writeFileSync(
+    path.join(dir, "versions", `${derived.version.version}.json`),
+    `${JSON.stringify(derived.version, null, 2)}\n`,
+  );
+  for (const asset of derived.assets ?? []) {
+    fs.writeFileSync(path.join(dir, asset.path), asset.bytes);
+  }
+}
+
+/**
  * Run the derived listing past `tools/validate.mjs` — the same code CI runs
  * against every hand-written listing in this repository.
  *
@@ -429,13 +457,7 @@ async function validateDerived(root, derived, opts) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "astra-ingest-"));
   try {
     fs.cpSync(path.join(root, "plugins"), path.join(tmp, "plugins"), { recursive: true });
-    const dir = path.join(tmp, "plugins", derived.plugin.id);
-    fs.mkdirSync(path.join(dir, "versions"), { recursive: true });
-    fs.writeFileSync(path.join(dir, "plugin.json"), `${JSON.stringify(derived.plugin, null, 2)}\n`);
-    fs.writeFileSync(
-      path.join(dir, "versions", `${derived.version.version}.json`),
-      `${JSON.stringify(derived.version, null, 2)}\n`,
-    );
+    writeListing(path.join(tmp, "plugins", derived.plugin.id), derived);
     const { report } = await runValidation({
       root: tmp, allowStaging: true, allowDirect: false, online: false, artifactsDir: null, index: false,
     });
@@ -572,13 +594,7 @@ async function main(argv) {
   console.log(result.comment);
 
   if (opts.out && result.derived && !result.blocked) {
-    const dir = path.join(opts.out, "plugins", result.derived.plugin.id);
-    fs.mkdirSync(path.join(dir, "versions"), { recursive: true });
-    fs.writeFileSync(path.join(dir, "plugin.json"), `${JSON.stringify(result.derived.plugin, null, 2)}\n`);
-    fs.writeFileSync(
-      path.join(dir, "versions", `${result.derived.version.version}.json`),
-      `${JSON.stringify(result.derived.version, null, 2)}\n`,
-    );
+    writeListing(path.join(opts.out, "plugins", result.derived.plugin.id), result.derived);
     console.error(`wrote the derived listing under ${opts.out}`);
   }
 
