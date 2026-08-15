@@ -92,10 +92,11 @@ asked of you. There are only four:
 | `R_IDENTITY_CHANGED` | The repository moved. Every installed copy is pinned to the old one. Is this the same author, or a takeover? |
 | `R_CHECK_HELD` | A name one edit from a listed plugin, or a display name that collides. Is it a coincidence? |
 
-Then comment **one line**:
+Then comment **one line**. For a yes, that line is printed in the bot's own
+comment, in a code block, ready to copy — **do not retype it from memory**:
 
 ```
-/approve
+/approve you/dice-roller@v0.2.0 4f1c9a02be773d15
 ```
 
 or
@@ -105,16 +106,34 @@ or
 ```
 
 Expect a new comment within minutes. For `/approve` it is a full check table
-again with a line naming you and the time. For `/reject` it is your reason
-quoted back to the author with what they can do next, and then the issue closes.
+again with a line naming you, the time, and the submission you cleared. For
+`/reject` it is your reason quoted back to the author with what they can do next,
+and then the issue closes.
 
 **Approving does not skip anything.** The entire ingest runs again from
 scratch — the assets are re-downloaded, the attestation re-verified, the
 manifest re-read, the digests re-hashed. A tag can be moved and a release asset
 can be replaced between the hold and your yes, so what publishes is what *this*
-run verified, never what an earlier one did. This is also why there is no
-"approve the version I already looked at" command: there would be no way to
-prove the bytes were the same ones.
+run verified, never what an earlier one did.
+
+**And it applies to nothing but what you read.** The last field of the line is a
+fingerprint of that submission: the repository, the tag, the version, and the
+digest of every asset that run hashed. The re-run works it out again from the
+release in front of it and compares. So the answer to "what if it changed between
+my reading it and my yes" is no longer only *the checks would run again* — it is
+**the approval is refused, and you are told what moved**: `P_APPROVAL_STALE`, a
+comment naming both fingerprints, and a fresh line to copy if you still want to
+say yes. There is still no "publish the version I already looked at" command, and
+there never will be; the bytes are re-fetched every time. The fingerprint buys
+the other half — that the bytes being re-fetched are the ones you meant.
+
+The case that made this necessary does not look like an attack while it is
+happening: **the issue body belongs to its author.** They can edit the repository
+and tag fields at any time, including after the bot posts the hold and before you
+answer it. A bare `/approve` meant "approve whatever this issue says right now",
+so two edits were enough to point your yes at a release you never saw. If you get
+*"this issue no longer describes what you approved"*, read the issue's edit
+history before you retype anything.
 
 **A rejection is a sentence, not a close.** `/reject` with nothing after it does
 nothing and tells you so. A silent close is the one thing this flow will not do.
@@ -127,6 +146,9 @@ nothing and tells you so. A silent close is the one thing this flow will not do.
 | "is refused" … "would not say" | The permission call itself failed **and** you are not the account this repository belongs to. Re-run it. If it keeps happening from the owner's account, that is a bug: `author_association: OWNER` is meant to carry the command through exactly this case. From any other account the fallback is to publish the listing by hand through a pull request — `bot/run-checks.mjs` is that path. |
 | "would not say … but the event payload marks the comment `author_association: OWNER`" | Not a failure. `GITHUB_TOKEN` could not read `GET /repos/{owner}/{repo}/collaborators/{login}/permission` — it holds `contents: read`, and that endpoint is documented as needing push access — so the command was honoured on GitHub's own assertion that you are the repository's owner instead. **Whether the API path works at all with a real Actions token has not been observed in a live run**; if every `/approve` comes through this line, that is the answer. |
 | "has nothing to act on here" | The issue carries no readable form. Ask the author to open a fresh request with the listing template. |
+| "`/approve` has to name what it is approving" | You typed the bare word, or the line lost a field on the way into the comment box. Copy the whole line out of the bot's **Held for a maintainer** comment: `/approve <owner/repo>@<tag> <fingerprint>`. |
+| "this issue no longer describes what you approved" | The repository or tag in the issue is not the one your command named. **Look at the issue's edit history before doing anything else** — this is what an author swapping a submission under review looks like from here, and it is also what a stale browser tab looks like. If the issue as it stands is what you meant, comment `/recheck`, read the new comment, and copy the line out of *that* one. |
+| `P_APPROVAL_STALE` in the new comment | Your command was well formed and named an earlier state of the release: the tag moved, or a release asset was replaced, after the comment you answered. Nothing published and the hold stands. Re-read the table as it now is; the same comment prints the current line. |
 | Nothing at all | The command was not the first line you wrote, or it was inside a quoted reply. Post it alone, on its own line. |
 
 ### Reproducing a decision locally
@@ -142,14 +164,66 @@ ASTRA_MANIFEST_PROBE=bot/manifest-probe/target/release/astra-manifest-probe \
 ```
 
 It prints the same comment the bot posts and exits `0` published, `1` refused,
-`3` held, `4` delayed, `2` the bot itself broke. `--approved-by you` reproduces
-what your `/approve` would decide.
+`3` held, `4` delayed, `2` the bot itself broke.
+
+To reproduce what your `/approve` would decide, run it once as above, take the
+fingerprint out of the `/approve` line it printed, and run it again with all
+three flags:
+
+```sh
+… node bot/decide.mjs --repo you/dice-roller --tag v0.2.0 --submitter you \
+    --approved-by you --approved-at 2026-08-14T09:00:00Z \
+    --approved-for 4f1c9a02be773d15 --out /tmp/ingest
+```
+
+`--approved-by` on its own is refused exactly as a bare `/approve` is, and for
+the same reason: it says yes without saying to what.
 
 The trust chain is provisioned, so this really does run: `registry/v1/root.json`
 carries `astra-root-2026a` and its reserve, and `registry/v1/trust.json` is
 signed by the active root at serial 1, delegating to `astra-index-2026a` and
 allowlisting one reusable-workflow commit. An attestation from any other
 workflow is refused, which is the point of the allowlist.
+
+### The one switch that is not flipped yet
+
+**Private vulnerability reporting is off on this repository.** Check it, and
+check it after you change it — the answer is one line either way:
+
+```sh
+gh api repos/mihailinl/astra-registry/private-vulnerability-reporting
+```
+
+```
+{"enabled":false}          # as of 2026-08-15
+```
+
+While it says `false`, `https://github.com/mihailinl/astra-registry/security/advisories/new`
+works **for you** and 404s for everybody else: GitHub shows the "Report a
+vulnerability" form to outside reporters only when this is on. That is the
+opposite of what a security contact link is for, and it is why the one in
+`.github/ISSUE_TEMPLATE/config.yml` now points at `docs/POLICY.md` §11 — which
+carries a fallback that works today — rather than at the form.
+
+Turn it on:
+
+```
+Settings → Advanced Security → Private vulnerability reporting → Enable
+```
+
+Then, in one commit: delete step 2 of §11's "how to open one" in
+`docs/POLICY.md`, and point the security contact link in
+`.github/ISSUE_TEMPLATE/config.yml` back at `/security/advisories/new`. Leave the
+sentence about who can read an advisory where it is — enabling the form does not
+make it end-to-end encrypted.
+
+**Two other places to fix, neither done here.** `site/build.mjs` still generates
+"it is end-to-end between you and the maintainer" onto the published security
+page (`bot/security-contact.json`, which feeds it, has been corrected).
+`SECURITY.md`'s third paragraph says "open a private security advisory on this
+repository, or email the address in the repository profile" — the first half is
+the form that 404s while the switch is off, and the second names an address this
+repository does not publish anywhere it can be checked.
 
 ---
 

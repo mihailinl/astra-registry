@@ -50,7 +50,7 @@ import {
 } from "../lib/notify.mjs";
 import { pollFeed, runDrain, runWatch } from "../watch.mjs";
 import { triage } from "../triage.mjs";
-import { makeBundle, fakeGitHub, fakeGh, fakeOwnership } from "../fixtures/ingest/make.mjs";
+import { makeBundle, fakeGitHub, fakeGh, fakeOwnership, FIXTURE_COMMIT } from "../fixtures/ingest/make.mjs";
 import { loadSources } from "../../tools/lib/sources.mjs";
 
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -179,12 +179,16 @@ const conforming = (spec = {}) => ({ name: bundleName(spec), bytes: makeBundle(s
 /** One ingest-and-decide against a world assembled from the arguments. */
 async function run({
   assets = [conforming()], repo = REPO, tag = TAG, submitter = SUBMITTER, root,
-  now = NOW, out = null, issue = null, approvedBy = null, approvedAt = null,
+  now = NOW, out = null, issue = null, approvedBy = null, approvedAt = null, approvedFor = null,
+  // The commit the Release names and the commit the attestation names. Equal by
+  // default, because in a healthy release they are the same commit; a test that
+  // moves one and not the other is asking about `E_RELEASE_COMMIT_MISMATCH`.
+  commit = FIXTURE_COMMIT, attestedCommit = commit,
 } = {}) {
-  const github = fakeGitHub({ repo, tag, assets });
+  const github = fakeGitHub({ repo, tag, assets, commit });
   return decideRelease(
     {
-      repo, tag, submitter, root, issue, now, approvedBy, approvedAt,
+      repo, tag, submitter, root, issue, now, approvedBy, approvedAt, approvedFor,
       rootsFile: ROOTS_FILE, trustFile: TRUST_FILE, signerWorkflow: DEFAULT_SIGNER_WORKFLOW,
       out,
     },
@@ -196,10 +200,28 @@ async function run({
       ghRunner: (args) => fakeGh({
         repo,
         signerDigest: ALLOWED_WORKFLOW_SHA,
+        sourceCommit: attestedCommit,
         subjectDigest: crypto.createHash("sha256").update(fs.readFileSync(args[2])).digest("hex"),
       })(args),
     },
   );
+}
+
+/**
+ * What a maintainer actually does: read the comment on a held run, copy the
+ * `/approve` line out of it, and answer with that.
+ *
+ * Two runs, because that is two runs in production too — and because a test
+ * that computed the fingerprint from the same expression the code does would
+ * assert that a function equals itself. This takes the string out of the
+ * rendered markdown a human would have copied.
+ */
+async function approveFromComment(world, { by = "the-maintainer", at = "2026-08-10T11:59:00Z" } = {}) {
+  const held = await run(world);
+  const line = /^\/approve (\S+)@(\S+) ([0-9a-f]{16})$/m.exec(held.comment);
+  if (!line) throw new Error(`the held comment printed no /approve line:\n${held.comment}`);
+  const approved = await run({ ...world, approvedBy: by, approvedAt: at, approvedFor: line[3] });
+  return { held, approved, line: line[0], fingerprint: line[3] };
 }
 
 const codes = (r) => r.decision.reasons.map((x) => x.code);
@@ -1148,19 +1170,86 @@ await test("OWNER never overrides an answer GitHub did give", async () => {
   assertEqual(out.role, "read", "");
 });
 
+/** A fingerprint of the right shape. Whether it names these bytes is decided later. */
+const FP = "0123456789abcdef";
+
 await test("/approve from a maintainer emits a target carrying the approval, and nothing else", async () => {
-  const out = await command("/approve", "the-maintainer");
+  const out = await command(`/approve ${REPO}@${TAG} ${FP}`, "the-maintainer");
   assertEqual(out.mode, "approve", out.why);
   assertEqual(out.repo, REPO, "");
   assertEqual(out.tag, TAG, "");
   assertEqual(out.submitter, SUBMITTER, "the issue author, whose ownership is proved again downstream");
   assertEqual(out.approvedBy, "the-maintainer", "");
+  assertEqual(out.approvedFor, FP, "and what it is an approval OF");
   assert(/^2026-/.test(out.approvedAt), out.approvedAt);
-  // The property the whole design rests on: an approval is a name and a moment.
-  // No verdict, no digest, no listing — so there is no second, shorter route
-  // into the catalogue for a release somebody said yes to.
+  // The property the whole design rests on: an approval is a name, a moment, and
+  // the name of a submission. No verdict, no digest, no listing — so there is no
+  // second, shorter route into the catalogue for a release somebody said yes to.
   assert(!("findings" in out) && !("derived" in out) && !("decision" in out),
     `an approval must carry no verification with it: ${Object.keys(out).join(", ")}`);
+});
+
+// ── an approval is bound to the submission it approves ──────────────────────
+//
+// The hole: `decideCommand` re-parses the issue body at the moment the
+// `/approve` comment is processed, and the author owns that body. Hold the
+// submission, wait for the maintainer to read it, edit the two form fields, and
+// the yes lands on a release nobody looked at. Nothing downstream could catch
+// it — every check would then pass, honestly, against the substituted
+// repository, and the audit record would name a maintainer who never saw it.
+
+await test("a bare /approve no longer approves whatever the issue says today", async () => {
+  const out = await command("/approve", "the-maintainer");
+  assertEqual(out.mode, "reply", out.why);
+  assert(!out.repo && !out.tag, "and emits no target at all");
+  assert(out.reply.includes("has to name what it is approving"), out.reply);
+  assert(out.reply.includes("the issue body belongs to the author"),
+    "and says why the bare word stopped being enough");
+});
+
+await test("an approval for a submission this issue no longer describes is refused, loudly", async () => {
+  // The whole defect in one call: the maintainer read `a-stranger/dice-roller
+  // v0.2.0` and typed a command naming it; by the time the comment is processed
+  // the form says something else entirely.
+  const out = await command(`/approve ${REPO}@${TAG} ${FP}`, "the-maintainer", {
+    issue: form({ repo: "someone-else/not-what-you-read", tag: "v9.9.9" }),
+  });
+  assertEqual(out.mode, "reply", out.why);
+  assert(!out.repo && !out.tag,
+    "no target: an approval that cannot be matched to a submission must not start an ingest");
+  assert(out.reply.includes("no longer describes what you approved"), out.reply);
+  assert(out.reply.includes(REPO) && out.reply.includes("someone-else/not-what-you-read"),
+    "and shows both, because which of the two is the surprise is the maintainer's call");
+});
+
+await test("a tag edited under a hold is caught too, not just a repository", async () => {
+  const out = await command(`/approve ${REPO}@${TAG} ${FP}`, "the-maintainer", {
+    issue: form({ tag: "v0.3.0" }),
+  });
+  assertEqual(out.mode, "reply", out.why);
+  assert(out.reply.includes("no longer describes"), out.reply);
+});
+
+await test("a line that is nearly the command is not the command", async () => {
+  for (const line of [
+    `/approve ${REPO} ${FP}`,             // no tag
+    `/approve ${REPO}@${TAG}`,            // no fingerprint
+    `/approve ${REPO}@${TAG} not-a-hash`, // not a fingerprint
+    `/approve ${REPO}@${TAG} ${FP} and also ship it`,
+  ]) {
+    const out = await command(line, "the-maintainer");
+    assertEqual(out.mode, "reply", `${line} → ${out.why}`);
+    assert(out.reply.includes("has to name what it is approving"), line);
+  }
+});
+
+await test("the permission is still asked first, so a stranger learns nothing from the shape", async () => {
+  // Ordering matters for the same reason it did before: an account that may not
+  // decide must get the same answer whatever it typed, or the bot becomes an
+  // oracle for what a well-formed command looks like.
+  const out = await command("/approve", "a-stranger");
+  assert(out.reply.includes("`/approve` is refused"), out.reply);
+  assert(!out.reply.includes("has to name what it is approving"), out.reply);
 });
 
 await test("/reject with no reason changes nothing and says so", async () => {
@@ -1218,14 +1307,17 @@ await test("without an approval it is held, with the SLA and no listing", async 
   assertEqual(r.decision.outcome, "review", JSON.stringify(codes(r)));
   assertEqual(r.decision.publishes_now, false, "");
   assertEqual(r.decision.approved_by, null, "");
+  // And the comment says what to type, in full, because "comment /approve" is
+  // an instruction that cannot be checked against anything afterwards and
+  // "comment this exact line" is one that can.
+  assert(r.comment.includes(`/approve ${REPO}@${TAG} ${r.decision.fingerprint}`),
+    `the hold comment must print the line ready to copy:\n${r.comment}`);
+  assert(/^[0-9a-f]{16}$/.test(r.decision.fingerprint), r.decision.fingerprint);
 });
 
 await test("a maintainer's yes re-runs every check and publishes what THIS run hashed", async () => {
   const assets = [conforming()];
-  const r = await run({
-    root: collidingTree(), assets,
-    approvedBy: "the-maintainer", approvedAt: "2026-08-10T11:59:00Z",
-  });
+  const { approved: r } = await approveFromComment({ root: collidingTree(), assets });
   assertEqual(r.decision.outcome, "publish", JSON.stringify(codes(r)));
   assert(codes(r).includes("P_APPROVED"), JSON.stringify(codes(r)));
   assertEqual(r.decision.approved_by, "the-maintainer", "");
@@ -1272,10 +1364,9 @@ await test("an approval cannot clear a failed check", async () => {
 });
 
 await test("an approval does not waive the publication delay, and the queue remembers it", async () => {
-  const r = await run({
+  const { approved: r } = await approveFromComment({
     root: collidingTree(),
     assets: [conforming({ capabilities: ["tools", "tts"] })],
-    approvedBy: "the-maintainer", approvedAt: "2026-08-10T11:59:00Z",
   });
   assertEqual(r.decision.outcome, "delay", JSON.stringify(codes(r)));
   assert(codes(r).includes("P_APPROVED") && codes(r).includes("P_DELAY_WIDENED"), JSON.stringify(codes(r)));
@@ -1290,7 +1381,7 @@ await test("an approval does not waive the publication delay, and the queue reme
 await test("the drain honours the approval in the queue without a second comment", async () => {
   const root = collidingTree();
   const assets = [conforming({ capabilities: ["tools", "tts"] })];
-  const first = await run({ root, assets, approvedBy: "the-maintainer", approvedAt: "2026-08-10T11:59:00Z" });
+  const { approved: first } = await approveFromComment({ root, assets });
   assertEqual(first.decision.outcome, "delay", "");
 
   // Commit the queue entry the publish job would have committed, then let the
@@ -1309,9 +1400,8 @@ await test("the drain honours the approval in the queue without a second comment
 
 await test("swapping the assets mid-window takes the approval with the clock", async () => {
   const root = collidingTree();
-  const first = await run({
+  const { approved: first } = await approveFromComment({
     root, assets: [conforming({ capabilities: ["tools", "tts"] })],
-    approvedBy: "the-maintainer", approvedAt: "2026-08-10T11:59:00Z",
   });
   const entry = first.decision.queue_entry;
   const file = path.join(root, queueFile(entry.id, entry.version));
@@ -1328,6 +1418,320 @@ await test("swapping the assets mid-window takes the approval with the clock", a
     "the hold comes back, because nobody has approved THESE bytes");
   assertEqual(swapped.decision.approved_by, null,
     "an approval recorded against a digest must never be reused for a different one");
+});
+
+section("an approval names what it approves, and only that");
+
+// The layer below `bot/triage.mjs`. Triage refuses a command whose repository
+// and tag disagree with the issue in front of it — but triage has no bytes, so
+// it cannot see a tag moved onto a different commit or a release asset replaced
+// in place. Both of those are §5.5's timed swap aimed at the review queue
+// instead of at the publication delay, and this is where they are caught.
+
+await test("an approval is refused when the release changed after the hold", async () => {
+  const root = collidingTree();
+
+  // 1. It is held, and the comment prints the line to copy.
+  const held = await run({ root, assets: [conforming()] });
+  assertEqual(held.decision.outcome, "review", JSON.stringify(codes(held)));
+  const approvedFor = held.decision.fingerprint;
+
+  // 2. The author replaces the asset on the same repository and the same tag
+  //    while the maintainer is reading. Nothing about the issue changed.
+  const swapped = [conforming({ description: "Rolls dice. Differently." })];
+
+  // 3. The maintainer answers the comment they read.
+  const r = await run({
+    root, assets: swapped,
+    approvedBy: "the-maintainer", approvedAt: "2026-08-10T11:59:00Z", approvedFor,
+  });
+
+  assertEqual(r.decision.outcome, "review",
+    `the hold has to stand: ${JSON.stringify(codes(r))}`);
+  assertEqual(r.decision.publishes_now, false, "and nothing is written");
+  assertEqual(r.decision.approved_by, null,
+    "the approval did not apply, so the record must not claim a hold was cleared");
+  assert(codes(r).includes("P_APPROVAL_STALE"), JSON.stringify(codes(r)));
+  assert(!codes(r).includes("P_APPROVED"), JSON.stringify(codes(r)));
+
+  // Refused loudly, not silently: who typed it, what it named, and what is here.
+  assertEqual(r.decision.approval_refused.by, "the-maintainer", "");
+  assertEqual(r.decision.approval_refused.for, approvedFor, "");
+  assert(r.decision.fingerprint !== approvedFor,
+    "the premise of the test: different bytes are a different submission");
+  assert(r.comment.includes("`/approve` was refused"), r.comment);
+  assert(r.comment.includes(approvedFor) && r.comment.includes(r.decision.fingerprint),
+    "the comment names both, so the maintainer can see which one moved");
+  // And it prints the line for the release as it is now, which is the remedy.
+  assert(r.comment.includes(`/approve ${REPO}@${TAG} ${r.decision.fingerprint}`), r.comment);
+});
+
+await test("an approval is refused when only the release commit moved", async () => {
+  // The narrower cousin of the test above, and the one the fingerprint used to
+  // fail. Every hashed fact was repo, tag, id, version and the artifact digests
+  // — so an author could delete the release and the tag, push a commit with a
+  // different `banner.png`, re-create both at that commit and re-upload
+  // BYTE-IDENTICAL assets, and the fingerprint would not move. The maintainer's
+  // `/approve` still bound, the listing published, and `bot/lib/assets.mjs`
+  // pinned every relative README image to a tree nobody had reviewed. The
+  // commit is in the hash now, so this is a different submission.
+  const root = collidingTree();
+  const assets = [conforming()];
+  const held = await run({ root, assets });
+  assertEqual(held.decision.outcome, "review", JSON.stringify(codes(held)));
+  const approvedFor = held.decision.fingerprint;
+
+  const moved = "c".repeat(40);
+  const r = await run({
+    root, assets, commit: moved,
+    approvedBy: "the-maintainer", approvedAt: "2026-08-10T11:59:00Z", approvedFor,
+  });
+
+  assert(r.decision.fingerprint !== approvedFor,
+    "the premise: the same bytes at a different commit are a different submission");
+  assertEqual(r.decision.outcome, "review", `the hold has to stand: ${JSON.stringify(codes(r))}`);
+  assertEqual(r.decision.publishes_now, false, "and nothing is written");
+  assertEqual(r.decision.approved_by, null, "");
+  assert(codes(r).includes("P_APPROVAL_STALE"), JSON.stringify(codes(r)));
+  assert(!codes(r).includes("P_APPROVED"), JSON.stringify(codes(r)));
+});
+
+await test("a Release pointed at a commit the attestation does not name is refused", async () => {
+  // Independent of approvals: it applies to every listing, auto-published ones
+  // included. `release.target_commitish` is whatever `gh release create --target`
+  // was given, the attestation names the commit that actually built the bytes,
+  // and nothing used to compare them — so the catalogue could record, and pin
+  // every relative README image to, an unrelated tree that verified fine.
+  const root = registryTree([{ versions: [{ version: "0.1.0" }] }]);
+  const r = await run({ root, commit: "d".repeat(40), attestedCommit: FIXTURE_COMMIT });
+  const errors = r.findings.filter((x) => x.level === "error").map((x) => x.code);
+  assert(errors.includes("E_RELEASE_COMMIT_MISMATCH"), JSON.stringify(errors));
+  assertEqual(r.decision.publishes_now, false, "and nothing is published on a mismatch");
+});
+
+await test("an approval for one repository does not clear a hold on another", async () => {
+  const root = collidingTree();
+  const mine = await run({ root, assets: [conforming()] });
+
+  // Same bytes, same version, a different source repository — the shape of the
+  // issue-body edit, arriving through a path where no issue was parsed at all.
+  const elsewhere = await run({
+    root, repo: "someone-else/dice-roller", submitter: "someone-else",
+    assets: [conforming()],
+    approvedBy: "the-maintainer", approvedAt: "2026-08-10T11:59:00Z",
+    approvedFor: mine.decision.fingerprint,
+  });
+  assert(elsewhere.decision.outcome !== "publish", JSON.stringify(codes(elsewhere)));
+  assertEqual(elsewhere.decision.approved_by, null, "");
+  assert(codes(elsewhere).includes("P_APPROVAL_STALE"), JSON.stringify(codes(elsewhere)));
+});
+
+await test("an approval that names nothing at all is not an approval", async () => {
+  // `--approved-by` with no `--approved-for`: the exact shape every approval had
+  // before this binding existed, and the reason the flag is not optional.
+  const r = await run({
+    root: collidingTree(),
+    approvedBy: "the-maintainer", approvedAt: "2026-08-10T11:59:00Z",
+  });
+  assertEqual(r.decision.outcome, "review", JSON.stringify(codes(r)));
+  assertEqual(r.decision.approved_by, null, "");
+  assert(codes(r).includes("P_APPROVAL_STALE"), JSON.stringify(codes(r)));
+  assert(r.comment.includes("no submission at all"), r.comment);
+});
+
+await test("the line the hold comment prints is the line that works", async () => {
+  // The round trip, exactly as a maintainer performs it: read the comment,
+  // copy the line, comment it, watch it publish. If these two ever disagree the
+  // binding is unusable, and an unusable binding is one somebody removes.
+  const { held, approved, line, fingerprint } = await approveFromComment({ root: collidingTree() });
+  assertEqual(held.decision.outcome, "review", "");
+  assertEqual(line, `/approve ${REPO}@${TAG} ${fingerprint}`, "");
+  assertEqual(approved.decision.outcome, "publish", JSON.stringify(codes(approved)));
+  assertEqual(approved.decision.approved_by, "the-maintainer", "");
+  assertEqual(approved.decision.approval_refused, null, "");
+  assert(approved.comment.includes(`\`${fingerprint}\``),
+    "and the record says which submission was approved, not just that one was");
+});
+
+await test("the fingerprint is of the submission, not of the prose around it", async () => {
+  // The reason the binding is not a hash of the issue body: an author fixing a
+  // typo in their justification, or a maintainer editing the title, must not
+  // invalidate an approval. Two runs over identical bytes agree.
+  const root = collidingTree();
+  const a = await run({ root });
+  const b = await run({ root, issue: 41 });
+  assertEqual(a.decision.fingerprint, b.decision.fingerprint, "");
+
+  // And it moves for each of the five things it is made of.
+  const other = await run({ root, tag: "v0.2.0-rc1" });
+  assert(other.decision.fingerprint !== a.decision.fingerprint, "a different tag is a different submission");
+});
+
+await test("a refused approval does not take a waiting release out of the queue", async () => {
+  // The invariant: a refused approval changes NOTHING. A delayed release has a
+  // clock its author is owed, and the clock lives in a queue entry that a
+  // `review` outcome deletes. Without this, a maintainer pasting the wrong line
+  // would restart somebody's 24 hours.
+  const root = registryTree([{ versions: [{ version: "0.1.0", capabilities: ["tools"] }] }]);
+  const assets = [conforming({ capabilities: ["tools", "tts"] })];
+  const waiting = await run({ root, assets });
+  assertEqual(waiting.decision.outcome, "delay", JSON.stringify(codes(waiting)));
+
+  const entry = waiting.decision.queue_entry;
+  const file = path.join(root, queueFile(entry.id, entry.version));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(entry, null, 2)}\n`);
+
+  const out = tmp("astra-policy-out-");
+  const fumbled = await run({
+    root, assets, now: new Date(NOW.getTime() + 3600 * 1000),
+    approvedBy: "the-maintainer", approvedAt: "2026-08-10T12:30:00Z",
+    approvedFor: "ffffffffffffffff",
+  });
+  assertEqual(fumbled.decision.outcome, "review", JSON.stringify(codes(fumbled)));
+  assert(codes(fumbled).includes("P_APPROVAL_STALE"), JSON.stringify(codes(fumbled)));
+  writeOutputs(out, { repo: REPO, tag: TAG, issue: null }, fumbled);
+  assertEqual(fs.readFileSync(path.join(out, "remove.txt"), "utf8"), "",
+    "the entry the author is waiting on must still be there");
+
+  // And it still publishes itself on the original clock.
+  const later = await run({ root, assets, now: new Date(NOW.getTime() + 25 * 3600 * 1000) });
+  assertEqual(later.decision.outcome, "publish", JSON.stringify(codes(later)));
+  assert(codes(later).includes("P_DELAY_ELAPSED"), JSON.stringify(codes(later)));
+});
+
+await test("a real hold still stops a release waiting, stale approval or not", async () => {
+  // The other half of the exception above: `P_APPROVAL_STALE` is the only hold
+  // that leaves a queue entry alone. A submission that a re-check now hands to a
+  // person must not publish itself on a timer while it waits.
+  const root = collidingTree();
+  const assets = [conforming({ capabilities: ["tools", "tts"] })];
+  const out = tmp("astra-policy-out-");
+  const held = await run({
+    root, assets,
+    approvedBy: "the-maintainer", approvedAt: "2026-08-10T11:59:00Z", approvedFor: "ffffffffffffffff",
+  });
+  assertEqual(held.decision.outcome, "review", JSON.stringify(codes(held)));
+  assert(codes(held).includes("R_CHECK_HELD") && codes(held).includes("P_APPROVAL_STALE"),
+    JSON.stringify(codes(held)));
+  writeOutputs(out, { repo: REPO, tag: TAG, issue: null }, held);
+  assert(fs.readFileSync(path.join(out, "remove.txt"), "utf8").includes("state/queue/"),
+    "a genuine hold still takes the release out of the queue");
+});
+
+await test("decision.json carries the binding, for the run that publishes and the one that refuses", async () => {
+  const root = collidingTree();
+  const out = tmp("astra-policy-out-");
+  const held = await run({ root });
+  const r = await run({
+    root, approvedBy: "the-maintainer", approvedAt: "2026-08-10T11:59:00Z",
+    approvedFor: held.decision.fingerprint,
+  });
+  writeOutputs(out, { repo: REPO, tag: TAG, issue: 7 }, r);
+  const doc = JSON.parse(fs.readFileSync(path.join(out, "decision.json"), "utf8"));
+  assertEqual(doc.fingerprint, r.decision.fingerprint, "");
+  assertEqual(doc.approved_by, "the-maintainer", "");
+  assertEqual(doc.approval_refused, null, "");
+  assert(Array.isArray(doc.artifact_digests) && doc.artifact_digests.length > 0,
+    "the digests the fingerprint is a label on are still written out in full");
+});
+
+section("what the workflow may cancel, and what it may never");
+
+// `.github/workflows/ingest.yml` grouped every event on an issue under one
+// concurrency key with `cancel-in-progress: true`. That was fine while a comment
+// could only ever start a re-check; it stopped being fine when `/approve` began
+// starting a full ingest on that same key, because then an edit — or any second
+// comment, including `/recheck` — cancelled a decision that was already running.
+//
+// A cancelled run is not a run that did nothing. `publish` is the only job that
+// commits, so cancelling it leaves the listing unwritten, the backstop's etag
+// memory thrown away, and — the one that does not heal — the QUEUE ENTRY for a
+// delayed release never committed, after `comment` has already told the author
+// it publishes itself at a stated time. Nothing retries that. The `/approve`
+// itself is spent too: GitHub does not redeliver the comment.
+//
+// `cancel-in-progress: false` fixed the in-progress half and only that half. A
+// PENDING run is still replaced by a newer one in the same group, which is why
+// the question below is which events share a key — and why the answer is "all
+// of an issue's", so that a replaced run is always a duplicate of the same
+// submission rather than a stranger's release.
+//
+// Asserted against the file rather than argued in prose, because the argument
+// is only as good as the two lines it is about.
+
+const ingestWorkflow = fs.readFileSync(
+  path.join(REPO_ROOT, ".github", "workflows", "ingest.yml"), "utf8");
+
+/** The top-level block of a workflow file: column 0 key, indented body. */
+function topLevelBlock(yaml, key) {
+  const lines = yaml.split("\n");
+  const start = lines.findIndex((l) => l === `${key}:` || l.startsWith(`${key}:`) && !l.startsWith(" "));
+  if (start < 0) return null;
+  const body = [lines[start]];
+  for (let i = start + 1; i < lines.length; i++) {
+    if (lines[i].trim() === "" || /^\s/.test(lines[i])) body.push(lines[i]);
+    else break;
+  }
+  return body.join("\n");
+}
+
+await test("no event can cancel an ingest that is already running", async () => {
+  const block = topLevelBlock(ingestWorkflow, "concurrency");
+  assert(block, "the workflow has no top-level concurrency block at all");
+  const flag = /cancel-in-progress:\s*(.+)/.exec(block);
+  assert(flag, block);
+  assertEqual(flag[1].trim(), "false",
+    "an expression here is a run that cancels a publish for some value of github.event_name");
+  // The spending argument the cancellation was there for survives: a group with
+  // cancel-in-progress false still serialises, and a newer event replaces the
+  // *pending* run rather than the in-flight one.
+  assert(/group:/.test(block), block);
+});
+
+await test("everything on one issue shares one concurrency key", async () => {
+  // This replaced an assertion that a comment must key on ITSELF
+  // (`comment-<id>`). That was wrong in a way `cancel-in-progress: false` hides:
+  // GitHub keeps one running and one PENDING run per group, and a third arrival
+  // replaces the pending one. A per-comment key does not remove that — it turns
+  // every comment into its own run, and all of those runs' `publish` jobs then
+  // queue on the single repo-wide `registry-publish` group, where the same rule
+  // now applies between different authors. `/release <listed-repo> <tag>`
+  // requires no authority at all, so a stranger could drop somebody else's
+  // pending publish at will.
+  //
+  // Sharing the issue's key does not make a pending run uncancellable. It makes
+  // the run that cancels it another event on the SAME submission, which the
+  // replacing run redoes from scratch.
+  const block = topLevelBlock(ingestWorkflow, "concurrency");
+  assert(!/github\.event\.comment\.id/.test(block),
+    `a per-comment key moves the collision to the repo-wide publish lane, where a stranger can cause it:\n${block}`);
+  assert(/github\.event\.issue\.number/.test(block),
+    `every event on an issue has to share one lane:\n${block}`);
+});
+
+await test("the job that commits still refuses to be cancelled or doubled", async () => {
+  // The only job that writes to the catalogue, serialised. Note what this does
+  // NOT promise: a pending `publish` can still be replaced by a newer one, so
+  // the durable fix is recovery — the hourly drain reconciling a promised
+  // `publish_after` against `state/queue/` — not a concurrency key. The header
+  // comment in ingest.yml says so rather than claiming the hazard is gone.
+  assert(/group:\s*registry-publish/.test(ingestWorkflow), "");
+  const after = ingestWorkflow.slice(ingestWorkflow.indexOf("group: registry-publish"));
+  assert(/^\s*cancel-in-progress:\s*false/m.test(after.slice(0, 200)), after.slice(0, 200));
+});
+
+await test("the approval's binding is wired from triage's target to decide's flag", async () => {
+  // Three names for one field, in three files, and a typo in any of them makes
+  // the approval unbound rather than loud: `triage.mjs` writes `approved_for`
+  // into the target, the matrix carries it, and `decide.mjs` reads
+  // `--approved-for`.
+  const triageSrc = fs.readFileSync(path.join(REPO_ROOT, "bot", "triage.mjs"), "utf8");
+  assert(/approved_for: out\.approvedFor/.test(triageSrc), "triage must put it on the target");
+  assert(/APPROVED_FOR: \$\{\{ matrix\.approved_for \}\}/.test(ingestWorkflow),
+    "the matrix entry has to reach the check job");
+  assert(/--approved-for "\$APPROVED_FOR"/.test(ingestWorkflow),
+    "and the check job has to pass it to decide.mjs");
 });
 
 section("the document and the code say the same thing");

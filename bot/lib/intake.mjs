@@ -67,7 +67,8 @@ export const safeLogin = (v) => safe(v, LOGIN_RE);
 // ── the maintainer's two commands ───────────────────────────────────────────
 
 /**
- * `/approve`, or `/reject <reason>`, and nothing else.
+ * `/approve <owner/repo>@<tag> <fingerprint>`, or `/reject <reason>`, and
+ * nothing else.
  *
  * Shaped exactly like `/recheck` and `/release` (`bot/lib/issue.mjs`,
  * `bot/lib/notify.mjs`): the whole line, case-insensitive, on the first line
@@ -77,11 +78,29 @@ export const safeLogin = (v) => safe(v, LOGIN_RE);
  * `firstWrittenLine` skips a leading blank line and a markdown heading, and
  * nothing else; `> /approve` in a quoted reply is neither.
  *
+ * ── why `/approve` takes arguments and `/reject` does not ──────────────────
+ *
+ * `/approve` used to be the bare word, and everything it applied to was read
+ * back out of the issue body at the moment the comment arrived. The author owns
+ * that body. Edit the two fields after the bot posts the hold and before the
+ * maintainer answers it, and the yes lands on a submission nobody read.
+ *
+ * So the command names what it approves, and the hold comment prints the line
+ * ready to copy: the repository, the tag, and the fingerprint of the bytes that
+ * run hashed (`submissionFingerprint` in `bot/lib/policy.mjs`). `bot/triage.mjs`
+ * checks the first two against the issue as it stands — a cheap, early refusal
+ * that costs no download — and `bot/lib/policy.mjs` checks the third against the
+ * bytes, which is the half that catches a moved tag or a replaced asset.
+ *
+ * `/reject` needs none of it. It publishes nothing, and refusing to close an
+ * issue because a fingerprint has moved on would be pedantry with a cost.
+ *
  * Parsing says nothing about permission. `bot/lib/maintainer.mjs` answers that,
  * against the GitHub API, and `bot/triage.mjs` refuses to act until it has.
  *
  * @param {string} text a comment body
- * @returns {{command: "approve"|"reject", reason: string|null}|null}
+ * @returns {{command: "approve"|"reject", reason: string|null, repo: string|null,
+ *   tag: string|null, fingerprint: string|null}|null}
  */
 export function parseMaintainerCommand(text) {
   const m = /^\/(approve|reject)\b\s*(.*)$/i.exec(firstWrittenLine(text));
@@ -89,9 +108,30 @@ export function parseMaintainerCommand(text) {
   const command = m[1].toLowerCase() === "approve" ? "approve" : "reject";
   // Capped and flattened: it is a maintainer's sentence, quoted back to the
   // author on a public thread, not a document.
-  const reason = m[2].trim().slice(0, 500) || null;
-  return { command, reason };
+  const rest = m[2].trim().slice(0, 500);
+  if (command === "reject") {
+    return { command, reason: rest || null, repo: null, tag: null, fingerprint: null };
+  }
+  const bound = APPROVE_BINDING_RE.exec(rest);
+  return {
+    command,
+    reason: null,
+    // Null when the line named nothing the parser recognises, which triage
+    // answers with the shape that works rather than by guessing at it.
+    repo: bound ? bound[1] : null,
+    tag: bound ? bound[2] : null,
+    fingerprint: bound ? bound[3].toLowerCase() : null,
+  };
 }
+
+/**
+ * `owner/repo@tag <16 hex>` — the same charsets `safeRepo` and `safeTag` allow,
+ * anchored, so a line with anything else on it is not a binding at all.
+ *
+ * A tag may contain `/` and `.` but never `@`, which is what makes the split
+ * unambiguous without asking the author's issue body where it is.
+ */
+const APPROVE_BINDING_RE = /^([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)@([A-Za-z0-9._/-]{1,128})\s+([0-9a-fA-F]{16})$/;
 
 // ── is this issue a listing request at all? ─────────────────────────────────
 
@@ -369,6 +409,81 @@ export function renderRejected({ login, reason, at }) {
     "",
     "The issue is closed so it leaves the review queue. Closing it *without* this comment is the " +
       "thing this registry does not do.",
+    "",
+    FOOTER,
+  ]);
+}
+
+/**
+ * `/approve` that did not say what it approves.
+ *
+ * The reply's whole job is to make the right line easy to find, because the
+ * wrong line is the bare word a maintainer typed for months. It does not print
+ * a ready-made command: the fingerprint half of one is not knowable here —
+ * triage has no bytes — and inventing a line that looks copy-pasteable and is
+ * not would teach exactly the habit this binding exists to break.
+ */
+export function renderApproveNeedsBinding({ repo, tag }) {
+  const r = safeRepo(repo);
+  const t = safeTag(tag);
+  return join([
+    "**`/approve` has to name what it is approving.**",
+    "",
+    "Nothing was published and nothing about this submission changed.",
+    "",
+    "The bot's **Held for a maintainer** comment prints the line ready to copy. It looks like this:",
+    "",
+    "```",
+    `/approve ${r ?? "owner/repo"}@${t ?? "v0.0.0"} 0123456789abcdef`,
+    "```",
+    "",
+    "The last field is the fingerprint of the submission that comment was about — the repository, " +
+      "the tag, the version and the digest of every release asset that run downloaded and hashed. " +
+      "Copying it is what ties your yes to the thing you read.",
+    "",
+    "**Why a bare `/approve` no longer works.** It used to mean *approve whatever this issue says " +
+      "right now*, and the issue body belongs to the author: it can be edited between the hold and " +
+      "your answer, so the release that published need never have been the one you looked at. The " +
+      "line above cannot be edited out from under you — if the release changes, the fingerprint " +
+      "changes, and the approval is refused instead of applied to something else.",
+    "",
+    FOOTER,
+  ]);
+}
+
+/**
+ * `/approve` for a submission the issue no longer describes.
+ *
+ * The loud case, and the one worth being loud about: this is what an author
+ * editing the two form fields between the hold and the answer looks like from
+ * here. It is also what a maintainer pasting the wrong comment's line looks
+ * like, and the bot cannot tell them apart — which is the argument for refusing
+ * both rather than guessing.
+ */
+export function renderApprovalMoved({ approvedRepo, approvedTag, issueRepo, issueTag }) {
+  const ar = safeRepo(approvedRepo);
+  const at = safeTag(approvedTag);
+  const ir = safeRepo(issueRepo);
+  const it = safeTag(issueTag);
+  return join([
+    "**`/approve` is refused: this issue no longer describes what you approved.**",
+    "",
+    "| | |",
+    "|---|---|",
+    `| Your command named | \`${ar ?? "unreadable"}@${at ?? "unreadable"}\` |`,
+    `| This issue says | \`${ir ?? "unreadable"}@${it ?? "unreadable"}\` |`,
+    "",
+    "Nothing was downloaded, nothing was verified and nothing was published.",
+    "",
+    "The submission form is part of the issue body, and the issue body belongs to its author — it " +
+      "can be edited at any time, including after the bot posted the hold you just answered. So an " +
+      "approval names its own target, and when the two disagree the registry stops rather than " +
+      "picking one. **This is worth looking at before you retype anything:** an edit between a hold " +
+      "and an approval is either an author fixing a mistake and saying so on the thread, or an " +
+      "author swapping a submission under review.",
+    "",
+    "If the issue as it now stands is what you meant to approve, comment `/recheck`, read the " +
+      "comment that comes back, and copy the `/approve` line out of **that** one.",
     "",
     FOOTER,
   ]);

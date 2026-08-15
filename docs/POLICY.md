@@ -119,13 +119,42 @@ permission model reaches.
 
 A maintainer answers on the issue with one of two commands. You will see it.
 
-**`/approve`** — the hold is cleared and the release goes back through the
-pipeline. The bot comments again with a full table of checks and a line saying
-who cleared the hold and when.
+**`/approve <owner/repo>@<tag> <fingerprint>`** — the hold is cleared and the
+release goes back through the pipeline. The bot comments again with a full table
+of checks and a line saying who cleared the hold, when, and which submission they
+cleared it for.
+
+The bot prints that whole line, ready to copy, in the **Held for a maintainer**
+comment. It is not decoration and it is not optional:
+
+> ```
+> /approve you/dice-roller@v0.2.0 4f1c9a02be773d15
+> ```
+
+The fingerprint is a short hash of the repository, the tag, the plugin id, the
+version and the digest of every release asset **that run downloaded and hashed**.
+When the approval is processed the registry works the fingerprint out again from
+the release as it is at that moment, and honours the approval only if the two
+match. If they do not — the tag moved, an asset was replaced, the issue's fields
+were edited — the answer is `P_APPROVAL_STALE`: nothing publishes, the hold
+stands, and the comment names both the submission that was approved and the one
+that is there now.
+
+**Why the command carries arguments at all.** A submission is described by the
+issue body, and the issue body belongs to its author, who can edit it at any
+time — including between the bot posting the hold and the maintainer answering
+it. A bare `/approve` meant *approve whatever this issue says right now*, so two
+edited fields were enough to make a maintainer's yes land on a release nobody had
+looked at. Naming the submission is how the yes and the thing read stay the same
+thing. It is the same rule as "the digest that reaches the catalogue is the
+digest this run hashed", applied one layer up, to the form that names the bytes
+rather than to the bytes.
 
 **`/reject <reason>`** — the reason is posted on the issue and the issue is
 closed. A rejection is about *this* submission and is not permanent: fix what
 the reason names and open a fresh request. Nothing counts against a later one.
+It takes no fingerprint: it publishes nothing, so there is nothing for one to
+protect.
 
 Four things an approval is deliberately **not**:
 
@@ -150,8 +179,11 @@ bot says so and nothing changes — the command is not secret and trying it is n
 a fault.
 
 Every approval leaves three records that cannot disagree: `P_APPROVED` in the
-comment on your issue, `approved_by` and `approved_at` in the run's
-`decision.json`, and the commit the publication makes.
+comment on your issue, `approved_by` / `approved_at` / `fingerprint` in the run's
+`decision.json`, and the commit the publication makes. An approval that was
+*refused* is recorded too — `approval_refused` in the same file, and
+`P_APPROVAL_STALE` in the same comment — because "a maintainer typed the command
+and the registry did not honour it" is a thing the thread has to be able to say.
 
 ### The SLA, and what happens when it slips
 
@@ -297,6 +329,7 @@ exists first; nothing downstream changes when it arrives.
 | `P_DELAY_BROUGHT_FORWARD` | A maintainer waived part of the window, on the record. |
 | `P_DELAY_BYTES_CHANGED` | The assets changed mid-window, so the clock restarted. |
 | `P_APPROVED` | A maintainer cleared the hold. Every check above it ran again from scratch in that same run. |
+| `P_APPROVAL_STALE` | An `/approve` named a different submission from this one — the release changed after the comment it answered. Nothing published; the hold stands. |
 | `P_UNKNOWN_PERMISSION` | A permission name this registry cannot describe. Reported, never blocking — the daemon default-denies, so it grants nothing. |
 | `P_SLA` | What happens next, and by when. |
 
@@ -478,8 +511,40 @@ verification chain, a way to get a listing past the checks, a compromised
 publisher — do not open a public issue.
 
 **Today, the channel is a private GitHub security advisory on this repository.**
-It is end-to-end between you and the maintainer, it needs no key ceremony, and it
-is the path this registry can honestly offer right now.
+It needs no key ceremony, and it is the path this registry can honestly offer
+right now.
+
+**Who can read it, exactly.** You, this repository's admins, and GitHub. It is
+*private*; it is not end-to-end encrypted, and this document used to say it was.
+That is a difference worth a sentence, because it is the difference between "not
+public" and "unreadable by anyone but us", and which of those you believe decides
+how much detail you paste into a first message. Until the PGP slot below is
+filled, nothing this registry publishes can offer the second one.
+
+**How to open one, including when the button is not there.**
+
+1. Go to
+   [Security → Advisories](https://github.com/mihailinl/astra-registry/security/advisories)
+   and use **Report a vulnerability**.
+2. **If there is no such button, that is expected right now.** GitHub shows it to
+   outside reporters only when *private vulnerability reporting* is enabled for
+   the repository, and on this one it is not yet
+   (`gh api repos/mihailinl/astra-registry/private-vulnerability-reporting` →
+   `{"enabled":false}`, checked 2026-08-15). Enabling it is one switch, it is on
+   the maintainer's list in `docs/RUNBOOK.md` §1, and this paragraph goes away
+   the day it is flipped.
+3. Until then, ask for the channel in public and put nothing in it. Blank issues
+   are off, so the door is the **Report a listed plugin** form; use `n/a` for the
+   plugin id if the finding is about the registry itself, say that you have a
+   security report and how to reach you, and **write not one word about the
+   mechanism** — that form is public the moment you submit it. A maintainer opens
+   an advisory and adds you to it, and the details go there. It costs one
+   round-trip and it needs no setting to have been switched on first.
+
+A report that arrives the wrong way is still a report. Nothing here is a reason
+to sit on a finding: if the only way you can reach somebody is a public issue
+with details in it, send it and say why, and the registry will deal with the
+disclosure rather than blame the reporter.
 
 **There is no PGP key yet, and no `security@` mailbox yet.** Both are slots in
 `bot/security-contact.json`, and both are empty. The security page on the website

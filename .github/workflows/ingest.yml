@@ -98,9 +98,81 @@ on:
 
 permissions: {}
 
+# ── what may cancel what, and what may never ────────────────────────────────
+#
+# This used to be `group: ingest-<issue number>` with `cancel-in-progress: true`
+# for both `issues` and `issue_comment`. The intent was sound — an author who
+# edits their submission six times should not start six ingests — but a comment
+# became able to *publish* when `/approve` landed, and the group did not move
+# with it. Every event on the issue shared one key, so any second event killed a
+# decision that was already running: an edit, a `/recheck`, a `/release`, a
+# second comment of any kind.
+#
+# What a cancelled publish leaves behind is not "nothing":
+#
+#   * `publish` is the only job that commits. Cancel it and the listing is not
+#     written, the QUEUE ENTRY for a delayed release is not written either, and
+#     the backstop's etag memory is thrown away. The queue entry is the worst of
+#     the three: `comment` may already have told the author "publishing itself
+#     at 14:00", and the file that would have made that true never reached the
+#     repository. Nothing retries it. The release simply never publishes, and
+#     the only record is a comment promising that it will.
+#   * a cancelled run may have posted its comment and not made its commit, or
+#     removed a queue entry in the artifact it never got to apply.
+#   * and the `/approve` itself is spent. GitHub will not redeliver the comment;
+#     the hold stays up, and nobody is told why.
+#
+# So: **nothing cancels anything in progress any more.** The spending argument
+# survives without cancellation, because a group with `cancel-in-progress: false`
+# still serialises: a second event on the same issue waits, and a third replaces
+# the second *while it is still pending*. An edit storm therefore costs one
+# in-flight run plus one queued run, whatever its length — bounded, and with
+# nothing half-written.
+#
+# `cancel-in-progress: false` is not the whole story, and the version of this
+# comment that gave a maintainer's decision its own `comment-<id>` key read as
+# though it were. GitHub keeps at most ONE running and ONE pending run per
+# group: a third arrival does not queue behind the second, it REPLACES it, and
+# the replaced run is cancelled while still pending. `cancel-in-progress: false`
+# protects the running job and says nothing about the pending one.
+#
+# That property is unavoidable, so the only question is what shares a key with
+# what — and the per-comment key answered it the wrong way. It made every
+# comment its own workflow run, so N comments started N parallel ingests, and
+# all N of their `publish` jobs then queued on the single repo-wide
+# `registry-publish` group, where the same replace-the-pending-one rule applies
+# but now BETWEEN STRANGERS. A `/release <listed-repo> <tag>` ping needs no
+# authority at all, so anyone could keep that lane churning and drop somebody
+# else's pending publish. The hazard did not go away when it left this key; it
+# moved from per-issue and bounded to repo-wide and third-party-triggerable.
+#
+# So `issue_comment` shares the issue's key again. A superseded pending run is
+# then always another event on the SAME submission — an edit, a second
+# `/recheck` — which is a duplicate of work the replacing run redoes from
+# scratch, rather than a different author's release.
+#
+# What this does NOT fix, said plainly, because the comment it replaces claimed
+# a hazard was eliminated when it had only been relocated: an `/approve` that
+# arrives while an ingest for the same issue is pending still replaces it, and
+# any run's `publish` can still be dropped while pending on `registry-publish`.
+# `comment` does not depend on `publish` (both are `needs: [triage, check]`), so
+# an author can be told "publishing itself at 14:00" by a run whose queue entry
+# never reached the repository. The fix for that is recovery rather than a key:
+# the hourly drain should reconcile decisions that promised a `publish_after`
+# and have no `state/queue/` entry. Until it does, a publish can still be lost,
+# and the honest statement is that this key makes such a loss same-submission
+# instead of cross-author.
 concurrency:
-  group: ingest-${{ github.event.issue.number || github.event.client_payload.repo || github.event.schedule || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'issues' || github.event_name == 'issue_comment' }}
+  # Folded to one line: every continuation below is at the same indentation as
+  # the first, which is what makes YAML join them with spaces rather than keep
+  # the newlines. An expression with a newline inside `${{ }}` is not worth
+  # finding out about on a live run.
+  group: >-
+    ingest-${{ github.event.issue.number
+    || github.event.client_payload.repo
+    || github.event.schedule
+    || github.run_id }}
+  cancel-in-progress: false
 
 env:
   # The AstraPlugins commit whose `astra-plugin-manifest` this bot validates
@@ -502,6 +574,13 @@ jobs:
           # explains why there is deliberately no shortcut here.
           APPROVED_BY: ${{ matrix.approved_by }}
           APPROVED_AT: ${{ matrix.approved_at }}
+          # And WHAT was approved: the fingerprint the maintainer copied out of
+          # the comment they answered. `bot/lib/policy.mjs` recomputes it from
+          # the repository, tag, version and artifact digests THIS run hashed,
+          # and refuses the approval when the two differ. Without it an approval
+          # applies to whatever the issue body says at the moment the comment is
+          # processed, and that body is the author's to edit.
+          APPROVED_FOR: ${{ matrix.approved_for }}
         run: |
           set -uo pipefail
           mkdir -p out
@@ -524,6 +603,7 @@ jobs:
             ${ISSUE:+--issue "$ISSUE"} \
             ${APPROVED_BY:+--approved-by "$APPROVED_BY"} \
             ${APPROVED_AT:+--approved-at "$APPROVED_AT"} \
+            ${APPROVED_FOR:+--approved-for "$APPROVED_FOR"} \
             --out out > out/comment.log || code=$?
           echo "code=$code" >> "$GITHUB_OUTPUT"
           cat out/comment.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || cat out/comment.log >> "$GITHUB_STEP_SUMMARY"
