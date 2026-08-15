@@ -5,9 +5,11 @@
 //        --issue-body issue-body.md --comment-body comment-body.md
 //
 // PRODUCTION_PLAN task 3.4, layer 1. `.github/workflows/ingest.yml` calls this
-// before it spends anything: it answers `mode=form|ping|none` and, for a ping,
-// the three values the pipeline needs. Nothing here downloads, verifies or
-// decides — it reads two files of stranger text and one directory of listings.
+// before it spends anything: it answers `mode=form|ping|approve|reject|reply|none`
+// and, for a ping or an approval, the values the pipeline needs. Nothing here
+// downloads, verifies or decides — it reads two files of stranger text, one
+// directory of listings, and (only for a maintainer's command) asks GitHub one
+// permission question.
 //
 // **Every body arrives as a FILE.** `${{ github.event.issue.body }}` inside a
 // `run:` block is the standard Actions script-injection hole, and this program
@@ -26,26 +28,81 @@
 // And the ownership that gets proved is the **release author's**, resolved here
 // from the release itself, never the pinger's. Whoever typed the line is not
 // part of the decision.
+//
+// ── and the rule that stops it being silent ─────────────────────────────────
+//
+// Everything above says when this file returns `none`. What it used to do with
+// a `none` was *nothing at all*: no comment job, no record, and an author who
+// had opened a perfectly good listing request without the label got a green run
+// and no reply. So every path that refuses to start work now either starts it
+// or produces `mode: reply` and the markdown a human will read. `bot/lib/intake.mjs`
+// holds the recognisers and the replies, including the argument for why an
+// unlabelled submission is answered rather than auto-labelled.
+//
+// ── the maintainer's two commands ──────────────────────────────────────────
+//
+// `/approve` and `/reject <reason>` are the other half of `outcome: "review"`.
+// They are the only thing in this file that needs a permission, they are
+// checked against the GitHub API by `bot/lib/maintainer.mjs` before anything
+// else happens, and an approval carries **no verification with it**: it is
+// recorded on a target, the whole ingest runs again from scratch, and what
+// publishes is what this run verified. See `bot/lib/policy.mjs` for why that
+// re-run is not optional.
 
 import fs from "node:fs";
 
 import { REPO_ROOT, loadSources } from "../tools/lib/sources.mjs";
 
 import { fetchRelease } from "./lib/github.mjs";
+import {
+  LISTING_LABEL,
+  formProblem,
+  looksLikeListing,
+  looksLikeReleasePing,
+  parseMaintainerCommand,
+  renderCommandRefused,
+  renderIncompleteForm,
+  renderNothingToDecide,
+  renderPingForUnlisted,
+  renderPingUnreadable,
+  renderRejectNeedsReason,
+  renderRejected,
+  renderUnlabelled,
+  safeLogin,
+  safeRepo,
+  safeTag,
+} from "./lib/intake.mjs";
 import { isRecheckCommand, parseIssueForm } from "./lib/issue.mjs";
+import { proveMaintainer } from "./lib/maintainer.mjs";
 import { findListingByRepo, parseReleasePing, resolveSubmitter } from "./lib/notify.mjs";
 
 function parseArgs(argv) {
   const opts = {
-    event: null, labels: "", issueBody: null, commentBody: null,
-    root: REPO_ROOT, modeFile: null, targetsFile: null,
+    event: null, action: null, labels: "", issueBody: null, commentBody: null,
+    issueTitle: null, issueAuthor: null, commenter: null, commenterAssociation: null,
+    registry: null,
+    root: REPO_ROOT, modeFile: null, targetsFile: null, replyFile: null, now: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--event") opts.event = argv[++i];
+    // `opened`, `edited`, `labeled`, `created`. It decides only how often the
+    // bot repeats itself, never whether it may act.
+    else if (a === "--action") opts.action = argv[++i];
     else if (a === "--labels") opts.labels = argv[++i] ?? "";
     else if (a === "--issue-body") opts.issueBody = argv[++i];
+    else if (a === "--issue-title") opts.issueTitle = argv[++i];
     else if (a === "--comment-body") opts.commentBody = argv[++i];
+    else if (a === "--issue-author") opts.issueAuthor = String(argv[++i] ?? "").replace(/^@/, "");
+    else if (a === "--commenter") opts.commenter = String(argv[++i] ?? "").replace(/^@/, "");
+    // `github.event.comment.author_association`, straight out of the payload.
+    // `bot/lib/maintainer.mjs` reads exactly one of its values, `OWNER`, and
+    // only when the permission API declined to answer — see the block at the
+    // top of that file for why the other values are not permissions.
+    else if (a === "--commenter-association") opts.commenterAssociation = argv[++i] ?? null;
+    // THIS registry, `owner/name`. The repository a maintainer's permission is
+    // checked against, and the one whose issue template gets linked.
+    else if (a === "--repository") opts.registry = argv[++i];
     else if (a === "--registry-dir") opts.root = argv[++i];
     // Two files rather than `$GITHUB_OUTPUT` lines the workflow would have to
     // `source`: sourcing a file written from stranger-influenced input is a
@@ -53,6 +110,10 @@ function parseArgs(argv) {
     // that a thing worth doing.
     else if (a === "--mode-file") opts.modeFile = argv[++i];
     else if (a === "--targets-file") opts.targetsFile = argv[++i];
+    // Where the markdown a human will read is written. Same reasoning: the
+    // `comment` job posts a FILE out of an artifact and never interpolates it.
+    else if (a === "--reply-file") opts.replyFile = argv[++i];
+    else if (a === "--now") opts.now = argv[++i];
     else throw new Error(`unknown argument: ${a}`);
   }
   return opts;
@@ -66,44 +127,82 @@ const read = (file) => {
   }
 };
 
+const iso = (d) => `${new Date(d).toISOString().slice(0, 19)}Z`;
+
 /**
  * @param {object} opts
  * @param {(repo: string, tag: string) => Promise<object>} [release] injection seam
+ * @param {{proveMaintainer?: Function}} [deps] the permission check, injected by the tests
  */
-export async function triage(opts, release = fetchRelease) {
+export async function triage(opts, release = fetchRelease, deps = {}) {
   const labels = String(opts.labels ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-  const labelled = labels.includes("listing");
+  const labelled = labels.includes(LISTING_LABEL);
   const issueBody = opts.issueBody ? read(opts.issueBody) : "";
   const commentBody = opts.commentBody ? read(opts.commentBody) : "";
+  const issueTitle = opts.issueTitle ? read(opts.issueTitle) : "";
   const sources = loadSources(opts.root);
+  const form = parseIssueForm(issueBody);
+  const registry = opts.registry ?? process.env.GITHUB_REPOSITORY ?? null;
+  // Absent means `opened`, because absent information must never be the reason
+  // an author hears nothing. The workflow always passes the real action; the
+  // default only decides whether a hand-run repeats a comment.
+  const action = opts.action || "opened";
+
+  // 0 ── a maintainer's decision, which is the only thing here that needs a
+  //      permission. Asked first, and asked of GitHub, so that no later branch
+  //      can act on a command whose authority was never established.
+  const command = opts.event === "issue_comment" ? parseMaintainerCommand(commentBody) : null;
+  if (command) {
+    return decideCommand({ command, opts, registry, labelled, issueTitle, form, deps });
+  }
 
   // A labelled listing issue, opened or edited, or `/recheck` on one: the
-  // submission form owns it, exactly as it did before this file existed.
+  // submission form owns it, exactly as it did before this file existed — but
+  // only when the form carries what `bot/read-submission.mjs` needs. It exits 2
+  // on a form it cannot read, and under the workflow's `set -e` that killed the
+  // step, produced no target and therefore no comment: a submitter who ticked
+  // one box instead of two got a red X and nothing else.
   if (labelled && (opts.event === "issues" || isRecheckCommand(commentBody))) {
+    const problem = formProblem(form);
+    if (problem) {
+      return {
+        mode: "reply",
+        why: `the form is missing ${[...problem.missing, ...problem.unticked].join("; ")}`,
+        reply: renderIncompleteForm({ registry, problem }),
+      };
+    }
     return { mode: "form", why: "a labelled listing issue" };
   }
 
   const ping = parseReleasePing(opts.event === "issue_comment" ? commentBody : issueBody);
   if (!ping) {
-    return { mode: "none", why: labelled ? "a comment that is not a command" : "nothing here asks for an ingest" };
+    return nothingAsked({ opts, action, labelled, registry, issueTitle, form });
   }
 
   // On a listing issue the repository is already written down; a bare issue has
   // to name it. Never taken from the pinger's word when the issue already says
   // which repository it is about.
-  const fromForm = parseIssueForm(issueBody).repo;
+  const fromForm = form.repo;
   const repo = (labelled ? fromForm ?? ping.repo : ping.repo ?? fromForm) ?? null;
   if (!repo) {
-    return { mode: "none", why: "/release named no repository and the issue does not say which one it is about" };
+    // `/release <tag>` with no repository, on an issue that does not say which
+    // repository it is about — one word short. That was a silence too, and it
+    // is the single most likely way to mistype the command on a new issue.
+    return {
+      mode: "reply",
+      why: "/release named no repository and the issue does not say which one it is about",
+      reply: renderPingUnreadable({ registry }),
+    };
   }
 
   const listing = findListingByRepo(sources, repo);
   if (!listing && !labelled) {
     return {
-      mode: "none",
+      mode: "reply",
       why:
         `${repo} is not listed, and an unlabelled ping can only re-check a listing that already ` +
         "exists. Open a listing request with the template.",
+      reply: renderPingForUnlisted({ registry, repo }),
     };
   }
 
@@ -123,6 +222,153 @@ export async function triage(opts, release = fetchRelease) {
   };
 }
 
+/**
+ * Nothing asked for an ingest — so does anything here ask for an *answer*?
+ *
+ * This is the branch that used to be the whole bug. `mode: none` is still the
+ * common case and still costs nothing, but an issue that is recognisably a
+ * listing request now leaves with a comment rather than with silence.
+ */
+function nothingAsked({ opts, action, labelled, registry, issueTitle, form }) {
+  if (labelled) {
+    return { mode: "none", why: "a comment that is not a command" };
+  }
+  if (opts.event !== "issues") {
+    return { mode: "none", why: "nothing here asks for an ingest" };
+  }
+  // Once, on `opened`. An unlabelled issue can be edited for months, and a bot
+  // that repeats the same comment on every edit is a bot people mute — which
+  // costs more than the extra copies buy. The labelled path above is the one
+  // that answers again on an edit, because there an edit is somebody fixing the
+  // thing the bot just asked them to fix.
+  if (action !== "opened") {
+    return { mode: "none", why: `nothing here asks for an ingest (and this is an ${action}, so the intake reply is not repeated)` };
+  }
+  // The release-ping form, with a command the parser could not read. Answered
+  // before the listing check, because the title already says what was intended
+  // and guessing at it a second time can only get it wrong.
+  if (looksLikeReleasePing(issueTitle)) {
+    return {
+      mode: "reply",
+      why: "the release-ping form was used and no `/release` line survived the edit",
+      reply: renderPingUnreadable({ registry }),
+    };
+  }
+  const shape = looksLikeListing({ title: issueTitle, form });
+  if (!shape.shaped) {
+    return { mode: "none", why: `nothing here asks for an ingest — ${shape.why}` };
+  }
+  return {
+    mode: "reply",
+    why:
+      `this is a listing request with no \`${LISTING_LABEL}\` label (${shape.why}); nothing will ` +
+      "run until somebody applies it, and the author is being told so",
+    reply: renderUnlabelled({ registry, repo: form.repo, tag: form.tag, why: shape.why }),
+  };
+}
+
+/**
+ * `/approve` or `/reject <reason>`, once GitHub has said whether this account
+ * may.
+ *
+ * The permission question is asked before the command is read for anything
+ * else, and a refusal is a *reply* rather than a `none`: a maintainer who
+ * mistypes their own login, or a stranger trying the command, both learn what
+ * happened. Silence would teach exactly the wrong lesson to the second one.
+ */
+async function decideCommand({ command, opts, registry, labelled, issueTitle, form, deps }) {
+  const commenter = safeLogin(opts.commenter);
+  const at = iso(opts.now ?? new Date());
+  if (!commenter) {
+    return { mode: "none", why: `/${command.command} arrived with no usable commenter login` };
+  }
+
+  const prove = deps.proveMaintainer ?? proveMaintainer;
+  const proof = await prove({
+    repo: registry,
+    login: commenter,
+    association: opts.commenterAssociation,
+  });
+  if (!proof.ok) {
+    return {
+      mode: "reply",
+      why: `/${command.command} from @${commenter} is refused: ${proof.detail}`,
+      reply: renderCommandRefused({ command: command.command, login: commenter, detail: proof.detail }),
+    };
+  }
+
+  const shape = looksLikeListing({ title: issueTitle, form });
+  if (!labelled && !shape.shaped) {
+    return {
+      mode: "reply",
+      why: `/${command.command} on an issue that is not a listing request`,
+      reply: renderNothingToDecide({
+        registry,
+        command: command.command,
+        reason:
+          "This issue is neither labelled `listing` nor shaped like a listing request, so there " +
+          "is no submission for the command to decide about.",
+      }),
+    };
+  }
+
+  if (command.command === "reject") {
+    if (!command.reason) {
+      return {
+        mode: "reply",
+        why: `/reject from @${commenter} carried no reason`,
+        reply: renderRejectNeedsReason(),
+      };
+    }
+    return {
+      mode: "reject",
+      close: true,
+      by: commenter,
+      at,
+      reason: command.reason,
+      why: `@${commenter} (\`${proof.role}\`) rejected this submission: ${command.reason}`,
+      reply: renderRejected({ login: commenter, reason: command.reason, at }),
+    };
+  }
+
+  // ── an approval, which is a target and nothing else ───────────────────────
+  //
+  // It carries no verdict, no cached result and no listing. What it carries is
+  // "a person said yes, at this moment", and the pipeline behind it re-runs
+  // every check from scratch before anything is written.
+  const problem = formProblem(form);
+  const repo = safeRepo(form.repo);
+  const tag = safeTag(form.tag);
+  const submitter = safeLogin(opts.issueAuthor);
+  if (problem || !repo || !tag || !submitter) {
+    return {
+      mode: "reply",
+      why: `/approve on an issue the bot cannot read a submission out of`,
+      reply: renderNothingToDecide({
+        registry,
+        command: "approve",
+        reason: problem
+          ? `The form is missing ${[...problem.missing, ...problem.unticked].join("; ")}.`
+          : submitter
+            ? "The repository and tag in this issue are not in a shape the bot will put in a URL."
+            : "This issue has no author the ownership check could be run against.",
+      }),
+    };
+  }
+
+  return {
+    mode: "approve",
+    repo,
+    tag,
+    submitter,
+    approvedBy: commenter,
+    approvedAt: at,
+    why:
+      `@${commenter} (\`${proof.role}\`) approved ${repo}@${tag}. The hold is cleared; every ` +
+      "check runs again from scratch against the release as it is now",
+  };
+}
+
 async function main(argv) {
   const opts = parseArgs(argv);
   const out = await triage(opts);
@@ -131,9 +377,20 @@ async function main(argv) {
   if (opts.targetsFile) {
     const targets = out.mode === "ping"
       ? [{ repo: out.repo, tag: out.tag, submitter: out.submitter }]
-      : [];
+      : out.mode === "approve"
+        // The approval travels ON the target, so that a matrix entry carries its
+        // own authority and a second target in the same run cannot borrow it.
+        ? [{
+          repo: out.repo,
+          tag: out.tag,
+          submitter: out.submitter,
+          approved_by: out.approvedBy,
+          approved_at: out.approvedAt,
+        }]
+        : [];
     fs.writeFileSync(opts.targetsFile, JSON.stringify(targets));
   }
+  if (opts.replyFile && out.reply) fs.writeFileSync(opts.replyFile, out.reply);
   // Always 0: "this event was not a release notification" is the normal case,
   // not a failure, and a workflow that treated it as one would show a red X on
   // every unrelated comment in the repository.

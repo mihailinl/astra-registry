@@ -30,6 +30,16 @@
 //   0  published now          3  held for a maintainer
 //   1  refused                4  delayed; it will publish itself
 //   2  the bot broke
+//
+// ── and what a maintainer does about a 3 ───────────────────────────────────
+//
+// `--approved-by <login> --approved-at <iso>` — a maintainer's `/approve`,
+// already permission-checked against the GitHub API by `bot/lib/maintainer.mjs`
+// in the triage job. It clears the hold and nothing else. Note where it enters:
+// **after** `ingest()` has run in full, so it cannot shorten a single check. It
+// reaches `decide()` as two strings and is written into `decision.json` beside
+// the digests this run hashed, so "who let this in, when, against which bytes"
+// has one answer with no gap in it.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -52,7 +62,7 @@ export function parseArgs(argv) {
   const opts = {
     repo: null, tag: null, submitter: null, root: REPO_ROOT, out: null,
     issue: null, rootsFile: null, trustFile: null, signerWorkflow: null,
-    hostAstraVersion: null, now: null,
+    hostAstraVersion: null, now: null, approvedBy: null, approvedAt: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -60,6 +70,13 @@ export function parseArgs(argv) {
     else if (a === "--tag") opts.tag = argv[++i];
     else if (a === "--submitter") opts.submitter = String(argv[++i]).replace(/^@/, "");
     else if (a === "--issue") opts.issue = Number(argv[++i]) || null;
+    // A maintainer's `/approve`, already permission-checked by
+    // `bot/lib/maintainer.mjs` in the triage job. It carries a name and a
+    // moment and NOTHING else — no verdict, no digest, no listing. This run
+    // ingests the release from scratch; the flag only says that the hold
+    // `bot/lib/policy.mjs` would otherwise raise has been answered.
+    else if (a === "--approved-by") opts.approvedBy = String(argv[++i] ?? "").replace(/^@/, "");
+    else if (a === "--approved-at") opts.approvedAt = argv[++i];
     else if (a === "--registry-dir") opts.root = path.resolve(argv[++i]);
     else if (a === "--roots") opts.rootsFile = path.resolve(argv[++i]);
     else if (a === "--trust") opts.trustFile = path.resolve(argv[++i]);
@@ -102,6 +119,7 @@ export async function decideRelease(opts, deps = {}) {
     queued: result.derived
       ? readQueueEntry(opts.root, result.derived.plugin.id, result.derived.version.version)
       : null,
+    approval: opts.approvedBy ? { by: opts.approvedBy, at: opts.approvedAt ?? now } : null,
     now,
   });
 
@@ -132,6 +150,12 @@ export function writeOutputs(out, opts, result) {
         notify_author: decision.notify_author,
         track: decision.track,
         decided_at: decision.decided_at,
+        // The audit record, in the file the publish job reads: who cleared the
+        // hold, when, and the digests THIS run hashed. All three or none — an
+        // approval without the bytes it applied to cannot be checked later.
+        approved_by: decision.approved_by,
+        approved_at: decision.approved_at,
+        artifact_digests: decision.artifact_digests,
         reasons: decision.reasons,
       },
       null,

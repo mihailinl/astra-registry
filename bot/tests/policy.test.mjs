@@ -39,6 +39,7 @@ import {
   slaReport,
   trackRecord,
 } from "../lib/policy.mjs";
+import { proveMaintainer } from "../lib/maintainer.mjs";
 import {
   WATCH_AFTER_DAYS,
   findListingByRepo,
@@ -89,6 +90,8 @@ function tmp(prefix) {
 // ── the world ───────────────────────────────────────────────────────────────
 
 const REPO = "a-stranger/dice-roller";
+/** This registry itself — what a maintainer's permission is checked against. */
+const REGISTRY_REPO = "mihailinl/astra-registry";
 const TAG = "v0.2.0";
 const SUBMITTER = "a-stranger";
 const ALLOWED_WORKFLOW_SHA = "0".repeat(40);
@@ -176,12 +179,12 @@ const conforming = (spec = {}) => ({ name: bundleName(spec), bytes: makeBundle(s
 /** One ingest-and-decide against a world assembled from the arguments. */
 async function run({
   assets = [conforming()], repo = REPO, tag = TAG, submitter = SUBMITTER, root,
-  now = NOW, out = null, issue = null,
+  now = NOW, out = null, issue = null, approvedBy = null, approvedAt = null,
 } = {}) {
   const github = fakeGitHub({ repo, tag, assets });
   return decideRelease(
     {
-      repo, tag, submitter, root, issue, now,
+      repo, tag, submitter, root, issue, now, approvedBy, approvedAt,
       rootsFile: ROOTS_FILE, trustFile: TRUST_FILE, signerWorkflow: DEFAULT_SIGNER_WORKFLOW,
       out,
     },
@@ -831,8 +834,39 @@ await test("an unlabelled ping is honoured only for a listing that already exist
     event: "issues", labels: "", root,
     ...bodies({ issue: "/release somebody/brand-new v1.0.0" }),
   }, releaseBy("the-author"));
-  assertEqual(stranger.mode, "none", "a first listing is not reachable this way");
+  // `none` until the intake fix: a stranger's ping for an unlisted repository
+  // still starts nothing — that restriction is what makes a ping safe to accept
+  // without a token — but it is now a `reply` rather than a silence, and the
+  // reply is what points at the form a first listing actually goes through.
+  assertEqual(stranger.mode, "reply", "a first listing is not reachable this way");
   assert(stranger.why.includes("template"), stranger.why);
+  assert(stranger.reply.includes("already listed"), stranger.reply);
+  assert(!stranger.repo && !stranger.tag, "and nothing is queued for verification");
+});
+
+await test("a release ping survives being rendered by an issue form", async () => {
+  // `.github/ISSUE_TEMPLATE/config.yml` turned blank issues off, so the
+  // ping-as-a-new-issue path docs/POLICY.md §5 promises now goes through
+  // `release-ping.yml` — and GitHub renders every form as `### <label>`, a
+  // blank line, then the value. Under the old first-line-only rule the command
+  // was never on line 1 again and the path stopped working the day the form
+  // became mandatory.
+  const rendered = "### The command\n\n/release " + REPO + " v0.3.0\n";
+  const out = await triage({
+    event: "issues", labels: "", root: registryTree([{}]),
+    ...bodies({ issue: rendered }),
+  }, releaseBy("the-author"));
+  assertEqual(out.mode, "ping", out.why);
+  assertEqual(out.tag, "v0.3.0", "");
+
+  // And the relaxation is exactly two things — a blank line and a heading.
+  // Prose above the command still hides it, which is what stops a quoted reply
+  // from re-triggering an ingest.
+  const prose = await triage({
+    event: "issues", labels: "", root: registryTree([{}]),
+    ...bodies({ issue: `here you go\n\n/release ${REPO} v0.3.0` }),
+  }, releaseBy("the-author"));
+  assert(prose.mode !== "ping", `prose above the command must not run it: ${prose.mode}`);
 });
 
 await test("/recheck still means recheck, and prose still means nothing", async () => {
@@ -853,6 +887,447 @@ await test("a ping for a tag that has no release is dropped, not ingested", asyn
   }, async () => { throw new Error("no release tagged v9.9.9 (404)"); });
   assertEqual(out.mode, "none", out.why);
   assert(out.why.includes("404"), out.why);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Defect 1: a submission that reached this registry and was answered with
+// nothing at all. Two of them, `#13` and `#14`. Both carried the rendered form
+// and zero labels, because there was no `.github/ISSUE_TEMPLATE/config.yml` and
+// blank issues were on, so they bypassed the template that applies the label.
+// `triage` answered `none`, `targets=[]`, every later job was skipped, and the
+// run went green — it had succeeded at deciding to do nothing.
+
+section("no listing request is answered with silence");
+
+/** The two facts, both boxes, and nothing else — a form GitHub has rendered. */
+const form = ({ repo = REPO, tag = TAG, boxes = 2, headings = true } = {}) => [
+  ...(headings ? ["### Source repository", "", repo, ""] : [repo, ""]),
+  ...(headings ? ["### Release tag carrying the .astraplugin assets", "", tag, ""] : [tag, ""]),
+  "### Confirmations", "",
+  `- [${boxes >= 1 ? "x" : " "}] I own or maintain this repository.`,
+  `- [${boxes >= 2 ? "x" : " "}] I have read POLICY.md, including the data-handling section.`,
+].join("\n");
+
+/**
+ * `mihailinl/astra-registry#14`, verbatim, as `gh issue view 14 --json body`
+ * returned it on 2026-08-12 — trimmed only of the prose paragraph, which the
+ * bot never reads.
+ *
+ * Embedded rather than fetched: this suite touches no network, and a regression
+ * test that needs GitHub to be up is a regression test that goes quiet on the
+ * day the network is the problem. The title and the empty label array are the
+ * two facts that mattered.
+ */
+const ISSUE_14 = {
+  title: "[listing] Rel0d1x/command-intent-guard",
+  labels: "",
+  body: [
+    "### Source repository", "", "Rel0d1x/command-intent-guard", "",
+    "### Release tag carrying the .astraplugin assets", "", "v0.1.0", "",
+    "### What does it do, and why should it be listed?", "",
+    "Adds a `tools` capability that tells a spoken command apart from a question.", "",
+    "### Confirmations", "",
+    "- [x] I own or maintain this repository.",
+    "- [x] I have read POLICY.md, including the data-handling section.",
+  ].join("\n"),
+};
+
+/** The three files the workflow writes, plus the arguments it passes with them. */
+function intake({ issue = "", comment = "", title = "", labels = "", action = "opened", event = "issues", root, ...rest }) {
+  const dir = tmp("astra-policy-intake-");
+  fs.writeFileSync(path.join(dir, "issue.md"), issue);
+  fs.writeFileSync(path.join(dir, "comment.md"), comment);
+  fs.writeFileSync(path.join(dir, "title.md"), title);
+  return {
+    event, action, labels, root: root ?? registryTree([{}]),
+    registry: "mihailinl/astra-registry",
+    issueBody: path.join(dir, "issue.md"),
+    commentBody: path.join(dir, "comment.md"),
+    issueTitle: path.join(dir, "title.md"),
+    ...rest,
+  };
+}
+
+await test("the real #14 — the form, no labels — no longer decides `none`", async () => {
+  const out = await triage(intake({
+    issue: ISSUE_14.body, title: ISSUE_14.title, labels: ISSUE_14.labels,
+    root: registryTree([{ id: "something-else" }]),
+  }), releaseBy("Rel0d1x"));
+  assertEqual(out.mode, "reply", out.why);
+  assert(out.reply.includes("Rel0d1x/command-intent-guard"),
+    "the reply has to name the repository the author asked about");
+  assert(out.reply.includes("v0.1.0"), "and the tag");
+});
+
+await test("the reply names the label, the one click, and why the bot will not click it", async () => {
+  const out = await triage(intake({ issue: form(), title: "[listing] a-stranger/dice-roller" }),
+    releaseBy("a-stranger"));
+  assertEqual(out.mode, "reply", out.why);
+  assert(out.reply.includes("`listing` label"), "the missing thing has a name");
+  assert(/one click/i.test(out.reply), "and a fix that is one action, not a resubmission");
+  assert(out.reply.includes("authority token"),
+    "an author told to go and ask somebody, with no reason, assumes the bot is broken");
+  // The whole argument for replying instead of auto-labelling: the label is an
+  // exemption from the already-listed rule, so minting it from the shape of a
+  // body would let a stranger choose which repositories this registry
+  // downloads archives from.
+  assertEqual(out.mode !== "form", true, "and nothing was verified for a repository nobody proved");
+});
+
+await test("either signal alone is enough: a rewritten title, or a rewritten body", async () => {
+  const titleOnly = await triage(intake({ issue: "please list my plugin, thanks", title: "[listing] me/mine" }),
+    releaseBy("me"));
+  assertEqual(titleOnly.mode, "reply", titleOnly.why);
+
+  const bodyOnly = await triage(intake({ issue: form(), title: "can you add this one" }), releaseBy("me"));
+  assertEqual(bodyOnly.mode, "reply", bodyOnly.why);
+});
+
+await test("an ordinary issue is still free, and still silent", async () => {
+  const out = await triage(intake({ issue: "the website is down", title: "site 500s" }), releaseBy("x"));
+  assertEqual(out.mode, "none", out.why);
+  assertEqual(out.reply, undefined, "no comment, no API call, no noise");
+});
+
+await test("the bot does not answer its own notices, or the other three forms", async () => {
+  for (const title of [
+    "[notice] dice-roller 0.2.0 publishes itself at 2026-08-11T12:00:00Z",
+    "[appeal] dice-roller",
+    "[report] dice-roller",
+  ]) {
+    const out = await triage(intake({ issue: form(), title }), releaseBy("x"));
+    assertEqual(out.mode, "none", `${title} → ${out.why}`);
+  }
+});
+
+await test("the intake comment is posted once, not on every edit", async () => {
+  const opened = await triage(intake({ issue: form(), title: "[listing] x/y", action: "opened" }), releaseBy("x"));
+  assertEqual(opened.mode, "reply", opened.why);
+  const edited = await triage(intake({ issue: form(), title: "[listing] x/y", action: "edited" }), releaseBy("x"));
+  assertEqual(edited.mode, "none", "a bot that repeats itself on every edit is a bot people mute");
+});
+
+await test("a labelled form the bot cannot read gets a comment, not a red X", async () => {
+  // `bot/read-submission.mjs` exits 2 on an unticked confirmation, and the
+  // workflow step runs under `set -e`. That killed the step: no target, no
+  // comment job, and a submitter who ticked one box instead of two got a red X
+  // and silence. Triage now answers the same question with the same parser
+  // first.
+  const out = await triage(intake({ issue: form({ boxes: 1 }), title: "[listing] x/y", labels: "listing" }),
+    releaseBy("x"));
+  assertEqual(out.mode, "reply", out.why);
+  assert(out.reply.includes("POLICY.md"), "and it names the box that is not ticked");
+  assert(out.reply.includes("Edit this issue"), "with a fix that is not 'open a new one'");
+});
+
+await test("the release-ping form with a broken command is answered too", async () => {
+  const out = await triage(intake({
+    issue: "### The command\n\n/release i-forgot-the-tag\n",
+    title: "[release] owner/repo v0.0.0",
+  }), releaseBy("x"));
+  assertEqual(out.mode, "reply", out.why);
+  assert(out.reply.includes("/release owner/repo v0.2.0"), "and shows the shape that works");
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Defect 2: `outcome: "review"` was a terminus. The bot said "held for a
+// maintainer", `decide.mjs` exited 3, and nothing in this repository
+// implemented the maintainer's next move — `git grep -nE "/approve|approved-by"`
+// over `bot/`, `docs/` and `.github/` returned nothing.
+
+section("the maintainer's two commands");
+
+/** `bot/lib/maintainer.mjs`, answered from a table instead of from GitHub. */
+const roles = (table) => async ({ repo, login }) => {
+  const role = table[login];
+  if (role === undefined) {
+    return {
+      ok: false,
+      role: null,
+      detail: `GitHub would not say what @${login} has on ${repo} (HTTP 403 — not visible to the bot), so the command is refused.`,
+    };
+  }
+  if (role === "admin" || role === "maintain") {
+    return { ok: true, role, detail: `GitHub reports @${login} has \`${role}\` on ${repo}` };
+  }
+  return {
+    ok: false,
+    role,
+    detail: `GitHub reports @${login} has \`${role}\` on ${repo}, which is neither \`admin\` nor \`maintain\`.`,
+  };
+};
+
+const MAINTAINERS = roles({ "the-maintainer": "admin", "a-second-pair-of-eyes": "maintain", "a-stranger": "read", "a-triager": "triage" });
+
+const command = (text, commenter, extra = {}) => triage(
+  intake({
+    event: "issue_comment", action: "created", labels: "listing",
+    issue: form(), title: "[listing] a-stranger/dice-roller",
+    comment: text, commenter, issueAuthor: SUBMITTER, now: NOW, ...extra,
+  }),
+  releaseBy(SUBMITTER),
+  { proveMaintainer: extra.prove ?? MAINTAINERS },
+);
+
+await test("/approve from somebody with no write access is refused, and told why", async () => {
+  const out = await command("/approve", "a-stranger");
+  assertEqual(out.mode, "reply", out.why);
+  assert(out.reply.includes("`/approve` is refused"), out.reply);
+  assert(out.reply.includes("`read`"), "the role GitHub actually reported, not a shrug");
+  assert(out.reply.includes("author_association"),
+    "and the reason the obvious cheaper check was not the one used");
+  assert(!out.repo && !out.tag, "and no target — nothing was verified and nothing published");
+});
+
+await test("a `triage` collaborator is not a maintainer either", async () => {
+  // The exact case `author_association` gets wrong: the event payload calls
+  // this account `COLLABORATOR`, and it cannot push a byte to this repository.
+  const out = await command("/approve", "a-triager");
+  assertEqual(out.mode, "reply", out.why);
+  assert(out.reply.includes("`triage`"), out.reply);
+});
+
+await test("when GitHub will not answer, the command fails closed", async () => {
+  const out = await command("/approve", "somebody-unknown");
+  assertEqual(out.mode, "reply", out.why);
+  assert(out.reply.includes("would not say"), out.reply);
+  // `proveOwnership` treats a missing answer as "no answer" and falls through
+  // to weaker proofs, because refusing every organisation that has not
+  // installed an app would make third-party publishing theoretical. There is no
+  // equivalent argument here: one repository, this bot's own token, and the
+  // cost of being wrong is a published listing rather than a refused one.
+  assert(!out.repo, "and no target is emitted on a permission nobody could read");
+});
+
+// The real `proveMaintainer`, against a stubbed `fetch`. Every test above
+// injects a stub for it, which is exactly why the endpoint's own behaviour has
+// never been exercised: `GET /collaborators/{login}/permission` is documented
+// as requiring push access, the triage job's `GITHUB_TOKEN` holds
+// `contents: read`, and `administration` is not a scope a workflow token can
+// request — so a 403 there would make `/approve` refuse the repository's owner
+// on every path, silently, and no stubbed test could see it.
+const respond = (status, body) => async () => ({
+  ok: status >= 200 && status < 300,
+  status,
+  json: async () => body ?? {},
+});
+
+await test("a 403 on the permission endpoint no longer refuses the repository's owner", async () => {
+  const denied = await proveMaintainer({
+    repo: REGISTRY_REPO, login: "the-maintainer", fetchImpl: respond(403),
+  });
+  assertEqual(denied.ok, false, "no association: still fails closed, which is the default");
+
+  const owner = await proveMaintainer({
+    repo: REGISTRY_REPO, login: "the-maintainer", association: "OWNER", fetchImpl: respond(403),
+  });
+  assertEqual(owner.ok, true, owner.detail);
+  assertEqual(owner.role, "owner", "");
+  assert(owner.detail.includes("author_association"), owner.detail);
+});
+
+await test("no association below OWNER fills the silence", async () => {
+  for (const association of ["COLLABORATOR", "MEMBER", "CONTRIBUTOR", "NONE", "", null]) {
+    const out = await proveMaintainer({
+      repo: REGISTRY_REPO, login: "a-stranger", association, fetchImpl: respond(403),
+    });
+    assertEqual(out.ok, false, `${association} must not stand in for a permission`);
+  }
+});
+
+await test("OWNER never overrides an answer GitHub did give", async () => {
+  // The narrowing that keeps this from being a reversal of the module's rule:
+  // it fills a silence, it does not outrank a `read`.
+  const out = await proveMaintainer({
+    repo: REGISTRY_REPO, login: "a-stranger", association: "OWNER",
+    fetchImpl: respond(200, { role_name: "read" }),
+  });
+  assertEqual(out.ok, false, out.detail);
+  assertEqual(out.role, "read", "");
+});
+
+await test("/approve from a maintainer emits a target carrying the approval, and nothing else", async () => {
+  const out = await command("/approve", "the-maintainer");
+  assertEqual(out.mode, "approve", out.why);
+  assertEqual(out.repo, REPO, "");
+  assertEqual(out.tag, TAG, "");
+  assertEqual(out.submitter, SUBMITTER, "the issue author, whose ownership is proved again downstream");
+  assertEqual(out.approvedBy, "the-maintainer", "");
+  assert(/^2026-/.test(out.approvedAt), out.approvedAt);
+  // The property the whole design rests on: an approval is a name and a moment.
+  // No verdict, no digest, no listing — so there is no second, shorter route
+  // into the catalogue for a release somebody said yes to.
+  assert(!("findings" in out) && !("derived" in out) && !("decision" in out),
+    `an approval must carry no verification with it: ${Object.keys(out).join(", ")}`);
+});
+
+await test("/reject with no reason changes nothing and says so", async () => {
+  const out = await command("/reject", "the-maintainer");
+  assertEqual(out.mode, "reply", out.why);
+  assert(out.reply.includes("needs a reason"), out.reply);
+  assert(out.reply.includes("Nothing has been closed"), out.reply);
+});
+
+await test("/reject closes the loop for the author: the reason, and what to do next", async () => {
+  const out = await command("/reject the licence is not one this registry allows", "a-second-pair-of-eyes");
+  assertEqual(out.mode, "reject", out.why);
+  assertEqual(out.close, true, "the issue leaves the review queue");
+  assertEqual(out.by, "a-second-pair-of-eyes", "");
+  assert(out.reply.includes("the licence is not one this registry allows"),
+    "the reason is quoted back on the thread, which is the whole point of the command");
+  assert(out.reply.includes("open a fresh listing request"), "a rejection is not permanent");
+  assert(!out.repo, "and nothing is ingested");
+});
+
+await test("a command on an issue with nothing to decide about says so", async () => {
+  const out = await command("/approve", "the-maintainer", {
+    issue: "the website is down", title: "site 500s", labels: "",
+  });
+  assertEqual(out.mode, "reply", out.why);
+  assert(out.reply.includes("nothing to act on"), out.reply);
+});
+
+await test("prose that mentions the command is not the command", async () => {
+  const out = await command("I think we should /approve this one", "the-maintainer");
+  assert(out.mode !== "approve", `${out.mode}: ${out.why}`);
+});
+
+await test("a quoted reply does not re-run the command", async () => {
+  const out = await command("> /approve\n\nno, not yet", "the-maintainer");
+  assert(out.mode !== "approve", `${out.mode}: ${out.why}`);
+});
+
+section("an approval clears the hold, and only the hold");
+
+/**
+ * A world where `dice-roller` is listed and something else has taken its
+ * display name, so a re-release is held on `R_DISPLAY_NAME_COLLISION` — a hold
+ * that is not about the bytes and not about the permissions, which is what
+ * makes it the clean case for "approval clears the hold and the release
+ * publishes".
+ */
+const collidingTree = () => registryTree([
+  { versions: [{ version: "0.1.0" }] },
+  { id: "bingo-cards", name: "Dice Roller", versions: [{ version: "1.0.0" }] },
+]);
+
+await test("without an approval it is held, with the SLA and no listing", async () => {
+  const r = await run({ root: collidingTree() });
+  assertEqual(r.decision.outcome, "review", JSON.stringify(codes(r)));
+  assertEqual(r.decision.publishes_now, false, "");
+  assertEqual(r.decision.approved_by, null, "");
+});
+
+await test("a maintainer's yes re-runs every check and publishes what THIS run hashed", async () => {
+  const assets = [conforming()];
+  const r = await run({
+    root: collidingTree(), assets,
+    approvedBy: "the-maintainer", approvedAt: "2026-08-10T11:59:00Z",
+  });
+  assertEqual(r.decision.outcome, "publish", JSON.stringify(codes(r)));
+  assert(codes(r).includes("P_APPROVED"), JSON.stringify(codes(r)));
+  assertEqual(r.decision.approved_by, "the-maintainer", "");
+  assertEqual(r.decision.approved_at, "2026-08-10T11:59:00Z", "");
+
+  // The hold is still on the record — the point of an audit trail is that the
+  // thing that was cleared is still visible.
+  assert(codes(r).includes("R_CHECK_HELD"), JSON.stringify(codes(r)));
+
+  // "Against which digest" has to be the digest of the bytes this run
+  // downloaded, or the record is a sentence nobody can check later.
+  const expected = crypto.createHash("sha256").update(assets[0].bytes).digest("hex");
+  assert(r.decision.artifact_digests.some((d) => d.endsWith(`:${expected}`)),
+    `${JSON.stringify(r.decision.artifact_digests)} does not contain ${expected}`);
+
+  // And the comment does not still tell the author to wait for a maintainer.
+  assert(r.comment.includes("A maintainer cleared the hold: **@the-maintainer**"), "");
+  assert(!r.comment.includes("Nothing to do but wait"),
+    "a cleared hold must not keep printing the remedy for an uncleared one");
+});
+
+await test("an approval cannot clear a failed check", async () => {
+  const r = await run({
+    root: collidingTree(),
+    assets: [conforming({ license: "BUSL-1.1" })],
+    approvedBy: "the-maintainer", approvedAt: "2026-08-10T11:59:00Z",
+  });
+  assertEqual(r.decision.outcome, "refuse", JSON.stringify(codes(r)));
+  assertEqual(codes(r).join(","), "P_REFUSED", "the refusal branch runs first and ends it");
+  // Recorded even so: the maintainer did type the command, and a record that
+  // omitted an approval the registry then ignored could not be reconciled with
+  // the thread.
+  assertEqual(r.decision.approved_by, "the-maintainer", "");
+
+  // The rendered markdown is the only artefact the author ever sees, so it is
+  // the one worth asserting on. It used to print "Not published. A check above
+  // failed; the policy never got a say." and then, in the very next paragraph,
+  // "A maintainer cleared the hold" — two sentences that cannot both be true,
+  // about a hold that was never raised.
+  assert(!r.comment.includes("cleared the hold"),
+    "nothing was held on a refusal, so nothing can have been cleared:\n" + r.comment);
+  assert(r.comment.includes("typed `/approve`") && r.comment.includes("changed nothing"),
+    "the refusal still has to account for the command the maintainer typed:\n" + r.comment);
+});
+
+await test("an approval does not waive the publication delay, and the queue remembers it", async () => {
+  const r = await run({
+    root: collidingTree(),
+    assets: [conforming({ capabilities: ["tools", "tts"] })],
+    approvedBy: "the-maintainer", approvedAt: "2026-08-10T11:59:00Z",
+  });
+  assertEqual(r.decision.outcome, "delay", JSON.stringify(codes(r)));
+  assert(codes(r).includes("P_APPROVED") && codes(r).includes("P_DELAY_WIDENED"), JSON.stringify(codes(r)));
+  assertEqual(hours(r.decision.publish_after, NOW), DELAY_HOURS, "");
+  // The hold and the delay answer different questions — *may this be listed at
+  // all* versus *has the author had a chance to notice* — and one person's yes
+  // does not answer the second one.
+  assertEqual(r.decision.queue_entry.approved_by, "the-maintainer",
+    "and without this the hourly drain raises the same hold again in 24 h and the release loops");
+});
+
+await test("the drain honours the approval in the queue without a second comment", async () => {
+  const root = collidingTree();
+  const assets = [conforming({ capabilities: ["tools", "tts"] })];
+  const first = await run({ root, assets, approvedBy: "the-maintainer", approvedAt: "2026-08-10T11:59:00Z" });
+  assertEqual(first.decision.outcome, "delay", "");
+
+  // Commit the queue entry the publish job would have committed, then let the
+  // clock run out. No `--approved-by` this time: a cron drain has no comment
+  // behind it, which is exactly the run that used to bounce it back to review.
+  const entry = first.decision.queue_entry;
+  const file = path.join(root, queueFile(entry.id, entry.version));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(entry, null, 2)}\n`);
+
+  const later = await run({ root, assets, now: new Date(NOW.getTime() + 25 * 3600 * 1000) });
+  assertEqual(later.decision.outcome, "publish", JSON.stringify(codes(later)));
+  assertEqual(later.decision.approved_by, "the-maintainer", "carried forward from the queue entry");
+  assert(codes(later).includes("P_DELAY_ELAPSED"), JSON.stringify(codes(later)));
+});
+
+await test("swapping the assets mid-window takes the approval with the clock", async () => {
+  const root = collidingTree();
+  const first = await run({
+    root, assets: [conforming({ capabilities: ["tools", "tts"] })],
+    approvedBy: "the-maintainer", approvedAt: "2026-08-10T11:59:00Z",
+  });
+  const entry = first.decision.queue_entry;
+  const file = path.join(root, queueFile(entry.id, entry.version));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(entry, null, 2)}\n`);
+
+  // Same repository, same tag, different bytes — §5.5's timed swap.
+  const swapped = await run({
+    root,
+    assets: [conforming({ capabilities: ["tools", "tts"], description: "Rolls dice. Differently." })],
+    now: new Date(NOW.getTime() + 23 * 3600 * 1000),
+  });
+  assertEqual(swapped.decision.outcome, "review",
+    "the hold comes back, because nobody has approved THESE bytes");
+  assertEqual(swapped.decision.approved_by, null,
+    "an approval recorded against a digest must never be reused for a different one");
 });
 
 section("the document and the code say the same thing");

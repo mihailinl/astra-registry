@@ -1,0 +1,45 @@
+# The template is the only door.
+#
+# Blank issues used to be on, and there was no config.yml, so nothing stopped a
+# submission bypassing the form. Two did — `#13` and `#14` — and because the
+# form is what applies the `listing` label, both arrived with **zero labels**.
+# `bot/triage.mjs` acts on a labelled issue, so it answered "nothing here asks
+# for an ingest", set `targets=[]`, and every later job was skipped. The Actions
+# run went green: it had succeeded at deciding to do nothing. Neither author was
+# told anything at all.
+#
+# Two changes came out of that, and both are needed. The bot now answers an
+# unlabelled listing request instead of going quiet (`bot/lib/intake.mjs`), and
+# this file removes the way in that produced the unlabelled issue in the first
+# place. The first is the safety net; this is the fix.
+#
+# Every path a person might have used a blank issue for now has a template or a
+# link, and that is not optional courtesy — `docs/POLICY.md` §5 promises the
+# release ping as a new issue and §10 promises an appeal, and turning blank
+# issues off without those two forms would have quietly broken both.
+blank_issues_enabled: false
+
+contact_links:
+  - name: A security problem — do not open an issue
+    url: https://github.com/mihailinl/astra-registry/security/advisories/new
+    about: >-
+      Anything that would let somebody ship code to a user: a hole in the
+      verification chain, a way to get a listing past the checks, a compromised
+      publisher. A private advisory is end-to-end between you and the
+      maintainer. docs/POLICY.md section 11 says what you get for reporting this
+      way, and states plainly that there is no PGP key and no security@ mailbox
+      yet.
+
+  - name: How do I build, sign and release a plugin?
+    url: https://github.com/mihailinl/AstraPlugins
+    about: >-
+      The SDKs, the CLI, the release workflow and the documentation all live in
+      AstraPlugins. Get a release built and attested there first — this registry
+      only ever reads a release that already exists.
+
+  - name: Astra itself is misbehaving
+    url: https://github.com/mihailinl/AstraPlugins/issues
+    about: >-
+      A plugin that crashes, a permission prompt that looks wrong, a daemon that
+      will not start. This repository is the catalogue; it holds no code that
+      runs on your machine.

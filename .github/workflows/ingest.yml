@@ -5,6 +5,12 @@ name: Ingest
 #
 #   * a listing issue is opened or edited (task 3.3's submission form);
 #   * somebody comments `/recheck` on one;
+#   * a maintainer comments **`/approve`** or **`/reject <reason>`** on one —
+#     the other half of `outcome: "review"`. `/approve` clears the hold and
+#     nothing else: it becomes an ordinary target carrying two extra fields, and
+#     the whole ingest runs again from scratch against the release as it is now.
+#     The permission is proved against the GitHub API in `triage`, which has no
+#     write access to anything, before a target is emitted at all;
 #   * a **release ping** — `/release v0.2.0` on a listing issue, or
 #     `/release you/plugin v0.2.0` as a new issue. Task 3.4's first layer: it
 #     carries owner/repo/tag and no authority whatsoever, which is what lets an
@@ -28,6 +34,15 @@ name: Ingest
 # of submitter-controlled code: one posts a markdown file out of an artifact,
 # the other copies JSON files out of one, revalidates them with this
 # repository's own validator, and commits.
+#
+# `respond` is the same split applied to the reply an unlabelled submission
+# gets. `triage` — no write access, no downloads — decides what to say and
+# writes it to a FILE; `respond` has `issues: write`, reads that one file out of
+# an artifact, posts it, and closes the issue when the mode was `reject`. The
+# job that can write to an issue never parses a submission, and the job that
+# parses a submission can write nothing. That is the same rule as check/comment,
+# and it is why the fix for "an author heard nothing" did not become a fourth
+# job with a token and a parser in it.
 #
 # That split is the whole security design of this file. A single job with write
 # access that also downloads attacker-controlled archives is one sandbox escape
@@ -131,6 +146,16 @@ jobs:
       targets: ${{ steps.decide.outputs.targets }}
       issue: ${{ steps.decide.outputs.issue }}
       watch: ${{ steps.decide.outputs.watch }}
+      # `form`, `ping`, `approve`, `reject`, `reply` or `none`. Read by
+      # `respond`, which needs to know whether a reply also closes the issue —
+      # and reads it from HERE rather than from the reply file, because the
+      # instruction must not travel inside the text a stranger influenced.
+      mode: ${{ steps.decide.outputs.mode }}
+      # There is a markdown file waiting for somebody to read. Set on every path
+      # that decided not to start work: the whole point of this workflow's
+      # rewrite is that "decided not to start work" and "said nothing" stopped
+      # being the same thing.
+      reply: ${{ steps.decide.outputs.reply }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -142,12 +167,31 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
+          # `opened`, `edited`, `labeled`, `created`. It decides only how often
+          # the bot repeats itself, never whether it may act.
+          ACTION: ${{ github.event.action }}
+          REGISTRY: ${{ github.repository }}
           SCHEDULE: ${{ github.event.schedule }}
           LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
-          # Stranger text. Both go to files, never into a command.
+          # Whose control of THIS repository is proved before `/approve` or
+          # `/reject` is honoured. A login, never a claim: `bot/lib/maintainer.mjs`
+          # asks GitHub about it.
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          # The one payload field that check will look at, and only when the
+          # permission API declines to answer: `OWNER` is GitHub asserting that
+          # this commenter is the account the repository belongs to. This job's
+          # token holds `contents: read`, the collaborators endpoint is
+          # documented as needing push access, and `administration` is not a
+          # scope a workflow token can ask for — so without this the endpoint
+          # 403ing would make `/approve` refuse the owner of the repository, on
+          # every path, silently. See the block at the top of maintainer.mjs;
+          # the API is still tried first and an answered denial still stands.
+          COMMENT_ASSOCIATION: ${{ github.event.comment.author_association }}
+          # Stranger text. All three go to files, never into a command.
           ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
           COMMENT_BODY: ${{ github.event.comment.body }}
           DISPATCH_REPO: ${{ github.event.client_payload.repo }}
           DISPATCH_TAG: ${{ github.event.client_payload.tag }}
@@ -158,6 +202,7 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s' "$ISSUE_BODY" > issue-body.md
+          printf '%s' "$ISSUE_TITLE" > issue-title.md
           printf '%s' "$COMMENT_BODY" > comment-body.md
           mkdir -p out
           echo 'targets=[]' >> "$GITHUB_OUTPUT"
@@ -198,6 +243,14 @@ jobs:
                   echo "watch=true" >> "$GITHUB_OUTPUT"
                   ;;
               esac
+              # Three fields, and deliberately not an approval among them. A
+              # release that a maintainer approved and that then landed in the
+              # publication delay is re-ingested here with no comment behind it,
+              # and it must not raise the same hold again — so the approval is
+              # carried in the QUEUE ENTRY, which is a file in this repository
+              # that only the publish job can write, and `bot/lib/policy.mjs`
+              # reads it back. Passing it through a cron job's output instead
+              # would put a permission in a place a workflow input can reach.
               echo "targets=$(node -e '
                 const fs = require("node:fs");
                 const list = JSON.parse(fs.readFileSync("out/dispatch.json", "utf8"));
@@ -206,20 +259,35 @@ jobs:
               ;;
 
             issues|issue_comment)
-              # `bot/triage.mjs` answers form / ping / none, and resolves a
-              # ping's submitter from the release author. Its answers arrive as
-              # two files; nothing here sources a file written from stranger
-              # text.
+              # `bot/triage.mjs` answers form / ping / approve / reject / reply
+              # / none, resolves a ping's submitter from the release author, and
+              # — for `/approve` and `/reject` only — asks GitHub whether the
+              # commenter may decide. Its answers arrive as three files; nothing
+              # here sources a file written from stranger text.
               node bot/triage.mjs \
-                --event "$EVENT" --labels "$LABELS" \
-                --issue-body issue-body.md --comment-body comment-body.md \
-                --mode-file mode.txt --targets-file targets.json
-              case "$(cat mode.txt)" in
+                --event "$EVENT" --action "$ACTION" --labels "$LABELS" \
+                --repository "$REGISTRY" \
+                --issue-body issue-body.md --issue-title issue-title.md \
+                --comment-body comment-body.md \
+                --issue-author "$ISSUE_AUTHOR" --commenter "$COMMENT_AUTHOR" \
+                --commenter-association "$COMMENT_ASSOCIATION" \
+                --mode-file mode.txt --targets-file targets.json \
+                --reply-file out/reply.md
+              mode="$(cat mode.txt)"
+              echo "mode=$mode" >> "$GITHUB_OUTPUT"
+              case "$mode" in
                 form)
                   # The two facts out of the rendered form, with the
                   # confirmations checked. The submitter is the issue author,
                   # whose control of the repository is then proved against
                   # GitHub — this is the path a first listing takes.
+                  #
+                  # `read-submission.mjs` exits 2 on a form it cannot read, and
+                  # `set -e` above would kill the step — no target, no comment,
+                  # a red X and silence for somebody who ticked one box instead
+                  # of two. It cannot get here any more: triage answers the same
+                  # question with the same parser first, and an unreadable form
+                  # leaves as `reply` with a comment naming the missing field.
                   node bot/read-submission.mjs --body-file issue-body.md --output form.env
                   one_target \
                     "$(grep '^repo=' form.env | head -1 | cut -d= -f2-)" \
@@ -227,8 +295,19 @@ jobs:
                     "$ISSUE_AUTHOR"
                   echo "issue=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
                   ;;
-                ping)
+                ping|approve)
+                  # An approval is an ordinary target with `approved_by` and
+                  # `approved_at` alongside it. Everything downstream is
+                  # identical, which is the property that matters: there is no
+                  # second, shorter route into the catalogue for a release
+                  # somebody said yes to.
                   echo "targets=$(cat targets.json)" >> "$GITHUB_OUTPUT"
+                  echo "issue=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+                  ;;
+                reply|reject)
+                  # Nothing is downloaded, verified or published. One comment is
+                  # posted by `respond` — and for `reject`, the issue is closed
+                  # with the reason on the thread rather than in silence.
                   echo "issue=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
                   ;;
                 *)
@@ -237,6 +316,12 @@ jobs:
               ;;
           esac
 
+          # Every path above that refused to start work either produced a target
+          # or produced this file. An empty one means the event genuinely asked
+          # for nothing — an unrelated comment, one of the bot's own notices —
+          # and that is the only case in which nobody is told anything.
+          if [ -s out/reply.md ]; then echo "reply=true" >> "$GITHUB_OUTPUT"; fi
+
       - uses: actions/upload-artifact@v4
         if: steps.decide.outputs.watch == 'true'
         with:
@@ -244,6 +329,65 @@ jobs:
           path: out/state
           if-no-files-found: ignore
           retention-days: 7
+
+      # The markdown a human will read, handed to the job that may post it.
+      # An artifact rather than a job output for the same reason `comment` reads
+      # one: a workflow output is a string that gets expanded, and this text was
+      # composed with a stranger's repository name in it.
+      - uses: actions/upload-artifact@v4
+        if: steps.decide.outputs.reply == 'true'
+        with:
+          name: intake-reply
+          path: out/reply.md
+          retention-days: 7
+
+  # The answer to an event that started no verification.
+  #
+  # This job is the whole of defect 1. Two listing requests arrived carrying the
+  # rendered form and no labels; `triage` answered `none`, every later job was
+  # skipped, the run went green — it had succeeded at deciding to do nothing —
+  # and neither author was told anything at all. Not refused. Nothing.
+  #
+  # It runs no submitter code, downloads no archive and parses nothing. It reads
+  # one markdown file out of an artifact and posts it, which is exactly what
+  # `comment` does with the ingest report and for exactly the same reason.
+  #
+  # `mode` comes from the triage job's output rather than from inside the file,
+  # because "and also close the issue" is an instruction and instructions must
+  # not travel in text a stranger influenced.
+  respond:
+    needs: triage
+    if: needs.triage.outputs.reply == 'true' && needs.triage.outputs.issue != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: intake-reply
+          path: reply
+
+      - uses: actions/github-script@v7
+        env:
+          ISSUE: ${{ needs.triage.outputs.issue }}
+          MODE: ${{ needs.triage.outputs.mode }}
+        with:
+          script: |
+            const fs = require("node:fs");
+            const issue_number = Number(process.env.ISSUE);
+            if (!issue_number) return;
+            const body = fs.readFileSync("reply/reply.md", "utf8");
+            const { owner, repo } = context.repo;
+            await github.rest.issues.createComment({ owner, repo, issue_number, body });
+
+            // A rejection closes the issue, and only after the reason is on the
+            // thread. In that order, always: a close that races the comment is
+            // the silent close this whole job exists to stop being possible.
+            if (process.env.MODE === "reject") {
+              await github.rest.issues.update({
+                owner, repo, issue_number, state: "closed", state_reason: "not_planned",
+              });
+            }
 
   # The bot that judges a stranger's release runs its own tests first. A suite
   # that only runs on pull requests is a suite that is green on the day it
@@ -351,6 +495,13 @@ jobs:
           TAG: ${{ matrix.tag }}
           SUBMITTER: ${{ matrix.submitter }}
           ISSUE: ${{ needs.triage.outputs.issue }}
+          # Present only on a target that came from `/approve`, and empty on
+          # every other one. It says a hold was cleared by a named account at a
+          # named moment — it carries no verdict, no digest and no listing, so
+          # every check below still runs from scratch. `bot/lib/policy.mjs`
+          # explains why there is deliberately no shortcut here.
+          APPROVED_BY: ${{ matrix.approved_by }}
+          APPROVED_AT: ${{ matrix.approved_at }}
         run: |
           set -uo pipefail
           mkdir -p out
@@ -371,6 +522,8 @@ jobs:
           node bot/decide.mjs \
             --repo "$REPO" --tag "$TAG" --submitter "$SUBMITTER" \
             ${ISSUE:+--issue "$ISSUE"} \
+            ${APPROVED_BY:+--approved-by "$APPROVED_BY"} \
+            ${APPROVED_AT:+--approved-at "$APPROVED_AT"} \
             --out out > out/comment.log || code=$?
           echo "code=$code" >> "$GITHUB_OUTPUT"
           cat out/comment.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || cat out/comment.log >> "$GITHUB_STEP_SUMMARY"

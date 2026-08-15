@@ -99,17 +99,41 @@ function isUsableTag(tag) {
 // ── layer 1: the ping ───────────────────────────────────────────────────────
 
 /**
+ * The first line of a body that a person actually wrote.
+ *
+ * Leading blank lines and markdown headings are skipped, and **nothing else
+ * is**. That is not a convenience: `.github/ISSUE_TEMPLATE/config.yml` turned
+ * blank issues off, so the ping-as-a-new-issue path that `docs/POLICY.md` §5
+ * promises now goes through a form — and GitHub renders every issue form as
+ * `### <label>`, a blank line, then the value. Under the old rule the command
+ * was never on line 1 again and the whole path silently stopped working.
+ *
+ * A heading and a blank line are the two things GitHub's own renderer inserts.
+ * Prose is not skipped, so "any news? maybe /release it" is still not a
+ * command, and neither is a quoted reply — `> ` is neither blank nor a heading.
+ */
+export function firstWrittenLine(text) {
+  for (const raw of String(text ?? "").replace(/\r/g, "").split("\n")) {
+    const line = raw.trim();
+    if (line === "" || /^#{1,6}\s/.test(line)) continue;
+    return line;
+  }
+  return "";
+}
+
+/**
  * `/release [owner/repo] <tag>`, and nothing else.
  *
- * Deliberately shaped like `/recheck` (`bot/lib/issue.mjs`): first line, whole
- * line, case-insensitive. A sentence that mentions the command does not run it,
- * because a bot that reacts to prose is a bot that reacts to a quoted reply.
+ * Deliberately shaped like `/recheck` (`bot/lib/issue.mjs`): the whole line,
+ * case-insensitive, and the first line anybody wrote. A sentence that mentions
+ * the command does not run it, because a bot that reacts to prose is a bot that
+ * reacts to a quoted reply.
  *
  * @param {string} text an issue body or a comment body
  * @returns {{repo: string|null, tag: string|null}|null}
  */
 export function parseReleasePing(text) {
-  const first = String(text ?? "").replace(/\r/g, "").split("\n")[0]?.trim() ?? "";
+  const first = firstWrittenLine(text);
   const m = /^\/release\s+(\S+)(?:\s+(\S+))?$/i.exec(first);
   if (!m) return null;
 

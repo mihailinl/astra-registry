@@ -74,6 +74,59 @@ function headers(token) {
   return h;
 }
 
+/**
+ * `GET /repos/{o}/{r}/collaborators/{u}/permission`, and what its answer means.
+ *
+ * Extracted because there are now two questions in this repository that hang on
+ * this one endpoint and must not answer it differently: *does this submitter
+ * control the repository they are listing* (below), and *may this commenter
+ * approve a held release* (`bot/lib/maintainer.mjs`). One caller reading
+ * `role_name` and another reading `permission` is exactly how a `maintain`
+ * collaborator ends up trusted by one path and refused by the other.
+ *
+ * The distinction the two callers share, and the reason this returns
+ * `answered` rather than a boolean: **"GitHub said no" and "GitHub would not
+ * say" are different facts.** A 200 is an answer in both directions. A 403 or a
+ * 404 means the caller cannot see the endpoint, which is evidence of nothing.
+ * What each caller *does* with a missing answer differs — one falls back to
+ * weaker proofs, the other refuses outright — and that is their decision to
+ * make, not this function's.
+ *
+ * Verified against the live API on 2026-08-13, against this registry itself:
+ * for a **public** repository the endpoint answers 200 `role_name: "read"` for
+ * an account that is not a collaborator at all (`octocat`), and 200
+ * `role_name: "admin"` for the owner. So "not a collaborator" arrives here as
+ * an answered denial rather than as a 404, and the callers can rely on the
+ * distinction meaning what it says.
+ *
+ * @returns {Promise<{answered: boolean, role: string|null, outcome: string}>}
+ */
+export async function collaboratorRole(repo, login, opts = {}) {
+  const doFetch = opts.fetchImpl ?? fetch;
+  try {
+    const url = `${API}/repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`;
+    const res = await doFetch(url, { headers: headers(opts.token) });
+    if (res.ok) {
+      const body = await res.json();
+      // `role_name` is the fine-grained role (`admin`, `maintain`, `write`, …);
+      // `permission` is the coarse legacy field, where `maintain` reports as
+      // `write`. Read the fine one and fall back, so a `maintain` collaborator
+      // is not silently demoted by an old field name.
+      const role = String(body.role_name ?? body.permission ?? "").toLowerCase() || "none";
+      return { answered: true, role, outcome: `role is \`${role}\`` };
+    }
+    if (res.status === 403 || res.status === 404) {
+      return { answered: false, role: null, outcome: `HTTP ${res.status} — not visible to the bot` };
+    }
+    return { answered: false, role: null, outcome: `HTTP ${res.status}` };
+  } catch (e) {
+    return { answered: false, role: null, outcome: `request failed: ${e.message}` };
+  }
+}
+
+/** The two roles that count as control of a repository, in either question. */
+export const CONTROL_ROLES = ["admin", "maintain"];
+
 /** The strength order the methods are reported in. */
 export const METHOD_STRENGTH = {
   "collaborator-permission": 3,
@@ -117,52 +170,38 @@ export async function proveOwnership(opts) {
   }
 
   // 1 ── ask GitHub who has admin or maintain.
+  const asked = await collaboratorRole(repo, login, { token, fetchImpl: doFetch });
   let githubAnswered = false;
-  try {
-    const url = `${API}/repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`;
-    const res = await doFetch(url, { headers: headers(token) });
-    if (res.ok) {
-      const body = await res.json();
-      // `role_name` is the fine-grained role (`admin`, `maintain`, `write`, …);
-      // `permission` is the coarse legacy field, where `maintain` reports as
-      // `write`. Read the fine one and fall back, so a `maintain` collaborator
-      // is not silently demoted to "not an owner" by an old field name.
-      const role = String(body.role_name ?? body.permission ?? "").toLowerCase();
-      if (role === "admin" || role === "maintain") {
-        tried.push({ method: "collaborator-permission", outcome: role });
-        return {
-          ok: true,
-          method: "collaborator-permission",
-          detail: `GitHub reports @${login} has \`${role}\` on ${repo}`,
-          tried,
-        };
-      }
-      // **A 200 is a denial, and a denial ends it.** The fallbacks exist for the
-      // case where GitHub will not say; they are not a second opinion on an
-      // answer GitHub gave.
-      githubAnswered = true;
-      tried.push({ method: "collaborator-permission", outcome: `role is \`${role || "none"}\`` });
-      return {
-        ok: false,
-        method: null,
-        detail:
-          `GitHub reports @${login} has \`${role || "none"}\` on ${repo}, which is neither ` +
-          "`admin` nor `maintain`. That is an answer, not a missing one, so the weaker checks " +
-          "(`.well-known/astra-plugin-owner`, release author) are not consulted — neither of them " +
-          "can outrank what GitHub just said.",
-        tried,
-      };
-    } else if (res.status === 403 || res.status === 404) {
-      // No answer, not a denial: this endpoint is only visible to a caller with
-      // admin on the repository. Reading it as "no" would refuse every
-      // organisation that has not installed the registry's app.
-      tried.push({ method: "collaborator-permission", outcome: `HTTP ${res.status} — not visible to the bot` });
-    } else {
-      tried.push({ method: "collaborator-permission", outcome: `HTTP ${res.status}` });
-    }
-  } catch (e) {
-    tried.push({ method: "collaborator-permission", outcome: `request failed: ${e.message}` });
+  if (asked.answered && CONTROL_ROLES.includes(asked.role)) {
+    tried.push({ method: "collaborator-permission", outcome: asked.role });
+    return {
+      ok: true,
+      method: "collaborator-permission",
+      detail: `GitHub reports @${login} has \`${asked.role}\` on ${repo}`,
+      tried,
+    };
   }
+  if (asked.answered) {
+    // **A 200 is a denial, and a denial ends it.** The fallbacks exist for the
+    // case where GitHub will not say; they are not a second opinion on an
+    // answer GitHub gave.
+    githubAnswered = true;
+    tried.push({ method: "collaborator-permission", outcome: asked.outcome });
+    return {
+      ok: false,
+      method: null,
+      detail:
+        `GitHub reports @${login} has \`${asked.role}\` on ${repo}, which is neither ` +
+        "`admin` nor `maintain`. That is an answer, not a missing one, so the weaker checks " +
+        "(`.well-known/astra-plugin-owner`, release author) are not consulted — neither of them " +
+        "can outrank what GitHub just said.",
+      tried,
+    };
+  }
+  // No answer, not a denial: this endpoint is only fully visible to a caller
+  // with admin on the repository. Reading it as "no" would refuse every
+  // organisation that has not installed the registry's app.
+  tried.push({ method: "collaborator-permission", outcome: asked.outcome });
 
   // 2 ── the file, on the default branch, read now.
   try {

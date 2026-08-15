@@ -6,45 +6,87 @@ body:
   - type: markdown
     attributes:
       value: |
-        You are asked for **two facts and two confirmations**, and nothing else.
+        **Two facts, two confirmations, and one optional paragraph.** That is
+        the whole form.
 
-        Everything else — id, version, capabilities, permissions, license,
-        summary, platforms, digests — is read out of the release bundle itself.
-        That data is covered by the build attestation, which makes it strictly
-        more trustworthy than anything typed into a form, and it means there is
-        no such thing here as a "your form disagrees with plugin.toml"
-        rejection. Run `astra-plugin publish --dry-run` in your plugin directory
-        first: it runs the local half of the registry's checks, and names the
-        ones only the registry can run.
+        **Before you submit,** run this in your plugin directory:
 
-        A plugin is listed **once, ever**. After this, releases are zero-touch —
+        ```
+        astra-plugin publish --dry-run
+        ```
+
+        It runs the local half of this registry's checks in a few seconds and
+        names the ones only the registry can run. Fixing a problem there is
+        minutes; fixing it here is a round trip.
+
+        **You need a release that already exists.** This registry reads a
+        GitHub Release — it does not build anything. The tag below must already
+        carry `.astraplugin` files produced by `plugin-release.yml`, which is
+        what attaches the *attestation*: a signed statement from GitHub saying
+        which workflow, in which repository, built those exact bytes. Without
+        one there is nothing here to verify.
+
+        **Everything else is read out of the bundle** — id, version,
+        capabilities, permissions, licence, summary, platforms, digests. That
+        data is covered by the attestation, which makes it more trustworthy than
+        anything typed into a form, so there is no such thing here as a "your
+        form disagrees with `plugin.toml`" rejection.
+
+        **A plugin is listed once, ever.** After this, releases are zero-touch:
         tag, let CI build and attest, and the registry picks it up.
         `docs/POLICY.md` says exactly when a release publishes itself, when it
         waits, and which three things still take a person.
+
+        **What happens after you submit.** The bot comments here, usually within
+        a few minutes: it downloads your release assets, verifies the
+        attestation, reads the manifest, and posts a table of every check with a
+        digest at the end. A first listing is one of three things a person still
+        decides — a maintainer answers within 48 hours, and comments `/approve`
+        or `/reject` with a reason. Either way you hear back on this thread.
+  # Fact 1 of 2. The label text is parsed by `bot/lib/issue.mjs`; changing it
+  # changes what the bot can read out of a rendered form, so change both.
   - type: input
     id: repository
     attributes:
       label: Source repository
-      description: The repository whose GitHub Release carries the bundle.
+      description: >-
+        The repository whose GitHub Release carries the bundle. `owner/name`, or
+        paste the full address — both work.
       placeholder: you/dice-roller
     validations:
       required: true
+
+  # Fact 2 of 2.
   - type: input
     id: release_tag
     attributes:
       label: Release tag carrying the .astraplugin assets
+      description: >-
+        The tag of an existing release, not a branch and not a commit. If
+        `astra-plugin publish --dry-run` warned that the tag is missing, publish
+        the release first.
       placeholder: v0.2.0
     validations:
       required: true
+
   - type: textarea
     id: why
     attributes:
       label: What does it do, and why should it be listed?
-      description: A few sentences. This is the only part a human writes and the only part a human reads first.
+      description: >-
+        Optional, a few sentences. The only part a human writes, and the first
+        part a human reads.
+
+  # Both required, and both read. `bot/read-submission.mjs` refuses a submission
+  # with an unticked box, and `bot/lib/intake.mjs` names the box in a comment
+  # rather than letting the run die silently.
   - type: checkboxes
     id: attest
     attributes:
       label: Confirmations
+      description: >-
+        Neither is evidence — ownership is proved against GitHub either way.
+        They are the difference between a mistake and a statement.
       options:
         - label: I own or maintain this repository.
           required: true

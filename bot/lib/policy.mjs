@@ -26,6 +26,43 @@
 // is: a delay buys time for a human who is watching, and buys nothing at all
 // from an attacker nobody is watching.
 //
+// ── what an approval is, and the one thing it must never become ────────────
+//
+// `review` used to be a terminus. The bot said "held for a maintainer", the
+// ingest exited 3, and nothing in this repository implemented the maintainer's
+// next move — no command, no override, nothing in POLICY.md. The queue was a
+// place submissions went.
+//
+// `/approve` (`bot/triage.mjs`, permission-checked by `bot/lib/maintainer.mjs`)
+// resolves that, and it is deliberately the smallest possible thing: an
+// approval **clears the hold and nothing else**.
+//
+//   * It cannot clear an error. The refusal branch below runs first, so a
+//     maintainer cannot approve away a failed signature, an unproved ownership
+//     or a licence this registry does not allow. Those are not decisions; they
+//     are facts about the bytes, and the answer to one is a new release.
+//   * It does not carry a verdict forward. The approval is a name and a
+//     timestamp on a target; `bot/decide.mjs` runs the **entire** ingest again
+//     before this function is called at all. Publishing the artifact a previous
+//     run verified would be publishing something nobody has looked at since —
+//     a tag can be moved, a release asset can be replaced, and the digest that
+//     reaches the catalogue must be the digest this run downloaded and hashed.
+//     That is the same rule the publication delay follows when its clock runs
+//     out, for the same reason, and it is why there is no "approve and publish
+//     what you already checked" path anywhere in this file.
+//   * It does not waive the publication delay. A held release that is also a
+//     widening still waits: the hold and the delay answer different questions
+//     (*may this be listed at all* versus *has the author had a chance to
+//     notice*), and one person's yes does not answer the second one. The delay
+//     has its own documented waiver — editing `publish_after` — which leaves
+//     its own commit.
+//
+// What it does leave behind is a record: `P_APPROVED` in the comment on the
+// issue, and `approved_by` / `approved_at` / `artifact_digests` in the
+// `decision.json` the publish job reads, so "who let this in, when, and against
+// which bytes" has one answer and it is written down in three places that
+// cannot disagree.
+//
 // ── why the codes are not in bot/lib/codes.mjs ──────────────────────────────
 //
 // `codes.mjs` is the vocabulary of the *checks* — what a submission got wrong.
@@ -141,6 +178,13 @@ export const POLICY_CODES = {
       "Say in the issue what the new permission is for, in one sentence a user would accept. " +
       "The four that block are `client`, `dom_access`, `send_chat_message` and " +
       "`set_theme_contribution`; each reaches outside the plugin's own surface.",
+  },
+  P_APPROVED: {
+    level: "pass",
+    title: "A maintainer cleared the hold",
+    remedy:
+      "Nothing to do. The hold is gone; every check above was re-run from scratch in this run, " +
+      "against the release as it is today, and what publishes is what this run verified.",
   },
   R_CHECK_HELD: {
     level: "review",
@@ -426,6 +470,7 @@ const iso = (d) => `${new Date(d).toISOString().slice(0, 19)}Z`;
  *   issue?: number|null,
  *   track?: object,
  *   queued?: object|null,
+ *   approval?: {by: string, at: string}|null,
  *   now?: Date,
  * }} input
  */
@@ -434,6 +479,7 @@ export function decide(input) {
   const now = input.now ?? new Date();
   const track = input.track ?? { tier: "new", clean_releases: 0, delay_hours: DELAY_HOURS, revoked: false };
   const queued = input.queued ?? null;
+  const typed = normaliseApproval(input.approval);
   const reasons = [];
   const add = (code, message) => reasons.push({ code, level: policyCodeDef(code).level, message });
 
@@ -446,10 +492,42 @@ export function decide(input) {
         ? `${errors.length} blocking finding(s); the policy never ran`
         : "the ingest produced no listing to decide about",
     );
-    return finish({ outcome: "refuse", reasons, track, now });
+    // An approval never reaches this branch's outcome. It is recorded — the
+    // maintainer did type the command, and a record that omits an approval the
+    // registry then ignored is a record that cannot be reconciled with the
+    // thread — but it changes nothing: a failed check is a fact about the
+    // bytes, and the answer to one is a new release, not a permission.
+    return finish({ outcome: "refuse", reasons, track, now, approval: typed });
   }
 
   const requested = requestedAuthority(derived.version);
+  // Computed here rather than at the delay branch, because two later decisions
+  // need it: the approval record ("against which digest") and the queue clock.
+  // Both are only auditable if the digest is the one THIS run hashed.
+  const digests = artifactDigests(derived.version);
+
+  // Does the queue entry still describe this release and these bytes? Asked
+  // once, here, and reused by everything that is allowed to trust the entry.
+  const sameRelease = Boolean(queued && queued.repo === repo && queued.tag === input.tag);
+  const sameBytes = Boolean(queued && JSON.stringify(queued.artifact_digests ?? []) === JSON.stringify(digests));
+  const queueIsAboutThis = sameRelease && sameBytes;
+
+  // An approval reaches a *second* run when the first one cleared the hold and
+  // then landed in the publication delay: the hourly drain re-ingests from
+  // scratch with no comment behind it, and without this the same hold would be
+  // raised again and the release would loop between the queue and the review
+  // list for ever.
+  //
+  // What is carried forward is the maintainer's PERMISSION, never their
+  // verdict — every check in this run is still run from scratch, exactly as
+  // `queued_at` is carried forward while the bytes are re-hashed. And it is
+  // carried only while the entry still describes these bytes: a swapped asset
+  // restarts the clock (below) and takes the approval with it, so "approved by
+  // X against digest Y" is never a sentence about bytes nobody approved.
+  const approval = typed ?? (queueIsAboutThis
+    ? normaliseApproval({ by: queued.approved_by, at: queued.approved_at })
+    : null);
+
   const previous = newestListedVersion(existing);
   const previouslyRequested = requestedAuthority(previous);
   const added = requested.filter((n) => !previouslyRequested.includes(n));
@@ -472,13 +550,26 @@ export function decide(input) {
     add("R_NEW_HIGH_RISK", `this release adds ${newHighRisk.join(", ")}, which the listed ${previous?.version ?? "previous version"} did not have`);
   }
   if (reasons.some((r) => r.level === "review")) {
-    return finish({
-      outcome: "review",
-      reasons,
-      track,
-      now,
-      sla_deadline: iso(now.getTime() + REVIEW_SLA_HOURS * HOUR_MS),
-    });
+    if (!approval) {
+      return finish({
+        outcome: "review",
+        reasons,
+        track,
+        now,
+        sla_deadline: iso(now.getTime() + REVIEW_SLA_HOURS * HOUR_MS),
+        artifact_digests: digests,
+        approval: null,
+      });
+    }
+    // The hold is cleared, and only the hold. Execution falls through into the
+    // delay rules below, which get no say from this: a person answering "may
+    // this be listed at all" has not answered "has the author had a chance to
+    // notice", and §5.5's window is the answer to the second question.
+    add(
+      "P_APPROVED",
+      `@${approval.by} cleared the hold at ${approval.at}, against ${digests.length || "no"} ` +
+      `artifact digest(s) hashed in this run: ${digests.join(", ") || "none"}`,
+    );
   }
 
   // 3 ── a permission nobody can name. Reported, never blocking: the daemon
@@ -506,7 +597,7 @@ export function decide(input) {
 
   if (delayReasons.length === 0) {
     add("P_PUBLISHED", "identity unchanged, permissions unchanged, every check green, version strictly greater");
-    return finish({ outcome: "publish", reasons, track, now });
+    return finish({ outcome: "publish", reasons, track, now, artifact_digests: digests, approval });
   }
 
   for (const r of delayReasons) add(r.code, r.message);
@@ -515,16 +606,15 @@ export function decide(input) {
   }
 
   const delayHours = track.delay_hours ?? DELAY_HOURS;
-  const digests = artifactDigests(derived.version);
 
   // 5 ── has it already waited?
   //
   // The clock is pinned to the bytes. An asset replaced during the window is a
   // new release for this purpose, and the only thing that stops a swap timed
-  // for the last minute of the window is starting the clock again.
-  const sameRelease = queued && queued.repo === repo && queued.tag === input.tag;
-  const sameBytes = queued && JSON.stringify(queued.artifact_digests ?? []) === JSON.stringify(digests);
-  if (queued && !(sameRelease && sameBytes)) {
+  // for the last minute of the window is starting the clock again. Both
+  // questions were asked above, because the carried-forward approval rests on
+  // the same answer.
+  if (queued && !queueIsAboutThis) {
     add(
       "P_DELAY_BYTES_CHANGED",
       sameRelease
@@ -533,7 +623,7 @@ export function decide(input) {
     );
   }
 
-  const startedAt = sameRelease && sameBytes ? new Date(queued.queued_at) : now;
+  const startedAt = queueIsAboutThis ? new Date(queued.queued_at) : now;
   let publishAfter = new Date(startedAt.getTime() + delayHours * HOUR_MS);
 
   // A maintainer bringing the publication forward, which every queue entry
@@ -557,7 +647,7 @@ export function decide(input) {
   // repository, so moving the date takes a commit from somebody who could
   // publish the listing by hand regardless — and unlike a hand-published
   // listing, this path still re-runs every check from scratch first.
-  if (sameRelease && sameBytes && queued.publish_after) {
+  if (queueIsAboutThis && queued.publish_after) {
     const asked = new Date(queued.publish_after);
     if (!Number.isNaN(asked.getTime()) && asked.getTime() < publishAfter.getTime()) {
       publishAfter = asked;
@@ -568,7 +658,7 @@ export function decide(input) {
 
   if (publishAfter.getTime() <= now.getTime()) {
     add("P_DELAY_ELAPSED", `queued at ${iso(startedAt)}, ${delayHours} h ago; every check has just been re-run against today's bytes`);
-    return finish({ outcome: "publish", reasons, track, now, drop_queue: true });
+    return finish({ outcome: "publish", reasons, track, now, drop_queue: true, artifact_digests: digests, approval });
   }
 
   add("P_DELAY_WAITING", `it publishes itself at ${iso(publishAfter)} — ${delayHours} h after ${iso(startedAt)} — with nobody touching it`);
@@ -579,6 +669,8 @@ export function decide(input) {
     now,
     publish_after: iso(publishAfter),
     notify_author: true,
+    artifact_digests: digests,
+    approval,
     queue_entry: {
       $comment:
         "A release waiting out PRODUCTION_PLAN §3.5's publication delay. Nothing here is trusted at " +
@@ -606,9 +698,34 @@ export function decide(input) {
       delay_hours: delayHours,
       reason: delayReasons.map((r) => r.code).join(","),
       artifact_digests: digests,
+      // The maintainer who cleared the hold, so the drain that picks this up in
+      // 24 h does not raise it again and bounce the release between the queue
+      // and the review list. It carries no verdict: `decide` re-runs every rule
+      // above against a bundle this repository will hash again, and it is
+      // honoured only while `artifact_digests` still match.
+      approved_by: approval?.by ?? null,
+      approved_at: approval?.at ?? null,
       issue: input.issue ?? null,
     },
   });
+}
+
+/**
+ * `{by, at}`, or nothing at all.
+ *
+ * Shape-checked here rather than trusted, because this value has travelled
+ * through a workflow output, a matrix entry and — on the second run — a JSON
+ * file in this repository. A login that is not a login, or a timestamp that is
+ * not a timestamp, means the audit record would be a sentence nobody can check,
+ * and an unverifiable record of who approved something is worse than none: it
+ * reads as evidence.
+ */
+function normaliseApproval(approval) {
+  const by = String(approval?.by ?? "").replace(/^@/, "");
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(by)) return null;
+  const at = new Date(approval?.at ?? NaN);
+  if (Number.isNaN(at.getTime())) return null;
+  return { by, at: iso(at) };
 }
 
 function finish(d) {
@@ -622,6 +739,12 @@ function finish(d) {
     notify_author: Boolean(d.notify_author),
     queue_entry: d.queue_entry ?? null,
     drop_queue: Boolean(d.drop_queue),
+    // Who cleared the hold, when, and the digests this run hashed. The third
+    // is what makes the first two auditable: an approval recorded without the
+    // bytes it applied to cannot be checked against anything later.
+    approved_by: d.approval?.by ?? null,
+    approved_at: d.approval?.at ?? null,
+    artifact_digests: d.artifact_digests ?? [],
     /** True when the derived listing should be committed by this run. */
     publishes_now: d.outcome === "publish",
   };
@@ -704,13 +827,45 @@ export function renderPolicySection(decision, derived) {
   }[decision.outcome];
   lines.push("", headline, "");
 
+  // A cleared hold still appears in the table below, and it must: the record of
+  // what was held is the point. But its remedy ("nothing to do but wait") is
+  // now false, so the approval is stated first and the remedies are suppressed.
+  //
+  // On the refuse path there was no hold, and claiming one was cleared is worse
+  // than saying nothing. `decide()` records `approved_by` there deliberately —
+  // the maintainer did type the command, and a record that omitted it could not
+  // be reconciled with the thread — but rendering the two sentences back to
+  // back ("a check failed, the policy never got a say" / "a maintainer cleared
+  // the hold") reads to the author as the bot contradicting itself, or as the
+  // approval having been lost. So the refusal gets its own line, and it says
+  // what actually became of the command.
+  if (decision.approved_by && decision.outcome !== "refuse") {
+    lines.push(
+      `A maintainer cleared the hold: **@${decision.approved_by}**, at ${decision.approved_at}. ` +
+      "Nothing was carried over from the run that raised it — every check in this comment ran " +
+      "again, from scratch, against the release as it is right now.",
+      "",
+    );
+  } else if (decision.approved_by) {
+    lines.push(
+      `**@${decision.approved_by}** typed \`/approve\` at ${decision.approved_at}. It was recorded ` +
+      "and it changed nothing, because a failed check is not a decision an approval can clear — " +
+      "nothing was held here for it to clear. Fix what the table below names and push a new " +
+      "release, and a maintainer approves the hold *that* release raises: an approval is recorded " +
+      "against the digests of the bytes it applied to, and these are not those bytes.",
+      "",
+    );
+  }
+
   lines.push("| | code | detail |", "|---|---|---|");
   for (const r of decision.reasons) {
     lines.push(`| ${GLYPH[r.level] ?? "•"} | \`${r.code}\` | ${String(r.message).replace(/\|/g, "\\|")} |`);
   }
   lines.push("");
 
-  const actionable = decision.reasons.filter((r) => r.level === "review" || r.level === "warn");
+  const actionable = decision.reasons.filter(
+    (r) => (r.level === "review" && !decision.approved_by) || r.level === "warn",
+  );
   if (actionable.length) {
     const seen = new Set();
     for (const r of actionable) {

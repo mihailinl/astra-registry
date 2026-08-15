@@ -243,21 +243,67 @@ the same reason.
 
 ## Listing a plugin
 
-1. Run the checks locally, from a checkout of this repository:
-   `node tools/validate.mjs` and `node bot/run-checks.mjs --plugin <id>`.
-   In your plugin's own directory, `astra-plugin check --strict` catches the
-   manifest problems before a listing exists at all.
-2. Open a listing issue (`.github/ISSUE_TEMPLATE/plugin-listing.yml`). It asks
-   for two facts: the repository and the release tag. Everything else is read
-   out of the bundle, which is why there is no "your form disagrees with
-   plugin.toml" rejection.
-3. A maintainer adds `plugins/<id>/plugin.json` and the first version file,
-   regenerates the index, and merges.
+Three steps, and you write nothing into this repository. The bot writes the
+listing, from your release bundle.
 
-From Phase 3 that becomes zero-touch for subsequent releases: tag → CI →
-attestation → the bot verifies → index regenerated. A human sees a plugin again
-only on a first listing, a newly requested high-risk permission, an identity
-change, or a report. See `POLICY.md`.
+**First, you need a GitHub Release that already exists.** This registry reads
+one; it does not build anything. Build and release your plugin in AstraPlugins
+first — `plugin-release.yml` there produces the `.astraplugin` files and the
+*attestation*, which is a signed statement from GitHub saying which workflow, in
+which repository, built those exact bytes. Without one there is nothing here to
+verify.
+
+### 1. Check it locally first
+
+In your plugin's own directory:
+
+```bash
+astra-plugin publish --dry-run
+```
+
+It takes seconds and prints the checks it ran plus the ones only the registry
+can run. Fixing something here is minutes; fixing it after you have submitted is
+a round trip.
+
+### 2. Open a listing request
+
+<https://github.com/mihailinl/astra-registry/issues/new?template=plugin-listing.yml>
+
+It asks for **two facts** — the repository and the release tag — and two
+confirmations. Everything else (id, version, capabilities, permissions, licence,
+summary, platforms, digests) is read out of the bundle, which is covered by the
+attestation. That is why there is no "your form disagrees with `plugin.toml`"
+rejection: the form is not consulted about any of it.
+
+Blank issues are off, so this link is the way in. If you land on a chooser page,
+pick **Plugin listing request**.
+
+### 3. Read the bot's comment
+
+The bot downloads your release assets, verifies the attestation, reads the
+manifest and comments on your issue with a table of every check and a digest.
+Allow minutes, not seconds — the run compiles a manifest parser first.
+
+You get one of four answers, always on the thread:
+
+| | What it means |
+|---|---|
+| **Published** | Live. Nothing more to do. |
+| **Publishing itself at `<time>`** | Everything passed; it waits out a publication delay and then goes live on its own. |
+| **Held for a maintainer** | A first listing is one of exactly three things a person decides. Answer within 48 h, by `/approve` or `/reject <reason>`. |
+| **Not published** | A check failed. The comment names it and the fix; comment `/recheck` when you have pushed a new release. |
+
+**If you ever get silence, that is a bug in this registry.** Say so on the issue.
+
+### After the first time
+
+Listing happens **once, ever**. Every later release is zero-touch: tag it, let
+CI build and attest it, and the registry picks it up — by a `/release v0.2.0`
+comment on your listing issue within minutes, or by a daily backstop that polls
+your release feed within a week.
+
+A person sees your plugin again only on a newly requested high-risk permission,
+a change of repository, or a report. `docs/POLICY.md` is the detail.
 
 ## Running the tools
 
@@ -288,15 +334,16 @@ thing: Node.
 
 Named, so nobody assumes otherwise:
 
-- **No signed `trust.json`, so nothing verifies in practice.** The machinery all
-  exists — `trust.json`'s format, the index envelope, the signer, the daemon's
-  verifier, key rotation with validity windows — and the root ceremony ran on
-  2026-08-11, so `registry/v1/root.json` is `status: provisioned` and the daemon
-  compiles in the same two keys. But a root key signs `trust.json`, not a
-  catalogue, and no `trust.json` has been signed. With nothing delegated there
-  are no index keys, so every catalogue still reads as `UNSIGNED` and the
-  artifact digest is doing all the work. What remains is one offline signing and
-  an index key in the `publish` environment, not more code.
+- **The catalogue itself is still unsigned, though the chain above it is not.**
+  The root ceremony ran, so `registry/v1/root.json` is `status: provisioned` with
+  `astra-root-2026a` and its reserve, and the daemon compiles in the same two
+  keys. `registry/v1/trust.json` is signed by that root at serial 1, delegating
+  `astra-index-2026a` and allowlisting one reusable-workflow commit. What is
+  still missing is one step further down: the committed
+  `registry/v1/index.json` carries `"signatures": []`, so a daemon reads the
+  catalogue as `UNSIGNED` and the artifact digest is doing all the work. The
+  signing key and its id are in the `publish` environment; what remains is a
+  publish run that uses them, not more code.
 - **Nothing intersects a candidate with `revocations.json`.** The document
   exists, the daemon enforces it at five points, and `tools/build-revocations.mjs`
   / `tools/sign-revocations.mjs` produce it — but neither bot path checks a
