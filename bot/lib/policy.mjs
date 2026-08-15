@@ -63,6 +63,32 @@
 // which bytes" has one answer and it is written down in three places that
 // cannot disagree.
 //
+// ── and the thing an approval has to NAME ───────────────────────────────────
+//
+// Everything above is about the run that publishes. It left a gap one layer up,
+// and the gap was real: `/approve` used to carry no identity at all, so
+// `bot/triage.mjs` re-read the issue body at the moment the comment arrived and
+// took the repository and the tag out of it. The author can edit that body. Hold
+// the submission, wait for the maintainer to read it, edit the two fields, and
+// the `/approve` they type is an approval of a submission they never saw — the
+// same defect as publishing bytes an earlier run verified, moved from the bytes
+// to the form that names them.
+//
+// So an approval names what it approves, and `submissionFingerprint` below is
+// what it names: repository, tag, plugin id, version, and the digest of every
+// artifact **this run hashed**. Not the issue body — a body is prose, it is
+// edited for good reasons, and binding to it would refuse an approval because
+// somebody fixed a typo. The digests are the identity that is stable exactly as
+// long as the thing being approved is unchanged.
+//
+// The fingerprint travels in the command (`/approve owner/repo@tag <fp>`, the
+// line the hold comment prints ready to copy), and this module recomputes it
+// from the run in front of it. A mismatch is `P_APPROVAL_STALE`: the hold stands,
+// nothing publishes, and the comment says what was approved and what is here
+// now. It is deliberately louder than a silent no-op, because the interesting
+// case is not a maintainer fumbling a paste — it is a submission that changed
+// underneath one.
+//
 // ── why the codes are not in bot/lib/codes.mjs ──────────────────────────────
 //
 // `codes.mjs` is the vocabulary of the *checks* — what a submission got wrong.
@@ -73,6 +99,7 @@
 // to explain the other's rows. The two tables have the same shape, and
 // `renderPolicySection` renders them the same way.
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -185,6 +212,16 @@ export const POLICY_CODES = {
     remedy:
       "Nothing to do. The hold is gone; every check above was re-run from scratch in this run, " +
       "against the release as it is today, and what publishes is what this run verified.",
+  },
+  P_APPROVAL_STALE: {
+    level: "review",
+    title: "The approval named a different submission from this one",
+    remedy:
+      "Nothing published and nothing was lost. An `/approve` carries the fingerprint printed in " +
+      "the comment it answers, and this run's fingerprint is different — the repository, the tag, " +
+      "the version or the release assets changed after that comment was written. Read the table " +
+      "above as it stands now and, if it is still a yes, copy the `/approve` line out of **this** " +
+      "comment. An approval has to be about something a person actually read.",
   },
   R_CHECK_HELD: {
     level: "review",
@@ -449,6 +486,49 @@ export function artifactDigests(versionDoc) {
     .map((k) => `${k}:${artifacts[k].sha256 ?? ""}`);
 }
 
+/** How long a fingerprint is, in hex characters. */
+export const FINGERPRINT_CHARS = 16;
+
+/**
+ * The name of one submission: what an `/approve` has to say out loud.
+ *
+ * Six facts, in one order, hashed: the repository, the tag, the plugin id, the
+ * version, the RELEASE COMMIT, and every artifact digest this run computed. It
+ * is not a secret and it authorises nothing — the permission is still GitHub's
+ * answer about the commenter. It is an *identity*, and its only job is to make
+ * "the thing I read" and "the thing you are about to publish" comparable by a
+ * string.
+ *
+ * Why these six and not the issue body: the body is prose that gets edited for
+ * good reasons, and a binding that refuses an approval because somebody fixed a
+ * typo is a binding maintainers learn to route around. These six change only
+ * when what would be published changes.
+ *
+ * The commit was added after it was pointed out that the design's one
+ * post-approval immutability claim rested on the one field the approval did not
+ * bind. `bot/lib/assets.mjs` pins every relative README image to
+ * `raw.githubusercontent.com/<repo>/<commit>/…` precisely so the picture cannot
+ * change after a human approved the listing — and the commit came from
+ * `release.target_commitish`, which the author controls. Delete the release and
+ * the tag, push a new commit whose `banner.png` is different, re-create both at
+ * that commit and re-upload byte-identical assets, and repo, tag, id, version
+ * and every digest were unchanged: the fingerprint matched, the hold's
+ * `/approve` was still binding, and the store rendered a tree no maintainer had
+ * seen. Hashing the commit is what makes that approval refuse.
+ *
+ * 16 hex characters — 64 bits of a SHA-256. A maintainer copies it out of a
+ * comment rather than typing it, so length costs nothing, and 64 bits puts a
+ * deliberate collision (rebuild a bundle until its fingerprint matches the one
+ * the maintainer read) far past the effort of simply asking for a second
+ * approval. Truncation is safe here for the same reason it would not be in a
+ * signature: the full digests are recorded beside it in `decision.json`, and
+ * this string is a label on them, not a substitute for them.
+ */
+export function submissionFingerprint({ repo, tag, id, version, commit, digests } = {}) {
+  const canonical = [repo ?? "", tag ?? "", id ?? "", version ?? "", commit ?? "", ...(digests ?? [])].join("\n");
+  return crypto.createHash("sha256").update(canonical).digest("hex").slice(0, FINGERPRINT_CHARS);
+}
+
 // ── the decision ────────────────────────────────────────────────────────────
 
 const HOUR_MS = 3600 * 1000;
@@ -497,7 +577,7 @@ export function decide(input) {
     // registry then ignored is a record that cannot be reconciled with the
     // thread — but it changes nothing: a failed check is a fact about the
     // bytes, and the answer to one is a new release, not a permission.
-    return finish({ outcome: "refuse", reasons, track, now, approval: typed });
+    return finish({ outcome: "refuse", reasons, track, now, approval: typed, repo, tag: input.tag });
   }
 
   const requested = requestedAuthority(derived.version);
@@ -505,6 +585,18 @@ export function decide(input) {
   // need it: the approval record ("against which digest") and the queue clock.
   // Both are only auditable if the digest is the one THIS run hashed.
   const digests = artifactDigests(derived.version);
+  // And the name of this submission, which is what an approval must have said.
+  const fingerprint = submissionFingerprint({
+    repo,
+    tag: input.tag,
+    id: derived.plugin.id,
+    version: derived.version.version,
+    // The commit the listing will record and pin every relative README image
+    // to. Bound here so that re-pointing the tag at a different tree after a
+    // hold invalidates the approval instead of riding it.
+    commit: derived.version.release?.commit ?? null,
+    digests,
+  });
 
   // Does the queue entry still describe this release and these bytes? Asked
   // once, here, and reused by everything that is allowed to trust the entry.
@@ -524,7 +616,32 @@ export function decide(input) {
   // carried only while the entry still describes these bytes: a swapped asset
   // restarts the clock (below) and takes the approval with it, so "approved by
   // X against digest Y" is never a sentence about bytes nobody approved.
-  const approval = typed ?? (queueIsAboutThis
+  //
+  // ── and the approval has to have named THIS submission ────────────────────
+  //
+  // A typed approval arrives from a comment, and the comment is the one input
+  // here that a maintainer composed while looking at a specific run's report. So
+  // it carries that run's fingerprint, and it is honoured only when the run in
+  // front of us has the same one. An approval with no fingerprint at all is in
+  // the same position: it names nothing, so there is nothing to check it
+  // against, and "cannot be checked" is not a reason to proceed.
+  //
+  // This is where the issue-body hole is closed. `bot/triage.mjs` already
+  // refuses a `/approve` whose repository and tag disagree with the issue as it
+  // stands — but triage has no bytes, so it cannot see a moved tag or a replaced
+  // asset. Here there are bytes, and they have just been hashed.
+  const bound = typed && typed.for === fingerprint ? typed : null;
+  const refusedApproval = typed && !bound ? typed : null;
+  if (refusedApproval) {
+    add(
+      "P_APPROVAL_STALE",
+      `@${refusedApproval.by} approved ${refusedApproval.for ? `\`${refusedApproval.for}\`` : "no named submission"}` +
+      `, and this run is \`${fingerprint}\` (${repo}@${input.tag ?? "?"}, ${derived.plugin.id} ` +
+      `${derived.version.version}, ${digests.length || "no"} artifact digest(s)). The hold stands.`,
+    );
+  }
+
+  const approval = bound ?? (queueIsAboutThis
     ? normaliseApproval({ by: queued.approved_by, at: queued.approved_at })
     : null);
 
@@ -559,6 +676,10 @@ export function decide(input) {
         sla_deadline: iso(now.getTime() + REVIEW_SLA_HOURS * HOUR_MS),
         artifact_digests: digests,
         approval: null,
+        refused: refusedApproval,
+        repo,
+        tag: input.tag,
+        fingerprint,
       });
     }
     // The hold is cleared, and only the hold. Execution falls through into the
@@ -567,8 +688,8 @@ export function decide(input) {
     // notice", and §5.5's window is the answer to the second question.
     add(
       "P_APPROVED",
-      `@${approval.by} cleared the hold at ${approval.at}, against ${digests.length || "no"} ` +
-      `artifact digest(s) hashed in this run: ${digests.join(", ") || "none"}`,
+      `@${approval.by} cleared the hold at ${approval.at}, against submission \`${fingerprint}\` — ` +
+      `${digests.length || "no"} artifact digest(s) hashed in this run: ${digests.join(", ") || "none"}`,
     );
   }
 
@@ -597,7 +718,10 @@ export function decide(input) {
 
   if (delayReasons.length === 0) {
     add("P_PUBLISHED", "identity unchanged, permissions unchanged, every check green, version strictly greater");
-    return finish({ outcome: "publish", reasons, track, now, artifact_digests: digests, approval });
+    return finish({
+      outcome: "publish", reasons, track, now, artifact_digests: digests, approval,
+      refused: refusedApproval, repo, tag: input.tag, fingerprint,
+    });
   }
 
   for (const r of delayReasons) add(r.code, r.message);
@@ -658,7 +782,10 @@ export function decide(input) {
 
   if (publishAfter.getTime() <= now.getTime()) {
     add("P_DELAY_ELAPSED", `queued at ${iso(startedAt)}, ${delayHours} h ago; every check has just been re-run against today's bytes`);
-    return finish({ outcome: "publish", reasons, track, now, drop_queue: true, artifact_digests: digests, approval });
+    return finish({
+      outcome: "publish", reasons, track, now, drop_queue: true, artifact_digests: digests, approval,
+      refused: refusedApproval, repo, tag: input.tag, fingerprint,
+    });
   }
 
   add("P_DELAY_WAITING", `it publishes itself at ${iso(publishAfter)} — ${delayHours} h after ${iso(startedAt)} — with nobody touching it`);
@@ -671,6 +798,10 @@ export function decide(input) {
     notify_author: true,
     artifact_digests: digests,
     approval,
+    refused: refusedApproval,
+    repo,
+    tag: input.tag,
+    fingerprint,
     queue_entry: {
       $comment:
         "A release waiting out PRODUCTION_PLAN §3.5's publication delay. Nothing here is trusted at " +
@@ -705,6 +836,10 @@ export function decide(input) {
       // honoured only while `artifact_digests` still match.
       approved_by: approval?.by ?? null,
       approved_at: approval?.at ?? null,
+      // The name that approval was given against, so the entry can be read on
+      // its own: `artifact_digests` above is what the check compares, and this
+      // is the string the maintainer's comment actually contained.
+      approved_for: approval ? fingerprint : null,
       issue: input.issue ?? null,
     },
   });
@@ -725,7 +860,15 @@ function normaliseApproval(approval) {
   if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(by)) return null;
   const at = new Date(approval?.at ?? NaN);
   if (Number.isNaN(at.getTime())) return null;
-  return { by, at: iso(at) };
+  // `for` is the submission the maintainer named. Shape-checked and otherwise
+  // null, never repaired: a fingerprint that is not a fingerprint has to fail
+  // the comparison rather than be quietly dropped from it, and a `null` here
+  // matches nothing. Absent on an approval read back out of a queue entry
+  // written before this field existed, which is why the queue's own binding is
+  // `artifact_digests` and not this.
+  const named = String(approval?.for ?? "").toLowerCase();
+  const forWhat = new RegExp(`^[0-9a-f]{${FINGERPRINT_CHARS}}$`).test(named) ? named : null;
+  return { by, at: iso(at), for: forWhat };
 }
 
 function finish(d) {
@@ -745,6 +888,18 @@ function finish(d) {
     approved_by: d.approval?.by ?? null,
     approved_at: d.approval?.at ?? null,
     artifact_digests: d.artifact_digests ?? [],
+    // What this submission is called, and what the maintainer's own comment has
+    // to say for it to apply. Null on a refusal, where there is no listing to
+    // name — the checks failed before anything was derived.
+    fingerprint: d.fingerprint ?? null,
+    repo: d.repo ?? null,
+    tag: d.tag ?? null,
+    // An approval that named something else. Recorded rather than discarded: a
+    // maintainer typed a command and the registry did not honour it, and the
+    // thread has to be able to say which of those two things happened.
+    approval_refused: d.refused
+      ? { by: d.refused.by, at: d.refused.at, for: d.refused.for ?? null }
+      : null,
     /** True when the derived listing should be committed by this run. */
     publishes_now: d.outcome === "publish",
   };
@@ -839,6 +994,42 @@ export function renderPolicySection(decision, derived) {
   // the hold") reads to the author as the bot contradicting itself, or as the
   // approval having been lost. So the refusal gets its own line, and it says
   // what actually became of the command.
+  // The line a maintainer copies, on the comment they are reading when they
+  // decide. It is generated rather than described because the fingerprint in it
+  // is the whole binding: an instruction that says "type /approve" cannot be
+  // checked against anything later, and one that says "type this exact line"
+  // can. `decision.repo` and `decision.tag` come from the run, never from the
+  // issue body — that body is the thing the binding exists to stop trusting.
+  if (decision.outcome === "review" && decision.fingerprint && decision.repo && decision.tag) {
+    lines.push(
+      "**A maintainer clears this hold with exactly this line:**",
+      "",
+      "```",
+      `/approve ${decision.repo}@${decision.tag} ${decision.fingerprint}`,
+      "```",
+      "",
+      `\`${decision.fingerprint}\` names this submission: the repository, the tag, \`${id} ${version}\`, ` +
+      `and the ${decision.artifact_digests.length || "no"} artifact digest(s) hashed in this run. ` +
+      "If the release changes before the line is typed, the approval is refused and this comment is " +
+      "posted again with a new one — an approval applies to what somebody read, or to nothing.",
+      "",
+    );
+  }
+
+  // An approval that named something else. Stated before the table, because it
+  // is the answer to "I typed the command, why is this still held".
+  if (decision.approval_refused) {
+    const r = decision.approval_refused;
+    lines.push(
+      `**@${r.by}'s \`/approve\` was refused.** It named ` +
+      (r.for ? `\`${r.for}\`` : "no submission at all") +
+      `, and this run is \`${decision.fingerprint ?? "not a listing"}\`. It cleared nothing, and ` +
+      "it changed nothing about the outcome above: the command was typed at " +
+      `${r.at}, and what it approved is not what is here.`,
+      "",
+    );
+  }
+
   if (decision.approved_by && decision.outcome !== "refuse") {
     lines.push(
       `A maintainer cleared the hold: **@${decision.approved_by}**, at ${decision.approved_at}. ` +

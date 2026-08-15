@@ -33,13 +33,20 @@
 //
 // ── and what a maintainer does about a 3 ───────────────────────────────────
 //
-// `--approved-by <login> --approved-at <iso>` — a maintainer's `/approve`,
-// already permission-checked against the GitHub API by `bot/lib/maintainer.mjs`
-// in the triage job. It clears the hold and nothing else. Note where it enters:
-// **after** `ingest()` has run in full, so it cannot shorten a single check. It
-// reaches `decide()` as two strings and is written into `decision.json` beside
-// the digests this run hashed, so "who let this in, when, against which bytes"
-// has one answer with no gap in it.
+// `--approved-by <login> --approved-at <iso> --approved-for <fingerprint>` — a
+// maintainer's `/approve`, already permission-checked against the GitHub API by
+// `bot/lib/maintainer.mjs` in the triage job. It clears the hold and nothing
+// else. Note where it enters: **after** `ingest()` has run in full, so it cannot
+// shorten a single check. It reaches `decide()` as three strings and is written
+// into `decision.json` beside the digests this run hashed, so "who let this in,
+// when, against which bytes" has one answer with no gap in it.
+//
+// The third flag is what makes the first two mean anything. `--approved-for` is
+// the fingerprint of the submission the maintainer was looking at, copied out of
+// the comment they answered; `bot/lib/policy.mjs` recomputes it from this run
+// and refuses the approval when the two differ. Without it an approval says
+// "yes" without saying to what, and the repository and tag it applies to were
+// re-read from an issue body the author can edit after the hold.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -62,7 +69,7 @@ export function parseArgs(argv) {
   const opts = {
     repo: null, tag: null, submitter: null, root: REPO_ROOT, out: null,
     issue: null, rootsFile: null, trustFile: null, signerWorkflow: null,
-    hostAstraVersion: null, now: null, approvedBy: null, approvedAt: null,
+    hostAstraVersion: null, now: null, approvedBy: null, approvedAt: null, approvedFor: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -71,12 +78,16 @@ export function parseArgs(argv) {
     else if (a === "--submitter") opts.submitter = String(argv[++i]).replace(/^@/, "");
     else if (a === "--issue") opts.issue = Number(argv[++i]) || null;
     // A maintainer's `/approve`, already permission-checked by
-    // `bot/lib/maintainer.mjs` in the triage job. It carries a name and a
-    // moment and NOTHING else — no verdict, no digest, no listing. This run
-    // ingests the release from scratch; the flag only says that the hold
-    // `bot/lib/policy.mjs` would otherwise raise has been answered.
+    // `bot/lib/maintainer.mjs` in the triage job. It carries a name, a moment
+    // and the NAME OF WHAT WAS APPROVED — no verdict, no digest, no listing.
+    // This run ingests the release from scratch; the flags only say that the
+    // hold `bot/lib/policy.mjs` would otherwise raise has been answered, and
+    // which submission it was answered about.
     else if (a === "--approved-by") opts.approvedBy = String(argv[++i] ?? "").replace(/^@/, "");
     else if (a === "--approved-at") opts.approvedAt = argv[++i];
+    // The fingerprint out of the comment the maintainer answered. Compared, not
+    // trusted: `decide()` recomputes it from the bytes this run hashed.
+    else if (a === "--approved-for") opts.approvedFor = String(argv[++i] ?? "").toLowerCase();
     else if (a === "--registry-dir") opts.root = path.resolve(argv[++i]);
     else if (a === "--roots") opts.rootsFile = path.resolve(argv[++i]);
     else if (a === "--trust") opts.trustFile = path.resolve(argv[++i]);
@@ -119,7 +130,9 @@ export async function decideRelease(opts, deps = {}) {
     queued: result.derived
       ? readQueueEntry(opts.root, result.derived.plugin.id, result.derived.version.version)
       : null,
-    approval: opts.approvedBy ? { by: opts.approvedBy, at: opts.approvedAt ?? now } : null,
+    approval: opts.approvedBy
+      ? { by: opts.approvedBy, at: opts.approvedAt ?? now, for: opts.approvedFor ?? null }
+      : null,
     now,
   });
 
@@ -156,6 +169,12 @@ export function writeOutputs(out, opts, result) {
         approved_by: decision.approved_by,
         approved_at: decision.approved_at,
         artifact_digests: decision.artifact_digests,
+        // What this submission is called, and — when a command named something
+        // else — the command that was refused. Both are the record of the
+        // binding: `fingerprint` is what an `/approve` had to say, and
+        // `approval_refused` is the one that did not say it.
+        fingerprint: decision.fingerprint,
+        approval_refused: decision.approval_refused,
         reasons: decision.reasons,
       },
       null,
@@ -186,7 +205,20 @@ export function writeOutputs(out, opts, result) {
   // A release that has served its delay, and one that a re-check now refuses or
   // hands to a human, both stop waiting. Leaving the entry behind would make
   // the drain re-publish a listing that is no longer allowed.
-  if (derived && (decision.drop_queue || decision.outcome === "refuse" || decision.outcome === "review")) {
+  //
+  // With one exception, and it is the invariant the approval binding rests on:
+  // **a refused approval changes nothing.** When the only thing holding this run
+  // is `P_APPROVAL_STALE` — a maintainer answered with a fingerprint that names
+  // some other state of this release — the submission itself is exactly as it
+  // was a minute ago. Deleting its queue entry would take a waiting release out
+  // of the queue and restart a 24-hour clock the author is owed, because
+  // somebody pasted the wrong line. Every other hold still drops the entry: those
+  // are facts about the submission, and a submission that now needs a person must
+  // not publish itself on a timer.
+  const holds = decision.reasons.filter((r) => r.level === "review");
+  const onlyStale = holds.length > 0 && holds.every((r) => r.code === "P_APPROVAL_STALE");
+  const handedToAPerson = decision.outcome === "review" && !onlyStale;
+  if (derived && (decision.drop_queue || decision.outcome === "refuse" || handedToAPerson)) {
     removals.push(queueFile(derived.plugin.id, derived.version.version));
   }
   fs.writeFileSync(path.join(out, "remove.txt"), removals.map((r) => `${r}\n`).join(""));

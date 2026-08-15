@@ -19,16 +19,48 @@
 # issues off without those two forms would have quietly broken both.
 blank_issues_enabled: false
 
+# ── why the security link goes to a document and not to the advisory form ───
+#
+# It used to point straight at `/security/advisories/new` and describe that page
+# as "end-to-end between you and the maintainer". Two things were wrong with it,
+# and this is the one report the registry can least afford to lose.
+#
+# **The link was a dead end for the people it was for.** The "Report a
+# vulnerability" form on a public repository is only open to outside reporters
+# when *private vulnerability reporting* is switched on for that repository. It
+# is not:
+#
+#     $ gh api repos/mihailinl/astra-registry/private-vulnerability-reporting
+#     {"enabled":false}
+#
+# (checked 2026-08-15). With it off, that URL works for accounts with write
+# access to this repository — the maintainer, who does not need a contact link —
+# and 404s for everybody else. A stranger who finds a hole in the verification
+# chain, follows the one link that says "do not open an issue", and lands on a
+# 404 either opens the public issue they were just told not to open, or gives up.
+#
+# **And "end-to-end" was not what that page is.** A private advisory is private,
+# which is a real and sufficient property: it is visible to the reporter, to this
+# repository's admins, and to GitHub. It is not end-to-end encrypted, and using
+# the phrase for it teaches a reporter that the contents are unreadable in
+# transit and at rest, which is exactly the belief that decides how much detail
+# somebody pastes into a first message.
+#
+# So the link goes to `docs/POLICY.md` §11, which is honest about both, works for
+# everybody today, and carries the fallback that needs no configuration: say you
+# have a report, without the details, and the maintainer opens the private
+# channel and adds you to it. `docs/RUNBOOK.md` §1 has the one toggle that makes
+# the direct form work, and what to change here on the day it is flipped.
 contact_links:
   - name: A security problem — do not open an issue
-    url: https://github.com/mihailinl/astra-registry/security/advisories/new
+    url: https://github.com/mihailinl/astra-registry/blob/main/docs/POLICY.md#11-embargoed-reports
     about: >-
       Anything that would let somebody ship code to a user: a hole in the
       verification chain, a way to get a listing past the checks, a compromised
-      publisher. A private advisory is end-to-end between you and the
-      maintainer. docs/POLICY.md section 11 says what you get for reporting this
-      way, and states plainly that there is no PGP key and no security@ mailbox
-      yet.
+      publisher. Section 11 gives you the private channel, says who can actually
+      read it (you, this repository's admins, and GitHub — it is private, not
+      end-to-end encrypted), and states plainly that there is no PGP key and no
+      security@ mailbox yet. Read it before you paste any detail anywhere.
 
   - name: How do I build, sign and release a plugin?
     url: https://github.com/mihailinl/AstraPlugins

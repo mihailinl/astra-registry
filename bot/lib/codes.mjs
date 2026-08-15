@@ -129,6 +129,18 @@ export const CODES = {
     title: "The attestation is for different bytes",
     remedy: "The asset was replaced after CI attested it. Cut a new release; never overwrite an asset in place.",
   },
+  E_RELEASE_COMMIT_MISMATCH: {
+    level: "error", stage: "attestation",
+    title: "The Release points at a different commit than the one that built it",
+    remedy:
+      "`release.target_commitish` and the commit named in the build attestation must be the same. " +
+      "They are not, which means the Release was created against — or re-pointed at — a tree that " +
+      "did not produce these bytes. This matters beyond tidiness: the listing records that commit " +
+      "as the release's provenance, and every relative image in your README is pinned to it, so a " +
+      "mismatch renders pictures from a tree nothing attested. Re-create the Release at the commit " +
+      "the workflow built (`gh release create <tag> --target <sha>`), or re-run the release " +
+      "workflow on the tag.",
+  },
   E_ATTESTATION_REPO_MISMATCH: {
     level: "error", stage: "attestation",
     title: "The attestation was issued to another repository",

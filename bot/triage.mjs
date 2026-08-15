@@ -41,13 +41,22 @@
 //
 // ── the maintainer's two commands ──────────────────────────────────────────
 //
-// `/approve` and `/reject <reason>` are the other half of `outcome: "review"`.
-// They are the only thing in this file that needs a permission, they are
-// checked against the GitHub API by `bot/lib/maintainer.mjs` before anything
-// else happens, and an approval carries **no verification with it**: it is
-// recorded on a target, the whole ingest runs again from scratch, and what
-// publishes is what this run verified. See `bot/lib/policy.mjs` for why that
-// re-run is not optional.
+// `/approve <owner/repo>@<tag> <fingerprint>` and `/reject <reason>` are the
+// other half of `outcome: "review"`. They are the only thing in this file that
+// needs a permission, they are checked against the GitHub API by
+// `bot/lib/maintainer.mjs` before anything else happens, and an approval carries
+// **no verification with it**: it is recorded on a target, the whole ingest runs
+// again from scratch, and what publishes is what this run verified. See
+// `bot/lib/policy.mjs` for why that re-run is not optional.
+//
+// An approval does, however, carry **what it is an approval of**. It has to:
+// this file re-parses the issue body at the moment the comment arrives, and that
+// body is the author's to edit. Hold a submission, wait for the maintainer to
+// read it, change the two form fields, and a bare `/approve` becomes a yes to
+// something nobody looked at. So the command names a repository, a tag and the
+// fingerprint printed on the comment it answers; the form is checked against
+// that name instead of supplying it, and a disagreement is a reply, not a
+// target.
 
 import fs from "node:fs";
 
@@ -60,6 +69,8 @@ import {
   looksLikeListing,
   looksLikeReleasePing,
   parseMaintainerCommand,
+  renderApprovalMoved,
+  renderApproveNeedsBinding,
   renderCommandRefused,
   renderIncompleteForm,
   renderNothingToDecide,
@@ -334,8 +345,17 @@ async function decideCommand({ command, opts, registry, labelled, issueTitle, fo
   // ── an approval, which is a target and nothing else ───────────────────────
   //
   // It carries no verdict, no cached result and no listing. What it carries is
-  // "a person said yes, at this moment", and the pipeline behind it re-runs
-  // every check from scratch before anything is written.
+  // "a person said yes to THIS, at this moment", and the pipeline behind it
+  // re-runs every check from scratch before anything is written.
+  //
+  // The emphasis is the fix for a real hole. This branch used to read the
+  // repository and the tag out of `form`, which is `parseIssueForm(issueBody)`
+  // re-run at the moment the `/approve` comment is processed — and the issue
+  // body belongs to its author, who may edit it at any point, including between
+  // the bot posting the hold and the maintainer answering it. Two fields
+  // changed and the approval landed on a submission the maintainer had never
+  // seen. So the command names its target, and the form is now what that name is
+  // CHECKED AGAINST rather than where it comes from.
   const problem = formProblem(form);
   const repo = safeRepo(form.repo);
   const tag = safeTag(form.tag);
@@ -356,16 +376,50 @@ async function decideCommand({ command, opts, registry, labelled, issueTitle, fo
     };
   }
 
+  // What the maintainer's own line said. Re-validated here rather than trusted
+  // from the parser, because it is about to become a matrix entry and then a URL.
+  const named = safeRepo(command.repo);
+  const namedTag = safeTag(command.tag);
+  if (!named || !namedTag || !command.fingerprint) {
+    return {
+      mode: "reply",
+      why: `/approve from @${commenter} named no submission, so there is nothing to bind it to`,
+      reply: renderApproveNeedsBinding({ repo, tag }),
+    };
+  }
+  if (named !== repo || namedTag !== tag) {
+    // The loud refusal. Cheap, too: this is the last point before the pipeline
+    // starts downloading a stranger's archive, and it is reached without one.
+    return {
+      mode: "reply",
+      why:
+        `/approve from @${commenter} named ${named}@${namedTag} and this issue now says ` +
+        `${repo}@${tag}; the submission changed after the hold and nothing is being published`,
+      reply: renderApprovalMoved({
+        approvedRepo: named, approvedTag: namedTag, issueRepo: repo, issueTag: tag,
+      }),
+    };
+  }
+
   return {
     mode: "approve",
-    repo,
-    tag,
+    // The maintainer's values, not the form's. They are equal — the branch above
+    // is what makes them equal — and taking them from the command is what keeps
+    // that true if this file is ever edited again.
+    repo: named,
+    tag: namedTag,
     submitter,
     approvedBy: commenter,
     approvedAt: at,
+    // The half triage cannot check: it names bytes, and this job has none. It
+    // travels with the target to `bot/decide.mjs`, which re-hashes the release
+    // and refuses the approval when the fingerprint does not match what it just
+    // computed. A moved tag and a replaced asset are both invisible from here.
+    approvedFor: command.fingerprint,
     why:
-      `@${commenter} (\`${proof.role}\`) approved ${repo}@${tag}. The hold is cleared; every ` +
-      "check runs again from scratch against the release as it is now",
+      `@${commenter} (\`${proof.role}\`) approved ${named}@${namedTag} (\`${command.fingerprint}\`). ` +
+      "The hold is cleared only if this run hashes the same submission; every check runs again " +
+      "from scratch against the release as it is now",
   };
 }
 
@@ -386,6 +440,9 @@ async function main(argv) {
           submitter: out.submitter,
           approved_by: out.approvedBy,
           approved_at: out.approvedAt,
+          // The submission the maintainer named. Checked against the bytes in
+          // `check`, which is the only job that has any.
+          approved_for: out.approvedFor,
         }]
         : [];
     fs.writeFileSync(opts.targetsFile, JSON.stringify(targets));

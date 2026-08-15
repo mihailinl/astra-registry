@@ -302,7 +302,12 @@ export async function ingest(opts, deps = {}) {
     }
 
     artifacts[key] = { url, filename: asset.name, sha256: digest, size: bytes.length };
-    perBundle.push({ where, facts: probed.manifest, manifest: inspected.manifest, files: inspected.files });
+    perBundle.push({
+      where, facts: probed.manifest, manifest: inspected.manifest, files: inspected.files,
+      // The commit the SIGNED predicate names. Kept so step 10 can insist that
+      // the Release agrees with it; see the check there for why that matters.
+      sourceDigest: att.facts?.sourceDigest ?? null,
+    });
     f.pass("E_DIGEST_MISMATCH", where, `sha256 ${digest.slice(0, 16)}…, ${bytes.length} bytes, ${key}`);
   }
 
@@ -377,13 +382,41 @@ export async function ingest(opts, deps = {}) {
     );
   }
 
-  // ── 10. write the listing, then hold it to this repository's own rules ────
+  // ── 10. the commit the listing will record ────────────────────────────────
+  //
+  // `release.target_commitish` is author-supplied and mutable: `gh release
+  // create <tag> --target <sha>` sets it to anything in the repository, and
+  // nothing about the attestation constrains it, because an attestation is
+  // checked against the ARTIFACT's digest rather than against the Release. The
+  // signed predicate does name a source commit, and until now nothing compared
+  // the two — so `version.release.commit`, the provenance field a reader would
+  // trust, and the base URL `bot/lib/assets.mjs` pins every relative README
+  // image to, were both taken from the mutable field.
+  //
+  // The attested commit is the one to prefer, and a disagreement is an error
+  // rather than a silent preference: the two naming different trees is a fact
+  // about the Release that the author has to fix, not a detail to paper over.
+  const attestedCommit = perBundle.map((b) => b.sourceDigest).find((c) => /^[0-9a-f]{40}$/.test(c ?? "")) ?? null;
+  const releaseCommit = /^[0-9a-f]{40}$/.test(release.target_commitish ?? "") ? release.target_commitish : null;
+  if (attestedCommit && releaseCommit && attestedCommit !== releaseCommit) {
+    f.error("E_RELEASE_COMMIT_MISMATCH", "provenance",
+      `the Release names ${releaseCommit.slice(0, 12)}… and the attestation names ` +
+      `${attestedCommit.slice(0, 12)}…; a listing may record only the commit that built the bytes`);
+    return finish(f, null, opts);
+  }
+  // When the Release's commitish is a branch name rather than a SHA — the
+  // common case for a tag pushed off a branch — the attested commit is used
+  // instead of dropping the field, which used to leave every relative README
+  // image with nothing to resolve against.
+  const commit = releaseCommit ?? attestedCommit;
+
+  // ── write the listing, then hold it to this repository's own rules ────────
   const derived = deriveListing({
     facts,
     manifest: first.manifest,
     repo: opts.repo,
     tag: opts.tag,
-    commit: /^[0-9a-f]{40}$/.test(release.target_commitish ?? "") ? release.target_commitish : null,
+    commit,
     publishedAt: normaliseTime(release.published_at),
     artifacts,
     // The bundle's own contents, for the icon and the README. Taken from the

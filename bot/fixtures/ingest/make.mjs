@@ -116,7 +116,7 @@ export function makeBundle(spec = {}) {
  * one question about it — rather than stubbing four functions and hoping they
  * agree with each other about, say, the asset's size.
  */
-export function fakeGitHub({ repo, tag, assets, author = "a-stranger" }) {
+export function fakeGitHub({ repo, tag, assets, author = "a-stranger", commit = FIXTURE_COMMIT }) {
   const prefix = `https://github.com/${repo}/releases/download/${tag}/`;
   const table = new Map(
     assets.map((a) => [a.url ?? `${prefix}${a.name}`, a.bytes]),
@@ -125,7 +125,7 @@ export function fakeGitHub({ repo, tag, assets, author = "a-stranger" }) {
     release: {
       tag_name: tag,
       published_at: "2026-08-10T09:00:00Z",
-      target_commitish: "a".repeat(40),
+      target_commitish: commit,
       author: { login: author },
       assets: assets.map((a) => ({
         name: a.name,
@@ -157,6 +157,15 @@ export function fakeGitHub({ repo, tag, assets, author = "a-stranger" }) {
   };
 }
 
+/**
+ * The commit the fixture release was cut at AND the commit its attestation
+ * names, because in a healthy release those are the same commit — the listing
+ * records it as provenance and every relative README image is pinned to it.
+ * They used to be two different strings here ("aaa…" and "bbb…"), which is how
+ * a whole suite stayed green while nothing compared them.
+ */
+export const FIXTURE_COMMIT = "a".repeat(40);
+
 /** The reusable workflow the fixtures are built by. The real filename. */
 export const FIXTURE_SIGNER_WORKFLOW =
   "mihailinl/AstraPlugins/.github/workflows/plugin-release.yml";
@@ -183,6 +192,9 @@ export function fakeGh({
   certRepo = null,
   fail = null,
   signerWorkflow = FIXTURE_SIGNER_WORKFLOW,
+  // The commit the signed predicate names. A test that wants
+  // `E_RELEASE_COMMIT_MISMATCH` moves this one and leaves the Release alone.
+  sourceCommit = FIXTURE_COMMIT,
 }) {
   return async (args) => {
     if (fail) {
@@ -215,7 +227,7 @@ export function fakeGh({
               buildSignerURI: signerUri ?? `https://github.com/${signerWorkflow}@refs/heads/main`,
               buildSignerDigest: signerDigest,
               sourceRepositoryURI: `https://github.com/${certRepo ?? repo}`,
-              sourceRepositoryDigest: "b".repeat(40),
+              sourceRepositoryDigest: sourceCommit,
               runInvocationURI: `https://github.com/${repo}/actions/runs/1`,
             },
           },
