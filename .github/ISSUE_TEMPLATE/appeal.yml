@@ -1,0 +1,104 @@
+# docs/POLICY.md §10, which promises a reasoned answer within 7 days and used to
+# say "open an issue titled `[appeal] <plugin-id>`" — through a blank issue.
+# `config.yml` turned those off, so the promise needed a door of its own.
+#
+# The `[appeal]` title prefix is load-bearing: `bot/lib/intake.mjs` treats an
+# issue titled `[appeal] …` as explicitly NOT a listing request, so the bot does
+# not answer an appeal with "ask a maintainer for the `listing` label".
+name: Appeal a decision about a listed plugin
+description: A yank, delist, deprecation or revocation you think is wrong.
+title: "[appeal] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **You get a reasoned answer within 7 days**, in public, on this thread —
+        naming the rule that was applied and whether it still applies.
+
+        Every action can be appealed, including one that has already taken
+        effect. If the appeal succeeds the correction is a commit, and the
+        moderation log keeps both the original entry and the reversal. Nothing
+        is quietly deleted.
+
+  - type: input
+    id: plugin_id
+    attributes:
+      label: Plugin id
+      placeholder: dice-roller
+    validations:
+      required: true
+
+  - type: dropdown
+    id: action
+    attributes:
+      label: Which action are you appealing?
+      description: >-
+        They escalate by what they cost somebody who already installed the
+        plugin. A yank or a delist reaches nobody's machine; a deprecation or a
+        revocation does.
+      options:
+        - yank — this version left the catalogue
+        - delist — the whole plugin left the catalogue
+        - deprecate — installed copies are badged and the user is told
+        - revoke — installs are refused, or a running copy is stopped
+        - something else, described below
+    validations:
+      required: true
+
+  - type: input
+    id: advisory
+    attributes:
+      label: Advisory id, if there is one
+      description: Deprecations and revocations have one. Yanks and delists do not.
+      placeholder: ASTRA-2026-0001
+
+  - type: dropdown
+    id: relationship
+    attributes:
+      label: Your relationship to the plugin
+      options:
+        - author
+        - co-maintainer
+        - user
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: said
+    attributes:
+      label: What the registry said
+      description: Paste the reason from the moderation log entry or the advisory.
+    validations:
+      required: true
+
+  - type: textarea
+    id: happened
+    attributes:
+      label: What you say happened
+    validations:
+      required: true
+
+  - type: textarea
+    id: changed
+    attributes:
+      label: What has changed since, if anything
+      description: >-
+        A new release, a corrected manifest, a licence fix, a disclosure added
+        to the store card.
+
+  - type: textarea
+    id: asking
+    attributes:
+      label: What you are asking for
+      placeholder: relist / reduce the action to a warning / withdraw the advisory entirely
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        **If the action was taken in error by this registry rather than by a
+        rule, say so plainly.** That is a bug report about the bot or about
+        `docs/POLICY.md`, and it is worth filing on its own.

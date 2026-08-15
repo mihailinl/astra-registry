@@ -1,0 +1,66 @@
+# The release ping, as a new issue (docs/POLICY.md §5, PRODUCTION_PLAN task 3.4).
+#
+# **This form must never apply the `listing` label**, and that is the only rule
+# it has. In this repository the label is an authority token: a labelled issue
+# may drive an ingest of a repository the registry has never seen, while an
+# unlabelled `/release` is honoured only for a repository that is **already
+# listed**. That restriction is the entire reason a ping can carry no authority
+# and need no token. A template that stamped the label would hand the exemption
+# to anybody who can open an issue.
+#
+# It exists because `config.yml` turned blank issues off, and the
+# ping-as-a-new-issue path went through a blank one.
+#
+# ONE field, deliberately. GitHub renders a form as `### <label>`, a blank line,
+# then the value — so a second field would put a heading between the two halves
+# of the command. `bot/lib/notify.mjs` skips leading blank lines and headings
+# and nothing else, which is exactly enough for this shape and no more.
+name: A release of a plugin that is already listed
+description: Tell the registry about a new release. Only for a plugin already in the catalogue.
+title: "[release] owner/repo v0.0.0"
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Faster: comment `/release v0.2.0` on your own listing issue.** It
+        needs no form, and the registry already knows which repository that
+        issue is about.
+
+        Use this page when you cannot find that issue. It works only for a
+        plugin **already in the catalogue** — a first listing goes through
+        "Plugin listing request" instead.
+
+        You may not need either. A daily backstop finds releases nobody pinged,
+        by polling each listed repository's release feed. This is the fast path;
+        that is the safety net.
+
+  - type: textarea
+    id: command
+    attributes:
+      label: The command
+      description: >-
+        One line, exactly this shape, and nothing above it. A sentence that
+        mentions the command does not run it.
+      value: |
+        /release owner/repo v0.2.0
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        **What happens next, and how long it takes.** Within a few minutes the
+        bot re-runs every check from scratch: it downloads the release assets,
+        verifies the build attestation, reads the manifest, and comments here
+        with the result and a digest.
+
+        It believes nothing in this form. A ping is a request to re-check, never
+        a claim — which is why it needs no token. Whoever typed it is not part
+        of the decision: the account that *published the release* is the one
+        whose control of the repository gets proved against GitHub.
+
+        If the repository is not listed yet, the bot says so here and links the
+        listing form. It will not start a verification for a repository it has
+        no listing for, because otherwise anybody could make this registry
+        download archives from anywhere.

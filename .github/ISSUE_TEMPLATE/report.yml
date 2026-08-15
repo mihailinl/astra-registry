@@ -1,0 +1,78 @@
+# docs/POLICY.md §9, which publishes a clock on reports — 72 h to an
+# acknowledgement, 24 h to the first action once active harm is credible — and
+# had no door of its own once `config.yml` turned blank issues off.
+#
+# **Not for a security hole.** Anything that would let somebody ship code to a
+# user goes to a private advisory instead; the link is in `config.yml`, and this
+# form says so at the top rather than after the fields.
+name: Report a listed plugin
+description: A plugin in the catalogue is not what it says it is.
+title: "[report] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Stop here if this is a security problem.** A hole in the verification
+        chain, a way to get a listing past the checks, or a compromised
+        publisher goes to a
+        [private advisory](https://github.com/mihailinl/astra-registry/security/advisories/new),
+        not to a public issue. This form is public the moment you submit it.
+
+        **What you get:** a human reads this and says so on the thread within
+        **72 h**. If it describes active harm and becomes credible, the first
+        action follows within **24 h** — and that first action is allowed to be
+        the reversible one. Everything else gets a decision within **7 days**.
+
+        Reports about behaviour beat every automated heuristic in this
+        repository, and they are what it actually relies on. That is why the
+        clock is published.
+
+  - type: input
+    id: plugin_id
+    attributes:
+      label: Plugin id
+      placeholder: dice-roller
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version, if it matters
+      placeholder: 0.2.0
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What does it do that it should not?
+      description: >-
+        What you saw, and how you saw it. Concrete beats certain — "it opened a
+        connection to X while idle" is more use than "it is malware".
+    validations:
+      required: true
+
+  - type: dropdown
+    id: harm
+    attributes:
+      label: Is somebody being harmed right now?
+      description: >-
+        Active harm means malware, credential harvesting, undisclosed
+        exfiltration of conversation content, or behaviour that differs from the
+        description in a way that costs the user something. Everything else — a
+        licence mismatch, a name that looks like impersonation, a missing
+        disclosure — is the second option.
+      options:
+        - "Yes: this is active harm as described above"
+        - "No: it is wrong, but nobody is losing anything right now"
+        - I am not sure
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        **What this registry cannot tell you.** It has no telemetry. It cannot
+        say how many people are running the version you are reporting, and it
+        will not pretend to. Reports received and not acted on are not published
+        — a report is not an accusation this registry has substantiated.

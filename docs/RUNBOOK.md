@@ -1,7 +1,11 @@
 # Runbook
 
-Operational procedures for the person who holds the keys. `SECURITY.md` says
-*why*; this file says *what to type*.
+What to type, as the person who runs this registry. `SECURITY.md` says *why*;
+this file says *what*.
+
+**§1 is the one you need most nights** — a listing request is open and somebody
+is waiting. Everything from §2 onwards is key custody, and most of it happens
+once a year or once ever.
 
 Everything here assumes one maintainer. Where a bigger team would use a second
 pair of eyes, this document says what compensates instead.
@@ -10,18 +14,146 @@ pair of eyes, this document says what compensates instead.
 
 ## Contents
 
-1. [Where each thing lives](#1-where-each-thing-lives)
-2. [The root ceremony](#2-the-root-ceremony)
-3. [Signing `trust.json`](#3-signing-trustjson)
-4. [Rotating the index key](#4-rotating-the-index-key)
-5. [Promoting the reserve root](#5-promoting-the-reserve-root)
-6. [Emergency revocation](#6-emergency-revocation)
-7. [Testing the chain without any real key](#7-testing-the-chain-without-any-real-key)
-8. [Upgrades this runbook is written to accept](#8-upgrades-this-runbook-is-written-to-accept)
+1. [A listing request is open — what do I do?](#1-a-listing-request-is-open--what-do-i-do)
+2. [Where each thing lives](#2-where-each-thing-lives)
+3. [The root ceremony](#3-the-root-ceremony)
+4. [Signing `trust.json`](#4-signing-trustjson)
+5. [Rotating the index key](#5-rotating-the-index-key)
+6. [Promoting the reserve root](#6-promoting-the-reserve-root)
+7. [Emergency revocation](#7-emergency-revocation)
+8. [Testing the chain without any real key](#8-testing-the-chain-without-any-real-key)
+9. [Upgrades this runbook is written to accept](#9-upgrades-this-runbook-is-written-to-accept)
 
 ---
 
-## 1. Where each thing lives
+## 1. A listing request is open — what do I do?
+
+The whole procedure is: **check the label, read the bot's comment, type one
+command.** Everything below is that, with the failure cases named.
+
+You need nothing installed. Every step is a click or a comment on the issue.
+
+### Step 1 — Does it have the `listing` label?
+
+Open the issue and look at the labels.
+
+**It does.** Go to step 2; the bot is already working.
+
+**It does not, and the bot has commented** saying it reads as a listing request.
+Add the label. One click.
+
+```
+The Labels box, right-hand side → listing
+```
+
+Adding the label starts verification on **this** issue within one run. Nothing
+needs reopening and nothing needs retyping. That is why the bot asks for a
+label rather than applying one itself: in this repository the label is an
+authority token, not a category. A labelled issue may drive an ingest of a
+repository this registry has never seen. An unlabelled one may only ask for a
+re-check of something already listed. A bot that minted that label from the
+shape of a body would let anybody who can copy a form choose which repositories
+this registry downloads archives from.
+
+**It does not, and the bot has said nothing.** That is a bug. Check
+`gh run list --workflow=Ingest --limit 5 --repo mihailinl/astra-registry` for a
+run against that issue. If there is no run at all, the event never fired; if
+there is a green run with everything skipped, `bot/triage.mjs` decided the issue
+is not a listing request and `bot/tests/policy.test.mjs` wants a case for it.
+
+### Step 2 — Read the bot's comment
+
+The run compiles a Rust manifest probe before it checks anything, so allow
+minutes rather than seconds. When it finishes the bot comments with two tables:
+the checks, then a **Publication** section with the outcome in bold.
+
+Four outcomes, and only one of them needs you:
+
+| The comment says | What to do |
+|---|---|
+| **Published** | Nothing. It is live. |
+| **Publishing itself at `<time>`** | Nothing. It goes live at that time on its own. |
+| **Held for a maintainer** | Step 3. This is the one. |
+| **Not published** | Nothing. A check failed; the author fixes it and comments `/recheck`. |
+
+The comment also states an SLA of 48 h from the moment it was posted. That
+number is declared in `bot/lib/policy.mjs` and is a commitment about the three
+blocking events only.
+
+### Step 3 — Decide, in one comment
+
+Read the `R_…` rows in the Publication table. They say exactly what is being
+asked of you. There are only four:
+
+| Row | What you are actually deciding |
+|---|---|
+| `R_FIRST_LISTING` | Is this a real plugin, named honestly, doing what it says? Once per plugin, ever. |
+| `R_NEW_HIGH_RISK` | The release asks for a permission that reaches outside its own surface. Is the stated reason one a user would accept? |
+| `R_IDENTITY_CHANGED` | The repository moved. Every installed copy is pinned to the old one. Is this the same author, or a takeover? |
+| `R_CHECK_HELD` | A name one edit from a listed plugin, or a display name that collides. Is it a coincidence? |
+
+Then comment **one line**:
+
+```
+/approve
+```
+
+or
+
+```
+/reject the licence is not one this registry allows — POLICY.md §4
+```
+
+Expect a new comment within minutes. For `/approve` it is a full check table
+again with a line naming you and the time. For `/reject` it is your reason
+quoted back to the author with what they can do next, and then the issue closes.
+
+**Approving does not skip anything.** The entire ingest runs again from
+scratch — the assets are re-downloaded, the attestation re-verified, the
+manifest re-read, the digests re-hashed. A tag can be moved and a release asset
+can be replaced between the hold and your yes, so what publishes is what *this*
+run verified, never what an earlier one did. This is also why there is no
+"approve the version I already looked at" command: there would be no way to
+prove the bytes were the same ones.
+
+**A rejection is a sentence, not a close.** `/reject` with nothing after it does
+nothing and tells you so. A silent close is the one thing this flow will not do.
+
+### When the command does not work
+
+| The bot replies | What it means, and the fix |
+|---|---|
+| "is refused" … "role is `read`" | GitHub does report a role for you on **this** repository, and it is not `admin` or `maintain`. Check which account you commented from. An answered role stands: `author_association` cannot override it, because it is not a permission — `COLLABORATOR` is true for a `triage` role that cannot push a byte, and `CONTRIBUTOR` never expires. |
+| "is refused" … "would not say" | The permission call itself failed **and** you are not the account this repository belongs to. Re-run it. If it keeps happening from the owner's account, that is a bug: `author_association: OWNER` is meant to carry the command through exactly this case. From any other account the fallback is to publish the listing by hand through a pull request — `bot/run-checks.mjs` is that path. |
+| "would not say … but the event payload marks the comment `author_association: OWNER`" | Not a failure. `GITHUB_TOKEN` could not read `GET /repos/{owner}/{repo}/collaborators/{login}/permission` — it holds `contents: read`, and that endpoint is documented as needing push access — so the command was honoured on GitHub's own assertion that you are the repository's owner instead. **Whether the API path works at all with a real Actions token has not been observed in a live run**; if every `/approve` comes through this line, that is the answer. |
+| "has nothing to act on here" | The issue carries no readable form. Ask the author to open a fresh request with the listing template. |
+| Nothing at all | The command was not the first line you wrote, or it was inside a quoted reply. Post it alone, on its own line. |
+
+### Reproducing a decision locally
+
+Only worth doing when you disagree with the bot. It needs a Rust toolchain and
+network access, and it writes nothing into this repository.
+
+```sh
+bot/manifest-probe/link-deps.sh
+cargo build --release --manifest-path bot/manifest-probe/Cargo.toml
+ASTRA_MANIFEST_PROBE=bot/manifest-probe/target/release/astra-manifest-probe \
+  node bot/decide.mjs --repo you/dice-roller --tag v0.2.0 --submitter you --out /tmp/ingest
+```
+
+It prints the same comment the bot posts and exits `0` published, `1` refused,
+`3` held, `4` delayed, `2` the bot itself broke. `--approved-by you` reproduces
+what your `/approve` would decide.
+
+The trust chain is provisioned, so this really does run: `registry/v1/root.json`
+carries `astra-root-2026a` and its reserve, and `registry/v1/trust.json` is
+signed by the active root at serial 1, delegating to `astra-index-2026a` and
+allowlisting one reusable-workflow commit. An attestation from any other
+workflow is refused, which is the point of the allowlist.
+
+---
+
+## 2. Where each thing lives
 
 | Thing | Where |
 |---|---|
@@ -39,9 +171,9 @@ tree the subject can write.
 
 ---
 
-## 2. The root ceremony
+## 3. The root ceremony
 
-Once, ever, unless §5 happens. Full rationale in `SECURITY.md` §3–4.
+Once, ever, unless §6 happens. Full rationale in `SECURITY.md` §3–4.
 
 ```sh
 # On a machine with no network, from removable media:
@@ -64,7 +196,7 @@ daemon does not have is a catalogue nobody can verify; the reverse is worse.
 
 ---
 
-## 3. Signing `trust.json`
+## 4. Signing `trust.json`
 
 `trust.json` is the only document a root ever signs. It names the index signing
 keys and their validity windows.
@@ -101,7 +233,7 @@ Rules the daemon enforces, so get them right before you publish:
 - `reusable_workflow_shas` is the allowlist §5.5 of the plan refers to. Changing
   it is a root ceremony, by construction — that is the point.
 
-### 3.1 First, an index key to delegate to
+### 4.1 First, an index key to delegate to
 
 A `trust.json` that delegates to nothing verifies perfectly and grants nothing —
 every catalogue still reads `UNSIGNED`. So the index key comes first.
@@ -125,7 +257,7 @@ gh secret set ASTRA_INDEX_SIGNING_KEY_ID --env publish \
   --repo mihailinl/astra-registry --body astra-index-2026a
 ```
 
-### 3.2 Then sign, offline, with the root key on removable media
+### 4.2 Then sign, offline, with the root key on removable media
 
 ```sh
 node tools/sign-trust.mjs \
@@ -144,7 +276,7 @@ It refuses, rather than writes, when:
   guard worth having: signing with the reserve key, or last year's, produces a
   document that looks perfect, verifies against itself, and is refused by every
   daemon. You would hear about it from a user, and fixing it means another trip.
-- no index key was given — §3.1.
+- no index key was given — §4.1.
 - a `--workflow-sha` is not 40 hex characters. A tag will not do: it can be
   repointed, and this workflow runs inside every plugin author's repository.
 - the index key is one of the TEST keys whose private half is committed here.
@@ -156,7 +288,7 @@ requires **strictly greater**; equal is rejected rather than treated as
 idempotent, because equal serials with differing contents is what a rollback
 looks like.
 
-### 3.3 Verify before you publish
+### 4.3 Verify before you publish
 
 ```sh
 node tools/sign-trust.mjs --verify registry/v1/trust.json
@@ -177,7 +309,7 @@ cargo test -p astra-daemon plugins::trust
 this tool's output to the daemon's verifier, so a canonicalisation or
 field-shape drift is a red build instead of a wasted ceremony.
 
-### 3.4 By hand, if you ever need to
+### 4.4 By hand, if you ever need to
 
 The tool is a convenience over four steps. They stay written down so that losing
 it is an inconvenience rather than a lockout.
@@ -209,12 +341,12 @@ openssl base64 -A -in trust.sig
 ```
 
 Then copy `trust.json` — and only `trust.json` — back to the online machine,
-verify it as in §3.3, and publish it. Confirm the fingerprint the daemon logs on
+verify it as in §4.3, and publish it. Confirm the fingerprint the daemon logs on
 acceptance matches the one `keygen-root.sh` printed.
 
 ---
 
-## 4. Rotating the index key
+## 5. Rotating the index key
 
 Quarterly, and immediately on suspicion. The planned form has a **30-day
 overlap** so no window exists in which nothing can sign.
@@ -235,7 +367,7 @@ key, with the old key's `not_after` in the past. Then follow `SECURITY.md` §5.1
 
 ---
 
-## 5. Promoting the reserve root
+## 6. Promoting the reserve root
 
 When the active root is compromised, or lost, or simply being retired.
 
@@ -251,12 +383,12 @@ When the active root is compromised, or lost, or simply being retired.
    key's fingerprint so users can compare it to what their daemon logs.
 
 The reserve is only real if it works. Exercise the path on the test roots
-(§7) before you ever need it in anger — the daemon's own acceptance test signs
+(§8) before you ever need it in anger — the daemon's own acceptance test signs
 with the reserve rather than the active key for exactly this reason.
 
 ---
 
-## 6. Emergency revocation
+## 7. Emergency revocation
 
 > **Not yet buildable.** `registry/v1/revocations.json`, `revoke.yml` and the
 > daemon's five enforcement points land in 3.9. This section is written now so
@@ -285,7 +417,7 @@ persisted so an attacker cannot un-revoke by serving an older list.
 
 ---
 
-## 7. Testing the chain without any real key
+## 8. Testing the chain without any real key
 
 Never rehearse with the production root. `tools/testkeys/` exists so you do not
 have to.
@@ -313,7 +445,7 @@ repository's tests.
 
 ---
 
-## 8. Upgrades this runbook is written to accept
+## 9. Upgrades this runbook is written to accept
 
 Written down so they are decisions rather than aspirations. None is required
 today; each becomes worth its friction at a specific moment.

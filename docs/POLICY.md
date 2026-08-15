@@ -16,6 +16,28 @@ document is decoration.
 
 ---
 
+## 0. You always get an answer
+
+Open a listing request and the bot comments on it. Every time.
+
+That is worth stating because it was not true. Two submissions — `#13` and
+`#14` — arrived without the `listing` label, because blank issues were on and
+they bypassed the form that applies it. The bot only acts on a labelled issue,
+so it decided there was nothing to do, every later job was skipped, and the
+Actions run went green. Neither author was told anything at all. Not refused;
+nothing.
+
+Three things changed, and together they close it:
+
+1. **Blank issues are off.** Every way into this repository is a form now, and
+   the listing form applies the label itself.
+2. **An unlabelled listing request gets a comment** naming the label, the
+   one-click fix, and why the bot will not apply the label for you.
+3. **A held submission has a next move.** `/approve` and `/reject` are §3.1.
+
+If you ever get silence from this registry, that is a bug in it. Say so on the
+issue.
+
 ## 1. The four outcomes
 
 | Outcome | What it means | Who is involved |
@@ -92,6 +114,44 @@ the machine, because there is no sandbox: a plugin is a native process with the
 user's full privileges, and Phase 7 is where that changes. Read the table above
 as "what the daemon will permit", and root `POLICY.md` §0 for the part no
 permission model reaches.
+
+### 3.1 What happens to a held submission
+
+A maintainer answers on the issue with one of two commands. You will see it.
+
+**`/approve`** — the hold is cleared and the release goes back through the
+pipeline. The bot comments again with a full table of checks and a line saying
+who cleared the hold and when.
+
+**`/reject <reason>`** — the reason is posted on the issue and the issue is
+closed. A rejection is about *this* submission and is not permanent: fix what
+the reason names and open a fresh request. Nothing counts against a later one.
+
+Four things an approval is deliberately **not**:
+
+- **It is not a skip.** Every check runs again, from scratch, against the
+  release as it is at that moment. Nothing verified in the earlier run is
+  reused. A tag can be moved and a release asset can be replaced between the
+  hold and the yes, so the digest that reaches the catalogue is the digest of
+  the bytes this run downloaded and hashed.
+- **It cannot clear a failed check.** A refusal outranks it. A bad signature, an
+  unproved ownership or a licence this registry does not allow are facts about
+  the bytes, and the answer to one is a new release.
+- **It does not waive the publication delay.** If your release also widens its
+  permissions, it still waits out §4's window and then publishes itself. The
+  hold and the delay answer different questions: *may this be listed at all*,
+  and *has the author had a chance to notice*.
+- **It is not a review of your code.** §7.
+
+Who may run them: only an account GitHub reports as `admin` or `maintain` on
+**this** repository. It is asked of the GitHub API at the moment the command is
+typed, not read off the comment. If you run one and are not a maintainer, the
+bot says so and nothing changes — the command is not secret and trying it is not
+a fault.
+
+Every approval leaves three records that cannot disagree: `P_APPROVED` in the
+comment on your issue, `approved_by` and `approved_at` in the run's
+`decision.json`, and the commit the publication makes.
 
 ### The SLA, and what happens when it slips
 
@@ -186,18 +246,26 @@ Three ways in, all of which end in the same verification. None of them requires
 you to hold a credential for this repository — the bot verifies everything from
 scratch every time, so a notification is a *request to re-check*, never a claim.
 
-1. **`astra-plugin publish --notify`** (AstraPlugins CLI). Prints, and offers to
-   open, a prefilled URL. This is the escape hatch that always works.
-2. **A comment on your listing issue:** `/release v0.2.0`. Anyone may say it. An
-   unlabelled new issue may also say `/release you/your-plugin v0.2.0`, and is
-   honoured only for a repository that is **already listed** — so the worst a
-   stranger achieves is causing a re-check of a listing already pinned to a
-   repository identity. A first listing still goes through the issue template.
+1. **Comment `/release v0.2.0` on your listing issue.** One line, on its own,
+   first line of the comment. This is the fast path and it is the one to use.
+   Anyone may say it — the bot re-verifies everything from scratch anyway.
+2. **Open "A release of a plugin that is already listed"** from the issue
+   template chooser, if you cannot find your listing issue. It is honoured only
+   for a repository that is **already listed**, so the worst a stranger achieves
+   is causing a re-check of a listing already pinned to a repository identity. A
+   first listing still goes through the listing form.
 3. **The backstop.** A daily cron polls listings whose newest known release is
    more than 7 days old, using each repository's `releases.atom` with
    `If-None-Match`. An unchanged repository costs one 304 and no API quota. It is
    a safety net for a missed notification, not the fast path: use 1 or 2 and your
    release is in the catalogue in minutes.
+
+**One thing does not work today.** `astra-plugin publish --notify` prints a
+prefilled `issues/new?title=…&body=…` link. Blank issues are now off, so that
+link lands on the template chooser and the prefilled text is dropped. Pick "A
+release of a plugin that is already listed" and paste the `/release` line, or
+use option 1 instead. Fixing the CLI to link the template directly is a change
+in AstraPlugins and has not been made.
 
 For 2 and 3, the ownership that gets proved is the **release author's** — the
 account that published the bytes, which required push access to the pinned
@@ -228,6 +296,7 @@ exists first; nothing downstream changes when it arrives.
 | `P_DELAY_ELAPSED` | The delay is over and every check has just been re-run. |
 | `P_DELAY_BROUGHT_FORWARD` | A maintainer waived part of the window, on the record. |
 | `P_DELAY_BYTES_CHANGED` | The assets changed mid-window, so the clock restarted. |
+| `P_APPROVED` | A maintainer cleared the hold. Every check above it ran again from scratch in that same run. |
 | `P_UNKNOWN_PERMISSION` | A permission name this registry cannot describe. Reported, never blocking — the daemon default-denies, so it grants nothing. |
 | `P_SLA` | What happens next, and by when. |
 
