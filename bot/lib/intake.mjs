@@ -291,7 +291,8 @@ export function renderIncompleteForm({ registry, problem }) {
       ? `Not ticked:\n${unticked.map((m) => `- ${m}`).join("\n")}`
       : null,
     unticked.length ? "" : null,
-    "The confirmations are not evidence — ownership is proved against GitHub either way — but " +
+    "The confirmations are not evidence — ownership is proved by reading " +
+      "`.well-known/astra-plugin-owner` off the default branch, whatever is ticked here — but " +
       "they are the difference between a mistake and a statement, and the template requires " +
       "them.",
     "",

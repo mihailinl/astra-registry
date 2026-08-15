@@ -6,8 +6,41 @@ body:
   - type: markdown
     attributes:
       value: |
-        **Two facts, two confirmations, and one optional paragraph.** That is
+        **Two facts, three confirmations, and one optional paragraph.** That is
         the whole form.
+
+        ## One commit first, or this will be refused
+
+        The registry has to know that the person asking for the listing controls
+        the repository — otherwise a stranger could list your plugin and become
+        the account through which its updates reach Astra users. **The way you
+        prove that is one file on your default branch:**
+
+        ```
+        mkdir -p .well-known
+        echo YOUR-GITHUB-LOGIN > .well-known/astra-plugin-owner
+        git add .well-known/astra-plugin-owner && git commit -m "registry: owner"
+        git push
+        ```
+
+        One login per line, `#` starts a comment, and **the login has to be the
+        one opening this issue** — the bot compares the file against the issue's
+        author and nothing else. It is read live from the default branch on every
+        run, so removing a line stops that login opening a new request or passing
+        a `/recheck`; it does not reach a plugin that is already listed, whose
+        later releases are proved against the account that published the release.
+        No CI runs either way.
+
+        Be clear about what it proves: that somebody who can write to that branch
+        vouches for that login. It is a proof of *write access*, not of legal
+        ownership.
+
+        **There is no way to skip it.** The bot does ask GitHub who has `admin` or
+        `maintain` first, but GitHub answers that question only for a caller that
+        can already see the repository. The bot's token belongs to this registry,
+        so for your repository the answer is `403` — "I will not tell you", not
+        "no". That is never held against you, and it is also never a shortcut:
+        the file is the only thing that can prove this.
 
         **Before you submit,** run this in your plugin directory:
 
@@ -77,17 +110,39 @@ body:
         Optional, a few sentences. The only part a human writes, and the first
         part a human reads.
 
-  # Both required, and both read. `bot/read-submission.mjs` refuses a submission
-  # with an unticked box, and `bot/lib/intake.mjs` names the box in a comment
-  # rather than letting the run die silently.
+  # All three required, and all three read. `bot/read-submission.mjs` refuses a
+  # submission with an unticked box, and `bot/lib/intake.mjs` names the box in a
+  # comment rather than letting the run die silently. Both read every `- [ ]`
+  # line in the rendered body, so adding an option here needs no parser change.
+  #
+  # ── why the first one is a checkbox and not a text field ───────────────────
+  #
+  # The obvious alternative is an input asking which login you wrote in the
+  # file, so a typo is caught by comparing two strings. It was considered and
+  # rejected twice over. First, the bot already knows the login it expects — the
+  # account that opened this issue — so a field could only introduce a *third*
+  # string to disagree with the other two. Second, this registry's whole shape is
+  # "there is no form to disagree with": everything except the repository and the
+  # tag is read out of attested bytes, and a typed field that the ingest ignores
+  # would be a promise the bot cannot keep.
+  #
+  # The typo is caught anyway, and by the half that can see it:
+  # `bot/lib/ownership.mjs` prints the logins the file *does* contain when it
+  # does not contain yours, so `Rel0dlx` versus `Rel0d1x` is visible in the
+  # refusal instead of being silence.
   - type: checkboxes
     id: attest
     attributes:
       label: Confirmations
       description: >-
-        Neither is evidence — ownership is proved against GitHub either way.
-        They are the difference between a mistake and a statement.
+        None of these is evidence — ownership is proved against your repository
+        either way. They are the difference between a mistake and a statement.
       options:
+        - label: >-
+            I have committed `.well-known/astra-plugin-owner` to this
+            repository's default branch, and it contains my GitHub login (the
+            account opening this issue) on a line of its own.
+          required: true
         - label: I own or maintain this repository.
           required: true
         - label: I have read POLICY.md, including the data-handling section.

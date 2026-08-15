@@ -43,7 +43,7 @@ export const PHASE_3_CHECKS = [
   {
     code: "E_OWNERSHIP_UNPROVEN",
     name: "repository ownership",
-    why: "landed in bot/ingest.mjs (collaborator permission, .well-known fallback, release author). On the pull-request path the reviewer is the check.",
+    why: "landed in bot/ingest.mjs (.well-known/astra-plugin-owner is the proof; the collaborator endpoint is an opportunistic shortcut that answers only for repositories this registry can already see, and release author covers already-listed plugins). On the pull-request path the reviewer is the check.",
   },
   {
     code: "E_HOST_RPC_UNDECLARED",

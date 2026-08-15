@@ -886,29 +886,137 @@ await test("[permissions] satisfies the scan too, so Phase 4 does not break this
 
 section("ownership, in detail");
 
+// The world every one of these is about, observed in a real Actions run on
+// 2026-08-14 against `astra-registry#13` and `#14`: every cryptographic check
+// passed and the submission was refused on ownership alone, because the fast
+// path answered 403 (the bot's token belongs to `astra-registry`, and GitHub
+// will not disclose a third party's collaborators to it) and the release had
+// been published by `@github-actions[bot]`, which is what the documented
+// `plugin-release.yml` does. Neither arm can fire for an honest first
+// submission, so the file has to be the thing an author is asked for — and the
+// refusal has to lead with it.
+
 const RECENT_RELEASE = new Date(Date.now() - 3 * 86_400_000).toISOString();
 
-await test("a 403 from the collaborator endpoint is 'no answer', not 'no'", async () => {
-  const calls = [];
+/** A world where the bot can see nothing and the file does not exist. */
+const blind = async (url) => ({ ok: false, status: url.includes("/collaborators/") ? 403 : 404 });
+
+await test("a 403 from the fast path is not a refusal by itself", async () => {
+  // The whole defect, in one assertion: 403 means "the bot cannot see", and the
+  // run has to carry on to the proof the author was actually asked for.
+  const out = await proveOwnership({
+    repo: "org/thing", login: "someone", releaseAuthor: null, token: null,
+    fetchImpl: async (url) =>
+      url.includes("/collaborators/")
+        ? { ok: false, status: 403 }
+        : { ok: true, status: 200, text: async () => "someone\n" },
+  });
+  assert(out.ok, `a 403 must not decide anything: ${JSON.stringify(out)}`);
+  assertEqual(out.method, "well-known", JSON.stringify(out.tried));
+});
+
+await test("a 403 is never reported to the author as a finding against them", async () => {
+  const out = await proveOwnership({
+    repo: "org/thing", login: "someone", releaseAuthor: "github-actions[bot]",
+    releasePublishedAt: RECENT_RELEASE, token: null, fetchImpl: blind,
+  });
+  assert(!out.ok, "with no file there is nothing to grant on");
+  assert(!/403/.test(out.detail),
+    `a 403 is a fact about the bot's token, not about the submitter: ${out.detail}`);
+  assert(!/collaborator-permission/.test(out.detail),
+    `nor is the name of a check the author cannot influence: ${out.detail}`);
+  // It stays in the audit trail, which is where "how did this get decided"
+  // is answered — just not in the comment a stranger reads.
+  assert(out.tried.some((t) => t.method === "collaborator-permission" && /403/.test(t.outcome)),
+    JSON.stringify(out.tried));
+});
+
+await test("a 403 plus a release published by CI is the real #13/#14 case", async () => {
+  const out = await proveOwnership({
+    repo: "Rel0d1x/command-intent-guard", login: "Rel0d1x",
+    releaseAuthor: "github-actions[bot]", releasePublishedAt: RECENT_RELEASE,
+    token: null, fetchImpl: blind,
+  });
+  assert(!out.ok, JSON.stringify(out));
+  // Not "three checks failed". One instruction, first, naming the exact path.
+  assert(out.detail.startsWith("**Commit `.well-known/astra-plugin-owner`"), out.detail);
+  assert(out.detail.includes("Rel0d1x/command-intent-guard's default branch"), out.detail);
+  assert(out.detail.includes("`Rel0d1x`"), "and the exact line to put in it");
+  assert(out.detail.includes("/recheck"), "and how to run it again");
+  assert(!/github-actions/.test(out.detail),
+    `who pressed the button in CI is not something the author can act on: ${out.detail}`);
+});
+
+await test("the missing-file refusal says the file is missing, not that the author is", async () => {
+  const out = await proveOwnership({
+    repo: "org/thing", login: "someone", releaseAuthor: null, token: null, fetchImpl: blind,
+  });
+  assert(out.detail.includes("there is no `.well-known/astra-plugin-owner` on that branch (HTTP 404)"),
+    out.detail);
+});
+
+await test("a file naming somebody else refuses, and prints who it does name", async () => {
+  // The typo case. `Rel0dlx` and `Rel0d1x` differ by one glyph, and the whole
+  // point of printing the file's contents is that the author can see it.
+  const out = await proveOwnership({
+    repo: "org/thing", login: "Rel0d1x", releaseAuthor: null, token: null,
+    fetchImpl: async (url) =>
+      url.includes("/collaborators/")
+        ? { ok: false, status: 403 }
+        : { ok: true, status: 200, text: async () => "# owners\nRel0dlx\n" },
+  });
+  assert(!out.ok, "a file that names somebody else proves nothing about this submitter");
+  assertEqual(out.method, null, JSON.stringify(out.tried));
+  assert(out.detail.includes("`Rel0dlx`"), `it has to show what the file says: ${out.detail}`);
+  assert(out.detail.startsWith("**Commit `.well-known/astra-plugin-owner`"), out.detail);
+});
+
+await test("a stranger cannot list a repository whose file does not name them", async () => {
+  // The property the whole check exists for, stated as a test rather than as a
+  // comment: the file is on the victim's default branch, and mallory is not in
+  // it. Nothing else in the pipeline asks this question.
+  const out = await proveOwnership({
+    repo: "victim/plugin", login: "mallory", releaseAuthor: "victim",
+    releasePublishedAt: RECENT_RELEASE, token: null,
+    fetchImpl: async (url) =>
+      url.includes("/collaborators/")
+        ? { ok: false, status: 403 }
+        : { ok: true, status: 200, text: async () => "victim\n" },
+  });
+  assert(!out.ok, JSON.stringify(out));
+});
+
+await test("the file is compared case-insensitively, and `@` and comments are forgiven", async () => {
+  const out = await proveOwnership({
+    repo: "org/thing", login: "SomeOne", releaseAuthor: null, token: null,
+    fetchImpl: async (url) =>
+      url.includes("/collaborators/")
+        ? { ok: false, status: 403 }
+        : { ok: true, status: 200, text: async () => "# who may list this\n@someone   # the author\n" },
+  });
+  assert(out.ok && out.method === "well-known", JSON.stringify(out));
+});
+
+await test("a 403 with no file still lets a release ping through, which is what carries every later release", async () => {
+  // `resolveSubmitter` (bot/lib/notify.mjs) makes the submitter the release's
+  // own author on the ping and backstop paths, so this arm is the only one that
+  // can answer there. It is circular and says so; what protects that path is the
+  // pin — a ping may only name a repository that is already listed.
   const out = await proveOwnership({
     repo: "org/thing", login: "someone", releaseAuthor: "someone",
-    releasePublishedAt: RECENT_RELEASE, token: null,
-    fetchImpl: async (url) => {
-      calls.push(url);
-      if (url.includes("/collaborators/")) return { ok: false, status: 403 };
-      return { ok: false, status: 404 };
-    },
+    releasePublishedAt: RECENT_RELEASE, token: null, fetchImpl: blind,
   });
-  assert(out.ok, "an organisation that has not installed the app must still be able to publish");
+  assert(out.ok, "an already-listed plugin must keep releasing with nobody in the loop");
   assertEqual(out.method, "release-author", JSON.stringify(out.tried));
 });
 
-await test("a 200 saying `write` is a DENIAL, and the fallbacks do not get a vote", async () => {
-  // The whole ranking was decorative before this: the three methods were tried
-  // in sequence with no distinction between "GitHub did not answer" and
-  // "GitHub answered no", so an explicit `write` — not admin, not maintain —
-  // fell through to a `.well-known` file a contributor can add in a pull
-  // request, or to a release the account published before it was removed.
+await test("a 200 saying `write` is a DENIAL, and the owner file does not get a vote", async () => {
+  // The one place the owner file does NOT win, and the reason is the same
+  // reason a 403 does not lose: GitHub answering and GitHub declining are
+  // different facts. Here it answered — about this person, on this repository,
+  // just now — and said `write`. The file speaks where GitHub will not; it does
+  // not overrule GitHub where it will, or a contributor could add themselves in
+  // a pull request and outrank an explicit non-maintainer role.
   const out = await proveOwnership({
     repo: "victim/plugin", login: "mallory", releaseAuthor: "mallory",
     releasePublishedAt: RECENT_RELEASE, token: null,
@@ -956,7 +1064,11 @@ await test("release-author expires — a permanent fact must not be permanent ac
     token: null, fetchImpl: answer,
   });
   assert(!old.ok, `a 400-day-old release is not proof of current access: ${JSON.stringify(old)}`);
-  assert(old.detail.includes("400 days old"), old.detail);
+  assert(old.detail.includes("400 days ago"), old.detail);
+  assert(old.tried.some((t) => t.method === "release-author" && t.outcome.includes("400 days old")),
+    JSON.stringify(old.tried));
+  // Even here the refusal leads with the fix rather than with the expiry.
+  assert(old.detail.startsWith("**Commit `.well-known/astra-plugin-owner`"), old.detail);
 });
 
 await test("maintain counts, write does not", async () => {
@@ -970,7 +1082,7 @@ await test("maintain counts, write does not", async () => {
   assert(!write.ok, "push access is not maintainership");
 });
 
-await test("the .well-known fallback reads the file, not a claim about it", async () => {
+await test("the owner file is read, not claimed", async () => {
   const out = await proveOwnership({
     repo: "org/thing", login: "someone", releaseAuthor: "nobody",
     fetchImpl: async (url) =>
@@ -979,6 +1091,41 @@ await test("the .well-known fallback reads the file, not a claim about it", asyn
         : { ok: false, status: 404 },
   });
   assert(out.ok && out.method === "well-known", JSON.stringify(out));
+  assert(out.detail.includes("read live on this run"),
+    `and the run says so, because live reading is what makes removal a revocation: ${out.detail}`);
+});
+
+// ── the loop, closed at the source ──────────────────────────────────────────
+//
+// The refusal is now useful, but the point of the exercise is that an honest
+// author never sees it. That means three files have to name the same path, and
+// nothing but a test keeps them agreeing.
+
+await test("the submission form asks for the file, with the exact path, before the submission", () => {
+  const form = fs.readFileSync(
+    path.join(REPO_ROOT, ".github", "ISSUE_TEMPLATE", "plugin-listing.yml"), "utf8");
+  assert(form.includes(".well-known/astra-plugin-owner"),
+    "the form must name the file an author is refused for not having");
+  assert(/echo YOUR-GITHUB-LOGIN > \.well-known\/astra-plugin-owner/.test(form),
+    "and give the line that creates it, so it is a copy rather than a translation");
+  assert(/one commit/i.test(form), "and say what it costs");
+  // A required confirmation, not a paragraph somebody scrolls past.
+  const confirmations = [...form.matchAll(/- label: ([\s\S]*?)\n\s+required: true/g)].map((m) => m[1]);
+  assert(confirmations.some((c) => c.includes(".well-known/astra-plugin-owner")),
+    `the owner file has to be one of the required confirmations: ${JSON.stringify(confirmations)}`);
+  // `bot/lib/issue.mjs` reads every `- [ ]` line in the rendered body and
+  // `bot/lib/intake.mjs` refuses an unticked one, so adding it here needs no
+  // parser change — but a prose block that is not a checkbox would be read by
+  // nothing at all.
+});
+
+await test("the fixed remedy and the run's own message name the same file", () => {
+  const remedy = codeDef("E_OWNERSHIP_UNPROVEN").remedy;
+  assert(remedy.startsWith("Commit `.well-known/astra-plugin-owner`"),
+    `the remedy has to lead with the fix, not with the diagnosis: ${remedy}`);
+  assert(remedy.includes("/recheck"), remedy);
+  assert(/write access, not of legal ownership/.test(remedy),
+    "and be honest about what the file proves");
 });
 
 section("the submission form");

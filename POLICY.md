@@ -47,9 +47,15 @@ no release for the bot to read an asset list from. A listing here must be re-der
 a third party from the author's repository alone.
 
 Two further requirements apply **on the release path**, and are checked there:
-the artifact carries a GitHub build attestation, and the submitter has admin or
-maintain permission on the repository. `bot/ingest.mjs` proves ownership
-(`bot/lib/ownership.mjs`) and verifies the attestation against a
+the artifact carries a GitHub build attestation, and the submitter is proved to
+control the repository. Control is proved by
+`.well-known/astra-plugin-owner` on the repository's default branch naming the
+submitter's login, read live on every run. Asking GitHub who holds `admin` or
+`maintain` is tried first and is an opportunistic shortcut only: GitHub answers
+that endpoint solely for a caller that can already see the repository, so for
+any repository this registry does not itself own it returns `403` — no answer,
+never a denial, and never a substitute for the file. `bot/ingest.mjs` proves
+ownership (`bot/lib/ownership.mjs`) and verifies the attestation against a
 reusable-workflow allowlist read out of the root-signed `trust.json`
 (`bot/lib/attestation.mjs`, which passes both `--repo` and `--signer-workflow`
 to `gh attestation verify`, so "some workflow in that repository built it"

@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "published_at": "2026-08-10T00:00:00Z",
   "staging": true,
-  "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so echo-stt-v0.1.0 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/echo-stt writes the caller workflow, then the tag is pushed.",
+  "staging_reason": "AstraPlugins has published no *plugin* release: GET /repos/mihailinl/AstraPlugins/releases returns only cli-v0.2.1, the CLI. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so echo-stt-v0.1.0 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/echo-stt writes the caller workflow, then the tag is pushed.",
   "release": {
     "kind": "github_release",
     "repo": "mihailinl/AstraPlugins",

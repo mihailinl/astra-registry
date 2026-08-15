@@ -170,6 +170,18 @@ export async function ingest(opts, deps = {}) {
   f.pass("E_NO_BUNDLE_ASSETS", "release", `${bundles.length} bundle(s) on ${opts.repo}@${opts.tag}`);
 
   // ── 3. ownership ──────────────────────────────────────────────────────────
+  //
+  // Does the account asking control the repository? The attestation already
+  // binds the bytes to a repository and the listing is already pinned to it;
+  // this is the one thing neither of those says, and it is what keeps a
+  // stranger from listing somebody else's plugin.
+  //
+  // What the author is asked for is `.well-known/astra-plugin-owner` on the
+  // default branch, and the submission form asks for it before a run ever
+  // happens. The other two methods are a free shortcut and a re-listing
+  // mechanism respectively; neither can fire for an honest first submission,
+  // which is why leading a refusal with them was a bug rather than a wording
+  // problem. `bot/lib/ownership.mjs` has the whole argument.
   const owner = await ownership({
     repo: opts.repo,
     login: opts.submitter,

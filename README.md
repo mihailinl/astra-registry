@@ -253,6 +253,21 @@ first — `plugin-release.yml` there produces the `.astraplugin` files and the
 which repository, built those exact bytes. Without one there is nothing here to
 verify.
 
+**Second, you need one commit on your side.** `.well-known/astra-plugin-owner`,
+on your default branch, containing your GitHub login on a line of its own:
+
+```bash
+mkdir -p .well-known
+echo YOUR-GITHUB-LOGIN > .well-known/astra-plugin-owner
+git add .well-known/astra-plugin-owner && git commit -m "registry: owner" && git push
+```
+
+That is what proves the account opening the request controls the repository. For
+a repository this registry does not itself own it is the **only** proof
+available — GitHub answers the collaborator endpoint only for a caller that can
+already see the repository, so it tells this bot nothing — and the form asks for
+it as a required confirmation. One commit, no CI.
+
 ### 1. Check it locally first
 
 In your plugin's own directory:
@@ -269,8 +284,10 @@ a round trip.
 
 <https://github.com/mihailinl/astra-registry/issues/new?template=plugin-listing.yml>
 
-It asks for **two facts** — the repository and the release tag — and two
-confirmations. Everything else (id, version, capabilities, permissions, licence,
+It asks for **two facts** — the repository and the release tag — and three
+required confirmations, the first being that you have committed
+`.well-known/astra-plugin-owner` to your default branch with your login in it.
+Everything else (id, version, capabilities, permissions, licence,
 summary, platforms, digests) is read out of the bundle, which is covered by the
 attestation. That is why there is no "your form disagrees with `plugin.toml`"
 rejection: the form is not consulted about any of it.
