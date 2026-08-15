@@ -38,6 +38,54 @@ Three things changed, and together they close it:
 If you ever get silence from this registry, that is a bug in it. Say so on the
 issue.
 
+### The one thing to do before you open the request
+
+**Commit `.well-known/astra-plugin-owner` to your default branch, containing
+your GitHub login on a line of its own.**
+
+```
+mkdir -p .well-known
+echo YOUR-GITHUB-LOGIN > .well-known/astra-plugin-owner
+```
+
+One commit, no CI. The listing form asks for it as a required confirmation,
+because the alternative — finding out from a refusal — is what used to happen to
+every honest first submission, and it happened for structural reasons rather
+than by accident. `astra-registry#13` and `#14` are the record: every
+cryptographic check passed, and the run refused them on ownership alone.
+
+The registry has to know that the account asking for the listing controls the
+repository, or a stranger could list your plugin and become the account through
+which its updates reach Astra users. The file is how you say so, and it is read
+**live from the default branch on every run** — so removing a line stops that
+login opening a new listing request or passing a `/recheck`, and a person
+removed from an organisation stops being able to submit as soon as the file is
+updated. What it does **not** do is reach a plugin that is already listed; that
+is the second bullet below.
+
+Be clear about what it proves: **that somebody who can write to that branch
+vouches for that login.** It is a proof of write access, not of legal ownership,
+not of authorship, and not of identity. That is the right size for what this
+check defends against, and `docs/BOT-CHECKS.md` states its residual risk rather
+than hiding it.
+
+**Nothing spares you the commit on a first listing.** Two things are worth
+knowing about the checks either side of it, and neither is a shortcut you can
+take:
+
+- The bot does ask GitHub who has `admin` or `maintain`, first and for free.
+  GitHub answers that endpoint only for a caller that can already see the
+  repository, and the bot's token belongs to this registry — so for a repository
+  this registry does not itself own the answer is `403`, meaning "I will not
+  tell you" rather than "no". **That silence is never held against you**, it is
+  never printed as a failed check, and it is never an answer either. There is
+  nothing you can install that changes this.
+- Once a plugin is listed, later releases prove ownership against the account
+  that published the release rather than against whoever pinged (§5). That is a
+  different question with a different answer: it is why routine releases need no
+  file update and no form, and also why editing the file does not revoke
+  anybody's ability to ship a release of a plugin that is already listed.
+
 ## 1. The four outcomes
 
 | Outcome | What it means | Who is involved |
@@ -302,9 +350,21 @@ in AstraPlugins and has not been made.
 For 2 and 3, the ownership that gets proved is the **release author's** — the
 account that published the bytes, which required push access to the pinned
 repository — not whoever typed the notification. Whoever pinged is not part of
-the decision. This is weaker than the admin/maintain answer a first listing gets,
-and the weakening is bounded by the two events that always block on a human
-anyway: a first listing, and a repository change.
+the decision. In practice that account is `github-actions[bot]`, because
+`plugin-release.yml` is what creates the Release, and so this arm is
+deliberately **circular**: the release's author is checked against the release's
+author. Saying that out loud is the point. What actually protects these two
+paths is not the check but the pin — a ping may only name a repository that is
+**already listed**, so the worst it can do is re-verify a listing that is
+already tied to that repository's identity, and the two events that could change
+that identity (a first listing, a repository change) always block on a human.
+It is capped at 90 days, so "they published something once" cannot stand in for
+"they have access now".
+
+None of this applies to a first listing, where the release author is a bot and
+cannot be you. That is why the owner file above is what the form asks for, and
+why a first-listing refusal never mentions who published the release: it is not
+a fact you can act on.
 
 The planned upgrade to 2 is a **GitHub App** subscribed to `release` on the
 author's repository, posting the same line automatically. It needs the

@@ -22,7 +22,7 @@ const OUT = path.join(REPO_ROOT, "docs", "BOT-CHECKS.md");
 const STAGES = [
   ["submission", "The two facts a person types", "The repository and the release tag. Nothing else is typed, so nothing else can be typed wrongly."],
   ["trust", "The anchor", "The reusable-workflow allowlist comes out of a `trust.json` a root key signed. Without a root, the bot has no basis for any conclusion and stops here."],
-  ["ownership", "Who is asking", "Proved against GitHub, at the moment of the request."],
+  ["ownership", "Who is asking", "Proved against the repository itself, live, at the moment of the request. See \"Ownership\" below for the one file this asks you to create."],
   ["release", "The release and its assets", "That the release exists, that the URLs belong to the repository being listed, and that the bytes are the bytes the release advertised."],
   ["attestation", "Who built the bytes", "The half that makes the registry a trust boundary rather than a consistency checker."],
   ["bundle", "The archive's shape", "Decided from the bytes alone, without extracting anything."],
@@ -140,26 +140,66 @@ compromised — a case PRODUCTION_PLAN §5.5 lists with the mitigation "nothing
 cryptographic". What the bot proves is *who published these exact bytes*, and
 that is all it proves.
 
-## Ownership, and what each method establishes
+## Ownership: one file, and why it is the one
 
-Three ways, tried in order, and the one that succeeded is recorded:
+**Commit \`.well-known/astra-plugin-owner\` to your default branch with your
+GitHub login on a line of its own.** That is the whole thing:
 
-1. \`GET /repos/{owner}/{repo}/collaborators/{user}/permission\` returning
-   \`admin\` or \`maintain\`. The strongest answer, and frictionless — there is
-   nothing for the author to do. GitHub answers it only for a caller with admin
-   visibility on the repository, so a 403 or 404 is treated as *no answer*,
-   never as a denial.
-2. \`.well-known/astra-plugin-owner\` on the default branch, one login per line,
-   read live. The organisation fallback. It proves that somebody with push
-   access to the default branch asserts this login — which is why it is read at
-   request time rather than accepted once.
-3. The account that published the release being listed. Publishing requires push
-   access, and it is *this* release, so it is the narrowest statement available:
-   the person asking is the person who published these exact bytes.
+\`\`\`
+mkdir -p .well-known
+echo YOUR-GITHUB-LOGIN > .well-known/astra-plugin-owner
+\`\`\`
 
-A challenge file with a nonce is deliberately **not** the primary. It proves
-that at some moment somebody could write to a branch — not that they still can,
-and not that they were ever a maintainer.
+One login per line, \`#\` starts a comment, a leading \`@\` is forgiven. The
+listing form asks for it *before* you submit, and the bot re-reads it from the
+default branch on every run that consults it — so removing a line stops that
+login opening a new listing request or passing a \`/recheck\`, and no CI runs.
+
+**What it proves, exactly:** that somebody who can write to that repository's
+default branch vouches for that login. It is a proof of **write access**, not of
+legal ownership, not of authorship, and not of identity. Two things make that
+enough for what this check is for — keeping a stranger from listing somebody
+else's plugin and becoming the account its updates arrive through. A stranger
+cannot land a commit on somebody else's default branch; and because the file is
+read live, an author removed from an organisation stops being able to submit
+the moment the file is updated. That last point has a boundary worth stating:
+it governs a first listing and a \`/recheck\`, and not an already-listed plugin,
+whose later releases are proved against the account that published the release
+(second bullet below). Its residual risk is stated rather than hidden: a
+contributor can open a pull request that adds their own login, and a maintainer
+who merges it without reading has vouched for them. The registry cannot close
+that, because the same merge could change the release workflow or the plugin's
+source — anyone who can land commits on the default branch is already that
+plugin's update path.
+
+Two other methods exist, and it matters that **neither of them can fire for an
+honest first submission**:
+
+- \`GET /repos/{owner}/{repo}/collaborators/{user}/permission\` returning
+  \`admin\` or \`maintain\` is tried **first**, as a free shortcut: one request,
+  nothing for the author to do. GitHub answers it only for a caller that can
+  already see the repository, and the bot's token belongs to \`astra-registry\`
+  — so for any repository this registry does not itself own the answer is
+  **403**, observed in a real run on 2026-08-14, and there is nothing an author
+  can install to change that. A 403 means *the bot cannot see*, never *no*, and it is
+  never printed as a finding against a submitter. A **200** is different and is
+  final in both directions: \`admin\`/\`maintain\` grants, anything else is
+  GitHub answering the exact question about the exact person, and the owner file
+  does not overrule it.
+- The account that **published the release** being listed. On a first listing it
+  is inert, and structurally so: the documented \`plugin-release.yml\` creates
+  the Release, so its author is \`github-actions[bot]\` and never a person. It
+  is kept because it is the arm that carries every *later* release — a
+  \`/release\` ping and the cron backstop prove ownership against the release's
+  own author (\`bot/lib/notify.mjs\`, \`resolveSubmitter\`), where the protection
+  comes from the repository already being listed and pinned. It is capped at 90
+  days so that "they had access once" cannot stand in for "they have access", and
+  it is left out of a first-listing refusal entirely, because a line about who
+  pressed a button in CI is not something an author can act on.
+
+A challenge file carrying a nonce is deliberately **not** used. It proves that
+at some moment somebody could write to a branch, and then keeps proving it
+forever; the owner file makes the same claim continuously and can be withdrawn.
 
 ## Every code
 
@@ -194,7 +234,7 @@ const FOOTER = `## Where each check lives
 | \`bot/ingest.mjs\` | The pipeline and the order of it |
 | \`bot/manifest-probe/\` | \`plugin.toml\`, parsed by \`astra-plugin-manifest\` — the daemon's crate, linked, not reimplemented |
 | \`bot/lib/attestation.mjs\` | \`gh attestation verify\`, and the root-signed workflow allowlist |
-| \`bot/lib/ownership.mjs\` | The three ownership methods |
+| \`bot/lib/ownership.mjs\` | \`.well-known/astra-plugin-owner\`, and the two methods that cannot replace it |
 | \`bot/lib/bundle.mjs\` | The archive, read in memory and never extracted |
 | \`bot/lib/names.mjs\` | Typosquatting and trademarks |
 | \`bot/lib/rpcscan.mjs\` | The host-RPC heuristic and its scope |

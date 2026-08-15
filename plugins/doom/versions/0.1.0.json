@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "published_at": "2026-08-10T00:00:00Z",
   "staging": true,
-  "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — doom-v0.1.0 is a tag plugin-release.yml now accepts. What is left upstream: astra-plugin init-ci examples/doom, then push the tag. The GPL-2.0 engine build under an MIT listing is a separate blocker.",
+  "staging_reason": "AstraPlugins has published no *plugin* release: GET /repos/mihailinl/AstraPlugins/releases returns only cli-v0.2.1, the CLI. The tag-prefix blocker is gone — doom-v0.1.0 is a tag plugin-release.yml now accepts. What is left upstream: astra-plugin init-ci examples/doom, then push the tag. The GPL-2.0 engine build under an MIT listing is a separate blocker.",
   "release": {
     "kind": "github_release",
     "repo": "mihailinl/AstraPlugins",

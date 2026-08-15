@@ -80,6 +80,40 @@ The comment also states an SLA of 48 h from the moment it was posted. That
 number is declared in `bot/lib/policy.mjs` and is a commitment about the three
 blocking events only.
 
+### Step 2a — If the refusal is `E_OWNERSHIP_UNPROVEN`
+
+The most common refusal, and the one most likely to be aimed at you in a
+follow-up comment. **Do not work around it by publishing the listing by hand.**
+The fix is one commit in the author's repository, and the bot's comment already
+leads with it:
+
+```
+mkdir -p .well-known
+echo THEIR-GITHUB-LOGIN > .well-known/astra-plugin-owner
+```
+
+Then they comment `/recheck` on the same issue. Nothing needs reopening.
+
+| What the refusal says | What it means, and what you do |
+|---|---|
+| "there is no `.well-known/astra-plugin-owner` on that branch (HTTP 404)" | The ordinary case. The file has not been created, or it landed on a branch that is not the default one. Point at the two lines above. |
+| "the file is there but does not name you: it lists `…`" | A typo, a second account, or an organisation listing its release bot. The refusal prints what the file *does* contain, so compare it with the issue's author by eye. Adding a line and `/recheck` is the whole fix. |
+| "GitHub reports @x has `write` on …" | Not a visibility problem: GitHub answered directly, and the answer was that this account is not `admin` or `maintain`. The owner file does **not** override that, on purpose — it speaks where GitHub will not, it does not overrule GitHub where it will. Someone with `admin`/`maintain` opens the request, or grants the role. |
+| "the file could not be read (HTTP 403)" | Not a private repository — GitHub hides those, so a private one comes back **404** and lands in row 1. A 403 here is the repository being blocked, or a token that may not read it. |
+| "the bot ran out of GitHub API requests before it could read the file" | Rate limiting (403 with `x-ratelimit-remaining: 0`, or 429). Nothing was learnt about the file, so the refusal does **not** tell the author to commit one; it asks for a `/recheck`. If a run of submissions all say this, wait for the window to reset rather than answering them one by one. |
+| Any mention of a **403 or 404 from the collaborator** endpoint | You should never see this in a comment. It means the bot's token cannot see that repository's collaborator list — true of every repository this registry does not itself own, and evidence of nothing. If it is being reported to an author as a finding, that is a bug in `bot/lib/ownership.mjs`: it belongs in the audit trail (`tried`), never in the comment. An **answered** collaborator call is a different fact and belongs in the comment — that is row 3. |
+
+Two things worth knowing before you answer a question about it. The file proves
+**write access to the default branch**, not legal ownership — so "prove you own
+it" is not what is being asked, and saying so avoids an argument nobody here can
+settle. And it is read live on every run that consults it: an author handing a
+plugin over removes their login and adds the new one, and the next *listing
+request or `/recheck`* follows the file. It does not follow a release ping or
+the cron backstop — those prove the release against the account that published
+it (`resolveSubmitter`, `bot/lib/notify.mjs`), so the outgoing maintainer's own
+releases would still ingest. If someone asks you to cut a person off entirely,
+that is a repository-side question, not a file-side one.
+
 ### Step 3 — Decide, in one comment
 
 Read the `R_…` rows in the Publication table. They say exactly what is being

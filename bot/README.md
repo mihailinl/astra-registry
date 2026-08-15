@@ -94,10 +94,18 @@ judged by.
 1. **The allowlist**, out of a root-signed `trust.json`. First, not last: if
    there is no root, the bot has no basis for any conclusion and should not
    spend a stranger's bandwidth pretending otherwise.
-2. **Ownership.** `GET /repos/{o}/{r}/collaborators/{u}/permission` requiring
-   `admin` or `maintain`, then `.well-known/astra-plugin-owner` on the default
-   branch, then the account that published the release. `docs/BOT-CHECKS.md`
-   says what each one establishes and why a nonce challenge file is not the
+2. **Ownership.** `.well-known/astra-plugin-owner` on the default branch,
+   naming the submitter, is the proof — it is what the listing form asks for
+   before a run ever happens, and for a third-party repository it is the only
+   arm that can answer. `GET /repos/{o}/{r}/collaborators/{u}/permission` is
+   still tried first, as an opportunistic shortcut: GitHub answers it only for
+   a caller that can already see the repository, so it returns `403` (no
+   answer, never a denial) for everything this registry does not itself own.
+   When it *does* answer, that answer is final in both directions and the file
+   does not override it. The account that published the release is third and
+   covers the already-listed paths,
+   where `resolveSubmitter` makes it the submitter. `docs/BOT-CHECKS.md` says
+   what each one establishes and why a nonce challenge file is not the
    primary.
 3. **The release**, its `.astraplugin` assets, and that every URL sits under
    `github.com/<repo>/releases/download/<tag>/` — the same check a user's daemon

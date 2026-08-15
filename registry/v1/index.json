@@ -55,7 +55,7 @@
               "tag": "bad-apple-v0.1.0"
             },
             "staging": true,
-            "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so bad-apple-v0.1.0 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/bad-apple writes the caller workflow, then the tag is pushed.",
+            "staging_reason": "AstraPlugins has published no *plugin* release: GET /repos/mihailinl/AstraPlugins/releases returns only cli-v0.2.1, the CLI. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so bad-apple-v0.1.0 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/bad-apple writes the caller workflow, then the tag is pushed.",
             "version": "0.1.0"
           }
         ],
@@ -121,7 +121,7 @@
               "tag": "companion-cat-v0.1.4"
             },
             "staging": true,
-            "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so companion-cat-v0.1.4 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/companion-cat writes the caller workflow, then the tag is pushed.",
+            "staging_reason": "AstraPlugins has published no *plugin* release: GET /repos/mihailinl/AstraPlugins/releases returns only cli-v0.2.1, the CLI. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so companion-cat-v0.1.4 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/companion-cat writes the caller workflow, then the tag is pushed.",
             "version": "0.1.4"
           }
         ],
@@ -293,7 +293,7 @@
               "tag": "doom-v0.1.0"
             },
             "staging": true,
-            "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — doom-v0.1.0 is a tag plugin-release.yml now accepts. What is left upstream: astra-plugin init-ci examples/doom, then push the tag. The GPL-2.0 engine build under an MIT listing is a separate blocker.",
+            "staging_reason": "AstraPlugins has published no *plugin* release: GET /repos/mihailinl/AstraPlugins/releases returns only cli-v0.2.1, the CLI. The tag-prefix blocker is gone — doom-v0.1.0 is a tag plugin-release.yml now accepts. What is left upstream: astra-plugin init-ci examples/doom, then push the tag. The GPL-2.0 engine build under an MIT listing is a separate blocker.",
             "version": "0.1.0"
           }
         ],
@@ -358,7 +358,7 @@
               "tag": "echo-stt-v0.1.0"
             },
             "staging": true,
-            "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so echo-stt-v0.1.0 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/echo-stt writes the caller workflow, then the tag is pushed.",
+            "staging_reason": "AstraPlugins has published no *plugin* release: GET /repos/mihailinl/AstraPlugins/releases returns only cli-v0.2.1, the CLI. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so echo-stt-v0.1.0 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/echo-stt writes the caller workflow, then the tag is pushed.",
             "version": "0.1.0"
           }
         ],
@@ -423,7 +423,7 @@
               "tag": "json-tools-v0.1.1"
             },
             "staging": true,
-            "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so json-tools-v0.1.1 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/json-tools writes the caller workflow, then the tag is pushed.",
+            "staging_reason": "AstraPlugins has published no *plugin* release: GET /repos/mihailinl/AstraPlugins/releases returns only cli-v0.2.1, the CLI. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so json-tools-v0.1.1 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/json-tools writes the caller workflow, then the tag is pushed.",
             "version": "0.1.1"
           }
         ],
@@ -488,7 +488,7 @@
               "tag": "mock-stt-v0.1.0"
             },
             "staging": true,
-            "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so mock-stt-v0.1.0 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/mock-stt writes the caller workflow, then the tag is pushed.",
+            "staging_reason": "AstraPlugins has published no *plugin* release: GET /repos/mihailinl/AstraPlugins/releases returns only cli-v0.2.1, the CLI. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so mock-stt-v0.1.0 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/mock-stt writes the caller workflow, then the tag is pushed.",
             "version": "0.1.0"
           }
         ],
@@ -553,7 +553,7 @@
               "tag": "telegram-client-v0.1.0"
             },
             "staging": true,
-            "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so telegram-client-v0.1.0 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/telegram-client writes the caller workflow, then the tag is pushed.",
+            "staging_reason": "AstraPlugins has published no *plugin* release: GET /repos/mihailinl/AstraPlugins/releases returns only cli-v0.2.1, the CLI. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so telegram-client-v0.1.0 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/telegram-client writes the caller workflow, then the tag is pushed.",
             "version": "0.1.0"
           }
         ],
@@ -619,7 +619,7 @@
               "tag": "text-utils-v0.1.1"
             },
             "staging": true,
-            "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so text-utils-v0.1.1 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/text-utils writes the caller workflow, then the tag is pushed.",
+            "staging_reason": "AstraPlugins has published no *plugin* release: GET /repos/mihailinl/AstraPlugins/releases returns only cli-v0.2.1, the CLI. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so text-utils-v0.1.1 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/text-utils writes the caller workflow, then the tag is pushed.",
             "version": "0.1.1"
           }
         ],
@@ -684,7 +684,7 @@
               "tag": "tone-tts-v0.1.0"
             },
             "staging": true,
-            "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so tone-tts-v0.1.0 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/tone-tts writes the caller workflow, then the tag is pushed.",
+            "staging_reason": "AstraPlugins has published no *plugin* release: GET /repos/mihailinl/AstraPlugins/releases returns only cli-v0.2.1, the CLI. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so tone-tts-v0.1.0 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/tone-tts writes the caller workflow, then the tag is pushed.",
             "version": "0.1.0"
           }
         ],
@@ -750,7 +750,7 @@
               "tag": "web-chat-v0.1.0"
             },
             "staging": true,
-            "staging_reason": "AstraPlugins has published no release at all: GET /repos/mihailinl/AstraPlugins/releases returns []. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so web-chat-v0.1.0 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/web-chat writes the caller workflow, then the tag is pushed.",
+            "staging_reason": "AstraPlugins has published no *plugin* release: GET /repos/mihailinl/AstraPlugins/releases returns only cli-v0.2.1, the CLI. The tag-prefix blocker is gone — plugin-release.yml takes a tag-prefix input, so web-chat-v0.1.0 is a tag it now accepts. What is left is upstream and mechanical: astra-plugin init-ci examples/web-chat writes the caller workflow, then the tag is pushed.",
             "version": "0.1.0"
           }
         ],

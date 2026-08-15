@@ -45,14 +45,26 @@ export const CODES = {
   },
 
   // ── ownership ──────────────────────────────────────────────────────────────
+  // The remedy leads with the one thing to create, because for months this
+  // comment led with three failures and buried the fix in the fourth clause.
+  // Two of those three cannot fire for an honest first submission at all — see
+  // `bot/lib/ownership.mjs` — so a correct author was refused once by design.
   E_OWNERSHIP_UNPROVEN: {
     level: "error", stage: "ownership",
-    title: "You are not an admin or maintainer of that repository",
+    title: "The repository has not vouched for the account asking",
     remedy:
-      "Ask someone with admin or maintain on the repository to open this issue, or — if the " +
-      "collaborator list is private, which it is for many organisations — commit a file at " +
-      "`.well-known/astra-plugin-owner` on the default branch containing your GitHub login, " +
-      "one per line, and comment `/recheck`.",
+      "Commit `.well-known/astra-plugin-owner` on the repository's default branch with your " +
+      "GitHub login on a line of its own, then comment `/recheck`. One commit, no CI: " +
+      "`mkdir -p .well-known && echo YOUR-LOGIN > .well-known/astra-plugin-owner`. " +
+      "That file is the proof this registry asks for: it says somebody who can write to that " +
+      "branch vouches for this login — a proof of write access, not of legal ownership — and it " +
+      "is read live on every run, so deleting a line stops that login opening a new request " +
+      "or passing a `/recheck`. The bot also tries a free " +
+      "shortcut first (`GET /collaborators/{you}/permission`, which grants on `admin` or " +
+      "`maintain`), but GitHub answers that only for a caller that can already see the " +
+      "repository, so for any repository this registry does not itself own it is told nothing " +
+      "at all — a limit of the bot's token, not a finding about you, and not something you " +
+      "can install your way around.",
   },
 
   // ── the release and its assets ─────────────────────────────────────────────
