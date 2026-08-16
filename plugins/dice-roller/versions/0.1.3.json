@@ -1,0 +1,38 @@
+{
+  "$comment": "Derived from mihailinl/astra-dice-roller@v0.1.3. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: release-author.",
+  "schema": "astra.registry.version/1",
+  "id": "dice-roller",
+  "version": "0.1.3",
+  "published_at": "2026-08-16T13:17:09Z",
+  "release": {
+    "kind": "github_release",
+    "repo": "mihailinl/astra-dice-roller",
+    "tag": "v0.1.3",
+    "commit": "15852f735aed10002e06a2363b580df03bd62735"
+  },
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/mihailinl/astra-dice-roller/releases/download/v0.1.3/dice-roller-0.1.3-linux-x64.astraplugin",
+      "filename": "dice-roller-0.1.3-linux-x64.astraplugin",
+      "sha256": "c515dce80bbde17c0f6b8e92d0a1e2a0eaed9cbeffd8af9c528f13ff8e37d046",
+      "size": 2900913
+    },
+    "windows-x64": {
+      "url": "https://github.com/mihailinl/astra-dice-roller/releases/download/v0.1.3/dice-roller-0.1.3-windows-x64.astraplugin",
+      "filename": "dice-roller-0.1.3-windows-x64.astraplugin",
+      "sha256": "8df26cca0a71d8b47c8874fc657a58602f820850ba0bde8f46fc87862bd18fa8",
+      "size": 2464077
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "actions",
+    "tools",
+    "triggers"
+  ],
+  "permissions": {
+    "fire_trigger": {
+      "reason": "Fires the on_roll_value trigger so your commands can react to what you rolled"
+    }
+  }
+}

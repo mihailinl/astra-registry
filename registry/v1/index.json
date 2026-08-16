@@ -163,11 +163,46 @@
         "license": "MIT",
         "name": "Dice Roller",
         "platform_downloads": {
-          "linux-x64": "https://github.com/mihailinl/astra-dice-roller/releases/download/v0.1.2/dice-roller-0.1.2-linux-x64.astraplugin",
-          "windows-x64": "https://github.com/mihailinl/astra-dice-roller/releases/download/v0.1.2/dice-roller-0.1.2-windows-x64.astraplugin"
+          "linux-x64": "https://github.com/mihailinl/astra-dice-roller/releases/download/v0.1.3/dice-roller-0.1.3-linux-x64.astraplugin",
+          "windows-x64": "https://github.com/mihailinl/astra-dice-roller/releases/download/v0.1.3/dice-roller-0.1.3-windows-x64.astraplugin"
         },
         "readme": "# Dice Roller\n\nRoll dice and flip coins — in conversation, in a command, or as the thing that\nstarts a command.\n\n## What it does\n\nAsk Astra to *\"roll 3d6\"* and it rolls three six-sided dice and tells you the\nfaces and the total. Ask it to flip five coins and it flips five coins.\n\nBeyond conversation, it plugs into the command editor in two directions:\n\n- **A \"Roll Dice\" action** you can drop into any command. It takes dice notation\n  (`d20`, `3d6`, `4d10`) and can store the result in a variable that later steps\n  read. Counts are clamped to 1–100 dice with 2–1000 sides each, so a typo\n  cannot ask for a million rolls.\n- **A \"Dice Roll Value\" trigger** that fires once per die, carrying `value`,\n  `roll` and `sum`. Set it to `20` and you have a command that runs on a natural\n  20; set it to `1` and you have one that runs on a fumble. Leave the value\n  empty and it fires on every roll.\n\nThe randomness is a small xorshift seeded from the system clock. It is fine for\na d20 at the table and it is **not** suitable for anything where the outcome\nmatters — no cryptography, no money, no lottery.\n\n## What it needs\n\nNothing. No network, no files, no account, no configuration to get started. It\nis a single native binary that talks only to Astra.\n\n## Capabilities it asks for, and why\n\n| Capability | What it allows | Why this plugin asks |\n|---|---|---|\n| `tools` | Astra's assistant may call the plugin during a conversation | So *\"roll 2d6\"* works as a sentence rather than a menu |\n| `actions` | The plugin contributes steps to the command editor | The \"Roll Dice\" action |\n| `triggers` | The plugin can start your commands | The \"Dice Roll Value\" trigger |\n\nIt asks for nothing else. It does not read your conversations, does not run code\nin the Astra window, and does not open a socket.\n\nAs with every Astra plugin, the binary runs as a normal program with your user\naccount's privileges. The capability list above describes what Astra will *route\nto it*, not a sandbox.\n\n## Configuration\n\n| Setting | Default | Meaning |\n|---|---|---|\n| Default Dice Sides | `6` | Sides assumed when you say \"roll a die\" without naming a size |\n\n## Build it yourself\n\n```bash\ncargo build --release\nastra-plugin build            # produces dice-roller-<version>-<target>.astraplugin\n```\n\nTo develop against a running Astra:\n\n```bash\nastra-plugin dev .\n```\n\n## Files\n\n- `src/main.rs` — the whole plugin, about 250 lines. If you are writing your\n  first Astra plugin, read this one: it is the smallest complete example that\n  uses all three of tools, actions and triggers.\n- `icon.svg` — the store icon. Any of `icon.png`, `icon.webp`, `icon.svg`,\n  `icon.jpg` or `icon.ico` next to `plugin.toml` is packed into the bundle and\n  becomes the picture on this plugin's card.\n- `README.md` — this file. It is what Astra shows on the plugin's page, so it is\n  what somebody reads while deciding whether to install.\n\nMIT licensed.\n",
         "releases": [
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "dice-roller-0.1.3-linux-x64.astraplugin",
+                "sha256": "c515dce80bbde17c0f6b8e92d0a1e2a0eaed9cbeffd8af9c528f13ff8e37d046",
+                "size": 2900913,
+                "url": "https://github.com/mihailinl/astra-dice-roller/releases/download/v0.1.3/dice-roller-0.1.3-linux-x64.astraplugin"
+              },
+              "windows-x64": {
+                "filename": "dice-roller-0.1.3-windows-x64.astraplugin",
+                "sha256": "8df26cca0a71d8b47c8874fc657a58602f820850ba0bde8f46fc87862bd18fa8",
+                "size": 2464077,
+                "url": "https://github.com/mihailinl/astra-dice-roller/releases/download/v0.1.3/dice-roller-0.1.3-windows-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "actions",
+              "tools",
+              "triggers"
+            ],
+            "permissions": {
+              "fire_trigger": {
+                "reason": "Fires the on_roll_value trigger so your commands can react to what you rolled"
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-08-16T13:17:09Z",
+            "release": {
+              "commit": "15852f735aed10002e06a2363b580df03bd62735",
+              "kind": "github_release",
+              "repo": "mihailinl/astra-dice-roller",
+              "tag": "v0.1.3"
+            },
+            "version": "0.1.3"
+          },
           {
             "artifacts": {
               "linux-x64": {
@@ -239,8 +274,8 @@
           "repo": "mihailinl/astra-dice-roller"
         },
         "stars": 0,
-        "updated_at": "2026-08-12T01:46:14Z",
-        "version": "0.1.2"
+        "updated_at": "2026-08-16T13:17:09Z",
+        "version": "0.1.3"
       },
       {
         "added_at": "2026-08-10",
