@@ -49,6 +49,30 @@ jobs:
       # reason: the probe parses `plugin.toml` with the daemon's own crate, so
       # the tests are asserting the daemon's rules rather than a re-reading of
       # them.
+      # The pin is read OUT OF `ingest.yml` rather than repeated here. It is one
+      # decision — which commit of AstraPlugins states the manifest rules this
+      # bot enforces — and a second copy of it is a copy that goes stale without
+      # anything going red. `build-index.yml` reads it the same way and for the
+      # same reason; `link-deps.sh` refuses to clone without it, which is how
+      # this workflow found out.
+      - name: The AstraPlugins pin ingest.yml judges manifests by
+        id: pin
+        run: |
+          set -euo pipefail
+          ref=$(grep -oP '^\s*ASTRA_PLUGINS_REF:\s*\K[0-9a-f]+' .github/workflows/ingest.yml || true)
+          if ! [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::ASTRA_PLUGINS_REF is not a 40-hex commit in .github/workflows/ingest.yml: '$ref'"
+            exit 1
+          fi
+          url=$(grep -oP '^\s*ASTRA_PLUGINS_URL:\s*\K\S+' .github/workflows/ingest.yml || true)
+          if [ -z "$url" ]; then
+            echo "::error::ASTRA_PLUGINS_URL is not in .github/workflows/ingest.yml"
+            exit 1
+          fi
+          echo "ASTRA_PLUGINS_REF=$ref" >> "$GITHUB_ENV"
+          echo "ASTRA_PLUGINS_URL=$url" >> "$GITHUB_ENV"
+          echo "ok    judging manifests by $ref from $url"
+
       - name: Fetch the manifest crate the daemon uses
         run: |
           set -euo pipefail
