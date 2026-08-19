@@ -444,6 +444,137 @@
       },
       {
         "added_at": "2026-08-10",
+        "author": "Mihailin",
+        "capabilities": [
+          "dom_access",
+          "ui_contributions"
+        ],
+        "categories": [
+          "entertainment"
+        ],
+        "description": "Play DOOM (1993 shareware) inside Astra via js-dos",
+        "details": "Play DOOM (1993 shareware) inside Astra via js-dos",
+        "download_url": "",
+        "downloads": 0,
+        "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/doom",
+        "icon_url": "data:image/png;base64,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",
+        "id": "doom",
+        "keywords": [
+          "doom",
+          "freedoom",
+          "game",
+          "webassembly"
+        ],
+        "license": "MIT",
+        "name": "Doom",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.2/doom-0.1.2-linux-x64.astraplugin",
+          "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.2/doom-0.1.2-windows-x64.astraplugin"
+        },
+        "publisher": "mihailinl",
+        "readme": "# Doom\n\nA \"Doom\" page in Astra that runs the Chocolate Doom engine, compiled to\nWebAssembly, on the Freedoom data set.\n\n## What it does\n\nAdds a page to Astra's navigation. Open it and you are playing a first-person\nshooter inside your assistant. Keyboard input goes to the game while the page\nhas focus; the canvas scales to the window according to the setting below.\n\nEverything runs locally in the Astra window — the engine is a `.wasm` binary in\nthe bundle, and the game data is packed beside it. There is no server, no\nstreaming and no account.\n\n## What it needs\n\nNothing beyond Astra. Be aware of the size: the bundle is about **15 MB** to\ndownload and about **36 MB** on disk once installed — by far the largest example\nin this repository. (Measured on a `linux-x64` build; the compressed figure is\nwhat the store shows you before you click Install.)\n\n## Capabilities it asks for, and why\n\n| Capability | What it allows | Why this plugin asks |\n|---|---|---|\n| `ui_contributions` | The plugin may add its own surfaces to the Astra window | The \"Doom\" page |\n| `dom_access` | The plugin's JavaScript runs **inside the Astra window**, with access to the page: your conversations on screen, and every other plugin's interface | A WebAssembly game needs a canvas, an input loop and an audio context in that window |\n\n`dom_access` is high risk and Astra will say so before installing. The code it\ncovers here is `ui/doom.js` plus the Emscripten-generated\n`ui/chocolate-doom.js`, which loads `ui/chocolate-doom.wasm`. That generated file\nis machine output and is not realistically reviewable line by line — which is\nexactly the kind of thing worth knowing before you grant a plugin the run of\nyour window.\n\n## Configuration\n\n| Setting | Default | Meaning |\n|---|---|---|\n| Scale Mode | `fit` | `fit` (letterboxed), `stretch`, or `pixel-perfect` (integer scaling, sharpest) |\n\n## Licensing — read this before forking\n\nThe bundle contains two pieces of other people's work:\n\n- **Chocolate Doom**, the engine, is licensed **GPL-2.0**. `chocolate-doom.js`\n  and `chocolate-doom.wasm` are builds of it and carry that licence with them.\n- **Freedoom** supplies the game data (`doom1.wad` inside\n  `chocolate-doom.data`), under a **modified BSD** licence — freely\n  redistributable. No commercial DOOM WAD is included.\n\n`plugin.toml` currently declares `license = \"MIT\"`, which describes `src/` and\n`ui/doom.js` and **not** the engine build sitting next to them. A distributed\nbundle that mixes GPL-2.0 binaries under an MIT label is a licensing problem, not\na formatting one. This needs resolving before this example is published anywhere\nusers can install it.\n\n## Build it yourself\n\n```bash\ncd examples/doom\ncargo build --release\nastra-plugin build\n```\n\nThe engine and data are committed, so there is nothing to download first.\n\n## Files\n\n- `src/main.rs` — the backend: declares the page and serves its config.\n- `ui/doom.js` — the page: canvas, input, engine bootstrap.\n- `ui/chocolate-doom.{js,wasm,data}` — the engine build and Freedoom data.\n- `icon.svg` — the store icon, hand-drawn SVG.\n\nMIT licensed (`src/` and `ui/doom.js` — see the licensing section above).\n",
+        "releases": [
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "doom-0.1.2-linux-x64.astraplugin",
+                "sha256": "fc006318f9d0a4e7b38728f1eeb3b032f583c6fce314ba43f97d665a694bd23e",
+                "size": 16047899,
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.2/doom-0.1.2-linux-x64.astraplugin"
+              },
+              "windows-x64": {
+                "filename": "doom-0.1.2-windows-x64.astraplugin",
+                "sha256": "84f908477dd1fcc5cd90691bb7f922d3d7b78ec34ad7260257c1872f00ecc3d0",
+                "size": 15611154,
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.2/doom-0.1.2-windows-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "dom_access",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "dom_access": {
+                "reason": "Runs the js-dos emulator inside the Astra window, which is what playing DOOM in a panel requires"
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-08-19T13:33:19Z",
+            "release": {
+              "commit": "ff566e83f89133c182dec9eb7ae19d94f858f498",
+              "kind": "github_release",
+              "repo": "mihailinl/AstraPlugins",
+              "tag": "doom-v0.1.2"
+            },
+            "version": "0.1.2"
+          },
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "doom-0.1.1-linux-x64.astraplugin",
+                "sha256": "90bfffe757c5b879bcfb7c092f438ff95bba9f5db170e703208d3ca52dfa130f",
+                "size": 16044583,
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.1/doom-0.1.1-linux-x64.astraplugin"
+              },
+              "windows-x64": {
+                "filename": "doom-0.1.1-windows-x64.astraplugin",
+                "sha256": "cea7f51d67bd983274ff4313dbeb63a39b14fad3e29b70a33f166049d0fd569a",
+                "size": 15611035,
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.1/doom-0.1.1-windows-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "dom_access",
+              "ui_contributions"
+            ],
+            "protocol": 1,
+            "published_at": "2026-08-19T06:47:45Z",
+            "release": {
+              "commit": "5b5d2605961b54271b74304f6988972edb83d598",
+              "kind": "github_release",
+              "repo": "mihailinl/AstraPlugins",
+              "tag": "doom-v0.1.1"
+            },
+            "version": "0.1.1"
+          },
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "doom-0.1.0-linux-x64.astraplugin",
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.0/doom-0.1.0-linux-x64.astraplugin"
+              },
+              "windows-x64": {
+                "filename": "doom-0.1.0-windows-x64.astraplugin",
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.0/doom-0.1.0-windows-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "dom_access",
+              "ui_contributions"
+            ],
+            "protocol": 1,
+            "published_at": "2026-08-10T00:00:00Z",
+            "release": {
+              "kind": "github_release",
+              "repo": "mihailinl/AstraPlugins",
+              "tag": "doom-v0.1.0"
+            },
+            "staging": true,
+            "staging_reason": "AstraPlugins has published no *plugin* release: GET /repos/mihailinl/AstraPlugins/releases returns only cli-v0.2.1, the CLI. The tag-prefix blocker is gone — doom-v0.1.0 is a tag plugin-release.yml now accepts. What is left upstream: astra-plugin init-ci examples/doom, then push the tag. The GPL-2.0 engine build under an MIT listing is a separate blocker.",
+            "version": "0.1.0"
+          }
+        ],
+        "repository_url": "https://github.com/mihailinl/AstraPlugins",
+        "source": {
+          "kind": "github",
+          "repo": "mihailinl/AstraPlugins"
+        },
+        "stars": 0,
+        "updated_at": "2026-08-19T13:33:19Z",
+        "version": "0.1.2"
+      },
+      {
+        "added_at": "2026-08-10",
         "author": "Astra Team",
         "capabilities": [
           "actions",
@@ -778,6 +909,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 19
+    "serial": 20
   }
 }

@@ -25,6 +25,5 @@
     "webassembly",
     "freedoom"
   ],
-  "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/doom",
-  "unlisted": true
+  "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/doom"
 }
