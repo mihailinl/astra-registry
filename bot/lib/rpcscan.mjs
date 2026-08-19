@@ -229,6 +229,39 @@ export function classifyFile(name, bytes, opts = {}) {
  * @param {{capabilities: string[], permissions: object}} declared
  * @returns {{level: string, code: string, message: string}[]}
  */
+
+/**
+ * Does this JavaScript file embed the SDK's proto SERVICE DESCRIPTOR?
+ *
+ * If it does, every rpc name is in it and so is a call to every rpc, because
+ * the whole client got bundled. That is not a figure of speech: json-tools
+ * formats JSON and its bundle contains `"SendChatMessage": {…}` in the
+ * descriptor AND `.sendChatMessage(` twice, in the SDK's own wrapper. No
+ * textual test can separate "the SDK defines this" from "the plugin invokes
+ * it" once they are one file.
+ *
+ * So a bundle is worth exactly what a compiled binary is worth here, and this
+ * module already says what that is: a linked client carries the name of every
+ * method on the service, so the hit is RECORDED and not held against the
+ * author. Treating it as a confession made every TypeScript plugin
+ * unlistable — json-tools was refused for two rpcs its source never mentions,
+ * and so would have been every TypeScript plugin ever submitted.
+ *
+ * Testing for the descriptor rather than for `dist/` or for size is testing
+ * the actual reason the evidence is worthless.
+ *
+ * The check loses nothing that was protecting anybody: the daemon refuses an
+ * undeclared host rpc at `require_permission` whatever the manifest claims.
+ * This scan tells an author early; it was never the gate.
+ */
+const JS_EXT = /\.(?:js|cjs|mjs|jsx)$/i;
+const DESCRIPTOR_MARKS = ['"requestType"', '"responseType"', '"requestStream"'];
+
+function isBundledClient(fileName, text) {
+  if (!JS_EXT.test(String(fileName))) return false;
+  return DESCRIPTOR_MARKS.every((m) => text.includes(m));
+}
+
 export function scanHostRpcs(files, declared) {
   const capabilities = new Set(declared.capabilities ?? []);
   const permissions = new Set(Object.keys(declared.permissions ?? {}));
@@ -264,12 +297,24 @@ export function scanHostRpcs(files, declared) {
     for (const rpc of HOST_RPCS) {
       if (ALWAYS_ALLOWED.has(rpc)) continue;
       if (isDeclared(rpc)) continue;
-      // Both spellings the wire and the SDKs use: the method name as it appears
-      // in generated clients, and the snake_case wrapper every SDK exposes.
+      // THREE spellings, and the third was missing. The wire name as generated
+      // clients carry it; the snake_case wrapper Rust and Python expose; and
+      // the camelCase one the TypeScript SDK exposes — `ctx.host.sendChatMessage()`
+      // is how a TypeScript plugin actually calls this, and matching only the
+      // other two meant a TypeScript plugin's own source could name an
+      // undeclared rpc and pass. The bundle matched anyway, on the descriptor,
+      // which is how the gap stayed hidden: the check looked right because it
+      // was firing, on the wrong evidence.
       const snake = rpc.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
-      if (!text.includes(rpc) && !text.includes(snake)) continue;
+      const camel = rpc.charAt(0).toLowerCase() + rpc.slice(1);
+      if (!text.includes(rpc) && !text.includes(snake) && !text.includes(camel)) continue;
       if (!hits.has(rpc)) hits.set(rpc, { source: [], opaque: [], weak: [] });
-      const bucket = kind === "opaque" ? "opaque" : kind === "weak-vendor" ? "weak" : "source";
+      const bucket =
+        kind === "opaque" || isBundledClient(f.name, text)
+          ? "opaque"
+          : kind === "weak-vendor"
+            ? "weak"
+            : "source";
       hits.get(rpc)[bucket].push(f.name);
     }
   }
