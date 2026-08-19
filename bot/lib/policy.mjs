@@ -1087,6 +1087,12 @@ export function renderPolicySection(decision, derived) {
       `/approve ${decision.repo}@${decision.tag} ${decision.fingerprint}`,
       "```",
       "",
+      "**Or clear it and publish immediately, without the delay:**",
+      "",
+      "```",
+      `/publish ${decision.repo}@${decision.tag} ${decision.fingerprint}`,
+      "```",
+      "",
       `\`${decision.fingerprint}\` names this submission: the repository, the tag, \`${id} ${version}\`, ` +
       `and the ${decision.artifact_digests.length || "no"} artifact digest(s) hashed in this run. ` +
       "If the release changes before the line is typed, the approval is refused and this comment is " +
@@ -1153,6 +1159,25 @@ export function renderPolicySection(decision, derived) {
         "and it is the only defence this registry has against a compromised author account (PRODUCTION_PLAN §5.5).</sub>",
       "",
     );
+    // The line a maintainer needs at the moment they decide not to wait. It was
+    // absent, and the waiver was documented as "edit publish_after" — a commit,
+    // from a machine with a checkout. Somebody reading this comment on a phone
+    // had to know a command existed, and then guess its arguments from the
+    // `/approve` line above. A command nobody can find is half a command.
+    if (decision.repo && decision.tag && decision.fingerprint) {
+      lines.push(
+        "**A maintainer publishes it now with exactly this line:**",
+        "",
+        "```",
+        `/publish ${decision.repo}@${decision.tag} ${decision.fingerprint}`,
+        "```",
+        "",
+        "<sub>It waives the wait and nothing else — every check above runs again, from scratch, " +
+        "before anything is published, and the shortened window is recorded here where the author " +
+        "reads it.</sub>",
+        "",
+      );
+    }
   }
   lines.push(`<sub>Why this outcome and not another: \`docs/POLICY.md\`. The rules are ${HIGH_RISK.length} high-risk names, ${REVIEW_SLA_HOURS} h for the three events that need a person, and ${DELAY_HOURS} h (${TRUSTED_DELAY_HOURS} h after ${CLEAN_RELEASES_FOR_TRUSTED} clean releases) for everything else that is not routine.</sub>`);
   return lines.join("\n");

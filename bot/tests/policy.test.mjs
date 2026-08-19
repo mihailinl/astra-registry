@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 
 import { decideRelease, writeOutputs } from "../decide.mjs";
 import { DEFAULT_SIGNER_WORKFLOW } from "../ingest.mjs";
+import { parseMaintainerCommand } from "../lib/intake.mjs";
 import {
   CLEAN_RELEASES_FOR_TRUSTED,
   DELAY_HOURS,
@@ -308,6 +309,45 @@ await test("/publish does not stand in for an approval", async () => {
   assert(codes(r).includes("R_FIRST_LISTING"), JSON.stringify(codes(r)));
   assert(!codes(r).includes("P_DELAY_WAIVED_BY_COMMAND"),
     "a waiver nobody approved must not appear");
+});
+
+// An instruction is checked by RUNNING it, not by reading it. Both lines the
+// bot prints are fed back to the parser that will receive them, so a comment
+// that tells a maintainer to type something the bot cannot understand fails
+// here rather than in front of them.
+await test("the lines the bot prints are lines the bot accepts", async () => {
+  const held = await run({ root: registryTree([{ id: "something-else" }]) });
+  assertEqual(held.decision.outcome, "review", JSON.stringify(codes(held)));
+
+  for (const verb of ["approve", "publish"]) {
+    const line = new RegExp(`^/${verb} \\S+@\\S+ [0-9a-f]{16}$`, "m").exec(held.comment);
+    assert(line, `the hold comment offers no ready-made /${verb} line:\n${held.comment.slice(0, 400)}`);
+    const parsed = parseMaintainerCommand(line[0]);
+    assert(parsed, `/${verb} line does not parse: ${line[0]}`);
+    assertEqual(parsed.command, verb, line[0]);
+    assertEqual(parsed.fingerprint, held.decision.fingerprint, "and it names this submission");
+    assertEqual(parsed.repo, held.decision.repo, line[0]);
+    assertEqual(parsed.tag, held.decision.tag, line[0]);
+  }
+});
+
+// The state our owner was in: approved, waiting, and no command in front of
+// them. The waiver was documented as editing a file from a machine with a
+// checkout.
+await test("a delayed release offers the line that publishes it now", async () => {
+  const tree = registryTree([{ versions: [{ version: "0.1.0", capabilities: ["tools", "client"] }] }]);
+  const first = await run({ root: tree, assets: [conforming({ capabilities: ["tools", "client"] })] });
+  const delayed = await run({
+    root: tree, assets: [conforming({ capabilities: ["tools", "client"] })],
+    approvedBy: "maint", approvedAt: NOW.toISOString(), approvedFor: first.decision.fingerprint,
+  });
+  assertEqual(delayed.decision.outcome, "delay", JSON.stringify(codes(delayed)));
+
+  const line = /^\/publish \S+@\S+ [0-9a-f]{16}$/m.exec(delayed.comment);
+  assert(line, `a waiting release offers no /publish line:\n${delayed.comment.slice(-600)}`);
+  const parsed = parseMaintainerCommand(line[0]);
+  assertEqual(parsed?.command, "publish", line[0]);
+  assertEqual(parsed?.fingerprint, delayed.decision.fingerprint, "bound to these bytes");
 });
 
 section("the three events that block on a person, and nothing else");
