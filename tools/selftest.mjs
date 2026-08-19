@@ -395,7 +395,26 @@ await test("the bootstrap listing is accepted, loudly, WITH --allow-staging", as
 await test("no staging entry offers a download URL to a digest-blind client", () => {
   const doc = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "registry/v1/index.json"), "utf8"));
   const staged = doc.signed.plugins.filter((p) => p.staging === true);
-  assert(staged.length >= 1, "no staging entry in the index, so this test proves nothing");
+
+  // Derived from the SOURCES, not asserted as a constant. This used to demand
+  // `staged.length >= 1` so the leak check below could not pass over an empty
+  // set — a good instinct that could not tell two different things apart: a
+  // scraper that broke, and a catalogue that legitimately ran out of staging
+  // entries. The second happened. Every placeholder now has a real release
+  // behind it, which is the state this registry was working towards, and the
+  // floor turned that into a red build.
+  //
+  // So the expectation comes from what the sources actually contain. If a
+  // version marked `staging` exists on disk, the index must carry it and the
+  // check below has something to check; if none does, the index must carry
+  // none. That is an exact correspondence rather than a threshold, and it
+  // cannot be satisfied by a broken walk in either direction.
+  const stagingInSources = loadSources(REPO_ROOT).plugins.filter(
+    (p) => p.doc?.unlisted !== true && (p.versions ?? []).some((v) => v.doc?.staging === true && v.doc?.yanked !== true),
+  ).length;
+  assert(staged.length > 0 === stagingInSources > 0,
+    `the sources describe ${stagingInSources} plugin(s) with a staging version and the index carries ${staged.length}`);
+
   // Checked across every staging entry, not one named one: the compatibility
   // fields are exactly what a client that cannot read releases[] would follow,
   // and one leaky entry is one unverifiable download.
