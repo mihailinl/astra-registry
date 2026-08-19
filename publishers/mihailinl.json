@@ -2,7 +2,7 @@
   "$comment": "Hand-written and hand-reviewed. Never derived from a bundle — see schema/publisher-v1.json for why the plugin's own `author` string cannot carry this.",
   "schema": "astra.registry.publisher/1",
   "owner": "mihailinl",
-  "display_name": "Astra Team",
+  "display_name": "Mihailin",
   "tier": "official",
   "verified_at": "2026-08-19",
   "evidence": {

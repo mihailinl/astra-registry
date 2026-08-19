@@ -1,0 +1,12 @@
+{
+  "$comment": "Hand-written and hand-reviewed. NOTE the two spellings: the GitHub login is `KnlCE` with a lowercase L as its third character, while the name shown to people is `KNICE` with a capital i. They are different strings that look alike, which is exactly why display_name is reviewed here rather than read off a GitHub profile — a profile name can be changed by its owner at any time, and what Astra shows must not move with it.",
+  "schema": "astra.registry.publisher/1",
+  "owner": "KnlCE",
+  "display_name": "KNICE",
+  "tier": "official",
+  "verified_at": "2026-08-19",
+  "evidence": {
+    "kind": "first-party",
+    "note": "Astra team. The claim is this file in this repository, so re-checking it is reading a reviewed commit rather than trusting a record."
+  }
+}
