@@ -1,0 +1,36 @@
+{
+  "$comment": "Derived from mihailinl/AstraPlugins@telegram-client-v0.1.2. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: release-author.",
+  "schema": "astra.registry.version/1",
+  "id": "telegram-client",
+  "version": "0.1.2",
+  "published_at": "2026-08-19T13:36:21Z",
+  "release": {
+    "kind": "github_release",
+    "repo": "mihailinl/AstraPlugins",
+    "tag": "telegram-client-v0.1.2",
+    "commit": "ff566e83f89133c182dec9eb7ae19d94f858f498"
+  },
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.1.2/telegram-client-0.1.2-linux-x64.astraplugin",
+      "filename": "telegram-client-0.1.2-linux-x64.astraplugin",
+      "sha256": "11592cbf995dfc8c664ac8649720500a09f6678a57ddb052459f549589de6107",
+      "size": 7154211
+    },
+    "windows-x64": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.1.2/telegram-client-0.1.2-windows-x64.astraplugin",
+      "filename": "telegram-client-0.1.2-windows-x64.astraplugin",
+      "sha256": "16797dbe712530b184dca46029fce0e9cf9eca31049c12cc62cde1b822d315e7",
+      "size": 6195645
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "client"
+  ],
+  "permissions": {
+    "client": {
+      "reason": "Bridges Telegram topics to Astra conversations, which means holding a client session with the daemon"
+    }
+  }
+}

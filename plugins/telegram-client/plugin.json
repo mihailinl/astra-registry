@@ -1,5 +1,5 @@
 {
-  "$comment": "Derived from mihailinl/AstraPlugins@telegram-client-v0.1.1 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
+  "$comment": "Derived from mihailinl/AstraPlugins@telegram-client-v0.1.2 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
   "schema": "astra.registry.plugin/1",
   "id": "telegram-client",
   "name": "Telegram Bot",
@@ -12,7 +12,7 @@
   "added_at": "2026-08-10",
   "description": "Bridge Telegram bot topics to Astra conversations with full sync and streaming",
   "author": {
-    "name": "Astra Team"
+    "name": "Mihailin"
   },
   "icon": "icon.svg",
   "readme": "README.md",
