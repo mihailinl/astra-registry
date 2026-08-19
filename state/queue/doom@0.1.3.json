@@ -6,7 +6,7 @@
   "tag": "doom-v0.1.3",
   "submitter": "github-actions[bot]",
   "queued_at": "2026-08-19T15:00:26Z",
-  "publish_after": "2026-08-19T21:00:26Z",
+  "publish_after": "2026-08-19T15:01:22Z",
   "delay_hours": 6,
   "reason": "P_DELAY_HIGH_RISK",
   "artifact_digests": [
