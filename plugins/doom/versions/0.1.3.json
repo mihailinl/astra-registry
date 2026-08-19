@@ -1,0 +1,37 @@
+{
+  "$comment": "Derived from mihailinl/AstraPlugins@doom-v0.1.3. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: release-author.",
+  "schema": "astra.registry.version/1",
+  "id": "doom",
+  "version": "0.1.3",
+  "published_at": "2026-08-19T14:58:06Z",
+  "release": {
+    "kind": "github_release",
+    "repo": "mihailinl/AstraPlugins",
+    "tag": "doom-v0.1.3",
+    "commit": "e12b9e301a43bf5729c283d6179f012d32051a20"
+  },
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.3/doom-0.1.3-linux-x64.astraplugin",
+      "filename": "doom-0.1.3-linux-x64.astraplugin",
+      "sha256": "b97b081e5d5b68c92460bb87056a3c4480248d93f561f33287a7fd63d472d911",
+      "size": 16048451
+    },
+    "windows-x64": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.3/doom-0.1.3-windows-x64.astraplugin",
+      "filename": "doom-0.1.3-windows-x64.astraplugin",
+      "sha256": "bbd51da258b5281a51f2df5391b7dfa5aa527493ce803cd4cbbda558b2bd53bb",
+      "size": 15612004
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "dom_access",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "dom_access": {
+      "reason": "Runs the js-dos emulator inside the Astra window, which is what playing DOOM in a panel requires"
+    }
+  }
+}

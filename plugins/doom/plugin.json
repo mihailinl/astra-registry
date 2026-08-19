@@ -1,10 +1,10 @@
 {
-  "$comment": "Derived from mihailinl/AstraPlugins@doom-v0.1.2 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
+  "$comment": "Derived from mihailinl/AstraPlugins@doom-v0.1.3 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
   "schema": "astra.registry.plugin/1",
   "id": "doom",
   "name": "Doom",
   "summary": "Play DOOM (1993 shareware) inside Astra via js-dos",
-  "license": "MIT",
+  "license": "GPL-2.0-or-later",
   "source": {
     "kind": "github",
     "repo": "mihailinl/AstraPlugins"
