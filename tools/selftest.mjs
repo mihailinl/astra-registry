@@ -390,30 +390,56 @@ await test("every staging listing is REJECTED without --allow-staging", async ()
 await test("the bootstrap listing is accepted, loudly, WITH --allow-staging", async () => {
   const { report } = await runValidation({ root: REPO_ROOT, allowStaging: true, online: false, artifactsDir: null, index: true });
   assert(report.errors.length === 0, report.errors.map((e) => `${e.where}: ${e.message}`).join("\n"));
-  assert(report.warnings.some((w) => w.message.includes("accepted as staging")), "it passed silently");
+
+  // "Loudly" is only a claim when there is something to be loud ABOUT, and this
+  // catalogue has now run out: every placeholder has a real release behind it.
+  // Demanding the warning unconditionally made the arrival of that state a
+  // failing test — the same shape as the floor below, one test over, and worth
+  // fixing here rather than after it turns a publish red for the second time.
+  //
+  // Read off the tree rather than assumed, so if a staging version is ever
+  // added again the assertion comes back on its own.
+  const anyStaging = loadSources(REPO_ROOT).plugins.some(
+    (p) => p.doc?.unlisted !== true && (p.versions ?? []).some((v) => v.doc?.staging === true && v.doc?.yanked !== true),
+  );
+  if (anyStaging) {
+    assert(report.warnings.some((w) => w.message.includes("accepted as staging")), "it passed silently");
+  }
 });
 await test("no staging entry offers a download URL to a digest-blind client", () => {
   const doc = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "registry/v1/index.json"), "utf8"));
   const staged = doc.signed.plugins.filter((p) => p.staging === true);
 
-  // Derived from the SOURCES, not asserted as a constant. This used to demand
-  // `staged.length >= 1` so the leak check below could not pass over an empty
-  // set — a good instinct that could not tell two different things apart: a
-  // scraper that broke, and a catalogue that legitimately ran out of staging
-  // entries. The second happened. Every placeholder now has a real release
-  // behind it, which is the state this registry was working towards, and the
-  // floor turned that into a red build.
+  // Per entry, and exact. This used to demand `staged.length >= 1` so the leak
+  // check below could not pass over an empty set — a good instinct that could
+  // not tell two things apart: a scraper that broke, and a catalogue that
+  // legitimately ran out of staging entries. The second happened, the moment
+  // the last placeholder got a real release, and the floor turned the thing it
+  // was working towards into a red build.
   //
-  // So the expectation comes from what the sources actually contain. If a
-  // version marked `staging` exists on disk, the index must carry it and the
-  // check below has something to check; if none does, the index must carry
-  // none. That is an exact correspondence rather than a threshold, and it
-  // cannot be satisfied by a broken walk in either direction.
-  const stagingInSources = loadSources(REPO_ROOT).plugins.filter(
-    (p) => p.doc?.unlisted !== true && (p.versions ?? []).some((v) => v.doc?.staging === true && v.doc?.yanked !== true),
-  ).length;
-  assert(staged.length > 0 === stagingInSources > 0,
-    `the sources describe ${stagingInSources} plugin(s) with a staging version and the index carries ${staged.length}`);
+  // My first repair compared "are there staging versions in the sources" with
+  // "are there staging entries in the index" and was wrong for a reason worth
+  // keeping: an old staging version stays on disk forever, while the index
+  // reflects only the NEWEST release. So the two counts legitimately disagree
+  // and the assertion failed on a correct tree.
+  //
+  // The honest statement is per plugin: an entry is `staging` exactly when its
+  // own newest listed version is. That cannot be satisfied by a broken walk in
+  // either direction, and it needs no threshold.
+  const newestIsStaging = new Map();
+  for (const p of loadSources(REPO_ROOT).plugins) {
+    if (p.doc?.unlisted === true) continue;
+    const live = (p.versions ?? []).map((v) => v.doc).filter((d) => d && d.yanked !== true);
+    if (!live.length) continue;
+    const newest = live.slice().sort((a, b) => compareSemver(a.version, b.version)).at(-1);
+    newestIsStaging.set(p.doc.id, newest.staging === true);
+  }
+  for (const entry of doc.signed.plugins) {
+    const want = newestIsStaging.get(entry.id);
+    assert(want !== undefined, `${entry.id} is in the index and not in the sources`);
+    assert((entry.staging === true) === want,
+      `${entry.id}: the index says staging=${entry.staging === true} and its newest version says ${want}`);
+  }
 
   // Checked across every staging entry, not one named one: the compatibility
   // fields are exactly what a client that cannot read releases[] would follow,
