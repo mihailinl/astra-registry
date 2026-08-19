@@ -1,6 +1,6 @@
 {
   "$comment": "What the release backstop last saw, per listed repository (PRODUCTION_PLAN task 3.4). Cache only: deleting this file costs one full poll of every listing and nothing else. `etag` is fed back as If-None-Match so an unchanged repository costs a 304.",
-  "updated_at": "2026-08-18T06:00:27Z",
+  "updated_at": "2026-08-19T06:01:38Z",
   "repos": {
     "mihailinl/astraplugins": {
       "last_checked": "2026-08-17T06:04:24Z",
