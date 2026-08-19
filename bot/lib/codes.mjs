@@ -136,6 +136,16 @@ export const CODES = {
     title: "The attestation does not verify",
     remedy: "Re-run the release workflow. Do not re-upload the asset by hand — the attestation covers the exact bytes, and hand-uploading is how they stop matching.",
   },
+  E_ATTESTATION_UNCHECKED: {
+    level: "error", stage: "attestation",
+    title: "The attestation could not be checked — this is not about your release",
+    remedy:
+      "Nothing to fix and nothing to rebuild: the verifier could not start. `gh attestation verify` " +
+      "fetches Sigstore's trust root before it can check anything, and when that fetch fails it " +
+      "reports a failure that reads like a bad signature. Comment `/recheck` — the same bytes usually " +
+      "verify on the next run. It still blocks, because an artifact nobody could verify must not be " +
+      "listed; it blocks as \"we could not look\", not as \"we looked and it was wrong\".",
+  },
   E_ATTESTATION_SUBJECT_MISMATCH: {
     level: "error", stage: "attestation",
     title: "The attestation is for different bytes",

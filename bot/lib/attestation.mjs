@@ -189,9 +189,23 @@ export async function verifyAttestation(opts) {
     // "no attestations found" is a different answer from "the attestation is
     // wrong", and an author fixes them differently.
     const missing = /no attestation|could not find any attestations|404/i.test(text);
+    // "The verifier could not start" is not "the bytes are wrong", and telling
+    // an author the second when the first happened sends them to rebuild a
+    // release that was never broken. Seen in the wild: `gh` failed with
+    // "public good verifier is not available (initialization…)" — it could not
+    // fetch Sigstore's trust root — and the same bundle verified from another
+    // machine, unchanged, minutes later.
+    //
+    // Still blocking, because an unverified artifact must not be listed. What
+    // changes is what it says and who it points at: retry, not rebuild.
+    const unavailable = /verifier is not available|initializ|trust(ed)? root|tuf|timeout|timed out|connection|network|temporar/i.test(text);
     findings.push({
       level: "error",
-      code: missing ? "E_ATTESTATION_MISSING" : "E_ATTESTATION_INVALID",
+      code: missing
+        ? "E_ATTESTATION_MISSING"
+        : unavailable
+          ? "E_ATTESTATION_UNCHECKED"
+          : "E_ATTESTATION_INVALID",
       message: `gh attestation verify --repo ${repo} --signer-workflow ${signerWorkflow}: ${text.trim().split("\n")[0] || "failed"}`,
     });
     return { findings, facts: null };
