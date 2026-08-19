@@ -6,7 +6,7 @@
   "tag": "companion-cat-v0.1.6",
   "submitter": "github-actions[bot]",
   "queued_at": "2026-08-19T14:08:46Z",
-  "publish_after": "2026-08-19T20:08:46Z",
+  "publish_after": "2026-08-19T14:13:23Z",
   "delay_hours": 6,
   "reason": "P_DELAY_HIGH_RISK",
   "artifact_digests": [
