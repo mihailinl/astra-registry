@@ -1,0 +1,31 @@
+{
+  "$comment": "Derived from mihailinl/AstraPlugins@telegram-client-v0.1.1. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: release-author.",
+  "schema": "astra.registry.version/1",
+  "id": "telegram-client",
+  "version": "0.1.1",
+  "published_at": "2026-08-19T09:05:43Z",
+  "release": {
+    "kind": "github_release",
+    "repo": "mihailinl/AstraPlugins",
+    "tag": "telegram-client-v0.1.1",
+    "commit": "f80f4f8d775a4188746d11c5efe781d5ac2c10c5"
+  },
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.1.1/telegram-client-0.1.1-linux-x64.astraplugin",
+      "filename": "telegram-client-0.1.1-linux-x64.astraplugin",
+      "sha256": "bec29c47981526b372f7c2814a38b23e35efc8ba0521399382a748009598af2f",
+      "size": 7149651
+    },
+    "windows-x64": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.1.1/telegram-client-0.1.1-windows-x64.astraplugin",
+      "filename": "telegram-client-0.1.1-windows-x64.astraplugin",
+      "sha256": "8ca141797b96e9125ab8358a33bc2e32802c7b97097417107dee2e32d8b4800e",
+      "size": 6194912
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "client"
+  ]
+}

@@ -506,15 +506,14 @@
       {
         "added_at": "2026-08-10",
         "author": "Astra Team",
-        "author_url": "https://github.com/mihailinl",
         "capabilities": [
           "client"
         ],
         "categories": [
           "communication"
         ],
-        "description": "Talk to Astra from Telegram: one forum topic per conversation, synced both ways.",
-        "details": "Bridges a Telegram bot to Astra as a full chat client. /new creates a forum topic and a matching Astra conversation, /list links an existing one, and any message in a linked topic reaches Astra as if you had typed it in the app, with the reply streaming back as it is generated. Sync runs in both directions. Needs a bot token from @BotFather, a Telegram group with Topics enabled and the bot as an administrator, and outbound access to api.telegram.org. Read this part twice: installing it means your Astra conversations are relayed to Telegram, and leaving the allowed-usernames setting empty means anyone who can reach the bot can talk to your Astra.",
+        "description": "Bridge Telegram bot topics to Astra conversations with full sync and streaming",
+        "details": "Bridge Telegram bot topics to Astra conversations with full sync and streaming",
         "download_url": "",
         "downloads": 0,
         "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/telegram-client",
@@ -529,9 +528,41 @@
         ],
         "license": "MIT",
         "name": "Telegram Bot",
-        "platform_downloads": {},
+        "platform_downloads": {
+          "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.1.1/telegram-client-0.1.1-linux-x64.astraplugin",
+          "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.1.1/telegram-client-0.1.1-windows-x64.astraplugin"
+        },
         "publisher": "mihailinl",
+        "readme": "# Telegram Bot\n\nTalk to Astra from Telegram. Each conversation becomes a topic in a Telegram\nforum group, and both sides stay in sync.\n\n## What it does\n\nBridges a Telegram bot to Astra as a full chat client:\n\n- **`/new [title]`** creates a forum topic and a matching Astra conversation.\n- **`/list`** shows Astra conversations that are not linked to a topic yet and\n  links the one you pick.\n- Any message you send in a linked topic goes to Astra as if you had typed it in\n  the app, and the reply streams back into the topic as it is generated.\n- Sync runs both ways: a conversation you continue in the Astra window appears in\n  its Telegram topic, and vice versa.\n\nThe interface is translated — English and Russian ship with it, following\nAstra's language setting.\n\n## What it needs\n\n1. **A Telegram bot token.** Talk to [@BotFather](https://t.me/BotFather),\n   create a bot, copy the token into the plugin's settings.\n2. **A Telegram group with Topics enabled**, with your bot added as an\n   administrator. Topics are how conversations are kept apart; a plain group\n   will not work.\n3. **Outbound network access** to `api.telegram.org`.\n\nOptionally set **Allowed Usernames** to a comma-separated list of Telegram\nusernames (no `@`). Leave it empty and *anyone who can reach the bot can talk to\nyour Astra* — including anyone who is added to the group later. Setting it is\nthe difference between a personal bridge and an open door.\n\n## Capabilities it asks for, and why\n\n| Capability | What it allows | Why this plugin asks |\n|---|---|---|\n| `client` | The plugin acts as a full chat client: it may read your conversations, create new ones, submit messages as you, and subscribe to the live event stream | That *is* the feature — a bridge that could not read and write your conversations would not be a bridge |\n\n`client` is a high-risk capability and Astra will say so before installing. Be\nconcrete about what installing this means: **your Astra conversations are\nrelayed to Telegram**, therefore to Telegram's servers, therefore to anyone with\naccess to that group. That is the intended behaviour and it is not reversible\nfor messages already sent.\n\nThe bot token is stored in the plugin's configuration, and the topic-to-\nconversation mapping is written to a `state.json` beside the plugin binary in\nAstra's plugin directory.\n\n## Configuration\n\n| Setting | Required | Meaning |\n|---|---|---|\n| Bot Token | yes | The token from @BotFather |\n| Allowed Usernames | no, but read the warning above | Comma-separated Telegram usernames permitted to use the bot. Empty means everyone |\n\n## Build it yourself\n\n```bash\ncd examples/telegram-client\ncargo build --release\nastra-plugin build\n```\n\n## Files\n\n- `src/main.rs` — lifecycle, config, and starting/stopping the poll loop.\n- `src/telegram.rs` — the Bot API client.\n- `src/bot.rs`, `src/commands.rs` — update handling and the two commands.\n- `src/sync.rs` — the firehose: Astra events to Telegram, streamed.\n- `src/state.rs` — the topic mapping, persisted.\n- `locales/` — English and Russian.\n- `icon.svg` — the store icon, hand-drawn SVG.\n\nMIT licensed.\n",
         "releases": [
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "telegram-client-0.1.1-linux-x64.astraplugin",
+                "sha256": "bec29c47981526b372f7c2814a38b23e35efc8ba0521399382a748009598af2f",
+                "size": 7149651,
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.1.1/telegram-client-0.1.1-linux-x64.astraplugin"
+              },
+              "windows-x64": {
+                "filename": "telegram-client-0.1.1-windows-x64.astraplugin",
+                "sha256": "8ca141797b96e9125ab8358a33bc2e32802c7b97097417107dee2e32d8b4800e",
+                "size": 6194912,
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.1.1/telegram-client-0.1.1-windows-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "client"
+            ],
+            "protocol": 1,
+            "published_at": "2026-08-19T09:05:43Z",
+            "release": {
+              "commit": "f80f4f8d775a4188746d11c5efe781d5ac2c10c5",
+              "kind": "github_release",
+              "repo": "mihailinl/AstraPlugins",
+              "tag": "telegram-client-v0.1.1"
+            },
+            "version": "0.1.1"
+          },
           {
             "artifacts": {
               "linux-x64": {
@@ -561,13 +592,11 @@
         "repository_url": "https://github.com/mihailinl/AstraPlugins",
         "source": {
           "kind": "github",
-          "repo": "mihailinl/AstraPlugins",
-          "subdirectory": "examples/telegram-client"
+          "repo": "mihailinl/AstraPlugins"
         },
-        "staging": true,
         "stars": 0,
-        "updated_at": "2026-08-10T00:00:00Z",
-        "version": "0.1.0"
+        "updated_at": "2026-08-19T09:05:43Z",
+        "version": "0.1.1"
       },
       {
         "added_at": "2026-08-10",
@@ -677,6 +706,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 10
+    "serial": 12
   }
 }
