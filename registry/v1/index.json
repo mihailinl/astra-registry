@@ -572,7 +572,6 @@
       {
         "added_at": "2026-08-10",
         "author": "Astra Team",
-        "author_url": "https://github.com/mihailinl",
         "capabilities": [
           "actions",
           "tools",
@@ -582,9 +581,9 @@
           "productivity",
           "utilities"
         ],
-        "description": "Word counts, case conversion, regex matching, and a scheduled trigger.",
-        "details": "Counts words, characters and lines; converts case between upper, lower, title, snake and camel; runs a regular expression over text and returns every match. Adds a Transform Text action to the command editor (including Base64 encode and decode) and a Scheduled Time trigger that fires when the machine's local clock reaches a time you name — while Astra is running, so it is not a cron replacement. Requires Python 3.10 or newer on the machine running Astra.",
-        "download_url": "",
+        "description": "Word count, case conversion, regex matching — with actions and triggers",
+        "details": "Word count, case conversion, regex matching — with actions and triggers",
+        "download_url": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.2/text-utils-0.1.2-noarch.astraplugin",
         "downloads": 0,
         "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/text-utils",
         "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2IiB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgcm9sZT0iaW1nIiBhcmlhLWxhYmVsPSJUZXh0IFV0aWxzIj4KICA8dGl0bGU+VGV4dCBVdGlsczwvdGl0bGU+CiAgPCEtLSBNb25vbGluZTogYSBwYWdlIG9mIHRleHQgd2l0aCBvbmUgbGluZSBwaWNrZWQgb3V0LCBhbmQgdGhlIGNsb2NrIHRoYXQKICAgICAgIGZpcmVzIG9uIGEgc2NoZWR1bGUuIFBsYWluIHN0YXRpYyBtYXJrdXA6IG5vIHNjcmlwdCwgbm8gZXh0ZXJuYWwKICAgICAgIHJlZmVyZW5jZXMsIG5vIGVtYmVkZGVkIGZvbnRzLiAtLT4KCiAgPGcgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjOTRhM2I4IiBzdHJva2Utd2lkdGg9IjEzIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPgogICAgPHBhdGggZD0iTTQwIDI4IGg5NiBsNTAgNTAgdjEzNiBINDAgWiIvPgogICAgPHBhdGggZD0iTTEzNiAyOCB2NTAgaDUwIi8+CiAgPC9nPgoKICA8ZyBzdHJva2Utd2lkdGg9IjEzIiBzdHJva2UtbGluZWNhcD0icm91bmQiIGZpbGw9Im5vbmUiPgogICAgPHBhdGggZD0iTTcwIDExMiBoODQiIHN0cm9rZT0iIzk0YTNiOCIvPgogICAgPHBhdGggZD0iTTcwIDE0NiBoNTQiIHN0cm9rZT0iI2Y1OWUwYiIvPgogICAgPHBhdGggZD0iTTcwIDE4MCBoNzAiIHN0cm9rZT0iIzk0YTNiOCIvPgogIDwvZz4KCiAgPCEtLSB0aGUgc2NoZWR1bGVkIHRyaWdnZXIsIHB1bmNoZWQgY2xlYXIgb2YgdGhlIHBhZ2UgLS0+CiAgPGNpcmNsZSBjeD0iMTg4IiBjeT0iMTkyIiByPSI1MCIgZmlsbD0iI2ZmZmZmZiIvPgogIDxjaXJjbGUgY3g9IjE4OCIgY3k9IjE5MiIgcj0iNDAiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2Y1OWUwYiIgc3Ryb2tlLXdpZHRoPSIxMyIvPgogIDxwYXRoIGQ9Ik0xODggMTcwIHYyNCBoMTkiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2Y1OWUwYiIgc3Ryb2tlLXdpZHRoPSIxMyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+Cjwvc3ZnPgo=",
@@ -598,9 +597,43 @@
         ],
         "license": "MIT",
         "name": "Text Utils",
-        "platform_downloads": {},
+        "platform_downloads": {
+          "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.2/text-utils-0.1.2-noarch.astraplugin",
+          "noarch": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.2/text-utils-0.1.2-noarch.astraplugin",
+          "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.2/text-utils-0.1.2-noarch.astraplugin"
+        },
         "publisher": "mihailinl",
+        "readme": "# Text Utils\n\nWord counts, case conversion, regex matching and a scheduled trigger.\n\n## What it does\n\nThree tools the assistant can use mid-conversation:\n\n- **`word_count`** — words, characters and lines in a piece of text.\n- **`case_convert`** — `upper`, `lower`, `title`, `snake` or `camel`.\n- **`regex_match`** — run a regular expression over text and return every match\n  with a count.\n\nOne **\"Transform Text\" action** for the command editor: uppercase, lowercase,\ntitle case, reverse, Base64 encode and Base64 decode, on text from an earlier\nstep, with the result optionally stored in a variable.\n\nOne **\"Scheduled Time\" trigger**. Give it a time in `HH:MM` and any command\nsubscribed to it runs when the machine's local clock reaches that minute. The\ncheck runs every 30 seconds and fires at most once per minute, so a command\nnever runs twice for the same tick. It only runs while Astra is running — this\nis not a cron replacement, and a machine that is asleep at 09:00 misses 09:00.\n\n## What it needs\n\n- **Python 3.10 or newer** on the machine running Astra. Astra ships no Python\n  runtime; the bundle declares `runtimes = [\"python\"]` so the daemon fails\n  clearly if there is no interpreter instead of dying at startup.\n- The dependencies in `requirements.txt` (`astra-plugin-sdk`, `grpcio`,\n  `protobuf`).\n\nNo network, no account.\n\n## Capabilities it asks for, and why\n\n| Capability | What it allows | Why this plugin asks |\n|---|---|---|\n| `tools` | Astra's assistant may call the plugin during a conversation | The three text tools |\n| `actions` | The plugin contributes steps to the command editor | \"Transform Text\" |\n| `triggers` | The plugin can start your commands | \"Scheduled Time\" |\n\nThe regex tool runs a pattern you supply against text you supply, in the plugin\nprocess. A pathological pattern can make that process spin — it will not take\nAstra down with it, but the plugin will stop answering until you restart it.\n\n## Configuration\n\n| Setting | Default | Meaning |\n|---|---|---|\n| Max Text Length | `10000` | every tool refuses text longer than this, so a pasted log file cannot stall the plugin |\n\nA value that is not a number is logged and ignored rather than fatal: a config\nhook has nowhere to report a failure, and refusing to start over one bad field\nwould take the whole plugin down.\n\n## Testing it — the reference suite\n\n`tests/test_text_utils.py` is the worked example for testing a Python Astra\nplugin, and is worth reading before writing tests for your own:\n\n```bash\npip install -e '.[dev]'      # astra-plugin-sdk[test] — pytest and the harness\npytest\n```\n\nIt uses both levels of `astra_plugin_sdk.testing`:\n\n- **Level 1**, `astra_harness`, drives the plugin through its own gRPC servicer\n  in-process. That is not the same as calling the method: it goes through tool\n  registration, the JSON round-trip, the schema, and the error taxonomy — which\n  is where plugins actually break. `RecordingHost` records everything the plugin\n  asked Astra for, and `fail_next` makes the \"Astra said no\" branch reachable at\n  all. Without it, the path a plugin takes when `fire_trigger` is denied for a\n  missing `[permissions]` entry is untested by construction.\n- **Level 2**, `astra_wire`, runs the plugin's real `run()` against a mock\n  daemon over loopback gRPC — registration, the protobuf descriptor, the\n  capability interceptor, the `x-session-token` on every host call. One test, at\n  the end, because it catches a class of bug level 1 structurally cannot see.\n\nThe last test in the file breaks the plugin on purpose — one tool loses its\n`@tool` decorator — and shows the suite catching it. A test suite nobody has\nwatched fail is a test suite nobody should trust.\n\n## Build it yourself\n\n```bash\ncd examples/text-utils\npip install -r requirements.txt\nastra-plugin build            # produces text-utils-<version>-noarch.astraplugin\n```\n\nThe bundle is `noarch`: the plugin is pure Python, and the platform-specific\npart is the interpreter, which comes from the user's machine.\n\n## Files\n\n- `src/plugin.py` — the whole plugin. The `@tool` / `@action` / `@trigger`\n  decorators register everything; there is no manual wiring to read.\n- `tests/test_text_utils.py` — the reference suite, above.\n- `conftest.py` — three lines, so `src.plugin` imports from `tests/` the same\n  way the daemon imports it.\n- `icon.svg` — the store icon, hand-drawn SVG.\n\nMIT licensed.\n",
         "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "text-utils-0.1.2-noarch.astraplugin",
+                "sha256": "7ef9945812d3d20a6c2504ac861988c1a41a1d7703e91f34036917fe405b7acd",
+                "size": 8290,
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.2/text-utils-0.1.2-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "actions",
+              "tools",
+              "triggers"
+            ],
+            "permissions": {
+              "fire_trigger": {
+                "reason": "Fires the on_time trigger at the time you set, so your commands can run on a schedule"
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-08-19T06:44:13Z",
+            "release": {
+              "commit": "5b5d2605961b54271b74304f6988972edb83d598",
+              "kind": "github_release",
+              "repo": "mihailinl/AstraPlugins",
+              "tag": "text-utils-v0.1.2"
+            },
+            "version": "0.1.2"
+          },
           {
             "artifacts": {
               "noarch": {
@@ -628,13 +661,11 @@
         "repository_url": "https://github.com/mihailinl/AstraPlugins",
         "source": {
           "kind": "github",
-          "repo": "mihailinl/AstraPlugins",
-          "subdirectory": "examples/text-utils"
+          "repo": "mihailinl/AstraPlugins"
         },
-        "staging": true,
         "stars": 0,
-        "updated_at": "2026-08-10T00:00:00Z",
-        "version": "0.1.1"
+        "updated_at": "2026-08-19T06:44:13Z",
+        "version": "0.1.2"
       }
     ],
     "publishers": {

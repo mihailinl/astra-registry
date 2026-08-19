@@ -1,21 +1,21 @@
 {
-  "$comment": "Seed catalogue (PRODUCTION_PLAN task 2.13). Source: AstraPlugins/examples/text-utils/plugin.toml at version 0.1.1, transcribed by hand. A Python plugin: one noarch artifact, and the user's own interpreter.",
+  "$comment": "Derived from mihailinl/AstraPlugins@text-utils-v0.1.2 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
   "schema": "astra.registry.plugin/1",
   "id": "text-utils",
   "name": "Text Utils",
-  "summary": "Word counts, case conversion, regex matching, and a scheduled trigger.",
-  "description": "Counts words, characters and lines; converts case between upper, lower, title, snake and camel; runs a regular expression over text and returns every match. Adds a Transform Text action to the command editor (including Base64 encode and decode) and a Scheduled Time trigger that fires when the machine's local clock reaches a time you name \u2014 while Astra is running, so it is not a cron replacement. Requires Python 3.10 or newer on the machine running Astra.",
-  "author": {
-    "name": "Astra Team",
-    "url": "https://github.com/mihailinl"
-  },
+  "summary": "Word count, case conversion, regex matching — with actions and triggers",
   "license": "MIT",
   "source": {
     "kind": "github",
-    "repo": "mihailinl/AstraPlugins",
-    "subdirectory": "examples/text-utils"
+    "repo": "mihailinl/AstraPlugins"
   },
-  "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/text-utils",
+  "added_at": "2026-08-10",
+  "description": "Word count, case conversion, regex matching — with actions and triggers",
+  "author": {
+    "name": "Astra Team"
+  },
+  "icon": "icon.svg",
+  "readme": "README.md",
   "categories": [
     "productivity",
     "utilities"
@@ -27,6 +27,5 @@
     "scheduled",
     "python"
   ],
-  "added_at": "2026-08-10",
-  "icon": "icon.svg"
+  "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/text-utils"
 }
