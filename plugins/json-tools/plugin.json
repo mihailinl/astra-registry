@@ -1,21 +1,21 @@
 {
-  "$comment": "Seed catalogue (PRODUCTION_PLAN task 2.13). Source: AstraPlugins/examples/json-tools/plugin.toml at version 0.1.1, transcribed by hand. A TypeScript plugin: one noarch artifact, and the user's own Node runtime.",
+  "$comment": "Derived from mihailinl/AstraPlugins@json-tools-v0.1.2 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
   "schema": "astra.registry.plugin/1",
   "id": "json-tools",
   "name": "JSON Tools",
-  "summary": "Format, query and diff JSON, in conversation and in commands.",
-  "description": "Three tools the assistant can call \u2014 pretty-print JSON at a chosen indent, extract a value by dot-path, and diff two documents path by path \u2014 plus a JSON Transform action for the command editor that formats, minifies, sorts keys or extracts a path and stores the result in a variable. Requires Node.js 18 or newer on the machine running Astra; the bundle declares node as a runtime so the daemon refuses to start it rather than failing halfway.",
-  "author": {
-    "name": "Astra Team",
-    "url": "https://github.com/mihailinl"
-  },
+  "summary": "Format, query, and diff JSON — with actions and triggers",
   "license": "MIT",
   "source": {
     "kind": "github",
-    "repo": "mihailinl/AstraPlugins",
-    "subdirectory": "examples/json-tools"
+    "repo": "mihailinl/AstraPlugins"
   },
-  "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/json-tools",
+  "added_at": "2026-08-10",
+  "description": "Format, query, and diff JSON — with actions and triggers",
+  "author": {
+    "name": "Astra Team"
+  },
+  "icon": "icon.svg",
+  "readme": "README.md",
   "categories": [
     "development",
     "utilities"
@@ -26,6 +26,5 @@
     "diff",
     "typescript"
   ],
-  "added_at": "2026-08-10",
-  "icon": "icon.svg"
+  "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/json-tools"
 }

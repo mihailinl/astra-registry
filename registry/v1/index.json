@@ -440,7 +440,6 @@
       {
         "added_at": "2026-08-10",
         "author": "Astra Team",
-        "author_url": "https://github.com/mihailinl",
         "capabilities": [
           "actions",
           "tools",
@@ -450,9 +449,9 @@
           "development",
           "utilities"
         ],
-        "description": "Format, query and diff JSON, in conversation and in commands.",
-        "details": "Three tools the assistant can call — pretty-print JSON at a chosen indent, extract a value by dot-path, and diff two documents path by path — plus a JSON Transform action for the command editor that formats, minifies, sorts keys or extracts a path and stores the result in a variable. Requires Node.js 18 or newer on the machine running Astra; the bundle declares node as a runtime so the daemon refuses to start it rather than failing halfway.",
-        "download_url": "",
+        "description": "Format, query, and diff JSON — with actions and triggers",
+        "details": "Format, query, and diff JSON — with actions and triggers",
+        "download_url": "https://github.com/mihailinl/AstraPlugins/releases/download/json-tools-v0.1.2/json-tools-0.1.2-noarch.astraplugin",
         "downloads": 0,
         "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/json-tools",
         "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2IiB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgcm9sZT0iaW1nIiBhcmlhLWxhYmVsPSJKU09OIFRvb2xzIj4KICA8dGl0bGU+SlNPTiBUb29sczwvdGl0bGU+CiAgPCEtLSBGbGF0IGdlb21ldHJ5OiBhIHBhaXIgb2YgYnJhY2VzIGhvbGRpbmcgYSB0aHJlZS1saW5lIGRpZmYuIFBsYWluIHN0YXRpYwogICAgICAgbWFya3VwOiBubyBzY3JpcHQsIG5vIGV4dGVybmFsIHJlZmVyZW5jZXMsIG5vIGVtYmVkZGVkIGZvbnRzLiAtLT4KCiAgPHJlY3QgeD0iNiIgeT0iNiIgd2lkdGg9IjI0NCIgaGVpZ2h0PSIyNDQiIHJ4PSI1OCIgZmlsbD0iIzBmNzY2ZSIvPgogIDxyZWN0IHg9IjYiIHk9IjYiIHdpZHRoPSIyNDQiIGhlaWdodD0iMjQ0IiByeD0iNTgiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzVlZWFkNCIgc3Ryb2tlLXdpZHRoPSI2IiBvcGFjaXR5PSIwLjU1Ii8+CgogIDxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2VjZmRmNSIgc3Ryb2tlLXdpZHRoPSIxNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj4KICAgIDxwYXRoIGQ9Ik05OSA1NSBDNzkgNTUgNzkgNzAgNzkgODggQzc5IDEwOCA2OCAxMTggNTggMTI4IEM2OCAxMzggNzkgMTQ4IDc5IDE2OCBDNzkgMTg2IDc5IDIwMSA5OSAyMDEiLz4KICAgIDxwYXRoIGQ9Ik0xNTcgNTUgQzE3NyA1NSAxNzcgNzAgMTc3IDg4IEMxNzcgMTA4IDE4OCAxMTggMTk4IDEyOCBDMTg4IDEzOCAxNzcgMTQ4IDE3NyAxNjggQzE3NyAxODYgMTc3IDIwMSAxNTcgMjAxIi8+CiAgPC9nPgoKICA8Zz4KICAgIDxyZWN0IHg9Ijk2IiB5PSI4NiIgd2lkdGg9IjY0IiBoZWlnaHQ9IjE3IiByeD0iOC41IiBmaWxsPSIjODZlZmFjIi8+CiAgICA8cmVjdCB4PSI5NiIgeT0iMTE5IiB3aWR0aD0iNDYiIGhlaWdodD0iMTciIHJ4PSI4LjUiIGZpbGw9IiNmY2E1YTUiLz4KICAgIDxyZWN0IHg9Ijk2IiB5PSIxNTIiIHdpZHRoPSI1OCIgaGVpZ2h0PSIxNyIgcng9IjguNSIgZmlsbD0iI2VjZmRmNSIvPgogIDwvZz4KPC9zdmc+Cg==",
@@ -465,9 +464,46 @@
         ],
         "license": "MIT",
         "name": "JSON Tools",
-        "platform_downloads": {},
+        "platform_downloads": {
+          "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/json-tools-v0.1.2/json-tools-0.1.2-noarch.astraplugin",
+          "noarch": "https://github.com/mihailinl/AstraPlugins/releases/download/json-tools-v0.1.2/json-tools-0.1.2-noarch.astraplugin",
+          "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/json-tools-v0.1.2/json-tools-0.1.2-noarch.astraplugin"
+        },
         "publisher": "mihailinl",
+        "readme": "# JSON Tools\n\nFormat, query and diff JSON — in conversation and in commands.\n\n## What it does\n\nThree things the assistant can do for you in a conversation:\n\n- **`json_format`** — pretty-print a JSON string at a chosen indent, or tell you\n  precisely where it is malformed.\n- **`json_query`** — pull a value out with a dot-path such as\n  `data.users[0].name`.\n- **`json_diff`** — compare two JSON documents and list what was added, removed\n  and changed, path by path.\n\nAnd one **\"JSON Transform\" action** for the command editor, which does *format*,\n*minify*, *sort keys* or *extract path* on a value from an earlier step and can\nstore the result in a variable. Sorting keys is the useful one for commands: two\ndocuments that differ only in key order stop looking different.\n\nThere is also an **\"Invalid JSON Detected\" trigger** whose payload carries the\noffending text and a source label. Note the honest bit: this trigger is declared\nso a command can subscribe to it, but nothing in this plugin fires it today — a\ncommand wired to it will never run until some future version does. It is here as\na worked example of a declared trigger type, not as a working alarm.\n\n## What it needs\n\n- **Node.js 18 or newer** on the machine running Astra. This is a TypeScript\n  plugin; Astra does not ship a Node runtime, so the bundle declares\n  `runtimes = [\"node\"]` and the daemon refuses to start it if `node` is missing\n  rather than failing halfway.\n\nNo network, no files outside its own directory, no account.\n\n## Capabilities it asks for, and why\n\n| Capability | What it allows | Why this plugin asks |\n|---|---|---|\n| `tools` | Astra's assistant may call the plugin during a conversation | The three `json_*` tools |\n| `actions` | The plugin contributes steps to the command editor | \"JSON Transform\" |\n| `triggers` | The plugin can start your commands | \"Invalid JSON Detected\" (declared; see above) |\n\nText you pass to a tool is processed inside the plugin process and returned. It\nis not written to disk and not sent anywhere.\n\n## Configuration\n\n| Setting | Default | Meaning |\n|---|---|---|\n| Default Indent | `2` | Spaces used by *format* and *sort keys* when no indent is given |\n\n## Build it yourself\n\n```bash\ncd examples/json-tools\n# This example needs astra-plugin-sdk 0.5.0, which is not on npm yet, so point\n# resolution at the SDK in this checkout — exactly what CI does:\n#   (cd ../../astra-plugin-sdk-ts && bun install && bun run build && bun pm pack --destination /tmp/tgz)\n#   node -e 'const f=require(\"fs\"),p=JSON.parse(f.readFileSync(\"package.json\",\"utf8\"));\n#            p.overrides={\"astra-plugin-sdk\":\"file:/tmp/tgz/astra-plugin-sdk-0.5.0.tgz\"};\n#            f.writeFileSync(\"package.json\",JSON.stringify(p,null,2))'\nbun install                   # or npm install\nbun run test                  # the reference suite, both levels\nbun run build                 # esbuild bundles src/index.ts to dist/index.js\nastra-plugin build            # produces json-tools-<version>-noarch.astraplugin\n```\n\nThe bundle is `noarch`: one file that runs on every platform Astra supports,\nbecause the platform-specific part is the Node install, not the plugin.\n\n## How it is written\n\nThe object form, with the SDK's `s` schema builder:\n\n```typescript\njson_format: tool({\n  description: \"Pretty-print JSON with configurable indentation.\",\n  input: s.object({\n    json: s.string({ description: \"JSON string to format\" }),\n    indent: s.integer({ minimum: 0, maximum: 10 }).optional(),\n  }),\n  run: ({ json, indent }, ctx) =>\n    JSON.stringify(parse(json), null, indent ?? defaultIndent(ctx.config)),\n});\n```\n\n`input` is the JSON Schema the assistant reads **and** the type of `run`'s first\nargument. There is no `String(args.json ?? \"\")` anywhere in this plugin: the SDK\nvalidated the assistant's arguments against that schema before the handler ran,\nand a violation came back to the assistant as a `BAD_ARGUMENTS` result it can\nread and correct.\n\n## The test suite\n\n`test/plugin.test.mjs` is meant to be copied. It runs at both of the SDK's\nlevels:\n\n- **Level 1** — `Harness.create(app)`, in process, no socket. Every tool, the\n  action, the config handling, `assertSchemaAccepts` / `assertSchemaRejects`,\n  a `RecordingHost` with `setVariable` made to fail on purpose (so a step that\n  could not publish its variable does not report success), and\n  `h.fuzzConfig()`, which pushes eleven shapes of real-world config through\n  `onConfigChanged`.\n- **Level 2** — `MockDaemon`, a real gRPC handshake with a real session token,\n  asserting the capabilities this plugin registers with are the ones\n  `plugin.toml` declares and that a tool answers correctly over the wire.\n\n## Files\n\n- `src/plugin.ts` — the plugin, as a value. Read it alongside `../text-utils`\n  and `../dice-roller` to see the same three capabilities in three languages.\n- `src/index.ts` — the two-line entrypoint.\n- `test/plugin.test.mjs` — the reference suite.\n- `icon.svg` — the store icon, hand-drawn SVG.\n\nMIT licensed.\n",
         "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "json-tools-0.1.2-noarch.astraplugin",
+                "sha256": "9772f9ca85c41e00c17637eb943882a41e616572d350dd0094589756fcd2f23c",
+                "size": 208270,
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/json-tools-v0.1.2/json-tools-0.1.2-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "actions",
+              "tools",
+              "triggers"
+            ],
+            "permissions": {
+              "set_variable": {
+                "reason": "Publishes the transformed JSON as the variable your command names in 'Store Result In'",
+                "scopes": [
+                  "session"
+                ]
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-08-19T11:14:45Z",
+            "release": {
+              "commit": "9e6bf28ddda656cb6015a1076284d51db119f4e4",
+              "kind": "github_release",
+              "repo": "mihailinl/AstraPlugins",
+              "tag": "json-tools-v0.1.2"
+            },
+            "version": "0.1.2"
+          },
           {
             "artifacts": {
               "noarch": {
@@ -495,13 +531,11 @@
         "repository_url": "https://github.com/mihailinl/AstraPlugins",
         "source": {
           "kind": "github",
-          "repo": "mihailinl/AstraPlugins",
-          "subdirectory": "examples/json-tools"
+          "repo": "mihailinl/AstraPlugins"
         },
-        "staging": true,
         "stars": 0,
-        "updated_at": "2026-08-10T00:00:00Z",
-        "version": "0.1.1"
+        "updated_at": "2026-08-19T11:14:45Z",
+        "version": "0.1.2"
       },
       {
         "added_at": "2026-08-10",
@@ -706,6 +740,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 12
+    "serial": 13
   }
 }

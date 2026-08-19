@@ -1,0 +1,35 @@
+{
+  "$comment": "Derived from mihailinl/AstraPlugins@json-tools-v0.1.2. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: release-author.",
+  "schema": "astra.registry.version/1",
+  "id": "json-tools",
+  "version": "0.1.2",
+  "published_at": "2026-08-19T11:14:45Z",
+  "release": {
+    "kind": "github_release",
+    "repo": "mihailinl/AstraPlugins",
+    "tag": "json-tools-v0.1.2",
+    "commit": "9e6bf28ddda656cb6015a1076284d51db119f4e4"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/json-tools-v0.1.2/json-tools-0.1.2-noarch.astraplugin",
+      "filename": "json-tools-0.1.2-noarch.astraplugin",
+      "sha256": "9772f9ca85c41e00c17637eb943882a41e616572d350dd0094589756fcd2f23c",
+      "size": 208270
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "actions",
+    "tools",
+    "triggers"
+  ],
+  "permissions": {
+    "set_variable": {
+      "reason": "Publishes the transformed JSON as the variable your command names in 'Store Result In'",
+      "scopes": [
+        "session"
+      ]
+    }
+  }
+}
