@@ -1,0 +1,19 @@
+{
+  "$comment": "A release waiting out PRODUCTION_PLAN §3.5's publication delay. Nothing here is trusted at publish time: the whole ingest runs again from scratch. Delete this file to cancel the publication; edit publish_after to bring it forward.",
+  "id": "text-utils",
+  "version": "0.1.2",
+  "repo": "mihailinl/AstraPlugins",
+  "tag": "text-utils-v0.1.2",
+  "submitter": "github-actions[bot]",
+  "queued_at": "2026-08-19T07:19:19Z",
+  "publish_after": "2026-08-20T07:19:19Z",
+  "delay_hours": 24,
+  "reason": "P_DELAY_WIDENED",
+  "artifact_digests": [
+    "noarch:7ef9945812d3d20a6c2504ac861988c1a41a1d7703e91f34036917fe405b7acd"
+  ],
+  "approved_by": null,
+  "approved_at": null,
+  "approved_for": null,
+  "issue": 20
+}
