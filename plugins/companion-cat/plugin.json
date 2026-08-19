@@ -1,5 +1,5 @@
 {
-  "$comment": "Derived from mihailinl/AstraPlugins@companion-cat-v0.1.6 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
+  "$comment": "Derived from mihailinl/AstraPlugins@companion-cat-v0.1.7 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
   "schema": "astra.registry.plugin/1",
   "id": "companion-cat",
   "name": "Companion Cat",
@@ -14,6 +14,7 @@
   "author": {
     "name": "Mihailin"
   },
+  "icon": "icon.png",
   "readme": "README.md",
   "categories": [
     "entertainment"
