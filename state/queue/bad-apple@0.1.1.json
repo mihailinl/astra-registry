@@ -1,0 +1,20 @@
+{
+  "$comment": "A release waiting out PRODUCTION_PLAN §3.5's publication delay. Nothing here is trusted at publish time: the whole ingest runs again from scratch. Delete this file to cancel the publication; edit publish_after to bring it forward.",
+  "id": "bad-apple",
+  "version": "0.1.1",
+  "repo": "mihailinl/AstraPlugins",
+  "tag": "bad-apple-v0.1.1",
+  "submitter": "github-actions[bot]",
+  "queued_at": "2026-08-19T07:19:05Z",
+  "publish_after": "2026-08-20T07:19:05Z",
+  "delay_hours": 24,
+  "reason": "P_DELAY_HIGH_RISK",
+  "artifact_digests": [
+    "linux-x64:93e466cdce1633f599f2e73f677fda80db941dcd52d086ef03496420b76c4baa",
+    "windows-x64:48e48f03d1169ba768552a4e03c57679976b1ca4891ac8798127431972401f1c"
+  ],
+  "approved_by": null,
+  "approved_at": null,
+  "approved_for": null,
+  "issue": 17
+}
