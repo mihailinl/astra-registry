@@ -137,7 +137,7 @@
       },
       {
         "added_at": "2026-08-10",
-        "author": "Astra Team",
+        "author": "Mihailin",
         "capabilities": [
           "dom_access",
           "ui_contributions"
@@ -161,12 +161,46 @@
         "license": "MIT",
         "name": "Companion Cat",
         "platform_downloads": {
-          "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/companion-cat-v0.1.5/companion-cat-0.1.5-linux-x64.astraplugin",
-          "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/companion-cat-v0.1.5/companion-cat-0.1.5-windows-x64.astraplugin"
+          "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/companion-cat-v0.1.6/companion-cat-0.1.6-linux-x64.astraplugin",
+          "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/companion-cat-v0.1.6/companion-cat-0.1.6-windows-x64.astraplugin"
         },
         "publisher": "mihailinl",
         "readme": "# Companion Cat\n\nA cat that flies around the Astra window and occasionally says something.\n\n## What it does\n\nAdds a small animated cat as an overlay on top of the Astra interface. It drifts\nacross the window, reacts to being clicked, and every so often speaks a line\ndrawn at random from a phrase list. The phrase list is translated: it ships\nEnglish and Russian, and follows Astra's own language setting, so switching\nAstra to Russian switches the cat.\n\nIt is decorative. It does nothing to your conversations, your settings or your\nfiles.\n\n## What it needs\n\nNothing. No network, no account, no configuration.\n\n## Capabilities it asks for, and why\n\nThis plugin asks for the two capabilities Astra treats as **high risk**, and it\nis worth being precise about what that means.\n\n| Capability | What it allows | Why this plugin asks |\n|---|---|---|\n| `ui_contributions` | The plugin may add its own surfaces — pages, panels, overlays — to the Astra window | The cat is an overlay contribution |\n| `dom_access` | The plugin's JavaScript runs **inside the Astra window**, with access to the page: your conversations on screen, and every other plugin's interface | An overlay that flies across the UI is, by construction, code running in that UI |\n\n`dom_access` is the strongest thing a plugin can ask for short of the fact that\nits backend is already a native process. A plugin with `dom_access` can read\nwhat is rendered on your screen, including message text, and can interact with\nanything else drawn there. There is no version of an in-window animated cat that\ndoes not need it.\n\nRead `ui/cat.js` if you want to know what this particular one does with it —\nthat is the file that runs in your window, and it is the only one.\n\n## Configuration\n\nNone.\n\n## Build it yourself\n\n```bash\ncd examples/companion\ncargo build --release\nastra-plugin build\n```\n\n## Files\n\n- `src/main.rs` — the backend: declares the overlay and answers\n  `getRandomMessage` calls from the UI side.\n- `ui/cat.js` — everything visible. This is the code `dom_access` covers.\n- `locales/en.json`, `locales/ru.json` — the phrase lists.\n- `icon.svg` — the store icon, hand-drawn SVG.\n\nMIT licensed.\n",
         "releases": [
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "companion-cat-0.1.6-linux-x64.astraplugin",
+                "sha256": "90fcdc6ad008d4bb32e2c8f17a481f9476f1ee7adfe20a37045005323dc86ecd",
+                "size": 2788085,
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/companion-cat-v0.1.6/companion-cat-0.1.6-linux-x64.astraplugin"
+              },
+              "windows-x64": {
+                "filename": "companion-cat-0.1.6-windows-x64.astraplugin",
+                "sha256": "d923261b6a12ba4a7eddeefe0e3304c730c97d1b087b212586b6258e0c1ccd1f",
+                "size": 2354967,
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/companion-cat-v0.1.6/companion-cat-0.1.6-windows-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "dom_access",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "dom_access": {
+                "reason": "Flies the cat around the Astra interface, which means running its own JavaScript inside the Astra window"
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-08-19T13:33:14Z",
+            "release": {
+              "commit": "ff566e83f89133c182dec9eb7ae19d94f858f498",
+              "kind": "github_release",
+              "repo": "mihailinl/AstraPlugins",
+              "tag": "companion-cat-v0.1.6"
+            },
+            "version": "0.1.6"
+          },
           {
             "artifacts": {
               "linux-x64": {
@@ -229,8 +263,8 @@
           "repo": "mihailinl/AstraPlugins"
         },
         "stars": 0,
-        "updated_at": "2026-08-19T06:46:58Z",
-        "version": "0.1.5"
+        "updated_at": "2026-08-19T13:33:14Z",
+        "version": "0.1.6"
       },
       {
         "added_at": "2026-08-10",
@@ -774,6 +808,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 14
+    "serial": 15
   }
 }

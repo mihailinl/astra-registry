@@ -1,5 +1,5 @@
 {
-  "$comment": "Derived from mihailinl/AstraPlugins@companion-cat-v0.1.5 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
+  "$comment": "Derived from mihailinl/AstraPlugins@companion-cat-v0.1.6 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
   "schema": "astra.registry.plugin/1",
   "id": "companion-cat",
   "name": "Companion Cat",
@@ -12,7 +12,7 @@
   "added_at": "2026-08-10",
   "description": "A cat that flies around the UI and says random things",
   "author": {
-    "name": "Astra Team"
+    "name": "Mihailin"
   },
   "readme": "README.md",
   "categories": [

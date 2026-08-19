@@ -1,0 +1,37 @@
+{
+  "$comment": "Derived from mihailinl/AstraPlugins@companion-cat-v0.1.6. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: release-author.",
+  "schema": "astra.registry.version/1",
+  "id": "companion-cat",
+  "version": "0.1.6",
+  "published_at": "2026-08-19T13:33:14Z",
+  "release": {
+    "kind": "github_release",
+    "repo": "mihailinl/AstraPlugins",
+    "tag": "companion-cat-v0.1.6",
+    "commit": "ff566e83f89133c182dec9eb7ae19d94f858f498"
+  },
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/companion-cat-v0.1.6/companion-cat-0.1.6-linux-x64.astraplugin",
+      "filename": "companion-cat-0.1.6-linux-x64.astraplugin",
+      "sha256": "90fcdc6ad008d4bb32e2c8f17a481f9476f1ee7adfe20a37045005323dc86ecd",
+      "size": 2788085
+    },
+    "windows-x64": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/companion-cat-v0.1.6/companion-cat-0.1.6-windows-x64.astraplugin",
+      "filename": "companion-cat-0.1.6-windows-x64.astraplugin",
+      "sha256": "d923261b6a12ba4a7eddeefe0e3304c730c97d1b087b212586b6258e0c1ccd1f",
+      "size": 2354967
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "dom_access",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "dom_access": {
+      "reason": "Flies the cat around the Astra interface, which means running its own JavaScript inside the Astra window"
+    }
+  }
+}
