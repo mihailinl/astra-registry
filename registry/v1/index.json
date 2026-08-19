@@ -6,7 +6,6 @@
       {
         "added_at": "2026-08-10",
         "author": "Astra Team",
-        "author_url": "https://github.com/mihailinl",
         "capabilities": [
           "dom_access",
           "ui_contributions"
@@ -14,8 +13,8 @@
         "categories": [
           "entertainment"
         ],
-        "description": "The Bad Apple!! animation as a background effect, in four render styles.",
-        "details": "Plays a 1-bit animation behind the Astra interface at low opacity, from a pre-extracted run-length-encoded frame stream rather than a video decoder. Four renderers: ASCII (blocks, braille, classic or katakana), CRT with scanlines and phosphor glow, drifting particles, and clean silhouette. Opacity, character set, colour mode and looping are configurable. It runs its own JavaScript inside the Astra window, which is what drawing behind the interface requires and why it asks for dom_access.",
+        "description": "Bad Apple!! with ASCII, CRT, particle, and silhouette render modes",
+        "details": "Bad Apple!! with ASCII, CRT, particle, and silhouette render modes",
         "download_url": "",
         "downloads": 0,
         "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/bad-apple",
@@ -30,9 +29,42 @@
         ],
         "license": "MIT",
         "name": "Bad Apple",
-        "platform_downloads": {},
+        "platform_downloads": {
+          "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/bad-apple-v0.1.1/bad-apple-0.1.1-linux-x64.astraplugin",
+          "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/bad-apple-v0.1.1/bad-apple-0.1.1-windows-x64.astraplugin"
+        },
         "publisher": "mihailinl",
+        "readme": "# Bad Apple\n\nThe *Bad Apple!!* animation, rendered as ASCII, CRT phosphor, particles or\nsilhouette, behind the Astra interface.\n\n## What it does\n\nPlays a 1-bit black-and-white animation as a background effect in the Astra\nwindow, at low opacity by default so it reads as texture rather than a video.\nFour renderers are included:\n\n| Mode | What you see |\n|---|---|\n| **ASCII** | Characters from one of four sets — blocks `█▓▒░`, braille dot matrix, classic `@#*=:.`, or katakana rain |\n| **CRT** | Canvas with scanlines, phosphor glow and VHS jitter |\n| **Particles** | Lit pixels spawn particles that drift and fade |\n| **Silhouette** | Clean black and white with an accent glow |\n\nThe frame data is a pre-extracted 1-bit RLE stream (`ui/frames.bin`, ~3 MB) —\nthere is no video decoder involved, which is what makes it cheap enough to run\nbehind a working interface.\n\n## What it needs\n\nNothing at run time — the frames and audio are inside the bundle. No network, no\naccount.\n\n`tools/extract_frames.py` is included for regenerating `frames.bin` from a video\nfile (it needs `opencv-python` and `numpy`), but you only need it if you want a\ndifferent animation or a different resolution.\n\n## Capabilities it asks for, and why\n\n| Capability | What it allows | Why this plugin asks |\n|---|---|---|\n| `ui_contributions` | The plugin may add its own surfaces to the Astra window | The background effect is a UI contribution |\n| `dom_access` | The plugin's JavaScript runs **inside the Astra window**, with access to the page: your conversations on screen, and every other plugin's interface | Drawing behind the interface means drawing *in* the interface |\n\n`dom_access` is a high-risk capability, and Astra will say so before installing.\nA plugin that has it can read what is on your screen. There is no way to paint a\nbackground effect into a window without running code in that window; if that\ntrade is not worth an animation to you, it should not be, and you should not\ninstall this.\n\nThe code that runs in your window is `ui/bad-apple-bg.js`, `ui/renderer.js` and\n`ui/bad-apple-player.js`. Nothing else.\n\n## Configuration\n\n| Setting | Default | Meaning |\n|---|---|---|\n| Render Mode | `ascii` | `ascii`, `crt`, `particles`, `silhouette` |\n| Background Opacity | `0.15` | 0.05–1.0. Above ~0.3 it competes with the text |\n| ASCII Character Set | `blocks` | `blocks`, `braille`, `classic`, `katakana` |\n| Color Mode | `mono` | `mono`, `accent` (follows your Astra theme), `green`, `amber` |\n| Loop Playback | `true` | Restart at the end |\n\n## A note on the media\n\n`ui/bad-apple.mp3` and `ui/frames.bin` are derived from *Bad Apple!!* — the\nTouhou-derived song and the shadow-art music video built on it. Those are other\npeople's work, and this example redistributes them for demonstration. The MIT\nlicence on this directory covers **the code**, not the audio or the frame data.\nBefore publishing a fork of this plugin anywhere, sort that out.\n\n## Build it yourself\n\n```bash\ncd examples/bad-apple\ncargo build --release\nastra-plugin build\n```\n\nTo regenerate the frame data from your own video:\n\n```bash\npip install opencv-python numpy\npython tools/extract_frames.py bad-apple.mp4 ui/frames.bin        # 120x90\npython tools/extract_frames.py bad-apple.mp4 ui/frames.bin 160 120 # sharper, costlier\n```\n\n## Files\n\n- `src/main.rs` — the backend: declares the effect and serves its config.\n- `ui/` — the renderers, the frame data and the audio.\n- `tools/extract_frames.py` — video to 1-bit RLE.\n- `icon.svg` — the store icon, hand-drawn SVG.\n\nMIT licensed (the code — see the media note above).\n",
         "releases": [
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "bad-apple-0.1.1-linux-x64.astraplugin",
+                "sha256": "93e466cdce1633f599f2e73f677fda80db941dcd52d086ef03496420b76c4baa",
+                "size": 7266311,
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/bad-apple-v0.1.1/bad-apple-0.1.1-linux-x64.astraplugin"
+              },
+              "windows-x64": {
+                "filename": "bad-apple-0.1.1-windows-x64.astraplugin",
+                "sha256": "48e48f03d1169ba768552a4e03c57679976b1ca4891ac8798127431972401f1c",
+                "size": 6828808,
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/bad-apple-v0.1.1/bad-apple-0.1.1-windows-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "dom_access",
+              "ui_contributions"
+            ],
+            "protocol": 1,
+            "published_at": "2026-08-19T06:45:43Z",
+            "release": {
+              "commit": "5b5d2605961b54271b74304f6988972edb83d598",
+              "kind": "github_release",
+              "repo": "mihailinl/AstraPlugins",
+              "tag": "bad-apple-v0.1.1"
+            },
+            "version": "0.1.1"
+          },
           {
             "artifacts": {
               "linux-x64": {
@@ -63,13 +95,11 @@
         "repository_url": "https://github.com/mihailinl/AstraPlugins",
         "source": {
           "kind": "github",
-          "repo": "mihailinl/AstraPlugins",
-          "subdirectory": "examples/bad-apple"
+          "repo": "mihailinl/AstraPlugins"
         },
-        "staging": true,
         "stars": 0,
-        "updated_at": "2026-08-10T00:00:00Z",
-        "version": "0.1.0"
+        "updated_at": "2026-08-19T06:45:43Z",
+        "version": "0.1.1"
       },
       {
         "added_at": "2026-08-10",
@@ -586,6 +616,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 8
+    "serial": 9
   }
 }

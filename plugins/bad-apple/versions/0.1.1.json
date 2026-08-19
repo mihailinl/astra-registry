@@ -1,0 +1,32 @@
+{
+  "$comment": "Derived from mihailinl/AstraPlugins@bad-apple-v0.1.1. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: release-author.",
+  "schema": "astra.registry.version/1",
+  "id": "bad-apple",
+  "version": "0.1.1",
+  "published_at": "2026-08-19T06:45:43Z",
+  "release": {
+    "kind": "github_release",
+    "repo": "mihailinl/AstraPlugins",
+    "tag": "bad-apple-v0.1.1",
+    "commit": "5b5d2605961b54271b74304f6988972edb83d598"
+  },
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/bad-apple-v0.1.1/bad-apple-0.1.1-linux-x64.astraplugin",
+      "filename": "bad-apple-0.1.1-linux-x64.astraplugin",
+      "sha256": "93e466cdce1633f599f2e73f677fda80db941dcd52d086ef03496420b76c4baa",
+      "size": 7266311
+    },
+    "windows-x64": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/bad-apple-v0.1.1/bad-apple-0.1.1-windows-x64.astraplugin",
+      "filename": "bad-apple-0.1.1-windows-x64.astraplugin",
+      "sha256": "48e48f03d1169ba768552a4e03c57679976b1ca4891ac8798127431972401f1c",
+      "size": 6828808
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "dom_access",
+    "ui_contributions"
+  ]
+}

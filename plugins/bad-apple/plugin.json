@@ -1,21 +1,21 @@
 {
-  "$comment": "Seed catalogue (PRODUCTION_PLAN task 2.13). Source: AstraPlugins/examples/bad-apple/plugin.toml at version 0.1.0. UNRESOLVED BEFORE THIS GOES PUBLIC: the bundle redistributes the Bad Apple!! audio and a frame set derived from the video. The MIT declared here covers the code in that directory and not that media. See the README's media note.",
+  "$comment": "Derived from mihailinl/AstraPlugins@bad-apple-v0.1.1 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
   "schema": "astra.registry.plugin/1",
   "id": "bad-apple",
   "name": "Bad Apple",
-  "summary": "The Bad Apple!! animation as a background effect, in four render styles.",
-  "description": "Plays a 1-bit animation behind the Astra interface at low opacity, from a pre-extracted run-length-encoded frame stream rather than a video decoder. Four renderers: ASCII (blocks, braille, classic or katakana), CRT with scanlines and phosphor glow, drifting particles, and clean silhouette. Opacity, character set, colour mode and looping are configurable. It runs its own JavaScript inside the Astra window, which is what drawing behind the interface requires and why it asks for dom_access.",
-  "author": {
-    "name": "Astra Team",
-    "url": "https://github.com/mihailinl"
-  },
+  "summary": "Bad Apple!! with ASCII, CRT, particle, and silhouette render modes",
   "license": "MIT",
   "source": {
     "kind": "github",
-    "repo": "mihailinl/AstraPlugins",
-    "subdirectory": "examples/bad-apple"
+    "repo": "mihailinl/AstraPlugins"
   },
-  "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/bad-apple",
+  "added_at": "2026-08-10",
+  "description": "Bad Apple!! with ASCII, CRT, particle, and silhouette render modes",
+  "author": {
+    "name": "Astra Team"
+  },
+  "icon": "icon.png",
+  "readme": "README.md",
   "categories": [
     "entertainment"
   ],
@@ -26,6 +26,5 @@
     "crt",
     "effect"
   ],
-  "added_at": "2026-08-10",
-  "icon": "icon.png"
+  "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/bad-apple"
 }
