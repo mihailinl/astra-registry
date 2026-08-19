@@ -5,35 +5,55 @@
   "description": "registry/v1/index.json — the catalogue the Astra client fetches. GENERATED from plugins/**; never hand-edited. Since 3.2 it is a SIGNED ENVELOPE: `signed` holds the catalogue and `signatures` holds Ed25519 signatures over SHA-256(\"astra.registry.index/1\" ‖ 0x00 ‖ JCS(signed)), made with an index key that a root-signed trust.json delegates to. Nothing outside `signed` is authenticated — not `$comment`, not the `key_id` fields — and nothing outside it may be read as a fact. Two audiences share `signed`: the daemon's flat reader (id/name/version/description/platform_downloads) and everything from 2.9 on, which reads `releases[]` for the per-artifact sha256 and size. The flat fields are a projection of `releases[0]` from the same generator run, so they cannot disagree with it.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["signed", "signatures"],
+  "required": [
+    "signed",
+    "signatures"
+  ],
   "properties": {
-    "$comment": { "type": "string" },
+    "$comment": {
+      "type": "string"
+    },
     "signatures": {
       "type": "array",
       "description": "Empty in the committed tree: this repository holds no signing key, and CI signs the deploy candidate in the `publish` environment. An empty array says 'unsigned' out loud, where an absent member could not be told from a stripped one.",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["key_id", "sig"],
+        "required": [
+          "key_id",
+          "sig"
+        ],
         "properties": {
           "key_id": {
             "type": "string",
             "maxLength": 128,
             "description": "A HINT, for logs and key selection. The verifier tries every trusted key against every offered signature, so this string cannot make a signature verify and cannot stop one from verifying."
           },
-          "sig": { "type": "string", "pattern": "^[A-Za-z0-9+/]{86}==$", "description": "base64 of the 64-byte Ed25519 signature." }
+          "sig": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9+/]{86}==$",
+            "description": "base64 of the 64-byte Ed25519 signature."
+          }
         }
       }
     },
-    "signed": { "$ref": "#/$defs/signed" }
+    "signed": {
+      "$ref": "#/$defs/signed"
+    }
   },
   "$defs": {
     "signed": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema", "serial", "plugins"],
+      "required": [
+        "schema",
+        "serial",
+        "plugins"
+      ],
       "properties": {
-        "schema": { "const": "astra.registry.index/1" },
+        "schema": {
+          "const": "astra.registry.index/1"
+        },
         "serial": {
           "type": "integer",
           "minimum": 0,
@@ -51,7 +71,49 @@
         },
         "plugins": {
           "type": "array",
-          "items": { "$ref": "#/$defs/plugin" }
+          "items": {
+            "$ref": "#/$defs/plugin"
+          }
+        },
+        "publishers": {
+          "type": "object",
+          "description": "What the registry knows about the ACCOUNTS behind these listings, keyed by GitHub owner login. Present only for owners a listing points at. Inside `signed`, so the signature a client already verifies covers it — a badge is a claim the registry makes, and a claim outside the signature is one whoever serves the bytes could invent.",
+          "propertyNames": {
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "display_name",
+              "tier",
+              "verified_at"
+            ],
+            "properties": {
+              "display_name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "tier": {
+                "type": "string",
+                "enum": [
+                  "official",
+                  "verified"
+                ],
+                "description": "A string rather than a closed client-side enum: a new tier should cost a registry edit and a locale key, not a proto change and an arm in every shell. A client MUST render on explicit membership — equal to `official` or equal to `verified` — and never on the value merely being present, non-empty, or not-some-default. An unrecognised tier is not a badge."
+              },
+              "verified_at": {
+                "type": "string",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+              },
+              "last_confirmed_at": {
+                "type": "string",
+                "description": "When the evidence last held. `verified` is stored as live evidence plus this date, not as a verdict, because a tier granted once and never revisited is a claim about who somebody used to be.",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+              }
+            }
+          }
         }
       }
     },
@@ -59,13 +121,32 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "capabilities", "description", "download_url", "downloads", "icon_url",
-        "id", "license", "name", "platform_downloads", "releases",
-        "repository_url", "source", "stars", "updated_at", "version"
+        "capabilities",
+        "description",
+        "download_url",
+        "downloads",
+        "icon_url",
+        "id",
+        "license",
+        "name",
+        "platform_downloads",
+        "releases",
+        "repository_url",
+        "source",
+        "stars",
+        "updated_at",
+        "version"
       ],
       "properties": {
-        "id": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])$" },
-        "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
         "version": {
           "type": "string",
           "description": "The latest listed release. Compatibility projection of releases[0].version."
@@ -75,29 +156,81 @@
           "maxLength": 200,
           "description": "The one-line card text. Projection of plugin.json's `summary`; named `description` because that is the field the daemon already deserialises."
         },
-        "details": { "type": "string", "maxLength": 4000 },
+        "details": {
+          "type": "string",
+          "maxLength": 4000
+        },
         "readme": {
           "type": "string",
           "maxLength": 16384,
           "description": "The plugin's own README, for the store's detail view. GitHub-flavoured markdown with NO RAW HTML and no image pointing anywhere but GitHub's asset hosts — both guaranteed by bot/lib/assets.mjs when this was derived, because by the time a client reads this the author is a stranger and the renderer is inside Astra's window. Inlined rather than linked so the bytes are covered by the index signature and so opening the store makes no request to a third party. Absent when the plugin ships no README."
         },
-        "author": { "type": "string", "maxLength": 64 },
-        "author_url": { "type": "string", "pattern": "^https://" },
-        "license": { "type": "string", "maxLength": 64 },
-        "capabilities": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
-        "categories": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
-        "keywords": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
-        "homepage": { "type": "string", "pattern": "^https://" },
-        "repository_url": { "type": "string", "pattern": "^https://github\\.com/" },
+        "author": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "author_url": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "license": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "homepage": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "repository_url": {
+          "type": "string",
+          "pattern": "^https://github\\.com/"
+        },
         "icon_url": {
           "type": "string",
           "description": "The store card's picture. A `data:image/png;base64,…` or `data:image/svg+xml;base64,…` URI when the listing committed an icon (the normal case since bot/ingest.mjs started extracting one from the attested bundle), an `https://` URL for an older hand-written listing, and empty when there is neither. Deliberately unpatterned: a client renders whichever it is handed, and both forms have shipped."
         },
-        "source": { "$ref": "#/$defs/source" },
-        "downloads": { "type": "integer", "minimum": 0, "description": "Always 0. This registry counts nothing; see README §What is not here." },
-        "stars": { "type": "integer", "minimum": 0, "description": "Always 0, same reason." },
-        "updated_at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
-        "added_at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "downloads": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Always 0. This registry counts nothing; see README §What is not here."
+        },
+        "stars": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Always 0, same reason."
+        },
+        "updated_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        },
+        "added_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
         "staging": {
           "type": "boolean",
           "description": "true when the latest listed release has no artifact digest yet. Such an entry is deliberately absent from `platform_downloads` and `download_url`, so a client that only knows the flat fields cannot download it."
@@ -109,68 +242,150 @@
         "platform_downloads": {
           "type": "object",
           "description": "Compatibility projection: platform key -> URL for the latest listed release. A `noarch` artifact is written under every supported platform key (PRODUCTION_PLAN §5.2), so no client needs to learn the word. Digest-free (staging) releases are omitted entirely.",
-          "propertyNames": { "$ref": "#/$defs/platformKey" },
-          "additionalProperties": { "type": "string", "pattern": "^https://" }
+          "propertyNames": {
+            "$ref": "#/$defs/platformKey"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^https://"
+          }
         },
         "releases": {
           "type": "array",
           "minItems": 1,
           "description": "Newest first, by semver precedence. This is the authoritative half of the record.",
-          "items": { "$ref": "#/$defs/release" }
+          "items": {
+            "$ref": "#/$defs/release"
+          }
+        },
+        "publisher": {
+          "type": "string",
+          "description": "The key into `signed.publishers`, i.e. the GitHub owner of `source.repo` — the only identity this registry proves. ABSENT when no reviewed record exists, and absence is the answer: a client that renders a badge from this field being present would badge every listing. Deliberately not the `author` string, which comes out of the plugin's own manifest and is whatever the author typed."
         }
       }
     },
     "release": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["version", "published_at", "release", "artifacts"],
+      "required": [
+        "version",
+        "published_at",
+        "release",
+        "artifacts"
+      ],
       "properties": {
-        "version": { "type": "string" },
-        "published_at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
-        "protocol": { "type": "integer", "minimum": 0, "maximum": 65535 },
-        "min_astra_version": { "type": "string" },
-        "capabilities": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
-        "permissions": { "type": "object", "additionalProperties": true },
-        "changelog_url": { "type": "string", "pattern": "^https://" },
-        "staging": { "type": "boolean" },
-        "staging_reason": { "type": "string" },
+        "version": {
+          "type": "string"
+        },
+        "published_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        },
+        "protocol": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "min_astra_version": {
+          "type": "string"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "permissions": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "changelog_url": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "staging": {
+          "type": "boolean"
+        },
+        "staging_reason": {
+          "type": "string"
+        },
         "release": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind"],
+          "required": [
+            "kind"
+          ],
           "description": "Copied through from the version file. `github_release` names a repo and a tag; `direct` names the `base_url` its artifacts sit under. schema/version-v1.json says why the second kind exists and where it is allowed.",
           "properties": {
-            "kind": { "enum": ["github_release", "direct"] },
-            "repo": { "type": "string" },
-            "tag": { "type": "string" },
-            "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-            "base_url": { "type": "string", "pattern": "^https://" }
+            "kind": {
+              "enum": [
+                "github_release",
+                "direct"
+              ]
+            },
+            "repo": {
+              "type": "string"
+            },
+            "tag": {
+              "type": "string"
+            },
+            "commit": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "base_url": {
+              "type": "string",
+              "pattern": "^https://"
+            }
           },
           "oneOf": [
             {
               "title": "github_release",
-              "properties": { "kind": { "const": "github_release" } },
-              "required": ["kind", "repo", "tag"]
+              "properties": {
+                "kind": {
+                  "const": "github_release"
+                }
+              },
+              "required": [
+                "kind",
+                "repo",
+                "tag"
+              ]
             },
             {
               "title": "direct",
-              "properties": { "kind": { "const": "direct" } },
-              "required": ["kind", "base_url"]
+              "properties": {
+                "kind": {
+                  "const": "direct"
+                }
+              },
+              "required": [
+                "kind",
+                "base_url"
+              ]
             }
           ]
         },
         "artifacts": {
           "type": "object",
           "minProperties": 1,
-          "propertyNames": { "$ref": "#/$defs/platformKey" },
-          "additionalProperties": { "$ref": "#/$defs/artifact" }
+          "propertyNames": {
+            "$ref": "#/$defs/platformKey"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/artifact"
+          }
         }
       }
     },
     "artifact": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["url", "filename"],
+      "required": [
+        "url",
+        "filename"
+      ],
       "properties": {
         "url": {
           "type": "string",
@@ -178,29 +393,51 @@
           "pattern": "^https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?/[^\\s]+$",
           "description": "Any https origin; which one is legal is decided by this release's `release` object and enforced in tools/validate.mjs, not by a pattern that can only describe GitHub."
         },
-        "filename": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.astraplugin$" },
+        "filename": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.astraplugin$"
+        },
         "sha256": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$",
           "description": "sha256 of the whole .astraplugin file. Absent only on a staging entry, which is uninstallable by construction."
         },
-        "size": { "type": "integer", "minimum": 1, "maximum": 268435456 }
+        "size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 268435456
+        }
       }
     },
     "source": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "repo"],
+      "required": [
+        "kind",
+        "repo"
+      ],
       "properties": {
-        "kind": { "const": "github" },
-        "repo": { "type": "string", "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$" },
-        "subdirectory": { "type": "string" }
+        "kind": {
+          "const": "github"
+        },
+        "repo": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
+        },
+        "subdirectory": {
+          "type": "string"
+        }
       }
     },
     "platformKey": {
       "enum": [
-        "linux-x64", "windows-x64", "noarch",
-        "linux-arm64", "windows-arm64", "macos-x64", "macos-arm64"
+        "linux-x64",
+        "windows-x64",
+        "noarch",
+        "linux-arm64",
+        "windows-arm64",
+        "macos-x64",
+        "macos-arm64"
       ]
     }
   }

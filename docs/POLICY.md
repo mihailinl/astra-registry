@@ -393,7 +393,45 @@ exists first; nothing downstream changes when it arrives.
 | `P_UNKNOWN_PERMISSION` | A permission name this registry cannot describe. Reported, never blocking — the daemon default-denies, so it grants nothing. |
 | `P_SLA` | What happens next, and by when. |
 
-## 7. What none of this proves
+## 7. The publisher badge
+
+A badge belongs to the **account**, never to the plugin, and never to the
+`author` string. That string is read out of the plugin's own manifest, inside
+the bundle, and it is whatever the author typed — a badge keyed on it would be
+forged by a one-line edit. The only identity this registry proves is the GitHub
+owner of `source.repo`, because that is what the ownership check binds to, so
+that is what carries a tier.
+
+Records live in `publishers/<owner>.json`, hand-written and hand-reviewed like a
+listing. They are joined into `signed.publishers` at generation time and are
+inside the signature a client already verifies; a claim outside it is one
+whoever serves the bytes could invent.
+
+| tier | what it says | evidence | how it is withdrawn |
+|---|---|---|---|
+| `official` | published by the Astra project | membership of this repository — the claim IS the reviewed file | deleting the file |
+| `verified` | the registry has confirmed who this account is | a URL on a domain the publisher controls, serving their owner login | the re-check stops finding it, or `expires_at` passes |
+| *(no record)* | **no claim at all** | — | — |
+
+**`verified` is stored as live evidence and the date it last held, not as a
+verdict.** A tier granted once and never revisited becomes a claim about who
+somebody *used to be*, and this registry is the only place that can notice. So
+the evidence must be re-fetchable, it is re-fetched on a schedule, and
+`expires_at` is the backstop for a re-check that has been failing quietly: a
+record nobody has confirmed inside its window is reported by the build rather
+than shipped on the strength of having once been true.
+
+**What the badge does not mean.** It is not a safety claim. "We know who
+published this" is not "this code is safe" — §8 below is unchanged by it, and a
+client that lets a badge stand in for the permission sheet has made the user
+worse off, not better. For the same reason a client must render on explicit
+membership — the tier being exactly `official` or exactly `verified` — and never
+on a value merely being present, non-empty, or not-some-default. An
+unrecognised tier is not a badge.
+
+---
+
+## 8. What none of this proves
 
 Auto-publication is not a safety review, and neither is human review — a
 maintainer reading a listing issue is checking a name, a repository and a
@@ -404,7 +442,7 @@ the rest, and it is the sentence this policy cannot get around.
 
 ---
 
-## 8. Taking something back
+## 9. Taking something back
 
 Four actions, and they escalate by **what they cost somebody who already
 installed the plugin** — which is the only ordering a user cares about. None of
@@ -476,7 +514,7 @@ acted on (publishing those publishes an unsubstantiated accusation), and anythin
 about installed copies — this registry has no telemetry and cannot tell you how
 many people are running a withdrawn version.
 
-## 9. Triage: how long a report takes
+## 10. Triage: how long a report takes
 
 A report is somebody telling this registry that a **listed** plugin is not what
 it says it is. Reports about behaviour beat every heuristic in this repository,
@@ -526,11 +564,11 @@ A mismatch means the release this catalogue points at is no longer the release
 that was reviewed. It does **not** mean anybody is in danger: Astra verifies the
 digest before it unpacks anything, so a swapped asset is uninstallable rather
 than dangerous. The job opens an issue and touches nothing; what happens next is
-one of the four actions in §8, and that is a person's decision.
+one of the four actions in §9, and that is a person's decision.
 
-## 10. Appeals
+## 11. Appeals
 
-Every action in §8 can be appealed, including one that has already taken effect,
+Every action in §9 can be appealed, including one that has already taken effect,
 and the answer arrives within **7 days**. Open an issue titled
 `[appeal] <plugin-id>` and use this template:
 
@@ -564,7 +602,7 @@ If the action was taken in error by this registry rather than by a rule, say so
 plainly in the appeal. That is a bug report about the bot or about this document,
 and it is worth filing on its own.
 
-## 11. Embargoed reports
+## 12. Embargoed reports
 
 For anything that would let somebody **ship code to a user** — a hole in the
 verification chain, a way to get a listing past the checks, a compromised
@@ -630,7 +668,7 @@ Provisioning it, when it happens, is this checklist and not fewer steps:
 
 Until step 4 has happened, this section stays as it is.
 
-**What you get for reporting privately:** an acknowledgement inside the §9
+**What you get for reporting privately:** an acknowledgement inside the §10
 window, a coordinated disclosure date agreed with you rather than announced at
 you, credit in the advisory unless you ask otherwise, and — if the finding leads
 to a withdrawal — a stable `ASTRA-YYYY-NNNN` id that points at what you found.

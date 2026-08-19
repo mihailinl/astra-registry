@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://registry.astra.app/schema/publisher-v1.json",
+  "title": "astra.registry.publisher/1",
+  "description": "publishers/<owner>.json — what the registry knows about the ACCOUNT behind a listing, keyed by the GitHub owner of source.repo. Hand-written and hand-reviewed. Never derived from a bundle: a plugin's own manifest carries an `author` string the author typed, and a badge keyed on that would be forged by a one-line edit. The owner login is the only identity this registry proves, because it is what the ownership check binds to.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "owner",
+    "display_name",
+    "tier",
+    "verified_at",
+    "evidence"
+  ],
+  "properties": {
+    "$comment": {
+      "type": "string"
+    },
+    "schema": {
+      "const": "astra.registry.publisher/1"
+    },
+    "owner": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$",
+      "description": "The GitHub owner login, matching the file name. Compared case-insensitively against the owner half of every listing's source.repo."
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "description": "What a person sees beside the badge. One record per publisher rather than a copy per listing, so a rename is one edit and two entries cannot disagree."
+    },
+    "tier": {
+      "type": "string",
+      "enum": [
+        "official",
+        "verified"
+      ],
+      "description": "A STRING and not a proto enum, deliberately. A closed enum makes a third tier a proto change, a regeneration and an arm in both shells; and it buys no safety, because an unknown tier is not equal to the zero value either. The property that matters is that a client renders on explicit membership — `tier === 'official' || tier === 'verified'` — never on a value merely being present or non-empty."
+    },
+    "verified_at": {
+      "type": "string",
+      "description": "When the evidence below was first accepted.",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "last_confirmed_at": {
+      "type": "string",
+      "description": "When it last held. Written by the re-check, not by hand.",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "expires_at": {
+      "type": "string",
+      "description": "The backstop for a re-check that has been failing quietly. A record past this date is dropped from the index, so a tier nobody has confirmed inside the window lapses rather than persisting on the strength of having once been true. Required for `verified`; meaningless for `official`, whose evidence is a file in this repository.",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "evidence": {
+      "description": "WHY the tier holds, as a fact that can be re-checked later rather than a verdict recorded once. A tier granted and never revisited becomes a claim about who somebody used to be, and this registry is the only place that can notice.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "note"
+          ],
+          "properties": {
+            "kind": {
+              "const": "first-party"
+            },
+            "note": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 400
+            }
+          },
+          "description": "For `official`: the account belongs to the project. Re-checkable by construction — the claim is this file, in this repository, and changing it is a reviewed commit."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "domain",
+            "proof"
+          ],
+          "properties": {
+            "kind": {
+              "const": "domain"
+            },
+            "domain": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 253
+            },
+            "proof": {
+              "type": "string",
+              "format": "uri",
+              "description": "A URL on that domain serving the owner login. Re-fetched on a schedule; when it stops naming the owner, the tier is withdrawn."
+            },
+            "note": {
+              "type": "string",
+              "maxLength": 400
+            }
+          },
+          "description": "For `verified`: the publisher controls a domain that names them back. The evidence is live, so the badge can be taken away by the world changing rather than only by a person deciding."
+        }
+      ]
+    }
+  }
+}

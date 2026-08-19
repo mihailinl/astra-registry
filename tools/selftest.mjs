@@ -28,7 +28,7 @@ import { loadTestRoot } from "./testkeys/regenerate.mjs";
 import { stableStringify, jcs } from "./lib/canonical.mjs";
 import { validate as validateSchema } from "./lib/jsonschema.mjs";
 import { makeFixtures } from "./make-fixtures.mjs";
-import { REPO_ROOT, loadSources } from "./lib/sources.mjs";
+import { REPO_ROOT, expiredPublishers, loadPublishers, loadSources } from "./lib/sources.mjs";
 import { readZip, readEntry, writeZip } from "./lib/zip.mjs";
 import { compareSemver } from "./lib/semver.mjs";
 import { invalidId, unsafePathComponent, foldId } from "./lib/ids.mjs";
@@ -212,6 +212,74 @@ await test("index.json validates against schema/index-v1.json", () => {
   const errs = validateSchema(schema, doc);
   assert(errs.length === 0, errs.map((e) => `${e.path} ${e.message}`).join("\n"));
 });
+await test("every publishers/ record validates against schema/publisher-v1.json", () => {
+  const schema = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "schema/publisher-v1.json"), "utf8"));
+  const { errors, publishers } = loadPublishers(REPO_ROOT);
+  assert(errors.length === 0, errors.map((e) => `${e.file}: ${e.message}`).join("\n"));
+  assert(publishers.size >= 1, "no publisher records, so this test proves nothing");
+  for (const { file, doc } of publishers.values()) {
+    const errs = validateSchema(schema, doc);
+    assert(errs.length === 0, `${file}: ` + errs.map((e) => `${e.path} ${e.message}`).join("\n"));
+  }
+});
+
+// The badge's whole safety property, asserted on the shipped document rather
+// than on the code that writes it: a listing may only name a publisher the
+// catalogue actually carries a reviewed record for. A dangling key would be a
+// badge a client cannot resolve, and the tempting way to render that is "some
+// publisher" — which is a badge for an account nobody reviewed.
+await test("every listing's publisher resolves, and no record is shipped unused", () => {
+  const doc = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "registry/v1/index.json"), "utf8"));
+  const map = doc.signed.publishers ?? {};
+  const named = new Set(doc.signed.plugins.map((p) => p.publisher).filter(Boolean));
+  for (const key of named) {
+    assert(Object.hasOwn(map, key), `${key} is named by a listing and absent from signed.publishers`);
+  }
+  for (const key of Object.keys(map)) {
+    assert(named.has(key), `${key} ships a record no listing points at`);
+  }
+});
+
+// Fail closed, and exercised rather than asserted over an empty set. Every
+// listing today HAS a publisher record, so a test that walked the shipped
+// document looking for owners without one would loop over nothing and pass for
+// that reason — the exact vacuity this suite exists to refuse. So the generator
+// is run against a tree with no publishers/ at all, which is also the state
+// every fork and every first day is in.
+await test("with no publishers/ at all, no listing carries a publisher key", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "astra-nopub-"));
+  try {
+    for (const dir of ["plugins", "registry", "policy", "schema"]) {
+      const from = path.join(REPO_ROOT, dir);
+      if (fs.existsSync(from)) fs.cpSync(from, path.join(tmp, dir), { recursive: true });
+    }
+    assert(!fs.existsSync(path.join(tmp, "publishers")), "the copy must not carry publishers/");
+    const doc = buildIndex({ root: tmp, serial: 1 });
+    assert(doc.signed.plugins.length >= 1, "no listings in the copy, so this proves nothing");
+    assert(!Object.hasOwn(doc.signed, "publishers"),
+      "signed.publishers is present with no records behind it");
+    const badged = doc.signed.plugins.filter((e) => Object.hasOwn(e, "publisher"));
+    assert(badged.length === 0,
+      `no record exists and ${badged.length} listing(s) still carry a publisher key`);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// The expiry has to be able to fire, or it is a comment. `verified` is stored
+// as live evidence plus the date it last held, precisely so a tier granted once
+// and never revisited cannot go on asserting who somebody used to be.
+await test("an expired publisher record is reported, and a current one is not", () => {
+  const stale = new Map([["ghost", { file: "publishers/ghost.json", doc: { owner: "ghost", expires_at: "2020-01-01" } }]]);
+  assert(expiredPublishers(stale).length === 1, "an expired record went unreported");
+  const fresh = new Map([["ghost", { file: "publishers/ghost.json", doc: { owner: "ghost", expires_at: "2999-01-01" } }]]);
+  assert(expiredPublishers(fresh).length === 0, "a current record was reported as expired");
+  const committed = loadPublishers(REPO_ROOT).publishers;
+  assert(expiredPublishers(committed).length === 0,
+    "a committed publisher record is past its own expiry: " +
+    expiredPublishers(committed).map((e) => `${e.file} (${e.expires_at})`).join(", "));
+});
+
 await test("every staging listing is REJECTED without --allow-staging", async () => {
   // The count is read off the tree, never hardcoded. An earlier version of this
   // test asserted `=== 1`, which was true only while the registry held a single

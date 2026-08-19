@@ -120,5 +120,79 @@ export function loadSchemas(root = REPO_ROOT) {
     index: readJson(path.join(root, "schema", "index-v1.json")),
     plugin: readJson(path.join(root, "schema", "plugin-v1.json")),
     version: readJson(path.join(root, "schema", "version-v1.json")),
+    publisher: readJson(path.join(root, "schema", "publisher-v1.json")),
   };
+}
+
+/**
+ * Reads `publishers/*.json` into a map keyed by the LOWERCASED owner login.
+ *
+ * Structure only, like `loadSources` — no policy, no schema, and no clock. The
+ * expiry a `verified` record carries is deliberately NOT enforced here: this
+ * module feeds a generator whose whole contract is "same sources, same bytes",
+ * and a rule that consults the date makes today's index differ from tomorrow's
+ * for reasons no diff can show. Expiry is a CHECK (see `expiredPublishers`),
+ * which fails loudly and puts a person in front of it, rather than a silent
+ * disappearance nobody can date.
+ *
+ * GitHub logins are case-insensitive, so `mihailinl` and `MihailinL` are one
+ * account; keying on the lowercase form is what makes a listing's
+ * `source.repo` find its publisher regardless of how either was typed.
+ */
+export function loadPublishers(root = REPO_ROOT) {
+  const dir = path.join(root, "publishers");
+  const errors = [];
+  const publishers = new Map();
+  if (!fs.existsSync(dir)) return { errors, publishers };
+
+  const files = fs.readdirSync(dir, { withFileTypes: true })
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  for (const ent of files) {
+    const rel = `publishers/${ent.name}`;
+    if (ent.isSymbolicLink()) {
+      errors.push({ file: rel, message: "is a symlink; publishers/ holds real files only" });
+      continue;
+    }
+    if (!ent.isFile() || !ent.name.endsWith(".json")) continue;
+    let doc;
+    try {
+      doc = readJson(path.join(dir, ent.name));
+    } catch (e) {
+      errors.push({ file: rel, message: `is not readable JSON — ${e.message}` });
+      continue;
+    }
+    const stem = ent.name.slice(0, -".json".length);
+    if (typeof doc?.owner !== "string" || doc.owner.toLowerCase() !== stem.toLowerCase()) {
+      // The file name is the key the index is built on, so a record naming a
+      // different owner than its file would attach a badge to an account
+      // nobody reviewed.
+      errors.push({ file: rel, message: `owner ${JSON.stringify(doc?.owner)} does not match the file name` });
+      continue;
+    }
+    const key = doc.owner.toLowerCase();
+    if (publishers.has(key)) {
+      errors.push({ file: rel, message: `a second record for ${doc.owner}` });
+      continue;
+    }
+    publishers.set(key, { file: rel, doc });
+  }
+  return { errors, publishers };
+}
+
+/**
+ * The records whose evidence has not been confirmed inside its own window.
+ *
+ * Separate from the loader and from the generator because it is the one part
+ * of this that has to know what day it is. A tier granted once and never
+ * revisited is a claim about who somebody USED to be; this is what notices.
+ */
+export function expiredPublishers(publishers, now = new Date()) {
+  const today = now.toISOString().slice(0, 10);
+  const out = [];
+  for (const { file, doc } of publishers.values()) {
+    if (typeof doc.expires_at === "string" && doc.expires_at < today) {
+      out.push({ file, owner: doc.owner, expires_at: doc.expires_at });
+    }
+  }
+  return out;
 }

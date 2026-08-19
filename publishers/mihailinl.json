@@ -1,0 +1,12 @@
+{
+  "$comment": "Hand-written and hand-reviewed. Never derived from a bundle — see schema/publisher-v1.json for why the plugin's own `author` string cannot carry this.",
+  "schema": "astra.registry.publisher/1",
+  "owner": "mihailinl",
+  "display_name": "Astra Team",
+  "tier": "official",
+  "verified_at": "2026-08-19",
+  "evidence": {
+    "kind": "first-party",
+    "note": "The account that publishes Astra itself, its SDKs and this registry. The claim is this file in this repository, so re-checking it is reading a reviewed commit rather than trusting a record."
+  }
+}

@@ -60,7 +60,7 @@ import { execFileSync } from "node:child_process";
 
 import { stableStringify } from "./lib/canonical.mjs";
 import { compareSemver } from "./lib/semver.mjs";
-import { loadSources, REPO_ROOT } from "./lib/sources.mjs";
+import { loadPublishers, loadSources, REPO_ROOT } from "./lib/sources.mjs";
 import { INDEX_SCHEMA } from "../bot/lib/sign.mjs";
 import { MAX_README_CHARS, iconDataUri } from "../bot/lib/assets.mjs";
 
@@ -218,6 +218,8 @@ function presentation(root, plugin) {
 
 export function buildIndex({ root = REPO_ROOT, serial } = {}) {
   const { errors, plugins } = loadSources(root);
+  const { errors: pubErrors, publishers } = loadPublishers(root);
+  errors.push(...pubErrors);
   if (errors.length) {
     const lines = errors.map((e) => `  ${e.file}: ${e.message}`).join("\n");
     throw new Error(`cannot generate the index, the sources do not load:\n${lines}`);
@@ -257,6 +259,15 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
         repo: p.source.repo,
         ...(p.source.subdirectory !== undefined ? { subdirectory: p.source.subdirectory } : {}),
       },
+      // The lookup key only, and only when a reviewed record exists. The
+      // display name lives once in `signed.publishers` rather than being
+      // copied onto every listing, so a rename is one edit and two entries
+      // cannot disagree. An owner with no record emits no key at all: the
+      // absence is what a client must read as "no badge", and a client that
+      // renders on the field merely being present would badge everybody.
+      ...(publishers.has(p.source.repo.split("/")[0].toLowerCase())
+        ? { publisher: publishers.get(p.source.repo.split("/")[0].toLowerCase()).doc.owner }
+        : {}),
       downloads: 0,
       stars: 0,
       updated_at: latest.published_at,
@@ -270,6 +281,19 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
 
   entries.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
+  // Sorted, so the same sources produce the same bytes whatever order the
+  // filesystem handed them back.
+  const usedPublishers = {};
+  for (const key of [...new Set(entries.map((e) => e.publisher).filter(Boolean))].sort()) {
+    const rec = publishers.get(key.toLowerCase()).doc;
+    usedPublishers[key] = {
+      display_name: rec.display_name,
+      tier: rec.tier,
+      verified_at: rec.verified_at,
+      ...(rec.last_confirmed_at !== undefined ? { last_confirmed_at: rec.last_confirmed_at } : {}),
+    };
+  }
+
   return {
     $comment: BANNER,
     // Empty, and written out rather than omitted: a reader that finds no
@@ -280,6 +304,16 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
       schema: INDEX_SCHEMA,
       serial: resolveSerial({ explicit: serial, root }),
       plugins: entries,
+      // One record per publisher, and only for publishers something in this
+      // catalogue actually points at — a record for an owner with no listing
+      // would be a claim nobody can reach, and it would make the document
+      // depend on files that do not affect it.
+      //
+      // It lives INSIDE `signed`, so the signature the daemon already checks
+      // covers it. A badge is a claim the registry makes; putting it anywhere
+      // a signature does not reach would let whoever serves the bytes invent
+      // one.
+      ...(Object.keys(usedPublishers).length ? { publishers: usedPublishers } : {}),
     },
   };
 }
