@@ -460,6 +460,16 @@ rather than the presence of a failure: the window runs out, the record is
 deleted in a commit anyone can read, and an issue says so where the publisher
 will see it. Putting the document back is how it comes back.
 
+**Two publishers may not render as the same word.** The display name is what a
+person reads beside a trust mark, so an account whose name is confusable with
+another's is an impersonation whether or not anyone meant one — and a client
+cannot catch it, because homoglyphs are exactly as indistinguishable to a
+renderer as to a reader. The build refuses it instead, using the same
+confusable folding the catalogue already applies to plugin names: `KNICE` and
+`KnlCE` differ by a capital i against a lowercase L, and collapse to one word.
+A publisher's own login and display name are allowed to collide — that is one
+account spelling its own name, which is what the field is for.
+
 **What the badge does not mean.** It is not a safety claim. "We know who
 published this" is not "this code is safe" — §8 below is unchanged by it, and a
 client that lets a badge stand in for the permission sheet has made the user

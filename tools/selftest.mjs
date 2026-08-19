@@ -28,7 +28,7 @@ import { loadTestRoot } from "./testkeys/regenerate.mjs";
 import { stableStringify, jcs } from "./lib/canonical.mjs";
 import { validate as validateSchema } from "./lib/jsonschema.mjs";
 import { makeFixtures } from "./make-fixtures.mjs";
-import { REPO_ROOT, expiredPublishers, loadPublishers, loadSources } from "./lib/sources.mjs";
+import { REPO_ROOT, expiredPublishers, loadPublishers, loadSources, publisherNameCollisions } from "./lib/sources.mjs";
 import { proofNamesOwner, recheck } from "../bot/recheck-publishers.mjs";
 import { readZip, readEntry, writeZip } from "./lib/zip.mjs";
 import { compareSemver } from "./lib/semver.mjs";
@@ -279,6 +279,32 @@ await test("an expired publisher record is reported, and a current one is not", 
   assert(expiredPublishers(committed).length === 0,
     "a committed publisher record is past its own expiry: " +
     expiredPublishers(committed).map((e) => `${e.file} (${e.expires_at})`).join(", "));
+});
+
+// The display name is the word a user reads beside a trust mark, so two
+// publishers rendering as the same word is an impersonation whether or not
+// anyone meant one. A CLIENT cannot catch this — homoglyphs are exactly as
+// indistinguishable to a renderer as to a reader — so review is the only place
+// it can be caught, and review is what forgets.
+await test("no two publishers render as the same word", () => {
+  const { publishers } = loadPublishers(REPO_ROOT);
+  const clashes = publisherNameCollisions(publishers);
+  assert(clashes.length === 0, clashes.map((c) => `${c.a} vs ${c.b}: ${c.why}`).join("\n"));
+
+  // Exercised, not asserted over a set of two that happens to be fine. This
+  // repository contains the pair that motivates it: a capital i against a
+  // lowercase L, which case folding leaves distinct and nobody can see.
+  const planted = new Map([
+    ["one", { file: "publishers/one.json", doc: { owner: "someone-else", display_name: "KNICE" } }],
+    ["two", { file: "publishers/two.json", doc: { owner: "KnlCE", display_name: "KNICE" } }],
+  ]);
+  assert(publisherNameCollisions(planted).length === 1, "two records displaying the same word must clash");
+
+  const distinct = new Map([
+    ["one", { file: "publishers/one.json", doc: { owner: "mihailinl", display_name: "Mihailin" } }],
+    ["two", { file: "publishers/two.json", doc: { owner: "KnlCE", display_name: "KNICE" } }],
+  ]);
+  assert(publisherNameCollisions(distinct).length === 0, "two genuinely different publishers must not clash");
 });
 
 // A `verified` badge rests on a document that keeps saying the same thing. The

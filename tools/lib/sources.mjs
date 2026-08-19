@@ -4,6 +4,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+
+import { confusableSkeleton } from "./ids.mjs";
 import { fileURLToPath } from "node:url";
 
 export const REPO_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
@@ -192,6 +194,51 @@ export function expiredPublishers(publishers, now = new Date()) {
   for (const { file, doc } of publishers.values()) {
     if (typeof doc.expires_at === "string" && doc.expires_at < today) {
       out.push({ file, owner: doc.owner, expires_at: doc.expires_at });
+    }
+  }
+  return out;
+}
+
+/**
+ * Publisher names that a person could not tell apart.
+ *
+ * The display name is the word a user reads beside a trust mark, so two
+ * publishers who render as the same word are an impersonation whether or not
+ * anybody intended one. The catalogue already refuses this for plugin NAMES;
+ * the argument is stronger here, because a plugin name sits beside a
+ * description and a badge sits beside a claim about identity.
+ *
+ * `confusableSkeleton` and not a fold, and this repository already contains the
+ * example that shows why: `KNICE` and `KnlCE` differ by a capital i against a
+ * lowercase L. Case folding leaves them distinct — `knice` and `knlce` — and a
+ * reader cannot tell them apart in any typeface they are likely to meet. The
+ * skeleton collapses both to `knice`, which is the honest answer.
+ *
+ * A record's OWN login and display name are allowed to collide, and that is not
+ * an oversight: `KnlCE` publishing as `KNICE` is one account spelling its own
+ * name, which is the case this whole field exists to serve. What is refused is
+ * one publisher wearing another's word.
+ */
+export function publisherNameCollisions(publishers) {
+  const out = [];
+  const records = [...publishers.values()];
+  for (let i = 0; i < records.length; i++) {
+    for (let j = i + 1; j < records.length; j++) {
+      const a = records[i].doc;
+      const b = records[j].doc;
+      const an = confusableSkeleton(a.display_name ?? "");
+      const bn = confusableSkeleton(b.display_name ?? "");
+      if (an && an === bn) {
+        out.push({ a: a.owner, b: b.owner, why: `both display as ${JSON.stringify(an)} once confusables are folded` });
+        continue;
+      }
+      // Somebody else's LOGIN is also a word users see — in a repository URL,
+      // and in this UI as the fallback when a display name is missing.
+      if (an && an === confusableSkeleton(b.owner)) {
+        out.push({ a: a.owner, b: b.owner, why: `${JSON.stringify(a.display_name)} is confusable with the login ${JSON.stringify(b.owner)}` });
+      } else if (bn && bn === confusableSkeleton(a.owner)) {
+        out.push({ a: b.owner, b: a.owner, why: `${JSON.stringify(b.display_name)} is confusable with the login ${JSON.stringify(a.owner)}` });
+      }
     }
   }
   return out;
