@@ -104,10 +104,10 @@
               "tier": {
                 "type": "string",
                 "enum": [
-                  "official",
+                  "astra_team",
                   "verified"
                 ],
-                "description": "A string rather than a closed client-side enum: a new tier should cost a registry edit and a locale key, not a proto change and an arm in every shell. A client MUST render on explicit membership — equal to `official` or equal to `verified` — and never on the value merely being present, non-empty, or not-some-default. An unrecognised tier is not a badge."
+                "description": "A string rather than a closed client-side enum: a new tier should cost a registry edit and a locale key, not a proto change and an arm in every shell. A client MUST render on explicit membership — equal to `astra_team` or equal to `verified` — and never on the value merely being present, non-empty, or not-some-default. An unrecognised tier is not a badge."
               },
               "verified_at": {
                 "type": "string",

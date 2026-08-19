@@ -870,11 +870,11 @@
       "mihailinl": {
         "description": "Astra's creator and main developer",
         "display_name": "Mihailin",
-        "tier": "official",
+        "tier": "astra_team",
         "verified_at": "2026-08-19"
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 17
+    "serial": 18
   }
 }

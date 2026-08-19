@@ -40,10 +40,10 @@
     "tier": {
       "type": "string",
       "enum": [
-        "official",
+        "astra_team",
         "verified"
       ],
-      "description": "A STRING and not a proto enum, deliberately. A closed enum makes a third tier a proto change, a regeneration and an arm in both shells; and it buys no safety, because an unknown tier is not equal to the zero value either. The property that matters is that a client renders on explicit membership — `tier === 'official' || tier === 'verified'` — never on a value merely being present or non-empty."
+      "description": "A STRING and not a proto enum, deliberately — a new tier should cost a registry edit and a locale key, not a proto change and an arm in every shell. A client MUST render on explicit membership and never on a value being present or non-default.\n\n`astra_team` and not `official`, because `official` is relative to nothing. Beside a plugin that plays DOOM or renders Bad Apple!!, a reader completes the sentence with the SUBJECT — \"the official DOOM plugin\", or worse, a claim on somebody else's rights. Naming Astra leaves nothing to complete: it says whose team, which is the only thing this tier ever meant."
     },
     "verified_at": {
       "type": "string",
@@ -80,7 +80,7 @@
               "maxLength": 400
             }
           },
-          "description": "For `official`: the account belongs to the project. Re-checkable by construction — the claim is this file, in this repository, and changing it is a reviewed commit."
+          "description": "For `astra_team`: the account belongs to the project. Re-checkable by construction — the claim is this file, in this repository, and changing it is a reviewed commit."
         },
         {
           "type": "object",

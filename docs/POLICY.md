@@ -409,7 +409,7 @@ whoever serves the bytes could invent.
 
 | tier | what it says | evidence | how it is withdrawn |
 |---|---|---|---|
-| `official` | published by the Astra project | membership of this repository — the claim IS the reviewed file | deleting the file |
+| `astra_team` | published by the Astra project itself | membership of this repository — the claim IS the reviewed file | deleting the file |
 | `verified` | the registry has confirmed who this account is | a URL on a domain the publisher controls, serving their owner login | the re-check stops finding it, or `expires_at` passes |
 | *(no record)* | **no claim at all** | — | — |
 
@@ -430,14 +430,22 @@ the evidence must be re-fetchable, it is re-fetched on a schedule, and
 record nobody has confirmed inside its window is reported by the build rather
 than shipped on the strength of having once been true.
 
-**`official` and `verified` are not degrees of one thing**, and the difference is
-what each rests on rather than how much we like the publisher. `official` says
+**`astra_team` and `verified` are not degrees of one thing**, and the difference is
+what each rests on rather than how much we like the publisher. `astra_team` says
 the account belongs to this project, and its evidence is a reviewed commit in
 this repository — it cannot rot, because the claim *is* the file. `verified`
 says we confirmed who a stranger is, and its evidence lives outside: a document
 on their own domain that we re-fetch, and take the badge away when it stops
 saying what it said. One is an assertion about ourselves; the other is a fact
 about somebody else that we keep re-checking.
+
+**The tier is named `astra_team` and not `official` for a reason worth keeping.**
+"Official" is relative to nothing. Beside a plugin that plays DOOM, or renders
+*Bad Apple!!*, a reader finishes the sentence with the plugin's SUBJECT — "the
+official DOOM plugin" — and that is a claim about somebody else's rights that
+this registry has no business making on a publisher's behalf. Naming Astra
+leaves nothing to finish. A client must render it the same way: the words a
+user sees have to say *whose* team, never a bare "Official".
 
 **Asking for `verified`.** Open a *Publisher verification* issue with three
 things: the account that publishes your plugins, a URL on a domain you control
