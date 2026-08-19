@@ -343,7 +343,6 @@
       {
         "added_at": "2026-08-10",
         "author": "Astra Team",
-        "author_url": "https://github.com/mihailinl",
         "capabilities": [
           "dom_access",
           "ui_contributions"
@@ -351,8 +350,8 @@
         "categories": [
           "entertainment"
         ],
-        "description": "Play Doom inside Astra, on the Chocolate Doom engine and Freedoom data.",
-        "details": "Adds a Doom page to Astra's navigation running the Chocolate Doom engine compiled to WebAssembly, with Freedoom as the game data. Everything runs locally in the Astra window; there is no server, no streaming and no account. Scaling is configurable between letterboxed fit, stretch and integer pixel-perfect. At about 15 MB to download and 36 MB on disk it is by far the largest plugin in this catalogue. It runs its own JavaScript inside the Astra window, which is what a WebAssembly game needs and why it asks for dom_access.",
+        "description": "Play DOOM (1993 shareware) inside Astra via js-dos",
+        "details": "Play DOOM (1993 shareware) inside Astra via js-dos",
         "download_url": "",
         "downloads": 0,
         "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/doom",
@@ -366,9 +365,42 @@
         ],
         "license": "MIT",
         "name": "Doom",
-        "platform_downloads": {},
+        "platform_downloads": {
+          "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.1/doom-0.1.1-linux-x64.astraplugin",
+          "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.1/doom-0.1.1-windows-x64.astraplugin"
+        },
         "publisher": "mihailinl",
+        "readme": "# Doom\n\nA \"Doom\" page in Astra that runs the Chocolate Doom engine, compiled to\nWebAssembly, on the Freedoom data set.\n\n## What it does\n\nAdds a page to Astra's navigation. Open it and you are playing a first-person\nshooter inside your assistant. Keyboard input goes to the game while the page\nhas focus; the canvas scales to the window according to the setting below.\n\nEverything runs locally in the Astra window — the engine is a `.wasm` binary in\nthe bundle, and the game data is packed beside it. There is no server, no\nstreaming and no account.\n\n## What it needs\n\nNothing beyond Astra. Be aware of the size: the bundle is about **15 MB** to\ndownload and about **36 MB** on disk once installed — by far the largest example\nin this repository. (Measured on a `linux-x64` build; the compressed figure is\nwhat the store shows you before you click Install.)\n\n## Capabilities it asks for, and why\n\n| Capability | What it allows | Why this plugin asks |\n|---|---|---|\n| `ui_contributions` | The plugin may add its own surfaces to the Astra window | The \"Doom\" page |\n| `dom_access` | The plugin's JavaScript runs **inside the Astra window**, with access to the page: your conversations on screen, and every other plugin's interface | A WebAssembly game needs a canvas, an input loop and an audio context in that window |\n\n`dom_access` is high risk and Astra will say so before installing. The code it\ncovers here is `ui/doom.js` plus the Emscripten-generated\n`ui/chocolate-doom.js`, which loads `ui/chocolate-doom.wasm`. That generated file\nis machine output and is not realistically reviewable line by line — which is\nexactly the kind of thing worth knowing before you grant a plugin the run of\nyour window.\n\n## Configuration\n\n| Setting | Default | Meaning |\n|---|---|---|\n| Scale Mode | `fit` | `fit` (letterboxed), `stretch`, or `pixel-perfect` (integer scaling, sharpest) |\n\n## Licensing — read this before forking\n\nThe bundle contains two pieces of other people's work:\n\n- **Chocolate Doom**, the engine, is licensed **GPL-2.0**. `chocolate-doom.js`\n  and `chocolate-doom.wasm` are builds of it and carry that licence with them.\n- **Freedoom** supplies the game data (`doom1.wad` inside\n  `chocolate-doom.data`), under a **modified BSD** licence — freely\n  redistributable. No commercial DOOM WAD is included.\n\n`plugin.toml` currently declares `license = \"MIT\"`, which describes `src/` and\n`ui/doom.js` and **not** the engine build sitting next to them. A distributed\nbundle that mixes GPL-2.0 binaries under an MIT label is a licensing problem, not\na formatting one. This needs resolving before this example is published anywhere\nusers can install it.\n\n## Build it yourself\n\n```bash\ncd examples/doom\ncargo build --release\nastra-plugin build\n```\n\nThe engine and data are committed, so there is nothing to download first.\n\n## Files\n\n- `src/main.rs` — the backend: declares the page and serves its config.\n- `ui/doom.js` — the page: canvas, input, engine bootstrap.\n- `ui/chocolate-doom.{js,wasm,data}` — the engine build and Freedoom data.\n- `icon.svg` — the store icon, hand-drawn SVG.\n\nMIT licensed (`src/` and `ui/doom.js` — see the licensing section above).\n",
         "releases": [
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "doom-0.1.1-linux-x64.astraplugin",
+                "sha256": "90bfffe757c5b879bcfb7c092f438ff95bba9f5db170e703208d3ca52dfa130f",
+                "size": 16044583,
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.1/doom-0.1.1-linux-x64.astraplugin"
+              },
+              "windows-x64": {
+                "filename": "doom-0.1.1-windows-x64.astraplugin",
+                "sha256": "cea7f51d67bd983274ff4313dbeb63a39b14fad3e29b70a33f166049d0fd569a",
+                "size": 15611035,
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/doom-v0.1.1/doom-0.1.1-windows-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "dom_access",
+              "ui_contributions"
+            ],
+            "protocol": 1,
+            "published_at": "2026-08-19T06:47:45Z",
+            "release": {
+              "commit": "5b5d2605961b54271b74304f6988972edb83d598",
+              "kind": "github_release",
+              "repo": "mihailinl/AstraPlugins",
+              "tag": "doom-v0.1.1"
+            },
+            "version": "0.1.1"
+          },
           {
             "artifacts": {
               "linux-x64": {
@@ -399,13 +431,11 @@
         "repository_url": "https://github.com/mihailinl/AstraPlugins",
         "source": {
           "kind": "github",
-          "repo": "mihailinl/AstraPlugins",
-          "subdirectory": "examples/doom"
+          "repo": "mihailinl/AstraPlugins"
         },
-        "staging": true,
         "stars": 0,
-        "updated_at": "2026-08-10T00:00:00Z",
-        "version": "0.1.0"
+        "updated_at": "2026-08-19T06:47:45Z",
+        "version": "0.1.1"
       },
       {
         "added_at": "2026-08-10",
@@ -616,6 +646,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 9
+    "serial": 10
   }
 }

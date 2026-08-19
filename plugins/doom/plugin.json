@@ -1,21 +1,21 @@
 {
-  "$comment": "Seed catalogue (PRODUCTION_PLAN task 2.13). Source: AstraPlugins/examples/doom/plugin.toml at version 0.1.0. UNRESOLVED BEFORE THIS GOES PUBLIC: the bundle ships a WebAssembly build of Chocolate Doom, which is GPL-2.0, under a listing that declares MIT. The game data is Freedoom (modified BSD) and is fine. GPL-2.0 is not on policy/spdx-allowlist.json, so the licence cannot simply be corrected here \u2014 it needs a decision first.",
+  "$comment": "Derived from mihailinl/AstraPlugins@doom-v0.1.1 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
   "schema": "astra.registry.plugin/1",
   "id": "doom",
   "name": "Doom",
-  "summary": "Play Doom inside Astra, on the Chocolate Doom engine and Freedoom data.",
-  "description": "Adds a Doom page to Astra's navigation running the Chocolate Doom engine compiled to WebAssembly, with Freedoom as the game data. Everything runs locally in the Astra window; there is no server, no streaming and no account. Scaling is configurable between letterboxed fit, stretch and integer pixel-perfect. At about 15 MB to download and 36 MB on disk it is by far the largest plugin in this catalogue. It runs its own JavaScript inside the Astra window, which is what a WebAssembly game needs and why it asks for dom_access.",
-  "author": {
-    "name": "Astra Team",
-    "url": "https://github.com/mihailinl"
-  },
+  "summary": "Play DOOM (1993 shareware) inside Astra via js-dos",
   "license": "MIT",
   "source": {
     "kind": "github",
-    "repo": "mihailinl/AstraPlugins",
-    "subdirectory": "examples/doom"
+    "repo": "mihailinl/AstraPlugins"
   },
-  "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/doom",
+  "added_at": "2026-08-10",
+  "description": "Play DOOM (1993 shareware) inside Astra via js-dos",
+  "author": {
+    "name": "Astra Team"
+  },
+  "icon": "icon.png",
+  "readme": "README.md",
   "categories": [
     "entertainment"
   ],
@@ -25,6 +25,5 @@
     "webassembly",
     "freedoom"
   ],
-  "added_at": "2026-08-10",
-  "icon": "icon.png"
+  "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/doom"
 }
