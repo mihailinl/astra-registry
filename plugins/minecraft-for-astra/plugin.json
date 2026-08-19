@@ -1,0 +1,19 @@
+{
+  "$comment": "Derived from teletemagame-dev/minecraft-for-astra@v0.3.1 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
+  "schema": "astra.registry.plugin/1",
+  "id": "minecraft-for-astra",
+  "name": "Minecraft for Astra",
+  "summary": "Lets Astra play Minecraft: a mineflayer bot exposed as tools and triggers",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "teletemagame-dev/minecraft-for-astra"
+  },
+  "added_at": "2026-08-19",
+  "description": "Lets Astra play Minecraft: a mineflayer bot exposed as tools and triggers",
+  "author": {
+    "name": "Noxys"
+  },
+  "icon": "icon.png",
+  "readme": "README.md"
+}
