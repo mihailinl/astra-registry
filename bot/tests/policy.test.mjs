@@ -180,6 +180,7 @@ const conforming = (spec = {}) => ({ name: bundleName(spec), bytes: makeBundle(s
 async function run({
   assets = [conforming()], repo = REPO, tag = TAG, submitter = SUBMITTER, root,
   now = NOW, out = null, issue = null, approvedBy = null, approvedAt = null, approvedFor = null,
+  publishNow = false,
   // The commit the Release names and the commit the attestation names. Equal by
   // default, because in a healthy release they are the same commit; a test that
   // moves one and not the other is asking about `E_RELEASE_COMMIT_MISMATCH`.
@@ -188,7 +189,7 @@ async function run({
   const github = fakeGitHub({ repo, tag, assets, commit });
   return decideRelease(
     {
-      repo, tag, submitter, root, issue, now, approvedBy, approvedAt, approvedFor,
+      repo, tag, submitter, root, issue, now, approvedBy, approvedAt, approvedFor, publishNow,
       rootsFile: ROOTS_FILE, trustFile: TRUST_FILE, signerWorkflow: DEFAULT_SIGNER_WORKFLOW,
       out,
     },
@@ -262,6 +263,51 @@ await test("a dom_access request does not", async () => {
   assert(r.comment.includes("R_NEW_HIGH_RISK"), "the comment names the reason");
   assert(r.comment.includes(POLICY_CODES.R_NEW_HIGH_RISK.remedy.slice(0, 40)),
     "…and says what to do about it");
+});
+
+section("/publish — the maintainer's \"not in a day, now\"");
+
+// The flag has to be able to fire AND to be absent, or one of the two is a
+// comment. Same tree, same bytes, same approval; the only difference is the
+// word the maintainer typed.
+await test("/publish waives the delay, and /approve alone does not", async () => {
+  const tree = () => registryTree([{ versions: [{ version: "0.1.0", capabilities: ["tools", "client"] }] }]);
+  const assets = [conforming({ capabilities: ["tools", "client"] })];
+
+  // The fingerprint the maintainer would copy out of the hold comment. An
+  // approval that names nothing is stale by design, which is a different test.
+  const first = await run({ root: tree(), assets });
+  const fp = first.decision.fingerprint;
+
+  const approved = await run({
+    root: tree(), assets,
+    approvedBy: "maint", approvedAt: NOW.toISOString(), approvedFor: fp,
+  });
+  assertEqual(approved.decision.outcome, "delay", JSON.stringify(codes(approved)));
+  assert(!approved.decision.publishes_now, "an approval alone still waits");
+
+  const published = await run({
+    root: tree(), assets,
+    approvedBy: "maint", approvedAt: NOW.toISOString(), approvedFor: fp, publishNow: true,
+  });
+  assertEqual(published.decision.outcome, "publish", JSON.stringify(codes(published)));
+  assert(published.decision.publishes_now, "/publish does not wait");
+  assert(codes(published).includes("P_DELAY_WAIVED_BY_COMMAND"), JSON.stringify(codes(published)));
+  assert(published.comment.includes("P_DELAY_WAIVED_BY_COMMAND"),
+    "the shortened window is stated where the author reads it");
+});
+
+// It waives the WAIT and nothing else. Without an approval at all there is
+// nothing to waive, and a hold is not a delay.
+await test("/publish does not stand in for an approval", async () => {
+  const r = await run({
+    root: registryTree([{ id: "something-else" }]),
+    publishNow: true,
+  });
+  assertEqual(r.decision.outcome, "review", JSON.stringify(codes(r)));
+  assert(codes(r).includes("R_FIRST_LISTING"), JSON.stringify(codes(r)));
+  assert(!codes(r).includes("P_DELAY_WAIVED_BY_COMMAND"),
+    "a waiver nobody approved must not appear");
 });
 
 section("the three events that block on a person, and nothing else");

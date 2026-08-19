@@ -230,6 +230,24 @@ export const POLICY_CODES = {
       "Not a rejection and not one of the three policy events — a near-miss name or a display-name " +
       "collision that the bot is not entitled to rule on. Same 48-hour SLA.",
   },
+  P_DELAY_WAIVED_BY_COMMAND: {
+    level: "note",
+    title: "A maintainer published this without waiting",
+    remedy:
+      "Nothing to do, and the shortened window is on the record. Somebody with write access to this " +
+      "registry typed `/publish` against these exact bytes, which is the same act as editing " +
+      "`publish_after` by hand and needs the same access — but every check in the comment above it ran " +
+      "again from scratch first, which a hand-written listing would not have.",
+  },
+  P_FIRST_LISTING_APPROVED: {
+    level: "note",
+    title: "Approved, and published without waiting",
+    remedy:
+      "Nothing to do. A first listing has no installed copies, so the publication delay would have " +
+      "protected nobody who had not already chosen to install it — and a person read this submission, " +
+      "which is the check the delay stands in for. The delay still applies to every later release from " +
+      "this repository, where existing installs follow an update whether or not anybody looked.",
+  },
   P_DELAY_HIGH_RISK: {
     level: "note",
     title: "Held for the publication delay because the plugin holds a high-risk permission",
@@ -642,7 +660,7 @@ export function decide(input) {
   }
 
   const approval = bound ?? (queueIsAboutThis
-    ? normaliseApproval({ by: queued.approved_by, at: queued.approved_at })
+    ? normaliseApproval({ by: queued.approved_by, at: queued.approved_at, publishNow: queued.publish_now })
     : null);
 
   const previous = newestListedVersion(existing);
@@ -709,10 +727,15 @@ export function decide(input) {
       message: `this plugin holds ${heldHighRisk.join(", ")}`,
     });
   }
-  if (added.length) {
+  // Only against a release that EXISTS. On a first listing everything is
+  // "added" — there is nothing to widen from — so this fired on every first
+  // submission and told the author its permissions had grown beyond "the
+  // previous release", naming one that had never been cut. A delay reason
+  // nobody can act on is a delay nobody can shorten.
+  if (previous && added.length) {
     delayReasons.push({
       code: "P_DELAY_WIDENED",
-      message: `it asks for ${added.join(", ")}, which ${previous?.version ?? "the previous release"} did not`,
+      message: `it asks for ${added.join(", ")}, which ${previous.version} did not`,
     });
   }
 
@@ -727,6 +750,59 @@ export function decide(input) {
   for (const r of delayReasons) add(r.code, r.message);
   if (track.tier === "established") {
     add("P_TRUSTED_AUTHOR", `${track.clean_releases} clean release(s) from @${track.owner} here, so the delay is ${TRUSTED_DELAY_HOURS} h rather than ${DELAY_HOURS} h`);
+  }
+
+  // A FIRST listing that a maintainer has approved does not wait, and the
+  // reason is who the delay protects.
+  //
+  // The delay buys a window in which the real author can say "that release is
+  // not mine" before a hijacked build reaches anybody. That window is worth a
+  // great deal for an UPDATE: every existing install follows it, and the
+  // people at risk never chose to take the risk.
+  //
+  // A first listing has no installs. Nobody is carried along by it; the only
+  // people who can be harmed are people who go and choose it after it appears,
+  // and a day's delay does not change that — it postpones it. What a first
+  // listing does have is the strongest check this registry performs: a person
+  // reading the submission, which is exactly what an approval is.
+  //
+  // So the approval publishes it. Stacking a day on top of a human decision
+  // was asking the maintainer to wait out a window that protects nobody who
+  // has not already decided to trust them.
+  // `/publish` — the maintainer's explicit "not in a day, now".
+  //
+  // It waives the delay and nothing else: the permission question, the binding
+  // to these exact bytes, and every check in this run happened first and
+  // happened identically to `/approve`. What it removes is the WAIT, which is
+  // the only thing a maintainer was ever able to remove by hand — the queue
+  // entry has always said so, and doing it by hand meant a commit from a
+  // laptop. This is that same act, typed where the decision is being made.
+  //
+  // It grants no authority that did not exist: whoever can run it could edit
+  // `publish_after`, or write the listing by hand. Unlike writing it by hand,
+  // this path re-runs every check from scratch first.
+  if (approval?.publishNow && delayReasons.length) {
+    add(
+      "P_DELAY_WAIVED_BY_COMMAND",
+      `@${approval.by} published this without waiting out the ${track.delay_hours ?? DELAY_HOURS} h delay ` +
+      `(${delayReasons.map((r) => r.code).join(", ")}); every check in this comment ran again first`,
+    );
+    return finish({
+      outcome: "publish", reasons, track, now, drop_queue: true, artifact_digests: digests, approval,
+      refused: refusedApproval, repo, tag: input.tag, fingerprint,
+    });
+  }
+
+  if (approval && !existing && delayReasons.length) {
+    add(
+      "P_FIRST_LISTING_APPROVED",
+      `@${approval.by} approved the first listing, and a first listing has no installed copies for a delay to protect — ` +
+      `${delayReasons.map((r) => r.code).join(", ")} would have applied to an update`,
+    );
+    return finish({
+      outcome: "publish", reasons, track, now, drop_queue: true, artifact_digests: digests, approval,
+      refused: refusedApproval, repo, tag: input.tag, fingerprint,
+    });
   }
 
   const delayHours = track.delay_hours ?? DELAY_HOURS;
@@ -868,7 +944,10 @@ function normaliseApproval(approval) {
   // `artifact_digests` and not this.
   const named = String(approval?.for ?? "").toLowerCase();
   const forWhat = new RegExp(`^[0-9a-f]{${FINGERPRINT_CHARS}}$`).test(named) ? named : null;
-  return { by, at: iso(at), for: forWhat };
+  // `/publish` sets this; `/approve` does not. Boolean-coerced here so a
+  // queue entry written before the field existed reads as false rather than
+  // undefined — the safe direction, since the flag only ever shortens a wait.
+  return { by, at: iso(at), for: forWhat, publishNow: approval?.publishNow === true };
 }
 
 function finish(d) {

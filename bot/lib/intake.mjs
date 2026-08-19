@@ -103,15 +103,19 @@ export const safeLogin = (v) => safe(v, LOGIN_RE);
  *   tag: string|null, fingerprint: string|null}|null}
  */
 export function parseMaintainerCommand(text) {
-  const m = /^\/(approve|reject)\b\s*(.*)$/i.exec(firstWrittenLine(text));
+  const m = /^\/(approve|publish|reject)\b\s*(.*)$/i.exec(firstWrittenLine(text));
   if (!m) return null;
-  const command = m[1].toLowerCase() === "approve" ? "approve" : "reject";
+  const command = m[1].toLowerCase();
   // Capped and flattened: it is a maintainer's sentence, quoted back to the
   // author on a public thread, not a document.
   const rest = m[2].trim().slice(0, 500);
   if (command === "reject") {
     return { command, reason: rest || null, repo: null, tag: null, fingerprint: null };
   }
+  // `/publish` is `/approve` plus a waiver of the publication delay, and it
+  // takes the SAME binding for the same reason: a command that changes what
+  // reaches users has to name the bytes it means, or the author can move them
+  // between the hold and the answer.
   const bound = APPROVE_BINDING_RE.exec(rest);
   return {
     command,

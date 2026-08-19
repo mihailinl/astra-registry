@@ -403,6 +403,13 @@ async function decideCommand({ command, opts, registry, labelled, issueTitle, fo
 
   return {
     mode: "approve",
+    // `/publish` is `/approve` and one thing more: it also waives the rest of
+    // the publication delay. Everything above this line ran identically for
+    // both — the same permission question to GitHub, the same binding to the
+    // bytes, the same refusal when the submission moved — because a shortcut
+    // that skipped any of them would be a different command wearing this one's
+    // checks.
+    publishNow: command.command === "publish",
     // The maintainer's values, not the form's. They are equal — the branch above
     // is what makes them equal — and taking them from the command is what keeps
     // that true if this file is ever edited again.
@@ -440,6 +447,9 @@ async function main(argv) {
           submitter: out.submitter,
           approved_by: out.approvedBy,
           approved_at: out.approvedAt,
+          // Travels on the target beside the approval, for the same reason: a
+          // second target in the same run must not borrow this one's waiver.
+          publish_now: out.publishNow === true,
           // The submission the maintainer named. Checked against the bytes in
           // `check`, which is the only job that has any.
           approved_for: out.approvedFor,

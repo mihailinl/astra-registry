@@ -261,6 +261,37 @@ Some releases publish themselves, but not immediately.
 | The plugin holds **any** high-risk permission, whether or not this release changed anything | `P_DELAY_HIGH_RISK` | 24 h |
 | The release asks for a permission or capability the previous one did not, inside the non-high-risk set | `P_DELAY_WIDENED` | 24 h |
 | Either of the above, from an author with **5 clean** releases in this registry | `P_TRUSTED_AUTHOR` | 6 h |
+| Either of the above, on a **first listing a maintainer approved** | `P_FIRST_LISTING_APPROVED` | none |
+| Any of the above, when a maintainer typed `/publish` | `P_DELAY_WAIVED_BY_COMMAND` | none |
+
+**Why an approved first listing does not wait, and every later release does.**
+The delay buys a window in which the real author can say *"that release is not
+mine"* before a hijacked build reaches anybody. For an **update** that window is
+worth a great deal: every existing install follows it, and the people carried
+along never chose to take the risk.
+
+A first listing has no installs. Nobody is carried along; the only people who
+can be harmed are those who go and choose it after it appears, and a day's delay
+does not prevent that — it postpones it. What a first listing does have is the
+strongest check this registry performs: a person reading the submission. That is
+what an approval is, and stacking a day on top of it asks a maintainer to wait
+out a window that protects nobody who has not already decided to trust them.
+
+So: approval publishes a first listing. The delay stays exactly as it was for
+every release after it.
+
+**And a maintainer can always publish now.** `/publish <owner/repo>@<tag>
+<fingerprint>` — the same shape as `/approve`, the same GitHub permission
+question asked before anything happens, and the same binding to the exact bytes,
+so a submission that moved between the hold and the answer is refused rather
+than published. It waives the **wait** and nothing else: every check in the
+comment it produces ran again, from scratch, first.
+
+It grants no authority that did not already exist. Whoever can run it could edit
+`publish_after` in the queue entry, or write the listing into this repository by
+hand. The difference is that this path re-verifies everything and leaves the
+waiver on the issue where the author can see it; a hand-written listing does
+neither.
 
 A maintainer of this registry can waive part of the window by editing
 `publish_after` in the queue entry, which reports `P_DELAY_BROUGHT_FORWARD`. It
@@ -382,6 +413,8 @@ exists first; nothing downstream changes when it arrives.
 | `R_IDENTITY_CHANGED` | The repository this plugin is listed from changed. |
 | `R_CHECK_HELD` | A check handed the decision to a person; not one of the three, same SLA. |
 | `P_DELAY_HIGH_RISK` | Waiting, because the plugin holds a high-risk permission. |
+| `P_FIRST_LISTING_APPROVED` | Approved and published without waiting, because a first listing has no installed copies for a delay to protect. |
+| `P_DELAY_WAIVED_BY_COMMAND` | A maintainer typed `/publish`, which waives the wait and nothing else. |
 | `P_DELAY_WIDENED` | Waiting, because the permission set grew. |
 | `P_TRUSTED_AUTHOR` | Shorter delay: a clean release history in this registry. |
 | `P_DELAY_WAITING` | The publication time, stated. |

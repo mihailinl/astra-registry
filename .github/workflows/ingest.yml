@@ -581,6 +581,14 @@ jobs:
           # applies to whatever the issue body says at the moment the comment is
           # processed, and that body is the author's to edit.
           APPROVED_FOR: ${{ matrix.approved_for }}
+          # `/publish` rather than `/approve`. Travels ON the matrix entry, so a
+          # second target in the same run cannot borrow this one's waiver.
+          #
+          # Compared against "true" and not tested with `${VAR:+…}`: an unset
+          # flag arrives here as the STRING "false", which is non-empty, so the
+          # idiom every other argument on this line uses would have passed
+          # --publish-now on every run and waived every delay silently.
+          PUBLISH_NOW: ${{ matrix.publish_now }}
         run: |
           set -uo pipefail
           mkdir -p out
@@ -604,6 +612,7 @@ jobs:
             ${APPROVED_BY:+--approved-by "$APPROVED_BY"} \
             ${APPROVED_AT:+--approved-at "$APPROVED_AT"} \
             ${APPROVED_FOR:+--approved-for "$APPROVED_FOR"} \
+            $([ "$PUBLISH_NOW" = "true" ] && echo --publish-now) \
             --out out > out/comment.log || code=$?
           echo "code=$code" >> "$GITHUB_OUTPUT"
           cat out/comment.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || cat out/comment.log >> "$GITHUB_STEP_SUMMARY"

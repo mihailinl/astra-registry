@@ -69,7 +69,7 @@ export function parseArgs(argv) {
   const opts = {
     repo: null, tag: null, submitter: null, root: REPO_ROOT, out: null,
     issue: null, rootsFile: null, trustFile: null, signerWorkflow: null,
-    hostAstraVersion: null, now: null, approvedBy: null, approvedAt: null, approvedFor: null,
+    hostAstraVersion: null, now: null, approvedBy: null, approvedAt: null, approvedFor: null, publishNow: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -88,6 +88,7 @@ export function parseArgs(argv) {
     // The fingerprint out of the comment the maintainer answered. Compared, not
     // trusted: `decide()` recomputes it from the bytes this run hashed.
     else if (a === "--approved-for") opts.approvedFor = String(argv[++i] ?? "").toLowerCase();
+    else if (a === "--publish-now") opts.publishNow = true;
     else if (a === "--registry-dir") opts.root = path.resolve(argv[++i]);
     else if (a === "--roots") opts.rootsFile = path.resolve(argv[++i]);
     else if (a === "--trust") opts.trustFile = path.resolve(argv[++i]);
@@ -131,7 +132,7 @@ export async function decideRelease(opts, deps = {}) {
       ? readQueueEntry(opts.root, result.derived.plugin.id, result.derived.version.version)
       : null,
     approval: opts.approvedBy
-      ? { by: opts.approvedBy, at: opts.approvedAt ?? now, for: opts.approvedFor ?? null }
+      ? { by: opts.approvedBy, at: opts.approvedAt ?? now, for: opts.approvedFor ?? null, publishNow: opts.publishNow === true }
       : null,
     now,
   });
