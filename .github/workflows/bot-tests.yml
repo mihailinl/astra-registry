@@ -1,0 +1,89 @@
+# The bot's own tests, on the path that reaches `main`.
+#
+# `ingest.yml` runs `bot/tests/ingest.test.mjs` and `bot/tests/policy.test.mjs`
+# before every ingest, and that placement is right: a bot that cannot pass its
+# own tests should decide nothing about a stranger's release. But `ingest.yml`
+# is event-driven — issues, dispatch, cron — and never fires on a push or a pull
+# request, so until this file existed a change to the checks or to the policy
+# could reach `main` with neither suite having run. One did: the commit that
+# taught the bot to close a published issue changed `bot/lib/policy.mjs` and
+# went green without `policy.test.mjs` executing once.
+#
+# `build-index.yml` already runs the cheap suites for the same reason. These two
+# are not there because they need the manifest probe — a Rust binary built from
+# the crate the daemon itself parses manifests with — and a Rust build does not
+# belong in the job that regenerates the index.
+#
+# **No path filter, deliberately.** These suites assert agreement between code
+# and prose in several directories at once: `policy.test.mjs` checks that
+# `docs/POLICY.md` quotes the numbers `bot/lib/policy.mjs` enforces, and
+# `ingest.test.mjs` checks that `docs/BOT-CHECKS.md` describes exactly the codes
+# that exist. A path filter that forgets one of those turns this workflow into a
+# check that is green because it did not run — which is the failure it is here
+# to prevent, one level up.
+name: Bot tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bot-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  suites:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The same two steps `ingest.yml` runs, in the same order, for the same
+      # reason: the probe parses `plugin.toml` with the daemon's own crate, so
+      # the tests are asserting the daemon's rules rather than a re-reading of
+      # them.
+      - name: Fetch the manifest crate the daemon uses
+        run: |
+          set -euo pipefail
+          bot/manifest-probe/link-deps.sh --clone
+
+      - name: Cache the probe build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            bot/manifest-probe/target
+          key: probe-${{ runner.os }}-${{ hashFiles('bot/manifest-probe/Cargo.toml', 'bot/manifest-probe/src/**') }}
+          restore-keys: probe-${{ runner.os }}-
+
+      - name: Build the manifest probe
+        run: cargo build --release --manifest-path bot/manifest-probe/Cargo.toml
+
+      - name: The probe's own tests — the daemon's manifest rules, asserted
+        run: cargo test --manifest-path bot/manifest-probe/Cargo.toml
+
+      # A run that reported PASS because the probe was missing would be the
+      # worst possible outcome here: `E_PROBE_UNAVAILABLE` is a finding, and a
+      # suite that treated it as one more expected refusal would go green over
+      # a binary that was never built. The tests fail loudly on it — this step
+      # says so out loud anyway, so the reason is in the log and not only in a
+      # test name.
+      - name: The probe is actually there
+        run: |
+          set -euo pipefail
+          test -x bot/manifest-probe/target/release/astra-manifest-probe
+          bot/manifest-probe/target/release/astra-manifest-probe --version || true
+
+      - name: The bot's tests, including every shared bundle vector
+        run: node bot/tests/ingest.test.mjs
+
+      - name: The publication policy's tests, including its published numbers
+        run: node bot/tests/policy.test.mjs

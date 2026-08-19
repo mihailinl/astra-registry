@@ -184,25 +184,18 @@ jobs:
       # catalogue, so it is a property of the generator rather than a property
       # of today's eleven listings.
       #
-      # The bot's suites run here as well as in `ingest.yml`, and the duplication
-      # is deliberate: `ingest.yml` is event-driven — issues, dispatch, cron —
-      # and never fires on a pull request, so a change to the ingest checks, the
-      # policy, or the icon and README derivation could reach `main` with
-      # nothing having run its tests. This workflow is the one that gates a PR.
-      #
-      # `ingest.yml` runs them too, and that is not redundant: there they gate
-      # the ingest itself, so a bot that cannot pass its own tests decides
-      # nothing. Here they gate the merge. Both matter, and neither substitutes
-      # for the other — the whole set costs under a second.
-      - name: Self-test (the site, the moderation log, the ingest checks, the policy, the presentation rules)
+      # The presentation suite runs here as well as in `ingest.yml`, and the
+      # duplication is deliberate: `ingest.yml` is event-driven — issues,
+      # dispatch, cron — and never fires on a pull request, so a change to the
+      # icon and README derivation could reach `main` with nothing having run
+      # its tests. This workflow is the one that gates a PR.
+      - name: Self-test (the site, the moderation log, the asset check, the presentation rules)
         run: |
           set -euo pipefail
           node site/selftest.mjs
           node bot/moderation.mjs --check
           node bot/tests/asset-check.test.mjs
           node bot/tests/presentation.test.mjs
-          node bot/tests/ingest.test.mjs
-          node bot/tests/policy.test.mjs
 
       - name: Validate the listings
         # --allow-staging tolerates plugins/dice-roller/versions/0.1.1.json,
