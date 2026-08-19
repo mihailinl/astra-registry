@@ -439,6 +439,27 @@ on their own domain that we re-fetch, and take the badge away when it stops
 saying what it said. One is an assertion about ourselves; the other is a fact
 about somebody else that we keep re-checking.
 
+**Asking for `verified`.** Open a *Publisher verification* issue with three
+things: the account that publishes your plugins, a URL on a domain you control
+serving that account's login on a line of its own, and one line saying who you
+are. A maintainer fetches the URL themselves and writes the record by hand —
+nothing here is automatic, because the record is the registry making a claim
+about you, and a claim nobody read is not worth making.
+
+There is no queue to climb and nothing to earn. A badge is not given for being
+popular, prolific or long-standing: either the evidence holds or it does not.
+Popularity is a number the catalogue can count; identity is a fact somebody has
+to check, and mixing them would make the mark mean whichever one is convenient.
+
+**Keeping it.** `.github/workflows/publisher-recheck.yml` re-fetches every
+`verified` publisher's document daily. A confirmation pushes the window forward
+by 180 days; a failure moves nothing at all, because a certificate renewing is
+not a publisher ceasing to exist and a badge that flickered would be one nobody
+read. What withdraws a badge is therefore the **absence of confirmations**
+rather than the presence of a failure: the window runs out, the record is
+deleted in a commit anyone can read, and an issue says so where the publisher
+will see it. Putting the document back is how it comes back.
+
 **What the badge does not mean.** It is not a safety claim. "We know who
 published this" is not "this code is safe" — §8 below is unchanged by it, and a
 client that lets a badge stand in for the permission sheet has made the user

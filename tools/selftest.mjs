@@ -29,6 +29,7 @@ import { stableStringify, jcs } from "./lib/canonical.mjs";
 import { validate as validateSchema } from "./lib/jsonschema.mjs";
 import { makeFixtures } from "./make-fixtures.mjs";
 import { REPO_ROOT, expiredPublishers, loadPublishers, loadSources } from "./lib/sources.mjs";
+import { proofNamesOwner, recheck } from "../bot/recheck-publishers.mjs";
 import { readZip, readEntry, writeZip } from "./lib/zip.mjs";
 import { compareSemver } from "./lib/semver.mjs";
 import { invalidId, unsafePathComponent, foldId } from "./lib/ids.mjs";
@@ -278,6 +279,64 @@ await test("an expired publisher record is reported, and a current one is not", 
   assert(expiredPublishers(committed).length === 0,
     "a committed publisher record is past its own expiry: " +
     expiredPublishers(committed).map((e) => `${e.file} (${e.expires_at})`).join(", "));
+});
+
+// A `verified` badge rests on a document that keeps saying the same thing. The
+// whole-line test is the part that matters: a page MENTIONING a login — a blog
+// post, a directory, somebody else's README — is not that person asserting it,
+// and `includes` would take any of them for proof.
+await test("proof must name the owner on a line of its own", () => {
+  assert(proofNamesOwner("knlce\n", "KnlCE"), "an exact line, case-insensitively, is proof");
+  assert(proofNamesOwner("# owner\nKnlCE\n", "KnlCE"), "a line among lines is still proof");
+  assert(!proofNamesOwner("plugins by KnlCE are great", "KnlCE"), "a mention in prose is not an assertion");
+  assert(!proofNamesOwner("KnlCE-fan", "KnlCE"), "a longer word that contains it is not it");
+  assert(!proofNamesOwner("", "KnlCE"), "an empty document proves nothing");
+});
+
+// Four outcomes, each on a tree of its own, because the interesting ones are
+// the three where NOTHING should move. A re-check that quietly renewed a badge
+// whose evidence had gone would be the failure this whole mechanism exists to
+// prevent.
+await test("a re-check renews on proof, and moves nothing without it", async () => {
+  const mk = (over = {}) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "astra-recheck-"));
+    fs.mkdirSync(path.join(root, "publishers"));
+    fs.writeFileSync(path.join(root, "publishers", "someone.json"), JSON.stringify({
+      schema: "astra.registry.publisher/1", owner: "someone", display_name: "Someone",
+      tier: "verified", verified_at: "2026-01-01", expires_at: "2099-01-01",
+      evidence: { kind: "domain", domain: "example.com", proof: "https://example.com/p" },
+      ...over,
+    }, null, 2) + "\n");
+    return root;
+  };
+  const read = (root) => JSON.parse(fs.readFileSync(path.join(root, "publishers", "someone.json"), "utf8"));
+  const today = new Date().toISOString().slice(0, 10);
+
+  let root = mk();
+  let r = await recheck({ root, write: true, fetcher: async () => ({ ok: true, body: "someone\n" }) });
+  assert(r.results[0].state === "confirmed", JSON.stringify(r.results));
+  assert(read(root).last_confirmed_at === today, "a confirmed proof records the day it held");
+  assert(read(root).expires_at > today, "the window moves forward from today");
+  fs.rmSync(root, { recursive: true, force: true });
+
+  root = mk();
+  r = await recheck({ root, write: true, fetcher: async () => ({ ok: false, why: "HTTP 503" }) });
+  assert(r.results[0].state === "unreachable", JSON.stringify(r.results));
+  assert(!read(root).last_confirmed_at, "an unreachable document must renew nothing");
+  assert(read(root).expires_at === "2099-01-01", "and must not move the window");
+  fs.rmSync(root, { recursive: true, force: true });
+
+  root = mk();
+  r = await recheck({ root, write: true, fetcher: async () => ({ ok: true, body: "somebody-else\n" }) });
+  assert(r.results[0].state === "mismatched", JSON.stringify(r.results));
+  assert(!read(root).last_confirmed_at, "a document naming somebody else must renew nothing");
+  fs.rmSync(root, { recursive: true, force: true });
+
+  root = mk({ expires_at: "2020-01-01" });
+  r = await recheck({ root, write: true, fetcher: async () => ({ ok: false, why: "HTTP 404" }) });
+  assert(r.expired.length === 1, "an expired record is withdrawn");
+  assert(!fs.existsSync(path.join(root, "publishers", "someone.json")), "the record is gone, so the badge is");
+  fs.rmSync(root, { recursive: true, force: true });
 });
 
 await test("every staging listing is REJECTED without --allow-staging", async () => {

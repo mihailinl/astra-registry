@@ -1,0 +1,80 @@
+# Asking for a publisher verification badge (docs/POLICY.md §7).
+#
+# **This form must never apply a label that grants anything.** As with the
+# listing template, a label in this repository is an authority token; this form
+# asks a question and carries no answer. A maintainer reads it, checks the
+# evidence themselves, and writes the record by hand.
+#
+# The form asks for EVIDENCE, not for a case. Nothing here is persuasive by
+# design: a badge is not awarded for being good, popular or long-standing, and
+# a form that invited an argument would collect arguments.
+name: Publisher verification
+description: Ask the registry to confirm who is behind a publishing account.
+title: "[publisher] <your GitHub login>"
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **What this badge says, and what it does not.**
+
+        It says the registry has confirmed **who you are**. It does not say
+        your plugins are good, popular, safe or reviewed — Astra shows the
+        permissions a plugin asks for right beside it, and that is what a
+        person should read before installing. A badge that meant "trustworthy
+        code" would replace that reading with a feeling, so this one is kept
+        narrow on purpose.
+
+        It is also not a ranking. There is no queue to climb and nothing to
+        earn: either the evidence below holds or it does not.
+
+  - type: input
+    id: owner
+    attributes:
+      label: The GitHub account that publishes your plugins
+      description: >-
+        The account that owns the repositories your releases come from. This is
+        the identity the badge attaches to — not the `author` line in your
+        plugin.toml, which anybody can type.
+      placeholder: your-login
+    validations:
+      required: true
+
+  - type: input
+    id: proof
+    attributes:
+      label: A URL on a domain you control, serving your GitHub login
+      description: >-
+        A plain-text file containing one line — your login, exactly. For
+        example `https://example.com/.well-known/astra-publisher`. It must stay
+        reachable: the registry re-fetches it on a schedule, and the badge is
+        withdrawn when it stops saying what it said. That is the point of
+        asking for something live rather than for a document once.
+      placeholder: https://example.com/.well-known/astra-publisher
+    validations:
+      required: true
+
+  - type: input
+    id: description
+    attributes:
+      label: One line saying who you are, for a person to read
+      description: >-
+        Who you are, not how good you are. "Independent plugin developer" or
+        "Maintainer of whisper-stt-plus" — not "makes excellent plugins". It is
+        rendered beside a trust mark, so it is reviewed and it is kept factual.
+        120 characters.
+      placeholder: Independent plugin developer
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        **What happens next.** A maintainer fetches that URL themselves, checks
+        it names the account above, and writes `publishers/<login>.json` by
+        hand. Nothing here is automated, because the record is the registry
+        making a claim about you and a claim nobody read is not worth making.
+
+        **If the URL later stops resolving or stops naming you**, a scheduled
+        job says so on this issue and the badge comes off. Getting it back is
+        putting the file back.

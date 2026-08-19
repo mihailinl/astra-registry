@@ -1,0 +1,89 @@
+name: publisher re-check
+
+# `verified` is a standing claim, not a verdict, so something has to keep
+# checking it. This is that something.
+#
+# A publisher earns the tier by serving a document on a domain they control
+# that names their GitHub login. This re-fetches those documents daily and
+# pushes the confirmation window forward when one still holds. A FAILURE moves
+# nothing — a certificate renewing or a CDN having a minute is not a publisher
+# ceasing to exist, and a badge that flickered would be one nobody read.
+#
+# What withdraws a badge is therefore the ABSENCE of confirmations rather than
+# the presence of a failure: the window runs out, and the record is deleted in
+# an ordinary commit somebody can read in the log.
+#
+# The clock lives here and nowhere downstream. tools/build-index.mjs reads no
+# clock by contract — same sources, same bytes — so expiry could not be enforced
+# there without making today's catalogue differ from tomorrow's for a reason no
+# diff can show.
+
+on:
+  schedule:
+    # Early, and off the hour, for the same reason as asset-check: a cron that
+    # everybody writes at midnight is a cron that runs late.
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publisher-recheck
+  cancel-in-progress: false
+
+jobs:
+  recheck:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write   # commit a renewed window, or a withdrawal
+      issues: write     # say so, where the publisher can see it
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Re-fetch every verified publisher's evidence
+        id: run
+        run: |
+          set -euo pipefail
+          node bot/recheck-publishers.mjs --write | tee /tmp/recheck.log
+          {
+            echo 'report<<REPORT'
+            cat /tmp/recheck.log
+            echo REPORT
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Commit whatever moved
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- publishers/; then
+            echo "nothing moved"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add publishers/
+          git commit -m "publishers: re-check $(date -u +%Y-%m-%d)
+
+          $(cat /tmp/recheck.log)"
+          git push
+
+      # A withdrawal is the one outcome a person has to hear about, and the
+      # publisher is the person. Reported rather than left in a commit log
+      # nobody subscribed to.
+      - name: Say so when a badge came off
+        if: contains(steps.run.outputs.report, 'GONE')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT: ${{ steps.run.outputs.report }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "A publisher verification badge was withdrawn." '' \
+            'The evidence behind it stopped holding long enough for the confirmation window to run out. Nothing is wrong with the plugins, and nothing about them changed — the registry simply stopped being able to say who publishes them.' '' \
+            'To get it back: put the document back where it was, then say so here.' '' \
+            '```' "$REPORT" '```' > /tmp/body.md
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "[publisher] a verification badge was withdrawn" \
+            --body-file /tmp/body.md
