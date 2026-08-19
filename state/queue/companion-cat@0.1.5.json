@@ -1,0 +1,20 @@
+{
+  "$comment": "A release waiting out PRODUCTION_PLAN §3.5's publication delay. Nothing here is trusted at publish time: the whole ingest runs again from scratch. Delete this file to cancel the publication; edit publish_after to bring it forward.",
+  "id": "companion-cat",
+  "version": "0.1.5",
+  "repo": "mihailinl/AstraPlugins",
+  "tag": "companion-cat-v0.1.5",
+  "submitter": "github-actions[bot]",
+  "queued_at": "2026-08-19T07:19:20Z",
+  "publish_after": "2026-08-20T07:19:20Z",
+  "delay_hours": 24,
+  "reason": "P_DELAY_HIGH_RISK",
+  "artifact_digests": [
+    "linux-x64:25f7b3135d3610ce4c7208fcf4a90e11137b91a623df7e5d25b70a8b0229c525",
+    "windows-x64:c130b5af194a60c07610b27bc8d499d11c9e5a9f220714e68adda9f3663262b5"
+  ],
+  "approved_by": null,
+  "approved_at": null,
+  "approved_for": null,
+  "issue": 18
+}
