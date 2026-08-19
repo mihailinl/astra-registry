@@ -31,6 +31,12 @@
       "maxLength": 64,
       "description": "What a person sees beside the badge. One record per publisher rather than a copy per listing, so a rename is one edit and two entries cannot disagree."
     },
+    "description_text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "description": "One line a PERSON reads beside the badge, saying who this publisher is to Astra — 'Main developer of Astra', not 'verified'. The tier says what kind of claim the registry is making; this says what the publisher actually is, which is the thing a user wanted to know. Reviewed like everything else in this file: it is free text rendered next to a trust mark, which is precisely where an impersonation would want to live, and the only thing standing in front of it is that a human wrote this line and a root-delegated key signed it."
+    },
     "tier": {
       "type": "string",
       "enum": [

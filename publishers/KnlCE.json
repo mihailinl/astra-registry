@@ -3,6 +3,7 @@
   "schema": "astra.registry.publisher/1",
   "owner": "KnlCE",
   "display_name": "KNICE",
+  "description_text": "Main developer of Astra",
   "tier": "official",
   "verified_at": "2026-08-19",
   "evidence": {

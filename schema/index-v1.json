@@ -95,6 +95,12 @@
                 "minLength": 1,
                 "maxLength": 64
               },
+              "description": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120,
+                "description": "One line saying who this publisher is to Astra, for a person to read beside the badge. Optional; a client must render nothing when it is absent rather than inventing a default."
+              },
               "tier": {
                 "type": "string",
                 "enum": [

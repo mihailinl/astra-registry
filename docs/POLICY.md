@@ -413,6 +413,15 @@ whoever serves the bytes could invent.
 | `verified` | the registry has confirmed who this account is | a URL on a domain the publisher controls, serving their owner login | the re-check stops finding it, or `expires_at` passes |
 | *(no record)* | **no claim at all** | — | — |
 
+Each record also carries **one line saying who the publisher is to Astra** —
+"Astra's creator and main developer", not "verified". The tier says what kind
+of claim the registry is making; that line says what the publisher actually
+is, which is the thing a person wanted to know when they looked. It is free
+text rendered beside a trust mark, which is exactly where an impersonation
+would want to live, so it is reviewed like everything else here and signed
+with the rest of the catalogue. A client renders nothing when it is absent
+rather than inventing a default.
+
 **`verified` is stored as live evidence and the date it last held, not as a
 verdict.** A tier granted once and never revisited becomes a claim about who
 somebody *used to be*, and this registry is the only place that can notice. So

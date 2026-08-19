@@ -288,6 +288,10 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
     const rec = publishers.get(key.toLowerCase()).doc;
     usedPublishers[key] = {
       display_name: rec.display_name,
+      // The line a person reads. Carried beside the tier rather than derived
+      // from it, because "official" says what kind of claim this is and the
+      // reader wanted to know who the publisher IS.
+      ...(rec.description_text !== undefined ? { description: rec.description_text } : {}),
       tier: rec.tier,
       verified_at: rec.verified_at,
       ...(rec.last_confirmed_at !== undefined ? { last_confirmed_at: rec.last_confirmed_at } : {}),

@@ -3,6 +3,7 @@
   "schema": "astra.registry.publisher/1",
   "owner": "mihailinl",
   "display_name": "Mihailin",
+  "description_text": "Astra's creator and main developer",
   "tier": "official",
   "verified_at": "2026-08-19",
   "evidence": {

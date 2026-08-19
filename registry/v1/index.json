@@ -549,6 +549,7 @@
     ],
     "publishers": {
       "mihailinl": {
+        "description": "Astra's creator and main developer",
         "display_name": "Mihailin",
         "tier": "official",
         "verified_at": "2026-08-19"
