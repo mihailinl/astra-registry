@@ -1,0 +1,32 @@
+{
+  "$comment": "Derived from mihailinl/AstraPlugins@companion-cat-v0.1.5. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: release-author.",
+  "schema": "astra.registry.version/1",
+  "id": "companion-cat",
+  "version": "0.1.5",
+  "published_at": "2026-08-19T06:46:58Z",
+  "release": {
+    "kind": "github_release",
+    "repo": "mihailinl/AstraPlugins",
+    "tag": "companion-cat-v0.1.5",
+    "commit": "5b5d2605961b54271b74304f6988972edb83d598"
+  },
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/companion-cat-v0.1.5/companion-cat-0.1.5-linux-x64.astraplugin",
+      "filename": "companion-cat-0.1.5-linux-x64.astraplugin",
+      "sha256": "25f7b3135d3610ce4c7208fcf4a90e11137b91a623df7e5d25b70a8b0229c525",
+      "size": 2785224
+    },
+    "windows-x64": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/companion-cat-v0.1.5/companion-cat-0.1.5-windows-x64.astraplugin",
+      "filename": "companion-cat-0.1.5-windows-x64.astraplugin",
+      "sha256": "c130b5af194a60c07610b27bc8d499d11c9e5a9f220714e68adda9f3663262b5",
+      "size": 2356870
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "dom_access",
+    "ui_contributions"
+  ]
+}

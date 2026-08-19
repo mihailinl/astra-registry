@@ -1,21 +1,20 @@
 {
-  "$comment": "Seed catalogue (PRODUCTION_PLAN task 2.13). Source: AstraPlugins/examples/companion/plugin.toml at version 0.1.4 \u2014 note the directory is `companion` and the id is `companion-cat`; the registry directory follows the id, and `source.subdirectory` records where the code actually lives.",
+  "$comment": "Derived from mihailinl/AstraPlugins@companion-cat-v0.1.5 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
   "schema": "astra.registry.plugin/1",
   "id": "companion-cat",
   "name": "Companion Cat",
-  "summary": "A cat that flies around the Astra window and occasionally says something.",
-  "description": "A small animated cat drifts across the Astra interface, reacts to clicks, and speaks a line drawn at random from a translated phrase list that follows Astra's own language setting. Purely decorative \u2014 it changes nothing about your conversations or settings. It runs its own JavaScript inside the Astra window, which is what an in-window overlay means and why it asks for dom_access.",
-  "author": {
-    "name": "Astra Team",
-    "url": "https://github.com/mihailinl"
-  },
+  "summary": "A cat that flies around the UI and says random things",
   "license": "MIT",
   "source": {
     "kind": "github",
-    "repo": "mihailinl/AstraPlugins",
-    "subdirectory": "examples/companion"
+    "repo": "mihailinl/AstraPlugins"
   },
-  "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/companion",
+  "added_at": "2026-08-10",
+  "description": "A cat that flies around the UI and says random things",
+  "author": {
+    "name": "Astra Team"
+  },
+  "readme": "README.md",
   "categories": [
     "entertainment"
   ],
@@ -25,6 +24,5 @@
     "companion",
     "fun"
   ],
-  "added_at": "2026-08-10",
-  "icon": "icon.webp"
+  "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/companion"
 }
