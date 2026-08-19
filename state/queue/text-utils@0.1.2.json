@@ -6,7 +6,7 @@
   "tag": "text-utils-v0.1.2",
   "submitter": "github-actions[bot]",
   "queued_at": "2026-08-19T07:19:19Z",
-  "publish_after": "2026-08-20T07:19:19Z",
+  "publish_after": "2026-08-19T12:14:07Z",
   "delay_hours": 24,
   "reason": "P_DELAY_WIDENED",
   "artifact_digests": [

@@ -6,7 +6,7 @@
   "tag": "telegram-client-v0.1.1",
   "submitter": "github-actions[bot]",
   "queued_at": "2026-08-19T09:07:23Z",
-  "publish_after": "2026-08-20T09:07:23Z",
+  "publish_after": "2026-08-19T12:14:07Z",
   "delay_hours": 24,
   "reason": "P_DELAY_HIGH_RISK",
   "artifact_digests": [

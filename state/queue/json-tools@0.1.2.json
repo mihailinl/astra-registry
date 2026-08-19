@@ -6,7 +6,7 @@
   "tag": "json-tools-v0.1.2",
   "submitter": "github-actions[bot]",
   "queued_at": "2026-08-19T11:23:07Z",
-  "publish_after": "2026-08-20T11:23:07Z",
+  "publish_after": "2026-08-19T12:14:07Z",
   "delay_hours": 24,
   "reason": "P_DELAY_WIDENED",
   "artifact_digests": [

@@ -6,7 +6,7 @@
   "tag": "bad-apple-v0.1.1",
   "submitter": "github-actions[bot]",
   "queued_at": "2026-08-19T07:19:05Z",
-  "publish_after": "2026-08-20T07:19:05Z",
+  "publish_after": "2026-08-19T12:14:07Z",
   "delay_hours": 24,
   "reason": "P_DELAY_HIGH_RISK",
   "artifact_digests": [
