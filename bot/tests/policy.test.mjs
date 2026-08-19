@@ -1845,6 +1845,142 @@ await test("the job that commits still refuses to be cancelled or doubled", asyn
   assert(/^\s*cancel-in-progress:\s*false/m.test(after.slice(0, 200)), after.slice(0, 200));
 });
 
+// ── the close on a publication ──────────────────────────────────────────────
+//
+// The one job in this workflow whose effect is invisible until a stranger
+// publishes something: it closes the submission issue. Asserting its YAML is
+// not enough — the interesting parts are in the script, and a script that
+// closed the wrong thread, or closed one whose publication never landed, would
+// look exactly like a correct one in a diff. So it is EXTRACTED and RUN here,
+// against a fake `github` and a fake filesystem.
+
+/** The `script: |` body of a named job in a workflow file, dedented. */
+function jobScript(yaml, job) {
+  const lines = yaml.split("\n");
+  const start = lines.findIndex((l) => l === `  ${job}:`);
+  if (start < 0) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^  \S/.test(lines[i])) { end = i; break; }
+  }
+  const body = lines.slice(start, end);
+  const at = body.findIndex((l) => /^\s*script:\s*\|\s*$/.test(l));
+  if (at < 0) return null;
+  const indent = /^(\s*)/.exec(body[at + 1])[1];
+  const out = [];
+  for (let i = at + 1; i < body.length; i++) {
+    if (body[i].trim() !== "" && !body[i].startsWith(indent)) break;
+    out.push(body[i].slice(indent.length));
+  }
+  return out.join("\n");
+}
+
+const CLOSE_SCRIPT = jobScript(ingestWorkflow, "close");
+
+/**
+ * Runs the extracted script over `reports`, a map of directory name to
+ * decision, and returns every call it made.
+ */
+async function runClose(reports, { issue = "" } = {}) {
+  const calls = [];
+  const fakeFs = {
+    readdirSync: (dir) => {
+      if (dir !== "reports") throw new Error(`ENOENT: ${dir}`);
+      return Object.keys(reports);
+    },
+    readFileSync: (file) => {
+      const m = /^reports\/([^/]+)\/decision\.json$/.exec(file);
+      if (!m || !(m[1] in reports)) throw new Error(`ENOENT: ${file}`);
+      return JSON.stringify(reports[m[1]]);
+    },
+  };
+  const github = {
+    rest: { issues: { update: async (args) => { calls.push(args); } } },
+  };
+  const context = { repo: { owner: "mihailinl", repo: "astra-registry" } };
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const fn = new AsyncFunction("github", "context", "require", "process", CLOSE_SCRIPT);
+  await fn(github, context, (m) => (m === "node:fs" ? fakeFs : require(m)), { env: { ISSUE: issue } });
+  return calls;
+}
+
+await test("the close job's script was found, so the tests below are about something", async () => {
+  // The extraction is the whole rest of this section's premise. A rename in the
+  // workflow that made `jobScript` return null would otherwise turn every test
+  // below into a test of an empty string that passes.
+  assert(CLOSE_SCRIPT, "no `script: |` under a `close:` job in ingest.yml");
+  assert(/state_reason/.test(CLOSE_SCRIPT), CLOSE_SCRIPT);
+  assert(CLOSE_SCRIPT.split("\n").length > 10, CLOSE_SCRIPT);
+});
+
+await test("a publication closes its issue, as completed", async () => {
+  const calls = await runClose({ "ingest-report-1": { outcome: "publish", issue: 5 } }, { issue: "5" });
+  assertEqual(calls.length, 1, JSON.stringify(calls));
+  assertEqual(calls[0].issue_number, 5, "the thread that asked");
+  assertEqual(calls[0].state, "closed", "");
+  assertEqual(calls[0].state_reason, "completed",
+    "`not_planned` is what a rejection uses; this request got what it asked for");
+});
+
+await test("nothing that did not publish closes anything", async () => {
+  for (const outcome of ["delay", "review", "refuse"]) {
+    const calls = await runClose({ "ingest-report-1": { outcome, issue: 5 } }, { issue: "5" });
+    assertEqual(calls.length, 0, `${outcome} closed the issue: ${JSON.stringify(calls)}`);
+  }
+});
+
+await test("a drained release closes the thread the queue entry remembered", async () => {
+  // The cron path: no event, so no ISSUE in the environment. The number comes
+  // out of the decision, which got it from the queue entry.
+  const calls = await runClose({ "ingest-report-1": { outcome: "publish", issue: 12 } }, { issue: "" });
+  assertEqual(calls.length, 1, JSON.stringify(calls));
+  assertEqual(calls[0].issue_number, 12, "recovered with no event to read");
+});
+
+await test("a publication with no thread behind it closes nothing", async () => {
+  // A release ping or the backstop. There is no issue; §0's answer to that is
+  // the [notice] the comment job opens, not a close.
+  const calls = await runClose({ "ingest-report-1": { outcome: "publish", issue: null } }, { issue: "" });
+  assertEqual(calls.length, 0, JSON.stringify(calls));
+});
+
+await test("one issue carrying two releases is closed once", async () => {
+  const calls = await runClose({
+    "ingest-report-1": { outcome: "publish", issue: 5 },
+    "ingest-report-2": { outcome: "publish", issue: 5 },
+  }, { issue: "5" });
+  assertEqual(calls.length, 1, JSON.stringify(calls));
+});
+
+await test("an unreadable report is skipped rather than fatal", async () => {
+  const calls = await runClose({
+    "ingest-report-1": undefined,
+    "ingest-report-2": { outcome: "publish", issue: 5 },
+  }, { issue: "5" });
+  assertEqual(calls.length, 1, "the readable one still closed");
+});
+
+await test("the close waits for the commit, and for the comment", async () => {
+  // Two orderings, both load-bearing, both expressed in YAML rather than in the
+  // script — so they are asserted separately from the run above.
+  const lines = ingestWorkflow.split("\n");
+  const start = lines.findIndex((l) => l === "  close:");
+  assert(start > 0, "no close job");
+  const head = lines.slice(start, start + 6).join("\n");
+
+  assert(/needs:.*\bpublish\b/.test(head),
+    `the close must depend on the job that lands the commit:\n${head}`);
+  assert(/needs:.*\bcomment\b/.test(head),
+    `a close that races the comment is the silent close §0 forbids:\n${head}`);
+  const cond = /if:\s*(.+)/.exec(head);
+  assert(cond, head);
+  assert(/needs\.publish\.result\s*==\s*'success'/.test(cond[1]),
+    `an outcome of "publish" is a decision, not a commit:\n${cond[1]}`);
+  // `always()` here would run the close even when the comment or the publish
+  // failed, which is exactly the pair of failures it must not survive.
+  assert(!/always\(\)/.test(cond[1]), cond[1]);
+});
+
 await test("the approval's binding is wired from triage's target to decide's flag", async () => {
   // Three names for one field, in three files, and a typo in any of them makes
   // the approval unbound rather than loud: `triage.mjs` writes `approved_for`
