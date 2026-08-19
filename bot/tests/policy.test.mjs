@@ -477,6 +477,44 @@ await test("the queue entry the workflow commits lands under state/queue/", asyn
   assert(!fs.existsSync(path.join(out, "plugins")), "a delayed release publishes nothing yet");
 });
 
+await test("the issue number survives the queue, so the drain knows which thread it answered", async () => {
+  const root = registryTree([{ versions: [{ version: "0.1.0", capabilities: ["tools"] }] }]);
+  const asset = conforming({ capabilities: ["tools", "tts"] });
+
+  // Round one is driven by the submission issue, so the number is in the event.
+  const first = await run({ root, assets: [asset], issue: 41 });
+  assertEqual(first.decision.outcome, "delay", JSON.stringify(first.decision.reasons));
+  assertEqual(first.decision.issue, 41, "the decision names the thread it is answering");
+  assertEqual(first.decision.queue_entry.issue, 41, "and the queue entry keeps it");
+
+  const qfile = path.join(root, queueFile("dice-roller", "0.2.0"));
+  fs.mkdirSync(path.dirname(qfile), { recursive: true });
+  fs.writeFileSync(qfile, `${JSON.stringify(first.decision.queue_entry, null, 2)}\n`);
+
+  // Round two is the cron drain: no issue, no comment, no event at all. The
+  // queue entry is the only thing left that remembers, and the publication has
+  // to be able to close the thread that asked for it.
+  const later = new Date(NOW.getTime() + (DELAY_HOURS + 1) * 3600000);
+  const second = await run({ root, assets: [asset], now: later, issue: null });
+  assertEqual(second.decision.outcome, "publish", JSON.stringify(second.decision.reasons));
+  assertEqual(second.decision.issue, 41, "recovered from the queue entry with no event to read");
+});
+
+await test("a queue entry about a different release does not lend this one its issue", async () => {
+  const root = registryTree([{ versions: [{ version: "0.1.0", capabilities: ["tools"] }] }]);
+  const asset = conforming({ capabilities: ["tools", "tts"] });
+
+  const first = await run({ root, assets: [asset], issue: 41 });
+  const stale = { ...first.decision.queue_entry, tag: "v9.9.9", issue: 41 };
+  const qfile = path.join(root, queueFile("dice-roller", "0.2.0"));
+  fs.mkdirSync(path.dirname(qfile), { recursive: true });
+  fs.writeFileSync(qfile, `${JSON.stringify(stale, null, 2)}\n`);
+
+  const second = await run({ root, assets: [asset], issue: null });
+  assertEqual(second.decision.issue, null,
+    "the entry names another tag, so its thread is not this release's thread");
+});
+
 await test("when the delay has elapsed the same release publishes, and stops waiting", async () => {
   const root = registryTree([{ versions: [{ version: "0.1.0", capabilities: ["tools"] }] }]);
   const asset = conforming({ capabilities: ["tools", "tts"] });

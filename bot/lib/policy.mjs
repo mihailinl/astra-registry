@@ -579,6 +579,19 @@ export function decide(input) {
   const queued = input.queued ?? null;
   const typed = normaliseApproval(input.approval);
   const reasons = [];
+
+  // The thread that asked for this release, carried onto every decision so a run
+  // that publishes can close it. On the issue paths it is the event's own number;
+  // on the cron drain there is no event, and the QUEUE ENTRY is the only thing
+  // left that remembers which issue this release came from. Read only when the
+  // entry is about this exact release — a stale entry naming some other tag must
+  // not lend its issue number to this one.
+  const finish = (d) => finishDecision({
+    issue: input.issue
+      ?? (queued && queued.repo === repo && queued.tag === input.tag ? queued.issue ?? null : null),
+    ...d,
+  });
+
   const add = (code, message) => reasons.push({ code, level: policyCodeDef(code).level, message });
 
   // 1 ── a failed check is not a policy decision.
@@ -950,7 +963,7 @@ function normaliseApproval(approval) {
   return { by, at: iso(at), for: forWhat, publishNow: approval?.publishNow === true };
 }
 
-function finish(d) {
+function finishDecision(d) {
   return {
     outcome: d.outcome,
     reasons: d.reasons,
@@ -973,6 +986,8 @@ function finish(d) {
     fingerprint: d.fingerprint ?? null,
     repo: d.repo ?? null,
     tag: d.tag ?? null,
+    // The issue to answer on, and — on a publication — to close.
+    issue: d.issue ?? null,
     // An approval that named something else. Recorded rather than discarded: a
     // maintainer typed a command and the registry did not honour it, and the
     // thread has to be able to say which of those two things happened.

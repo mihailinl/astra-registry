@@ -696,9 +696,15 @@ jobs:
               try { body = fs.readFileSync(`reports/${dir}/comment.md`, "utf8"); } catch { continue; }
               try { decision = JSON.parse(fs.readFileSync(`reports/${dir}/decision.json`, "utf8")); } catch { /* older shape */ }
 
-              if (issue) {
+              // The event's issue when one drove this run; otherwise the number the
+              // decision carried out of the queue entry, which is how a release that
+              // waited out the delay and is being drained by cron gets its answer on
+              // the thread that asked for it instead of in a new one.
+              const thread = issue || Number(decision.issue) || null;
+
+              if (thread) {
                 await github.rest.issues.createComment({
-                  owner: context.repo.owner, repo: context.repo.repo, issue_number: issue, body,
+                  owner: context.repo.owner, repo: context.repo.repo, issue_number: thread, body,
                 });
                 continue;
               }
@@ -925,6 +931,65 @@ jobs:
           # somebody is waiting on; a second failure is a real conflict and
           # should be looked at.
           git push || { git pull --rebase --autostash && git push; }
+
+  # Closes the submission issue once the listing is actually in the catalogue.
+  #
+  # Two rules, and they are the same two the rejection close obeys further up.
+  #
+  # **Only on fact, never on intent.** `decision.outcome === "publish"` is what
+  # the bot decided, not what happened: the `publish` job still has to derive the
+  # files, pass `tools/validate.mjs` a second time, and get a commit onto `main`.
+  # So this job needs that job and runs only when it succeeded. A thread closed
+  # over a publication that failed to land is worse than one left open — it tells
+  # the author to stop watching.
+  #
+  # **Only after the reason is on the thread.** `needs: comment` is what makes
+  # that ordering hold; a close that races the comment is a silent close, which
+  # is the thing this whole workflow is built not to do.
+  close:
+    needs: [triage, check, publish, comment]
+    if: needs.publish.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ingest-report-*
+          path: reports
+        continue-on-error: true
+
+      - uses: actions/github-script@v7
+        env:
+          ISSUE: ${{ needs.triage.outputs.issue }}
+        with:
+          script: |
+            const fs = require("node:fs");
+            const issue = Number(process.env.ISSUE) || null;
+            let dirs = [];
+            try {
+              dirs = fs.readdirSync("reports").sort();
+            } catch { return; }
+
+            // One issue can carry several releases; close it once.
+            const closed = new Set();
+            for (const dir of dirs) {
+              let decision = {};
+              try { decision = JSON.parse(fs.readFileSync(`reports/${dir}/decision.json`, "utf8")); } catch { continue; }
+              if (decision.outcome !== "publish") continue;
+
+              const thread = issue || Number(decision.issue) || null;
+              if (!thread || closed.has(thread)) continue;
+              closed.add(thread);
+
+              // `completed`, not `not_planned`: this issue asked for a listing and
+              // the listing exists. The distinction is what GitHub's own UI reads
+              // to tell a finished request from an abandoned one.
+              await github.rest.issues.update({
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: thread,
+                state: "closed", state_reason: "completed",
+              });
+            }
 
   # The review queue, said out loud on every drain.
   #

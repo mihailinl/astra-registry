@@ -98,6 +98,16 @@ take:
 The bot posts the outcome on the listing issue with the reason and, when there
 is one, the exact time it will publish.
 
+A **published** submission also closes its issue, marked *completed*. Two things
+that closes on, both deliberate: the comment goes up first, so nothing is ever
+closed silently, and the close waits for the commit that puts the listing in the
+catalogue — not for the decision to make one. A publication that fails to land
+leaves the thread open, because that is the thread you would go back to.
+
+A **delayed** release closes its issue the same way, when it drains — which can
+be a day after the last thing anybody said on it. Until then the issue stays
+open on purpose: it is where you object.
+
 ## 2. When a release publishes itself
 
 All five of these, and it goes live with no human:
