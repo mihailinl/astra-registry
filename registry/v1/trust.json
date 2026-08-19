@@ -3,24 +3,25 @@
   "signatures": [
     {
       "key_id": "astra-root-2026a",
-      "sig": "t/01KDwfLSmxTyk3c1UqoE7A+08cwdljpABk4L0EFm10oz9SVM626SrjvjV3WiMH4gPVElEd09vdZZTYJQwTDw=="
+      "sig": "89RkTBAgM4xJ44T4H1iqrMNSNv3M2Q2WnYtA21OK3rdmm2gsRmBKBjWu59dUxFVInqva9PzUjtZFoZTblZOPCg=="
     }
   ],
   "signed": {
-    "expires_at": "2027-08-11T23:49:05Z",
+    "expires_at": "2027-08-19T11:00:49Z",
     "index_keys": [
       {
         "key_id": "astra-index-2026a",
-        "not_before": "2026-08-11T23:49:05Z",
+        "not_before": "2026-08-19T11:00:49Z",
         "public_key": "qrNK87ZsLPQQK9IUJYk+Q3nFUjBCDVTxD/DgPipcvK8="
       }
     ],
-    "issued_at": "2026-08-11T23:49:05Z",
+    "issued_at": "2026-08-19T11:00:49Z",
     "reusable_workflow_shas": [
-      "e3329df252a46d747676cb540ae4b986af68a3ad"
+      "e3329df252a46d747676cb540ae4b986af68a3ad",
+      "c3f342469d186ef48458992930bf1b7c583c78d4"
     ],
     "schema": "astra.registry.trust/1",
-    "serial": 1
+    "serial": 2
   }
 }
 
