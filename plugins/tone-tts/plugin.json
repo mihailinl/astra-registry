@@ -27,5 +27,7 @@
     "diagnostic"
   ],
   "added_at": "2026-08-10",
-  "icon": "icon.png"
+  "icon": "icon.png",
+  "unlisted": true,
+  "unlisted_reason": "Developer scaffolding, not a product. This entry describes itself as a test double — it exists so the SDK's own tests and a plugin author's wiring have something deterministic to talk to. A marketplace that offers a person a mock STT has misunderstood who is reading it. Delisted rather than revoked: nothing is wrong with it, it was never for this audience. Reversible by deleting these two fields."
 }

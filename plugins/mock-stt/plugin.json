@@ -4,7 +4,7 @@
   "id": "mock-stt",
   "name": "Mock STT",
   "summary": "A speech-to-text provider that never transcribes. It is a wiring test.",
-  "description": "Registers as a speech-to-text provider and returns one deterministic sentence per utterance describing the audio it was handed: byte count, sample count, sample rate, mean amplitude. No model, no download, no GPU, no delay. If that line reaches your conversation after you speak, the whole path \u2014 capture, endpointing, transport, the plugin protocol, the result returning to the chat \u2014 works, and anything still wrong is in the model rather than the plumbing. The smallest possible STT plugin: 59 lines.",
+  "description": "Registers as a speech-to-text provider and returns one deterministic sentence per utterance describing the audio it was handed: byte count, sample count, sample rate, mean amplitude. No model, no download, no GPU, no delay. If that line reaches your conversation after you speak, the whole path — capture, endpointing, transport, the plugin protocol, the result returning to the chat — works, and anything still wrong is in the model rather than the plumbing. The smallest possible STT plugin: 59 lines.",
   "author": {
     "name": "Astra Team",
     "url": "https://github.com/mihailinl"
@@ -27,5 +27,7 @@
     "diagnostic"
   ],
   "added_at": "2026-08-10",
-  "icon": "icon.png"
+  "icon": "icon.png",
+  "unlisted": true,
+  "unlisted_reason": "Developer scaffolding, not a product. This entry describes itself as a test double — it exists so the SDK's own tests and a plugin author's wiring have something deterministic to talk to. A marketplace that offers a person a mock STT has misunderstood who is reading it. Delisted rather than revoked: nothing is wrong with it, it was never for this audience. Reversible by deleting these two fields."
 }
