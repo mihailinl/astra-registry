@@ -421,6 +421,15 @@ the evidence must be re-fetchable, it is re-fetched on a schedule, and
 record nobody has confirmed inside its window is reported by the build rather
 than shipped on the strength of having once been true.
 
+**`official` and `verified` are not degrees of one thing**, and the difference is
+what each rests on rather than how much we like the publisher. `official` says
+the account belongs to this project, and its evidence is a reviewed commit in
+this repository — it cannot rot, because the claim *is* the file. `verified`
+says we confirmed who a stranger is, and its evidence lives outside: a document
+on their own domain that we re-fetch, and take the badge away when it stops
+saying what it said. One is an assertion about ourselves; the other is a fact
+about somebody else that we keep re-checking.
+
 **What the badge does not mean.** It is not a safety claim. "We know who
 published this" is not "this code is safe" — §8 below is unchanged by it, and a
 client that lets a badge stand in for the permission sheet has made the user
