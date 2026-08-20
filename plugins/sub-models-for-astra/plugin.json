@@ -1,0 +1,20 @@
+{
+  "$comment": "Derived from teletemagame-dev/sub-models-for-astra@v0.14.0 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
+  "schema": "astra.registry.plugin/1",
+  "id": "sub-models-for-astra",
+  "name": "Sub Models for Astra",
+  "summary": "Runs Astra on your Claude or ChatGPT subscription by driving the official agent CLI, with turn and token limits you set",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "teletemagame-dev/sub-models-for-astra"
+  },
+  "added_at": "2026-08-20",
+  "description": "Runs Astra on your Claude or ChatGPT subscription by driving the official agent CLI, with turn and token limits you set",
+  "author": {
+    "name": "Noxys"
+  },
+  "homepage": "https://github.com/teletemagame-dev/sub-models-for-astra",
+  "icon": "icon.svg",
+  "readme": "README.md"
+}

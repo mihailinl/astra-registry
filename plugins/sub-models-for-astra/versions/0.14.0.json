@@ -1,0 +1,26 @@
+{
+  "$comment": "Derived from teletemagame-dev/sub-models-for-astra@v0.14.0. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: well-known.",
+  "schema": "astra.registry.version/1",
+  "id": "sub-models-for-astra",
+  "version": "0.14.0",
+  "published_at": "2026-08-20T19:00:29Z",
+  "release": {
+    "kind": "github_release",
+    "repo": "teletemagame-dev/sub-models-for-astra",
+    "tag": "v0.14.0",
+    "commit": "f168ffe7a5b66c27a6498e4f614256c8e0f9ca29"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/teletemagame-dev/sub-models-for-astra/releases/download/v0.14.0/sub-models-for-astra-0.14.0-noarch.astraplugin",
+      "filename": "sub-models-for-astra-0.14.0-noarch.astraplugin",
+      "sha256": "c9886f167113f07b922ea66a2b4644f6ea1d0afbddda1781c996bc14a81d22ff",
+      "size": 189809
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "ai_provider",
+    "tools"
+  ]
+}

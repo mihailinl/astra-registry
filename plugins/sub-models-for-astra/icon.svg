@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="A power bolt inside a partly filled gauge">
+  <!-- A gauge with a bolt in it: metered power, which is the whole plugin.
+       Painted on its own filled tile rather than left transparent, so the
+       silhouette holds on a light card and a dark one alike — the store
+       follows the user's theme and the icon cannot ask which it got. -->
+  <rect width="64" height="64" rx="14" fill="#5B4BE8"/>
+
+  <!-- The track: the whole allowance. -->
+  <path d="M14 44a22 22 0 1 1 36 0" fill="none" stroke="#FFFFFF" stroke-opacity="0.28"
+        stroke-width="6" stroke-linecap="round"/>
+
+  <!-- The spent part, stopping short of full: a budget with something left. -->
+  <path d="M14 44a22 22 0 0 1 6.6-32.3" fill="none" stroke="#FFFFFF"
+        stroke-width="6" stroke-linecap="round"/>
+
+  <!-- The bolt. Straight-edged so it survives being drawn at 64px. -->
+  <path d="M35.5 20 24 36h7.5L28.5 48 40 31h-7.5z" fill="#FFFFFF"/>
+</svg>
