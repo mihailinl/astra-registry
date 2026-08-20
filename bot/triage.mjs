@@ -86,6 +86,7 @@ import {
 import { isRecheckCommand, parseIssueForm } from "./lib/issue.mjs";
 import { proveMaintainer } from "./lib/maintainer.mjs";
 import { findListingByRepo, parseReleasePing, resolveSubmitter } from "./lib/notify.mjs";
+import { readQueue } from "./lib/policy.mjs";
 
 function parseArgs(argv) {
   const opts = {
@@ -387,7 +388,35 @@ async function decideCommand({ command, opts, registry, labelled, issueTitle, fo
       reply: renderApproveNeedsBinding({ repo, tag }),
     };
   }
-  if (named !== repo || namedTag !== tag) {
+  // ── the target this registry is already holding ─────────────────────────
+  //
+  // The refusal below compares the maintainer's line against the ISSUE BODY,
+  // and that is right for the submission the body describes: the body belongs
+  // to its author, who can edit the two form fields between the hold and the
+  // answer, and an approval must not land on something nobody read.
+  //
+  // It is wrong for every release after the first, and it made `/publish`
+  // impossible for all of them. An update arrives as a release PING — a
+  // `/release v0.3.2` comment — which never touches the body. The ingest
+  // verifies it, the delay queues it, and the bot posts the line to publish it
+  // now. Meanwhile the body still says the tag the first listing named, for
+  // ever, because nothing ever rewrites it. So the bot printed
+  // `/publish owner/repo@v0.3.2 <fp>` and then refused that exact line for
+  // naming something "this issue no longer describes" — and the remedy the
+  // refusal offered, `/recheck`, re-reads the same body and returns the same
+  // stale tag. The first listing of a plugin could be published on command and
+  // no release after it ever could.
+  //
+  // The queue is what the maintainer is actually answering, and it is the safe
+  // thing to check against for the reason the body is not: it is a committed
+  // file in THIS repository, written by the bot from a run that downloaded and
+  // hashed the release. A stranger cannot edit it. Nothing else is relaxed —
+  // the fingerprint still names the bytes, and `bot/decide.mjs` still re-hashes
+  // the release and refuses an approval that names anything else.
+  const queued = (deps.readQueue ?? readQueue)(opts.root)
+    .some((e) => safeRepo(e.repo) === named && safeTag(e.tag) === namedTag);
+
+  if (!queued && (named !== repo || namedTag !== tag)) {
     // The loud refusal. Cheap, too: this is the last point before the pipeline
     // starts downloading a stranger's archive, and it is reached without one.
     return {
@@ -424,7 +453,8 @@ async function decideCommand({ command, opts, registry, labelled, issueTitle, fo
     // computed. A moved tag and a replaced asset are both invisible from here.
     approvedFor: command.fingerprint,
     why:
-      `@${commenter} (\`${proof.role}\`) approved ${named}@${namedTag} (\`${command.fingerprint}\`). ` +
+      `@${commenter} (\`${proof.role}\`) approved ${named}@${namedTag} (\`${command.fingerprint}\`)` +
+      `${queued && namedTag !== tag ? ", a release this registry is holding in its queue" : ""}. ` +
       "The hold is cleared only if this run hashes the same submission; every check runs again " +
       "from scratch against the release as it is now",
   };
