@@ -1860,6 +1860,41 @@ function topLevelBlock(yaml, key) {
   return body.join("\n");
 }
 
+const indexWorkflow = fs.readFileSync(
+  path.join(REPO_ROOT, ".github", "workflows", "build-index.yml"), "utf8");
+
+await test("a publication signs and deploys promptly, not at the top of the next hour", async () => {
+  // `ingest.yml`'s publish job commits with the repository's own GITHUB_TOKEN,
+  // and GitHub does not raise workflow-starting events from that token — so the
+  // push that publishes a listing cannot start the file that SIGNS it. Left at
+  // that, the catalogue users fetch trails the repository by up to an hour.
+  // Measured: 0.3.3 published at 18:03 and the site served 0.3.1 until 18:09.
+  const on = topLevelBlock(indexWorkflow, "on");
+  assert(on, "build-index.yml has no top-level `on:` block");
+  assert(/workflow_run:/.test(on),
+    "no prompt trigger: a publication waits for the cron, which is the whole defect");
+  assert(/schedule:/.test(on),
+    "the cron must survive the prompt trigger — the catalogue expires whether or not anybody publishes");
+});
+
+await test("the workflow it waits on is the one that is actually called that", async () => {
+  // The coupling this pair has that nothing else would: `workflows: ["Ingest"]`
+  // is matched against another file's `name:`, by string, at dispatch time.
+  // Rename the ingest workflow and NOTHING fails — no error, no warning, no run.
+  // The trigger simply stops firing and the catalogue silently goes back to
+  // being up to an hour stale, which is the state this trigger was added to end.
+  const on = topLevelBlock(indexWorkflow, "on");
+  const named = /workflows:\s*\[([^\]]*)\]/.exec(on);
+  assert(named, `no \`workflows:\` list under workflow_run:\n${on}`);
+  const wanted = named[1].split(",").map((w) => w.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
+  const actual = /^name:\s*(.+)$/m.exec(ingestWorkflow);
+  assert(actual, "ingest.yml has no top-level `name:`");
+  const ingestName = actual[1].trim().replace(/^["']|["']$/g, "");
+  assert(wanted.includes(ingestName),
+    `build-index.yml waits on ${JSON.stringify(wanted)} and ingest.yml is called ` +
+    `"${ingestName}" — the trigger will never fire`);
+});
+
 await test("no event can cancel an ingest that is already running", async () => {
   const block = topLevelBlock(ingestWorkflow, "concurrency");
   assert(block, "the workflow has no top-level concurrency block at all");
