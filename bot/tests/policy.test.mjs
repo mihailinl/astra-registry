@@ -1346,6 +1346,66 @@ await test("an approval for a submission this issue no longer describes is refus
     "and shows both, because which of the two is the surprise is the maintainer's call");
 });
 
+/**
+ * A queue entry, written where `readQueue` looks for it.
+ *
+ * A real file rather than a stubbed dependency: the thing under test is
+ * "does a maintainer's line match something this registry is holding", and a
+ * stub would have asserted that the code calls a function rather than that the
+ * two halves agree about where the queue lives.
+ */
+function queued(root, { repo = REPO, tag = "v0.3.2", id = "dice-roller", version = "0.3.2" } = {}) {
+  const dir = path.join(root, "state", "queue");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${id}@${version}.json`), JSON.stringify({
+    id, version, repo, tag,
+    submitter: SUBMITTER,
+    queued_at: "2026-08-20T17:26:42Z",
+    publish_after: "2026-08-21T17:26:42Z",
+    delay_hours: 24,
+    reason: "P_DELAY_HIGH_RISK",
+  }));
+  return root;
+}
+
+await test("/publish works for an UPDATE, whose tag the issue body never names", async () => {
+  // The defect this exists to stop, end to end: a listed plugin's second
+  // release arrives as a `/release` ping, is verified, is queued for the delay,
+  // and the bot posts the line to publish it now. The issue body still names
+  // the tag of the FIRST listing, because nothing ever rewrites it — so the
+  // line the bot printed was refused for describing "something this issue no
+  // longer describes", every time, for every plugin, for every release after
+  // the first.
+  const root = queued(registryTree([{}]));
+  const out = await command(`/publish ${REPO}@v0.3.2 ${FP}`, "the-maintainer", { root });
+  assertEqual(out.mode, "approve", out.why);
+  assertEqual(out.tag, "v0.3.2", "the target is the tag the maintainer named, not the body's");
+  assertEqual(out.publishNow, true, "and /publish still waives the delay");
+  assertEqual(out.approvedFor, FP, "and still carries the fingerprint the bytes are checked against");
+});
+
+await test("a queue entry for a DIFFERENT tag does not let the command through", async () => {
+  // The relaxation is "this exact release is one we are holding", not "this
+  // repository has something in the queue". Without this the fix would turn one
+  // pending release into a skeleton key for any tag of the same repository.
+  const root = queued(registryTree([{}]), { tag: "v0.3.2" });
+  const out = await command(`/publish ${REPO}@v9.9.9 ${FP}`, "the-maintainer", { root });
+  assertEqual(out.mode, "reply", out.why);
+  assert(out.reply.includes("no longer describes"), out.reply);
+  assert(!out.repo && !out.tag, "and no target");
+});
+
+await test("an empty queue still refuses a tag the issue does not name", async () => {
+  // The original guard, unchanged. Constructed rather than assumed: with no
+  // queue directory at all, `readQueue` returns [] and the refusal is reached
+  // by the same path it always was.
+  const out = await command(`/publish ${REPO}@v0.3.2 ${FP}`, "the-maintainer", {
+    root: registryTree([{}]),
+  });
+  assertEqual(out.mode, "reply", out.why);
+  assert(out.reply.includes("no longer describes"), out.reply);
+});
+
 await test("a tag edited under a hold is caught too, not just a repository", async () => {
   const out = await command(`/approve ${REPO}@${TAG} ${FP}`, "the-maintainer", {
     issue: form({ tag: "v0.3.0" }),
@@ -1799,6 +1859,41 @@ function topLevelBlock(yaml, key) {
   }
   return body.join("\n");
 }
+
+const indexWorkflow = fs.readFileSync(
+  path.join(REPO_ROOT, ".github", "workflows", "build-index.yml"), "utf8");
+
+await test("a publication signs and deploys promptly, not at the top of the next hour", async () => {
+  // `ingest.yml`'s publish job commits with the repository's own GITHUB_TOKEN,
+  // and GitHub does not raise workflow-starting events from that token — so the
+  // push that publishes a listing cannot start the file that SIGNS it. Left at
+  // that, the catalogue users fetch trails the repository by up to an hour.
+  // Measured: 0.3.3 published at 18:03 and the site served 0.3.1 until 18:09.
+  const on = topLevelBlock(indexWorkflow, "on");
+  assert(on, "build-index.yml has no top-level `on:` block");
+  assert(/workflow_run:/.test(on),
+    "no prompt trigger: a publication waits for the cron, which is the whole defect");
+  assert(/schedule:/.test(on),
+    "the cron must survive the prompt trigger — the catalogue expires whether or not anybody publishes");
+});
+
+await test("the workflow it waits on is the one that is actually called that", async () => {
+  // The coupling this pair has that nothing else would: `workflows: ["Ingest"]`
+  // is matched against another file's `name:`, by string, at dispatch time.
+  // Rename the ingest workflow and NOTHING fails — no error, no warning, no run.
+  // The trigger simply stops firing and the catalogue silently goes back to
+  // being up to an hour stale, which is the state this trigger was added to end.
+  const on = topLevelBlock(indexWorkflow, "on");
+  const named = /workflows:\s*\[([^\]]*)\]/.exec(on);
+  assert(named, `no \`workflows:\` list under workflow_run:\n${on}`);
+  const wanted = named[1].split(",").map((w) => w.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
+  const actual = /^name:\s*(.+)$/m.exec(ingestWorkflow);
+  assert(actual, "ingest.yml has no top-level `name:`");
+  const ingestName = actual[1].trim().replace(/^["']|["']$/g, "");
+  assert(wanted.includes(ingestName),
+    `build-index.yml waits on ${JSON.stringify(wanted)} and ingest.yml is called ` +
+    `"${ingestName}" — the trigger will never fire`);
+});
 
 await test("no event can cancel an ingest that is already running", async () => {
   const block = topLevelBlock(ingestWorkflow, "concurrency");

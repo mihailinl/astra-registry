@@ -297,6 +297,17 @@ so a submission that moved between the hold and the answer is refused rather
 than published. It waives the **wait** and nothing else: every check in the
 comment it produces ran again, from scratch, first.
 
+The line is matched against the submission the issue body describes **or against
+a release this registry is holding in its queue**, and the second half is not a
+loophole — it is what makes the command usable at all for an update. A release
+after the first arrives as a `/release` ping in a comment; the issue body keeps
+naming the tag of the first listing for ever, because nothing rewrites it. Match
+against the body alone and every `/publish` this bot prints for an update is
+refused for naming something the issue "no longer describes". A queue entry is
+safe to match against for the reason the body is not: it is a committed file in
+this repository, written by the bot from a run that downloaded and hashed the
+release, and no submitter can edit it.
+
 It grants no authority that did not already exist. Whoever can run it could edit
 `publish_after` in the queue entry, or write the listing into this repository by
 hand. The difference is that this path re-verifies everything and leaves the

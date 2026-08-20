@@ -40,6 +40,37 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # The bot just finished. Ask, now, rather than at the top of the next hour.
+  #
+  # `workflow_run` fires when another workflow COMPLETES. That is the whole
+  # point of using it here: the rule that keeps `ingest.yml`'s publish commit
+  # from starting this file — GitHub does not raise workflow-starting events
+  # from the repository's own `GITHUB_TOKEN` — is about `push`, and does not
+  # reach an event the platform raises about a run finishing. So this is the one
+  # prompt trigger available that needs no personal access token in a secret,
+  # which `ingest.yml` argues against at length and for good reason: the job it
+  # would sit in exists precisely to hold no credentials.
+  #
+  # What this buys, measured rather than assumed: on 2026-08-20 the catalogue
+  # published `minecraft-for-astra 0.3.3` at 18:03 and mihailinl.github.io went
+  # on serving 0.3.1 until a maintainer ran this workflow by hand at 18:09. The
+  # next scheduled run would have been 18:23. Twenty minutes is the SHORT case —
+  # a publication landing at :24 waits fifty-nine.
+  #
+  # Deliberately not narrowed to "and only when something was actually
+  # published". Knowing that would mean an output or an artifact threaded out of
+  # `ingest.yml`, i.e. a second thing to keep in step with the first, and the
+  # run it would save is one this file already performs every hour on the hour
+  # regardless. `success` is gated on below for a different reason: a failed
+  # ingest has published nothing, so re-signing after one is pure noise.
+  #
+  # The schedule below STAYS. This trigger answers publication latency; the
+  # cron's second reason — the catalogue expires whether or not anybody commits
+  # — is untouched by it and would still be true if nothing were ever published
+  # again.
+  workflow_run:
+    workflows: ["Ingest"]
+    types: [completed]
   # Hourly, for two independent reasons — either alone would justify it.
   #
   # 1. THE BOT'S PUBLISH COMMIT DOES NOT TRIGGER THIS FILE. `ingest.yml`'s
@@ -80,6 +111,13 @@ permissions:
 jobs:
   index:
     runs-on: ubuntu-24.04
+    # A failed ingest published nothing, so there is nothing new to sign. Every
+    # other event carries no `workflow_run` object and the condition is vacuously
+    # true for them — the push, the schedule, the dispatch and the pull request
+    # all reach this job exactly as they did before.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     # Where the index signing key lives. The "Sign the deploy candidate" step
     # below has always SAID so; the job never declared it, so
     # `secrets.ASTRA_INDEX_SIGNING_KEY` resolved against repository secrets and
