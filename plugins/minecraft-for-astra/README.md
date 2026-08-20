@@ -24,7 +24,7 @@ have given the plugin a second brain that argues with the first one.
 | `minecraft_pillar` | gain height with nothing to climb: jump and place underneath, repeatedly |
 | `minecraft_craft`, `minecraft_smelt` | craft (finding or placing a table) and smelt |
 | `minecraft_equip`, `minecraft_drop`, `minecraft_give`, `minecraft_chest` | items in, out and across |
-| `minecraft_attack`, `minecraft_defend` | hunt one mob, or clear the hostiles nearby |
+| `minecraft_attack`, `minecraft_defend` | hunt one mob or fight one player by name, or clear the hostiles nearby |
 | `minecraft_eat`, `minecraft_sleep` | stay alive, skip the night |
 | `minecraft_say` | talk in chat |
 | `minecraft_chat_mode` | who the bot answers in chat: off / mention / all |
@@ -112,6 +112,17 @@ Configure the server in Astra's plugin settings, or pass it to
 `minecraft_connect` per call. `auth: microsoft` signs in with a device code
 written to the plugin log — no password is ever handled by this plugin.
 
+### Which Minecraft versions
+
+Whatever the bundled mineflayer speaks: **1.8.8 through 1.21.11** at the time of
+writing, with 1.21.11 the newest. Leave the version setting blank and the bot
+takes the version from the server's ping, which is right far more often than a
+guess; pin it only when that detection fails.
+
+The ceiling moves when mineflayer's does, not when this plugin changes — a
+version newer than the bundle is answered with the version it can speak instead
+of a stack trace, and the fix is a newer release rather than a setting.
+
 ### Installing it in Astra
 
 ```bash
@@ -119,7 +130,7 @@ npm run build
 astra-plugin build .
 ```
 
-That writes `minecraft-for-astra-0.3.0-noarch.astraplugin` next to `plugin.toml`,
+That writes `minecraft-for-astra-0.3.3-noarch.astraplugin` next to `plugin.toml`,
 and Astra imports it from **Plugins → Development → Import plugin**.
 
 Two things the tier table does not tell you, both learned by hitting them:
