@@ -1,0 +1,19 @@
+{
+  "$comment": "A release waiting out PRODUCTION_PLAN §3.5's publication delay. Nothing here is trusted at publish time: the whole ingest runs again from scratch. Delete this file to cancel the publication; edit publish_after to bring it forward.",
+  "id": "minecraft-for-astra",
+  "version": "0.3.3",
+  "repo": "teletemagame-dev/minecraft-for-astra",
+  "tag": "v0.3.3",
+  "submitter": "github-actions[bot]",
+  "queued_at": "2026-08-20T17:54:50Z",
+  "publish_after": "2026-08-21T17:54:50Z",
+  "delay_hours": 24,
+  "reason": "P_DELAY_HIGH_RISK",
+  "artifact_digests": [
+    "noarch:9f17b3da8fb9910222778b9e2e37633d9678c6ca53cd15567fb2119527529534"
+  ],
+  "approved_by": null,
+  "approved_at": null,
+  "approved_for": null,
+  "issue": 29
+}
