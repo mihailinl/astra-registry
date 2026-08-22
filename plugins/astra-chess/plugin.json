@@ -1,0 +1,19 @@
+{
+  "$comment": "Derived from KNICE-TECH/astra-chess@v0.1.13 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
+  "schema": "astra.registry.plugin/1",
+  "id": "astra-chess",
+  "name": "Astra Chess",
+  "summary": "Official chess plugin for Astra with local bot levels, the selected Astra model, and in-game chat.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "KNICE-TECH/astra-chess"
+  },
+  "added_at": "2026-08-22",
+  "description": "Official chess plugin for Astra with local bot levels, the selected Astra model, and in-game chat.",
+  "author": {
+    "name": "KNICE"
+  },
+  "icon": "icon.svg",
+  "readme": "README.md"
+}
