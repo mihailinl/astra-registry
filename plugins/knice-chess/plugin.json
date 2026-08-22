@@ -1,5 +1,5 @@
 {
-  "$comment": "Derived from KNICE-TECH/astra-chess@v0.1.12 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
+  "$comment": "Derived from KNICE-TECH/astra-chess@v0.1.12 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves. RETIRED 2026-08-22, the day it was listed: `knice-chess` was never the intended id. The plugin was submitted as `astra-chess`, refused for the mark and the reserved prefix (issue #33), and renamed by its author to get past a rule that should not have applied to him — he is Astra team. Both allowlists were corrected in the merge that precedes this one, so the id is his to take, and he will re-release under it. The directory stays because the version was published and signed and its audit trail is not ours to delete; `unlisted` is what keeps it out of the catalogue. Note for anyone reading this later: the two ids are two plugins to a daemon, not a rename — the id is the install directory name — so anybody who installed `knice-chess` in its one afternoon keeps it, unmanaged, until they remove it by hand.",
   "schema": "astra.registry.plugin/1",
   "id": "knice-chess",
   "name": "KNICE Chess",
@@ -15,5 +15,6 @@
     "name": "KNICE"
   },
   "icon": "icon.svg",
-  "readme": "README.md"
+  "readme": "README.md",
+  "unlisted": true
 }

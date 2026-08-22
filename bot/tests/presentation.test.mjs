@@ -351,6 +351,38 @@ await test("a curator's homepage survives the next release", () => {
   assertEqual(derived.plugin.homepage, "https://dice.example", "the curated homepage was dropped");
 });
 
+await test("a delisting survives the next release, and the author cannot lift it", () => {
+  // Found 2026-08-22 while retiring `knice-chess`. `unlisted: true` is not a
+  // curator's decoration — `bot/lib/moderation.mjs` documents `delist` as one
+  // of the four moderation actions and this field is how it is spelled. It was
+  // not in the carry-forward list, so the next release from the same repository
+  // derived a document without it and put the plugin back in the store, in a
+  // commit whose diff read as a version bump. The party who benefits from that
+  // is exactly the party a delisting is about.
+  const derived = deriveListing({
+    ...baseInput,
+    files: [],
+    existingPlugin: { added_at: "2026-01-01", unlisted: true },
+  });
+  assertEqual(derived.plugin.unlisted, true, "a release un-retired a delisted plugin");
+
+  // And no manifest field may reach it. The bundle is written by the author, so
+  // if `unlisted` could be set OR cleared from `facts`, the delisting would be
+  // theirs to revoke.
+  const claimed = deriveListing({
+    ...baseInput,
+    facts: { ...baseInput.facts, unlisted: false },
+    files: [],
+    existingPlugin: { added_at: "2026-01-01", unlisted: true },
+  });
+  assertEqual(claimed.plugin.unlisted, true, "the manifest overrode a delisting");
+
+  // A plugin nobody delisted must not gain the field, or every listing ships a
+  // `false` that reads as a decision somebody took.
+  const ordinary = deriveListing({ ...baseInput, files: [], existingPlugin: { added_at: "2026-01-01" } });
+  assertEqual(ordinary.plugin.unlisted, undefined, "an ordinary listing was marked");
+});
+
 await test("the author's own homepage beats the curator's", () => {
   const derived = deriveListing({
     ...baseInput,

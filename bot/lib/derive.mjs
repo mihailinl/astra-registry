@@ -225,6 +225,20 @@ export function deriveListing(input) {
   if (existingPlugin?.keywords) plugin.keywords = existingPlugin.keywords;
   if (!facts.homepage && existingPlugin?.homepage) plugin.homepage = existingPlugin.homepage;
 
+  // `unlisted` is the same shape as `homepage` and a great deal more serious.
+  // It is not decoration: `delist` — one of the four moderation actions in
+  // `bot/lib/moderation.mjs` — IS `"unlisted": true`, and it is what takes a
+  // plugin out of the catalogue when a person decides it has to go.
+  //
+  // Left out of this list, the next release from the same repository derived a
+  // document without it and the plugin returned to the store, in a commit whose
+  // diff showed a version bump. A retirement a release can undo is not a
+  // retirement, and the author is the one party who should not be able to lift
+  // it. Carried unconditionally, therefore, and with no manifest override: no
+  // `facts.*` may reach this field, because the bundle is written by exactly
+  // the person the delisting is about.
+  if (existingPlugin?.unlisted === true) plugin.unlisted = true;
+
   const version = {
     $comment:
       `Derived from ${repo}@${tag}. Digests are of the bytes the bot downloaded and the ` +
