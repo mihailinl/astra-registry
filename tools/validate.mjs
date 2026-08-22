@@ -39,7 +39,7 @@ import {
   unsafePathComponent,
 } from "./lib/ids.mjs";
 import { loadSources, loadPolicy, loadSchemas, readJson, REPO_ROOT } from "./lib/sources.mjs";
-import { ALLOWED_IMAGE_HOSTS, ICON_NAMES, MAX_README_CHARS, checkIcon } from "../bot/lib/assets.mjs";
+import { ALLOWED_IMAGE_HOSTS, ICON_NAMES, MAX_README_BYTES, checkIcon } from "../bot/lib/assets.mjs";
 import { buildIndex, indexContent } from "./build-index.mjs";
 
 const PLATFORM_KEYS = new Set([
@@ -199,9 +199,15 @@ function checkPresentationFiles(plugin, ctx) {
       return;
     }
     const text = fs.readFileSync(file, "utf8");
-    if (text.length > MAX_README_CHARS) {
+    // Bytes, the same unit bot/lib/assets.mjs truncates to and the same unit
+    // tools/build-index.mjs refuses on. Three readers of one number, and until
+    // this commit all three measured UTF-16 code units instead — which for a
+    // Russian or Chinese README is roughly half to a third of the bytes the
+    // signed index would actually carry.
+    const bytes = Buffer.byteLength(text, "utf8");
+    if (bytes > MAX_README_BYTES) {
       report.error(`plugins/${plugin.dir}/${readme}`,
-        `${text.length} characters, over the ${MAX_README_CHARS} the index allows`,
+        `${bytes} bytes, over the ${MAX_README_BYTES} the index allows`,
         "Trim it, or let bot/ingest.mjs derive it — that path truncates on a line boundary.");
     }
     // The two properties the renderer is entitled to assume, checked directly

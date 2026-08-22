@@ -20,13 +20,16 @@ import {
   ALLOWED_IMAGE_HOSTS,
   ICON_NAMES,
   MAX_ICON_BYTES,
-  MAX_README_CHARS,
+  MAX_README_BYTES,
   checkIcon,
+  cutToBytes,
   iconDataUri,
   pickIcon,
   rewriteReadme,
 } from "../lib/assets.mjs";
 import { deriveListing } from "../lib/derive.mjs";
+import { stableStringify } from "../../tools/lib/canonical.mjs";
+import { buildIndex } from "../../tools/build-index.mjs";
 import { loadPolicy } from "../../tools/lib/sources.mjs";
 import { runValidation } from "../../tools/validate.mjs";
 
@@ -49,6 +52,10 @@ async function test(name, fn) {
   }
 }
 function assert(cond, message) { if (!cond) throw new Error(message); }
+/** UTF-8 bytes, the unit the index budget is denominated in. */
+function bytes(s) { return Buffer.byteLength(s, "utf8"); }
+/** A high surrogate with no low one after it, or a low one with no high before. */
+const UNPAIRED = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
 function assertEqual(actual, expected, message) {
   if (actual !== expected) throw new Error(`${message}\n  expected: ${expected}\n  actual:   ${actual}`);
 }
@@ -285,9 +292,63 @@ await test("a reference-style image definition is pinned too", () => {
 await test("an over-long README is truncated on a line boundary, and says so", () => {
   const source = `${"a very ordinary line of prose\n".repeat(2000)}`;
   const { markdown, findings } = rewriteReadme(source, at);
-  assert(markdown.length <= MAX_README_CHARS, `${markdown.length} characters got through the cap`);
+  assert(bytes(markdown) <= MAX_README_BYTES, `${bytes(markdown)} bytes got through the cap`);
   assert(markdown.includes("truncated"), "a silently cut README reads as a badly written one");
   assert(findings.some((f) => /truncated/.test(f.message)), "the author is not told");
+});
+
+// The cap is a BYTE cap because the thing it bounds is a byte count: this
+// markdown is inlined into one signed index that every install fetches whole.
+// It used to be compared against `text.length`, which is UTF-16 code units, and
+// every README in the catalogue is close enough to ASCII for the two to look
+// like the same number.
+await test("a README under the cap in UTF-16 units and over it in bytes is still truncated", () => {
+  // 12,000 CJK characters: 12,000 code units, 36,000 bytes. The old comparison
+  // let this through untouched and put 36 KB into a 16 KiB budget.
+  const source = `${`${"設定".repeat(20)}\n`.repeat(300)}`;
+  assert(source.length < MAX_README_BYTES, "the fixture must be UNDER the cap in code units, or it proves nothing");
+  assert(bytes(source) > MAX_README_BYTES, "the fixture must be OVER the cap in bytes, or it proves nothing");
+  const { markdown, findings } = rewriteReadme(source, at);
+  assert(bytes(markdown) <= MAX_README_BYTES, `${bytes(markdown)} bytes got through the cap`);
+  assert(findings.some((f) => /truncated/.test(f.message)), "the author is not told");
+});
+
+// The old cut was `text.slice(0, MAX - 200)` on UTF-16 units, and its fallback
+// for prose with no newline in it sliced at exactly that unit — which lands
+// between the halves of a surrogate pair whenever the character there is astral.
+// A lone surrogate reaches the signed index as a `\udXXX` escape and serde_json
+// rejects the whole catalogue.
+// Every budget from 1 to 200 bytes over a string of nothing but astral
+// characters, so the answer does not depend on which side of a pair one
+// particular budget happens to land on.
+await test("the byte cut never returns half a character, at any budget", () => {
+  const astral = "🙂".repeat(50);
+  const mixed = "a🙂b測".repeat(50);
+  let cutsSeen = 0;
+  for (const s of [astral, mixed]) {
+    for (let budget = 1; budget <= 200; budget++) {
+      const out = cutToBytes(s, budget);
+      assert(!UNPAIRED.test(out), `budget ${budget} left half a character behind`);
+      assert(bytes(out) <= budget, `budget ${budget} produced ${bytes(out)} bytes`);
+      if (out.length < s.length) cutsSeen++;
+    }
+  }
+  assert(cutsSeen > 300, `only ${cutsSeen} of 400 budgets cut anything; the fixture is too short to prove this`);
+});
+
+await test("truncating never cuts a character in half", () => {
+  // NO newline anywhere: the line-boundary path is the safe one, and a fixture
+  // that reaches it proves nothing. This is the fallback — `cut.length` in the
+  // old code — which is where the raw cut happened. (Written with a newline in
+  // it first, where the mutation that reverts `cutToBytes` to a UTF-16 slice
+  // still passed.)
+  const source = "🙂".repeat(20000);
+  assert(!source.includes("\n"), "a newline puts this fixture back on the safe path");
+  const { markdown } = rewriteReadme(source, at);
+  assert(!UNPAIRED.test(markdown), "the cut left half a character behind");
+  assert(!/\\u[dD][89abAB]/.test(JSON.stringify(markdown)),
+    "the canonical serialisation carries a lone surrogate: serde_json refuses the catalogue, not the listing");
+  assert(bytes(markdown) <= MAX_README_BYTES, `${bytes(markdown)} bytes got through the cap`);
 });
 
 await test("every rewrite is reported rather than done silently", () => {
@@ -423,18 +484,89 @@ await test("the README the derivation emits is the rewritten one, not the author
   assert(written.includes(COMMIT), `the image was committed unpinned: ${written}`);
 });
 
+// ── the summary, and the character it used to cut in half ───────────────────
+//
+// `summarise` trims plugin.description to policy.limits.max_summary_length. It
+// did so with `String.prototype.slice`, which counts UTF-16 code units, so the
+// cut could land between the two halves of a surrogate pair. What comes out is
+// a lone surrogate; `tools/lib/canonical.mjs` writes it with plain
+// `JSON.stringify` as `\udXXX`; `serde_json` refuses that escape — and it is
+// refusing the whole catalogue, not the listing that caused it.
+//
+// It has never fired, because an English description that reaches 200 units has
+// long since run out of things to say. A Chinese or Russian one reaches it in
+// two sentences, which is what makes this worth fixing before any listing
+// carries either.
+
+await test("a description whose cut lands mid-emoji does not produce half a character", () => {
+  const cap = policy.limits.max_summary_length;   // 200
+  // No spaces anywhere: Chinese prose does not have them, and it is the
+  // no-space path that used to slice at a raw unit offset. The emoji sits so
+  // that the old cut (`slice(0, cap - 1)`, units) fell between its halves.
+  const description = `${"設".repeat(cap - 2)}🙂${"定".repeat(20)}`;
+  assert([...description].length > cap, "the fixture must be over the cap, or nothing is cut");
+  const derived = deriveListing({ ...baseInput, facts: { ...baseInput.facts, description } });
+  const summary = derived.plugin.summary;
+  assert(!UNPAIRED.test(summary), `the summary carries half a character: ${JSON.stringify(summary)}`);
+  assert([...summary].length <= cap,
+    `${[...summary].length} code points, over the ${cap} checkMetadata measures with`);
+  assert(!derived.findings.some((f) => f.code === "E_METADATA_UNSAFE_TEXT"),
+    "an honest Chinese description was refused");
+});
+
+// The other half of the same unit confusion, and the one that costs an author
+// text rather than costing everyone the catalogue: `summarise` decided whether
+// to cut at all by counting code units, while `checkMetadata` decides whether
+// the result is too long by counting code points. A description of 150 emoji is
+// 150 code points and 300 units — inside the cap by the rule that judges it,
+// over the cap by the rule that cut it.
+await test("a description inside the cap in code points is not truncated for being long in code units", () => {
+  const cap = policy.limits.max_summary_length;   // 200
+  const description = "🎲".repeat(150);
+  assert([...description].length <= cap, "the fixture must be INSIDE the cap in code points");
+  assert(description.length > cap, "the fixture must be OVER the cap in code units, or it proves nothing");
+  const derived = deriveListing({ ...baseInput, facts: { ...baseInput.facts, description } });
+  assertEqual(derived.plugin.summary, description,
+    "a description the length rule would have accepted whole was cut anyway");
+  assert(!derived.plugin.summary.endsWith("…"), "an ellipsis was added to a summary that fits");
+});
+
+await test("the catalogue serialisation of that listing carries no lone-surrogate escape", () => {
+  const cap = policy.limits.max_summary_length;
+  const description = `${"設".repeat(cap - 2)}🙂${"定".repeat(20)}`;
+  const derived = deriveListing({ ...baseInput, facts: { ...baseInput.facts, description } });
+  const json = stableStringify(derived.plugin);
+  assert(!/\\u[dD][89abAB]/.test(json),
+    `serde_json refuses this document, and with it every other listing in the index:\n${json}`);
+  // Not vacuous: the emoji really is in there, as a whole character.
+  assert(JSON.parse(json).description.includes("🙂"), "the fixture lost its emoji before the assertion could see it");
+});
+
+await test("a lone surrogate in hand-written metadata is refused outright", () => {
+  const derived = deriveListing({
+    ...baseInput,
+    facts: { ...baseInput.facts, name: `Dice \ud83c` },
+  });
+  assert(derived.findings.some((f) => f.code === "E_METADATA_UNSAFE_TEXT" && /surrogate/.test(f.message)),
+    `half a character reached the catalogue: ${JSON.stringify(derived.findings)}`);
+});
+
 // ── and past the repository's own validator ─────────────────────────────────
 
 section("and past the repository's own validator");
 
-/** A minimal registry tree with one listing, so validate.mjs has something to read. */
-function treeWith(files, doc = {}) {
-  const root = tmp("astra-presentation-");
-  const dir = path.join(root, "plugins", "dice-roller");
+/**
+ * A minimal registry tree with one listing, so validate.mjs has something to
+ * read. Pass an existing `root` and a second `id` to put another listing beside
+ * the first — which is how the generator gets asked whether it reports one
+ * broken listing or all of them.
+ */
+function treeWith(files, doc = {}, { root = tmp("astra-presentation-"), id = "dice-roller" } = {}) {
+  const dir = path.join(root, "plugins", id);
   fs.mkdirSync(path.join(dir, "versions"), { recursive: true });
   fs.writeFileSync(path.join(dir, "plugin.json"), `${JSON.stringify({
     schema: "astra.registry.plugin/1",
-    id: "dice-roller",
+    id,
     name: "Dice Roller",
     summary: "Rolls dice when you ask it to.",
     license: "MIT",
@@ -444,7 +576,7 @@ function treeWith(files, doc = {}) {
   }, null, 2)}\n`);
   fs.writeFileSync(path.join(dir, "versions", "0.2.0.json"), `${JSON.stringify({
     schema: "astra.registry.version/1",
-    id: "dice-roller",
+    id,
     version: "0.2.0",
     published_at: "2026-08-11T00:00:00Z",
     release: { kind: "github_release", repo: REPO, tag: "v0.2.0" },
@@ -507,9 +639,69 @@ await test("a clean icon and README pass", async () => {
 });
 
 await test("an over-long README is refused rather than silently cut by the generator", async () => {
-  const root = treeWith({ "README.md": "x\n".repeat(MAX_README_CHARS) }, { readme: "README.md" });
+  const root = treeWith({ "README.md": "x\n".repeat(MAX_README_BYTES) }, { readme: "README.md" });
   const errors = await errorsFor(root);
   assert(errors.some((e) => /over the/.test(e.message)), "the cap is not enforced on a hand-written listing");
+});
+
+await test("a hand-written README that is over the cap only in bytes is refused too", async () => {
+  const readme = `${`${"設定".repeat(20)}\n`.repeat(300)}`;
+  assert(readme.length < MAX_README_BYTES && bytes(readme) > MAX_README_BYTES,
+    "the fixture must be under in code units and over in bytes, or it proves nothing");
+  const root = treeWith({ "README.md": readme }, { readme: "README.md" });
+  const errors = await errorsFor(root);
+  assert(errors.some((e) => /over the/.test(e.message)),
+    "the tree validator measured code units, so a 36 KB Chinese README read as 12 KB");
+});
+
+// ── and past the index generator ────────────────────────────────────────────
+//
+// The generator is the last reader of the cap and the only one whose failure is
+// the catalogue not existing. It used to `throw` out of the middle of its entry
+// loop on the first listing it could not render, so a tree with three bad
+// listings took three runs to diagnose and each run named one file.
+//
+// It still fails — it must. A listing quietly dropped from a signed catalogue is
+// a plugin that disappears from every user's store with nothing red anywhere.
+// What changed is that it says everything it knows before it does.
+
+section("and past the index generator");
+
+const overCapReadme = `${`${"設定".repeat(20)}\n`.repeat(300)}`;
+
+await test("a two-listing tree builds", () => {
+  const root = treeWith({ "README.md": "# fine\n" }, { readme: "README.md" });
+  treeWith({ "README.md": "# also fine\n" }, { readme: "README.md" }, { root, id: "text-utils" });
+  const doc = buildIndex({ root, serial: 1 });
+  assertEqual(doc.signed.plugins.length, 2, "the fixture the next test mutates does not build clean");
+});
+
+await test("an over-cap README fails the build naming every listing, not the first", () => {
+  const root = treeWith({ "README.md": overCapReadme }, { readme: "README.md" });
+  treeWith({ "README.md": overCapReadme }, { readme: "README.md" }, { root, id: "text-utils" });
+  let message = null;
+  try {
+    buildIndex({ root, serial: 1 });
+  } catch (e) {
+    message = e.message;
+  }
+  assert(message !== null, "36 KB of Chinese went into a 16 KiB budget and the generator said nothing");
+  assert(/dice-roller\/README\.md/.test(message), `the first offender is unnamed:\n${message}`);
+  assert(/text-utils\/README\.md/.test(message),
+    `the generator stopped at the first offender, so the second one costs another run:\n${message}`);
+  assert(/16384/.test(message), `the cap the reader has to satisfy is not in the message:\n${message}`);
+});
+
+await test("a listing naming a README that is not there fails the build rather than shipping without it", () => {
+  const root = treeWith({}, { readme: "README.md" });
+  let message = null;
+  try {
+    buildIndex({ root, serial: 1 });
+  } catch (e) {
+    message = e.message;
+  }
+  assert(message !== null && /README\.md/.test(message ?? ""),
+    `a missing README became an entry with no readme at all: ${message}`);
 });
 
 // ── result ──────────────────────────────────────────────────────────────────

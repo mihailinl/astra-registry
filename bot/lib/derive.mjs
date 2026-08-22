@@ -22,13 +22,40 @@ import { unsafeDisplayText } from "../../tools/lib/ids.mjs";
 import { reservedPrefixViolation } from "../../tools/lib/reserved.mjs";
 import { README_NAME, checkIcon, pickIcon, rewriteReadme } from "./assets.mjs";
 
-/** Trim to a length without cutting a word or leaving a dangling space. */
+/**
+ * Trim to a length without cutting a word, leaving a dangling space, or
+ * splitting a character in half.
+ *
+ * COUNTED IN CODE POINTS, and that is the whole point. `String.prototype.slice`
+ * and `.length` work in UTF-16 code units, so an emoji or any other astral
+ * character is two of them and a cut can land between the two halves of a
+ * surrogate pair. The result is a string containing a lone surrogate, which
+ * `tools/lib/canonical.mjs` writes with plain `JSON.stringify` as a `\udXXX`
+ * escape, which `serde_json` refuses to parse — so one bad summary rejects the
+ * WHOLE catalogue in every daemon that fetches it, not one listing.
+ *
+ * An English description reaches 200 units long after it has run out of prose;
+ * a Chinese or Russian one hits the cap in a sentence or two, which is what
+ * makes this reachable rather than theoretical.
+ *
+ * Code points is also the unit `checkMetadata` caps with (`[...value].length`),
+ * so the summary this produces and the summary that is measured are now the
+ * same quantity. They were not before: 200 units of emoji is 100 code points,
+ * and this function would truncate a description that the cap would have let
+ * through whole.
+ */
 function summarise(text, max) {
   const flat = String(text).replace(/\s+/g, " ").trim();
-  if (flat.length <= max) return flat;
-  const cut = flat.slice(0, max - 1);
-  const lastSpace = cut.lastIndexOf(" ");
-  return `${(lastSpace > max / 2 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
+  const points = [...flat];
+  if (points.length <= max) return flat;
+  // One code point of the budget belongs to the ellipsis.
+  const kept = points.slice(0, max - 1);
+  // Indices here are code-point positions in `kept`, so comparing one against
+  // `max / 2` compares like with like. `cut.lastIndexOf(" ")` on the string
+  // did not.
+  const lastSpace = kept.lastIndexOf(" ");
+  const head = lastSpace > max / 2 ? kept.slice(0, lastSpace) : kept;
+  return `${head.join("").trimEnd()}…`;
 }
 
 /**

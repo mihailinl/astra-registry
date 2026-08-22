@@ -67,8 +67,25 @@ export const README_NAME = "README.md";
  * so the cap is also the per-listing cost of carrying it.
  */
 export const MAX_ICON_BYTES = 128 * 1024;
-/** 16 KiB of markdown — several screens of prose. See the contract note on when this moves out of the index. */
-export const MAX_README_CHARS = 16 * 1024;
+/**
+ * 16 KiB of markdown — several screens of prose. See the contract note on when
+ * this moves out of the index.
+ *
+ * BYTES, measured as UTF-8, because bytes are the thing being bounded: this
+ * markdown is inlined into `registry/v1/index.json`, one signed document every
+ * install fetches whole, and the ceiling that document is held to is a byte
+ * count.
+ *
+ * It used to be compared against `text.length`, which is neither bytes nor
+ * characters but UTF-16 code units. A Chinese character is one unit and three
+ * bytes, so 16,384 units of Chinese is 49,152 bytes and passed. Every README in
+ * the catalogue is close enough to ASCII for the two numbers to look like the
+ * same number, which is why nothing noticed — until `sub-models-for-astra`,
+ * whose committed README was 16,289 units and 16,390 bytes: six bytes over the
+ * budget its own truncation notice said it was inside. It was the truncator
+ * below that produced it.
+ */
+export const MAX_README_BYTES = 16 * 1024;
 
 /**
  * Image hosts a README may point at.
@@ -284,6 +301,30 @@ function resolveImageUrl(raw, { repo, commit }) {
 }
 
 /**
+ * The longest prefix of `text` that fits in `budget` UTF-8 bytes.
+ *
+ * `Buffer.prototype.write` stops on a code-point boundary — it will not emit a
+ * partial UTF-8 sequence, and a surrogate pair is one code point of four bytes,
+ * so it is all or nothing. That is the property this function exists for.
+ * Slicing the string instead measures UTF-16 units and can cut a character in
+ * half; see the note at the cap below for what a half character costs.
+ *
+ * Exported for one reason: whether a cut lands between the halves of a
+ * surrogate pair depends on the exact budget, and the budget here depends on
+ * the length of a repository name. A test that goes through `rewriteReadme`
+ * therefore proves the property for one arithmetic accident and not for the
+ * next one — which is what it did, until the mutation that reverts this
+ * function to `text.slice` was run and the test stayed green.
+ */
+export function cutToBytes(text, budget) {
+  if (budget <= 0) return "";
+  if (Buffer.byteLength(text, "utf8") <= budget) return text;
+  const buf = Buffer.alloc(budget);
+  const written = buf.write(text, 0, budget, "utf8");
+  return buf.toString("utf8", 0, written);
+}
+
+/**
  * The README as it will be stored and rendered.
  *
  * Raw HTML out, images resolved against the attested commit or dropped to their
@@ -357,11 +398,27 @@ export function rewriteReadme(source, { repo, commit }) {
 
   text = `${text.replace(/\n{3,}/g, "\n\n").trim()}\n`;
 
-  if (text.length > MAX_README_CHARS) {
-    const cut = text.slice(0, MAX_README_CHARS - 200);
+  // The cap, and the two things the old cut got wrong.
+  //
+  // It reserved 200 UTF-16 units for a footer whose real cost is bytes, so its
+  // own output could come out over the cap that produced it — which is what
+  // happened to `sub-models-for-astra`. The reserve is now the footer's actual
+  // byte length, so the result is inside the cap by construction.
+  //
+  // And its fallback path, `cut.slice(0, cut.length)` when the prose holds no
+  // newline, is a raw UTF-16 cut that can land between the halves of a
+  // surrogate pair. That leaves a lone surrogate in a string that
+  // `tools/build-index.mjs` inlines into the signed catalogue, which
+  // `serde_json` then refuses whole. `cutToBytes` cannot do that: it writes
+  // whole code points or nothing.
+  if (Buffer.byteLength(text, "utf8") > MAX_README_BYTES) {
+    const footer =
+      `\n\n---\n\n*This README was truncated. [Read the rest on GitHub](https://github.com/${repo}).*\n`;
+    const budget = Math.max(0, MAX_README_BYTES - Buffer.byteLength(footer, "utf8"));
+    const cut = cutToBytes(text, budget);
     const atLine = cut.lastIndexOf("\n");
-    text = `${cut.slice(0, atLine > 0 ? atLine : cut.length)}\n\n---\n\n*This README was truncated. [Read the rest on GitHub](https://github.com/${repo}).*\n`;
-    note(`README truncated to ${MAX_README_CHARS} characters`);
+    text = `${(atLine > 0 ? cut.slice(0, atLine) : cut).trimEnd()}${footer}`;
+    note(`README truncated to ${MAX_README_BYTES} bytes`);
   }
 
   return { markdown: text, findings };
