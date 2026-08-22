@@ -1,5 +1,5 @@
 {
-  "$comment": "Ids nobody but the maintainers may list, and prefixes nobody but the maintainers may list under. Two reasons: an id that reads as first-party is an impersonation primitive, and the daemon reserves a few names for its own directories. Removing an entry here is a security change, not a cleanup.",
+  "$comment": "Ids nobody but the maintainers may list, and prefixes nobody but the maintainers may list under. Two reasons: an id that reads as first-party is an impersonation primitive, and the daemon reserves a few names for its own directories. Removing an entry here is a security change, not a cleanup — and so is ADDING one to either allowlist below. The predicate that reads them is tools/lib/reserved.mjs, imported by both tools/validate.mjs and bot/lib/derive.mjs, so that what CI refuses in the tree and what the bot refuses at ingest cannot be two different answers.",
   "reserved": [
     "astra",
     "admin",
@@ -24,5 +24,9 @@
   "first_party_repos": [
     "mihailinl/AstraPlugins",
     "mihailinl/Astra"
+  ],
+  "first_party_owners_note": "Owner logins whose EVERY repository may list under a reserved prefix — present and future, including one a collaborator with push access creates. Wider than first_party_repos by construction, so an entry here is a statement that the project vouches for the whole account. KNICE-TECH is KNICE's organisation; he is Astra team (publishers/KnlCE.json) and astra-chess is his.",
+  "first_party_owners": [
+    "KNICE-TECH"
   ]
 }

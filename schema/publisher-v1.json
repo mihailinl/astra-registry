@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://registry.astra.app/schema/publisher-v1.json",
   "title": "astra.registry.publisher/1",
-  "description": "publishers/<owner>.json — what the registry knows about the ACCOUNT behind a listing, keyed by the GitHub owner of source.repo. Hand-written and hand-reviewed. Never derived from a bundle: a plugin's own manifest carries an `author` string the author typed, and a badge keyed on that would be forged by a one-line edit. The owner login is the only identity this registry proves, because it is what the ownership check binds to.",
+  "description": "publishers/<owner>.json — what the registry knows about the ACCOUNT behind a listing, keyed by the GitHub owner of source.repo (`owner`, and any login in `covers`). Hand-written and hand-reviewed. Never derived from a bundle: a plugin's own manifest carries an `author` string the author typed, and a badge keyed on that would be forged by a one-line edit. The owner login is the only identity this registry proves, because it is what the ownership check binds to.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -24,6 +24,16 @@
       "type": "string",
       "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$",
       "description": "The GitHub owner login, matching the file name. Compared case-insensitively against the owner half of every listing's source.repo."
+    },
+    "covers": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 8,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$"
+      },
+      "description": "Further owner logins this ONE record speaks for — an organisation the publisher runs, an account they also publish from. Listings under any of them resolve to this record, so the badge, the display name and the byline are written once and cannot disagree between them.\n\nWhy this exists rather than a second file: the badge is keyed on the owner half of source.repo, and a person's plugins do not all live under their personal login. `KnlCE` publishes `astra-chess` from the `KNICE-TECH` organisation, so the reviewed record about the PERSON reached none of their listings while being entirely correct. A second record for the org would have carried the same display_name and tripped the collision check — correctly, because two records rendering as one word IS the thing that check is for. One record, several keys, is the shape that says what is actually true.\n\nWhat it is NOT: a claim the registry verifies. Nothing here re-fetches an organisation's membership. The claim is this line, in a reviewed commit, exactly as strong as the `owner` line above it and no stronger — and it is worth knowing that it extends the badge to every repository under that owner, including one a collaborator pushes. Add an org you would vouch for as a whole; the narrower knob is to leave this out and let each account carry its own record."
     },
     "display_name": {
       "type": "string",

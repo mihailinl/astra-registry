@@ -127,7 +127,10 @@ export function loadSchemas(root = REPO_ROOT) {
 }
 
 /**
- * Reads `publishers/*.json` into a map keyed by the LOWERCASED owner login.
+ * Reads `publishers/*.json` into a map keyed by the LOWERCASED owner login —
+ * `owner`, plus every login the record's `covers` list says it also speaks for,
+ * all pointing at the SAME record object. Use `publisherRecords` when you want
+ * each record once rather than each key once.
  *
  * Structure only, like `loadSources` — no policy, no schema, and no clock. The
  * expiry a `verified` record carries is deliberately NOT enforced here: this
@@ -171,14 +174,48 @@ export function loadPublishers(root = REPO_ROOT) {
       errors.push({ file: rel, message: `owner ${JSON.stringify(doc?.owner)} does not match the file name` });
       continue;
     }
-    const key = doc.owner.toLowerCase();
-    if (publishers.has(key)) {
-      errors.push({ file: rel, message: `a second record for ${doc.owner}` });
+    // The record's own login, plus every login it says it also speaks for.
+    // `covers` exists because the badge is keyed on the owner half of
+    // `source.repo` and a person's plugins do not all live under their personal
+    // login: `KnlCE`'s reviewed record reached none of their listings, because
+    // those live under the `KNICE-TECH` organisation. A second file for the org
+    // is NOT the fix — it would carry the same `display_name` and trip
+    // `publisherNameCollisions`, correctly, since two records rendering as one
+    // word is exactly what that check is for.
+    //
+    // Every key is claimed the same way and refused the same way, so a
+    // `covers` entry cannot quietly take an owner another record already owns,
+    // in either direction and whichever file was read first.
+    const claims = [doc.owner, ...(Array.isArray(doc.covers) ? doc.covers : [])];
+    const taken = claims.map((c) => String(c).toLowerCase()).find((k) => publishers.has(k));
+    if (taken !== undefined) {
+      const by = publishers.get(taken);
+      errors.push({
+        file: rel,
+        message: taken === doc.owner.toLowerCase() && by.doc.owner.toLowerCase() === taken
+          ? `a second record for ${doc.owner}`
+          : `claims ${taken}, which ${by.file} already claims`,
+      });
       continue;
     }
-    publishers.set(key, { file: rel, doc });
+    const record = { file: rel, doc };
+    for (const claim of claims) publishers.set(String(claim).toLowerCase(), record);
   }
   return { errors, publishers };
+}
+
+/**
+ * The DISTINCT records in a publishers map, once each.
+ *
+ * The map is keyed by login and a record with `covers` is stored under several,
+ * so `publishers.values()` yields the same object more than once. Every caller
+ * that reasons about records rather than about keys wants this instead — and
+ * one of them, `publisherNameCollisions`, would otherwise compare a record with
+ * itself, find its own display name identical to its own display name, and
+ * report every multi-login publisher as an impersonation of itself.
+ */
+export function publisherRecords(publishers) {
+  return [...new Set(publishers.values())];
 }
 
 /**
@@ -191,7 +228,7 @@ export function loadPublishers(root = REPO_ROOT) {
 export function expiredPublishers(publishers, now = new Date()) {
   const today = now.toISOString().slice(0, 10);
   const out = [];
-  for (const { file, doc } of publishers.values()) {
+  for (const { file, doc } of publisherRecords(publishers)) {
     if (typeof doc.expires_at === "string" && doc.expires_at < today) {
       out.push({ file, owner: doc.owner, expires_at: doc.expires_at });
     }
@@ -221,7 +258,7 @@ export function expiredPublishers(publishers, now = new Date()) {
  */
 export function publisherNameCollisions(publishers) {
   const out = [];
-  const records = [...publishers.values()];
+  const records = publisherRecords(publishers);
   for (let i = 0; i < records.length; i++) {
     for (let j = i + 1; j < records.length; j++) {
       const a = records[i].doc;
