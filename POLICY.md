@@ -105,7 +105,11 @@ name you believe is impersonation — that path works, and it is the one that
 scales.
 
 Reserved ids and prefixes are in `policy/reserved-ids.json`. Removing an entry
-there is a security change, not a cleanup.
+there is a security change, not a cleanup — and so is adding one to either
+allowlist beside them. `first_party_repos` admits one repository;
+`first_party_owners` admits every repository an account has or will ever have,
+which is a statement that the project vouches for the whole account rather than
+for one piece of work.
 
 ## 4. Licensing
 

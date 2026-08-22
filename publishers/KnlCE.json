@@ -1,9 +1,10 @@
 {
-  "$comment": "Hand-written and hand-reviewed. NOTE the two spellings: the GitHub login is `KnlCE` with a lowercase L as its third character, while the name shown to people is `KNICE` with a capital i. They are different strings that look alike, which is exactly why display_name is reviewed here rather than read off a GitHub profile — a profile name can be changed by its owner at any time, and what Astra shows must not move with it.",
+  "$comment": "Hand-written and hand-reviewed. NOTE the two spellings: the GitHub login is `KnlCE` with a lowercase L as its third character, while the name shown to people is `KNICE` with a capital i. They are different strings that look alike, which is exactly why display_name is reviewed here rather than read off a GitHub profile — a profile name can be changed by its owner at any time, and what Astra shows must not move with it. `covers` was added 2026-08-22: this record was correct from the day it was written and reached nothing, because the badge is keyed on the owner half of source.repo and every plugin of his is published from the KNICE-TECH organisation. The record was about the person; the lookup was about the repository. See tools/lib/sources.mjs.",
   "schema": "astra.registry.publisher/1",
   "owner": "KnlCE",
+  "covers": ["KNICE-TECH"],
   "display_name": "KNICE",
-  "description_text": "Main developer of Astra",
+  "description_text": "Astra's co-founder and main developer",
   "tier": "astra_team",
   "verified_at": "2026-08-19",
   "evidence": {

@@ -29,6 +29,7 @@ import { stableStringify, jcs } from "./lib/canonical.mjs";
 import { validate as validateSchema } from "./lib/jsonschema.mjs";
 import { makeFixtures } from "./make-fixtures.mjs";
 import { REPO_ROOT, expiredPublishers, loadPublishers, loadSources, publisherNameCollisions } from "./lib/sources.mjs";
+import { reservedPrefixViolation } from "./lib/reserved.mjs";
 import { proofNamesOwner, recheck } from "../bot/recheck-publishers.mjs";
 import { readZip, readEntry, writeZip } from "./lib/zip.mjs";
 import { compareSemver } from "./lib/semver.mjs";
@@ -305,6 +306,110 @@ await test("no two publishers render as the same word", () => {
     ["two", { file: "publishers/two.json", doc: { owner: "KnlCE", display_name: "KNICE" } }],
   ]);
   assert(publisherNameCollisions(distinct).length === 0, "two genuinely different publishers must not clash");
+});
+
+// `covers` lets ONE reviewed record speak for several owner logins, because a
+// person's plugins do not all live under their personal one. Three things have
+// to hold, and the second is the one that would have gone unnoticed.
+await test("a covered owner resolves to the same record, and cannot be claimed twice", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "astra-covers-"));
+  const write = (name, doc) =>
+    fs.writeFileSync(path.join(tmp, "publishers", name), JSON.stringify(doc, null, 2));
+  const load = () => loadPublishers(tmp);
+  fs.mkdirSync(path.join(tmp, "publishers"));
+
+  // 1. Every claimed login finds the record, and finds the SAME object.
+  write("someone.json", { owner: "someone", covers: ["SOMEONE-TECH"], display_name: "Someone" });
+  const { errors, publishers } = load();
+  assert(errors.length === 0, `a well-formed record errored: ${JSON.stringify(errors)}`);
+  assert(publishers.has("someone") && publishers.has("someone-tech"),
+    "a covered login did not resolve; the badge would reach only the personal account");
+  assert(publishers.get("someone") === publishers.get("someone-tech"),
+    "the two keys must be one record, or a rename becomes two edits that can disagree");
+
+  // 2. The collision check must not see one record as two publishers. Without
+  //    `publisherRecords` deduplicating by identity this compares the record
+  //    with itself, finds its display name equal to its display name, and
+  //    reports every multi-login publisher as impersonating itself.
+  assert(publisherNameCollisions(publishers).length === 0,
+    "one record under two keys was reported as two publishers colliding");
+
+  // 3. A `covers` entry must not take a login another record owns — in EITHER
+  //    direction. `publishers/` is walked in sorted order and a record's file
+  //    name must equal its owner, so the two orderings are two different pairs
+  //    of names: "aaa.json" cover-first, "contested.json" owner-first. A check
+  //    that handled only one of them would pass on half the alphabet.
+  fs.rmSync(path.join(tmp, "publishers", "someone.json"));
+
+  write("aaa.json", { owner: "aaa", covers: ["contested"], display_name: "Aaa" });
+  write("contested.json", { owner: "contested", display_name: "Contested" });
+  const coverFirst = load().errors;
+  assert(coverFirst.some((e) => e.file === "publishers/contested.json"),
+    `an owner already claimed by a cover was accepted: ${JSON.stringify(coverFirst)}`);
+
+  fs.rmSync(path.join(tmp, "publishers", "aaa.json"));
+  write("zzz.json", { owner: "zzz", covers: ["contested"], display_name: "Zzz" });
+  const ownerFirst = load().errors;
+  assert(ownerFirst.some((e) => e.file === "publishers/zzz.json"),
+    `a cover of an already-owned login was accepted: ${JSON.stringify(ownerFirst)}`);
+
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+// The reserved-prefix rule used to live twice — in `tools/validate.mjs` for a
+// listing already in the tree, and in `bot/lib/derive.mjs` for a submission
+// arriving at ingest. Identical behaviour, two files, and widening the
+// exception is precisely the edit that updates one of them. It is one function
+// now, and this is what says so: both allowlists, both directions, and the
+// malformed case.
+await test("a reserved prefix is refused unless the repo or its owner is first-party", () => {
+  const policy = {
+    reserved_prefixes: ["astra-", "official-"],
+    first_party_repos: ["mihailinl/AstraPlugins"],
+    first_party_owners: ["KNICE-TECH"],
+  };
+  const hit = (id, repo) => reservedPrefixViolation(id, repo, policy);
+
+  assert(hit("astra-chess", "somebody/astra-chess")?.prefix === "astra-",
+    "an outsider took a reserved prefix");
+  assert(hit("astra-chess", "KNICE-TECH/astra-chess") === null,
+    "a first-party OWNER was refused its own prefix");
+  assert(hit("astra-chess", "knice-tech/astra-chess") === null,
+    "owner matching must be case-insensitive; GitHub logins are");
+  assert(hit("doom", "somebody/doom") === null,
+    "an id with no reserved prefix was refused");
+  assert(hit("official-thing", "mihailinl/AstraPlugins") === null,
+    "a first-party REPO was refused a reserved prefix");
+  assert(hit("official-thing", "mihailinl/something-else")?.prefix === "official-",
+    "the repo allowlist must match the repo, not its owner — first_party_owners is the wider knob");
+
+  // A listing with no `source.repo` must not buy itself a prefix by being
+  // malformed.
+  assert(hit("astra-chess", undefined)?.prefix === "astra-", "a missing repo was treated as first-party");
+  assert(hit("astra-chess", "")?.prefix === "astra-", "an empty repo was treated as first-party");
+
+  // And the same pair against a policy carrying an EMPTY allowlist entry,
+  // which is what makes the two assertions above mean anything. A blank line
+  // in JSON is one keystroke, and without the guard in reserved.mjs it turns
+  // every malformed listing — no repo, or a repo the caller failed to read —
+  // into a first-party one. Written this way because the first version of this
+  // test passed with the guard REMOVED: it was asserting behaviour that held
+  // for an unrelated reason, which is the same as not asserting it.
+  const blank = { ...policy, first_party_repos: [""], first_party_owners: [""] };
+  assert(reservedPrefixViolation("astra-chess", "", blank)?.prefix === "astra-",
+    "an empty allowlist entry matched an empty repo and granted the prefix");
+  assert(reservedPrefixViolation("astra-chess", undefined, blank)?.prefix === "astra-",
+    "an empty allowlist entry matched a missing repo and granted the prefix");
+
+  // And the COMMITTED policy really does admit the repository this was widened
+  // for, and still refuses everybody else. Asserted against the real file
+  // rather than the fixture above, because a fixture cannot notice that
+  // somebody edited the policy back.
+  const real = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "policy/reserved-ids.json"), "utf8"));
+  assert(reservedPrefixViolation("astra-chess", "KNICE-TECH/astra-chess", real) === null,
+    "policy/reserved-ids.json no longer admits KNICE-TECH; issue #33 is blocked again");
+  assert(reservedPrefixViolation("astra-anything", "someone-else/x", real)?.prefix === "astra-",
+    "policy/reserved-ids.json admits everybody; the prefix is no longer reserved");
 });
 
 // A `verified` badge rests on a document that keeps saying the same thing. The

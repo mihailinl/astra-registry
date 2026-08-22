@@ -59,7 +59,7 @@
     "zoom"
   ],
   "allow_repo_owners": {
-    "astra": ["mihailinl"]
+    "astra": ["mihailinl", "KNICE-TECH"]
   },
   "allow_ids": {
     "$comment": "id -> the issue or pull request where a human agreed. An entry with no reference is an entry nobody reviewed.",

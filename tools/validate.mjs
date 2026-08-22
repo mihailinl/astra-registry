@@ -28,6 +28,7 @@ import crypto from "node:crypto";
 import { validate as validateSchema } from "./lib/jsonschema.mjs";
 import { stableStringify } from "./lib/canonical.mjs";
 import { compareSemver, parseSemver } from "./lib/semver.mjs";
+import { reservedPrefixViolation } from "./lib/reserved.mjs";
 import {
   editDistance,
   foldId,
@@ -126,11 +127,13 @@ function checkPluginDoc(plugin, ctx) {
   if (policy.reserved.reserved.includes(id)) {
     report.error(where, `id ${JSON.stringify(id)} is reserved`, "See policy/reserved-ids.json.");
   }
-  for (const prefix of policy.reserved.reserved_prefixes) {
-    if (id.startsWith(prefix) && !policy.reserved.first_party_repos.includes(plugin.doc.source?.repo)) {
-      report.error(where, `id ${JSON.stringify(id)} uses the reserved prefix "${prefix}"`,
-        "Prefixes that read as first-party are an impersonation primitive. See policy/reserved-ids.json.");
-    }
+  // The predicate lives in tools/lib/reserved.mjs and `bot/lib/derive.mjs`
+  // imports the same one, so what CI refuses in the tree and what the bot
+  // refuses at ingest cannot be two answers.
+  const prefixHit = reservedPrefixViolation(id, plugin.doc.source?.repo, policy.reserved);
+  if (prefixHit) {
+    report.error(where, `id ${JSON.stringify(id)} uses the reserved prefix "${prefixHit.prefix}"`,
+      "Prefixes that read as first-party are an impersonation primitive. See policy/reserved-ids.json.");
   }
 
   const license = plugin.doc.license;

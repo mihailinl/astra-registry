@@ -19,6 +19,7 @@
 // output is held to the rules its input would have been.
 
 import { unsafeDisplayText } from "../../tools/lib/ids.mjs";
+import { reservedPrefixViolation } from "../../tools/lib/reserved.mjs";
 import { README_NAME, checkIcon, pickIcon, rewriteReadme } from "./assets.mjs";
 
 /** Trim to a length without cutting a word or leaving a dangling space. */
@@ -167,19 +168,20 @@ export function deriveListing(input) {
     });
   }
 
-  // Reserved ids and prefixes. `first_party_repos` is matched against the
-  // repository the ownership check already proved, not against a claim.
+  // Reserved ids and prefixes. Both allowlists are matched against the
+  // repository the ownership check already proved, not against a claim — and
+  // the predicate is `tools/lib/reserved.mjs`, which `tools/validate.mjs`
+  // imports too, so a submission this admits cannot be one CI then rejects.
   if (policy.reserved.reserved.includes(facts.id)) {
     findings.push({ level: "error", code: "E_ID_RESERVED", message: `id ${JSON.stringify(facts.id)} is reserved` });
   }
-  for (const prefix of policy.reserved.reserved_prefixes) {
-    if (facts.id.startsWith(prefix) && !policy.reserved.first_party_repos.includes(repo)) {
-      findings.push({
-        level: "error",
-        code: "E_ID_RESERVED_PREFIX",
-        message: `id ${JSON.stringify(facts.id)} uses the reserved prefix ${JSON.stringify(prefix)}`,
-      });
-    }
+  const prefixHit = reservedPrefixViolation(facts.id, repo, policy.reserved);
+  if (prefixHit) {
+    findings.push({
+      level: "error",
+      code: "E_ID_RESERVED_PREFIX",
+      message: `id ${JSON.stringify(facts.id)} uses the reserved prefix ${JSON.stringify(prefixHit.prefix)}`,
+    });
   }
 
   // `added_at` is the day the plugin was FIRST listed and never moves; on a
