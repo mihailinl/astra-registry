@@ -1,0 +1,31 @@
+{
+  "$comment": "Derived from KNICE-TECH/astra-chess@v0.1.12. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: well-known.",
+  "schema": "astra.registry.version/1",
+  "id": "knice-chess",
+  "version": "0.1.12",
+  "published_at": "2026-08-22T19:17:19Z",
+  "release": {
+    "kind": "github_release",
+    "repo": "KNICE-TECH/astra-chess",
+    "tag": "v0.1.12",
+    "commit": "d5b039dcd5609220076077fad449dd534d931396"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/KNICE-TECH/astra-chess/releases/download/v0.1.12/knice-chess-0.1.12-noarch.astraplugin",
+      "filename": "knice-chess-0.1.12-noarch.astraplugin",
+      "sha256": "8434beab5aa024030b2adb4400b1ec2a30cf5cade2a0623e6e781d51365dd2c7",
+      "size": 313266
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "tools",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "send_chat_message": {
+      "reason": "Отправляет выбранной модели позицию и сообщения игрового чата, чтобы она делала ходы и отвечала игроку."
+    }
+  }
+}
