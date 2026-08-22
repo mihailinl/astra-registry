@@ -392,7 +392,6 @@ sequenceDiagram
 ```
 
 Astra then executes the tool and starts a fresh turn with the result in
-`messages`. That means the conversation is re-sent each time rather than
 
 ---
 

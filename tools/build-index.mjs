@@ -62,7 +62,7 @@ import { stableStringify } from "./lib/canonical.mjs";
 import { compareSemver } from "./lib/semver.mjs";
 import { loadPublishers, loadSources, REPO_ROOT } from "./lib/sources.mjs";
 import { INDEX_SCHEMA } from "../bot/lib/sign.mjs";
-import { MAX_README_CHARS, iconDataUri } from "../bot/lib/assets.mjs";
+import { MAX_README_BYTES, iconDataUri } from "../bot/lib/assets.mjs";
 
 const BANNER =
   "GENERATED FILE — DO NOT EDIT. Source of truth: plugins/<id>/plugin.json and " +
@@ -186,13 +186,16 @@ function presentation(root, plugin) {
   const dir = path.join(root, "plugins", plugin.dir);
   const p = plugin.doc;
   const out = {};
+  const errors = [];
+  const bad = (file, message) => errors.push({ file, message });
 
   if (p.icon) {
     const file = path.join(dir, p.icon);
     if (!fs.existsSync(file)) {
-      throw new Error(`plugins/${plugin.dir}/plugin.json names icon ${JSON.stringify(p.icon)}, which is not in the directory`);
+      bad(`plugins/${plugin.dir}/plugin.json`, `names icon ${JSON.stringify(p.icon)}, which is not in the directory`);
+    } else {
+      out.icon_url = iconDataUri({ name: p.icon, bytes: fs.readFileSync(file) });
     }
-    out.icon_url = iconDataUri({ name: p.icon, bytes: fs.readFileSync(file) });
   } else if (p.icon_url !== undefined) {
     out.icon_url = p.icon_url;
   } else {
@@ -202,18 +205,23 @@ function presentation(root, plugin) {
   if (p.readme) {
     const file = path.join(dir, p.readme);
     if (!fs.existsSync(file)) {
-      throw new Error(`plugins/${plugin.dir}/plugin.json names readme ${JSON.stringify(p.readme)}, which is not in the directory`);
+      bad(`plugins/${plugin.dir}/plugin.json`, `names readme ${JSON.stringify(p.readme)}, which is not in the directory`);
+    } else {
+      const text = fs.readFileSync(file, "utf8");
+      // Bytes: this string is about to be inlined into a signed document whose
+      // own ceiling is a byte count. bot/lib/assets.mjs truncates to the same
+      // number in the same unit, so anything the bot derived fits here by
+      // construction and only a hand-edited file can be over.
+      const bytes = Buffer.byteLength(text, "utf8");
+      if (bytes > MAX_README_BYTES) {
+        bad(`plugins/${plugin.dir}/${p.readme}`, `is ${bytes} bytes, over the ${MAX_README_BYTES} the index allows`);
+      } else {
+        out.readme = text;
+      }
     }
-    const text = fs.readFileSync(file, "utf8");
-    if (text.length > MAX_README_CHARS) {
-      throw new Error(
-        `plugins/${plugin.dir}/${p.readme} is ${text.length} characters, over the ${MAX_README_CHARS} the index allows`,
-      );
-    }
-    out.readme = text;
   }
 
-  return out;
+  return { out, errors };
 }
 
 export function buildIndex({ root = REPO_ROOT, serial } = {}) {
@@ -225,19 +233,35 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
     throw new Error(`cannot generate the index, the sources do not load:\n${lines}`);
   }
 
+  // Everything a listing can be wrong about is collected and reported together.
+  // A bare `throw` out of the middle of the loop stops at the first offender,
+  // so a tree with three unrenderable listings takes three runs to diagnose and
+  // each run names one file. Collecting them does NOT make the build succeed
+  // and must not: a listing silently dropped from a signed catalogue is a
+  // plugin that vanishes from every user's store with nothing red anywhere.
+  // The build still fails — it just says everything it knows first.
+  const entryErrors = [];
   const entries = [];
   for (const plugin of plugins) {
     if (plugin.doc.unlisted === true) continue;
     const releases = listedReleases(plugin);
     if (releases.length === 0) {
-      throw new Error(
-        `plugins/${plugin.dir}: every version is yanked or missing; delete the listing or add a release`,
-      );
+      entryErrors.push({
+        file: `plugins/${plugin.dir}`,
+        message: "every version is yanked or missing; delete the listing or add a release",
+      });
+      continue;
     }
     const records = releases.map(releaseRecord);
     const latest = records[0];
     const { download_url, platform_downloads } = flatDownloads(latest);
     const p = plugin.doc;
+
+    const pres = presentation(root, plugin);
+    if (pres.errors.length) {
+      entryErrors.push(...pres.errors);
+      continue;
+    }
 
     entries.push({
       id: p.id,
@@ -253,7 +277,7 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
       ...(p.keywords !== undefined ? { keywords: [...p.keywords].sort() } : {}),
       ...(p.homepage !== undefined ? { homepage: p.homepage } : {}),
       repository_url: `https://github.com/${p.source.repo}`,
-      ...presentation(root, plugin),
+      ...pres.out,
       source: {
         kind: p.source.kind,
         repo: p.source.repo,
@@ -277,6 +301,13 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
       platform_downloads,
       releases: records,
     });
+  }
+
+  if (entryErrors.length) {
+    const lines = entryErrors.map((e) => `  ${e.file}: ${e.message}`).join("\n");
+    throw new Error(
+      `cannot generate the index, ${entryErrors.length} listing(s) cannot be rendered:\n${lines}`,
+    );
   }
 
   entries.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));

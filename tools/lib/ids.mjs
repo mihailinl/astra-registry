@@ -199,5 +199,21 @@ export function unsafeDisplayText(s) {
   if (/[\u200b-\u200f\u202a-\u202e\u2066-\u2069\u2060-\u2064\ufeff]/.test(s)) {
     return "contains a zero-width or bidirectional-control character";
   }
+  // An unpaired surrogate is not a character at all — it is half of one, and
+  // it is what a cut through the middle of an emoji leaves behind. The reason
+  // it belongs in THIS function rather than in a length check is where it ends
+  // up: `tools/lib/canonical.mjs` serialises strings with plain
+  // `JSON.stringify`, which escapes a lone surrogate as `\udXXX` rather than
+  // refusing it, and `serde_json` rejects that escape. So one such character in
+  // one listing makes the whole signed catalogue unparseable in every daemon
+  // that fetches it — the blast radius of a display bug with the blast radius
+  // of an outage.
+  //
+  // Matched explicitly rather than with `String.prototype.isWellFormed` so that
+  // the two failing shapes are visible: a high surrogate with no low one after
+  // it, and a low surrogate with no high one before it.
+  if (/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(s)) {
+    return "contains an unpaired surrogate, which is half a character and makes the catalogue unparseable";
+  }
   return null;
 }

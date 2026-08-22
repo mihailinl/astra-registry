@@ -33,7 +33,7 @@ import { reservedPrefixViolation } from "./lib/reserved.mjs";
 import { proofNamesOwner, recheck } from "../bot/recheck-publishers.mjs";
 import { readZip, readEntry, writeZip } from "./lib/zip.mjs";
 import { compareSemver } from "./lib/semver.mjs";
-import { invalidId, unsafePathComponent, foldId } from "./lib/ids.mjs";
+import { invalidId, unsafePathComponent, foldId, unsafeDisplayText } from "./lib/ids.mjs";
 import {
   checkBundle, manifestDigest, artifactDigest,
   manifestBytesFromLocalHeader, MANIFEST_DIGEST_DOMAIN,
@@ -179,6 +179,20 @@ await test("safe path components", () => {
 await test("confusable folding collapses 0/o and hyphens", () => {
   assert(foldId("dice-roller") === foldId("dicer0ller"), `${foldId("dice-roller")} vs ${foldId("dicer0ller")}`);
 });
+// Half a character is not a display trick like the other two — it is a
+// serialisation bomb. `tools/lib/canonical.mjs` writes strings with plain
+// `JSON.stringify`, which turns an unpaired surrogate into a `\udXXX` escape
+// instead of refusing it, and `serde_json` rejects that escape: one listing
+// with one bad character makes the ENTIRE signed catalogue unparseable in every
+// daemon that fetches it. It belongs here because here is where every string
+// that reaches a user's screen is already checked.
+await test("display text refuses an unpaired surrogate and keeps a whole one", () => {
+  assert(unsafeDisplayText("Dice \ud83c") !== null, "a high surrogate with nothing after it passed");
+  assert(unsafeDisplayText("\ude00 Dice") !== null, "a low surrogate with nothing before it passed");
+  assert(unsafeDisplayText("Dice 🎲 Roller") === null, "a whole emoji was refused; astral characters are legitimate");
+  assert(unsafeDisplayText("Шахматы против бота") === null, "a Russian summary was refused");
+  assert(unsafeDisplayText("x\u200b") !== null, "the zero-width check regressed");
+});
 await test("semver precedence, prerelease included", () => {
   assert(compareSemver("0.10.0", "0.9.0") === 1, "0.10.0 must be newer than 0.9.0");
   assert(compareSemver("1.0.0-alpha", "1.0.0") === -1);
@@ -207,6 +221,21 @@ await test("index.json is byte-identical to a fresh generation", () => {
   const committed = fs.readFileSync(path.join(REPO_ROOT, "registry/v1/index.json"), "utf8");
   const regenerated = stableStringify(buildIndex({ serial: JSON.parse(committed).signed.serial }));
   assert(committed === regenerated, "registry/v1/index.json is not what tools/build-index.mjs produces");
+});
+// A catalogue-wide canary for the bug above, on the real document rather than a
+// fixture. The predicate is proved able to fail on the very next line, because
+// today's catalogue is all ASCII and an assertion that cannot fail is not one.
+await test("no string in the catalogue is half a character, and the check can see one", () => {
+  const committed = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "registry/v1/index.json"), "utf8"));
+  const doc = buildIndex({ serial: committed.signed.serial });
+  assert(doc.signed.plugins.length > 0, "an empty catalogue would pass this by having nothing in it");
+  const lone = /\\u[dD][89abAB]/;
+  assert(!lone.test(stableStringify(doc)),
+    "a lone surrogate escape is in the catalogue; serde_json refuses the whole document, not the listing");
+  const corrupted = JSON.parse(JSON.stringify(doc));
+  corrupted.signed.plugins[0].name += "\ud83c";
+  assert(lone.test(stableStringify(corrupted)),
+    "the predicate cannot see a lone surrogate at all, so the assertion above was decoration");
 });
 await test("index.json validates against schema/index-v1.json", () => {
   const schema = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "schema/index-v1.json"), "utf8"));

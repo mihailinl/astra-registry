@@ -169,7 +169,7 @@
         "readme": {
           "type": "string",
           "maxLength": 16384,
-          "description": "The plugin's own README, for the store's detail view. GitHub-flavoured markdown with NO RAW HTML and no image pointing anywhere but GitHub's asset hosts — both guaranteed by bot/lib/assets.mjs when this was derived, because by the time a client reads this the author is a stranger and the renderer is inside Astra's window. Inlined rather than linked so the bytes are covered by the index signature and so opening the store makes no request to a third party. Absent when the plugin ships no README."
+          "description": "The plugin's own README, for the store's detail view. GitHub-flavoured markdown with NO RAW HTML and no image pointing anywhere but GitHub's asset hosts — both guaranteed by bot/lib/assets.mjs when this was derived, because by the time a client reads this the author is a stranger and the renderer is inside Astra's window. Inlined rather than linked so the bytes are covered by the index signature and so opening the store makes no request to a third party. Absent when the plugin ships no README. The 16384 here is a character bound and is the backstop, not the budget: what the registry enforces is 16384 UTF-8 BYTES, in bot/lib/assets.mjs (MAX_README_BYTES), which truncates to it, and in tools/build-index.mjs and tools/validate.mjs, which refuse over it. Bytes are never fewer than characters, so anything this schema accepts the byte cap has already had the final say on."
         },
         "author": {
           "type": "string",
