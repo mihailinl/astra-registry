@@ -344,13 +344,57 @@ function preview(items) {
  * those. **False for locale files**, which reach the installed plugin per
  * platform: a Windows bundle whose `ru.json` says something the Linux one does
  * not is a card that disagrees with the software half the users are running.
+ *
+ * ── `limits` is REQUIRED, and that is the fix rather than a style choice ─────
+ *
+ * This used to call `readLocales(files)` with no limits, which defaults
+ * `maxBytes`/`maxKeys` to `Infinity`. It runs at ingest **step 7**, where the
+ * bundles are compared with each other; the cap runs at **step 11**, inside
+ * `deriveLocaleText`. So the real order of operations was: parse every locale
+ * file of every bundle unbounded, and THEN refuse the oversized ones. Measured
+ * on a flat, valid 43 MiB `en.json`: `readLocales(files, policy.limits)`
+ * refuses it in 0 ms; `localeSignature(files)` parsed it in 517 ms, +131 MiB
+ * heap, 474 MiB RSS. `inspectBundle` materialises every listed file bounded
+ * only by `max_extract_bytes` (500 MB) and a file like that compresses to
+ * nothing, so the input is reachable by anyone who can open a listing issue —
+ * and `max_artifacts_per_version` is 8, so the first bundle's files were
+ * re-parsed once per comparison.
+ *
+ * A `limits = {}` default would put the same hole back the moment somebody
+ * adds a second call site, so an absent one throws. That is the exemption-list
+ * discipline rather than a silence: a new caller answers *"which limits?"*
+ * instead of inheriting `Infinity` without being asked.
+ *
+ * **A refused file is still in the signature.** Its bytes were never read —
+ * that is the point of the cap — but a bundle shipping a 300 KiB `ru.json` and
+ * one shipping no `ru.json` at all are not the same set of languages, and
+ * dropping both would make them compare equal.
+ *
+ * @param {{name: string, bytes: Buffer}[]} files
+ * @param {object} limits `policy/limits.json`
  */
-export function localeSignature(files) {
-  const set = readLocales(files);
-  return JSON.stringify(
-    real(set).map((f) => [f.code, ...RESERVED_LISTING_KEYS.map((k) => f.keys[k] ?? null)]),
-  );
+export function localeSignature(files, limits) {
+  if (limits === undefined || limits === null) {
+    throw new Error(
+      "localeSignature(files, limits) needs the limits. Without them readLocales parses every locale " +
+      "file of every bundle unbounded, which is the one failure mode policy/limits.json's " +
+      "max_locale_bytes_note names out loud. Pass policy.limits.",
+    );
+  }
+  const set = readLocales(files, limits);
+  const rows = [
+    ...real(set).map((f) => [f.code, ...RESERVED_LISTING_KEYS.map((k) => f.keys[k] ?? null)]),
+    ...set.oversize.map((o) => [o.code, OVERSIZE_MARKER, o.bytes]),
+  ];
+  rows.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return JSON.stringify(rows);
 }
+
+/**
+ * Stands in for a locale file the cap refused, inside a signature. A sentinel
+ * rather than the file's contents, because the contents were never read.
+ */
+const OVERSIZE_MARKER = "\u0000refused-by-max_locale_bytes";
 
 // ── the corpus, and what this side of it implements ──────────────────────────
 
@@ -408,7 +452,65 @@ export const CORPUS_NOT_IMPLEMENTED = {
   N1: "a locale-named `*.json` outside `locales/` (`src/locales/en.json` is the case) ships working runtime strings and nothing the daemon reads. It is a fact about the source tree, which the CLI can see and a bundle cannot distinguish from any other data file.",
 };
 
+/**
+ * Errors THIS module can emit that the shared corpus has no rule id for, and
+ * why each one is nobody's fixture.
+ *
+ * **The direction C16 did not run in.** [`CORPUS_RULE_IDS`] and
+ * [`CORPUS_NOT_IMPLEMENTED`] between them answer *"every id the corpus writes
+ * is either implemented here or exempted here"* — corpus to registry. Nothing
+ * asked the reverse: *is every rule this module enforces on locale text a rule
+ * some fixture can see?* `E_METADATA_UNSAFE_TEXT` was the proof that the
+ * question was worth asking. It has fired on a translated `listing.name` since
+ * the locale work landed, no corpus case provokes it (104 fixture files, none
+ * carrying an invisible character), and it appeared in neither map — so
+ * `corpusIds` would have thrown `is an error this module can emit and
+ * CORPUS_RULE_IDS does not name` at whoever wrote the first fixture for it.
+ * A rule invisible to both readers, and refusing the fixture that would make
+ * it visible.
+ *
+ * `checkLocaleCorpusCoverage` in `tools/validate.mjs` now enumerates this
+ * module's `add("error", …)` calls and holds every one to being in exactly one
+ * of the three maps. A new rule therefore arrives as a one-line answer to
+ * *"which fixture proves this still fires?"* rather than as an absence.
+ *
+ * These three are exempt because none of them is a fact about a SOURCE TREE,
+ * which is the only thing `astra-plugin check` is ever pointed at.
+ */
+export const CORPUS_NO_RULE_ID = {
+  E_LOCALE_TOO_LARGE:
+    "max_locale_bytes and max_locale_keys are registry numbers with no CLI counterpart — `astra-plugin check` " +
+    "enforces neither, which is the gap the review filed as its own item. A corpus fixture would have to ship a " +
+    "262,145-byte locale file to provoke it, in a directory three repositories vendor. Witnessed instead by " +
+    "bot/tests/ingest.test.mjs, against constructed bytes rather than committed ones.",
+  E_LOCALE_CARD_TOO_LARGE:
+    "max_listing_i18n_bytes bounds the `i18n` member of a LISTING, which is a document this repository writes and " +
+    "the CLI never sees. There is nothing in a source tree for a fixture to be about. Witnessed in " +
+    "bot/tests/ingest.test.mjs, in both directions — that it fires, and that nine locales at the schema's own " +
+    "caps do NOT trip it.",
+  E_METADATA_UNSAFE_TEXT:
+    "a bidi override or zero-width character in a translated `listing.name` is refused by the same predicate that " +
+    "refuses one in `plugin.toml`'s name, and `astra-plugin check` has no display-text scan at all — so a fixture " +
+    "here would assert a CLI verdict that does not exist and the two sides would be recorded as agreeing when they " +
+    "do not. Witnessed by bot/tests/ingest.test.mjs on both planes, English and translated, so the rule is at least " +
+    "visible to one reader instead of none.",
+};
+
 // ── the derivation ───────────────────────────────────────────────────────────
+
+/**
+ * How many findings ONE rule may contribute to a report before the rest
+ * collapse into a single line.
+ *
+ * Derived from [`LOCALE_CODES`] rather than written down, because the number
+ * that must not cost an honest author anything is exactly *how many languages
+ * exist*. A bundle translated into all of them and missing one key everywhere
+ * produces one finding per file, and a hand-picked 5 silently ate four of
+ * them — which a mutation caught and a constant would not have. What this
+ * bounds is the count a STRANGER controls: `max_archive_entries` is 10,000 and
+ * every one of those entries can be a `locales/<something>.json`.
+ */
+const MAX_PER_CODE = LOCALE_CODES.length;
 
 /**
  * The per-locale card text, out of the bundle the bot already holds.
@@ -420,7 +522,55 @@ export const CORPUS_NOT_IMPLEMENTED = {
  */
 export function deriveLocaleText({ files = [], facts = {}, limits = {}, summarise, languageExempt = false }) {
   const findings = [];
-  const add = (level, code, where, message) => findings.push({ level, code, where, message });
+  // ── every rule here is per-FILE, and the file count is a stranger's ───────
+  //
+  // Almost every rule below runs once per `locales/*.json` in the bundle, and
+  // that count is bounded by `max_archive_entries` (10,000) and by nothing
+  // else. Measured by driving this function and `renderComment` for real: 100
+  // bogus locale files rendered a 41,701-byte issue comment, 200 rendered
+  // 82,102 — and GitHub refuses a comment over 65,536 characters with a 422.
+  // The report is the only channel this bot has, so a submission that produces
+  // enough findings takes away the bot's ability to say anything at all,
+  // including to the other submissions in the same run.
+  //
+  // So `add` bounds itself, per code: the first `MAX_PER_CODE` of a rule are
+  // reported in full — which is every honest bundle, since a plugin has at
+  // most ten locale files — and the rest collapse into one finding naming a
+  // count and a `preview()` of the files. Doing it HERE rather than in each
+  // loop is deliberate: a rule added next year is bounded without its author
+  // having to remember, and forgetting is what this failure was.
+  //
+  // The collapsed finding keeps the rule's own code and level, so it still
+  // blocks, still reaches "What to do", and still names a file to open.
+  const heldBack = new Map();
+  const add = (level, code, where, message) => {
+    let seen = heldBack.get(code);
+    if (!seen) { seen = { level, shown: 0, rest: [] }; heldBack.set(code, seen); }
+    if (seen.shown < MAX_PER_CODE) {
+      seen.shown++;
+      findings.push({ level, code, where, message });
+      return;
+    }
+    seen.rest.push(where);
+  };
+  /** Append one collapsed finding per over-reported rule. Called at every exit. */
+  const done = (i18n) => {
+    for (const [code, seen] of heldBack) {
+      if (seen.rest.length === 0) continue;
+      findings.push({
+        level: seen.level,
+        code,
+        where: "locales/",
+        message:
+          `…and ${seen.rest.length} more file(s) with the same problem, not listed one by one: ` +
+          `${preview(seen.rest)}. Only the first ${MAX_PER_CODE} are shown in full — an issue ` +
+          "comment GitHub caps at 65,536 characters is the only way this bot can tell you " +
+          "anything, and a report that does not post is a submission with no verdict at all. " +
+          "The whole finding list is in the run's `ingest-report-*` artifact.",
+      });
+    }
+    return { i18n, findings };
+  };
 
   // ── the English gate. It does not need `locales/` and does not wait for it.
   const description = String(facts.description ?? "").trim();
@@ -471,7 +621,7 @@ export function deriveLocaleText({ files = [], facts = {}, limits = {}, summaris
   if (parsed.length === 0 && set.files.length === 0) {
     // No `locales/` at all: the overwhelming majority of bundles, for ever.
     // Nothing declared, nothing to check, and no block.
-    return { i18n: undefined, findings };
+    return done(undefined);
   }
 
   // Codes outside the vocabulary. Reported per file, and the file is NOT then
@@ -512,7 +662,7 @@ export function deriveLocaleText({ files = [], facts = {}, limits = {}, summaris
     // Every rule below needs a loaded en.json. They stand down rather than each
     // restating the same fact in its own words and sending the author to fix
     // the wrong thing.
-    return { i18n: undefined, findings };
+    return done(undefined);
   }
 
   // ── parity, over families rather than raw keys ────────────────────────────
@@ -648,7 +798,7 @@ export function deriveLocaleText({ files = [], facts = {}, limits = {}, summaris
   }
 
   const codes = Object.keys(i18n);
-  if (codes.length === 0) return { i18n: undefined, findings };
+  if (codes.length === 0) return done(undefined);
 
   // A per-listing budget, checked before the block is emitted. A shared ceiling
   // would let one verbose author stop every other author's publish behind a red
@@ -660,10 +810,10 @@ export function deriveLocaleText({ files = [], facts = {}, limits = {}, summaris
       `${codes.length} locale block(s) come to ${size} bytes, over max_listing_i18n_bytes ` +
       `(${budget}). The index is one signed document every client fetches whole every hour; this ` +
       "budget is what keeps one listing's translations from being everybody's download.");
-    return { i18n: undefined, findings };
+    return done(undefined);
   }
 
-  return { i18n, findings };
+  return done(i18n);
 }
 
 // ── C15, the in-repository half ──────────────────────────────────────────────

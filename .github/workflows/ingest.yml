@@ -708,6 +708,49 @@ jobs:
               return;
             }
 
+            // The run this report came from, so a truncated or refused comment
+            // still names the place the whole thing is.
+            const runUrl =
+              `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            // GitHub refuses a comment over 65,536 characters with a 422.
+            // `bot/ingest.mjs` already keeps its reports under that, in three
+            // independent places, but this loop is the last line: it posts on
+            // behalf of EVERY report in the run, and one throw here used to end
+            // the step — so a single oversized report meant every other
+            // submission in the same run got no answer at all. A cut body with
+            // a link beats no body, and a failed post has to be survivable.
+            const GITHUB_COMMENT_MAX = 65536;
+            const fit = (text) => {
+              if (text.length <= GITHUB_COMMENT_MAX) return text;
+              const tail =
+                `\n\n---\n\n**Cut to fit.** The full report is ${text.length} characters and GitHub ` +
+                `caps a comment at ${GITHUB_COMMENT_MAX}. The complete finding list is in this run's ` +
+                `\`ingest-report-*\` artifact: ${runUrl}`;
+              return text.slice(0, GITHUB_COMMENT_MAX - tail.length - 1) + tail;
+            };
+            const post = async (issue_number, text) => {
+              try {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner, repo: context.repo.repo, issue_number, body: fit(text),
+                });
+              } catch (e) {
+                core.warning(`could not post the report on #${issue_number}: ${e.message}`);
+                // One more try, with a body that cannot itself be the problem.
+                try {
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner, repo: context.repo.repo, issue_number,
+                    body:
+                      "The ingest report for this submission could not be posted here " +
+                      `(\`${e.status ?? "?"}\`). That is a fault in this registry, not in the ` +
+                      `submission. The report is in this run's \`ingest-report-*\` artifact: ${runUrl}`,
+                  });
+                } catch (e2) {
+                  core.warning(`and the fallback failed too on #${issue_number}: ${e2.message}`);
+                }
+              }
+            };
+
             for (const dir of dirs) {
               let body = "";
               let decision = {};
@@ -721,9 +764,7 @@ jobs:
               const thread = issue || Number(decision.issue) || null;
 
               if (thread) {
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner, repo: context.repo.repo, issue_number: thread, body,
-                });
+                await post(thread, body);
                 continue;
               }
               if (decision.outcome !== "delay" && decision.outcome !== "review") continue;

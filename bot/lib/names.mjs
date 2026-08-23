@@ -86,10 +86,66 @@ export function foldDisplayName(name) {
  * The leading token of a display name, folded the way ids are, so
  * `Spotify Controller`, `spotify-controller` and `SPOTIFY controller` are one
  * answer.
+ *
+ * **An assumption about Latin word spacing**, and on its own it collapsed this
+ * whole rule to exact equality in ja, zh and ko — see [`leadsWithMark`].
  */
 function leadingToken(name) {
   const first = foldDisplayName(name).split(" ")[0] ?? "";
   return confusableSkeleton(first);
+}
+
+/**
+ * Does this display name LEAD with the mark, in a language that writes no
+ * spaces between words?
+ *
+ * ── what was wrong ──────────────────────────────────────────────────────────
+ *
+ * [`leadingToken`] splits on `" "`. Japanese, Chinese and Korean do not write
+ * one. So for three of the ten languages this feature exists to serve, "the
+ * first word" was the whole name and the rule degenerated to *equality with a
+ * mark*. Driven against the real `bot/policy/trademarks.json`:
+ * `Telegram Official` (en) and `Telegram Offiziell` (de) were refused, while
+ * `Telegram公式`, `Telegram官方版`, `Spotify公式クライアント`, `Astra公式`,
+ * `Astra公式プラグイン` and `Telegram공식` produced **nothing at all** — and a
+ * bare `Telegram` in the same files was refused, which is the collapse to
+ * equality exactly. `bot/ingest.mjs` runs `checkDisplayName` once per derived
+ * locale, so this was live, and `astra` is on the marks list: the project's own
+ * name was claimable on a Japanese or Chinese card. This module's own comment
+ * says "a rule that held only for the language the reviewer reads is not a
+ * rule, it is a reading test." It was a reading test for those three.
+ *
+ * ── the rule, and why it is not simply "starts with" ─────────────────────────
+ *
+ * The skeletonised mark must be a prefix of the skeletonised name, AND the
+ * character after it must not be a Latin letter or digit. That second clause is
+ * what preserves the existing narrowness: `Astral Projection` skeletonises to
+ * `astraiprojection`, which begins with the mark `astra` and is an ordinary
+ * name — the `i` after the prefix says the mark is not a word here, it is the
+ * start of a longer one. `Astra公式` has `公` there, which cannot continue a
+ * Latin word, so that name genuinely leads with the mark.
+ *
+ * It does refuse `Telegram用クライアント` ("client for Telegram"), and that is
+ * **consistent rather than a false positive**: the Latin half has always
+ * refused `Telegram Client` on identical grounds, which is why
+ * `telegram-client` needs an entry in `allow_ids`. A name that leads with
+ * somebody else's mark reads as theirs whatever follows it.
+ *
+ * ── what it still does not catch, said out loud ──────────────────────────────
+ *
+ * `公式Telegram` and `官方Telegram` — the mark after a CJK modifier. Telling
+ * those from an honest `Telegram向けツール` needs to know that 公式 means
+ * "official" and 向け means "for", which is a judgement this registry cannot
+ * make and a denylist cannot encode. They are not silent, though: with
+ * `scriptOf` taught the CJK ranges, a Latin+Han name outside a CJK locale
+ * reaches `R_DISPLAY_NAME_MIXED_SCRIPT` and a human. `docs/BOT-CHECKS.md`
+ * already says this rule catches lazy impersonation rather than a determined
+ * person, and this is one more edge of that.
+ */
+function leadsWithMark(name, mark) {
+  const folded = confusableSkeleton(name);
+  if (mark === "" || !folded.startsWith(mark) || folded.length === mark.length) return false;
+  return !/[a-z0-9]/.test(folded[mark.length]);
 }
 
 /**
@@ -134,7 +190,10 @@ export function trademarkClaim(candidate, trademarks, scope = "both") {
     if (idClaims && scope !== "name") {
       return `the id "${id}" is, or begins with, the mark "${mark}"`;
     }
-    if (scope !== "id" && leadingToken(name) === m) {
+    // Two tests, because one of them cannot see three of the ten languages.
+    // `leadingToken` is the Latin-spacing one and stays as it is; `leadsWithMark`
+    // is what makes the rule reach a name written without spaces at all.
+    if (scope !== "id" && (leadingToken(name) === m || leadsWithMark(name, m))) {
       return `the display name "${name}" begins with the mark "${mark}"`;
     }
   }
@@ -199,10 +258,15 @@ export function checkNames(candidate, existing, opts) {
 /**
  * Every name a listing renders: the English one, and each localized card name.
  *
+ * Exported because `tools/validate.mjs` needs the same answer on the hand-edit
+ * path and used to take `p.doc?.name` alone — so a localized homoglyph
+ * collision or mixed-script name produced no finding there at all, while the
+ * ingest path found both. One function rather than two that agree today.
+ *
  * @param {{id: string, name?: string, i18n?: object}} listing
  * @returns {{name: string, locale: string|null}[]}
  */
-function renderedNames(listing) {
+export function renderedNames(listing) {
   const out = listing.name ? [{ name: listing.name, locale: null }] : [];
   for (const [code, block] of Object.entries(listing.i18n ?? {})) {
     if (block && typeof block.name === "string" && block.name) out.push({ name: block.name, locale: code });
@@ -314,8 +378,35 @@ export function checkDisplayName(candidate, existing, opts) {
  * rule and not a free one; what stops that case is that a Russian card named
  * `Telegram` collides with the English `Telegram` under `foldDisplayName`,
  * which folds the lookalike.
+ *
+ * ── the CJK languages, which used to be suppressed by accident ───────────────
+ *
+ * `scriptOf` learned Han, kana and Hangul in the same commit as this. Before
+ * it, every Japanese, Chinese and Korean name reported one script or none, so
+ * this rule was silent there whatever it said — and `ja`, `zh` and `ko` needed
+ * no entry below because the question never reached them. Now it does, and a
+ * Japanese name is *ordinarily* Han + hiragana + katakana + Latin all at once:
+ * without a rule for it, every honest CJK listing would land in a review queue,
+ * which is how a rule gets switched off within a week.
+ *
+ * So the CJK entries are a SET rather than one script, and the test is that
+ * every script present is either the locale's own or Latin. That keeps the two
+ * cases this rule exists for: a Cyrillic or Greek letter dropped into a
+ * Japanese name is still Cyrillic-among-Han and still reported, and a Latin+Han
+ * name in a locale that is not written in Han — an `en` or `de` card reading
+ * `公式Telegram` — is still reported, which is the only thing left watching the
+ * one trademark shape `leadsWithMark` deliberately cannot judge.
  */
 function honestlyMixed(scripts, locale) {
-  const own = { ru: "Cyrillic", uk: "Cyrillic" }[locale ?? ""];
-  return own !== undefined && scripts.length === 2 && scripts.includes(own) && scripts.includes("Latin");
+  const own = {
+    ru: ["Cyrillic"],
+    uk: ["Cyrillic"],
+    ja: ["Han", "Hiragana", "Katakana"],
+    zh: ["Han"],
+    ko: ["Hangul", "Han"],
+  }[locale ?? ""];
+  if (own === undefined) return false;
+  const allowed = new Set([...own, "Latin"]);
+  // Not vacuous on a one-script name: `scripts.length > 1` is what got us here.
+  return scripts.every((s) => allowed.has(s)) && scripts.some((s) => own.includes(s));
 }

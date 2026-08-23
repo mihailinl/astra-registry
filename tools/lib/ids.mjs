@@ -98,13 +98,43 @@ const SCRIPT_LOOKALIKES = new Map(Object.entries({
   "\u03c5": "u", "\u03c7": "x", "\u03bb": "l",
 }));
 
-/** Which alphabet a character belongs to, or null for digits/punctuation/emoji. */
+/**
+ * Which alphabet a character belongs to, or null for digits/punctuation/emoji.
+ *
+ * **The CJK scripts are here because leaving them out made this function answer
+ * a question about a smaller world than its name claims.** It knew Latin,
+ * Cyrillic and Greek, so every Han, kana and Hangul character was
+ * indistinguishable from punctuation: `scriptsUsed("Telegram公式")` returned
+ * `["Latin"]` — one script, no mixture, nothing to report — and a name written
+ * in Han with a single Cyrillic letter dropped into it returned `["Cyrillic"]`,
+ * also one script, also silent. That is `dev/couplings.md`'s gap 7 shape: a
+ * check that runs, does real work, and returns a true answer about a world
+ * three of this system's ten languages are not in.
+ *
+ * Japanese is deliberately three scripts rather than one bucket. `Script=Han`
+ * is shared by Japanese and Chinese; kana and Hangul are not. A name mixing
+ * them is what an ordinary Japanese name does, and `honestlyMixed()` in
+ * `bot/lib/names.mjs` is where that is said — this function's job is to report
+ * what is there, not to decide whether it is innocent.
+ */
 function scriptOf(ch) {
   if (/\p{Script=Latin}/u.test(ch)) return "Latin";
   if (/\p{Script=Cyrillic}/u.test(ch)) return "Cyrillic";
   if (/\p{Script=Greek}/u.test(ch)) return "Greek";
+  if (/\p{Script=Han}/u.test(ch)) return "Han";
+  if (/\p{Script=Hiragana}/u.test(ch)) return "Hiragana";
+  if (/\p{Script=Katakana}/u.test(ch)) return "Katakana";
+  if (/\p{Script=Hangul}/u.test(ch)) return "Hangul";
   return null;
 }
+
+/**
+ * The scripts a name in one of Astra's CJK languages is ordinarily written in.
+ *
+ * Exported so `bot/lib/names.mjs` can say what an honest mixture looks like
+ * without re-deriving the ranges, and so the two cannot answer differently.
+ */
+export const CJK_SCRIPTS = ["Han", "Hiragana", "Katakana", "Hangul"];
 
 /**
  * The scripts a string mixes, ignoring digits, spaces and punctuation.

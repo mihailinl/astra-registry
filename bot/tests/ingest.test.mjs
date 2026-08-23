@@ -31,13 +31,14 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { ingest, renderComment, DEFAULT_SIGNER_WORKFLOW } from "../ingest.mjs";
+import { ingest, renderComment, GITHUB_COMMENT_MAX, DEFAULT_SIGNER_WORKFLOW } from "../ingest.mjs";
 import { CODES, codeDef } from "../lib/codes.mjs";
-import { deriveLocaleText } from "../lib/locales.mjs";
+import { LOCALE_CODES, deriveLocaleText, localeSignature, readLocales } from "../lib/locales.mjs";
 import { summarise } from "../lib/derive.mjs";
 import { loadPolicy } from "../../tools/lib/sources.mjs";
 import { classifyFile, scanHostRpcs } from "../lib/rpcscan.mjs";
-import { checkNames, foldDisplayName, loadTrademarks } from "../lib/names.mjs";
+import { checkDisplayName, checkNames, foldDisplayName, loadTrademarks } from "../lib/names.mjs";
+import { scriptsUsed } from "../../tools/lib/ids.mjs";
 import { extractSignerFacts, loadWorkflowAllowlist } from "../lib/attestation.mjs";
 import { proveOwnership } from "../lib/ownership.mjs";
 import { isRecheckCommand, parseIssueForm } from "../lib/issue.mjs";
@@ -199,6 +200,15 @@ function registryWith({ id = "dice-roller", version = "0.1.0", repo = REPO, name
 const bundleName = (spec = {}) =>
   `${spec.id ?? "dice-roller"}-${spec.version ?? "0.2.0"}-${
     spec.os === "windows" ? "windows-x64" : "linux-x64"}.astraplugin`;
+
+/**
+ * Two complete, well-formed report rows, as a hostile ZIP entry name carries
+ * them. Written as escapes so this file itself holds no control characters —
+ * the fixture is what the attacker types, not what the repository stores.
+ */
+const FORGED_ROWS =
+  "\n| \u2705 | `E_OWNERSHIP_PROVEN` | ownership | proved by mihailinl (first-party) |" +
+  "\n| \u2705 | `R_FIRST_LISTING` | version | withdrawn, already approved by a maintainer |\n";
 
 const conformingAsset = (spec = {}) => ({ name: bundleName(spec), bytes: makeBundle(spec) });
 
@@ -1183,6 +1193,375 @@ await test("E_LOCALE_CARD_TOO_LARGE and the exemption note, at the unit they are
   assert(codesOf(exempt).includes("N_LISTING_LANGUAGE_EXEMPT"),
     `and must say so rather than passing quietly: ${JSON.stringify(codesOf(exempt))}`);
   for (const i of exempt.findings) emitted.add(i.code);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+
+section("the ingest path, against somebody who is not an author");
+
+// Everything in this section is reachable by anyone who can open a listing
+// issue. None of it needs an attestation, an approved workflow or an ownership
+// proof — the bundle is opened at step 6 and these are properties of what is
+// inside it — so the input is a stranger's and the cost of getting it wrong is
+// not the submission's, it is the registry's.
+
+await test("localeSignature caps a locale file BEFORE parsing it, and refuses to run uncapped", () => {
+  // The cap ran in `deriveLocaleText`, at step 11. `localeSignature` ran at
+  // step 7 and called `readLocales(files)` with no limits at all, which
+  // defaults maxBytes to Infinity — so the real order of operations was parse
+  // first, refuse afterwards. Measured on this fixture before the fix: 517 ms,
+  // +131 MiB heap, 474 MiB RSS for a file the cap exists to refuse in 0 ms,
+  // and `max_artifacts_per_version` is 8.
+  const limits = loadPolicy(REPO_ROOT).limits;
+  const big = {};
+  // Comfortably over max_locale_bytes (262,144) and flat, valid JSON: nothing
+  // about it is malformed, which is the point — a parser error would have
+  // stopped it.
+  for (let i = 0; i < 20000; i++) big[`k.${i}`] = "x".repeat(40);
+  // A reserved key with a distinctive value, so the signature SAYS whether the
+  // file was parsed. Without it the signature of a parsed-but-cardless file is
+  // `[["en",null,null]]`, which is indistinguishable from a refused one — an
+  // assertion that cannot tell the two apart is how `readLocales(files, {})`
+  // survived a mutation.
+  big["listing.name"] = "PARSED-DESPITE-THE-CAP";
+  const bytes = Buffer.from(JSON.stringify(big), "utf8");
+  assert(bytes.length > limits.max_locale_bytes,
+    `the fixture must be over the cap, or this proves nothing: ${bytes.length} vs ${limits.max_locale_bytes}`);
+  const files = [{ name: "locales/en.json", bytes }];
+
+  const sig = localeSignature(files, limits);
+  assert(!sig.includes("PARSED-DESPITE-THE-CAP"),
+    `the file was parsed despite being over the cap: ${sig.slice(0, 200)}`);
+  // Not vacuous: the same bytes under an uncapped read DO show the value, so
+  // the assertion above is measuring the cap and not the fixture.
+  assert(JSON.stringify(readLocales(files, {}).files).includes("PARSED-DESPITE-THE-CAP"),
+    "the fixture does not carry a value the signature would show, so the assertion above proves nothing");
+
+  // An absent `limits` is a throw rather than Infinity. A default of {} would
+  // put the hole straight back the next time somebody adds a call site.
+  let threw = null;
+  try { localeSignature(files); } catch (e) { threw = e; }
+  assert(threw !== null, "localeSignature(files) with no limits must refuse, not default to Infinity");
+  assert(/limits/.test(threw.message), `and must say what is missing: ${threw.message}`);
+
+  // A refused file is still a language this bundle ships. Dropping it silently
+  // would make a bundle carrying a 300 KiB ru.json compare equal to one
+  // carrying no ru.json at all, and E_LOCALE_BUNDLE_MISMATCH would not fire.
+  const withOversize = localeSignature([{ name: "locales/ru.json", bytes }], limits);
+  const without = localeSignature([], limits);
+  assert(withOversize !== without,
+    "an oversize locale file must still show in the signature, or the bundles-agree check cannot see it");
+});
+
+await test("E_BUNDLE_CONTROL_CHARACTER — an entry name that forges rows in the maintainer's report", async () => {
+  // `renderComment` escaped the message column and interpolated `${i.where}`
+  // raw. For a locale finding `where` is `locales/${code}.json`, and `code`
+  // comes out of /^locales\/([^/]+)\.json$/ — where `[^/]` matches newlines and
+  // pipes. A real .astraplugin built with the entry name below returned ZERO
+  // errors from `inspectBundle`, and the report rendered two forged
+  // four-column rows with green ticks above the real finding, in the one
+  // document a human reads before typing `/approve`.
+  const forged =
+    "locales/ru" + FORGED_ROWS + "x.json";
+  const r = await run({
+    assets: [conformingAsset({
+      extraFiles: [{ name: forged, data: Buffer.from(JSON.stringify({ "listing.name": "X" })), mode: 0o644 }],
+    })],
+  });
+  assertBlockedWith(r, "E_BUNDLE_CONTROL_CHARACTER");
+
+  // And the report is sound even so, because the escaping is the half that
+  // does not depend on anybody having thought of this shape. Two defences on
+  // purpose: one refuses the name, the other makes the name harmless.
+  const rows = r.comment.split("\n").filter((l) => l.startsWith("|"));
+  const bad = rows.filter((l) => /`(E_OWNERSHIP_PROVEN|R_FIRST_LISTING)`\s*\|/.test(l));
+  assertEqual(bad.length, 0, `forged rows rendered as real ones:\n${bad.join("\n")}`);
+  // The property, not the instance: a table row is four columns and five
+  // unescaped pipes, whatever a stranger put in any of them.
+  for (const row of rows) {
+    assertEqual((row.match(/(?<!\\)\|/g) ?? []).length, 5,
+      `a stranger's bytes changed the shape of the table:\n${row}`);
+  }
+});
+
+await test("renderComment escapes every column, not only the message", () => {
+  // The asymmetry WAS the bug: the same bytes came out escaped in `detail` and
+  // raw in `where`. This asserts the property rather than the instance, so a
+  // future column added without `cell()` is a failure here.
+  const f = {
+    items: [{ level: "error", code: "E_LOCALE_UNKNOWN_CODE", where: "locales/a|b" + FORGED_ROWS, message: "m" }],
+    errors: [{}], reviews: [],
+  };
+  const body = renderComment(f, null, { repo: "o/r", tag: "v1" });
+  const rows = body.split("\n").filter((l) => l.startsWith("|"));
+  for (const row of rows) {
+    assertEqual((row.match(/(?<!\\)\|/g) ?? []).length, 5,
+      `every rendered row must have exactly five unescaped pipes (four columns):\n${row}`);
+  }
+
+  // Pipes and newlines are the injection; the invisible characters are the
+  // other half, and they need their own assertion because escaping the first
+  // two does nothing about them. A right-to-left override in an entry name
+  // makes the rendered row read as a row it does not contain — the same trick
+  // `unsafeDisplayText` refuses in a plugin's metadata, arriving through a
+  // column nothing checked.
+  const tricky = {
+    items: [{ level: "error", code: "E_LOCALE_UNKNOWN_CODE", where: "locales/\u202egnp.exe", message: "m\u0007\ufeff" }],
+    errors: [{}], reviews: [],
+  };
+  const shady = renderComment(tricky, null, { repo: "o/r", tag: "v1" });
+  for (const ch of ["\u202e", "\u0007", "\ufeff"]) {
+    assert(!shady.includes(ch),
+      `${JSON.stringify(ch)} reached the report a maintainer reads before typing /approve`);
+  }
+});
+
+await test("the report stays inside GitHub's 65,536-character cap however many findings there are", async () => {
+  // Driven through the real `deriveLocaleText` and the real `renderComment`.
+  // Before this was bounded: 100 bogus locale files rendered 41,701 bytes, 200
+  // rendered 82,102 — over the cap — and 1,000 rendered 405,304. The count is
+  // bounded only by max_archive_entries, which is 10,000. A submission that
+  // produced enough findings took the bot's only channel away, and
+  // `ingest.yml`'s comment loop had no try/catch, so the other submissions in
+  // the same run lost their reports too.
+  const limits = loadPolicy(REPO_ROOT).limits;
+  for (const n of [10, 200, 2000]) {
+    const files = [];
+    for (let i = 0; i < n; i++) {
+      files.push({
+        name: `locales/xx${i}.json`,
+        bytes: Buffer.from(JSON.stringify({ "listing.name": "N", "listing.description": "D" })),
+      });
+    }
+    const { findings } = deriveLocaleText({
+      files, facts: { name: "Demo", description: "A demo plugin" }, limits, summarise,
+    });
+    const f = { items: findings, errors: findings.filter((i) => i.level === "error"), reviews: [] };
+    const body = renderComment(f, null, { repo: "o/r", tag: "v1.0.0" });
+    assert(body.length <= GITHUB_COMMENT_MAX,
+      `${n} bogus locale files rendered ${body.length} characters, over GitHub's ${GITHUB_COMMENT_MAX}`);
+    // Bounded, and still honest about it: a reader must be able to tell a
+    // complete report from a collapsed one.
+    if (n > 10) {
+      assert(/more file\(s\) with the same problem|more finding\(s\)|Cut to fit|cut, /.test(body),
+        `${n} files collapsed silently — a report that hides its own truncation is worse than a long one`);
+    }
+  }
+});
+
+await test("renderComment bounds a report the locale rules did not produce", () => {
+  // The per-code collapse in `bot/lib/locales.mjs` handles the locale rules,
+  // which is why the test above cannot reach these two bounds — and a bound
+  // nothing reaches is a bound nobody has watched. `renderComment` is what
+  // stands behind EVERY other check in the pipeline, several of which emit one
+  // finding per file with no collapse of their own.
+  //
+  // THREE bounds, and they are not redundant: the row cap bounds the count, the
+  // cell cap bounds the width, and only measuring the finished document bounds
+  // the thing GitHub actually refuses. The fixture is deliberately wide as well
+  // as long, because the row cap on its own is not enough — fifty rows at the
+  // cell cap is over a hundred thousand characters, so a report can clear the
+  // first two bounds and still not post.
+  // One finding is enough on its own: an entry name is bounded by the archive
+  // format at 64 KiB, and both `where` and several messages interpolate one.
+  const huge = {
+    items: [{ level: "error", code: "E_LOCALE_UNKNOWN_CODE", where: `locales/${"a".repeat(60000)}.json`, message: "b".repeat(60000) }],
+    errors: [{}], reviews: [],
+  };
+  // The cell cap is 2,000 characters and a row holds four cells plus its
+  // furniture. Anything near that is cut; anything far past it is not.
+  const MAX_CELL_ALLOWANCE = 6000;
+
+  const many = { items: [], errors: [{}], reviews: [] };
+  for (let i = 0; i < 4000; i++) {
+    many.items.push({ level: "error", code: "E_ASSET_FILENAME", where: `asset-${i}`, message: "x".repeat(3000) });
+  }
+  const capped = renderComment(many, null, { repo: "o/r", tag: "v1" });
+  assert(capped.length <= GITHUB_COMMENT_MAX,
+    `4,000 wide findings rendered ${capped.length} characters, over GitHub's ${GITHUB_COMMENT_MAX}`);
+  assert(/more finding\(s\)/.test(capped),
+    "the rows were dropped without the report saying how many, which is a partial answer dressed as a whole one");
+  assert(!/cut to fit/i.test(capped),
+    "the table budget is what should have bounded this, and it must leave the `and N more` line and " +
+    "the `What to do` section standing rather than letting the final cut take them off the end");
+
+  // The three bounds own three different properties, and a report can satisfy
+  // one while failing another. Stated separately so each is a witness for its
+  // own bound rather than all three resting on the byte count.
+  //
+  // The ROW cap owns "few enough rows to read". A budget alone would let four
+  // thousand narrow findings render five hundred rows and still fit.
+  const narrow = { items: [], errors: [{}], reviews: [] };
+  for (let i = 0; i < 4000; i++) {
+    narrow.items.push({ level: "error", code: "E_ASSET_FILENAME", where: `a${i}`, message: "short" });
+  }
+  const rows = renderComment(narrow, null, { repo: "o/r", tag: "v1" })
+    .split("\n").filter((l) => l.startsWith("|"));
+  assert(rows.length <= 55,
+    `${rows.length} rows rendered — a report nobody scrolls to the end of is a report nobody reads`);
+
+  // The CELL cap owns "no row is wider than a screen". The bounds after it
+  // would keep the DOCUMENT small by cutting it short instead, which loses the
+  // report rather than narrowing it.
+  const widest = Math.max(...renderComment(huge, null, { repo: "o/r", tag: "v1" })
+    .split("\n").filter((l) => l.startsWith("|")).map((l) => l.length));
+  assert(widest < MAX_CELL_ALLOWANCE,
+    `one row is ${widest} characters wide; a 64 KiB entry name must be cut in its cell, not left to ` +
+    "push the rest of the report over the edge");
+
+  // And the section NOTHING above bounds: "What to do" prints one paragraph per
+  // distinct actionable code, out of `bot/lib/codes.mjs`. The table budget has
+  // no say over it, so a report carrying enough distinct codes clears every
+  // bound above and still cannot post. This is the case the final cut exists
+  // for, and it is why a row cap and a cell cap are two estimates rather than a
+  // guarantee.
+  const wide = { items: [], errors: [{}], reviews: [] };
+  for (const code of Object.keys(CODES)) {
+    wide.items.push({ level: "error", code, where: "everywhere", message: "y".repeat(3000) });
+  }
+  const forced = renderComment(wide, null, { repo: "o/r", tag: "v1" });
+  assert(forced.length <= GITHUB_COMMENT_MAX,
+    `${Object.keys(CODES).length} distinct codes rendered ${forced.length} characters, over GitHub's ${GITHUB_COMMENT_MAX}`);
+  assert(/cut to fit/i.test(forced),
+    "the report was cut and did not say so, which is the one thing a truncated verdict must never do");
+
+  const cut = renderComment(huge, null, { repo: "o/r", tag: "v1" });
+  assert(cut.length <= GITHUB_COMMENT_MAX,
+    `one hostile entry name rendered ${cut.length} characters, over GitHub's ${GITHUB_COMMENT_MAX}`);
+  assert(/cut, \d+ characters|cut to fit/i.test(cut), "a cut cell must say it was cut");
+});
+
+await test("a hostile file count collapses per rule, and an honest ten-locale bundle does not", () => {
+  const limits = loadPolicy(REPO_ROOT).limits;
+  const mk = (n) => {
+    const files = [];
+    for (let i = 0; i < n; i++) {
+      files.push({ name: `locales/xx${i}.json`, bytes: Buffer.from(JSON.stringify({ "listing.name": "N" })) });
+    }
+    return deriveLocaleText({ files, facts: { name: "Demo", description: "A demo" }, limits, summarise }).findings;
+  };
+  const many = mk(500);
+  assert(many.length < 20, `500 files produced ${many.length} findings; the collapse did not run`);
+  const collapsed = many.filter((i) => /more file\(s\) with the same problem/.test(i.message));
+  assert(collapsed.length > 0, "the collapse must leave a finding saying how many were held back");
+  assertEqual(collapsed[0].level, "error",
+    "a collapsed error is still an error — bounding the report must not unblock the release");
+
+  // The honest case loses nothing. Ten is every locale Astra has, so no author
+  // ever meets the bound; only a stranger who wrote 10,000 files does.
+  const files = LOCALE_CODES.filter((c) => c !== "en").map((c) => ({
+    name: `locales/${c}.json`,
+    bytes: Buffer.from(JSON.stringify({ "listing.name": "N", "unknown.key": "x" })),
+  }));
+  files.push({ name: "locales/en.json", bytes: Buffer.from(JSON.stringify({ "listing.name": "Demo" })) });
+  const honest = deriveLocaleText({
+    files, facts: { name: "Demo", description: "A demo" }, limits, summarise,
+  }).findings;
+  assert(!honest.some((i) => /more file\(s\) with the same problem/.test(i.message)),
+    `a nine-locale bundle must be reported in full, one file at a time: ${JSON.stringify(honest.map((i) => i.where))}`);
+});
+
+await test("E_METADATA_UNSAFE_TEXT — a bidi override in a TRANSLATED card name", async () => {
+  // The rule has run on every translated `listing.name` since the locale work
+  // landed and nothing anywhere proved it fires. The two tests that named this
+  // code were both about the English metadata, through `checkMetadata`; the
+  // corpus's 104 fixture files carry no invisible character at all; and the
+  // code appeared in neither CORPUS_RULE_IDS nor CORPUS_NOT_IMPLEMENTED, so
+  // `corpusIds` would have THROWN at whoever wrote the first fixture for it.
+  // `CORPUS_NO_RULE_ID` is the written-down reason there is no fixture, and
+  // this is the witness that reason costs nothing.
+  const RLO = "\u202e";
+  const r = await run({
+    assets: [conformingAsset({
+      extraFiles: [
+        locale("en", EN_CARD),
+        locale("ru", { ...RU_CARD, "listing.name": `${RLO}Dice Roller` }),
+      ],
+    })],
+  });
+  assertBlockedWith(r, "E_METADATA_UNSAFE_TEXT");
+  assertEqual(r.findings.find((i) => i.code === "E_METADATA_UNSAFE_TEXT").where, "locales/ru.json",
+    "the finding must name the file the author has to open, not the stage it was found in");
+  // And it is not merely refused: nothing invisible reaches a card.
+  assert(!JSON.stringify(r.derived?.plugin?.i18n ?? {}).includes("\\u202e"),
+    "the override reached the derived listing anyway");
+});
+
+await test("the trademark rule reaches ja, zh and ko — it used to collapse to exact equality there", () => {
+  // `leadingToken` splits a display name on " ". Japanese, Chinese and Korean
+  // do not write one, so for three of the ten languages this feature exists to
+  // serve, "the first word" was the whole name and the rule became equality
+  // with a mark. Driven against the real bot/policy/trademarks.json before the
+  // fix: `Telegram Official` (en) and `Telegram Offiziell` (de) were refused,
+  // and every row below produced NOTHING AT ALL while a bare `Telegram` in the
+  // same file was refused.
+  //
+  // These are this repository's witnesses for the rule. They are here and not
+  // in AstraPlugins/testdata/locales because the trademark rule is not a corpus
+  // rule — `astra-plugin check` has no marks list and never will, since the
+  // catalogue is the only place the question "is this name already somebody
+  // else's" can be asked at all.
+  const tm = loadTrademarks();
+  const claim = (locale, name) =>
+    checkDisplayName({ id: "media-tools", name, repoOwner: "a-stranger", locale }, [], { trademarks: tm })
+      .map((o) => o.code);
+
+  const impersonation = [
+    ["ja", "Telegram公式"], ["zh", "Telegram官方版"], ["ja", "Spotify公式クライアント"],
+    ["ja", "Astra公式"], ["ja", "Astra公式プラグイン"], ["ko", "Telegram공식"],
+    ["ja", "Telegram用クライアント"], ["en", "Telegram Official"], ["de", "Telegram Offiziell"],
+  ];
+  for (const [locale, name] of impersonation) {
+    assert(claim(locale, name).includes("E_TRADEMARK"),
+      `${locale} ${JSON.stringify(name)} leads with somebody else's mark and was not refused: ${claim(locale, name)}`);
+  }
+
+  // The narrowness the rule has always had, kept. `Astral Projection`
+  // skeletonises to `astraiprojection`, which begins with the mark `astra` — a
+  // bare prefix test would refuse it. The character after the prefix is what
+  // separates a name that LEADS with a mark from one that merely starts with
+  // the same letters.
+  const honest = [
+    ["en", "Astral Projection"], ["en", "Music controls for Spotify"], ["en", "Notes for Notion"],
+    ["ja", "チェス 対局"], ["zh", "国际象棋"], ["ko", "체스 게임"],
+    ["ja", "Chess 日本語版"], ["zh", "Chess 中文版"], ["ru", "Клиент Telegram"],
+  ];
+  for (const [locale, name] of honest) {
+    assertEqual(claim(locale, name).join(","), "",
+      `${locale} ${JSON.stringify(name)} is an honest name and must produce nothing`);
+  }
+
+  // The floor: if the marks list ever empties, every assertion above passes for
+  // the wrong reason and this is the only thing that notices.
+  assert(tm.marks.length >= 40, `the marks list holds ${tm.marks.length} entries; this scan needs a real one`);
+});
+
+await test("scriptsUsed knows the CJK scripts, so a name mixing them with another alphabet is visible", () => {
+  // `scriptOf` knew Latin, Cyrillic and Greek. Han, kana and Hangul were
+  // indistinguishable from punctuation, so `scriptsUsed("Telegram公式")`
+  // returned ["Latin"] — one script, no mixture, nothing to report — and
+  // R_DISPLAY_NAME_MIXED_SCRIPT could never fire on a CJK card whatever was
+  // hidden in it. A true answer about a smaller world than the name claims.
+  assertEqual(scriptsUsed("Telegram公式").join(","), "Han,Latin", "Han was invisible");
+  assertEqual(scriptsUsed("Telegram공식").join(","), "Hangul,Latin", "Hangul was invisible");
+  assertEqual(scriptsUsed("チェス").join(","), "Katakana", "katakana alone is one script and ordinary");
+
+  const tm = loadTrademarks();
+  const at = (locale, name) =>
+    checkDisplayName({ id: "x", name, repoOwner: "s", locale }, [], { trademarks: tm }).map((o) => o.code);
+
+  // The finding this buys: a Cyrillic letter dropped into a Han name. Before,
+  // that string reported ["Cyrillic"] — one script — and said nothing.
+  assert(at("ja", "игра公式").includes("R_DISPLAY_NAME_MIXED_SCRIPT"),
+    "a Cyrillic letter among Han characters must be visible");
+
+  // And what it must NOT buy: a Japanese name is ordinarily Han, kana and
+  // Latin all at once. Flagging those would put every honest CJK listing in a
+  // review queue, which ends with the rule switched off within a week.
+  for (const [locale, name] of [["ja", "Chess 日本語版"], ["ja", "アストラ Chess"], ["zh", "Chess 中文版"], ["ko", "Chess 한국어"]]) {
+    assertEqual(at(locale, name).join(","), "",
+      `${locale} ${JSON.stringify(name)} is what an ordinary name in that language looks like`);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
