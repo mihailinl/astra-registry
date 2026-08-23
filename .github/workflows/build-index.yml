@@ -204,15 +204,30 @@ jobs:
       # icon-format one was added the same day this was noticed, and would have
       # joined it.
       #
-      # `sparse-checkout` because only `spec/` is read; the manifest crate the
-      # pin also governs is fetched separately by `link-deps.sh` in the job that
-      # needs it.
+      # `sparse-checkout` because only these two directories are read; the
+      # manifest crate the pin also governs is fetched separately by
+      # `link-deps.sh` in the job that needs it.
+      #
+      # `testdata/locales` is the shared locale-rule corpus — coupling C16 —
+      # read by `tools/validate.mjs` here and by `astra-plugin`'s own unit tests
+      # there, so that the rules the CLI refuses a bundle by and the rules this
+      # repository refuses a listing by are held to one set of fixtures instead
+      # of to each other's good intentions.
+      #
+      # It is added HERE, in its own commit, BEFORE anything reads it. A reader
+      # pointed at a directory a sparse checkout does not fetch enumerates
+      # nothing, and this workflow is unusually unforgiving of that by design:
+      # the "Validate the listings" step below turns any `NOT verified` line
+      # into `::error::` and `exit 1`, which stops the catalogue deploying for
+      # every plugin — not only for one that ships `locales/`.
       - uses: actions/checkout@v4
         with:
           repository: mihailinl/AstraPlugins
           ref: ${{ steps.pin.outputs.ref }}
           path: _astra-plugins
-          sparse-checkout: spec
+          sparse-checkout: |
+            spec
+            testdata/locales
           persist-credentials: false
           fetch-depth: 1
 

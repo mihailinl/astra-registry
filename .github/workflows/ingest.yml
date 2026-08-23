@@ -202,7 +202,25 @@ env:
   # and `plugin-release.yml` are byte-identical between the two commits
   # (`git diff --stat e3329df2 aaf480ea -- <path>` is empty for both), so no
   # manifest is judged differently and no attestation changes meaning.
-  ASTRA_PLUGINS_REF: aaf480ea0b8b70a4cf18ad47646cf40f6efa0520
+  #
+  # Bumped to `6d6861f` for `spec/locales.yaml`, `spec/listing-limits.yaml` and
+  # `testdata/locales/`, which the three locale couplings in `tools/validate.mjs`
+  # read. This one is NOT byte-identical, and the check is the same one, run
+  # again rather than repeated from memory:
+  #
+  #   * `astra-plugin-cli/vendor/astra-plugin-manifest` gains a `Cargo.lock` and
+  #     one named constant — `NOARCH_PLATFORM_KEY = "noarch"`, replacing the
+  #     literal in `RESERVED_PLATFORM_KEYS` and re-exported from `lib.rs`. No
+  #     parse, no rule, no field changes, so no manifest is judged differently.
+  #     (`git diff aaf480ea 6d6861f -- astra-plugin-cli/vendor/astra-plugin-manifest/src`.)
+  #   * `plugin-release.yml` moves its own `ASTRA_TOOLING_REF` to the CLI that
+  #     knows about `locales/`. That is a change to what an AUTHOR's release
+  #     builds with, and it reaches this registry through the bundle, not
+  #     through this pin. Which builder's word counts is the
+  #     `reusable_workflow_shas` allowlist inside the root-signed `trust.json`
+  #     — its own list of commits, which this variable does not appear in and
+  #     cannot move — so no attestation changes meaning here either.
+  ASTRA_PLUGINS_REF: 6d6861fc41da51fa5eb62c0ca284075699a708ef
   ASTRA_PLUGINS_URL: https://github.com/mihailinl/AstraPlugins.git
 
 jobs:
