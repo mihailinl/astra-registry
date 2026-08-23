@@ -991,8 +991,119 @@ export function checkLocaleVocabulary(ctx) {
   }
 }
 
+/** The four siblings a cap in `policy/limits.json` may carry, exactly one of. */
+const CAP_DECLARATIONS = ["_mirrors", "_mirrored_by", "_not_author_facing", "_unmirrored"];
+
+/** Where a `_mirrored_by` sibling is allowed to point. One file, today. */
+const MIRRORED_BY_FILE = "AstraPlugins/spec/listing-limits.yaml";
+
 /**
- * **C20** — the four listing caps AstraPlugins mirrors FROM here.
+ * **Every cap says what its relationship to an author's source tree is.**
+ *
+ * The check that would have caught the thing the two C20 halves could not.
+ * Both of those enumerate `spec/listing-limits.yaml` and ask, of each row,
+ * *"does this name a real constant here, and equal it?"* — a question with the
+ * same answer whether this repository holds four author-facing caps or forty.
+ * So when `max_locale_bytes`, `max_locale_keys` and `max_listing_i18n_bytes`
+ * were added and wired into `bot/lib/locales.mjs` as blocking errors, nothing
+ * on either side could observe that no copy of them existed upstream. An
+ * author's 521,032-byte `en.json` passed `astra-plugin check` with `OK`, and
+ * `deriveLocaleText` refused the same bytes as `E_LOCALE_TOO_LARGE` — after a
+ * tag, in a repository they had never opened, which is the exact failure that
+ * spec file's own header describes itself as existing to prevent.
+ *
+ * A rule of the form *"every X must be handled"* is only as good as its
+ * enumeration of X, and the enumeration has to be of the side where a new X is
+ * born. New caps are born HERE. So the declaration is here: one of
+ * [`CAP_DECLARATIONS`] per numeric cap, and a cap with none is an error rather
+ * than a silence. That is the exemption-list discipline — a new cap arrives as
+ * a one-line answer to *"can an author trip this from their own tree?"* instead
+ * of as an absence nobody notices.
+ *
+ * **`_unmirrored` is not an exemption and is not printed like one.** It says an
+ * author CAN trip the cap and nothing local checks it; every one is named on
+ * every run. Collapsing it into `_not_author_facing` would let real debt hide
+ * behind an innocuous word, which is the failure this whole check is about.
+ *
+ * **Which side should somebody edit when this goes red?** This one — the cap
+ * that has no sibling was just added here, and only the person adding it knows
+ * the answer. The one repair to refuse is deleting a sibling to make a
+ * *downstream* check pass: see [`checkMirroredListingLimits`]. That repair used
+ * to be the fastest green available and is now the loudest failure, because a
+ * cap with no sibling fails here.
+ *
+ * **What this cannot refuse**, measured rather than assumed: relabelling a true
+ * `_mirrored_by` as `_not_author_facing` with a false sentence greens every
+ * check on both sides, and no program can tell. That is the floor of any
+ * exemption list. It is why the sibling carries prose and not a boolean — the
+ * escape hatch was turned into a written claim that shows up in a diff and can
+ * be disagreed with, not closed. A silence became a sentence; a sentence is
+ * what review is for.
+ *
+ * Needs no checkout. Runs everywhere, on every `validate.mjs` and every
+ * `selftest.mjs`.
+ */
+export function checkEveryCapDeclaresItsAuthorSide(ctx) {
+  const where = "policy/limits.json";
+  const limits = ctx.policy.limits ?? ctx.policy;
+  const caps = Object.entries(limits).filter(([, v]) => typeof v === "number");
+
+  // The floor, written before anything is compared. A reader that enumerates
+  // no caps reports a clean bill of health for a file it never opened, and
+  // "the caps were deleted" and "this reader broke" need opposite fixes.
+  const MIN_CAPS = 10;
+  if (caps.length < MIN_CAPS) {
+    ctx.report.error(where, `${caps.length} numeric cap(s) found, below the floor of ${MIN_CAPS}`,
+      "If that file still holds `\"name\": <number>` members, THIS READER is what broke and the caps are fine. " +
+      "If it does not, most of this registry's policy has just been deleted.");
+    return;
+  }
+
+  const unmirrored = [];
+  for (const [name] of caps) {
+    const carried = CAP_DECLARATIONS.filter((s) => limits[name + s] !== undefined);
+    if (carried.length === 0) {
+      ctx.report.error(where, `${name} carries none of ${CAP_DECLARATIONS.join(", ")}`,
+        "Every cap here declares what an author's source tree has to do with it, because the way three locale " +
+        "caps came to be enforced at ingest and mirrored nowhere was not a decision — it was an absence nobody " +
+        "could see. Pick one: `_mirrors` (this number is a copy of an AstraPlugins constant), `_mirrored_by` " +
+        `(an author can trip it and ${MIRRORED_BY_FILE} carries a copy so \`astra-plugin\` refuses it before a ` +
+        "tag), `_not_author_facing` (nothing in a source tree decides it — the sentence is the claim), or " +
+        "`_unmirrored` (an author can trip it and nothing local checks it, recorded as debt). See this file's " +
+        "$comment for what each obliges.");
+      continue;
+    }
+    if (carried.length > 1) {
+      ctx.report.error(where, `${name} carries ${carried.length} declarations: ${carried.join(", ")}`,
+        "Exactly one. `_mirrors` and `_mirrored_by` in particular are opposite claims about which repository " +
+        "owns the number, and a cap asserting both pins nothing in either direction.");
+      continue;
+    }
+    if (carried[0] === "_mirrored_by" && !String(limits[name + "_mirrored_by"]).startsWith(MIRRORED_BY_FILE)) {
+      ctx.report.error(where,
+        `${name}_mirrored_by names ${JSON.stringify(limits[name + "_mirrored_by"])}, which is not ${MIRRORED_BY_FILE}`,
+        `Only ${MIRRORED_BY_FILE} is compared, by checkMirroredListingLimits below and by ` +
+        "`tools/check-locales.py --rules C20` from the other end. A sibling naming somewhere else is a copy " +
+        "nothing compares, which is the state this whole convention exists to end.");
+      continue;
+    }
+    if (carried[0] === "_unmirrored") unmirrored.push(name);
+  }
+
+  // Recorded debt, named on every run rather than counted once. A number would
+  // let one drop out of the list without the count moving in a way anybody
+  // reads; the names are what somebody can act on.
+  if (unmirrored.length > 0) {
+    ctx.report.note(where,
+      `${unmirrored.length} cap(s) an author can trip with nothing local checking: ${unmirrored.join(", ")}`,
+      "Each carries an `_unmirrored` sentence saying what that costs. This is recorded debt, not an exemption: " +
+      "the fix for any of them is a row in " + MIRRORED_BY_FILE + ", a rule in `astra-plugin`, and the sibling " +
+      "changed to `_mirrored_by`.");
+  }
+}
+
+/**
+ * **C20** — the listing caps AstraPlugins mirrors FROM here, in both directions.
  *
  * The other mirror check in this file points outward: `policy/limits.json`
  * declares that its numbers are copies of AstraPlugins' constants. This one
@@ -1007,6 +1118,24 @@ export function checkLocaleVocabulary(ctx) {
  * walks an author into a refusal they cannot act on. The message says which way
  * round, because the fastest way to green a mirror check is to edit whichever
  * file is in front of you.
+ *
+ * **The reverse direction, added 2026-08-23.** Everything above enumerates the
+ * rows that file happens to carry, so a cap it does not carry is invisible to
+ * it by construction — which is how three locale caps were enforced here and
+ * mirrored nowhere for a day. The second loop enumerates the `_mirrored_by`
+ * declarations instead, and asks whether each one's copy is really there.
+ *
+ * The wrong repair for THAT failure is the interesting one, because it is one
+ * keystroke and it looks like tidying: delete the `_mirrored_by` sibling. Both
+ * halves of C20 go green, the cap goes on being enforced at ingest exactly as
+ * before, and the number is unpinned in both repositories. The hint says so,
+ * and so does this file's `$comment`, because the person about to do it is
+ * looking at `policy/limits.json` and nothing else.
+ *
+ * **A missing row is usually the pin, not a deletion.** `build-index.yml`
+ * checks AstraPlugins out at `ASTRA_PLUGINS_REF`, pinned in `ingest.yml`, so a
+ * row added there arrives here when the pin moves — not when it merges. The
+ * message names both causes because they need opposite fixes.
  */
 export function checkMirroredListingLimits(ctx) {
   const where = "AstraPlugins/spec/listing-limits.yaml";
@@ -1082,6 +1211,41 @@ export function checkMirroredListingLimits(ctx) {
         "in which case change it here first and mirror it there in the same breath, because between the two commits every " +
         "author is checked against a cap this registry does not enforce.");
     }
+  }
+
+  // ── the reverse direction ────────────────────────────────────────────────
+  // Enumerated from THIS side's declarations rather than from that file's
+  // rows, because a row that does not exist cannot be walked.
+  const limits = ctx.policy.limits ?? ctx.policy;
+  const declared = Object.keys(limits)
+    .filter((k) => k.endsWith("_mirrored_by"))
+    .map((k) => k.slice(0, -"_mirrored_by".length));
+
+  // The floor again, and for the same reason as the one above: an enumeration
+  // that finds nothing reports every cap as correctly mirrored.
+  const MIN_DECLARED = 3;
+  if (declared.length < MIN_DECLARED) {
+    ctx.report.error("policy/limits.json",
+      `${declared.length} \`_mirrored_by\` declaration(s) found, below the floor of ${MIN_DECLARED}`,
+      "If policy/limits.json still carries `\"<cap>_mirrored_by\"` siblings, THIS READER is what broke. " +
+      "If it does not, those declarations were deleted — which greens this check by unpinning the numbers, " +
+      "and is the one repair this convention exists to refuse. See checkEveryCapDeclaresItsAuthorSide.");
+    return;
+  }
+
+  const present = new Set(pairs.map((p) => p.name));
+  for (const name of declared) {
+    if (present.has(name)) continue;
+    ctx.report.error(where, `${name} is declared \`_mirrored_by\` this file, which has no \`${name}\` row`,
+      `This registry enforces ${name} at ingest, on a bundle whose tag is already pushed. The copy is what is ` +
+      "missing, and the copy is what to add: a `# mirrors: astra-registry/policy/limits.json " + name + "` " +
+      "comment above a `" + name + ": " + limits[name] + "` row there, mirrored into " +
+      "astra-plugin-cli/src/listing-limits.yaml, with a rule in `astra-plugin` that executes on it. " +
+      "TWO CAUSES, opposite fixes: the row may never have landed upstream, OR it landed and ASTRA_PLUGINS_REF " +
+      "in .github/workflows/ingest.yml still points at a commit from before it — this job checks that " +
+      "repository out at the pin, so a merge upstream does not reach here until the pin moves. " +
+      "Do NOT fix it by deleting the `_mirrored_by` sibling: that greens both halves of C20 in one keystroke, " +
+      "leaves the cap enforced here exactly as it was, and puts the number back to being a copy nobody compares.");
   }
 }
 
@@ -1451,6 +1615,7 @@ export async function runValidation(opts) {
 
   checkMirroredLimits(ctx);
   checkMirroredIconFormats(ctx);
+  checkEveryCapDeclaresItsAuthorSide(ctx);
   checkMirroredListingLimits(ctx);
   checkLocaleVocabulary(ctx);
   checkLocaleCorpus(ctx);

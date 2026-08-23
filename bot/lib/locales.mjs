@@ -479,15 +479,22 @@ export const CORPUS_NOT_IMPLEMENTED = {
  */
 export const CORPUS_NO_RULE_ID = {
   E_LOCALE_TOO_LARGE:
-    "max_locale_bytes and max_locale_keys are registry numbers with no CLI counterpart — `astra-plugin check` " +
-    "enforces neither, which is the gap the review filed as its own item. A corpus fixture would have to ship a " +
-    "262,145-byte locale file to provoke it, in a directory three repositories vendor. Witnessed instead by " +
-    "bot/tests/ingest.test.mjs, against constructed bytes rather than committed ones.",
+    "max_locale_bytes and max_locale_keys are mirrored into AstraPlugins/spec/listing-limits.yaml since " +
+    "2026-08-23 and checked in both directions, but the CLI RULES that would read them — E18 — are still not " +
+    "written, so `astra-plugin check` returns OK on a 521,032-byte en.json that this refuses. That is a live " +
+    "CLI/registry gap and not a corpus one either way: a fixture would have to ship a 262,145-byte locale file, " +
+    "in a directory three repositories vendor, to provoke a rule one side does not implement. Witnessed instead " +
+    "by bot/tests/ingest.test.mjs, against constructed bytes rather than committed ones.",
   E_LOCALE_CARD_TOO_LARGE:
-    "max_listing_i18n_bytes bounds the `i18n` member of a LISTING, which is a document this repository writes and " +
-    "the CLI never sees. There is nothing in a source tree for a fixture to be about. Witnessed in " +
-    "bot/tests/ingest.test.mjs, in both directions — that it fires, and that nine locales at the schema's own " +
-    "caps do NOT trip it.",
+    "max_listing_i18n_bytes bounds the `i18n` member of a LISTING — a document this repository DERIVES, so a " +
+    "corpus fixture has no source-tree artifact to be about. It is mirrored into " +
+    "AstraPlugins/spec/listing-limits.yaml all the same, because E19 has to read the number from somewhere and a " +
+    "cap the CLI copies is one C20 pins. Note for whoever writes E19: this is NOT unreachable from a tree " +
+    "`astra-plugin check` passes. The per-locale name and description caps are enforced there in CHARACTERS and " +
+    "this one is in BYTES, so nine locales of astral-plane text at exactly those caps come to 9,775 bytes against " +
+    "a budget of 8,192 — constructed 2026-08-23 from a real scaffold, `OK … 0 warning(s)` there and this error " +
+    "here. Witnessed in bot/tests/ingest.test.mjs, in both directions — that it fires, and that nine locales at " +
+    "the schema's own caps do NOT trip it.",
   E_METADATA_UNSAFE_TEXT:
     "a bidi override or zero-width character in a translated `listing.name` is refused by the same predicate that " +
     "refuses one in `plugin.toml`'s name, and `astra-plugin check` has no display-text scan at all — so a fixture " +

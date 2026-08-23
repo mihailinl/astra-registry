@@ -220,7 +220,30 @@ env:
   #     `reusable_workflow_shas` allowlist inside the root-signed `trust.json`
   #     — its own list of commits, which this variable does not appear in and
   #     cannot move — so no attestation changes meaning here either.
-  ASTRA_PLUGINS_REF: 6d6861fc41da51fa5eb62c0ca284075699a708ef
+  #
+  # Bumped again to `c545528` for the three locale caps `spec/listing-limits.yaml`
+  # gained. `checkMirroredListingLimits` in `tools/validate.mjs` now enumerates
+  # this repository's `<cap>_mirrored_by` declarations and asks whether the copy
+  # each names exists over there — so with the pin at `6d6861f` that check reports
+  # three real errors about a file that has since grown the rows, which is the
+  # correct verdict about the pinned commit and the wrong one about AstraPlugins.
+  # Measured, both ways:
+  #
+  #   $ ASTRA_PLUGINS_DIR=<AstraPlugins@6d6861f> node tools/validate.mjs --allow-staging
+  #   ERROR ... max_locale_bytes is declared `_mirrored_by` this file, which has no
+  #         `max_locale_bytes` row                                    (x3)  FAIL
+  #   $ ASTRA_PLUGINS_DIR=<AstraPlugins@c545528> node tools/validate.mjs --allow-staging
+  #   PASS  15 plugin(s), 0 error(s)
+  #
+  # This is the C16 discipline again — that checkout moved in its own commit
+  # BEFORE anything read it — applied to a comparison rather than to a corpus.
+  #
+  # `c545528` is AstraPlugins master — the merge commit of that pull request.
+  # It must stay a commit on master. A pin at a feature branch head is a pin
+  # somebody can force-push out from under this repository, and the head this
+  # one replaced was exactly that: it was set while the pair was still open, so
+  # the registry half could be run at all before its counterpart existed.
+  ASTRA_PLUGINS_REF: c545528aca4678a0ea2bd36b53a4a9eed0453c17
   ASTRA_PLUGINS_URL: https://github.com/mihailinl/AstraPlugins.git
 
 jobs:
