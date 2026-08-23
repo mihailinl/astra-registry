@@ -33,6 +33,9 @@ import { fileURLToPath } from "node:url";
 
 import { ingest, renderComment, DEFAULT_SIGNER_WORKFLOW } from "../ingest.mjs";
 import { CODES, codeDef } from "../lib/codes.mjs";
+import { deriveLocaleText } from "../lib/locales.mjs";
+import { summarise } from "../lib/derive.mjs";
+import { loadPolicy } from "../../tools/lib/sources.mjs";
 import { classifyFile, scanHostRpcs } from "../lib/rpcscan.mjs";
 import { checkNames, foldDisplayName, loadTrademarks } from "../lib/names.mjs";
 import { extractSignerFacts, loadWorkflowAllowlist } from "../lib/attestation.mjs";
@@ -154,7 +157,7 @@ process.on("exit", () => {
 });
 
 /** A registry tree holding one already-listed plugin, so updates can be tested. */
-function registryWith({ id = "dice-roller", version = "0.1.0", repo = REPO, name = "Dice Roller" } = {}) {
+function registryWith({ id = "dice-roller", version = "0.1.0", repo = REPO, name = "Dice Roller", i18n } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-reg-"));
   scratch.push(dir);
   const pdir = path.join(dir, "plugins", id, "versions");
@@ -166,6 +169,10 @@ function registryWith({ id = "dice-roller", version = "0.1.0", repo = REPO, name
     license: "MIT",
     source: { kind: "github", repo },
     added_at: "2026-01-01",
+    // A listing that already carries localized card names, so a submission can
+    // be compared against the names a Russian user actually reads rather than
+    // only against the English ones a reviewer does.
+    ...(i18n ? { i18n } : {}),
   }, null, 2));
   fs.writeFileSync(path.join(pdir, `${version}.json`), JSON.stringify({
     schema: "astra.registry.version/1",
@@ -710,6 +717,475 @@ await test("E_PLATFORM_UNSUPPORTED — a host Astra ships no daemon for", async 
   const r = await run({ assets: [conformingAsset({ os: "macos" })] });
   assertBlockedWith(r, "E_PLATFORM_UNSUPPORTED");
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+
+section("the card, in more than one language");
+
+// Every case here is a real bundle through the real pipeline. The rules
+// themselves are pinned against AstraPlugins/testdata/locales by
+// tools/validate.mjs — that is coupling C16, and it is what stops the CLI and
+// this repository refusing different things. What these tests add is the half a
+// corpus cannot carry: that the rule reaches a submission at all, that the
+// finding names the file the author has to open, and that what comes out is
+// what a store renders.
+
+/** A `locales/<code>.json` entry for `makeBundle`'s `extraFiles`. */
+const locale = (code, keys) => ({
+  name: `locales/${code}.json`,
+  data: Buffer.from(JSON.stringify(keys, null, 2), "utf8"),
+});
+const EN_CARD = {
+  "listing.name": "Dice Roller",
+  "listing.description": "Rolls dice when you ask it to.",
+};
+const RU_CARD = {
+  "listing.name": "Бросок костей",
+  "listing.description": "Бросает кости, когда вы попросите.",
+};
+
+await test("a bundle's Russian card reaches the listing, and it is the only thing read out of locales/", async () => {
+  const r = await run({
+    assets: [conformingAsset({
+      extraFiles: [
+        locale("en", { ...EN_CARD, "action.roll.label": "Roll" }),
+        locale("ru", { ...RU_CARD, "action.roll.label": "Бросить" }),
+      ],
+    })],
+    root: registryWith({}),
+  });
+  assert(!r.blocked, JSON.stringify(errorCodes(r)));
+  assertEqual(r.derived.plugin.i18n.ru.name, "Бросок костей", "the Russian card name was not derived");
+  assertEqual(r.derived.plugin.i18n.ru.summary, "Бросает кости, когда вы попросите.", "nor the summary");
+  assertEqual(r.derived.plugin.i18n.en, undefined,
+    "`en` must never be a key: the flat name and summary ARE the English, and a document that can " +
+    "carry it twice will eventually carry two different versions of it");
+  // **That assertion alone has no teeth**, and a mutation is what showed it: an
+  // `en` block built from a conforming `en.json` is identical to the English
+  // card and is dropped by the rule below it, so widening the loop to all ten
+  // codes changed nothing here. The case where the two differ is the case that
+  // can actually reach a store, so it is the one asserted.
+  const disagreeing = deriveLocaleText({
+    files: [{ name: "locales/en.json", bytes: Buffer.from(JSON.stringify({ ...EN_CARD, "listing.name": "Something Else" }), "utf8") }],
+    facts: { name: "Dice Roller", description: "Rolls dice when you ask it to." },
+    limits: loadPolicy(REPO_ROOT).limits,
+    summarise,
+  });
+  assertEqual(disagreeing.i18n?.en, undefined,
+    "English reached the i18n member as a second, disagreeing copy of the card it is supposed to be");
+  assertEqual(JSON.stringify(Object.keys(r.derived.plugin.i18n.ru).sort()), '["name","summary"]',
+    "the interface strings (action.roll.label) are the daemon's business, not the card's");
+});
+
+await test("a locale block is never half a block — the missing half comes from English", async () => {
+  // **This test was wrong when it was first written, and a mutation is what
+  // said so.** It used a German file carrying BOTH reserved keys, so the fill
+  // it claimed to exercise never ran: deleting the fill left every assertion
+  // green. The path that actually reaches it is a plugin whose `en.json`
+  // declares only `listing.description` — parity then permits every other
+  // locale to declare only that too, and a block would otherwise be emitted
+  // with a summary and no name, which the schema's `required` refuses.
+  const r = await run({
+    assets: [conformingAsset({
+      extraFiles: [
+        locale("en", { "listing.description": "Rolls dice when you ask it to." }),
+        locale("ru", { "listing.description": "Бросает кости, когда вы попросите." }),
+      ],
+    })],
+    root: registryWith({}),
+  });
+  assert(!r.blocked, `a half block reached the schema: ${JSON.stringify(errorCodes(r))}`);
+  assertEqual(r.derived.plugin.i18n.ru.name, "Dice Roller",
+    "the missing half must be filled from English, not left out of the block");
+  assertEqual(r.derived.plugin.i18n.ru.summary, "Бросает кости, когда вы попросите.",
+    "and the half that IS translated must survive the fill");
+});
+
+await test("…and a name identical to English is kept, because that is what a brand is", async () => {
+  const r = await run({
+    assets: [conformingAsset({
+      extraFiles: [
+        locale("en", EN_CARD),
+        locale("de", { "listing.name": "Dice Roller", "listing.description": "Würfelt, wenn Sie fragen." }),
+      ],
+    })],
+    root: registryWith({}),
+  });
+  assert(!r.blocked, JSON.stringify(errorCodes(r)));
+  assertEqual(r.derived.plugin.i18n.de.name, "Dice Roller", "a brand name repeated in another locale was dropped");
+  assertEqual(r.derived.plugin.i18n.de.summary, "Würfelt, wenn Sie fragen.", "and the German summary with it");
+});
+
+await test("a long localized description is cut to the card line, by the same cut the English one gets", async () => {
+  // `listing.description` may be up to 4,000 characters — it is the manifest's
+  // description — and the card line is 200. The English one has always been
+  // summarised; a locale block that was not would be refused by the schema and
+  // the author would be told the registry has a bug.
+  const long = `${"Бросает кости, когда вы попросите. ".repeat(20)}`;
+  const r = await run({
+    assets: [conformingAsset({
+      extraFiles: [
+        locale("en", { ...EN_CARD, "listing.description": "Rolls dice when you ask it to." }),
+        locale("ru", { "listing.name": "Бросок костей", "listing.description": long }),
+      ],
+    })],
+    root: registryWith({}),
+  });
+  assert(!r.blocked, `an unsummarised locale block reached the schema: ${JSON.stringify(errorCodes(r))}`);
+  const summary = r.derived.plugin.i18n.ru.summary;
+  assert([...summary].length <= 200, `the Russian card line is ${[...summary].length} code points`);
+  assert(summary.endsWith("…"), `and it must be marked as cut rather than merely short: ${JSON.stringify(summary)}`);
+});
+
+await test("a block that says exactly what the English card says is not emitted", async () => {
+  const r = await run({
+    assets: [conformingAsset({ extraFiles: [locale("en", EN_CARD), locale("fr", EN_CARD)] })],
+    root: registryWith({}),
+  });
+  assert(!r.blocked, JSON.stringify(errorCodes(r)));
+  assertEqual(r.derived.plugin.i18n, undefined,
+    "a French block identical to the English card renders identically to no block, and costs every user its bytes");
+});
+
+await test("E_LOCALE_NO_ENGLISH — translations with nothing to fall back to", async () => {
+  const r = await run({ assets: [conformingAsset({ extraFiles: [locale("ru", RU_CARD)] })] });
+  assertBlockedWith(r, "E_LOCALE_NO_ENGLISH");
+});
+
+await test("E_LOCALE_UNKNOWN_CODE — the region tag that exists nowhere in this system", async () => {
+  // `zh-CN` is the spelling this project used in its own documentation tree for
+  // months. Astra's Chinese is `zh`, matching is exact string equality, and a
+  // file named anything else is packed, digested, signed, installed and read by
+  // nothing, with no error at any point.
+  const r = await run({
+    assets: [conformingAsset({ extraFiles: [locale("en", EN_CARD), locale("zh-CN", EN_CARD)] })],
+  });
+  assertBlockedWith(r, "E_LOCALE_UNKNOWN_CODE");
+  assertEqual(r.findings.find((i) => i.code === "E_LOCALE_UNKNOWN_CODE").where, "locales/zh-CN.json",
+    "the finding must name the file, not the stage");
+});
+
+await test("E_LOCALE_MALFORMED — the nested shape the daemon drops whole, silently", async () => {
+  const r = await run({
+    assets: [conformingAsset({
+      extraFiles: [{
+        name: "locales/en.json",
+        data: Buffer.from(JSON.stringify({ listing: { name: "Dice Roller" } }), "utf8"),
+      }],
+    })],
+  });
+  assertBlockedWith(r, "E_LOCALE_MALFORMED");
+});
+
+await test("E_LOCALE_KEY_MISSING and E_LOCALE_KEY_EXTRA — parity, in both directions", async () => {
+  const missing = await run({
+    assets: [conformingAsset({
+      extraFiles: [locale("en", { ...EN_CARD, greeting: "Hello" }), locale("ru", RU_CARD)],
+    })],
+  });
+  assertBlockedWith(missing, "E_LOCALE_KEY_MISSING");
+
+  const extra = await run({
+    assets: [conformingAsset({
+      extraFiles: [locale("en", EN_CARD), locale("ru", { ...RU_CARD, extra: "Лишний" })],
+    })],
+  });
+  assertBlockedWith(extra, "E_LOCALE_KEY_EXTRA");
+});
+
+await test("parity is over plural FAMILIES, or it fires on a file the CLI itself wrote", async () => {
+  // `astra-plugin locale add ru` writes `msg.done.few` and `msg.done.many`,
+  // which `en.json` cannot legally contain. A raw-key parity rule would refuse
+  // the bundle its own toolchain produced and recommended.
+  const r = await run({
+    assets: [conformingAsset({
+      extraFiles: [
+        locale("en", { ...EN_CARD, "msg.done.one": "Rolled {n} die", "msg.done.other": "Rolled {n} dice" }),
+        locale("ru", {
+          ...RU_CARD,
+          "msg.done.one": "{n} бросок", "msg.done.few": "{n} броска",
+          "msg.done.many": "{n} бросков", "msg.done.other": "{n} броска",
+        }),
+      ],
+    })],
+    root: registryWith({}),
+  });
+  assert(!r.blocked, `the four Russian plural rows were refused: ${JSON.stringify(errorCodes(r))}`);
+});
+
+await test("E_LISTING_TEXT_MISMATCH — the card and the manifest saying two things", async () => {
+  const r = await run({
+    assets: [conformingAsset({
+      extraFiles: [locale("en", { ...EN_CARD, "listing.name": "Something Else" })],
+    })],
+  });
+  assertBlockedWith(r, "E_LISTING_TEXT_MISMATCH");
+});
+
+await test("W_LOCALE_NO_CARD_TEXT — a plugin that translates its interface and not its card", async () => {
+  const r = await run({
+    assets: [conformingAsset({ extraFiles: [locale("en", { greeting: "Hello" }), locale("ru", { greeting: "Привет" })] })],
+    root: registryWith({}),
+  });
+  assert(!r.blocked, JSON.stringify(errorCodes(r)));
+  assert(codes(r).includes("W_LOCALE_NO_CARD_TEXT"), JSON.stringify(codes(r)));
+  assertEqual(r.derived.plugin.i18n, undefined, "nothing to put on a card is not something to put on a card");
+});
+
+await test("E_LISTING_NOT_ENGLISH — the failure this whole feature was filed from", async () => {
+  // The live one, word for word: a listing published through the correct
+  // zero-touch path, in Russian, because nothing in this system had ever asked
+  // what language a listing was in.
+  const r = await run({
+    assets: [conformingAsset({
+      description: "Шахматы против локального бота или выбранной модели Astra с игровым чатом.",
+    })],
+  });
+  assertBlockedWith(r, "E_LISTING_NOT_ENGLISH");
+  const message = r.findings.find((i) => i.code === "E_LISTING_NOT_ENGLISH").message;
+  assert(message.includes("SCRIPT check"),
+    "a gate that overstates its reach is one people route around: the message has to say it cannot tell English from French");
+});
+
+await test("…and an English sentence quoting a Russian word still passes", async () => {
+  const r = await run({
+    assets: [conformingAsset({ description: "Plays chess against a local bot. The UI button says Шахматы." })],
+    root: registryWith({}),
+  });
+  assert(!errorCodes(r).includes("E_LISTING_NOT_ENGLISH"),
+    `60% and not 100% is the whole point: ${JSON.stringify(errorCodes(r))}`);
+});
+
+await test("W_LISTING_NAME_NOT_LATIN — a product name is not prose, and is not left unobserved either", async () => {
+  const r = await run({
+    assets: [conformingAsset({ name: "Бросок костей" })],
+    root: registryWith({}),
+  });
+  assert(!errorCodes(r).includes("W_LISTING_NAME_NOT_LATIN"), "a name must not block a release");
+  assert(codes(r).includes("W_LISTING_NAME_NOT_LATIN"), JSON.stringify(codes(r)));
+});
+
+await test("E_TRADEMARK — an honest English card and an impersonating Russian one", async () => {
+  // The hole that mattered most. `checkNames` ran exactly once, on the English
+  // name out of plugin.toml, so a bundle whose en.json said `Dice Roller` and
+  // whose ru.json said `Telegram` would have put a card named Telegram in front
+  // of every Russian user — on a listing a human approved by reading a clean
+  // English card.
+  const r = await run({
+    assets: [conformingAsset({
+      extraFiles: [
+        locale("en", EN_CARD),
+        locale("ru", { "listing.name": "Telegram", "listing.description": "Бросает кости, когда вы попросите." }),
+      ],
+    })],
+    root: registryWith({}),
+  });
+  assertBlockedWith(r, "E_TRADEMARK");
+  assertEqual(r.findings.find((i) => i.code === "E_TRADEMARK").where, "locales/ru.json",
+    "the finding has to name the language, or the author reads the English name and sees nothing wrong");
+});
+
+await test("R_DISPLAY_NAME_COLLISION — two cards that are the same card in Russian", async () => {
+  const root = registryWith({
+    id: "other-dice",
+    name: "Something Else",
+    i18n: { ru: { name: "Бросок костей", summary: "Кости." } },
+  });
+  const r = await run({
+    assets: [conformingAsset({ extraFiles: [locale("en", EN_CARD), locale("ru", RU_CARD)] })],
+    root,
+  });
+  assert(codes(r).includes("R_DISPLAY_NAME_COLLISION"),
+    `a collision only a Russian user can see is still a collision: ${JSON.stringify(codes(r))}`);
+});
+
+await test("a Cyrillic name that borrows a Latin brand is not a homoglyph attack", async () => {
+  // `Клиент Telegram` is what an honest Russian name for a third-party client
+  // looks like. Flagging it would put every honest Cyrillic listing in a review
+  // queue, which ends with the rule switched off inside a week.
+  const r = await run({
+    assets: [conformingAsset({
+      id: "chat-bridge",
+      name: "Chat Bridge",
+      extraFiles: [
+        locale("en", { "listing.name": "Chat Bridge", "listing.description": "Rolls dice when you ask it to." }),
+        locale("ru", { "listing.name": "Мост Chat", "listing.description": "Бросает кости, когда вы попросите." }),
+      ],
+    })],
+    root: registryWith({}),
+  });
+  assert(!codes(r).includes("R_DISPLAY_NAME_MIXED_SCRIPT"),
+    `an honest Russian name was held for a human: ${JSON.stringify(codes(r))}`);
+});
+
+await test("W_LOCALE_STALE — a translation of English that has since been rewritten", async () => {
+  // Debian's Description-md5, as a derived value: the lock records a digest of
+  // the English each translation was made against. When it stops matching, the
+  // string falls back to English rather than the release being refused —
+  // showing a confidently wrong sentence in a language nobody here can
+  // proof-read is worse than showing a correct one in the wrong language.
+  const r = await run({
+    assets: [conformingAsset({
+      extraFiles: [
+        locale("en", EN_CARD),
+        locale("ru", RU_CARD),
+        {
+          name: "locales.lock.json",
+          data: Buffer.from(JSON.stringify({
+            schema: "astra.plugin.locales/1",
+            source: "en",
+            locales: { ru: { "listing.name": "0".repeat(12), "listing.description": "0".repeat(12) } },
+          }), "utf8"),
+        },
+      ],
+    })],
+    root: registryWith({}),
+  });
+  assert(!r.blocked, `a stale translation must not refuse a release: ${JSON.stringify(errorCodes(r))}`);
+  assert(codes(r).includes("W_LOCALE_STALE"), JSON.stringify(codes(r)));
+  assertEqual(r.derived.plugin.i18n, undefined,
+    "both strings demote to English, which leaves a block identical to the English card, which is not emitted");
+});
+
+await test("…and a lock that matches today's English is not stale", async () => {
+  const digest = (s) => crypto.createHash("sha256").update(Buffer.from(s, "utf8")).digest("hex").slice(0, 12);
+  const r = await run({
+    assets: [conformingAsset({
+      extraFiles: [
+        locale("en", EN_CARD),
+        locale("ru", RU_CARD),
+        {
+          name: "locales.lock.json",
+          data: Buffer.from(JSON.stringify({
+            schema: "astra.plugin.locales/1",
+            source: "en",
+            locales: {
+              ru: {
+                "listing.name": digest(EN_CARD["listing.name"]),
+                "listing.description": digest(EN_CARD["listing.description"]),
+              },
+            },
+          }), "utf8"),
+        },
+      ],
+    })],
+    root: registryWith({}),
+  });
+  assert(!codes(r).includes("W_LOCALE_STALE"),
+    `the digests agree, so nothing is stale: ${JSON.stringify(codes(r))}`);
+  assertEqual(r.derived.plugin.i18n.ru.name, "Бросок костей", "a fresh translation must survive");
+});
+
+await test("E_LOCALE_CARD_TOO_LONG — a name past the card's width, in one language", async () => {
+  const r = await run({
+    assets: [conformingAsset({
+      extraFiles: [
+        locale("en", EN_CARD),
+        locale("ru", { "listing.name": "Б".repeat(70), "listing.description": "Бросает кости." }),
+      ],
+    })],
+  });
+  assertBlockedWith(r, "E_LOCALE_CARD_TOO_LONG");
+});
+
+await test("E_LOCALE_TOO_LARGE — refused before the parse, not after it", async () => {
+  // inspectBundle materialises every listed file as a Buffer bounded only by
+  // max_extract_bytes (500 MB). Icons are capped at 128 KiB and READMEs at
+  // 16 KiB; locale files were capped by nothing, and a flat-but-valid 200 MB
+  // en.json would take the ingest runner out mid-derivation and leave the
+  // submitter's issue with no verdict at all.
+  const fat = {};
+  for (let i = 0; i < 400; i++) fat[`k${i}`] = "x".repeat(1024);
+  const r = await run({
+    assets: [conformingAsset({ extraFiles: [locale("en", { ...EN_CARD, ...fat })] })],
+  });
+  assertBlockedWith(r, "E_LOCALE_TOO_LARGE");
+});
+
+await test("E_LOCALE_BUNDLE_MISMATCH — one release, two platforms, two different cards", async () => {
+  // `deriveListing` is handed the FIRST bundle's files, with a comment saying
+  // the icon and the README are one picture across platforms. True for those.
+  // False for locale files, which reach the installed plugin per platform.
+  const r = await run({
+    assets: [
+      {
+        name: "dice-roller-0.2.0-linux-x64.astraplugin",
+        bytes: makeBundle({ os: "linux", extraFiles: [locale("en", EN_CARD), locale("ru", RU_CARD)] }),
+      },
+      {
+        name: "dice-roller-0.2.0-windows-x64.astraplugin",
+        bytes: makeBundle({
+          os: "windows",
+          extraFiles: [locale("en", EN_CARD), locale("ru", { ...RU_CARD, "listing.name": "Другое имя" })],
+        }),
+      },
+    ],
+    root: registryWith({}),
+  });
+  assertBlockedWith(r, "E_LOCALE_BUNDLE_MISMATCH");
+});
+
+await test("a plugin that ships no locales/ is not asked about any of this", async () => {
+  const r = await run({ assets: [conformingAsset()], root: registryWith({}) });
+  assert(!codes(r).some((c) => c.startsWith("E_LOCALE") || c.startsWith("W_LOCALE")),
+    `the overwhelming majority of bundles, for ever: ${JSON.stringify(codes(r))}`);
+});
+
+await test("E_LOCALE_CARD_TOO_LARGE and the exemption note, at the unit they are decided in", async () => {
+  // Two codes with no end-to-end fixture, and they are here rather than absent.
+  // The budget needs nine locales of maximum-length CJK, which is a bundle
+  // fixture testing arithmetic and nothing else; the exemption needs an entry in
+  // the real policy/listing-language-exemptions.json, and a test that edits the
+  // shipped policy file in order to prove the shipped policy file is read is a
+  // test that can pass for the wrong reason.
+  const limits = loadPolicy(REPO_ROOT).limits;
+  const files = [{ name: "locales/en.json", bytes: Buffer.from(JSON.stringify(EN_CARD), "utf8") }];
+  for (const code of ["ru", "uk", "de", "fr", "es", "pt", "ja", "zh", "ko"]) {
+    files.push({
+      name: `locales/${code}.json`,
+      bytes: Buffer.from(JSON.stringify({
+        "listing.name": "名".repeat(64),
+        "listing.description": "説".repeat(200),
+      }), "utf8"),
+    });
+  }
+  const codesOf = (x) => x.findings.map((i) => i.code);
+  const facts = { name: "Dice Roller", description: "Rolls dice when you ask it to." };
+
+  // The rule, at a budget low enough to reach: the number is policy and the
+  // mechanism is what this asserts.
+  const over = deriveLocaleText({ files, facts, limits: { ...limits, max_listing_i18n_bytes: 512 }, summarise });
+  assert(codesOf(over).includes("E_LOCALE_CARD_TOO_LARGE"),
+    `the per-listing budget did not fire: ${JSON.stringify(codesOf(over))}`);
+  assertEqual(over.i18n, undefined, "and nothing is emitted, rather than the budget being advisory");
+  for (const i of over.findings) emitted.add(i.code);
+
+  // And the shipped number, from the other side. **This is the assertion that
+  // matters more**, because the way this ceiling goes wrong is not that it
+  // fails to fire — it is that somebody lowers it and every honest CJK listing
+  // starts losing its translations with a message about a budget. Nine locales
+  // at the schema's own caps, in three-byte characters, is the worst case a
+  // listing can legitimately reach.
+  const worst = deriveLocaleText({ files, facts, limits, summarise });
+  assert(!codesOf(worst).includes("E_LOCALE_CARD_TOO_LARGE"),
+    "nine locales at 64 + 200 characters each satisfies every per-string cap and must not be refused by the total: " +
+    `${Buffer.byteLength(JSON.stringify(worst.i18n ?? {}), "utf8")} bytes against a ceiling of ${limits.max_listing_i18n_bytes}`);
+  assertEqual(Object.keys(worst.i18n ?? {}).length, 9, "the worst case must actually have been built");
+
+  const exempt = deriveLocaleText({
+    files: [],
+    facts: { name: "Шахматы", description: "Шахматы против локального бота." },
+    limits,
+    summarise,
+    languageExempt: true,
+  });
+  assert(!codesOf(exempt).includes("E_LISTING_NOT_ENGLISH"), "an exemption must actually excuse the rule");
+  assert(codesOf(exempt).includes("N_LISTING_LANGUAGE_EXEMPT"),
+    `and must say so rather than passing quietly: ${JSON.stringify(codesOf(exempt))}`);
+  for (const i of exempt.findings) emitted.add(i.code);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 
 section("versions and identity");
 

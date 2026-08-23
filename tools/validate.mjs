@@ -40,6 +40,17 @@ import {
 } from "./lib/ids.mjs";
 import { loadSources, loadPolicy, loadSchemas, readJson, REPO_ROOT } from "./lib/sources.mjs";
 import { ALLOWED_IMAGE_HOSTS, ICON_NAMES, MAX_README_BYTES, checkIcon } from "../bot/lib/assets.mjs";
+import { checkMetadata, summarise } from "../bot/lib/derive.mjs";
+import {
+  CORPUS_NOT_IMPLEMENTED,
+  CORPUS_RULE_IDS,
+  LOCALE_CODES,
+  deriveLocaleText,
+  isLanguageExempt,
+  isLatinScript,
+  latinFraction,
+  localeEnumProblems,
+} from "../bot/lib/locales.mjs";
 import { buildIndex, indexContent } from "./build-index.mjs";
 
 const PLATFORM_KEYS = new Set([
@@ -96,6 +107,49 @@ function sha256File(file) {
 
 // ── source-tree checks ──────────────────────────────────────────────────────
 
+/**
+ * Every string in a listing that a person reads off a card, with the name it
+ * goes by in the document.
+ *
+ * **This used to be a three-field object literal** — `name`, `summary`,
+ * `author?.name` — and the day a listing gained a fourth display string it
+ * became a hole rather than a check. That day is this one: `i18n.<code>.name`
+ * is a store card's title in another language, and a maintainer who typed one
+ * into `plugins/<id>/plugin.json` by hand would have got no display-text scan
+ * at all, with CI green because the generator faithfully reproduced whatever
+ * the tree said. `bot/lib/assets.mjs`'s own header explains why this
+ * second-opinion path exists: the bot sanitises what it derives, and a
+ * hand-edited listing has never been near the bot.
+ *
+ * A walk rather than a list, so the next field of this kind is covered by
+ * construction — and it works on an INDEX entry as well as on a source
+ * listing, which is how the deploy candidate comes to be scanned as a document
+ * rather than trusted because its inputs were.
+ *
+ * @returns {[string, string][]} `["i18n.ru.name", "…"]`
+ */
+export function displayStrings(doc) {
+  const out = [];
+  const take = (field, value) => {
+    if (typeof value === "string" && value.length > 0) out.push([field, value]);
+  };
+  take("name", doc?.name);
+  // `summary` is plugin.json's spelling of the card line and `description` is
+  // the index's. Both are taken, and whichever is absent costs nothing.
+  take("summary", doc?.summary);
+  take("description", doc?.description);
+  take("author", typeof doc?.author === "string" ? doc.author : doc?.author?.name);
+  const i18n = doc?.i18n;
+  if (i18n && typeof i18n === "object") {
+    for (const code of Object.keys(i18n).sort()) {
+      const block = i18n[code];
+      if (!block || typeof block !== "object") continue;
+      for (const key of Object.keys(block).sort()) take(`i18n.${code}.${key}`, block[key]);
+    }
+  }
+  return out;
+}
+
 function checkPluginDoc(plugin, ctx) {
   const { report, schemas, policy } = ctx;
   const where = plugin.file;
@@ -144,12 +198,7 @@ function checkPluginDoc(plugin, ctx) {
       "Add it to policy/spdx-allowlist.json in its own PR, with a sentence on why.");
   }
 
-  for (const [field, value] of Object.entries({
-    name: plugin.doc.name,
-    summary: plugin.doc.summary,
-    author: plugin.doc.author?.name,
-  })) {
-    if (typeof value !== "string") continue;
+  for (const [field, value] of displayStrings(plugin.doc)) {
     const trick = unsafeDisplayText(value);
     if (trick) {
       report.error(where, `${field} ${trick}`,
@@ -660,6 +709,19 @@ function checkIndex(ctx) {
     report.error(rel, `${e.path} ${e.message}`);
   }
 
+  // The same walk, over the assembled document. The per-listing scan above
+  // runs on the sources; this one runs on what is about to be signed, so the
+  // deploy candidate is scanned as a document rather than trusted because its
+  // inputs were. It is not redundant with the schema, which constrains lengths
+  // and shapes and has nothing to say about a bidi override inside a
+  // well-formed string.
+  for (const entry of doc.signed?.plugins ?? doc.plugins ?? []) {
+    for (const [field, value] of displayStrings(entry)) {
+      const trick = unsafeDisplayText(value);
+      if (trick) report.error(rel, `${entry.id}: ${field} ${trick}`);
+    }
+  }
+
   // Since 3.2 the catalogue is a `{signed, signatures}` envelope: only `signed`
   // is generated and only `signed` is covered by a signature. The fallback to a
   // bare document keeps this readable for a tree that predates the envelope —
@@ -826,6 +888,414 @@ export function checkMirroredLimits(ctx) {
   }
 }
 
+// ── the locale couplings ────────────────────────────────────────────────────
+
+/** Where an AstraPlugins checkout might be, best first. */
+function astraPluginsCandidates() {
+  return [process.env.ASTRA_PLUGINS_DIR, path.resolve(REPO_ROOT, "../AstraPlugins")].filter(Boolean);
+}
+
+function astraPluginsFile(rel) {
+  return astraPluginsCandidates().map((d) => path.join(d, rel)).find((f) => fs.existsSync(f)) ?? null;
+}
+
+/**
+ * **C15** — the ten locale codes, in three places on this side alone.
+ *
+ * `bot/lib/locales.mjs` decides which locale blocks the bot EMITS and the two
+ * schemas decide which ones this repository ACCEPTS. Disagreement is silent
+ * until the moment it is catastrophic: a bot that emits a code the schema
+ * rejects fails `validateSchema(schemas.index, doc)` on the deploy candidate,
+ * which stops the catalogue for every listing because one plugin shipped a
+ * translation.
+ *
+ * The schema half runs always, needs nothing checked out, and `selftest.mjs`
+ * constructs a drift to prove it fires. The `spec/locales.yaml` half is the
+ * cross-repository one and says out loud when it did not run.
+ */
+export function checkLocaleVocabulary(ctx) {
+  const where = "bot/lib/locales.mjs";
+  for (const [name, doc] of [["schema/plugin-v1.json", ctx.schemas.plugin], ["schema/index-v1.json", ctx.schemas.index]]) {
+    let problems;
+    try {
+      problems = localeEnumProblems(doc, name);
+    } catch (e) {
+      // The member is gone or has moved. That is a broken SCAN, not a passing
+      // check, and it is reported as an error rather than swallowed.
+      ctx.report.error(where, e.message,
+        "Restore the i18n member's propertyNames.enum, or update localeEnum() in bot/lib/locales.mjs to find where it went.");
+      continue;
+    }
+    for (const p of problems) {
+      ctx.report.error(where, p,
+        "The vocabulary is AstraPlugins/spec/locales.yaml. Mirror it into LOCALE_CODES and into both schema enums, and never into only one.");
+    }
+  }
+
+  const specFile = astraPluginsFile("spec/locales.yaml");
+  if (!specFile) {
+    ctx.report.note(where, "the locale vocabulary is NOT verified against AstraPlugins: no checkout found",
+      `Looked in ${astraPluginsCandidates().join(", ")}. Set ASTRA_PLUGINS_DIR to check it. ` +
+      "LOCALE_CODES must equal spec/locales.yaml, which mirrors Astra's SUPPORTED_LANGUAGES.");
+    return;
+  }
+  // One row per line: the code, the endonym, and an optional trailing
+  // `maintained`. Only the first field is read here — `maintained` is a
+  // different subset of the same ten codes and conflating the two is how an
+  // unselectable locale file gets shipped.
+  const declared = fs.readFileSync(specFile, "utf8")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("#"))
+    .map((l) => l.split(/\s+/)[0]);
+  // The floor, before the comparison: a reader that matched nothing would
+  // otherwise compare ten codes against an empty list and report the drift
+  // backwards, naming every code as missing upstream.
+  if (declared.length < 5) {
+    ctx.report.error(where, `${specFile} yielded ${declared.length} locale row(s), which cannot be right`,
+      "The file's row format changed, so THIS READER is what broke — not the vocabulary. Fix the parse before believing any comparison it makes.");
+    return;
+  }
+  if (declared.join(" ") !== LOCALE_CODES.join(" ")) {
+    ctx.report.error(where,
+      `LOCALE_CODES is [${LOCALE_CODES.join(" ")}] but spec/locales.yaml declares [${declared.join(" ")}]`,
+      "Order matters: `en` is first because it is the base every other locale falls back to. " +
+      "Change Astra's SUPPORTED_LANGUAGES first, then spec/locales.yaml, then this list and both schema enums.");
+  }
+}
+
+/**
+ * **C20** — the four listing caps AstraPlugins mirrors FROM here.
+ *
+ * The other mirror check in this file points outward: `policy/limits.json`
+ * declares that its numbers are copies of AstraPlugins' constants. This one
+ * points inward. `spec/listing-limits.yaml` exists so that `astra-plugin check`
+ * can refuse a 141-character permission reason at pack time instead of letting
+ * an author discover it at ingest, in a repository they have never opened,
+ * after they have pushed a tag they cannot move.
+ *
+ * **Which side should somebody edit to make this pass?** Theirs. These are this
+ * repository's numbers and that file says so in its own header; a lower value
+ * there refuses a listing this registry would have accepted, and a higher one
+ * walks an author into a refusal they cannot act on. The message says which way
+ * round, because the fastest way to green a mirror check is to edit whichever
+ * file is in front of you.
+ */
+export function checkMirroredListingLimits(ctx) {
+  const where = "AstraPlugins/spec/listing-limits.yaml";
+  const specFile = astraPluginsFile("spec/listing-limits.yaml");
+  if (!specFile) {
+    ctx.report.note("policy/limits.json", "the listing caps AstraPlugins mirrors are NOT verified: no checkout found",
+      `Looked in ${astraPluginsCandidates().map((d) => path.join(d, "spec/listing-limits.yaml")).join(", ")}. ` +
+      "Set ASTRA_PLUGINS_DIR to check them.");
+    return;
+  }
+
+  // `# mirrors: <file> <path…>` on a comment line, then `name: <integer>`.
+  // The comment is the machine-readable half ON PURPOSE: it is read by a human
+  // and by this regex, and by nothing that would break if it were reworded.
+  const pairs = [];
+  let pending = null;
+  for (const line of fs.readFileSync(specFile, "utf8").split("\n")) {
+    const mirror = /^#\s*mirrors:\s*(.+?)\s*$/.exec(line);
+    if (mirror) { pending = mirror[1]; continue; }
+    const value = /^([a-z0-9_]+):\s*([0-9_]+)\s*(#.*)?$/.exec(line);
+    if (value) {
+      pairs.push({ name: value[1], value: Number(value[2].replace(/_/g, "")), target: pending });
+      pending = null;
+    }
+  }
+
+  // The floor, written before the comparison and not derived from it. Four
+  // values are declared there today; a reader that finds fewer than three has
+  // stopped matching the file rather than found a shrinking list, and those two
+  // need opposite fixes.
+  const MIN_MIRRORS = 3;
+  if (pairs.length < MIN_MIRRORS) {
+    ctx.report.error(where, `${pairs.length} mirrored cap(s) found, below the floor of ${MIN_MIRRORS}`,
+      "If that file still holds `# mirrors:` comments above `name: integer` lines, THIS READER is what broke. " +
+      "If it does not, the caps upstream were deleted and nothing over there is checking these numbers any more.");
+    return;
+  }
+
+  for (const { name, value, target } of pairs) {
+    if (!target) {
+      ctx.report.error(where, `${name} has no \`# mirrors:\` line above it`,
+        "Every value in that file is a copy of one of ours. One without a source is a number nobody can check.");
+      continue;
+    }
+    const parts = target.split(/\s+/);
+    const [file, ...rest] = parts;
+    let ours;
+    if (file === "astra-registry/policy/limits.json" && rest.length === 1) {
+      ours = (ctx.policy.limits ?? ctx.policy)[rest[0]];
+    } else if (file === "astra-registry/schema/version-v1.json" && rest.length === 2) {
+      // `$.properties.permissions.patternProperties.*.properties.reason maxLength`
+      // — a JSON pointer with one wildcard, resolved rather than guessed at.
+      let node = ctx.schemas.version;
+      for (const step of rest[0].replace(/^\$\.?/, "").split(".")) {
+        if (node === undefined || node === null) break;
+        if (step === "*") {
+          const keys = Object.keys(node);
+          node = keys.length === 1 ? node[keys[0]] : undefined;
+        } else {
+          node = node[step];
+        }
+      }
+      ours = node?.[rest[1]];
+    }
+    if (ours === undefined) {
+      ctx.report.error(where, `${name} claims to mirror ${JSON.stringify(target)}, which resolves to nothing here`,
+        "Either the value moved in this repository or the `mirrors:` line is wrong. Both are drift, and both leave that file's copy unpinned.");
+      continue;
+    }
+    if (ours !== value) {
+      ctx.report.error(where, `${name} is ${value} there and ${ours} here (${target})`,
+        "THIS repository owns these numbers; that file is the copy. Fix the copy — unless the number here is what is wrong, " +
+        "in which case change it here first and mirror it there in the same breath, because between the two commits every " +
+        "author is checked against a cap this registry does not enforce.");
+    }
+  }
+}
+
+/**
+ * **The English store card**, over the committed tree.
+ *
+ * `bot/lib/locales.mjs` refuses a non-English card at ingest. This is the other
+ * half: a listing can also be hand-written or hand-edited, and one that is
+ * already in the tree was ingested before this rule existed. The predicate is
+ * imported rather than restated, so what the bot admits cannot be what CI then
+ * refuses.
+ *
+ * **`unlisted: true` is skipped, explicitly.** Such a plugin is not in the
+ * generated index and is rendered to nobody in any language, so an exemption
+ * protecting one would be decoration nobody could observe firing. This is not
+ * hypothetical: `knice-chess` is unlisted, its summary is Russian, and it is
+ * the only listing in the tree that fails this check.
+ */
+export function checkListingLanguage(plugins, ctx) {
+  const exemptions = ctx.policy.listingLanguage;
+  const used = new Set();
+
+  for (const plugin of plugins) {
+    const doc = plugin.doc ?? {};
+    if (doc.unlisted === true) continue;
+    const repo = doc.source?.repo;
+    const summary = typeof doc.summary === "string" ? doc.summary : "";
+    if (!summary || isLatinScript(summary)) continue;
+    if (isLanguageExempt(repo, exemptions)) {
+      used.add(String(repo).toLowerCase());
+      ctx.report.warn(plugin.file,
+        `summary is not in the Latin script; listed by an exemption for ${repo}`,
+        "policy/listing-language-exemptions.json. Every user whose language this plugin has not translated reads this string.");
+      continue;
+    }
+    const { latin, letters } = latinFraction(summary);
+    ctx.report.error(plugin.file,
+      `summary is not in English: ${letters === 0 ? "it contains no letters at all" : `${100 - Math.floor((latin * 100) / letters)}% of its letters are outside the Latin script`}`,
+      "The card, the search index and every client that predates localization all show this string, and so does every " +
+      "user whose language the plugin has not translated. The fix is a release whose plugin.toml description is English " +
+      "with the original in locales/<code>.json under `listing.description` — NOT an edit to this file, which is derived " +
+      "and would disagree with the bundle at the next release. If the listing must stand as it is, add its source.repo to " +
+      "policy/listing-language-exemptions.json with a reason.");
+  }
+
+  // An exemption nobody needs is a hole nobody is watching: the next release
+  // from that repository inherits an excuse no one granted it.
+  for (const entry of exemptions?.exempt ?? []) {
+    const repo = String(entry?.repo ?? "");
+    if (!used.has(repo.toLowerCase())) {
+      ctx.report.warn("policy/listing-language-exemptions.json",
+        `the exemption for ${JSON.stringify(repo)} is not being used by any listed plugin`,
+        "Either the card is English now — delete the entry — or the plugin is unlisted or not listed at all, in which case " +
+        "the entry is protecting nothing and will silently excuse whatever that repository publishes next.");
+    }
+  }
+}
+
+/**
+ * **C16** — the shared locale rule corpus, as this repository reads it.
+ *
+ * `AstraPlugins/testdata/locales/` holds one directory per case with the
+ * verdict written down beside it, and two implementations of one rule set are
+ * held to it: `astra-plugin check` there, and `bot/lib/locales.mjs` here. The
+ * CLI refuses a bundle before a tag is pushed and this repository refuses a
+ * listing after one is, so a disagreement is an author whose release passes
+ * every gate they can see and dies somewhere they have never looked.
+ *
+ * This side implements a SUBSET, because the two halves are asked different
+ * questions — the CLI is asked about a source tree and this is asked about a
+ * published card. The subset is declared in `bot/lib/locales.mjs`
+ * (`CORPUS_RULE_IDS`) and everything outside it is declared too
+ * (`CORPUS_NOT_IMPLEMENTED`), with a reason. A fixture whose ids are all
+ * outside the subset is not skipped: it is asserted to produce NO errors here,
+ * which is the useful half of that case — this repository does not invent a
+ * refusal for a defect it cannot see.
+ */
+export function checkLocaleCorpus(ctx) {
+  const where = "AstraPlugins/testdata/locales";
+  const dir = astraPluginsCandidates().map((d) => path.join(d, "testdata/locales")).find((d) => fs.existsSync(d));
+  if (!dir) {
+    ctx.report.note(where, "the shared locale corpus is NOT verified: no checkout found",
+      `Looked in ${astraPluginsCandidates().map((d) => path.join(d, "testdata/locales")).join(", ")}. ` +
+      "Set ASTRA_PLUGINS_DIR, or add testdata/locales to the sparse-checkout that fetches it. " +
+      "An absent corpus reads exactly like a clean one, which is why this is printed rather than passed over.");
+    return;
+  }
+
+  const cases = (kind) => {
+    const root = path.join(dir, kind);
+    if (!fs.existsSync(root)) return [];
+    return fs.readdirSync(root, { withFileTypes: true })
+      .filter((e) => e.isDirectory())
+      .map((e) => path.join(root, e.name))
+      .sort();
+  };
+  const pass = cases("pass");
+  const fail = cases("fail");
+
+  // The floor, BEFORE any comparison, and the two failures it separates look
+  // nothing alike: a shrunken corpus is somebody deleting a rule's only
+  // witness; an empty one is this reader looking in the wrong place. The
+  // numbers are the CLI's own floors, so neither reader can drift below the
+  // other without saying so.
+  const MIN_PASS = 4;
+  const MIN_FAIL = 12;
+  if (pass.length < MIN_PASS || fail.length < MIN_FAIL) {
+    ctx.report.error(where,
+      `found ${pass.length} pass and ${fail.length} fail case(s) (floor: ${MIN_PASS}/${MIN_FAIL})`,
+      "If that directory still holds one subdirectory per case, the RULES are what shrank and somebody deleted a fixture. " +
+      "If it does not, this SCAN is what broke — the corpus moved, or the checkout that fetched it does not include it.");
+    return;
+  }
+
+  const covered = new Set();
+  const mismatches = [];
+  for (const kind of ["pass", "fail"]) {
+    for (const caseDir of kind === "pass" ? pass : fail) {
+      const name = `${kind}/${path.basename(caseDir)}`;
+      let got;
+      try {
+        got = corpusIds(caseDir, ctx);
+      } catch (e) {
+        ctx.report.error(where, `${name} could not be read: ${e.message}`,
+          "A case this reader cannot load is a case it is not checking. Fix the reader or the fixture; do not skip it.");
+        continue;
+      }
+      let expect = new Set();
+      if (kind === "fail") {
+        const file = path.join(caseDir, "EXPECT");
+        if (!fs.existsSync(file)) {
+          ctx.report.error(where, `${name} has no EXPECT file`);
+          continue;
+        }
+        const all = fs.readFileSync(file, "utf8").split("\n").map((l) => l.trim()).filter(Boolean);
+        for (const id of all) {
+          if (Object.values(CORPUS_RULE_IDS).includes(id)) { expect.add(id); covered.add(id); continue; }
+          if (Object.hasOwn(CORPUS_NOT_IMPLEMENTED, id)) continue;
+          ctx.report.error(where, `${name} expects ${id}, which this repository neither implements nor exempts`,
+            "Add it to CORPUS_RULE_IDS in bot/lib/locales.mjs, or to CORPUS_NOT_IMPLEMENTED with one sentence on why the " +
+            "registry does not need it. An id that is silently ignored is a rule nobody decided about.");
+        }
+      }
+      const a = [...expect].sort().join(",");
+      const b = [...got].sort().join(",");
+      if (a !== b) mismatches.push(`${name}: expected [${a || "none"}], got [${b || "none"}]`);
+    }
+  }
+  for (const m of mismatches) {
+    ctx.report.error(where, m,
+      "The CLI and this repository disagree about one bundle. Read the case's WHY file: it says what the rule is for, " +
+      "and which of the two implementations is wrong is a decision, not a diff.");
+  }
+
+  // Every implemented rule has a witness in the corpus, or the corpus has
+  // stopped proving the rule still fires.
+  for (const id of new Set(Object.values(CORPUS_RULE_IDS))) {
+    if (!covered.has(id)) {
+      ctx.report.error(where, `rule ${id} is implemented here and has no fail case in the corpus`,
+        "A rule with no witness may already have stopped firing. Add a case in AstraPlugins/testdata/locales/fail/, or " +
+        "remove the rule from CORPUS_RULE_IDS if it no longer exists.");
+    }
+  }
+  ctx.report.note(where,
+    `${pass.length} pass and ${fail.length} fail case(s) read; ${new Set(Object.values(CORPUS_RULE_IDS)).size} rule(s) ` +
+    `implemented here, ${Object.keys(CORPUS_NOT_IMPLEMENTED).length} declared not implemented`);
+}
+
+/**
+ * One corpus case, through the checks a submission's card text goes through.
+ *
+ * Both of them: `checkMetadata` is where an over-long or invisible-charactered
+ * ENGLISH name is refused, and `deriveLocaleText` is where everything about the
+ * translations is. At ingest they run one after the other on the same facts, so
+ * running one alone here would be testing half the answer.
+ */
+function corpusIds(caseDir, ctx) {
+  const facts = readFixtureManifest(path.join(caseDir, "plugin.toml"));
+  const files = [];
+  const localesDir = path.join(caseDir, "locales");
+  if (fs.existsSync(localesDir)) {
+    for (const e of fs.readdirSync(localesDir, { withFileTypes: true })) {
+      if (e.isFile()) files.push({ name: `locales/${e.name}`, bytes: fs.readFileSync(path.join(localesDir, e.name)) });
+    }
+  }
+  const lock = path.join(caseDir, "locales.lock.json");
+  if (fs.existsSync(lock)) files.push({ name: "locales.lock.json", bytes: fs.readFileSync(lock) });
+
+  const limits = ctx.policy.limits;
+  const findings = [
+    ...checkMetadata({
+      name: facts.name,
+      description: facts.description,
+      summary: summarise(facts.description, limits.max_summary_length),
+    }, limits),
+    ...deriveLocaleText({ files, facts, limits, summarise }).findings,
+  ];
+  const ids = new Set();
+  for (const f of findings) {
+    if (f.level !== "error") continue;
+    const id = CORPUS_RULE_IDS[f.code];
+    if (id) ids.add(id);
+    else {
+      throw new Error(
+        `${f.code} is an error this module can emit and CORPUS_RULE_IDS does not name. Every error the corpus can ` +
+        "provoke has to map to a rule id, or a real disagreement with the CLI shows up as an unexplained extra finding.",
+      );
+    }
+  }
+  return ids;
+}
+
+/**
+ * `[plugin] name` and `description` out of a fixture's `plugin.toml`.
+ *
+ * A five-line reader for a five-line file, and it is deliberately unforgiving:
+ * every fixture in the corpus declares both, so a missing one means the format
+ * moved and this reader is now inventing facts. `[config] schema` in some
+ * fixtures is a multi-line string full of `"key": "value"` lines, which is why
+ * reading stops at the next section header rather than scanning the file.
+ */
+function readFixtureManifest(file) {
+  const text = fs.readFileSync(file, "utf8");
+  const out = {};
+  let inPlugin = false;
+  for (const line of text.split("\n")) {
+    const header = /^\s*\[([^\]]+)\]/.exec(line);
+    if (header) { inPlugin = header[1] === "plugin"; continue; }
+    if (!inPlugin) continue;
+    const kv = /^\s*(name|description)\s*=\s*"((?:[^"\\]|\\.)*)"\s*$/.exec(line);
+    if (kv) out[kv[1]] = JSON.parse(`"${kv[2]}"`);
+  }
+  if (typeof out.name !== "string" || typeof out.description !== "string") {
+    throw new Error(
+      `${file} yielded no [plugin] name/description. Every fixture declares both, so this READER is what broke — ` +
+      "probably a multi-line or single-quoted value it does not parse.",
+    );
+  }
+  return out;
+}
+
 // ── driver ──────────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
@@ -865,6 +1335,9 @@ export async function runValidation(opts) {
 
   checkMirroredLimits(ctx);
   checkMirroredIconFormats(ctx);
+  checkMirroredListingLimits(ctx);
+  checkLocaleVocabulary(ctx);
+  checkLocaleCorpus(ctx);
 
   const { errors, plugins } = loadSources(opts.root);
   for (const e of errors) report.error(e.file, e.message);
@@ -878,6 +1351,7 @@ export async function runValidation(opts) {
     }
   }
   checkSquatting(usable, ctx);
+  checkListingLanguage(usable, ctx);
 
   let hashed = 0;
   if (opts.artifactsDir) hashed += checkLocalArtifacts(usable, ctx);

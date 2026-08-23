@@ -383,7 +383,6 @@ ${withdrawal}
 ${staging}
 
 <p class="summary">${esc(entry.description)}</p>
-${entry.details ? `<p>${esc(entry.details)}</p>` : ""}
 
 ${
   entry.keywords?.length || entry.categories?.length

@@ -224,6 +224,33 @@ function presentation(root, plugin) {
   return { out, errors };
 }
 
+/**
+ * A card's two strings, in the index's vocabulary.
+ *
+ * `plugin.json` says `summary` and the index says `description`, because the
+ * flat fields have always used the spelling the daemon deserialises. **One
+ * function, called for the flat pair and for every locale block**, so the two
+ * cannot come to mean different things.
+ *
+ * The alternative is a field list written out twice, and it has a specific bad
+ * ending: `plugin.json`'s `description` is the 4,000-character body and the
+ * index's `description` is the 200-character card line. A second copy of this
+ * rename that reached for `description` on both sides would put the body under
+ * the card's name, in two files, passing every length check on the way.
+ *
+ * `details` — plugin.json's `description`, copied into the index under a third
+ * name — used to be emitted beside these. It is gone: `RegistryPlugin` has no
+ * such field, so serde dropped it in every daemon that ever fetched it, and in
+ * all ten listings it was byte-identical to `description`, which the store site
+ * then rendered as a second paragraph saying the same sentence twice. Deleting
+ * it also takes a 4,000-character field out of the site's search haystack,
+ * which is the one place a "translation" could have been used as a ranking
+ * lever against a reviewer reading a clean English card.
+ */
+function cardText(doc) {
+  return { name: doc.name, description: doc.summary };
+}
+
 export function buildIndex({ root = REPO_ROOT, serial } = {}) {
   const { errors, plugins } = loadSources(root);
   const { errors: pubErrors, publishers } = loadPublishers(root);
@@ -265,10 +292,11 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
 
     entries.push({
       id: p.id,
-      name: p.name,
       version: latest.version,
-      description: p.summary,
-      ...(p.description !== undefined ? { details: p.description } : {}),
+      ...cardText(p),
+      ...(p.i18n !== undefined
+        ? { i18n: Object.fromEntries(Object.entries(p.i18n).map(([code, block]) => [code, cardText(block)])) }
+        : {}),
       ...(p.author?.name !== undefined ? { author: p.author.name } : {}),
       ...(p.author?.url !== undefined ? { author_url: p.author.url } : {}),
       license: p.license,

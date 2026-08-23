@@ -34,7 +34,17 @@ A plugin is listed when all of the following hold.
 | Its licence is on the SPDX allowlist. | `validate.mjs` against `policy/spdx-allowlist.json` |
 | Its id is a safe path component, is not reserved, and is not confusable with a listed id. | `validate.mjs` against `policy/reserved-ids.json` |
 | Each artifact is at most 256 MiB. | `validate.mjs` against `policy/limits.json` |
+| **The store card carries English text.** Covers the summary and the description; the **name** is a warning only, because product names are legitimately not English. | `astra-plugin check` and `astra-plugin build` before the tag; `E_LISTING_NOT_ENGLISH` in `bot/lib/locales.mjs` at ingest; `validate.mjs` over the committed tree. Exemptions live in `policy/listing-language-exemptions.json`, keyed on `source.repo` |
 | It does something a user asked for, described honestly. | maintainer |
+
+A card may also carry its name and summary in any of the other nine languages
+Astra can be set to. Those come out of the bundle — `locales/<code>.json`, under
+the reserved keys `listing.name` and `listing.description` — and never out of a
+form, so they are covered by the same build attestation as everything else in a
+listing, and they are re-derived on every release rather than carried forward.
+**Every locale's name is held to the same name rules as the English one** (§3):
+a listing whose English card reads `Media Tools` and whose Russian card reads
+`Telegram` is impersonation that happens to be invisible to whoever approved it.
 
 `release.kind: direct`, which names an artifact origin that is not a GitHub
 release, is a shape the schemas can express and this catalogue does not list.
@@ -103,6 +113,24 @@ each other are **flagged for a human**, not rejected.
 stop a determined attacker,** and no amount of Unicode folding will. Report a
 name you believe is impersonation — that path works, and it is the one that
 scales.
+
+The same rules run over **every localized card name**, not only the English one,
+and the two adjustments that keep them usable are worth stating: a trademark
+claim is an error in every language, because a rule that held only for the
+language a reviewer reads would be a reading test rather than a rule; and a
+Russian or Ukrainian name that mixes Cyrillic with Latin is not flagged as mixed
+script, because `Клиент Telegram` is what an honest Russian name for a
+third-party client looks like. A Latin-script name that borrows a Cyrillic
+letter still is flagged, and that is the case the rule was written for.
+
+**The English rule in §1 is a script check, not a language detector.** It refuses
+a summary whose letters are under 60% Latin — which catches Cyrillic, CJK,
+Arabic, Greek, Hebrew and Devanagari, and caught the listing this rule was
+written after. It cannot tell English from French, and a card written in fluent
+French passes it. That is the honest statement of what is enforced: *cards
+written entirely in another alphabet are refused*, and nothing more. The
+mechanism is a reviewed exemption file rather than a dated deadline, because the
+cheapest response to a build that fails on a fixed morning is to edit the date.
 
 Reserved ids and prefixes are in `policy/reserved-ids.json`. Removing an entry
 there is a security change, not a cleanup — and so is adding one to either

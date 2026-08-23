@@ -358,6 +358,133 @@ export const CODES = {
       "with a sentence on why.",
   },
 
+  // ── the card, in more than one language ────────────────────────────────────
+  //
+  // Read out of `locales/<code>.json` in the bundle the bot already holds, under
+  // the two reserved keys `listing.name` and `listing.description`. Nothing here
+  // is typed by a submitter and nothing here is a second download.
+  E_LISTING_NOT_ENGLISH: {
+    level: "error", stage: "metadata",
+    title: "The store card's summary is not in English",
+    remedy:
+      "Write `plugin.description` in English and put your own language in `locales/<code>.json` " +
+      "under `listing.description`. The card, the search index, every client that predates " +
+      "localization and every user whose language you have not translated all read the English " +
+      "one. This is a SCRIPT check, not a language detector: it refuses a description whose " +
+      "letters are under 60% Latin, and it cannot tell English from French.",
+  },
+  W_LISTING_NAME_NOT_LATIN: {
+    level: "warn", stage: "metadata",
+    title: "The plugin's name is mostly outside the Latin script",
+    remedy:
+      "Nothing to fix, necessarily — a product name is not prose and is legitimately anything. " +
+      "The summary beside it is held to English, so check that the two read as one listing.",
+  },
+  E_LOCALE_NO_ENGLISH: {
+    level: "error", stage: "metadata",
+    title: "`locales/` has translations and no `en.json`",
+    remedy:
+      "`astra-plugin locale add en`. English is the base every other language falls back to, and " +
+      "the released daemon falls back per FILE rather than per key — it selects one whole locale " +
+      "map and then resolves — so without `en.json` there is nothing to fall back to and the key " +
+      "itself reaches the screen.",
+  },
+  E_LOCALE_UNKNOWN_CODE: {
+    level: "error", stage: "metadata",
+    title: "A locale file is named for a language Astra cannot be set to",
+    remedy:
+      "The ten codes are in `AstraPlugins/spec/locales.yaml`. Matching is exact string equality and " +
+      "there are no region tags anywhere in this system — Chinese is `zh`, never `zh-CN` — so a " +
+      "file named anything else is packed, digested, signed, installed, and read by nothing.",
+  },
+  E_LOCALE_MALFORMED: {
+    level: "error", stage: "metadata",
+    title: "A locale file is not a flat map of string to string",
+    remedy:
+      "Flatten it. The daemon deserialises `HashMap<String,String>` and drops the WHOLE file on one " +
+      "non-string value — silently, at install time — so a nested object costs every translation in " +
+      "that file and says nothing. Plurals are key suffixes (`msg.done.one`), never nested objects.",
+  },
+  E_LOCALE_KEY_MISSING: {
+    level: "error", stage: "metadata",
+    title: "A locale file is missing keys `en.json` declares",
+    remedy:
+      "`astra-plugin locale add <code>` seeds the missing keys from English and leaves what is " +
+      "already translated alone. Every language must carry every key while the daemon falls back " +
+      "per file: a key missing here is not filled in from English, it is shown to the user as a key.",
+  },
+  E_LOCALE_KEY_EXTRA: {
+    level: "error", stage: "metadata",
+    title: "A locale file declares keys `en.json` does not",
+    remedy:
+      "Add them to `en.json` or delete them. `en.json` is the base, so a key that is not in it can " +
+      "never be reached from any other language and is dead weight in every bundle.",
+  },
+  E_LISTING_TEXT_MISMATCH: {
+    level: "error", stage: "metadata",
+    title: "`en.json`'s `listing.*` disagrees with `plugin.toml`",
+    remedy:
+      "`astra-plugin locale sync` rewrites `en.json` from `plugin.toml`. They are the same fact in " +
+      "two files because the manifest crate cannot hold a locale table, and the card is drawn from " +
+      "one while every other language falls back to the other — so a disagreement is a listing that " +
+      "says two things.",
+  },
+  E_LOCALE_CARD_TOO_LONG: {
+    level: "error", stage: "metadata",
+    title: "A localized card string is over its cap",
+    remedy:
+      "See `policy/limits.json`: 64 characters for a name, 4000 for a description. The block is " +
+      "refused, so that language's card falls back to English with nothing explaining why.",
+  },
+  E_LOCALE_CARD_TOO_LARGE: {
+    level: "error", stage: "metadata",
+    title: "One listing's translations are over the per-listing budget",
+    remedy:
+      "See `max_listing_i18n_bytes` in `policy/limits.json`. The catalogue is one signed document " +
+      "every install fetches whole every hour; this budget is what keeps one listing's translations " +
+      "from being everybody's download.",
+  },
+  E_LOCALE_TOO_LARGE: {
+    level: "error", stage: "metadata",
+    title: "A locale file is too big to read",
+    remedy:
+      "See `max_locale_bytes` and `max_locale_keys` in `policy/limits.json`. The file is refused " +
+      "unread — a locale file is loaded whole by the daemon, by the CLI and by this bot, and before " +
+      "the parse is the only cheap place to stop a runaway one.",
+  },
+  E_LOCALE_BUNDLE_MISMATCH: {
+    level: "error", stage: "bundle",
+    title: "This release's bundles carry different translations",
+    remedy:
+      "Build every platform from the same tree. The store card is derived from one bundle and each " +
+      "platform installs its own, so bundles whose `locales/` differ describe different plugins to " +
+      "different halves of the users.",
+  },
+  W_LOCALE_STALE: {
+    level: "warn", stage: "metadata",
+    title: "A translation describes English that has since been rewritten",
+    remedy:
+      "`astra-plugin locale sync` before the next release. The affected strings fall back to English " +
+      "on the card rather than being shown: a confidently wrong sentence in a language nobody here " +
+      "can proof-read is worse than a correct one in the wrong language, and the release is not " +
+      "refused over prose.",
+  },
+  W_LOCALE_NO_CARD_TEXT: {
+    level: "warn", stage: "metadata",
+    title: "`en.json` declares neither reserved listing key",
+    remedy:
+      "`astra-plugin locale sync` writes `listing.name` and `listing.description`. They are the only " +
+      "two keys the registry reads out of `locales/`, so without them a plugin that translates its " +
+      "whole interface still gets an English-only store card.",
+  },
+  N_LISTING_LANGUAGE_EXEMPT: {
+    level: "note", stage: "metadata",
+    title: "The English card rule was waived for this repository",
+    remedy:
+      "Nothing to do. The waiver is a reviewed entry in `policy/listing-language-exemptions.json`, " +
+      "keyed on the repository rather than on the plugin id so that a rename cannot walk past it.",
+  },
+
   // ── versions and identity ──────────────────────────────────────────────────
   E_VERSION_NOT_NEW: { level: "error", stage: "version", title: "That version is already listed, or is older than one that is", remedy: "Releases go forward. Bump the version and cut a new release — a version that is republished with different bytes is how a downgrade attack starts." },
   E_VERSION_INCONSISTENT: { level: "error", stage: "version", title: "The release's bundles do not agree on a version", remedy: "One release, one version, every target. Check the build matrix." },

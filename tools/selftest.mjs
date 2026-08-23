@@ -14,7 +14,14 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
-import { runValidation } from "./validate.mjs";
+import {
+  checkListingLanguage,
+  checkLocaleCorpus,
+  checkLocaleVocabulary,
+  checkMirroredListingLimits,
+  runValidation,
+} from "./validate.mjs";
+import { localeEnumProblems } from "../bot/lib/locales.mjs";
 import { buildIndex } from "./build-index.mjs";
 import {
   CATALOG_TTL_DAYS, INDEX_SCHEMA, REVOCATIONS_SCHEMA, REVOCATION_TTL_DAYS, TRUST_SCHEMA,
@@ -28,7 +35,7 @@ import { loadTestRoot } from "./testkeys/regenerate.mjs";
 import { stableStringify, jcs } from "./lib/canonical.mjs";
 import { validate as validateSchema } from "./lib/jsonschema.mjs";
 import { makeFixtures } from "./make-fixtures.mjs";
-import { REPO_ROOT, expiredPublishers, loadPublishers, loadSources, publisherNameCollisions } from "./lib/sources.mjs";
+import { REPO_ROOT, expiredPublishers, loadPolicy, loadPublishers, loadSchemas, loadSources, publisherNameCollisions } from "./lib/sources.mjs";
 import { reservedPrefixViolation } from "./lib/reserved.mjs";
 import { proofNamesOwner, recheck } from "../bot/recheck-publishers.mjs";
 import { readZip, readEntry, writeZip } from "./lib/zip.mjs";
@@ -54,6 +61,16 @@ async function test(name, fn) {
     console.log(`  FAIL  ${name}`);
     console.log(`        ${e.message.split("\n").join("\n        ")}`);
     failures.push(name);
+  }
+}
+
+/**
+ * Two values, and the difference printed when they are not one value. `assert`
+ * alone reports "expected true" for a mismatch nobody can then see.
+ */
+function assertEqual(actual, expected, message) {
+  if (actual !== expected) {
+    throw new Error(`${message}\n  expected: ${JSON.stringify(expected)}\n  actual:   ${JSON.stringify(actual)}`);
   }
 }
 
@@ -667,6 +684,245 @@ await test("a limit that drifts from AstraPlugins/spec/limits.yaml is caught", a
         "the limit that did NOT drift was reported anyway");
     });
 });
+// ── the locale couplings ────────────────────────────────────────────────────
+//
+// Three facts about locales are kept in more than one place, and all three are
+// tested by CONSTRUCTING a drift rather than by waiting for one. A mirror check
+// nobody has watched fail is a mirror check nobody knows works, and each of
+// these is silent in the direction that matters: nothing errors, nothing is
+// missing, a document says the right thing, and no program ever asks it.
+
+/**
+ * A fake AstraPlugins checkout with exactly the files a case needs, and one
+ * check run against it.
+ *
+ * `$ASTRA_PLUGINS_DIR` is tried before the sibling working copy, so a fake that
+ * carries the file under test wins in both places these tests run: a
+ * developer's machine with AstraPlugins beside this repository, and CI, where
+ * the only checkout is the one the workflow fetched.
+ */
+function withFakeCheckout(dirName, files, fn) {
+  const root = path.join(tmp, dirName);
+  for (const [rel, body] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+    fs.writeFileSync(path.join(root, rel), body);
+  }
+  const found = [];
+  const ctx = {
+    report: {
+      error: (where, message, hint) => found.push({ level: "error", where, message, hint }),
+      warn: (where, message, hint) => found.push({ level: "warn", where, message, hint }),
+      note: (where, message, hint) => found.push({ level: "note", where, message, hint }),
+    },
+    policy: loadPolicy(REPO_ROOT),
+    schemas: loadSchemas(REPO_ROOT),
+    root: REPO_ROOT,
+  };
+  const prev = process.env.ASTRA_PLUGINS_DIR;
+  process.env.ASTRA_PLUGINS_DIR = root;
+  try {
+    fn(ctx, found);
+  } finally {
+    if (prev === undefined) delete process.env.ASTRA_PLUGINS_DIR;
+    else process.env.ASTRA_PLUGINS_DIR = prev;
+  }
+  return found;
+}
+
+const LOCALES_YAML = "en   English\nru   Русский\nuk   Українська\nde   Deutsch\nfr   Français\n" +
+  "es   Español\npt   Português\nja   日本語\nzh   中文\nko   한국어\n";
+
+await test("C15 — the bot's locale list and both schema enums are one vocabulary", () => {
+  // The in-repository half, which needs no checkout at all. A bot that emits a
+  // locale the schema rejects does not fail that listing: it fails
+  // `validateSchema(schemas.index, doc)` on the deploy candidate, which stops
+  // the catalogue for every listing because one plugin shipped a translation.
+  const schemas = loadSchemas(REPO_ROOT);
+  assertEqual(localeEnumProblems(schemas.plugin, "schema/plugin-v1.json").length, 0,
+    "the source schema disagrees with bot/lib/locales.mjs today");
+  assertEqual(localeEnumProblems(schemas.index, "schema/index-v1.json").length, 0,
+    "the index schema disagrees with bot/lib/locales.mjs today");
+
+  // Constructed drift, one in each direction.
+  const narrowed = JSON.parse(JSON.stringify(schemas.plugin));
+  narrowed.properties.i18n.propertyNames.enum =
+    narrowed.properties.i18n.propertyNames.enum.filter((c) => c !== "uk");
+  assert(localeEnumProblems(narrowed, "fake").some((p) => p.includes("uk")),
+    "a schema that stopped accepting a locale the bot emits was not noticed");
+
+  const widened = JSON.parse(JSON.stringify(schemas.index));
+  widened.$defs.plugin.properties.i18n.propertyNames.enum.push("en");
+  assert(localeEnumProblems(widened, "fake").some((p) => p.includes('accepts "en"')),
+    "`en` as an i18n key is the drift that looks harmless: it duplicates the untranslated card");
+
+  // And the reach of the check itself. Rename the member and this reader must
+  // say so, rather than comparing nine codes against nothing and reporting a
+  // clean bill of health for a schema it never opened.
+  const moved = JSON.parse(JSON.stringify(schemas.plugin));
+  delete moved.properties.i18n;
+  let threw = null;
+  try { localeEnumProblems(moved, "fake"); } catch (e) { threw = e.message; }
+  assert(threw?.includes("no i18n member"),
+    `a vanished member must be an error, not an empty comparison: ${threw}`);
+});
+
+await test("C15 — the vocabulary is compared with spec/locales.yaml, and that parse has a floor", () => {
+  const drifted = withFakeCheckout("fake-ap-locales-drift",
+    { "spec/locales.yaml": LOCALES_YAML.replace("zh   中文\n", "zh-CN   中文\n") },
+    (ctx) => checkLocaleVocabulary(ctx));
+  assert(drifted.some((f) => f.level === "error" && f.message.includes("zh-CN")),
+    `the spelling that ships an unselectable locale file was not caught: ${JSON.stringify(drifted)}`);
+
+  const agreeing = withFakeCheckout("fake-ap-locales-ok",
+    { "spec/locales.yaml": LOCALES_YAML },
+    (ctx) => checkLocaleVocabulary(ctx));
+  assertEqual(agreeing.filter((f) => f.level === "error").length, 0,
+    `agreeing vocabularies were reported as drift: ${JSON.stringify(agreeing)}`);
+
+  // The floor, and it is the difference between "the vocabulary shrank" and
+  // "this reader stopped matching the file" — which need opposite fixes and
+  // look identical from a green tick.
+  const unparseable = withFakeCheckout("fake-ap-locales-shape",
+    { "spec/locales.yaml": "# every row is now a comment\n" },
+    (ctx) => checkLocaleVocabulary(ctx));
+  assert(unparseable.some((f) => f.message.includes("cannot be right")),
+    `an empty parse must fail as a broken scan: ${JSON.stringify(unparseable)}`);
+});
+
+await test("C20 — the four caps AstraPlugins mirrors FROM here, and which side is the copy", () => {
+  const mirrors = (nameCap) =>
+    `# mirrors: astra-registry/policy/limits.json max_name_length\nmax_name_length: ${nameCap}\n` +
+    "# mirrors: astra-registry/policy/limits.json max_summary_length\nmax_summary_length: 200\n" +
+    "# mirrors: astra-registry/policy/limits.json max_description_length\nmax_description_length: 4000\n" +
+    "# mirrors: astra-registry/schema/version-v1.json $.properties.permissions.patternProperties.*.properties.reason maxLength\n" +
+    "max_permission_reason_chars: 140\n";
+
+  const ok = withFakeCheckout("fake-ap-listing-ok", { "spec/listing-limits.yaml": mirrors(64) },
+    (ctx) => checkMirroredListingLimits(ctx));
+  assertEqual(ok.filter((f) => f.level === "error").length, 0,
+    `today's four caps were reported as drift: ${JSON.stringify(ok)}`);
+
+  const drift = withFakeCheckout("fake-ap-listing-drift", { "spec/listing-limits.yaml": mirrors(48) },
+    (ctx) => checkMirroredListingLimits(ctx));
+  const hit = drift.find((f) => f.level === "error");
+  assert(hit?.message.includes("48"), `a cap that drifted was not caught: ${JSON.stringify(drift)}`);
+  // Which side somebody edits to make a mirror check pass is the whole question
+  // for this class of check, and the answer belongs in the message, because the
+  // fastest way to green is to edit whichever of the two files is on screen.
+  assert(hit.hint.includes("THIS repository owns these numbers"),
+    "the message must say which of the two files is the copy");
+
+  // The JSON-pointer target, resolved rather than guessed at: it names a schema
+  // keyword rather than a policy key, and a reader that quietly failed to
+  // resolve it would leave that cap unpinned in both repositories.
+  const pointer = withFakeCheckout("fake-ap-listing-pointer",
+    { "spec/listing-limits.yaml": mirrors(64).replace("max_permission_reason_chars: 140", "max_permission_reason_chars: 999") },
+    (ctx) => checkMirroredListingLimits(ctx));
+  assert(pointer.some((f) => f.message.includes("999")),
+    `the schema-pointer mirror did not resolve: ${JSON.stringify(pointer)}`);
+
+  // And the floor: a file this reader can no longer parse is a broken scan, not
+  // a shrinking list of caps.
+  const shapeless = withFakeCheckout("fake-ap-listing-shape",
+    { "spec/listing-limits.yaml": "max_name_length = 64\n" },
+    (ctx) => checkMirroredListingLimits(ctx));
+  assert(shapeless.some((f) => f.message.includes("below the floor")),
+    `a file that stopped parsing must say so: ${JSON.stringify(shapeless)}`);
+});
+
+await test("C16 — an absent or shrunken locale corpus is never read as a clean one", () => {
+  const one = "[plugin]\nname = \"x\"\ndescription = \"x\"\n";
+  const empty = withFakeCheckout("fake-ap-corpus-empty",
+    { "testdata/locales/pass/only/plugin.toml": one },
+    (ctx) => checkLocaleCorpus(ctx));
+  const floor = empty.find((f) => f.message.includes("floor"));
+  assert(floor, `a one-case corpus passed for a full one: ${JSON.stringify(empty)}`);
+  assert(floor.hint.includes("this SCAN is what broke"),
+    "the floor's message has to separate `the rules shrank` from `the reader is looking in the wrong place`");
+
+  // A fixture expecting a rule this side neither implements nor exempts is a
+  // decision nobody made. It is reported, rather than skipped, because the
+  // exemption list is the load-bearing half of the arrangement: it turns
+  // forgetting into a visible blank.
+  const files = {};
+  for (let i = 0; i < 4; i++) files[`testdata/locales/pass/p${i}/plugin.toml`] = one;
+  for (let i = 0; i < 12; i++) {
+    files[`testdata/locales/fail/f${i}/plugin.toml`] = one;
+    files[`testdata/locales/fail/f${i}/EXPECT`] = "E1\n";
+    files[`testdata/locales/fail/f${i}/locales/ru.json`] = '{"listing.name":"x","listing.description":"x"}';
+  }
+  files["testdata/locales/fail/f0/EXPECT"] = "E99\n";
+  const unknown = withFakeCheckout("fake-ap-corpus-unknown", files, (ctx) => checkLocaleCorpus(ctx));
+  assert(unknown.some((f) => f.message.includes("E99")),
+    `a rule id from the future was silently ignored: ${JSON.stringify(unknown.map((f) => f.message))}`);
+});
+
+await test("the English card rule, and an exemption that has outlived its listing", () => {
+  const listing = (id, summary, repo) => ({
+    file: `plugins/${id}/plugin.json`,
+    doc: { id, summary, source: { kind: "github", repo } },
+  });
+  const russian = "Шахматы против локального бота или выбранной модели Astra с игровым чатом.";
+  const run = (plugins, exempt) => {
+    const found = [];
+    const ctx = {
+      report: {
+        error: (where, message, hint) => found.push({ level: "error", where, message, hint }),
+        warn: (where, message, hint) => found.push({ level: "warn", where, message, hint }),
+        note: () => {},
+      },
+      policy: { ...loadPolicy(REPO_ROOT), listingLanguage: { exempt } },
+    };
+    checkListingLanguage(plugins, ctx);
+    return found;
+  };
+
+  const refused = run([listing("chess", russian, "KNICE-TECH/chess")], []);
+  assert(refused.some((f) => f.level === "error"), `a Russian card was listed: ${JSON.stringify(refused)}`);
+  assert(refused[0].hint.includes("NOT an edit to this file"),
+    "the fix is a release, not a hand edit to a derived document that the next release would contradict");
+
+  const excused = run([listing("chess", russian, "KNICE-TECH/chess")], [{ repo: "KNICE-TECH/chess", reason: "test" }]);
+  assertEqual(excused.filter((f) => f.level === "error").length, 0,
+    `the exemption did not excuse: ${JSON.stringify(excused)}`);
+  // Keyed on the repository and not on the id, because an id can be re-taken
+  // under a different repository and a rename would walk straight past it.
+  const renamed = run([listing("astra-chess", russian, "KNICE-TECH/astra-chess")], [{ repo: "KNICE-TECH/chess" }]);
+  assert(renamed.some((f) => f.level === "error"),
+    "an exemption for one repository must not follow the plugin to another one");
+
+  // An unlisted plugin is rendered to nobody in any language, so it is skipped —
+  // and it is worth knowing this is live rather than hypothetical: `knice-chess`
+  // is in the tree, is unlisted, is Russian, and is the only listing that fails
+  // this check today.
+  const hidden = run([{ file: "plugins/knice-chess/plugin.json", doc: { id: "knice-chess", summary: russian, unlisted: true, source: { repo: "x/y" } } }], []);
+  assertEqual(hidden.length, 0, `an unlisted plugin was audited: ${JSON.stringify(hidden)}`);
+
+  // An exemption nobody needs is a hole nobody is watching: the next release
+  // from that repository inherits an excuse no one granted it.
+  const stale = run([listing("chess", "Plays chess.", "KNICE-TECH/chess")], [{ repo: "KNICE-TECH/chess" }]);
+  assert(stale.some((f) => f.message.includes("not being used")),
+    `an exemption for a card that is English now was not reported: ${JSON.stringify(stale)}`);
+});
+
+await test("a hand-edited locale name is scanned like every other display string", async () => {
+  // The hole this closes: `tools/validate.mjs` applied `unsafeDisplayText` to a
+  // hardcoded three-field object literal — name, summary, author — so a
+  // maintainer who typed an i18n block into a plugin.json by hand got no
+  // display-text scan at all, and CI stayed green because the generator
+  // faithfully reproduced whatever the tree said.
+  const dir = path.join(tmp, "hand-edited-i18n");
+  fs.cpSync(path.join(REPO_ROOT, "tests/fixtures/id-collision/plugins/dice-roller"),
+    path.join(dir, "plugins/dice-roller"), { recursive: true });
+  const file = path.join(dir, "plugins/dice-roller/plugin.json");
+  const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+  doc.i18n = { ru: { name: "Dice Roller‮", summary: "Бросает кости." } };
+  fs.writeFileSync(file, stableStringify(doc));
+  const { report } = await validateTree(dir);
+  assert(errorsMatching(report, "i18n.ru.name").length === 1,
+    `a bidi override in a localized card name reached the store: ${report.errors.map((e) => e.message).join("; ")}`);
+});
+
 await test("matching limits produce no finding, and a renamed constant does", async () => {
   await withFakeAstraPlugins("fake-ap-ok",
     "max_extract_bytes: 524_288_000\nmax_archive_entries: 10_000\n",

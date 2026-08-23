@@ -178,7 +178,12 @@ test("hostile listing text is escaped everywhere it lands", () => {
   const p = doc.signed.plugins[0];
   p.name = '<script>alert(1)</script>';
   p.description = '"><img src=x onerror=alert(1)>';
-  p.details = "</textarea><svg onload=alert(1)>";
+  // This payload used to sit on `p.details`, a field the index no longer
+  // carries and this site no longer renders. Left there it would have kept
+  // passing — a string nothing prints cannot appear raw in the output — and
+  // that is an assertion that has quietly stopped asking anything. Moved onto
+  // the author string, which IS rendered, on both pages.
+  p.author = "</textarea><svg onload=alert(1)>";
   p.releases[0].permissions.fire_trigger.reason = "<b>bold</b>";
   const { out } = buildInto("escape", doc);
   for (const file of ["index.html", path.join("p", "alpha", "index.html")]) {
@@ -193,6 +198,13 @@ test("hostile listing text is escaped everywhere it lands", () => {
     assert.ok(!html.includes("</textarea>"), `${file} contains a raw closing tag`);
     assert.ok(html.includes("&lt;script&gt;alert(1)&lt;/script&gt;"), `${file} did not escape the name at all`);
   }
+  // The author string is on the plugin page and not on the catalogue index —
+  // which the first version of this assertion got wrong, and which is exactly
+  // why the payload has to land somewhere the test then proves was rendered.
+  // Without this line the `</textarea>` assertion above passes for a string
+  // that never reached a template.
+  const page = fs.readFileSync(path.join(out, "p", "alpha", "index.html"), "utf8");
+  assert.ok(page.includes("&lt;svg onload"), "the plugin page did not render the escaped author at all");
 });
 
 test("href refuses a scheme that is not https", () => {

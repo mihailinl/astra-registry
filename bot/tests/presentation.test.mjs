@@ -676,6 +676,38 @@ await test("a two-listing tree builds", () => {
   assertEqual(doc.signed.plugins.length, 2, "the fixture the next test mutates does not build clean");
 });
 
+await test("the built entry CARRIES the localized card, in the index's own vocabulary", () => {
+  // Omission here is silent — `i18n` is optional, so an entry without it
+  // validates cleanly, exactly as `homepage` and `unlisted` did before it — so
+  // this asserts what the generator PUTS IN rather than what the schema
+  // tolerates. A test that only validated would pass for a catalogue in which
+  // localization had quietly stopped happening.
+  const root = treeWith({}, { i18n: { ru: { name: "Бросок костей", summary: "Бросает кости." } } });
+  const entry = buildIndex({ root, serial: 1 }).signed.plugins[0];
+  assertEqual(entry.i18n.ru.name, "Бросок костей", "the locale block did not reach the index");
+  assertEqual(entry.i18n.ru.description, "Бросает кости.",
+    "`summary` in plugin.json is `description` in the index, and one function does that rename for the flat " +
+    "fields and for every locale block — two copies of it is how a 4000-character body ends up under the " +
+    "card line's name");
+  assertEqual(entry.i18n.ru.summary, undefined, "the source document's spelling must not survive into the index");
+  assertEqual(entry.description, "Rolls dice when you ask it to.", "and the flat English is untouched");
+  assertEqual(entry.i18n.en, undefined, "`en` is the flat pair, and is never a key here");
+});
+
+await test("`details` is gone from every entry the generator writes", () => {
+  // 742 bytes across ten listings, byte-identical to `description` in all of
+  // them, dropped by serde in every daemon that ever fetched it — and rendered
+  // by this repository's own store site as a second paragraph saying the same
+  // sentence twice. Deleting it also took a 4,000-character free-text field out
+  // of the site's search haystack, which is the one place a "translation" could
+  // have been used as a ranking lever against a reviewer reading English.
+  const root = treeWith({}, { description: "The long body a listing may carry." });
+  const entry = buildIndex({ root, serial: 1 }).signed.plugins[0];
+  assertEqual(entry.details, undefined, "the field is back, and nothing deserialises it");
+  assert(!JSON.stringify(entry).includes("The long body"),
+    "the body reached the index under some other name, which is the same bytes with a new story");
+});
+
 await test("an over-cap README fails the build naming every listing, not the first", () => {
   const root = treeWith({ "README.md": overCapReadme }, { readme: "README.md" });
   treeWith({ "README.md": overCapReadme }, { readme: "README.md" }, { root, id: "text-utils" });

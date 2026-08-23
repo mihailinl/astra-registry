@@ -162,9 +162,21 @@
           "maxLength": 200,
           "description": "The one-line card text. Projection of plugin.json's `summary`; named `description` because that is the field the daemon already deserialises."
         },
-        "details": {
-          "type": "string",
-          "maxLength": 4000
+        "i18n": {
+          "$comment": "The same member as schema/plugin-v1.json's, in the INDEX's vocabulary: `summary` there is `description` here, because tools/build-index.mjs renames plugin.json's `summary` on the way in and the flat fields have always used the daemon's spelling. That rename happens in ONE function which both the flat fields and these blocks call, so the two cannot come to mean different things — the alternative, two field lists written out twice, is how a 200-character summary and a 4,000-character body end up under one name in two files with both passing every check.\n\n`en` is not a key: the flat `name` and `description` above ARE the English. The nine codes are AstraPlugins/spec/locales.yaml minus `en` and coupling C15 compares this enum with schema/plugin-v1.json's and with bot/lib/locales.mjs.\n\nA client that has never heard of this member reads the flat fields and renders English, which is the required fallback and costs nothing: `RegistryPlugin` in the daemon carries no `deny_unknown_fields` and the signature covers the whole `signed` member whether or not the typed model looks at it.",
+          "type": "object",
+          "propertyNames": {
+            "enum": ["ru", "uk", "de", "fr", "es", "pt", "ja", "zh", "ko"]
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "description"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "description": { "type": "string", "minLength": 1, "maxLength": 200 }
+            }
+          }
         },
         "readme": {
           "type": "string",
