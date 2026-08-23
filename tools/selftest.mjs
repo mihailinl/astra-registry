@@ -15,6 +15,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 import {
+  checkEveryCapDeclaresItsAuthorSide,
   checkListingLanguage,
   checkLocaleCorpus,
   checkLocaleCorpusCoverage,
@@ -791,18 +792,57 @@ await test("C15 — the vocabulary is compared with spec/locales.yaml, and that 
     `an empty parse must fail as a broken scan: ${JSON.stringify(unparseable)}`);
 });
 
-await test("C20 — the four caps AstraPlugins mirrors FROM here, and which side is the copy", () => {
+await test("C20 — the caps AstraPlugins mirrors FROM here, and which side is the copy", () => {
   const mirrors = (nameCap) =>
     `# mirrors: astra-registry/policy/limits.json max_name_length\nmax_name_length: ${nameCap}\n` +
     "# mirrors: astra-registry/policy/limits.json max_summary_length\nmax_summary_length: 200\n" +
     "# mirrors: astra-registry/policy/limits.json max_description_length\nmax_description_length: 4000\n" +
     "# mirrors: astra-registry/schema/version-v1.json $.properties.permissions.patternProperties.*.properties.reason maxLength\n" +
-    "max_permission_reason_chars: 140\n";
+    "max_permission_reason_chars: 140\n" +
+    "# mirrors: astra-registry/policy/limits.json max_locale_bytes\nmax_locale_bytes: 262144\n" +
+    "# mirrors: astra-registry/policy/limits.json max_locale_keys\nmax_locale_keys: 5000\n" +
+    "# mirrors: astra-registry/policy/limits.json max_listing_i18n_bytes\nmax_listing_i18n_bytes: 8192\n";
 
   const ok = withFakeCheckout("fake-ap-listing-ok", { "spec/listing-limits.yaml": mirrors(64) },
     (ctx) => checkMirroredListingLimits(ctx));
   assertEqual(ok.filter((f) => f.level === "error").length, 0,
-    `today's four caps were reported as drift: ${JSON.stringify(ok)}`);
+    `today's caps were reported as drift: ${JSON.stringify(ok)}`);
+
+  // ── the reverse direction ──────────────────────────────────────────────
+  // The one the forward loop structurally cannot run: it walks that file's
+  // rows, so a cap that file does not carry is invisible to it however
+  // carefully it is written. This is what three locale caps were enforced at
+  // ingest and mirrored nowhere behind, for a day, with both halves green.
+  //
+  // The mutation is a DELETION rather than a bad value, because a bad value is
+  // already what the loop above catches. Constructed in the direction the real
+  // failure arrived in: the registry holds the cap, upstream does not.
+  const unmirrored = withFakeCheckout("fake-ap-listing-reverse",
+    { "spec/listing-limits.yaml": mirrors(64).replace(/# mirrors:[^\n]*max_locale_bytes\nmax_locale_bytes: \d+\n/, "") },
+    (ctx) => checkMirroredListingLimits(ctx));
+  const gone = unmirrored.find((f) => f.level === "error" && f.message.includes("max_locale_bytes"));
+  assert(gone, `a cap declared _mirrored_by with no row upstream passed: ${JSON.stringify(unmirrored)}`);
+  // The two causes need opposite fixes and look identical from the error alone.
+  assert(gone.hint.includes("ASTRA_PLUGINS_REF"),
+    "a missing row is as often a stale pin as a deletion, and the message must name both");
+  // The repair that greens the check by destroying it.
+  assert(gone.hint.includes("Do NOT fix it by deleting"),
+    "the fastest green here is deleting the `_mirrored_by` sibling, so the message has to refuse it by name");
+
+  // And its floor: declarations deleted wholesale is the same green as a reader
+  // that stopped matching them, and they need opposite fixes.
+  const noDeclarations = withFakeCheckout("fake-ap-listing-nodecl",
+    { "spec/listing-limits.yaml": mirrors(64) },
+    (ctx) => checkMirroredListingLimits({
+      ...ctx,
+      policy: {
+        ...ctx.policy,
+        limits: Object.fromEntries(
+          Object.entries(ctx.policy.limits).filter(([k]) => !k.endsWith("_mirrored_by"))),
+      },
+    }));
+  assert(noDeclarations.some((f) => f.message.includes("below the floor of")),
+    `an empty declaration set must fail as a broken enumeration: ${JSON.stringify(noDeclarations)}`);
 
   const drift = withFakeCheckout("fake-ap-listing-drift", { "spec/listing-limits.yaml": mirrors(48) },
     (ctx) => checkMirroredListingLimits(ctx));
@@ -830,6 +870,63 @@ await test("C20 — the four caps AstraPlugins mirrors FROM here, and which side
     (ctx) => checkMirroredListingLimits(ctx));
   assert(shapeless.some((f) => f.message.includes("below the floor")),
     `a file that stopped parsing must say so: ${JSON.stringify(shapeless)}`);
+});
+
+await test("every cap in policy/limits.json says what an author's tree has to do with it", () => {
+  const run = (limits) => {
+    // `loadPolicy` wraps the file, and every reader unwraps with
+    // `ctx.policy.limits ?? ctx.policy`. Passing the bare map exercises the
+    // second branch, which is the one a hand-built ctx would otherwise skip.
+    const found = [];
+    checkEveryCapDeclaresItsAuthorSide({
+      report: {
+        error: (where, message, hint) => found.push({ level: "error", where, message, hint }),
+        warn: (where, message, hint) => found.push({ level: "warn", where, message, hint }),
+        note: (where, message, hint) => found.push({ level: "note", where, message, hint }),
+      },
+      policy: limits,
+    });
+    return found;
+  };
+
+  const real = loadPolicy(REPO_ROOT).limits;
+  const today = run(real);
+  assertEqual(today.filter((f) => f.level === "error").length, 0,
+    `the committed policy has an undeclared cap: ${JSON.stringify(today)}`);
+
+  // The floor first, before any mutation, because a reader that enumerates no
+  // caps reports every one of them as correctly declared.
+  assert(run({ max_only_one: 1 }).some((f) => f.message.includes("below the floor of")),
+    "a policy this reader can barely parse must fail as a broken scan, not pass as a tiny policy");
+
+  // A NEW CAP WITH NO SIBLING is the thing this check exists for: the way three
+  // locale caps came to be enforced at ingest and mirrored nowhere was not a
+  // decision, it was an absence nobody could see. Adding one must be red until
+  // somebody answers `can an author trip this from their own tree?`.
+  const added = run({ ...real, max_something_new: 99 });
+  const blank = added.find((f) => f.level === "error" && f.message.includes("max_something_new"));
+  assert(blank, `a cap with no declaration passed: ${JSON.stringify(added)}`);
+  assert(blank.hint.includes("_mirrored_by") && blank.hint.includes("_not_author_facing"),
+    "the message has to name the choices, because the person adding a cap is the only one who knows the answer");
+
+  // `_mirrors` and `_mirrored_by` are opposite claims about which repository
+  // owns the number. A cap asserting both pins nothing in either direction.
+  const both = run({ ...real, max_locale_bytes_mirrors: "AstraPlugins/spec/limits.yaml max_locale_bytes" });
+  assert(both.some((f) => f.level === "error" && f.message.includes("2 declarations")),
+    `a cap claiming to be both a copy and an original passed: ${JSON.stringify(both)}`);
+
+  // A `_mirrored_by` pointing anywhere else is a copy nothing compares — which
+  // is the state this convention exists to end, wearing the convention's badge.
+  const elsewhere = run({ ...real, max_locale_keys_mirrored_by: "somewhere/else.yaml max_locale_keys" });
+  assert(elsewhere.some((f) => f.level === "error" && f.message.includes("max_locale_keys_mirrored_by")),
+    `a declaration naming an uncompared file passed: ${JSON.stringify(elsewhere)}`);
+
+  // `_unmirrored` is recorded debt, not an exemption, and is named on every run
+  // rather than counted. Collapsing it into `_not_author_facing` would let real
+  // debt hide behind an innocuous word.
+  const debt = today.find((f) => f.level === "note" && f.message.includes("an author can trip"));
+  assert(debt && debt.message.includes("max_artifact_bytes"),
+    `the unmirrored caps must be named, not counted: ${JSON.stringify(today)}`);
 });
 
 await test("C16 — an absent or shrunken locale corpus is never read as a clean one", () => {
