@@ -253,13 +253,28 @@ env:
   # it is that AstraPlugins' own CI checks out no registry at all, so the
   # fixture lands there green and is invisible here until this line moves.
   #
-  # `2d35d2d` is AstraPlugins master, the merge commit of that pull request, and
-  # every value this variable takes must be a commit on master. A pin at a
-  # feature branch head is a pin somebody can force-push out from under this
-  # repository; one was set that way on 2026-08-23 while a pair was still open,
-  # so the registry half could run before its counterpart existed, and it was
-  # moved to the merge commit before that pair was closed.
-  ASTRA_PLUGINS_REF: 2d35d2d12564e2a54269da89a551c3bfe202e787
+  # Bumped again to `bc51241` for `max_artifact_bytes`. Same shape as the E19
+  # pairing above and for the same reason: this file now declares that cap
+  # `_mirrored_by` AstraPlugins/spec/listing-limits.yaml, and that row exists
+  # only from `bc51241`. Measured both ways rather than argued:
+  #
+  #   $ ASTRA_PLUGINS_DIR=<AstraPlugins@2d35d2d> node tools/validate.mjs --allow-staging
+  #   ERROR ... max_artifact_bytes is declared `_mirrored_by` this file, which has
+  #         no `max_artifact_bytes` row                                     FAIL
+  #   $ ASTRA_PLUGINS_DIR=<AstraPlugins@bc51241> node tools/validate.mjs --allow-staging
+  #   PASS  15 plugin(s), 0 error(s)
+  #
+  # `bc51241` is AstraPlugins master, and every value this variable takes must be
+  # a commit on master. A pin at a feature branch head is a pin somebody can
+  # force-push out from under this repository; one was set that way on
+  # 2026-08-23 while a pair was still open, so the registry half could run before
+  # its counterpart existed, and it was moved to the merge commit before that
+  # pair was closed.
+  #
+  # A note for the next person to move this line, learned by getting it wrong on
+  # this very bump: grepping the file for the OUTGOING 40-hex sha finds nothing,
+  # because the prose above carries the 7-character form. Search for both.
+  ASTRA_PLUGINS_REF: bc5124177fa0c14070f644d51cd298bf041e359b
   ASTRA_PLUGINS_URL: https://github.com/mihailinl/AstraPlugins.git
 
 jobs:
