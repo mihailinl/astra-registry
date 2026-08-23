@@ -793,6 +793,17 @@ await test("C15 — the vocabulary is compared with spec/locales.yaml, and that 
 });
 
 await test("C20 — the caps AstraPlugins mirrors FROM here, and which side is the copy", () => {
+  // A HAND-WRITTEN STAND-IN FOR `AstraPlugins/spec/listing-limits.yaml`, and
+  // therefore a third copy of the same list — which is the shape this whole
+  // page is about, so say it plainly rather than let somebody discover it.
+  //
+  // It has to carry a row for EVERY cap `policy/limits.json` declares
+  // `_mirrored_by`, because the reverse loop below walks those declarations and
+  // this string is what it walks them against. Adding a `_mirrored_by` sibling
+  // without adding the row here is red, immediately, with the same message a
+  // real missing row produces — which is how `max_artifact_bytes` was found to
+  // need this line on 2026-08-23. That is the right failure: the fixture is
+  // wrong in exactly the way the real file would be.
   const mirrors = (nameCap) =>
     `# mirrors: astra-registry/policy/limits.json max_name_length\nmax_name_length: ${nameCap}\n` +
     "# mirrors: astra-registry/policy/limits.json max_summary_length\nmax_summary_length: 200\n" +
@@ -801,7 +812,8 @@ await test("C20 — the caps AstraPlugins mirrors FROM here, and which side is t
     "max_permission_reason_chars: 140\n" +
     "# mirrors: astra-registry/policy/limits.json max_locale_bytes\nmax_locale_bytes: 262144\n" +
     "# mirrors: astra-registry/policy/limits.json max_locale_keys\nmax_locale_keys: 5000\n" +
-    "# mirrors: astra-registry/policy/limits.json max_listing_i18n_bytes\nmax_listing_i18n_bytes: 8192\n";
+    "# mirrors: astra-registry/policy/limits.json max_listing_i18n_bytes\nmax_listing_i18n_bytes: 8192\n" +
+    "# mirrors: astra-registry/policy/limits.json max_artifact_bytes\nmax_artifact_bytes: 268435456\n";
 
   const ok = withFakeCheckout("fake-ap-listing-ok", { "spec/listing-limits.yaml": mirrors(64) },
     (ctx) => checkMirroredListingLimits(ctx));
@@ -924,9 +936,34 @@ await test("every cap in policy/limits.json says what an author's tree has to do
   // `_unmirrored` is recorded debt, not an exemption, and is named on every run
   // rather than counted. Collapsing it into `_not_author_facing` would let real
   // debt hide behind an innocuous word.
-  const debt = today.find((f) => f.level === "note" && f.message.includes("an author can trip"));
-  assert(debt && debt.message.includes("max_artifact_bytes"),
-    `the unmirrored caps must be named, not counted: ${JSON.stringify(today)}`);
+  //
+  // ON A SYNTHETIC POLICY SINCE 2026-08-23, and the reason is worth the four
+  // lines. This assertion used to read the COMMITTED policy and require the
+  // note to name `max_artifact_bytes` — which was, at the time it was written,
+  // the only `_unmirrored` cap in the file. So the commit that paid that debt
+  // off (a row in AstraPlugins/spec/listing-limits.yaml, a rule in
+  // `astra-plugin build`, this sibling flipped to `_mirrored_by`) turned this
+  // test red, having changed nothing this test is about. A test pinned to
+  // today's list of open debts fails when a debt is paid, which puts the
+  // person doing the right thing in front of a red check and one keystroke
+  // from putting the `_unmirrored` sibling back.
+  const withDebt = run({
+    ...real,
+    max_pretend_bytes: 1,
+    max_pretend_bytes_unmirrored: "an author can trip it and nothing local checks it",
+  });
+  const debt = withDebt.find((f) => f.level === "note" && f.message.includes("an author can trip"));
+  assert(debt?.message.includes("max_pretend_bytes"),
+    `the unmirrored caps must be named, not counted: ${JSON.stringify(withDebt)}`);
+
+  // And the other end of it: no `_unmirrored` cap means NO note, rather than a
+  // note reporting zero. A list of debts is something somebody acts on; a line
+  // that says `0 cap(s)` every run is one they learn to skip past, and the day
+  // it says 1 they skip that too.
+  const noDebt = run(Object.fromEntries(
+    Object.entries(real).filter(([k]) => !k.endsWith("_unmirrored"))));
+  assert(!noDebt.some((f) => f.level === "note" && f.message.includes("an author can trip")),
+    `a policy with nothing unmirrored must produce no debt note: ${JSON.stringify(noDebt)}`);
 });
 
 await test("C16 — an absent or shrunken locale corpus is never read as a clean one", () => {
