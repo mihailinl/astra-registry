@@ -336,6 +336,12 @@ export async function ingest(opts, deps = {}) {
 
   // ── 7. the bundles have to agree with each other ──────────────────────────
   const first = perBundle[0];
+  // Taken ONCE, outside the loop. It used to be recomputed on every comparison,
+  // so at `max_artifacts_per_version: 8` the first bundle's locale files were
+  // parsed seven times over — and until this commit that parse had no size cap
+  // in front of it at all. `policy.limits` is what puts the cap before the
+  // parse; `localeSignature` now refuses to run without it.
+  const firstSignature = localeSignature(first.files, policy.limits);
   for (const b of perBundle.slice(1)) {
     if (b.facts.id !== first.facts.id) {
       f.error("E_MANIFEST_ID_MISMATCH", b.where,
@@ -351,7 +357,7 @@ export async function ingest(opts, deps = {}) {
     // platform: a Windows build whose ru.json says something the Linux build's
     // does not is a store card that describes the software half the users are
     // running. No extra download — these bytes are already in hand.
-    if (localeSignature(b.files) !== localeSignature(first.files)) {
+    if (localeSignature(b.files, policy.limits) !== firstSignature) {
       f.error("E_LOCALE_BUNDLE_MISMATCH", b.where,
         `this bundle's locale files disagree with ${first.where}'s — a different set of languages, ` +
         "or different `listing.name`/`listing.description` in one of them. The store card is " +
@@ -606,23 +612,104 @@ function finish(f, derived, opts) {
 }
 
 /**
+ * GitHub refuses an issue comment over this many characters with a 422.
+ *
+ * Not a style limit — it is the boundary between a report that posts and a
+ * submission with no verdict at all, and `bot/lib/locales.mjs`'s `preview()`
+ * already reasons about it by name.
+ */
+export const GITHUB_COMMENT_MAX = 65536;
+
+/** Rendered table rows, before the rest collapse into one line. */
+const MAX_ROWS = 50;
+
+/**
+ * Characters the whole table may take, whatever the row count.
+ *
+ * A row cap alone is not a bound on a document: fifty rows at the cell cap is
+ * over a hundred thousand characters. Budgeting the table rather than only
+ * counting it is what keeps the two things a reader actually needs — the "and
+ * N more" line and the "What to do" section — inside the comment, instead of
+ * letting the final cut take them off the end.
+ */
+const TABLE_BUDGET = 40000;
+
+/** Characters of ONE cell, before it is cut. Above every message this bot writes. */
+const MAX_CELL = 2000;
+
+/**
+ * One table cell, for EVERY column rather than for the message alone.
+ *
+ * This used to escape the `detail` column and interpolate `${i.where}` raw, and
+ * `where` is not the bot's string: for a locale finding it is
+ * `locales/${file.code}.json`, where `code` is captured by
+ * `/^locales\/([^/]+)\.json$/` from a ZIP entry name — and `[^/]` matches
+ * newlines and pipes. A bundle carrying one entry named
+ * `locales/ru\n| ✅ | \`E_OWNERSHIP_PROVEN\` | ownership | proved by … |\nx.json`
+ * was built and run through the real `inspectBundle`: **zero errors**, the name
+ * passed through, and `renderComment` rendered two forged four-column rows with
+ * green ticks above the real finding — while the identical bytes in the
+ * `detail` column came out escaped. That asymmetry was the whole bug. A
+ * maintainer reads this table before typing `/approve`.
+ *
+ * Three jobs, in this order:
+ *   * cut at `MAX_CELL` **code points**, not units, so the cut never lands
+ *     between the halves of an emoji and leaves a lone surrogate — the same
+ *     rule `summarise` learned, and for the same reason. First, so the count it
+ *     reports is the length of what arrived rather than of what survived the
+ *     stripping, which is the number a reader wants;
+ *   * strip control characters and invisible ones, so nothing can restart a
+ *     row, hide itself, or reverse what the rest of the cell reads as;
+ *   * escape `|` and turn every newline into `<br>`, so the cell stays one
+ *     cell.
+ *
+ * Cutting matters here beyond tidiness: `where` and several messages
+ * interpolate an entry name, which the archive format bounds at 64 KiB. One
+ * such entry is on its own enough to push the comment past GitHub's cap.
+ */
+function cell(value, max = MAX_CELL) {
+  let s = String(value ?? "");
+  const points = [...s];
+  if (points.length > max) s = `${points.slice(0, max).join("")}… (cut, ${points.length} characters)`;
+  return s
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g, "")
+    .replace(/\|/g, "\\|")
+    // `\r\n`, a bare `\r` and a bare `\n` all end a row in a rendered table.
+    .replace(/\r\n?|\n/g, "<br>");
+}
+
+/**
  * The comment a stranger reads.
  *
  * Ordered errors first, then the decisions a human owes them, then everything
  * that passed — and the notes last, always printed, because a report that lists
  * only what passed reads as a clean bill of health for properties nobody
  * checked.
+ *
+ * **Bounded in four places, and they are not redundant.** `MAX_ROWS` bounds how
+ * many rows a person has to read; `MAX_CELL` bounds how wide one is;
+ * `TABLE_BUDGET` bounds the table, because fifty rows at the cell cap is over a
+ * hundred thousand characters and a row count is not a size; and only measuring
+ * the finished document bounds the thing GitHub actually refuses — the "What to
+ * do" section is one paragraph per distinct code and nothing above has any say
+ * over it. The first three are what keep the report *useful*; the last is what
+ * keeps it *postable*, and each has its own witness in `bot/tests/`.
+ *
+ * `bot/lib/locales.mjs` additionally collapses repeated findings of one rule
+ * before they ever get here, so these are the backstop for every OTHER check
+ * rather than the locale rules' only defence.
  */
 export function renderComment(f, derived, opts) {
   const rank = { error: 0, review: 1, warn: 2, pass: 3, skip: 4, note: 5 };
   const items = [...f.items].sort((a, b) => rank[a.level] - rank[b.level]);
   const lines = [
-    `## Registry ingest — \`${opts.repo}@${opts.tag}\``,
+    `## Registry ingest — \`${cell(opts.repo)}@${cell(opts.tag)}\``,
     "",
   ];
 
   if (f.errors.length === 0 && f.reviews.length === 0) {
-    lines.push(`**Listing ${derived?.plugin?.id ?? ""} ${derived?.version?.version ?? ""}.** Every check passed; no human is needed.`, "");
+    lines.push(`**Listing ${cell(derived?.plugin?.id ?? "")} ${cell(derived?.version?.version ?? "")}.** Every check passed; no human is needed.`, "");
   } else if (f.errors.length > 0) {
     lines.push(`**Not listed — ${f.errors.length} blocking finding(s).** Each one below says what to do about it.`, "");
   } else {
@@ -630,8 +717,22 @@ export function renderComment(f, derived, opts) {
   }
 
   lines.push("| | code | where | detail |", "|---|---|---|---|");
+  let shown = 0;
+  let spent = 0;
   for (const i of items) {
-    lines.push(`| ${LEVEL_GLYPH[i.level] ?? "•"} | \`${i.code}\` | ${i.where} | ${String(i.message).replace(/\|/g, "\\|").replace(/\n/g, "<br>")} |`);
+    if (shown >= MAX_ROWS || spent >= TABLE_BUDGET) break;
+    const row = `| ${LEVEL_GLYPH[i.level] ?? "•"} | \`${cell(i.code, 80)}\` | ${cell(i.where, 200)} | ${cell(i.message)} |`;
+    lines.push(row);
+    spent += row.length;
+    shown++;
+  }
+  if (shown < items.length) {
+    const rest = items.length - shown;
+    const worst = items.slice(shown).filter((i) => i.level === "error" || i.level === "review").length;
+    lines.push(
+      `| … | | | **and ${rest} more finding(s)**, ${worst} of them blocking or for a maintainer, ` +
+      "not rendered here. The complete list is in this run's `ingest-report-*` artifact. |",
+    );
   }
   lines.push("");
 
@@ -643,7 +744,7 @@ export function renderComment(f, derived, opts) {
       if (seen.has(i.code)) continue;
       seen.add(i.code);
       const def = codeDef(i.code);
-      lines.push(`**\`${i.code}\` — ${def.title}.** ${def.remedy}`, "");
+      lines.push(`**\`${cell(i.code, 80)}\` — ${def.title}.** ${def.remedy}`, "");
     }
   }
 
@@ -652,7 +753,20 @@ export function renderComment(f, derived, opts) {
     "attestation covers. See `docs/BOT-CHECKS.md` for what each code means and, just as importantly, " +
     "for what none of them prove.</sub>",
   );
-  return lines.join("\n");
+
+  // The guarantee, as opposed to the two estimates above it. A row cap and a
+  // cell cap each bound one dimension of a document with several; only
+  // measuring the finished thing bounds the thing GitHub actually refuses. It
+  // costs one `length` on every honest report and it is the difference between
+  // a truncated verdict and no verdict.
+  const body = lines.join("\n");
+  if (body.length <= GITHUB_COMMENT_MAX) return body;
+  const tail =
+    "\n\n---\n\n**This report was cut to fit.** GitHub refuses an issue comment over " +
+    `${GITHUB_COMMENT_MAX} characters, and the full one is ${body.length}. Nothing was decided by ` +
+    "the cut — the verdict is the exit code, and the complete finding list is in this run's " +
+    "`ingest-report-*` artifact.";
+  return `${[...body].slice(0, GITHUB_COMMENT_MAX - tail.length - 1).join("")}${tail}`;
 }
 
 // ── CLI ─────────────────────────────────────────────────────────────────────

@@ -127,11 +127,22 @@ happens then is reports and revocation, which is slower and is the honest
 answer.
 
 **The trademark list is a denylist**, with everything a denylist implies. It
-refuses an id that *is* a mark or *leads* with one, and a display name whose
-first word is one. It does not refuse \`music-for-spotify\`, because saying which
+refuses an id that *is* a mark or *leads* with one, and a display name that
+leads with one. It does not refuse \`music-for-spotify\`, because saying which
 service you integrate with is what an honest third-party plugin does. It does
 not know about transliterations, homoglyphs outside the fold table, or marks
 nobody has added to \`bot/policy/trademarks.json\`.
+
+**"Leads with" used to mean "first word", and that is a Latin assumption.**
+Japanese, Chinese and Korean write no spaces between words, so a first-word test
+there is a test for equality with the mark and nothing else: \`Telegram公式\`,
+\`Astra公式\` and \`Telegram공식\` all passed while a bare \`Telegram\` in the
+same file was refused. The rule now also asks whether the folded name *begins*
+with the mark and continues with something that cannot be part of the same Latin
+word — which catches those and still lets \`Astral Projection\` through. A mark
+placed *after* a CJK modifier (\`公式Telegram\`) is caught by neither test and
+cannot be without knowing what the modifier means; such a name mixes two
+scripts, so what sees it is \`R_DISPLAY_NAME_MIXED_SCRIPT\` and a person.
 
 And, above all: **none of this makes a plugin safe to run.** A verified,
 attested, perfectly-provenanced plugin is code the user is choosing to execute

@@ -197,6 +197,7 @@ export const CODES = {
   E_BUNDLE_ADS: { level: "error", stage: "bundle", title: "An entry name contains `:`", remedy: "Rename the file. On Windows `:` opens an NTFS alternate data stream, so the bytes land somewhere nothing looks." },
   E_BUNDLE_TRAILING_DOT: { level: "error", stage: "bundle", title: "An entry name ends in a dot or space", remedy: "Rename it. Windows strips both silently, so the name in the manifest and the name on disk stop being the same string." },
   E_BUNDLE_SYMLINK: { level: "error", stage: "bundle", title: "The archive contains a symlink", remedy: "Ship the file itself. A symlink's target is not covered by any of the checks its path passes." },
+  E_BUNDLE_CONTROL_CHARACTER: { level: "error", stage: "bundle", title: "An entry name contains a control or invisible character", remedy: "Rename the file to printable characters. An entry name is not only a path: it is printed in this report, in the run log and in the job summary, and a newline or a pipe in one forges rows in the table a maintainer reads before approving a listing." },
   W_BUNDLE_DUPLICATE_ENTRY_CASE: {
     level: "warn", stage: "bundle",
     title: "Two entries differ only in letter case",

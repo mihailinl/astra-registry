@@ -91,11 +91,22 @@ happens then is reports and revocation, which is slower and is the honest
 answer.
 
 **The trademark list is a denylist**, with everything a denylist implies. It
-refuses an id that *is* a mark or *leads* with one, and a display name whose
-first word is one. It does not refuse `music-for-spotify`, because saying which
+refuses an id that *is* a mark or *leads* with one, and a display name that
+leads with one. It does not refuse `music-for-spotify`, because saying which
 service you integrate with is what an honest third-party plugin does. It does
 not know about transliterations, homoglyphs outside the fold table, or marks
 nobody has added to `bot/policy/trademarks.json`.
+
+**"Leads with" used to mean "first word", and that is a Latin assumption.**
+Japanese, Chinese and Korean write no spaces between words, so a first-word test
+there is a test for equality with the mark and nothing else: `Telegram公式`,
+`Astra公式` and `Telegram공식` all passed while a bare `Telegram` in the
+same file was refused. The rule now also asks whether the folded name *begins*
+with the mark and continues with something that cannot be part of the same Latin
+word — which catches those and still lets `Astral Projection` through. A mark
+placed *after* a CJK modifier (`公式Telegram`) is caught by neither test and
+cannot be without knowing what the modifier means; such a name mixes two
+scripts, so what sees it is `R_DISPLAY_NAME_MIXED_SCRIPT` and a person.
 
 And, above all: **none of this makes a plugin safe to run.** A verified,
 attested, perfectly-provenanced plugin is code the user is choosing to execute
@@ -229,6 +240,7 @@ Decided from the bytes alone, without extracting anything.
 | `E_BUNDLE_ADS` | error | An entry name contains `:` | Rename the file. On Windows `:` opens an NTFS alternate data stream, so the bytes land somewhere nothing looks. |
 | `E_BUNDLE_TRAILING_DOT` | error | An entry name ends in a dot or space | Rename it. Windows strips both silently, so the name in the manifest and the name on disk stop being the same string. |
 | `E_BUNDLE_SYMLINK` | error | The archive contains a symlink | Ship the file itself. A symlink's target is not covered by any of the checks its path passes. |
+| `E_BUNDLE_CONTROL_CHARACTER` | error | An entry name contains a control or invisible character | Rename the file to printable characters. An entry name is not only a path: it is printed in this report, in the run log and in the job summary, and a newline or a pipe in one forges rows in the table a maintainer reads before approving a listing. |
 | `W_BUNDLE_DUPLICATE_ENTRY_CASE` | warn | Two entries differ only in letter case | Rename one. Linux keeps both; Windows and macOS keep one, and the daemon refuses the bundle there — so this lists cleanly and then fails to install for most of your users. |
 | `E_PLUGIN_TOML_MISSING` | error | The bundle has no `plugin.toml` | Every plugin carries one; it is what the daemon reads to know what the plugin is. Rebuild with `astra-plugin build`. |
 | `E_MANIFEST_MISSING` | error | No `MANIFEST.json` — this is not a v2 bundle | Rebuild with a current `astra-plugin`. |

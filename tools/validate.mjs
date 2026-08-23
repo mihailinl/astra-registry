@@ -32,7 +32,6 @@ import { reservedPrefixViolation } from "./lib/reserved.mjs";
 import {
   editDistance,
   foldId,
-  foldLookalikeScripts,
   invalidId,
   scriptsUsed,
   unsafeDisplayText,
@@ -41,8 +40,10 @@ import {
 import { loadSources, loadPolicy, loadSchemas, readJson, REPO_ROOT } from "./lib/sources.mjs";
 import { ALLOWED_IMAGE_HOSTS, ICON_NAMES, MAX_README_BYTES, checkIcon } from "../bot/lib/assets.mjs";
 import { checkMetadata, summarise } from "../bot/lib/derive.mjs";
+import { foldDisplayName, renderedNames } from "../bot/lib/names.mjs";
 import {
   CORPUS_NOT_IMPLEMENTED,
+  CORPUS_NO_RULE_ID,
   CORPUS_RULE_IDS,
   LOCALE_CODES,
   deriveLocaleText,
@@ -574,29 +575,55 @@ function checkSquatting(plugins, ctx) {
   // Same two rules `bot/lib/names.mjs` applies, and warnings rather than errors
   // for the same reason: a human decides. Two plugins genuinely called "Notes"
   // is a thing that happens; it is still a thing somebody should look at.
+  //
+  // ── and EVERY name, not the English one ─────────────────────────────────────
+  //
+  // This loop read `p.doc?.name` and nothing else, so the moment a listing grew
+  // an `i18n` member the asymmetry was back in a new place: the bot ran
+  // `checkDisplayName` once per derived locale and this ran once per listing.
+  // Constructed against a two-listing tree — `lucky-cubes` with a `ru` card
+  // named `Dіce Roller` (U+0456 for the ASCII `i`, colliding with the listed
+  // `Dice Roller`) and a `de` card named `Würfеl Roller` (Cyrillic е) — this
+  // validator printed `PASS … 0 error(s), 0 warning(s)` while
+  // `bot/lib/names.mjs` returned `R_DISPLAY_NAME_COLLISION` and
+  // `R_DISPLAY_NAME_MIXED_SCRIPT` for the same two strings. A maintainer editing
+  // a listing by hand had no rule at all on nine of its ten cards.
+  //
+  // `renderedNames` and `foldDisplayName` are IMPORTED rather than rebuilt, and
+  // that is what keeps it fixed. The fold used to be re-derived inline here —
+  // `foldLookalikeScripts(name).toLowerCase().replace(/\s+/g, " ").trim()`,
+  // which is `foldDisplayName`'s body, one edit away from the two paths folding
+  // differently for ever. `bot/lib/names.mjs` exists to be the one predicate;
+  // `dev/couplings.md` records the reserved-prefix rule being collapsed the same
+  // way, and the residual risk is the same one: nothing stops somebody
+  // re-inlining it.
   const byName = new Map();
   for (const p of plugins) {
     const id = p.doc?.id;
-    const name = p.doc?.name;
-    if (typeof id !== "string" || typeof name !== "string" || name === "") continue;
+    if (typeof id !== "string") continue;
 
-    const scripts = scriptsUsed(name);
-    if (scripts.length > 1) {
-      report.warn(p.file,
-        `the display name ${JSON.stringify(name)} mixes ${scripts.join(" and ")} letters`,
-        "Write the name in one alphabet. A name that borrows one Cyrillic or Greek letter for its Latin " +
-        "shape renders as a name it does not contain, and the id charset cannot catch it. See POLICY.md §Names.");
-    }
+    for (const { name, locale } of renderedNames(p.doc)) {
+      const at = locale ? ` (i18n.${locale})` : "";
 
-    const key = foldLookalikeScripts(name).toLowerCase().replace(/\s+/g, " ").trim();
-    const prev = byName.get(key);
-    if (prev && prev.id !== id) {
-      report.warn(p.file,
-        `the display name ${JSON.stringify(name)} matches ${JSON.stringify(prev.name)} (listed as ${JSON.stringify(prev.id)}) ` +
-        "once case, whitespace and lookalike letters are ignored",
-        "The store shows names, not ids, so two identical names are two identical cards. See POLICY.md §Names.");
-    } else if (!prev) {
-      byName.set(key, { id, name });
+      const scripts = scriptsUsed(name);
+      if (scripts.length > 1) {
+        report.warn(p.file,
+          `the display name ${JSON.stringify(name)}${at} mixes ${scripts.join(" and ")} letters`,
+          "Write the name in one alphabet. A name that borrows one Cyrillic or Greek letter for its Latin " +
+          "shape renders as a name it does not contain, and the id charset cannot catch it. See POLICY.md §Names.");
+      }
+
+      const key = foldDisplayName(name);
+      const prev = byName.get(key);
+      if (prev && prev.id !== id) {
+        report.warn(p.file,
+          `the display name ${JSON.stringify(name)}${at} matches ${JSON.stringify(prev.name)} (listed as ` +
+          `${JSON.stringify(prev.id)}${prev.locale ? `, in ${prev.locale}` : ""}) once case, whitespace and ` +
+          "lookalike letters are ignored",
+          "The store shows names, not ids, so two identical names are two identical cards. See POLICY.md §Names.");
+      } else if (!prev) {
+        byName.set(key, { id, name, locale });
+      }
     }
   }
 }
@@ -1256,15 +1283,104 @@ function corpusIds(caseDir, ctx) {
   for (const f of findings) {
     if (f.level !== "error") continue;
     const id = CORPUS_RULE_IDS[f.code];
-    if (id) ids.add(id);
-    else {
-      throw new Error(
-        `${f.code} is an error this module can emit and CORPUS_RULE_IDS does not name. Every error the corpus can ` +
-        "provoke has to map to a rule id, or a real disagreement with the CLI shows up as an unexplained extra finding.",
-      );
-    }
+    if (id) { ids.add(id); continue; }
+    // A rule this repository enforces that the corpus has no id for, declared
+    // as such in `CORPUS_NO_RULE_ID` with the reason. It contributes no id, so
+    // the case's EXPECT file is unaffected — a fixture may provoke one of these
+    // in passing without being about it. What used to happen instead was a
+    // throw, which is why writing the first fixture for `E_METADATA_UNSAFE_TEXT`
+    // would have been refused by this reader rather than welcomed by it.
+    if (Object.hasOwn(CORPUS_NO_RULE_ID, f.code)) continue;
+    throw new Error(
+      `${f.code} is an error this module can emit and neither CORPUS_RULE_IDS nor CORPUS_NO_RULE_ID names. Every ` +
+      "error the corpus can provoke has to map to a rule id or to a written-down reason there is none, or a real " +
+      "disagreement with the CLI shows up as an unexplained extra finding.",
+    );
   }
   return ids;
+}
+
+/**
+ * **The direction C16 never ran in.** Every error `bot/lib/locales.mjs` can
+ * emit is either mapped to a corpus rule id or declared to have none.
+ *
+ * `checkLocaleCorpus` above reads the corpus and asks, of each id in it,
+ * whether this repository implements or exempts it. That is corpus → registry,
+ * and it can only ever see rules somebody already wrote a fixture for. Nothing
+ * asked the reverse, so a registry rule applied to locale text with no fixture
+ * was a member neither reader could see — which is exactly what
+ * `E_METADATA_UNSAFE_TEXT` was: live on every translated `listing.name` since
+ * the locale work landed, provoked by none of the corpus's 104 files, and named
+ * in neither map.
+ *
+ * It reads the module as TEXT rather than executing it, which is
+ * `bot/manifest-probe`'s pattern — the only way to enumerate what a function
+ * *can* emit rather than what one call did. **Runs everywhere**: no checkout, no
+ * secret, no corpus. That matters, because `checkLocaleCorpus` skips without an
+ * AstraPlugins checkout and this is the half that must not skip with it.
+ *
+ * The floor is written before the comparison and its failure separates the two
+ * causes: a scan that finds fewer codes than the module has is a scan that
+ * broke, and a scan that finds none is a reader pointed at the wrong file.
+ */
+export function checkLocaleCorpusCoverage(ctx) {
+  const where = "bot/lib/locales.mjs";
+  const file = path.join(REPO_ROOT, "bot", "lib", "locales.mjs");
+  let text;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch (e) {
+    ctx.report.error(where, `cannot be read to enumerate its rules: ${e.message}`,
+      "This reader scrapes the module's own `add(\"error\", …)` calls. If it cannot open the file it is not " +
+      "checking anything, and an unreadable module must not pass for a module with no rules.");
+    return;
+  }
+
+  const codes = new Set([...text.matchAll(/add\("error",\s*"([A-Z][A-Z0-9_]+)"/g)].map((m) => m[1]));
+
+  // The floor, BEFORE any comparison. Eleven today; a number rather than a
+  // range because this set grows by somebody adding a rule, and a rule added
+  // without an answer to "which fixture proves it fires?" is the whole point.
+  const MIN_CODES = 8;
+  if (codes.size < MIN_CODES) {
+    ctx.report.error(where,
+      `found ${codes.size} error rule(s) (floor: ${MIN_CODES})`,
+      "If deriveLocaleText still calls add(\"error\", \"E_…\") for each rule, then RULES are what shrank and somebody " +
+      "deleted one. If it does not, this SCAN is what broke — the helper was renamed or the calls were reshaped, " +
+      "and a scan that matches nothing reads exactly like a module with nothing to check.");
+    return;
+  }
+
+  for (const code of [...codes].sort()) {
+    const mapped = Object.hasOwn(CORPUS_RULE_IDS, code);
+    const exempt = Object.hasOwn(CORPUS_NO_RULE_ID, code);
+    if (mapped && exempt) {
+      ctx.report.error(where, `${code} is in BOTH CORPUS_RULE_IDS and CORPUS_NO_RULE_ID`,
+        "A rule either has a corpus witness or has a written reason it cannot. Two answers is no answer.");
+    } else if (!mapped && !exempt) {
+      ctx.report.error(where, `${code} is enforced on locale text and neither maps to a corpus rule id nor declares why it cannot`,
+        "Add it to CORPUS_RULE_IDS in bot/lib/locales.mjs with the AstraPlugins rule id whose fixture proves it fires, or " +
+        "to CORPUS_NO_RULE_ID with one sentence on why no fixture can. A rule with neither is invisible to both readers " +
+        "of the shared corpus, which is how E_METADATA_UNSAFE_TEXT came to be enforced on every translated card with " +
+        "nothing anywhere proving it still fires.");
+    }
+  }
+
+  // The other direction of the same page: an exemption for a rule that no
+  // longer exists is a reason nobody can check, and it makes the debt look
+  // serviced. `dev/couplings.md`'s step 6 asks for the exemption list to fail
+  // when an entry stops being needed, the way C6's pending-exception list does.
+  for (const code of Object.keys(CORPUS_NO_RULE_ID)) {
+    if (!codes.has(code)) {
+      ctx.report.error(where, `CORPUS_NO_RULE_ID exempts ${code}, which this module no longer emits`,
+        "Delete the entry. An exemption outliving its rule is a sentence that reads as a decision and guards nothing.");
+    }
+  }
+
+  ctx.report.note(where,
+    `${codes.size} locale error rule(s) enumerated; ` +
+    `${[...codes].filter((c) => Object.hasOwn(CORPUS_RULE_IDS, c)).length} carry a corpus rule id, ` +
+    `${[...codes].filter((c) => Object.hasOwn(CORPUS_NO_RULE_ID, c)).length} declare why they cannot`);
 }
 
 /**
@@ -1338,6 +1454,7 @@ export async function runValidation(opts) {
   checkMirroredListingLimits(ctx);
   checkLocaleVocabulary(ctx);
   checkLocaleCorpus(ctx);
+  checkLocaleCorpusCoverage(ctx);
 
   const { errors, plugins } = loadSources(opts.root);
   for (const e of errors) report.error(e.file, e.message);

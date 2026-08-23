@@ -200,6 +200,37 @@ export function inspectBundle(buf, expected, limits) {
     if (n.includes(":")) {
       err("E_BUNDLE_ADS", `${JSON.stringify(n)} contains ':' — an NTFS alternate data stream on Windows`);
     }
+    // A control character in an entry name is not a filename problem, it is a
+    // REPORT problem, and that is why it sits beside the `:` and `..` checks
+    // rather than in the presentation layer. `where` on a locale finding is
+    // `locales/${code}.json` and `code` comes out of
+    // /^locales\/([^/]+)\.json$/ — and `[^/]` matches newlines and pipes. A
+    // real .astraplugin was built with one entry named
+    // `locales/ru\n| ✅ | \`E_OWNERSHIP_PROVEN\` | ownership | proved by … |\nx.json`:
+    // this loop returned zero errors, the name reached `renderComment`, and two
+    // forged rows with green ticks rendered above the real finding, in the one
+    // document a human reads before typing `/approve`.
+    //
+    // `cell()` in bot/ingest.mjs now escapes every column, so the report is
+    // sound with or without this check. Both, deliberately: escaping is what
+    // stops the injection, and refusing the name is what stops the next reader
+    // of these bytes — a log line, a job summary, a filename on somebody's disk
+    // — from having to have thought of it too. `tools/lib/ids.mjs`'s
+    // `unsafePathComponent` has refused exactly these characters in a plugin id
+    // since the beginning, for the same reason and in the same words.
+    // eslint-disable-next-line no-control-regex
+    if (/[\u0000-\u001f\u007f-\u009f]/.test(n)) {
+      err("E_BUNDLE_CONTROL_CHARACTER",
+        `${JSON.stringify(n)} contains a control character. Entry names are printed in this bot's report, ` +
+        "in logs and in job summaries; a newline or a pipe in one forges rows in the table a maintainer " +
+        "reads before approving a listing");
+    }
+    if (/[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/.test(n)) {
+      err("E_BUNDLE_CONTROL_CHARACTER",
+        `${JSON.stringify(n)} contains a zero-width or bidirectional-control character. On a terminal and in ` +
+        "a rendered comment those make a name display as a name it does not contain, which is the same trick " +
+        "unsafeDisplayText refuses in a plugin's metadata");
+    }
     if (/[. ]$/.test(n)) {
       err("E_BUNDLE_TRAILING_DOT", `${JSON.stringify(n)} ends in a dot or space, which Windows silently strips`);
     }

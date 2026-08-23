@@ -17,11 +17,13 @@ import { execFileSync } from "node:child_process";
 import {
   checkListingLanguage,
   checkLocaleCorpus,
+  checkLocaleCorpusCoverage,
   checkLocaleVocabulary,
   checkMirroredListingLimits,
   runValidation,
 } from "./validate.mjs";
-import { localeEnumProblems } from "../bot/lib/locales.mjs";
+import { CORPUS_NO_RULE_ID, deriveLocaleText, localeEnumProblems } from "../bot/lib/locales.mjs";
+import { summarise } from "../bot/lib/derive.mjs";
 import { buildIndex } from "./build-index.mjs";
 import {
   CATALOG_TTL_DAYS, INDEX_SCHEMA, REVOCATIONS_SCHEMA, REVOCATION_TTL_DAYS, TRUST_SCHEMA,
@@ -855,6 +857,189 @@ await test("C16 — an absent or shrunken locale corpus is never read as a clean
   const unknown = withFakeCheckout("fake-ap-corpus-unknown", files, (ctx) => checkLocaleCorpus(ctx));
   assert(unknown.some((f) => f.message.includes("E99")),
     `a rule id from the future was silently ignored: ${JSON.stringify(unknown.map((f) => f.message))}`);
+});
+
+await test("C16 — a fixture that provokes an exempt rule is READ, not refused by the reader", () => {
+  // The other half of the exemption, and the half that was missing. Declaring
+  // `E_METADATA_UNSAFE_TEXT` in `CORPUS_NO_RULE_ID` is only worth something if
+  // `corpusIds` then lets a case through that provokes it — and before that
+  // entry existed it did the opposite: it THREW `is an error this module can
+  // emit and CORPUS_RULE_IDS does not name`, so the reader refused the very
+  // fixture that would have made the rule visible. A mutation is what said this
+  // needed saying: removing the exemption from `corpusIds` left every other
+  // test green, because no committed fixture provokes any of the three.
+  //
+  // The case belongs in `pass/`, and that is not a mistake. `astra-plugin
+  // check` has no display-text scan at all, so the CLI accepts this bundle;
+  // the registry refuses it. The corpus compares ERROR ID SETS, and this rule
+  // contributes no id to either side — which is exactly the disagreement
+  // `CORPUS_NO_RULE_ID` exists to write down instead of hiding.
+  const toml = (name, desc) => `[plugin]\nname = "${name}"\ndescription = "${desc}"\n`;
+  const plain = toml("x", "x");
+  const files = {};
+  for (let i = 0; i < 4; i++) files[`testdata/locales/pass/p${i}/plugin.toml`] = plain;
+  for (let i = 0; i < 12; i++) {
+    files[`testdata/locales/fail/f${i}/plugin.toml`] = plain;
+    files[`testdata/locales/fail/f${i}/EXPECT`] = "E1\n";
+    files[`testdata/locales/fail/f${i}/locales/ru.json`] = '{"listing.name":"x","listing.description":"x"}';
+  }
+  // A conforming bundle whose Russian card name carries a right-to-left
+  // override. Every parity and card rule is satisfied; the only thing wrong
+  // with it is a character nobody can see.
+  files["testdata/locales/pass/p0/locales/en.json"] = '{"listing.name":"x","listing.description":"x"}';
+  files["testdata/locales/pass/p0/locales/ru.json"] =
+    JSON.stringify({ "listing.name": "\u202ex", "listing.description": "x" });
+
+  const found = withFakeCheckout("fake-ap-corpus-exempt", files, (ctx) => checkLocaleCorpus(ctx));
+  const unreadable = found.filter((f) => f.level === "error" && /could not be read/.test(f.message));
+  assertEqual(unreadable.length, 0,
+    "the reader refused a fixture for a rule this repository deliberately has no corpus id for:\n" +
+    unreadable.map((f) => `  ${f.message}`).join("\n"));
+  // Scoped to `pass/p0` on purpose. This synthetic corpus witnesses one rule,
+  // so the "every implemented rule has a fail case" loop rightly complains
+  // about the other seven — that is a different check doing its job, and
+  // swallowing it here would make this test pass for a reason of its own.
+  const aboutTheCase = found.filter((f) => f.level === "error" && /pass\/p0/.test(f.message));
+  assertEqual(aboutTheCase.length, 0,
+    `an exempt rule became a corpus disagreement: ${JSON.stringify(aboutTheCase.map((f) => f.message))}`);
+
+  // Not vacuous: the fixture really does provoke the rule. Without this the
+  // test would pass against a corpus that provokes nothing at all, which is the
+  // failure the whole exemption exists to stop.
+  const provoked = deriveLocaleText({
+    files: [
+      { name: "locales/en.json", bytes: Buffer.from('{"listing.name":"x","listing.description":"x"}') },
+      { name: "locales/ru.json", bytes: Buffer.from(JSON.stringify({ "listing.name": "\u202ex", "listing.description": "x" })) },
+    ],
+    facts: { name: "x", description: "x" },
+    limits: loadPolicy(REPO_ROOT).limits,
+    summarise,
+  }).findings;
+  assert(provoked.some((f) => f.code === "E_METADATA_UNSAFE_TEXT"),
+    `the fixture provokes nothing, so this test proves nothing: ${JSON.stringify(provoked.map((f) => f.code))}`);
+});
+
+await test("C16, the direction it never ran in — every locale rule is mapped or exempted", () => {
+  // `checkLocaleCorpus` reads the corpus and asks of each id whether this
+  // repository implements or exempts it: corpus -> registry. It can only ever
+  // see rules somebody already wrote a fixture for. Nothing asked the reverse,
+  // and `E_METADATA_UNSAFE_TEXT` is what that cost — enforced on every
+  // translated `listing.name` since the locale work landed, provoked by none of
+  // the corpus's 104 files, and named in neither map, so `corpusIds` would have
+  // THROWN at whoever wrote the first fixture for it.
+  //
+  // This half needs no checkout, which is the point: `checkLocaleCorpus` skips
+  // without one and this must not skip with it.
+  const run = () => {
+    const found = [];
+    checkLocaleCorpusCoverage({
+      report: {
+        error: (where, message, hint) => found.push({ level: "error", where, message, hint }),
+        warn: (where, message, hint) => found.push({ level: "warn", where, message, hint }),
+        note: (where, message) => found.push({ level: "note", where, message }),
+      },
+      policy: loadPolicy(REPO_ROOT),
+      schemas: loadSchemas(REPO_ROOT),
+      root: REPO_ROOT,
+    });
+    return found;
+  };
+
+  const today = run();
+  assertEqual(today.filter((f) => f.level === "error").length, 0,
+    `bot/lib/locales.mjs enforces a rule that is neither mapped nor exempted:\n` +
+    today.filter((f) => f.level === "error").map((f) => `  ${f.message}`).join("\n"));
+
+  // ── the FLOOR, before the mutation ──
+  //
+  // This check enumerates a set by scraping `add("error", "E_…")` out of the
+  // module's own text. That set is one refactor away from being empty, and an
+  // empty enumeration passes for the wrong reason — quietly, for ever, while
+  // reading as coverage. So the count is asserted here and again inside the
+  // check, and the two failures are made to look different from each other.
+  const counted = today.find((f) => f.level === "note" && /locale error rule\(s\) enumerated/.test(f.message));
+  assert(counted, `the check reported no count at all: ${JSON.stringify(today)}`);
+  const n = Number(/^(\d+)/.exec(counted.message)?.[1] ?? 0);
+  assert(n >= 11, `only ${n} locale error rules were found; the module has more, so this SCAN is what broke`);
+
+  // ── and the mutation, watched ──
+  //
+  // The check reads this repository's own module by design — it is asking about
+  // THIS repository's rules — so the drift is constructed in the maps, which is
+  // the side an editor touches. An exemption for a rule that no longer exists
+  // is the reverse of the failure above and the one that makes a debt look
+  // serviced, so it fails too rather than being tidied away.
+  const stale = [];
+  const before = CORPUS_NO_RULE_ID.E_LOCALE_GONE_TOMORROW;
+  CORPUS_NO_RULE_ID.E_LOCALE_GONE_TOMORROW = "a rule this module does not emit";
+  try {
+    checkLocaleCorpusCoverage({
+      report: {
+        error: (where, message, hint) => stale.push({ where, message, hint }),
+        warn: () => {}, note: () => {},
+      },
+      policy: loadPolicy(REPO_ROOT), schemas: loadSchemas(REPO_ROOT), root: REPO_ROOT,
+    });
+  } finally {
+    if (before === undefined) delete CORPUS_NO_RULE_ID.E_LOCALE_GONE_TOMORROW;
+    else CORPUS_NO_RULE_ID.E_LOCALE_GONE_TOMORROW = before;
+  }
+  assert(stale.some((f) => f.message.includes("E_LOCALE_GONE_TOMORROW")),
+    "an exemption outliving its rule is a reason nobody can check, and it makes the debt look serviced");
+});
+
+await test("the hand-edit path checks every card a listing renders, not the English one", async () => {
+  // `checkSquatting` built its name index from `p.doc?.name` alone. The moment
+  // a listing grew an `i18n` member the asymmetry was back in a new place: the
+  // bot ran `checkDisplayName` once per derived locale and this ran once per
+  // listing. Constructed below and confirmed against origin/main: the validator
+  // printed `PASS … 0 error(s), 0 warning(s)` for a tree `bot/lib/names.mjs`
+  // answered R_DISPLAY_NAME_COLLISION and R_DISPLAY_NAME_MIXED_SCRIPT for.
+  const dir = path.join(tmp, "i18n-names");
+  const mk = (id, name, i18n) => {
+    const d = path.join(dir, "plugins", id);
+    fs.mkdirSync(path.join(d, "versions"), { recursive: true });
+    fs.writeFileSync(path.join(d, "plugin.json"), JSON.stringify({
+      schema: "astra.registry.plugin/1",
+      id, name, summary: "Roll dice", license: "MIT",
+      source: { kind: "github", repo: `someone/${id}` },
+      added_at: "2026-08-10", description: "Roll dice", author: { name: "A Stranger" },
+      ...(i18n ? { i18n } : {}),
+    }, null, 2));
+    fs.writeFileSync(path.join(d, "versions", "0.1.0.json"), JSON.stringify({
+      schema: "astra.registry.version/1", id, version: "0.1.0",
+      published_at: "2026-08-10T00:00:00Z",
+      release: { kind: "github_release", repo: `someone/${id}`, tag: "v0.1.0" },
+      staging: true, staging_reason: "selftest fixture: no release to pin",
+      artifacts: {
+        "linux-x64": {
+          url: `https://github.com/someone/${id}/releases/download/v0.1.0/${id}-0.1.0-linux-x64.astraplugin`,
+          filename: `${id}-0.1.0-linux-x64.astraplugin`,
+        },
+      },
+    }, null, 2));
+  };
+  mk("dice-roller", "Dice Roller");
+  // U+0456 CYRILLIC SMALL LETTER BYELORUSSIAN-UKRAINIAN I for the ASCII `i`,
+  // and a Cyrillic е inside a German name. Both live ONLY in `i18n`, which is
+  // the whole point — the English cards are innocent and were all this looked at.
+  mk("lucky-cubes", "Lucky Cubes", {
+    ru: { name: "D\u0456ce Roller", summary: "\u0411\u0440\u043e\u0441\u043a\u0438" },
+    de: { name: "W\u00fcrf\u0435l Roller", summary: "W\u00fcrfeln" },
+  });
+
+  const { report } = await runValidation({
+    root: dir, allowStaging: true, allowDirect: false, online: false, artifactsDir: null, index: false,
+  });
+  const said = report.warnings.map((w) => `${w.where} ${w.message}`).join("\n");
+  assert(/i18n\.ru.*matches/.test(said),
+    `a localized homoglyph collision produced no finding on the hand-edit path:\n${said}`);
+  assert(/i18n\.de.*mixes/.test(said),
+    `a localized mixed-script name produced no finding on the hand-edit path:\n${said}`);
+  // The floor: if `renderedNames` ever returns only the flat name again, the
+  // two assertions above go red — but so does a tree with no listings, and the
+  // two must not look alike.
+  assertEqual(report.errors.length, 0, `the fixture tree itself is broken:\n${report.errors.map((e) => `${e.where} ${e.message}`).join("\n")}`);
 });
 
 await test("the English card rule, and an exemption that has outlived its listing", () => {
