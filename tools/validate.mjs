@@ -1162,10 +1162,21 @@ export function checkMirroredListingLimits(ctx) {
     }
   }
 
-  // The floor, written before the comparison and not derived from it. Four
-  // values are declared there today; a reader that finds fewer than three has
-  // stopped matching the file rather than found a shrinking list, and those two
-  // need opposite fixes.
+  // The floor, written before the comparison and not derived from it: a reader
+  // that finds fewer than three rows has stopped matching the file rather than
+  // found a shrinking list, and those two need opposite fixes.
+  //
+  // It does NOT track the row count, and that is deliberate rather than
+  // neglect. This comment used to open "Four values are declared there today",
+  // which was true when the file had four rows and silently false from the
+  // evening it gained three more — a count in a comment beside a list is a
+  // second copy of the list. What actually covers a deleted row is the reverse
+  // loop at the bottom of this function, which names each `_mirrored_by` cap
+  // and asks for it. The one row neither reaches is
+  // `max_permission_reason_chars`, whose upstream is a JSON pointer into
+  // schema/version-v1.json rather than a key in policy/limits.json, so nothing
+  // here declares it; `MIN_LIMIT_ROWS` in AstraPlugins' own check-locales.py is
+  // what catches its deletion, and that floor does sit at the count.
   const MIN_MIRRORS = 3;
   if (pairs.length < MIN_MIRRORS) {
     ctx.report.error(where, `${pairs.length} mirrored cap(s) found, below the floor of ${MIN_MIRRORS}`,
