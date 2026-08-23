@@ -56,8 +56,18 @@
     return a;
   }
 
+  // `e.details` used to be in here. It was the listing's 4,000-character body,
+  // copied into the index under a third name, byte-identical to `description`
+  // in every listing that ever carried it, and read by nothing in the daemon.
+  // It is gone from the index, and it is worth knowing why it is not coming
+  // back in another form: a long free-text field inside the search filter is a
+  // ranking lever the listing's own author operates. Ninety lines of a
+  // competitor's name in a "translation" would match every query, in nine
+  // languages, while the human who approved the listing read a clean English
+  // card. What is searched here is the card: the id, the name, the one-line
+  // summary, and the keywords a curator wrote.
   function haystack(e) {
-    return [e.id, e.name, e.description, e.details, (e.keywords || []).join(" "), (e.categories || []).join(" "), (e.capabilities || []).join(" "), e.author]
+    return [e.id, e.name, e.description, (e.keywords || []).join(" "), (e.categories || []).join(" "), (e.capabilities || []).join(" "), e.author]
       .filter(Boolean)
       .join(" ")
       .toLowerCase();

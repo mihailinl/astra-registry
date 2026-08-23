@@ -310,7 +310,26 @@ jobs:
           diff -u dist/index.json dist/index.again.json \
             || { echo "::error::the index generator is not deterministic"; exit 1; }
           rm dist/index.again.json
-          echo "bytes: $(wc -c < dist/index.json), sha256: $(sha256sum dist/index.json | cut -d' ' -f1)"
+          echo "sha256: $(sha256sum dist/index.json | cut -d' ' -f1)"
+
+          # The size gate. This step used to echo `wc -c` and compare it to
+          # nothing, while notes/icon-readme-contract.md's "do not let the index
+          # quietly grow past a few megabytes" was enforced by nobody reading a
+          # log line. The catalogue is ONE signed document that every install
+          # fetches whole every hour, so its size is a cost paid by every user
+          # of every plugin, and it grows one listing at a time in pull requests
+          # that each look small.
+          bytes=$(wc -c < dist/index.json)
+          ceiling=$(node -p 'require("./policy/limits.json").max_index_bytes')
+          if [ "$bytes" -gt "$ceiling" ]; then
+            echo "::error::index is $bytes bytes, over the $ceiling ceiling in policy/limits.json."
+            echo "Icons and READMEs are three quarters of this document. The fix is to move the"
+            echo "largest inlined field to a *_url + *_sha256 pair, which notes/icon-readme-contract.md"
+            echo "already sanctions — not to raise the number, which needs a written reason in"
+            echo "policy/limits.json's max_index_bytes_note."
+            exit 1
+          fi
+          echo "index: $bytes / $ceiling bytes ($(( bytes * 100 / ceiling ))%)"
 
       - name: Validate the deploy candidate against schema/index-v1.json
         run: |

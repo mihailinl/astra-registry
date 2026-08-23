@@ -21,6 +21,7 @@
 import { unsafeDisplayText } from "../../tools/lib/ids.mjs";
 import { reservedPrefixViolation } from "../../tools/lib/reserved.mjs";
 import { README_NAME, checkIcon, pickIcon, rewriteReadme } from "./assets.mjs";
+import { deriveLocaleText, isLanguageExempt } from "./locales.mjs";
 
 /**
  * Trim to a length without cutting a word, leaving a dangling space, or
@@ -44,7 +45,7 @@ import { README_NAME, checkIcon, pickIcon, rewriteReadme } from "./assets.mjs";
  * and this function would truncate a description that the cap would have let
  * through whole.
  */
-function summarise(text, max) {
+export function summarise(text, max) {
   const flat = String(text).replace(/\s+/g, " ").trim();
   const points = [...flat];
   if (points.length <= max) return flat;
@@ -239,6 +240,25 @@ export function deriveListing(input) {
   findings.push(...presentation.findings);
   if (presentation.icon) plugin.icon = presentation.icon;
   if (presentation.readme) plugin.readme = presentation.readme;
+
+  // The card in every language the bundle carries it in, read out of the same
+  // `files` the icon and the README came from — no new download, no new
+  // attestation surface, and no fact the submitter types.
+  //
+  // `summarise` is handed over rather than reimplemented next door: the
+  // localized summary and the English one are the same cut, and two
+  // implementations of "trim to 200 without splitting a character" is exactly
+  // the defect that let one bad summary reject the whole catalogue in
+  // serde_json.
+  const localized = deriveLocaleText({
+    files,
+    facts,
+    limits: policy.limits,
+    summarise,
+    languageExempt: isLanguageExempt(repo, policy.listingLanguage),
+  });
+  findings.push(...localized.findings);
+  if (localized.i18n) plugin.i18n = localized.i18n;
   // Categories, keywords and homepage are the fields no bundle carries and no
   // bot can invent. They stay whatever a human put there, and are absent on a
   // first listing rather than guessed.
@@ -251,6 +271,13 @@ export function deriveListing(input) {
   if (existingPlugin?.categories) plugin.categories = existingPlugin.categories;
   if (existingPlugin?.keywords) plugin.keywords = existingPlugin.keywords;
   if (!facts.homepage && existingPlugin?.homepage) plugin.homepage = existingPlugin.homepage;
+  // `i18n` is deliberately NOT in this list, and it is the one field above that
+  // somebody will be tempted to add by reflex. It is derived fresh from the
+  // bundle on every release, exactly like the icon and the README: a locale a
+  // release stopped shipping must disappear from the card, or a translation
+  // outlives the file it came from and the store shows text that is in no
+  // attested bundle. Nothing here is curator-maintained, so nothing here is
+  // lost by re-deriving.
 
   // `unlisted` is the same shape as `homepage` and a great deal more serious.
   // It is not decoration: `delist` — one of the four moderation actions in

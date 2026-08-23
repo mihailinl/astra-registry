@@ -52,7 +52,8 @@ import { CODES, LEVEL_GLYPH, codeDef } from "./lib/codes.mjs";
 import { deriveListing } from "./lib/derive.mjs";
 import * as gh from "./lib/github.mjs";
 import { loadWorkflowAllowlist, verifyAttestation } from "./lib/attestation.mjs";
-import { checkNames, loadTrademarks } from "./lib/names.mjs";
+import { localeSignature } from "./lib/locales.mjs";
+import { checkDisplayName, checkNames, loadTrademarks } from "./lib/names.mjs";
 import { proveOwnership } from "./lib/ownership.mjs";
 import { runProbe } from "./lib/probe.mjs";
 import { scanHostRpcs } from "./lib/rpcscan.mjs";
@@ -95,9 +96,15 @@ class Findings {
   note(code, where, message) { return this.add("note", code, where, message); }
   pass(code, where, message) { return this.add("pass", code, where, message); }
   skip(code, where, message) { return this.add("skip", code, where, message); }
-  /** Adopt a sub-check's findings, which carry their own level and code. */
+  /**
+   * Adopt a sub-check's findings, which carry their own level and code — and
+   * their own `where` when they have one. A locale finding names
+   * `locales/ru.json`, which is the file the author has to open; collapsing
+   * nine of those into one `metadata` would make the report name a stage
+   * instead of a file.
+   */
   absorb(list, where) {
-    for (const i of list) this.add(i.level, i.code, where, i.message);
+    for (const i of list) this.add(i.level, i.code, i.where ?? where, i.message);
     return this;
   }
   get errors() { return this.items.filter((i) => i.level === "error"); }
@@ -338,6 +345,19 @@ export async function ingest(opts, deps = {}) {
       f.error("E_VERSION_INCONSISTENT", b.where,
         `this bundle is ${b.facts.version} and ${first.where} is ${first.facts.version}`);
     }
+    // The card is derived from the FIRST bundle's files, with a comment saying
+    // the icon and the README are one picture across platforms. True for those.
+    // **False for locale files**, which reach the installed plugin per
+    // platform: a Windows build whose ru.json says something the Linux build's
+    // does not is a store card that describes the software half the users are
+    // running. No extra download — these bytes are already in hand.
+    if (localeSignature(b.files) !== localeSignature(first.files)) {
+      f.error("E_LOCALE_BUNDLE_MISMATCH", b.where,
+        `this bundle's locale files disagree with ${first.where}'s — a different set of languages, ` +
+        "or different `listing.name`/`listing.description` in one of them. The store card is " +
+        "derived from one bundle and every platform installs its own, so the two would describe " +
+        "different plugins. Build every platform from the same tree.");
+    }
   }
   if (f.errors.length) return finish(f, null, opts);
 
@@ -351,12 +371,17 @@ export async function ingest(opts, deps = {}) {
   const { plugins } = loadSources(root);
   const existing = plugins.find((p) => p.doc?.id === facts.id) ?? null;
 
+  // Every listing, and every NAME every listing renders — the English one and
+  // each localized card name. A collision between two Russian cards is a
+  // collision; it is only invisible to somebody who reads the catalogue in
+  // English, which is everybody who has ever reviewed one.
   const catalogue = plugins
     .filter((p) => p.doc?.id)
-    .map((p) => ({ id: p.doc.id, name: p.doc.name ?? "" }));
+    .map((p) => ({ id: p.doc.id, name: p.doc.name ?? "", i18n: p.doc.i18n }));
+  const repoOwner = opts.repo.split("/")[0];
   f.absorb(
     checkNames(
-      { id: facts.id, name: facts.name, repoOwner: opts.repo.split("/")[0] },
+      { id: facts.id, name: facts.name, repoOwner },
       catalogue,
       { flagDistance: policy.limits.typosquat_flag_distance, trademarks },
     ),
@@ -443,6 +468,28 @@ export async function ingest(opts, deps = {}) {
     policy,
   });
   f.absorb(derived.findings, "metadata");
+
+  // ── the name rules, once per language the card is drawn in ────────────────
+  //
+  // `checkNames` above runs once, on `facts.name` — the English name out of
+  // plugin.toml. That was the whole card until this release. It is not any
+  // more: a bundle whose en.json says `Media Tools` and whose ru.json says
+  // `Telegram` would put a card named Telegram in front of every Russian user,
+  // on a listing a human approved by reading a clean English card.
+  //
+  // The same predicate, not a second one, and it runs on the DERIVED block
+  // rather than on the raw locale file — so a name that was demoted to English
+  // as stale is checked as the string that will actually be rendered.
+  for (const [code, block] of Object.entries(derived.plugin?.i18n ?? {})) {
+    f.absorb(
+      checkDisplayName(
+        { id: facts.id, name: block.name, repoOwner, locale: code },
+        catalogue,
+        { trademarks },
+      ),
+      `locales/${code}.json`,
+    );
+  }
 
   // Hold the bot's own output to the rules its input would have been held to —
   // except across an identity change, where the tree is inconsistent BY

@@ -114,6 +114,7 @@ export function loadPolicy(root = REPO_ROOT) {
     limits: readJson(path.join(root, "policy", "limits.json")),
     spdx: readJson(path.join(root, "policy", "spdx-allowlist.json")),
     reserved: readJson(path.join(root, "policy", "reserved-ids.json")),
+    listingLanguage: readJson(path.join(root, "policy", "listing-language-exemptions.json")),
   };
 }
 

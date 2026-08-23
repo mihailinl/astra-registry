@@ -39,6 +39,24 @@
       "$comment": "Likewise a filename beside this document. Markdown, sanitised when it was derived: no raw HTML, and every image either pinned to the attested commit or dropped to its alt text. bot/lib/assets.mjs says what is removed and why.",
       "enum": ["README.md"]
     },
+    "i18n": {
+      "$comment": "Per-locale card text, read out of the attested bundle's locales/<code>.json under the reserved keys `listing.name` and `listing.description` by bot/lib/locales.mjs. Derived, never hand-written, and never carried forward from a previous release: a locale a release stopped shipping disappears from the card rather than outliving the file it came from.\n\n`en` is NOT a key here. The flat `name`/`summary`/`description` above ARE the English and are never removed — a document that can carry the untranslated form twice will eventually carry two different versions of it. The nine codes below are AstraPlugins/spec/locales.yaml minus `en`; coupling C15 compares this enum against bot/lib/locales.mjs and against schema/index-v1.json, because a bot that emits a locale this schema rejects red-lines the deploy candidate for every listing rather than for the plugin that shipped it.\n\nNo README and no long-form text. Nine locales of card text is single-digit percent of the index; nine locales of README is more than three times the whole document, on a file every install fetches whole every hour. policy/limits.json's `max_index_bytes_note` carries the measurement.",
+      "type": "object",
+      "propertyNames": {
+        "enum": ["ru", "uk", "de", "fr", "es", "pt", "ja", "zh", "ko"]
+      },
+      "additionalProperties": {
+        "$comment": "Both halves or neither. A locale whose name is legitimately identical to English — which is what a brand name is — must not produce a block with a summary and no name, so the derivation fills the missing half from English rather than emitting a fragment.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "summary"],
+        "properties": {
+          "$comment": { "type": "string" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "summary": { "type": "string", "minLength": 1, "maxLength": 200 }
+        }
+      }
+    },
     "categories": {
       "type": "array",
       "maxItems": 3,
