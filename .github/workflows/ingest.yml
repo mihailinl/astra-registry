@@ -221,11 +221,11 @@ env:
   #     — its own list of commits, which this variable does not appear in and
   #     cannot move — so no attestation changes meaning here either.
   #
-  # Bumped again to `c545528` for the three locale caps `spec/listing-limits.yaml`
-  # gained. `checkMirroredListingLimits` in `tools/validate.mjs` now enumerates
-  # this repository's `<cap>_mirrored_by` declarations and asks whether the copy
-  # each names exists over there — so with the pin at `6d6861f` that check reports
-  # three real errors about a file that has since grown the rows, which is the
+  # Bumped to `c545528` for the three locale caps `spec/listing-limits.yaml`
+  # gained. `checkMirroredListingLimits` in `tools/validate.mjs` enumerates this
+  # repository's `<cap>_mirrored_by` declarations and asks whether the copy each
+  # names exists over there — so with the pin at `6d6861f` that check reported
+  # three real errors about a file that had since grown the rows, which is the
   # correct verdict about the pinned commit and the wrong one about AstraPlugins.
   # Measured, both ways:
   #
@@ -238,12 +238,28 @@ env:
   # This is the C16 discipline again — that checkout moved in its own commit
   # BEFORE anything read it — applied to a comparison rather than to a corpus.
   #
-  # `c545528` is AstraPlugins master — the merge commit of that pull request.
-  # It must stay a commit on master. A pin at a feature branch head is a pin
-  # somebody can force-push out from under this repository, and the head this
-  # one replaced was exactly that: it was set while the pair was still open, so
-  # the registry half could be run at all before its counterpart existed.
-  ASTRA_PLUGINS_REF: c545528aca4678a0ea2bd36b53a4a9eed0453c17
+  # Bumped again to `2d35d2d`, and THIS bump is not optional in the way the
+  # others were. `CORPUS_RULE_IDS` in bot/lib/locales.mjs now maps
+  # `E_LOCALE_CARD_TOO_LARGE` to the corpus id `E19`, and the reader below holds
+  # every mapped rule to having a fail case upstream. That case —
+  # `testdata/locales/fail/card-i18n-over-budget` — exists only from `2d35d2d`.
+  # Map without pin is an immediate red: `rule E19 is implemented here and has
+  # no fail case in the corpus`. So the two land together, and this comment is
+  # the reason they cannot be separated later by somebody tidying.
+  #
+  # That pairing is also what broke a cycle. The fixture could not go upstream
+  # first — a case expecting `E19` errored in this reader, which maps no id to
+  # it — and the map could not come first, for the reason above. What resolves
+  # it is that AstraPlugins' own CI checks out no registry at all, so the
+  # fixture lands there green and is invisible here until this line moves.
+  #
+  # `2d35d2d` is AstraPlugins master, the merge commit of that pull request, and
+  # every value this variable takes must be a commit on master. A pin at a
+  # feature branch head is a pin somebody can force-push out from under this
+  # repository; one was set that way on 2026-08-23 while a pair was still open,
+  # so the registry half could run before its counterpart existed, and it was
+  # moved to the merge commit before that pair was closed.
+  ASTRA_PLUGINS_REF: 2d35d2d12564e2a54269da89a551c3bfe202e787
   ASTRA_PLUGINS_URL: https://github.com/mihailinl/AstraPlugins.git
 
 jobs:

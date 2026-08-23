@@ -422,6 +422,16 @@ export const CORPUS_RULE_IDS = {
   // its two readers gets there first.
   E_METADATA_TOO_LONG: "E14",
   E_LOCALE_CARD_TOO_LONG: "E14",
+  // The listing's whole `i18n` member against its byte budget. This entry
+  // could not exist until AstraPlugins had a fixture for it, and that fixture
+  // could not exist until this entry did: a case expecting `E19` errored in the
+  // reader below, and mapping the code with no case errors in the coverage loop
+  // beneath that. What breaks the cycle is the pin — AstraPlugins' own CI reads
+  // no registry at all, so the fixture lands there green and this line arrives
+  // with the ASTRA_PLUGINS_REF bump that first shows it. `fail/card-i18n-over-
+  // budget` is the case: nine cards at exactly the per-string caps, 9,775 bytes
+  // against 8,192, and `astra-plugin check` prints the same 9,775.
+  E_LOCALE_CARD_TOO_LARGE: "E19",
 };
 
 /**
@@ -479,22 +489,15 @@ export const CORPUS_NOT_IMPLEMENTED = {
  */
 export const CORPUS_NO_RULE_ID = {
   E_LOCALE_TOO_LARGE:
-    "max_locale_bytes and max_locale_keys are mirrored into AstraPlugins/spec/listing-limits.yaml since " +
-    "2026-08-23 and checked in both directions, but the CLI RULES that would read them — E18 — are still not " +
-    "written, so `astra-plugin check` returns OK on a 521,032-byte en.json that this refuses. That is a live " +
-    "CLI/registry gap and not a corpus one either way: a fixture would have to ship a 262,145-byte locale file, " +
-    "in a directory three repositories vendor, to provoke a rule one side does not implement. Witnessed instead " +
-    "by bot/tests/ingest.test.mjs, against constructed bytes rather than committed ones.",
-  E_LOCALE_CARD_TOO_LARGE:
-    "max_listing_i18n_bytes bounds the `i18n` member of a LISTING — a document this repository DERIVES, so a " +
-    "corpus fixture has no source-tree artifact to be about. It is mirrored into " +
-    "AstraPlugins/spec/listing-limits.yaml all the same, because E19 has to read the number from somewhere and a " +
-    "cap the CLI copies is one C20 pins. Note for whoever writes E19: this is NOT unreachable from a tree " +
-    "`astra-plugin check` passes. The per-locale name and description caps are enforced there in CHARACTERS and " +
-    "this one is in BYTES, so nine locales of astral-plane text at exactly those caps come to 9,775 bytes against " +
-    "a budget of 8,192 — constructed 2026-08-23 from a real scaffold, `OK … 0 warning(s)` there and this error " +
-    "here. Witnessed in bot/tests/ingest.test.mjs, in both directions — that it fires, and that nine locales at " +
-    "the schema's own caps do NOT trip it.",
+    "the CLI rule exists — E18 landed 2026-08-23 and `astra-plugin check` now refuses the 521,032-byte en.json " +
+    "this refuses, so the CLI/registry gap this entry used to describe is closed. What remains is the fixture, " +
+    "and the reason is size rather than disagreement: THE FIXTURE IS THE SIZE. Provoking it means committing a " +
+    "262,145-byte locale file, or a 5,001-key one, to AstraPlugins/testdata/locales — read by that repository's " +
+    "own suite and checked out by this repository's ingest job on every run, to prove a threshold both sides " +
+    "already agree on. Witnessed by bot/tests/ingest.test.mjs here and by " +
+    "`an_oversized_locale_file_is_refused_before_it_is_parsed` there, both against constructed bytes rather than " +
+    "committed ones. (Its sibling E19 was in this list for the same reason and is not: that fixture is 10 KB, " +
+    "so it was written — see CORPUS_RULE_IDS.)",
   E_METADATA_UNSAFE_TEXT:
     "a bidi override or zero-width character in a translated `listing.name` is refused by the same predicate that " +
     "refuses one in `plugin.toml`'s name, and `astra-plugin check` has no display-text scan at all — so a fixture " +
