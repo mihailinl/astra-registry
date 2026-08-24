@@ -1,7 +1,17 @@
 {
   "$comment": "What the release backstop last saw, per listed repository (PRODUCTION_PLAN task 3.4). Cache only: deleting this file costs one full poll of every listing and nothing else. `etag` is fed back as If-None-Match so an unchanged repository costs a 304.",
-  "updated_at": "2026-08-23T06:00:57Z",
+  "updated_at": "2026-08-24T06:23:30Z",
   "repos": {
+    "mihailinl/astra-dice-roller": {
+      "last_checked": "2026-08-24T06:23:30Z",
+      "etag": "W/\"8b82a45f656ef8c737191f581fcf7ee9\"",
+      "last_seen_tag": "v0.1.2",
+      "last_seen_at": "2026-08-12T01:46:14Z",
+      "checked_tags": [
+        "v0.1.2",
+        "v0.1.1"
+      ]
+    },
     "mihailinl/astraplugins": {
       "last_checked": "2026-08-17T06:04:24Z",
       "etag": "W/\"5ede9c85182dd761b910e62b45c687e7\"",
