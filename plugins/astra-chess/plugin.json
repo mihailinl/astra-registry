@@ -1,5 +1,5 @@
 {
-  "$comment": "Derived from KNICE-TECH/astra-chess@v0.1.15 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
+  "$comment": "Derived from KNICE-TECH/astra-chess@v0.1.16 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
   "schema": "astra.registry.plugin/1",
   "id": "astra-chess",
   "name": "Astra Chess",
@@ -15,5 +15,15 @@
     "name": "KNICE"
   },
   "icon": "icon.svg",
-  "readme": "README.md"
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "Шахматы Astra",
+      "summary": "Официальный шахматный плагин для Astra: уровни локального бота, выбранная модель Astra и чат прямо в партии."
+    },
+    "uk": {
+      "name": "Шахи Astra",
+      "summary": "Офіційний шаховий плагін для Astra: рівні локального бота, вибрана модель Astra і чат просто в партії."
+    }
+  }
 }
