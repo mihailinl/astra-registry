@@ -25,7 +25,7 @@ import {
 } from "./validate.mjs";
 import { CORPUS_NO_RULE_ID, deriveLocaleText, localeEnumProblems } from "../bot/lib/locales.mjs";
 import { summarise } from "../bot/lib/derive.mjs";
-import { buildIndex } from "./build-index.mjs";
+import { buildIndex, resolveSerial } from "./build-index.mjs";
 import {
   CATALOG_TTL_DAYS, INDEX_SCHEMA, REVOCATIONS_SCHEMA, REVOCATION_TTL_DAYS, TRUST_SCHEMA,
   signEnvelope, verifyEnvelope, privateKeyFromSeed, publicKeyBase64,
@@ -234,6 +234,55 @@ await test("the fixture bundle is byte-identical on a second build", () => {
   const a = makeFixtures(path.join(tmp, "det-a")).bundle;
   const b = makeFixtures(path.join(tmp, "det-b")).bundle;
   assert(a.equals(b), "the deterministic writer is not deterministic");
+});
+
+await test("the serial counts the commit being made, not the one behind it", () => {
+  // `resolveSerial` counts commits touching `plugins/`. At the moment
+  // `ingest.yml` regenerates the index its own catalogue change is STAGED, so
+  // the count of history is one short of the document being written — and every
+  // publish shipped the PREVIOUS catalogue's serial until a follow-up run
+  // corrected it. Measured on four consecutive publishes before this was fixed:
+  // 30/31, then 31 corrected; 31/32, then 32 corrected. Two catalogues, one
+  // serial, both deployed.
+  //
+  // A temporary git repository, because the real one's cleanliness is not this
+  // test's to depend on and a probe file under `plugins/` in the real tree
+  // would be a catalogue entry.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "serial-"));
+  const git = (...a) => execFileSync("git", a, { cwd: dir, stdio: ["ignore", "pipe", "ignore"] });
+  git("init", "-q");
+  git("config", "user.email", "t@example.invalid");
+  git("config", "user.name", "t");
+  fs.mkdirSync(path.join(dir, "plugins"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "plugins", "a.txt"), "one\n");
+  git("add", "-A"); git("commit", "-qm", "one");
+  assert(resolveSerial({ root: dir }) === 1, "a clean tree counts its own history");
+
+  fs.writeFileSync(path.join(dir, "plugins", "b.txt"), "two\n");
+  assert(resolveSerial({ root: dir }) === 2,
+    "a pending change under plugins/ is the commit about to be made and must be counted");
+
+  // TWO pending files are still ONE commit. Without this line the obvious wrong
+  // implementation — count the dirty entries rather than add one — passes:
+  // measured, it did, and the single-file case above could not tell them apart.
+  // A publish touches `plugin.json`, a `versions/*.json` and often a README, so
+  // that mistake would have shipped a serial three ahead and then a follow-up
+  // run pulling it back down. A monotonic counter that goes backwards is worse
+  // than one that lags.
+  fs.writeFileSync(path.join(dir, "plugins", "c.txt"), "three\n");
+  assert(resolveSerial({ root: dir }) === 2,
+    "two pending files under plugins/ are still one commit — the serial counts commits, not files");
+  fs.rmSync(path.join(dir, "plugins", "c.txt"));
+
+  // A change OUTSIDE plugins/ is not a catalogue change and must not move it.
+  fs.rmSync(path.join(dir, "plugins", "b.txt"));
+  fs.writeFileSync(path.join(dir, "README.md"), "docs\n");
+  assert(resolveSerial({ root: dir }) === 1,
+    "a change outside plugins/ is not a catalogue change and must not bump the serial");
+
+  // And an explicit value still wins, because build-index.yml passes one.
+  assert(resolveSerial({ root: dir, explicit: 41 }) === 41, "--serial must override");
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 console.log("\nthe real registry");
