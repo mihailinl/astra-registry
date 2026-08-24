@@ -89,7 +89,39 @@ export function resolveSerial({ explicit, root = REPO_ROOT } = {}) {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     });
-    return Number(out.trim());
+    const committed = Number(out.trim());
+
+    // **Plus the commit that is about to be made.**
+    //
+    // The count answers "how many commits have touched plugins/", and at the
+    // moment `ingest.yml` regenerates the index its own catalogue change is
+    // STAGED, not committed — so the honest count for the document being
+    // written is one higher than the count of history behind it.
+    //
+    // Without this, every publish shipped a catalogue carrying the PREVIOUS
+    // catalogue's serial, and the follow-up `build-index.yml` run — which
+    // counts after the push, so it gets the right number — committed a second
+    // time to correct it. Measured on four consecutive publishes: `bb126bd`
+    // serial 30 with count 31, corrected by `e4b7c53` to 31; `12b22bb` serial
+    // 31 with count 32, corrected by `635d973` to 32.
+    //
+    // Two different catalogues therefore carried one serial, briefly and while
+    // deployed. Nothing reads the serial today — the daemon does not compare
+    // it and this repository only asserts `>= 1` — so nothing was exploitable.
+    // That is precisely why it was worth fixing: a monotonic counter inside a
+    // signed document is the shape of an anti-rollback guarantee, and the first
+    // reader to rely on it would have inherited a hole nobody put there on
+    // purpose.
+    //
+    // A dirty `plugins/` means exactly one pending commit, because every writer
+    // here commits what it staged. A clean tree adds nothing, so `--check` on a
+    // pull request is unchanged.
+    const dirty = execFileSync("git", ["status", "--porcelain", "--", "plugins"], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return dirty.trim() ? committed + 1 : committed;
   } catch {
     // No git history (a fresh checkout of the files, or the repo before its
     // first commit). 0 is the honest answer and it is deterministic.
