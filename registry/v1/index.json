@@ -11,20 +11,48 @@
           "ui_contributions"
         ],
         "description": "Official chess plugin for Astra with local bot levels, the selected Astra model, and in-game chat.",
-        "download_url": "https://github.com/KNICE-TECH/astra-chess/releases/download/v0.1.13/astra-chess-0.1.13-noarch.astraplugin",
+        "download_url": "https://github.com/KNICE-TECH/astra-chess/releases/download/v0.1.15/astra-chess-0.1.15-noarch.astraplugin",
         "downloads": 0,
         "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2Ij4KICA8cmVjdCB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgcng9IjU2IiBmaWxsPSIjMTgxYjE4Ii8+CiAgPHBhdGggZD0iTTY3IDIwN2gxMjVNNzYgMTgxaDEwMmwtOC0zOWMtNC0yMC0xLTQxIDgtNTlsMTMtMjQtNTAtMzAtMTQgMzItMzUtMTItMzkgNDIgMzUgMTRjLTIxIDE3LTI5IDQzLTEyIDc2WiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZDdmMTcxIiBzdHJva2Utd2lkdGg9IjE0IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8cGF0aCBkPSJtMTI2IDY1IDI3IDEzIiBmaWxsPSJub25lIiBzdHJva2U9IiNkN2YxNzEiIHN0cm9rZS13aWR0aD0iMTQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K",
         "id": "astra-chess",
         "license": "MIT",
         "name": "Astra Chess",
         "platform_downloads": {
-          "linux-x64": "https://github.com/KNICE-TECH/astra-chess/releases/download/v0.1.13/astra-chess-0.1.13-noarch.astraplugin",
-          "noarch": "https://github.com/KNICE-TECH/astra-chess/releases/download/v0.1.13/astra-chess-0.1.13-noarch.astraplugin",
-          "windows-x64": "https://github.com/KNICE-TECH/astra-chess/releases/download/v0.1.13/astra-chess-0.1.13-noarch.astraplugin"
+          "linux-x64": "https://github.com/KNICE-TECH/astra-chess/releases/download/v0.1.15/astra-chess-0.1.15-noarch.astraplugin",
+          "noarch": "https://github.com/KNICE-TECH/astra-chess/releases/download/v0.1.15/astra-chess-0.1.15-noarch.astraplugin",
+          "windows-x64": "https://github.com/KNICE-TECH/astra-chess/releases/download/v0.1.15/astra-chess-0.1.15-noarch.astraplugin"
         },
         "publisher": "KnlCE",
-        "readme": "# Astra Chess\n\nPlay chess against a classical local bot or the model currently selected in Astra, directly in a dedicated app tab.\n\n> Official Astra plugin by KNICE — Astra co-founder and main developer.\n\n## Features\n\n- complete chess rules: check, checkmate, stalemate, castling, en passant, and pawn promotion;\n- four local difficulty levels plus **Astra AI**, which plays through the provider and model selected in Astra;\n- move calculation in a Web Worker, keeping the interface responsive during local search;\n- smooth piece movement, including castling and history replay, with `prefers-reduced-motion` support;\n- play as White or Black, undo moves, and locally restore an unfinished game;\n- step through the entire game with first, previous, next, and current-position controls;\n- **Realism** mode enabled by default, adding a natural pause, a thought bubble, and readable chess remarks;\n- local levels work entirely offline;\n- Astra AI validates every model-selected move against the legal move list before changing the board;\n- built-in chat with Astra AI, including the current position and move history as context.\n\nRules and move validation use [chess.js](https://github.com/jhlywa/chess.js), distributed under BSD-2-Clause. In Astra AI mode, the model also receives the narrow `play_chess_move` tool, which accepts one UCI move for the active turn.\n\n## Data sent to the selected model\n\nThe **Astra AI** level and in-game chat require the `send_chat_message` permission. After the user grants it, the plugin sends the selected Astra provider the current FEN position, move history, legal move list, and messages entered in the in-game chat. Local bot levels do not use the network.\n\nAstra shows this high-risk permission and its reason on the installation consent screen. A bundle imported manually cannot receive this permission; the Astra AI level and chat require the verified catalogue release.\n\n## Licences\n\nAuthor: KNICE. The plugin's original code is released under the MIT licence. The bundle also contains:\n\n- [chess.js 1.4.0](https://github.com/jhlywa/chess.js) — BSD-2-Clause;\n- [Astra Plugin SDK for TypeScript 0.5.0](https://github.com/mihailinl/AstraPlugins/tree/master/astra-plugin-sdk-ts) — MPL-2.0.\n\nFull notices and source links are in `LICENSE`, which is included in the plugin bundle.\n\n## Development\n\n```bash\nnpm install\nnpm test\nnpm run typecheck\nastra-plugin check --strict .\nastra-plugin test .\n```\n\nTo load the source folder into a running Astra instance:\n\n```bash\nastra-plugin dev .\n```\n",
+        "readme": "# Astra Chess\n\nPlay chess against a classical local bot or the model currently selected in Astra, directly in a dedicated app tab.\n\n> Official Astra plugin by KNICE — Astra co-founder and main developer.\n\n## Features\n\n- complete chess rules: check, checkmate, stalemate, castling, en passant, and pawn promotion;\n- four local difficulty levels plus **Astra AI**, which plays through the provider and model selected in Astra;\n- move calculation in a Web Worker, keeping the interface responsive during local search;\n- smooth piece movement, including castling and history replay, with `prefers-reduced-motion` support;\n- play as White or Black, undo moves, and locally restore an unfinished game;\n- step through the entire game with first, previous, next, and current-position controls;\n- **Realism** mode enabled by default, adding a natural pause, a thought bubble, and readable chess remarks;\n- local levels work entirely offline;\n- Astra AI validates every model-selected move against the legal move list before changing the board;\n- built-in chat with Astra AI, including the current position and move history as context.\n- automatic restoration of the current game, history position, settings, and Astra chat after leaving the plugin tab.\n\nRules and move validation use [chess.js](https://github.com/jhlywa/chess.js), distributed under BSD-2-Clause. In Astra AI mode, the model also receives the narrow `play_chess_move` tool, which accepts one UCI move for the active turn.\n\n## Data sent to the selected model\n\nThe **Astra AI** level and in-game chat require the `send_chat_message` permission. After the user grants it, the plugin sends the selected Astra provider the current FEN position, move history, legal move list, and messages entered in the in-game chat. Local bot levels do not use the network.\n\nAstra shows this high-risk permission and its reason on the installation consent screen. A bundle imported manually cannot receive this permission; the Astra AI level and chat require the verified catalogue release.\n\n## Licences\n\nAuthor: KNICE. The plugin's original code is released under the MIT licence. The bundle also contains:\n\n- [chess.js 1.4.0](https://github.com/jhlywa/chess.js) — BSD-2-Clause;\n- [Astra Plugin SDK for TypeScript 0.5.0](https://github.com/mihailinl/AstraPlugins/tree/master/astra-plugin-sdk-ts) — MPL-2.0.\n\nFull notices and source links are in `LICENSE`, which is included in the plugin bundle.\n\n## Development\n\n```bash\nnpm install\nnpm test\nnpm run typecheck\nastra-plugin check --strict .\nastra-plugin test .\n```\n\nTo load the source folder into a running Astra instance:\n\n```bash\nastra-plugin dev .\n```\n",
         "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "astra-chess-0.1.15-noarch.astraplugin",
+                "sha256": "d7a48fa9a7e6c761ed69326da6d712d1a2c48faf83bb32d39b769484de22e12a",
+                "size": 313163,
+                "url": "https://github.com/KNICE-TECH/astra-chess/releases/download/v0.1.15/astra-chess-0.1.15-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "send_chat_message": {
+                "reason": "Sends the position and in-game chat messages to the selected model so it can make moves and reply to the player."
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-08-23T08:16:14Z",
+            "release": {
+              "commit": "95506bda6f4103474755ab29f221c1b4f790ea85",
+              "kind": "github_release",
+              "repo": "KNICE-TECH/astra-chess",
+              "tag": "v0.1.15"
+            },
+            "version": "0.1.15"
+          },
           {
             "artifacts": {
               "noarch": {
@@ -60,8 +88,8 @@
           "repo": "KNICE-TECH/astra-chess"
         },
         "stars": 0,
-        "updated_at": "2026-08-22T20:38:20Z",
-        "version": "0.1.13"
+        "updated_at": "2026-08-23T08:16:14Z",
+        "version": "0.1.15"
       },
       {
         "added_at": "2026-08-10",

@@ -16,6 +16,7 @@ Play chess against a classical local bot or the model currently selected in Astr
 - local levels work entirely offline;
 - Astra AI validates every model-selected move against the legal move list before changing the board;
 - built-in chat with Astra AI, including the current position and move history as context.
+- automatic restoration of the current game, history position, settings, and Astra chat after leaving the plugin tab.
 
 Rules and move validation use [chess.js](https://github.com/jhlywa/chess.js), distributed under BSD-2-Clause. In Astra AI mode, the model also receives the narrow `play_chess_move` tool, which accepts one UCI move for the active turn.
 
