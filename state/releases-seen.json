@@ -1,9 +1,9 @@
 {
   "$comment": "What the release backstop last saw, per listed repository (PRODUCTION_PLAN task 3.4). Cache only: deleting this file costs one full poll of every listing and nothing else. `etag` is fed back as If-None-Match so an unchanged repository costs a 304.",
-  "updated_at": "2026-08-26T06:04:56Z",
+  "updated_at": "2026-08-27T16:48:21Z",
   "repos": {
     "mihailinl/astra-dice-roller": {
-      "last_checked": "2026-08-26T06:04:56Z",
+      "last_checked": "2026-08-27T16:48:21Z",
       "etag": "W/\"8b82a45f656ef8c737191f581fcf7ee9\"",
       "last_seen_tag": "v0.1.2",
       "last_seen_at": "2026-08-12T01:46:14Z",
@@ -13,10 +13,10 @@
       ]
     },
     "mihailinl/astraplugins": {
-      "last_checked": "2026-08-17T06:04:24Z",
-      "etag": "W/\"5ede9c85182dd761b910e62b45c687e7\"",
-      "last_seen_tag": "sdk-v0.7.0",
-      "last_seen_at": "2026-08-16T03:29:42Z",
+      "last_checked": "2026-08-27T16:48:21Z",
+      "etag": "W/\"fc711a60126ad00abb6578b2753989fe\"",
+      "last_seen_tag": "sdk-v0.7.1",
+      "last_seen_at": "2026-08-24T03:48:56Z",
       "checked_tags": [
         "sdk-v0.7.0",
         "cli-v0.2.1",
@@ -27,7 +27,16 @@
         "python-v0.4.0",
         "ts-v0.2.0",
         "rust-v0.2.0",
-        "python-v0.2.0"
+        "python-v0.2.0",
+        "sdk-v0.7.1",
+        "cli-v0.3.0",
+        "text-utils-v0.1.3",
+        "text-utils-v0.1.2",
+        "telegram-client-v0.1.2",
+        "telegram-client-v0.1.1",
+        "json-tools-v0.1.2",
+        "doom-v0.1.3",
+        "doom-v0.1.2"
       ]
     }
   }
