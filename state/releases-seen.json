@@ -1,21 +1,22 @@
 {
   "$comment": "What the release backstop last saw, per listed repository (PRODUCTION_PLAN task 3.4). Cache only: deleting this file costs one full poll of every listing and nothing else. `etag` is fed back as If-None-Match so an unchanged repository costs a 304.",
-  "updated_at": "2026-08-31T11:50:10Z",
+  "updated_at": "2026-09-01T10:27:01Z",
   "repos": {
     "knice-tech/astra-chess": {
-      "last_checked": "2026-08-31T11:50:10Z",
-      "etag": "W/\"8919fe0e7b31ed011048f527276cffa9\"",
-      "last_seen_tag": "v0.1.15",
-      "last_seen_at": "2026-08-23T08:16:14Z",
+      "last_checked": "2026-09-01T10:27:01Z",
+      "etag": "W/\"ee5f9382bd07624b4433aae19625fac3\"",
+      "last_seen_tag": "v0.1.17",
+      "last_seen_at": "2026-08-31T21:10:27Z",
       "checked_tags": [
         "v0.1.15",
         "v0.1.13",
         "v0.1.12",
-        "v0.1.11"
+        "v0.1.11",
+        "v0.1.17"
       ]
     },
     "mihailinl/astra-dice-roller": {
-      "last_checked": "2026-08-31T11:50:10Z",
+      "last_checked": "2026-09-01T10:27:01Z",
       "etag": "W/\"8b82a45f656ef8c737191f581fcf7ee9\"",
       "last_seen_tag": "v0.1.2",
       "last_seen_at": "2026-08-12T01:46:14Z",
@@ -25,7 +26,7 @@
       ]
     },
     "mihailinl/astraplugins": {
-      "last_checked": "2026-08-31T11:50:10Z",
+      "last_checked": "2026-09-01T10:27:01Z",
       "etag": "W/\"fc711a60126ad00abb6578b2753989fe\"",
       "last_seen_tag": "sdk-v0.7.1",
       "last_seen_at": "2026-08-24T03:48:56Z",
@@ -52,7 +53,7 @@
       ]
     },
     "teletemagame-dev/minecraft-for-astra": {
-      "last_checked": "2026-08-31T11:50:10Z",
+      "last_checked": "2026-09-01T10:27:01Z",
       "etag": "W/\"06aebc3c84bf157b3ac92edab77e74e7\"",
       "last_seen_tag": "v0.3.2",
       "last_seen_at": "2026-08-20T17:24:55Z",
@@ -63,7 +64,7 @@
       ]
     },
     "teletemagame-dev/sub-models-for-astra": {
-      "last_checked": "2026-08-31T11:50:10Z",
+      "last_checked": "2026-09-01T10:27:01Z",
       "etag": "W/\"dde0b0a83b4229b63fff12ab0be5ff9c\""
     }
   }
