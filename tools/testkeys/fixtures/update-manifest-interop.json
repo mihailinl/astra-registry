@@ -1,0 +1,49 @@
+{
+  "signed": {
+    "schema": "astra.update.v1",
+    "channel": "stable",
+    "signedAt": "2026-09-02T08:00:00Z",
+    "expires": "2031-01-01T00:00:00Z",
+    "min_supported_version": "0.2.1",
+    "latest": {
+      "version": "0.2.2",
+      "releasedAt": "2026-09-02T07:40:00Z",
+      "placeholder": false,
+      "notes": {
+        "en": "Automatic updates. Quote \" backslash \\ tab\tend.",
+        "ru": "Автоматические обновления. Кавычка \" слэш \\ табуляция\tконец.",
+        "uk": "Автоматичні оновлення 🛠 готово."
+      },
+      "artifacts": [
+        {
+          "platform": "windows-x64",
+          "kind": "installer",
+          "filename": "Astra-Installer-0.2.2.exe",
+          "sizeBytes": 87437592,
+          "sha256": "b779a4e8c4e076451014d1237717a815bb77f1e71e800aba797279b98ff3d185"
+        },
+        {
+          "platform": "linux-x64",
+          "kind": "package",
+          "filename": "Astra-linux-x64.tar.gz",
+          "sizeBytes": 91234567,
+          "sha256": "3f786850e387550fdab836ed7e6dc881de23001b3a55a4cf6ec1a3ff4a63b3ba"
+        }
+      ]
+    },
+    "проба": {
+      "🛠": "non-BMP key, sorted by UTF-16 code unit",
+      "empty_object": {},
+      "empty_array": [],
+      "max_safe": 9007199254740991,
+      "negative": -1,
+      "zero": 0
+    }
+  },
+  "signatures": [
+    {
+      "key_id": "TEST-ONLY-DO-NOT-TRUST-root-a",
+      "sig": "oHQgNGVqJ6cvFWa8ozvoNFz8byghhwrpAR9uCZYe6HY33JyIiSpKCgAxVnQ3iorrUax+H6lJKgx7/Wur7YtmBA=="
+    }
+  ]
+}
