@@ -1,0 +1,13 @@
+Astra now checks for updates on its own and tells you once when a new build is
+ready. The About panel shows what is waiting, so a notice you dismiss is not a
+notice you lose.
+
+The installer is signed, so Windows no longer warns about an unknown publisher.
+
+Updating asks before closing a running Astra instead of stopping it underneath
+you, and the installer follows the language you picked.
+
+Autostart now says what went wrong instead of failing quietly.
+
+The companion pack is no longer bundled into the installer, so the download is
+smaller.

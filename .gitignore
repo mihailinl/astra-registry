@@ -27,3 +27,10 @@ node_modules/
 # could mistake them for production material, and the daemon can only compile
 # them in behind a non-default feature that a release profile refuses.
 !tools/testkeys/*.SECRET-TEST-KEY.json
+
+# Installers are 87 MB and belong on the CDN, never in this history. A stray
+# `git add -A` with one of these present is permanent, and this repository is
+# public. Test fixtures for the signer go in tools/testkeys/fixtures/ instead.
+*.exe
+*.msi
+*.dmg
