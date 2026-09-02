@@ -45,6 +45,21 @@ export const TRUST_SCHEMA = "astra.registry.trust/1";
 export const REVOCATIONS_SCHEMA = "astra.registry.revocations/1";
 
 /**
+ * The Astra update manifest's schema, and therefore its signature domain.
+ *
+ * It sits here beside the other three rather than in the signer that uses it, for
+ * the reason the comment above gives: a domain string is what stops a signature
+ * over one document being replayed as a signature over another, and four of them
+ * in four files is four chances for two to drift into agreement.
+ *
+ * Read by `astra-daemon/src/updates/manifest.rs` as its own constant — never from
+ * the file it is checking. The full contract is `api/docs/update-manifest.md` in
+ * the minice repository, and it is frozen: the signature covers the serialised
+ * bytes, so a field cannot be added without a new domain.
+ */
+export const UPDATE_SCHEMA = "astra.update.v1";
+
+/**
  * How long a signed catalogue claims to be current — PRODUCTION_PLAN §5.5.
  *
  * Thirty days, and the asymmetry with the revocation list's seven is the whole
