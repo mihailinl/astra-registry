@@ -1,10 +1,11 @@
-Astra can now update itself. When a new build is ready you are offered it once,
-and the offer waits in About until you take it or dismiss it, so a notice you
-closed is not a notice you lost.
+Astra can now update itself. When a new build is ready you are offered it once.
+Close the notice and it stays waiting in About — dismissing it silences the
+banner, it does not throw the offer away.
 
-One button does the whole thing: it downloads the installer, checks it against
-the signature, installs it and brings Astra back.
+One button does the whole thing: it downloads the installer, checks it byte for
+byte against the digest published in the signed release manifest, installs it and
+brings Astra back.
 
-Where Astra was installed through Steam or a Linux package, that installer owns
-updates instead. Astra says so plainly rather than showing a button that would
-not work.
+Where Astra came from Steam, from a Linux package, or as a portable copy, that
+route owns updates instead. Astra says so plainly rather than showing a button
+that would not work.
