@@ -101,6 +101,35 @@ is needed, the change is the handler minting a **signed** target, not this line.
 Those two digests must match. The server serves the bytes verbatim and holds no key:
 it can refuse a manifest, and it cannot forge one.
 
+## What 0.2.1's updater actually does, which is less than it was written to do
+
+**The one-time system notification works. The About panel's "an update is waiting"
+block never renders — on any platform.**
+
+Stage 1 added `update_version` / `update_notes` / `update_problem` to the daemon's
+state response and declared them REQUIRED strings in the TypeScript types, but no
+UI bridge carries them: Tauri's payload stopped at eight fields and Electron writes
+the same eight BY HAND TWICE, in `get_state` and in the post-auth snapshot, and both
+copies stopped too. The fields arrive `undefined`.
+
+Nothing failed and nothing could. A Rust struct that omits a field and a TypeScript
+interface that promises one meet only at runtime, and `check:parity` compares command
+NAMES between the bridges rather than the SHAPE of what they return — it checks that
+the door exists, not that anything came through it.
+
+So a person on 0.2.1 learns about a new version once, as a toast, and then has no
+standing surface showing it. The release notes here were written to say the About
+panel shows what is waiting; that sentence has been removed rather than shipped,
+because a signed manifest is not the place to find out a note was aspirational.
+
+Fixed in the client at `ad2a40db`, with a canary comparing the field names of all
+three definitions. `main` is 0.2.2 and stage 2 — download, hash check, run the
+installer, restart — is being built.
+
+**None of this is a reason not to sign.** The notification is the load-bearing half:
+it is what turns "there is a new version" from something nobody learns into something
+everybody is told. It is simply worth knowing what you are signing.
+
 ## The obligation this creates
 
 `expires` is 30 days. The signing key is offline, so **re-signing is a calendar

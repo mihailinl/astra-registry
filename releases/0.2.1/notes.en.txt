@@ -1,6 +1,5 @@
-Astra now checks for updates on its own and tells you once when a new build is
-ready. The About panel shows what is waiting, so a notice you dismiss is not a
-notice you lose.
+Astra now checks for updates on its own and notifies you once when a new build
+is ready.
 
 The installer is signed, so Windows no longer warns about an unknown publisher.
 
