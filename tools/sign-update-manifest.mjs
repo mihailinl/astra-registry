@@ -3,7 +3,7 @@
 //
 //   node tools/sign-update-manifest.mjs \
 //     --root-key /run/media/$USER/ASTRA-ROOT/keys/astra-root-2026a.private.pem \
-//     --artifact ~/Astra-Setup-0.2.1.exe \
+//     --artifact ~/Astra-Installer-0.2.1.exe \
 //     --version 0.2.1 \
 //     --notes-en notes.en.txt --notes-ru notes.ru.txt --notes-uk notes.uk.txt \
 //     --out manifest.json
@@ -103,10 +103,20 @@ const ROOT_JSON = path.join(REPO, "registry", "v1", "root.json");
  */
 const DEFAULT_EXPIRY_DAYS = 30;
 
-/** The artefact names the shipped client accepts. Widen THERE first, then here. */
-const FILENAME = /^Astra-Setup-(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\.exe$/;
+/**
+ * The artefact names the shipped client accepts. Widen THERE first, then here.
+ *
+ * `Astra-Installer-<semver>.exe` is the OUTER Slint launcher — the file a person downloads and
+ * runs. The inner Inno setup is called `Astra-Setup-<semver>.exe`, is embedded in the launcher and
+ * unpacked to %TEMP% for the seconds an install takes, and can never be on a CDN. This regex named
+ * the inner one until 2026-09-02; it matched a file that does not exist.
+ *
+ * Windows only, by the owner's decision: a closed set should name what is actually published, and
+ * today that is one file. The Linux shapes are in the contract for the day they ship.
+ */
+const FILENAME = /^Astra-Installer-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\.exe$/;
 
-const PLATFORMS = new Set(["windows-x64", "linux-x64"]);
+const PLATFORMS = new Set(["windows-x64"]);
 
 function die(message) {
   console.error(`sign-update-manifest: ${message}`);
@@ -233,7 +243,7 @@ function artefact() {
     die(
       `the artefact is named ${filename}, which is outside the set the shipped client accepts. ` +
         "That name becomes a URL component AND a path on disk over there. Rename it to " +
-        "Astra-Setup-<semver>.exe, or widen the set in the CLIENT first and ship that before " +
+        "Astra-Installer-<semver>.exe, or widen the set in the CLIENT first and ship that before " +
         "publishing a new shape here.",
     );
   }
