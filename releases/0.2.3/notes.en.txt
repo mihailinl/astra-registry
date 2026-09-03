@@ -1,0 +1,12 @@
+If Setup told you your processor does not support AVX2 and stopped before
+unpacking anything, it was wrong — and it was wrong about every processor on
+three versions of Windows 10, not about yours.
+
+Windows only learned to answer that question in the May 2020 update. Below it
+the answer is "no" whether the hardware supports the feature or not, and there
+is no way to tell the two apart. Astra now asks only where the answer means
+something. The real check, the one that reads the processor directly and names
+exactly what is missing, runs as it always did.
+
+The companion tab takes its pictures and its cast from the engine itself now,
+instead of from a file Astra opened and hoped was current.
