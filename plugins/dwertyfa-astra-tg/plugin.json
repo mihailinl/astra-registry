@@ -1,0 +1,25 @@
+{
+  "$comment": "Derived from dwertyfa288/dwertyfa-astra-tg@v0.1.11 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
+  "schema": "astra.registry.plugin/1",
+  "id": "dwertyfa-astra-tg",
+  "name": "TG for Astra",
+  "summary": "Announce selected Telegram chats with Astra and send voice-dictated replies",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "dwertyfa288/dwertyfa-astra-tg"
+  },
+  "added_at": "2026-09-03",
+  "description": "Announce selected Telegram chats with Astra and send voice-dictated replies",
+  "author": {
+    "name": "dwertyfa"
+  },
+  "icon": "icon.svg",
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "TG for Astra",
+      "summary": "Озвучивает выбранные Telegram-чаты голосом Astra и отправляет продиктованные ответы"
+    }
+  }
+}

@@ -758,6 +758,81 @@
         "version": "0.1.3"
       },
       {
+        "added_at": "2026-09-03",
+        "author": "dwertyfa",
+        "capabilities": [
+          "actions",
+          "event_handlers",
+          "triggers",
+          "ui_contributions"
+        ],
+        "description": "Announce selected Telegram chats with Astra and send voice-dictated replies",
+        "download_url": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.11/dwertyfa-astra-tg-0.1.11-noarch.astraplugin",
+        "downloads": 0,
+        "i18n": {
+          "ru": {
+            "description": "Озвучивает выбранные Telegram-чаты голосом Astra и отправляет продиктованные ответы",
+            "name": "TG for Astra"
+          }
+        },
+        "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgcm9sZT0iaW1nIiBhcmlhLWxhYmVsPSJURyBmb3IgQXN0cmEiPgogIDx0aXRsZT5URyBmb3IgQXN0cmE8L3RpdGxlPgogIDxkZWZzPgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJiZyIgeDE9IjgiIHkxPSI0IiB4Mj0iNTciIHkyPSI2MSIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPgogICAgICA8c3RvcCBzdG9wLWNvbG9yPSIjMzliOGZmIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzE3NjlkMiIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3QgeD0iMiIgeT0iMiIgd2lkdGg9IjYwIiBoZWlnaHQ9IjYwIiByeD0iMTciIGZpbGw9InVybCgjYmcpIi8+CiAgPHBhdGggZD0iTTE0IDMxLjMgNDkuOCAxN2MxLjgtLjcgMy40LjcgMi45IDIuOGwtNi4xIDI4LjhjLS40IDIuMS0yIDIuNi0zLjcgMS42bC05LjQtNy00LjYgNC41Yy0uNS41LS45LjktMS45LjlsLjctOS42IDE3LjUtMTUuOGMuOC0uNy0uMi0xLjEtMS4yLS40TDIyLjQgMzYuNGwtOS4zLTIuOWMtMi0uNi0yLjEtMiAuOS0zLjJaIiBmaWxsPSIjZmZmIi8+CiAgPHBhdGggZD0iTTcgNDhjMy40IDAgMy40LTUgNi44LTVzMy40IDUgNi44IDUiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzljZTBmZiIgc3Ryb2tlLXdpZHRoPSIyLjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K",
+        "id": "dwertyfa-astra-tg",
+        "license": "MIT",
+        "name": "TG for Astra",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.11/dwertyfa-astra-tg-0.1.11-noarch.astraplugin",
+          "noarch": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.11/dwertyfa-astra-tg-0.1.11-noarch.astraplugin",
+          "windows-x64": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.11/dwertyfa-astra-tg-0.1.11-noarch.astraplugin"
+        },
+        "readme": "# TG for Astra\n\nTG for Astra connects a personal Telegram account to Astra. The plugin monitors selected chats, announces new messages with Astra's voice, plays voice messages, and sends replies dictated by the user.\n\n## Features\n\n- Login with a phone number, Telegram verification code, and two-step verification password.\n- Support for private chats, groups, and channels.\n- Monitoring of up to 10 chats at the same time.\n- Customizable notification and reply-confirmation messages.\n- Playback of Telegram voice messages in their original audio.\n- Automatic transport selection: Telegram WSS first, followed by a fallback WSS relay.\n- Text replies after a command word, for example `Astra, write I will be there soon`.\n\nThe two-step verification password is not stored after login.\n\n## Development\n\nRequirements: Node.js 20+ and the `astra-plugin` CLI.\n\n```bash\nnpm install\nnpm run typecheck\nnpm run build\nastra-plugin check --strict .\n```\n\nTo run the plugin in development mode:\n\n```bash\nastra-plugin dev .\n```\n\n## License\n\nMIT\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "dwertyfa-astra-tg-0.1.11-noarch.astraplugin",
+                "sha256": "000e2175b99d5269dce852de6154c7ada67e93be2afdf8e8cd94bce5bafea564",
+                "size": 3854435,
+                "url": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.11/dwertyfa-astra-tg-0.1.11-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "actions",
+              "event_handlers",
+              "triggers",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "fire_trigger": {
+                "reason": "Starts your Telegram announcement command when a selected chat receives a message"
+              },
+              "subscribe_events": {
+                "reason": "Reads final recognized phrases only while a Telegram voice-reply window is open",
+                "types": [
+                  "speech_recognized"
+                ]
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-09-03T03:10:59Z",
+            "release": {
+              "commit": "f0de7e654eb83d6824c90df10609591a7c89870f",
+              "kind": "github_release",
+              "repo": "dwertyfa288/dwertyfa-astra-tg",
+              "tag": "v0.1.11"
+            },
+            "version": "0.1.11"
+          }
+        ],
+        "repository_url": "https://github.com/dwertyfa288/dwertyfa-astra-tg",
+        "source": {
+          "kind": "github",
+          "repo": "dwertyfa288/dwertyfa-astra-tg"
+        },
+        "stars": 0,
+        "updated_at": "2026-09-03T03:10:59Z",
+        "version": "0.1.11"
+      },
+      {
         "added_at": "2026-08-10",
         "author": "Astra Team",
         "capabilities": [
@@ -1285,6 +1360,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 33
+    "serial": 34
   }
 }
