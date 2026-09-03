@@ -1,21 +1,27 @@
 {
-  "$comment": "Derived from mihailinl/AstraPlugins@telegram-client-v0.1.2 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
+  "$comment": "Derived from mihailinl/AstraPlugins@telegram-client-v0.2.0 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
   "schema": "astra.registry.plugin/1",
   "id": "telegram-client",
   "name": "Telegram Bot",
-  "summary": "Bridge Telegram bot topics to Astra conversations with full sync and streaming",
+  "summary": "Talk to Astra from Telegram — your message in, the reply streamed back as it is written",
   "license": "MIT",
   "source": {
     "kind": "github",
     "repo": "mihailinl/AstraPlugins"
   },
   "added_at": "2026-08-10",
-  "description": "Bridge Telegram bot topics to Astra conversations with full sync and streaming",
+  "description": "Talk to Astra from Telegram — your message in, the reply streamed back as it is written",
   "author": {
     "name": "Mihailin"
   },
   "icon": "icon.svg",
   "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "Telegram Bot",
+      "summary": "Общайтесь с Astra из Telegram — ваше сообщение туда, ответ приходит сюда по мере написания"
+    }
+  },
   "categories": [
     "communication"
   ],

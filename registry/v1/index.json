@@ -1100,10 +1100,16 @@
         "categories": [
           "communication"
         ],
-        "description": "Bridge Telegram bot topics to Astra conversations with full sync and streaming",
+        "description": "Talk to Astra from Telegram — your message in, the reply streamed back as it is written",
         "download_url": "",
         "downloads": 0,
         "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/telegram-client",
+        "i18n": {
+          "ru": {
+            "description": "Общайтесь с Astra из Telegram — ваше сообщение туда, ответ приходит сюда по мере написания",
+            "name": "Telegram Bot"
+          }
+        },
         "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2IiB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgcm9sZT0iaW1nIiBhcmlhLWxhYmVsPSJUZWxlZ3JhbSBCb3QiPgogIDx0aXRsZT5UZWxlZ3JhbSBCb3Q8L3RpdGxlPgogIDwhLS0gRmxhdCBnZW9tZXRyeTogYSBwYXBlciBwbGFuZSBvdmVyIHRoZSBzdGFjayBvZiBmb3J1bSB0b3BpY3MgaXQga2VlcHMgaW4KICAgICAgIHN5bmMuIFBsYWluIHN0YXRpYyBtYXJrdXA6IG5vIHNjcmlwdCwgbm8gZXh0ZXJuYWwgcmVmZXJlbmNlcywgbm8gZm9udHMuIC0tPgoKICA8Y2lyY2xlIGN4PSIxMjgiIGN5PSIxMjgiIHI9IjEyMiIgZmlsbD0iIzIyOWVkOSIvPgogIDxjaXJjbGUgY3g9IjEyOCIgY3k9IjEyOCIgcj0iMTE2IiBmaWxsPSJub25lIiBzdHJva2U9IiM3ZmQzZjIiIHN0cm9rZS13aWR0aD0iNiIgb3BhY2l0eT0iMC41Ii8+CgogIDwhLS0gb25lIGJhciBwZXIgdG9waWMsIHRoZSBjb252ZXJzYXRpb24gbGlzdCB0aGUgYnJpZGdlIHdyaXRlcyBpbnRvIC0tPgogIDxnIGZpbGw9IiNmZmZmZmYiIG9wYWNpdHk9IjAuNDIiPgogICAgPHJlY3QgeD0iMzgiIHk9IjE2MCIgd2lkdGg9Ijg2IiBoZWlnaHQ9IjEzIiByeD0iNi41Ii8+CiAgICA8cmVjdCB4PSIzOCIgeT0iMTgzIiB3aWR0aD0iNjIiIGhlaWdodD0iMTMiIHJ4PSI2LjUiLz4KICAgIDxyZWN0IHg9IjM4IiB5PSIyMDYiIHdpZHRoPSI0MCIgaGVpZ2h0PSIxMyIgcng9IjYuNSIvPgogIDwvZz4KCiAgPCEtLSB0aGUgcGxhbmU6IHR3byBmb2xkcywgdGlwIHRvIHRoZSB0b3AgcmlnaHQgLS0+CiAgPHBhdGggZD0iTTIyMiAzNiBMMzQgMTE2IEwxMTAgMTMzIFoiIGZpbGw9IiNmZmZmZmYiLz4KICA8cGF0aCBkPSJNMjIyIDM2IEwxMTAgMTMzIEwxMjYgMjA2IEwxNTIgMTY2IFoiIGZpbGw9IiNiZmU2ZjciLz4KICA8cGF0aCBkPSJNMjIyIDM2IEwxMTAgMTMzIEwxMTAgMTc4IFoiIGZpbGw9IiM4ZmQwZWUiLz4KPC9zdmc+Cg==",
         "id": "telegram-client",
         "keywords": [
@@ -1116,12 +1122,48 @@
         "license": "MIT",
         "name": "Telegram Bot",
         "platform_downloads": {
-          "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.1.2/telegram-client-0.1.2-linux-x64.astraplugin",
-          "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.1.2/telegram-client-0.1.2-windows-x64.astraplugin"
+          "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.2.0/telegram-client-0.2.0-linux-x64.astraplugin",
+          "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.2.0/telegram-client-0.2.0-windows-x64.astraplugin"
         },
         "publisher": "mihailinl",
-        "readme": "# Telegram Bot\n\nTalk to Astra from Telegram. Each conversation becomes a topic in a Telegram\nforum group, and both sides stay in sync.\n\n## What it does\n\nBridges a Telegram bot to Astra as a full chat client:\n\n- **`/new [title]`** creates a forum topic and a matching Astra conversation.\n- **`/list`** shows Astra conversations that are not linked to a topic yet and\n  links the one you pick.\n- Any message you send in a linked topic goes to Astra as if you had typed it in\n  the app, and the reply streams back into the topic as it is generated.\n- Sync runs both ways: a conversation you continue in the Astra window appears in\n  its Telegram topic, and vice versa.\n\nThe interface is translated — English and Russian ship with it, following\nAstra's language setting.\n\n## What it needs\n\n1. **A Telegram bot token.** Talk to [@BotFather](https://t.me/BotFather),\n   create a bot, copy the token into the plugin's settings.\n2. **A Telegram group with Topics enabled**, with your bot added as an\n   administrator. Topics are how conversations are kept apart; a plain group\n   will not work.\n3. **Outbound network access** to `api.telegram.org`.\n\nOptionally set **Allowed Usernames** to a comma-separated list of Telegram\nusernames (no `@`). Leave it empty and *anyone who can reach the bot can talk to\nyour Astra* — including anyone who is added to the group later. Setting it is\nthe difference between a personal bridge and an open door.\n\n## Capabilities it asks for, and why\n\n| Capability | What it allows | Why this plugin asks |\n|---|---|---|\n| `client` | The plugin acts as a full chat client: it may read your conversations, create new ones, submit messages as you, and subscribe to the live event stream | That *is* the feature — a bridge that could not read and write your conversations would not be a bridge |\n\n`client` is a high-risk capability and Astra will say so before installing. Be\nconcrete about what installing this means: **your Astra conversations are\nrelayed to Telegram**, therefore to Telegram's servers, therefore to anyone with\naccess to that group. That is the intended behaviour and it is not reversible\nfor messages already sent.\n\nThe bot token is stored in the plugin's configuration, and the topic-to-\nconversation mapping is written to a `state.json` beside the plugin binary in\nAstra's plugin directory.\n\n## Configuration\n\n| Setting | Required | Meaning |\n|---|---|---|\n| Bot Token | yes | The token from @BotFather |\n| Allowed Usernames | no, but read the warning above | Comma-separated Telegram usernames permitted to use the bot. Empty means everyone |\n\n## Build it yourself\n\n```bash\ncd examples/telegram-client\ncargo build --release\nastra-plugin build\n```\n\n## Files\n\n- `src/main.rs` — lifecycle, config, and starting/stopping the poll loop.\n- `src/telegram.rs` — the Bot API client.\n- `src/bot.rs`, `src/commands.rs` — update handling and the two commands.\n- `src/sync.rs` — the firehose: Astra events to Telegram, streamed.\n- `src/state.rs` — the topic mapping, persisted.\n- `locales/` — English and Russian.\n- `icon.svg` — the store icon, hand-drawn SVG.\n\nMIT licensed.\n",
+        "readme": "# Telegram Bot\n\nTalk to Astra from Telegram. What you send goes into an Astra conversation as\nif you had typed it in the app, and the reply appears in Telegram as it is\nwritten.\n\n## What it does\n\n- **Any message** you send the bot goes to Astra, and the answer streams back\n  as it is written — through `sendMessageDraft`, the method Telegram added for\n  exactly this, so the text animates in the way its own AI assistant does\n  rather than jumping once a second. Telegram's \"Thinking…\" covers the wait\n  before the first word. Drafts are a **private-chat** method; in a group the\n  bot falls back to posting one message and rewriting it about once a second,\n  which is what every Telegram client has always supported.\n\n  A draft is a preview, not a message — it expires on its own in about thirty\n  seconds. What stays in the chat is the finished answer, sent normally once\n  the stream is done.\n- **`/new`** starts a new conversation: the next message begins with no memory\n  of what came before. The old one stays in Astra's sidebar — the plugin never\n  deletes anything.\n- **Stopping a reply.** A streaming draft carries Telegram's own **Stop**\n  button, and `/stop` does the same for a chat that has no draft to put one on.\n  Whatever had arrived by then is delivered as a message, marked stopped.\n\n  What stopping means here is worth being exact about: the bridge lets go of the\n  reply stream. It cannot tell Astra to abandon the turn — `StopGeneration` is\n  on `ChatService`, refused to a plugin like the rest of it — so whether the\n  daemon drops the work or finishes it unheard is the daemon's call about a\n  cancelled stream.\n- **`/screenshot`** sends a picture of this machine's screen into the chat.\n  **Windows only**, and **off until you switch it on** — see below for both.\n- **`/help`** repeats the short version of this page inside the chat.\n- A long answer is **split** across as many messages as it takes, at a line\n  break where there is one.\n\nThe interface is translated — English and Russian ship with it, following\nAstra's language setting.\n\n## One conversation, and why\n\nThe bridge holds **one Astra conversation at a time**, not one per Telegram\ntopic. That is a limit of what a plugin may do, not a simplification:\n\n`PluginHostService.SendChatMessage` is the only way a plugin can reach a\nconversation. The daemon registers every plugin as `ClientType::PluginClient`\nand its auth interceptor refuses that identity on any gRPC path outside\n`/astra.PluginHostService/`, so `ChatService.ListConversations` and\n`CreateConversation` — the two calls a topic-per-conversation bridge needs —\nanswer `permission_denied` whatever the manifest says. Version 0.1 of this\nplugin was built on them and could not send a single message.\n\nThe conversation Astra opens is a normal one: it is in the sidebar, you can\nopen it, read it and carry on typing in it from the desktop. What you type\nthere does not appear in Telegram — a plugin cannot subscribe to conversation\nevents either — so the bridge is one-way in that sense: Telegram in, replies\nback.\n\n**Tool calls are invisible here, for the same reason.** `PluginChatChunk`, the\nonly thing `SendChatMessage` streams back, carries text, `done` or an error and\nnothing else; the events that name a tool — `ToolCallStartEvt`,\n`ToolCallResultEvt` — are `ConversationEventMsg` variants on `ChatService`'s\nfirehose, and `PluginHostService.SubscribeEvents` says so in the proto: *chat-log\nevents travel through `ChatService.SubscribeEvents`, NOT through this stream*.\nSo while Astra runs a tool the bridge can say that something is happening, and\ncannot say what: the streaming draft is held open through the silence rather\nthan left to expire.\n\n## What it needs\n\n1. **A Telegram bot token.** Talk to [@BotFather](https://t.me/BotFather),\n   create a bot, copy the token into the plugin's settings.\n2. **Outbound network access** to `api.telegram.org`.\n\nA private chat with the bot is enough; a group works too, and in a forum group\nthe bot answers inside the topic you wrote in. The bot binds to the **first\nchat that talks to it** and ignores every other one from then on.\n\nOptionally set **Allowed Usernames** to a comma-separated list of Telegram\nusernames (no `@`). Leave it empty and *anyone who can reach the bot can talk to\nyour Astra* — including anyone who is added to the group later. Setting it is\nthe difference between a personal bridge and an open door.\n\n## What it asks for, and why\n\n| | What it means | Why this plugin asks |\n|---|---|---|\n| `client` (capability + permission) | The plugin is a chat front-end | `spec/hooks.yaml` files `SendChatMessage` under this capability |\n| `send_chat_message` (permission) | Drive an AI turn as if the user had spoken | That *is* the feature |\n\n`send_chat_message` is high-risk and Astra will say so before installing, with\nits own checkbox. Be concrete about what installing this means: **what Astra\nreplies is relayed to Telegram**, therefore to Telegram's servers, therefore to\nanyone with access to that chat. That is the intended behaviour and it is not\nreversible for messages already sent.\n\nThe bot token is stored in the plugin's configuration. The chat it is bound to\nand the conversation it is talking into are written to a `state.json` beside the\nplugin binary in Astra's plugin directory.\n\n## Configuration\n\n| Setting | Required | Meaning |\n|---|---|---|\n| Bot Token | yes | The token from @BotFather |\n| Allowed Usernames | no, but read the warning above | Comma-separated Telegram usernames permitted to use the bot. Empty means everyone |\n| Allow `/screenshot` | no, **off by default** | Whether `/screenshot` works at all. Windows only. Read the section below before turning it on |\n\n## `/screenshot`, why it is off, and why it is Windows only\n\nEverything else this bridge does is a conversation with an AI. This is a live\npicture of the desktop — whatever is on screen at the moment the command\narrives, sent to Telegram's servers and to everyone who can see that chat.\nAnyone who may talk to the bot may run it, so with **Allowed Usernames** empty\nthat is anyone who finds the bot. Fill that in first; the two settings are\nmeant to be read together.\n\nThe picture is taken by the plugin itself, not by Astra. Astra can do it —\n`MediaService` carries *\"Capture a PNG screenshot of the requested monitor\"* —\nbut that is a daemon service, and a plugin's session token is refused outside\n`PluginHostService`, the same wall as the chat firehose. What lets the plugin\ndo it anyway is that a sideloaded plugin is a native process running as you,\nwith no sandbox; Astra's [security page](../../docs/en/1-orientation/security.md)\nsays so in as many words, under *what is not defended against*. So the switch\nhere is the whole of the protection, which is why it defaults to off.\n\nOnly the primary monitor is captured. The file is written to the system\ntemporary directory and deleted once Telegram has it, whether the upload\nsucceeded or not.\n\n**Windows only, for now.** The capture library needs PipeWire and libxcb on\nLinux, both as `-sys` crates, and a binary that links them does not start at\nall where those shared objects are missing — so the Linux build would trade a\nbridge that needs no display, and no system package, for one that cannot load\non a headless machine, in exchange for a command that ships switched off. On\nLinux the command answers that it is unavailable and nothing else about the\nbridge changes. Lifting this means capturing through X11 directly rather than\ninstalling the packages, and that is a later version.\n\n## Build it yourself\n\n```bash\ncd examples/telegram-client\ncargo build --release\nastra-plugin build\n```\n\n## Files\n\n- `src/main.rs` — lifecycle, config, and starting/stopping the poll loop.\n- `src/telegram.rs` — the Bot API client: send, draft, edit, long-poll.\n- `src/bot.rs` — update handling, the commands, and the reply stream.\n- `src/screen.rs` — capturing the screen for `/screenshot`, and the platform line.\n- `src/state.rs` — the bound chat and the current conversation, persisted.\n- `src/types.rs` — config, and what the three shapes of `conversation_id` mean.\n- `locales/` — English and Russian, and both planes in one plugin: the\n  `$config.*` keys `plugin.toml` references, which the daemon resolves for\n  the settings form, and the `bot.*` keys this process resolves itself with\n  `I18n`. See [the localisation page](../../docs/en/3-reference/localisation.md).\n- `icon.svg` — the store icon, hand-drawn SVG.\n\nMIT licensed.\n",
         "releases": [
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "telegram-client-0.2.0-linux-x64.astraplugin",
+                "sha256": "10f3043e14b0e84b91a411bc112b6202230b97dfc90454ffe395e2967c370c0f",
+                "size": 7386427,
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.2.0/telegram-client-0.2.0-linux-x64.astraplugin"
+              },
+              "windows-x64": {
+                "filename": "telegram-client-0.2.0-windows-x64.astraplugin",
+                "sha256": "16db0c0f6045e49e7541d5fc71f7129bb1fd6e2983bc3bbff13819bc67e541ce",
+                "size": 6439592,
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.2.0/telegram-client-0.2.0-windows-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "client"
+            ],
+            "permissions": {
+              "client": {
+                "reason": "Acts as a chat front-end: what you write in Telegram is sent to Astra as if you had typed it"
+              },
+              "send_chat_message": {
+                "reason": "Sends your Telegram messages to Astra and streams the reply back into the chat"
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-09-02T21:04:37Z",
+            "release": {
+              "commit": "700ec6d01e06a397ece050e441beb6b2431b18dd",
+              "kind": "github_release",
+              "repo": "mihailinl/AstraPlugins",
+              "tag": "telegram-client-v0.2.0"
+            },
+            "version": "0.2.0"
+          },
           {
             "artifacts": {
               "linux-x64": {
@@ -1215,8 +1257,8 @@
           "repo": "mihailinl/AstraPlugins"
         },
         "stars": 0,
-        "updated_at": "2026-08-19T13:36:21Z",
-        "version": "0.1.2"
+        "updated_at": "2026-09-02T21:04:37Z",
+        "version": "0.2.0"
       },
       {
         "added_at": "2026-08-10",
@@ -1360,6 +1402,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 34
+    "serial": 35
   }
 }
