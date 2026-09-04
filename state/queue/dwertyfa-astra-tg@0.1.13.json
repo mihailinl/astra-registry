@@ -1,0 +1,19 @@
+{
+  "$comment": "A release waiting out PRODUCTION_PLAN §3.5's publication delay. Nothing here is trusted at publish time: the whole ingest runs again from scratch. Delete this file to cancel the publication; edit publish_after to bring it forward.",
+  "id": "dwertyfa-astra-tg",
+  "version": "0.1.13",
+  "repo": "dwertyfa288/dwertyfa-astra-tg",
+  "tag": "v0.1.13",
+  "submitter": "github-actions[bot]",
+  "queued_at": "2026-09-04T14:59:31Z",
+  "publish_after": "2026-09-05T14:59:31Z",
+  "delay_hours": 24,
+  "reason": "P_DELAY_WIDENED",
+  "artifact_digests": [
+    "noarch:3375505d139f8f7088f463438e2ab0216b97e0d34d7eaf257498df0f31af9f04"
+  ],
+  "approved_by": null,
+  "approved_at": null,
+  "approved_for": null,
+  "issue": 48
+}
