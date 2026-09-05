@@ -763,11 +763,12 @@
         "capabilities": [
           "actions",
           "event_handlers",
+          "tools",
           "triggers",
           "ui_contributions"
         ],
         "description": "Announce selected Telegram chats with Astra and send voice-dictated replies",
-        "download_url": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.12/dwertyfa-astra-tg-0.1.12-noarch.astraplugin",
+        "download_url": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.13/dwertyfa-astra-tg-0.1.13-noarch.astraplugin",
         "downloads": 0,
         "i18n": {
           "ru": {
@@ -780,12 +781,49 @@
         "license": "MIT",
         "name": "TG for Astra",
         "platform_downloads": {
-          "linux-x64": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.12/dwertyfa-astra-tg-0.1.12-noarch.astraplugin",
-          "noarch": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.12/dwertyfa-astra-tg-0.1.12-noarch.astraplugin",
-          "windows-x64": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.12/dwertyfa-astra-tg-0.1.12-noarch.astraplugin"
+          "linux-x64": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.13/dwertyfa-astra-tg-0.1.13-noarch.astraplugin",
+          "noarch": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.13/dwertyfa-astra-tg-0.1.13-noarch.astraplugin",
+          "windows-x64": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.13/dwertyfa-astra-tg-0.1.13-noarch.astraplugin"
         },
-        "readme": "# TG for Astra\n\nTG for Astra connects a personal Telegram account to Astra. The plugin monitors selected chats, announces new messages with Astra's voice, plays voice messages, and sends replies dictated by the user.\n\n## Features\n\n- Login with a phone number, Telegram verification code, and two-step verification password.\n- Support for private chats, groups, and channels.\n- Monitoring of up to 1000 chats at the same time, with a one-click \"monitor every chat\" action.\n- A privacy toggle that masks the account name and phone number; the state is kept in the plugin's own state file.\n- A panel that lists the chats currently being monitored.\n- A button that writes the two ready-made Astra commands out as an `astra-commands` file to import.\n- Customizable notification and reply-confirmation messages.\n- Playback of Telegram voice messages in their original audio.\n- Automatic transport selection: Telegram WSS first, followed by a fallback WSS relay.\n- Text replies after a command word, for example `Astra, write I will be there soon`.\n\nThe two-step verification password is not stored after login.\n\n## Development\n\nRequirements: Node.js 20+ and the `astra-plugin` CLI.\n\n```bash\nnpm install\nnpm run typecheck\nnpm run build\nastra-plugin check --strict .\n```\n\nTo run the plugin in development mode:\n\n```bash\nastra-plugin dev .\n```\n\n## License\n\nMIT\n",
+        "readme": "# TG for Astra\n\nTG for Astra connects a personal Telegram account to Astra. The plugin monitors selected chats, announces new messages with Astra's voice, plays voice messages, and sends replies dictated by the user.\n\n## Features\n\n- Login with a phone number, Telegram verification code, and two-step verification password.\n- Support for private chats, groups, and channels.\n- Monitoring of up to 1000 chats at the same time, with a one-click \"monitor every chat\" action.\n- A privacy toggle that masks the account name and phone number; the state is kept in the plugin's own state file.\n- A panel that lists the chats currently being monitored.\n- A button that writes the two ready-made Astra commands out as an `astra-commands` file to import.\n- Customizable notification and reply-confirmation messages.\n- Playback of Telegram voice messages in their original audio.\n- Automatic transport selection: Telegram WSS first, followed by a fallback WSS relay.\n- Text replies after a command word, for example `Astra, write I will be there soon`.\n- New Telegram messages through Astra AI tools: say, for example, `Astra, write to Andrey that I will be there soon`; Astra shows the resolved chat and draft first, then sends only after a separate confirmation.\n- A customizable phrase for tool-based sending, such as `write` or `write in Telegram`. No Astra command-editor nodes are required for this feature.\n\nThe two-step verification password is not stored after login.\n\n## Development\n\nRequirements: Node.js 20+ and the `astra-plugin` CLI.\n\n```bash\nnpm install\nnpm run typecheck\nnpm run build\nastra-plugin check --strict .\n```\n\nTo run the plugin in development mode:\n\n```bash\nastra-plugin dev .\n```\n\n## License\n\nMIT\n",
         "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "dwertyfa-astra-tg-0.1.13-noarch.astraplugin",
+                "sha256": "3375505d139f8f7088f463438e2ab0216b97e0d34d7eaf257498df0f31af9f04",
+                "size": 3865818,
+                "url": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.13/dwertyfa-astra-tg-0.1.13-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "actions",
+              "event_handlers",
+              "tools",
+              "triggers",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "fire_trigger": {
+                "reason": "Starts your Telegram announcement command when a selected chat receives a message"
+              },
+              "subscribe_events": {
+                "reason": "Reads final recognized phrases only while a Telegram voice-reply window is open",
+                "types": [
+                  "speech_recognized"
+                ]
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-09-04T14:56:20Z",
+            "release": {
+              "commit": "270d471c0bffc93392da419558839e95a19b7a72",
+              "kind": "github_release",
+              "repo": "dwertyfa288/dwertyfa-astra-tg",
+              "tag": "v0.1.13"
+            },
+            "version": "0.1.13"
+          },
           {
             "artifacts": {
               "noarch": {
@@ -865,8 +903,8 @@
           "repo": "dwertyfa288/dwertyfa-astra-tg"
         },
         "stars": 0,
-        "updated_at": "2026-09-03T19:00:14Z",
-        "version": "0.1.12"
+        "updated_at": "2026-09-04T14:56:20Z",
+        "version": "0.1.13"
       },
       {
         "added_at": "2026-08-10",
@@ -1438,6 +1476,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 36
+    "serial": 37
   }
 }
