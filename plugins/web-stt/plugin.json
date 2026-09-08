@@ -1,5 +1,5 @@
 {
-  "$comment": "Derived from LilKALINOV/Astra-Google-STT@v0.4.0 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
+  "$comment": "Derived from LilKALINOV/Astra-Google-STT@v0.6.0 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
   "schema": "astra.registry.plugin/1",
   "id": "web-stt",
   "name": "Web Speech-to-Text",
@@ -19,6 +19,10 @@
   "i18n": {
     "ru": {
       "summary": "Бесплатный плагин распознавания речи для Astra. Работает через Google Web Speech API — не требует API-ключа. Поддерживает 38 языков. Установил и говоришь.",
+      "name": "Web Speech-to-Text"
+    },
+    "uk": {
+      "summary": "Безкоштовний плагін розпізнавання мовлення для Astra. Працює через Google Web Speech API — не потребує API-ключа. Підтримує 38 мов. Встановив і говориш.",
       "name": "Web Speech-to-Text"
     }
   }
