@@ -105,6 +105,13 @@ export function makeBundle(spec = {}) {
     }),
   };
 
+  // A bundle from before `permissions` was a manifest member. `permissions_hash`
+  // stays, because sha256("{}") is what an absent member hashes to — spec §7,
+  // `null` and `{}` are the same value. This is the only way to build the third
+  // state the daemon distinguishes, and it exists so a test can assert that
+  // deriving normalises it rather than passing the absence through.
+  if (spec.omitPermissionsMember) delete manifest.permissions;
+
   const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   return writeZip([{ name: "MANIFEST.json", data: manifestBytes, mode: 0o644 }, ...payload]);
 }
