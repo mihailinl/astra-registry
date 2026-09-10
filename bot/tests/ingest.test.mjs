@@ -260,6 +260,67 @@ await test("an update to an already-listed plugin ingests with zero human action
     "…and it passed");
 });
 
+// ── the permission declaration survives derivation ──────────────────────────
+//
+// `permissions` on a derived record has THREE states and the daemon reads all
+// three. `{…}` is "asks for these", `{}` is "asks for nothing", and the key
+// being ABSENT is "this record cannot answer" — which
+// `RegistryRelease::declared_permissions()` turns into `known: false`,
+// `permissions_absence()` reports as `no_declaration`, and the consent sheet
+// turns into a disabled Install button. Only the third is a refusal.
+//
+// `derive.mjs` tested `Object.keys(...).length`, so the second state collapsed
+// into the third: a plugin that asked for nothing derived a record with no key
+// and nobody could install it. `sub-models-for-astra 0.14.0` sat in the
+// catalogue in exactly that state — one release, author's own plugin.toml
+// comment reading "this plugin asks for nothing at all" — and `web-stt 0.4.0`
+// did for the 20 h it was the listed version.
+//
+// The trap these close is worth naming, because it is why the suite agreed
+// with the bug for a month: `makeBundle`'s DEFAULT is `permissions = {}`, so
+// every acceptance run above has been exercising the broken case since the day
+// it was written, and not one of them asked what came out the other end.
+// A fixture whose default is the failing input is not coverage.
+
+await test("a plugin that asks for nothing derives `permissions: {}`, not a missing key", async () => {
+  const r = await run({ assets: [conformingAsset()], root: registryWith({}) });
+  assert(!r.blocked, `blocked: ${JSON.stringify(r.findings.filter((i) => i.level === "error"))}`);
+  assert("permissions" in r.derived.version,
+    "the key is missing, which Astra reads as `no_declaration` and refuses to install");
+  assertEqual(JSON.stringify(r.derived.version.permissions), "{}",
+    "and what it carries is the empty set, not something falsy");
+});
+
+await test("a plugin that asks for something carries exactly what the bundle declared", async () => {
+  const declared = { fire_trigger: { reason: "Fires on_roll_value so your commands can react." } };
+  const r = await run({
+    assets: [conformingAsset({ permissions: declared })],
+    root: registryWith({}),
+  });
+  assert("permissions" in r.derived.version, "the key is present");
+  assertEqual(JSON.stringify(r.derived.version.permissions), JSON.stringify(declared),
+    "copied through unchanged, which is what schema/version-v1.json promises a reader");
+});
+
+await test("a bundle with no permissions member at all still derives `{}`", async () => {
+  // The manifest layer does not distinguish absent from empty — AstraPlugins
+  // `docs/en/spec/permissions.md` §2 ("a missing section is not 'unspecified';
+  // it is a complete answer, and the answer is no") and §7 ("`null` and `{}`
+  // are the same value and hash the same"). `bot/lib/bundle.mjs` already reads
+  // it that way when it hashes, so deriving normalises rather than passing the
+  // absence through. That leaves absence in an INDEX record with exactly one
+  // meaning — the record predates this rule — which is the only meaning the
+  // daemon's fail-closed branch needs it to have.
+  const r = await run({
+    assets: [conformingAsset({ omitPermissionsMember: true })],
+    root: registryWith({}),
+  });
+  assert(!r.blocked, `blocked: ${JSON.stringify(r.findings.filter((i) => i.level === "error"))}`);
+  assert("permissions" in r.derived.version,
+    "an old bundle must not derive a record Astra classifies as unreadable");
+  assertEqual(JSON.stringify(r.derived.version.permissions), "{}", "normalised to the empty set");
+});
+
 await test("a first listing is held for a human, and nothing else is wrong with it", async () => {
   const r = await run({ assets: [conformingAsset()], root: registryWith({ id: "something-else" }) });
   assert(!r.blocked, `nothing should block: ${JSON.stringify(errorCodes(r))}`);

@@ -62,6 +62,40 @@ reusable-workflow allowlist, and every ingest stops at
 with an empty `PRODUCTION_ROOT_KEYS`, and it is correct on both sides: a trust
 chain whose anchor does not exist must verify nothing rather than everything.
 
+## What a derived record always carries
+
+**Every release record derived from a bundle carries `permissions`.** It is
+copied from `MANIFEST.json` unchanged, and an absent or null member is written
+as `{}`. The key is never omitted, and `{}` is a value rather than a reason
+to omit it.
+
+That is a rule about a reader, not about this bot's taste. Astra reads three
+states out of the record and only one of them is a refusal:
+
+| in the record | Astra reads it as |
+|---|---|
+| `permissions: {…}` | asks for these — the consent sheet lists them |
+| `permissions: {}` | asks for nothing — the sheet says so and Install is offered |
+| the key **absent** | *cannot answer* — Install is disabled, and no amount of refreshing changes it |
+
+So an absent key is a statement, and after this rule it has exactly one
+meaning: **the record predates the rule.** It never means "this plugin asks for
+nothing", and a reader must not soften it into one — a permission set that
+could not be read is the case the refusal exists for.
+
+This is written down because it was not, and the cost was paid by authors. The
+derivation used to omit the key whenever the map was empty, so a plugin that
+asked for nothing produced a record Astra classified as unreadable and refused
+to install. The bundle was never ambiguous: the packer writes
+`"permissions": {}` unconditionally and backs it with a
+`permissions_hash` of `sha256:44136fa3…`, which is the hash of the two bytes
+`{}` — an affirmative commitment to the empty set. One truthiness test threw
+that away. `sub-models-for-astra 0.14.0` has been uninstallable for everyone
+since it was listed, and the advice its consent sheet gave — that the author
+must publish a release declaring permissions — was advice no author could take,
+because an author who needs nothing had no way to publish an installable
+release at all.
+
 ## What none of this proves
 
 Three of these checks are heuristics, and describing them as anything more would

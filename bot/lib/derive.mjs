@@ -307,9 +307,47 @@ export function deriveListing(input) {
   if (Number.isInteger(manifest.protocol)) version.protocol = manifest.protocol;
   if (facts.min_astra_version) version.min_astra_version = facts.min_astra_version;
   if (facts.capabilities.length) version.capabilities = [...facts.capabilities].sort();
-  if (manifest.permissions && Object.keys(manifest.permissions).length) {
-    version.permissions = manifest.permissions;
-  }
+  // `permissions` is written ALWAYS, and `{}` is a value rather than a reason
+  // to omit the key. The line above may test a length; this one may not.
+  //
+  // The daemon reads three states out of a release record, not two.
+  // `permissions: {…}` is "asks for these", `permissions: {}` is "asks for
+  // nothing", and the key being ABSENT is "this record cannot answer" — an
+  // index older than the field. Only the third is a refusal, and it is a hard
+  // one: `RegistryRelease::declared_permissions()` returns `known: false`,
+  // `permissions_absence()` says `no_declaration`, and the consent sheet
+  // disables Install. Astra will not install a plugin whose permissions it
+  // could not read. That is correct and is not what changed here.
+  //
+  // This tested `Object.keys(...).length`, so a plugin that asked for nothing
+  // derived a record with no key and Astra classified it as unreadable. The
+  // bundle was never ambiguous: the packer writes `"permissions": {}` into
+  // MANIFEST.json unconditionally and backs it with
+  // `permissions_hash: sha256:44136fa3…`, which is sha256 of the two bytes
+  // `{}` — an affirmative commitment to the empty set. The truthiness test
+  // threw that away and turned "I ask for nothing" into "I did not say".
+  //
+  // What it cost: `sub-models-for-astra 0.14.0` — one release, no permissions,
+  // the author's own comment in plugin.toml reads "this plugin asks for
+  // nothing at all" — uninstallable for everyone since 2026-08-20. `web-stt
+  // 0.4.0` was the same for the 20 h it was the listed version. And the advice
+  // the consent sheet gives ("the author has to publish a release that
+  // declares them") was advice nobody could take: an author who needed nothing
+  // could not publish an installable release at all without claiming a
+  // permission they did not want.
+  //
+  // An absent MANIFEST member is normalised to `{}` rather than passed through,
+  // because at the manifest layer absent and empty are the same value and are
+  // documented as such — AstraPlugins `docs/en/spec/permissions.md` §2 ("a
+  // missing section is not 'unspecified'; it is a complete answer, and the
+  // answer is no") and §7 ("`null` and `{}` are the same value and hash the
+  // same"). `bot/lib/bundle.mjs` already reads it that way when it hashes.
+  // Normalising here keeps this bot's two readings identical and leaves index
+  // absence with exactly one meaning: the record predates this rule.
+  version.permissions =
+    manifest.permissions && typeof manifest.permissions === "object" && !Array.isArray(manifest.permissions)
+      ? manifest.permissions
+      : {};
 
   return { findings, plugin, version, assets: presentation.assets };
 }
