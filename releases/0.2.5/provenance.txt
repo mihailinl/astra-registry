@@ -1,0 +1,1 @@
+manifest.json: captured byte-for-byte from the live update API (GET /api/updates/manifest) by the orchestrating session and saved at 2026-09-11 16:36:08 UTC, three minutes after the owner's 16:33:19Z signature went live, as live-0.2.5.json in that session's scratch directory; sha256 23be9081a68b4884b55e237c66db6872bad7185f8f93f0e811a6112a917d9f4c.

@@ -67,9 +67,10 @@ function rfc3339(d) {
 /**
  * Release notes, refused if they carry anything the client would not render as text.
  *
- * The same predicate the production signer applies, for the same reason: the client
- * renders notes as PLAIN TEXT and the server refuses markup too, so a document carrying
- * it would be published and then refused by both ends.
+ * The same predicate the production signer applies, which is the API server's rule: a
+ * "<", "](", "http://" or "https://" in any note makes the server refuse to serve the
+ * WHOLE manifest, so every client stops learning about updates. (The client renders notes
+ * as plain text and refuses nothing about them.)
  */
 function notes() {
   const out = {};
@@ -84,11 +85,11 @@ function notes() {
     }
     text = text.trim();
     if (!text) die(`the ${locale} notes at ${where} are empty — omit the flag instead`);
-    if (/[<>]|\]\(|https?:\/\//.test(text)) {
+    if (/<|\]\(|https?:\/\//.test(text)) {
       die(
-        `the ${locale} notes carry markup or a link. The client renders notes as PLAIN TEXT ` +
-          "and the server refuses them as well, so a rehearsal that accepted them would " +
-          "rehearse a document the real ceremony refuses.",
+        `the ${locale} notes carry markup or a link. The API server refuses to serve a manifest ` +
+          "whose notes carry one, so a rehearsal that accepted them would rehearse a document " +
+          "the real ceremony refuses.",
       );
     }
     out[locale] = text;
