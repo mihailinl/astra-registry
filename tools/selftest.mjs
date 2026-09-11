@@ -12,7 +12,7 @@ import fs from "node:fs";
 import os from "node:os";
 import crypto from "node:crypto";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 import {
   checkEveryCapDeclaresItsAuthorSide,
@@ -27,9 +27,10 @@ import { CORPUS_NO_RULE_ID, deriveLocaleText, localeEnumProblems } from "../bot/
 import { summarise } from "../bot/lib/derive.mjs";
 import { buildIndex, resolveSerial } from "./build-index.mjs";
 import {
-  CATALOG_TTL_DAYS, INDEX_SCHEMA, REVOCATIONS_SCHEMA, REVOCATION_TTL_DAYS, TRUST_SCHEMA,
-  signEnvelope, verifyEnvelope, privateKeyFromSeed, publicKeyBase64,
+  CATALOG_TTL_DAYS, INDEX_SCHEMA, REVOCATIONS_SCHEMA, REVOCATION_TTL_DAYS, TRUST_SCHEMA, UPDATE_SCHEMA,
+  signEnvelope, verifyEnvelope, privateKeyFromSeed, publicKeyBase64, rfc3339,
 } from "../bot/lib/sign.mjs";
+import { DEFAULT_EXPIRY_DAYS, MAX_EXPIRY_DAYS, notesProblems, renewSigned } from "./sign-update-manifest.mjs";
 import { signIndex, indexKeysFromTrust } from "../bot/sign-index.mjs";
 import { signRevocations } from "./sign-revocations.mjs";
 import { buildRevocations, checkAdvisory } from "./lib/revocations.mjs";
@@ -2084,7 +2085,7 @@ function sandboxWithRoot(name, keyId, publicKey) {
   // Only the four files the tool actually loads. Copying `tools/` and `bot/`
   // wholesale drags in `bot/manifest-probe/target/`, which is a Rust build
   // directory and filled /tmp the first time this was written.
-  for (const f of ["tools/sign-trust.mjs", "tools/lib/canonical.mjs", "bot/lib/sign.mjs"]) {
+  for (const f of ["tools/sign-trust.mjs", "tools/sign-update-manifest.mjs", "tools/lib/canonical.mjs", "bot/lib/sign.mjs"]) {
     fs.mkdirSync(path.join(dir, path.dirname(f)), { recursive: true });
     fs.copyFileSync(path.join(REPO_ROOT, f), path.join(dir, f));
   }
@@ -2229,6 +2230,290 @@ await test("keygen-index.sh emits a 32-byte seed and the matching public key", (
   // The seed in the GitHub secret and the public key in trust.json must be two
   // halves of one key, or the catalogue is signed by a key nobody delegated to.
   assert(publicKeyBase64(privateKeyFromSeed(seed)) === pub.public_key, "seed and public key disagree");
+});
+
+// ── the update manifest ─────────────────────────────────────────────────────
+//
+// `sign-update-manifest.mjs` is the other tool that holds a root key. Its renewal
+// is what `release.sh --resign` runs with the owner's passphrase already typed, so
+// what it promises is asserted here rather than trusted: `latest` crosses a
+// renewal byte for byte, a document that does not verify is never renewed,
+// signedAt only moves forward, and the notes rule `--check-notes` applies is the
+// rule signing applies.
+
+console.log("\nupdate manifest (sign-update-manifest.mjs)");
+
+const UPDATE_SIGNER = loadTestRoot("TEST-ONLY-DO-NOT-TRUST-root-a");
+const UPDATE_DIR = sandboxWithRoot("update", TRUST_ROOT_A.keyId, TRUST_ROOT_A.publicKey);
+const DAY_MS = 86400 * 1000;
+
+/** Run the signer; never throws, returns what it said. The sandbox publishes test root A. */
+function updateSigner(args, cwd = UPDATE_DIR) {
+  const r = spawnSync("node", ["tools/sign-update-manifest.mjs", ...args], { cwd, encoding: "utf8" });
+  return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+}
+
+/**
+ * A previous document, signed by test root A. The notes are hostile to a
+ * re-serialiser on purpose: Cyrillic, a non-BMP emoji, a quote and a backslash.
+ * `mutate` runs BEFORE signing, so what it changes is covered by the signature.
+ */
+function previousUpdateDoc({ signedAt, mutate } = {}, signer = UPDATE_SIGNER) {
+  const now = Date.now();
+  const signed = {
+    schema: UPDATE_SCHEMA,
+    channel: "stable",
+    signedAt: signedAt ?? rfc3339(new Date(now - 3600 * 1000)),
+    expires: rfc3339(new Date(now + 5 * DAY_MS)),
+    min_supported_version: "0.2.4",
+    latest: {
+      version: "0.2.5",
+      releasedAt: "2026-09-08T19:02:05Z",
+      placeholder: false,
+      notes: {
+        en: "Signing in is sturdier.\n\nA quote \" and a backslash \\ survive.",
+        ru: "Вход стал надёжнее.",
+        uk: "Вхід став надійнішим. 🚀",
+      },
+      artifacts: [{
+        platform: "windows-x64",
+        kind: "installer",
+        filename: "Astra-Installer-0.2.5.exe",
+        sizeBytes: 88118552,
+        sha256: "95c2a19ced2721ce4a08b215aabe0a2970301f57605b5d7279e2f4b2f183229b",
+      }],
+    },
+  };
+  mutate?.(signed);
+  return signEnvelope({
+    domain: UPDATE_SCHEMA,
+    signed,
+    signers: [{ key_id: signer.key_id, privateKey: signer.privateKey }],
+  });
+}
+
+let updateSeq = 0;
+function updateTmp(stem) {
+  return path.join(tmp, `update-${stem}-${++updateSeq}.json`);
+}
+function writeUpdateDoc(doc) {
+  const file = updateTmp("prev");
+  fs.writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
+  return file;
+}
+
+/** The raw bytes of the `latest` member, exactly as the file carries them. */
+function latestBytes(text) {
+  const start = text.indexOf('\n    "latest": {');
+  const end = text.indexOf('\n  "signatures": [');
+  assert(start !== -1 && end > start, "no `latest` block where a pretty-printed manifest puts it");
+  return text.slice(start, end);
+}
+
+const UPDATE_ARTEFACT = path.join(tmp, "Astra-Installer-0.2.6.exe");
+fs.writeFileSync(UPDATE_ARTEFACT, "not really an installer");
+const UPDATE_NOTES_EN = path.join(tmp, "update-notes.en.txt");
+fs.writeFileSync(UPDATE_NOTES_EN, "Plain text, as the client renders it.\n");
+
+await test("the update manifest's default expiry is 180 days, and 365 is still the cap", () => {
+  assertEqual(DEFAULT_EXPIRY_DAYS, 180, "DEFAULT_EXPIRY_DAYS (astra-rs UPDATES_0_2_6_PLAN.md D16)");
+  assertEqual(MAX_EXPIRY_DAYS, 365, "MAX_EXPIRY_DAYS");
+  const fresh = ["--root-key", TRUST_ROOT_A.file, "--artifact", UPDATE_ARTEFACT, "--notes-en", UPDATE_NOTES_EN];
+  const out = updateTmp("fresh");
+  const r = updateSigner([...fresh, "--out", out]);
+  assertEqual(r.status, 0, `a fresh signature failed: ${r.stderr}`);
+  const doc = JSON.parse(fs.readFileSync(out, "utf8"));
+  assertEqual(Date.parse(doc.signed.expires) - Date.parse(doc.signed.signedAt), 180 * DAY_MS, "expires - signedAt");
+  assertEqual(doc.signed.latest.artifacts[0].sizeBytes, fs.statSync(UPDATE_ARTEFACT).size, "size from the bytes");
+  // The closing message used to promise a server-side check that does not exist.
+  assert(!r.stdout.includes("will refuse"), `the false promise is back:\n${r.stdout}`);
+
+  const over = updateTmp("366");
+  const r2 = updateSigner([...fresh, "--expires-days", "366", "--out", over]);
+  assertEqual(r2.status, 1, "366 days was accepted");
+  assert(r2.stderr.includes("between 1 and 365"), r2.stderr);
+  assert(!fs.existsSync(over), "it wrote a document past the cap");
+});
+
+await test("--renew carries `latest` byte for byte and moves only signedAt and expires", () => {
+  const prevDoc = previousUpdateDoc();
+  const prev = writeUpdateDoc(prevDoc);
+  const out = updateTmp("renewed");
+  const r = updateSigner(["--renew", prev, "--root-key", TRUST_ROOT_A.file, "--out", out]);
+  assertEqual(r.status, 0, `the renewal failed: ${r.stderr}`);
+
+  const text = fs.readFileSync(out, "utf8");
+  assertEqual(latestBytes(text), latestBytes(fs.readFileSync(prev, "utf8")), "the bytes of `latest`");
+  const doc = JSON.parse(text);
+  assertEqual(jcs(doc.signed.latest), jcs(prevDoc.signed.latest), "JCS(latest), which is what the signature covers");
+  assertEqual(Object.keys(doc.signed).join(","), Object.keys(prevDoc.signed).join(","), "the members, in order");
+  for (const k of Object.keys(prevDoc.signed)) {
+    if (k === "signedAt" || k === "expires") continue;
+    assertEqual(jcs(doc.signed[k]), jcs(prevDoc.signed[k]), `signed.${k} changed`);
+  }
+  assert(
+    Date.parse(doc.signed.signedAt) > Date.parse(prevDoc.signed.signedAt),
+    `signedAt did not move forward: ${prevDoc.signed.signedAt} -> ${doc.signed.signedAt}`,
+  );
+  assertEqual(Date.parse(doc.signed.expires) - Date.parse(doc.signed.signedAt), 180 * DAY_MS, "a renewal's expiry");
+  const v = updateSigner(["--verify", out]);
+  assertEqual(v.status, 0, `the renewal does not verify: ${v.stderr}`);
+});
+
+await test("--renew refuses a previous document that does not verify, and writes nothing", () => {
+  // Claims root A's key_id; the verifier never believes a claimed key_id.
+  const stranger = { key_id: UPDATE_SIGNER.key_id, privateKey: crypto.generateKeyPairSync("ed25519").privateKey };
+  const tampered = previousUpdateDoc();
+  tampered.signed.latest.artifacts[0].sizeBytes += 1;
+  const cases = [
+    ["signed by a key root.json does not publish", previousUpdateDoc({}, stranger), "does not verify"],
+    ["altered after it was signed", tampered, "does not verify"],
+    ["a v2 body signed under the v1 domain",
+      previousUpdateDoc({ mutate: (s) => { s.schema = "astra.update.v2"; } }), "declares schema"],
+  ];
+  for (const [name, doc, expect] of cases) {
+    const out = updateTmp("must-not-exist");
+    const r = updateSigner(["--renew", writeUpdateDoc(doc), "--root-key", TRUST_ROOT_A.file, "--out", out]);
+    assertEqual(r.status, 1, `${name}: exit status`);
+    assert(r.stderr.includes(expect), `${name}: ${r.stderr}`);
+    assert(!fs.existsSync(out), `${name}: it renewed a document it could not verify`);
+  }
+});
+
+await test("--renew refuses unless the new signedAt is strictly later than the previous one", () => {
+  const t = new Date("2026-09-11T16:33:19Z");
+  const prev = previousUpdateDoc({ signedAt: rfc3339(t) }).signed;
+  const refused = (now) => {
+    try {
+      renewSigned(prev, now, DEFAULT_EXPIRY_DAYS);
+      return false;
+    } catch (e) {
+      return /strictly later/.test(e.message);
+    }
+  };
+  assert(refused(t), "the same instant was accepted");
+  assert(refused(new Date(t.getTime() + 999)), "the same second was accepted, and signedAt is published in seconds");
+  assert(refused(new Date(t.getTime() - 1000)), "an earlier instant was accepted");
+  const next = renewSigned(prev, new Date(t.getTime() + 1000), DEFAULT_EXPIRY_DAYS);
+  assertEqual(next.signedAt, "2026-09-11T16:33:20Z", "one second later");
+  assertEqual(next.expires, "2027-03-10T16:33:20Z", "180 days after that");
+  assertEqual(prev.signedAt, "2026-09-11T16:33:19Z", "the previous block was modified in place");
+
+  // Through the command line: a previous document dated tomorrow.
+  const future = writeUpdateDoc(previousUpdateDoc({ signedAt: rfc3339(new Date(Date.now() + DAY_MS)) }));
+  const out = updateTmp("must-not-exist");
+  const r = updateSigner(["--renew", future, "--root-key", TRUST_ROOT_A.file, "--out", out]);
+  assertEqual(r.status, 1, "exit status");
+  assert(r.stderr.includes("strictly later"), r.stderr);
+  assert(!fs.existsSync(out), "it wrote a renewal dated before its input");
+});
+
+await test("--renew refuses the flags that would describe a different release", () => {
+  const out = updateTmp("must-not-exist");
+  const r = updateSigner([
+    "--renew", writeUpdateDoc(previousUpdateDoc()), "--root-key", TRUST_ROOT_A.file,
+    "--notes-en", UPDATE_NOTES_EN, "--out", out,
+  ]);
+  assertEqual(r.status, 1, "exit status");
+  assert(r.stderr.includes("--notes-en"), r.stderr);
+  assert(!fs.existsSync(out), "it renewed and ignored a flag");
+});
+
+await test("--renew re-checks the claims it carries against today's rules", () => {
+  // Each document verifies: a published root signed it. A renewal publishes its
+  // claims AGAIN, so a claim today's signer would refuse is refused here too.
+  const cases = [
+    ["the inner Setup's name", (s) => { s.latest.artifacts[0].filename = "Astra-Setup-0.2.5.exe"; }, "outside the set"],
+    ["a version the filename contradicts", (s) => { s.latest.version = "0.2.6"; }, "disagrees with the filename"],
+    ["notes with a link", (s) => { s.latest.notes.en = "See https://minice.ai."; }, "markup or a link"],
+  ];
+  for (const [name, mutate, expect] of cases) {
+    const out = updateTmp("must-not-exist");
+    const r = updateSigner([
+      "--renew", writeUpdateDoc(previousUpdateDoc({ mutate })), "--root-key", TRUST_ROOT_A.file, "--out", out,
+    ]);
+    assertEqual(r.status, 1, `${name}: exit status`);
+    assert(r.stderr.includes(expect), `${name}: ${r.stderr}`);
+    assert(!fs.existsSync(out), `${name}: it re-published a claim today's rules refuse`);
+  }
+});
+
+await test("--check-notes applies the signer's notes rule: markup, links, empty, English required", () => {
+  const notesDir = (name, files) => {
+    const d = path.join(tmp, `notes-${name}`);
+    fs.mkdirSync(d, { recursive: true });
+    for (const [f, t] of Object.entries(files)) fs.writeFileSync(path.join(d, f), t);
+    return d;
+  };
+  // A README beside the notes is not a note, whatever it contains.
+  const ok = notesDir("ok", { "notes.en.txt": "Plain.\n", "notes.ru.txt": "Просто.\n", "README.md": "<b>x</b>" });
+  let r = updateSigner(["--check-notes", ok], REPO_ROOT);
+  assertEqual(r.status, 0, `good notes refused: ${r.stderr}`);
+  assert(r.stdout.includes("notes ok: en ru"), r.stdout);
+
+  const refusals = [
+    ["tag", { "notes.en.txt": "Now <b>bold</b>." }, "markup or a link"],
+    ["url", { "notes.en.txt": "See https://minice.ai for more." }, "markup or a link"],
+    ["mdlink", { "notes.en.txt": "See [the site](minice.ai)." }, "markup or a link"],
+    ["empty", { "notes.en.txt": "Fine.", "notes.ru.txt": " \n\t\n" }, "are empty"],
+    ["no-en", { "notes.ru.txt": "Только по-русски." }, "no English notes"],
+    ["de", { "notes.en.txt": "Fine.", "notes.de.txt": "Gut." }, "not a locale the manifest carries"],
+  ];
+  for (const [name, files, expect] of refusals) {
+    r = updateSigner(["--check-notes", notesDir(name, files)], REPO_ROOT);
+    assertEqual(r.status, 1, `${name}: exit status`);
+    assert(r.stderr.includes(expect), `${name}: ${r.stderr}`);
+  }
+
+  r = updateSigner(["--check-notes", path.join(ok, "notes.en.txt"), path.join(ok, "notes.ru.txt")], REPO_ROOT);
+  assertEqual(r.status, 0, `the same notes as files: ${r.stderr}`);
+  r = updateSigner(["--check-notes", path.join(ok, "README.md")], REPO_ROOT);
+  assertEqual(r.status, 1, "a file whose name says no locale");
+
+  for (const v of ["0.2.4", "0.2.5"]) {
+    r = updateSigner(["--check-notes", path.join("releases", v)], REPO_ROOT);
+    assertEqual(r.status, 0, `releases/${v}: ${r.stderr}`);
+  }
+});
+
+await test("signing refuses the notes --check-notes refuses: the rule is written once", () => {
+  const bad = path.join(tmp, "update-bad.en.txt");
+  fs.writeFileSync(bad, "See https://minice.ai.\n");
+  const out = updateTmp("must-not-exist");
+  const r = updateSigner(["--root-key", TRUST_ROOT_A.file, "--artifact", UPDATE_ARTEFACT, "--notes-en", bad, "--out", out]);
+  assertEqual(r.status, 1, "exit status");
+  assert(r.stderr.includes("markup or a link"), r.stderr);
+  assert(!fs.existsSync(out), "it signed notes with a link");
+  const verdict = notesProblems([{ locale: "en", where: bad, text: "See https://minice.ai.\n" }]);
+  assertEqual(verdict.problems.length, 1, "the exported rule");
+});
+
+await test("every committed release manifest verifies, and carries exactly the notes beside it", () => {
+  const releases = path.join(REPO_ROOT, "releases");
+  let seen = 0;
+  for (const v of fs.readdirSync(releases).sort()) {
+    const file = path.join(releases, v, "manifest.json");
+    if (!fs.existsSync(file)) continue;
+    seen++;
+    // Against the PRODUCTION roots in this checkout's registry/v1/root.json.
+    const r = updateSigner(["--verify", path.relative(REPO_ROOT, file)], REPO_ROOT);
+    assertEqual(r.status, 0, `releases/${v}/manifest.json: ${r.stderr}`);
+    const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+    assertEqual(doc.signed.latest.version, v, `releases/${v}: the directory and the signed version disagree`);
+    const locales = fs.readdirSync(path.join(releases, v))
+      .map((n) => /^notes\.([^.]+)\.txt$/.exec(n)?.[1])
+      .filter(Boolean)
+      .sort();
+    assertEqual(Object.keys(doc.signed.latest.notes).sort().join(","), locales.join(","), `releases/${v}: locales`);
+    for (const l of locales) {
+      assertEqual(
+        fs.readFileSync(path.join(releases, v, `notes.${l}.txt`), "utf8").trim(),
+        doc.signed.latest.notes[l],
+        `releases/${v}/notes.${l}.txt is not what was signed`,
+      );
+    }
+  }
+  assert(seen >= 2, `only ${seen} release manifests found; 0.2.4 and 0.2.5 are committed`);
 });
 
 fs.rmSync(tmp, { recursive: true, force: true });

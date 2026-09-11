@@ -64,7 +64,7 @@ function arg(name) {
  * `expires` is 2031 on purpose. A fixture that goes stale starts failing on a
  * date nobody wrote down, and the test it breaks is the one that would have told
  * you why — so it outlives any plausible life of this test rather than modelling
- * a real thirty-day window, which the production signer computes from the clock.
+ * a real 180-day window, which the production signer computes from the clock.
  */
 function manifest() {
   return {
