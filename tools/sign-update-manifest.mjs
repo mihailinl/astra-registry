@@ -15,7 +15,7 @@
 //   node tools/sign-update-manifest.mjs --withdraw-to releases/0.2.4/manifest.json \
 //     --root-key "$keydir/root.pem" [--expires-days 180] [--out manifest.json]
 //
-//   node tools/sign-update-manifest.mjs --verify manifest.json
+//   node tools/sign-update-manifest.mjs --verify manifest.json [--receipt manifest.json.verified]
 //
 //   node tools/sign-update-manifest.mjs --check-notes releases/0.2.6           # a directory
 //   node tools/sign-update-manifest.mjs --check-notes notes.en.txt notes.ru.txt  # or files
@@ -184,13 +184,13 @@
 // Neither knows what the server serves right now; the box does. `publish-release.sh
 // --check-manifest <signed.json> [--withdraw]` (minice, since eb9e379) fetches the
 // served document and refuses a candidate signed more than five minutes ahead of the
-// box's NTP-synced clock and, unless --withdraw is given, one whose signedAt is at or
-// before the served one or whose version is older. It checks that a signature is
+// box's NTP-synced clock or at or before the served one, and, unless --withdraw is
+// given, one whose version is older. It checks that a signature is
 // present, not that it verifies; that is --verify's job here. Run it on the box
 // before installing any document by hand. It stays essential: the records rule here
 // stops a wrong input on this desk, not a wrong file on the box. Its --withdraw
-// waives the signedAt rule as well as the version rule, so the strictly-later rule
-// for a withdrawal lives here, in --withdraw-to, and not there.
+// waives only the version rule (minice ea4e813; before that it waived signedAt too),
+// so a withdrawal is held to a strictly later signedAt on the box as well as here.
 //
 // ── --verify ───────────────────────────────────────────────────────────────
 //
@@ -199,7 +199,27 @@
 // Node's); the schema; no duplicate key in any object (the client parses strictly
 // and refuses the whole document; JSON.parse would silently keep the last one);
 // not expired; signedAt no more than 24 hours ahead of this clock (update.rs
-// FUTURE_SKEW); and artefacts and notes that pass the rules above.
+// FUTURE_SKEW); and artefacts and notes that pass the rules above. The file must be
+// valid UTF-8 with no byte-order mark, because the client parses the raw bytes.
+//
+// `--receipt <out>` then writes, ONLY after every check above has passed, one JSON
+// object that binds the verdict to the exact bytes read: RECEIPT_SCHEMA, the file's
+// basename, the sha256 and length of those bytes (never of a re-serialisation), the
+// version, signedAt and expires, the key_ids of every published root that signed,
+// and verified_at. It is written through a temp file and a rename. A refusal writes
+// nothing, and `<out>` may not be the file itself or sit under releases/.
+//
+// Why it exists: the box holds no root key, and the API server checks only that a
+// signature is PRESENT, not that it verifies. So publish-release.sh on the box
+// (minice) reads the receipt as `<manifest>.verified` beside the document it is asked
+// to install and compares its schema, file, sha256, bytes, version, signedAt and
+// expires with that document. `--check-manifest` refuses a receipt that disagrees and
+// reports a missing one; `--stage`, planned in minice M3, is to refuse without one.
+// What it guards against is ACCIDENTS: a hand install that skipped --verify, or a
+// file corrupted or swapped between this desk and the box. It is NOT a defence
+// against a compromised desk, which can sign a bad document and write a receipt for
+// it as easily. The defence against that stays the root signature every client
+// verifies.
 //
 // ── signing with BOTH roots, and the one day it matters ────────────────────
 //
@@ -259,6 +279,9 @@ export const MAX_EXPIRY_DAYS = 365;
 /** How far ahead of the clock the client lets a signedAt be (astra-daemon update.rs FUTURE_SKEW). */
 export const FUTURE_SKEW_MS = 24 * 3600 * 1000;
 
+/** What `--verify --receipt` writes. The box's publish-release.sh reads it; see the header. */
+export const RECEIPT_SCHEMA = "astra.update-verify-receipt/1";
+
 /** The locales a manifest carries notes in. English is required; the rest fall back to it. */
 export const NOTE_LOCALES = ["en", "ru", "uk"];
 
@@ -310,7 +333,7 @@ const SIGNING_FLAGS = {
 
 /** Each mode's closed set of flags, and what each flag takes. */
 const MODES = {
-  verify: { "--verify": "value" },
+  verify: { "--verify": "value", "--receipt": "value" },
   "check-notes": { "--check-notes": "list" },
   renew: { "--renew": "value", ...SIGNING_FLAGS },
   withdraw: { "--withdraw-to": "value", ...SIGNING_FLAGS },
@@ -604,7 +627,11 @@ export function envelopeProblems(text, roots) {
         "this is checked separately",
     );
   }
-  return { doc, key_id: result.ok ? result.key_id : undefined, problems };
+  // Every published root that signed it, not only the first one found: the receipt names them all.
+  const key_ids = result.ok
+    ? roots.filter((root) => verifyEnvelope({ ...doc, signatures: canonical }, UPDATE_SCHEMA, [root]).ok).map((r) => r.key_id)
+    : [];
+  return { doc, key_id: result.ok ? result.key_id : undefined, key_ids, problems };
 }
 
 /**
@@ -767,24 +794,44 @@ function expiryDays(opts) {
   return days;
 }
 
-/**
- * Where the signed document goes, refused when that is the previous document itself or anywhere
- * under releases/. The record is what went live, committed after the flip; the signer never
- * writes it, so a document that never went live cannot pass for one that did.
- */
+/** Where the signed document goes: `--out`, through `checkedOutPath`. */
 function outputPath(opts, prevPath) {
-  const out = path.resolve(opts["--out"] ?? "manifest.json");
-  if (prevPath !== undefined && out === path.resolve(prevPath)) {
-    die(`--out ${out} is the previous document itself; the input is never overwritten`);
+  return checkedOutPath(opts["--out"] ?? "manifest.json", "--out", prevPath, "the previous document");
+}
+
+/**
+ * A path this tool will write, refused when it is the input itself or anywhere under releases/.
+ * A record is what went live, committed after the flip; the signer never writes one, so a document
+ * or a receipt that never went live cannot pass for one that did.
+ */
+function checkedOutPath(target, flag, inputPath, inputName) {
+  const out = path.resolve(target);
+  if (inputPath !== undefined && out === path.resolve(inputPath)) {
+    die(`${flag} ${out} is ${inputName} itself; the input is never overwritten`);
   }
   const rel = path.relative(RELEASES, out);
   if (!rel.startsWith("..") && !path.isAbsolute(rel)) {
     die(
-      `--out ${out} lies under releases/. A record is what went live, committed after the flip; ` +
+      `${flag} ${out} lies under releases/. A record is what went live, committed after the flip; ` +
         "the signer never writes one.",
     );
   }
   return out;
+}
+
+/**
+ * Write `data` to `out` through a temp file in the same directory and a rename, so `out` is
+ * either the old file or the whole new one, never a half-written one a reader could take.
+ */
+function writeAtomically(out, data) {
+  const temp = path.join(path.dirname(out), `.${path.basename(out)}.${process.pid}.${crypto.randomBytes(4).toString("hex")}.tmp`);
+  try {
+    fs.writeFileSync(temp, data, { flag: "wx" });
+    fs.renameSync(temp, out);
+  } catch (e) {
+    fs.rmSync(temp, { force: true });
+    die(`cannot write ${out}: ${e.message}`);
+  }
 }
 
 /**
@@ -916,11 +963,27 @@ function printWhatWasNotChecked() {
   console.log("in minice M3 and does not exist yet.");
 }
 
-function verifyFile(where) {
+function verifyFile(where, opts = {}) {
+  const receiptPath =
+    opts["--receipt"] === undefined ? undefined : checkedOutPath(opts["--receipt"], "--receipt", where, "the verified file");
   const roots = publishedRoots();
-  const text = readOrDie(where, "the manifest");
+  let bytes;
+  try {
+    bytes = fs.readFileSync(where);
+  } catch (e) {
+    die(`cannot read the manifest at ${where}: ${e.message}`);
+  }
+  let text;
+  try {
+    // Fatal, and the BOM kept: the client parses the raw bytes, so a sequence only a lenient decoder
+    // reads, or a BOM a decoder would quietly strip, is a document the client refuses. The receipt
+    // hashes these exact bytes, so what was checked must be exactly them.
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    die(`${where} is not valid UTF-8; the client refuses it`);
+  }
   const now = new Date();
-  const { doc, key_id, problems } = envelopeProblems(text, roots);
+  const { doc, key_ids, problems } = envelopeProblems(text, roots);
   if (doc?.signed && typeof doc.signed === "object") {
     problems.push(...freshnessProblems(doc.signed, now), ...contentProblems(doc.signed));
   }
@@ -931,7 +994,7 @@ function verifyFile(where) {
   const signed = doc.signed;
   const left = (instant(signed.expires) - now.getTime()) / DAY_MS;
   console.log(`ok  ${where}`);
-  console.log(`    signed by      ${key_id}`);
+  console.log(`    signed by      ${key_ids.join(" + ")}`);
   console.log(`    version        ${signed.latest.version}`);
   console.log(`    signedAt       ${signed.signedAt}`);
   console.log(`    expires        ${signed.expires}  (${left.toFixed(1)} days left)`);
@@ -939,6 +1002,22 @@ function verifyFile(where) {
     console.log(`    ${a.platform}  ${a.filename}  ${a.sizeBytes} bytes  ${a.sha256.slice(0, 16)}…`);
   }
   console.log(`    a client whose clock reads ${rfc3339(now)} would accept it`);
+  if (receiptPath) {
+    // Written only here, after every check above has passed. The member order is the contract's.
+    const receipt = {
+      schema: RECEIPT_SCHEMA,
+      file: path.basename(where),
+      sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.length,
+      version: signed.latest.version,
+      signedAt: signed.signedAt,
+      expires: signed.expires,
+      key_ids,
+      verified_at: rfc3339(now),
+    };
+    writeAtomically(receiptPath, `${JSON.stringify(receipt)}\n`);
+    console.log(`    receipt        ${receiptPath}  (sha256 ${receipt.sha256.slice(0, 16)}…, ${receipt.bytes} bytes)`);
+  }
 }
 
 /**
@@ -1185,7 +1264,7 @@ function main() {
   }
   const { mode, opts } = parsed;
   if (mode === "check-notes") return checkNotes(opts["--check-notes"]);
-  if (mode === "verify") return verifyFile(opts["--verify"]);
+  if (mode === "verify") return verifyFile(opts["--verify"], opts);
   if (mode === "renew") return renew(opts, opts["--renew"], false);
   if (mode === "withdraw") return renew(opts, opts["--withdraw-to"], true);
   return signFresh(opts);

@@ -2757,6 +2757,102 @@ await test("signing afresh refuses an older version than the newest record, and 
     "not strictly later than releases/0.2.5/manifest.json", out, "a record dated tomorrow");
 });
 
+await test("--verify --receipt binds the verdict to the exact bytes it read, written only after every check passes", () => {
+  const dir = updateSandbox();
+  const hex = (b) => crypto.createHash("sha256").update(b).digest("hex");
+  const B = loadTestRoot("TEST-ONLY-DO-NOT-TRUST-root-b");
+  const both = signEnvelope({
+    domain: UPDATE_SCHEMA,
+    signed: updateDoc().signed,
+    signers: [
+      { key_id: UPDATE_SIGNER.key_id, privateKey: UPDATE_SIGNER.privateKey },
+      { key_id: B.key_id, privateKey: B.privateKey },
+    ],
+  });
+  // CRLF line ends and trailing whitespace: valid JSON whose re-serialisation hashes differently.
+  const text = `${pretty(both).replace(/\n/g, "\r\n")}  `;
+  const file = writeUpdateText(text);
+  const bytes = fs.readFileSync(file);
+  assert(hex(bytes) !== hex(pretty(JSON.parse(text))), "premise: the bytes are not their re-serialisation");
+  const receipt = `${file}.verified`;
+  const r = updateSigner(["--verify", file, "--receipt", receipt], dir);
+  assertEqual(r.status, 0, `--verify --receipt: ${r.stderr}`);
+  const got = JSON.parse(readText(receipt));
+  assertEqual(Object.keys(got).join(","), "schema,file,sha256,bytes,version,signedAt,expires,key_ids,verified_at", "members, in order");
+  assertEqual(got.schema, "astra.update-verify-receipt/1", "schema");
+  assertEqual(got.file, path.basename(file), "file");
+  assertEqual(got.sha256, hex(bytes), "sha256 of the exact bytes read");
+  assertEqual(got.bytes, bytes.length, "bytes");
+  assertEqual(got.version, both.signed.latest.version, "version");
+  assertEqual(got.signedAt, both.signed.signedAt, "signedAt");
+  assertEqual(got.expires, both.signed.expires, "expires");
+  assertEqual(got.key_ids.join(","), `${UPDATE_SIGNER.key_id},${B.key_id}`, "every published root that signed");
+  assert(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(got.verified_at), `verified_at ${got.verified_at}`);
+  assert(Math.abs(Date.parse(got.verified_at) - Date.now()) < 120000, `verified_at ${got.verified_at} is not now`);
+  assertEqual(
+    fs.readdirSync(path.dirname(receipt)).filter((n) => n.startsWith(`.${path.basename(receipt)}.`)).length,
+    0,
+    "a temp file was left beside the receipt",
+  );
+
+  // Temp file plus rename: a hard link to the previous receipt keeps its bytes, where a rewrite in
+  // place would change them under the reader.
+  fs.writeFileSync(receipt, "stale\n");
+  const link = `${receipt}.link`;
+  fs.linkSync(receipt, link);
+  const again = updateSigner(["--verify", file, "--receipt", receipt], dir);
+  assertEqual(again.status, 0, again.stderr);
+  assertEqual(readText(link), "stale\n", "the receipt was rewritten in place rather than replaced by a rename");
+  assert(readText(receipt).startsWith('{"schema":'), "the new receipt");
+
+  // Refused: nothing written. The last two are bytes only a lenient decoder would have accepted.
+  const lenientOnly = (() => {
+    const d = updateDoc({ mutate: (s) => { s.latest.notes.en = "Replacement \uFFFD kept."; } });
+    const buf = Buffer.from(pretty(d));
+    const at = buf.indexOf(Buffer.from([0xef, 0xbf, 0xbd]));
+    assert(at > 0, "premise: U+FFFD is in the file");
+    const raw = Buffer.concat([buf.subarray(0, at), Buffer.from([0xff]), buf.subarray(at + 3)]);
+    assert(verifyEnvelope(JSON.parse(raw.toString("utf8")), UPDATE_SCHEMA, UPDATE_SIGNER_PUB).ok, "premise: it verifies once leniently decoded");
+    return raw;
+  })();
+  const cases = [
+    ["expired", pretty(updateDoc({ signedAt: hoursFromNow(-48), expires: hoursFromNow(-1) })), "expired at"],
+    ["a bad signature", (() => { const d = updateDoc(); d.signed.latest.artifacts[0].sizeBytes += 1; return pretty(d); })(), "does not verify"],
+    ["a key written twice", withDuplicateVersion(updateDoc()), "appears twice"],
+    ["a byte only a lenient decoder reads", lenientOnly, "not valid UTF-8"],
+    ["a byte-order mark", `\uFEFF${pretty(updateDoc())}`, "it is not JSON"],
+  ];
+  for (const [name, content, expect] of cases) {
+    const f = updateTmp("refused");
+    fs.writeFileSync(f, content);
+    const rc = `${f}.verified`;
+    assertRefused(updateSigner(["--verify", f, "--receipt", rc], dir), expect, rc, name);
+  }
+
+  const good = writeUpdateDoc(updateDoc());
+  const goodBefore = readText(good);
+  assertRefused(updateSigner(["--verify", good, "--receipt", good], dir), "is the verified file itself", undefined, "--receipt = the file");
+  assertEqual(readText(good), goodBefore, "the verified file was overwritten");
+  assertRefused(updateSigner(["--verify", good, "--receipt", "releases/0.2.5/manifest.json.verified"], dir),
+    "lies under releases/", path.join(dir, "releases", "0.2.5", "manifest.json.verified"), "--receipt under releases/");
+});
+
+await test("--receipt belongs to --verify alone: every other mode refuses it and writes nothing", () => {
+  const dir = updateSandbox([updateDoc({ version: "0.2.4", signedAt: hoursFromNow(-48) }), updateDoc()]);
+  const receipt = updateTmp("receipt");
+  const cases = [
+    ["signing", [...freshArgs(), "--out", updateTmp("x")], "--receipt is not a flag signing accepts"],
+    ["--renew", ["--renew", "releases/0.2.5/manifest.json", "--root-key", TRUST_ROOT_A.file, "--out", updateTmp("x")],
+      "--receipt is not a flag --renew accepts"],
+    ["--withdraw-to", ["--withdraw-to", "releases/0.2.4/manifest.json", "--root-key", TRUST_ROOT_A.file, "--out", updateTmp("x")],
+      "--receipt is not a flag --withdraw-to accepts"],
+    ["--check-notes", ["--check-notes", path.join(REPO_ROOT, "releases", "0.2.5")], "--receipt is not a flag --check-notes accepts"],
+  ];
+  for (const [name, args, expect] of cases) {
+    assertRefused(updateSigner([...args, "--receipt", receipt], dir), expect, receipt, name);
+  }
+});
+
 await test("every committed release manifest verifies against the production roots and carries the notes beside it", () => {
   // Not freshness: a record is history, and 0.2.4's expired document stays a correct record of it.
   const releases = path.join(REPO_ROOT, "releases");
