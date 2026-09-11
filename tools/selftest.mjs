@@ -2408,9 +2408,11 @@ await test("the update manifest's default expiry is 180 days; --expires-days is 
   assertEqual(r.status, 0, `a fresh signature failed: ${r.stderr}`);
   const doc = JSON.parse(readText(out));
   assertEqual(Date.parse(doc.signed.expires) - Date.parse(doc.signed.signedAt), 180 * DAY_MS, "expires - signedAt");
-  // The closing message once promised a server check that does not exist, then a box check that does not either.
+  // The closing message once promised a server check that does not exist, and later called a box check
+  // that does exist (--check-manifest, minice eb9e379) planned. It names that one, and --stage as planned.
   assert(!r.stdout.includes("will refuse"), `the false server promise is back:\n${r.stdout}`);
-  assert(r.stdout.includes("planned in minice M3") && r.stdout.includes("does not exist yet"), r.stdout);
+  assert(r.stdout.includes("publish-release.sh --check-manifest <this file>"), `the box check is not named:\n${r.stdout}`);
+  assert(r.stdout.includes("publish-release.sh --stage, is planned") && r.stdout.includes("does not exist yet"), r.stdout);
   for (const bad of ["0", "366", "1.5", "abc"]) {
     const o = updateTmp("bad-days");
     assertRefused(updateSigner([...freshArgs(), "--expires-days", bad, "--out", o], dir),

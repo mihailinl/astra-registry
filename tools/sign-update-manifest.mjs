@@ -140,16 +140,16 @@
 // records**, with the difference, because signedAt comes from this machine's
 // clock and a wrong clock is the one mistake nothing else here can see. A
 // renewal more than a year after the signature it renews is refused as a wrong
-// clock. The hard guard against a future date belongs on the box, whose clock is
-// synchronised; it is not here.
+// clock. The hard guard against a future date is on the box, whose clock is
+// synchronised: `publish-release.sh --check-manifest`, below.
 //
 // **What nothing here checks: that clients can download the artefact.** The API
 // server does not check it either; it serves the document and checks nothing
-// about the file the document names. A box-side check is PLANNED in minice M3:
-// `publish-release.sh --stage` is to fetch the file through the origin and compare
-// its sha256 with the signed one before it installs the document. It does not
-// exist yet (only `--preflight` does). Until it does, the only reachability check
-// is by hand: fetch the file through the CDN and hash the body.
+// about the file the document names. The box step that would, `publish-release.sh
+// --stage` (the flip, with a probe that fetches the file through the origin and
+// compares its sha256 with the signed one before installing the document), is
+// PLANNED in minice M3 and does not exist yet. Until it does, the only reachability
+// check is by hand: fetch the file through the CDN and hash the body.
 //
 // ── renewing: --renew, and withdrawing: --withdraw-to ──────────────────────
 //
@@ -181,11 +181,16 @@
 // document refuse the withdrawal as a rollback and keep the release being
 // withdrawn. Renewing a withdrawal later needs --withdraw-to again.
 //
-// Neither knows what the server serves right now. release.sh passes the live
-// document. The box-side rule (refuse a signedAt at or before the served one, or a
-// lower version without a withdrawal) is PLANNED in minice M3 (`publish-release.sh
-// --stage`) and is not present yet. It stays essential: the records rule here stops
-// a wrong input on this desk, not a wrong file on the box.
+// Neither knows what the server serves right now; the box does. `publish-release.sh
+// --check-manifest <signed.json> [--withdraw]` (minice, since eb9e379) fetches the
+// served document and refuses a candidate signed more than five minutes ahead of the
+// box's NTP-synced clock and, unless --withdraw is given, one whose signedAt is at or
+// before the served one or whose version is older. It checks that a signature is
+// present, not that it verifies; that is --verify's job here. Run it on the box
+// before installing any document by hand. It stays essential: the records rule here
+// stops a wrong input on this desk, not a wrong file on the box. Its --withdraw
+// waives the signedAt rule as well as the version rule, so the strictly-later rule
+// for a withdrawal lives here, in --withdraw-to, and not there.
 //
 // ── --verify ───────────────────────────────────────────────────────────────
 //
@@ -902,10 +907,13 @@ function printClock(now, label, signedAt, where) {
 
 /** The truth about what a signature here does and does not establish. */
 function printWhatWasNotChecked() {
-  console.log("What it did NOT check: that clients can download that file. The API server does not check");
-  console.log("it either; it serves this document and checks nothing about the artefact it names. A box-side");
-  console.log("check is planned in minice M3 (publish-release.sh --stage) and does not exist yet. Until it");
-  console.log("does, the only reachability check is by hand: fetch the file through the CDN and hash the body.");
+  console.log("What it did NOT check: that this document may replace the one being served, or that clients");
+  console.log("can download that file. The API server checks neither. Before installing it by hand, run");
+  console.log("  publish-release.sh --check-manifest <this file>        (add --withdraw only for a withdrawal)");
+  console.log("on the box: it refuses a signedAt not later than the served one or more than 5 minutes ahead of");
+  console.log("the box's clock, and an older version. Reachability is still by hand: fetch the file through");
+  console.log("the CDN and hash the body. The box step that probes it, publish-release.sh --stage, is planned");
+  console.log("in minice M3 and does not exist yet.");
 }
 
 function verifyFile(where) {
