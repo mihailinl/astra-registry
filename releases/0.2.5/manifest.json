@@ -1,0 +1,34 @@
+{
+  "signed": {
+    "schema": "astra.update.v1",
+    "channel": "stable",
+    "signedAt": "2026-09-11T16:33:19Z",
+    "expires": "2027-03-10T16:33:19Z",
+    "min_supported_version": "0.2.4",
+    "latest": {
+      "version": "0.2.5",
+      "releasedAt": "2026-09-08T19:02:05Z",
+      "placeholder": false,
+      "notes": {
+        "en": "If the voice you chose refuses to speak (a lapsed key, a provider outage),\nAstra no longer goes mute with a red warning on every reply. It answers in the\nfree local voice when that voice is installed and says so once; when no voice\ncan speak at all, it still tells you every time.\n\nPlugins can be updated from their cards again. The Update button had never been\ndrawn; it is there now, together with Update all and Restart all, and each one\nreports what actually happened to every plugin. A plugin that cannot be\ninstalled on this computer no longer carries an update badge that no press\ncould clear.\n\nSigning in is sturdier. A sign-in could half-succeed and leave you signed in\nbut refused everywhere; a single refusal from a proxy or a captive portal could\nlock Astra out until a restart; and one kind of server answer silently deleted\nyour sign-in. Each of these now recovers or tells you what happened.\n\nWhen a download fails on the way, the error now names who refused it, the\ndelivery network or the server, so a support report can be followed up.",
+        "ru": "Если выбранный голос отказывается говорить (истёк ключ или сбой у провайдера),\nAstra больше не замолкает с красным предупреждением на каждый ответ. Она\nотвечает бесплатным локальным голосом, если он установлен, и сообщает об этом\nодин раз; если говорить не может ни один голос, она по-прежнему скажет об этом\nкаждый раз.\n\nПлагины снова обновляются прямо с карточек. Кнопка «Обновить» до сих пор просто\nне рисовалась; теперь она есть, а рядом с ней «Обновить все» и «Перезапустить\nвсе», и каждая сообщает, что на самом деле произошло с каждым плагином. Плагин,\nкоторый нельзя установить на этот компьютер, больше не показывает значок\nобновления, который невозможно убрать.\n\nВход стал надёжнее. Вход мог пройти наполовину: вы вошли, но Astra отказывала\nна каждом шаге; один отказ от прокси или страницы входа в Wi-Fi мог\nзаблокировать Astra до перезапуска; а один вид ответа сервера молча удалял ваш\nвход. Теперь в каждом из этих случаев Astra восстанавливается или объясняет,\nчто произошло.\n\nЕсли загрузка обрывается в пути, ошибка теперь называет, кто отказал: сеть\nдоставки или сервер. По такому отчёту в поддержку уже можно разобраться.",
+        "uk": "Якщо обраний голос відмовляється говорити (сплив ключ або збій у провайдера),\nAstra більше не замовкає з червоним попередженням на кожну відповідь. Вона\nвідповідає безкоштовним локальним голосом, якщо його встановлено, і повідомляє\nпро це один раз; якщо не може говорити жоден голос, вона, як і раніше, скаже\nпро це щоразу.\n\nПлагіни знову оновлюються просто з карток. Кнопка «Оновити» досі просто не\nмалювалася; тепер вона є, а поруч із нею «Оновити всі» та «Перезапустити всі»,\nі кожна повідомляє, що насправді сталося з кожним плагіном. Плагін, який не\nможна встановити на цей комп'ютер, більше не показує значок оновлення, який\nнеможливо прибрати.\n\nВхід став надійнішим. Вхід міг пройти наполовину: ви увійшли, але Astra\nвідмовляла на кожному кроці; одна відмова від проксі чи сторінки входу у Wi-Fi\nмогла заблокувати Astra до перезапуску; а один вид відповіді сервера мовчки\nвидаляв ваш вхід. Тепер у кожному з цих випадків Astra відновлюється або\nпояснює, що сталося.\n\nЯкщо завантаження обривається дорогою, помилка тепер називає, хто відмовив:\nмережа доставки чи сервер. За таким звітом у підтримку вже можна розібратися."
+      },
+      "artifacts": [
+        {
+          "platform": "windows-x64",
+          "kind": "installer",
+          "filename": "Astra-Installer-0.2.5.exe",
+          "sizeBytes": 88118552,
+          "sha256": "95c2a19ced2721ce4a08b215aabe0a2970301f57605b5d7279e2f4b2f183229b"
+        }
+      ]
+    }
+  },
+  "signatures": [
+    {
+      "key_id": "astra-root-2026a",
+      "sig": "0VozgYtVC/x3XQn4xC3sEy3z7eplyq1AR/Evc28ljtEfrX6ptuliAeNrYIEa3GVlpou8mdaV1b93AN+xJDefAA=="
+    }
+  ]
+}
