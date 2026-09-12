@@ -1,0 +1,19 @@
+{
+  "$comment": "Derived from denchik2444/vrm-manager@v1.1.7 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
+  "schema": "astra.registry.plugin/1",
+  "id": "denchik-vroid-manager",
+  "name": "VRM Manager",
+  "summary": "VRoid Hub library, VRM editor and accessory manager",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "denchik2444/vrm-manager"
+  },
+  "added_at": "2026-09-07",
+  "description": "VRoid Hub library, VRM editor and accessory manager",
+  "author": {
+    "name": "denchik"
+  },
+  "icon": "icon.png",
+  "readme": "README.md"
+}

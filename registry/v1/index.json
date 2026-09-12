@@ -453,6 +453,71 @@
         "version": "0.1.7"
       },
       {
+        "added_at": "2026-09-07",
+        "author": "denchik",
+        "capabilities": [
+          "tools",
+          "ui_contributions"
+        ],
+        "description": "VRoid Hub library, VRM editor and accessory manager",
+        "download_url": "https://github.com/denchik2444/vrm-manager/releases/download/v1.1.7/denchik-vroid-manager-1.1.7-noarch.astraplugin",
+        "downloads": 0,
+        "icon_url": "data:image/png;base64,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",
+        "id": "denchik-vroid-manager",
+        "license": "MIT",
+        "name": "VRM Manager",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/denchik2444/vrm-manager/releases/download/v1.1.7/denchik-vroid-manager-1.1.7-noarch.astraplugin",
+          "noarch": "https://github.com/denchik2444/vrm-manager/releases/download/v1.1.7/denchik-vroid-manager-1.1.7-noarch.astraplugin",
+          "windows-x64": "https://github.com/denchik2444/vrm-manager/releases/download/v1.1.7/denchik-vroid-manager-1.1.7-noarch.astraplugin"
+        },
+        "readme": "# VRM Manager\n\nVRM Manager is an Astra plugin for managing local VRM models, VRoid Hub models, accessories and basic VRM editing.\n\n**Author:** denchik  \n**License:** MIT  \n**Version:** 1.1.7\n\n![VRM Manager](https://raw.githubusercontent.com/denchik2444/vrm-manager/cf347a05cfa3363253d08b8f2be5819b64fd0536/icon.png)\n\n## Features\n\n- Local VRM library\n- VRoid Hub search and downloads\n- OAuth 2.0 + PKCE for VRoid Hub\n- VRM/GLB inspection\n- Object and mesh tree\n- Hide/show model nodes\n- Save edited `.edited.vrm` copies\n- Accessory management\n- Direct import into Astra Character Library\n- Astra UI page with transparent background and theme integration\n\n## Astra import\n\n`Import to Astra` does not automate clicks in the Astra window.\n\nIt detects the Astra Character Library on the local Windows installation and registers the model by creating or updating:\n\n- `pack/models/model.vrm`\n- `pack/characters/character/character.toml`\n- `library.json`\n\nBefore changing `library.json`, the plugin creates a timestamped backup.\n\nThe plugin first checks standard Astra AppData locations and can also use the `ASTRA_COMPANION_DIR` environment variable for a custom Character Library location.\n\n## Requirements\n\n- Astra with plugin support\n- Windows x64\n- Node.js runtime supplied by Astra\n- VRoid Hub Client ID and Client Secret for VRoid Hub features\n\n## Permissions\n\nThe plugin requests:\n\n- `set_variable`: stores the currently selected VRM path for the Astra session.\n- `send_chat_message`: lets the \"Use in Astra\" action ask Astra to use the selected VRM.\n\n## Development\n\n```text\nnpm install\nnpm run build\nnpm run check\n\nastra-plugin check . --strict\nastra-plugin test .\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "denchik-vroid-manager-1.1.7-noarch.astraplugin",
+                "sha256": "51fd40aad14a618ab81846deb5c771b8c76ab2168de1eeb9b5716037fa92ab10",
+                "size": 242509,
+                "url": "https://github.com/denchik2444/vrm-manager/releases/download/v1.1.7/denchik-vroid-manager-1.1.7-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "send_chat_message": {
+                "reason": "Позволяет кнопке «Использовать в Astra» передать Astra запрос на использование выбранной VRM-модели."
+              },
+              "set_variable": {
+                "reason": "Передаёт выбранную VRM-модель Astra как активную модель для использования.",
+                "scopes": [
+                  "session"
+                ]
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-09-07T16:01:40Z",
+            "release": {
+              "commit": "cf347a05cfa3363253d08b8f2be5819b64fd0536",
+              "kind": "github_release",
+              "repo": "denchik2444/vrm-manager",
+              "tag": "v1.1.7"
+            },
+            "version": "1.1.7"
+          }
+        ],
+        "repository_url": "https://github.com/denchik2444/vrm-manager",
+        "source": {
+          "kind": "github",
+          "repo": "denchik2444/vrm-manager"
+        },
+        "stars": 0,
+        "updated_at": "2026-09-07T16:01:40Z",
+        "version": "1.1.7"
+      },
+      {
         "added_at": "2026-08-10",
         "author": "Astra Team",
         "capabilities": [
