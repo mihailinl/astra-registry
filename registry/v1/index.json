@@ -1596,6 +1596,61 @@
         "stars": 0,
         "updated_at": "2026-09-07T21:50:11Z",
         "version": "0.6.0"
+      },
+      {
+        "added_at": "2026-09-10",
+        "author": "Voltur",
+        "capabilities": [
+          "tools",
+          "ui_contributions"
+        ],
+        "description": "Plugin for controlling Yandex Smart Home devices directly from Astra.",
+        "download_url": "https://github.com/Voltur792/Y-home-f-astra/releases/download/v0.1.0/yandex-smart-home-0.1.0-noarch.astraplugin",
+        "downloads": 0,
+        "icon_url": "data:image/svg+xml;base64,PCEtLSBSZXBsYWNlIG1lLiBUaGlzIGlzIGEgcGxhY2Vob2xkZXIgc28geW91ciBwbHVnaW4gaGFzICphKiBwaWN0dXJlCiAgICAgZnJvbSB0aGUgZmlyc3QgbWludXRlOyBpdCBpcyBub3QgYSBob3VzZSBzdHlsZSBhbmQgbm90aGluZyBleHBlY3RzIHlvdXIKICAgICBpY29uIHRvIGxvb2sgYW55dGhpbmcgbGlrZSBpdC4KCiAgICAgYGFzdHJhLXBsdWdpbiBidWlsZGAgcGFja3Mgd2hpY2hldmVyIG9mIHRoZXNlIGl0IGZpbmRzIG5leHQgdG8gcGx1Z2luLnRvbWwsCiAgICAgYW5kIEFzdHJhJ3Mgc3RvcmUgZHJhd3MgaXQgb24geW91ciBjYXJkOgoKICAgICAgICAgaWNvbi5wbmcgICBpY29uLndlYnAgICBpY29uLnN2ZyAgIGljb24uanBnICAgaWNvbi5pY28KCiAgICAgUE5HIHdpdGggYSB0cmFuc3BhcmVudCBiYWNrZ3JvdW5kIGlzIHRoZSB1c3VhbCBhbnN3ZXIuIERyYXcgaXQgc3F1YXJlOyBpdAogICAgIGlzIGRpc3BsYXllZCBhdCBhYm91dCA2NHB4LCBzbyBpdCB3YW50cyBhIGJvbGQgc2lsaG91ZXR0ZSByYXRoZXIgdGhhbiBmaW5lCiAgICAgZGV0YWlsLCBhbmQgaXQgc2hvdWxkIHJlYWQgb24gYm90aCBhIGxpZ2h0IGFuZCBhIGRhcmsgYmFja2dyb3VuZCBiZWNhdXNlCiAgICAgdGhlIHN0b3JlIGZvbGxvd3MgdGhlIHVzZXIncyB0aGVtZS4KCiAgICAgSWYgeW91IGRvIHNoaXAgYW4gU1ZHLCBrZWVwIGl0IHN0YXRpYzogbm8gPHNjcmlwdD4sIG5vIG9uKiBoYW5kbGVycywgbm8KICAgICA8Zm9yZWlnbk9iamVjdD4sIGFuZCBubyByZWZlcmVuY2UgdG8gYW55dGhpbmcgb2ZmIHRoaXMgbWFjaGluZS4gVGhlCiAgICAgcmVnaXN0cnkgZHJvcHMgYW4gaWNvbiBjYXJyeWluZyBhbnkgb2YgdGhvc2UsIGFuZCB5b3VyIHBsdWdpbiB3b3VsZCBsaXN0CiAgICAgd2l0aCBubyBwaWN0dXJlIGF0IGFsbC4gLS0+CjxzdmcgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB2aWV3Qm94PSIwIDAgMTYgMTYiIHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCIKICAgICBzaGFwZS1yZW5kZXJpbmc9ImNyaXNwRWRnZXMiIHJvbGU9ImltZyIgYXJpYS1sYWJlbD0iWWFuZGV4IFNtYXJ0IEhvbWUiPgogIDx0aXRsZT5ZYW5kZXggU21hcnQgSG9tZTwvdGl0bGU+CiAgPHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiBmaWxsPSIjZWE1ODBjIi8+CiAgPHJlY3QgeD0iNCIgeT0iMiIgd2lkdGg9IjIiIGhlaWdodD0iMSIgZmlsbD0iI2Y4ZmFmYyIvPgogIDxyZWN0IHg9IjEwIiB5PSIyIiB3aWR0aD0iMiIgaGVpZ2h0PSIxIiBmaWxsPSIjZjhmYWZjIi8+CiAgPHJlY3QgeD0iNCIgeT0iMyIgd2lkdGg9IjIiIGhlaWdodD0iMSIgZmlsbD0iI2Y4ZmFmYyIvPgogIDxyZWN0IHg9IjEwIiB5PSIzIiB3aWR0aD0iMiIgaGVpZ2h0PSIxIiBmaWxsPSIjZjhmYWZjIi8+CiAgPHJlY3QgeD0iMiIgeT0iNCIgd2lkdGg9IjEyIiBoZWlnaHQ9IjEiIGZpbGw9IiNmOGZhZmMiLz4KICA8cmVjdCB4PSIyIiB5PSI1IiB3aWR0aD0iMTEiIGhlaWdodD0iMSIgZmlsbD0iI2Y4ZmFmYyIvPgogIDxyZWN0IHg9IjEzIiB5PSI1IiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjOTRhM2I4Ii8+CiAgPHJlY3QgeD0iMiIgeT0iNiIgd2lkdGg9IjExIiBoZWlnaHQ9IjEiIGZpbGw9IiNmOGZhZmMiLz4KICA8cmVjdCB4PSIxMyIgeT0iNiIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iIzk0YTNiOCIvPgogIDxyZWN0IHg9IjIiIHk9IjciIHdpZHRoPSIxMSIgaGVpZ2h0PSIxIiBmaWxsPSIjZjhmYWZjIi8+CiAgPHJlY3QgeD0iMTMiIHk9IjciIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiM5NGEzYjgiLz4KICA8cmVjdCB4PSIyIiB5PSI4IiB3aWR0aD0iMTEiIGhlaWdodD0iMSIgZmlsbD0iI2Y4ZmFmYyIvPgogIDxyZWN0IHg9IjEzIiB5PSI4IiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjOTRhM2I4Ii8+CiAgPHJlY3QgeD0iMiIgeT0iOSIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2Y4ZmFmYyIvPgogIDxyZWN0IHg9IjMiIHk9IjkiIHdpZHRoPSIxMSIgaGVpZ2h0PSIxIiBmaWxsPSIjOTRhM2I4Ii8+CiAgPHJlY3QgeD0iNCIgeT0iMTAiIHdpZHRoPSI4IiBoZWlnaHQ9IjEiIGZpbGw9IiNmOGZhZmMiLz4KICA8cmVjdCB4PSI0IiB5PSIxMSIgd2lkdGg9IjciIGhlaWdodD0iMSIgZmlsbD0iI2Y4ZmFmYyIvPgogIDxyZWN0IHg9IjExIiB5PSIxMSIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iIzk0YTNiOCIvPgogIDxyZWN0IHg9IjYiIHk9IjEyIiB3aWR0aD0iNCIgaGVpZ2h0PSIxIiBmaWxsPSIjZjhmYWZjIi8+CiAgPHJlY3QgeD0iNiIgeT0iMTMiIHdpZHRoPSIzIiBoZWlnaHQ9IjEiIGZpbGw9IiNmOGZhZmMiLz4KICA8cmVjdCB4PSI5IiB5PSIxMyIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iIzk0YTNiOCIvPgogIDxyZWN0IHg9IjYiIHk9IjE0IiB3aWR0aD0iMyIgaGVpZ2h0PSIxIiBmaWxsPSIjZjhmYWZjIi8+CiAgPHJlY3QgeD0iOSIgeT0iMTQiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiM5NGEzYjgiLz4KPC9zdmc+Cg==",
+        "id": "yandex-smart-home",
+        "license": "MIT",
+        "name": "Yandex Smart Home",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/Voltur792/Y-home-f-astra/releases/download/v0.1.0/yandex-smart-home-0.1.0-noarch.astraplugin",
+          "noarch": "https://github.com/Voltur792/Y-home-f-astra/releases/download/v0.1.0/yandex-smart-home-0.1.0-noarch.astraplugin",
+          "windows-x64": "https://github.com/Voltur792/Y-home-f-astra/releases/download/v0.1.0/yandex-smart-home-0.1.0-noarch.astraplugin"
+        },
+        "readme": "# Yandex Smart Home\n\nУправляйте устройствами Умного дома Яндекса прямо из Astra — голосом и\nтекстом через ИИ, а также вручную через вкладку с переключателями.\n\nEnglish: An Astra plugin to control Yandex Smart Home devices from Astra —\nvia the built-in AI or a dedicated tab.\n\n## Возможности\n\n- **Вкладка «Умный дом»** в панели навигации Astra:\n  - *Устройства* — карточки всех устройств с переключателями вкл/выкл;\n    сенсоры показывают показания (температура, напряжение, состояние АКБ…);\n    состояние обновляется автоматически.\n  - *Сценарии* — запуск любого сценария одной кнопкой.\n  - *Настройки* — подключение к Яндексу по OAuth-токену со встроенной\n    пошаговой инструкцией.\n- **Инструменты для ИИ Astra**: включение/выключение устройств, запуск\n  сценариев, списки устройств и сценариев — по обычной человеческой фразе.\n  Плагин понимает русские падежи и разговорные обороты, находит устройство\n  по названию и даже по комнате.\n- **Прозрачный стеклянный интерфейс** в стиле темы Astra.\n- **Приватность**: токен хранится локально и передаётся только в API\n  Яндекса; ничего не отправляется куда-либо ещё.\n\n## Подключение (один раз)\n\n1. Откройте вкладку «Умный дом» → «Настройки» — там полная инструкция.\n2. Кратко: на oauth.yandex.ru создайте приложение типа\n   «Для доступа к API или отладки», добавьте права `iot:view` и\n   `iot:control` (Умный дом Яндекса), скопируйте ClientID.\n3. Откройте ссылку авторизации со своим ClientID:\n   `https://oauth.yandex.ru/authorize?response_type=token&client_id=ВАШ_CLIENTID`\n4. Вставьте показанный токен (начинается с `y0__`) в поле на вкладке\n   «Настройки» и нажмите «Подключить».\n\n## Примеры фраз для ИИ Astra\n\nУстройства:\n\n- «Включи умную лампочку в коридоре»\n- «Выключи люстру»\n- «Открой багажник»\n- «Включи свет в коридоре» — по комнате\n\nСценарии:\n\n- «Запусти сценарий 1 минута»\n- «Запусти двигатель на 15 минут»\n- «Какие сценарии есть в умном доме?»\n\n## Разработка\n\nЯзык: Python.\n\n```bash\nastra-plugin dev .\n```\n\n## Сборка\n\n```bash\nastra-plugin build\n```\n\nСоздаёт файл `.astraplugin` для распространения.\n\n## Лицензия\n\nMIT · Автор: Voltur (GitHub [Voltur792](https://github.com/Voltur792))\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "yandex-smart-home-0.1.0-noarch.astraplugin",
+                "sha256": "f9541994bfab1bff4143e484e4ff8515375a42d2d7966dc210bf54cafcd9f354",
+                "size": 23816,
+                "url": "https://github.com/Voltur792/Y-home-f-astra/releases/download/v0.1.0/yandex-smart-home-0.1.0-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {},
+            "protocol": 1,
+            "published_at": "2026-09-10T13:54:16Z",
+            "release": {
+              "commit": "f6204de3a9ba77b4eaceed863ae47e18dbd7f5dd",
+              "kind": "github_release",
+              "repo": "Voltur792/Y-home-f-astra",
+              "tag": "v0.1.0"
+            },
+            "version": "0.1.0"
+          }
+        ],
+        "repository_url": "https://github.com/Voltur792/Y-home-f-astra",
+        "source": {
+          "kind": "github",
+          "repo": "Voltur792/Y-home-f-astra"
+        },
+        "stars": 0,
+        "updated_at": "2026-09-10T13:54:16Z",
+        "version": "0.1.0"
       }
     ],
     "publishers": {
@@ -1613,6 +1668,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 40
+    "serial": 41
   }
 }
