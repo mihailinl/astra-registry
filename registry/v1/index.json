@@ -1108,6 +1108,69 @@
         "version": "0.1.2"
       },
       {
+        "added_at": "2026-09-09",
+        "author": "be1lnash3",
+        "capabilities": [
+          "tools",
+          "ui_contributions"
+        ],
+        "description": "A live Obsidian-style knowledge graph of your Astra chats and memory: entities, links, filters, force settings, and tools to explore connections.",
+        "download_url": "https://github.com/Belnash3/knowledge-graph/releases/download/v0.1.0/knowledge-graph-0.1.0-noarch.astraplugin",
+        "downloads": 0,
+        "icon_url": "data:image/png;base64,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",
+        "id": "knowledge-graph",
+        "license": "MIT",
+        "name": "Knowledge Graph",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/Belnash3/knowledge-graph/releases/download/v0.1.0/knowledge-graph-0.1.0-noarch.astraplugin",
+          "noarch": "https://github.com/Belnash3/knowledge-graph/releases/download/v0.1.0/knowledge-graph-0.1.0-noarch.astraplugin",
+          "windows-x64": "https://github.com/Belnash3/knowledge-graph/releases/download/v0.1.0/knowledge-graph-0.1.0-noarch.astraplugin"
+        },
+        "readme": "# Knowledge Graph — граф знаний Астры\n\nЖивой граф в стиле Obsidian по чатам и памяти Астры.\n\n## Что делает\n- **Вкладка «Граф знаний»** в навигации Astra: светящиеся узлы-сущности,\n  связи-пружины, физика, зум/панорама, драг узлов, поиск, легенда.\n- **Источники:** история чатов (`~/.config/astra/chat_history/*.jsonl`) —\n  сущности извлекаются из заглавных фраз с нормализацией падежей;\n  память (`memory.db`) — готовые тройки subject/predicate/object.\n- **Живое обновление:** события `chat_message` / `memory_changed` перестраивают\n  граф с задержкой 6 с; страница подтягивает свежую сборку каждые 15 с.\n- **Клик по узлу** — панель с выдержками сообщений, где сущность встречается.\n\n## Инструменты для Астры\n- `rebuild_knowledge_graph` — перестроить, вернуть статистику.\n- `graph_stats` — узлы/связи/сообщения/тройки.\n- `find_connections(«А», «Б»)` — цепочка связей между понятиями (BFS).\n\n## Установка\nПапка плагина лежит в `~/.config/astra/plugins/knowledge-graph`\n(разработка — в `~/ZCodeProject/astra-knowledge-graph`). Нужен режим\nразработчика (Settings → Privacy → Allow unsigned plugins).\n\n## Тесты\n```\npython3 -m pytest tests/ -q\n```\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "knowledge-graph-0.1.0-noarch.astraplugin",
+                "sha256": "fd16fd41b474edabc5581a3bf77203ffebc4b08d243636064cb45514a8a13468",
+                "size": 30823,
+                "url": "https://github.com/Belnash3/knowledge-graph/releases/download/v0.1.0/knowledge-graph-0.1.0-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "subscribe_events": {
+                "reason": "Дополнять граф новыми сообщениями чата и обновлениями памяти.",
+                "types": [
+                  "chat_message",
+                  "memory_changed"
+                ]
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-09-09T17:58:11Z",
+            "release": {
+              "commit": "839e56875bb4bae9f2c8611f36b17153ba6cdc98",
+              "kind": "github_release",
+              "repo": "Belnash3/knowledge-graph",
+              "tag": "v0.1.0"
+            },
+            "version": "0.1.0"
+          }
+        ],
+        "repository_url": "https://github.com/Belnash3/knowledge-graph",
+        "source": {
+          "kind": "github",
+          "repo": "Belnash3/knowledge-graph"
+        },
+        "stars": 0,
+        "updated_at": "2026-09-09T17:58:11Z",
+        "version": "0.1.0"
+      },
+      {
         "added_at": "2026-08-19",
         "author": "Noxys",
         "capabilities": [
