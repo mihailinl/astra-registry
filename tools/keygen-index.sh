@@ -91,12 +91,43 @@ chmod 600 -- "$KEY"
 PUB_B64="$(openssl pkey -in "$KEY" -pubout -outform DER | tail -c 32 | openssl base64 -A)"
 FINGERPRINT="$(openssl pkey -in "$KEY" -pubout -outform DER | tail -c 32 | openssl dgst -sha256 -hex | awk '{print $NF}')"
 
+# Each of the three derivations above and below is a PIPELINE, and this is
+# `sh`. A pipeline's status is its LAST command's, so `openssl pkey` failing at
+# the head of one leaves `tail` and `openssl base64` to succeed on no input —
+# status 0, empty output, and `set -eu` does not fire because the variable IS
+# set, just empty. Measured: the whole pipeline exits 0 with a zero-length
+# capture.
+#
+# `set -o pipefail` is the obvious answer and is not available: this is
+# `#!/usr/bin/env sh`, and dash — /bin/sh on Debian and Ubuntu, where an
+# operator is most likely to run this — does not have it.
+#
+# So assert the artefact instead of the mechanism, which is the stronger check
+# anyway: a raw Ed25519 public key is 32 bytes, so exactly 44 base64
+# characters, and a SHA-256 is 64 hex. Nothing downstream can tell an empty
+# secret from a missing one, and the round-trip test below proves the KEY file
+# is good — not that these three values were derived from it.
+[ ${#PUB_B64} -eq 44 ] ||
+  die "the public key came out ${#PUB_B64} base64 chars, expected 44 — openssl failed at the head of a pipeline and the rest of it succeeded on nothing"
+case "$FINGERPRINT" in
+  [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+  *) die "the fingerprint is not 64 hex characters: '$FINGERPRINT'" ;;
+esac
+
 # The private key as the base64 raw 32-byte SEED, which is the form
 # ASTRA_INDEX_SIGNING_KEY takes (bot/lib/sign.mjs rebuilds the PKCS#8 around
 # it). A PKCS#8 DER for Ed25519 is a fixed 16-byte prefix and then the seed, so
 # the last 32 bytes are it.
 openssl pkey -in "$KEY" -outform DER | tail -c 32 | openssl base64 -A > "$OUT/$KEY_ID.seed.b64"
 chmod 600 -- "$OUT/$KEY_ID.seed.b64"
+
+# The same pipeline hazard, and the one that costs most: this file's contents
+# ARE `ASTRA_INDEX_SIGNING_KEY`. An empty one is pasted into a GitHub
+# environment secret and discovered at the first release, by which time nobody
+# is looking at this script.
+SEED_LEN=$(wc -c < "$OUT/$KEY_ID.seed.b64" | tr -d ' ')
+[ "$SEED_LEN" = "44" ] ||
+  die "the private seed came out $SEED_LEN bytes, expected 44 — refusing to leave an empty secret in $OUT/$KEY_ID.seed.b64"
 
 # Round-trip the key before anyone depends on it: sign 32 random bytes and
 # verify. A keypair that cannot do that is better discovered now than at the
