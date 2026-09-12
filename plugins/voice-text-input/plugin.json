@@ -1,0 +1,25 @@
+{
+  "$comment": "Derived from Voltur792/voice-text-input@v1.0.1 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
+  "schema": "astra.registry.plugin/1",
+  "id": "voice-text-input",
+  "name": "Voice Text Input",
+  "summary": "Voice typing into any focused window: a start word begins dictation, text is typed as you speak, a send word presses Enter. Configurable command words, fully local.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "Voltur792/voice-text-input"
+  },
+  "added_at": "2026-09-12",
+  "description": "Voice typing into any focused window: a start word begins dictation, text is typed as you speak, a send word presses Enter. Configurable command words, fully local.",
+  "author": {
+    "name": "Voltur"
+  },
+  "icon": "icon.png",
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "Голосовой наборщик текста",
+      "summary": "Голосовой набор текста в активное окно: скажите командное слово — начнётся диктовка, текст печатается по мере говорения; второе командное слово отправляет сообщение (Enter). Командные слова…"
+    }
+  }
+}
