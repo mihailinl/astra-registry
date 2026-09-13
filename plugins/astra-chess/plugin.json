@@ -1,5 +1,5 @@
 {
-  "$comment": "Derived from KNICE-TECH/astra-chess@v0.1.17 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
+  "$comment": "Derived from KNICE-TECH/astra-chess@v0.1.17 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves. DELISTED 2026-09-12: source.repo names KNICE-TECH, an organisation login freed when the organisation was renamed to MINICE-AI, which anybody can register and then release from. Registry trust in that login is withdrawn in the same change, so the listing leaves the catalogue until it is re-released from MINICE-AI/astra-chess, which is an identity change a maintainer reviews (R_IDENTITY_CHANGED). Installed copies keep working and are offered no update meanwhile; the version files stay, because they were published and signed.",
   "schema": "astra.registry.plugin/1",
   "id": "astra-chess",
   "name": "Astra Chess",
@@ -25,5 +25,6 @@
       "name": "Шахи Astra",
       "summary": "Офіційний шаховий плагін для Astra: рівні локального бота, вибрана модель Astra і чат просто в партії."
     }
-  }
+  },
+  "unlisted": true
 }

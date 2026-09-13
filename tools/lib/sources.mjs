@@ -179,7 +179,7 @@ export function loadPublishers(root = REPO_ROOT) {
     // `covers` exists because the badge is keyed on the owner half of
     // `source.repo` and a person's plugins do not all live under their personal
     // login: `KnlCE`'s reviewed record reached none of their listings, because
-    // those live under the `KNICE-TECH` organisation. A second file for the org
+    // those live under the organisation `MINICE-AI` (named `KNICE-TECH` until 2026-09). A second file for the org
     // is NOT the fix — it would carry the same `display_name` and trip
     // `publisherNameCollisions`, correctly, since two records rendering as one
     // word is exactly what that check is for.
