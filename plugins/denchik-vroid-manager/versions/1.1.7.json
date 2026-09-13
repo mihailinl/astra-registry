@@ -1,0 +1,37 @@
+{
+  "$comment": "Derived from denchik2444/vrm-manager@v1.1.7. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: well-known.",
+  "schema": "astra.registry.version/1",
+  "id": "denchik-vroid-manager",
+  "version": "1.1.7",
+  "published_at": "2026-09-07T16:01:40Z",
+  "release": {
+    "kind": "github_release",
+    "repo": "denchik2444/vrm-manager",
+    "tag": "v1.1.7",
+    "commit": "cf347a05cfa3363253d08b8f2be5819b64fd0536"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/denchik2444/vrm-manager/releases/download/v1.1.7/denchik-vroid-manager-1.1.7-noarch.astraplugin",
+      "filename": "denchik-vroid-manager-1.1.7-noarch.astraplugin",
+      "sha256": "51fd40aad14a618ab81846deb5c771b8c76ab2168de1eeb9b5716037fa92ab10",
+      "size": 242509
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "tools",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "send_chat_message": {
+      "reason": "Позволяет кнопке «Использовать в Astra» передать Astra запрос на использование выбранной VRM-модели."
+    },
+    "set_variable": {
+      "reason": "Передаёт выбранную VRM-модель Astra как активную модель для использования.",
+      "scopes": [
+        "session"
+      ]
+    }
+  }
+}

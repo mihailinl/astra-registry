@@ -1,0 +1,19 @@
+{
+  "$comment": "Derived from Voltur792/Y-home-f-astra@v0.1.0 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
+  "schema": "astra.registry.plugin/1",
+  "id": "yandex-smart-home",
+  "name": "Yandex Smart Home",
+  "summary": "Plugin for controlling Yandex Smart Home devices directly from Astra.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "Voltur792/Y-home-f-astra"
+  },
+  "added_at": "2026-09-10",
+  "description": "Plugin for controlling Yandex Smart Home devices directly from Astra.",
+  "author": {
+    "name": "Voltur"
+  },
+  "icon": "icon.svg",
+  "readme": "README.md"
+}

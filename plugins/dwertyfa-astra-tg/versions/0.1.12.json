@@ -1,0 +1,39 @@
+{
+  "$comment": "Derived from dwertyfa288/dwertyfa-astra-tg@v0.1.12. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: release-author.",
+  "schema": "astra.registry.version/1",
+  "id": "dwertyfa-astra-tg",
+  "version": "0.1.12",
+  "published_at": "2026-09-03T19:00:14Z",
+  "release": {
+    "kind": "github_release",
+    "repo": "dwertyfa288/dwertyfa-astra-tg",
+    "tag": "v0.1.12",
+    "commit": "9085f9d121cf8775facd71ac90b00a25a982aa83"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.12/dwertyfa-astra-tg-0.1.12-noarch.astraplugin",
+      "filename": "dwertyfa-astra-tg-0.1.12-noarch.astraplugin",
+      "sha256": "cbc79c2f86b51b36ea6798e470414bfdff0fb72709eac47fccc526094bcead6d",
+      "size": 3861323
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "actions",
+    "event_handlers",
+    "triggers",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "fire_trigger": {
+      "reason": "Starts your Telegram announcement command when a selected chat receives a message"
+    },
+    "subscribe_events": {
+      "reason": "Reads final recognized phrases only while a Telegram voice-reply window is open",
+      "types": [
+        "speech_recognized"
+      ]
+    }
+  }
+}

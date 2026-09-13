@@ -1,0 +1,36 @@
+{
+  "$comment": "Derived from LilKALINOV/Astra-Google-STT@v0.6.0. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: well-known.",
+  "schema": "astra.registry.version/1",
+  "id": "web-stt",
+  "version": "0.6.0",
+  "published_at": "2026-09-07T21:50:11Z",
+  "release": {
+    "kind": "github_release",
+    "repo": "LilKALINOV/Astra-Google-STT",
+    "tag": "v0.6.0",
+    "commit": "779e2957f8e90f3046c742f22f92b6f02472e8ba"
+  },
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/LilKALINOV/Astra-Google-STT/releases/download/v0.6.0/web-stt-0.6.0-linux-x64.astraplugin",
+      "filename": "web-stt-0.6.0-linux-x64.astraplugin",
+      "sha256": "4253a9e362d7f44d3d1bb2011880d37bd57f031a8183dae56f1b51c382d7668a",
+      "size": 3587518
+    },
+    "windows-x64": {
+      "url": "https://github.com/LilKALINOV/Astra-Google-STT/releases/download/v0.6.0/web-stt-0.6.0-windows-x64.astraplugin",
+      "filename": "web-stt-0.6.0-windows-x64.astraplugin",
+      "sha256": "2d49cc1881818e4e90c2f5f99e96d617e5789b2c6d45420be1db16a446082691",
+      "size": 3096955
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "stt"
+  ],
+  "permissions": {
+    "client": {
+      "reason": "Sends recognized speech into Astra chat as a message (dictation)."
+    }
+  }
+}

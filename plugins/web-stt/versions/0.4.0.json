@@ -1,0 +1,31 @@
+{
+  "$comment": "Derived from LilKALINOV/Astra-Google-STT@v0.4.0. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: well-known.",
+  "schema": "astra.registry.version/1",
+  "id": "web-stt",
+  "version": "0.4.0",
+  "published_at": "2026-09-05T07:18:40Z",
+  "release": {
+    "kind": "github_release",
+    "repo": "LilKALINOV/Astra-Google-STT",
+    "tag": "v0.4.0",
+    "commit": "4f672cbf3d193805a00741a13a54de4c1d474e97"
+  },
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/LilKALINOV/Astra-Google-STT/releases/download/v0.4.0/web-stt-0.4.0-linux-x64.astraplugin",
+      "filename": "web-stt-0.4.0-linux-x64.astraplugin",
+      "sha256": "2d2e2db8f153a6427addcf544b295ebbdf247200d292901a62be0816a5c329cc",
+      "size": 3568115
+    },
+    "windows-x64": {
+      "url": "https://github.com/LilKALINOV/Astra-Google-STT/releases/download/v0.4.0/web-stt-0.4.0-windows-x64.astraplugin",
+      "filename": "web-stt-0.4.0-windows-x64.astraplugin",
+      "sha256": "9a48ae7fb32b1d0a2cd4c3749b8e0b2b588c64e79e61b71fdae110e067cd5693",
+      "size": 3080047
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "stt"
+  ]
+}

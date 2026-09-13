@@ -4,160 +4,6 @@
   "signed": {
     "plugins": [
       {
-        "added_at": "2026-08-22",
-        "author": "KNICE",
-        "capabilities": [
-          "tools",
-          "ui_contributions"
-        ],
-        "description": "Official chess plugin for Astra with local bot levels, the selected Astra model, and in-game chat.",
-        "download_url": "https://github.com/KNICE-TECH/astra-chess/releases/download/v0.1.17/astra-chess-0.1.17-noarch.astraplugin",
-        "downloads": 0,
-        "i18n": {
-          "ru": {
-            "description": "Официальный шахматный плагин для Astra: уровни локального бота, выбранная модель Astra и чат прямо в партии.",
-            "name": "Шахматы Astra"
-          },
-          "uk": {
-            "description": "Офіційний шаховий плагін для Astra: рівні локального бота, вибрана модель Astra і чат просто в партії.",
-            "name": "Шахи Astra"
-          }
-        },
-        "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2Ij4KICA8cmVjdCB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgcng9IjU2IiBmaWxsPSIjMTgxYjE4Ii8+CiAgPHBhdGggZD0iTTY3IDIwN2gxMjVNNzYgMTgxaDEwMmwtOC0zOWMtNC0yMC0xLTQxIDgtNTlsMTMtMjQtNTAtMzAtMTQgMzItMzUtMTItMzkgNDIgMzUgMTRjLTIxIDE3LTI5IDQzLTEyIDc2WiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZDdmMTcxIiBzdHJva2Utd2lkdGg9IjE0IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8cGF0aCBkPSJtMTI2IDY1IDI3IDEzIiBmaWxsPSJub25lIiBzdHJva2U9IiNkN2YxNzEiIHN0cm9rZS13aWR0aD0iMTQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K",
-        "id": "astra-chess",
-        "license": "MIT",
-        "name": "Astra Chess",
-        "platform_downloads": {
-          "linux-x64": "https://github.com/KNICE-TECH/astra-chess/releases/download/v0.1.17/astra-chess-0.1.17-noarch.astraplugin",
-          "noarch": "https://github.com/KNICE-TECH/astra-chess/releases/download/v0.1.17/astra-chess-0.1.17-noarch.astraplugin",
-          "windows-x64": "https://github.com/KNICE-TECH/astra-chess/releases/download/v0.1.17/astra-chess-0.1.17-noarch.astraplugin"
-        },
-        "publisher": "KnlCE",
-        "readme": "# Astra Chess\n\nPlay chess against a classical local bot or the model currently selected in Astra, directly in a dedicated app tab.\n\n> Official Astra plugin by KNICE — Astra co-founder and main developer.\n\n## Features\n\n- complete chess rules: check, checkmate, stalemate, castling, en passant, and pawn promotion;\n- four local difficulty levels plus **Astra AI**, which plays through the provider and model selected in Astra;\n- move calculation in a Web Worker, keeping the interface responsive during local search;\n- smooth piece movement, including castling and history replay, with `prefers-reduced-motion` support;\n- play as White or Black, undo moves, and locally restore an unfinished game;\n- step through the entire game with first, previous, next, and current-position controls;\n- **Realism** mode enabled by default, adding a natural pause, a thought bubble, and readable chess remarks;\n- local levels work entirely offline;\n- Astra AI validates every model-selected move against the legal move list before changing the board;\n- built-in chat with Astra AI, including the current position and move history as context.\n- automatic restoration of the current game, history position, settings, and Astra chat after leaving the plugin tab;\n- **English, Russian and Ukrainian**, following the language Astra is set to when the board opens. Changing Astra's language while the board is already open does not repaint it: the strings are fetched once, in `initialize()`, and nothing listens for a change. Close the tab and open it again.\n\nRules and move validation use [chess.js](https://github.com/jhlywa/chess.js), distributed under BSD-2-Clause. In Astra AI mode, the model also receives the narrow `play_chess_move` tool, which accepts one UCI move for the active turn.\n\n## Languages\n\nThe plugin ships `locales/en.json`, `locales/ru.json` and `locales/uk.json` beside `plugin.toml`. English is the base; the other two are defined against it, and `locales.lock.json` records which English each translation was made from, so rewriting an English sentence marks its translations stale instead of leaving them quietly wrong.\n\nWhere each string is resolved is the thing to know before editing any of them.\n\n| | Rendered by | Written as |\n|---|---|---|\n| the store card — the name and summary in the catalogue | the **registry**, out of the bundle | `listing.name` / `listing.description`, the two reserved keys |\n| the board page, the chess remarks, every error a player reads | **this plugin**, at the moment it produces the string | a key, resolved through the SDK's `I18n` |\n| the page's label in Astra's sidebar | the **daemon** | a literal English string — deliberately, see below |\n\nThe page is an iframe and cannot read a file, so it asks the plugin process for the active language over one UI call (`get_locale`) and the plugin process resolves it with `I18n`. `src/en.generated.ts` is the English base compiled into the page bundle, so a page that has not heard back is English rather than a wall of identifiers; `npm run locales:gen` writes it from `locales/en.json`, and `npm test` fails if the two disagree.\n\nThe **sidebar label is not a `$key`**, and that is not an oversight. A daemon resolves plugin keys outside `[config] schema` only from a build newer than any published Astra release, and `plugin.min_astra_version` — the only thing that would stop an older daemon installing this plugin — has no release number to name yet. A key there would reach users as the literal text `$ui.chess.label`. When such a release exists, the label becomes a key and `min_astra_version` names that release.\n\nAdding a language:\n\n```bash\nastra-plugin locale add <code>     # seeds locales/<code>.json from en.json\n# translate the values in place; leave the keys alone\nastra-plugin locale sync           # restamps locales.lock.json\nastra-plugin locale check\nnpm run locales:gen && npm test\n```\n\nThe ten codes Astra can be set to are bare ISO-639-1 — `zh`, never `zh-CN`. A file named anything else is packed, signed, shipped and read by nothing.\n\n## Data sent to the selected model\n\nThe **Astra AI** level and in-game chat require the `send_chat_message` permission. After the user grants it, the plugin sends the selected Astra provider the current FEN position, move history, legal move list, and messages entered in the in-game chat. Local bot levels do not use the network.\n\nAstra shows this high-risk permission and its reason on the installation consent screen. A bundle imported manually cannot receive this permission; the Astra AI level and chat require the verified catalogue release.\n\n## Licences\n\nAuthor: KNICE. The plugin's original code is released under the MIT licence. The bundle also contains:\n\n- [chess.js 1.4.0](https://github.com/jhlywa/chess.js) — BSD-2-Clause;\n- [Astra Plugin SDK for TypeScript 0.5.0](https://github.com/mihailinl/AstraPlugins/tree/master/astra-plugin-sdk-ts) — MPL-2.0.\n\nFull notices and source links are in `LICENSE`, which is included in the plugin bundle.\n\n## Development\n\n```bash\nnpm install\nnpm run locales:gen        # after any edit to locales/en.json\nnpm test\nnpm run typecheck\nastra-plugin check --strict .\nastra-plugin test .        # the only gate that reads the sidebar label\n```\n\nTo load the source folder into a running Astra instance:\n\n```bash\nastra-plugin dev .\n```\n",
-        "releases": [
-          {
-            "artifacts": {
-              "noarch": {
-                "filename": "astra-chess-0.1.17-noarch.astraplugin",
-                "sha256": "96ce85681a81fd0f4a1f08a70fe85bd9fac0733737af63d1f00a69fec30f9eee",
-                "size": 320477,
-                "url": "https://github.com/KNICE-TECH/astra-chess/releases/download/v0.1.17/astra-chess-0.1.17-noarch.astraplugin"
-              }
-            },
-            "capabilities": [
-              "tools",
-              "ui_contributions"
-            ],
-            "permissions": {
-              "send_chat_message": {
-                "reason": "Sends the position and in-game chat messages to the selected model so it can make moves and reply to the player."
-              }
-            },
-            "protocol": 1,
-            "published_at": "2026-08-31T21:10:27Z",
-            "release": {
-              "commit": "13bc50105c97dbf6ba68fd66b7a41da8d5c131a9",
-              "kind": "github_release",
-              "repo": "KNICE-TECH/astra-chess",
-              "tag": "v0.1.17"
-            },
-            "version": "0.1.17"
-          },
-          {
-            "artifacts": {
-              "noarch": {
-                "filename": "astra-chess-0.1.16-noarch.astraplugin",
-                "sha256": "a221c265d01554b1ec1ca9cf46af9673babf02dc00626ee56eafc653b020d80d",
-                "size": 327409,
-                "url": "https://github.com/KNICE-TECH/astra-chess/releases/download/v0.1.16/astra-chess-0.1.16-noarch.astraplugin"
-              }
-            },
-            "capabilities": [
-              "tools",
-              "ui_contributions"
-            ],
-            "permissions": {
-              "send_chat_message": {
-                "reason": "Sends the position and in-game chat messages to the selected model so it can make moves and reply to the player."
-              }
-            },
-            "protocol": 1,
-            "published_at": "2026-08-24T03:32:23Z",
-            "release": {
-              "commit": "1317dafe5ac6656af0e1a2792e82dcaf55ce0fa5",
-              "kind": "github_release",
-              "repo": "KNICE-TECH/astra-chess",
-              "tag": "v0.1.16"
-            },
-            "version": "0.1.16"
-          },
-          {
-            "artifacts": {
-              "noarch": {
-                "filename": "astra-chess-0.1.15-noarch.astraplugin",
-                "sha256": "d7a48fa9a7e6c761ed69326da6d712d1a2c48faf83bb32d39b769484de22e12a",
-                "size": 313163,
-                "url": "https://github.com/KNICE-TECH/astra-chess/releases/download/v0.1.15/astra-chess-0.1.15-noarch.astraplugin"
-              }
-            },
-            "capabilities": [
-              "tools",
-              "ui_contributions"
-            ],
-            "permissions": {
-              "send_chat_message": {
-                "reason": "Sends the position and in-game chat messages to the selected model so it can make moves and reply to the player."
-              }
-            },
-            "protocol": 1,
-            "published_at": "2026-08-23T08:16:14Z",
-            "release": {
-              "commit": "95506bda6f4103474755ab29f221c1b4f790ea85",
-              "kind": "github_release",
-              "repo": "KNICE-TECH/astra-chess",
-              "tag": "v0.1.15"
-            },
-            "version": "0.1.15"
-          },
-          {
-            "artifacts": {
-              "noarch": {
-                "filename": "astra-chess-0.1.13-noarch.astraplugin",
-                "sha256": "3214bea991b4c0d2ce269f3abf56b376036670cb2354bc7cdea30590f5e473b8",
-                "size": 312552,
-                "url": "https://github.com/KNICE-TECH/astra-chess/releases/download/v0.1.13/astra-chess-0.1.13-noarch.astraplugin"
-              }
-            },
-            "capabilities": [
-              "tools",
-              "ui_contributions"
-            ],
-            "permissions": {
-              "send_chat_message": {
-                "reason": "Sends the position and in-game chat messages to the selected model so it can make moves and reply to the player."
-              }
-            },
-            "protocol": 1,
-            "published_at": "2026-08-22T20:38:20Z",
-            "release": {
-              "commit": "83f1c377253812a55264fe39ee69b3cdb6767bfd",
-              "kind": "github_release",
-              "repo": "KNICE-TECH/astra-chess",
-              "tag": "v0.1.13"
-            },
-            "version": "0.1.13"
-          }
-        ],
-        "repository_url": "https://github.com/KNICE-TECH/astra-chess",
-        "source": {
-          "kind": "github",
-          "repo": "KNICE-TECH/astra-chess"
-        },
-        "stars": 0,
-        "updated_at": "2026-08-31T21:10:27Z",
-        "version": "0.1.17"
-      },
-      {
         "added_at": "2026-08-10",
         "author": "Mihailin",
         "capabilities": [
@@ -451,6 +297,71 @@
         "stars": 0,
         "updated_at": "2026-08-19T14:31:19Z",
         "version": "0.1.7"
+      },
+      {
+        "added_at": "2026-09-07",
+        "author": "denchik",
+        "capabilities": [
+          "tools",
+          "ui_contributions"
+        ],
+        "description": "VRoid Hub library, VRM editor and accessory manager",
+        "download_url": "https://github.com/denchik2444/vrm-manager/releases/download/v1.1.7/denchik-vroid-manager-1.1.7-noarch.astraplugin",
+        "downloads": 0,
+        "icon_url": "data:image/png;base64,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",
+        "id": "denchik-vroid-manager",
+        "license": "MIT",
+        "name": "VRM Manager",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/denchik2444/vrm-manager/releases/download/v1.1.7/denchik-vroid-manager-1.1.7-noarch.astraplugin",
+          "noarch": "https://github.com/denchik2444/vrm-manager/releases/download/v1.1.7/denchik-vroid-manager-1.1.7-noarch.astraplugin",
+          "windows-x64": "https://github.com/denchik2444/vrm-manager/releases/download/v1.1.7/denchik-vroid-manager-1.1.7-noarch.astraplugin"
+        },
+        "readme": "# VRM Manager\n\nVRM Manager is an Astra plugin for managing local VRM models, VRoid Hub models, accessories and basic VRM editing.\n\n**Author:** denchik  \n**License:** MIT  \n**Version:** 1.1.7\n\n![VRM Manager](https://raw.githubusercontent.com/denchik2444/vrm-manager/cf347a05cfa3363253d08b8f2be5819b64fd0536/icon.png)\n\n## Features\n\n- Local VRM library\n- VRoid Hub search and downloads\n- OAuth 2.0 + PKCE for VRoid Hub\n- VRM/GLB inspection\n- Object and mesh tree\n- Hide/show model nodes\n- Save edited `.edited.vrm` copies\n- Accessory management\n- Direct import into Astra Character Library\n- Astra UI page with transparent background and theme integration\n\n## Astra import\n\n`Import to Astra` does not automate clicks in the Astra window.\n\nIt detects the Astra Character Library on the local Windows installation and registers the model by creating or updating:\n\n- `pack/models/model.vrm`\n- `pack/characters/character/character.toml`\n- `library.json`\n\nBefore changing `library.json`, the plugin creates a timestamped backup.\n\nThe plugin first checks standard Astra AppData locations and can also use the `ASTRA_COMPANION_DIR` environment variable for a custom Character Library location.\n\n## Requirements\n\n- Astra with plugin support\n- Windows x64\n- Node.js runtime supplied by Astra\n- VRoid Hub Client ID and Client Secret for VRoid Hub features\n\n## Permissions\n\nThe plugin requests:\n\n- `set_variable`: stores the currently selected VRM path for the Astra session.\n- `send_chat_message`: lets the \"Use in Astra\" action ask Astra to use the selected VRM.\n\n## Development\n\n```text\nnpm install\nnpm run build\nnpm run check\n\nastra-plugin check . --strict\nastra-plugin test .\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "denchik-vroid-manager-1.1.7-noarch.astraplugin",
+                "sha256": "51fd40aad14a618ab81846deb5c771b8c76ab2168de1eeb9b5716037fa92ab10",
+                "size": 242509,
+                "url": "https://github.com/denchik2444/vrm-manager/releases/download/v1.1.7/denchik-vroid-manager-1.1.7-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "send_chat_message": {
+                "reason": "Позволяет кнопке «Использовать в Astra» передать Astra запрос на использование выбранной VRM-модели."
+              },
+              "set_variable": {
+                "reason": "Передаёт выбранную VRM-модель Astra как активную модель для использования.",
+                "scopes": [
+                  "session"
+                ]
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-09-07T16:01:40Z",
+            "release": {
+              "commit": "cf347a05cfa3363253d08b8f2be5819b64fd0536",
+              "kind": "github_release",
+              "repo": "denchik2444/vrm-manager",
+              "tag": "v1.1.7"
+            },
+            "version": "1.1.7"
+          }
+        ],
+        "repository_url": "https://github.com/denchik2444/vrm-manager",
+        "source": {
+          "kind": "github",
+          "repo": "denchik2444/vrm-manager"
+        },
+        "stars": 0,
+        "updated_at": "2026-09-07T16:01:40Z",
+        "version": "1.1.7"
       },
       {
         "added_at": "2026-08-10",
@@ -758,6 +669,192 @@
         "version": "0.1.3"
       },
       {
+        "added_at": "2026-09-03",
+        "author": "dwertyfa",
+        "capabilities": [
+          "actions",
+          "event_handlers",
+          "tools",
+          "triggers",
+          "ui_contributions"
+        ],
+        "description": "Announce selected Telegram chats with Astra and send voice-dictated replies",
+        "download_url": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.14/dwertyfa-astra-tg-0.1.14-noarch.astraplugin",
+        "downloads": 0,
+        "i18n": {
+          "ru": {
+            "description": "Озвучивает выбранные Telegram-чаты голосом Astra и отправляет продиктованные ответы",
+            "name": "TG for Astra"
+          }
+        },
+        "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgcm9sZT0iaW1nIiBhcmlhLWxhYmVsPSJURyBmb3IgQXN0cmEiPgogIDx0aXRsZT5URyBmb3IgQXN0cmE8L3RpdGxlPgogIDxkZWZzPgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJiZyIgeDE9IjgiIHkxPSI0IiB4Mj0iNTciIHkyPSI2MSIgZ3JhZGllbnRVbml0cz0idXNlclNwYWNlT25Vc2UiPgogICAgICA8c3RvcCBzdG9wLWNvbG9yPSIjMzliOGZmIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iIzE3NjlkMiIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3QgeD0iMiIgeT0iMiIgd2lkdGg9IjYwIiBoZWlnaHQ9IjYwIiByeD0iMTciIGZpbGw9InVybCgjYmcpIi8+CiAgPHBhdGggZD0iTTE0IDMxLjMgNDkuOCAxN2MxLjgtLjcgMy40LjcgMi45IDIuOGwtNi4xIDI4LjhjLS40IDIuMS0yIDIuNi0zLjcgMS42bC05LjQtNy00LjYgNC41Yy0uNS41LS45LjktMS45LjlsLjctOS42IDE3LjUtMTUuOGMuOC0uNy0uMi0xLjEtMS4yLS40TDIyLjQgMzYuNGwtOS4zLTIuOWMtMi0uNi0yLjEtMiAuOS0zLjJaIiBmaWxsPSIjZmZmIi8+CiAgPHBhdGggZD0iTTcgNDhjMy40IDAgMy40LTUgNi44LTVzMy40IDUgNi44IDUiIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzljZTBmZiIgc3Ryb2tlLXdpZHRoPSIyLjQiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K",
+        "id": "dwertyfa-astra-tg",
+        "license": "MIT",
+        "name": "TG for Astra",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.14/dwertyfa-astra-tg-0.1.14-noarch.astraplugin",
+          "noarch": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.14/dwertyfa-astra-tg-0.1.14-noarch.astraplugin",
+          "windows-x64": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.14/dwertyfa-astra-tg-0.1.14-noarch.astraplugin"
+        },
+        "readme": "# TG for Astra\n\nTG for Astra connects a personal Telegram account to Astra. The plugin monitors selected chats, announces new messages with Astra's voice, plays voice messages, and sends replies dictated by the user.\n\n## Features\n\n- Login with a phone number, Telegram verification code, and two-step verification password.\n- Support for private chats, groups, and channels.\n- Monitoring of up to 1000 chats at the same time, with a one-click \"monitor every chat\" action.\n- A privacy toggle that masks the account name and phone number; the state is kept in the plugin's own state file.\n- A panel that lists the chats currently being monitored.\n- A button that writes the two ready-made Astra commands out as an `astra-commands` file to import.\n- Customizable notification and reply-confirmation messages.\n- Playback of Telegram voice messages in their original audio.\n- Automatic transport selection: Telegram WSS first, followed by a fallback WSS relay.\n- Text replies after a command word, for example `Astra, write I will be there soon`.\n- New Telegram messages through Astra AI tools: say, for example, `Astra, write to Andrey that I will be there soon`; Astra shows the resolved chat and draft first, then sends only after a separate confirmation.\n- A customizable phrase for tool-based sending, such as `write` or `write in Telegram`. No Astra command-editor nodes are required for this feature.\n- Concise tool responses: Astra asks only for the final send confirmation and reports only the final result, without narrating tool lookup or intermediate steps.\n\nThe two-step verification password is not stored after login.\n\n## Development\n\nRequirements: Node.js 20+ and the `astra-plugin` CLI.\n\n```bash\nnpm install\nnpm run typecheck\nnpm run build\nastra-plugin check --strict .\n```\n\nTo run the plugin in development mode:\n\n```bash\nastra-plugin dev .\n```\n\n## License\n\nMIT\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "dwertyfa-astra-tg-0.1.14-noarch.astraplugin",
+                "sha256": "48465ac33551f9aa7a90351b679a1745f6a3ab6685b5541c2f6f1d0ed1ce4782",
+                "size": 3865557,
+                "url": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.14/dwertyfa-astra-tg-0.1.14-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "actions",
+              "event_handlers",
+              "tools",
+              "triggers",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "fire_trigger": {
+                "reason": "Starts your Telegram announcement command when a selected chat receives a message"
+              },
+              "subscribe_events": {
+                "reason": "Reads final recognized phrases only while a Telegram voice-reply window is open",
+                "types": [
+                  "speech_recognized"
+                ]
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-09-04T15:39:43Z",
+            "release": {
+              "commit": "6067e97fdc773faa19e24116a19151715adfe65a",
+              "kind": "github_release",
+              "repo": "dwertyfa288/dwertyfa-astra-tg",
+              "tag": "v0.1.14"
+            },
+            "version": "0.1.14"
+          },
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "dwertyfa-astra-tg-0.1.13-noarch.astraplugin",
+                "sha256": "3375505d139f8f7088f463438e2ab0216b97e0d34d7eaf257498df0f31af9f04",
+                "size": 3865818,
+                "url": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.13/dwertyfa-astra-tg-0.1.13-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "actions",
+              "event_handlers",
+              "tools",
+              "triggers",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "fire_trigger": {
+                "reason": "Starts your Telegram announcement command when a selected chat receives a message"
+              },
+              "subscribe_events": {
+                "reason": "Reads final recognized phrases only while a Telegram voice-reply window is open",
+                "types": [
+                  "speech_recognized"
+                ]
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-09-04T14:56:20Z",
+            "release": {
+              "commit": "270d471c0bffc93392da419558839e95a19b7a72",
+              "kind": "github_release",
+              "repo": "dwertyfa288/dwertyfa-astra-tg",
+              "tag": "v0.1.13"
+            },
+            "version": "0.1.13"
+          },
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "dwertyfa-astra-tg-0.1.12-noarch.astraplugin",
+                "sha256": "cbc79c2f86b51b36ea6798e470414bfdff0fb72709eac47fccc526094bcead6d",
+                "size": 3861323,
+                "url": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.12/dwertyfa-astra-tg-0.1.12-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "actions",
+              "event_handlers",
+              "triggers",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "fire_trigger": {
+                "reason": "Starts your Telegram announcement command when a selected chat receives a message"
+              },
+              "subscribe_events": {
+                "reason": "Reads final recognized phrases only while a Telegram voice-reply window is open",
+                "types": [
+                  "speech_recognized"
+                ]
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-09-03T19:00:14Z",
+            "release": {
+              "commit": "9085f9d121cf8775facd71ac90b00a25a982aa83",
+              "kind": "github_release",
+              "repo": "dwertyfa288/dwertyfa-astra-tg",
+              "tag": "v0.1.12"
+            },
+            "version": "0.1.12"
+          },
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "dwertyfa-astra-tg-0.1.11-noarch.astraplugin",
+                "sha256": "000e2175b99d5269dce852de6154c7ada67e93be2afdf8e8cd94bce5bafea564",
+                "size": 3854435,
+                "url": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.11/dwertyfa-astra-tg-0.1.11-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "actions",
+              "event_handlers",
+              "triggers",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "fire_trigger": {
+                "reason": "Starts your Telegram announcement command when a selected chat receives a message"
+              },
+              "subscribe_events": {
+                "reason": "Reads final recognized phrases only while a Telegram voice-reply window is open",
+                "types": [
+                  "speech_recognized"
+                ]
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-09-03T03:10:59Z",
+            "release": {
+              "commit": "f0de7e654eb83d6824c90df10609591a7c89870f",
+              "kind": "github_release",
+              "repo": "dwertyfa288/dwertyfa-astra-tg",
+              "tag": "v0.1.11"
+            },
+            "version": "0.1.11"
+          }
+        ],
+        "repository_url": "https://github.com/dwertyfa288/dwertyfa-astra-tg",
+        "source": {
+          "kind": "github",
+          "repo": "dwertyfa288/dwertyfa-astra-tg"
+        },
+        "stars": 0,
+        "updated_at": "2026-09-04T15:39:43Z",
+        "version": "0.1.14"
+      },
+      {
         "added_at": "2026-08-10",
         "author": "Astra Team",
         "capabilities": [
@@ -855,6 +952,69 @@
         "stars": 0,
         "updated_at": "2026-08-19T11:14:45Z",
         "version": "0.1.2"
+      },
+      {
+        "added_at": "2026-09-09",
+        "author": "be1lnash3",
+        "capabilities": [
+          "tools",
+          "ui_contributions"
+        ],
+        "description": "A live Obsidian-style knowledge graph of your Astra chats and memory: entities, links, filters, force settings, and tools to explore connections.",
+        "download_url": "https://github.com/Belnash3/knowledge-graph/releases/download/v0.1.0/knowledge-graph-0.1.0-noarch.astraplugin",
+        "downloads": 0,
+        "icon_url": "data:image/png;base64,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",
+        "id": "knowledge-graph",
+        "license": "MIT",
+        "name": "Knowledge Graph",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/Belnash3/knowledge-graph/releases/download/v0.1.0/knowledge-graph-0.1.0-noarch.astraplugin",
+          "noarch": "https://github.com/Belnash3/knowledge-graph/releases/download/v0.1.0/knowledge-graph-0.1.0-noarch.astraplugin",
+          "windows-x64": "https://github.com/Belnash3/knowledge-graph/releases/download/v0.1.0/knowledge-graph-0.1.0-noarch.astraplugin"
+        },
+        "readme": "# Knowledge Graph — граф знаний Астры\n\nЖивой граф в стиле Obsidian по чатам и памяти Астры.\n\n## Что делает\n- **Вкладка «Граф знаний»** в навигации Astra: светящиеся узлы-сущности,\n  связи-пружины, физика, зум/панорама, драг узлов, поиск, легенда.\n- **Источники:** история чатов (`~/.config/astra/chat_history/*.jsonl`) —\n  сущности извлекаются из заглавных фраз с нормализацией падежей;\n  память (`memory.db`) — готовые тройки subject/predicate/object.\n- **Живое обновление:** события `chat_message` / `memory_changed` перестраивают\n  граф с задержкой 6 с; страница подтягивает свежую сборку каждые 15 с.\n- **Клик по узлу** — панель с выдержками сообщений, где сущность встречается.\n\n## Инструменты для Астры\n- `rebuild_knowledge_graph` — перестроить, вернуть статистику.\n- `graph_stats` — узлы/связи/сообщения/тройки.\n- `find_connections(«А», «Б»)` — цепочка связей между понятиями (BFS).\n\n## Установка\nПапка плагина лежит в `~/.config/astra/plugins/knowledge-graph`\n(разработка — в `~/ZCodeProject/astra-knowledge-graph`). Нужен режим\nразработчика (Settings → Privacy → Allow unsigned plugins).\n\n## Тесты\n```\npython3 -m pytest tests/ -q\n```\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "knowledge-graph-0.1.0-noarch.astraplugin",
+                "sha256": "fd16fd41b474edabc5581a3bf77203ffebc4b08d243636064cb45514a8a13468",
+                "size": 30823,
+                "url": "https://github.com/Belnash3/knowledge-graph/releases/download/v0.1.0/knowledge-graph-0.1.0-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "subscribe_events": {
+                "reason": "Дополнять граф новыми сообщениями чата и обновлениями памяти.",
+                "types": [
+                  "chat_message",
+                  "memory_changed"
+                ]
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-09-09T17:58:11Z",
+            "release": {
+              "commit": "839e56875bb4bae9f2c8611f36b17153ba6cdc98",
+              "kind": "github_release",
+              "repo": "Belnash3/knowledge-graph",
+              "tag": "v0.1.0"
+            },
+            "version": "0.1.0"
+          }
+        ],
+        "repository_url": "https://github.com/Belnash3/knowledge-graph",
+        "source": {
+          "kind": "github",
+          "repo": "Belnash3/knowledge-graph"
+        },
+        "stars": 0,
+        "updated_at": "2026-09-09T17:58:11Z",
+        "version": "0.1.0"
       },
       {
         "added_at": "2026-08-19",
@@ -962,6 +1122,67 @@
         "version": "0.3.3"
       },
       {
+        "added_at": "2026-09-06",
+        "author": "Voltur",
+        "capabilities": [
+          "tools",
+          "ui_contributions"
+        ],
+        "description": "Pause timer with a Home-screen countdown widget. At zero it presses the media play/pause key (optionally activating a chosen window first), shuts the PC down, or puts it to sleep.",
+        "download_url": "https://github.com/Voltur792/SPT/releases/download/v0.1.0/sleep-pause-timer-0.1.0-noarch.astraplugin",
+        "downloads": 0,
+        "i18n": {
+          "ru": {
+            "description": "Таймер с виджетом отсчёта на главном экране. По завершении нажимает медиа-клавишу play/pause (опционально активировав выбранное окно), выключает ПК или усыпляет его.",
+            "name": "Sleep Pause Timer"
+          }
+        },
+        "icon_url": "data:image/png;base64,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",
+        "id": "sleep-pause-timer",
+        "license": "MIT",
+        "name": "Sleep Pause Timer",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/Voltur792/SPT/releases/download/v0.1.0/sleep-pause-timer-0.1.0-noarch.astraplugin",
+          "noarch": "https://github.com/Voltur792/SPT/releases/download/v0.1.0/sleep-pause-timer-0.1.0-noarch.astraplugin",
+          "windows-x64": "https://github.com/Voltur792/SPT/releases/download/v0.1.0/sleep-pause-timer-0.1.0-noarch.astraplugin"
+        },
+        "readme": "# Sleep Pause Timer\n\nПлагин [Astra](https://github.com/mihailinl/AstraPlugins) от **Voltur** (лицензия MIT) —\nпортирование автономной программы «Таймер паузы» (`sleep_pause.py`).\n\n## Что умеет\n\n- **Обратный отсчёт** с паузой, продолжением и отменой — управляется голосом\n  или текстом через Астру.\n- **Действие по завершении** (как в оригинальной программе):\n  - `playpause` — нажать медиа-клавишу play/pause (пауза видео/музыки);\n  - `shutdown` — выключить ПК;\n  - `sleep` — усыпить ПК.\n- **Активация окна** перед нажатием клавиши: по подстроке заголовка или по\n  номеру `#N` из списка окон (поддержка Chromium-браузеров — Яндекс.Браузер,\n  Chrome, Edge — как в оригинале).\n- **Виджет на главном экране** Astra (слот `home.widgets`): отсчёт, прогресс,\n  кнопки «пауза/продолжить» и «отмена». Прозрачный, следует теме Astra.\n\n## Инструменты для Астры\n\n| Инструмент | Что делает |\n|---|---|\n| `start_timer` | Запустить отсчёт: `hours`, `minutes`, `seconds`, `action`, `window` |\n| `pause_timer` | Пауза |\n| `resume_timer` | Продолжить |\n| `cancel_timer` | Отменить (действие не выполняется) |\n| `timer_status` | Сколько осталось и что будет по завершении |\n| `list_windows` | Нумерованный список открытых окон для выбора цели |\n\nПримеры: *«поставь таймер на 5 минут, потом нажми play в YouTube»*,\n*«таймер на полчаса и выключи компьютер»*, *«сколько осталось?»*.\n\n## Настройки\n\nВ настройках плагина (Астра рисует форму сама): действие по умолчанию и окно\nпо умолчанию — тогда `start_timer` можно звать без этих аргументов.\n\n## Разрешения\n\nПлагин **не запрашивает ни одного разрешения**: виджет сам опрашивает плагин,\nинструменты вызывает Астра, наружные вызовы демону не нужны.\n\n## Установка (режим разработчика)\n\n1. В Astra: **Settings → Privacy** → включить **«Allow unsigned plugins»**.\n2. **Plugins → Dev** → вставить путь к папке в поле **«Load a plugin»** → нажать загрузку.\n3. После перезапуска Astra плагин из папки возвращается **выключенным** —\n   включите его во вкладке Installed.\n\nСобственное виртуальное окружение (`.venv`) лежит внутри папки плагина —\nсистемный Python не используется.\n\n## Отличия от оригинальной программы\n\n- Не нужны pyautogui/pygetwindow/win32gui/pystray — всё на чистом `ctypes`.\n- Исправлен спящий режим: `SetSuspendState` вызывается из `PowrProf.dll`\n  (в оригинале вызов через `kernel32` падал с `AttributeError`).\n- GUI на Tkinter заменён виджетом в окне Astra; трей не нужен — управляет Астра.\n\n## Development\n\nLanguage: python\n\n```bash\nastra-plugin dev .\n```\n\n## Build\n\n```bash\nastra-plugin build\n```\n\nThis produces a `.astraplugin` file for distribution.\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "sleep-pause-timer-0.1.0-noarch.astraplugin",
+                "sha256": "d49311cecda87ba88d741ec2ad6debdbfe23ee4a0014329de925d95f2b996687",
+                "size": 23279,
+                "url": "https://github.com/Voltur792/SPT/releases/download/v0.1.0/sleep-pause-timer-0.1.0-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {},
+            "protocol": 1,
+            "published_at": "2026-09-06T06:54:06Z",
+            "release": {
+              "commit": "08a409ec7ce8c4e27cdb9fd53de4a1602b64c93a",
+              "kind": "github_release",
+              "repo": "Voltur792/SPT",
+              "tag": "v0.1.0"
+            },
+            "version": "0.1.0"
+          }
+        ],
+        "repository_url": "https://github.com/Voltur792/SPT",
+        "source": {
+          "kind": "github",
+          "repo": "Voltur792/SPT"
+        },
+        "stars": 0,
+        "updated_at": "2026-09-06T06:54:06Z",
+        "version": "0.1.0"
+      },
+      {
         "added_at": "2026-08-20",
         "author": "Noxys",
         "capabilities": [
@@ -1025,10 +1246,16 @@
         "categories": [
           "communication"
         ],
-        "description": "Bridge Telegram bot topics to Astra conversations with full sync and streaming",
+        "description": "Talk to Astra from Telegram — your message in, the reply streamed back as it is written",
         "download_url": "",
         "downloads": 0,
         "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/telegram-client",
+        "i18n": {
+          "ru": {
+            "description": "Общайтесь с Astra из Telegram — ваше сообщение туда, ответ приходит сюда по мере написания",
+            "name": "Telegram Bot"
+          }
+        },
         "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2IiB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgcm9sZT0iaW1nIiBhcmlhLWxhYmVsPSJUZWxlZ3JhbSBCb3QiPgogIDx0aXRsZT5UZWxlZ3JhbSBCb3Q8L3RpdGxlPgogIDwhLS0gRmxhdCBnZW9tZXRyeTogYSBwYXBlciBwbGFuZSBvdmVyIHRoZSBzdGFjayBvZiBmb3J1bSB0b3BpY3MgaXQga2VlcHMgaW4KICAgICAgIHN5bmMuIFBsYWluIHN0YXRpYyBtYXJrdXA6IG5vIHNjcmlwdCwgbm8gZXh0ZXJuYWwgcmVmZXJlbmNlcywgbm8gZm9udHMuIC0tPgoKICA8Y2lyY2xlIGN4PSIxMjgiIGN5PSIxMjgiIHI9IjEyMiIgZmlsbD0iIzIyOWVkOSIvPgogIDxjaXJjbGUgY3g9IjEyOCIgY3k9IjEyOCIgcj0iMTE2IiBmaWxsPSJub25lIiBzdHJva2U9IiM3ZmQzZjIiIHN0cm9rZS13aWR0aD0iNiIgb3BhY2l0eT0iMC41Ii8+CgogIDwhLS0gb25lIGJhciBwZXIgdG9waWMsIHRoZSBjb252ZXJzYXRpb24gbGlzdCB0aGUgYnJpZGdlIHdyaXRlcyBpbnRvIC0tPgogIDxnIGZpbGw9IiNmZmZmZmYiIG9wYWNpdHk9IjAuNDIiPgogICAgPHJlY3QgeD0iMzgiIHk9IjE2MCIgd2lkdGg9Ijg2IiBoZWlnaHQ9IjEzIiByeD0iNi41Ii8+CiAgICA8cmVjdCB4PSIzOCIgeT0iMTgzIiB3aWR0aD0iNjIiIGhlaWdodD0iMTMiIHJ4PSI2LjUiLz4KICAgIDxyZWN0IHg9IjM4IiB5PSIyMDYiIHdpZHRoPSI0MCIgaGVpZ2h0PSIxMyIgcng9IjYuNSIvPgogIDwvZz4KCiAgPCEtLSB0aGUgcGxhbmU6IHR3byBmb2xkcywgdGlwIHRvIHRoZSB0b3AgcmlnaHQgLS0+CiAgPHBhdGggZD0iTTIyMiAzNiBMMzQgMTE2IEwxMTAgMTMzIFoiIGZpbGw9IiNmZmZmZmYiLz4KICA8cGF0aCBkPSJNMjIyIDM2IEwxMTAgMTMzIEwxMjYgMjA2IEwxNTIgMTY2IFoiIGZpbGw9IiNiZmU2ZjciLz4KICA8cGF0aCBkPSJNMjIyIDM2IEwxMTAgMTMzIEwxMTAgMTc4IFoiIGZpbGw9IiM4ZmQwZWUiLz4KPC9zdmc+Cg==",
         "id": "telegram-client",
         "keywords": [
@@ -1041,12 +1268,48 @@
         "license": "MIT",
         "name": "Telegram Bot",
         "platform_downloads": {
-          "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.1.2/telegram-client-0.1.2-linux-x64.astraplugin",
-          "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.1.2/telegram-client-0.1.2-windows-x64.astraplugin"
+          "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.2.0/telegram-client-0.2.0-linux-x64.astraplugin",
+          "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.2.0/telegram-client-0.2.0-windows-x64.astraplugin"
         },
         "publisher": "mihailinl",
-        "readme": "# Telegram Bot\n\nTalk to Astra from Telegram. Each conversation becomes a topic in a Telegram\nforum group, and both sides stay in sync.\n\n## What it does\n\nBridges a Telegram bot to Astra as a full chat client:\n\n- **`/new [title]`** creates a forum topic and a matching Astra conversation.\n- **`/list`** shows Astra conversations that are not linked to a topic yet and\n  links the one you pick.\n- Any message you send in a linked topic goes to Astra as if you had typed it in\n  the app, and the reply streams back into the topic as it is generated.\n- Sync runs both ways: a conversation you continue in the Astra window appears in\n  its Telegram topic, and vice versa.\n\nThe interface is translated — English and Russian ship with it, following\nAstra's language setting.\n\n## What it needs\n\n1. **A Telegram bot token.** Talk to [@BotFather](https://t.me/BotFather),\n   create a bot, copy the token into the plugin's settings.\n2. **A Telegram group with Topics enabled**, with your bot added as an\n   administrator. Topics are how conversations are kept apart; a plain group\n   will not work.\n3. **Outbound network access** to `api.telegram.org`.\n\nOptionally set **Allowed Usernames** to a comma-separated list of Telegram\nusernames (no `@`). Leave it empty and *anyone who can reach the bot can talk to\nyour Astra* — including anyone who is added to the group later. Setting it is\nthe difference between a personal bridge and an open door.\n\n## Capabilities it asks for, and why\n\n| Capability | What it allows | Why this plugin asks |\n|---|---|---|\n| `client` | The plugin acts as a full chat client: it may read your conversations, create new ones, submit messages as you, and subscribe to the live event stream | That *is* the feature — a bridge that could not read and write your conversations would not be a bridge |\n\n`client` is a high-risk capability and Astra will say so before installing. Be\nconcrete about what installing this means: **your Astra conversations are\nrelayed to Telegram**, therefore to Telegram's servers, therefore to anyone with\naccess to that group. That is the intended behaviour and it is not reversible\nfor messages already sent.\n\nThe bot token is stored in the plugin's configuration, and the topic-to-\nconversation mapping is written to a `state.json` beside the plugin binary in\nAstra's plugin directory.\n\n## Configuration\n\n| Setting | Required | Meaning |\n|---|---|---|\n| Bot Token | yes | The token from @BotFather |\n| Allowed Usernames | no, but read the warning above | Comma-separated Telegram usernames permitted to use the bot. Empty means everyone |\n\n## Build it yourself\n\n```bash\ncd examples/telegram-client\ncargo build --release\nastra-plugin build\n```\n\n## Files\n\n- `src/main.rs` — lifecycle, config, and starting/stopping the poll loop.\n- `src/telegram.rs` — the Bot API client.\n- `src/bot.rs`, `src/commands.rs` — update handling and the two commands.\n- `src/sync.rs` — the firehose: Astra events to Telegram, streamed.\n- `src/state.rs` — the topic mapping, persisted.\n- `locales/` — English and Russian.\n- `icon.svg` — the store icon, hand-drawn SVG.\n\nMIT licensed.\n",
+        "readme": "# Telegram Bot\n\nTalk to Astra from Telegram. What you send goes into an Astra conversation as\nif you had typed it in the app, and the reply appears in Telegram as it is\nwritten.\n\n## What it does\n\n- **Any message** you send the bot goes to Astra, and the answer streams back\n  as it is written — through `sendMessageDraft`, the method Telegram added for\n  exactly this, so the text animates in the way its own AI assistant does\n  rather than jumping once a second. Telegram's \"Thinking…\" covers the wait\n  before the first word. Drafts are a **private-chat** method; in a group the\n  bot falls back to posting one message and rewriting it about once a second,\n  which is what every Telegram client has always supported.\n\n  A draft is a preview, not a message — it expires on its own in about thirty\n  seconds. What stays in the chat is the finished answer, sent normally once\n  the stream is done.\n- **`/new`** starts a new conversation: the next message begins with no memory\n  of what came before. The old one stays in Astra's sidebar — the plugin never\n  deletes anything.\n- **Stopping a reply.** A streaming draft carries Telegram's own **Stop**\n  button, and `/stop` does the same for a chat that has no draft to put one on.\n  Whatever had arrived by then is delivered as a message, marked stopped.\n\n  What stopping means here is worth being exact about: the bridge lets go of the\n  reply stream. It cannot tell Astra to abandon the turn — `StopGeneration` is\n  on `ChatService`, refused to a plugin like the rest of it — so whether the\n  daemon drops the work or finishes it unheard is the daemon's call about a\n  cancelled stream.\n- **`/screenshot`** sends a picture of this machine's screen into the chat.\n  **Windows only**, and **off until you switch it on** — see below for both.\n- **`/help`** repeats the short version of this page inside the chat.\n- A long answer is **split** across as many messages as it takes, at a line\n  break where there is one.\n\nThe interface is translated — English and Russian ship with it, following\nAstra's language setting.\n\n## One conversation, and why\n\nThe bridge holds **one Astra conversation at a time**, not one per Telegram\ntopic. That is a limit of what a plugin may do, not a simplification:\n\n`PluginHostService.SendChatMessage` is the only way a plugin can reach a\nconversation. The daemon registers every plugin as `ClientType::PluginClient`\nand its auth interceptor refuses that identity on any gRPC path outside\n`/astra.PluginHostService/`, so `ChatService.ListConversations` and\n`CreateConversation` — the two calls a topic-per-conversation bridge needs —\nanswer `permission_denied` whatever the manifest says. Version 0.1 of this\nplugin was built on them and could not send a single message.\n\nThe conversation Astra opens is a normal one: it is in the sidebar, you can\nopen it, read it and carry on typing in it from the desktop. What you type\nthere does not appear in Telegram — a plugin cannot subscribe to conversation\nevents either — so the bridge is one-way in that sense: Telegram in, replies\nback.\n\n**Tool calls are invisible here, for the same reason.** `PluginChatChunk`, the\nonly thing `SendChatMessage` streams back, carries text, `done` or an error and\nnothing else; the events that name a tool — `ToolCallStartEvt`,\n`ToolCallResultEvt` — are `ConversationEventMsg` variants on `ChatService`'s\nfirehose, and `PluginHostService.SubscribeEvents` says so in the proto: *chat-log\nevents travel through `ChatService.SubscribeEvents`, NOT through this stream*.\nSo while Astra runs a tool the bridge can say that something is happening, and\ncannot say what: the streaming draft is held open through the silence rather\nthan left to expire.\n\n## What it needs\n\n1. **A Telegram bot token.** Talk to [@BotFather](https://t.me/BotFather),\n   create a bot, copy the token into the plugin's settings.\n2. **Outbound network access** to `api.telegram.org`.\n\nA private chat with the bot is enough; a group works too, and in a forum group\nthe bot answers inside the topic you wrote in. The bot binds to the **first\nchat that talks to it** and ignores every other one from then on.\n\nOptionally set **Allowed Usernames** to a comma-separated list of Telegram\nusernames (no `@`). Leave it empty and *anyone who can reach the bot can talk to\nyour Astra* — including anyone who is added to the group later. Setting it is\nthe difference between a personal bridge and an open door.\n\n## What it asks for, and why\n\n| | What it means | Why this plugin asks |\n|---|---|---|\n| `client` (capability + permission) | The plugin is a chat front-end | `spec/hooks.yaml` files `SendChatMessage` under this capability |\n| `send_chat_message` (permission) | Drive an AI turn as if the user had spoken | That *is* the feature |\n\n`send_chat_message` is high-risk and Astra will say so before installing, with\nits own checkbox. Be concrete about what installing this means: **what Astra\nreplies is relayed to Telegram**, therefore to Telegram's servers, therefore to\nanyone with access to that chat. That is the intended behaviour and it is not\nreversible for messages already sent.\n\nThe bot token is stored in the plugin's configuration. The chat it is bound to\nand the conversation it is talking into are written to a `state.json` beside the\nplugin binary in Astra's plugin directory.\n\n## Configuration\n\n| Setting | Required | Meaning |\n|---|---|---|\n| Bot Token | yes | The token from @BotFather |\n| Allowed Usernames | no, but read the warning above | Comma-separated Telegram usernames permitted to use the bot. Empty means everyone |\n| Allow `/screenshot` | no, **off by default** | Whether `/screenshot` works at all. Windows only. Read the section below before turning it on |\n\n## `/screenshot`, why it is off, and why it is Windows only\n\nEverything else this bridge does is a conversation with an AI. This is a live\npicture of the desktop — whatever is on screen at the moment the command\narrives, sent to Telegram's servers and to everyone who can see that chat.\nAnyone who may talk to the bot may run it, so with **Allowed Usernames** empty\nthat is anyone who finds the bot. Fill that in first; the two settings are\nmeant to be read together.\n\nThe picture is taken by the plugin itself, not by Astra. Astra can do it —\n`MediaService` carries *\"Capture a PNG screenshot of the requested monitor\"* —\nbut that is a daemon service, and a plugin's session token is refused outside\n`PluginHostService`, the same wall as the chat firehose. What lets the plugin\ndo it anyway is that a sideloaded plugin is a native process running as you,\nwith no sandbox; Astra's [security page](../../docs/en/1-orientation/security.md)\nsays so in as many words, under *what is not defended against*. So the switch\nhere is the whole of the protection, which is why it defaults to off.\n\nOnly the primary monitor is captured. The file is written to the system\ntemporary directory and deleted once Telegram has it, whether the upload\nsucceeded or not.\n\n**Windows only, for now.** The capture library needs PipeWire and libxcb on\nLinux, both as `-sys` crates, and a binary that links them does not start at\nall where those shared objects are missing — so the Linux build would trade a\nbridge that needs no display, and no system package, for one that cannot load\non a headless machine, in exchange for a command that ships switched off. On\nLinux the command answers that it is unavailable and nothing else about the\nbridge changes. Lifting this means capturing through X11 directly rather than\ninstalling the packages, and that is a later version.\n\n## Build it yourself\n\n```bash\ncd examples/telegram-client\ncargo build --release\nastra-plugin build\n```\n\n## Files\n\n- `src/main.rs` — lifecycle, config, and starting/stopping the poll loop.\n- `src/telegram.rs` — the Bot API client: send, draft, edit, long-poll.\n- `src/bot.rs` — update handling, the commands, and the reply stream.\n- `src/screen.rs` — capturing the screen for `/screenshot`, and the platform line.\n- `src/state.rs` — the bound chat and the current conversation, persisted.\n- `src/types.rs` — config, and what the three shapes of `conversation_id` mean.\n- `locales/` — English and Russian, and both planes in one plugin: the\n  `$config.*` keys `plugin.toml` references, which the daemon resolves for\n  the settings form, and the `bot.*` keys this process resolves itself with\n  `I18n`. See [the localisation page](../../docs/en/3-reference/localisation.md).\n- `icon.svg` — the store icon, hand-drawn SVG.\n\nMIT licensed.\n",
         "releases": [
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "telegram-client-0.2.0-linux-x64.astraplugin",
+                "sha256": "10f3043e14b0e84b91a411bc112b6202230b97dfc90454ffe395e2967c370c0f",
+                "size": 7386427,
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.2.0/telegram-client-0.2.0-linux-x64.astraplugin"
+              },
+              "windows-x64": {
+                "filename": "telegram-client-0.2.0-windows-x64.astraplugin",
+                "sha256": "16db0c0f6045e49e7541d5fc71f7129bb1fd6e2983bc3bbff13819bc67e541ce",
+                "size": 6439592,
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.2.0/telegram-client-0.2.0-windows-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "client"
+            ],
+            "permissions": {
+              "client": {
+                "reason": "Acts as a chat front-end: what you write in Telegram is sent to Astra as if you had typed it"
+              },
+              "send_chat_message": {
+                "reason": "Sends your Telegram messages to Astra and streams the reply back into the chat"
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-09-02T21:04:37Z",
+            "release": {
+              "commit": "700ec6d01e06a397ece050e441beb6b2431b18dd",
+              "kind": "github_release",
+              "repo": "mihailinl/AstraPlugins",
+              "tag": "telegram-client-v0.2.0"
+            },
+            "version": "0.2.0"
+          },
           {
             "artifacts": {
               "linux-x64": {
@@ -1140,8 +1403,8 @@
           "repo": "mihailinl/AstraPlugins"
         },
         "stars": 0,
-        "updated_at": "2026-08-19T13:36:21Z",
-        "version": "0.1.2"
+        "updated_at": "2026-09-02T21:04:37Z",
+        "version": "0.2.0"
       },
       {
         "added_at": "2026-08-10",
@@ -1268,15 +1531,225 @@
         "stars": 0,
         "updated_at": "2026-08-20T19:35:21Z",
         "version": "0.1.3"
+      },
+      {
+        "added_at": "2026-09-12",
+        "author": "Voltur",
+        "capabilities": [
+          "stt",
+          "tools"
+        ],
+        "description": "Voice typing into any focused window: a start word begins dictation, text is typed as you speak, a send word presses Enter. Configurable command words, fully local.",
+        "download_url": "https://github.com/Voltur792/voice-text-input/releases/download/v1.0.1/voice-text-input-1.0.1-noarch.astraplugin",
+        "downloads": 0,
+        "i18n": {
+          "ru": {
+            "description": "Голосовой набор текста в активное окно: скажите командное слово — начнётся диктовка, текст печатается по мере говорения; второе командное слово отправляет сообщение (Enter). Командные слова…",
+            "name": "Голосовой наборщик текста"
+          }
+        },
+        "icon_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAAFnUlEQVR4nO3dTU4kVxCFURL1Uhh4ESwDeZEWy2ARHrCX7Em3LCOwyar8iYh7zsQTy8qsF+/LV1WAHx4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAICjLIf9lynn6eVt/e6/+/76bDYCWOTBtmz4/yMIMwnAMHtu+q+IwRwCMMQZG/8jIehPAJq7YuN/JAR9PV59AfTe/JWug+2cABqqvOGcBnpxAmim8ubvcH38mwA00mVzdblOBKCNbpuq2/WmcgJooOtm6nrdSQSguO6bqPv1TycAhU3ZPFPuYyIBKGrappl2P1MIAAQTgIKmPi2n3ldnAlDM9E0y/f66EQAIJgCFpDwdU+6zAwGAYAJQRNpTMe1+qxIACCYAEEwACkg9DqfedyUCAMEEAIIJAAQTgIulvw9Ov/+rCQAEEwAIJgAQTAAgmABAMAGAYAIAwQQAggkABBMACCYAEEwAIJgAQDABgGACAMHGB2D96w+/b475+cKPh6FsfPaaofXXP5c//16mvaqPCZtfDLh3hqbO0bgAfLVIExeP863D5mhcAJIWj2OsQXMyKgBJC8d1M7QOmrMxAfjuokxaPK6zDpmjx8TFmLJ47GsNnKMRAYB7rQM2c2QAUheOfS03fsffff7aB+AWE3+gg/stgXPROgC31DdxkTl2PtbGp4DWAdjK5secDAnA1ura/Bw5L2vTU0DbAAChAfD05wxLwCmgZQCAfQgABGsXAMd/zrQMfxvQLgDAfkYHwFd/mKNBAeh2vCLT2mhOWwUA2JcAQLA2AfDpP1dahn4b0CYAwP4EAIIJAAQbGQDf/2OuBgWgywcq0G1uWwQAOIYAQDABgGACAMEEAIKNC4CvADFfgwLQ4asU6Dq/5QMAHEcAIJgAQDABgGACAMEEAIIJwMXeX583///oJ0m//6sJAAT7cfUFJHh6eSv9wyCVXxsnhGMJwEFs+v1fRzHYnwDszMY//rUVgv34DGBHNv85vM77cQLYgYE8n9PAPpwA7mTzX8vrfx8BgGACcAdPnxqsw+0E4EaGrhbrcRsBgGDlA1Dxb/x52tRUcV2WgvPbKgDT/gYbva3D5mtcAIDvE4ABx0z+YX22EQAIJgAQTAAgWIsAVP8qBbrObYsApH9VQw3rwLkaGQDgewQAggkABHuc+oHKxPdrXGfdOE8dPgBsFQBgfwKwkb9IW5v1GRyALscqsi2N5rRVALbyOQDmKDgAR3HMrMm6BATAtwGcaR366X/bAFThaVOL9biNANzB0NVgHcIC4G0AZ1iHH//bBqASTx+vf2ftilW50P4e3ZzwrsVm6yhRJ4Cjfy7AaSBz83fWslr3LtYZtXYa6BnYteg8HaXthd9b6zMXTQx6nKrWBrO0t7YXnlzts+OT8NZmDdz8cZ8BwNSNHB2ArYuXutj8tyVwjkYEYMtiTFg0rrcMmaMxAZi0KNSeoWXQnI0KQNLCcZwlaE4eUxYvaVE5zjJsjsYF4LNFmrZoHG/5ZGYmztHIAPxerIkLxnmWX/MzeZbGBuC3qQvHOZbh8zM+AMDXBACCCQAEEwAIJgAQTAAgmABAMAGAYAIAwQQAggkABBMACCYAEEwAIJgAQDABgGACAMEEAIIJAAQTAAgmABBMACCYAEAwAYBgAgDBBACCCQAEEwAIJgAQTAAAAAAAAAAAAAAAAKCX5eoL4HNPL2/rtNfm/fXZvBVjQYqZuPE/EoI6/DZgIQmbP+k+OxCAItI2Rdr9ViUABaRuhtT7rkQAIJgAXCz9KZh+/1cTAAgmABBMACCYAEAwAYBgAgDBBACCCQAEE4CLpf9mXPr9X00AIJgAFJD6FEy970oEoIi0zZB2v1UJQCEpmyLlPjuwEEVN/C05Gx8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAeKjtJ+u56SuO1Y1HAAAAAElFTkSuQmCC",
+        "id": "voice-text-input",
+        "license": "MIT",
+        "name": "Voice Text Input",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/Voltur792/voice-text-input/releases/download/v1.0.1/voice-text-input-1.0.1-noarch.astraplugin",
+          "noarch": "https://github.com/Voltur792/voice-text-input/releases/download/v1.0.1/voice-text-input-1.0.1-noarch.astraplugin",
+          "windows-x64": "https://github.com/Voltur792/voice-text-input/releases/download/v1.0.1/voice-text-input-1.0.1-noarch.astraplugin"
+        },
+        "readme": "# Voice Text Input — Голосовой наборщик текста\n\nГолосовой набор текста в **любое активное окно** — Telegram, браузер (VK),\nWord, куда угодно. Существует в двух видах:\n\n- **плагин [Astra](https://github.com/mihailinl/AstraPlugins)** (этот репозиторий);\n- **отдельное десктоп-приложение [VoiceTyper](https://github.com/Voltur792/VoiceTyper)**\n  — то же самое без Astra: один exe, окно с настройками и значок в трее.\n\nСкажите командное слово (**«напиши»**) — движок слушает и печатает речь в то\nокно, где стоит курсор, **по мере говорения**. Скажите **«отправить»** —\nнажимается Enter, и сообщение уходит, а диктовка **продолжается** без нового\n«напиши» (непрерывный набор). Скажите **«закончить»** — Enter и конец\nдиктовки. Скажите **«отмена»** — набранное стирается. **«с новой строки»** —\nперенос строки (в мессенджерах сообщение не отправляет). По умолчанию всё\nлокально, без облака.\n\n## Как это работает\n\n```\nмикрофон → Vosk (всегда слушает, ~50 МБ ОЗУ)\n   ├─ ловит командные слова (нечётко: «напишы» тоже сработает)\n   └─ печатает живой текст мгновенно\nпосле каждой паузы сегмент перепроверяет faster-whisper (int8, CPU)\n   └─ лучший текст с пунктуацией заменяет черновик Vosk\n```\n\n- Печать — WinAPI `SendInput` с Unicode: русские буквы вставляются независимо\n  от раскладки, в любом приложении.\n- Движок настраивается: `faster-whisper` (по умолчанию, качественнее) или\n  `vosk` (только офлайн-модель, легче и без уточнения).\n- Пунктуация: в режиме faster-whisper — автоматическая; в режиме vosk —\n  голосом («запятая», «точка», «с новой строки», «вопросительный знак»…).\n\n## Настройки (Astra → Плагины → Voice Text Input)\n\n| Параметр | По умолчанию | Описание |\n|---|---|---|\n| Включено | да | прослушивание микрофона и диктовка |\n| Слово начала диктовки | `напиши` | начинает набор текста |\n| Слово отправки | `отправить` | печатает Enter; набор продолжается (непрерывный режим) |\n| Слово завершения | `закончить` | печатает Enter и завершает диктовку; очистите — и «отправить» снова завершает сама |\n| Слово отмены | `отмена` | стирает всё набранное за сессию |\n| Слово переноса строки | `с новой строки` | вставляет Shift+Enter — перенос строки без отправки (в Telegram/VK работает именно так); очистите, чтобы выключить |\n| Wake-слова | `астра` | что можно сказать ПЕРЕД командным словом («Астра напиши»); через запятую |\n| Движок | `faster-whisper` | `faster-whisper` / `yandex` / `openai` / `google` / `vosk` |\n| Модель Whisper | `small` | `tiny` / `base` / `small` |\n| API-ключ Яндекс SpeechKit | — | для движка `yandex`: Api-Key сервисного аккаунта Yandex Cloud |\n| Язык SpeechKit | `ru-RU` | язык облачного распознавания |\n| API-ключ OpenAI | — | для движка `openai`: ключ OpenAI или совместимого сервиса |\n| OpenAI-совместимый сервер | `https://api.openai.com/v1` | можно указать Groq, локальный whisper-сервер и др. |\n| Модель OpenAI | `whisper-1` | или `gpt-4o-mini-transcribe`, модель сервера |\n| API-ключ Google Cloud STT | — | для движка `google`: ключ Google Cloud Speech-to-Text |\n| Клавиша отправки | `enter` | `enter` или `ctrl+enter` (настройка Telegram) |\n| Уточнение текста | да | перепроверка сегментов движком качества |\n| Ожидание коррекции перед отправкой | 1.2 с | 0 — отправлять мгновенно |\n\nКомандные слова распознаются нечётко и только в конце/начале фразы: слово\n«отправить» внутри диктуемого текста отправку не вызовет.\n\n## Отдельное приложение (без Astra)\n\nТот же голосовой наборщик — простым exe-файлом, Astra не нужна:\n**[Voltur792/VoiceTyper](https://github.com/Voltur792/VoiceTyper)** — скачайте\n`VoiceTyper.exe` из релизов, запустите, скажите «напиши привет мир». Окно с\nкнопкой-микрофоном и настройками, значок в трее, тёмная/светлая тема. Ядро\nраспознавания у приложения и плагина общее.\n\n**Про «Астра напиши»** (только в плагине): wake-слово перед командным\nотрезается (настраивается), диктовка работает. Но Astra со включённым\nпостоянным прослушиванием услышит фразу тоже и **ответит ассистентом** —\nплагин подавить это не может (у Astra нет API для этого). Чтобы Astra молчала:\n\n- **Настройки Astra → Голос** → выключите активацию по фразе (wake word) —\n  оставьте активацию кнопкой/хоткеем; либо\n- говорите просто **«напиши …»** без «Астра» — Astra не среагирует, плагин\n  напечатает.\n\n## Yandex SpeechKit (движок `yandex`)\n\nОблачное распознавание SpeechKit v3: быстрее уточнения whisper, автоматическая\nпунктуация, не занимает CPU. Нужен **API-ключ**:\n\n1. В Yandex Cloud создать **сервисный аккаунт** с ролью `ai.speechkit-stt`.\n2. Ему — **API-ключ** (консоль → Сервисный аккаунт → Создать новый ключ → API-ключ).\n3. Вставить ключ в настройках плагина, выбрать движок `yandex`.\n\nЕдинственный облачный движок со **стримингом**: финальный текст приходит\nпотоком. Ключ передаётся только в Yandex Cloud.\n\n## OpenAI и совместимые (движок `openai`)\n\nРаботает с любым сервером OpenAI-аудио-API: сам OpenAI, **Groq** (бесплатный\ntier), локальный whisper.cpp-сервер. Поля: API-ключ, Base URL, модель\n(`whisper-1`, `gpt-4o-mini-transcribe`, …). Пример для Groq: Base URL\n`https://api.groq.com/openai/v1`, модель `whisper-large-v3`.\n\n## Google Cloud Speech-to-Text (движок `google`)\n\nREST `speech:recognize` с API-ключом: в Google Cloud включить Speech-to-Text\nAPI, создать ключ (Credentials → API key). Пунктуация включается\nавтоматически.\n\n**Про облачные движки в диктовке**: живой черновик всё равно печатает Vosk\n(облако не умеет печатать по мере речи, кроме Яндекса в STT-потоке Astra);\nоблако уточняет текст после пауз — как это делает whisper локально. Без\nключа движок автоматически подменяется на vosk-фолбэк. Выбор движка действует\nи на Astra, когда плагин служит её распознавателем.\n\n## Установка\n\n**Из каталога Astra:** **Плагины → Browse** → «Voice Text Input» → Установить.\n\n**Режим разработчика (sideload):**\n\n1. В Astra: **Настройки → Приватность** → включить **«Разрешить\n   неподписанные плагины»**.\n2. **Плагины → Dev** → в поле **«Load a plugin»** вставить путь к папке\n   репозитория и нажать загрузку.\n3. Плагин стартует сразу. После перезапуска Astra плагин, загруженный из\n   папки, возвращается **выключенным** — включите его во вкладке Installed.\n\nЗависимости ставит сама Astra: она находит Python, создаёт окружение плагина\nиз `requirements.lock` и запускает код в нём. Модели скачиваются отдельно\n(см. «Модели»).\n\n## Модели\n\nЛежат в `models/` (не попадают в git и в бандл):\n\n- `models/vosk-model-small-ru-0.22` — [alphacephei.com/vosk/models](https://alphacephei.com/vosk/models)\n- faster-whisper `small` — скачивается сам (HuggingFace) при первой загрузке\n  движка; чтобы заранее: `.venv\\Scripts\\python.exe scripts\\smoke_components.py`\n\nПроверка всех компонентов (модели, микрофон, печать):\n\n```powershell\n.venv\\Scripts\\python.exe scripts\\smoke_components.py\n```\n\n## Разработка\n\n```powershell\n.venv\\Scripts\\python.exe -m pytest -q          # модульные тесты\nastra-plugin check . --strict                  # манифест\nastra-plugin test .                            # конформити (mock-демон)\nastra-plugin dev .                             # hot-reload в запущенную Astra\n```\n\n## Известные ограничения\n\n- Окна, запущенные от администратора, не принимают синтетический ввод\n  (защита UIPI Windows) — запускайте Astra с теми же правами, что и целевое\n  приложение, либо не диктуйте в админские окна.\n- Если в Astra включено постоянное голосовое прослушивание, она слышит те же\n  фразы — рекомендуется режим активации по кнопке/хоткею.\n- Отмена стирает ровно то, что напечатал плагин; ручные правки текста в окне\n  она не учитывает.\n- Переключение диктовки через ИИ действует до следующего сохранения настроек\n  в Astra.\n\n## Лицензия\n\n[MIT](LICENSE) © Voltur\n\n## Поддержать автора\n\nЕсли голосовой наборщик оказался полезным, можно поддержать разработку:\n\n**[boosty.to/voltur/donate](https://boosty.to/voltur/donate)**\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "voice-text-input-1.0.1-noarch.astraplugin",
+                "sha256": "3167a57ec77e3692c5f077f2cb9b93c1ba2cf296b6a1e0ad00b9222e092bc61a",
+                "size": 43375,
+                "url": "https://github.com/Voltur792/voice-text-input/releases/download/v1.0.1/voice-text-input-1.0.1-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "stt",
+              "tools"
+            ],
+            "permissions": {},
+            "protocol": 1,
+            "published_at": "2026-09-12T02:47:14Z",
+            "release": {
+              "commit": "33ab1930d91e1d3b8ac1824c53a92e5c0481698b",
+              "kind": "github_release",
+              "repo": "Voltur792/voice-text-input",
+              "tag": "v1.0.1"
+            },
+            "version": "1.0.1"
+          }
+        ],
+        "repository_url": "https://github.com/Voltur792/voice-text-input",
+        "source": {
+          "kind": "github",
+          "repo": "Voltur792/voice-text-input"
+        },
+        "stars": 0,
+        "updated_at": "2026-09-12T02:47:14Z",
+        "version": "1.0.1"
+      },
+      {
+        "added_at": "2026-09-05",
+        "author": "Lil KALINOV",
+        "capabilities": [
+          "stt"
+        ],
+        "description": "Free speech-to-text plugin for Astra. Uses Google Web Speech API with no API key required. Supports 38 languages. Install and speak.",
+        "download_url": "",
+        "downloads": 0,
+        "i18n": {
+          "ru": {
+            "description": "Бесплатный плагин распознавания речи для Astra. Работает через Google Web Speech API — не требует API-ключа. Поддерживает 38 языков. Установил и говоришь.",
+            "name": "Web Speech-to-Text"
+          },
+          "uk": {
+            "description": "Безкоштовний плагін розпізнавання мовлення для Astra. Працює через Google Web Speech API — не потребує API-ключа. Підтримує 38 мов. Встановив і говориш.",
+            "name": "Web Speech-to-Text"
+          }
+        },
+        "icon_url": "data:image/png;base64,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",
+        "id": "web-stt",
+        "license": "MIT",
+        "name": "Web Speech-to-Text",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/LilKALINOV/Astra-Google-STT/releases/download/v0.6.0/web-stt-0.6.0-linux-x64.astraplugin",
+          "windows-x64": "https://github.com/LilKALINOV/Astra-Google-STT/releases/download/v0.6.0/web-stt-0.6.0-windows-x64.astraplugin"
+        },
+        "readme": "# Web Speech-to-Text — Free STT plugin for Astra\n\nSpeech recognition via Google Web Speech API — **free, no API key required, no registration, no setup**. Install the plugin, pick it as your STT engine in Astra and talk.\n\n![icon](https://raw.githubusercontent.com/LilKALINOV/Astra-Google-STT/779e2957f8e90f3046c742f22f92b6f02472e8ba/icon.svg)\n\n## What it does and why you need it\n\nAstra can turn your voice into typed text, but out of the box it ships without a speech-to-text engine. This plugin provides one — a small process that takes the microphone audio Astra captures and turns it into a transcript.\n\nIt uses the same free Web Speech API endpoint that Google Chrome and the Python `SpeechRecognition` library call, with the `client=chromium` handshake and a built-in public key. Speech in, text out — nothing more.\n\n**Real-world use cases:**\n\n- Dictate messages by voice instead of typing.\n- Feed transcribed voice into your AI so it reads what was said.\n- Hands-free control while your hands are busy.\n\n## How a phrase turns into text\n\n1. Astra captures microphone audio and runs its own VAD (voice-activity detection) — it listens for speech and decides where one phrase ends.\n2. The finished phrase is streamed to the plugin as raw PCM audio, chunk by chunk.\n3. The plugin watches the stream live and spots silence itself.\n4. When the phrase is done (Astra's silence or the plugin's own, whichever comes first), the audio is converted from f32 to 16-bit little-endian PCM and posted to Google's speech endpoint.\n5. The JSON answer is parsed and returned to Astra as a final `SttEvent`.\n\n> Astra normally \"waits for silence\" by itself before handing a phrase to the plugin. If that pause feels too long or too short for you, set **Silence to end phrase** below — the plugin then finishes the phrase on its own after that much quiet, without waiting for Astra's VAD.\n\n## What it requires and why\n\n| What | Why this plugin asks |\n| --- | --- |\n| Outbound network access to Google's speech servers (`www.google.com:80`) | The recognition request is sent from the plugin's own process to Google directly. Astra never sees the audio, the transcript or the network traffic. |\n\nOne `[permissions]` grant is declared — the one thing this plugin may grow into:\n\n| Permission | Why it is asked |\n| --- | --- |\n| `client` | Lets the plugin act as a client front-end, so a future release can send the recognized speech straight into an Astra chat conversation (dictation). Declared up front because a listing cannot add a high-risk permission without going back through review. Today's code calls none of the permission-gated host RPCs — pure STT needs nothing from the daemon beyond the `stt` capability — and the daemon grants the session only if the user consents on the permission screen.\n\n## Configuration\n\nThe plugin works out of the box — Russian by default. Every setting is a convenience, not a requirement.\n\n| Setting | Required | Default | Meaning |\n| --- | --- | --- | --- |\n| Language | No | `ru-RU` | Recognition language, from a dropdown of 38 supported locales (Russian, English US/UK, Ukrainian, German, French, Spanish, Italian, Portuguese BR, Japanese, Korean, Chinese Simplified/Traditional, Arabic, Hindi, Turkish, Polish, Dutch, Swedish, Norwegian, Finnish, Danish, Greek, Hebrew, Romanian, Hungarian, Czech, Bulgarian, Croatian, Slovenian, Serbian, Slovak, Lithuanian, Latvian, Estonian, Indonesian, Thai, Vietnamese). The plugin's own settings are localized: they follow Astra's UI language in English, Russian or Ukrainian. |\n| Google API key | No | built-in free key | Your own key for `www.google.com/speech-api`. Leave empty to use the shared free key. Useful if the built-in one is throttled. |\n| Max phrase length (seconds) | No | `55` | Audio longer than this is cut before sending. Google rejects requests over ~60 s, so the default keeps you under the limit. `0` = no limit. |\n| Network timeout (seconds) | No | `10` | How long to wait for Google to answer before the request fails. `0` = default 10 s. |\n| Silence to end phrase (ms) | No | `0` | End the phrase and send it after this much quiet, without waiting for Astra's own silence detection. `0` = use Astra's setting (recommended first). |\n\n> The language picked in Astra's own STT picker overrides this plugin's Language setting for that call.\n\n## Set up in Astra\n\n1. Install the plugin (see **Installation** below).\n2. Press `Ctrl+P` to open Astra's settings, or go to **Settings**.\n3. Open the **Voice** tab.\n4. Go down to the **STT (Speech-to-Text)** section.\n5. Change the STT engine from the default to **Web Speech-to-Text**.\n6. Optionally, open the plugin's config (the settings gear next to it) and set Language / API key / limits.\n7. Done — the next time voice is used, Web STT transcribes it.\n\nIf your plugin does not appear in the STT list, you likely forgot a licence: **Settings → Privacy → Enable \"Allow unsigned plugins\"**.\n\n## Installation\n\n1. In Astra: **Settings → Privacy** → enable **\"Allow unsigned plugins\"**\n2. **Plugins → Dev** → paste the plugin folder path and click **Load**\n3. Pick it as your STT engine in **Settings → Voice**.\n\n## Limitations\n\n- One request at a time; a phrase is limited to ~60 s (configurable, see Max phrase length).\n- Requires an internet connection — every request goes to Google's servers, and the transcript leaves your machine.\n- The endpoint is the free, unofficial one. It is not a guaranteed SLA service; treat it as best-effort.\n- Google may throttle, require a personal key, or change the free endpoint at any time. That is the price of a free, keyless engine.\n\n## Build it yourself\n\n```sh\ncargo build --release\nastra-plugin build\n```\n\n## Files\n\n- `src/main.rs` — plugin lifecycle, config handling, f32→i16 PCM conversion, live streaming hook with the plugin's own silence endpointing, phrase-length cutting, Google request and JSON parsing.\n- `locales/` — English, Russian and Ukrainian translations: store-card text (`listing.*`) and every settings label (`config.*`), resolved by Astra in the user's current UI language.\n- `icon.svg` / `icon.png` — store icons, drawn by hand.\n\nLicensed MIT.\n",
+        "releases": [
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "web-stt-0.6.0-linux-x64.astraplugin",
+                "sha256": "4253a9e362d7f44d3d1bb2011880d37bd57f031a8183dae56f1b51c382d7668a",
+                "size": 3587518,
+                "url": "https://github.com/LilKALINOV/Astra-Google-STT/releases/download/v0.6.0/web-stt-0.6.0-linux-x64.astraplugin"
+              },
+              "windows-x64": {
+                "filename": "web-stt-0.6.0-windows-x64.astraplugin",
+                "sha256": "2d49cc1881818e4e90c2f5f99e96d617e5789b2c6d45420be1db16a446082691",
+                "size": 3096955,
+                "url": "https://github.com/LilKALINOV/Astra-Google-STT/releases/download/v0.6.0/web-stt-0.6.0-windows-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "stt"
+            ],
+            "permissions": {
+              "client": {
+                "reason": "Sends recognized speech into Astra chat as a message (dictation)."
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-09-07T21:50:11Z",
+            "release": {
+              "commit": "779e2957f8e90f3046c742f22f92b6f02472e8ba",
+              "kind": "github_release",
+              "repo": "LilKALINOV/Astra-Google-STT",
+              "tag": "v0.6.0"
+            },
+            "version": "0.6.0"
+          },
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "web-stt-0.4.0-linux-x64.astraplugin",
+                "sha256": "2d2e2db8f153a6427addcf544b295ebbdf247200d292901a62be0816a5c329cc",
+                "size": 3568115,
+                "url": "https://github.com/LilKALINOV/Astra-Google-STT/releases/download/v0.4.0/web-stt-0.4.0-linux-x64.astraplugin"
+              },
+              "windows-x64": {
+                "filename": "web-stt-0.4.0-windows-x64.astraplugin",
+                "sha256": "9a48ae7fb32b1d0a2cd4c3749b8e0b2b588c64e79e61b71fdae110e067cd5693",
+                "size": 3080047,
+                "url": "https://github.com/LilKALINOV/Astra-Google-STT/releases/download/v0.4.0/web-stt-0.4.0-windows-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "stt"
+            ],
+            "protocol": 1,
+            "published_at": "2026-09-05T07:18:40Z",
+            "release": {
+              "commit": "4f672cbf3d193805a00741a13a54de4c1d474e97",
+              "kind": "github_release",
+              "repo": "LilKALINOV/Astra-Google-STT",
+              "tag": "v0.4.0"
+            },
+            "version": "0.4.0"
+          }
+        ],
+        "repository_url": "https://github.com/LilKALINOV/Astra-Google-STT",
+        "source": {
+          "kind": "github",
+          "repo": "LilKALINOV/Astra-Google-STT"
+        },
+        "stars": 0,
+        "updated_at": "2026-09-07T21:50:11Z",
+        "version": "0.6.0"
+      },
+      {
+        "added_at": "2026-09-10",
+        "author": "Voltur",
+        "capabilities": [
+          "tools",
+          "ui_contributions"
+        ],
+        "description": "Plugin for controlling Yandex Smart Home devices directly from Astra.",
+        "download_url": "https://github.com/Voltur792/Y-home-f-astra/releases/download/v0.1.0/yandex-smart-home-0.1.0-noarch.astraplugin",
+        "downloads": 0,
+        "icon_url": "data:image/svg+xml;base64,PCEtLSBSZXBsYWNlIG1lLiBUaGlzIGlzIGEgcGxhY2Vob2xkZXIgc28geW91ciBwbHVnaW4gaGFzICphKiBwaWN0dXJlCiAgICAgZnJvbSB0aGUgZmlyc3QgbWludXRlOyBpdCBpcyBub3QgYSBob3VzZSBzdHlsZSBhbmQgbm90aGluZyBleHBlY3RzIHlvdXIKICAgICBpY29uIHRvIGxvb2sgYW55dGhpbmcgbGlrZSBpdC4KCiAgICAgYGFzdHJhLXBsdWdpbiBidWlsZGAgcGFja3Mgd2hpY2hldmVyIG9mIHRoZXNlIGl0IGZpbmRzIG5leHQgdG8gcGx1Z2luLnRvbWwsCiAgICAgYW5kIEFzdHJhJ3Mgc3RvcmUgZHJhd3MgaXQgb24geW91ciBjYXJkOgoKICAgICAgICAgaWNvbi5wbmcgICBpY29uLndlYnAgICBpY29uLnN2ZyAgIGljb24uanBnICAgaWNvbi5pY28KCiAgICAgUE5HIHdpdGggYSB0cmFuc3BhcmVudCBiYWNrZ3JvdW5kIGlzIHRoZSB1c3VhbCBhbnN3ZXIuIERyYXcgaXQgc3F1YXJlOyBpdAogICAgIGlzIGRpc3BsYXllZCBhdCBhYm91dCA2NHB4LCBzbyBpdCB3YW50cyBhIGJvbGQgc2lsaG91ZXR0ZSByYXRoZXIgdGhhbiBmaW5lCiAgICAgZGV0YWlsLCBhbmQgaXQgc2hvdWxkIHJlYWQgb24gYm90aCBhIGxpZ2h0IGFuZCBhIGRhcmsgYmFja2dyb3VuZCBiZWNhdXNlCiAgICAgdGhlIHN0b3JlIGZvbGxvd3MgdGhlIHVzZXIncyB0aGVtZS4KCiAgICAgSWYgeW91IGRvIHNoaXAgYW4gU1ZHLCBrZWVwIGl0IHN0YXRpYzogbm8gPHNjcmlwdD4sIG5vIG9uKiBoYW5kbGVycywgbm8KICAgICA8Zm9yZWlnbk9iamVjdD4sIGFuZCBubyByZWZlcmVuY2UgdG8gYW55dGhpbmcgb2ZmIHRoaXMgbWFjaGluZS4gVGhlCiAgICAgcmVnaXN0cnkgZHJvcHMgYW4gaWNvbiBjYXJyeWluZyBhbnkgb2YgdGhvc2UsIGFuZCB5b3VyIHBsdWdpbiB3b3VsZCBsaXN0CiAgICAgd2l0aCBubyBwaWN0dXJlIGF0IGFsbC4gLS0+CjxzdmcgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB2aWV3Qm94PSIwIDAgMTYgMTYiIHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCIKICAgICBzaGFwZS1yZW5kZXJpbmc9ImNyaXNwRWRnZXMiIHJvbGU9ImltZyIgYXJpYS1sYWJlbD0iWWFuZGV4IFNtYXJ0IEhvbWUiPgogIDx0aXRsZT5ZYW5kZXggU21hcnQgSG9tZTwvdGl0bGU+CiAgPHJlY3Qgd2lkdGg9IjE2IiBoZWlnaHQ9IjE2IiBmaWxsPSIjZWE1ODBjIi8+CiAgPHJlY3QgeD0iNCIgeT0iMiIgd2lkdGg9IjIiIGhlaWdodD0iMSIgZmlsbD0iI2Y4ZmFmYyIvPgogIDxyZWN0IHg9IjEwIiB5PSIyIiB3aWR0aD0iMiIgaGVpZ2h0PSIxIiBmaWxsPSIjZjhmYWZjIi8+CiAgPHJlY3QgeD0iNCIgeT0iMyIgd2lkdGg9IjIiIGhlaWdodD0iMSIgZmlsbD0iI2Y4ZmFmYyIvPgogIDxyZWN0IHg9IjEwIiB5PSIzIiB3aWR0aD0iMiIgaGVpZ2h0PSIxIiBmaWxsPSIjZjhmYWZjIi8+CiAgPHJlY3QgeD0iMiIgeT0iNCIgd2lkdGg9IjEyIiBoZWlnaHQ9IjEiIGZpbGw9IiNmOGZhZmMiLz4KICA8cmVjdCB4PSIyIiB5PSI1IiB3aWR0aD0iMTEiIGhlaWdodD0iMSIgZmlsbD0iI2Y4ZmFmYyIvPgogIDxyZWN0IHg9IjEzIiB5PSI1IiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjOTRhM2I4Ii8+CiAgPHJlY3QgeD0iMiIgeT0iNiIgd2lkdGg9IjExIiBoZWlnaHQ9IjEiIGZpbGw9IiNmOGZhZmMiLz4KICA8cmVjdCB4PSIxMyIgeT0iNiIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iIzk0YTNiOCIvPgogIDxyZWN0IHg9IjIiIHk9IjciIHdpZHRoPSIxMSIgaGVpZ2h0PSIxIiBmaWxsPSIjZjhmYWZjIi8+CiAgPHJlY3QgeD0iMTMiIHk9IjciIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiM5NGEzYjgiLz4KICA8cmVjdCB4PSIyIiB5PSI4IiB3aWR0aD0iMTEiIGhlaWdodD0iMSIgZmlsbD0iI2Y4ZmFmYyIvPgogIDxyZWN0IHg9IjEzIiB5PSI4IiB3aWR0aD0iMSIgaGVpZ2h0PSIxIiBmaWxsPSIjOTRhM2I4Ii8+CiAgPHJlY3QgeD0iMiIgeT0iOSIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iI2Y4ZmFmYyIvPgogIDxyZWN0IHg9IjMiIHk9IjkiIHdpZHRoPSIxMSIgaGVpZ2h0PSIxIiBmaWxsPSIjOTRhM2I4Ii8+CiAgPHJlY3QgeD0iNCIgeT0iMTAiIHdpZHRoPSI4IiBoZWlnaHQ9IjEiIGZpbGw9IiNmOGZhZmMiLz4KICA8cmVjdCB4PSI0IiB5PSIxMSIgd2lkdGg9IjciIGhlaWdodD0iMSIgZmlsbD0iI2Y4ZmFmYyIvPgogIDxyZWN0IHg9IjExIiB5PSIxMSIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iIzk0YTNiOCIvPgogIDxyZWN0IHg9IjYiIHk9IjEyIiB3aWR0aD0iNCIgaGVpZ2h0PSIxIiBmaWxsPSIjZjhmYWZjIi8+CiAgPHJlY3QgeD0iNiIgeT0iMTMiIHdpZHRoPSIzIiBoZWlnaHQ9IjEiIGZpbGw9IiNmOGZhZmMiLz4KICA8cmVjdCB4PSI5IiB5PSIxMyIgd2lkdGg9IjEiIGhlaWdodD0iMSIgZmlsbD0iIzk0YTNiOCIvPgogIDxyZWN0IHg9IjYiIHk9IjE0IiB3aWR0aD0iMyIgaGVpZ2h0PSIxIiBmaWxsPSIjZjhmYWZjIi8+CiAgPHJlY3QgeD0iOSIgeT0iMTQiIHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiM5NGEzYjgiLz4KPC9zdmc+Cg==",
+        "id": "yandex-smart-home",
+        "license": "MIT",
+        "name": "Yandex Smart Home",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/Voltur792/Y-home-f-astra/releases/download/v0.1.0/yandex-smart-home-0.1.0-noarch.astraplugin",
+          "noarch": "https://github.com/Voltur792/Y-home-f-astra/releases/download/v0.1.0/yandex-smart-home-0.1.0-noarch.astraplugin",
+          "windows-x64": "https://github.com/Voltur792/Y-home-f-astra/releases/download/v0.1.0/yandex-smart-home-0.1.0-noarch.astraplugin"
+        },
+        "readme": "# Yandex Smart Home\n\nУправляйте устройствами Умного дома Яндекса прямо из Astra — голосом и\nтекстом через ИИ, а также вручную через вкладку с переключателями.\n\nEnglish: An Astra plugin to control Yandex Smart Home devices from Astra —\nvia the built-in AI or a dedicated tab.\n\n## Возможности\n\n- **Вкладка «Умный дом»** в панели навигации Astra:\n  - *Устройства* — карточки всех устройств с переключателями вкл/выкл;\n    сенсоры показывают показания (температура, напряжение, состояние АКБ…);\n    состояние обновляется автоматически.\n  - *Сценарии* — запуск любого сценария одной кнопкой.\n  - *Настройки* — подключение к Яндексу по OAuth-токену со встроенной\n    пошаговой инструкцией.\n- **Инструменты для ИИ Astra**: включение/выключение устройств, запуск\n  сценариев, списки устройств и сценариев — по обычной человеческой фразе.\n  Плагин понимает русские падежи и разговорные обороты, находит устройство\n  по названию и даже по комнате.\n- **Прозрачный стеклянный интерфейс** в стиле темы Astra.\n- **Приватность**: токен хранится локально и передаётся только в API\n  Яндекса; ничего не отправляется куда-либо ещё.\n\n## Подключение (один раз)\n\n1. Откройте вкладку «Умный дом» → «Настройки» — там полная инструкция.\n2. Кратко: на oauth.yandex.ru создайте приложение типа\n   «Для доступа к API или отладки», добавьте права `iot:view` и\n   `iot:control` (Умный дом Яндекса), скопируйте ClientID.\n3. Откройте ссылку авторизации со своим ClientID:\n   `https://oauth.yandex.ru/authorize?response_type=token&client_id=ВАШ_CLIENTID`\n4. Вставьте показанный токен (начинается с `y0__`) в поле на вкладке\n   «Настройки» и нажмите «Подключить».\n\n## Примеры фраз для ИИ Astra\n\nУстройства:\n\n- «Включи умную лампочку в коридоре»\n- «Выключи люстру»\n- «Открой багажник»\n- «Включи свет в коридоре» — по комнате\n\nСценарии:\n\n- «Запусти сценарий 1 минута»\n- «Запусти двигатель на 15 минут»\n- «Какие сценарии есть в умном доме?»\n\n## Разработка\n\nЯзык: Python.\n\n```bash\nastra-plugin dev .\n```\n\n## Сборка\n\n```bash\nastra-plugin build\n```\n\nСоздаёт файл `.astraplugin` для распространения.\n\n## Лицензия\n\nMIT · Автор: Voltur (GitHub [Voltur792](https://github.com/Voltur792))\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "yandex-smart-home-0.1.0-noarch.astraplugin",
+                "sha256": "f9541994bfab1bff4143e484e4ff8515375a42d2d7966dc210bf54cafcd9f354",
+                "size": 23816,
+                "url": "https://github.com/Voltur792/Y-home-f-astra/releases/download/v0.1.0/yandex-smart-home-0.1.0-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {},
+            "protocol": 1,
+            "published_at": "2026-09-10T13:54:16Z",
+            "release": {
+              "commit": "f6204de3a9ba77b4eaceed863ae47e18dbd7f5dd",
+              "kind": "github_release",
+              "repo": "Voltur792/Y-home-f-astra",
+              "tag": "v0.1.0"
+            },
+            "version": "0.1.0"
+          }
+        ],
+        "repository_url": "https://github.com/Voltur792/Y-home-f-astra",
+        "source": {
+          "kind": "github",
+          "repo": "Voltur792/Y-home-f-astra"
+        },
+        "stars": 0,
+        "updated_at": "2026-09-10T13:54:16Z",
+        "version": "0.1.0"
       }
     ],
     "publishers": {
-      "KnlCE": {
-        "description": "Astra's co-founder and main developer",
-        "display_name": "KNICE",
-        "tier": "astra_team",
-        "verified_at": "2026-08-19"
-      },
       "mihailinl": {
         "description": "Astra's creator and main developer",
         "display_name": "Mihailin",
@@ -1285,6 +1758,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 33
+    "serial": 46
   }
 }

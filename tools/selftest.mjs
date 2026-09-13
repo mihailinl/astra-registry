@@ -468,15 +468,15 @@ await test("a reserved prefix is refused unless the repo or its owner is first-p
   const policy = {
     reserved_prefixes: ["astra-", "official-"],
     first_party_repos: ["mihailinl/AstraPlugins"],
-    first_party_owners: ["KNICE-TECH"],
+    first_party_owners: ["MINICE-AI"],
   };
   const hit = (id, repo) => reservedPrefixViolation(id, repo, policy);
 
   assert(hit("astra-chess", "somebody/astra-chess")?.prefix === "astra-",
     "an outsider took a reserved prefix");
-  assert(hit("astra-chess", "KNICE-TECH/astra-chess") === null,
+  assert(hit("astra-chess", "MINICE-AI/astra-chess") === null,
     "a first-party OWNER was refused its own prefix");
-  assert(hit("astra-chess", "knice-tech/astra-chess") === null,
+  assert(hit("astra-chess", "minice-ai/astra-chess") === null,
     "owner matching must be case-insensitive; GitHub logins are");
   assert(hit("doom", "somebody/doom") === null,
     "an id with no reserved prefix was refused");
@@ -508,8 +508,29 @@ await test("a reserved prefix is refused unless the repo or its owner is first-p
   // rather than the fixture above, because a fixture cannot notice that
   // somebody edited the policy back.
   const real = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "policy/reserved-ids.json"), "utf8"));
-  assert(reservedPrefixViolation("astra-chess", "KNICE-TECH/astra-chess", real) === null,
-    "policy/reserved-ids.json no longer admits KNICE-TECH; issue #33 is blocked again");
+  assert(reservedPrefixViolation("astra-chess", "MINICE-AI/astra-chess", real) === null,
+    "policy/reserved-ids.json no longer admits MINICE-AI (named KNICE-TECH until its rename); issue #33 is blocked again");
+  // The organisation's OLD login is free for anybody to register once GitHub
+  // has renamed it, so it must never be first-party again as an owner. Only
+  // the one frozen repository pair survives, and only while every listing
+  // under it stays out of the catalogue: that pair plus a listed plugin is
+  // exactly the takeover the rename opened.
+  assert((real.first_party_owners ?? []).every((o) => o.toLowerCase() !== "knice-tech"),
+    "policy/reserved-ids.json trusts the freed login KNICE-TECH as an owner again; anybody who registers it gets every astra- id");
+  assert(reservedPrefixViolation("astra-anything", "KNICE-TECH/anything", real)?.prefix === "astra-",
+    "a repository under the freed login KNICE-TECH was admitted to a reserved prefix");
+  const frozenPairs = (real.first_party_repos ?? []).filter((r) => r.toLowerCase().startsWith("knice-tech/"));
+  const pluginsRoot = path.join(REPO_ROOT, "plugins");
+  for (const dir of fs.readdirSync(pluginsRoot)) {
+    const file = path.join(pluginsRoot, dir, "plugin.json");
+    if (!fs.existsSync(file)) continue;
+    const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+    const repo = String(doc.source?.repo ?? "").toLowerCase();
+    if (frozenPairs.some((r) => r.toLowerCase() === repo)) {
+      assert(doc.unlisted === true,
+        `plugins/${dir} is listed from ${doc.source.repo}, a repository under the freed login KNICE-TECH that policy/reserved-ids.json keeps only for a frozen listing`);
+    }
+  }
   assert(reservedPrefixViolation("astra-anything", "someone-else/x", real)?.prefix === "astra-",
     "policy/reserved-ids.json admits everybody; the prefix is no longer reserved");
 });

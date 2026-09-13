@@ -1,0 +1,39 @@
+{
+  "$comment": "Derived from mihailinl/AstraPlugins@telegram-client-v0.2.0. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: well-known.",
+  "schema": "astra.registry.version/1",
+  "id": "telegram-client",
+  "version": "0.2.0",
+  "published_at": "2026-09-02T21:04:37Z",
+  "release": {
+    "kind": "github_release",
+    "repo": "mihailinl/AstraPlugins",
+    "tag": "telegram-client-v0.2.0",
+    "commit": "700ec6d01e06a397ece050e441beb6b2431b18dd"
+  },
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.2.0/telegram-client-0.2.0-linux-x64.astraplugin",
+      "filename": "telegram-client-0.2.0-linux-x64.astraplugin",
+      "sha256": "10f3043e14b0e84b91a411bc112b6202230b97dfc90454ffe395e2967c370c0f",
+      "size": 7386427
+    },
+    "windows-x64": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/telegram-client-v0.2.0/telegram-client-0.2.0-windows-x64.astraplugin",
+      "filename": "telegram-client-0.2.0-windows-x64.astraplugin",
+      "sha256": "16db0c0f6045e49e7541d5fc71f7129bb1fd6e2983bc3bbff13819bc67e541ce",
+      "size": 6439592
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "client"
+  ],
+  "permissions": {
+    "client": {
+      "reason": "Acts as a chat front-end: what you write in Telegram is sent to Astra as if you had typed it"
+    },
+    "send_chat_message": {
+      "reason": "Sends your Telegram messages to Astra and streams the reply back into the chat"
+    }
+  }
+}
