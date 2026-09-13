@@ -1,0 +1,6 @@
+{
+  "date": "2026-09-12",
+  "action": "delist",
+  "plugin": "astra-chess",
+  "reason": "Its source repository is under KNICE-TECH, a login freed by the organisation's rename to MINICE-AI and claimable by anyone. Delisted until it is re-released from MINICE-AI/astra-chess."
+}
