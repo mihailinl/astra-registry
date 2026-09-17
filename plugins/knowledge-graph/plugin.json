@@ -1,16 +1,16 @@
 {
-  "$comment": "Derived from Belnash3/knowledge-graph@v0.1.0 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
+  "$comment": "Derived from Belnash3/knowledge-graph@v0.2.0 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
   "schema": "astra.registry.plugin/1",
   "id": "knowledge-graph",
   "name": "Knowledge Graph",
-  "summary": "A live Obsidian-style knowledge graph of your Astra chats and memory: entities, links, filters, force settings, and tools to explore connections.",
+  "summary": "A live knowledge graph of your Astra chats and memory: Obsidian-style 2D, a cosmic 3D force-graph, and a 3D 'Brain of Astra' system view with sectors for commands, tools, plugins, MCP and memories.",
   "license": "MIT",
   "source": {
     "kind": "github",
     "repo": "Belnash3/knowledge-graph"
   },
   "added_at": "2026-09-09",
-  "description": "A live Obsidian-style knowledge graph of your Astra chats and memory: entities, links, filters, force settings, and tools to explore connections.",
+  "description": "A live knowledge graph of your Astra chats and memory: Obsidian-style 2D, a cosmic 3D force-graph, and a 3D 'Brain of Astra' system view with sectors for commands, tools, plugins, MCP and memories.",
   "author": {
     "name": "be1lnash3"
   },

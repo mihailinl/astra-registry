@@ -1,0 +1,35 @@
+{
+  "$comment": "Derived from Belnash3/knowledge-graph@v0.2.0. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: release-author.",
+  "schema": "astra.registry.version/1",
+  "id": "knowledge-graph",
+  "version": "0.2.0",
+  "published_at": "2026-09-09T18:49:03Z",
+  "release": {
+    "kind": "github_release",
+    "repo": "Belnash3/knowledge-graph",
+    "tag": "v0.2.0",
+    "commit": "67ba2bf4fe9896a71244baa719b4d414be277696"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/Belnash3/knowledge-graph/releases/download/v0.2.0/knowledge-graph-0.2.0-noarch.astraplugin",
+      "filename": "knowledge-graph-0.2.0-noarch.astraplugin",
+      "sha256": "33e9bb0b53ec6912427fc66af72d28e7fe559d0e3ca9ada72b366c9c9ba1a207",
+      "size": 373071
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "tools",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "subscribe_events": {
+      "reason": "Дополнять граф новыми сообщениями чата и обновлениями памяти.",
+      "types": [
+        "chat_message",
+        "memory_changed"
+      ]
+    }
+  }
+}
