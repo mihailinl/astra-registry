@@ -1572,7 +1572,7 @@
           "tools"
         ],
         "description": "Voice typing into any focused window: a start word begins dictation, text is typed as you speak, a send word presses Enter. Configurable command words, fully local.",
-        "download_url": "https://github.com/Voltur792/voice-text-input/releases/download/v1.0.1/voice-text-input-1.0.1-noarch.astraplugin",
+        "download_url": "https://github.com/Voltur792/voice-text-input/releases/download/v1.0.2/voice-text-input-1.0.2-noarch.astraplugin",
         "downloads": 0,
         "i18n": {
           "ru": {
@@ -1585,12 +1585,36 @@
         "license": "MIT",
         "name": "Voice Text Input",
         "platform_downloads": {
-          "linux-x64": "https://github.com/Voltur792/voice-text-input/releases/download/v1.0.1/voice-text-input-1.0.1-noarch.astraplugin",
-          "noarch": "https://github.com/Voltur792/voice-text-input/releases/download/v1.0.1/voice-text-input-1.0.1-noarch.astraplugin",
-          "windows-x64": "https://github.com/Voltur792/voice-text-input/releases/download/v1.0.1/voice-text-input-1.0.1-noarch.astraplugin"
+          "linux-x64": "https://github.com/Voltur792/voice-text-input/releases/download/v1.0.2/voice-text-input-1.0.2-noarch.astraplugin",
+          "noarch": "https://github.com/Voltur792/voice-text-input/releases/download/v1.0.2/voice-text-input-1.0.2-noarch.astraplugin",
+          "windows-x64": "https://github.com/Voltur792/voice-text-input/releases/download/v1.0.2/voice-text-input-1.0.2-noarch.astraplugin"
         },
         "readme": "# Voice Text Input — Голосовой наборщик текста\n\nГолосовой набор текста в **любое активное окно** — Telegram, браузер (VK),\nWord, куда угодно. Существует в двух видах:\n\n- **плагин [Astra](https://github.com/mihailinl/AstraPlugins)** (этот репозиторий);\n- **отдельное десктоп-приложение [VoiceTyper](https://github.com/Voltur792/VoiceTyper)**\n  — то же самое без Astra: один exe, окно с настройками и значок в трее.\n\nСкажите командное слово (**«напиши»**) — движок слушает и печатает речь в то\nокно, где стоит курсор, **по мере говорения**. Скажите **«отправить»** —\nнажимается Enter, и сообщение уходит, а диктовка **продолжается** без нового\n«напиши» (непрерывный набор). Скажите **«закончить»** — Enter и конец\nдиктовки. Скажите **«отмена»** — набранное стирается. **«с новой строки»** —\nперенос строки (в мессенджерах сообщение не отправляет). По умолчанию всё\nлокально, без облака.\n\n## Как это работает\n\n```\nмикрофон → Vosk (всегда слушает, ~50 МБ ОЗУ)\n   ├─ ловит командные слова (нечётко: «напишы» тоже сработает)\n   └─ печатает живой текст мгновенно\nпосле каждой паузы сегмент перепроверяет faster-whisper (int8, CPU)\n   └─ лучший текст с пунктуацией заменяет черновик Vosk\n```\n\n- Печать — WinAPI `SendInput` с Unicode: русские буквы вставляются независимо\n  от раскладки, в любом приложении.\n- Движок настраивается: `faster-whisper` (по умолчанию, качественнее) или\n  `vosk` (только офлайн-модель, легче и без уточнения).\n- Пунктуация: в режиме faster-whisper — автоматическая; в режиме vosk —\n  голосом («запятая», «точка», «с новой строки», «вопросительный знак»…).\n\n## Настройки (Astra → Плагины → Voice Text Input)\n\n| Параметр | По умолчанию | Описание |\n|---|---|---|\n| Включено | да | прослушивание микрофона и диктовка |\n| Слово начала диктовки | `напиши` | начинает набор текста |\n| Слово отправки | `отправить` | печатает Enter; набор продолжается (непрерывный режим) |\n| Слово завершения | `закончить` | печатает Enter и завершает диктовку; очистите — и «отправить» снова завершает сама |\n| Слово отмены | `отмена` | стирает всё набранное за сессию |\n| Слово переноса строки | `с новой строки` | вставляет Shift+Enter — перенос строки без отправки (в Telegram/VK работает именно так); очистите, чтобы выключить |\n| Wake-слова | `астра` | что можно сказать ПЕРЕД командным словом («Астра напиши»); через запятую |\n| Движок | `faster-whisper` | `faster-whisper` / `yandex` / `openai` / `google` / `vosk` |\n| Модель Whisper | `small` | `tiny` / `base` / `small` |\n| API-ключ Яндекс SpeechKit | — | для движка `yandex`: Api-Key сервисного аккаунта Yandex Cloud |\n| Язык SpeechKit | `ru-RU` | язык облачного распознавания |\n| API-ключ OpenAI | — | для движка `openai`: ключ OpenAI или совместимого сервиса |\n| OpenAI-совместимый сервер | `https://api.openai.com/v1` | можно указать Groq, локальный whisper-сервер и др. |\n| Модель OpenAI | `whisper-1` | или `gpt-4o-mini-transcribe`, модель сервера |\n| API-ключ Google Cloud STT | — | для движка `google`: ключ Google Cloud Speech-to-Text |\n| Клавиша отправки | `enter` | `enter` или `ctrl+enter` (настройка Telegram) |\n| Уточнение текста | да | перепроверка сегментов движком качества |\n| Ожидание коррекции перед отправкой | 1.2 с | 0 — отправлять мгновенно |\n\nКомандные слова распознаются нечётко и только в конце/начале фразы: слово\n«отправить» внутри диктуемого текста отправку не вызовет.\n\n## Отдельное приложение (без Astra)\n\nТот же голосовой наборщик — простым exe-файлом, Astra не нужна:\n**[Voltur792/VoiceTyper](https://github.com/Voltur792/VoiceTyper)** — скачайте\n`VoiceTyper.exe` из релизов, запустите, скажите «напиши привет мир». Окно с\nкнопкой-микрофоном и настройками, значок в трее, тёмная/светлая тема. Ядро\nраспознавания у приложения и плагина общее.\n\n**Про «Астра напиши»** (только в плагине): wake-слово перед командным\nотрезается (настраивается), диктовка работает. Но Astra со включённым\nпостоянным прослушиванием услышит фразу тоже и **ответит ассистентом** —\nплагин подавить это не может (у Astra нет API для этого). Чтобы Astra молчала:\n\n- **Настройки Astra → Голос** → выключите активацию по фразе (wake word) —\n  оставьте активацию кнопкой/хоткеем; либо\n- говорите просто **«напиши …»** без «Астра» — Astra не среагирует, плагин\n  напечатает.\n\n## Yandex SpeechKit (движок `yandex`)\n\nОблачное распознавание SpeechKit v3: быстрее уточнения whisper, автоматическая\nпунктуация, не занимает CPU. Нужен **API-ключ**:\n\n1. В Yandex Cloud создать **сервисный аккаунт** с ролью `ai.speechkit-stt`.\n2. Ему — **API-ключ** (консоль → Сервисный аккаунт → Создать новый ключ → API-ключ).\n3. Вставить ключ в настройках плагина, выбрать движок `yandex`.\n\nЕдинственный облачный движок со **стримингом**: финальный текст приходит\nпотоком. Ключ передаётся только в Yandex Cloud.\n\n## OpenAI и совместимые (движок `openai`)\n\nРаботает с любым сервером OpenAI-аудио-API: сам OpenAI, **Groq** (бесплатный\ntier), локальный whisper.cpp-сервер. Поля: API-ключ, Base URL, модель\n(`whisper-1`, `gpt-4o-mini-transcribe`, …). Пример для Groq: Base URL\n`https://api.groq.com/openai/v1`, модель `whisper-large-v3`.\n\n## Google Cloud Speech-to-Text (движок `google`)\n\nREST `speech:recognize` с API-ключом: в Google Cloud включить Speech-to-Text\nAPI, создать ключ (Credentials → API key). Пунктуация включается\nавтоматически.\n\n**Про облачные движки в диктовке**: живой черновик всё равно печатает Vosk\n(облако не умеет печатать по мере речи, кроме Яндекса в STT-потоке Astra);\nоблако уточняет текст после пауз — как это делает whisper локально. Без\nключа движок автоматически подменяется на vosk-фолбэк. Выбор движка действует\nи на Astra, когда плагин служит её распознавателем.\n\n## Установка\n\n**Из каталога Astra:** **Плагины → Browse** → «Voice Text Input» → Установить.\n\n**Режим разработчика (sideload):**\n\n1. В Astra: **Настройки → Приватность** → включить **«Разрешить\n   неподписанные плагины»**.\n2. **Плагины → Dev** → в поле **«Load a plugin»** вставить путь к папке\n   репозитория и нажать загрузку.\n3. Плагин стартует сразу. После перезапуска Astra плагин, загруженный из\n   папки, возвращается **выключенным** — включите его во вкладке Installed.\n\nЗависимости ставит сама Astra: она находит Python, создаёт окружение плагина\nиз `requirements.lock` и запускает код в нём. Модели скачиваются отдельно\n(см. «Модели»).\n\n## Модели\n\nЛежат в `models/` (не попадают в git и в бандл):\n\n- `models/vosk-model-small-ru-0.22` — [alphacephei.com/vosk/models](https://alphacephei.com/vosk/models)\n- faster-whisper `small` — скачивается сам (HuggingFace) при первой загрузке\n  движка; чтобы заранее: `.venv\\Scripts\\python.exe scripts\\smoke_components.py`\n\nПроверка всех компонентов (модели, микрофон, печать):\n\n```powershell\n.venv\\Scripts\\python.exe scripts\\smoke_components.py\n```\n\n## Разработка\n\n```powershell\n.venv\\Scripts\\python.exe -m pytest -q          # модульные тесты\nastra-plugin check . --strict                  # манифест\nastra-plugin test .                            # конформити (mock-демон)\nastra-plugin dev .                             # hot-reload в запущенную Astra\n```\n\n## Известные ограничения\n\n- Окна, запущенные от администратора, не принимают синтетический ввод\n  (защита UIPI Windows) — запускайте Astra с теми же правами, что и целевое\n  приложение, либо не диктуйте в админские окна.\n- Если в Astra включено постоянное голосовое прослушивание, она слышит те же\n  фразы — рекомендуется режим активации по кнопке/хоткею.\n- Отмена стирает ровно то, что напечатал плагин; ручные правки текста в окне\n  она не учитывает.\n- Переключение диктовки через ИИ действует до следующего сохранения настроек\n  в Astra.\n\n## Лицензия\n\n[MIT](LICENSE) © Voltur\n\n## Поддержать автора\n\nЕсли голосовой наборщик оказался полезным, можно поддержать разработку:\n\n**[boosty.to/voltur/donate](https://boosty.to/voltur/donate)**\n",
         "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "voice-text-input-1.0.2-noarch.astraplugin",
+                "sha256": "63b1e7151aed06428387624c5f9c5692ef44e49628f0efd951736d1e92f70060",
+                "size": 46449,
+                "url": "https://github.com/Voltur792/voice-text-input/releases/download/v1.0.2/voice-text-input-1.0.2-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "stt",
+              "tools"
+            ],
+            "permissions": {},
+            "protocol": 1,
+            "published_at": "2026-09-17T22:59:32Z",
+            "release": {
+              "commit": "a402353ccd74f7b9d5f1b93edbc26746278f88f8",
+              "kind": "github_release",
+              "repo": "Voltur792/voice-text-input",
+              "tag": "v1.0.2"
+            },
+            "version": "1.0.2"
+          },
           {
             "artifacts": {
               "noarch": {
@@ -1622,8 +1646,8 @@
           "repo": "Voltur792/voice-text-input"
         },
         "stars": 0,
-        "updated_at": "2026-09-12T02:47:14Z",
-        "version": "1.0.1"
+        "updated_at": "2026-09-17T22:59:32Z",
+        "version": "1.0.2"
       },
       {
         "added_at": "2026-09-05",
@@ -1790,6 +1814,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 47
+    "serial": 48
   }
 }
