@@ -1,5 +1,5 @@
 {
-  "$comment": "Derived from Voltur792/voice-text-input@v1.0.2 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
+  "$comment": "Derived from Voltur792/voice-text-input@v1.0.3 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.",
   "schema": "astra.registry.plugin/1",
   "id": "voice-text-input",
   "name": "Voice Text Input",
