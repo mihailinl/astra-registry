@@ -1118,6 +1118,11 @@ jobs:
       - uses: actions/github-script@v7
         env:
           ISSUE: ${{ needs.triage.outputs.issue }}
+          # The reports publish-apply refused. The gate above says the RUN
+          # committed; this says which releases in it did not, and a thread
+          # closed over one of those tells its author to stop watching for a
+          # listing that was refused. Same shape as the gate, one level down.
+          REFUSED: ${{ needs.publish.outputs.refused }}
         with:
           script: |
             const fs = require("node:fs");
@@ -1129,10 +1134,15 @@ jobs:
 
             // One issue can carry several releases; close it once.
             const closed = new Set();
+            const refused = (process.env.REFUSED || "").split(" ").filter(Boolean);
+
             for (const dir of dirs) {
               let decision = {};
               try { decision = JSON.parse(fs.readFileSync(`reports/${dir}/decision.json`, "utf8")); } catch { continue; }
               if (decision.outcome !== "publish") continue;
+              // One report's refusal is one release's refusal, so "the run
+              // committed" is not the same statement as "this listing landed".
+              if (refused.includes(dir)) continue;
 
               const thread = issue || Number(decision.issue) || null;
               if (!thread || closed.has(thread)) continue;
@@ -1141,10 +1151,20 @@ jobs:
               // `completed`, not `not_planned`: this issue asked for a listing and
               // the listing exists. The distinction is what GitHub's own UI reads
               // to tell a finished request from an abandoned one.
-              await github.rest.issues.update({
-                owner: context.repo.owner, repo: context.repo.repo, issue_number: thread,
-                state: "closed", state_reason: "completed",
-              });
+              //
+              // Per issue, like `comment`'s `post()` and for the same reason: a
+              // locked, deleted or transferred thread used to throw out of the
+              // step, so one unclosable issue left every other author in the run
+              // watching a thread that would never be closed — and unlike a
+              // comment, nothing tries a close again.
+              try {
+                await github.rest.issues.update({
+                  owner: context.repo.owner, repo: context.repo.repo, issue_number: thread,
+                  state: "closed", state_reason: "completed",
+                });
+              } catch (e) {
+                core.warning(`could not close #${thread}: ${e.message}`);
+              }
             }
 
   # The review queue, said out loud on every drain.

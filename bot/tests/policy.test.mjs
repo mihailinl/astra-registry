@@ -2062,8 +2062,9 @@ const CLOSE_SCRIPT = jobScript(ingestWorkflow, "close");
  * Runs the extracted script over `reports`, a map of directory name to
  * decision, and returns every call it made.
  */
-async function runClose(reports, { issue = "" } = {}) {
+async function runClose(reports, { issue = "", refused = "", failOn = [] } = {}) {
   const calls = [];
+  const warnings = [];
   const fakeFs = {
     readdirSync: (dir) => {
       if (dir !== "reports") throw new Error(`ENOENT: ${dir}`);
@@ -2076,13 +2077,23 @@ async function runClose(reports, { issue = "" } = {}) {
     },
   };
   const github = {
-    rest: { issues: { update: async (args) => { calls.push(args); } } },
+    rest: {
+      issues: {
+        update: async (args) => {
+          if (failOn.includes(args.issue_number)) throw new Error(`#${args.issue_number} is locked`);
+          calls.push(args);
+        },
+      },
+    },
   };
+  const core = { warning: (m) => warnings.push(m) };
   const context = { repo: { owner: "mihailinl", repo: "astra-registry" } };
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  const fn = new AsyncFunction("github", "context", "require", "process", CLOSE_SCRIPT);
-  await fn(github, context, (m) => (m === "node:fs" ? fakeFs : require(m)), { env: { ISSUE: issue } });
-  return calls;
+  const fn = new AsyncFunction("github", "context", "core", "require", "process", CLOSE_SCRIPT);
+  await fn(github, context, core, (m) => (m === "node:fs" ? fakeFs : require(m)), {
+    env: { ISSUE: issue, REFUSED: refused },
+  });
+  return { calls, warnings };
 }
 
 await test("the close job's script was found, so the tests below are about something", async () => {
@@ -2095,7 +2106,7 @@ await test("the close job's script was found, so the tests below are about somet
 });
 
 await test("a publication closes its issue, as completed", async () => {
-  const calls = await runClose({ "ingest-report-1": { outcome: "publish", issue: 5 } }, { issue: "5" });
+  const { calls } = await runClose({ "ingest-report-1": { outcome: "publish", issue: 5 } }, { issue: "5" });
   assertEqual(calls.length, 1, JSON.stringify(calls));
   assertEqual(calls[0].issue_number, 5, "the thread that asked");
   assertEqual(calls[0].state, "closed", "");
@@ -2105,7 +2116,7 @@ await test("a publication closes its issue, as completed", async () => {
 
 await test("nothing that did not publish closes anything", async () => {
   for (const outcome of ["delay", "review", "refuse"]) {
-    const calls = await runClose({ "ingest-report-1": { outcome, issue: 5 } }, { issue: "5" });
+    const { calls } = await runClose({ "ingest-report-1": { outcome, issue: 5 } }, { issue: "5" });
     assertEqual(calls.length, 0, `${outcome} closed the issue: ${JSON.stringify(calls)}`);
   }
 });
@@ -2113,7 +2124,7 @@ await test("nothing that did not publish closes anything", async () => {
 await test("a drained release closes the thread the queue entry remembered", async () => {
   // The cron path: no event, so no ISSUE in the environment. The number comes
   // out of the decision, which got it from the queue entry.
-  const calls = await runClose({ "ingest-report-1": { outcome: "publish", issue: 12 } }, { issue: "" });
+  const { calls } = await runClose({ "ingest-report-1": { outcome: "publish", issue: 12 } }, { issue: "" });
   assertEqual(calls.length, 1, JSON.stringify(calls));
   assertEqual(calls[0].issue_number, 12, "recovered with no event to read");
 });
@@ -2121,12 +2132,12 @@ await test("a drained release closes the thread the queue entry remembered", asy
 await test("a publication with no thread behind it closes nothing", async () => {
   // A release ping or the backstop. There is no issue; §0's answer to that is
   // the [notice] the comment job opens, not a close.
-  const calls = await runClose({ "ingest-report-1": { outcome: "publish", issue: null } }, { issue: "" });
+  const { calls } = await runClose({ "ingest-report-1": { outcome: "publish", issue: null } }, { issue: "" });
   assertEqual(calls.length, 0, JSON.stringify(calls));
 });
 
 await test("one issue carrying two releases is closed once", async () => {
-  const calls = await runClose({
+  const { calls } = await runClose({
     "ingest-report-1": { outcome: "publish", issue: 5 },
     "ingest-report-2": { outcome: "publish", issue: 5 },
   }, { issue: "5" });
@@ -2134,11 +2145,47 @@ await test("one issue carrying two releases is closed once", async () => {
 });
 
 await test("an unreadable report is skipped rather than fatal", async () => {
-  const calls = await runClose({
+  const { calls } = await runClose({
     "ingest-report-1": undefined,
     "ingest-report-2": { outcome: "publish", issue: 5 },
   }, { issue: "5" });
   assertEqual(calls.length, 1, "the readable one still closed");
+});
+
+await test("a report that was refused does not get its issue closed", async () => {
+  // The gate above says the RUN committed. It does not say every release in it
+  // did: one report's refusal is one release's refusal now, and the run carries
+  // on. Closing that author's thread would tell them to stop watching for a
+  // listing this registry refused.
+  const { calls } = await runClose(
+    {
+      "ingest-report-0": { outcome: "publish", issue: 7 },
+      "ingest-report-1": { outcome: "publish", issue: 8 },
+    },
+    { refused: "ingest-report-0" },
+  );
+  assertEqual(calls.map((c) => c.issue_number).join(","), "8",
+    `only the release that landed may be closed: ${JSON.stringify(calls)}`);
+});
+
+await test("one unclosable issue does not strand every other author in the run", async () => {
+  // `comment` learned this the expensive way — one oversized report threw out of
+  // the step and every other submission in the run got no answer at all — and
+  // the same loop in `close` was left without the same guard. A close is worse:
+  // nothing tries it again, so the thread stays open for ever over a listing
+  // that is in the catalogue.
+  const { calls, warnings } = await runClose(
+    {
+      "ingest-report-0": { outcome: "publish", issue: 11 },
+      "ingest-report-1": { outcome: "publish", issue: 12 },
+      "ingest-report-2": { outcome: "publish", issue: 13 },
+    },
+    { failOn: [12] },
+  );
+  assertEqual(calls.map((c) => c.issue_number).join(","), "11,13",
+    `the other two authors' threads still close: ${JSON.stringify(calls)}`);
+  assertEqual(warnings.length, 1, `the failure has to be said out loud: ${JSON.stringify(warnings)}`);
+  assert(/#12/.test(warnings[0]), warnings[0]);
 });
 
 await test("the close waits for the commit, and for the comment", async () => {
