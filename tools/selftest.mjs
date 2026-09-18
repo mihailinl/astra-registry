@@ -2944,6 +2944,42 @@ const WORKFLOW_DIR = path.join(REPO_ROOT, ".github", "workflows");
 const workflowFiles = () =>
   fs.readdirSync(WORKFLOW_DIR).filter((n) => n.endsWith(".yml") || n.endsWith(".yaml"));
 
+// One implementation of what a plugin id is (registry plan B-T0.5, B-T0.3).
+//
+// `ingest.yml` carried an inline `grep -Eq` copy whose second character group
+// was optional, so it admitted a one-character id the rest of the registry
+// refuses. B-T0.5 deleted it; B-T0.3 then moved the publish path into
+// `bot/publish-apply.mjs`, which IMPORTS the predicate — and at that point
+// `workflows.test.mjs` was the only thing watching, and it only scans YAML.
+//
+// So this is the hole that move left: a second copy of the predicate written
+// into a .mjs file is what nothing was looking for. The rule is the same one
+// `dev/couplings.md` states for every fact kept twice — one implementation, and
+// a check that fails when a second appears.
+await test("only tools/lib/ids.mjs says what a plugin id is", async () => {
+  const OWNER = path.join("tools", "lib", "ids.mjs");
+  // Excluded by name for the reason given above grepRepo: a file may contain a
+  // pattern in order to forbid it. Test files are excluded because a test that
+  // asserts the predicate's behaviour has to name it.
+  const allowed = new Set([OWNER, path.join("tools", "selftest.mjs")]);
+  const offenders = [];
+  for (const file of walkRepo()) {
+    const rel = path.relative(REPO_ROOT, file);
+    if (!rel.endsWith(".mjs") || allowed.has(rel) || rel.includes(`${path.sep}tests${path.sep}`)) continue;
+    let text;
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    text.split("\n").forEach((line, i) => {
+      if (/\[a-z0-9\][^\n]*\{0,\d\d\}/.test(line)) offenders.push(`${rel}:${i + 1}`);
+    });
+  }
+  assertEqual(offenders.join(", "), "",
+    "a second implementation of the plugin-id pattern; tools/lib/ids.mjs is the one that decides");
+});
+
 // The withdrawal list must have exactly one signer. The workflow that was the
 // second one failed on every run it ever made and was deleted at R0; `sign.yml`
 // takes that path at R1. This fails the day a second one appears.

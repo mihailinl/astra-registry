@@ -168,7 +168,18 @@ test("the catalogue page links every entry and nothing else", () => {
 test("an id that is not a safe path component is refused, not written", () => {
   const doc = catalogue(["alpha"]);
   doc.signed.plugins[0].id = "../escape";
-  assert.throws(() => buildInto("evil-id", doc), /not a plugin id/);
+  // Keyed on the id and on the refusal, not on the sentence. This read
+  // `/not a plugin id/` until the check here stopped re-writing the predicate
+  // and started asking `tools/lib/ids.mjs`, which answers with the actual
+  // reason — "contains a path separator". The message got better and the test
+  // went red: it was keyed on prose, and the property is that the build refuses
+  // and names what it refused.
+  assert.throws(() => buildInto("evil-id", doc), /refusing to write a page for "\.\.\/escape"/);
+  // A second id of the same shape, so this cannot pass on one hard-coded
+  // string: a bare `..` is refused too, and for its own reason.
+  const dots = catalogue(["alpha"]);
+  dots.signed.plugins[0].id = "..";
+  assert.throws(() => buildInto("evil-id-2", dots), /refusing to write a page for "\.\."/);
 });
 
 // ── escaping ────────────────────────────────────────────────────────────────

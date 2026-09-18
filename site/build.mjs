@@ -57,6 +57,7 @@ import { REPO_ROOT } from "../tools/lib/sources.mjs";
 import { CONSENT_HIGH_RISK } from "../bot/lib/policy.mjs";
 import { buildModerationLog } from "../bot/lib/moderation.mjs";
 import { loadAdvisories } from "../tools/lib/revocations.mjs";
+import { invalidId, unsafePathComponent } from "../tools/lib/ids.mjs";
 
 import { markdown } from "./lib/html.mjs";
 import { pluginPage, withdrawalsFor } from "./templates/plugin.mjs";
@@ -174,8 +175,14 @@ export function build(opts) {
     // Checked again anyway, because this is the line that turns a string from a
     // JSON file into a directory: an id that reached here containing `..` would
     // write a page outside the output tree.
-    if (!/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])$/.test(entry.id)) {
-      throw new Error(`refusing to write a page for ${JSON.stringify(entry.id)}: not a plugin id`);
+    // Asked of `tools/lib/ids.mjs` rather than re-written here. The copy that
+    // used to sit on this line was correct and was still a second answer to a
+    // question with one owner: tighten the predicate there and this line would
+    // have gone on admitting what it always did, silently, at the one place
+    // that turns a JSON string into a directory name.
+    const bad = unsafePathComponent(entry.id) ?? invalidId(entry.id);
+    if (bad) {
+      throw new Error(`refusing to write a page for ${JSON.stringify(entry.id)}: ${bad}`);
     }
     w(`p/${entry.id}/index.html`, pluginPage(entry, { revocations, meta, highRisk: CONSENT_HIGH_RISK }));
     pluginPages.push(entry.id);

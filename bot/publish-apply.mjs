@@ -400,7 +400,18 @@ export function run({
       git(root, ["push", remote, `HEAD:${branch}`], { stdio: "pipe" });
       log(`pushed on attempt ${attempt}`);
       return { outcome: "committed", attempts: attempt, touchedIds: [...state.touchedIds], queued: queued() };
-    } catch {
+    } catch (err) {
+      // Only a rejection meaning "somebody else got there first" is worth
+      // retrying. A branch protection, a revoked token or a hook that declined
+      // is refused identically by every attempt, and five retries of that end
+      // in a message telling an author another commit changed their listing —
+      // which is false, and the kind of false that sends somebody to look in
+      // the wrong repository. Anything unrecognised stops here, carrying what
+      // git actually said.
+      const said = `${err?.stderr ?? ""}${err?.stdout ?? ""}`;
+      if (!/non-fast-forward|fetch first|behind its remote|\[rejected\]/i.test(said)) {
+        throw new Error(`the push was refused for a reason that will not change on a retry:\n${said.trim()}`);
+      }
       log(`push refused on attempt ${attempt}; reading what landed`);
     }
 
@@ -494,7 +505,11 @@ if (import.meta.filename === process.argv[1]) {
     process.exit(EXIT.conflict);
   }
   if (result.outcome === "exhausted") {
-    console.error("::error::the push was refused on every attempt; nothing was committed");
+    console.error(
+      `::error::the tree moved under this run ${result.attempts} times running; nothing was committed. ` +
+        "Every attempt re-applied and re-checked cleanly and was then beaten to the push, which is a " +
+        "publication rate this design did not expect rather than a conflict with any one listing.",
+    );
     process.exit(EXIT.conflict);
   }
   process.exit(EXIT.ok);

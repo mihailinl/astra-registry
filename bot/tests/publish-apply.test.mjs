@@ -287,6 +287,29 @@ test("the backstop's etag memory lands, and yields to a newer one", () => {
   assert.ok(git(bare, "ls-tree", "-r", "--name-only", "main").includes("plugins/alpha/plugin.json"));
 });
 
+test("a rejection that is not a race stops at once, carrying what git said", () => {
+  const { dir, one } = estate();
+  // A remote that is not there stands in for every rejection that will be the
+  // same on the fifth attempt as on the first: a branch protection, a revoked
+  // token, a declining hook. The old shape retried all of them and then told
+  // the author another commit had changed their listing.
+  git(one, "remote", "set-url", "origin", path.join(dir, "no-such-remote.git"));
+  const reports = report(dir, "ingest-report-0", { id: "alpha", version: "0.1.0" });
+  const lines = [];
+  assert.throws(
+    () => run({
+      root: one, reports, watchState: path.join(dir, "none"), skipChecks: true,
+      log: (l) => lines.push(l),
+    }),
+    /will not change on a retry/,
+  );
+  assert.equal(
+    lines.filter((l) => l.startsWith("attempt ")).length,
+    1,
+    `it should not have tried again: ${lines.join(" | ")}`,
+  );
+});
+
 test("classifyChanges reads a path for what it is", () => {
   const touchedIds = new Set(["alpha"]);
   const of = (paths, removals = []) => classifyChanges(paths, { touchedIds, removals });
