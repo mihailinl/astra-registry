@@ -118,3 +118,31 @@ jobs:
       # suite can hold them (registry plan B-T0.3, B-T0.5, B-T0.6).
       - name: The workflow files' own tests
         run: node --test bot/tests/workflows.test.mjs
+
+      # Two clones and a bare remote: what `bot/publish-apply.mjs` does when two
+      # publications reach `main` at once. It needs no probe and no second
+      # checkout, only git (registry plan B-T0.3).
+      - name: The publish path, under contention
+        run: node --test bot/tests/publish-apply.test.mjs
+
+      # These four ran nowhere on the path to `main` until now. Each is cheap,
+      # each asserts agreement between code and something a human reads, and
+      # each was already written: `presentation.test.mjs` holds the card's text
+      # and its assets, `asset-check.test.mjs` the icon and README lifted out of
+      # an attested bundle, `moderation.mjs --check` the moderation records
+      # against their schema, and `gen-checks-doc.mjs --check` that
+      # `docs/BOT-CHECKS.md` still describes the checks that exist. That last
+      # one ran only at `ingest.yml:591` — which is to say only when a stranger
+      # published something, so the documentation of what the bot refuses could
+      # sit stale on `main` for as long as nobody submitted a release.
+      - name: The presentation the card is built from
+        run: node bot/tests/presentation.test.mjs
+
+      - name: The icon and README lifted out of the bundle
+        run: node bot/tests/asset-check.test.mjs
+
+      - name: The moderation records, against their own schema
+        run: node bot/moderation.mjs --check
+
+      - name: docs/BOT-CHECKS.md still describes the checks that exist
+        run: node bot/gen-checks-doc.mjs --check

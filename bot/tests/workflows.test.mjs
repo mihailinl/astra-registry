@@ -72,6 +72,22 @@ test("no workflow lets a caller name the submitter", () => {
   assert.equal(offenders.join(", "), "", "a workflow takes the submitter from its caller");
 });
 
+// B-T0.3. `bot/publish-apply.mjs` takes `--skip-checks` so its own tests can run
+// against a toy repository with no catalogue in it. That flag turns off
+// `validate.mjs`, `build-index.mjs --check` and `selftest.mjs` — every rule this
+// registry holds a publication to. An escape hatch CI can reach is not an escape
+// hatch, it is the behaviour, so the one place it may appear is a test file.
+test("no workflow turns the publish path's own checks off", () => {
+  const offenders = [];
+  for (const name of files) {
+    read(name).split("\n").forEach((line, i) => {
+      if (line.trim().startsWith("#")) return;
+      if (line.includes("--skip-checks") || line.includes("--no-push")) offenders.push(`${name}:${i + 1}`);
+    });
+  }
+  assert.equal(offenders.join(", "), "", "a workflow passes publish-apply.mjs a flag meant for its tests");
+});
+
 test("ingest's manual dispatch takes no inputs", () => {
   const ingest = read("ingest.yml").split("\n");
   const at = ingest.findIndex((l) => /^\s{2}workflow_dispatch:/.test(l));
