@@ -2155,7 +2155,18 @@ await test("the close waits for the commit, and for the comment", async () => {
     `a close that races the comment is the silent close §0 forbids:\n${head}`);
   const cond = /if:\s*(.+)/.exec(head);
   assert(cond, head);
-  assert(/needs\.publish\.result\s*==\s*'success'/.test(cond[1]),
+  // This asserted `needs.publish.result == 'success'` until B-T0.3, and the
+  // reason it gave — "an outcome of \"publish\" is a decision, not a commit" —
+  // is the same reason it now asserts something stronger. `result` is `success`
+  // whenever publish-apply exited 0, and it exits 0 for `outcome=nothing` too:
+  // a run that applied nothing, which happens whenever both artifact downloads
+  // fail. So the job result stopped being the fact this gate needs on the day
+  // the publish job gained an outcome that says what landed.
+  assert(/needs\.publish\.outputs\.outcome\s*==\s*'committed'/.test(cond[1]),
+    `the close must gate on what LANDED, not on the job exiting 0:\n${cond[1]}`);
+  assert(!/needs\.publish\.result/.test(cond[1]),
+    `the job result is success for a run that committed nothing:\n${cond[1]}`);
+  assert(!/decision\.outcome/.test(cond[1]),
     `an outcome of "publish" is a decision, not a commit:\n${cond[1]}`);
   // `always()` here would run the close even when the comment or the publish
   // failed, which is exactly the pair of failures it must not survive.

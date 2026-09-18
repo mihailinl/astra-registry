@@ -157,6 +157,19 @@ permissions: {}
 # edit storm is still bounded to one running plus one pending run, and a
 # superseded pending run is still another event on the SAME submission.
 #
+# **And the key's test for a command is not the parser's**, which is a real
+# asymmetry rather than a tidy one. This expression can only call `startsWith`
+# on the raw comment body; `parseMaintainerCommand` matches
+# `/^\/(approve|publish|reject)\b/i` against `firstWrittenLine`, which trims each
+# line and skips blank ones and markdown headings. So a `/approve` written after
+# a blank line, or indented, is a real command that shares the issue's lane —
+# it keeps the old protection and loses the new one — and a comment that merely
+# STARTS with the word gets a lane of its own and is then parsed as nothing.
+# Neither direction is unsafe: the first is the behaviour that stood until
+# today, and the second costs one idle run. Written down because the two rules
+# look identical in a diff and are not, and because the day somebody makes them
+# agree they should do it in the parser's direction, not this one's.
+#
 # What this does NOT fix, said plainly, because two versions of this comment
 # have now claimed a hazard was eliminated when it had only been relocated: a
 # maintainer who comments `/approve` twice within seconds can still have the
@@ -313,6 +326,12 @@ jobs:
       reply: ${{ steps.decide.outputs.reply }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Every job in this run reads the same tree. The commit that added
+          # this pin to `publish` said "every job" and pinned one, which is the
+          # class of claim this repository treats as a defect in its own right:
+          # a comment that describes a change nobody made.
+          ref: ${{ github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -574,6 +593,12 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Every job in this run reads the same tree. The commit that added
+          # this pin to `publish` said "every job" and pinned one, which is the
+          # class of claim this repository treats as a defect in its own right:
+          # a comment that describes a change nobody made.
+          ref: ${{ github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -620,6 +645,18 @@ jobs:
       - name: The error-code documentation is not stale
         run: node bot/gen-checks-doc.mjs --check
 
+      # The two suites that are about the job with write access, running on the
+      # path where being wrong costs a publication. They were wired into
+      # `bot-tests.yml` alone, which runs on pushes and pull requests — so the
+      # code that decides what gets committed was covered everywhere except in
+      # the run that commits. This job's own header states that rule; it did not
+      # follow it.
+      - name: The publish path, under contention
+        run: node --test bot/tests/publish-apply.test.mjs
+
+      - name: What the workflow files may and may not say
+        run: node --test bot/tests/workflows.test.mjs
+
       - uses: actions/upload-artifact@v4
         with:
           name: manifest-probe
@@ -647,6 +684,12 @@ jobs:
       attestations: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Every job in this run reads the same tree. The commit that added
+          # this pin to `publish` said "every job" and pinned one, which is the
+          # class of claim this repository treats as a defect in its own right:
+          # a comment that describes a change nobody made.
+          ref: ${{ github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -788,6 +831,11 @@ jobs:
           PUBLISH_OUTCOME: ${{ needs.publish.outputs.outcome }}
           PUBLISH_RESULT: ${{ needs.publish.result }}
           QUEUED: ${{ needs.publish.outputs.queued }}
+          # The report directories publish-apply refused. One report's refusal
+          # is one release's refusal now, so a run can commit nine listings and
+          # refuse the tenth, and only the tenth author may be told nothing
+          # happened.
+          REFUSED: ${{ needs.publish.outputs.refused }}
         with:
           script: |
             const fs = require("node:fs");
@@ -802,13 +850,27 @@ jobs:
               process.env.PUBLISH_OUTCOME === "conflict"
                 ? "another commit changed the same listing while this run was working"
                 : `the publish job ended as \`${process.env.PUBLISH_OUTCOME || process.env.PUBLISH_RESULT || "unknown"}\``;
+            const refused = (process.env.REFUSED || "").split(" ").filter(Boolean);
+            const committed = process.env.PUBLISH_OUTCOME === "committed";
+            // What to do about it, written once. `/recheck` is honoured only on
+            // an issue carrying the `listing` label (bot/triage.mjs), and the
+            // [notice] issues this same script opens carry no labels — so the
+            // advice has to name both doors rather than the one that happens to
+            // work on a submission thread.
+            const again =
+              "Nothing retries this on its own. On a submission issue, comment `/recheck`; " +
+              "anywhere else, ping the release again with a `[release]` issue naming " +
+              "`owner/repo` and the tag. Either way it is decided from scratch against the " +
+              "release as it is now.";
             const notQueued =
               "\n\n---\n\n**This release is not waiting to publish.** The delay above describes " +
               "what was decided; the file that would make it happen \u2014 " +
               "`state/queue/<id>@<version>.json` \u2014 is not in this repository, because " +
-              `${why}. Nothing retries this on its own: comment \`/recheck\` on this issue, ` +
-              "or ping the release again, and the decision is taken from scratch against the " +
-              "release as it is now.";
+              `${why}. ${again}`;
+            const notPublished =
+              "\n\n---\n\n**This release is not in the catalogue.** The report above says it " +
+              "passed every check; the commit that would have put it there was not made, " +
+              `because ${why}. ` + again;
             let dirs = [];
             try {
               dirs = fs.readdirSync("reports").sort();
@@ -878,11 +940,20 @@ jobs:
               // the thread that asked for it instead of in a new one.
               const thread = issue || Number(decision.issue) || null;
 
-              // A delay is only true if the file that makes it true is in the
-              // pushed commit. When it is not, the author reads that instead of
-              // a time nothing is waiting for.
+              // Both promises are checked against what the repository holds, not
+              // against what was decided. A delay is true only if the queue
+              // entry is in the pushed commit; a publication is true only if
+              // this run committed AND this report was not the one refused.
+              // Until this block covered `publish` too, a decision that said
+              // "**Published.** `<id> <version>` is live" was posted verbatim
+              // over a run that committed nothing.
               const delayed = decision.outcome === "delay";
-              const text = delayed && !landed(decision) ? body + notQueued : body;
+              const landedHere = committed && !refused.includes(dir);
+              const text = delayed
+                ? (landed(decision) ? body : body + notQueued)
+                : decision.outcome === "publish" && !landedHere
+                  ? body + notPublished
+                  : body;
 
               if (thread) {
                 await post(thread, text);
@@ -941,7 +1012,7 @@ jobs:
     outputs:
       outcome: ${{ steps.apply.outputs.outcome }}
       queued: ${{ steps.apply.outputs.queued }}
-      conflicts: ${{ steps.apply.outputs.conflicts }}
+      refused: ${{ steps.apply.outputs.refused }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -1023,9 +1094,17 @@ jobs:
   # **Only after the reason is on the thread.** `needs: comment` is what makes
   # that ordering hold; a close that races the comment is a silent close, which
   # is the thing this whole workflow is built not to do.
+  # **And "it succeeded" is not the fact this needs.** `needs.publish.result` is
+  # `success` whenever publish-apply exited 0, which it also does for
+  # `outcome=nothing` — a run that applied nothing at all. That is reachable with
+  # nothing going wrong loudly: both of publish's artifact downloads are
+  # `continue-on-error`, so a transient failure leaves `reports/` absent, nothing
+  # is applied, the job is green, and this job would then close a submission over
+  # a listing that is not in the catalogue. `comment` was given the output that
+  # says what actually landed, in the same change where this gate was not.
   close:
     needs: [triage, check, publish, comment]
-    if: needs.publish.result == 'success'
+    if: needs.publish.outputs.outcome == 'committed'
     runs-on: ubuntu-24.04
     permissions:
       issues: write
@@ -1081,6 +1160,12 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Every job in this run reads the same tree. The commit that added
+          # this pin to `publish` said "every job" and pinned one, which is the
+          # class of claim this repository treats as a defect in its own right:
+          # a comment that describes a change nobody made.
+          ref: ${{ github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

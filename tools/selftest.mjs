@@ -2909,10 +2909,25 @@ await test("every committed release manifest verifies against the production roo
 // Each was watched failing before it was committed.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Every file in the tree, minus the places a checkout does not own. */
+/**
+ * Every file in the tree, minus the places a checkout does not own.
+ *
+ * `reports/` and `watch-state/` are the two that are not about tidiness. In the
+ * `publish` job this file runs inside a WORKSPACE, not a clean checkout, and
+ * that workspace holds the downloaded ingest artifacts — bytes lifted verbatim
+ * out of a stranger's release bundle, including their README. Every `grepRepo`
+ * rule below therefore scanned submitter-controlled text, so a plugin whose
+ * README happened to mention `revoke.yml` failed the publication and the author
+ * was told the bot had broken. Measured, not theorised: one such README under
+ * `reports/` turned a green `node tools/selftest.mjs` red.
+ *
+ * Neither name can appear in a real checkout of this repository — nothing is
+ * tracked at either path — so excluding them costs no coverage.
+ */
 function walkRepo(dir = REPO_ROOT, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     if (e.name === ".git" || e.name === "node_modules" || e.name === "dist") continue;
+    if (dir === REPO_ROOT && (e.name === "reports" || e.name === "watch-state")) continue;
     const full = path.join(dir, e.name);
     if (e.isDirectory()) walkRepo(full, out);
     else out.push(full);
@@ -2926,7 +2941,18 @@ function walkRepo(dir = REPO_ROOT, out = []) {
 function grepRepo(needle) {
   const hits = [];
   for (const file of walkRepo()) {
-    if (path.relative(REPO_ROOT, file) === path.join("tools", "selftest.mjs")) continue;
+    const rel = path.relative(REPO_ROOT, file);
+    if (rel === path.join("tools", "selftest.mjs")) continue;
+    // A listing's README is a stranger's document that this repository stores.
+    // These rules are about what the registry says about ITSELF — "nothing
+    // claims a required reviewer", "only the runbook names the deleted
+    // workflow" — and a plugin author writing `revoke.yml` in their own
+    // Releasing section is not the registry making a claim. Without this, one
+    // published README turns `main` red for everybody, for ever, and the only
+    // fix is editing somebody else's document. Watched: the same README with
+    // the exclusion removed fails "a file other than the runbook still points
+    // at revoke.yml".
+    if (/^plugins[\\/][^\\/]+[\\/]README\.md$/.test(rel)) continue;
     let text;
     try {
       text = fs.readFileSync(file, "utf8");
@@ -2953,7 +2979,15 @@ const workflowFiles = () =>
 // `workflows.test.mjs` was the only thing watching, and it only scans YAML.
 //
 // So this is the hole that move left: a second copy of the predicate written
-// into a .mjs file is what nothing was looking for. The rule is the same one
+// into a .mjs file is what nothing was looking for.
+//
+// The detector is a heuristic and says so here rather than pretending: it
+// matches the character class and a `{0,NN}` quantifier on one line, which is
+// the spelling `tools/lib/ids.mjs` uses and therefore the spelling a copy is
+// made from. A re-derivation written differently enough — a different
+// quantifier, the pattern built by concatenation, a regex assembled from a
+// string — walks past it. It catches the copy somebody makes, not the one
+// somebody designs. The rule is the same one
 // `dev/couplings.md` states for every fact kept twice — one implementation, and
 // a check that fails when a second appears.
 await test("only tools/lib/ids.mjs says what a plugin id is", async () => {

@@ -129,6 +129,36 @@ test("no workflow turns the publish path's own checks off", () => {
   assert.equal(offenders.join(", "), "", "a workflow passes publish-apply.mjs a flag meant for its tests");
 });
 
+// B-T0.3. `bot/publish-apply.mjs`'s `record()` writes the step outputs and
+// `ingest.yml` reads them as `steps.apply.outputs.*`. Two files, one vocabulary,
+// nothing comparing them — so a renamed key would leave the workflow reading an
+// empty string, and an empty string is what every one of those reads means
+// "nothing happened". That is the failure mode this whole change was about: a
+// job that says a publication landed when it did not.
+//
+// The check is deliberately one-directional. A key the YAML reads and nobody
+// writes fails silently and is a defect; a key written and nobody reads is
+// information in the step log and is not. The test names the second set rather
+// than forbidding it.
+test("every step output the workflow reads is one publish-apply writes", () => {
+  const applier = fs.readFileSync(path.join(REPO, "bot", "publish-apply.mjs"), "utf8");
+  const written = new Set(
+    [...applier.matchAll(/`([a-z_]+)=\$\{/g)].map((m) => m[1]),
+  );
+  assert.ok(written.size >= 4, `record() writes ${written.size} keys; this suite would prove little`);
+
+  const ingest = read("ingest.yml");
+  const readKeys = new Set([...ingest.matchAll(/steps\.apply\.outputs\.([a-z_]+)/g)].map((m) => m[1]));
+  assert.ok(readKeys.size >= 3, `ingest.yml reads ${readKeys.size} of them; the publish job lost its outputs`);
+
+  const missing = [...readKeys].filter((k) => !written.has(k));
+  assert.equal(
+    missing.join(", "),
+    "",
+    "ingest.yml reads a step output publish-apply.mjs never writes; it will always be empty",
+  );
+});
+
 test("ingest's manual dispatch takes no inputs", () => {
   const ingest = read("ingest.yml").split("\n");
   const at = ingest.findIndex((l) => /^\s{2}workflow_dispatch:/.test(l));

@@ -61,6 +61,14 @@ import { invalidId, unsafePathComponent } from "../tools/lib/ids.mjs";
 
 export const EXIT = { ok: 0, refused: 1, broke: 2, conflict: 3 };
 
+/** The registry's own rules refused the derived listing. Not a bug in the bot. */
+export class ChecksFailed extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ChecksFailed";
+  }
+}
+
 /** A refusal names the file it is about, because the comment quotes it. */
 export class Refusal extends Error {
   constructor(message, { file } = {}) {
@@ -240,6 +248,28 @@ export function applyReport(root, reportDir, state) {
 
   refuseVersionRegressions(root, reportDir, rels);
 
+  // What stops waiting. Only a queue entry may be deleted, and only one this
+  // run is entitled to name: `remove.txt` comes out of the same artifact as the
+  // files above, from a job that cannot write here.
+  //
+  // Read and CHECKED here, before the copy loop, and deleted after it. Every
+  // refusal this function can raise now happens before it writes anything,
+  // which is what lets `applyAll` skip one bad report and keep the rest of the
+  // run: a report that is refused half-way through copying is a report that
+  // cannot be skipped, only aborted on.
+  const removeFile = path.join(reportDir, "remove.txt");
+  const removals = !fs.existsSync(removeFile)
+    ? []
+    : fs
+        .readFileSync(removeFile, "utf8")
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean);
+  for (const rel of removals) {
+    if (!QUEUE_FILE.test(rel)) throw new Refusal(`refusing to delete ${rel}`, { file: rel });
+    if (idOfPath(rel) === null) throw new Refusal(`${rel}: has no id`, { file: rel });
+  }
+
   for (const rel of rels) {
     const target = path.join(root, rel);
     fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -249,24 +279,37 @@ export function applyReport(root, reportDir, state) {
     state.changed = true;
   }
 
-  // What stops waiting. Only a queue entry may be deleted, and only one this
-  // run is entitled to name: `remove.txt` comes out of the same artifact as the
-  // files above, from a job that cannot write here.
-  const removeFile = path.join(reportDir, "remove.txt");
-  if (fs.existsSync(removeFile)) {
-    for (const line of fs.readFileSync(removeFile, "utf8").split("\n")) {
-      const rel = line.trim();
-      if (!rel) continue;
-      if (!QUEUE_FILE.test(rel)) throw new Refusal(`refusing to delete ${rel}`, { file: rel });
-      state.removals.push(rel);
-      state.touchedIds.add(idOfPath(rel));
-      const target = path.join(root, rel);
-      if (fs.existsSync(target)) {
-        fs.rmSync(target);
-        state.changed = true;
-      }
+  for (const rel of removals) {
+    state.removals.push(rel);
+    state.touchedIds.add(idOfPath(rel));
+    const target = path.join(root, rel);
+    if (fs.existsSync(target)) {
+      fs.rmSync(target);
+      state.changed = true;
     }
   }
+}
+
+/**
+ * Report directories in the order the bot decided them, not in the order a
+ * string sort puts them.
+ *
+ * The artifacts are named `ingest-report-<strategy.job-index>`, the index is a
+ * decimal that reaches 19 (`MAX_DISPATCH` in `bot/watch.mjs`), and a plain sort
+ * gives 0, 1, 10, 11, …, 19, 2, 3 — so on the busiest drains, and only on those,
+ * the queue order that `readQueue` carefully sorted by `publish_after` was
+ * discarded. Two ripe releases of one plugin would then be applied newest-first,
+ * and `refuseVersionRegressions` would refuse the older one for being older,
+ * correctly, having been handed them backwards.
+ */
+export function compareReportNames(a, b) {
+  const n = (s) => {
+    const m = /(\d+)\s*$/.exec(s);
+    return m ? Number(m[1]) : null;
+  };
+  const [x, y] = [n(a), n(b)];
+  if (x !== null && y !== null && x !== y) return x - y;
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 /**
@@ -282,6 +325,7 @@ export function applyAll(root, { reports, watchState, dropWatchState = false }) 
     touchedIds: new Set(),
     removals: [],
     queued: [],
+    refusals: [],
     watchState: false,
   };
 
@@ -300,9 +344,24 @@ export function applyAll(root, { reports, watchState, dropWatchState = false }) 
   }
 
   if (reports && fs.existsSync(reports)) {
-    for (const name of fs.readdirSync(reports).sort()) {
+    for (const name of fs.readdirSync(reports).sort(compareReportNames)) {
       const dir = path.join(reports, name);
-      if (fs.statSync(dir).isDirectory()) applyReport(root, dir, state);
+      if (!fs.statSync(dir).isDirectory()) continue;
+      try {
+        applyReport(root, dir, state);
+      } catch (err) {
+        // One report's refusal is one release's refusal. It used to be the
+        // whole run's: a single bad report aborted the process before anything
+        // was committed, which also meant the `remove.txt` that would have
+        // cleared the offending queue entry was never applied — so the drain
+        // re-dispatched the identical set an hour later and refused again, and
+        // every other author in that batch lost their publication each time.
+        //
+        // Safe to continue because `applyReport` raises every refusal it has
+        // before it copies anything, so a refused report has written nothing.
+        if (!(err instanceof Refusal)) throw err;
+        state.refusals.push({ report: path.basename(dir), file: err.file, message: err.message });
+      }
     }
   }
 
@@ -358,6 +417,22 @@ export function run({
   let at = base ?? git(root, ["rev-parse", "HEAD"]);
   let dropWatchState = false;
 
+  // Anything thrown out of an attempt leaves the checkout as it was found. The
+  // workspace is a runner and is discarded either way, but three tests assert
+  // "the working tree is untouched" and until this existed they only ever
+  // asserted it on the refusal paths, which throw before the copy loop and so
+  // could not have dirtied it. An assertion that can only pass is not one.
+  const attemptFailed = (err) => {
+    try {
+      git(root, ["reset", "--hard", at], { stdio: "pipe" });
+      const present = ["plugins", "state"].filter((d) => fs.existsSync(path.join(root, d)));
+      if (present.length > 0) git(root, ["clean", "-qfd", "--", ...present], { stdio: "pipe" });
+    } catch {
+      /* the tree is already beyond tidying; the thrown error is the news */
+    }
+    throw err;
+  };
+
   for (let attempt = 1; attempt <= attempts; attempt++) {
     log(`attempt ${attempt} of ${attempts}, base ${at.slice(0, 8)}`);
     const state = applyAll(root, {
@@ -371,12 +446,36 @@ export function run({
     // repository — so the promise is made from this list, not from the decision.
     const queued = () => state.queued.filter((rel) => fs.existsSync(path.join(root, rel)));
 
+    const refusals = state.refusals;
+    for (const r of refusals) log(`refused ${r.report}: ${r.message}`);
+
     if (!state.changed) {
-      log("nothing to apply");
-      return { outcome: "nothing", attempts: attempt, touchedIds: [], queued: [] };
+      // Nothing landed. Which of the two "nothings" it is matters to the
+      // author: an empty run is routine, a run where every report was refused
+      // is a refusal and has to exit non-zero and say so.
+      log(refusals.length > 0 ? "every report was refused" : "nothing to apply");
+      return {
+        outcome: refusals.length > 0 ? "refused" : "nothing",
+        attempts: attempt,
+        touchedIds: [],
+        queued: [],
+        refusals,
+      };
     }
 
-    if (!skipChecks) registryChecks(root, log);
+    if (!skipChecks) {
+      try {
+        registryChecks(root, log);
+      } catch (err) {
+        // A failed registry check is the derived listing being refused by this
+        // repository's own rules — the single most likely real failure of a
+        // publication, and not the bot breaking. It used to reach the CLI as a
+        // plain Error, which recorded `outcome=refused` and then exited with
+        // the code for "the bot broke": three answers to one question, in the
+        // exit code, the step output and two comments.
+        attemptFailed(new ChecksFailed(`${err?.message ?? err}`.split("\n")[0]));
+      }
+    }
 
     // Named pathspecs, not `git add -A`: this job's workspace also holds the
     // downloaded artifacts, and a bare `-A` would commit them. Absent ones are
@@ -388,18 +487,18 @@ export function run({
     if (pathspecs.length > 0) git(root, ["add", "-A", ...pathspecs], { stdio: "pipe" });
     if (git(root, ["diff", "--cached", "--name-only"]) === "") {
       log("nothing to commit");
-      return { outcome: "nothing", attempts: attempt, touchedIds: [...state.touchedIds], queued: queued() };
+      return { outcome: "nothing", attempts: attempt, touchedIds: [...state.touchedIds], queued: queued(), refusals };
     }
     git(root, ["commit", "-m", message, ...(trailer ? ["-m", trailer] : [])], { stdio: "pipe" });
 
     if (!push) {
-      return { outcome: "committed", attempts: attempt, touchedIds: [...state.touchedIds], queued: queued() };
+      return { outcome: "committed", attempts: attempt, touchedIds: [...state.touchedIds], queued: queued(), refusals };
     }
 
     try {
       git(root, ["push", remote, `HEAD:${branch}`], { stdio: "pipe" });
       log(`pushed on attempt ${attempt}`);
-      return { outcome: "committed", attempts: attempt, touchedIds: [...state.touchedIds], queued: queued() };
+      return { outcome: "committed", attempts: attempt, touchedIds: [...state.touchedIds], queued: queued(), refusals };
     } catch (err) {
       // Only a rejection meaning "somebody else got there first" is worth
       // retrying. A branch protection, a revoked token or a hook that declined
@@ -410,7 +509,9 @@ export function run({
       // git actually said.
       const said = `${err?.stderr ?? ""}${err?.stdout ?? ""}`;
       if (!/non-fast-forward|fetch first|behind its remote|\[rejected\]/i.test(said)) {
-        throw new Error(`the push was refused for a reason that will not change on a retry:\n${said.trim()}`);
+        attemptFailed(
+          new Error(`the push was refused for a reason that will not change on a retry:\n${said.trim()}`),
+        );
       }
       log(`push refused on attempt ${attempt}; reading what landed`);
     }
@@ -426,15 +527,16 @@ export function run({
       removals: state.removals,
     });
 
+    // A path another commit touched is not by itself a conflict, and treating
+    // it as one told two runs publishing the SAME release that somebody had
+    // changed their listing. What decides it is `refuseVersionRegressions`, on
+    // the next attempt, against the tree as it now is: identical bytes apply
+    // and commit nothing, an older version is refused for being older, and a
+    // newer one lands. So this logs what moved and re-applies; the only thing
+    // that ends the run with nothing committed is a refusal, which names the
+    // release it is about, or running out of attempts.
     if (conflicts.length > 0) {
-      git(root, ["reset", "--hard", head], { stdio: "pipe" });
-      return {
-        outcome: "conflict",
-        attempts: attempt,
-        conflicts,
-        head,
-        touchedIds: [...state.touchedIds],
-      };
+      log(`another commit changed ${conflicts.join(", ")}; re-applying and letting the version rules judge`);
     }
 
     if (seenChanged) dropWatchState = true;
@@ -442,7 +544,7 @@ export function run({
     at = head;
   }
 
-  return { outcome: "exhausted", attempts };
+  return { outcome: "exhausted", attempts, refusals: [], queued: [] };
 }
 
 function parseArgv(argv) {
@@ -472,12 +574,17 @@ function parseArgv(argv) {
 function record(result) {
   const out = process.env.GITHUB_OUTPUT;
   if (!out) return;
+  // These five keys are the whole contract with `.github/workflows/ingest.yml`,
+  // which reads them as `steps.apply.outputs.*` and republishes three as job
+  // outputs. `bot/tests/workflows.test.mjs` asserts that every key written here
+  // is read there and every key read there is written here — this file and that
+  // YAML were the only two places that knew, and nothing compared them.
   const lines = [
     `outcome=${result.outcome}`,
     `attempts=${result.attempts ?? 0}`,
     `changed=${result.outcome === "committed" ? 1 : 0}`,
-    `conflicts=${(result.conflicts ?? []).join(" ")}`,
     `queued=${(result.queued ?? []).join(" ")}`,
+    `refused=${(result.refusals ?? []).map((r) => r.report).join(" ")}`,
   ];
   try {
     fs.appendFileSync(out, `${lines.join("\n")}\n`);
@@ -486,13 +593,32 @@ function record(result) {
   }
 }
 
+/** Every outcome `run` can return, and what the process exits with for it. */
+export const OUTCOMES = {
+  committed: EXIT.ok,
+  nothing: EXIT.ok,
+  refused: EXIT.refused,
+  "checks-failed": EXIT.refused,
+  exhausted: EXIT.conflict,
+};
+
 if (import.meta.filename === process.argv[1]) {
   let result;
   try {
     result = run(parseArgv(process.argv.slice(2)));
   } catch (err) {
-    record({ outcome: "refused", attempts: 0 });
-    if (err instanceof Refusal) {
+    // The outcome is decided BEFORE it is recorded. The version this replaces
+    // wrote `outcome=refused` into the step output and then chose an exit code
+    // separately, so a failed registry check reported "refused" to the author's
+    // comment and "the bot broke" to the workflow, out of one error.
+    const outcome =
+      err instanceof ChecksFailed ? "checks-failed" : err instanceof Refusal ? "refused" : "broke";
+    record({ outcome, attempts: 0 });
+    if (outcome === "checks-failed") {
+      console.error(`::error::this repository's own rules refused the derived listing: ${err.message}`);
+      process.exit(EXIT.refused);
+    }
+    if (outcome === "refused") {
       console.error(`::error::${err.message}`);
       process.exit(EXIT.refused);
     }
@@ -500,9 +626,8 @@ if (import.meta.filename === process.argv[1]) {
     process.exit(EXIT.broke);
   }
   record(result);
-  if (result.outcome === "conflict") {
-    console.error(`::error::another commit changed ${result.conflicts.join(", ")}; nothing was committed`);
-    process.exit(EXIT.conflict);
+  for (const r of result.refusals ?? []) {
+    console.error(`::warning::${r.report} was refused and the rest of the run went on: ${r.message}`);
   }
   if (result.outcome === "exhausted") {
     console.error(
@@ -512,5 +637,10 @@ if (import.meta.filename === process.argv[1]) {
     );
     process.exit(EXIT.conflict);
   }
-  process.exit(EXIT.ok);
+  const code = OUTCOMES[result.outcome];
+  if (code === undefined) {
+    console.error(`::error::unknown outcome ${result.outcome}; treating it as a fault in this file`);
+    process.exit(EXIT.broke);
+  }
+  process.exit(code);
 }

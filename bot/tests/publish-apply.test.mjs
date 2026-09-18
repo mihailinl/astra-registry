@@ -25,7 +25,13 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { classifyChanges, idOfPath, newestVersionInTree, run } from "../publish-apply.mjs";
+import {
+  classifyChanges,
+  compareReportNames,
+  idOfPath,
+  newestVersionInTree,
+  run,
+} from "../publish-apply.mjs";
 
 const git = (cwd, ...args) =>
   execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -108,29 +114,54 @@ test("two ids on one base both land in one commit", () => {
   assert.ok(landed.includes("plugins/alpha/plugin.json") && landed.includes("plugins/beta/plugin.json"));
 });
 
-test("the same id from two bases: the second is refused, and commits nothing", () => {
+test("the same id from two bases: the older release is refused and nothing of it lands", () => {
   const { dir, one, two, bare } = estate();
 
-  // The other writer publishes alpha first.
-  write(two, "plugins/alpha/plugin.json", '{"id":"alpha","from":"the other run"}\n');
+  // The other writer publishes a COMPLETE listing, which is what a publish run
+  // actually writes: plugin.json and the version file beside it. The fixture
+  // used to write plugin.json alone, which is a registry state no run produces,
+  // and it mattered — with no version in the tree there is nothing for the
+  // version rules to judge and the "conflict" was decided by path alone.
+  write(two, "plugins/alpha/plugin.json", '{"id":"alpha","latest":"0.2.0"}\n');
+  write(two, "plugins/alpha/versions/0.2.0.json", '{"version":"0.2.0"}\n');
   git(two, "add", "-A");
-  git(two, "commit", "-m", "the other run");
+  git(two, "commit", "-m", "the other run published 0.2.0");
   git(two, "push", "origin", "HEAD:main");
   const theirs = git(two, "rev-parse", "HEAD");
 
   const reports = report(dir, "ingest-report-0", { id: "alpha", version: "0.1.0" });
   const result = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, log: quiet });
 
-  assert.equal(result.outcome, "conflict");
-  assert.deepEqual(result.conflicts, ["plugins/alpha/plugin.json"]);
-  // Nothing of this run reached the remote, and the local branch is exactly
-  // theirs — no commit of ours survives to be pushed by a later step.
+  // Refused by the version rules on the second attempt, against the tree as it
+  // then is — not by a path comparison on the first. The distinction is the
+  // whole of what this file got wrong before: a path another commit touched is
+  // not by itself a conflict.
+  assert.equal(result.outcome, "refused");
+  assert.match(result.refusals[0].message, /not newer than 0\.2\.0/);
   assert.equal(git(bare, "rev-parse", "main"), theirs);
-  assert.equal(git(one, "rev-parse", "HEAD"), theirs);
-  assert.equal(
-    git(bare, "show", "main:plugins/alpha/plugin.json"),
-    '{"id":"alpha","from":"the other run"}',
-  );
+  assert.equal(git(bare, "show", "main:plugins/alpha/plugin.json"), '{"id":"alpha","latest":"0.2.0"}');
+  assert.equal(git(one, "status", "--porcelain"), "", "the working tree is left as it was found");
+});
+
+test("two runs publishing the SAME release: the loser commits nothing and says nothing false", () => {
+  const { dir, one, two, bare } = estate();
+
+  // Byte-identical to what this run is about to write — which is exactly what
+  // two runs for one release look like. This used to end as `outcome: conflict`
+  // with a comment telling the author somebody had changed their listing.
+  write(two, "plugins/alpha/plugin.json", '{"id":"alpha"}\n');
+  write(two, "plugins/alpha/versions/0.1.0.json", '{"version":"0.1.0"}\n');
+  git(two, "add", "-A");
+  git(two, "commit", "-m", "the other run published the same release");
+  git(two, "push", "origin", "HEAD:main");
+  const theirs = git(two, "rev-parse", "HEAD");
+
+  const reports = report(dir, "ingest-report-0", { id: "alpha", version: "0.1.0" });
+  const result = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, log: quiet });
+
+  assert.equal(result.outcome, "nothing");
+  assert.deepEqual(result.refusals, []);
+  assert.equal(git(bare, "rev-parse", "main"), theirs, "the winner's commit stands and no second one was made");
 });
 
 test("a different id landing in the meantime is re-applied, not refused", () => {
@@ -157,10 +188,9 @@ test("0.2.0 after 0.3.0 is refused — INV-12's publish-time half", () => {
   git(one, "commit", "-m", "0.3.0 is listed");
 
   const reports = report(dir, "ingest-report-0", { id: "alpha", version: "0.2.0" });
-  assert.throws(
-    () => run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, log: quiet }),
-    /not newer than 0\.3\.0/,
-  );
+  const result = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, log: quiet });
+  assert.equal(result.outcome, "refused");
+  assert.match(result.refusals[0].message, /not newer than 0\.3\.0/);
   // A queued release drains hours after it was decided. This is the whole of
   // what stops the drain from walking a listing backwards, so it must refuse
   // BEFORE anything is copied: the working tree is untouched.
@@ -178,10 +208,9 @@ test("a published version re-cut with different bytes is refused; an identical o
     path.join(rewritten, "ingest-report-0", "plugins/alpha/versions/0.1.0.json"),
     '{"version":"0.1.0","and":"something else"}\n',
   );
-  assert.throws(
-    () => run({ root: one, reports: rewritten, watchState: path.join(dir, "none"), skipChecks: true, log: quiet }),
-    /already published with different bytes/,
-  );
+  const refused = run({ root: one, reports: rewritten, watchState: path.join(dir, "none"), skipChecks: true, log: quiet });
+  assert.equal(refused.outcome, "refused");
+  assert.match(refused.refusals[0].message, /already published with different bytes/);
 
   // The same bytes are allowed through, because re-publishing them changes
   // nothing on disk. A refusal here would make every retry of a partly-landed
@@ -201,10 +230,9 @@ test("only a queue entry may be deleted", () => {
   git(one, "commit", "-m", "alpha is listed");
 
   const reports = report(dir, "ingest-report-0", { remove: ["plugins/alpha/plugin.json"] });
-  assert.throws(
-    () => run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, log: quiet }),
-    /refusing to delete plugins\/alpha\/plugin\.json/,
-  );
+  const result = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, log: quiet });
+  assert.equal(result.outcome, "refused");
+  assert.match(result.refusals[0].message, /refusing to delete plugins\/alpha\/plugin\.json/);
   assert.equal(git(one, "status", "--porcelain"), "");
 });
 
@@ -213,10 +241,9 @@ test("a directory nobody designed is refused rather than ignored", () => {
   const reports = report(dir, "ingest-report-0", { id: "alpha", version: "0.1.0" });
   fs.mkdirSync(path.join(reports, "ingest-report-0", "policy"), { recursive: true });
   fs.writeFileSync(path.join(reports, "ingest-report-0", "policy", "reserved-ids.json"), "{}\n");
-  assert.throws(
-    () => run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, log: quiet }),
-    /policy\/ is not something the publish job knows how to apply/,
-  );
+  const result = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, log: quiet });
+  assert.equal(result.outcome, "refused");
+  assert.match(result.refusals[0].message, /policy\/ is not something the publish job knows how to apply/);
 });
 
 test("a delayed release reports the queue entry that actually landed", () => {
@@ -228,32 +255,38 @@ test("a delayed release reports the queue entry that actually landed", () => {
   assert.deepEqual(landed.queued, ["state/queue/alpha@0.1.0.json"]);
   assert.ok(git(bare, "ls-tree", "-r", "--name-only", "main").includes("state/queue/alpha@0.1.0.json"));
 
-  // And when the entry does NOT reach the repository, the list is empty — which
-  // is the whole point of reporting it. `comment` tells the author "publishes
-  // itself at 14:00" off this list rather than off the decision, because the
-  // decision is what the bot wanted and the list is what happened. A run
-  // cancelled or conflicted here used to leave that promise standing with no
-  // file behind it and nothing retrying.
+  // And when this run loses the race, the list still describes the repository
+  // rather than the decision. The other run queued the same id@version with
+  // different bytes; this one re-applies on top of it, its entry wins, and
+  // `queued` names the file that is in the pushed commit. The version that
+  // returned `outcome: conflict` here reported `queued: []` without looking at
+  // the tree it had just reset onto — so the author of a release that WAS
+  // queued was told, as a fact, that it was not.
   const other = estate();
   write(other.two, "state/queue/beta@2.0.0.json", '{"from":"the other run"}\n');
   git(other.two, "add", "-A");
   git(other.two, "commit", "-m", "the other run queued beta");
   git(other.two, "push", "origin", "HEAD:main");
   const clash = report(other.dir, "ingest-report-0", { queue: "beta@2.0.0.json" });
-  const refused = run({
+  const second = run({
     root: other.one, reports: clash, watchState: path.join(other.dir, "none"), skipChecks: true, log: quiet,
   });
-  assert.equal(refused.outcome, "conflict");
-  assert.deepEqual(refused.queued ?? [], []);
+  assert.equal(second.outcome, "committed");
+  assert.equal(second.attempts, 2, "the first push loses and the second, re-applied, wins");
+  assert.deepEqual(second.queued, ["state/queue/beta@2.0.0.json"]);
+  assert.equal(
+    git(other.bare, "show", "main:state/queue/beta@2.0.0.json"),
+    "{}",
+    "and the entry in the commit is this run's, which is the one `queued` names",
+  );
 });
 
 test("a queue entry that names no plugin is refused", () => {
   const { dir, one } = estate();
   const reports = report(dir, "ingest-report-0", { queue: "evil.json" });
-  assert.throws(
-    () => run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, log: quiet }),
-    /state\/queue\/evil\.json: has no id/,
-  );
+  const result = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, log: quiet });
+  assert.equal(result.outcome, "refused");
+  assert.match(result.refusals[0].message, /state\/queue\/evil\.json: has no id/);
   assert.equal(git(one, "status", "--porcelain"), "");
 });
 
@@ -307,6 +340,115 @@ test("a rejection that is not a race stops at once, carrying what git said", () 
     lines.filter((l) => l.startsWith("attempt ")).length,
     1,
     `it should not have tried again: ${lines.join(" | ")}`,
+  );
+});
+
+test("eleven reports apply in the order the bot decided them, not in string order", () => {
+  const { dir, one, bare } = estate();
+  // `ingest-report-<strategy.job-index>`, and the index reaches 19 on a busy
+  // drain. A string sort gives 0, 1, 10, 11, …, 2, 3 — so the queue order that
+  // `readQueue` sorted by publish_after was discarded exactly when the queue was
+  // busiest. Here reports 2 and 11 are two ripe releases of ONE plugin, oldest
+  // deadline first, which is the shape that made the old order fatal: applied
+  // backwards, the older one is refused for being older and, before refusals
+  // were isolated, took the other nine plugins in the batch down with it.
+  for (let i = 0; i < 11; i++) report(dir, `ingest-report-${i}`, { id: `p${i}`, version: "1.0.0" });
+  report(dir, "ingest-report-2", { id: "shared", version: "1.9.0", listing: '{"id":"shared","latest":"1.9.0"}\n' });
+  const reports = report(dir, "ingest-report-11", {
+    id: "shared", version: "1.10.0", listing: '{"id":"shared","latest":"1.10.0"}\n',
+  });
+
+  const result = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, log: quiet });
+  assert.equal(result.outcome, "committed");
+  assert.deepEqual(result.refusals, [], "nothing was refused; they arrived in the right order");
+
+  const landed = git(bare, "ls-tree", "-r", "--name-only", "main").split("\n");
+  assert.ok(landed.includes("plugins/shared/versions/1.9.0.json"), landed.join(" "));
+  assert.ok(landed.includes("plugins/shared/versions/1.10.0.json"), landed.join(" "));
+  // Both versions are listed and the NEWER one is what the listing points at,
+  // which is only true if 1.9.0 was written first.
+  assert.equal(git(bare, "show", "main:plugins/shared/plugin.json"), '{"id":"shared","latest":"1.10.0"}');
+});
+
+test("compareReportNames orders by the index, and falls back to text", () => {
+  const names = ["ingest-report-0", "ingest-report-10", "ingest-report-2", "ingest-report-1"];
+  assert.deepEqual(
+    [...names].sort(compareReportNames),
+    ["ingest-report-0", "ingest-report-1", "ingest-report-2", "ingest-report-10"],
+  );
+  // A name with no trailing number still has to order deterministically, and
+  // two names with the same index fall back to the text rather than to
+  // whichever the filesystem happened to list first.
+  assert.deepEqual(["b", "a"].sort(compareReportNames), ["a", "b"]);
+  assert.deepEqual(["x-1", "y-1"].sort(compareReportNames), ["x-1", "y-1"]);
+});
+
+test("one report's refusal is one release's refusal, and the rest of the run lands", () => {
+  const { dir, one, bare } = estate();
+  write(one, "plugins/alpha/versions/0.3.0.json", '{"version":"0.3.0"}\n');
+  git(one, "add", "-A");
+  git(one, "commit", "-m", "alpha 0.3.0 is listed");
+  git(one, "push", "origin", "HEAD:main");
+
+  report(dir, "ingest-report-0", { id: "alpha", version: "0.2.0" });   // refused: older
+  report(dir, "ingest-report-1", { id: "beta", version: "1.0.0" });    // fine
+  const reports = report(dir, "ingest-report-2", { id: "gamma", version: "1.0.0" }); // fine
+
+  const result = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, log: quiet });
+
+  // This is the finding that mattered most: it used to abort the whole process,
+  // so beta and gamma lost their publication because alpha's was stale — and
+  // because the run never committed, the queue entries that caused it were
+  // never removed, so the next drain re-dispatched the identical set and
+  // refused again, hourly, for ever.
+  assert.equal(result.outcome, "committed");
+  assert.equal(result.refusals.length, 1);
+  assert.match(result.refusals[0].message, /not newer than 0\.3\.0/);
+  assert.equal(result.refusals[0].report, "ingest-report-0");
+  const landed = git(bare, "ls-tree", "-r", "--name-only", "main");
+  assert.ok(landed.includes("plugins/beta/plugin.json"), landed);
+  assert.ok(landed.includes("plugins/gamma/plugin.json"), landed);
+  assert.ok(!landed.includes("plugins/alpha/versions/0.2.0.json"), landed);
+});
+
+test("a failed registry check is a refusal of the listing, and leaves the tree as it was", () => {
+  const { dir, one } = estate();
+  // A TRACKED file the report will overwrite, and an untracked one it will
+  // create. Both halves are needed to give the cleanup teeth: `git clean`
+  // removes what was created and only `git reset --hard` restores what was
+  // overwritten, so a test that creates files alone passes with half the
+  // cleanup deleted — which is exactly what the first version of this test did.
+  write(one, "plugins/alpha/plugin.json", '{"id":"alpha","from":"the tree"}\n');
+  git(one, "add", "-A");
+  git(one, "commit", "-m", "alpha is listed");
+  const reports = report(dir, "ingest-report-0", {
+    id: "alpha", version: "0.1.0", listing: '{"id":"alpha","from":"the report"}\n',
+  });
+  // `skipChecks: false` against a toy repository: `registryChecks` shells
+  // `node tools/validate.mjs` with this tree as cwd and there is no such file,
+  // which stands in for the real thing — a derived listing that this
+  // repository's own validator refuses. What is being asserted is the SHAPE of
+  // the failure, not the validator: it arrives as ChecksFailed rather than as
+  // an anonymous Error, so the CLI can exit 1 "refused" instead of 2 "the bot
+  // broke" while writing `outcome=refused` — three answers to one question,
+  // which is what it did before.
+  let err;
+  try {
+    run({ root: one, reports, watchState: path.join(dir, "none"), log: quiet });
+  } catch (e) {
+    err = e;
+  }
+  assert.ok(err, "a failing check must not be swallowed");
+  assert.equal(err.name, "ChecksFailed");
+  assert.equal(
+    git(one, "status", "--porcelain"),
+    "",
+    "the created files are gone: this is the only path that could leave the tree dirty",
+  );
+  assert.equal(
+    fs.readFileSync(path.join(one, "plugins/alpha/plugin.json"), "utf8"),
+    '{"id":"alpha","from":"the tree"}\n',
+    "and the overwritten file is the tree's again, not the report's",
   );
 });
 
