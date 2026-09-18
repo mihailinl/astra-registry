@@ -111,3 +111,10 @@ jobs:
 
       - name: The publication policy's tests, including its published numbers
         run: node bot/tests/policy.test.mjs
+
+      # What the workflow files may and may not say: which job can reach the
+      # signing key, whether a shell re-derives the plugin-id predicate, whether
+      # a dispatch can name a submitter. Properties of the YAML, so no other
+      # suite can hold them (registry plan B-T0.3, B-T0.5, B-T0.6).
+      - name: The workflow files' own tests
+        run: node --test bot/tests/workflows.test.mjs

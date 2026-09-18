@@ -84,17 +84,13 @@ on:
     # so paying for it more often would buy minutes on a path that is already
     # measured in days.
     - cron: '41 5 * * *'
+  # No inputs, deliberately (registry plan B-T0.6). A dispatch used to take a
+  # repository, a tag and a LOGIN whose ownership would then be re-proved — so
+  # whoever could press the button chose whose authority the run would check.
+  # A no-input dispatch runs what the crons run: the publication drain and the
+  # release backstop. To re-ingest one release, ping it with a `[release]` issue
+  # or `/recheck` it, which both carry an author GitHub asserts.
   workflow_dispatch:
-    inputs:
-      repo:
-        description: 'Source repository (owner/name)'
-        required: true
-      tag:
-        description: 'Release tag'
-        required: true
-      submitter:
-        description: 'GitHub login whose control of the repository is checked'
-        required: true
 
 permissions: {}
 
@@ -339,10 +335,9 @@ jobs:
           COMMENT_BODY: ${{ github.event.comment.body }}
           DISPATCH_REPO: ${{ github.event.client_payload.repo }}
           DISPATCH_TAG: ${{ github.event.client_payload.tag }}
-          DISPATCH_SUBMITTER: ${{ github.event.client_payload.submitter }}
-          INPUT_REPO: ${{ github.event.inputs.repo }}
-          INPUT_TAG: ${{ github.event.inputs.tag }}
-          INPUT_SUBMITTER: ${{ github.event.inputs.submitter }}
+          # `client_payload.submitter` is deliberately not read: a dispatch
+          # carries no authority, so the submitter is resolved from the release
+          # itself below (AV-5; INV-6).
         run: |
           set -euo pipefail
           printf '%s' "$ISSUE_BODY" > issue-body.md
@@ -363,15 +358,26 @@ jobs:
 
           case "$EVENT" in
             workflow_dispatch)
-              one_target "$INPUT_REPO" "$INPUT_TAG" "$INPUT_SUBMITTER"
+              # The drain and the backstop, exactly as the crons run them.
+              node bot/watch.mjs --drain --out out
+              node bot/watch.mjs --watch --out out
+              echo "watch=true" >> "$GITHUB_OUTPUT"
               ;;
 
             repository_dispatch)
               # Where the GitHub App upgrade lands. A dispatch carries
               # owner/repo/tag and no authority; the submitter it names is the
-              # account that published the release, and is proved against
-              # GitHub downstream exactly like every other path's.
-              one_target "$DISPATCH_REPO" "$DISPATCH_TAG" "$DISPATCH_SUBMITTER"
+              # account that published the release, read from the release here
+              # rather than taken from the payload, and proved against GitHub
+              # downstream exactly like every other path's.
+              submitter="$(node -e '
+                const [repo, tag] = process.argv.slice(1);
+                Promise.all([import("./bot/lib/notify.mjs"), import("./bot/lib/github.mjs")])
+                  .then(([notify, gh]) => notify.resolveSubmitter(repo, tag, gh.fetchRelease))
+                  .then((login) => process.stdout.write(login))
+                  .catch((e) => { console.error(`::error::${e.message}`); process.exit(1); });
+              ' "$DISPATCH_REPO" "$DISPATCH_TAG")"
+              one_target "$DISPATCH_REPO" "$DISPATCH_TAG" "$submitter"
               ;;
 
             schedule)
@@ -949,7 +955,11 @@ jobs:
                   *) echo "::error::$rel is not a listing file"; exit 1 ;;
                 esac
                 id="$(printf '%s' "$rel" | cut -d/ -f2)"
-                printf '%s' "$id" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$' \
+                # One implementation of what a plugin id is, in `tools/lib/ids.mjs`.
+                # The `grep -Eq` copy that used to live here made the second
+                # character group optional and so admitted a one-character id
+                # that the rest of the registry refuses (B-T0.5).
+                node tools/lib/ids.mjs --check "$id" \
                   || { echo "::error::$id is not a plugin id"; exit 1; }
               done < <(find "$dir/plugins" -type f)
               cp -r "$dir/plugins/." plugins/

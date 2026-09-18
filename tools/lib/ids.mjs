@@ -247,3 +247,27 @@ export function unsafeDisplayText(s) {
   }
   return null;
 }
+
+// ── one entry point, so a shell never re-derives this ────────────────────────
+//
+// `ingest.yml`'s publish guard used to carry its own copy of the charset as a
+// `grep -Eq` pattern, and the copy was wrong in the way copies are: it made the
+// second character group optional, so it admitted a one-character id that this
+// file has always refused (registry plan B-T0.5; ROLL-51, ID-65). A predicate
+// that decides what becomes a directory on a stranger's disk gets exactly one
+// implementation.
+//
+//   node tools/lib/ids.mjs --check <id>   # exit 0 accepted, 1 refused with a reason
+if (import.meta.filename === process.argv[1]) {
+  const [flag, id] = process.argv.slice(2);
+  if (flag !== "--check" || id === undefined) {
+    console.error("usage: node tools/lib/ids.mjs --check <id>");
+    process.exit(2);
+  }
+  const why = invalidId(id);
+  if (why) {
+    console.error(`${JSON.stringify(id)} is not a plugin id: ${why}`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
