@@ -39,9 +39,11 @@
 // click, which the reply names. What the bot must never do is stay quiet.
 
 import { firstWrittenLine } from "./notify.mjs";
+import { TAG_CHARSET, TAG_MAX, TAG_PATTERN } from "../../tools/lib/tags.mjs";
 
 const REPO_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
-const TAG_RE = /^[A-Za-z0-9._/-]{1,128}$/;
+// One place decides what a tag is: tools/lib/tags.mjs.
+const TAG_RE = new RegExp(TAG_PATTERN);
 const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 
 /** The label that turns an issue into a submission this bot will act on. */
@@ -135,7 +137,12 @@ export function parseMaintainerCommand(text) {
  * A tag may contain `/` and `.` but never `@`, which is what makes the split
  * unambiguous without asking the author's issue body where it is.
  */
-const APPROVE_BINDING_RE = /^([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)@([A-Za-z0-9._/-]{1,128})\s+([0-9a-fA-F]{16})$/;
+// The tag half is built from the shared charset rather than typed again:
+// this grammar is the reason a tag may not contain `@`, so it is the last
+// place that should carry its own idea of what a tag looks like.
+const APPROVE_BINDING_RE = new RegExp(
+  `^([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)@(${TAG_CHARSET}{1,${TAG_MAX}})\\s+([0-9a-fA-F]{16})$`,
+);
 
 // ── is this issue a listing request at all? ─────────────────────────────────
 

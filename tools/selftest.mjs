@@ -3014,6 +3014,63 @@ await test("only tools/lib/ids.mjs says what a plugin id is", async () => {
     "a second implementation of the plugin-id pattern; tools/lib/ids.mjs is the one that decides");
 });
 
+// One implementation of what a release TAG is, and a schema that agrees with it.
+//
+// A tag arrives from a stranger and is used four ways: to fetch a release, as
+// part of the queue and decision records, as text echoed into a public comment,
+// and as half of the `owner/repo@tag` binding a maintainer types. It was written
+// out five times — bot/ingest.mjs, bot/lib/notify.mjs, bot/lib/intake.mjs twice
+// (once inside the approval grammar) and once more as a `pattern` in
+// schema/version-v1.json — with nothing comparing them. All five agreed, which
+// is what a coupling looks like the day before it stops agreeing.
+//
+// Found by measuring, not by reading: minice-be reported its own sender refusing
+// `pkg@1.2.3`, and asking what THIS side does with that tag is what turned up
+// the five copies.
+await test("only tools/lib/tags.mjs says what a release tag is", async () => {
+  const OWNER = path.join("tools", "lib", "tags.mjs");
+  const allowed = new Set([OWNER, path.join("tools", "selftest.mjs")]);
+  const offenders = [];
+  for (const file of walkRepo()) {
+    const rel = path.relative(REPO_ROOT, file);
+    if (!rel.endsWith(".mjs") || allowed.has(rel) || rel.includes(`${path.sep}tests${path.sep}`)) continue;
+    let text;
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    text.split("\n").forEach((line, i) => {
+      if (/\[A-Za-z0-9\._\/-\][^\n]*\{1,\s*128\}/.test(line)) offenders.push(`${rel}:${i + 1}`);
+    });
+  }
+  assertEqual(offenders.join(", "), "",
+    "a second implementation of the release-tag pattern; tools/lib/tags.mjs is the one that decides");
+});
+
+await test("the version schema's tag rule is the same rule, asserted by behaviour", async () => {
+  const { isTag, TAG_MAX } = await import("./lib/tags.mjs");
+  const schema = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "schema/version-v1.json"), "utf8"));
+  // Located rather than searched for: a fallback that hunts the tree for
+  // something tag-shaped would keep passing after somebody moved the field,
+  // which is the failure this test is for.
+  const rule = schema.properties?.release?.properties?.tag;
+  assert(rule && rule.pattern, "schema/version-v1.json no longer states a tag pattern");
+  const re = new RegExp(rule.pattern);
+  const max = rule.maxLength ?? Infinity;
+  // Compared by BEHAVIOUR rather than by string, because the two are allowed to
+  // spell the bound differently — the module puts `{1,128}` in the pattern and
+  // the schema carries `maxLength` beside a `+`. What must not differ is the
+  // answer, so the answers are compared on the cases that sit on each edge.
+  const probes = [
+    "v1.2.3", "feature/x-1.0", "a", "a".repeat(TAG_MAX), "a".repeat(TAG_MAX + 1),
+    "", "pkg@1.2.3", "@scope/pkg@1.2.3", "релиз-1.2.0", "v1.2.3 ", "v1.2.3\n", "tag with space",
+  ];
+  const disagreements = probes.filter((t) => isTag(t) !== (re.test(t) && t.length <= max && t.length >= 1));
+  assertEqual(JSON.stringify(disagreements), "[]",
+    "schema/version-v1.json and tools/lib/tags.mjs disagree about these tags");
+});
+
 // The withdrawal list must have exactly one signer. The workflow that was the
 // second one failed on every run it ever made and was deleted at R0; `sign.yml`
 // takes that path at R1. This fails the day a second one appears.

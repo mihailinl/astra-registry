@@ -65,6 +65,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { compareSemver, parseSemver } from "../../tools/lib/semver.mjs";
+import { TAG_PATTERN } from "../../tools/lib/tags.mjs";
 import { STATE_DIR } from "./policy.mjs";
 
 /** `state/releases-seen.json` — one row per watched repository. */
@@ -77,7 +78,8 @@ export const WATCH_AFTER_DAYS = 7;
 export const WATCH_BATCH = 100;
 
 const REPO_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
-const TAG_RE = /^[A-Za-z0-9._/-]{1,128}$/;
+// One place decides what a tag is: tools/lib/tags.mjs.
+const TAG_RE = new RegExp(TAG_PATTERN);
 const DAY_MS = 86400 * 1000;
 
 /**

@@ -46,6 +46,7 @@ import { runValidation } from "../tools/validate.mjs";
 import { loadSources, loadPolicy, REPO_ROOT } from "../tools/lib/sources.mjs";
 import { compareSemver, parseSemver } from "../tools/lib/semver.mjs";
 import { SUPPORTED_KEYS } from "../tools/lib/platform.mjs";
+import { TAG_PATTERN } from "../tools/lib/tags.mjs";
 
 import { inspectBundle } from "./lib/bundle.mjs";
 import { CODES, LEVEL_GLYPH, codeDef } from "./lib/codes.mjs";
@@ -59,7 +60,8 @@ import { runProbe } from "./lib/probe.mjs";
 import { scanHostRpcs } from "./lib/rpcscan.mjs";
 
 const REPO_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
-const TAG_RE = /^[A-Za-z0-9._/-]{1,128}$/;
+// One place decides what a tag is: tools/lib/tags.mjs.
+const TAG_RE = new RegExp(TAG_PATTERN);
 
 /**
  * The reusable workflow every listed plugin is built by, in the form
