@@ -245,6 +245,7 @@ export function applyReport(root, reportDir, state) {
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.copyFileSync(path.join(reportDir, rel), target);
     state.touchedIds.add(idOfPath(rel));
+    if (QUEUE_FILE.test(rel)) state.queued.push(rel);
     state.changed = true;
   }
 
@@ -276,7 +277,13 @@ export function applyReport(root, reportDir, state) {
  * version rules above are only true of the tree they were checked against.
  */
 export function applyAll(root, { reports, watchState, dropWatchState = false }) {
-  const state = { changed: false, touchedIds: new Set(), removals: [], watchState: false };
+  const state = {
+    changed: false,
+    touchedIds: new Set(),
+    removals: [],
+    queued: [],
+    watchState: false,
+  };
 
   // The etag memory the backstop wrote. Not derived from anything a stranger
   // controls beyond an HTTP header, and it is a cache: the worst a bad value
@@ -358,9 +365,15 @@ export function run({
       watchState: abs(watchState),
       dropWatchState,
     });
+    // The queue entries this run is answerable for: the ones that are on disk
+    // when it settles. `comment` promises an author "publishes itself at 14:00"
+    // and that promise is only true if the file that makes it true reached the
+    // repository — so the promise is made from this list, not from the decision.
+    const queued = () => state.queued.filter((rel) => fs.existsSync(path.join(root, rel)));
+
     if (!state.changed) {
       log("nothing to apply");
-      return { outcome: "nothing", attempts: attempt, touchedIds: [] };
+      return { outcome: "nothing", attempts: attempt, touchedIds: [], queued: [] };
     }
 
     if (!skipChecks) registryChecks(root, log);
@@ -375,18 +388,18 @@ export function run({
     if (pathspecs.length > 0) git(root, ["add", "-A", ...pathspecs], { stdio: "pipe" });
     if (git(root, ["diff", "--cached", "--name-only"]) === "") {
       log("nothing to commit");
-      return { outcome: "nothing", attempts: attempt, touchedIds: [...state.touchedIds] };
+      return { outcome: "nothing", attempts: attempt, touchedIds: [...state.touchedIds], queued: queued() };
     }
     git(root, ["commit", "-m", message, ...(trailer ? ["-m", trailer] : [])], { stdio: "pipe" });
 
     if (!push) {
-      return { outcome: "committed", attempts: attempt, touchedIds: [...state.touchedIds] };
+      return { outcome: "committed", attempts: attempt, touchedIds: [...state.touchedIds], queued: queued() };
     }
 
     try {
       git(root, ["push", remote, `HEAD:${branch}`], { stdio: "pipe" });
       log(`pushed on attempt ${attempt}`);
-      return { outcome: "committed", attempts: attempt, touchedIds: [...state.touchedIds] };
+      return { outcome: "committed", attempts: attempt, touchedIds: [...state.touchedIds], queued: queued() };
     } catch {
       log(`push refused on attempt ${attempt}; reading what landed`);
     }
@@ -453,6 +466,7 @@ function record(result) {
     `attempts=${result.attempts ?? 0}`,
     `changed=${result.outcome === "committed" ? 1 : 0}`,
     `conflicts=${(result.conflicts ?? []).join(" ")}`,
+    `queued=${(result.queued ?? []).join(" ")}`,
   ];
   try {
     fs.appendFileSync(out, `${lines.join("\n")}\n`);

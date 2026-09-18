@@ -1957,36 +1957,73 @@ await test("no event can cancel an ingest that is already running", async () => 
   assert(/group:/.test(block), block);
 });
 
-await test("everything on one issue shares one concurrency key", async () => {
-  // This replaced an assertion that a comment must key on ITSELF
-  // (`comment-<id>`). That was wrong in a way `cancel-in-progress: false` hides:
-  // GitHub keeps one running and one PENDING run per group, and a third arrival
-  // replaces the pending one. A per-comment key does not remove that — it turns
-  // every comment into its own run, and all of those runs' `publish` jobs then
-  // queue on the single repo-wide `registry-publish` group, where the same rule
-  // now applies between different authors. `/release <listed-repo> <tag>`
-  // requires no authority at all, so a stranger could drop somebody else's
-  // pending publish at will.
+await test("a maintainer's decision gets its own lane; everything else shares the issue's", async () => {
+  // Read the two sentences this replaces before changing it back, because this
+  // assertion has now been inverted twice and each inversion was right at the
+  // time.
   //
-  // Sharing the issue's key does not make a pending run uncancellable. It makes
-  // the run that cancels it another event on the SAME submission, which the
-  // replacing run redoes from scratch.
+  // It first said a comment must key on ITSELF (`comment-<id>`). That was wrong
+  // in a way `cancel-in-progress: false` hides: GitHub keeps one running and one
+  // PENDING run per group, and a third arrival replaces the pending one. A
+  // per-comment key did not remove that — it turned every comment into its own
+  // run, and all of those runs' `publish` jobs then queued on the single
+  // repo-wide `registry-publish` group, where the same rule applies BETWEEN
+  // AUTHORS. `/release <listed-repo> <tag>` requires no authority at all, so a
+  // stranger could drop somebody else's pending publish at will.
+  //
+  // It then said everything on one issue must share one key, which was right
+  // for exactly as long as that repo-wide lane existed.
+  //
+  // The lane is gone (registry plan B-T0.3): `publish` has no `concurrency:`,
+  // because `bot/publish-apply.mjs` makes two publishes racing a survivable
+  // event. So the premise of the second sentence is gone with it, and the
+  // decision commands take their own key — `/approve`, `/publish` and `/reject`
+  // are SPENT comments that GitHub will not redeliver, so a run replaced while
+  // pending takes the decision with it and nobody is told. Everything else still
+  // shares the issue's key, so an edit storm is still bounded.
   const block = topLevelBlock(ingestWorkflow, "concurrency");
-  assert(!/github\.event\.comment\.id/.test(block),
-    `a per-comment key moves the collision to the repo-wide publish lane, where a stranger can cause it:\n${block}`);
+  assert(/github\.event\.comment\.id/.test(block),
+    `a spent /approve must not share a lane with the next event on the issue:\n${block}`);
   assert(/github\.event\.issue\.number/.test(block),
-    `every event on an issue has to share one lane:\n${block}`);
+    `every other event on an issue has to share one lane:\n${block}`);
+  for (const command of ["/approve", "/publish", "/reject"]) {
+    assert(block.includes(command),
+      `the per-comment key must be gated on the decision commands; ${command} is not named:\n${block}`);
+  }
+  // And the gate is what keeps a stranger's `/release` ping out of its own lane:
+  // a key nobody can aim is the whole reason the per-comment key is safe now.
+  assert(!block.includes("/release"),
+    `a ping that needs no authority must not get its own lane:\n${block}`);
 });
 
-await test("the job that commits still refuses to be cancelled or doubled", async () => {
-  // The only job that writes to the catalogue, serialised. Note what this does
-  // NOT promise: a pending `publish` can still be replaced by a newer one, so
-  // the durable fix is recovery — the hourly drain reconciling a promised
-  // `publish_after` against `state/queue/` — not a concurrency key. The header
-  // comment in ingest.yml says so rather than claiming the hazard is gone.
-  assert(/group:\s*registry-publish/.test(ingestWorkflow), "");
-  const after = ingestWorkflow.slice(ingestWorkflow.indexOf("group: registry-publish"));
-  assert(/^\s*cancel-in-progress:\s*false/m.test(after.slice(0, 200)), after.slice(0, 200));
+await test("the job that commits queues behind nobody, and handles the race itself", async () => {
+  // This asserted the opposite until B-T0.3: `group: registry-publish,
+  // cancel-in-progress: false`, the only job that writes to the catalogue,
+  // serialised. Its own comment named what that did not promise — a pending
+  // `publish` could still be replaced by a newer one — and said the durable fix
+  // was recovery rather than a key. This is that fix: the lane is gone, and two
+  // publishes racing to push now end in a re-apply or a refusal, in
+  // `bot/publish-apply.mjs`, instead of one of them never starting.
+  //
+  // `bot/tests/workflows.test.mjs` asserts the same absence by scanning the
+  // publish job's block. The overlap is deliberate and small: that suite runs
+  // only in `bot-tests.yml`, and this one also runs inside `ingest.yml` before
+  // every ingest, which is the run where being wrong about this costs a
+  // publication.
+  // Comment lines are skipped, and not as a convenience: the job's own comment
+  // names the group it used to have, so that somebody reading the YAML learns
+  // why it is absent. A scan of the raw file would make that explanation
+  // indistinguishable from the thing it explains — the same trap that caught
+  // `tools/selftest.mjs`'s signer rule and `workflows.test.mjs`'s submitter
+  // rule, both of which now skip comments for this reason.
+  const lane = ingestWorkflow
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("#"))
+    .filter((l) => /group:\s*registry-publish/.test(l));
+  assertEqual(lane.join(" | "), "",
+    "the repo-wide publish lane is back; a stranger's ping can drop another author's pending publish");
+  assert(/node bot\/publish-apply\.mjs/.test(ingestWorkflow),
+    "the publish job no longer goes through the file that makes a racing push survivable");
 });
 
 // ── the close on a publication ──────────────────────────────────────────────

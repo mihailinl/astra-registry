@@ -42,13 +42,54 @@ test("no workflow carries its own plugin-id pattern", () => {
   assert.equal(offenders.join(", "), "", "a workflow re-derives what a plugin id is");
 });
 
-test("the publish guard asks ids.mjs", () => {
-  const ingest = read("ingest.yml");
+// The publish path asks `tools/lib/ids.mjs` what a plugin id is. Where that
+// question is asked moved in B-T0.3 — out of a shell block in `ingest.yml` and
+// into `bot/publish-apply.mjs`, which imports the module rather than shelling
+// out to it — so this test moved with it rather than being deleted. A coupling
+// test that is removed because the code it watched was refactored is how a
+// coupling stops being checked without anybody deciding that it should.
+test("the publish path asks ids.mjs, wherever it lives", () => {
+  const applier = fs.readFileSync(path.join(REPO, "bot", "publish-apply.mjs"), "utf8");
   assert.match(
-    ingest,
-    /node tools\/lib\/ids\.mjs --check/,
-    "ingest.yml no longer calls the one id predicate at its publish guard",
+    applier,
+    /from "\.\.\/tools\/lib\/ids\.mjs"/,
+    "bot/publish-apply.mjs no longer asks the one id predicate what an id is",
   );
+  assert.match(
+    read("ingest.yml"),
+    /node bot\/publish-apply\.mjs/,
+    "ingest.yml's publish job no longer goes through publish-apply.mjs",
+  );
+});
+
+// B-T0.3. The `publish` job had `concurrency: { group: registry-publish }`,
+// which serialised commits and in exchange let a stranger's release ping
+// replace another author's PENDING publish — GitHub keeps one pending run per
+// group. Racing publishes are handled in `publish-apply.mjs` now; a group here
+// would bring the hazard back with nothing saying so.
+test("the publish job serialises nothing", () => {
+  const lines = read("ingest.yml").split("\n");
+  const at = lines.findIndex((l) => /^  publish:/.test(l));
+  assert.ok(at >= 0, "ingest.yml has no publish job");
+  let end = at + 1;
+  while (end < lines.length && !/^  \S/.test(lines[end])) end++;
+  const offenders = lines
+    .slice(at, end)
+    .map((l, i) => [l, at + i + 1])
+    .filter(([l]) => /^\s+concurrency:/.test(l))
+    .map(([, n]) => `ingest.yml:${n}`);
+  assert.equal(offenders.join(", "), "", "the publish job is in a concurrency group again");
+});
+
+// The promise "publishes itself at 14:00" is made by `comment` and made true by
+// `publish`. While they ran side by side, an author could be told a time by a
+// run whose queue entry never reached the repository, and nothing retried it.
+test("comment waits for publish", () => {
+  const lines = read("ingest.yml").split("\n");
+  const at = lines.findIndex((l) => /^  comment:/.test(l));
+  assert.ok(at >= 0, "ingest.yml has no comment job");
+  const needs = lines.slice(at, at + 12).find((l) => /^\s+needs:/.test(l));
+  assert.match(needs ?? "", /publish/, "comment no longer waits for the job that makes its promise true");
 });
 
 // B-T0.6 (AV-5, INV-6, OPEN-OPS-6). A dispatch that names a submitter lets

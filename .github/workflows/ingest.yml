@@ -133,41 +133,56 @@ permissions: {}
 # protects the running job and says nothing about the pending one.
 #
 # That property is unavoidable, so the only question is what shares a key with
-# what — and the per-comment key answered it the wrong way. It made every
-# comment its own workflow run, so N comments started N parallel ingests, and
-# all N of their `publish` jobs then queued on the single repo-wide
-# `registry-publish` group, where the same replace-the-pending-one rule applies
-# but now BETWEEN STRANGERS. A `/release <listed-repo> <tag>` ping needs no
-# authority at all, so anyone could keep that lane churning and drop somebody
-# else's pending publish. The hazard did not go away when it left this key; it
-# moved from per-issue and bounded to repo-wide and third-party-triggerable.
+# what — and for as long as the `publish` job carried a repo-wide
+# `registry-publish` group, a per-comment key answered it the wrong way. It made
+# every comment its own workflow run, so N comments started N parallel ingests,
+# and all N of their `publish` jobs then queued on that single group, where the
+# same replace-the-pending-one rule applies but now BETWEEN STRANGERS. A
+# `/release <listed-repo> <tag>` ping needs no authority at all, so anyone could
+# keep that lane churning and drop somebody else's pending publish. The hazard
+# did not go away when it left this key; it moved from per-issue and bounded to
+# repo-wide and third-party-triggerable.
 #
-# So `issue_comment` shares the issue's key again. A superseded pending run is
-# then always another event on the SAME submission — an edit, a second
-# `/recheck` — which is a duplicate of work the replacing run redoes from
-# scratch, rather than a different author's release.
+# **That lane is gone** (registry plan B-T0.3). `publish` has no `concurrency:`
+# at all, because `bot/publish-apply.mjs` now makes two publish jobs racing to
+# push a survivable event rather than a lost one: the loser re-applies against
+# what landed, re-runs every check, and pushes again — or, if the other commit
+# touched the same listing, ends with no commit and says so on the thread.
 #
-# What this does NOT fix, said plainly, because the comment it replaces claimed
-# a hazard was eliminated when it had only been relocated: an `/approve` that
-# arrives while an ingest for the same issue is pending still replaces it, and
-# any run's `publish` can still be dropped while pending on `registry-publish`.
-# `comment` does not depend on `publish` (both are `needs: [triage, check]`), so
-# an author can be told "publishing itself at 14:00" by a run whose queue entry
-# never reached the repository. The fix for that is recovery rather than a key:
-# the hourly drain should reconcile decisions that promised a `publish_after`
-# and have no `state/queue/` entry. Until it does, a publish can still be lost,
-# and the honest statement is that this key makes such a loss same-submission
-# instead of cross-author.
+# So the premise of the paragraph above no longer holds, and the key moves with
+# it. A maintainer's decision — `/approve`, `/publish`, `/reject` — gets its own
+# `ingest-cmd-<comment id>` key, because that comment is SPENT: GitHub will not
+# redeliver it, so a run that is replaced while pending takes the decision with
+# it and nobody is told. Everything else still shares the issue's key, so an
+# edit storm is still bounded to one running plus one pending run, and a
+# superseded pending run is still another event on the SAME submission.
+#
+# What this does NOT fix, said plainly, because two versions of this comment
+# have now claimed a hazard was eliminated when it had only been relocated: a
+# maintainer who comments `/approve` twice within seconds can still have the
+# first run replaced while pending — same key, same submission, and the second
+# `/approve` does the same work. And a `/recheck` arriving while an ingest for
+# the same issue is pending still replaces it. Both are duplicates of work the
+# replacing run redoes from scratch. What is no longer true is the sentence this
+# replaces: a publish can no longer be lost, and an author is no longer told
+# "publishing itself at 14:00" by a run whose queue entry never reached the
+# repository — `comment` needs `publish` and makes that promise from the entry
+# that landed, not from the decision that wanted to.
 concurrency:
   # Folded to one line: every continuation below is at the same indentation as
   # the first, which is what makes YAML join them with spaces rather than keep
   # the newlines. An expression with a newline inside `${{ }}` is not worth
   # finding out about on a live run.
   group: >-
-    ingest-${{ github.event.issue.number
+    ${{ (github.event_name == 'issue_comment'
+    && (startsWith(github.event.comment.body, '/approve')
+    || startsWith(github.event.comment.body, '/publish')
+    || startsWith(github.event.comment.body, '/reject')))
+    && format('ingest-cmd-{0}', github.event.comment.id)
+    || format('ingest-{0}', github.event.issue.number
     || github.event.client_payload.repo
     || github.event.schedule
-    || github.run_id }}
+    || github.run_id) }}
   cancel-in-progress: false
 
 env:
@@ -744,7 +759,14 @@ jobs:
   # high-risk permission is delayed, so every one of those is announced 24 hours
   # before it happens.
   comment:
-    needs: [triage, check]
+    # `needs: publish` costs this job the publish job's few minutes, and buys the
+    # one thing a delay notice has to be: true. `comment` used to run beside
+    # `publish`, so an author could be told "publishing itself at 14:00" by a run
+    # whose queue entry never reached the repository — nothing retries that, and
+    # the only record of the release was a comment promising it would appear.
+    # The promise is now made from `publish`'s `queued` output: the entries that
+    # are in the pushed commit, not the ones the decision wanted.
+    needs: [triage, check, publish]
     if: always() && needs.triage.outputs.targets != '[]'
     runs-on: ubuntu-24.04
     permissions:
@@ -759,10 +781,34 @@ jobs:
       - uses: actions/github-script@v7
         env:
           ISSUE: ${{ needs.triage.outputs.issue }}
+          # What `publish` actually got onto `main`, and how it ended. Both are
+          # read as facts about the repository, never as a restatement of the
+          # decision: `outcome` is `committed`, `nothing`, `conflict` or
+          # `refused`, and `queued` is the queue entries that are in the tree.
+          PUBLISH_OUTCOME: ${{ needs.publish.outputs.outcome }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+          QUEUED: ${{ needs.publish.outputs.queued }}
         with:
           script: |
             const fs = require("node:fs");
             const issue = Number(process.env.ISSUE) || null;
+
+            // A delayed release is a promise with a file behind it. When the
+            // file is not in the pushed commit the promise is false, and saying
+            // so is the whole reason this job now waits for `publish`.
+            const queued = (process.env.QUEUED || "").split(" ").filter(Boolean);
+            const landed = (d) => queued.includes(`state/queue/${d.id}@${d.version}.json`);
+            const why =
+              process.env.PUBLISH_OUTCOME === "conflict"
+                ? "another commit changed the same listing while this run was working"
+                : `the publish job ended as \`${process.env.PUBLISH_OUTCOME || process.env.PUBLISH_RESULT || "unknown"}\``;
+            const notQueued =
+              "\n\n---\n\n**This release is not waiting to publish.** The delay above describes " +
+              "what was decided; the file that would make it happen \u2014 " +
+              "`state/queue/<id>@<version>.json` \u2014 is not in this repository, because " +
+              `${why}. Nothing retries this on its own: comment \`/recheck\` on this issue, ` +
+              "or ping the release again, and the decision is taken from scratch against the " +
+              "release as it is now.";
             let dirs = [];
             try {
               dirs = fs.readdirSync("reports").sort();
@@ -832,14 +878,22 @@ jobs:
               // the thread that asked for it instead of in a new one.
               const thread = issue || Number(decision.issue) || null;
 
+              // A delay is only true if the file that makes it true is in the
+              // pushed commit. When it is not, the author reads that instead of
+              // a time nothing is waiting for.
+              const delayed = decision.outcome === "delay";
+              const text = delayed && !landed(decision) ? body + notQueued : body;
+
               if (thread) {
-                await post(thread, body);
+                await post(thread, text);
                 continue;
               }
-              if (decision.outcome !== "delay" && decision.outcome !== "review") continue;
+              if (!delayed && decision.outcome !== "review") continue;
 
-              const what = decision.outcome === "delay"
-                ? `publishes itself at ${decision.publish_after}`
+              const what = delayed
+                ? (landed(decision)
+                    ? `publishes itself at ${decision.publish_after}`
+                    : "did NOT reach the publication queue")
                 : "is held for a maintainer";
               await github.rest.issues.create({
                 owner: context.repo.owner,
@@ -851,7 +905,7 @@ jobs:
                   "**If you did not publish this release, say so here now.** This notice, and the " +
                   "delay it describes, are the only defence this registry has against a compromised " +
                   "author account (PRODUCTION_PLAN §5.5), and they only work if somebody reads them.\n\n" +
-                  body,
+                  text,
               });
             }
 
@@ -877,15 +931,28 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
-    # Never two commits to the catalogue at once, and never cancel one that is
-    # already pushing.
-    concurrency:
-      group: registry-publish
-      cancel-in-progress: false
+    # No `concurrency:` here, deliberately. It used to be
+    # `group: registry-publish, cancel-in-progress: false`, which serialised
+    # commits and, in exchange, let any stranger's release ping replace another
+    # author's PENDING publish — GitHub keeps one pending run per group. Two
+    # publishes racing is now handled where the race actually is, in
+    # `bot/publish-apply.mjs`, which re-applies and re-checks against whatever
+    # landed, or refuses when the other commit touched the same listing.
+    outputs:
+      outcome: ${{ steps.apply.outputs.outcome }}
+      queued: ${{ steps.apply.outputs.queued }}
+      conflicts: ${{ steps.apply.outputs.conflicts }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # Every job in this run reads the same tree, and `publish-apply` takes
+          # that commit as its base: what it compares against, when a push is
+          # refused, to decide whether the other commit is a conflict or
+          # somebody else's plugin. Without the pin, each job clones whatever
+          # `main` happens to be when it starts, and "what changed since my
+          # base" has no answer.
+          ref: ${{ github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -902,167 +969,45 @@ jobs:
           path: watch-state
         continue-on-error: true
 
-      - name: Apply the decisions
+      # One step, because the apply, the checks and the push are one decision:
+      # a tree that passed every rule is only worth pushing onto the commit it
+      # was checked against, and when that commit is no longer the tip the whole
+      # decision has to be taken again. The shell this replaces could not do
+      # that — it ended with
+      #
+      #     git push || { git pull --rebase --autostash && git push; }
+      #
+      # which re-applies the commit onto whatever landed and pushes it WITHOUT
+      # re-running validate, build-index or selftest. The index in that commit
+      # then describes the tree the job built on rather than the one it landed
+      # on, and `build-index.yml` asserts on every push that the committed index
+      # is byte-identical to a fresh generation — so the red build appeared on
+      # the next person's commit.
+      #
+      # `bot/publish-apply.mjs` carries the checks that used to be the three
+      # steps below this one, in the same order and for the same reasons (the
+      # listings are validated BEFORE the index is regenerated; the index is
+      # checked only once it describes this tree). Its own tests are
+      # `bot/tests/publish-apply.test.mjs`, which builds two clones and a bare
+      # remote, because every property here is a property of a race.
+      #
+      # Exit codes: 0 committed or nothing to do, 1 refused, 2 the bot broke,
+      # 3 another commit touched the same listing and nothing was committed.
+      - name: Apply the decisions, hold them to the rules, and push
         id: apply
-        run: |
-          set -euo pipefail
-          changed=0
-
-          # The etag memory the backstop wrote. Not derived from anything a
-          # stranger controls beyond an HTTP header, and it is a cache: the
-          # worst a bad value does is cost one extra poll.
-          if [ -d watch-state ]; then
-            mkdir -p state
-            cp -r watch-state/. state/
-            changed=1
-          fi
-
-          for dir in reports/*/; do
-            [ -d "$dir" ] || continue
-            # `reports/*/` globs WITH a trailing slash, so `$dir/plugins` is
-            # `reports/1//plugins`, `find` prints that doubled separator back
-            # verbatim, and `${p#"$dir"}` then leaves a LEADING SLASH on every
-            # path — `/plugins/x/plugin.json`, which matches neither shape
-            # pattern below. Both guards therefore rejected every file they
-            # were ever handed, and the zero-touch publication this workflow
-            # exists to perform had never once run to completion: the first
-            # listing reached the catalogue through a hand-opened pull request,
-            # so nothing had exercised this path. Normalise once, here, rather
-            # than making each use remember.
-            dir="${dir%/}"
-
-            # ── the shape check ───────────────────────────────────────────
-            # A listing directory is `plugins/<id>/` with `plugin.json` and
-            # `versions/<semver>.json` under it, plus the two presentation
-            # files the bot lifts out of the attested bundle — the icon and the
-            # README. An id is the charset the daemon will turn into a
-            # directory name on a user's disk. Anything else in the artifact
-            # means the ingest produced something nobody designed, and the
-            # answer to that is to stop, not to commit it.
-            #
-            # The icon extensions are listed one by one rather than as
-            # `icon.*`, and must stay in step with
-            # `AstraPlugins/spec/icon-formats.yaml`. A glob here would accept
-            # `icon.sh` out of an artifact this job is about to commit.
-            if [ -d "$dir/plugins" ]; then
-              while IFS= read -r p; do
-                rel="${p#"$dir/"}"
-                case "$rel" in
-                  plugins/*/plugin.json|plugins/*/versions/*.json) ;;
-                  plugins/*/README.md) ;;
-                  plugins/*/icon.png|plugins/*/icon.webp|plugins/*/icon.svg) ;;
-                  plugins/*/icon.jpg|plugins/*/icon.jpeg|plugins/*/icon.ico) ;;
-                  *) echo "::error::$rel is not a listing file"; exit 1 ;;
-                esac
-                id="$(printf '%s' "$rel" | cut -d/ -f2)"
-                # One implementation of what a plugin id is, in `tools/lib/ids.mjs`.
-                # The `grep -Eq` copy that used to live here made the second
-                # character group optional and so admitted a one-character id
-                # that the rest of the registry refuses (B-T0.5).
-                node tools/lib/ids.mjs --check "$id" \
-                  || { echo "::error::$id is not a plugin id"; exit 1; }
-              done < <(find "$dir/plugins" -type f)
-              cp -r "$dir/plugins/." plugins/
-              changed=1
-            fi
-
-            # ── the publication queue ─────────────────────────────────────
-            if [ -d "$dir/state" ]; then
-              while IFS= read -r p; do
-                rel="${p#"$dir/"}"
-                case "$rel" in
-                  state/queue/*.json) ;;
-                  *) echo "::error::$rel is not a queue entry"; exit 1 ;;
-                esac
-              done < <(find "$dir/state" -type f)
-              mkdir -p state/queue
-              cp -r "$dir/state/." state/
-              changed=1
-            fi
-
-            # ── and what stops waiting ────────────────────────────────────
-            if [ -s "$dir/remove.txt" ]; then
-              while IFS= read -r rel; do
-                [ -n "$rel" ] || continue
-                case "$rel" in
-                  state/queue/*.json) ;;
-                  *) echo "::error::refusing to delete $rel"; exit 1 ;;
-                esac
-                if [ -f "$rel" ]; then rm -f "$rel"; changed=1; fi
-              done < "$dir/remove.txt"
-            fi
-          done
-
-          echo "changed=$changed" >> "$GITHUB_OUTPUT"
-
-      # Three steps, in this order, and the order is the point.
-      #
-      # It used to validate first and regenerate second, which cannot pass: the
-      # committed index does not describe a listing that was added a moment ago,
-      # and `validate.mjs` compares the two. Every publish died on
-      # `registry/v1/index.json: is not byte-identical to a fresh generation`,
-      # having correctly noticed a mismatch the next step existed to remove.
-      # Nothing caught it because no publish had ever got this far.
-      #
-      # The listings are still checked BEFORE the generator runs. Regenerating
-      # first would feed a stranger's freshly derived documents to the
-      # generator ahead of the schema check, which is the wrong way round for
-      # the one step in this workflow that reads submitter-shaped input.
-      - name: Hold the listings to this repository's own rules
-        if: steps.apply.outputs.changed == '1'
-        run: |
-          set -euo pipefail
-          # --allow-staging matches .github/workflows/build-index.yml and goes
-          # away with it, on the day the bootstrap listing gains a digest.
-          # --no-index because the index has not been regenerated yet; the run
-          # below checks it once it describes this tree.
-          #
-          # `selftest.mjs` is NOT here, and moved down for the same reason as
-          # the index check itself: it asserts `index.json is byte-identical to
-          # a fresh generation`, which is false by construction between adding a
-          # listing and rebuilding. Splitting only the validator's index check
-          # out and leaving the selftest behind fixed half the ordering and left
-          # the run just as red.
-          node tools/validate.mjs --allow-staging --no-index
-
-      - name: Regenerate the index the catalogue is built from
-        if: steps.apply.outputs.changed == '1'
-        run: |
-          set -euo pipefail
-          # build-index.yml asserts on every push that the committed index is
-          # exactly what the generator produces. A publish that added a listing
-          # and left the index alone would turn that assertion into a red build
-          # on somebody else's commit.
-          node tools/build-index.mjs
-          node tools/build-index.mjs --check
-
-      - name: And to every rule about the index, now that it describes this tree
-        if: steps.apply.outputs.changed == '1'
-        run: |
-          set -euo pipefail
-          node tools/validate.mjs --allow-staging
-          node tools/selftest.mjs
-
-      - name: Commit
-        if: steps.apply.outputs.changed == '1'
         env:
           MESSAGE: "registry: publish (${{ github.event_name }})"
+          TRAILER: "Decided by bot/decide.mjs in run ${{ github.run_id }}. See docs/POLICY.md."
         run: |
           set -euo pipefail
           git config user.name "astra-registry-bot"
           git config user.email "bot@users.noreply.github.com"
-          mkdir -p state
-          git add -A plugins state registry/v1/index.json
-          if git diff --cached --quiet; then
-            echo "nothing to commit"
-            exit 0
-          fi
-          git commit -m "$MESSAGE" -m "Decided by bot/decide.mjs in run ${{ github.run_id }}. See docs/POLICY.md."
-          # A cron drain and an issue-driven publish can land in the same
-          # minute. Rebase and retry once rather than failing a publication
-          # somebody is waiting on; a second failure is a real conflict and
-          # should be looked at.
-          git push || { git pull --rebase --autostash && git push; }
+          node bot/publish-apply.mjs \
+            --reports reports \
+            --watch-state watch-state \
+            --base "$GITHUB_SHA" \
+            --message "$MESSAGE" \
+            --trailer "$TRAILER"
 
   # Closes the submission issue once the listing is actually in the catalogue.
   #

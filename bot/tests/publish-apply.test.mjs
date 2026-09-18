@@ -219,6 +219,34 @@ test("a directory nobody designed is refused rather than ignored", () => {
   );
 });
 
+test("a delayed release reports the queue entry that actually landed", () => {
+  const { dir, one, two, bare } = estate();
+  const reports = report(dir, "ingest-report-0", { queue: "alpha@0.1.0.json" });
+
+  const landed = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, log: quiet });
+  assert.equal(landed.outcome, "committed");
+  assert.deepEqual(landed.queued, ["state/queue/alpha@0.1.0.json"]);
+  assert.ok(git(bare, "ls-tree", "-r", "--name-only", "main").includes("state/queue/alpha@0.1.0.json"));
+
+  // And when the entry does NOT reach the repository, the list is empty — which
+  // is the whole point of reporting it. `comment` tells the author "publishes
+  // itself at 14:00" off this list rather than off the decision, because the
+  // decision is what the bot wanted and the list is what happened. A run
+  // cancelled or conflicted here used to leave that promise standing with no
+  // file behind it and nothing retrying.
+  const other = estate();
+  write(other.two, "state/queue/beta@2.0.0.json", '{"from":"the other run"}\n');
+  git(other.two, "add", "-A");
+  git(other.two, "commit", "-m", "the other run queued beta");
+  git(other.two, "push", "origin", "HEAD:main");
+  const clash = report(other.dir, "ingest-report-0", { queue: "beta@2.0.0.json" });
+  const refused = run({
+    root: other.one, reports: clash, watchState: path.join(other.dir, "none"), skipChecks: true, log: quiet,
+  });
+  assert.equal(refused.outcome, "conflict");
+  assert.deepEqual(refused.queued ?? [], []);
+});
+
 test("a queue entry that names no plugin is refused", () => {
   const { dir, one } = estate();
   const reports = report(dir, "ingest-report-0", { queue: "evil.json" });
