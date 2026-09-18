@@ -7,8 +7,8 @@
 //
 // The real key comes from the environment — `ASTRA_INDEX_SIGNING_KEY` (base64
 // of the raw 32-byte Ed25519 seed) and `ASTRA_INDEX_SIGNING_KEY_ID` — held as a
-// GitHub Environment secret on the `publish` environment with the maintainer as
-// a required reviewer (PRODUCTION_PLAN §5.1). **Never as a command-line
+// GitHub Environment secret on the `publish` environment, which carries no
+// required reviewer, whatever PRODUCTION_PLAN §5.1 wanted. **Never as a command-line
 // argument**: a key on a command line is a key in the shell history, in `ps`
 // output for every other account on the machine, and in the Actions log the
 // first time somebody turns on command tracing.

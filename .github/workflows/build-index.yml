@@ -109,7 +109,13 @@ permissions:
   contents: read
 
 jobs:
-  index:
+  # ── check ────────────────────────────────────────────────────────────────
+  #
+  # Every check, and no key. This job holds NO environment: an environment is
+  # where the signing key lives, and a job that runs on a pull request must not
+  # be able to reach it. Splitting it out is what makes that structural rather
+  # than a matter of remembering the `if:` on one step (registry plan RC-R0-1).
+  check:
     runs-on: ubuntu-24.04
     # A failed ingest published nothing, so there is nothing new to sign. Every
     # other event carries no `workflow_run` object and the condition is vacuously
@@ -118,22 +124,6 @@ jobs:
     if: >-
       github.event_name != 'workflow_run' ||
       github.event.workflow_run.conclusion == 'success'
-    # Where the index signing key lives. The "Sign the deploy candidate" step
-    # below has always SAID so; the job never declared it, so
-    # `secrets.ASTRA_INDEX_SIGNING_KEY` resolved against repository secrets and
-    # a key put where the comment, the runbook and `tools/keygen-index.sh` all
-    # send you would have been invisible — the run failing with "no
-    # ASTRA_INDEX_SIGNING_KEY on main", which reads as a missing secret rather
-    # than a misplaced one.
-    #
-    # Declaring it also buys the property PRODUCTION_PLAN §5.1 wanted: an
-    # environment can carry a required reviewer, so signing the catalogue can be
-    # made to need a human. This adds no protection rule — that is a decision
-    # for the repository settings, not for a file — but it is the hook such a
-    # rule attaches to, and without the environment there is nowhere to put one.
-    environment: publish
-    outputs:
-      deploy: ${{ steps.sign.outcome == 'success' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -311,6 +301,7 @@ jobs:
             || { echo "::error::the index generator is not deterministic"; exit 1; }
           rm dist/index.again.json
           echo "sha256: $(sha256sum dist/index.json | cut -d' ' -f1)"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
 
           # The size gate. This step used to echo `wc -c` and compare it to
           # nothing, while notes/icon-readme-contract.md's "do not let the index
@@ -345,66 +336,20 @@ jobs:
               console.log(`ok  dist/index.json validates, serial ${doc.signed.serial}, ${doc.signed.plugins.length} plugin(s)`);
             });
           '
-
-      # ── 3.2: the signature ────────────────────────────────────────────────
-      #
-      # The key lives in the `publish` environment with the maintainer as a
-      # required reviewer (PRODUCTION_PLAN §5.1), so it is unavailable on a pull
-      # request and on a fork by construction — which is the point. This job
-      # therefore has to do something sensible with no key, and "quietly deploy
-      # an unsigned catalogue" is not it: an unsigned file that reaches the CDN
-      # under the same name as a signed one is a downgrade attack the registry
-      # performed on itself.
-      #
-      # So the rule is: on `main`, the key MUST be there and the signature MUST
-      # verify. Anywhere else, sign nothing, say so, and upload the unsigned
-      # candidate as a build artefact only — never as a deploy.
-      - name: Sign the deploy candidate
-        id: sign
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        env:
-          ASTRA_INDEX_SIGNING_KEY: ${{ secrets.ASTRA_INDEX_SIGNING_KEY }}
-          ASTRA_INDEX_SIGNING_KEY_ID: ${{ secrets.ASTRA_INDEX_SIGNING_KEY_ID }}
-        run: |
-          set -euo pipefail
-          if [ -z "${ASTRA_INDEX_SIGNING_KEY:-}" ]; then
-            echo "::error::no ASTRA_INDEX_SIGNING_KEY on main. Refusing to publish an unsigned catalogue."
-            exit 1
-          fi
-          # The key is passed through the environment and never appears on a
-          # command line: `ps` is readable by every process on the runner and
-          # `set -x` would put it in the log.
-          node bot/sign-index.mjs --in dist/index.json --out dist/index.signed.json
-          mv dist/index.signed.json dist/index.json
-          echo "sha256: $(sha256sum dist/index.json | cut -d' ' -f1)"
-
-      # Verified against the CURRENTLY PUBLISHED root-signed trust.json, not
-      # against the key we just signed with. Signing with a key and then
-      # checking the signature with the same key proves the crypto library
-      # works; checking it against trust.json proves the daemon will accept it.
-      # A key that has fallen out of its validity window fails here rather than
-      # in every user's client.
-      - name: Verify the signature the way the daemon will
-        if: steps.sign.outcome == 'success'
-        run: |
-          set -euo pipefail
-          if [ ! -f registry/v1/trust.json ]; then
-            echo "::error::registry/v1/trust.json is not published yet, so nothing can check this signature."
-            exit 1
-          fi
-          node bot/sign-index.mjs --verify dist/index.json --trust registry/v1/trust.json
-
-      - name: Say plainly that nothing here is signed
-        if: steps.sign.outcome == 'skipped'
-        run: echo "::notice::dist/index.json is UNSIGNED — the signing key is unavailable outside main. This artefact is for inspection, not for deploy."
-
       - uses: actions/upload-artifact@v4
         with:
           name: registry-index-v1
           path: dist/index.json
           if-no-files-found: error
 
-      # ── 6.5: the website, from the file that was just signed ──────────────
+      - name: Say plainly that nothing here is signed
+        run: echo "::notice::dist/index.json is UNSIGNED — this job holds no signing key by construction. This artefact is for inspection, not for deploy."
+      # ── 6.5: the website, built here from the candidate to assert the page set ──
+      #
+      # This job never signs, so what it builds is the UNSIGNED candidate: the
+      # assertion it exists for — a page exists iff an entry does — is a property
+      # of the entry set, which signing does not change. `sign` rebuilds the site
+      # from the signed bytes and asserts it again before anything is uploaded.
       #
       # `dist/registry/v1/` is assembled first and `--index` points INTO it, so
       # the bytes the generator reads and the bytes published under
@@ -413,7 +358,8 @@ jobs:
       # is no second input that could be stale.
       #
       # The withdrawal list and the trust documents are taken from the committed
-      # tree — `revoke.yml` owns their generation and signing, and a listing
+      # tree — the R1 withdrawal workflow will own their generation and signing,
+      # and a listing
       # build that re-signed them would be a second publisher of a document that
       # must have exactly one.
       - name: Assemble the deploy tree, then generate the site from it
@@ -450,8 +396,125 @@ jobs:
             console.log(`ok  ${ids.length} entr(y/ies), ${pages.length} page(s), and they are the same set`);
           '
 
+
+  # ── sign ─────────────────────────────────────────────────────────────────
+  #
+  # The only job in this repository that can reach the index signing key. It
+  # runs on `main` and never on a pull request, and it says so in its own `if:`
+  # rather than relying on a step-level guard inside a job that also runs for
+  # strangers. `needs: check` carries the ingest condition: when `check` is
+  # skipped because an ingest failed, this is skipped with it.
+  #
+  # The `publish` environment carries no required reviewer today. It is where a
+  # protection rule WOULD attach if the owner ever adds one (LM-1), and this
+  # file no longer claims one exists.
+  sign:
+    needs: check
+    runs-on: ubuntu-24.04
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    environment: publish
+    outputs:
+      deploy: ${{ steps.sign.outputs.signed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The candidate `check` built, byte for byte. Rebuilding it here would
+      # make the signed bytes a second generation of the same inputs rather
+      # than the artefact every check above was run against.
+      - uses: actions/download-artifact@v4
+        with:
+          name: registry-index-v1
+          path: dist
+
+      - name: Sign the deploy candidate
+        id: sign
+        env:
+          ASTRA_INDEX_SIGNING_KEY: ${{ secrets.ASTRA_INDEX_SIGNING_KEY }}
+          ASTRA_INDEX_SIGNING_KEY_ID: ${{ secrets.ASTRA_INDEX_SIGNING_KEY_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ASTRA_INDEX_SIGNING_KEY:-}" ]; then
+            echo "::error::no ASTRA_INDEX_SIGNING_KEY on main. Refusing to publish an unsigned catalogue."
+            exit 1
+          fi
+          # The key is passed through the environment and never appears on a
+          # command line: `ps` is readable by every process on the runner and
+          # `set -x` would put it in the log.
+          node bot/sign-index.mjs --in dist/index.json --out dist/index.signed.json
+          mv dist/index.signed.json dist/index.json
+          echo "sha256: $(sha256sum dist/index.json | cut -d' ' -f1)"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      # Verified against the CURRENTLY PUBLISHED root-signed trust.json, not
+      # against the key we just signed with. Signing with a key and then
+      # checking the signature with the same key proves the crypto library
+      # works; checking it against trust.json proves the daemon will accept it.
+      # A key that has fallen out of its validity window fails here rather than
+      # in every user's client.
+
+      - name: Verify the signature the way the daemon will
+        run: |
+          set -euo pipefail
+          if [ ! -f registry/v1/trust.json ]; then
+            echo "::error::registry/v1/trust.json is not published yet, so nothing can check this signature."
+            exit 1
+          fi
+          node bot/sign-index.mjs --verify dist/index.json --trust registry/v1/trust.json
+
+
+      # ── 6.5: the website, from the file that was just signed ──────────────
+      #
+      # `dist/registry/v1/` is assembled first and `--index` points INTO it, so
+      # the bytes the generator reads and the bytes published under
+      # `/registry/v1/index.json` are one file rather than two copies of one.
+      # That is what makes "a page exists iff an entry does" structural: there
+      # is no second input that could be stale.
+      #
+      # The withdrawal list and the trust documents are taken from the committed
+      # tree — the R1 withdrawal workflow will own their generation and signing,
+      # and a listing
+      # build that re-signed them would be a second publisher of a document that
+      # must have exactly one.
+      - name: Assemble the deploy tree, then generate the site from it
+        run: |
+          set -euo pipefail
+          mkdir -p dist/registry/v1
+          cp dist/index.json dist/registry/v1/index.json
+          for f in revocations.json trust.json root.json; do
+            [ -f "registry/v1/$f" ] && cp "registry/v1/$f" "dist/registry/v1/$f"
+          done
+          node site/build.mjs \
+            --index dist/registry/v1/index.json \
+            --revocations dist/registry/v1/revocations.json \
+            --registry-dir dist/registry/v1 \
+            --repo "${{ github.repository }}" \
+            --out dist/site
+
+      # The acceptance criterion, asserted against what was actually written
+      # rather than against what the generator says it wrote.
+      - name: A page exists for every entry, and for nothing else
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("node:fs");
+            const ids = JSON.parse(fs.readFileSync("dist/registry/v1/index.json", "utf8"))
+              .signed.plugins.map((p) => p.id).sort();
+            const pages = fs.readdirSync("dist/site/p").sort();
+            const missing = ids.filter((i) => !pages.includes(i));
+            const extra = pages.filter((p) => !ids.includes(p));
+            if (missing.length || extra.length) {
+              console.error(`::error::pages and entries disagree — missing ${missing.join(", ") || "none"}, extra ${extra.join(", ") || "none"}`);
+              process.exit(1);
+            }
+            console.log(`ok  ${ids.length} entr(y/ies), ${pages.length} page(s), and they are the same set`);
+          '
+
+
       - uses: actions/upload-pages-artifact@v3
-        if: steps.sign.outcome == 'success'
         with:
           path: dist/site
 
@@ -462,8 +525,8 @@ jobs:
   # name of a signed one is the downgrade attack this repository spends most of
   # its CI refusing to perform on itself.
   deploy:
-    needs: index
-    if: needs.index.outputs.deploy == 'true'
+    needs: sign
+    if: needs.sign.outputs.deploy == 'true'
     runs-on: ubuntu-24.04
     permissions:
       pages: write

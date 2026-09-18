@@ -223,7 +223,8 @@ export function addDays(date, days) {
  * the shell history, in `ps` output for every other user on the box, and in the
  * Actions log if anyone ever echoes the command. `ASTRA_INDEX_SIGNING_KEY` holds
  * the base64 of the raw 32-byte seed and comes from the `publish` environment's
- * secret, with the maintainer as a required reviewer (PRODUCTION_PLAN §5.1).
+ * secret on the `publish` environment. PRODUCTION_PLAN §5.1 wanted a required
+ * reviewer on it; none is configured, and this comment no longer says one is.
  *
  * @param {{env?: NodeJS.ProcessEnv}} opts
  */

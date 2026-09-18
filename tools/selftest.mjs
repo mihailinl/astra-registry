@@ -2902,6 +2902,144 @@ await test("every committed release manifest verifies against the production roo
   assert(seen >= 2, `only ${seen} release manifests found; 0.2.4 and 0.2.5 are committed`);
 });
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R0: the properties that kept this repository from having two signers, and
+// from saying things about itself that were not true (registry plan RC-R0-1).
+// Each was watched failing before it was committed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Every file in the tree, minus the places a checkout does not own. */
+function walkRepo(dir = REPO_ROOT, out = []) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (e.name === ".git" || e.name === "node_modules" || e.name === "dist") continue;
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) walkRepo(full, out);
+    else out.push(full);
+  }
+  return out;
+}
+
+// The file that states a rule is not an instance of it: this test file has to
+// contain the needles in order to look for them, so it is excluded by name. Any
+// other file that matches is a real claim.
+function grepRepo(needle) {
+  const hits = [];
+  for (const file of walkRepo()) {
+    if (path.relative(REPO_ROOT, file) === path.join("tools", "selftest.mjs")) continue;
+    let text;
+    try {
+      text = fs.readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    text.split("\n").forEach((line, i) => {
+      if (line.includes(needle)) hits.push(`${path.relative(REPO_ROOT, file)}:${i + 1}`);
+    });
+  }
+  return hits;
+}
+
+const WORKFLOW_DIR = path.join(REPO_ROOT, ".github", "workflows");
+const workflowFiles = () =>
+  fs.readdirSync(WORKFLOW_DIR).filter((n) => n.endsWith(".yml") || n.endsWith(".yaml"));
+
+// The withdrawal list must have exactly one signer. The workflow that was the
+// second one failed on every run it ever made and was deleted at R0; `sign.yml`
+// takes that path at R1. This fails the day a second one appears.
+await test("no workflow but sign.yml can sign a withdrawal list", async () => {
+  const offenders = [];
+  for (const name of workflowFiles()) {
+    if (name === "sign.yml") continue;
+    const text = fs.readFileSync(path.join(WORKFLOW_DIR, name), "utf8");
+    // Invoking the list signer at all is the offence. Holding the index key is
+    // not: `build-index.yml` holds it to sign the catalogue, and the same job
+    // copies `revocations.json` into the deploy tree without signing it — so a
+    // co-occurrence test would fail on the honest case and teach nothing.
+    if (text.includes("tools/sign-revocations.mjs")) offenders.push(`${name} invokes the list signer`);
+  }
+  assertEqual(offenders.join("; "), "", "a second signer of the withdrawal list exists");
+});
+
+// Signing happens in CI, into `dist/`, never on `main`. A signature in the
+// committed tree means a key ran where it should not have, or that a signed
+// artefact was committed back, which is how a stale signature outlives its bytes.
+await test("main carries no signature on the catalogue or the withdrawal list", async () => {
+  for (const rel of ["registry/v1/index.json", "registry/v1/revocations.json"]) {
+    const full = path.join(REPO_ROOT, rel);
+    if (!fs.existsSync(full)) continue;
+    const doc = JSON.parse(fs.readFileSync(full, "utf8"));
+    const sigs = Array.isArray(doc.signatures) ? doc.signatures : [];
+    assertEqual(sigs.length, 0, `${rel} carries ${sigs.length} signature(s) on main`);
+  }
+});
+
+// A job declaring `environment: publish` can read the signing key; a workflow
+// that runs on a pull request runs for strangers. Where both are possible the
+// job must refuse the pull-request case in its own `if:`, with both guards and
+// no `||` — an `||` is how a guard stops guarding.
+//
+// Line-oriented on purpose: this repository has no dependencies, so there is no
+// YAML parser here and adding one would make the gate need a lockfile.
+await test("no job that can reach the publish environment runs on a pull request", async () => {
+  const problems = [];
+  let jobsChecked = 0;
+  for (const name of workflowFiles()) {
+    const text = fs.readFileSync(path.join(WORKFLOW_DIR, name), "utf8");
+    const lines = text.split("\n");
+    const onBlock = text.slice(0, text.indexOf("\njobs:") + 1);
+    const runsOnPullRequest = /^\s{2}pull_request(_target)?:/m.test(onBlock);
+    const jobStarts = [];
+    let inJobs = false;
+    lines.forEach((l, i) => {
+      if (l === "jobs:") inJobs = true;
+      else if (inJobs && /^  [A-Za-z0-9_-]+:\s*$/.test(l)) jobStarts.push(i);
+    });
+    jobStarts.forEach((start, k) => {
+      const end = k + 1 < jobStarts.length ? jobStarts[k + 1] : lines.length;
+      const body = lines.slice(start, end);
+      const declaresPublish = body.some(
+        (l) => /^\s{4}environment:\s*publish\s*$/.test(l) || /^\s{6}name:\s*publish\s*$/.test(l),
+      );
+      if (!declaresPublish) return;
+      jobsChecked++;
+      if (!runsOnPullRequest) return;
+      const ifAt = body.findIndex((l) => /^\s{4}if:/.test(l));
+      let ifText = "";
+      if (ifAt >= 0) {
+        let j = ifAt + 1;
+        while (j < body.length && !/^\s{4}[a-z]/.test(body[j])) j++;
+        ifText = body.slice(ifAt, j).join(" ");
+      }
+      const guarded = ifText.includes("refs/heads/main") && ifText.includes("pull_request");
+      if (!guarded) problems.push(`${name} ${lines[start].trim()} reaches publish with no guard`);
+      else if (ifText.includes("||")) problems.push(`${name} ${lines[start].trim()} guards with an ||, which is not a guard`);
+    });
+  }
+  assertEqual(problems.join("; "), "", "a publish-capable job is reachable from a pull request");
+  assert(jobsChecked >= 1, "no job declares the publish environment at all, so this check proved nothing");
+});
+
+// Six places said the `publish` environment carried a required reviewer. None
+// was ever configured. That claim is worse than silence: it tells the next
+// reader a human approves every signature, so nobody adds one.
+await test("nothing claims the publish environment has a required reviewer", async () => {
+  const hits = [
+    ...grepRepo("with the maintainer as a required reviewer"),
+    ...grepRepo("required reviewer (PRODUCTION_PLAN"),
+    ...grepRepo("maintainer as required reviewer"),
+  ];
+  assertEqual(hits.join(", "), "", "a required reviewer is claimed somewhere");
+});
+
+// The deleted withdrawal workflow may still be named in the runbook, and only
+// until the real path is written at R1 (RC-R1-2 rewrites §7 then).
+await test("only the runbook still names the deleted withdrawal workflow", async () => {
+  const stray = grepRepo("revoke.yml").filter((h) => !h.startsWith("docs/RUNBOOK.md:"));
+  assertEqual(stray.join(", "), "", "a file other than the runbook still points at revoke.yml");
+});
+
+
 fs.rmSync(tmp, { recursive: true, force: true });
 
 console.log(`\n${failures.length === 0 ? "PASS" : "FAIL"}  ${passed} passed, ${failures.length} failed`);

@@ -66,7 +66,11 @@ competitor.
 
 ## Timing
 
-A revocation is signed and on the CDN by `.github/workflows/revoke.yml`, which
+A revocation will be signed and put on the CDN by the withdrawal workflow built at R1.
+There is no such workflow today. The one that held that name failed on every run it
+ever made and was deleted at R0, because it was also the second place in this
+repository that could sign (registry plan RC-R0-1, 2026-09-18); the withdrawal path
+is built once, at R1, in `sign.yml`. What follows describes the path it will take, which
 exists separately from the catalogue build precisely so it does not queue behind
 it. Everything else here rides the ordinary index build.
 

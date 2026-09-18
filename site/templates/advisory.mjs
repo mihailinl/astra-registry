@@ -9,7 +9,7 @@
 // ── WHAT THIS PAGE MAY SAY ──────────────────────────────────────────────────
 //
 // Only what the SIGNED document says. The generator is handed
-// `dist/revocations.json` — the same bytes `.github/workflows/revoke.yml` signs
+// `dist/revocations.json` — the same bytes the R1 withdrawal workflow will sign
 // and deploys — and an advisory that is not in it gets no page, however many
 // files sit in `tools/revocations/`. The prose comes from the advisory source
 // beside the generator; the *effect* comes from the signed entry. If the two

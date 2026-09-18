@@ -32,7 +32,7 @@ deliberately incapable of rejecting a correctly-signed catalogue.
 | Key | Custody | Signs | Rotation |
 |---|---|---|---|
 | **Root** — two public keys ship in every Astra binary, one active, one reserve | One person, two copies (§3). Generated offline by `tools/keygen-root.sh`. | `trust.json`, and nothing else | The reserve is already in every shipped binary, so replacing a root is a signature rather than a flag day |
-| **Index** | GitHub Environment secret on this repository, with the maintainer as a required reviewer on the `publish` environment | `index.json`, `revocations.json`, per-release countersignatures | Quarterly, and immediately on suspicion, by publishing a root-signed `trust.json` with a **30-day overlap** between the outgoing and incoming key |
+| **Index** | GitHub Environment secret on this repository, on the `publish` environment, which carries no required reviewer today (LM-1) | `index.json`, `revocations.json`, per-release countersignatures | Quarterly, and immediately on suspicion, by publishing a root-signed `trust.json` with a **30-day overlap** between the outgoing and incoming key |
 
 **There is no author row, and that is the design.** Astra pins the author's
 *repository identity* and the artifact's SHA-256; it never pins a key the author

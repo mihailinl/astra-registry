@@ -584,7 +584,7 @@ possible, or the only way to correct a mistake would be to delete files and hope
 
 ### How it reaches a machine, and how fast
 
-`.github/workflows/revoke.yml` regenerates, signs and pushes
+The withdrawal workflow built at R1 regenerates, signs and pushes
 `registry/v1/revocations.json` — and it exists as a separate workflow precisely
 so a withdrawal never queues behind a listing build. The target is **signed and
 on the CDN within five minutes**; the job stamps its own elapsed time on every

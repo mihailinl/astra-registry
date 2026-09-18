@@ -268,7 +268,7 @@ repository does not publish anywhere it can be checked.
 | Root private keys | Offline: paper/steel + an encrypted attachment in the password manager. Never on a networked machine, never in a repository. |
 | Root public keys | `registry/v1/root.json` here, **and** `PRODUCTION_ROOT_KEYS` in `astra-rs/astra-daemon/src/plugins/trust.rs`. Two copies of one fact, on purpose. |
 | `trust.json` | Published next to the index; cached by each daemon under `<config>/registry/trust.json`. |
-| Index private key | GitHub Environment secret `ASTRA_INDEX_SIGNING_KEY` on the `publish` environment, with the maintainer as required reviewer. |
+| Index private key | GitHub Environment secret `ASTRA_INDEX_SIGNING_KEY` on the `publish` environment. No required reviewer is configured on it (LM-1). |
 | Index public key | Inside the current root-signed `trust.json`. Nowhere else — that is what makes it rotatable. |
 | Test keys | `tools/testkeys/`. Public *and* private, committed on purpose, trusted by no shipped build. |
 

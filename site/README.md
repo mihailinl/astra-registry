@@ -93,6 +93,6 @@ verification path contains no hostname check at all — a catalogue is believed
 because a root key signed the trust document naming the key that signed it. The
 copy served here is a mirror that is byte-identical because it was never a copy.
 
-`.github/workflows/revoke.yml` rebuilds and redeploys the site too, **after** it
+The withdrawal workflow built at R1 will rebuild and redeploy the site too, **after** it
 pushes the withdrawal list, so a slow or queued Pages deployment can never delay
 the one thing in this repository that is measured in minutes.

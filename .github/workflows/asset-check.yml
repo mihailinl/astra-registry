@@ -41,7 +41,9 @@ name: Asset check
 on:
   schedule:
     # 03:23 UTC. Off the hour so it does not queue behind everybody else's cron,
-    # and well clear of revoke.yml's 04:17 so the two never contend.
+    # and well clear of 04:17, which the withdrawal workflow will take at R1 so
+    # the two never contend (the workflow that used to hold that slot was
+    # deleted at R0: it failed on every run it ever made).
     - cron: "23 3 * * *"
   workflow_dispatch:
     inputs:
