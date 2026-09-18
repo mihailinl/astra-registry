@@ -50,7 +50,7 @@ import {
   watchPlan,
 } from "../lib/notify.mjs";
 import { pollFeed, runDrain, runWatch } from "../watch.mjs";
-import { triage } from "../triage.mjs";
+import { recordPermissionProbe, triage } from "../triage.mjs";
 import { makeBundle, fakeGitHub, fakeGh, fakeOwnership, FIXTURE_COMMIT } from "../fixtures/ingest/make.mjs";
 import { loadSources } from "../../tools/lib/sources.mjs";
 
@@ -498,6 +498,55 @@ await test("the issue number survives the queue, so the drain knows which thread
   const second = await run({ root, assets: [asset], now: later, issue: null });
   assertEqual(second.decision.outcome, "publish", JSON.stringify(second.decision.reasons));
   assertEqual(second.decision.issue, 41, "recovered from the queue entry with no event to read");
+});
+
+await test("the permission check says what the endpoint did, and the probe line names no one", async () => {
+  // B-T0.4a. Two fields out of `proveMaintainer`, and a summary line that is
+  // about the token rather than about a person.
+  const silent = await proveMaintainer({
+    repo: "mihailinl/astra-registry",
+    login: "someone",
+    fetchImpl: async () => ({ ok: false, status: 404, json: async () => ({}) }),
+  });
+  assertEqual(silent.answered, false, "a 404 is GitHub declining to say");
+  assert(String(silent.outcome).length > 0, "and the outcome token says which silence it was");
+
+  const answered = await proveMaintainer({
+    repo: "mihailinl/astra-registry",
+    login: "someone",
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ permission: "admin" }) }),
+  });
+  assertEqual(answered.answered, true, "an answer is an answer");
+  assertEqual(answered.ok, true, "and admin may decide");
+
+  const lines = [];
+  const wrote = recordPermissionProbe(answered, { GITHUB_STEP_SUMMARY: "/dev/null" }, (_p, l) => lines.push(l));
+  assertEqual(wrote, true, "the line is written when a summary exists");
+  assertEqual(lines.length, 1, "one line");
+  assert(lines[0].startsWith("collaborator-permission: answered=true outcome="), lines[0]);
+  assert(!lines[0].includes("someone"), "the summary is public, so it carries no login");
+  assertEqual(recordPermissionProbe(answered, {}, () => {}), false, "and nothing is written outside Actions");
+});
+
+await test("and the file the publish job reads carries that recovered number, not the empty one", async () => {
+  // The decision knowing the thread is not enough: `publish.yml` reads
+  // `out/decision.json`, so the recovery has to survive being written down.
+  const root = registryTree([{ versions: [{ version: "0.1.0", capabilities: ["tools"] }] }]);
+  const asset = conforming({ capabilities: ["tools", "tts"] });
+
+  const first = await run({ root, assets: [asset], issue: 41 });
+  const qfile = path.join(root, queueFile("dice-roller", "0.2.0"));
+  fs.mkdirSync(path.dirname(qfile), { recursive: true });
+  fs.writeFileSync(qfile, `${JSON.stringify(first.decision.queue_entry, null, 2)}\n`);
+
+  const later = new Date(NOW.getTime() + (DELAY_HOURS + 1) * 3600000);
+  const second = await run({ root, assets: [asset], now: later, issue: null });
+
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "astra-bot-drain-out-"));
+  writeOutputs(out, { repo: REPO, tag: TAG, issue: null }, second);
+  const written = JSON.parse(fs.readFileSync(path.join(out, "decision.json"), "utf8"));
+  assertEqual(written.issue, 41, "the drain answers the thread that asked for the release");
+  fs.rmSync(out, { recursive: true, force: true });
 });
 
 await test("a queue entry about a different release does not lend this one its issue", async () => {

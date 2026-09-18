@@ -156,7 +156,14 @@ export function writeOutputs(out, opts, result) {
         outcome: decision.outcome,
         repo: opts.repo,
         tag: opts.tag,
-        issue: opts.issue,
+        // The issue the DECISION named, not the one this invocation was given.
+        // A cron drain is given none: the release it publishes came in on a
+        // thread months ago, and `finishDecision` recovered that number from the
+        // queue entry. Writing `opts.issue` here published the release and then
+        // answered nobody — the thread stayed open with no comment on it, and a
+        // re-held drain opened a second `[notice]` beside it. That is what
+        // happened at 126189c and f67a646.
+        issue: decision.issue ?? opts.issue ?? null,
         id: derived?.plugin?.id ?? null,
         version: derived?.version?.version ?? null,
         publish_after: decision.publish_after,

@@ -408,6 +408,15 @@ jobs:
               # — for `/approve` and `/reject` only — asks GitHub whether the
               # commenter may decide. Its answers arrive as three files; nothing
               # here sources a file written from stranger text.
+              #
+              # It also appends one line to this job's summary when it asks:
+              # `collaborator-permission: answered=<bool> outcome=<token>`, with
+              # no login. That line is R0's measurement (registry plan B-T0.4a).
+              # The `OWNER` fallback in `bot/lib/maintainer.mjs` is there because
+              # nobody has ever seen whether this token can read that endpoint in
+              # a real run, and removing it on a guess would strand every held
+              # submission if the endpoint is silent. The summary is where the
+              # answer becomes a fact instead of an assumption.
               node bot/triage.mjs \
                 --event "$EVENT" --action "$ACTION" --labels "$LABELS" \
                 --repository "$REGISTRY" \

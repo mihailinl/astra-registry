@@ -91,7 +91,14 @@ export const OWNER_ASSOCIATION = "OWNER";
  *   `repo` is **this registry**, not the plugin's repository. `association` is
  *   `github.event.comment.author_association` from the event payload, used only
  *   as the `OWNER` fallback described at the top of this file.
- * @returns {Promise<{ok: boolean, role: string|null, detail: string}>}
+ * @returns {Promise<{ok: boolean, role: string|null, detail: string,
+ *           answered: boolean, outcome: string}>}
+ *   `answered` and `outcome` are what the collaborator-permission endpoint did,
+ *   carried out of here unchanged so R0 can measure whether this token can read
+ *   that endpoint at all (registry plan B-T0.4a). The `OWNER` fallback below
+ *   exists only because nobody has ever seen the answer in a real run; removing
+ *   it without measuring would strand every held submission if the endpoint is
+ *   silent for this token.
  */
 export async function proveMaintainer(opts) {
   const { repo, login } = opts;
@@ -103,10 +110,18 @@ export async function proveMaintainer(opts) {
       detail:
         "this registry's own repository was not named, so there is nothing to check the command " +
         "against. That is a fault in the workflow, not in the comment.",
+      answered: false,
+      outcome: "not-asked",
     };
   }
   if (!LOGIN_RE.test(String(login ?? ""))) {
-    return { ok: false, role: null, detail: `${JSON.stringify(login ?? null)} is not a GitHub login` };
+    return {
+      ok: false,
+      role: null,
+      detail: `${JSON.stringify(login ?? null)} is not a GitHub login`,
+      answered: false,
+      outcome: "not-asked",
+    };
   }
 
   const asked = await collaboratorRole(repo, login, {
@@ -124,6 +139,8 @@ export async function proveMaintainer(opts) {
           `payload marks the comment \`author_association: OWNER\` — @${login} is the account ` +
           "this repository belongs to. That is an identity GitHub asserts, not a role the " +
           "commenter claimed.",
+        answered: asked.answered,
+        outcome: asked.outcome,
       };
     }
     return {
@@ -134,10 +151,18 @@ export async function proveMaintainer(opts) {
         "is not from the repository's owner either, so the command is refused. A command that " +
         "decides what this registry publishes fails closed when the permission behind it cannot " +
         "be read.",
+      answered: asked.answered,
+      outcome: asked.outcome,
     };
   }
   if (CONTROL_ROLES.includes(asked.role)) {
-    return { ok: true, role: asked.role, detail: `GitHub reports @${login} has \`${asked.role}\` on ${repo}` };
+    return {
+      ok: true,
+      role: asked.role,
+      detail: `GitHub reports @${login} has \`${asked.role}\` on ${repo}`,
+      answered: asked.answered,
+      outcome: asked.outcome,
+    };
   }
   return {
     ok: false,
@@ -146,5 +171,7 @@ export async function proveMaintainer(opts) {
       `GitHub reports @${login} has \`${asked.role}\` on ${repo}, which is neither \`admin\` nor ` +
       "`maintain`. This is checked against the API rather than against how the comment was " +
       "phrased, so there is nothing to rephrase.",
+    answered: asked.answered,
+    outcome: asked.outcome,
   };
 }

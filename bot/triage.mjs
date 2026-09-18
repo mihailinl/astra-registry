@@ -85,6 +85,24 @@ import {
 } from "./lib/intake.mjs";
 import { isRecheckCommand, parseIssueForm } from "./lib/issue.mjs";
 import { proveMaintainer } from "./lib/maintainer.mjs";
+
+/**
+ * Append one line to the job summary saying whether GitHub answered the
+ * collaborator-permission question and with what. Never the login, never the
+ * role: the measurement is about the token's reach.
+ */
+export function recordPermissionProbe(proof, env = process.env, appendFile = fs.appendFileSync) {
+  const summary = env.GITHUB_STEP_SUMMARY;
+  if (!summary) return false;
+  const line = `collaborator-permission: answered=${proof?.answered === true} outcome=${proof?.outcome ?? "unknown"}\n`;
+  try {
+    appendFile(summary, line);
+    return true;
+  } catch {
+    // A summary that cannot be written is not worth failing a triage run over.
+    return false;
+  }
+}
 import { findListingByRepo, parseReleasePing, resolveSubmitter } from "./lib/notify.mjs";
 import { readQueue } from "./lib/policy.mjs";
 
@@ -301,6 +319,14 @@ async function decideCommand({ command, opts, registry, labelled, issueTitle, fo
     login: commenter,
     association: opts.commenterAssociation,
   });
+  // R0's measurement (registry plan B-T0.4a). The `OWNER` fallback in
+  // `maintainer.mjs` exists because nobody has ever seen whether this token can
+  // read the collaborator-permission endpoint in a real Actions run, and it
+  // cannot be removed on a guess: if the endpoint is silent for this token,
+  // removing it strands every held submission with no way to clear it. So every
+  // run records what the endpoint did — and **no login**, because the summary is
+  // public and the question is about the token, not about a person.
+  recordPermissionProbe(proof);
   if (!proof.ok) {
     return {
       mode: "reply",
