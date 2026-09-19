@@ -539,6 +539,194 @@ test("an unreadable moderation source does not stop the catalogue going out", ()
   assert.match(r.stderr, /not readable JSON/, "the validator's message did not reach the build log either");
 });
 
+// ── ROLL-55: the pages that move, and the documents that must not ───────────
+//
+// At R4b and R9a the plugins service takes over the pages this repository
+// generates, one set at a time, and each moved page is replaced here by a
+// static redirect. Pages offers no redirect configuration, so the stub is the
+// mechanism rather than a fallback for one.
+//
+// `site/redirects.json` is empty today — RC-R4-1 and RC-R9-1 fill it — so
+// these drive the mechanism with synthetic sets. The one test that reads the
+// committed file is the last one, and it is about the file being armable.
+
+const REPO = path.resolve(SITE_DIR, "..");
+
+/** Write a redirect document and return its path. */
+function redirectsFile(name, sets) {
+  const file = scratch(`${name}-redirects.json`);
+  fs.writeFileSync(file, JSON.stringify({ schema: "astra.registry.site-redirects/1", sets }));
+  return file;
+}
+
+function buildWithRedirects(dir, indexDoc, sets, revDoc) {
+  const indexFile = scratch(`${dir}-index.json`);
+  fs.writeFileSync(indexFile, JSON.stringify(indexDoc));
+  let revFile = null;
+  if (revDoc) {
+    revFile = scratch(`${dir}-rev.json`);
+    fs.writeFileSync(revFile, JSON.stringify(revDoc));
+  }
+  const out = scratch(dir);
+  const result = build({ index: indexFile, revocations: revFile, out, redirects: redirectsFile(dir, sets) });
+  return { out, result };
+}
+
+const R4B = [
+  {
+    step: "R4b",
+    paths: {
+      "/": "https://astra.minice.ai/plugins",
+      "/search/": "https://astra.minice.ai/plugins",
+      "/p/<id>/": "https://astra.minice.ai/plugins/<id>",
+    },
+  },
+];
+
+test("every mapped path is a redirect, and nothing else is", () => {
+  const { out, result } = buildWithRedirects("redirect", catalogue(["alpha", "bravo"]), R4B);
+  assert.deepEqual(result.redirects, ["index.html", "p/alpha/index.html", "p/bravo/index.html", "search/index.html"]);
+
+  for (const [rel, to] of [
+    ["index.html", "https://astra.minice.ai/plugins"],
+    ["search/index.html", "https://astra.minice.ai/plugins"],
+    ["p/alpha/index.html", "https://astra.minice.ai/plugins/alpha"],
+    ["p/bravo/index.html", "https://astra.minice.ai/plugins/bravo"],
+  ]) {
+    const html = fs.readFileSync(path.join(out, rel), "utf8");
+    // Both mechanisms, because they answer to two different readers: the
+    // canonical link is the statement that this is the same resource, which a
+    // meta refresh does not make, and the refresh is the only thing that moves
+    // a browser with no script.
+    assert.ok(html.includes(`<link rel="canonical" href="${to}">`), `${rel} has no canonical link`);
+    assert.ok(html.includes(`<meta http-equiv="refresh" content="0; url=${to}">`), `${rel} has no meta refresh`);
+    // And a visible one, because a meta refresh is the one navigation a reader
+    // cannot see coming.
+    assert.ok(html.includes(`<a href="${to}">`), `${rel} does not offer the link to a reader`);
+    assert.ok(!html.includes("<nav>"), `${rel} carries the nav, whose links are themselves redirects`);
+  }
+
+  // A page in no set is untouched. `/policy/` moves at R9a, not at R4b, and a
+  // prefix rule or a "redirect everything" flag would have taken it early.
+  const policy = fs.readFileSync(path.join(out, "policy", "index.html"), "utf8");
+  assert.ok(!/rel="canonical"/.test(policy), "a page outside every set was redirected");
+  assert.ok(policy.includes("Rendered from <code>POLICY.md</code>"), "the policy page stopped being the policy page");
+});
+
+test("registry/v1/* and the moderation log stay byte-identical", () => {
+  // ROLL-55's other half, and the reason the sets are a data file rather than
+  // a prefix rule: `/transparency/` moves and
+  // `/transparency/moderation-log.json` never does, and they differ by one
+  // path component. A daemon follows no redirect — it would read the stub as a
+  // catalogue that fails to parse.
+  const sets = [{ step: "R9a", paths: { "/transparency/": "https://astra.minice.ai/plugins/_/transparency" } }];
+  const rev = { signatures: [{ key_id: "k", sig: "x" }], signed: { schema: "astra.registry.revocations/1", serial: 3, revocations: [advisory()] } };
+  const plain = buildInto("bytes-plain", catalogue(["alpha"]), rev);
+  const moved = buildWithRedirects("bytes-moved", catalogue(["alpha"]), sets, rev);
+
+  assert.deepEqual(moved.result.redirects, ["transparency/index.html"]);
+  const log = path.join("transparency", "moderation-log.json");
+  assert.deepEqual(
+    fs.readFileSync(path.join(moved.out, log)),
+    fs.readFileSync(path.join(plain.out, log)),
+    "the machine-readable moderation log changed when its page moved",
+  );
+  assert.ok(fs.readFileSync(path.join(moved.out, "transparency", "index.html"), "utf8").includes('rel="canonical"'));
+});
+
+test("a mapping onto a signed document or a non-page is refused", () => {
+  for (const [paths, message] of [
+    [{ "/registry/v1/index.json": "https://astra.minice.ai/plugins/index.json" }, /must stay byte-identical \(ROLL-55\)/],
+    [{ "/transparency/moderation-log.json": "https://astra.minice.ai/x" }, /must stay byte-identical \(ROLL-55\)/],
+    [{ "/assets/site.css": "https://astra.minice.ai/x.css" }, /not a generated page/],
+  ]) {
+    assert.throws(
+      () =>
+        build({
+          index: (() => {
+            const f = scratch("refuse-index.json");
+            fs.writeFileSync(f, JSON.stringify(catalogue(["alpha"])));
+            return f;
+          })(),
+          out: scratch("refuse"),
+          registryDir: (() => {
+            const d = scratch("refuse-registry");
+            fs.mkdirSync(d, { recursive: true });
+            fs.writeFileSync(path.join(d, "index.json"), "{}");
+            return d;
+          })(),
+          redirects: redirectsFile(`refuse-${Object.keys(paths)[0].replace(/\W+/g, "-")}`, [{ step: "R9a", paths }]),
+        }),
+      message,
+    );
+  }
+});
+
+test("a mapping the build generated nothing for is refused, and a pattern that matches nothing is not", () => {
+  // A literal is a typo: it would sit in the file redirecting nothing, the
+  // outside probe would never fetch it, and the old URL would go on serving a
+  // page the service has replaced.
+  assert.throws(
+    () => buildWithRedirects("typo", catalogue(["alpha"]), [{ step: "R9a", paths: { "/plublisher/": "https://astra.minice.ai/x" } }]),
+    /generated no such page/,
+  );
+  // A pattern is not. This catalogue has no advisories, and `/advisory/<id>/`
+  // is still the right line to have written.
+  const { result } = buildWithRedirects("empty-pattern", catalogue(["alpha"]), [
+    { step: "R9a", paths: { "/advisory/<id>/": "https://astra.minice.ai/plugins/_/advisories/<id>" } },
+  ]);
+  assert.deepEqual(result.redirects, []);
+});
+
+test("a redirect target must be an absolute https URL, and may capture only what its path does", () => {
+  const cases = [
+    [{ "/search/": "http://astra.minice.ai/plugins" }, /absolute https URL/],
+    [{ "/search/": "/plugins" }, /absolute https URL/],
+    [{ "/search/": "https://astra.minice.ai/plugins/<id>" }, /uses <id>, which the path does not capture/],
+  ];
+  for (const [paths, message] of cases) {
+    assert.throws(() => buildWithRedirects(`bad-${message.source.slice(0, 8).replace(/\W+/g, "")}`, catalogue(["alpha"]), [{ step: "R4b", paths }]), message);
+  }
+  // And two sets may not both own a page: whichever ran second would silently
+  // decide where an old URL points.
+  assert.throws(
+    () =>
+      buildWithRedirects("twice", catalogue(["alpha"]), [
+        { step: "R4b", paths: { "/p/<id>/": "https://astra.minice.ai/plugins/<id>" } },
+        { step: "R9a", paths: { "/p/alpha/": "https://astra.minice.ai/elsewhere" } },
+      ]),
+    /already redirected by set R4b/,
+  );
+});
+
+test("the committed redirects file is armable, and arming it reaches the publish job", () => {
+  const doc = JSON.parse(fs.readFileSync(path.join(REPO, "site", "redirects.json"), "utf8"));
+  assert.equal(doc.schema, "astra.registry.site-redirects/1");
+  assert.deepEqual(doc.sets.map((s) => s.step), ["R4b", "R9a"], "the two steps ROLL-55 names are not both present");
+
+  // THE COUPLING NOTHING ELSE HOLDS. `--redirects` is a flag, and
+  // `.github/workflows/build-index.yml` does not pass it. While every set is
+  // empty that is invisible and harmless. The moment RC-R4-1 or RC-R9-1 fills
+  // one, a set that never reaches the publish job is a takedown of the old
+  // URLs that silently did not happen — green CI, right file on `main`, and
+  // Pages still serving the pages the service has replaced. So this goes red
+  // at exactly that moment and not before.
+  const workflow = fs.readFileSync(path.join(REPO, ".github", "workflows", "build-index.yml"), "utf8");
+  const calls = workflow.split("node site/build.mjs").length - 1;
+  assert.ok(calls > 0, "build-index.yml no longer invokes site/build.mjs, so this check stopped asking anything");
+
+  const armed = doc.sets.filter((s) => Object.keys(s.paths).length);
+  if (!armed.length) return;
+  const wired = [...workflow.matchAll(/--redirects\s+site\/redirects\.json/g)].length;
+  assert.equal(
+    wired,
+    calls,
+    `set(s) ${armed.map((s) => s.step).join(", ")} carry paths, but ${calls - wired} of ${calls} ` +
+      "`node site/build.mjs` invocations in .github/workflows/build-index.yml do not pass " +
+      "`--redirects site/redirects.json`. Those old URLs would keep serving the page the service replaced.",
+  );
+});
+
 // ── the markdown subset ─────────────────────────────────────────────────────
 
 test("markdown escapes, and does not invent markup", () => {

@@ -10,8 +10,73 @@
 // change is one commit and the site cannot claim a rule the repository does not
 // have.
 
-import { esc, href, page } from "../lib/html.mjs";
+import { esc, href, page, upTo } from "../lib/html.mjs";
 import { escalationTable } from "./advisory.mjs";
+
+/**
+ * A page that has moved, written over the page that used to be there.
+ *
+ * ── WHY A PAGE AND NOT A 301 ────────────────────────────────────────────────
+ *
+ * GitHub Pages serves this tree and has no redirect configuration of any kind,
+ * so the only thing that can stand at an old URL is a document. ROLL-55 names
+ * the two mechanisms and this writes both, because they answer to two different
+ * readers and neither covers the other:
+ *
+ *   `<link rel="canonical">`   a crawler, an archive, anything that already
+ *                              holds the old URL. It is the statement that the
+ *                              successor is the same resource, which a meta
+ *                              refresh alone does not make.
+ *   `<meta http-equiv="refresh" content="0; url=…">`
+ *                              a person. It is the only thing that moves a
+ *                              browser without JavaScript, and this site ships
+ *                              no script it does not need.
+ *
+ * And a visible link under both, because a meta refresh is the one navigation
+ * a reader cannot see coming and cannot undo with Back — the stub says where it
+ * is sending them and lets them not go.
+ *
+ * ── NO NAV ──────────────────────────────────────────────────────────────────
+ *
+ * Deliberately not built on `page()`. The shell's nav links to `/`, `/search/`,
+ * `/policy/` and the rest, and at R9a every one of those is itself a stub: a
+ * reader who clicked the nav to escape a redirect would be redirected again,
+ * from a page that exists only to say it is gone. The stylesheet is kept — the
+ * assets are still written — so the stub does not look like a broken deploy.
+ *
+ * @param {{from: string, to: string, depth: number}} ctx `from` is the site
+ *   path this file stands at, for the reader; `to` is an absolute https URL.
+ */
+export function redirectPage({ from, to, depth }) {
+  const up = upTo(depth);
+  const url = esc(to);
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Moved — Astra plugin registry</title>
+<link rel="canonical" href="${url}">
+<meta http-equiv="refresh" content="0; url=${url}">
+<meta name="description" content="${esc(from)} has moved to ${url}.">
+<link rel="stylesheet" href="${esc(up)}assets/site.css">
+</head>
+<body>
+<main>
+<h1>This page has moved</h1>
+<p><code>${esc(from)}</code> is now <a href="${url}">${url}</a>, and your browser is being sent
+there. If it is not, follow the link.</p>
+<p class="thin">The page you asked for was generated from this registry&rsquo;s signed catalogue and
+is now served by the plugins service instead. The signed documents themselves have
+<strong>not</strong> moved and are not redirected &mdash;
+<a href="${esc(up)}registry/v1/index.json">the catalogue</a>, the withdrawal list and the trust
+documents are still the same bytes at the same URLs here, which is what a daemon and an outside
+checker fetch.</p>
+</main>
+</body>
+</html>
+`;
+}
 
 /** One card, on the home page and on a publisher page. */
 function card(entry, { depth, withdrawn }) {

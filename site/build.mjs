@@ -4,7 +4,8 @@
 //
 //   node site/build.mjs --index dist/registry/v1/index.json --out dist/site \
 //        [--revocations dist/registry/v1/revocations.json] \
-//        [--registry-dir dist/registry/v1] [--repo owner/name]
+//        [--registry-dir dist/registry/v1] [--redirects site/redirects.json] \
+//        [--repo owner/name]
 //
 // ── THE ONE PROPERTY THIS FILE EXISTS FOR ───────────────────────────────────
 //
@@ -62,19 +63,20 @@ import { invalidId, unsafePathComponent } from "../tools/lib/ids.mjs";
 import { markdown } from "./lib/html.mjs";
 import { pluginPage, withdrawalsFor } from "./templates/plugin.mjs";
 import { advisoryPage, groupAdvisories } from "./templates/advisory.mjs";
-import { homePage, searchPage, publisherPage, publishPage, docPage, transparencyPage, notFoundPage } from "./templates/pages.mjs";
+import { homePage, searchPage, publisherPage, publishPage, docPage, transparencyPage, notFoundPage, redirectPage } from "./templates/pages.mjs";
 
 /** The repository this catalogue is served from, for the links that need one. */
 const DEFAULT_REPO = "mihailinl/astra-registry";
 
 function parseArgs(argv) {
-  const opts = { out: null, index: null, revocations: null, registryDir: null, root: REPO_ROOT, repo: DEFAULT_REPO };
+  const opts = { out: null, index: null, revocations: null, registryDir: null, redirects: null, root: REPO_ROOT, repo: DEFAULT_REPO };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--out") opts.out = path.resolve(argv[++i]);
     else if (a === "--index") opts.index = path.resolve(argv[++i]);
     else if (a === "--revocations") opts.revocations = path.resolve(argv[++i]);
     else if (a === "--registry-dir") opts.registryDir = path.resolve(argv[++i]);
+    else if (a === "--redirects") opts.redirects = path.resolve(argv[++i]);
     else if (a === "--registry-root") opts.root = path.resolve(argv[++i]);
     else if (a === "--repo") opts.repo = argv[++i];
     else if (a === "--help" || a === "-h") opts.help = true;
@@ -105,8 +107,10 @@ function readIfPresent(file) {
  * without a shell.
  *
  * @param {{out: string, index: string, revocations?: string|null,
- *          registryDir?: string|null, root?: string, repo?: string}} opts
- * @returns {{pages: string[], plugins: string[], advisories: string[], publishers: string[]}}
+ *          registryDir?: string|null, redirects?: string|null, root?: string,
+ *          repo?: string}} opts
+ * @returns {{pages: string[], plugins: string[], advisories: string[],
+ *            publishers: string[], redirects: string[]}}
  */
 export function build(opts) {
   const { out, root = REPO_ROOT, repo = DEFAULT_REPO } = opts;
@@ -275,12 +279,171 @@ does not have.</p>`,
     }
   }
 
+  // ── and, last, the pages that have moved ─────────────────────────────────
+  //
+  // After everything, including `registry/v1/`, so that a redirect is written
+  // over a page that was generated rather than instead of one. The refusals in
+  // `applyRedirects` are then about files that demonstrably exist, and "this
+  // path was never generated" is a real finding instead of an ordering
+  // accident.
+  const redirects = opts.redirects ? applyRedirects({ out, file: opts.redirects, written }) : [];
+
   return {
     pages: written,
     plugins: pluginPages,
     advisories: advisories.map((a) => a.id),
     publishers: [...byOwner.keys()].sort(),
+    redirects,
   };
+}
+
+// ── ROLL-55: the pages that move, and the documents that must not ───────────
+//
+// The site is generated from the signed catalogue, and at R4b and R9a its
+// pages are replaced one set at a time by the plugins service's own. Pages
+// serves this tree and offers no redirect configuration, so a moved page has
+// to *be* a page — see `redirectPage` for which two mechanisms it writes and
+// for whom.
+//
+// THE PART THAT IS NOT ABOUT PAGES. `registry/v1/*` and
+// `transparency/moderation-log.json` MUST stay byte-identical for as long as
+// Pages serves anything (ROLL-55; ROLL-57 keeps the signed documents there
+// until R9b). Shipped 0.2.x daemons fetch the catalogue, the withdrawal list
+// and the trust documents from this host and derive the sibling URLs by path
+// (astra-daemon/src/plugins/registry_client.rs); an HTML stub at one of those
+// paths is not a redirect to such a client, it is a catalogue that fails to
+// parse — or, worse, a withdrawal list that fails to parse, which is the one
+// document whose absence has to be conspicuous. So this function refuses to
+// write over anything that is not a generated `.html`, and names ROLL-55 when
+// the mapping lands on one of those two.
+//
+// That refusal is the whole reason the sets are a data file rather than a
+// prefix rule: `/transparency/` moves at R9a and
+// `/transparency/moderation-log.json` never does, and the two differ by one
+// path component.
+
+/** `<id>`, `<owner>` — the only placeholders, on both sides of a mapping. */
+const PLACEHOLDER = /<([a-z][a-z0-9_]*)>/g;
+
+/** A target a browser will follow and the outside probe can fetch. */
+const ABSOLUTE_HTTPS = /^https:\/\/[^\s"'<>]+$/;
+
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** `/` → `index.html`; `/p/<id>/` → `p/<id>/index.html`; `/404.html` → `404.html`. */
+function siteFile(sitePath) {
+  const rel = sitePath.replace(/^\//, "");
+  return rel === "" || rel.endsWith("/") ? `${rel}index.html` : rel;
+}
+
+/** A pattern, as a regex over generated files, plus the names it captures. */
+function matcher(filePattern) {
+  const names = [];
+  let source = "";
+  let last = 0;
+  for (const m of filePattern.matchAll(PLACEHOLDER)) {
+    source += escapeRe(filePattern.slice(last, m.index));
+    source += "([^/]+)";
+    names.push(m[1]);
+    last = m.index + m[0].length;
+  }
+  source += escapeRe(filePattern.slice(last));
+  return { re: new RegExp(`^${source}$`), names };
+}
+
+/**
+ * Replace each mapped page with a redirect. Returns the files rewritten.
+ *
+ * @param {{out: string, file: string, written: string[]}} ctx
+ */
+export function applyRedirects({ out, file, written }) {
+  const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+  const where = path.basename(file);
+  if (doc.schema !== "astra.registry.site-redirects/1") {
+    throw new Error(`${where}: schema is ${JSON.stringify(doc.schema)}, not "astra.registry.site-redirects/1"`);
+  }
+  if (!Array.isArray(doc.sets)) throw new Error(`${where}: \`sets\` must be an array of { step, paths }`);
+
+  const htmlPages = written.filter((rel) => rel.endsWith(".html"));
+  const generated = new Set(written);
+  /** file → the mapping that claimed it, so two sets cannot both own a page. */
+  const claimed = new Map();
+  const done = [];
+
+  for (const set of doc.sets) {
+    const step = set?.step;
+    if (typeof step !== "string" || !/^R[0-9]+[a-z]?$/.test(step)) {
+      throw new Error(`${where}: every set needs a \`step\` like "R4b"; got ${JSON.stringify(step)}`);
+    }
+    if (!set.paths || typeof set.paths !== "object" || Array.isArray(set.paths)) {
+      throw new Error(`${where}: set ${step} has no \`paths\` object`);
+    }
+
+    for (const [sitePath, target] of Object.entries(set.paths)) {
+      const at = `${where}: set ${step}, ${sitePath}`;
+      if (!sitePath.startsWith("/")) throw new Error(`${at}: a path must start with "/"`);
+      if (typeof target !== "string" || !ABSOLUTE_HTTPS.test(target.replace(PLACEHOLDER, "x"))) {
+        throw new Error(
+          `${at}: the target must be an absolute https URL, not ${JSON.stringify(target)}. The successor ` +
+            "host belongs in one greppable place, and the daily probe fetches these verbatim.",
+        );
+      }
+
+      const filePattern = siteFile(sitePath);
+      const { re, names } = matcher(filePattern);
+      for (const m of String(target).matchAll(PLACEHOLDER)) {
+        if (!names.includes(m[1])) throw new Error(`${at}: the target uses <${m[1]}>, which the path does not capture`);
+      }
+
+      const hits = names.length ? htmlPages.filter((rel) => re.test(rel)) : [filePattern].filter((rel) => generated.has(rel));
+
+      if (!hits.length) {
+        if (names.length) {
+          // A pattern that matched nothing is legitimate — `/advisory/<id>/`
+          // with no advisories deployed is the state this catalogue is in
+          // today — so it is a line in the build log rather than a refusal.
+          // The direction that protects is the other one, and RC-R9-1's canary
+          // holds it: before R9a is requested, every generated HTML path is in
+          // a set.
+          console.log(`note  ${at}: matched no page in this build`);
+          continue;
+        }
+        // A literal, though, is a typo. `/plublisher/` would sit in the file
+        // redirecting nothing, the probe would never fetch it, and the old URL
+        // would go on serving a page the service has replaced.
+        throw new Error(`${at}: this build generated no such page, so the mapping would do nothing`);
+      }
+
+      for (const rel of hits) {
+        // Named first, and before the general rule below, so that the two
+        // paths ROLL-55 is actually about are refused with ROLL-55's reason
+        // rather than with "that is not a page" — which is true, and is not
+        // what a reader of this diff needs to know.
+        if (rel.startsWith("registry/v1/") || rel === "transparency/moderation-log.json") {
+          throw new Error(
+            `${at}: ${rel} must stay byte-identical (ROLL-55). It is fetched by daemons and by outside ` +
+              "checkers, which follow no redirect and would read an HTML stub as a malformed document.",
+          );
+        }
+        if (!rel.endsWith(".html")) {
+          throw new Error(`${at}: refusing to write a redirect over ${rel}, which is not a generated page`);
+        }
+        const already = claimed.get(rel);
+        if (already) throw new Error(`${at}: ${rel} is already redirected by set ${already}`);
+        claimed.set(rel, step);
+
+        const values = Object.fromEntries(names.map((n, i) => [n, re.exec(rel)[i + 1]]));
+        const to = target.replace(PLACEHOLDER, (_, n) => values[n]);
+        if (!ABSOLUTE_HTTPS.test(to)) throw new Error(`${at}: expanded to ${JSON.stringify(to)}, which is not an https URL`);
+
+        const from = `/${rel.replace(/(^|\/)index\.html$/, "$1")}`;
+        write(out, rel, redirectPage({ from, to, depth: rel.split("/").length - 1 }));
+        done.push(rel);
+      }
+    }
+  }
+
+  return done.sort();
 }
 
 /**
@@ -434,7 +597,8 @@ function main(argv) {
   const opts = parseArgs(argv);
   if (opts.help || !opts.index || !opts.out) {
     console.log(
-      "usage: node site/build.mjs --index FILE --out DIR [--revocations FILE] [--registry-dir DIR] [--repo owner/name]",
+      "usage: node site/build.mjs --index FILE --out DIR [--revocations FILE] [--registry-dir DIR]\n" +
+        "                          [--redirects site/redirects.json] [--repo owner/name]",
     );
     return opts.help ? 0 : 2;
   }
@@ -442,7 +606,8 @@ function main(argv) {
   console.log(
     `wrote ${result.pages.length} file(s) to ${path.relative(process.cwd(), opts.out)}: ` +
       `${result.plugins.length} plugin page(s), ${result.publishers.length} publisher page(s), ` +
-      `${result.advisories.length} advisory page(s)`,
+      `${result.advisories.length} advisory page(s)` +
+      (opts.redirects ? `, ${result.redirects.length} of them replaced by a redirect` : ""),
   );
   return 0;
 }
