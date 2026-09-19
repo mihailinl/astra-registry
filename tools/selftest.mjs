@@ -51,6 +51,15 @@ const MODULES = [
   "origins.mjs",
   "bundles.mjs",
   "index-signature.mjs",
+  // Beside index-signature.mjs because it is the same subject one step on —
+  // that module asks whether a signature is good, this one asks which key was
+  // allowed to make it and which document it was allowed to make it over. It
+  // prints its own three section headers, and so does revocations.mjs below
+  // it, so inserting here moves no existing name under a header it does not
+  // belong to. The two places in this list where a module's names print under
+  // the PREVIOUS module's header are primitives→catalogue and
+  // catalogue→validation; nothing may be inserted between either pair.
+  "signer.mjs",
   "revocations.mjs",
   "cli.mjs",
   "root-delegation.mjs",

@@ -1,0 +1,751 @@
+// The signer library: D3's serials, D4's per-document gates and cadence,
+// SERVE-30's key windows, D10's compromise mode, and D5's Pages latch.
+//
+// None of this has a workflow yet — RC-R1-2 writes `sign.yml` next — and that
+// is the reason these are tests rather than a first run. Every rule below
+// decides what a key signs and what a client is served, and the first time any
+// of them runs for real it will run in a job that holds the index key, against
+// `signed`, with no way to take a commit back. So each one is exercised here
+// against a fixture tree and a fixture head, and each is watched failing by
+// deleting the guard it names.
+//
+// The fixture heads are envelopes signed by the committed TEST index keys, and
+// their trust.json documents carry no root signature: the root layer is
+// root-delegation.mjs's subject, and what is under test here is which INDEX key
+// signed what, and when it was allowed to.
+
+import fs from "node:fs";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
+
+import { buildIndex, indexContent } from "../build-index.mjs";
+import { stableStringify } from "../lib/canonical.mjs";
+import { REPO_ROOT } from "../lib/sources.mjs";
+import { loadTestRoot } from "../testkeys/regenerate.mjs";
+import { signIndex } from "../../bot/sign-index.mjs";
+import { signRevocations } from "../sign-revocations.mjs";
+import { fixtureCatalogue } from "../../bot/fixtures/index/regenerate.mjs";
+import {
+  REVOCATIONS_SCHEMA, TRUST_SCHEMA, indexSignersFromEnv, publicKeyFromBase64, signerList, verifyEnvelope,
+} from "../../bot/lib/sign.mjs";
+import {
+  DOCUMENT_DOMAINS, INDEX_KEY_WINDOW_HOURS, WINDOW_EXEMPT_KEY_IDS, delegationTimes, keyPlan,
+  refusesDroppedKey,
+} from "../signer/key-window.mjs";
+import {
+  RESIGN_AFTER_HOURS, SIGNED_FILES, catalogueGate, contentOf, decideDocument, fetchSignedHead,
+  gateVerdict, indexSizeVerdict, listGate, maxIndexBytes, planRun, serialsAt,
+} from "../signer/plan.mjs";
+import { armingState, pagesRegistryFiles, pagesTree } from "../signer/pages.mjs";
+import { test, assert, assertEqual, tmp } from "./harness.mjs";
+
+const KEY_A = "TEST-ONLY-DO-NOT-TRUST-index-2026a";
+const KEY_B = "TEST-ONLY-DO-NOT-TRUST-index-2026b";
+const testKeys = { [KEY_A]: loadTestRoot(KEY_A), [KEY_B]: loadTestRoot(KEY_B) };
+
+const signerFor = (keyId) => ({
+  key_id: keyId,
+  privateKey: testKeys[keyId].privateKey,
+  public_key: testKeys[keyId].publicKeyB64,
+});
+
+const trustDelegating = (keyIds, serial = 1) => ({
+  signatures: [],
+  signed: {
+    schema: TRUST_SCHEMA,
+    serial,
+    issued_at: "2026-09-01T00:00:00Z",
+    expires_at: "2027-09-01T00:00:00Z",
+    index_keys: keyIds.map((keyId) => ({ key_id: keyId, public_key: testKeys[keyId].publicKeyB64 })),
+  },
+});
+
+const keyIdsOf = (signers) => signers.map((s) => s.key_id).join(",");
+
+/**
+ * A `signed` head from four documents, with the bytes and the parsed copies
+ * agreeing — which is what `fetchSignedHead` returns and what a carry copies.
+ */
+function headFrom({ index, revocations, trust = trustDelegating([KEY_A]), root = { schema: "astra.registry.root/1" }, sha = "0".repeat(40) }) {
+  const bytes = {};
+  const documents = {};
+  for (const [name, doc] of Object.entries({ index, revocations, trust, root })) {
+    bytes[name] = stableStringify(doc);
+    documents[name] = JSON.parse(bytes[name]);
+  }
+  return { present: true, reason: null, sha, bytes, documents, parseErrors: [] };
+}
+
+const listing = (id, extra = {}) => ({
+  schema: "astra.registry.plugin/1",
+  id,
+  name: id.replace(/-/g, " "),
+  summary: "A listing that exists so the catalogue is not empty.",
+  license: "MIT",
+  source: { kind: "github", repo: `someone/${id}` },
+  added_at: "2026-08-10",
+  ...extra,
+});
+
+const release = (id, { sha256 = "a".repeat(64) } = {}) => ({
+  schema: "astra.registry.version/1",
+  id,
+  version: "1.0.0",
+  published_at: "2026-08-10T00:00:00Z",
+  release: { kind: "github_release", repo: `someone/${id}`, tag: "v1.0.0" },
+  protocol: 1,
+  capabilities: ["tools"],
+  artifacts: {
+    "linux-x64": {
+      url: `https://github.com/someone/${id}/releases/download/v1.0.0/${id}-1.0.0-linux-x64.astraplugin`,
+      filename: `${id}-1.0.0-linux-x64.astraplugin`,
+      sha256,
+      size: 1234,
+    },
+  },
+});
+
+const advisory = (id = "ASTRA-2026-0001", pluginId = "dice-roller") => ({
+  id,
+  published: "2026-09-10",
+  severity: "high",
+  action: "block_install",
+  reason: "A fixture advisory, long enough to be a sentence a user can act on.",
+  entries: [{ kind: "id", value: pluginId }],
+});
+
+/** A throwaway registry tree with real git history, because D3 counts commits. */
+function makeTree(name) {
+  const dir = path.join(tmp, name);
+  fs.mkdirSync(dir, { recursive: true });
+  const git = (...a) =>
+    execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+  git("init", "-q", "-b", "main");
+  git("config", "user.email", "signer-fixture@example.invalid");
+  git("config", "user.name", "signer fixture");
+  git("config", "commit.gpgsign", "false");
+  const write = (rel, value) => {
+    const file = path.join(dir, rel);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, typeof value === "string" ? value : stableStringify(value));
+  };
+  const commit = (message) => {
+    git("add", "-A");
+    git("commit", "-qm", message);
+    return git("rev-parse", "HEAD");
+  };
+  const addListing = (id, opts = {}) => {
+    write(`plugins/${id}/plugin.json`, listing(id, opts.plugin ?? {}));
+    write(`plugins/${id}/versions/1.0.0.json`, release(id, opts));
+  };
+  return { dir, git, write, commit, addListing, head: () => git("rev-parse", "HEAD") };
+}
+
+export async function run() {
+  // ── SERVE-30's key windows, and D10's one exception ─────────────────────────
+  console.log("\nthe signer's key windows");
+
+  await test("the delegation time of a key is the FIRST `signed` commit that delegated it", () => {
+    const times = delegationTimes([
+      { sha: "1", committed_at: "2026-09-01T00:00:00Z", key_ids: [KEY_A] },
+      { sha: "2", committed_at: "2026-09-10T00:00:00Z", key_ids: [KEY_A, KEY_B] },
+      { sha: "3", committed_at: "2026-09-11T00:00:00Z", key_ids: [KEY_A, KEY_B] },
+    ]);
+    assertEqual(times.get(KEY_A), "2026-09-01T00:00:00Z", "the first delegation, not the latest");
+    assertEqual(times.get(KEY_B), "2026-09-10T00:00:00Z", "the first delegation, not the latest");
+  });
+
+  await test("a newly delegated key is refused the catalogue at 6 h 59 min and allowed at 7 h", () => {
+    // SERVE-30's margin over the client's 6-hour trust.json refresh. Without it
+    // a catalogue goes out signed by a key that no running client has been
+    // told about, and every one of them refuses the catalogue until its next
+    // refresh — for a rotation, which is a planned act, and therefore for
+    // nothing.
+    const candidateTrust = trustDelegating([KEY_A, KEY_B]);
+    const delegatedAt = new Map([[KEY_A, "2026-09-01T00:00:00Z"], [KEY_B, "2026-09-10T00:00:00Z"]]);
+    const available = [signerFor(KEY_A), signerFor(KEY_B)];
+
+    const within = keyPlan({
+      candidateTrust, headTrust: candidateTrust, delegatedAt, available, now: "2026-09-10T06:59:00Z",
+    });
+    assertEqual(keyIdsOf(within.index.signers), KEY_A, "the incoming key signed the catalogue inside its window");
+    assertEqual(keyIdsOf(within.revocations.signers), `${KEY_A},${KEY_B}`,
+      "the LIST is dual-signed from the delegating commit — it is what carries the new key into circulation");
+    assert(within.notes.some((n) => n.includes(KEY_B) && n.includes("after 7 h")),
+      `the refusal has to say when it lifts: ${JSON.stringify(within.notes)}`);
+
+    const after = keyPlan({
+      candidateTrust, headTrust: candidateTrust, delegatedAt, available, now: "2026-09-10T07:00:00Z",
+    });
+    assertEqual(keyIdsOf(after.index.signers), `${KEY_A},${KEY_B}`, "the window elapsed and the catalogue is still single-signed");
+    assertEqual(INDEX_KEY_WINDOW_HOURS, 7, "SERVE-30's window");
+  });
+
+  await test("the bootstrap key is exempt, and nothing else is", () => {
+    // Not a courtesy. `astra-index-2026a` is what today's trust.json delegates
+    // and there is no `signed` branch, so no commit has ever delegated it, so
+    // its window has not started. Without the exemption the first signer run
+    // refuses the catalogue, has no head to carry from, and `signed` is never
+    // created — R1 cannot start.
+    assertEqual(WINDOW_EXEMPT_KEY_IDS.join(","), "astra-index-2026a", "the exempt set is one key");
+    const bootstrap = { key_id: "astra-index-2026a", public_key: testKeys[KEY_A].publicKeyB64 };
+    const candidateTrust = {
+      signatures: [],
+      signed: { schema: TRUST_SCHEMA, serial: 1, index_keys: [bootstrap] },
+    };
+    const plan = keyPlan({
+      candidateTrust, headTrust: null, delegatedAt: new Map(), available: [bootstrap], now: "2026-09-19T00:00:00Z",
+    });
+    assertEqual(keyIdsOf(plan.index.signers), "astra-index-2026a", "the first run could not sign the catalogue");
+    assertEqual(plan.index.refused, null, "the first run was refused");
+  });
+
+  await test("a dual-signed list carries the OUTGOING signature first, and each key verifies it alone", () => {
+    // The order is read from `signed`'s history, never from the environment and
+    // never from the order trust.json lists keys in — both of those are
+    // whatever the last person to edit them typed. Proved by handing the plan
+    // the environment in the WRONG order and the trust document in the wrong
+    // order, and asserting it still puts the older delegation first.
+    const candidateTrust = trustDelegating([KEY_B, KEY_A]);
+    const delegatedAt = new Map([[KEY_A, "2026-09-01T00:00:00Z"], [KEY_B, "2026-09-10T00:00:00Z"]]);
+    const plan = keyPlan({
+      candidateTrust,
+      headTrust: candidateTrust,
+      delegatedAt,
+      available: [signerFor(KEY_B), signerFor(KEY_A)],
+      now: "2026-09-11T00:00:00Z",
+    });
+    assertEqual(keyIdsOf(plan.revocations.signers), `${KEY_A},${KEY_B}`, "outgoing first");
+
+    const doc = signRevocations(
+      { signed: { schema: REVOCATIONS_SCHEMA, serial: 4, revocations: [] } },
+      { signers: plan.revocations.signers, issuedAt: new Date("2026-09-11T00:00:00Z") },
+    );
+    assertEqual(doc.signatures.length, 2, "a rotation dual-signs");
+    assertEqual(doc.signatures[0].key_id, KEY_A, "the outgoing key's signature is not first");
+    for (const keyId of [KEY_A, KEY_B]) {
+      const r = verifyEnvelope(doc, REVOCATIONS_SCHEMA, [
+        { key_id: keyId, publicKey: publicKeyFromBase64(testKeys[keyId].publicKeyB64) },
+      ]);
+      assert(r.ok, `a client holding only ${keyId}'s trust.json could not verify the list: ${r.reason}`);
+    }
+  });
+
+  await test("a key the environment holds and trust.json does not delegate never signs", () => {
+    // It would be committed beside a trust.json that cannot verify it, and
+    // SERVE-91 would refuse the whole commit — withholding the list as well.
+    // Dropped loudly rather than silently, because a secret that is in the
+    // environment and not in the document is a half-finished ceremony.
+    const plan = keyPlan({
+      candidateTrust: trustDelegating([KEY_A]),
+      headTrust: trustDelegating([KEY_A]),
+      delegatedAt: new Map([[KEY_A, "2026-09-01T00:00:00Z"]]),
+      available: [signerFor(KEY_A), signerFor(KEY_B)],
+      now: "2026-09-11T00:00:00Z",
+    });
+    assertEqual(keyIdsOf(plan.revocations.signers), KEY_A, "an undelegated key signed");
+    assert(plan.notes.some((n) => n.includes(KEY_B) && n.includes("does not delegate it")),
+      `the drop has to be said out loud: ${JSON.stringify(plan.notes)}`);
+  });
+
+  await test("the signer never commits a catalogue signed by a dropped key beside the trust.json that drops it", () => {
+    // D10 step 4, and the one selftest RC-R1-1 names for key-window.mjs.
+    //
+    // The shape: a root ceremony publishes a trust.json delegating only the new
+    // key. If the catalogue's gates then fail, D4's ordinary answer is to carry
+    // `signed`'s copy forward — and that copy is signed by the key this very
+    // commit drops. SERVE-15 verifies every candidate document against the
+    // candidate trust.json, SERVE-91 refuses the whole commit, and the repair
+    // does not land: the new trust.json and the list signed by the new key are
+    // withheld together, and the compromised key's last bytes stay served.
+    const headTrust = trustDelegating([KEY_A]);
+    const candidateTrust = trustDelegating([KEY_B], 2);
+    const delegatedAt = new Map([[KEY_A, "2026-09-01T00:00:00Z"], [KEY_B, "2026-09-10T00:00:00Z"]]);
+    const now = "2026-09-10T02:00:00Z"; // two hours in — inside the seven-hour window
+
+    const plan = keyPlan({ candidateTrust, headTrust, delegatedAt, available: [signerFor(KEY_B)], now });
+    assertEqual(plan.mode, "compromise", "dropping the head's key is what selects compromise mode");
+    assertEqual(plan.dropped.join(","), KEY_A, "the dropped key is not named");
+    assertEqual(keyIdsOf(plan.index.signers), KEY_B,
+      "the seven-hour window was not waived, so the catalogue cannot be re-signed and would be carried");
+    assertEqual(plan.carryCatalogueAllowed, false, "a carry is still allowed in compromise mode");
+
+    const headIndex = signIndex(fixtureCatalogue(5), {
+      signer: signerFor(KEY_A), issuedAt: new Date("2026-09-09T00:00:00Z"),
+    });
+    const head = headFrom({
+      index: headIndex,
+      revocations: { signatures: [], signed: { schema: REVOCATIONS_SCHEMA, serial: 1, revocations: [] } },
+      trust: headTrust,
+    });
+    const gate = { ok: false, failures: ["a listing does not validate"], notes: [], candidate: null, bytes: null, serial: 5 };
+
+    const decided = decideDocument({
+      name: "index", file: SIGNED_FILES.index, gate, head, now, carryAllowed: plan.carryCatalogueAllowed,
+    });
+    assertEqual(decided.decision, "blocked", "the run carried a catalogue the new trust.json cannot verify");
+
+    // The fixture has to be ABLE to produce the bad commit, or the refusal
+    // below is asserting something that cannot happen.
+    const bad = decideDocument({ name: "index", file: SIGNED_FILES.index, gate, head, now, carryAllowed: true });
+    assertEqual(bad.decision, "carry", "the carry this test is about cannot be constructed");
+    const problems = refusesDroppedKey({
+      trust: candidateTrust,
+      documents: [{ name: SIGNED_FILES.index, domain: DOCUMENT_DOMAINS.index, doc: JSON.parse(bad.bytes) }],
+    });
+    assertEqual(problems.length, 1, `the carried catalogue was accepted beside the trust.json that drops its signer: ${problems}`);
+    assert(problems[0].includes("does not verify"), problems[0]);
+
+    // And what the compromise plan actually produces passes the same refusal.
+    const resigned = signIndex(fixtureCatalogue(6), { signers: plan.index.signers, issuedAt: new Date(now) });
+    assertEqual(
+      refusesDroppedKey({
+        trust: candidateTrust,
+        documents: [{ name: SIGNED_FILES.index, domain: DOCUMENT_DOMAINS.index, doc: resigned }],
+      }).join("; "),
+      "",
+      "the catalogue re-signed by the incoming key was refused",
+    );
+  });
+
+  await test("one signer or two, and never both spellings at once", () => {
+    const a = signerFor(KEY_A);
+    assertEqual(signerList({ signer: a }).length, 1, "one signer");
+    assertEqual(signerList({ signers: [a, signerFor(KEY_B)] }).length, 2, "two signers");
+    for (const [opts, why] of [
+      [{ signer: a, signers: [a] }, "both spellings hide which key signs first"],
+      [{}, "nothing to sign with"],
+    ]) {
+      let threw = false;
+      try { signerList(opts); } catch { threw = true; }
+      assert(threw, why);
+    }
+  });
+
+  await test("ASTRA_INDEX_SIGNING_KEY_NEXT is one more signer, and a copy of the first is not a rotation", () => {
+    const a = testKeys[KEY_A];
+    const b = testKeys[KEY_B];
+    const base = {
+      ASTRA_INDEX_SIGNING_KEY: a.seed.toString("base64"),
+      ASTRA_INDEX_SIGNING_KEY_ID: KEY_A,
+    };
+    assertEqual(keyIdsOf(indexSignersFromEnv({ env: base })), KEY_A, "no rotation is one signer — no secret is added at R1");
+    assertEqual(
+      keyIdsOf(indexSignersFromEnv({
+        env: { ...base, ASTRA_INDEX_SIGNING_KEY_NEXT: b.seed.toString("base64"), ASTRA_INDEX_SIGNING_KEY_NEXT_ID: KEY_B },
+      })),
+      `${KEY_A},${KEY_B}`,
+      "the incoming key did not reach the signer",
+    );
+    assertEqual(indexSignersFromEnv({ env: {} }).length, 0, "no key at all is not an error here; the caller reports it");
+
+    for (const [env, needle] of [
+      [{ ...base, ASTRA_INDEX_SIGNING_KEY_NEXT: b.seed.toString("base64") }, "ASTRA_INDEX_SIGNING_KEY_NEXT_ID"],
+      // The rotation that is not one: the live secret copied into the `_NEXT`
+      // slot. Two signatures by one key look dual-signed to every reader, and a
+      // client holding only the old trust.json is exactly as stuck as before.
+      [{ ...base, ASTRA_INDEX_SIGNING_KEY_NEXT: a.seed.toString("base64"), ASTRA_INDEX_SIGNING_KEY_NEXT_ID: KEY_B }, "same Ed25519 key"],
+    ]) {
+      let message = "";
+      try { indexSignersFromEnv({ env }); } catch (e) { message = e.message; }
+      assert(message.includes(needle), `expected a refusal naming ${needle}, got ${JSON.stringify(message)}`);
+    }
+  });
+
+  // ── D3's serials and D4's per-document gates ────────────────────────────────
+  console.log("\nthe signer's plan");
+
+  await test("the serials are D3's two formulas, counted at the Source-Commit and not at HEAD", () => {
+    const t = makeTree("serials");
+    t.addListing("dice-roller");
+    const first = t.commit("a listing");
+    assertEqual(serialsAt({ root: t.dir, sha: first }).index, 1, "one commit under plugins/");
+    assertEqual(serialsAt({ root: t.dir, sha: first }).revocations, 1, "no advisory commit yet, and serial 0 is reserved");
+
+    t.write("tools/revocations/ASTRA-2026-0001.json", advisory());
+    const second = t.commit("an advisory");
+    const at = serialsAt({ root: t.dir, sha: second });
+    assertEqual(at.index, 1, "an advisory commit is not a catalogue commit");
+    assertEqual(at.revocations, 2, "the list's serial is the advisory commit count plus one");
+
+    // The difference from `tools/build-index.mjs`'s counter, which adds one for
+    // a staged change because it runs inside the workflow that is about to
+    // commit. The signer counts at a commit that exists, so a dirty tree adds
+    // nothing — and if it did, two runs over one Source-Commit would publish
+    // two serials for one catalogue.
+    t.addListing("second-plugin");
+    assertEqual(serialsAt({ root: t.dir, sha: second }).index, 1,
+      "an uncommitted listing moved the serial the signer counts at a commit");
+
+    // And the older commit still counts what it counted.
+    assertEqual(serialsAt({ root: t.dir, sha: first }).revocations, 1, "the count at an older commit moved");
+  });
+
+  await test("SERVE-49's cap is policy/limits.json's number, refused one byte over", () => {
+    const limit = maxIndexBytes();
+    assertEqual(limit, 1048576, "max_index_bytes is not 1 MiB; SERVE-50 and this test disagree");
+    assertEqual(indexSizeVerdict(limit, limit).ok, true, "a catalogue exactly at the cap is refused");
+    const over = indexSizeVerdict(limit + 1, limit);
+    assertEqual(over.ok, false, "1,048,577 bytes was accepted");
+    assert(over.message.includes("SERVE-49") && over.message.includes(String(limit + 1)),
+      `the refusal has to name the size and the rule: ${over.message}`);
+  });
+
+  await test("a lower serial than `signed`'s head is refused", async () => {
+    // SERVE-36. D3 says the counts only rise, because ROLL-5 forbids rewriting
+    // `main` — so a serial that fell is not a smaller catalogue, it is evidence
+    // that something the serial rests on stopped being true, and publishing it
+    // would make every armed client refuse the document that follows.
+    const head = headFrom({
+      index: signIndex(fixtureCatalogue(9), { signer: signerFor(KEY_A), issuedAt: new Date("2026-09-18T00:00:00Z") }),
+      revocations: signRevocations(
+        { signed: { schema: REVOCATIONS_SCHEMA, serial: 9, revocations: [] } },
+        { signer: signerFor(KEY_A), issuedAt: new Date("2026-09-18T00:00:00Z") },
+      ),
+    });
+    const t = makeTree("lower-serial");
+    t.addListing("dice-roller");
+    t.commit("a listing");
+
+    const gate = await catalogueGate({ root: t.dir, serial: 8, head, limit: 1048576 });
+    assertEqual(gate.ok, false, "a serial below the head's was accepted");
+    assert(gate.failures.some((f) => f.includes("SERVE-36") && f.includes("8") && f.includes("9")),
+      `the refusal has to name both serials: ${JSON.stringify(gate.failures)}`);
+
+    const list = listGate({ root: t.dir, serial: 8, head });
+    assertEqual(list.ok, false, "the list took a lower serial than the head's");
+    assert(list.failures.some((f) => f.includes("SERVE-36")), JSON.stringify(list.failures));
+  });
+
+  await test("an unchanged document is a no-op at 19 h and re-signed at 20 h", () => {
+    // D4's cadence. Twenty hours sits inside the list's seven-day TTL with room
+    // for a missed run, and an unchanged document re-signed every hour would
+    // put a `signed` commit an hour in front of every reader of SERVE-85 for no
+    // content change at all.
+    const doc = signRevocations(
+      { signed: { schema: REVOCATIONS_SCHEMA, serial: 3, revocations: [] } },
+      { signer: signerFor(KEY_A), issuedAt: new Date("2026-09-18T00:00:00Z") },
+    );
+    const head = headFrom({ index: signIndex(fixtureCatalogue(3), { signer: signerFor(KEY_A) }), revocations: doc });
+    const gate = {
+      ok: true, failures: [], notes: [], serial: 3,
+      candidate: { signed: { schema: REVOCATIONS_SCHEMA, serial: 3, revocations: [] } },
+    };
+    const at = (hours) =>
+      decideDocument({
+        name: "revocations", file: SIGNED_FILES.revocations, gate, head,
+        now: new Date(Date.parse("2026-09-18T00:00:00Z") + hours * 3600 * 1000).toISOString().replace(/\.\d+Z$/, "Z"),
+      });
+    assertEqual(at(19).decision, "unchanged", "a re-sign at 19 h");
+    assertEqual(at(19).bytes, head.bytes.revocations, "an unchanged document must re-commit the head's exact bytes");
+    assertEqual(at(20).decision, "resign", "no re-sign at 20 h");
+    assertEqual(RESIGN_AFTER_HOURS, 20, "D4's cadence");
+  });
+
+  await test("an unchanged list beside a changed catalogue keeps the list's bytes", async () => {
+    // D4: each document stands alone, in both directions. The catalogue moving
+    // must not restamp a list that did not move — a re-signed list at the same
+    // serial is a new document every reader of SERVE-85 has to account for.
+    const t = makeTree("one-moves");
+    t.addListing("dice-roller");
+    const first = t.commit("a listing");
+
+    const headList = signRevocations(
+      { $comment: "x", signatures: [], signed: { schema: REVOCATIONS_SCHEMA, serial: 1, revocations: [] } },
+      { signer: signerFor(KEY_A), issuedAt: new Date("2026-09-19T00:00:00Z") },
+    );
+    const headIndex = signIndex(buildIndex({ root: t.dir, serial: 1 }), {
+      signer: signerFor(KEY_A), issuedAt: new Date("2026-09-19T00:00:00Z"),
+    });
+    const head = headFrom({ index: headIndex, revocations: headList, sha: first });
+
+    t.addListing("second-plugin");
+    const second = t.commit("a second listing");
+
+    const plan = await planRun({ root: t.dir, sourceCommit: second, head, now: "2026-09-19T01:00:00Z" });
+    assertEqual(plan.documents.index.decision, "changed", "a new listing did not change the catalogue");
+    assertEqual(plan.documents.revocations.decision, "unchanged", "the list moved because the catalogue did");
+    assertEqual(plan.documents.revocations.bytes, head.bytes.revocations, "the list's bytes were not the head's");
+    assertEqual(plan.alerts.join("; "), "", "an unchanged document must not alert");
+    assertEqual(plan.commit, true, "the run had a changed document and decided to commit nothing");
+  });
+
+  await test("each of D4's three catalogue failures still commits the list, carries the catalogue and alerts", async () => {
+    // Per-document isolation, the property the whole design rests on: a
+    // catalogue problem must never hold a withdrawal back. Three failures, one
+    // per gate, each a different thing going wrong in the tree.
+    const headList = signRevocations(
+      { signed: { schema: REVOCATIONS_SCHEMA, serial: 1, revocations: [] } },
+      { signer: signerFor(KEY_A), issuedAt: new Date("2026-09-19T00:00:00Z") },
+    );
+
+    // Each case names the failure it is supposed to produce. Without that, all
+    // three could fail for one reason — the fixture never building, say — and
+    // the test would report three isolated gates it had exercised once.
+    const cases = [
+      ["an invalid listing",
+        (t) => { t.addListing("broken-one", { sha256: "not-a-digest" }); t.commit("a broken listing"); },
+        { because: "$.artifacts.linux-x64.sha256 does not match" }],
+      ["an oversize catalogue",
+        (t) => { t.addListing("second-plugin"); t.commit("a listing"); },
+        { limit: 200, because: "SERVE-49" }],
+      // Equal-serial drift: the serial is taken at the Source-Commit and the
+      // tree under it says something else — here a listing that is not
+      // committed, which is the shape whatever produced it. TRUST-28 needs an
+      // equal serial to mean equal listings, so the served catalogue is
+      // carried until a commit under plugins/ raises it.
+      ["equal-serial drift", (t) => { t.addListing("second-plugin"); }, { because: "TRUST-28" }],
+    ];
+
+    for (const [label, mutate, opts] of cases) {
+      const t = makeTree(`isolation-${label.replace(/\W+/g, "-")}`);
+      t.addListing("dice-roller");
+      const first = t.commit("a listing");
+      const headIndex = signIndex(buildIndex({ root: t.dir, serial: 1 }), {
+        signer: signerFor(KEY_A), issuedAt: new Date("2026-09-19T00:00:00Z"),
+      });
+      const head = headFrom({ index: headIndex, revocations: headList, sha: first });
+
+      // The list changes in every case, so "the list still committed" is a real
+      // observation rather than an unchanged document sitting still.
+      t.write("tools/revocations/ASTRA-2026-0001.json", advisory());
+      t.commit("an advisory");
+      mutate(t);
+      const sourceCommit = t.head();
+
+      const plan = await planRun({
+        root: t.dir, sourceCommit, head, now: "2026-09-19T02:00:00Z", limit: opts.limit ?? 1048576,
+      });
+      assertEqual(plan.documents.index.decision, "carry", `${label}: the catalogue was not carried`);
+      assertEqual(plan.documents.index.bytes, head.bytes.index, `${label}: the carry is not byte-for-byte the head`);
+      assertEqual(plan.documents.revocations.decision, "changed", `${label}: the withdrawal list was held back`);
+      assertEqual(plan.alerts.length, 1, `${label}: every carry alerts (${plan.alerts.join("; ")})`);
+      assert(plan.alerts[0].includes(SIGNED_FILES.index), `${label}: ${plan.alerts[0]}`);
+      assertEqual(plan.commit, true, `${label}: the run refused to commit at all`);
+      assertEqual(plan.refusals.join("; "), "", `${label}: a carry is not a refusal`);
+      assert(plan.documents.index.reasons.some((r) => r.includes(opts.because)),
+        `${label}: the gate refused for some other reason than the one this case is about ` +
+        `(wanted ${opts.because}): ${JSON.stringify(plan.documents.index.reasons)}`);
+    }
+  });
+
+  await test("a stale committed revocations.json on main does not stop a changed list", () => {
+    // ROLL-12: `main:registry/v1/revocations.json` is an unsigned regeneration,
+    // and between an advisory commit and the next `build-index` run it is
+    // simply out of date. The list the signer publishes is built from
+    // `tools/revocations/**` alone, so a stale copy on main cannot hold a
+    // withdrawal back — which is the one delay this design exists to remove.
+    const t = makeTree("stale-main-list");
+    t.addListing("dice-roller");
+    t.write("registry/v1/revocations.json", {
+      $comment: "stale: regenerated before the advisory below existed",
+      signatures: [],
+      signed: { schema: REVOCATIONS_SCHEMA, serial: 1, revocations: [] },
+    });
+    t.commit("a listing and a list");
+    t.write("tools/revocations/ASTRA-2026-0001.json", advisory());
+    const sourceCommit = t.commit("an advisory, and nobody regenerated the committed list");
+
+    const serials = serialsAt({ root: t.dir, sha: sourceCommit });
+    const gate = listGate({ root: t.dir, serial: serials.revocations, head: { present: false } });
+    assertEqual(gate.ok, true, `the list did not build: ${gate.failures.join("; ")}`);
+    assertEqual(gate.candidate.signed.revocations.length, 1, "the advisory did not reach the list");
+    assertEqual(gate.candidate.signed.revocations[0].value, "dice-roller", "the wrong entry");
+    assertEqual(gate.candidate.signed.serial, 2, "the serial is the advisory commit count plus one");
+  });
+
+  await test("before the first run there is no head, so a failing document is blocked rather than carried", () => {
+    // R1's opening state, and the reason `carry` is not the answer to
+    // everything: a commit on `signed` holds all four documents (D2), so the
+    // first run cannot publish half of one.
+    const t = makeTree("no-head");
+    t.addListing("dice-roller");
+    t.commit("a listing");
+    const head = fetchSignedHead({ root: t.dir, remote: "origin", fetch: true });
+    assertEqual(head.present, false, "a repository with no `signed` branch reported a head");
+    assert(head.reason.includes("origin"), head.reason);
+
+    const decided = decideDocument({
+      name: "index", file: SIGNED_FILES.index, head,
+      gate: { ok: false, failures: ["a listing does not validate"], notes: [], candidate: null, serial: 1 },
+      now: "2026-09-19T00:00:00Z",
+    });
+    assertEqual(decided.decision, "blocked", "there was nothing to carry and the run carried it anyway");
+    assert(decided.blocked_because.includes("no usable copy"), decided.blocked_because);
+  });
+
+  await test("`signed`'s head comes back byte for byte, trailing newline included", () => {
+    // What a carry copies. `stableStringify` ends every document with a
+    // newline; a read that trimmed it would produce a carry whose bytes differ
+    // from the head's by one byte, whose SHA-256 differs, and whose signature
+    // was made over the other bytes — so it would not verify, on a path that
+    // only runs when something has already gone wrong.
+    const t = makeTree("head-bytes");
+    t.addListing("dice-roller");
+    t.commit("a listing");
+    const list = signRevocations(
+      { signed: { schema: REVOCATIONS_SCHEMA, serial: 1, revocations: [] } },
+      { signer: signerFor(KEY_A), issuedAt: new Date("2026-09-19T00:00:00Z") },
+    );
+    const wrote = {
+      "registry/v1/index.json": stableStringify(signIndex(fixtureCatalogue(4), { signer: signerFor(KEY_A) })),
+      "registry/v1/revocations.json": stableStringify(list),
+      "registry/v1/trust.json": stableStringify(trustDelegating([KEY_A])),
+      "registry/v1/root.json": stableStringify({ schema: "astra.registry.root/1" }),
+    };
+    t.git("checkout", "-q", "--orphan", "signed");
+    t.git("rm", "-rq", "--cached", ".");
+    for (const f of fs.readdirSync(path.join(t.dir)).filter((n) => n !== ".git")) {
+      fs.rmSync(path.join(t.dir, f), { recursive: true, force: true });
+    }
+    for (const [rel, text] of Object.entries(wrote)) t.write(rel, text);
+    const signedSha = t.commit("the first signed set");
+    t.git("checkout", "-q", "main");
+
+    const head = fetchSignedHead({ root: t.dir, remote: t.dir, branch: "signed" });
+    assertEqual(head.present, true, `no head: ${head.reason}`);
+    assertEqual(head.sha, signedSha, "the head is a different commit");
+    for (const [name, rel] of Object.entries(SIGNED_FILES)) {
+      // The cheap assertion first, and on purpose: the whole-document
+      // comparison below prints both documents, and a missing newline is the
+      // one difference a reader would have to count characters to find.
+      assert(head.bytes[name].endsWith("}\n"), `${rel} lost its trailing newline`);
+      assertEqual(head.bytes[name].length, wrote[rel].length, `${rel} came back a different length`);
+      assertEqual(head.bytes[name], wrote[rel], `${rel} did not round-trip byte for byte`);
+    }
+    assertEqual(head.parseErrors.join("; "), "", "the head did not parse");
+  });
+
+  await test("the content projection is the catalogue's own, extended to the list", () => {
+    // `contentOf` decides what "unchanged" means for both documents, and
+    // `tools/build-index.mjs`'s `indexContent` decides it for `--check`. Two
+    // answers to one question is how a catalogue becomes "unchanged" to the
+    // signer and "different" to CI, or the reverse.
+    const doc = signIndex(fixtureCatalogue(7), { signer: signerFor(KEY_A) });
+    // Key sets first, so a projection that started dropping or inventing a
+    // member says which one rather than printing two catalogues.
+    assertEqual(Object.keys(contentOf(doc)).sort().join(","), Object.keys(indexContent(doc)).sort().join(","),
+      "the signer and build-index project a catalogue onto different members");
+    assertEqual(stableStringify(contentOf(doc)), stableStringify(indexContent(doc)),
+      "the signer and build-index disagree about what a catalogue's content is");
+    assert(!Object.hasOwn(contentOf(doc), "issued_at") && !Object.hasOwn(contentOf(doc), "expires_at"),
+      "the publication stamps are content, so every run would look changed");
+    assertEqual(contentOf(doc).serial, 7, "the serial is content");
+  });
+
+  await test("a `NOT verified` note never decides anything, and the catalogue gate passes without a checkout", async () => {
+    // Seam 4. `tools/validate.mjs` emits one note per cross-repository check it
+    // could not run, and `build-index.yml` turns those into exit 1 — correctly,
+    // because it HAS the checkout. The signer must never grow one: signing that
+    // waits on another repository stops when that repository is unavailable,
+    // which is the state a withdrawal is most likely to be needed in.
+    //
+    // Hermetic first, because the end-to-end half below can only see notes on a
+    // machine that has no sibling AstraPlugins checkout.
+    const verdict = gateVerdict({
+      errors: [],
+      notes: [
+        { where: "policy/limits.json", message: "2 mirrored limit(s) NOT verified: no AstraPlugins checkout found" },
+        { where: "bot/lib/assets.mjs", message: "icon formats NOT verified against AstraPlugins: no checkout found" },
+      ],
+    });
+    assertEqual(verdict.ok, true, "a NOT verified note failed the catalogue gate");
+    assertEqual(verdict.notes.length, 2, "the notes were dropped instead of recorded");
+    assertEqual(gateVerdict({ errors: [{ where: "x", message: "y" }], notes: [] }).ok, false,
+      "an error did not fail the gate, so the gate decides nothing at all");
+
+    const t = makeTree("no-sibling");
+    t.addListing("dice-roller");
+    t.commit("a listing");
+    const gate = await catalogueGate({ root: t.dir, serial: 1, head: { present: false }, limit: 1048576 });
+    assertEqual(gate.ok, true, `a valid tree failed the catalogue gate: ${gate.failures.join("; ")}`);
+
+    if (!fs.existsSync(path.resolve(REPO_ROOT, "../AstraPlugins"))) {
+      assert(gate.notes.some((n) => n.includes("NOT verified")),
+        `with no AstraPlugins checkout the gate has to RECORD the checks it could not run: ${JSON.stringify(gate.notes)}`);
+    }
+  });
+
+  // ── D5: Pages, the arming flag and the latch ───────────────────────────────
+  console.log("\nPages and the arming latch");
+
+  await test("with no flag in history Pages gets main's unsigned list", () => {
+    // Early arming is the failure this stops. The moment Pages serves a list
+    // that verifies, every shipped 0.2.x daemon arms itself, and seven days
+    // after its last accepted fetch a stale list blocks installs — before
+    // ROLL-14's drill has run and before the owner has approved it.
+    const t = makeTree("pages-unarmed");
+    t.addListing("dice-roller");
+    t.write("registry/v1/revocations.json", {
+      $comment: "GENERATED FILE",
+      signatures: [],
+      signed: { schema: REVOCATIONS_SCHEMA, serial: 1, revocations: [] },
+    });
+    const sourceCommit = t.commit("a listing and the unsigned list");
+
+    const arming = armingState({ root: t.dir, sourceCommit });
+    assertEqual(arming.armed, false, "the latch closed with no flag in history");
+
+    const head = headFrom({
+      index: signIndex(fixtureCatalogue(2), { signer: signerFor(KEY_A) }),
+      revocations: signRevocations(
+        { signed: { schema: REVOCATIONS_SCHEMA, serial: 1, revocations: [] } },
+        { signer: signerFor(KEY_A) },
+      ),
+    });
+    const { files, list_source } = pagesRegistryFiles({ root: t.dir, head, arming, sourceCommit });
+    assertEqual(list_source, "main", "Pages took the signed list before the flag existed");
+    const served = JSON.parse(files[SIGNED_FILES.revocations]);
+    assertEqual(JSON.stringify(served.signatures), "[]",
+      "Pages served a list carrying a signature before arming; every shipped client has now armed itself");
+    assertEqual(files[SIGNED_FILES.index], head.bytes.index, "Pages did not get `signed`'s catalogue");
+  });
+
+  await test("the latch is the first commit that ADDED the flag, and deleting it does not reopen it", () => {
+    // Arming is one-way in the field: a client that has seen a valid list does
+    // not disarm. So a revert of the flag commit must change nothing here — if
+    // it did, Pages would put an unsigned list back in front of armed clients
+    // and they would block installs a week later, with a green build behind it.
+    const t = makeTree("pages-latch");
+    t.addListing("dice-roller");
+    t.write("registry/v1/revocations.json", {
+      signatures: [], signed: { schema: REVOCATIONS_SCHEMA, serial: 1, revocations: [] },
+    });
+    t.commit("a listing and the unsigned list");
+    t.write("policy/pages-withdrawal-list.json", {
+      schema: "astra.registry.pages-withdrawal-list/1",
+      armed_at: "2026-09-20T10:00:00Z",
+    });
+    const latch = t.commit("arm the withdrawal list on Pages");
+    fs.rmSync(path.join(t.dir, "policy", "pages-withdrawal-list.json"));
+    const afterRevert = t.commit("revert the arming (this must change nothing)");
+
+    const arming = armingState({ root: t.dir, sourceCommit: afterRevert });
+    assertEqual(arming.armed, true, "deleting the flag reopened the latch");
+    assertEqual(arming.latch_commit, latch, "the latch is not the commit that added the flag");
+    assertEqual(arming.armed_at, "2026-09-20T10:00:00Z", "armed_at is read from the flag at the latch");
+    assert(!fs.existsSync(path.join(t.dir, "policy", "pages-withdrawal-list.json")),
+      "the fixture has to have the flag deleted, or this proves nothing");
+
+    const head = headFrom({
+      index: signIndex(fixtureCatalogue(2), { signer: signerFor(KEY_A) }),
+      revocations: signRevocations(
+        { signed: { schema: REVOCATIONS_SCHEMA, serial: 1, revocations: [] } },
+        { signer: signerFor(KEY_A) },
+      ),
+    });
+    const { files, list_source } = pagesRegistryFiles({ root: t.dir, head, arming, sourceCommit: afterRevert });
+    assertEqual(list_source, "signed", "Pages went back to main's unsigned list after a revert");
+    assertEqual(files[SIGNED_FILES.revocations], head.bytes.revocations, "Pages' list is not `signed`'s bytes");
+
+    // And the tree the job deploys: the documents go OVER the rendered site, so
+    // a site that could not render cannot take them down with it (MOD-46).
+    const { tree, overwritten } = pagesTree({
+      site: { "index.html": "<!doctype html>", [SIGNED_FILES.index]: "a stale copy from the pages-site artifact" },
+      registry: files,
+    });
+    assertEqual(tree[SIGNED_FILES.index], head.bytes.index, "a stale site artifact overwrote this run's catalogue");
+    assertEqual(tree["index.html"], "<!doctype html>", "the site was dropped");
+    assertEqual(overwritten.join(","), SIGNED_FILES.index, "the overlay did not report what it replaced");
+  });
+}

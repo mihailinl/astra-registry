@@ -1,0 +1,147 @@
+// What Pages serves, and the one function that decides whether the withdrawal
+// list on it is signed.
+//
+// ── the latch (D5, ROLL-57, ROLL-14) ────────────────────────────────────────
+//
+// Pages serves an UNSIGNED withdrawal list today, and every shipped 0.2.x
+// daemon reads that and stays `NotEnforced`. The moment Pages serves a list
+// that verifies, those clients arm themselves, and seven days after their last
+// accepted fetch an unsigned or stale list blocks installs. Arming is therefore
+// one-way in the field whatever git says, and the flag has to be read the same
+// way:
+//
+//   **armed** when ANY commit reachable from the Source-Commit ADDED
+//   `policy/pages-withdrawal-list.json`.
+//
+// History, not the current tree, and the difference is the whole point. Reading
+// the tree makes a revert of the flag commit put an unsigned list back in front
+// of clients that have already armed — they do not disarm, they block installs
+// a week later, and the person who reverted sees a green build. Reading the
+// history means the revert changes nothing, which is the honest model of what
+// the field is doing.
+//
+// The flag is never changed and never deleted, not even at R9b. RC-R1-6's
+// "Arming flag is permanent" row is what asserts that; this module only has to
+// be unable to notice.
+//
+// ── one function, not a condition in a workflow ─────────────────────────────
+//
+// `armingState` is the single arming decision D5 asks for. The `pages` job,
+// RC-R1-5's served-vs-signed check and RC-R1-7's probe all have to agree about
+// when the latch closed, and three readings of "is the flag there" in three
+// languages is three chances to read it differently.
+
+import { blobAt, gitMaybe } from "./git.mjs";
+import { SIGNED_FILES } from "./plan.mjs";
+
+/** The flag. Its content is `schema` and `armed_at`, exactly (G3, proposed). */
+export const FLAG_PATH = "policy/pages-withdrawal-list.json";
+
+/** G3's proposed schema for the flag. `MBE-PENDING`: readers ignore it until a contract version records it. */
+export const FLAG_SCHEMA = "astra.registry.pages-withdrawal-list/1";
+
+/**
+ * Has the latch closed at this commit, and where.
+ *
+ * `--full-history` deliberately: the default history simplification can drop
+ * the commit that added a file when later commits made the same content reach
+ * the tip another way, and "was it ever added" is exactly the question
+ * simplification is entitled to answer with a shrug. `--diff-filter=A` keeps
+ * only the commits that added it, `--reverse` puts the oldest first, and the
+ * oldest is the latch.
+ *
+ * @param {{root: string, sourceCommit: string, flagPath?: string}} opts
+ * @returns {{armed: boolean, latch_commit: string|null, latch_committed_at: string|null,
+ *            armed_at: string|null, flag: object|null, adds: number}}
+ */
+export function armingState({ root, sourceCommit, flagPath = FLAG_PATH }) {
+  const listed = gitMaybe(
+    ["log", "--full-history", "--diff-filter=A", "--reverse", "--format=%H %cI", sourceCommit, "--", flagPath],
+    { root },
+  );
+  if (!listed.ok) {
+    throw new Error(`could not read the arming history at ${sourceCommit}: ${listed.error}`);
+  }
+  const lines = listed.out.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (lines.length === 0) {
+    return { armed: false, latch_commit: null, latch_committed_at: null, armed_at: null, flag: null, adds: 0 };
+  }
+  const [sha, committedAt] = lines[0].split(/\s+/);
+  let flag = null;
+  const text = blobAt({ root, ref: sha, path: flagPath });
+  if (text !== null) {
+    try {
+      flag = JSON.parse(text);
+    } catch {
+      // Unparseable is not un-armed. The latch is the commit, not the content:
+      // treating a broken flag as "not armed" would hand anybody with commit
+      // access a one-byte disarm, and clients in the field do not disarm.
+      flag = null;
+    }
+  }
+  return {
+    armed: true,
+    latch_commit: sha,
+    latch_committed_at: committedAt,
+    armed_at: typeof flag?.armed_at === "string" ? flag.armed_at : null,
+    flag,
+    adds: lines.length,
+  };
+}
+
+/**
+ * The four `registry/v1/` files Pages serves, as bytes.
+ *
+ * Three of them are always `signed`'s head. The fourth is the latch:
+ *
+ *   * armed   → `signed`'s list, signed, which is what arms a 0.2.x client;
+ *   * not yet → main's committed unsigned list, exactly as today, so those
+ *               clients stay `NotEnforced`.
+ *
+ * @param {{root: string, head: object, arming: {armed: boolean}, sourceCommit: string}} opts
+ */
+export function pagesRegistryFiles({ root, head, arming, sourceCommit }) {
+  if (!head?.present) {
+    throw new Error("Pages serves `signed`'s head and there is no head yet; the publish job runs first (D1)");
+  }
+  const files = {};
+  for (const name of ["index", "trust", "root"]) {
+    const bytes = head.bytes[name];
+    if (typeof bytes !== "string") {
+      throw new Error(`\`signed\`@${String(head.sha).slice(0, 12)} has no ${SIGNED_FILES[name]}`);
+    }
+    files[SIGNED_FILES[name]] = bytes;
+  }
+
+  if (arming.armed) {
+    const bytes = head.bytes.revocations;
+    if (typeof bytes !== "string") {
+      throw new Error(`the latch is closed and \`signed\`@${String(head.sha).slice(0, 12)} has no withdrawal list`);
+    }
+    files[SIGNED_FILES.revocations] = bytes;
+    return { files, list_source: "signed" };
+  }
+
+  const unsigned = blobAt({ root, ref: sourceCommit, path: SIGNED_FILES.revocations });
+  if (unsigned === null) {
+    throw new Error(`the latch is open and main@${sourceCommit.slice(0, 12)} has no ${SIGNED_FILES.revocations}`);
+  }
+  return { files: { ...files, [SIGNED_FILES.revocations]: unsigned }, list_source: "main" };
+}
+
+/**
+ * The tree to deploy: the rendered site, with the four documents laid over it.
+ *
+ * Over, and in that order, because the site build is a NON-FATAL step (D5,
+ * MOD-46, ROLL-55): a render failure redeploys the newest `pages-site`
+ * artifact, and the documents that go on top of it are this run's. A site that
+ * cannot render must never be able to take the catalogue and the withdrawal
+ * list down with it, and an assembly that let the site win would do exactly
+ * that with a stale `registry/v1/index.json` inside an old artifact.
+ *
+ * @param {{site?: Record<string,string>, registry: Record<string,string>}} opts
+ */
+export function pagesTree({ site = {}, registry }) {
+  const overwritten = Object.keys(registry).filter((p) => Object.hasOwn(site, p));
+  return { tree: { ...site, ...registry }, overwritten };
+}

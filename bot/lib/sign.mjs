@@ -160,6 +160,32 @@ export function signEnvelope({ domain, signed, signers }) {
 }
 
 /**
+ * One signer or two, as an ordered list, from whichever of the two spellings
+ * the caller used.
+ *
+ * SERVE-30's rotation dual-signs, outgoing key FIRST, and the order is the
+ * whole content of the rule — so it is the caller's list, preserved, never
+ * re-sorted here. `signer:` stays because most callers sign with one key and
+ * `{signer}` is what they already pass; `signers:` is the rotation. Both at
+ * once is refused rather than merged, because there is no answer to "which one
+ * goes first" that is not a guess at what the caller meant.
+ *
+ * Here rather than beside either signer, because both documents take it and two
+ * copies of "one signer or two" is how the catalogue and the list grow
+ * different ideas of what a rotation is.
+ *
+ * @param {{signer?: object, signers?: object[]}} opts
+ */
+export function signerList({ signer, signers }) {
+  if (signer && signers) {
+    throw new Error("pass `signer` or `signers`, not both: the signing ORDER is SERVE-30's rule and this hides it");
+  }
+  const list = signers ?? (signer ? [signer] : []);
+  if (!list.length) throw new Error("signing needs at least one signer");
+  return list;
+}
+
+/**
  * Verify a document against a set of trusted keys.
  *
  * Every key is tried against every offered signature. Returns the `key_id` of
@@ -242,4 +268,65 @@ export function indexSignerFromEnv({ env = process.env } = {}) {
   const seed = Buffer.from(seedB64.trim(), "base64");
   const privateKey = privateKeyFromSeed(seed);
   return { key_id: keyId, privateKey, public_key: publicKeyBase64(privateKey) };
+}
+
+/**
+ * The same, for a rotation: one signer, or two.
+ *
+ * SERVE-30 dual-signs during a rotation — the outgoing key first, then the
+ * incoming one — so that a client holding either trust.json verifies the
+ * document. Two keys therefore have to be reachable at once, and
+ * `indexSignerFromEnv` can only ever return one.
+ *
+ * `ASTRA_INDEX_SIGNING_KEY_NEXT` and `ASTRA_INDEX_SIGNING_KEY_NEXT_ID` hold the
+ * incoming one. **No such secret exists today and none is added at R1**: this
+ * returns a one-element array until a rotation is actually under way, which is
+ * the point — the second secret is created by the ceremony, and until it is,
+ * the signer's behaviour is exactly what it is now.
+ *
+ * The order this returns is the environment's — `ASTRA_INDEX_SIGNING_KEY`, then
+ * `_NEXT` — and the names are what make that outgoing-first, because a rotation
+ * puts the incoming key in `_NEXT` and D10 replaces the primary outright. It is
+ * still not TRUSTED: `tools/signer/key-window.mjs` re-derives the order from
+ * `signed`'s own history, because a secret pasted into the wrong slot is a
+ * mistake the environment cannot see and history can.
+ *
+ * @param {{env?: NodeJS.ProcessEnv}} opts
+ * @returns {{key_id: string, privateKey: import("node:crypto").KeyObject, public_key: string}[]}
+ */
+export function indexSignersFromEnv({ env = process.env } = {}) {
+  const signers = [];
+  const primary = indexSignerFromEnv({ env });
+  if (primary) signers.push(primary);
+
+  const nextSeedB64 = env.ASTRA_INDEX_SIGNING_KEY_NEXT;
+  if (nextSeedB64) {
+    const nextId = env.ASTRA_INDEX_SIGNING_KEY_NEXT_ID;
+    if (!nextId) {
+      throw new Error(
+        "ASTRA_INDEX_SIGNING_KEY_NEXT is set but ASTRA_INDEX_SIGNING_KEY_NEXT_ID is not. The key_id " +
+          "has to match an entry in the root-signed trust.json, or the daemon will refuse the " +
+          "signature it cannot attribute.",
+      );
+    }
+    const privateKey = privateKeyFromSeed(Buffer.from(nextSeedB64.trim(), "base64"));
+    const next = { key_id: nextId, privateKey, public_key: publicKeyBase64(privateKey) };
+    // The rotation that is not one. Copying the live secret into the `_NEXT`
+    // slot — which is what happens when the ceremony's second step is skipped,
+    // or when a workflow templates both names from one variable — produces a
+    // document carrying two signatures by one key. It verifies, it looks
+    // dual-signed to every reader including the operator watching the rotation,
+    // and a client holding only the OLD trust.json is exactly as stuck as it
+    // would have been with no rotation at all. Refused here because the one
+    // place that can tell is the place that holds both seeds.
+    if (next.public_key === primary?.public_key) {
+      throw new Error(
+        `ASTRA_INDEX_SIGNING_KEY_NEXT holds the same key as ASTRA_INDEX_SIGNING_KEY (${primary.key_id} ` +
+          `and ${next.key_id} are the same Ed25519 key). Two signatures by one key are not a ` +
+          "rotation; the incoming key comes from tools/keygen-index.sh.",
+      );
+    }
+    signers.push(next);
+  }
+  return signers;
 }

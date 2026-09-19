@@ -54,10 +54,11 @@ import {
   REVOCATIONS_SCHEMA,
   REVOCATION_TTL_DAYS,
   addDays,
-  indexSignerFromEnv,
+  indexSignersFromEnv,
   publicKeyFromBase64,
   rfc3339,
   signEnvelope,
+  signerList,
   verifyEnvelope,
 } from "../bot/lib/sign.mjs";
 import { loadTestRoot } from "./testkeys/regenerate.mjs";
@@ -78,10 +79,17 @@ export function stampFreshness(signed, { issuedAt, ttlDays = REVOCATION_TTL_DAYS
 /**
  * Sign one withdrawal list.
  *
+ * One signer, or two during a rotation. SERVE-30 dual-signs the list from the
+ * first `signed` commit whose trust.json delegates the incoming key — the list
+ * before the catalogue, because the list is the document clients refresh
+ * within six hours and is therefore what carries a new key into circulation.
+ * `signerList` is shared with the catalogue signer so the two documents cannot
+ * grow different ideas of what "two signers" means.
+ *
  * @param {object} doc a `{signed, signatures}` envelope, or a bare `signed`
- * @param {{signer: {key_id: string, privateKey: import("node:crypto").KeyObject}, issuedAt?: Date, ttlDays?: number}} opts
+ * @param {{signer?: object, signers?: object[], issuedAt?: Date, ttlDays?: number}} opts
  */
-export function signRevocations(doc, { signer, issuedAt, ttlDays } = {}) {
+export function signRevocations(doc, { signer, signers, issuedAt, ttlDays } = {}) {
   const raw = doc?.signed ?? doc;
   if (raw?.schema !== REVOCATIONS_SCHEMA) {
     throw new Error(
@@ -91,7 +99,11 @@ export function signRevocations(doc, { signer, issuedAt, ttlDays } = {}) {
     );
   }
   const signed = stampFreshness(raw, { issuedAt, ttlDays });
-  const envelope = signEnvelope({ domain: REVOCATIONS_SCHEMA, signed, signers: [signer] });
+  const envelope = signEnvelope({
+    domain: REVOCATIONS_SCHEMA,
+    signed,
+    signers: signerList({ signer, signers }),
+  });
   return doc?.$comment ? { $comment: doc.$comment, ...envelope } : envelope;
 }
 
@@ -177,10 +189,10 @@ export function main(argv) {
   }
 
   const testKeyId = arg(argv, "--test-key");
-  let signer;
+  let signers;
   if (testKeyId) {
     const key = loadTestRoot(testKeyId);
-    signer = { key_id: key.key_id, privateKey: key.privateKey };
+    signers = [{ key_id: key.key_id, privateKey: key.privateKey }];
     console.error(
       `WARNING: signing with ${key.key_id}, a TEST key whose private half is committed to this ` +
         "repository. Nothing a user's daemon acts on may be signed with it.",
@@ -193,8 +205,10 @@ export function main(argv) {
       return 2;
     }
   } else {
-    signer = indexSignerFromEnv();
-    if (!signer) {
+    // One key, or two during a rotation; the order is the environment's, and
+    // tools/signer/key-window.mjs is what decides it for a real signer run.
+    signers = indexSignersFromEnv();
+    if (!signers.length) {
       console.error(
         "FAIL  no signing key. Set ASTRA_INDEX_SIGNING_KEY and ASTRA_INDEX_SIGNING_KEY_ID in the\n" +
           "      environment (the `publish` environment's secrets), or pass --test-key <key_id>\n" +
@@ -205,15 +219,15 @@ export function main(argv) {
   }
 
   const doc = JSON.parse(fs.readFileSync(inFile, "utf8"));
-  const out = signRevocations(doc, { signer, issuedAt, ttlDays });
+  const out = signRevocations(doc, { signers, issuedAt, ttlDays });
   const text = stableStringify(out);
   if (outFile) {
     fs.mkdirSync(path.dirname(outFile), { recursive: true });
     fs.writeFileSync(outFile, text);
     console.error(
       `wrote ${outFile}: serial ${out.signed.serial}, ${out.signed.revocations?.length ?? 0} ` +
-        `entry(ies), signed by ${signer.key_id}, issued ${out.signed.issued_at}, ` +
-        `expires ${out.signed.expires_at}`,
+        `entry(ies), signed by ${signers.map((s) => s.key_id).join(", ")}, ` +
+        `issued ${out.signed.issued_at}, expires ${out.signed.expires_at}`,
     );
   } else {
     process.stdout.write(text);
