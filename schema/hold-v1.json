@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://registry.astra.app/schema/hold-v1.json",
+  "title": "astra.registry.hold/1",
+  "description": "state/holds/<service_decision_id>.json — one file per moderation decision the bot has decided NOT to apply yet (MOD-9). REGISTRY-ONLY: the service never reads it, it is not in the contract's B.4 wire set, and the hold kind `unbound_yank` is this plan's own reading raised for §1.3 row 6. The entry is the whole of what a release needs, because a release runs in a later workflow run than the decision did: the run that releases it reads this file and `main`, and nothing else. `decision` is therefore a COPY of the members BOT-80 names for the kind, and `additionalProperties` is false on it because a member the bot ignored on read must not be able to reach git by riding inside a hold entry. Note what that keyword can and cannot do: it refuses the entry when the entry is READ BACK, which is the run AFTER the one that committed it, so it is not what keeps the member out. `holdEntry()` in bot/lib/holds.mjs is — it copies member by member through an allowlist read out of this file's own `properties.decision.properties`, so the two cannot drift, and M-T3.4's composers allowlist the same way on the wire. Deleting this file by hand cancels the decision, and BOT-70 records that the commit which deleted it is the cancellation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "held_for", "service_decision_id", "held_at", "decision"],
+  "properties": {
+    "$comment": { "type": "string" },
+    "schema": { "const": "astra.registry.hold/1" },
+    "held_for": {
+      "description": "WHY it is held, and therefore what ends it. The five kinds are not interchangeable: `reversal` needs the 24-hour period AND an operator's confirmation (OPEN-OWNER-4, MOD-52); `bound` and `disable_confirmation` release on the confirmation alone, at once (OPEN-OWNER-14); `unbound_removal` is cancelled by an applied `author_request` delist or a cancel record; and `unbound_yank` is NEVER applied — no confirmation reaches it, because FLOW-79 lets only a bound account yank and an unbound one means the service erred. bot/lib/holds.mjs owns the rules; this enum and its HOLD_KINDS are compared by bot/tests/holds.test.mjs, because a kind added to one and not the other is a hold nothing knows how to end.",
+      "enum": ["reversal", "bound", "unbound_removal", "unbound_yank", "disable_confirmation"]
+    },
+    "service_decision_id": {
+      "$comment": "Must equal the file's basename. Two independent handles on the same identity: a confirm record is matched to this entry by id, never by plugin, so an operator confirming one decision can never release a second decision that happens to name the same listing.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "held_at": {
+      "$comment": "When the hold commit landed. `reversal`'s 24 hours are counted from here, not from `decision.decided_at`: the period is the operator's window to object to what the registry is about to do, and it cannot start before the registry knew.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+    },
+    "release_after": {
+      "$comment": "Written for `reversal` only, and written out rather than recomputed so that the directory answers `when?` to a person with no tooling. bot/lib/holds.mjs recomputes it from `held_at` anyway and refuses an entry whose two disagree — a hand-edited `release_after` must not be able to shorten a hold.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+    },
+    "run": {
+      "$comment": "The workflow run that wrote the hold. A convenience for a reader; nothing decides on it.",
+      "type": "string",
+      "pattern": "^https://"
+    },
+    "decision": {
+      "description": "The held decision, as BOT-80 names it for its kind. An `A_*` entry carries NO `moderator` and NO `declared_interest`, because no moderator decided it (DEC-14, MOD-41, n4); holds.mjs refuses one that does, by name, and the refusal is the same denylist M-T3.4 applies on the wire.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["service_decision_id", "code", "plugin_id", "decided_at", "reason"],
+      "properties": {
+        "$comment": { "type": "string" },
+        "service_decision_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "code": {
+          "$comment": "The codes that can be held. `M_RELIST` and `M_UNREVOKE` are the reversals; `M_YANK`, `M_DELIST`, `M_DEPRECATE` and `M_REVOKE` are the takedowns the bound can hold; `A_REMOVAL_REQUEST` and `A_YANK` are the author actions. A code outside this list is not a thing MOD-9 holds.",
+          "enum": [
+            "M_RELIST",
+            "M_UNREVOKE",
+            "M_YANK",
+            "M_DELIST",
+            "M_DEPRECATE",
+            "M_REVOKE",
+            "A_REMOVAL_REQUEST",
+            "A_YANK"
+          ]
+        },
+        "category": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "plugin_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "versions": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "maxItems": 500
+        },
+        "decided_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+        },
+        "reverses": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "reason": {
+          "$comment": "For an `A_*` code this is the one fixed registry string the token file's `fixed_reasons` lists — never author text and never a moderator's (BOT-80, MOD-41). This document cannot check that: the token file is RC-R2-1's and holds.mjs is not allowed to read it at run time (§1.2, service paths compiled in). The length floor and ceiling are MOD-41's, in code points.",
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 300
+        },
+        "severity": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "action": {
+          "$comment": "`M_REVOKE` only. `disable` is what stops software already running on somebody's machine, so it is the one action MOD-9 holds unconditionally for an operator's confirmation; `block_install` refuses only new installs and is held only over the bound (OPEN-OWNER-14, and OPEN-OWNER-45's limit on its reason).",
+          "enum": ["warn", "block_install", "disable"]
+        },
+        "moderator": {
+          "$comment": "Present for an `M_*` code and forbidden on an `A_*` one.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "declared_interest": { "type": "boolean" }
+      }
+    }
+  }
+}
