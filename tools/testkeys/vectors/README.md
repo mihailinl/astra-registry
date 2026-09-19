@@ -8,8 +8,9 @@ that it agrees with itself.
 
 **It is generated, never edited.** `../regenerate.mjs` writes it from the test
 keys in the directory above; `node tools/testkeys/regenerate.mjs --check`
-verifies the committed bytes and writes nothing. A hand edit here is a hand edit
-to another repository's fixtures, because Astra vendors these bytes.
+verifies the committed bytes and writes nothing. A hand edit here will be a hand
+edit to another repository's fixtures on the day Astra vendors them — which it
+does not yet; see *Who reads it*.
 
 ```sh
 node tools/testkeys/regenerate.mjs          # rewrite the keys and this corpus
@@ -26,10 +27,23 @@ no shipped Astra build can compile them in.
 |---|---|---|
 | the signer's selftest | `tools/selftest/index-signature.mjs` | imports `loadSignedSetVectors` from `../regenerate.mjs` |
 | the ROLL-15 probe | `astra-registry` | the same path in this checkout |
-| the plugins service | minice-be | this repository at a pinned commit |
-| `astra-daemon` | `Astra` | **vendored** into `astra-daemon/testdata/signed-set-vectors/` with `SHA256SUMS` and `SOURCE` (client plan C1.8) |
+| the plugins service | minice-be | **not yet** — this repository at a commit it will pin (ROLL-61) |
+| `astra-daemon` | `Astra` | **not yet** — to be vendored into `astra-daemon/testdata/signed-set-vectors/` with `SHA256SUMS` and `SOURCE` (client plan C1.8) |
 
-Astra vendors rather than reads a sibling checkout because Astra CI has no
+**One of the three reads it today.** The table said "vendored" and "at a pinned
+commit" in the present tense when this file was written, and both were false:
+measured at Astra `2d68bd6f`, `astra-daemon/testdata/signed-set-vectors/` does
+not exist and nothing under `astra-rs/` names it, and minice CI does not yet pin
+this repository. Until C1.8 and ROLL-61 land, **a corpus built so that two
+languages must agree proves that this repository agrees with itself** — the
+closed vocabulary, the floor and the two copies of the daemon column are all
+real and all on one side. `O:dev/couplings.md` gap 18 holds the other two.
+
+The tense mattered more than it looks. This table is what a reader consults
+before changing a verdict name, and "vendored" told them a rename here would be
+caught over there. It would not be.
+
+Astra will vendor rather than read a sibling checkout because Astra CI has no
 registry checkout, so a sibling-checkout reader there would check nothing.
 
 ## The shape
