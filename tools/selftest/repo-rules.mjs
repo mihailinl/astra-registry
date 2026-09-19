@@ -382,12 +382,21 @@ export async function run() {
   // passed`, exit 0.
   //
   // So it is a NAME LIST rather than a number, and a subset assertion rather
-  // than an equality: fifteen modules were here on 2026-09-19 and must still be
-  // here. Adding a module does not touch this list — the property no floor ever
-  // had, and the reason the first floor fired on growth — and it cannot be
-  // outgrown, because growing the suite does not make a name go away. Retiring a
-  // module is still allowed: take its name out of SPLIT_MODULES in the same
-  // commit, where a reviewer reads the removal as the decision it is.
+  // than an equality: the modules that were here on 2026-09-19 must still be
+  // here. Adding a module does not REQUIRE touching this list — the property no
+  // floor ever had, and the reason the first floor fired on growth — and it
+  // cannot be outgrown, because growing the suite does not make a name go away.
+  // Retiring a module is still allowed: take its name out of SPLIT_MODULES in
+  // the same commit, where a reviewer reads the removal as the decision it is.
+  //
+  // A new module is added here anyway, the same day it lands, and that is about
+  // what the list is for rather than about tidiness. The loss it catches is a
+  // module deleted from disk AND from the runner's list in one commit;
+  // `checkModuleSet` compares those two sides with each other and is silent
+  // whenever they agree. A module missing from the list below has exactly that
+  // hole, and its author is the last person who will ever think about it.
+  // `signer.mjs` was added on 2026-09-19 with RC-R1-1, watched failing by
+  // deleting the file and its runner entry together.
   //
   // Two checks per name, and together they say the module still RUNS: it is on
   // disk and exports `run`; and it is still in the runner's `MODULES`, read out
@@ -420,6 +429,7 @@ export async function run() {
     "primitives.mjs", "catalogue.mjs", "publishers.mjs", "validation.mjs", "couplings.mjs",
     "listings.mjs", "origins.mjs", "bundles.mjs", "index-signature.mjs", "revocations.mjs",
     "cli.mjs", "root-delegation.mjs", "update-signing.mjs", "update-notes.mjs", "repo-rules.mjs",
+    "signer.mjs",
   ];
   await test("no module has left the runner's list since the suite was split", async () => {
     const runner = fs.readFileSync(path.join(REPO_ROOT, "tools", "selftest.mjs"), "utf8");

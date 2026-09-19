@@ -13,8 +13,8 @@
 // modules that both used top-level `await test(...)` would INTERLEAVE — the spec
 // starts the second module's evaluation while the first is suspended at its
 // first await — and the printed order is itself under test, so the names would
-// come out round-robin across fifteen files. The runner awaits them one at a
-// time, in the order below, which is the order they print in.
+// come out round-robin across every module in the list. The runner awaits them
+// one at a time, in the order below, which is the order they print in.
 //
 // Sequential is also a correctness requirement, not just a cosmetic one:
 // `$ASTRA_PLUGINS_DIR` is set and restored around individual checks, and one
@@ -27,7 +27,7 @@ import { fileURLToPath } from "node:url";
 
 import { cleanupTmp, drain, registeredCount, results } from "./selftest/harness.mjs";
 
-// The order is load-bearing: it is the order the 165 names print in, and two of
+// The order is load-bearing: it is the order every name prints in, and two of
 // the boundaries are not where the section headers are. The serial test opens
 // catalogue.mjs and prints under primitives' "zip reader/writer" header; the
 // staging tests open validation.mjs and print under catalogue's "the real
@@ -51,6 +51,15 @@ const MODULES = [
   "origins.mjs",
   "bundles.mjs",
   "index-signature.mjs",
+  // Beside index-signature.mjs because it is the same subject one step on —
+  // that module asks whether a signature is good, this one asks which key was
+  // allowed to make it and which document it was allowed to make it over. It
+  // prints its own three section headers, and so does revocations.mjs below
+  // it, so inserting here moves no existing name under a header it does not
+  // belong to. The two places in this list where a module's names print under
+  // the PREVIOUS module's header are primitives→catalogue and
+  // catalogue→validation; nothing may be inserted between either pair.
+  "signer.mjs",
   "revocations.mjs",
   "cli.mjs",
   "root-delegation.mjs",
@@ -94,10 +103,11 @@ function fail(headline, problems) {
 // it exports answers both, and the question has one answer rather than two lists
 // that can drift.
 //
-// Importing every file in the directory to ask is not new exposure: all eighteen
-// are imported today anyway, the three fixture ones through the test modules
-// that use them. What is new is that a nineteenth file is imported here before
-// it is listed anywhere, which is what lets this say `exports run()` about it.
+// Importing every file in the directory to ask is not new exposure: every file
+// under tools/selftest/ is imported anyway, the three fixture ones through the
+// test modules that use them. What is new is that a file is imported here
+// before it is listed anywhere, which is what lets this say `exports run()`
+// about it.
 //
 // Not a test(): this commit's proof is that the 165 names came back identical,
 // and a sixteenth name would spend that proof.
@@ -112,16 +122,16 @@ async function checkModuleSet() {
   // walk today, but only because the module list is not empty, and that is a
   // property of the other side of the comparison rather than of this one.
   //
-  // 18 on 2026-09-19 — fifteen test modules and three fixture ones — and the
-  // floor is 10, not 18, deliberately. Retiring a module is a legitimate act and
+  // 19 on 2026-09-19 — sixteen test modules and three fixture ones — and the
+  // floor is 10, not 19, deliberately. Retiring a module is a legitimate act and
   // this line is not the inventory: the pinned list in repo-rules.mjs is, and it
-  // names the modules rather than counting files. Set at 18 this would go red on
+  // names the modules rather than counting files. Set at 19 this would go red on
   // an honest deletion, get read as noise, and be the first number somebody
   // lowers to zero. Ten is the number below which the walk has stopped working
   // rather than the suite having stopped having modules.
   if (onDisk.length < 10) {
     problems.push(
-      `the walk of tools/selftest/ found ${onDisk.length} .mjs files and there were 18 on 2026-09-19; ` +
+      `the walk of tools/selftest/ found ${onDisk.length} .mjs files and there were 19 on 2026-09-19; ` +
       `this is a broken walk, not a smaller suite, and every comparison below it would have passed`,
     );
   }
@@ -339,8 +349,8 @@ cleanupTmp();
 
 const { passed, failures } = results();
 // Both figures are counted, not compared to anything written down. The module
-// count is here because "15 modules" going to "14" is the one shrinkage a
-// reader can see at a glance, and the pinned list in repo-rules.mjs is what
+// count is here because a module count going down by one is the one shrinkage
+// a reader can see at a glance, and the pinned list in repo-rules.mjs is what
 // actually asserts it.
 console.log(
   `\n${failures.length === 0 && shortfalls.length === 0 ? "PASS" : "FAIL"}  ${passed} passed, ${failures.length} failed ` +

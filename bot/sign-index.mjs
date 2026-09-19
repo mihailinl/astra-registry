@@ -44,10 +44,11 @@ import {
   CATALOG_TTL_DAYS,
   INDEX_SCHEMA,
   addDays,
-  indexSignerFromEnv,
+  indexSignersFromEnv,
   publicKeyFromBase64,
   rfc3339,
   signEnvelope,
+  signerList,
   verifyEnvelope,
 } from "./lib/sign.mjs";
 import { loadTestRoot } from "../tools/testkeys/regenerate.mjs";
@@ -74,9 +75,9 @@ export function stampFreshness(signed, { issuedAt, ttlDays = CATALOG_TTL_DAYS } 
  * Sign one catalogue document.
  *
  * @param {object} doc a `{signed, signatures}` envelope, or a bare `signed`
- * @param {{signer: {key_id: string, privateKey: import("node:crypto").KeyObject}, issuedAt?: Date, ttlDays?: number}} opts
+ * @param {{signer?: object, signers?: object[], issuedAt?: Date, ttlDays?: number}} opts
  */
-export function signIndex(doc, { signer, issuedAt, ttlDays } = {}) {
+export function signIndex(doc, { signer, signers, issuedAt, ttlDays } = {}) {
   const raw = doc?.signed ?? doc;
   if (raw?.schema !== INDEX_SCHEMA) {
     throw new Error(
@@ -86,7 +87,7 @@ export function signIndex(doc, { signer, issuedAt, ttlDays } = {}) {
     );
   }
   const signed = stampFreshness(raw, { issuedAt, ttlDays });
-  const envelope = signEnvelope({ domain: INDEX_SCHEMA, signed, signers: [signer] });
+  const envelope = signEnvelope({ domain: INDEX_SCHEMA, signed, signers: signerList({ signer, signers }) });
   // The banner travels outside `signed` and is therefore unauthenticated — it
   // is a note for a human reading the file, never an input to a decision.
   return doc?.$comment ? { $comment: doc.$comment, ...envelope } : envelope;
@@ -165,10 +166,10 @@ function main(argv) {
   }
 
   const testKeyId = arg(argv, "--test-key");
-  let signer;
+  let signers;
   if (testKeyId) {
     const key = loadTestRoot(testKeyId);
-    signer = { key_id: key.key_id, privateKey: key.privateKey };
+    signers = [{ key_id: key.key_id, privateKey: key.privateKey }];
     console.error(
       `WARNING: signing with ${key.key_id}, a TEST key whose private half is committed to this ` +
         "repository. Nothing a user installs may be signed with it.",
@@ -181,8 +182,12 @@ function main(argv) {
       return 2;
     }
   } else {
-    signer = indexSignerFromEnv();
-    if (!signer) {
+    // One key, or two during a rotation. The order is the environment's —
+    // primary, then `_NEXT` — which is outgoing-first by the naming; the signer
+    // workflow does not rely on that and re-derives it from `signed`'s history
+    // in tools/signer/key-window.mjs.
+    signers = indexSignersFromEnv();
+    if (!signers.length) {
       console.error(
         "FAIL  no signing key. Set ASTRA_INDEX_SIGNING_KEY and ASTRA_INDEX_SIGNING_KEY_ID in the\n" +
           "      environment (the `publish` environment's secrets), or pass --test-key <key_id>\n" +
@@ -193,13 +198,13 @@ function main(argv) {
   }
 
   const doc = JSON.parse(fs.readFileSync(inFile, "utf8"));
-  const out = signIndex(doc, { signer, issuedAt, ttlDays });
+  const out = signIndex(doc, { signers, issuedAt, ttlDays });
   const text = stableStringify(out);
   if (outFile) {
     fs.mkdirSync(path.dirname(outFile), { recursive: true });
     fs.writeFileSync(outFile, text);
     console.error(
-      `wrote ${outFile}: serial ${out.signed.serial}, signed by ${signer.key_id}, ` +
+      `wrote ${outFile}: serial ${out.signed.serial}, signed by ${signers.map((s) => s.key_id).join(", ")}, ` +
         `issued ${out.signed.issued_at}, expires ${out.signed.expires_at}`,
     );
   } else {
