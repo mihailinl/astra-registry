@@ -141,17 +141,34 @@ jobs:
       - name: The icon and README lifted out of the bundle
         run: node bot/tests/asset-check.test.mjs
 
-      # Added by the batch's coordinator, not by M-T3.3's lane, and the reason
-      # is worth two lines. §2.0's standing rule — "a new registry test file is
-      # a check only once a workflow names it, so every one below is added to
-      # bot-tests.yml" — governs forty-seven tasks and is written into the
-      # `Repo/files` line of two. The grouping that decides which agents may run
-      # at once unions over those lines, so it saw M-T3.3 as sharing no file
-      # with anybody, and it shares this one with eight other tasks. The lane
-      # refused to edit a file outside its own, correctly, and that left
-      # thirteen watched canaries guarding nothing on the path to `main`.
+      # The steps below this line are added by the batch's coordinator, not by
+      # the lanes that wrote the suites, and the reason is a rule the lane
+      # grouping cannot see. §2.0: "a new registry test file is a check only
+      # once a workflow names it, so every one below is added to
+      # bot-tests.yml." That governs forty-seven tasks and is written into the
+      # `Repo/files` line of two, so the grouping — which unions over those
+      # lines — computed several of those tasks as sharing no file with anybody
+      # when they all share this one. Each lane refused to edit a workflow
+      # outside its own, correctly, and that is the only reason nine concurrent
+      # agents did not collide here.
+      #
+      # It collided anyway, once, and by the coordinator's hand: these two
+      # steps were added on two branches at the same anchor, minutes apart,
+      # which is exactly what the lanes were told not to do. The rule was right
+      # and the person who wrote it did not follow it. Anything added here
+      # afterwards goes in ONE commit, after the lanes that own the suites have
+      # finished.
       - name: The holds, and the four ways one of them ends
         run: node bot/tests/holds.test.mjs
+
+      # MIG-21's historic export, and the one suite here that cannot be re-run
+      # later: it renders the four decisions with `bot/ingest.mjs` and
+      # `bot/lib/policy/comment.mjs` and reads them back, so a reworded heading
+      # in either goes red here rather than in the single baseline dispatch.
+      # After ROLL-42 switches Issues off there is no archive left to compare
+      # against (registry plan M-T3.8).
+      - name: The historic export, against the comments the bot actually posts
+        run: node bot/tests/export-issues.test.mjs
 
       - name: The moderation records, against their own schema
         run: node bot/moderation.mjs --check
