@@ -3071,6 +3071,58 @@ await test("the version schema's tag rule is the same rule, asserted by behaviou
     "schema/version-v1.json and tools/lib/tags.mjs disagree about these tags");
 });
 
+// `bot/lib/policy.mjs`'s public surface, pinned.
+//
+// That file was 1199 lines and fifteen planned tasks edited it, so on
+// 2026-09-19 it became a barrel over seven modules under `bot/lib/policy/`.
+// Ten files import it and none of them changed, which is the whole point —
+// and also the risk: a barrel can silently grow when a submodule adds an
+// `export`, and can silently shrink when a function moves and nobody
+// re-exports it. The first leaks an internal name into ten importers, the
+// second breaks them all at once.
+//
+// So the surface is a list, not a count. `time.mjs` is deliberately absent:
+// `HOUR_MS` and `iso` were never public and the split is only honest if it
+// kept the same 26 names it had.
+await test("bot/lib/policy.mjs still exports exactly what it used to", async () => {
+  const mod = await import("../bot/lib/policy.mjs");
+  const expected = [
+    "CLEAN_RELEASES_FOR_TRUSTED",
+    "CONSENT_HIGH_RISK",
+    "DELAY_HOURS",
+    "FINGERPRINT_CHARS",
+    "HIGH_RISK",
+    "KNOWN_AUTHORITY",
+    "POLICY_CODES",
+    "REVIEW_SLA_HOURS",
+    "SLA_BREACH_HOURS",
+    "STATE_DIR",
+    "TRUSTED_DELAY_HOURS",
+    "artifactDigests",
+    "decide",
+    "highRiskIn",
+    "loadRevocations",
+    "newestListedVersion",
+    "policyCodeDef",
+    "queueFile",
+    "readQueue",
+    "readQueueEntry",
+    "renderPolicySection",
+    "requestedAuthority",
+    "ripeQueueEntries",
+    "slaReport",
+    "submissionFingerprint",
+    "trackRecord",
+  ];
+  const actual = Object.keys(mod).sort();
+  const missing = expected.filter((n) => !actual.includes(n));
+  const extra = actual.filter((n) => !expected.includes(n));
+  assertEqual(missing.join(", "), "",
+    "a name ten importers rely on stopped being re-exported by the barrel");
+  assertEqual(extra.join(", "), "",
+    "a submodule's internal name leaked into the barrel; either export it on purpose and add it here, or keep it internal");
+});
+
 // The withdrawal list must have exactly one signer. The workflow that was the
 // second one failed on every run it ever made and was deleted at R0; `sign.yml`
 // takes that path at R1. This fails the day a second one appears.
