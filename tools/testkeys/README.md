@@ -66,17 +66,26 @@ TEST-ONLY-DO-NOT-TRUST-root-b.SECRET-TEST-KEY.json
 regenerate.mjs                                   rederives all four from the phrases
 sign-trust.mjs                                   signs a trust.json `signed` block
 fixtures/                                        signed documents the daemon tests read
+vectors/                                         the signed-set corpus — see vectors/README.md
 ```
 
 ## Regenerating
 
 ```sh
-node tools/testkeys/regenerate.mjs          # rewrites the four key files
+node tools/testkeys/regenerate.mjs          # rewrites the key files and the vectors
 node tools/testkeys/regenerate.mjs --check  # verifies them without writing
 ```
 
 Because the derivation is deterministic, `--check` failing means somebody edited
 a key file by hand.
+
+`vectors/signed-set-v1.json` is rewritten in the same run and for the same
+reason: it is signed with the keys above, so a corpus left behind by a key that
+has since been rederived verifies nowhere, and a `--check` over the keys alone
+would have said everything was fine. Those bytes are vendored into
+`astra-daemon/testdata/signed-set-vectors/`, so a hand edit here is a hand edit
+to another repository's fixtures — [`vectors/README.md`](vectors/README.md) has
+the shape, the verdict vocabulary and the mapping table.
 
 ## Producing a signed `trust.json`
 

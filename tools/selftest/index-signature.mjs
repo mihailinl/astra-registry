@@ -4,6 +4,14 @@
 // covered, no replay across document domains, the 30-day window from the signing
 // instant, the committed fixtures the daemon's Rust test embeds, and the CI route
 // through ASTRA_INDEX_SIGNING_KEY.
+//
+// And, since RC-R1-3, the signed-set vectors: one corpus of eleven signed
+// documents with their expected verdicts, which this repository and
+// `astra-daemon` both read. That section is here rather than in a module of its
+// own because the runner's module list lives in `tools/selftest.mjs` and a
+// sixteenth module cannot be added without editing it; every import the corpus
+// needs — `loadTestRoot`, `verifyEnvelope`, all three domains — was already at
+// the top of this file, which is the other half of why it belongs here.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -11,14 +19,179 @@ import { execFileSync } from "node:child_process";
 
 import { buildIndex } from "../build-index.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
-import { loadTestRoot } from "../testkeys/regenerate.mjs";
+import {
+  SIGNED_SET_FLOOR, SIGNED_SET_VERDICTS, loadSignedSetVectors, loadTestRoot,
+} from "../testkeys/regenerate.mjs";
 import { signIndex } from "../../bot/sign-index.mjs";
 import { fixtureCatalogue, FIXTURE_ISSUED_AT } from "../../bot/fixtures/index/regenerate.mjs";
 import {
-  CATALOG_TTL_DAYS, INDEX_SCHEMA, REVOCATIONS_SCHEMA, TRUST_SCHEMA, verifyEnvelope,
+  CATALOG_TTL_DAYS, INDEX_SCHEMA, REVOCATIONS_SCHEMA, TRUST_SCHEMA, publicKeyFromBase64,
+  signingDigest, verifyEnvelope,
 } from "../../bot/lib/sign.mjs";
-import { test, assert, tmp } from "./harness.mjs";
+import { test, assert, assertEqual, tmp } from "./harness.mjs";
 import { TEST_INDEX_KEY, TEST_STRANGER_KEY, trustFixture, trustedIndexKeys } from "./fixtures.mjs";
+
+// ─────────────────────── the signed-set verifier (RC-R1-3) ──────────────────
+//
+// The JS half of the corpus's two readers. It is built out of
+// `bot/lib/sign.mjs` — `signingDigest` for the canonicalisation, `verifyEnvelope`
+// for the signatures — and adds only what that file deliberately does not know
+// about: the window `trust.json` gave the key, and the accepted state a document
+// is judged against. Neither belongs in the signer's library, and both are in
+// the daemon.
+//
+// The outcome string each branch returns is the README's "the JS verifier"
+// column, written at the point of observation rather than looked up. That is
+// what makes the table's assertion mean something: a branch whose behaviour
+// changes and whose sentence does not turns the table red.
+
+const DOMAIN_OF = { index: INDEX_SCHEMA, revocations: REVOCATIONS_SCHEMA };
+const OTHER_DOMAIN = { index: REVOCATIONS_SCHEMA, revocations: INDEX_SCHEMA };
+
+const VECTORS_README = path.join(REPO_ROOT, "tools", "testkeys", "vectors", "README.md");
+
+/**
+ * The daemon column of the mapping table, pinned here.
+ *
+ * A second copy on purpose, and the only kind of check available: this CI has
+ * no Astra checkout and Astra's has no registry checkout, so neither side can
+ * compile the other's column. What two copies buy is that an edit to one side
+ * of the table goes red on the other — which is the whole reason the table is
+ * written down at all. Three of these rows are weaker than they read; the
+ * README's "What the daemon column does not claim" says which and why, and
+ * whoever closes those gaps edits both copies in one pass.
+ */
+const DAEMON_COLUMN = {
+  accepted: "`SignatureState::Verified`",
+  bad_domain: "`SignatureState::Invalid`",
+  unknown_key: "`SignatureState::Invalid`",
+  key_outside_window: "`SignatureState::KeyOutsideWindow`",
+  unsafe_integer: "`EnvelopeError::Malformed`",
+  no_signatures: "`UnsignedReason::NoSignatures`",
+  serial_reused: "`TrustError::SerialReused`",
+  entries_shrank: "`RevocationSet::merged_with`",
+  older_issued_at: "`(none today)`",
+};
+
+/** `entry_count`'s two spellings, one per document kind. */
+function entryCount(kind, signed) {
+  const list = kind === "index" ? signed.plugins : signed.revocations;
+  return Array.isArray(list) ? list.length : 0;
+}
+
+function delegatedKeys(trustDoc) {
+  return (trustDoc?.signed?.index_keys ?? []).map((e) => ({
+    key_id: e.key_id,
+    publicKey: publicKeyFromBase64(e.public_key),
+    not_before: e.not_before,
+    not_after: e.not_after,
+  }));
+}
+
+/**
+ * One vector's verdict, derived rather than read.
+ *
+ * The rule order is `tools/testkeys/vectors/README.md`'s, stated there because
+ * more than one rule can be true of one document and the two readers have to
+ * name the same one.
+ */
+function judge(vector) {
+  const doc = vector.document;
+  const kind = vector.document_kind;
+  const keys = delegatedKeys(vector.trust_json);
+
+  // 1. Canonicalisation, before anything looks at a signature. A document with
+  //    a number no canonicaliser here will emit has no signable bytes, so
+  //    "does a trusted key vouch for it" is not yet a question.
+  try {
+    signingDigest(DOMAIN_OF[kind], doc.signed);
+  } catch (e) {
+    if (/safe integer/.test(String(e?.message))) {
+      return { verdict: "unsafe_integer", outcome: "verifyEnvelope throws out of jcs()" };
+    }
+    throw e;
+  }
+
+  // 2. Nothing offered is not the same event as nothing verified, and the two
+  //    must never be reported as one: unsigned is the registry before the root
+  //    ceremony, and a failed signature is tampering.
+  if (!Array.isArray(doc.signatures) || doc.signatures.length === 0) {
+    return { verdict: "no_signatures", outcome: "signatures is empty; nothing was offered" };
+  }
+
+  const verified = verifyEnvelope(doc, DOMAIN_OF[kind], keys);
+  if (!verified.ok) {
+    // The domain separator's own test: if these bytes verify under the other
+    // document's domain, the signature is genuine and was made for something
+    // else. Reporting that as "unknown key" would send the reader hunting for a
+    // key rotation that never happened.
+    if (verifyEnvelope(doc, OTHER_DOMAIN[kind], keys).ok) {
+      return {
+        verdict: "bad_domain",
+        outcome: "verifyEnvelope refuses; the same bytes verify under the other domain",
+      };
+    }
+    return { verdict: "unknown_key", outcome: "verifyEnvelope refuses under every delegated key" };
+  }
+
+  // 3. A delegated key is delegated FOR A WINDOW. The key that actually
+  //    verified, never the one the document named.
+  const key = keys.find((k) => k.key_id === verified.key_id);
+  const now = Date.parse(vector.now);
+  const before = key?.not_before ? now < Date.parse(key.not_before) : false;
+  const after = key?.not_after ? now > Date.parse(key.not_after) : false;
+  if (before || after) {
+    return {
+      verdict: "key_outside_window",
+      outcome: "verifyEnvelope ok; now is outside the verifying key's window",
+    };
+  }
+
+  // 4. And what the document says against what has already been accepted. Only
+  //    at an EQUAL serial: a greater one replaces outright, and a lower one is a
+  //    rollback, which this corpus does not carry a verdict for.
+  const prior = vector.prior_state;
+  if (prior && doc.signed.serial === prior.serial) {
+    if (Date.parse(doc.signed.issued_at) < Date.parse(prior.issued_at)) {
+      return { verdict: "older_issued_at", outcome: "equal serial; issued_at before the accepted state" };
+    }
+    const n = entryCount(kind, doc.signed);
+    if (n < prior.entry_count) {
+      return { verdict: "entries_shrank", outcome: "equal serial; entry_count below the accepted state" };
+    }
+    if (n > prior.entry_count) {
+      return { verdict: "serial_reused", outcome: "equal serial; entry_count above the accepted state" };
+    }
+  }
+
+  return { verdict: "accepted", outcome: "verifyEnvelope ok" };
+}
+
+/**
+ * The mapping table as the README states it.
+ *
+ * The parse is the thing the three tests below stand on, so it reports itself
+ * failing rather than reporting nine missing verdicts: a table that has been
+ * renamed or reshaped would otherwise read as a table that disagrees with
+ * everything.
+ */
+function mappingTable() {
+  const text = fs.readFileSync(VECTORS_README, "utf8");
+  const after = text.split("## The mapping table")[1];
+  const section = after?.split("Where each daemon symbol lives")[0];
+  if (!section) {
+    throw new Error(
+      "could not find the section between `## The mapping table` and `Where each daemon symbol lives` in " +
+      "tools/testkeys/vectors/README.md; the table these tests read has been renamed or reshaped, and every " +
+      "verdict below would report as missing for the wrong reason",
+    );
+  }
+  return [...section.matchAll(/^\| `([a-z_]+)` \| (.+?) \| (.+?) \|$/gm)].map(([, verdict, daemon, js]) => ({
+    verdict,
+    daemon: daemon.trim(),
+    js: js.trim(),
+  }));
+}
 
 export async function run() {
   // ── the catalogue signature ─────────────────────────────────────────────────
@@ -168,5 +341,130 @@ export async function run() {
     }
     assert(status === 2, `exit ${status}`);
     assert(stderr.includes("ASTRA_INDEX_SIGNING_KEY"), stderr);
+  });
+
+  // ── the signed-set vectors ──────────────────────────────────────────────────
+  //
+  // RC-R1-3. One corpus, read here through `bot/lib/sign.mjs`'s verifier and in
+  // Astra by a Rust test over a vendored copy. Everything above this line proves
+  // that this repository agrees with itself; these prove that the corpus the
+  // other repository is handed says what this one thinks it says.
+  console.log("\nsigned-set vectors");
+
+  await test("the corpus is at least the eleven vectors both readers are promised", () => {
+    // `loadSignedSetVectors` is where the floor and the closed vocabulary are
+    // asserted, so this case is as much about that loader existing as about the
+    // count: a reader that iterates whatever it finds reports PASS over a
+    // truncated file, and every reader would otherwise have to remember to
+    // check.
+    const vectors = loadSignedSetVectors();
+    assert(vectors.length >= SIGNED_SET_FLOOR, `${vectors.length} vectors, floor ${SIGNED_SET_FLOOR}`);
+
+    // A floor on the count says nothing about the SPREAD. Nine verdicts and
+    // eleven vectors could be eleven `accepted`s and a green suite that has
+    // never watched a refusal — which is the defect this whole corpus exists to
+    // stop one repository away.
+    const unexercised = SIGNED_SET_VERDICTS.filter((v) => !vectors.some((x) => x.verdict === v));
+    assertEqual(unexercised.join(", "), "",
+      "a verdict in the closed vocabulary has no vector, so neither reader has ever produced it");
+  });
+
+  await test("the committed corpus is exactly what the generator produces", () => {
+    // These bytes are vendored into astra-daemon/testdata/signed-set-vectors/.
+    // A hand edit here is a hand edit to another repository's fixtures, and a
+    // corpus regenerated silently on every run could not be the thing that
+    // notices. `--check` covers the test keys in the same pass, because a
+    // corpus signed by a key that has since been rederived verifies nowhere.
+    execFileSync("node", ["tools/testkeys/regenerate.mjs", "--check"], { cwd: REPO_ROOT, stdio: "pipe" });
+  });
+
+  await test("every vector's trust.json is signed by a root the vector itself carries", () => {
+    // The reason `root_json` is in every vector: a reader needs nothing from
+    // this repository but the file. If the anchor did not verify, every verdict
+    // below would be a judgement about a chain that does not exist.
+    const broken = [];
+    for (const v of loadSignedSetVectors()) {
+      const roots = (v.root_json?.roots ?? []).map((r) => ({
+        key_id: r.key_id,
+        publicKey: publicKeyFromBase64(r.public_key),
+      }));
+      if (roots.length === 0) broken.push(`vector ${v.id}: root_json publishes no roots`);
+      else if (!verifyEnvelope(v.trust_json, TRUST_SCHEMA, roots).ok) {
+        broken.push(`vector ${v.id}: trust_json does not verify under its own root_json`);
+      }
+    }
+    assertEqual(broken.join("; "), "", "a vector's trust anchor does not verify, so its verdict judges nothing");
+  });
+
+  await test("the verifier returns the verdict every vector claims", () => {
+    // The corpus says what should happen; this is what does. Failing by vector
+    // id, the way the client plan's C1.8 reader does, so the two repositories
+    // name the same vector when they disagree.
+    const wrong = [];
+    for (const v of loadSignedSetVectors()) {
+      const got = judge(v);
+      if (got.verdict !== v.verdict) {
+        wrong.push(`vector ${v.id} (${v.name}): claims ${v.verdict}, the verifier says ${got.verdict}`);
+      }
+    }
+    assertEqual(wrong.join("; "), "",
+      "the signer and the verifier disagree about a vector; one of the two is what a daemon will do");
+  });
+
+  await test("vector 10 really does carry the outgoing key's signature first", () => {
+    // The vector's NAME is a claim about signature order, and nothing else in
+    // the corpus checks it: `verifyEnvelope` tries every key against every
+    // signature, so a corpus that quietly put the incoming key first would pass
+    // every other case here and still not be the document SERVE-30 describes.
+    const v = loadSignedSetVectors().find((x) => x.id === 10);
+    assert(v, "vector 10 is gone");
+    assertEqual(v.document.signatures.map((s) => s.key_id).join(", "),
+      "TEST-ONLY-DO-NOT-TRUST-index-2026a, TEST-ONLY-DO-NOT-TRUST-index-2026b",
+      "the dual-signed vector must carry the outgoing key's signature first");
+  });
+
+  await test("the README's mapping table is the closed vocabulary, in order", () => {
+    const rows = mappingTable();
+    assertEqual(rows.map((r) => r.verdict).join(", "), SIGNED_SET_VERDICTS.join(", "),
+      "tools/testkeys/vectors/README.md's mapping table and the vocabulary in tools/testkeys/regenerate.mjs are " +
+      "two statements of one list; a verdict renamed on one side is a verdict the other reader has never heard of, " +
+      "and a reader that has never heard of a verdict skips the vector or reads it as \"not accepted\"");
+  });
+
+  await test("the README's JS column is what the verifier actually produced", () => {
+    const stated = new Map(mappingTable().map((r) => [r.verdict, r.js]));
+    const observed = new Map();
+    for (const v of loadSignedSetVectors()) {
+      const got = judge(v);
+      observed.set(got.verdict, got.outcome);
+    }
+    const disagree = [];
+    for (const verdict of SIGNED_SET_VERDICTS) {
+      const want = observed.get(verdict);
+      const have = stated.get(verdict);
+      // `\`x\`` in the table, plain text out of the verifier.
+      if (have?.replace(/`/g, "") !== want) {
+        disagree.push(`${verdict}: the README says ${JSON.stringify(have)}, the verifier produced ${JSON.stringify(want)}`);
+      }
+    }
+    assertEqual(disagree.join("; "), "",
+      "the README describes a JS outcome the verifier no longer produces; the table is what the daemon's reader is " +
+      "handed, so a sentence that has outlived its branch is a sentence another repository is asserting against");
+  });
+
+  await test("the README's daemon column has not been renamed on one side", () => {
+    const stated = new Map(mappingTable().map((r) => [r.verdict, r.daemon]));
+    const disagree = [];
+    for (const verdict of SIGNED_SET_VERDICTS) {
+      if (stated.get(verdict) !== DAEMON_COLUMN[verdict]) {
+        disagree.push(
+          `${verdict}: the README says ${JSON.stringify(stated.get(verdict))}, this suite pins ` +
+          `${JSON.stringify(DAEMON_COLUMN[verdict])}`,
+        );
+      }
+    }
+    assertEqual(disagree.join("; "), "",
+      "neither CI has the other repository checked out, so these two copies are the only thing that fails when the " +
+      "daemon's names and the table drift apart");
   });
 }
