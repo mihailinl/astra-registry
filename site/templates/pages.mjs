@@ -10,8 +10,73 @@
 // change is one commit and the site cannot claim a rule the repository does not
 // have.
 
-import { esc, href, page } from "../lib/html.mjs";
+import { esc, href, page, upTo } from "../lib/html.mjs";
 import { escalationTable } from "./advisory.mjs";
+
+/**
+ * A page that has moved, written over the page that used to be there.
+ *
+ * ── WHY A PAGE AND NOT A 301 ────────────────────────────────────────────────
+ *
+ * GitHub Pages serves this tree and has no redirect configuration of any kind,
+ * so the only thing that can stand at an old URL is a document. ROLL-55 names
+ * the two mechanisms and this writes both, because they answer to two different
+ * readers and neither covers the other:
+ *
+ *   `<link rel="canonical">`   a crawler, an archive, anything that already
+ *                              holds the old URL. It is the statement that the
+ *                              successor is the same resource, which a meta
+ *                              refresh alone does not make.
+ *   `<meta http-equiv="refresh" content="0; url=…">`
+ *                              a person. It is the only thing that moves a
+ *                              browser without JavaScript, and this site ships
+ *                              no script it does not need.
+ *
+ * And a visible link under both, because a meta refresh is the one navigation
+ * a reader cannot see coming and cannot undo with Back — the stub says where it
+ * is sending them and lets them not go.
+ *
+ * ── NO NAV ──────────────────────────────────────────────────────────────────
+ *
+ * Deliberately not built on `page()`. The shell's nav links to `/`, `/search/`,
+ * `/policy/` and the rest, and at R9a every one of those is itself a stub: a
+ * reader who clicked the nav to escape a redirect would be redirected again,
+ * from a page that exists only to say it is gone. The stylesheet is kept — the
+ * assets are still written — so the stub does not look like a broken deploy.
+ *
+ * @param {{from: string, to: string, depth: number}} ctx `from` is the site
+ *   path this file stands at, for the reader; `to` is an absolute https URL.
+ */
+export function redirectPage({ from, to, depth }) {
+  const up = upTo(depth);
+  const url = esc(to);
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Moved — Astra plugin registry</title>
+<link rel="canonical" href="${url}">
+<meta http-equiv="refresh" content="0; url=${url}">
+<meta name="description" content="${esc(from)} has moved to ${url}.">
+<link rel="stylesheet" href="${esc(up)}assets/site.css">
+</head>
+<body>
+<main>
+<h1>This page has moved</h1>
+<p><code>${esc(from)}</code> is now <a href="${url}">${url}</a>, and your browser is being sent
+there. If it is not, follow the link.</p>
+<p class="thin">The page you asked for was generated from this registry&rsquo;s signed catalogue and
+is now served by the plugins service instead. The signed documents themselves have
+<strong>not</strong> moved and are not redirected &mdash;
+<a href="${esc(up)}registry/v1/index.json">the catalogue</a>, the withdrawal list and the trust
+documents are still the same bytes at the same URLs here, which is what a daemon and an outside
+checker fetch.</p>
+</main>
+</body>
+</html>
+`;
+}
 
 /** One card, on the home page and on a publisher page. */
 function card(entry, { depth, withdrawn }) {
@@ -189,11 +254,40 @@ ${parts.map(([source, html]) => `<section class="doc"><p class="thin">Rendered f
 }
 
 /**
+ * One log entry's `backed`, said in words a reader can act on.
+ *
+ * MOD-7: a deprecate or a revoke is "in effect" on a host only once the
+ * withdrawal list THAT host serves carries it; otherwise it is pending. The
+ * distinction is not bookkeeping — a pending revoke is a decision that has been
+ * taken and recorded, and a daemon fetching from this host will not act on it
+ * until the next signed list goes out. Printing "revoked" for both states would
+ * tell a reader their machine is protected when it is not yet.
+ *
+ * The four values are `site/build.mjs`'s `moderationLog`; see the note there.
+ */
+function effectCell(entry) {
+  if (entry.backed === true) {
+    return `<span class="badge">in effect</span>`;
+  }
+  if (entry.backed === "pending") {
+    return `<span class="badge warn" title="Recorded here, and not yet carried by the withdrawal list published beside this page.">pending</span>`;
+  }
+  if (entry.backed === null) {
+    return `<span class="badge" title="This build was given no withdrawal list, so nothing was checked.">unchecked</span>`;
+  }
+  // `false` — a yank or a delist. It produces no signed document at all, so
+  // there is nothing to be pending on: the catalogue beside this page is the
+  // effect.
+  return `<span class="thin" title="A catalogue edit. It produces no signed document; the catalogue published beside this page is the effect.">catalogue</span>`;
+}
+
+/**
  * `/transparency/` — the moderation log, and what is not in it.
  *
  * @param {{log: object, advisories: object[], meta: object, plugins: Map<string, object>}} ctx
  */
 export function transparencyPage({ log, advisories, meta, plugins }) {
+  const anyPending = log.entries.some((e) => e.backed === "pending");
   const rows = log.entries
     .map((e) => {
       const linked = plugins.has(e.plugin)
@@ -204,6 +298,7 @@ export function transparencyPage({ log, advisories, meta, plugins }) {
   <td><span class="badge ${e.action === "revoke" ? "danger" : e.action === "deprecate" ? "warn" : ""}">${esc(e.action)}</span></td>
   <td>${linked}${e.versions?.length ? ` <span class="thin">${esc(e.versions.join(", "))}</span>` : ""}</td>
   <td>${esc(e.reason)}</td>
+  <td>${effectCell(e)}</td>
   <td>${e.advisory ? `<a href="../advisory/${esc(e.advisory)}/">${esc(e.advisory)}</a>` : ""}${
     e.appeal ? ` <a href="${href(e.appeal)}">appeal</a>` : ""
   }</td>
@@ -227,11 +322,39 @@ ${escalationTable()}
 
 <h2>The log</h2>
 ${
+  log.unavailable
+    ? `<p class="alert"><strong>This build could not read the moderation sources, so the log below is
+empty and is not the whole log.</strong> The files that failed to load are
+${log.unavailable.sources.length ? log.unavailable.sources.map((s) => `<code>${esc(s)}</code>`).join(", ") : "in <code>bot/moderation/</code>"}.
+The catalogue and the withdrawal list beside this page are unaffected and are in force: a broken
+record of a takedown must never hold up the takedown. The validator&rsquo;s own messages are in the
+build log rather than here, because a message quotes the text of the entry it refused and the usual
+reason to refuse an entry is that its text must not reach a reader&rsquo;s screen.</p>`
+    : ""
+}
+${
   log.entries.length
     ? `<div class="scroll"><table>
-<thead><tr><th>Date</th><th>Action</th><th>Plugin</th><th>Reason</th><th>Links</th></tr></thead>
-<tbody>${rows}</tbody></table></div>`
-    : `<p class="thin">Empty. No plugin has been yanked, delisted, deprecated or revoked. That is a
+<thead><tr><th>Date</th><th>Action</th><th>Plugin</th><th>Reason</th><th>Effect here</th><th>Links</th></tr></thead>
+<tbody>${rows}</tbody></table></div>
+<p class="thin"><strong>&ldquo;Effect here&rdquo; is about this host, not about the decision.</strong>
+A deprecate or a revoke is carried by <a href="../registry/v1/revocations.json">the signed withdrawal
+list</a>, and it reads <em>in effect</em> only once the list published beside this page carries it
+with a matching action &mdash; which is the moment a daemon fetching from here starts acting on it.
+<em>Pending</em> means the decision is recorded and the list this host serves does not carry it yet;
+that is a real state with a real duration, usually until the next publish, and the page says so
+rather than failing to build. A yank and a delist produce no signed document, so they read
+<em>catalogue</em>: the catalogue beside this page is their effect.</p>${
+        anyPending
+          ? `\n<p class="alert">Something in this log is <strong>pending</strong>. If you are reading
+this to decide whether you are protected: you are not protected by a pending row. Check
+<a href="../registry/v1/revocations.json">revocations.json</a> yourself &mdash; it is the document
+your machine acts on, and it is the one that decides.</p>`
+          : ""
+      }`
+    : log.unavailable
+      ? ""
+      : `<p class="thin">Empty. No plugin has been yanked, delisted, deprecated or revoked. That is a
 statement about this catalogue&rsquo;s age, not about its rigour &mdash; it has never had to.</p>`
 }
 

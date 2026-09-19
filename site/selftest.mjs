@@ -18,9 +18,11 @@
 // a withdrawal that is not in the signed document.
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { build } from "./build.mjs";
 import { markdown, esc, href } from "./lib/html.mjs";
@@ -40,6 +42,8 @@ function test(name, fn) {
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "astra-site-"));
 const scratch = (name) => path.join(tmp, name);
+
+const SITE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 /** A catalogue with the shape of the real one and none of its data. */
 function catalogue(ids, extra = {}) {
@@ -386,6 +390,341 @@ test("the log refuses to claim a revocation nobody signed", () => {
   assert.equal(log.entries.length, 1);
   assert.equal(log.entries[0].backed, true);
   assert.equal(log.revocations_serial, 4);
+});
+
+// ── MOD-7: the renderer shows pending and never fails ───────────────────────
+//
+// The test above is about `bot/lib/moderation.mjs`, which throws, and which is
+// right to: `bot/moderation.mjs --check` runs on every pull request and a log
+// entry claiming a revocation nobody signed must not be merged. These are about
+// the SITE, which must not throw, and the difference is the clock. MOD-3 puts
+// the advisory, the log entry and the catalogue edit in one commit; the signed
+// withdrawal list carrying that advisory is produced by a later job. In the
+// window between, the entry names an advisory the deployed list does not have —
+// and the site build is inside the job that publishes the catalogue, so the
+// first effect of recording a takedown used to be to stop the deploy carrying
+// it, and every deploy after it. MOD-46 is the rule that forbids exactly that.
+//
+// So the build goes through, out of process, and the row reads `pending`.
+
+/** A repository root holding nothing but the moderation entries given. */
+function fakeRoot(name, entries) {
+  const root = scratch(name);
+  fs.mkdirSync(path.join(root, "bot", "moderation"), { recursive: true });
+  for (const [file, body] of Object.entries(entries)) {
+    fs.writeFileSync(path.join(root, "bot", "moderation", file), typeof body === "string" ? body : JSON.stringify(body));
+  }
+  return root;
+}
+
+/**
+ * Run `node site/build.mjs` as a user would, and return its exit status.
+ *
+ * Out of process on purpose. "Never fails its build" is a claim about the exit
+ * code of a command in a workflow step, and a call to `build()` inside this
+ * file can only ever tell us whether a function threw — which is a different
+ * sentence, and the one a `try` around the wrong line would keep making.
+ */
+function runBuild({ root, indexDoc, revDoc, out, extra = [] }) {
+  const indexFile = scratch(`${out}-index.json`);
+  fs.writeFileSync(indexFile, JSON.stringify(indexDoc));
+  const args = ["--index", indexFile, "--out", scratch(out), "--registry-root", root];
+  if (revDoc) {
+    const revFile = scratch(`${out}-rev.json`);
+    fs.writeFileSync(revFile, JSON.stringify(revDoc));
+    args.push("--revocations", revFile);
+  }
+  const r = spawnSync(process.execPath, [path.join(SITE_DIR, "build.mjs"), ...args, ...extra], { encoding: "utf8" });
+  return { status: r.status, stdout: r.stdout, stderr: r.stderr, out: scratch(out) };
+}
+
+const revokeEntry = {
+  date: "2026-08-11",
+  action: "revoke",
+  plugin: "alpha",
+  reason: "It shipped a credential stealer, verified by hand.",
+  advisory: "ASTRA-2026-0009",
+};
+
+const signedList = (revocations) => ({
+  signatures: [{ key_id: "k", sig: "x" }],
+  signed: { schema: "astra.registry.revocations/1", serial: 3, revocations },
+});
+
+test("a revoke whose advisory the deployed list does not carry builds, and reads pending", () => {
+  const root = fakeRoot("pending-root", { "2026-08-11-alpha-revoke.json": revokeEntry });
+  const r = runBuild({
+    root,
+    indexDoc: catalogue(["alpha"]),
+    // A withdrawal list that is real, signed and deployed — and does not carry
+    // ASTRA-2026-0009, because it has not been signed into one yet.
+    revDoc: signedList([]),
+    out: "pending",
+  });
+  assert.equal(r.status, 0, `the build exited ${r.status}\n${r.stderr}`);
+  const log = JSON.parse(fs.readFileSync(path.join(r.out, "transparency", "moderation-log.json"), "utf8"));
+  assert.equal(log.entries.length, 1, "the entry was dropped instead of being shown as pending");
+  assert.equal(log.entries[0].backed, "pending");
+  const html = fs.readFileSync(path.join(r.out, "transparency", "index.html"), "utf8");
+  assert.match(html, /<span class="badge warn"[^>]*>pending<\/span>/, "the page does not show the row as pending");
+  assert.match(html, /you are not protected by a pending row/, "the page does not tell a reader what pending means for them");
+});
+
+test("the same entry reads in effect once the deployed list carries the advisory", () => {
+  const root = fakeRoot("effect-root", { "2026-08-11-alpha-revoke.json": revokeEntry });
+  const r = runBuild({
+    root,
+    indexDoc: catalogue(["alpha"]),
+    revDoc: signedList([advisory({ id: "ASTRA-2026-0009", action: "disable" })]),
+    out: "in-effect",
+  });
+  assert.equal(r.status, 0, `the build exited ${r.status}\n${r.stderr}`);
+  const log = JSON.parse(fs.readFileSync(path.join(r.out, "transparency", "moderation-log.json"), "utf8"));
+  assert.equal(log.entries[0].backed, true);
+  const html = fs.readFileSync(path.join(r.out, "transparency", "index.html"), "utf8");
+  assert.match(html, /<span class="badge">in effect<\/span>/);
+  assert.ok(!/>pending</.test(html), "an advisory that IS deployed is still shown as pending");
+});
+
+test("an advisory deployed with the wrong action is pending, not silently in effect", () => {
+  // `warn` is a deprecation. An entry calling it a revoke is either wrong or
+  // ahead of the list; either way the page may not say a revoke is in force.
+  const root = fakeRoot("mislabel-root", { "2026-08-11-alpha-revoke.json": revokeEntry });
+  const r = runBuild({
+    root,
+    indexDoc: catalogue(["alpha"]),
+    revDoc: signedList([advisory({ id: "ASTRA-2026-0009", action: "warn" })]),
+    out: "mislabel",
+  });
+  assert.equal(r.status, 0, `the build exited ${r.status}\n${r.stderr}`);
+  const log = JSON.parse(fs.readFileSync(path.join(r.out, "transparency", "moderation-log.json"), "utf8"));
+  assert.equal(log.entries[0].backed, "pending");
+});
+
+test("a yank stays `false` and an unchecked build stays `null`", () => {
+  // The two values that were already right, pinned so that the new third one
+  // cannot be introduced by flattening them.
+  const yank = { date: "2026-08-12", action: "yank", plugin: "alpha", reason: "The author asked for it." };
+  const root = fakeRoot("yank-root", { "2026-08-12-alpha-yank.json": yank, "2026-08-11-alpha-revoke.json": revokeEntry });
+
+  const withList = runBuild({ root, indexDoc: catalogue(["alpha"]), revDoc: signedList([]), out: "yank-listed" });
+  assert.equal(withList.status, 0, withList.stderr);
+  const a = JSON.parse(fs.readFileSync(path.join(withList.out, "transparency", "moderation-log.json"), "utf8"));
+  assert.equal(a.entries.find((e) => e.action === "yank").backed, false);
+
+  const noList = runBuild({ root, indexDoc: catalogue(["alpha"]), out: "yank-unlisted" });
+  assert.equal(noList.status, 0, noList.stderr);
+  const b = JSON.parse(fs.readFileSync(path.join(noList.out, "transparency", "moderation-log.json"), "utf8"));
+  assert.equal(b.entries.find((e) => e.action === "revoke").backed, null);
+  assert.equal(b.entries.find((e) => e.action === "yank").backed, false);
+});
+
+test("an unreadable moderation source does not stop the catalogue going out", () => {
+  // MOD-46, one step out: a broken record of a takedown must not hold up the
+  // takedown. `bot/moderation.mjs --check` is where this is fatal, on the pull
+  // request, before it can reach main.
+  const root = fakeRoot("broken-root", { "2026-08-11-alpha-revoke.json": "{ not json" });
+  const r = runBuild({ root, indexDoc: catalogue(["alpha"]), revDoc: signedList([]), out: "broken" });
+  assert.equal(r.status, 0, `the build exited ${r.status}\n${r.stderr}`);
+  assert.ok(fs.existsSync(path.join(r.out, "p", "alpha", "index.html")), "the catalogue pages were not written");
+  const log = JSON.parse(fs.readFileSync(path.join(r.out, "transparency", "moderation-log.json"), "utf8"));
+  assert.deepEqual(log.entries, []);
+  assert.deepEqual(log.unavailable.sources, ["bot/moderation/2026-08-11-alpha-revoke.json"]);
+  const html = fs.readFileSync(path.join(r.out, "transparency", "index.html"), "utf8");
+  assert.match(html, /could not read the moderation sources/);
+  // The validator's message quotes the entry it refused, and the usual reason
+  // to refuse one is that its text must not reach a screen. It goes to the
+  // build log, not to the page.
+  assert.ok(!/not readable JSON/.test(html), "the validator's message was published");
+  assert.match(r.stderr, /not readable JSON/, "the validator's message did not reach the build log either");
+});
+
+// ── ROLL-55: the pages that move, and the documents that must not ───────────
+//
+// At R4b and R9a the plugins service takes over the pages this repository
+// generates, one set at a time, and each moved page is replaced here by a
+// static redirect. Pages offers no redirect configuration, so the stub is the
+// mechanism rather than a fallback for one.
+//
+// `site/redirects.json` is empty today — RC-R4-1 and RC-R9-1 fill it — so
+// these drive the mechanism with synthetic sets. The one test that reads the
+// committed file is the last one, and it is about the file being armable.
+
+const REPO = path.resolve(SITE_DIR, "..");
+
+/** Write a redirect document and return its path. */
+function redirectsFile(name, sets) {
+  const file = scratch(`${name}-redirects.json`);
+  fs.writeFileSync(file, JSON.stringify({ schema: "astra.registry.site-redirects/1", sets }));
+  return file;
+}
+
+function buildWithRedirects(dir, indexDoc, sets, revDoc) {
+  const indexFile = scratch(`${dir}-index.json`);
+  fs.writeFileSync(indexFile, JSON.stringify(indexDoc));
+  let revFile = null;
+  if (revDoc) {
+    revFile = scratch(`${dir}-rev.json`);
+    fs.writeFileSync(revFile, JSON.stringify(revDoc));
+  }
+  const out = scratch(dir);
+  const result = build({ index: indexFile, revocations: revFile, out, redirects: redirectsFile(dir, sets) });
+  return { out, result };
+}
+
+const R4B = [
+  {
+    step: "R4b",
+    paths: {
+      "/": "https://astra.minice.ai/plugins",
+      "/search/": "https://astra.minice.ai/plugins",
+      "/p/<id>/": "https://astra.minice.ai/plugins/<id>",
+    },
+  },
+];
+
+test("every mapped path is a redirect, and nothing else is", () => {
+  const { out, result } = buildWithRedirects("redirect", catalogue(["alpha", "bravo"]), R4B);
+  assert.deepEqual(result.redirects, ["index.html", "p/alpha/index.html", "p/bravo/index.html", "search/index.html"]);
+
+  for (const [rel, to] of [
+    ["index.html", "https://astra.minice.ai/plugins"],
+    ["search/index.html", "https://astra.minice.ai/plugins"],
+    ["p/alpha/index.html", "https://astra.minice.ai/plugins/alpha"],
+    ["p/bravo/index.html", "https://astra.minice.ai/plugins/bravo"],
+  ]) {
+    const html = fs.readFileSync(path.join(out, rel), "utf8");
+    // Both mechanisms, because they answer to two different readers: the
+    // canonical link is the statement that this is the same resource, which a
+    // meta refresh does not make, and the refresh is the only thing that moves
+    // a browser with no script.
+    assert.ok(html.includes(`<link rel="canonical" href="${to}">`), `${rel} has no canonical link`);
+    assert.ok(html.includes(`<meta http-equiv="refresh" content="0; url=${to}">`), `${rel} has no meta refresh`);
+    // And a visible one, because a meta refresh is the one navigation a reader
+    // cannot see coming.
+    assert.ok(html.includes(`<a href="${to}">`), `${rel} does not offer the link to a reader`);
+    assert.ok(!html.includes("<nav>"), `${rel} carries the nav, whose links are themselves redirects`);
+  }
+
+  // A page in no set is untouched. `/policy/` moves at R9a, not at R4b, and a
+  // prefix rule or a "redirect everything" flag would have taken it early.
+  const policy = fs.readFileSync(path.join(out, "policy", "index.html"), "utf8");
+  assert.ok(!/rel="canonical"/.test(policy), "a page outside every set was redirected");
+  assert.ok(policy.includes("Rendered from <code>POLICY.md</code>"), "the policy page stopped being the policy page");
+});
+
+test("registry/v1/* and the moderation log stay byte-identical", () => {
+  // ROLL-55's other half, and the reason the sets are a data file rather than
+  // a prefix rule: `/transparency/` moves and
+  // `/transparency/moderation-log.json` never does, and they differ by one
+  // path component. A daemon follows no redirect — it would read the stub as a
+  // catalogue that fails to parse.
+  const sets = [{ step: "R9a", paths: { "/transparency/": "https://astra.minice.ai/plugins/_/transparency" } }];
+  const rev = { signatures: [{ key_id: "k", sig: "x" }], signed: { schema: "astra.registry.revocations/1", serial: 3, revocations: [advisory()] } };
+  const plain = buildInto("bytes-plain", catalogue(["alpha"]), rev);
+  const moved = buildWithRedirects("bytes-moved", catalogue(["alpha"]), sets, rev);
+
+  assert.deepEqual(moved.result.redirects, ["transparency/index.html"]);
+  const log = path.join("transparency", "moderation-log.json");
+  assert.deepEqual(
+    fs.readFileSync(path.join(moved.out, log)),
+    fs.readFileSync(path.join(plain.out, log)),
+    "the machine-readable moderation log changed when its page moved",
+  );
+  assert.ok(fs.readFileSync(path.join(moved.out, "transparency", "index.html"), "utf8").includes('rel="canonical"'));
+});
+
+test("a mapping onto a signed document or a non-page is refused", () => {
+  for (const [paths, message] of [
+    [{ "/registry/v1/index.json": "https://astra.minice.ai/plugins/index.json" }, /must stay byte-identical \(ROLL-55\)/],
+    [{ "/transparency/moderation-log.json": "https://astra.minice.ai/x" }, /must stay byte-identical \(ROLL-55\)/],
+    [{ "/assets/site.css": "https://astra.minice.ai/x.css" }, /not a generated page/],
+  ]) {
+    assert.throws(
+      () =>
+        build({
+          index: (() => {
+            const f = scratch("refuse-index.json");
+            fs.writeFileSync(f, JSON.stringify(catalogue(["alpha"])));
+            return f;
+          })(),
+          out: scratch("refuse"),
+          registryDir: (() => {
+            const d = scratch("refuse-registry");
+            fs.mkdirSync(d, { recursive: true });
+            fs.writeFileSync(path.join(d, "index.json"), "{}");
+            return d;
+          })(),
+          redirects: redirectsFile(`refuse-${Object.keys(paths)[0].replace(/\W+/g, "-")}`, [{ step: "R9a", paths }]),
+        }),
+      message,
+    );
+  }
+});
+
+test("a mapping the build generated nothing for is refused, and a pattern that matches nothing is not", () => {
+  // A literal is a typo: it would sit in the file redirecting nothing, the
+  // outside probe would never fetch it, and the old URL would go on serving a
+  // page the service has replaced.
+  assert.throws(
+    () => buildWithRedirects("typo", catalogue(["alpha"]), [{ step: "R9a", paths: { "/plublisher/": "https://astra.minice.ai/x" } }]),
+    /generated no such page/,
+  );
+  // A pattern is not. This catalogue has no advisories, and `/advisory/<id>/`
+  // is still the right line to have written.
+  const { result } = buildWithRedirects("empty-pattern", catalogue(["alpha"]), [
+    { step: "R9a", paths: { "/advisory/<id>/": "https://astra.minice.ai/plugins/_/advisories/<id>" } },
+  ]);
+  assert.deepEqual(result.redirects, []);
+});
+
+test("a redirect target must be an absolute https URL, and may capture only what its path does", () => {
+  const cases = [
+    [{ "/search/": "http://astra.minice.ai/plugins" }, /absolute https URL/],
+    [{ "/search/": "/plugins" }, /absolute https URL/],
+    [{ "/search/": "https://astra.minice.ai/plugins/<id>" }, /uses <id>, which the path does not capture/],
+  ];
+  for (const [paths, message] of cases) {
+    assert.throws(() => buildWithRedirects(`bad-${message.source.slice(0, 8).replace(/\W+/g, "")}`, catalogue(["alpha"]), [{ step: "R4b", paths }]), message);
+  }
+  // And two sets may not both own a page: whichever ran second would silently
+  // decide where an old URL points.
+  assert.throws(
+    () =>
+      buildWithRedirects("twice", catalogue(["alpha"]), [
+        { step: "R4b", paths: { "/p/<id>/": "https://astra.minice.ai/plugins/<id>" } },
+        { step: "R9a", paths: { "/p/alpha/": "https://astra.minice.ai/elsewhere" } },
+      ]),
+    /already redirected by set R4b/,
+  );
+});
+
+test("the committed redirects file is armable, and arming it reaches the publish job", () => {
+  const doc = JSON.parse(fs.readFileSync(path.join(REPO, "site", "redirects.json"), "utf8"));
+  assert.equal(doc.schema, "astra.registry.site-redirects/1");
+  assert.deepEqual(doc.sets.map((s) => s.step), ["R4b", "R9a"], "the two steps ROLL-55 names are not both present");
+
+  // THE COUPLING NOTHING ELSE HOLDS. `--redirects` is a flag, and
+  // `.github/workflows/build-index.yml` does not pass it. While every set is
+  // empty that is invisible and harmless. The moment RC-R4-1 or RC-R9-1 fills
+  // one, a set that never reaches the publish job is a takedown of the old
+  // URLs that silently did not happen — green CI, right file on `main`, and
+  // Pages still serving the pages the service has replaced. So this goes red
+  // at exactly that moment and not before.
+  const workflow = fs.readFileSync(path.join(REPO, ".github", "workflows", "build-index.yml"), "utf8");
+  const calls = workflow.split("node site/build.mjs").length - 1;
+  assert.ok(calls > 0, "build-index.yml no longer invokes site/build.mjs, so this check stopped asking anything");
+
+  const armed = doc.sets.filter((s) => Object.keys(s.paths).length);
+  if (!armed.length) return;
+  const wired = [...workflow.matchAll(/--redirects\s+site\/redirects\.json/g)].length;
+  assert.equal(
+    wired,
+    calls,
+    `set(s) ${armed.map((s) => s.step).join(", ")} carry paths, but ${calls - wired} of ${calls} ` +
+      "`node site/build.mjs` invocations in .github/workflows/build-index.yml do not pass " +
+      "`--redirects site/redirects.json`. Those old URLs would keep serving the page the service replaced.",
+  );
 });
 
 // ── the markdown subset ─────────────────────────────────────────────────────

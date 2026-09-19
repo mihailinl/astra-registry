@@ -1,21 +1,24 @@
 # The website
 
 Static HTML, generated from the **signed catalogue**, in the job that publishes
-it. About 1,440 lines of Node ESM across six files, plus a 320-line test, no framework, and — like
-everything else in this repository — **no dependencies**.
+it. 1,920 lines of Node ESM across five files, plus a 766-line test (counted
+2026-09-19), no framework, and — like everything else in this repository —
+**no dependencies**.
 
 ```
 node site/build.mjs \
   --index       dist/registry/v1/index.json \
   --revocations dist/registry/v1/revocations.json \
   --registry-dir dist/registry/v1 \
-  --out         dist/site
+  --out         dist/site \
+  [--redirects  site/redirects.json]
 ```
 
 ```
 site/
   build.mjs             the generator, and the argument for its shape
   selftest.mjs          `node site/selftest.mjs`
+  redirects.json        which pages have moved, per rollout step (ROLL-55)
   lib/html.mjs          escaping, the page shell, a small Markdown subset
   templates/plugin.mjs  /p/<id>/ — and the note on the missing deep link
   templates/advisory.mjs  /advisory/<ASTRA-YYYY-NNNN>/ and the four actions
@@ -96,3 +99,23 @@ copy served here is a mirror that is byte-identical because it was never a copy.
 The withdrawal workflow built at R1 will rebuild and redeploy the site too, **after** it
 pushes the withdrawal list, so a slow or queued Pages deployment can never delay
 the one thing in this repository that is measured in minutes.
+
+## When these pages move (ROLL-55)
+
+At R4b and again at R9a the plugins service serves the successors of these
+pages, and each one here is replaced by a static redirect — a canonical link
+and a meta refresh, because Pages has no redirect configuration of any kind and
+a moved page therefore has to *be* a page.
+
+`site/redirects.json` says which, per step, and it is empty until the step that
+is allowed to arm it: `R4b` takes `/`, `/search/` and `/p/<id>/`, `R9a` takes
+the rest. `--redirects` applies every set the file carries, so arming a step is
+one edit to that file and reverting it is the same edit back.
+
+**`/registry/v1/*` and `/transparency/moderation-log.json` are never
+redirected**, for as long as Pages serves anything. They are what a daemon and
+an outside checker fetch, neither follows a redirect, and an HTML stub at one
+of those paths is not a moved document — it is a catalogue, or a withdrawal
+list, that fails to parse. `site/build.mjs` refuses a mapping that lands on
+either, and `site/selftest.mjs` compares their bytes across a build with
+redirects and one without.
