@@ -141,6 +141,18 @@ jobs:
       - name: The icon and README lifted out of the bundle
         run: node bot/tests/asset-check.test.mjs
 
+      # Added by the batch's coordinator, not by M-T3.3's lane, and the reason
+      # is worth two lines. §2.0's standing rule — "a new registry test file is
+      # a check only once a workflow names it, so every one below is added to
+      # bot-tests.yml" — governs forty-seven tasks and is written into the
+      # `Repo/files` line of two. The grouping that decides which agents may run
+      # at once unions over those lines, so it saw M-T3.3 as sharing no file
+      # with anybody, and it shares this one with eight other tasks. The lane
+      # refused to edit a file outside its own, correctly, and that left
+      # thirteen watched canaries guarding nothing on the path to `main`.
+      - name: The holds, and the four ways one of them ends
+        run: node bot/tests/holds.test.mjs
+
       - name: The moderation records, against their own schema
         run: node bot/moderation.mjs --check
 
