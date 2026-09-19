@@ -1,0 +1,269 @@
+// The notes corpus and the verify side: one verdict per server trigger taken
+// alone, --check-notes on empty/missing-English/unknown/doubled locales, --verify
+// saying ok only for a document a client would accept now, primary versus reserve
+// root, signing afresh against the newest record, --verify --receipt bound to the
+// exact bytes read, --receipt belonging to --verify alone, and every committed
+// release manifest against the production roots.
+//
+// The two places that used to write `++updateSeq` call nextSeq() instead: the
+// counter lives in ./update-fixtures.mjs and an imported binding cannot be
+// assigned. Two counters would give both halves an `update-x-1.json` and
+// assertRefused's "it wrote <out>" check would start reading another test's
+// leftovers.
+
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+
+import { REPO_ROOT } from "../lib/sources.mjs";
+import { contentProblems, envelopeProblems } from "../sign-update-manifest.mjs";
+import { loadTestRoot } from "../testkeys/regenerate.mjs";
+import { UPDATE_SCHEMA, signEnvelope, verifyEnvelope } from "../../bot/lib/sign.mjs";
+import { test, assert, assertEqual, tmp } from "./harness.mjs";
+import { ROOT_B_KEY_ID, TRUST_ROOT_A } from "./fixtures.mjs";
+import {
+  PRODUCTION_ROOTS, TRUST_ROOT_B, UPDATE_NOTES_EN, UPDATE_SIGNER, UPDATE_SIGNER_PUB,
+  assertRefused, freshArgs, hoursFromNow, nextSeq, pretty, readText,
+  updateDoc, updateSandbox, updateSigner, updateTmp,
+  withDuplicateVersion, withUnpaddedSignature, writeUpdateDoc, writeUpdateText,
+} from "./update-fixtures.mjs";
+
+export async function run() {
+  await test("--check-notes and signing give one verdict on each server trigger, taken alone", () => {
+    // minice api/crates/astra-server/src/updates.rs `load`: a note containing '<', "](",
+    // "http://" or "https://" makes the server refuse the whole manifest. Nothing else does.
+    const corpus = [
+      ["a < b", false],
+      ["x](y", false],
+      ["http://x", false],
+      ["https://x", false],
+      ["a > b", true], // not a server trigger, and plain text as the client renders it
+      ["HTTPS://x", true], // the server's rule is case-sensitive, and this one is the same rule
+      ["plain words", true],
+    ];
+    const dir = updateSandbox();
+    for (const [text, accepted] of corpus) {
+      const notesDir = path.join(tmp, `update-corpus-${nextSeq()}`);
+      fs.mkdirSync(notesDir, { recursive: true });
+      fs.writeFileSync(path.join(notesDir, "notes.en.txt"), `${text}\n`);
+      const check = updateSigner(["--check-notes", notesDir], REPO_ROOT);
+      const out = updateTmp("corpus");
+      const sign = updateSigner([...freshArgs("0.2.6", path.join(notesDir, "notes.en.txt")), "--out", out], dir);
+      assertEqual(check.status, accepted ? 0 : 1, `--check-notes on ${JSON.stringify(text)}: ${check.stderr}`);
+      assertEqual(sign.status, accepted ? 0 : 1, `signing with ${JSON.stringify(text)}: ${sign.stderr}`);
+      if (!accepted) {
+        assert(check.stderr.includes("markup or a link"), check.stderr);
+        assert(sign.stderr.includes("markup or a link"), sign.stderr);
+      }
+    }
+  });
+
+  await test("--check-notes refuses empty notes, missing English, unknown or doubled locales; accepts files", () => {
+    const notesDir = (name, files) => {
+      const d = path.join(tmp, `update-notes-${name}-${nextSeq()}`);
+      fs.mkdirSync(d, { recursive: true });
+      for (const [f, t] of Object.entries(files)) fs.writeFileSync(path.join(d, f), t);
+      return d;
+    };
+    // A README beside the notes is not a note, whatever it contains.
+    const ok = notesDir("ok", { "notes.en.txt": "Plain.\n", "notes.ru.txt": "Просто.\n", "README.md": "<b>x</b>" });
+    let r = updateSigner(["--check-notes", ok], REPO_ROOT);
+    assertEqual(r.status, 0, `good notes refused: ${r.stderr}`);
+    assert(r.stdout.includes("notes ok: en ru"), r.stdout);
+    const refusals = [
+      ["empty", [notesDir("empty", { "notes.en.txt": "Fine.", "notes.ru.txt": " \n\t\n" })], "are empty"],
+      ["no-en", [notesDir("no-en", { "notes.ru.txt": "Только по-русски." })], "no English notes"],
+      ["de", [notesDir("de", { "notes.en.txt": "Fine.", "notes.de.txt": "Gut." })], "not a locale the manifest carries"],
+      ["twice", [ok, notesDir("again", { "notes.en.txt": "Again." })], "a second set of en notes"],
+      ["no locale in the name", [path.join(ok, "README.md")], "cannot tell which locale"],
+    ];
+    for (const [name, paths, expect] of refusals) {
+      assertRefused(updateSigner(["--check-notes", ...paths], REPO_ROOT), expect, undefined, name);
+    }
+    r = updateSigner(["--check-notes", path.join(ok, "notes.en.txt"), path.join(ok, "notes.ru.txt")], REPO_ROOT);
+    assertEqual(r.status, 0, `the same notes as files: ${r.stderr}`);
+    for (const v of ["0.2.4", "0.2.5"]) {
+      r = updateSigner(["--check-notes", path.join("releases", v)], REPO_ROOT);
+      assertEqual(r.status, 0, `releases/${v}: ${r.stderr}`);
+    }
+  });
+
+  await test("--verify says ok only for a document a client would accept now", () => {
+    const dir = updateSandbox();
+    const verify = (text) => updateSigner(["--verify", writeUpdateText(text)], dir);
+    let r = verify(pretty(updateDoc()));
+    assertEqual(r.status, 0, `a good document: ${r.stderr}`);
+    assert(r.stdout.includes("would accept it"), r.stdout);
+    r = verify(pretty(updateDoc({ signedAt: hoursFromNow(23) })));
+    assertEqual(r.status, 0, `23 hours ahead is inside the client's 24: ${r.stderr}`);
+    const cases = [
+      ["expired", pretty(updateDoc({ signedAt: hoursFromNow(-48), expires: hoursFromNow(-1) })), "expired at"],
+      ["signed 25 hours ahead", pretty(updateDoc({ signedAt: hoursFromNow(25) })), "more than 24 hours ahead"],
+      ["a key written twice", withDuplicateVersion(updateDoc()), "appears twice"],
+      ["a signature only Node's lenient base64 reads", withUnpaddedSignature(updateDoc()), "not canonical base64"],
+      ["notes the server refuses", pretty(updateDoc({ mutate: (s) => { s.latest.notes.ru = "x](y"; } })), "markup or a link"],
+      ["an uppercase digest", pretty(updateDoc({ mutate: (s) => { s.latest.artifacts[0].sha256 = "A".repeat(64); } })), "not 64 lowercase hex"],
+      ["a body this repository cannot canonicalise", (() => {
+        const d = structuredClone(updateDoc());
+        d.signed.latest.artifacts[0].sizeBytes = 1.5;
+        return pretty(d);
+      })(), "cannot be canonicalised"],
+    ];
+    for (const [name, text, expect] of cases) assertRefused(verify(text), expect, undefined, name);
+  });
+
+  await test("the primary key is the active root; the reserve signs as the primary only with --reserve", () => {
+    const dir = updateSandbox();
+    const rest = freshArgs().slice(2);
+    let out = updateTmp("x");
+    assertRefused(updateSigner(["--root-key", TRUST_ROOT_B.file, ...rest, "--out", out], dir),
+      "is the reserve root, and this needs the active one", out, "the reserve, by accident");
+    out = updateTmp("x");
+    assertRefused(updateSigner([...freshArgs(), "--reserve", "--out", out], dir),
+      "is the active root, and this needs the reserve one", out, "--reserve with the active key");
+    out = updateTmp("reserve");
+    let r = updateSigner(["--root-key", TRUST_ROOT_B.file, "--reserve", ...rest, "--out", out], dir);
+    assertEqual(r.status, 0, `the reserve, asked for: ${r.stderr}`);
+    out = updateTmp("both");
+    r = updateSigner([...freshArgs(), "--also-reserve", TRUST_ROOT_B.file, "--out", out], dir);
+    assertEqual(r.status, 0, `both roots: ${r.stderr}`);
+    assertEqual(JSON.parse(readText(out)).signatures.length, 2, "signatures");
+  });
+
+  await test("signing afresh refuses an older version than the newest record, and a signedAt not later than it", () => {
+    const dir = updateSandbox([updateDoc()]);
+    let out = updateTmp("x");
+    assertRefused(updateSigner([...freshArgs("0.2.4"), "--out", out], dir), "--withdraw-to releases/0.2.4/manifest.json", out, "an older release");
+    out = updateTmp("fresh");
+    const r = updateSigner([...freshArgs("0.2.6"), "--out", out], dir);
+    assertEqual(r.status, 0, `a newer release: ${r.stderr}`);
+    const ahead = updateSandbox([updateDoc({ signedAt: hoursFromNow(24) })]);
+    out = updateTmp("x");
+    assertRefused(updateSigner([...freshArgs("0.2.6"), "--out", out], ahead),
+      "not strictly later than releases/0.2.5/manifest.json", out, "a record dated tomorrow");
+  });
+
+  await test("--verify --receipt binds the verdict to the exact bytes it read, written only after every check passes", () => {
+    const dir = updateSandbox();
+    const hex = (b) => crypto.createHash("sha256").update(b).digest("hex");
+    const B = loadTestRoot("TEST-ONLY-DO-NOT-TRUST-root-b");
+    const both = signEnvelope({
+      domain: UPDATE_SCHEMA,
+      signed: updateDoc().signed,
+      signers: [
+        { key_id: UPDATE_SIGNER.key_id, privateKey: UPDATE_SIGNER.privateKey },
+        { key_id: B.key_id, privateKey: B.privateKey },
+      ],
+    });
+    // CRLF line ends and trailing whitespace: valid JSON whose re-serialisation hashes differently.
+    const text = `${pretty(both).replace(/\n/g, "\r\n")}  `;
+    const file = writeUpdateText(text);
+    const bytes = fs.readFileSync(file);
+    assert(hex(bytes) !== hex(pretty(JSON.parse(text))), "premise: the bytes are not their re-serialisation");
+    const receipt = `${file}.verified`;
+    const r = updateSigner(["--verify", file, "--receipt", receipt], dir);
+    assertEqual(r.status, 0, `--verify --receipt: ${r.stderr}`);
+    const got = JSON.parse(readText(receipt));
+    assertEqual(Object.keys(got).join(","), "schema,file,sha256,bytes,version,signedAt,expires,key_ids,verified_at", "members, in order");
+    assertEqual(got.schema, "astra.update-verify-receipt/1", "schema");
+    assertEqual(got.file, path.basename(file), "file");
+    assertEqual(got.sha256, hex(bytes), "sha256 of the exact bytes read");
+    assertEqual(got.bytes, bytes.length, "bytes");
+    assertEqual(got.version, both.signed.latest.version, "version");
+    assertEqual(got.signedAt, both.signed.signedAt, "signedAt");
+    assertEqual(got.expires, both.signed.expires, "expires");
+    assertEqual(got.key_ids.join(","), `${UPDATE_SIGNER.key_id},${B.key_id}`, "every published root that signed");
+    assert(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(got.verified_at), `verified_at ${got.verified_at}`);
+    assert(Math.abs(Date.parse(got.verified_at) - Date.now()) < 120000, `verified_at ${got.verified_at} is not now`);
+    assertEqual(
+      fs.readdirSync(path.dirname(receipt)).filter((n) => n.startsWith(`.${path.basename(receipt)}.`)).length,
+      0,
+      "a temp file was left beside the receipt",
+    );
+
+    // Temp file plus rename: a hard link to the previous receipt keeps its bytes, where a rewrite in
+    // place would change them under the reader.
+    fs.writeFileSync(receipt, "stale\n");
+    const link = `${receipt}.link`;
+    fs.linkSync(receipt, link);
+    const again = updateSigner(["--verify", file, "--receipt", receipt], dir);
+    assertEqual(again.status, 0, again.stderr);
+    assertEqual(readText(link), "stale\n", "the receipt was rewritten in place rather than replaced by a rename");
+    assert(readText(receipt).startsWith('{"schema":'), "the new receipt");
+
+    // Refused: nothing written. The last two are bytes only a lenient decoder would have accepted.
+    const lenientOnly = (() => {
+      const d = updateDoc({ mutate: (s) => { s.latest.notes.en = "Replacement \uFFFD kept."; } });
+      const buf = Buffer.from(pretty(d));
+      const at = buf.indexOf(Buffer.from([0xef, 0xbf, 0xbd]));
+      assert(at > 0, "premise: U+FFFD is in the file");
+      const raw = Buffer.concat([buf.subarray(0, at), Buffer.from([0xff]), buf.subarray(at + 3)]);
+      assert(verifyEnvelope(JSON.parse(raw.toString("utf8")), UPDATE_SCHEMA, UPDATE_SIGNER_PUB).ok, "premise: it verifies once leniently decoded");
+      return raw;
+    })();
+    const cases = [
+      ["expired", pretty(updateDoc({ signedAt: hoursFromNow(-48), expires: hoursFromNow(-1) })), "expired at"],
+      ["a bad signature", (() => { const d = updateDoc(); d.signed.latest.artifacts[0].sizeBytes += 1; return pretty(d); })(), "does not verify"],
+      ["a key written twice", withDuplicateVersion(updateDoc()), "appears twice"],
+      ["a byte only a lenient decoder reads", lenientOnly, "not valid UTF-8"],
+      ["a byte-order mark", `\uFEFF${pretty(updateDoc())}`, "it is not JSON"],
+    ];
+    for (const [name, content, expect] of cases) {
+      const f = updateTmp("refused");
+      fs.writeFileSync(f, content);
+      const rc = `${f}.verified`;
+      assertRefused(updateSigner(["--verify", f, "--receipt", rc], dir), expect, rc, name);
+    }
+
+    const good = writeUpdateDoc(updateDoc());
+    const goodBefore = readText(good);
+    assertRefused(updateSigner(["--verify", good, "--receipt", good], dir), "is the verified file itself", undefined, "--receipt = the file");
+    assertEqual(readText(good), goodBefore, "the verified file was overwritten");
+    assertRefused(updateSigner(["--verify", good, "--receipt", "releases/0.2.5/manifest.json.verified"], dir),
+      "lies under releases/", path.join(dir, "releases", "0.2.5", "manifest.json.verified"), "--receipt under releases/");
+  });
+
+  await test("--receipt belongs to --verify alone: every other mode refuses it and writes nothing", () => {
+    const dir = updateSandbox([updateDoc({ version: "0.2.4", signedAt: hoursFromNow(-48) }), updateDoc()]);
+    const receipt = updateTmp("receipt");
+    const cases = [
+      ["signing", [...freshArgs(), "--out", updateTmp("x")], "--receipt is not a flag signing accepts"],
+      ["--renew", ["--renew", "releases/0.2.5/manifest.json", "--root-key", TRUST_ROOT_A.file, "--out", updateTmp("x")],
+        "--receipt is not a flag --renew accepts"],
+      ["--withdraw-to", ["--withdraw-to", "releases/0.2.4/manifest.json", "--root-key", TRUST_ROOT_A.file, "--out", updateTmp("x")],
+        "--receipt is not a flag --withdraw-to accepts"],
+      ["--check-notes", ["--check-notes", path.join(REPO_ROOT, "releases", "0.2.5")], "--receipt is not a flag --check-notes accepts"],
+    ];
+    for (const [name, args, expect] of cases) {
+      assertRefused(updateSigner([...args, "--receipt", receipt], dir), expect, receipt, name);
+    }
+  });
+
+  await test("every committed release manifest verifies against the production roots and carries the notes beside it", () => {
+    // Not freshness: a record is history, and 0.2.4's expired document stays a correct record of it.
+    const releases = path.join(REPO_ROOT, "releases");
+    let seen = 0;
+    for (const v of fs.readdirSync(releases).sort()) {
+      const file = path.join(releases, v, "manifest.json");
+      if (!fs.existsSync(file)) continue;
+      seen++;
+      const { doc, problems } = envelopeProblems(readText(file), PRODUCTION_ROOTS);
+      assertEqual(problems.join("; "), "", `releases/${v}/manifest.json`);
+      assertEqual(contentProblems(doc.signed).join("; "), "", `releases/${v}/manifest.json content`);
+      assertEqual(doc.signed.latest.version, v, `releases/${v}: the directory and the signed version disagree`);
+      const locales = fs.readdirSync(path.join(releases, v))
+        .map((n) => /^notes\.([^.]+)\.txt$/.exec(n)?.[1])
+        .filter(Boolean)
+        .sort();
+      assertEqual(Object.keys(doc.signed.latest.notes).sort().join(","), locales.join(","), `releases/${v}: locales`);
+      for (const l of locales) {
+        assertEqual(
+          readText(path.join(releases, v, `notes.${l}.txt`)).trim(),
+          doc.signed.latest.notes[l],
+          `releases/${v}/notes.${l}.txt is not what was signed`,
+        );
+      }
+    }
+    assert(seen >= 2, `only ${seen} release manifests found; 0.2.4 and 0.2.5 are committed`);
+  });
+}

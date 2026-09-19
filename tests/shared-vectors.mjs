@@ -69,7 +69,9 @@ export function loadVectors() {
 const read = (file) => fs.readFileSync(path.join(VECTOR_DIR, file));
 
 /**
- * Register every shared-vector test against the harness in tools/selftest.mjs.
+ * Register every shared-vector test against the harness in
+ * tools/selftest/harness.mjs. This injected-harness shape is what let that file
+ * become a directory of fifteen modules without a test framework arriving too.
  * @param {{test: Function, assert: Function, limits: object}} harness
  */
 export async function registerSharedVectorTests({ test, assert, limits }) {
