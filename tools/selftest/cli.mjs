@@ -9,10 +9,6 @@ import { REPO_ROOT } from "../lib/sources.mjs";
 import { test, assert } from "./harness.mjs";
 import { TEST_INDEX_KEY } from "./fixtures.mjs";
 
-/** How many tests run() reports. The runner asserts exactly this many, so
- *  adding a test here is one line of arithmetic in this file and nowhere else. */
-export const TESTS = 5;
-
 export async function run() {
   console.log("\ncli surface");
   await test("`build-index.mjs --check` exits 0 on the committed tree", () => {

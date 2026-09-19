@@ -142,7 +142,8 @@ async function checkModuleSet() {
   // file nothing has vouched for yet, so it is the one that has to assume the
   // file is broken.
   const carriesTests = [];
-  const undeclared = [];
+  const sharedRun = [];
+  const runOwners = new Map();
   for (const name of onDisk) {
     let mod;
     try {
@@ -154,12 +155,18 @@ async function checkModuleSet() {
     }
     if (typeof mod.run !== "function") continue;
     carriesTests.push(name);
-    // The count a test module owns. See TESTS below; here it is only checked to
-    // exist, because a module that joins the suite without one would be a module
-    // whose only size check is that it is not zero.
-    if (!Number.isInteger(mod.TESTS) || mod.TESTS < 1) {
-      undeclared.push(`${name} (TESTS is ${JSON.stringify(mod.TESTS)})`);
-    }
+    // Two names, one module. A module copied from a sibling whose
+    // `export { run } from "./…"` was never changed, or a file replaced by a
+    // symlink to one, loads ONE module under two names: the shadowed module's
+    // tests stop running and the printed total RISES, because the other
+    // module's names come out twice. Watched on this tree: a re-export gave
+    // `PASS  189 passed, 0 failed`, exit 0, with eighteen checks gone and
+    // forty-one names printed twice. Every check above compares text, and no
+    // text distinguishes that from a legitimate file — only the identity of the
+    // function does.
+    const twin = runOwners.get(mod.run);
+    if (twin) sharedRun.push(`${twin} and ${name}`);
+    else runOwners.set(mod.run, name);
   }
   const unrun = carriesTests.filter((n) => !MODULES.includes(n));
   const testless = MODULES.filter((n) => onDisk.includes(n) && !carriesTests.includes(n));
@@ -169,10 +176,10 @@ async function checkModuleSet() {
   if (testless.length) {
     problems.push(`listed by the runner and exports no run(), so nothing in it runs: ${testless.join(", ")}`);
   }
-  if (undeclared.length) {
+  if (sharedRun.length) {
     problems.push(
-      `exports run() and does not declare how many tests it reports; add \`export const TESTS = <n>;\` ` +
-      `beside its run(): ${undeclared.join(", ")}`,
+      `two names load one module, so one of each pair never runs and the other's names print twice: ` +
+      `${sharedRun.join(", ")}`,
     );
   }
   if (problems.length) fail("the suite does not run what tools/selftest/ holds", problems);
@@ -200,25 +207,48 @@ async function checkModuleSet() {
 //     `PASS  191 passed`, exit 0, five checks gone and the guard green through
 //     both.
 //
-// So the count is not global any more. EACH MODULE DECLARES ITS OWN — `export
-// const TESTS = 12;` beside its `run()` — and the runner asserts each module
-// reported exactly that many. That answers both failures at once: growth is an
-// edit to the file the task is already editing, in the same commit as the test
-// it added, so no line is shared and nothing serialises; and the number cannot
-// go stale in the direction that matters, because there is no slack anywhere for
-// a loss to hide in.
+// A third attempt gave each module its own number — `export const TESTS = 12;`
+// beside its `run()`, asserted for EQUALITY — on the argument that growth is
+// then an edit to the file the author already has open, so no line is shared.
+// It is gone too, and the reason is worth more than the guard was, because it
+// is arithmetic rather than taste.
 //
-// EQUALITY, not a per-module floor. A floor would still miss the commonest real
-// shrinkage — a module that loses four tests of eighteen and keeps fourteen —
-// and equality costs exactly one line, in a file the author has open, in a
-// commit that is already changing that file's test count. That is the cheapest
-// guard in this repository and the only one that reads a deletion as a deletion.
+// **Equality fires exactly when a module's test count changes without that
+// module's text changing.** Every other shrinkage — a deleted test, an emptied
+// loop, a bad merge — is an edit to the module, and the author editing it
+// updates the number three lines away in the same diff. So ask what actually
+// changes a module's count from outside it, and in this repository there is one
+// answer: `bundles.mjs` declares 41 and owns 8. The other 33 come from
+// `registerSharedVectorTests` over the VENDORED `tests/vectors/`, one test per
+// vector, refreshed from AstraPlugins. The ordinary re-vendor therefore went red
+// — `bundles.mjs reported 42 and declares 41: raise TESTS to 42 in
+// tools/selftest/bundles.mjs — that line and no other file` — naming a file the
+// author never opened, about a number owned by another repository. That is the
+// guard's entire true-positive set, and it is a false alarm.
 //
-// It also deletes the two guards that existed only to protect the old global
-// number: the ratchet in repo-rules.mjs that pinned TEST_FLOOR from below, and
-// the interlock that counted textual occurrences of the guards' names in this
-// file. See the note on `no module has left the runner's list` in
-// repo-rules.mjs for what took their place and what did not.
+// And the loss it was meant to catch there is already caught, better, by the
+// side that owns it: `tests/shared-vectors.mjs` asserts `checked >= 20` and
+// `n >= 20` twice, in the module whose vectors they are, with a message about
+// vectors.
+//
+// The cost was not only the false red. Two tasks adding a test to one module
+// make the IDENTICAL `18` → `19` edit; git auto-merges it as one change and the
+// merged tree is red on a line neither author could have written correctly.
+// With ten tasks over fifteen modules that collision is near certain. The queue
+// was not removed by sharding it fifteen ways — it was hidden, in the one place
+// a merge does not warn.
+//
+// What is left is a FLOOR OF ONE per module, and the honest statement of what
+// it does not catch is below it. It reads a module that reported nothing —
+// emptied `run()`, early `return`, a `for` over a list that is now empty, half a
+// file lost in a merge — and it says nothing about a module that kept fourteen
+// tests of eighteen. Nothing here catches that, and no count can: the author who
+// deletes four tests is the author who would update the number.
+//
+// Deleted with the global count: the ratchet in repo-rules.mjs that pinned
+// TEST_FLOOR from below, and the interlock that counted textual occurrences of
+// the guards' names in this file. See the note on `no module has left the
+// runner's list` in repo-rules.mjs for what took their place and what did not.
 const reported = () => {
   const r = results();
   return r.passed + r.failures.length;
@@ -267,7 +297,6 @@ await settle();
 }
 
 const shortfalls = [];
-let declared = 0;
 for (const name of MODULES) {
   const before = reported();
   const mod = await load(name);
@@ -298,15 +327,11 @@ for (const name of MODULES) {
       "summary line, where the exit code has already been decided",
     ]);
   }
-  declared += mod.TESTS;
   const ran = reported() - before;
-  if (ran !== mod.TESTS) {
+  if (ran < 1) {
     shortfalls.push(
-      ran < mod.TESTS
-        ? `${name} reported ${ran} tests and declares TESTS = ${mod.TESTS}: ${mod.TESTS - ran} check(s) that used ` +
-          `to run do not run any more`
-        : `${name} reported ${ran} tests and declares TESTS = ${mod.TESTS}: it grew, so raise TESTS to ${ran} in ` +
-          `tools/selftest/${name} — that line and no other file`,
+      `${name} is in the list, was imported and its run() returned, and it reported no test at all — an emptied ` +
+      `run(), an early return, or a loop over a list that is now empty`,
     );
   }
 }
@@ -314,14 +339,14 @@ for (const name of MODULES) {
 cleanupTmp();
 
 const { passed, failures } = results();
-// The sum is derived and printed, and nothing compares it to a number written
-// down anywhere: it is fifteen module-owned numbers added up, and it is on the
-// last line so a reader still has one figure to look at. A reader who wants to
-// know whether the suite shrank reads the shortfalls, not this.
+// Both figures are counted, not compared to anything written down. The module
+// count is here because "15 modules" going to "14" is the one shrinkage a
+// reader can see at a glance, and the pinned list in repo-rules.mjs is what
+// actually asserts it.
 console.log(
   `\n${failures.length === 0 && shortfalls.length === 0 ? "PASS" : "FAIL"}  ${passed} passed, ${failures.length} failed ` +
-  `(${MODULES.length} modules declaring ${declared})`,
+  `(${MODULES.length} modules)`,
 );
 for (const f of failures) console.log(`      - ${f}`);
-for (const s of shortfalls) console.log(`      - the suite is not the size its modules say: ${s}`);
+for (const s of shortfalls) console.log(`      - a module ran and reported nothing: ${s}`);
 if (failures.length || shortfalls.length) process.exit(1);

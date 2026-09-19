@@ -13,10 +13,6 @@ import { REPO_ROOT, loadPolicy } from "../lib/sources.mjs";
 import { test, assert, assertEqual, tmp, validateTree, errorsMatching } from "./harness.mjs";
 import { withFakeAstraPlugins } from "./fixtures.mjs";
 
-/** How many tests run() reports. The runner asserts exactly this many, so
- *  adding a test here is one line of arithmetic in this file and nowhere else. */
-export const TESTS = 5;
-
 export async function run() {
   await test("the hand-edit path checks every card a listing renders, not the English one", async () => {
     // `checkSquatting` built its name index from `p.doc?.name` alone. The moment

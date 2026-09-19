@@ -21,10 +21,6 @@ import {
 import { registerSharedVectorTests } from "../../tests/shared-vectors.mjs";
 import { test, assert, tmp, LIMITS } from "./harness.mjs";
 
-/** How many tests run() reports. The runner asserts exactly this many, so
- *  adding a test here is one line of arithmetic in this file and nowhere else. */
-export const TESTS = 41;
-
 export async function run() {
   console.log("\nthe two digest constructions");
   // Known-answer vectors. The expected hex below was NOT produced by any of the

@@ -16,10 +16,6 @@ import { validate as validateSchema } from "../lib/jsonschema.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { test, assert } from "./harness.mjs";
 
-/** How many tests run() reports. The runner asserts exactly this many, so
- *  adding a test here is one line of arithmetic in this file and nowhere else. */
-export const TESTS = 4;
-
 export async function run() {
   await test("the serial counts the commit being made, not the one behind it", () => {
     // `resolveSerial` counts commits touching `plugins/`. At the moment

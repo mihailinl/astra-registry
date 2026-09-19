@@ -17,10 +17,6 @@ import { privateKeyFromSeed, publicKeyBase64 } from "../../bot/lib/sign.mjs";
 import { test, assert, tmp } from "./harness.mjs";
 import { TRUST_ROOT_A, sandboxWithRoot } from "./fixtures.mjs";
 
-/** How many tests run() reports. The runner asserts exactly this many, so
- *  adding a test here is one line of arithmetic in this file and nowhere else. */
-export const TESTS = 6;
-
 export async function run() {
   // ── the root delegation ─────────────────────────────────────────────────────
   //

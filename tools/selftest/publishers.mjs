@@ -18,10 +18,6 @@ import { REPO_ROOT, expiredPublishers, loadPublishers, publisherNameCollisions }
 import { proofNamesOwner, recheck } from "../../bot/recheck-publishers.mjs";
 import { test, assert } from "./harness.mjs";
 
-/** How many tests run() reports. The runner asserts exactly this many, so
- *  adding a test here is one line of arithmetic in this file and nowhere else. */
-export const TESTS = 9;
-
 export async function run() {
   await test("every publishers/ record validates against schema/publisher-v1.json", () => {
     const schema = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "schema/publisher-v1.json"), "utf8"));

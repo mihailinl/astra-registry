@@ -20,10 +20,6 @@ import {
 import { test, assert, tmp } from "./harness.mjs";
 import { TEST_INDEX_KEY, TEST_STRANGER_KEY, trustFixture, trustedIndexKeys } from "./fixtures.mjs";
 
-/** How many tests run() reports. The runner asserts exactly this many, so
- *  adding a test here is one line of arithmetic in this file and nowhere else. */
-export const TESTS = 12;
-
 export async function run() {
   // ── the catalogue signature ─────────────────────────────────────────────────
   //

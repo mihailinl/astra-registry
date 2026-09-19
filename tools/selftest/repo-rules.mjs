@@ -13,10 +13,6 @@ import path from "node:path";
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { test, assert, assertEqual, walkRepo, grepRepo, isSuiteFile } from "./harness.mjs";
 
-/** How many tests run() reports. The runner asserts exactly this many, so
- *  adding a test here is one line of arithmetic in this file and nowhere else. */
-export const TESTS = 10;
-
 export async function run() {
   // ─────────────────────────────────────────────────────────────────────────────
   // R0: the properties that kept this repository from having two signers, and
@@ -320,16 +316,12 @@ export async function run() {
     assertEqual(stray.join(", "), "", "a file other than the runbook still points at revoke.yml");
   });
 
-  // The one way this suite can get smaller that a per-module count cannot see.
-  //
-  // Each module declares its own `TESTS` and the runner holds it to exactly
-  // that, which is what keeps ten concurrent tasks off one shared line — and it
-  // is also why deleting a whole module takes its number away with it. Disk and
-  // the runner's list still agree, every surviving module still matches its own
-  // count, and the run is five checks shorter and green. That is precisely what
-  // the previous guard, a pinned global floor of 166, allowed once the suite had
-  // grown past it: `PASS  196 passed`, then a module deleted from disk and from
-  // the list, then `PASS  191 passed`, exit 0.
+  // The way this suite gets smaller that no count can see: a whole module
+  // deleted from disk AND from the runner's list. Both sides agree, every
+  // surviving module still reports tests, and the run is eighteen checks
+  // shorter and green. A global floor of 166 allowed exactly this once the
+  // suite had grown past it — `PASS  196 passed`, delete the module, `PASS  191
+  // passed`, exit 0.
   //
   // So it is a NAME LIST rather than a number, and a subset assertion rather
   // than an equality: fifteen modules were here on 2026-09-19 and must still be
@@ -339,27 +331,33 @@ export async function run() {
   // module is still allowed: take its name out of SPLIT_MODULES in the same
   // commit, where a reviewer reads the removal as the decision it is.
   //
-  // Three checks per name, and together they are the chain that says the module
-  // still RUNS: it is on disk; it exports `run` and declares a positive `TESTS`,
-  // so the runner's per-module equality has something to hold it to; and it is
-  // still in the runner's `MODULES`, read out of the runner's source rather than
-  // inferred, because `checkModuleSet` is the only other thing that would notice
-  // an unlisting and this test must not lean on a guard it is standing in for.
+  // Two checks per name, and together they say the module still RUNS: it is on
+  // disk and exports `run`; and it is still in the runner's `MODULES`, read out
+  // of the runner's source rather than inferred, because `checkModuleSet` is the
+  // only other thing that would notice an unlisting and this test must not lean
+  // on a guard it is standing in for.
   //
-  // What this does NOT do, said plainly because the guard it replaces pretended
-  // otherwise. Nothing here watches the runner's loop. The test that used to sit
-  // on this line counted textual occurrences of `checkModuleSet(` and
-  // `shrinkage(` in the runner and called that an interlock; it was not one.
-  // Changing `shrinkage(silent, passed + failures.length)` to `shrinkage(silent,
+  // What this does NOT do, said plainly because two guards that stood here
+  // before pretended otherwise.
+  //
+  // Nothing watches the runner's loop. The test that used to sit on this line
+  // counted textual occurrences of `checkModuleSet(` and `shrinkage(` in the
+  // runner and called that an interlock; it was not one. Changing
+  // `shrinkage(silent, passed + failures.length)` to `shrinkage(silent,
   // TEST_FLOOR)` keeps both occurrences, keeps that test green, and disarms the
   // floor outright — one argument, no growth required. Text cannot tell a live
-  // call from a present one, so there is no stronger spelling of it to write and
-  // it was deleted instead of reworded. The residual risk is stated rather than
-  // covered: deleting the per-module assertion from tools/selftest.mjs is a
-  // small green reviewable diff and nothing in this suite will go red for it.
-  // What changed is that it is now one edit against fifteen declared numbers in
-  // fifteen files, instead of one edit against one number that two other guards
-  // were built to defend and did not.
+  // call from a present one, so there is no stronger spelling to write, and it
+  // was deleted rather than reworded.
+  //
+  // And nothing here — or anywhere in this suite — notices a module that keeps
+  // fourteen tests of eighteen, or a test body hollowed to `() => {}`, or a
+  // `for` over a table with one row removed. Those were measured, not assumed:
+  // each leaves the count, the name and the whole printed transcript unchanged.
+  // A suite cannot audit its own assertions from inside, and the guards here are
+  // against the accident — a module that stops being imported, a file that never
+  // ran, a copy that shadowed its sibling — not against an author editing the
+  // check. That distinction is the only honest claim available and it is made
+  // here so the next reader does not infer a stronger one from the effort.
   const SPLIT_MODULES = [
     "primitives.mjs", "catalogue.mjs", "publishers.mjs", "validation.mjs", "couplings.mjs",
     "listings.mjs", "origins.mjs", "bundles.mjs", "index-signature.mjs", "revocations.mjs",
@@ -387,11 +385,8 @@ export async function run() {
       }
       const mod = await import(`./${name}`);
       if (typeof mod.run !== "function") hollow.push(`${name} exports no run()`);
-      else if (!Number.isInteger(mod.TESTS) || mod.TESTS < 1) {
-        hollow.push(`${name} declares TESTS = ${JSON.stringify(mod.TESTS)}`);
-      }
     }
     assertEqual(hollow.join(", "), "",
-      "a module from the split no longer carries anything the runner's per-module count can hold it to");
+      "a module from the split is on disk and no longer exports run(), so the runner imports it and runs nothing");
   });
 }

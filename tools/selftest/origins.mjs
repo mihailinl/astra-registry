@@ -10,10 +10,6 @@ import { stableStringify } from "../lib/canonical.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { test, assert, tmp, validateTree, errorsMatching } from "./harness.mjs";
 
-/** How many tests run() reports. The runner asserts exactly this many, so
- *  adding a test here is one line of arithmetic in this file and nowhere else. */
-export const TESTS = 5;
-
 export async function run() {
   console.log("\nwhere artifacts may come from");
   // A listing has to be able to say "these bytes live here" for a here that is not
