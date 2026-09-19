@@ -16,6 +16,10 @@ import { REPO_ROOT } from "../lib/sources.mjs";
 import { makeFixtures } from "../make-fixtures.mjs";
 import { test, assert, tmp } from "./harness.mjs";
 
+/** How many tests run() reports. The runner asserts exactly this many, so
+ *  adding a test here is one line of arithmetic in this file and nowhere else. */
+export const TESTS = 14;
+
 export async function run() {
   console.log("\ncanonical json");
   await test("keys are sorted by code unit, output ends in a newline", () => {

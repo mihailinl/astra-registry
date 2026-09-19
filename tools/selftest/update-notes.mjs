@@ -28,6 +28,10 @@ import {
   withDuplicateVersion, withUnpaddedSignature, writeUpdateDoc, writeUpdateText,
 } from "./update-fixtures.mjs";
 
+/** How many tests run() reports. The runner asserts exactly this many, so
+ *  adding a test here is one line of arithmetic in this file and nowhere else. */
+export const TESTS = 8;
+
 export async function run() {
   await test("--check-notes and signing give one verdict on each server trigger, taken alone", () => {
     // minice api/crates/astra-server/src/updates.rs `load`: a note containing '<', "](",

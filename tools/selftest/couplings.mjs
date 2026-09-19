@@ -23,6 +23,10 @@ import { summarise } from "../../bot/lib/derive.mjs";
 import { REPO_ROOT, loadPolicy, loadSchemas } from "../lib/sources.mjs";
 import { test, assert, assertEqual, tmp } from "./harness.mjs";
 
+/** How many tests run() reports. The runner asserts exactly this many, so
+ *  adding a test here is one line of arithmetic in this file and nowhere else. */
+export const TESTS = 7;
+
 export async function run() {
   // ── the locale couplings ────────────────────────────────────────────────────
   //

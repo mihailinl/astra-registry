@@ -65,9 +65,25 @@ export function updateSandbox(records = []) {
   return dir;
 }
 
-/** Run the signer in `cwd`; never throws, returns what it said. */
+/**
+ * Run the signer in `cwd` and return what it said. It does not throw for a
+ * refusal — that is a status and a message, and the caller asserts on both.
+ *
+ * It throws for the case below, which is not the signer speaking at all.
+ * `status` is `null` when the process produced no exit code: the spawn failed
+ * outright (a machine under enough load returns EAGAIN) or a signal killed it.
+ * Every caller here asserts `status === 0` or `status === 1`, so without this a
+ * spawn that never ran reads exactly like the signer having refused — and
+ * `stdout`/`stderr` are null too, so `assertRefused` then fails on a TypeError
+ * in its own message. One report of this suite being "load-dependently flaky"
+ * has already been spent on that confusion; the next one should be diagnosable
+ * from the line it prints.
+ */
 export function updateSigner(args, cwd) {
   const r = spawnSync("node", ["tools/sign-update-manifest.mjs", ...args], { cwd, encoding: "utf8" });
+  if (r.status === null) {
+    throw new Error(`the signer did not run: ${r.error ? `${r.error.code ?? r.error.name}: ${r.error.message}` : `killed by ${r.signal}`}`);
+  }
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 

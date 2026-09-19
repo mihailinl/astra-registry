@@ -13,6 +13,10 @@ import path from "node:path";
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { test, assert, assertEqual, walkRepo, grepRepo, isSuiteFile } from "./harness.mjs";
 
+/** How many tests run() reports. The runner asserts exactly this many, so
+ *  adding a test here is one line of arithmetic in this file and nowhere else. */
+export const TESTS = 10;
+
 export async function run() {
   // ─────────────────────────────────────────────────────────────────────────────
   // R0: the properties that kept this repository from having two signers, and
@@ -316,66 +320,78 @@ export async function run() {
     assertEqual(stray.join(", "), "", "a file other than the runbook still points at revoke.yml");
   });
 
-  // The guards that watch this suite for shrinking cannot be deleted quietly.
+  // The one way this suite can get smaller that a per-module count cannot see.
   //
-  // A split of a library and a split of a TEST file fail differently. A module
-  // of a library that stops being imported takes ten call sites down with it. A
-  // module of a suite that stops being imported takes nothing down: the run is
-  // shorter, every remaining check still passes, and the last line still says
-  // PASS — about less. So `tools/selftest.mjs` carries `checkModuleSet()` and
-  // `shrinkage()`, and they are in the RUNNER rather than in a module here
-  // because a guard against modules disappearing must not be one of the things
-  // that can disappear.
+  // Each module declares its own `TESTS` and the runner holds it to exactly
+  // that, which is what keeps ten concurrent tasks off one shared line — and it
+  // is also why deleting a whole module takes its number away with it. Disk and
+  // the runner's list still agree, every surviving module still matches its own
+  // count, and the run is five checks shorter and green. That is precisely what
+  // the previous guard, a pinned global floor of 166, allowed once the suite had
+  // grown past it: `PASS  196 passed`, then a module deleted from disk and from
+  // the list, then `PASS  191 passed`, exit 0.
   //
-  // Which leaves the ordinary hole: nothing was watching the runner. Deleting
-  // two calls out of a 113-line file is a small, green, reviewable diff, and
-  // this repository's two worst bugs were both small green reviewable diffs.
+  // So it is a NAME LIST rather than a number, and a subset assertion rather
+  // than an equality: fifteen modules were here on 2026-09-19 and must still be
+  // here. Adding a module does not touch this list — the property no floor ever
+  // had, and the reason the first floor fired on growth — and it cannot be
+  // outgrown, because growing the suite does not make a name go away. Retiring a
+  // module is still allowed: take its name out of SPLIT_MODULES in the same
+  // commit, where a reviewer reads the removal as the decision it is.
   //
-  // So it is an interlock, not a chain. Deleting this test means deleting this
-  // file's `run()`, and then `checkModuleSet` reports repo-rules.mjs as listed
-  // by the runner and exporting no run(); `checkModuleSet` and `shrinkage`
-  // cannot be dropped without this going red. Textual, because the runner is a
-  // script with nothing to import: it asserts the calls are made, not what they
-  // do. What they do was watched failing — every mutation in this comment's
-  // neighbourhood, re-run and re-read on 2026-09-19 after the guards were
-  // repaired, in the message of the commit that repaired them.
-  await test("the runner still runs the guards that catch a suite getting smaller", async () => {
+  // Three checks per name, and together they are the chain that says the module
+  // still RUNS: it is on disk; it exports `run` and declares a positive `TESTS`,
+  // so the runner's per-module equality has something to hold it to; and it is
+  // still in the runner's `MODULES`, read out of the runner's source rather than
+  // inferred, because `checkModuleSet` is the only other thing that would notice
+  // an unlisting and this test must not lean on a guard it is standing in for.
+  //
+  // What this does NOT do, said plainly because the guard it replaces pretended
+  // otherwise. Nothing here watches the runner's loop. The test that used to sit
+  // on this line counted textual occurrences of `checkModuleSet(` and
+  // `shrinkage(` in the runner and called that an interlock; it was not one.
+  // Changing `shrinkage(silent, passed + failures.length)` to `shrinkage(silent,
+  // TEST_FLOOR)` keeps both occurrences, keeps that test green, and disarms the
+  // floor outright — one argument, no growth required. Text cannot tell a live
+  // call from a present one, so there is no stronger spelling of it to write and
+  // it was deleted instead of reworded. The residual risk is stated rather than
+  // covered: deleting the per-module assertion from tools/selftest.mjs is a
+  // small green reviewable diff and nothing in this suite will go red for it.
+  // What changed is that it is now one edit against fifteen declared numbers in
+  // fifteen files, instead of one edit against one number that two other guards
+  // were built to defend and did not.
+  const SPLIT_MODULES = [
+    "primitives.mjs", "catalogue.mjs", "publishers.mjs", "validation.mjs", "couplings.mjs",
+    "listings.mjs", "origins.mjs", "bundles.mjs", "index-signature.mjs", "revocations.mjs",
+    "cli.mjs", "root-delegation.mjs", "update-signing.mjs", "update-notes.mjs", "repo-rules.mjs",
+  ];
+  await test("no module has left the runner's list since the suite was split", async () => {
     const runner = fs.readFileSync(path.join(REPO_ROOT, "tools", "selftest.mjs"), "utf8");
-    // Occurrences rather than an exact call spelling: each guard is written once
-    // and called at least once, so fewer than two means it is defined and never
-    // reached — or gone. Counting this way survives the arguments being renamed,
-    // which a literal `shrinkage(silent, ...)` needle would not.
-    const unreached = ["checkModuleSet", "shrinkage"].filter(
-      (g) => runner.split(`${g}(`).length - 1 < 2,
-    );
-    assertEqual(unreached.join(", "), "",
-      "a runner guard is defined and never called, or no longer there; a suite that runs fewer modules still prints PASS");
+    const listSrc = /^const MODULES = \[([\s\S]*?)^\];$/m.exec(runner)?.[1];
+    // The parse is the thing this test stands on, so it says so when it fails
+    // rather than reporting fifteen missing modules.
+    assert(listSrc !== undefined,
+      "could not find `const MODULES = [ … ];` in tools/selftest.mjs; the list this test reads has been renamed or " +
+      "reshaped, and every name below would report as missing for the wrong reason");
+    const listed = [...listSrc.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    const unlisted = SPLIT_MODULES.filter((n) => !listed.includes(n));
+    assertEqual(unlisted.join(", "), "",
+      "a module the runner ran on 2026-09-19 is no longer in its list, so its checks no longer run; if it was " +
+      "retired on purpose, remove its name from SPLIT_MODULES in this test in the same commit");
 
-    // The floor is a number, and a number can be edited down to nothing by
-    // somebody clearing a red build. So it is ratcheted: it may go up, and it
-    // may not go below what it was on the day this was measured.
-    //
-    // FLOOR_PINNED is a literal on purpose, and the first version of this line
-    // was not. It compared TEST_FLOOR against something DERIVED — the count of
-    // `await test(` sites under tools/selftest/, 133 of them then — on the
-    // theory that a bound read off the suite cannot go stale. Two different
-    // quantities, 33 apart, and the derived one grows: append 34 tests and a
-    // strictly larger, wholly green suite went RED here, with a message telling
-    // its author the floor was too low. The edit that message asks for is
-    // `TEST_FLOOR` in the runner — the one shared line the split existed to
-    // take out of ten concurrent tasks' path — so the guard against the suite
-    // shrinking was, on the only axis anybody was going to move it, a guard
-    // that fired on growth. A pinned literal cannot do that: it is the same
-    // shape as the `onDisk.length < 10` walk floor in the runner, a number that
-    // says what was true once and is never asked to track anything.
-    //
-    // 166 on 2026-09-19, the same measurement TEST_FLOOR itself carries. Two
-    // copies of one number is a coupling, and this assertion is the thing that
-    // enforces it: they can only disagree in the safe direction.
-    const FLOOR_PINNED = 166;
-    const floor = Number(/^const TEST_FLOOR = (\d+);$/m.exec(runner)?.[1] ?? -1);
-    assert(floor >= FLOOR_PINNED,
-      `tools/selftest.mjs sets TEST_FLOOR to ${floor}, and it was ${FLOOR_PINNED} on 2026-09-19; ` +
-      `a floor that has been lowered is a floor somebody moved out of the way of a lost check`);
+    const hollow = [];
+    for (const name of SPLIT_MODULES) {
+      if (!fs.existsSync(path.join(REPO_ROOT, "tools", "selftest", name))) {
+        hollow.push(`${name} is listed and not on disk`);
+        continue;
+      }
+      const mod = await import(`./${name}`);
+      if (typeof mod.run !== "function") hollow.push(`${name} exports no run()`);
+      else if (!Number.isInteger(mod.TESTS) || mod.TESTS < 1) {
+        hollow.push(`${name} declares TESTS = ${JSON.stringify(mod.TESTS)}`);
+      }
+    }
+    assertEqual(hollow.join(", "), "",
+      "a module from the split no longer carries anything the runner's per-module count can hold it to");
   });
 }

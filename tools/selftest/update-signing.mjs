@@ -23,6 +23,10 @@ import {
   withDuplicateVersion, withUnpaddedSignature, writeUpdateDoc, writeUpdateText,
 } from "./update-fixtures.mjs";
 
+/** How many tests run() reports. The runner asserts exactly this many, so
+ *  adding a test here is one line of arithmetic in this file and nowhere else. */
+export const TESTS = 12;
+
 export async function run() {
   // ── the update manifest ─────────────────────────────────────────────────────
   //

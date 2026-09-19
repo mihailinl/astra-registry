@@ -18,6 +18,10 @@ import { makeFixtures } from "../make-fixtures.mjs";
 import { test, assert, tmp, validateTree, errorsMatching } from "./harness.mjs";
 import { withFakeAstraPlugins } from "./fixtures.mjs";
 
+/** How many tests run() reports. The runner asserts exactly this many, so
+ *  adding a test here is one line of arithmetic in this file and nowhere else. */
+export const TESTS = 10;
+
 export async function run() {
   await test("every staging listing is REJECTED without --allow-staging", async () => {
     // The count is read off the tree, never hardcoded. An earlier version of this
