@@ -278,12 +278,42 @@ export async function run() {
       `bot/policy/trademarks.json parsed ${Array.isArray(tm.marks) ? tm.marks.length : "no"} marks and there were 55 ` +
       `on 2026-09-19; this is a broken read of the policy, not a shorter list, and the allowance walk below would pass on it`);
     const astraAllow = tm.allow_repo_owners?.astra;
-    assert(Array.isArray(astraAllow) && astraAllow.length >= 1,
+    // The `astra` floor is two assertions and not one, because the single
+    // `Array.isArray(x) && x.length >= 1` it replaces said the WRONG THING
+    // about the one case it most has to be right about. Watched on this tree:
+    // `"astra": "KNICE-TECH"` — an entry that hands the freed login the whole
+    // mark — printed *"has no `astra` entry under allow_repo_owners; the mark
+    // this containment is about is no longer allowed to anybody"*. Red for the
+    // right reason and wrong in every word of why, which sends the reader to
+    // restore a first-party allowance that was never missing and to leave the
+    // takeover in the file.
+    assert(astraAllow !== undefined,
       "bot/policy/trademarks.json has no `astra` entry under allow_repo_owners; the mark this containment is about " +
       "is no longer allowed to anybody, which is either a first-party release broken or the file read wrong");
+    assert(Array.isArray(astraAllow) && astraAllow.length >= 1,
+      `bot/policy/trademarks.json's allow_repo_owners.astra is ${JSON.stringify(astraAllow)} and not a non-empty ` +
+      `list of logins; read the value, because the walk below is what decides who holds the mark`);
 
     for (const [mark, owners] of Object.entries(tm.allow_repo_owners ?? {})) {
-      for (const owner of owners ?? []) {
+      // `$comment` is how this file documents itself — `allow_ids` carries one
+      // — so a key that is one is not a mark, and an honest note added here
+      // must not be a red build.
+      if (mark.startsWith("$")) continue;
+      // The shape, before the walk over it. `for (const o of "KNICE-TECH")`
+      // yields eleven characters and not one of them is the login, so a mark
+      // whose value is a bare string is a walk this test passes by not being
+      // able to read it. Measured rather than reasoned: `"spotify":
+      // "KNICE-TECH"` added to allow_repo_owners left the suite at
+      // `PASS  168 passed, 0 failed`, this test green over a file handing the
+      // freed login a mark, while its own message below claims to speak for
+      // every mark in the object. Nothing else notices either — there is no
+      // `schema/trademarks-v1.json`, this file is validated by nothing, and
+      // `bot/lib/names.mjs:169` calls `.some()` on the value, so at ingest the
+      // same edit is a TypeError rather than a refusal.
+      assert(Array.isArray(owners),
+        `bot/policy/trademarks.json's allow_repo_owners.${mark} is ${JSON.stringify(owners)} and not a list of ` +
+        `logins; the freed-login walk below cannot read it, and bot/lib/names.mjs calls .some() on it at ingest`);
+      for (const owner of owners) {
         assert(String(owner).toLowerCase() !== FREED,
           `bot/policy/trademarks.json lets the freed login KNICE-TECH publish under the mark "${mark}"; the ` +
           `organisation renamed to MINICE-AI and GitHub frees a renamed login, so whoever registers it gets ` +
