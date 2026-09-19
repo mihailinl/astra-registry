@@ -55,7 +55,7 @@ import { fileURLToPath } from "node:url";
 
 import { REPO_ROOT } from "../tools/lib/sources.mjs";
 import { CONSENT_HIGH_RISK } from "../bot/lib/policy.mjs";
-import { buildModerationLog } from "../bot/lib/moderation.mjs";
+import { buildModerationLog, loadEntries, BACKING, SCHEMA } from "../bot/lib/moderation.mjs";
 import { loadAdvisories } from "../tools/lib/revocations.mjs";
 import { invalidId, unsafePathComponent } from "../tools/lib/ids.mjs";
 
@@ -220,13 +220,7 @@ export function build(opts) {
   }
 
   // ── the transparency log ─────────────────────────────────────────────────
-  const log = buildModerationLog({
-    root,
-    // `null` when there is no withdrawal list to check against, which is what
-    // makes `backed` honest rather than assumed.
-    revocations: revDoc ? revocations : null,
-    revocationsSerial: revDoc?.signed?.serial,
-  });
+  const log = moderationLog({ root, revDoc, revocations });
   w("transparency/moderation-log.json", `${JSON.stringify(log, null, 2)}\n`);
   w("transparency/index.html", transparencyPage({ log, advisories, meta, plugins }));
 
@@ -287,6 +281,113 @@ does not have.</p>`,
     advisories: advisories.map((a) => a.id),
     publishers: [...byOwner.keys()].sort(),
   };
+}
+
+/**
+ * The moderation log, for a renderer that is not allowed to fail.
+ *
+ * ── WHY THIS IS NOT `buildModerationLog(…, revocations)` ────────────────────
+ *
+ * `bot/lib/moderation.mjs` throws when a log entry names an advisory the signed
+ * withdrawal list it was handed does not carry. That refusal is right where it
+ * lives — `bot/moderation.mjs --check` runs on every pull request, and a log
+ * entry claiming a revocation nobody signed must never be merged. It is wrong
+ * *here*, and the reason is the clock.
+ *
+ * A deprecate or a revoke is committed as one commit (MOD-3): the advisory
+ * file, the log entry, the catalogue edit. The signed withdrawal list that
+ * carries that advisory is produced by a LATER job. So between the commit and
+ * the next signing run there is a window in which `bot/moderation/…-revoke.json`
+ * names `ASTRA-2026-000N` and the deployed `registry/v1/revocations.json` does
+ * not. With the throw wired into the generator, the site build in that window
+ * dies — and the site build is in the job that PUBLISHES the catalogue. So the
+ * first effect of recording a takedown was to stop the deploy that carries it,
+ * and to keep stopping every deploy after it, including the yank or delist
+ * somebody files next. That is exactly the shape MOD-46 forbids: a moderation
+ * check that delays a moderation action.
+ *
+ * MOD-7 says what a renderer does instead. It shows a deprecate or a revoke as
+ * in effect ONLY once the withdrawal list this host serves carries it, and
+ * otherwise shows it as **pending** — never failing its build. That is a
+ * stronger claim than the old one, not a weaker one: the old `backed: true`
+ * came from a build that would have thrown rather than print `false`, so it was
+ * a fact about the build succeeding rather than about the document, and the
+ * page could not have told a reader "signed, but not deployed here yet"
+ * because that state killed the job.
+ *
+ * `backed` therefore has four values, and every one of them is a statement
+ * about THIS deploy tree:
+ *
+ *   true        the advisory is in the withdrawal list published beside this
+ *               page, with an action that matches (`BACKING`). In effect here.
+ *   "pending"   the entry names an advisory, and this tree's withdrawal list
+ *               does not carry it — or carries it with a different action.
+ *               Recorded, not yet in force on this host.
+ *   null        there is no withdrawal list in this tree at all, so nothing was
+ *               checked. Unchanged from before.
+ *   false       a yank or a delist. It produces no signed document; the
+ *               catalogue beside this page IS its effect.
+ *
+ * ── AND WHY IT ALSO SWALLOWS AN INVALID SOURCE ──────────────────────────────
+ *
+ * Same argument one step out. `loadEntries` refuses a malformed entry file, and
+ * `buildModerationLog` turns that into a throw. On the pull request that is the
+ * right answer and `bot/moderation.mjs --check` gives it. In the publish job it
+ * would again be a moderation check stopping a catalogue deploy, which is the
+ * one thing MOD-46 says it must not do. So the log degrades to "these sources
+ * did not load" — loudly, on the page and in the JSON — and the catalogue, the
+ * yank and the delist go out.
+ *
+ * Only the source PATHS are published, never the validator's messages: a
+ * message quotes the offending entry's own text, and the reason an entry is
+ * refused is often that its text carries something that must not reach a
+ * reader's screen. The messages go to the build log.
+ *
+ * @param {{root: string, revDoc: object|null, revocations: object[]}} ctx
+ */
+function moderationLog({ root, revDoc, revocations }) {
+  // Asked BEFORE the build rather than caught around it, and the difference is
+  // the whole point of this function. A `try` here would also swallow the
+  // backing throw — the thing this file exists to have removed — and publish an
+  // empty log with an "unavailable" notice instead of a pending row, quietly,
+  // exit 0. The canary in `site/selftest.mjs` was written against a version
+  // that did exactly that: the mutation went red, but on the wrong sentence.
+  const { errors } = loadEntries({ root });
+  if (errors.length) {
+    console.error("WARN  the moderation sources did not load; the log is published empty and says so.");
+    for (const e of errors) console.error(`      ${e}`);
+    const files = errors.map((e) => e.split(":")[0]).filter((f) => f.startsWith("bot/moderation/"));
+    return {
+      $comment:
+        "GENERATED FILE — DO NOT EDIT. This build could not read bot/moderation/. The entries below " +
+        "are NOT the whole log; see `unavailable`.",
+      schema: SCHEMA,
+      ...(revDoc?.signed?.serial !== undefined ? { revocations_serial: revDoc.signed.serial } : {}),
+      unavailable: { sources: [...new Set(files)].sort() },
+      entries: [],
+    };
+  }
+
+  // Built with NO withdrawal list on purpose. `buildModerationLog`'s backing
+  // check is the throw this function exists to be rid of, and it only runs when
+  // it is handed one; withholding it removes the throw by construction rather
+  // than by catching it, which is the difference between "cannot fail here" and
+  // "fails silently here". What comes back is every entry with `backed: null`
+  // for the ones naming an advisory and `backed: false` for the ones that
+  // cannot, and the loop below is the only thing that ever says `true`.
+  const log = buildModerationLog({ root, revocationsSerial: revDoc?.signed?.serial });
+
+  if (!revDoc) return log; // `backed: null` — nothing to check against.
+
+  const signedByAdvisory = new Map();
+  for (const r of revocations) if (!signedByAdvisory.has(r.id)) signedByAdvisory.set(r.id, r);
+
+  for (const e of log.entries) {
+    if (!e.advisory) continue; // yank, delist: `backed: false`, and that is right.
+    const signed = signedByAdvisory.get(e.advisory);
+    e.backed = signed && BACKING[e.action].includes(signed.action) ? true : "pending";
+  }
+  return log;
 }
 
 /**

@@ -189,11 +189,40 @@ ${parts.map(([source, html]) => `<section class="doc"><p class="thin">Rendered f
 }
 
 /**
+ * One log entry's `backed`, said in words a reader can act on.
+ *
+ * MOD-7: a deprecate or a revoke is "in effect" on a host only once the
+ * withdrawal list THAT host serves carries it; otherwise it is pending. The
+ * distinction is not bookkeeping — a pending revoke is a decision that has been
+ * taken and recorded, and a daemon fetching from this host will not act on it
+ * until the next signed list goes out. Printing "revoked" for both states would
+ * tell a reader their machine is protected when it is not yet.
+ *
+ * The four values are `site/build.mjs`'s `moderationLog`; see the note there.
+ */
+function effectCell(entry) {
+  if (entry.backed === true) {
+    return `<span class="badge">in effect</span>`;
+  }
+  if (entry.backed === "pending") {
+    return `<span class="badge warn" title="Recorded here, and not yet carried by the withdrawal list published beside this page.">pending</span>`;
+  }
+  if (entry.backed === null) {
+    return `<span class="badge" title="This build was given no withdrawal list, so nothing was checked.">unchecked</span>`;
+  }
+  // `false` — a yank or a delist. It produces no signed document at all, so
+  // there is nothing to be pending on: the catalogue beside this page is the
+  // effect.
+  return `<span class="thin" title="A catalogue edit. It produces no signed document; the catalogue published beside this page is the effect.">catalogue</span>`;
+}
+
+/**
  * `/transparency/` — the moderation log, and what is not in it.
  *
  * @param {{log: object, advisories: object[], meta: object, plugins: Map<string, object>}} ctx
  */
 export function transparencyPage({ log, advisories, meta, plugins }) {
+  const anyPending = log.entries.some((e) => e.backed === "pending");
   const rows = log.entries
     .map((e) => {
       const linked = plugins.has(e.plugin)
@@ -204,6 +233,7 @@ export function transparencyPage({ log, advisories, meta, plugins }) {
   <td><span class="badge ${e.action === "revoke" ? "danger" : e.action === "deprecate" ? "warn" : ""}">${esc(e.action)}</span></td>
   <td>${linked}${e.versions?.length ? ` <span class="thin">${esc(e.versions.join(", "))}</span>` : ""}</td>
   <td>${esc(e.reason)}</td>
+  <td>${effectCell(e)}</td>
   <td>${e.advisory ? `<a href="../advisory/${esc(e.advisory)}/">${esc(e.advisory)}</a>` : ""}${
     e.appeal ? ` <a href="${href(e.appeal)}">appeal</a>` : ""
   }</td>
@@ -227,11 +257,39 @@ ${escalationTable()}
 
 <h2>The log</h2>
 ${
+  log.unavailable
+    ? `<p class="alert"><strong>This build could not read the moderation sources, so the log below is
+empty and is not the whole log.</strong> The files that failed to load are
+${log.unavailable.sources.length ? log.unavailable.sources.map((s) => `<code>${esc(s)}</code>`).join(", ") : "in <code>bot/moderation/</code>"}.
+The catalogue and the withdrawal list beside this page are unaffected and are in force: a broken
+record of a takedown must never hold up the takedown. The validator&rsquo;s own messages are in the
+build log rather than here, because a message quotes the text of the entry it refused and the usual
+reason to refuse an entry is that its text must not reach a reader&rsquo;s screen.</p>`
+    : ""
+}
+${
   log.entries.length
     ? `<div class="scroll"><table>
-<thead><tr><th>Date</th><th>Action</th><th>Plugin</th><th>Reason</th><th>Links</th></tr></thead>
-<tbody>${rows}</tbody></table></div>`
-    : `<p class="thin">Empty. No plugin has been yanked, delisted, deprecated or revoked. That is a
+<thead><tr><th>Date</th><th>Action</th><th>Plugin</th><th>Reason</th><th>Effect here</th><th>Links</th></tr></thead>
+<tbody>${rows}</tbody></table></div>
+<p class="thin"><strong>&ldquo;Effect here&rdquo; is about this host, not about the decision.</strong>
+A deprecate or a revoke is carried by <a href="../registry/v1/revocations.json">the signed withdrawal
+list</a>, and it reads <em>in effect</em> only once the list published beside this page carries it
+with a matching action &mdash; which is the moment a daemon fetching from here starts acting on it.
+<em>Pending</em> means the decision is recorded and the list this host serves does not carry it yet;
+that is a real state with a real duration, usually until the next publish, and the page says so
+rather than failing to build. A yank and a delist produce no signed document, so they read
+<em>catalogue</em>: the catalogue beside this page is their effect.</p>${
+        anyPending
+          ? `\n<p class="alert">Something in this log is <strong>pending</strong>. If you are reading
+this to decide whether you are protected: you are not protected by a pending row. Check
+<a href="../registry/v1/revocations.json">revocations.json</a> yourself &mdash; it is the document
+your machine acts on, and it is the one that decides.</p>`
+          : ""
+      }`
+    : log.unavailable
+      ? ""
+      : `<p class="thin">Empty. No plugin has been yanked, delisted, deprecated or revoked. That is a
 statement about this catalogue&rsquo;s age, not about its rigour &mdash; it has never had to.</p>`
 }
 

@@ -18,9 +18,11 @@
 // a withdrawal that is not in the signed document.
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { build } from "./build.mjs";
 import { markdown, esc, href } from "./lib/html.mjs";
@@ -40,6 +42,8 @@ function test(name, fn) {
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "astra-site-"));
 const scratch = (name) => path.join(tmp, name);
+
+const SITE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 /** A catalogue with the shape of the real one and none of its data. */
 function catalogue(ids, extra = {}) {
@@ -386,6 +390,153 @@ test("the log refuses to claim a revocation nobody signed", () => {
   assert.equal(log.entries.length, 1);
   assert.equal(log.entries[0].backed, true);
   assert.equal(log.revocations_serial, 4);
+});
+
+// ── MOD-7: the renderer shows pending and never fails ───────────────────────
+//
+// The test above is about `bot/lib/moderation.mjs`, which throws, and which is
+// right to: `bot/moderation.mjs --check` runs on every pull request and a log
+// entry claiming a revocation nobody signed must not be merged. These are about
+// the SITE, which must not throw, and the difference is the clock. MOD-3 puts
+// the advisory, the log entry and the catalogue edit in one commit; the signed
+// withdrawal list carrying that advisory is produced by a later job. In the
+// window between, the entry names an advisory the deployed list does not have —
+// and the site build is inside the job that publishes the catalogue, so the
+// first effect of recording a takedown used to be to stop the deploy carrying
+// it, and every deploy after it. MOD-46 is the rule that forbids exactly that.
+//
+// So the build goes through, out of process, and the row reads `pending`.
+
+/** A repository root holding nothing but the moderation entries given. */
+function fakeRoot(name, entries) {
+  const root = scratch(name);
+  fs.mkdirSync(path.join(root, "bot", "moderation"), { recursive: true });
+  for (const [file, body] of Object.entries(entries)) {
+    fs.writeFileSync(path.join(root, "bot", "moderation", file), typeof body === "string" ? body : JSON.stringify(body));
+  }
+  return root;
+}
+
+/**
+ * Run `node site/build.mjs` as a user would, and return its exit status.
+ *
+ * Out of process on purpose. "Never fails its build" is a claim about the exit
+ * code of a command in a workflow step, and a call to `build()` inside this
+ * file can only ever tell us whether a function threw — which is a different
+ * sentence, and the one a `try` around the wrong line would keep making.
+ */
+function runBuild({ root, indexDoc, revDoc, out, extra = [] }) {
+  const indexFile = scratch(`${out}-index.json`);
+  fs.writeFileSync(indexFile, JSON.stringify(indexDoc));
+  const args = ["--index", indexFile, "--out", scratch(out), "--registry-root", root];
+  if (revDoc) {
+    const revFile = scratch(`${out}-rev.json`);
+    fs.writeFileSync(revFile, JSON.stringify(revDoc));
+    args.push("--revocations", revFile);
+  }
+  const r = spawnSync(process.execPath, [path.join(SITE_DIR, "build.mjs"), ...args, ...extra], { encoding: "utf8" });
+  return { status: r.status, stdout: r.stdout, stderr: r.stderr, out: scratch(out) };
+}
+
+const revokeEntry = {
+  date: "2026-08-11",
+  action: "revoke",
+  plugin: "alpha",
+  reason: "It shipped a credential stealer, verified by hand.",
+  advisory: "ASTRA-2026-0009",
+};
+
+const signedList = (revocations) => ({
+  signatures: [{ key_id: "k", sig: "x" }],
+  signed: { schema: "astra.registry.revocations/1", serial: 3, revocations },
+});
+
+test("a revoke whose advisory the deployed list does not carry builds, and reads pending", () => {
+  const root = fakeRoot("pending-root", { "2026-08-11-alpha-revoke.json": revokeEntry });
+  const r = runBuild({
+    root,
+    indexDoc: catalogue(["alpha"]),
+    // A withdrawal list that is real, signed and deployed — and does not carry
+    // ASTRA-2026-0009, because it has not been signed into one yet.
+    revDoc: signedList([]),
+    out: "pending",
+  });
+  assert.equal(r.status, 0, `the build exited ${r.status}\n${r.stderr}`);
+  const log = JSON.parse(fs.readFileSync(path.join(r.out, "transparency", "moderation-log.json"), "utf8"));
+  assert.equal(log.entries.length, 1, "the entry was dropped instead of being shown as pending");
+  assert.equal(log.entries[0].backed, "pending");
+  const html = fs.readFileSync(path.join(r.out, "transparency", "index.html"), "utf8");
+  assert.match(html, /<span class="badge warn"[^>]*>pending<\/span>/, "the page does not show the row as pending");
+  assert.match(html, /you are not protected by a pending row/, "the page does not tell a reader what pending means for them");
+});
+
+test("the same entry reads in effect once the deployed list carries the advisory", () => {
+  const root = fakeRoot("effect-root", { "2026-08-11-alpha-revoke.json": revokeEntry });
+  const r = runBuild({
+    root,
+    indexDoc: catalogue(["alpha"]),
+    revDoc: signedList([advisory({ id: "ASTRA-2026-0009", action: "disable" })]),
+    out: "in-effect",
+  });
+  assert.equal(r.status, 0, `the build exited ${r.status}\n${r.stderr}`);
+  const log = JSON.parse(fs.readFileSync(path.join(r.out, "transparency", "moderation-log.json"), "utf8"));
+  assert.equal(log.entries[0].backed, true);
+  const html = fs.readFileSync(path.join(r.out, "transparency", "index.html"), "utf8");
+  assert.match(html, /<span class="badge">in effect<\/span>/);
+  assert.ok(!/>pending</.test(html), "an advisory that IS deployed is still shown as pending");
+});
+
+test("an advisory deployed with the wrong action is pending, not silently in effect", () => {
+  // `warn` is a deprecation. An entry calling it a revoke is either wrong or
+  // ahead of the list; either way the page may not say a revoke is in force.
+  const root = fakeRoot("mislabel-root", { "2026-08-11-alpha-revoke.json": revokeEntry });
+  const r = runBuild({
+    root,
+    indexDoc: catalogue(["alpha"]),
+    revDoc: signedList([advisory({ id: "ASTRA-2026-0009", action: "warn" })]),
+    out: "mislabel",
+  });
+  assert.equal(r.status, 0, `the build exited ${r.status}\n${r.stderr}`);
+  const log = JSON.parse(fs.readFileSync(path.join(r.out, "transparency", "moderation-log.json"), "utf8"));
+  assert.equal(log.entries[0].backed, "pending");
+});
+
+test("a yank stays `false` and an unchecked build stays `null`", () => {
+  // The two values that were already right, pinned so that the new third one
+  // cannot be introduced by flattening them.
+  const yank = { date: "2026-08-12", action: "yank", plugin: "alpha", reason: "The author asked for it." };
+  const root = fakeRoot("yank-root", { "2026-08-12-alpha-yank.json": yank, "2026-08-11-alpha-revoke.json": revokeEntry });
+
+  const withList = runBuild({ root, indexDoc: catalogue(["alpha"]), revDoc: signedList([]), out: "yank-listed" });
+  assert.equal(withList.status, 0, withList.stderr);
+  const a = JSON.parse(fs.readFileSync(path.join(withList.out, "transparency", "moderation-log.json"), "utf8"));
+  assert.equal(a.entries.find((e) => e.action === "yank").backed, false);
+
+  const noList = runBuild({ root, indexDoc: catalogue(["alpha"]), out: "yank-unlisted" });
+  assert.equal(noList.status, 0, noList.stderr);
+  const b = JSON.parse(fs.readFileSync(path.join(noList.out, "transparency", "moderation-log.json"), "utf8"));
+  assert.equal(b.entries.find((e) => e.action === "revoke").backed, null);
+  assert.equal(b.entries.find((e) => e.action === "yank").backed, false);
+});
+
+test("an unreadable moderation source does not stop the catalogue going out", () => {
+  // MOD-46, one step out: a broken record of a takedown must not hold up the
+  // takedown. `bot/moderation.mjs --check` is where this is fatal, on the pull
+  // request, before it can reach main.
+  const root = fakeRoot("broken-root", { "2026-08-11-alpha-revoke.json": "{ not json" });
+  const r = runBuild({ root, indexDoc: catalogue(["alpha"]), revDoc: signedList([]), out: "broken" });
+  assert.equal(r.status, 0, `the build exited ${r.status}\n${r.stderr}`);
+  assert.ok(fs.existsSync(path.join(r.out, "p", "alpha", "index.html")), "the catalogue pages were not written");
+  const log = JSON.parse(fs.readFileSync(path.join(r.out, "transparency", "moderation-log.json"), "utf8"));
+  assert.deepEqual(log.entries, []);
+  assert.deepEqual(log.unavailable.sources, ["bot/moderation/2026-08-11-alpha-revoke.json"]);
+  const html = fs.readFileSync(path.join(r.out, "transparency", "index.html"), "utf8");
+  assert.match(html, /could not read the moderation sources/);
+  // The validator's message quotes the entry it refused, and the usual reason
+  // to refuse one is that its text must not reach a screen. It goes to the
+  // build log, not to the page.
+  assert.ok(!/not readable JSON/.test(html), "the validator's message was published");
+  assert.match(r.stderr, /not readable JSON/, "the validator's message did not reach the build log either");
 });
 
 // ── the markdown subset ─────────────────────────────────────────────────────
