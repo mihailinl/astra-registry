@@ -72,6 +72,52 @@ export async function run() {
       `than a smaller repository, and every scan below it would have passed`);
   });
 
+  // A suite's first job is to prove its subject loaded.
+  //
+  // On 2026-09-19 `bot/lib/holds.mjs` reached this repository carrying 474
+  // lines of hold-release rules and **would not import**: its last line was
+  // `export { loadSchema };` for a binding no line declares, so every `import()`
+  // of it threw `Export 'loadSchema' is not defined in module`. Nothing had a
+  // wrong answer. There was no answer, and a module nothing imports is
+  // indistinguishable from a module with nothing to say — the suite was green,
+  // the file was on a branch, and the first thing that would have executed it
+  // was the run that needed it.
+  //
+  // It is a link error rather than a syntax error, so `node --check` does not
+  // see it: the bindings resolve when the module graph is linked, one step
+  // after parsing. Only an actual import finds it.
+  //
+  // **Scoped to `*/lib/*.mjs` on purpose, and the scope is the whole design.**
+  // A library is a module whose import must do nothing — measured, not
+  // assumed: all 39 import silently, and this test would be a liability over
+  // the entry points, where `bot/gen-checks-doc.mjs` writes `docs/BOT-CHECKS.md`
+  // when imported and another calls `process.exit`. A sweep over everything
+  // found that out by dirtying a tree, which is the argument for the narrower
+  // rule rather than for a list of exceptions that would go stale.
+  //
+  // The floor is 20 against 39 measured, because a library being retired is
+  // legitimate and this line is not the inventory.
+  await test("every library module can be imported", async () => {
+    const libs = walkRepo()
+      .map((f) => path.relative(REPO_ROOT, f))
+      .filter((rel) => /(^|\/)lib\/[^/]+\.mjs$/.test(rel))
+      .sort();
+    assert(libs.length >= 20,
+      `found ${libs.length} modules under */lib/ and there were 39 on 2026-09-19; this is a broken walk, and a ` +
+      `loop over nothing imports nothing and passes`);
+    const broken = [];
+    for (const rel of libs) {
+      try {
+        await import(path.join(REPO_ROOT, rel));
+      } catch (e) {
+        broken.push(`${rel}: ${String(e.message).split("\n")[0]}`);
+      }
+    }
+    assertEqual(broken.join("; "), "",
+      "a module in this repository cannot be loaded at all, so whatever it contains has never run and its absence " +
+      "reads exactly like a module with nothing to say");
+  });
+
   // ─────────────────────────────────────────────────────────────────────────────
   // R0: the properties that kept this repository from having two signers, and
   // from saying things about itself that were not true (registry plan RC-R0-1).
