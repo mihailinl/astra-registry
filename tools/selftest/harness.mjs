@@ -17,22 +17,47 @@ export const LIMITS = JSON.parse(fs.readFileSync(new URL("../../policy/limits.js
 
 let passed = 0;
 const failures = [];
+let running = 0;
 
 export async function test(name, fn) {
+  running++;
   try {
-    await fn();
-    console.log(`  ok    ${name}`);
-    passed++;
-  } catch (e) {
-    console.log(`  FAIL  ${name}`);
-    console.log(`        ${e.message.split("\n").join("\n        ")}`);
-    failures.push(name);
+    try {
+      await fn();
+      console.log(`  ok    ${name}`);
+      passed++;
+    } catch (e) {
+      console.log(`  FAIL  ${name}`);
+      console.log(`        ${e.message.split("\n").join("\n        ")}`);
+      failures.push(name);
+    }
+  } finally {
+    running--;
   }
 }
 
 /** What the runner prints on the last line. Read once, after the last module. */
 export function results() {
   return { passed, failures };
+}
+
+/**
+ * How many `test()` calls have not finished. Zero everywhere the runner looks,
+ * because it only looks between modules and a module that awaits each of its
+ * tests has none outstanding when `run()` resolves.
+ *
+ * A non-zero reading is a forgotten `await` on a `test(...)`, which is the one
+ * mistake in this suite that makes a broken check ship GREEN: the promise nobody
+ * holds settles after the summary has printed and after the exit code has been
+ * decided, so the FAIL appears below the PASS and CI never sees it. Pre-existing
+ * — the shape was always available — but the split turned one file into fifteen
+ * `run()` bodies for ten tasks to write into, which is fifteen times the surface.
+ *
+ * A function rather than a bare binding, for the reason given at the top of this
+ * file: a reader that copied the number would hold a stale zero.
+ */
+export function inFlight() {
+  return running;
 }
 
 /**

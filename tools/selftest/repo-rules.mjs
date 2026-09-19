@@ -54,7 +54,9 @@ export async function run() {
     // needle can match this file anyway, because they are regex SOURCE — what is
     // written here is `\[a-z0-9\]`, and the backslash before the `]` means the
     // literal `[a-z0-9]` never appears. Verified by running both regexes over
-    // every line of the pre-split file: zero hits.
+    // every line of the pre-split file: zero hits — and re-measured on
+    // 2026-09-19 over all eighteen modules and the runner, when the tag needle
+    // below grew the escape and the prose explaining it: still zero.
     const offenders = [];
     for (const file of walkRepo()) {
       const rel = path.relative(REPO_ROOT, file);
@@ -98,8 +100,21 @@ export async function run() {
       } catch {
         continue;
       }
+      // The `\\?` is the whole point of this needle and was missing from it.
+      // `tools/lib/tags.mjs` keeps the pattern as a STRING, where the slash is
+      // bare. A copy made into a regex LITERAL cannot leave it bare — an
+      // unescaped `/` ends the literal — so it comes out as
+      // `[A-Za-z0-9._\/-]`, and a needle demanding the bare slash walked
+      // straight past the only spelling a copy can have. Watched both ways with
+      // a second tags module planted under bot/lib/: the string spelling was
+      // caught and the regex-literal spelling was not. Open since 9c4957b,
+      // where this needle was written; not the suite split's doing.
+      //
+      // Still cannot match this file: the two spellings above are written
+      // without a quantifier beside them, and the needle wants the character
+      // class and the `{1,NNN}` on ONE line.
       text.split("\n").forEach((line, i) => {
-        if (/\[A-Za-z0-9\._\/-\][^\n]*\{1,\s*128\}/.test(line)) offenders.push(`${rel}:${i + 1}`);
+        if (/\[A-Za-z0-9\._\\?\/-\][^\n]*\{1,\s*128\}/.test(line)) offenders.push(`${rel}:${i + 1}`);
       });
     }
     assertEqual(offenders.join(", "), "",
@@ -316,12 +331,14 @@ export async function run() {
   // two calls out of a 113-line file is a small, green, reviewable diff, and
   // this repository's two worst bugs were both small green reviewable diffs.
   //
-  // So it is an interlock, not a chain. This test cannot be dropped without
-  // `checkModuleSet` reporting repo-rules.mjs unimported; `checkModuleSet` and
-  // `shrinkage` cannot be dropped without this going red. Textual, because the
-  // runner is a script with nothing to import: it asserts the calls are made,
-  // not what they do. What they do was watched failing, three mutations, in the
-  // message of the commit that added them.
+  // So it is an interlock, not a chain. Deleting this test means deleting this
+  // file's `run()`, and then `checkModuleSet` reports repo-rules.mjs as listed
+  // by the runner and exporting no run(); `checkModuleSet` and `shrinkage`
+  // cannot be dropped without this going red. Textual, because the runner is a
+  // script with nothing to import: it asserts the calls are made, not what they
+  // do. What they do was watched failing — every mutation in this comment's
+  // neighbourhood, re-run and re-read on 2026-09-19 after the guards were
+  // repaired, in the message of the commit that repaired them.
   await test("the runner still runs the guards that catch a suite getting smaller", async () => {
     const runner = fs.readFileSync(path.join(REPO_ROOT, "tools", "selftest.mjs"), "utf8");
     // Occurrences rather than an exact call spelling: each guard is written once
@@ -335,29 +352,30 @@ export async function run() {
       "a runner guard is defined and never called, or no longer there; a suite that runs fewer modules still prints PASS");
 
     // The floor is a number, and a number can be edited down to nothing by
-    // somebody clearing a red build. So it is bounded from underneath by
-    // something derived rather than written: the `await test(` call sites on
-    // disk. That count is an undercount — sites inside a `for` print once per
-    // iteration, and the vendored vector tests add their own on top — which is
-    // exactly why it is safe as a LOWER bound and would be wrong as an equality.
-    // Counting them and comparing to the printed names was the first version of
-    // this rule and was thrown away for that reason: it cannot tell a loop from
-    // a lost test.
-    // Anchored at the start of a line, which is where a call site is and where
-    // prose about one is not: this comment says `await test(` three times and
-    // the counter must not find itself. Measured both ways when it was written —
-    // unanchored it counted 137 and there are 133, and an over-count is the one
-    // direction a lower bound must never drift, since it would push the floor
-    // above the real suite and go red on a green tree.
-    const dir = path.join(REPO_ROOT, "tools", "selftest");
-    let sites = 0;
-    for (const name of fs.readdirSync(dir).filter((n) => n.endsWith(".mjs"))) {
-      sites += (fs.readFileSync(path.join(dir, name), "utf8").match(/^[ \t]*await test\(/gm) ?? []).length;
-    }
-    assert(sites >= 100,
-      `only ${sites} \`await test(\` sites found under tools/selftest/; the bound below is being read off a broken walk, not off the suite`);
+    // somebody clearing a red build. So it is ratcheted: it may go up, and it
+    // may not go below what it was on the day this was measured.
+    //
+    // FLOOR_PINNED is a literal on purpose, and the first version of this line
+    // was not. It compared TEST_FLOOR against something DERIVED — the count of
+    // `await test(` sites under tools/selftest/, 133 of them then — on the
+    // theory that a bound read off the suite cannot go stale. Two different
+    // quantities, 33 apart, and the derived one grows: append 34 tests and a
+    // strictly larger, wholly green suite went RED here, with a message telling
+    // its author the floor was too low. The edit that message asks for is
+    // `TEST_FLOOR` in the runner — the one shared line the split existed to
+    // take out of ten concurrent tasks' path — so the guard against the suite
+    // shrinking was, on the only axis anybody was going to move it, a guard
+    // that fired on growth. A pinned literal cannot do that: it is the same
+    // shape as the `onDisk.length < 10` walk floor in the runner, a number that
+    // says what was true once and is never asked to track anything.
+    //
+    // 166 on 2026-09-19, the same measurement TEST_FLOOR itself carries. Two
+    // copies of one number is a coupling, and this assertion is the thing that
+    // enforces it: they can only disagree in the safe direction.
+    const FLOOR_PINNED = 166;
     const floor = Number(/^const TEST_FLOOR = (\d+);$/m.exec(runner)?.[1] ?? -1);
-    assert(floor >= sites,
-      `tools/selftest.mjs sets TEST_FLOOR to ${floor} and there are ${sites} \`await test(\` sites on disk, so the floor is below the suite and cannot fail`);
+    assert(floor >= FLOOR_PINNED,
+      `tools/selftest.mjs sets TEST_FLOOR to ${floor}, and it was ${FLOOR_PINNED} on 2026-09-19; ` +
+      `a floor that has been lowered is a floor somebody moved out of the way of a lost check`);
   });
 }
