@@ -25,7 +25,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { cleanupTmp, inFlight, results } from "./selftest/harness.mjs";
+import { cleanupTmp, drain, registeredCount, results } from "./selftest/harness.mjs";
 
 // The order is load-bearing: it is the order the 165 names print in, and two of
 // the boundaries are not where the section headers are. The serial test opens
@@ -254,18 +254,6 @@ const reported = () => {
   return r.passed + r.failures.length;
 };
 
-// Let everything already scheduled finish before reading a counter.
-//
-// `inFlight()` counts tests that have STARTED, and a helper that awaits
-// something before it calls `test()` — the commonest shape in this suite — has
-// not started one yet at the moment `run()` resolves. So the un-awaited
-// `test(...)` that this check exists to catch read as zero in flight whenever it
-// was one await away from beginning: `PASS  166 passed, 0 failed`, exit 0, and
-// the FAIL printed below the summary line where CI does not look. One turn of
-// the event loop is enough for the pending continuations to reach their
-// `test()` call and make themselves countable.
-const settle = () => new Promise((r) => setImmediate(r));
-
 await checkModuleSet();
 
 // Nothing may have run yet.
@@ -280,18 +268,16 @@ await checkModuleSet();
 // Watched: two such tests came out as transcript lines 1 and 2 of
 // `PASS  168 passed, 0 failed`, exit 0.
 //
-// Asserting the counters are still zero here is one line and does not care how
-// the file was classified, what it is called, or which of the eighteen imports
-// pulled it in. Anything that has run by this point ran somewhere nothing is
+// Asserting nothing has registered here is one line and does not care how the
+// file was classified, what it is called, or which of the eighteen imports
+// pulled it in. Anything registered by this point ran somewhere nothing is
 // accountable for it.
-await settle();
 {
-  const early = reported();
-  const starting = inFlight();
-  if (early || starting) {
-    fail(`${early + starting} test(s) ran before the first module`, [
+  const early = await drain();
+  if (early.length || registeredCount()) {
+    fail(`${registeredCount()} test(s) registered before the first module`, [
       "a file under tools/selftest/ calls test() at import time instead of from inside run(); its names print " +
-      "above the first section header, no module's TESTS accounts for them, and nothing reports them",
+      "above the first section header and belong to no module: " + [...new Set(early)].join(", "),
     ]);
   }
 }
@@ -310,21 +296,22 @@ for (const name of MODULES) {
       String(e && e.stack ? e.stack : e),
     ]);
   }
-  await settle();
-  // A `test(...)` written without its `await` returns a promise nobody holds.
-  // The module's run() finishes, the runner moves on, and if the test's body has
-  // any real await in it — a dynamic import, a file read — its result lands
-  // after the summary has already been printed and the exit code already
-  // decided. Watched: one non-awaited test asserting false printed
-  // `PASS  166 passed, 0 failed`, exit 0, with its FAIL line below the summary.
-  // CI reads the exit code. So the harness counts tests in flight and the
-  // boundary between two modules is where a test still running is a test whose
-  // result nothing is waiting for.
-  const running = inFlight();
-  if (running) {
-    fail(`${name}'s run() returned with ${running} test(s) still running`, [
-      "a test() was called without `await`, so its pass or fail lands after this module — and can land after the " +
-      "summary line, where the exit code has already been decided",
+  // A `test(...)` written without its `await` no longer loses its result: the
+  // harness registered the promise synchronously, so `drain()` settles it and
+  // its pass or fail is counted here, in this module, where it belongs. What
+  // `drain()` returns is the accounting error that is left — a test that
+  // reached the harness only AFTER this module had been drained, which means
+  // the module returned while work of its own was still on the way.
+  //
+  // This replaced two readings of a counter, both of which asked "is the
+  // started-but-unfinished set empty now" and both of which were beaten by a
+  // helper that awaits a file read before it calls `test()`. Moving the moment
+  // is not a fix for having chosen a moment.
+  const late = await drain();
+  if (late.length) {
+    fail(`${name}'s run() returned before ${late.length} of its own test(s) had even registered`, [
+      "a test() was called without `await` behind something else that was awaited, so the call reached the " +
+      "harness after this module was accounted for: " + [...new Set(late)].join(", "),
     ]);
   }
   const ran = reported() - before;
@@ -334,6 +321,18 @@ for (const name of MODULES) {
       `run(), an early return, or a loop over a list that is now empty`,
     );
   }
+}
+
+// One more, after the last module: a test registered by something slower than
+// any module boundary — a timer, a watcher — belongs to nobody and would
+// otherwise settle after the summary. Reported rather than silently counted,
+// because a result that arrives with no module to attribute it to is an
+// accounting hole even when it passes.
+const stragglers = await drain();
+if (stragglers.length) {
+  fail(`${stragglers.length} test(s) registered after the last module`, [
+    "nothing was waiting for these and no module is accountable for them: " + [...new Set(stragglers)].join(", "),
+  ]);
 }
 
 cleanupTmp();
