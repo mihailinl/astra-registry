@@ -9,6 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 
 import { runValidation } from "../validate.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
@@ -17,11 +18,41 @@ export const LIMITS = JSON.parse(fs.readFileSync(new URL("../../policy/limits.js
 
 let passed = 0;
 const failures = [];
-let running = 0;
 
-export async function test(name, fn) {
-  running++;
-  try {
+/**
+ * Every test this run has started, in the order it started, and the promise
+ * that settles when it is done. **The runner holds these handles, not the
+ * caller.**
+ *
+ * That sentence is the whole design and it replaces two earlier attempts that
+ * were the same attempt. The failure both were for: a `test(...)` called
+ * without `await` returns a promise nobody holds, `run()` resolves, the runner
+ * moves on, and the test's pass or fail lands after the summary has printed and
+ * after the exit code has been decided. CI reads the exit code, so a broken
+ * check ships green.
+ *
+ * Attempt one counted tests that had STARTED and read the counter when `run()`
+ * resolved. Attempt two read the same counter one turn of the event loop later.
+ * Both sample — *is the started-but-unfinished set empty at moment T* — so every
+ * escape is "T was too early" and every fix moves T. A helper that awaits a file
+ * read before it calls `test()` has not started one yet at either moment, and
+ * that is not an oversight in the choice of T; it is what choosing a T means.
+ * **A longer prefix match is still a prefix match.**
+ *
+ * So: `test()` registers synchronously, BEFORE it returns, and the run ends when
+ * everything registered has settled. There is no moment to pick, so there is no
+ * moment to pick wrong, and a caller that forgets `await` changes nothing —
+ * the runner never depended on the caller's discipline. What is left is not a
+ * timer either: work that registers DURING the drain is caught by comparing two
+ * measurements across it, which is what `drain()` returns.
+ *
+ * The shape is minice-be's, sent 2026-09-19 after it read the second attempt
+ * here and named what both had in common.
+ */
+const registered = [];
+
+export function test(name, fn) {
+  const done = (async () => {
     try {
       await fn();
       console.log(`  ok    ${name}`);
@@ -31,9 +62,9 @@ export async function test(name, fn) {
       console.log(`        ${e.message.split("\n").join("\n        ")}`);
       failures.push(name);
     }
-  } finally {
-    running--;
-  }
+  })();
+  registered.push({ name, done });
+  return done;
 }
 
 /** What the runner prints on the last line. Read once, after the last module. */
@@ -42,22 +73,32 @@ export function results() {
 }
 
 /**
- * How many `test()` calls have not finished. Zero everywhere the runner looks,
- * because it only looks between modules and a module that awaits each of its
- * tests has none outstanding when `run()` resolves.
+ * Settle everything registered, and return the names of any test that
+ * registered WHILE that was happening.
  *
- * A non-zero reading is a forgotten `await` on a `test(...)`, which is the one
- * mistake in this suite that makes a broken check ship GREEN: the promise nobody
- * holds settles after the summary has printed and after the exit code has been
- * decided, so the FAIL appears below the PASS and CI never sees it. Pre-existing
- * — the shape was always available — but the split turned one file into fifteen
- * `run()` bodies for ten tasks to write into, which is fifteen times the surface.
+ * A name in the returned list is a test whose `test(...)` call the module did
+ * not await: its work reached the harness only after the module had already
+ * been accounted for. The late ones are settled too, so their pass or fail is
+ * still counted and still printed — the point is to report the accounting
+ * error, not to lose the result.
  *
- * A function rather than a bare binding, for the reason given at the top of this
- * file: a reader that copied the number would hold a stale zero.
+ * This is a comparison of two measurements rather than a reading taken at a
+ * chosen instant, which is why "how long to wait" never enters. It terminates
+ * because each pass drains a set that was already registered when the pass
+ * began.
  */
-export function inFlight() {
-  return running;
+export async function drain() {
+  const before = registered.length;
+  for (let mark = before; ; mark = registered.length) {
+    await Promise.allSettled(registered.map((r) => r.done));
+    if (registered.length === mark) break;
+  }
+  return registered.slice(before).map((r) => r.name);
+}
+
+/** How many tests have been registered so far. A floor's denominator. */
+export function registeredCount() {
+  return registered.length;
 }
 
 /**
@@ -111,16 +152,49 @@ export function cleanupTmp() {
  *
  * Neither name can appear in a real checkout of this repository — nothing is
  * tracked at either path — so excluding them costs no coverage.
+ *
+ * It asks git what this repository CONTAINS rather than reading the disk and
+ * subtracting, and the difference is not tidiness.
+ *
+ * It was a `readdirSync` recursion skipping `.git`, `node_modules` and `dist`.
+ * On this machine that walk returned 633 files; in CI, and in any fresh
+ * checkout, 335. The 298 are `bot/manifest-probe/_deps/` and
+ * `bot/manifest-probe/target/` — git-ignored Rust build output that the skip
+ * list had never heard of. **So every rule built on this walk had a different
+ * subject depending on whose machine it ran on**, and nothing said so. A grep
+ * for a forbidden phrase could hit a vendored dependency's source locally and
+ * not in CI; a floor measured here would be measured against build artifacts.
+ * The second is not hypothetical — the floor in repo-rules.mjs was written at
+ * 150 for `bot/` from the 356 files on this machine, and CI, which sees 61,
+ * went red on the commit that added it.
+ *
+ * `git ls-files` is the same answer everywhere: the tracked set, on this
+ * machine, in CI, and in the `publish` workspace — where it also happens to
+ * answer the older finding that the self-scan must not read a stranger's
+ * downloaded bundle, because nothing downloaded is tracked.
+ *
+ * What is left of the exclusion list is the two paths that ARE tracked and are
+ * deliberately not the subject. Every other name in it was compensating for
+ * reading the disk.
  */
-export function walkRepo(dir = REPO_ROOT, out = []) {
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (e.name === ".git" || e.name === "node_modules" || e.name === "dist") continue;
-    if (dir === REPO_ROOT && (e.name === "reports" || e.name === "watch-state")) continue;
-    const full = path.join(dir, e.name);
-    if (e.isDirectory()) walkRepo(full, out);
-    else out.push(full);
+export function walkRepo() {
+  let listed;
+  try {
+    listed = execFileSync("git", ["-C", REPO_ROOT, "ls-files", "-z"], {
+      encoding: "utf8", maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (e) {
+    // Loud rather than empty: an empty walk makes every rule built on it pass.
+    throw new Error(
+      `the repository walk asked \`git ls-files\` in ${REPO_ROOT} and it failed, so every rule that scans this ` +
+      `repository would have found nothing and passed: ${String(e.stderr || e.message).trim()}`,
+    );
   }
-  return out;
+  return listed
+    .split("\0")
+    .filter(Boolean)
+    .filter((rel) => !rel.startsWith("reports/") && !rel.startsWith("watch-state/"))
+    .map((rel) => path.join(REPO_ROOT, rel));
 }
 
 // Derived from this module's own location rather than written down, so moving

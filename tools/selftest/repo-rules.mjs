@@ -34,14 +34,27 @@ export async function run() {
   // composition.** Byte-identical test bodies and a byte-identical transcript
   // say nothing about the seam the split just made.
   //
-  // The floors are what the walk reached on 2026-09-19, halved and rounded down
-  // so honest deletion does not fire them. They are not an inventory: the
+  // The floors are what the walk reached on 2026-09-19 — **335 tracked files,
+  // the same number in CI and on a developer's machine** — halved and rounded
+  // down so honest deletion does not fire them. They are not an inventory: the
   // question each one asks is "is this area still being looked at at all".
+  //
+  // The first version of this test had `bot` at 150, and CI went red on the
+  // commit that added it. The walk was a `readdirSync` then, so on this machine
+  // it returned 633 files and in CI 335 — the difference being
+  // `bot/manifest-probe/target/` and `_deps/`, git-ignored Rust build output.
+  // **The floor was measured against build artifacts**, which is the same
+  // defect as a floor that states a count it never took: minice-be reported
+  // exactly that in its own scanners the same morning, four messages whose
+  // "16 migrations examined" was a literal. A floor's whole job is to say how
+  // much was looked at, so a floor with an unmeasured denominator is the one
+  // kind of check that cannot do its job at all. The walk asks `git ls-files`
+  // now and the two trees agree.
   await test("the walk still reaches every area the rules below are about", () => {
     const seen = walkRepo().map((f) => path.relative(REPO_ROOT, f));
     const AREAS = [
       [".github/workflows", 4, "every workflow-shape rule — one signer, no required reviewer, the publish guard"],
-      ["bot", 150, "the plugin-id and policy-surface scans"],
+      ["bot", 30, "the plugin-id and policy-surface scans"],
       ["tools", 30, "the id and tag scans: the modules they are about live here too"],
       ["docs", 2, "the runbook rules, including the one that allows revoke.yml only there"],
       ["policy", 2, "the reserved-id and limits rules"],
@@ -54,9 +67,9 @@ export async function run() {
     }
     assertEqual(blind.join("; "), "",
       "walkRepo no longer reaches somewhere the rules are about, so those rules are green because they are blind");
-    assert(seen.length >= 300,
-      `the walk returned ${seen.length} files and returned 633 on 2026-09-19; this is a broken walk rather than a ` +
-      `smaller repository, and every scan below it would have passed`);
+    assert(seen.length >= 200,
+      `the walk returned ${seen.length} tracked files and returned 335 on 2026-09-19; this is a broken walk rather ` +
+      `than a smaller repository, and every scan below it would have passed`);
   });
 
   // ─────────────────────────────────────────────────────────────────────────────
