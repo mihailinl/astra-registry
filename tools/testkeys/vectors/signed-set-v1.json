@@ -1,0 +1,954 @@
+{
+  "version": 1,
+  "vectors": [
+    {
+      "id": 1,
+      "name": "valid",
+      "document_kind": "index",
+      "document": {
+        "signed": {
+          "schema": "astra.registry.index/1",
+          "serial": 41,
+          "issued_at": "2026-09-01T00:00:00Z",
+          "expires_at": "2026-10-01T00:00:00Z",
+          "plugins": [
+            {
+              "id": "vector-plugin-1",
+              "name": "Vector Plugin 1",
+              "version": "1.0.0"
+            },
+            {
+              "id": "vector-plugin-2",
+              "name": "Vector Plugin 2",
+              "version": "1.0.0"
+            }
+          ]
+        },
+        "signatures": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026a",
+            "sig": "0Mhi3ecuyWw5CbBKMonMdvy3mub9CSD9ZGLUnf8J8x/Vcuy+qWZYCRKnO+o5TUafl0NxvAG96aseHZckMKgVCg=="
+          }
+        ]
+      },
+      "trust_json": {
+        "signed": {
+          "schema": "astra.registry.trust/1",
+          "serial": 7,
+          "issued_at": "2026-08-10T00:00:00Z",
+          "expires_at": "2027-08-10T00:00:00Z",
+          "index_keys": [
+            {
+              "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026a",
+              "public_key": "U8/3Y8Zz1qd2TQ+JECdqODTMhWolfxvQFmXRySVd41o=",
+              "not_before": "2026-08-01T00:00:00Z",
+              "not_after": "2026-11-01T00:00:00Z"
+            },
+            {
+              "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026b",
+              "public_key": "selbz5cJXSydRAAxGZsrsDpL1mKNRUn5eo8p0h2H8lc=",
+              "not_before": "2026-10-02T00:00:00Z",
+              "not_after": "2027-02-01T00:00:00Z"
+            }
+          ],
+          "reusable_workflow_shas": [
+            "0000000000000000000000000000000000000000"
+          ]
+        },
+        "signatures": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "sig": "tIC4QSCHegjFzL7DKMMCJNphgtu0JspM8C4B0GxDiezyNch56a6Jbnv8EpVXJl4Tw6bUqb7fDtN5csIqGznpDg=="
+          }
+        ]
+      },
+      "prior_state": null,
+      "now": "2026-09-01T12:00:00Z",
+      "verdict": "accepted",
+      "root_json": {
+        "schema": "astra.registry.root/1",
+        "status": "provisioned",
+        "roots": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-a",
+            "role": "active",
+            "algorithm": "ed25519",
+            "public_key": "sT0w2UuCzf9J8kp2n7PllC/fQZs4ZNiDnkMnCMUqkNo=",
+            "signs": "trust.json"
+          },
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "role": "reserve",
+            "algorithm": "ed25519",
+            "public_key": "kjNqlEvEZof8jpVdaZQnCXB8lAi1kYTfeN0MZtFa1mI=",
+            "signs": "trust.json"
+          }
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "name": "wrong domain",
+      "document_kind": "index",
+      "document": {
+        "signed": {
+          "schema": "astra.registry.index/1",
+          "serial": 42,
+          "issued_at": "2026-09-01T00:00:00Z",
+          "expires_at": "2026-10-01T00:00:00Z",
+          "plugins": [
+            {
+              "id": "vector-plugin-1",
+              "name": "Vector Plugin 1",
+              "version": "1.0.0"
+            },
+            {
+              "id": "vector-plugin-2",
+              "name": "Vector Plugin 2",
+              "version": "1.0.0"
+            }
+          ]
+        },
+        "signatures": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026a",
+            "sig": "KRL4t9KvRNCG4Puyj7wAW7QqlNEXU83ZmjnehYZpkgDz8b/YuZVfdvHYKMQnSZieIhQSkIVnnO41ppzK+kOVCg=="
+          }
+        ]
+      },
+      "trust_json": {
+        "signed": {
+          "schema": "astra.registry.trust/1",
+          "serial": 7,
+          "issued_at": "2026-08-10T00:00:00Z",
+          "expires_at": "2027-08-10T00:00:00Z",
+          "index_keys": [
+            {
+              "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026a",
+              "public_key": "U8/3Y8Zz1qd2TQ+JECdqODTMhWolfxvQFmXRySVd41o=",
+              "not_before": "2026-08-01T00:00:00Z",
+              "not_after": "2026-11-01T00:00:00Z"
+            },
+            {
+              "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026b",
+              "public_key": "selbz5cJXSydRAAxGZsrsDpL1mKNRUn5eo8p0h2H8lc=",
+              "not_before": "2026-10-02T00:00:00Z",
+              "not_after": "2027-02-01T00:00:00Z"
+            }
+          ],
+          "reusable_workflow_shas": [
+            "0000000000000000000000000000000000000000"
+          ]
+        },
+        "signatures": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "sig": "tIC4QSCHegjFzL7DKMMCJNphgtu0JspM8C4B0GxDiezyNch56a6Jbnv8EpVXJl4Tw6bUqb7fDtN5csIqGznpDg=="
+          }
+        ]
+      },
+      "prior_state": null,
+      "now": "2026-09-01T12:00:00Z",
+      "verdict": "bad_domain",
+      "root_json": {
+        "schema": "astra.registry.root/1",
+        "status": "provisioned",
+        "roots": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-a",
+            "role": "active",
+            "algorithm": "ed25519",
+            "public_key": "sT0w2UuCzf9J8kp2n7PllC/fQZs4ZNiDnkMnCMUqkNo=",
+            "signs": "trust.json"
+          },
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "role": "reserve",
+            "algorithm": "ed25519",
+            "public_key": "kjNqlEvEZof8jpVdaZQnCXB8lAi1kYTfeN0MZtFa1mI=",
+            "signs": "trust.json"
+          }
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "name": "unknown key",
+      "document_kind": "index",
+      "document": {
+        "signed": {
+          "schema": "astra.registry.index/1",
+          "serial": 43,
+          "issued_at": "2026-09-01T00:00:00Z",
+          "expires_at": "2026-10-01T00:00:00Z",
+          "plugins": [
+            {
+              "id": "vector-plugin-1",
+              "name": "Vector Plugin 1",
+              "version": "1.0.0"
+            },
+            {
+              "id": "vector-plugin-2",
+              "name": "Vector Plugin 2",
+              "version": "1.0.0"
+            }
+          ]
+        },
+        "signatures": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-stranger",
+            "sig": "K1FKakOw4HAuXaVtPdiqKG7Ew7cKJuvjBpkW+g75cL982ut8Sa2KZG06gfYv55p5pjFLGBF1hK+cwHSYXMy4Bg=="
+          }
+        ]
+      },
+      "trust_json": {
+        "signed": {
+          "schema": "astra.registry.trust/1",
+          "serial": 7,
+          "issued_at": "2026-08-10T00:00:00Z",
+          "expires_at": "2027-08-10T00:00:00Z",
+          "index_keys": [
+            {
+              "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026a",
+              "public_key": "U8/3Y8Zz1qd2TQ+JECdqODTMhWolfxvQFmXRySVd41o=",
+              "not_before": "2026-08-01T00:00:00Z",
+              "not_after": "2026-11-01T00:00:00Z"
+            },
+            {
+              "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026b",
+              "public_key": "selbz5cJXSydRAAxGZsrsDpL1mKNRUn5eo8p0h2H8lc=",
+              "not_before": "2026-10-02T00:00:00Z",
+              "not_after": "2027-02-01T00:00:00Z"
+            }
+          ],
+          "reusable_workflow_shas": [
+            "0000000000000000000000000000000000000000"
+          ]
+        },
+        "signatures": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "sig": "tIC4QSCHegjFzL7DKMMCJNphgtu0JspM8C4B0GxDiezyNch56a6Jbnv8EpVXJl4Tw6bUqb7fDtN5csIqGznpDg=="
+          }
+        ]
+      },
+      "prior_state": null,
+      "now": "2026-09-01T12:00:00Z",
+      "verdict": "unknown_key",
+      "root_json": {
+        "schema": "astra.registry.root/1",
+        "status": "provisioned",
+        "roots": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-a",
+            "role": "active",
+            "algorithm": "ed25519",
+            "public_key": "sT0w2UuCzf9J8kp2n7PllC/fQZs4ZNiDnkMnCMUqkNo=",
+            "signs": "trust.json"
+          },
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "role": "reserve",
+            "algorithm": "ed25519",
+            "public_key": "kjNqlEvEZof8jpVdaZQnCXB8lAi1kYTfeN0MZtFa1mI=",
+            "signs": "trust.json"
+          }
+        ]
+      }
+    },
+    {
+      "id": 4,
+      "name": "key outside its window",
+      "document_kind": "index",
+      "document": {
+        "signed": {
+          "schema": "astra.registry.index/1",
+          "serial": 44,
+          "issued_at": "2026-09-15T00:00:00Z",
+          "expires_at": "2026-10-15T00:00:00Z",
+          "plugins": [
+            {
+              "id": "vector-plugin-1",
+              "name": "Vector Plugin 1",
+              "version": "1.0.0"
+            },
+            {
+              "id": "vector-plugin-2",
+              "name": "Vector Plugin 2",
+              "version": "1.0.0"
+            }
+          ]
+        },
+        "signatures": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026b",
+            "sig": "6z0z9zE3ApkA19orL+UC4I6/+a8OvjTaTm4+fpMLeIMZrClkTWnfJnsMmXOqTrLNPRf/7kA7XRX82wnSPACLAQ=="
+          }
+        ]
+      },
+      "trust_json": {
+        "signed": {
+          "schema": "astra.registry.trust/1",
+          "serial": 7,
+          "issued_at": "2026-08-10T00:00:00Z",
+          "expires_at": "2027-08-10T00:00:00Z",
+          "index_keys": [
+            {
+              "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026a",
+              "public_key": "U8/3Y8Zz1qd2TQ+JECdqODTMhWolfxvQFmXRySVd41o=",
+              "not_before": "2026-08-01T00:00:00Z",
+              "not_after": "2026-11-01T00:00:00Z"
+            },
+            {
+              "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026b",
+              "public_key": "selbz5cJXSydRAAxGZsrsDpL1mKNRUn5eo8p0h2H8lc=",
+              "not_before": "2026-10-02T00:00:00Z",
+              "not_after": "2027-02-01T00:00:00Z"
+            }
+          ],
+          "reusable_workflow_shas": [
+            "0000000000000000000000000000000000000000"
+          ]
+        },
+        "signatures": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "sig": "tIC4QSCHegjFzL7DKMMCJNphgtu0JspM8C4B0GxDiezyNch56a6Jbnv8EpVXJl4Tw6bUqb7fDtN5csIqGznpDg=="
+          }
+        ]
+      },
+      "prior_state": null,
+      "now": "2026-09-15T12:00:00Z",
+      "verdict": "key_outside_window",
+      "root_json": {
+        "schema": "astra.registry.root/1",
+        "status": "provisioned",
+        "roots": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-a",
+            "role": "active",
+            "algorithm": "ed25519",
+            "public_key": "sT0w2UuCzf9J8kp2n7PllC/fQZs4ZNiDnkMnCMUqkNo=",
+            "signs": "trust.json"
+          },
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "role": "reserve",
+            "algorithm": "ed25519",
+            "public_key": "kjNqlEvEZof8jpVdaZQnCXB8lAi1kYTfeN0MZtFa1mI=",
+            "signs": "trust.json"
+          }
+        ]
+      }
+    },
+    {
+      "id": 5,
+      "name": "unsafe integer",
+      "document_kind": "index",
+      "document": {
+        "signed": {
+          "schema": "astra.registry.index/1",
+          "serial": 9007199254740992,
+          "issued_at": "2026-09-01T00:00:00Z",
+          "expires_at": "2026-10-01T00:00:00Z",
+          "plugins": [
+            {
+              "id": "vector-plugin-1",
+              "name": "Vector Plugin 1",
+              "version": "1.0.0"
+            },
+            {
+              "id": "vector-plugin-2",
+              "name": "Vector Plugin 2",
+              "version": "1.0.0"
+            }
+          ]
+        },
+        "signatures": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026a",
+            "sig": "s4UiqPmqlp7O1dk75RdokzwGWhaYqFZN7dKI6DnSrxvOz6CR9nA7UzzlPjiO6fHRG5VsTvMXeAn2dB9JxeonBw=="
+          }
+        ]
+      },
+      "trust_json": {
+        "signed": {
+          "schema": "astra.registry.trust/1",
+          "serial": 7,
+          "issued_at": "2026-08-10T00:00:00Z",
+          "expires_at": "2027-08-10T00:00:00Z",
+          "index_keys": [
+            {
+              "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026a",
+              "public_key": "U8/3Y8Zz1qd2TQ+JECdqODTMhWolfxvQFmXRySVd41o=",
+              "not_before": "2026-08-01T00:00:00Z",
+              "not_after": "2026-11-01T00:00:00Z"
+            },
+            {
+              "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026b",
+              "public_key": "selbz5cJXSydRAAxGZsrsDpL1mKNRUn5eo8p0h2H8lc=",
+              "not_before": "2026-10-02T00:00:00Z",
+              "not_after": "2027-02-01T00:00:00Z"
+            }
+          ],
+          "reusable_workflow_shas": [
+            "0000000000000000000000000000000000000000"
+          ]
+        },
+        "signatures": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "sig": "tIC4QSCHegjFzL7DKMMCJNphgtu0JspM8C4B0GxDiezyNch56a6Jbnv8EpVXJl4Tw6bUqb7fDtN5csIqGznpDg=="
+          }
+        ]
+      },
+      "prior_state": null,
+      "now": "2026-09-01T12:00:00Z",
+      "verdict": "unsafe_integer",
+      "root_json": {
+        "schema": "astra.registry.root/1",
+        "status": "provisioned",
+        "roots": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-a",
+            "role": "active",
+            "algorithm": "ed25519",
+            "public_key": "sT0w2UuCzf9J8kp2n7PllC/fQZs4ZNiDnkMnCMUqkNo=",
+            "signs": "trust.json"
+          },
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "role": "reserve",
+            "algorithm": "ed25519",
+            "public_key": "kjNqlEvEZof8jpVdaZQnCXB8lAi1kYTfeN0MZtFa1mI=",
+            "signs": "trust.json"
+          }
+        ]
+      }
+    },
+    {
+      "id": 6,
+      "name": "empty signatures",
+      "document_kind": "index",
+      "document": {
+        "signed": {
+          "schema": "astra.registry.index/1",
+          "serial": 46,
+          "issued_at": "2026-09-01T00:00:00Z",
+          "expires_at": "2026-10-01T00:00:00Z",
+          "plugins": [
+            {
+              "id": "vector-plugin-1",
+              "name": "Vector Plugin 1",
+              "version": "1.0.0"
+            },
+            {
+              "id": "vector-plugin-2",
+              "name": "Vector Plugin 2",
+              "version": "1.0.0"
+            }
+          ]
+        },
+        "signatures": []
+      },
+      "trust_json": {
+        "signed": {
+          "schema": "astra.registry.trust/1",
+          "serial": 7,
+          "issued_at": "2026-08-10T00:00:00Z",
+          "expires_at": "2027-08-10T00:00:00Z",
+          "index_keys": [
+            {
+              "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026a",
+              "public_key": "U8/3Y8Zz1qd2TQ+JECdqODTMhWolfxvQFmXRySVd41o=",
+              "not_before": "2026-08-01T00:00:00Z",
+              "not_after": "2026-11-01T00:00:00Z"
+            },
+            {
+              "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026b",
+              "public_key": "selbz5cJXSydRAAxGZsrsDpL1mKNRUn5eo8p0h2H8lc=",
+              "not_before": "2026-10-02T00:00:00Z",
+              "not_after": "2027-02-01T00:00:00Z"
+            }
+          ],
+          "reusable_workflow_shas": [
+            "0000000000000000000000000000000000000000"
+          ]
+        },
+        "signatures": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "sig": "tIC4QSCHegjFzL7DKMMCJNphgtu0JspM8C4B0GxDiezyNch56a6Jbnv8EpVXJl4Tw6bUqb7fDtN5csIqGznpDg=="
+          }
+        ]
+      },
+      "prior_state": null,
+      "now": "2026-09-01T12:00:00Z",
+      "verdict": "no_signatures",
+      "root_json": {
+        "schema": "astra.registry.root/1",
+        "status": "provisioned",
+        "roots": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-a",
+            "role": "active",
+            "algorithm": "ed25519",
+            "public_key": "sT0w2UuCzf9J8kp2n7PllC/fQZs4ZNiDnkMnCMUqkNo=",
+            "signs": "trust.json"
+          },
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "role": "reserve",
+            "algorithm": "ed25519",
+            "public_key": "kjNqlEvEZof8jpVdaZQnCXB8lAi1kYTfeN0MZtFa1mI=",
+            "signs": "trust.json"
+          }
+        ]
+      }
+    },
+    {
+      "id": 7,
+      "name": "serial reused",
+      "document_kind": "index",
+      "document": {
+        "signed": {
+          "schema": "astra.registry.index/1",
+          "serial": 47,
+          "issued_at": "2026-09-02T00:00:00Z",
+          "expires_at": "2026-10-02T00:00:00Z",
+          "plugins": [
+            {
+              "id": "vector-plugin-1",
+              "name": "Vector Plugin 1",
+              "version": "1.0.0"
+            },
+            {
+              "id": "vector-plugin-2",
+              "name": "Vector Plugin 2",
+              "version": "1.0.0"
+            },
+            {
+              "id": "vector-plugin-3",
+              "name": "Vector Plugin 3",
+              "version": "1.0.0"
+            }
+          ]
+        },
+        "signatures": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026a",
+            "sig": "xZNgfW/4/cc+0UPDbnaR7FIWsnycSbPShXTKM1a8LOB1WNvpZ6ZJslpsItqy8ak8b7sab5cfnI4Wo8tEydj8Cw=="
+          }
+        ]
+      },
+      "trust_json": {
+        "signed": {
+          "schema": "astra.registry.trust/1",
+          "serial": 7,
+          "issued_at": "2026-08-10T00:00:00Z",
+          "expires_at": "2027-08-10T00:00:00Z",
+          "index_keys": [
+            {
+              "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026a",
+              "public_key": "U8/3Y8Zz1qd2TQ+JECdqODTMhWolfxvQFmXRySVd41o=",
+              "not_before": "2026-08-01T00:00:00Z",
+              "not_after": "2026-11-01T00:00:00Z"
+            },
+            {
+              "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026b",
+              "public_key": "selbz5cJXSydRAAxGZsrsDpL1mKNRUn5eo8p0h2H8lc=",
+              "not_before": "2026-10-02T00:00:00Z",
+              "not_after": "2027-02-01T00:00:00Z"
+            }
+          ],
+          "reusable_workflow_shas": [
+            "0000000000000000000000000000000000000000"
+          ]
+        },
+        "signatures": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "sig": "tIC4QSCHegjFzL7DKMMCJNphgtu0JspM8C4B0GxDiezyNch56a6Jbnv8EpVXJl4Tw6bUqb7fDtN5csIqGznpDg=="
+          }
+        ]
+      },
+      "prior_state": {
+        "serial": 47,
+        "issued_at": "2026-09-01T00:00:00Z",
+        "entry_count": 2
+      },
+      "now": "2026-09-02T12:00:00Z",
+      "verdict": "serial_reused",
+      "root_json": {
+        "schema": "astra.registry.root/1",
+        "status": "provisioned",
+        "roots": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-a",
+            "role": "active",
+            "algorithm": "ed25519",
+            "public_key": "sT0w2UuCzf9J8kp2n7PllC/fQZs4ZNiDnkMnCMUqkNo=",
+            "signs": "trust.json"
+          },
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "role": "reserve",
+            "algorithm": "ed25519",
+            "public_key": "kjNqlEvEZof8jpVdaZQnCXB8lAi1kYTfeN0MZtFa1mI=",
+            "signs": "trust.json"
+          }
+        ]
+      }
+    },
+    {
+      "id": 8,
+      "name": "equal serial, fewer entries",
+      "document_kind": "revocations",
+      "document": {
+        "signed": {
+          "schema": "astra.registry.revocations/1",
+          "serial": 5,
+          "issued_at": "2026-09-08T00:00:00Z",
+          "expires_at": "2026-09-15T00:00:00Z",
+          "revocations": [
+            {
+              "kind": "id",
+              "value": "vector-plugin-1",
+              "id": "ASTRA-TEST-0001",
+              "severity": "high",
+              "action": "block_install",
+              "reason": "TEST VECTOR — no plugin by this id exists."
+            }
+          ]
+        },
+        "signatures": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026a",
+            "sig": "dAJ/WOKt5423q4h49jKAjIZVss/Er/vH4FgSZvj2E9f/Njcd1LnsTPGB/5ScANKzLW1TNY2WuOaUrM+LhpZ5Cw=="
+          }
+        ]
+      },
+      "trust_json": {
+        "signed": {
+          "schema": "astra.registry.trust/1",
+          "serial": 7,
+          "issued_at": "2026-08-10T00:00:00Z",
+          "expires_at": "2027-08-10T00:00:00Z",
+          "index_keys": [
+            {
+              "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026a",
+              "public_key": "U8/3Y8Zz1qd2TQ+JECdqODTMhWolfxvQFmXRySVd41o=",
+              "not_before": "2026-08-01T00:00:00Z",
+              "not_after": "2026-11-01T00:00:00Z"
+            },
+            {
+              "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026b",
+              "public_key": "selbz5cJXSydRAAxGZsrsDpL1mKNRUn5eo8p0h2H8lc=",
+              "not_before": "2026-10-02T00:00:00Z",
+              "not_after": "2027-02-01T00:00:00Z"
+            }
+          ],
+          "reusable_workflow_shas": [
+            "0000000000000000000000000000000000000000"
+          ]
+        },
+        "signatures": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "sig": "tIC4QSCHegjFzL7DKMMCJNphgtu0JspM8C4B0GxDiezyNch56a6Jbnv8EpVXJl4Tw6bUqb7fDtN5csIqGznpDg=="
+          }
+        ]
+      },
+      "prior_state": {
+        "serial": 5,
+        "issued_at": "2026-09-01T00:00:00Z",
+        "entry_count": 2
+      },
+      "now": "2026-09-08T12:00:00Z",
+      "verdict": "entries_shrank",
+      "root_json": {
+        "schema": "astra.registry.root/1",
+        "status": "provisioned",
+        "roots": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-a",
+            "role": "active",
+            "algorithm": "ed25519",
+            "public_key": "sT0w2UuCzf9J8kp2n7PllC/fQZs4ZNiDnkMnCMUqkNo=",
+            "signs": "trust.json"
+          },
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "role": "reserve",
+            "algorithm": "ed25519",
+            "public_key": "kjNqlEvEZof8jpVdaZQnCXB8lAi1kYTfeN0MZtFa1mI=",
+            "signs": "trust.json"
+          }
+        ]
+      }
+    },
+    {
+      "id": 9,
+      "name": "equal serial, older issued_at",
+      "document_kind": "index",
+      "document": {
+        "signed": {
+          "schema": "astra.registry.index/1",
+          "serial": 48,
+          "issued_at": "2026-09-01T00:00:00Z",
+          "expires_at": "2026-10-01T00:00:00Z",
+          "plugins": [
+            {
+              "id": "vector-plugin-1",
+              "name": "Vector Plugin 1",
+              "version": "1.0.0"
+            },
+            {
+              "id": "vector-plugin-2",
+              "name": "Vector Plugin 2",
+              "version": "1.0.0"
+            }
+          ]
+        },
+        "signatures": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026a",
+            "sig": "LjJeTHcpbC+TsgeDMb/VEgJrGS5WUbzBmhk6GAKCbW69mdYOKtQV6c6MSrdrk2x2j04/8PLuf+tW5S9g9gwkCg=="
+          }
+        ]
+      },
+      "trust_json": {
+        "signed": {
+          "schema": "astra.registry.trust/1",
+          "serial": 7,
+          "issued_at": "2026-08-10T00:00:00Z",
+          "expires_at": "2027-08-10T00:00:00Z",
+          "index_keys": [
+            {
+              "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026a",
+              "public_key": "U8/3Y8Zz1qd2TQ+JECdqODTMhWolfxvQFmXRySVd41o=",
+              "not_before": "2026-08-01T00:00:00Z",
+              "not_after": "2026-11-01T00:00:00Z"
+            },
+            {
+              "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026b",
+              "public_key": "selbz5cJXSydRAAxGZsrsDpL1mKNRUn5eo8p0h2H8lc=",
+              "not_before": "2026-10-02T00:00:00Z",
+              "not_after": "2027-02-01T00:00:00Z"
+            }
+          ],
+          "reusable_workflow_shas": [
+            "0000000000000000000000000000000000000000"
+          ]
+        },
+        "signatures": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "sig": "tIC4QSCHegjFzL7DKMMCJNphgtu0JspM8C4B0GxDiezyNch56a6Jbnv8EpVXJl4Tw6bUqb7fDtN5csIqGznpDg=="
+          }
+        ]
+      },
+      "prior_state": {
+        "serial": 48,
+        "issued_at": "2026-09-05T00:00:00Z",
+        "entry_count": 2
+      },
+      "now": "2026-09-05T12:00:00Z",
+      "verdict": "older_issued_at",
+      "root_json": {
+        "schema": "astra.registry.root/1",
+        "status": "provisioned",
+        "roots": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-a",
+            "role": "active",
+            "algorithm": "ed25519",
+            "public_key": "sT0w2UuCzf9J8kp2n7PllC/fQZs4ZNiDnkMnCMUqkNo=",
+            "signs": "trust.json"
+          },
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "role": "reserve",
+            "algorithm": "ed25519",
+            "public_key": "kjNqlEvEZof8jpVdaZQnCXB8lAi1kYTfeN0MZtFa1mI=",
+            "signs": "trust.json"
+          }
+        ]
+      }
+    },
+    {
+      "id": 10,
+      "name": "dual-signed, outgoing key first",
+      "document_kind": "index",
+      "document": {
+        "signed": {
+          "schema": "astra.registry.index/1",
+          "serial": 49,
+          "issued_at": "2026-10-15T00:00:00Z",
+          "expires_at": "2026-11-14T00:00:00Z",
+          "plugins": [
+            {
+              "id": "vector-plugin-1",
+              "name": "Vector Plugin 1",
+              "version": "1.0.0"
+            },
+            {
+              "id": "vector-plugin-2",
+              "name": "Vector Plugin 2",
+              "version": "1.0.0"
+            }
+          ]
+        },
+        "signatures": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026a",
+            "sig": "yPAgVEdfuHOwSgsWdLk+KU7ExXF5j3DXvV1IOEY5NS4HOP8M56O5mE7mvuiUZ41a2K3/n8byip3HuhJR5/ByAg=="
+          },
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026b",
+            "sig": "ZOA5+TcHgUxFb8rgabl/C5bfZ4OGL1GV0DgERP3YwrbLF/TzxvlxpytnjS+jWx9pAoINH2onb5/7BiCngQKbAg=="
+          }
+        ]
+      },
+      "trust_json": {
+        "signed": {
+          "schema": "astra.registry.trust/1",
+          "serial": 7,
+          "issued_at": "2026-08-10T00:00:00Z",
+          "expires_at": "2027-08-10T00:00:00Z",
+          "index_keys": [
+            {
+              "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026a",
+              "public_key": "U8/3Y8Zz1qd2TQ+JECdqODTMhWolfxvQFmXRySVd41o=",
+              "not_before": "2026-08-01T00:00:00Z",
+              "not_after": "2026-11-01T00:00:00Z"
+            },
+            {
+              "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026b",
+              "public_key": "selbz5cJXSydRAAxGZsrsDpL1mKNRUn5eo8p0h2H8lc=",
+              "not_before": "2026-10-02T00:00:00Z",
+              "not_after": "2027-02-01T00:00:00Z"
+            }
+          ],
+          "reusable_workflow_shas": [
+            "0000000000000000000000000000000000000000"
+          ]
+        },
+        "signatures": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "sig": "tIC4QSCHegjFzL7DKMMCJNphgtu0JspM8C4B0GxDiezyNch56a6Jbnv8EpVXJl4Tw6bUqb7fDtN5csIqGznpDg=="
+          }
+        ]
+      },
+      "prior_state": null,
+      "now": "2026-10-15T12:00:00Z",
+      "verdict": "accepted",
+      "root_json": {
+        "schema": "astra.registry.root/1",
+        "status": "provisioned",
+        "roots": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-a",
+            "role": "active",
+            "algorithm": "ed25519",
+            "public_key": "sT0w2UuCzf9J8kp2n7PllC/fQZs4ZNiDnkMnCMUqkNo=",
+            "signs": "trust.json"
+          },
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "role": "reserve",
+            "algorithm": "ed25519",
+            "public_key": "kjNqlEvEZof8jpVdaZQnCXB8lAi1kYTfeN0MZtFa1mI=",
+            "signs": "trust.json"
+          }
+        ]
+      }
+    },
+    {
+      "id": 11,
+      "name": "incoming key alone after the outgoing key was dropped",
+      "document_kind": "revocations",
+      "document": {
+        "signed": {
+          "schema": "astra.registry.revocations/1",
+          "serial": 6,
+          "issued_at": "2026-10-15T00:00:00Z",
+          "expires_at": "2026-10-22T00:00:00Z",
+          "revocations": [
+            {
+              "kind": "id",
+              "value": "vector-plugin-1",
+              "id": "ASTRA-TEST-0001",
+              "severity": "high",
+              "action": "block_install",
+              "reason": "TEST VECTOR — no plugin by this id exists."
+            },
+            {
+              "kind": "id",
+              "value": "vector-plugin-2",
+              "id": "ASTRA-TEST-0002",
+              "severity": "high",
+              "action": "block_install",
+              "reason": "TEST VECTOR — no plugin by this id exists."
+            }
+          ]
+        },
+        "signatures": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026b",
+            "sig": "fCwZgg/163QKsxlnqR5pe7EQcqTT3tJsbkOdMM+6vdyu2xJ/z/UFpErU9mXuyZRHpIq1Y63ZEygVQvhAx7B/Dw=="
+          }
+        ]
+      },
+      "trust_json": {
+        "signed": {
+          "schema": "astra.registry.trust/1",
+          "serial": 8,
+          "issued_at": "2026-08-10T00:00:00Z",
+          "expires_at": "2027-08-10T00:00:00Z",
+          "index_keys": [
+            {
+              "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026b",
+              "public_key": "selbz5cJXSydRAAxGZsrsDpL1mKNRUn5eo8p0h2H8lc=",
+              "not_before": "2026-10-02T00:00:00Z",
+              "not_after": "2027-02-01T00:00:00Z"
+            }
+          ],
+          "reusable_workflow_shas": [
+            "0000000000000000000000000000000000000000"
+          ]
+        },
+        "signatures": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "sig": "M55ktsuUob4aPSIP9i6KEx9XyT0DGHWBBp+v60qwkLTc+85Ik3rvF89xGmv7Jhw2AB2+oarkGFyDlMpgsqN+AA=="
+          }
+        ]
+      },
+      "prior_state": null,
+      "now": "2026-10-15T12:00:00Z",
+      "verdict": "accepted",
+      "root_json": {
+        "schema": "astra.registry.root/1",
+        "status": "provisioned",
+        "roots": [
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-a",
+            "role": "active",
+            "algorithm": "ed25519",
+            "public_key": "sT0w2UuCzf9J8kp2n7PllC/fQZs4ZNiDnkMnCMUqkNo=",
+            "signs": "trust.json"
+          },
+          {
+            "key_id": "TEST-ONLY-DO-NOT-TRUST-root-b",
+            "role": "reserve",
+            "algorithm": "ed25519",
+            "public_key": "kjNqlEvEZof8jpVdaZQnCXB8lAi1kYTfeN0MZtFa1mI=",
+            "signs": "trust.json"
+          }
+        ]
+      }
+    }
+  ]
+}
