@@ -1,0 +1,103 @@
+# BOT-86's weekly alarm: the one run whose whole purpose is to prove that the
+# path from this repository to a person still works.
+#
+# Everything else in this estate alerts when something is wrong, which means
+# every other alert job is silent in the only state we cannot distinguish from
+# a broken channel. This one is loud on purpose, once a week, and the owner
+# acknowledges it. If he does not within 48 hours of THAT alarm, the receiver
+# tells KNICE.
+#
+# **Measured per alarm, not from the last acknowledgement** (registry plan
+# RC-R1-0). The drill sends a START signal to receiver check `alarm-ack` in the
+# same step that posts the alarm, and the acknowledgement link inside the
+# message sends the success ping. A single "ping within 7 days + 48 hours"
+# check measured from the last success escalates a missed acknowledgement up to
+# about 95 hours after the alarm it missed, whenever the week before was
+# acknowledged late. Per alarm, the 48 hours are 48 hours.
+#
+# The drill posts its own BOT-85 heartbeat too, to check `alarm-drill`. §2.0:
+# every scheduled check posts one. Without it, the workflow that watches the
+# channel is the one workflow whose own silence nothing watches — and a
+# schedule GitHub disabled on an idle repository looks exactly like a week with
+# no alarm in it.
+#
+# Until the owner creates environment `alerts`, its secrets and the receiver
+# account (§2.12's R1 row), every run of this workflow is red and says which
+# secret is missing. That is the intended state.
+
+name: Alarm drill
+
+on:
+  schedule:
+    # Mondays, 09:23 UTC. Not on the hour: a receiver bound of three weeks has
+    # no use for a tidy minute, and a job that shares its minute with every
+    # other cron on the runner fleet is a job that waits.
+    - cron: '23 9 * * 1'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: alarm-drill
+  cancel-in-progress: false
+
+jobs:
+  drill:
+    runs-on: ubuntu-24.04
+    environment: alerts
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    # Environment secrets are not ambient: a job reads one only where it says
+    # so. This block is what puts them in front of `bot/alert.mjs` and
+    # `bot/heartbeat.mjs`, and it is deliberately the complete list — the three
+    # channel secrets, and the whole ping URL of each check THIS job posts to
+    # and of no other. A job that mapped a base URL, or another check's URL,
+    # would be a job whose compromise silences a check it never posts to
+    # (attack M-5); `bot/tests/workflows.test.mjs` refuses one.
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_DEADMAN_URL_ALARM_DRILL: ${{ secrets.ASTRA_DEADMAN_URL_ALARM_DRILL }}
+      ASTRA_DEADMAN_URL_ALARM_ACK: ${{ secrets.ASTRA_DEADMAN_URL_ALARM_ACK }}
+      ASTRA_DEADMAN_URL_ALARM_ACK_START: ${{ secrets.ASTRA_DEADMAN_URL_ALARM_ACK_START }}
+    steps:
+      # Only what the alert step runs, at this commit. A job holding the alarm
+      # channel's credential reads no author code and checks out no more of
+      # this repository than the two scripts and their libraries (BOT-46: the
+      # credential sits in jobs that run no submitter code).
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            .github/actions/alert
+            bot/alert.mjs
+            bot/heartbeat.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+
+      # `status: red` because this must SEND. A synthetic alarm that arrived
+      # looking unlike an alarm would train the reader to skip the ones that
+      # are not synthetic, and the drill is as much practice for the person as
+      # it is a test of the wire.
+      - name: The synthetic alarm BOT-86 sends
+        run: |
+          set -euo pipefail
+          cat > verdict.json <<JSON
+          {
+            "schema": "astra.registry.alert-verdict/1",
+            "check": "alarm-drill",
+            "status": "red",
+            "codes": ["BOT_86_WEEKLY_DRILL"],
+            "run": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          JSON
+
+      - uses: ./.github/actions/alert
+        with:
+          verdict: verdict.json
+          check: alarm-drill
+          ack-check: alarm-ack

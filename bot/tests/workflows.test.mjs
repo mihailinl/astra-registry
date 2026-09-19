@@ -17,10 +17,59 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
+import { CHECKS, alertsEnvironmentSecrets, secretName } from "../lib/alert-checks.mjs";
+
 const REPO = path.resolve(import.meta.dirname, "..", "..");
 const DIR = path.join(REPO, ".github", "workflows");
 const files = fs.readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(".yaml"));
 const read = (n) => fs.readFileSync(path.join(DIR, n), "utf8");
+
+/**
+ * Every job in every workflow, as `{file, job, line, body}`.
+ *
+ * Line-oriented like the rest of this file: two-space keys under `jobs:`,
+ * each running to the next one or to the next top-level key. Written as a
+ * first pass over the STARTS rather than as one scan, because a comment
+ * indented two spaces between two jobs ended the earlier job's body in the
+ * scanning version and matched no job name either, so the rest of that job
+ * vanished from every check below — a silent false green in a file whose
+ * whole subject is silent false greens.
+ */
+function allJobs() {
+  const out = [];
+  for (const file of files) {
+    const lines = read(file).split("\n");
+    const at = lines.findIndex((l) => /^jobs:\s*$/.test(l));
+    if (at < 0) continue;
+    const starts = [];
+    for (let i = at + 1; i < lines.length; i++) {
+      if (/^\S/.test(lines[i])) break;
+      const m = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(lines[i]);
+      if (m) starts.push([i, m[1]]);
+    }
+    for (let k = 0; k < starts.length; k++) {
+      const [i, job] = starts[k];
+      let end = k + 1 < starts.length ? starts[k + 1][0] : lines.length;
+      for (let j = i + 1; j < end; j++) {
+        if (/^\S/.test(lines[j])) { end = j; break; }
+      }
+      out.push({ file, job, line: i + 1, body: lines.slice(i, end) });
+    }
+  }
+  return out;
+}
+
+/** Is this job pinned to environment `alerts`? Both spellings YAML allows. */
+function inAlerts(job) {
+  for (let i = 0; i < job.body.length; i++) {
+    if (/^\s+environment:\s*alerts\s*$/.test(job.body[i])) return true;
+    if (/^\s+environment:\s*$/.test(job.body[i]) && /^\s+name:\s*alerts\s*$/.test(job.body[i + 1] ?? "")) return true;
+  }
+  return false;
+}
+
+const code = (job) => job.body.filter((l) => !l.trim().startsWith("#"));
+const where = (job) => `${job.file}:${job.line} (job ${job.job})`;
 
 test("there are workflows to check at all", () => {
   assert.ok(files.length >= 5, `only ${files.length} workflow(s) found; this suite would prove nothing`);
@@ -172,4 +221,165 @@ test("ingest's manual dispatch takes no inputs", () => {
     "",
     "a no-input dispatch runs the drain and the backstop; inputs let a caller aim one run at one release",
   );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Environment `alerts` (registry plan RC-R1-0; BOT-46, BOT-85).
+//
+// `alerts` holds the only credential in this repository that reaches a person:
+// the registry's own Telegram bot token, the two chat ids, and one whole ping
+// URL per dead-man check. BOT-46's rule is that the credential sits in an
+// environment admitting only `main`, in jobs that run no submitter code — and
+// "no submitter code" is not a property a reviewer can check by reading a job
+// once, because the way it stops being true is a step added later.
+//
+// So the shape is asserted instead: an alert job reads a verdict its own
+// workflow computed, sends it, posts a heartbeat, and can do nothing else. It
+// cannot write to the repository, cannot mint an OIDC token, cannot pull an
+// artifact or a cache (both are bytes another job produced, and a cache is
+// bytes a pull request can poison), and cannot read the releases feed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ALERTS_FORBIDDEN = [
+  [/:\s*write\s*$/, "a write permission; an alert job commits nothing and mints no token"],
+  [/actions\/download-artifact/, "an artifact download; those are bytes another job produced"],
+  [/actions\/cache/, "a cache; a cache is bytes a pull request can poison"],
+  [/releases\.atom/, "the releases feed, which is a stranger's bytes"],
+  [/secrets\.GITHUB_TOKEN|github\.token/, "the GitHub token"],
+  [/^\s+token:\s*\S/, "a `token:` input"],
+];
+
+test("every job in environment `alerts` can do nothing but alert", () => {
+  const alertJobs = allJobs().filter(inAlerts);
+  // The floor, written before the mutation: with none found, every loop below
+  // runs over nothing and the whole section is green about a rule it never
+  // applied.
+  assert.ok(alertJobs.length >= 1, "no job in environment `alerts` was found; this section would prove nothing");
+
+  const offenders = [];
+  for (const job of alertJobs) {
+    code(job).forEach((line, i) => {
+      for (const [pattern, what] of ALERTS_FORBIDDEN) {
+        if (pattern.test(line)) offenders.push(`${job.file}:${job.line + i} (job ${job.job}) holds ${what}`);
+      }
+    });
+  }
+  assert.equal(offenders.join("\n"), "", "a job holding the alarm channel's credential can do more than alert");
+});
+
+test("an `alerts` job maps the channel's secrets and no ping URL that is not its own", () => {
+  // An environment secret is not ambient: a job reads one only where it names
+  // it. That makes the `env:` block of an alert job an exact statement of what
+  // that job can reach, and the statement has to be the minimum. A job that
+  // mapped a second check's URL would be a job whose compromise silences a
+  // check it never posts to — which is attack M-5 one level down from the base
+  // URL this estate refused, and the reason `ASTRA_DEADMAN_URL_*` is one
+  // secret per check rather than one per repository.
+  const known = new Set(alertsEnvironmentSecrets());
+  const problems = [];
+  for (const job of allJobs().filter(inAlerts)) {
+    const named = new Set([...code(job).join("\n").matchAll(/secrets\.([A-Z0-9_]+)/g)].map((m) => m[1]));
+    for (const secret of ["ASTRA_ALERT_TELEGRAM_TOKEN", "ASTRA_ALERT_CHAT_ID", "ASTRA_ALERT_COPY_CHAT_ID"]) {
+      if (!named.has(secret)) {
+        problems.push(`${where(job)} never maps ${secret}, so every run of it is red on a secret it could have had`);
+      }
+    }
+    for (const secret of named) {
+      if (!known.has(secret)) {
+        problems.push(`${where(job)} maps ${secret}, which is not a secret environment \`alerts\` holds`);
+      }
+    }
+  }
+  assert.equal(problems.join("\n"), "", "an alert job's credentials are not the ones it needs, or are more");
+});
+
+test("every job that calls the alert action is in `alerts` and names checks that exist", () => {
+  const registryChecks = new Set(CHECKS.filter((c) => c.party === "registry").map((c) => c.name));
+  const problems = [];
+  let callers = 0;
+  for (const job of allJobs()) {
+    const body = code(job).join("\n");
+    if (!/uses:\s*\.\/\.github\/actions\/alert\s*$/m.test(body)) continue;
+    callers++;
+    // Without the environment the three secrets are simply absent, every run
+    // is red, and the reason is a line nobody wrote rather than a line
+    // somebody deleted.
+    if (!inAlerts(job)) problems.push(`${where(job)} calls the alert action outside environment \`alerts\``);
+    const named = new Set([...body.matchAll(/secrets\.([A-Z0-9_]+)/g)].map((m) => m[1]));
+    // `ack-check` is counted for the secrets it needs and NOT for the rule
+    // below. They are different questions: BOT-86's start signal says an alarm
+    // went out, and a BOT-85 heartbeat says this job ran. Counting them
+    // together is how the first version of this passed with the drill's own
+    // `check:` deleted — the job still "named a check", and the one workflow
+    // whose silence nothing else watches would have posted no heartbeat at
+    // all.
+    const main = [...body.matchAll(/^\s+check:\s*([a-z0-9-]+)\s*$/gm)].map((m) => [m[1], ["success"]]);
+    const wants = [
+      ...main,
+      ...[...body.matchAll(/^\s+ack-check:\s*([a-z0-9-]+)\s*$/gm)].map((m) => [m[1], ["success", "start"]]),
+    ];
+    // Exactly one of a check and a reason there is none. An alert job that
+    // posts no heartbeat is invisible — the receiver has nothing to be silent
+    // about — so the omission is a sentence somebody wrote, not an empty
+    // input. `ingest.yml` is the case that exists: BOT-51's schedule is
+    // deliberately outside BOT-85's list because the service's BOT-47 watches
+    // it.
+    const excused = /^\s+no-heartbeat-because:\s*\S/m.test(body);
+    if (main.length === 0 && !excused) {
+      problems.push(`${where(job)} calls the alert action and names neither a receiver check nor a reason it posts none`);
+    }
+    if (main.length > 0 && excused) {
+      problems.push(`${where(job)} names a receiver check and a reason it posts no heartbeat; it can mean only one`);
+    }
+    for (const [check, signals] of wants) {
+      if (!registryChecks.has(check)) {
+        problems.push(`${where(job)} posts to ${check}, which bot/lib/alert-checks.mjs does not list as this repository's`);
+        continue;
+      }
+      for (const signal of signals) {
+        const secret = secretName(check, signal);
+        if (!named.has(secret)) problems.push(`${where(job)} posts ${signal} to ${check} and never maps ${secret}`);
+      }
+    }
+  }
+  assert.ok(callers >= 1, "nothing calls the alert action; this check would prove nothing");
+  assert.equal(problems.join("\n"), "", "an alert job cannot reach the check it says it posts to");
+});
+
+test("the alert action itself reaches for nothing an `alerts` job may not hold", () => {
+  // The composite action runs INSIDE those jobs, so a step added here has
+  // every permission the job has. It is also in TRUST-31's hashed set (§2.4)
+  // precisely because it outputs the `delivered_at` TRUST-32 gates publication
+  // on, and a change to it that did not return bot calls to shadow is what
+  // that set exists to prevent.
+  const file = path.join(REPO, ".github", "actions", "alert", "action.yml");
+  const src = fs.readFileSync(file, "utf8");
+  const offenders = [];
+  src.split("\n").forEach((line, i) => {
+    if (line.trim().startsWith("#")) return;
+    for (const [pattern, what] of ALERTS_FORBIDDEN) {
+      if (pattern.test(line)) offenders.push(`.github/actions/alert/action.yml:${i + 1} holds ${what}`);
+    }
+  });
+  assert.equal(offenders.join("\n"), "", "the step every alert job calls can do more than alert");
+
+  // The order that makes the two paths to a person independent. If the
+  // heartbeat went first, a job that then could not deliver its alarm would
+  // already have told the receiver everything was fine.
+  //
+  // Keyed on the EXACT line that posts the caller's own check, and asserted to
+  // appear once. The first spelling of this looked for the last occurrence of
+  // `node bot/heartbeat.mjs --check` and was beaten by the mutation it was
+  // written for: moving that step to the top leaves BOT-86's `--signal start`
+  // line, which is also a heartbeat call and also sits after the alarm, as the
+  // last match. Green, with the heartbeat first.
+  const BEAT = 'node bot/heartbeat.mjs --check "$ASTRA_ALERT_CHECK"';
+  assert.equal(src.split(BEAT).length - 1, 1,
+    "the step that posts this check's heartbeat is not in this file exactly once, so the order below is being " +
+    "read off the wrong line");
+  const alarmAt = src.indexOf("node bot/alert.mjs --verdict");
+  assert.ok(alarmAt > 0, "nothing in the alert action sends an alarm");
+  assert.ok(src.indexOf(BEAT) > alarmAt,
+    "BOT-85's heartbeat must be posted after the alarm, so a channel that is broken takes the receiver's path " +
+    "down with it instead of certifying a run that paged nobody");
 });
