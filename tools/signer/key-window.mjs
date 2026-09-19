@@ -47,6 +47,27 @@
 // it, and leaving the compromised key's last bytes served. The cost of the
 // waiver is one refused catalogue fetch on a client that has not refreshed
 // trust.json yet; the cost of not waiving it is that the repair does not land.
+//
+// ── what the detector cannot tell apart, said before it matters ─────────────
+//
+// **A planned retirement has the same shape as a compromise.** SERVE-30 keeps
+// the outgoing key signing until R9b — now right after R5 (OPEN-OWNER-27) — and
+// the trust.json that ends that overlap also drops a key the head delegated. So
+// this code will call R9b's retirement a compromise. One half of that is
+// harmless: waiving a window for a key delegated months ago changes nothing.
+// The other half is not. On that day a catalogue whose gates fail is BLOCKED
+// rather than carried, and a blocked run publishes no withdrawal list either
+// (D2: a commit holds all four documents).
+//
+// It is left this way rather than guessed at, for two reasons. D10 is a
+// PROPOSAL and OPEN-OWNER-25's compromise half is the one open item R1 waits
+// on (RC-R1-10(c)) — narrowing the detector now would be answering the owner's
+// question on his behalf. And the precise invariant is already written, below,
+// as `refusesDroppedKey`: a carried catalogue that still verifies against the
+// candidate trust.json is safe, which is exactly the R9b case, because the head
+// is dual-signed by then. Whoever answers OPEN-OWNER-25 can replace "no carry
+// in compromise mode" with "no carry that fails `refusesDroppedKey`" in one
+// line, and the R9b case stops being special. Do not do it before the answer.
 
 import { REVOCATIONS_SCHEMA, INDEX_SCHEMA, verifyEnvelope, publicKeyFromBase64 } from "../../bot/lib/sign.mjs";
 import { blobAt, gitMaybe, gitText } from "./git.mjs";
