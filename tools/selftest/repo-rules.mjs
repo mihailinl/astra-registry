@@ -300,4 +300,64 @@ export async function run() {
     const stray = all.filter((h) => !h.startsWith("docs/RUNBOOK.md:"));
     assertEqual(stray.join(", "), "", "a file other than the runbook still points at revoke.yml");
   });
+
+  // The guards that watch this suite for shrinking cannot be deleted quietly.
+  //
+  // A split of a library and a split of a TEST file fail differently. A module
+  // of a library that stops being imported takes ten call sites down with it. A
+  // module of a suite that stops being imported takes nothing down: the run is
+  // shorter, every remaining check still passes, and the last line still says
+  // PASS — about less. So `tools/selftest.mjs` carries `checkModuleSet()` and
+  // `shrinkage()`, and they are in the RUNNER rather than in a module here
+  // because a guard against modules disappearing must not be one of the things
+  // that can disappear.
+  //
+  // Which leaves the ordinary hole: nothing was watching the runner. Deleting
+  // two calls out of a 113-line file is a small, green, reviewable diff, and
+  // this repository's two worst bugs were both small green reviewable diffs.
+  //
+  // So it is an interlock, not a chain. This test cannot be dropped without
+  // `checkModuleSet` reporting repo-rules.mjs unimported; `checkModuleSet` and
+  // `shrinkage` cannot be dropped without this going red. Textual, because the
+  // runner is a script with nothing to import: it asserts the calls are made,
+  // not what they do. What they do was watched failing, three mutations, in the
+  // message of the commit that added them.
+  await test("the runner still runs the guards that catch a suite getting smaller", async () => {
+    const runner = fs.readFileSync(path.join(REPO_ROOT, "tools", "selftest.mjs"), "utf8");
+    // Occurrences rather than an exact call spelling: each guard is written once
+    // and called at least once, so fewer than two means it is defined and never
+    // reached — or gone. Counting this way survives the arguments being renamed,
+    // which a literal `shrinkage(silent, ...)` needle would not.
+    const unreached = ["checkModuleSet", "shrinkage"].filter(
+      (g) => runner.split(`${g}(`).length - 1 < 2,
+    );
+    assertEqual(unreached.join(", "), "",
+      "a runner guard is defined and never called, or no longer there; a suite that runs fewer modules still prints PASS");
+
+    // The floor is a number, and a number can be edited down to nothing by
+    // somebody clearing a red build. So it is bounded from underneath by
+    // something derived rather than written: the `await test(` call sites on
+    // disk. That count is an undercount — sites inside a `for` print once per
+    // iteration, and the vendored vector tests add their own on top — which is
+    // exactly why it is safe as a LOWER bound and would be wrong as an equality.
+    // Counting them and comparing to the printed names was the first version of
+    // this rule and was thrown away for that reason: it cannot tell a loop from
+    // a lost test.
+    // Anchored at the start of a line, which is where a call site is and where
+    // prose about one is not: this comment says `await test(` three times and
+    // the counter must not find itself. Measured both ways when it was written —
+    // unanchored it counted 137 and there are 133, and an over-count is the one
+    // direction a lower bound must never drift, since it would push the floor
+    // above the real suite and go red on a green tree.
+    const dir = path.join(REPO_ROOT, "tools", "selftest");
+    let sites = 0;
+    for (const name of fs.readdirSync(dir).filter((n) => n.endsWith(".mjs"))) {
+      sites += (fs.readFileSync(path.join(dir, name), "utf8").match(/^[ \t]*await test\(/gm) ?? []).length;
+    }
+    assert(sites >= 100,
+      `only ${sites} \`await test(\` sites found under tools/selftest/; the bound below is being read off a broken walk, not off the suite`);
+    const floor = Number(/^const TEST_FLOOR = (\d+);$/m.exec(runner)?.[1] ?? -1);
+    assert(floor >= sites,
+      `tools/selftest.mjs sets TEST_FLOOR to ${floor} and there are ${sites} \`await test(\` sites on disk, so the floor is below the suite and cannot fail`);
+  });
 }

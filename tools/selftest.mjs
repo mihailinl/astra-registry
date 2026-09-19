@@ -89,6 +89,27 @@ function checkModuleSet() {
   const missing = onDisk.filter((n) => !imported.includes(n));
   const phantom = imported.filter((n) => !onDisk.includes(n));
   const problems = [];
+  // A floor on the WALK, because everything below it compares two lists and two
+  // empty lists agree. If the readdir stops finding anything — the directory
+  // renamed, the `.mjs` filter outlived the extension, this file executed from
+  // somewhere its own dirname does not resolve from — `missing` is empty and the
+  // check reads as a clean bill of health. `phantom` happens to catch the empty
+  // walk today, but only because the import list is not empty, and that is a
+  // property of the other side of the comparison rather than of this one.
+  //
+  // 18 on 2026-09-19 — fifteen test modules and three fixture ones — and the
+  // floor is 10, not 18, deliberately. Retiring a module is a legitimate act and
+  // this line is not the inventory: TEST_FLOOR below is, and it counts the thing
+  // that actually matters. Set at 18 this would go red on an honest deletion,
+  // get read as noise, and be the first number somebody lowers to zero. Ten is
+  // the number below which the walk has stopped working rather than the suite
+  // having stopped having modules.
+  if (onDisk.length < 10) {
+    problems.push(
+      `the walk of tools/selftest/ found ${onDisk.length} .mjs files and there were 18 on 2026-09-19; ` +
+      `this is a broken walk, not a smaller suite, and every comparison below it would have passed`,
+    );
+  }
   if (duplicated.length) problems.push(`imported twice, so its names print twice: ${duplicated.join(", ")}`);
   if (missing.length) problems.push(`in tools/selftest/ and never imported, so its tests do not run: ${missing.join(", ")}`);
   if (phantom.length) problems.push(`imported and not in tools/selftest/: ${phantom.join(", ")}`);
@@ -99,15 +120,64 @@ function checkModuleSet() {
   }
 }
 
+// Two ways the suite gets smaller that checkModuleSet cannot see, because in
+// both of them the directory and the import list still agree with each other:
+//
+//   - a module that is imported, and runs, and tests nothing — a rewrite that
+//     lost the body of `run()`, an early `return`, a `for` over an empty list;
+//   - a module deleted from tools/selftest/ AND from the list above in one
+//     commit, which is two consistent lists and fewer checks.
+//
+// The first is caught per module and reported BY NAME, which is the one thing
+// the split bought here: before it there was one file and no boundary to stand
+// on, so an emptied section was only ever a number that had drifted.
+//
+// The second is caught by the total, and the total is a FLOOR rather than an
+// equality on purpose. Ten wave-1 tasks write into this suite and all of them
+// add tests; an exact count would send every one of them to edit this line,
+// which is the queue the split existed to remove. A floor never fires on growth,
+// so it costs the ten nothing and still goes red the day a check is lost.
+//
+// 166 on 2026-09-19: the 165 this split was proved against, plus the interlock
+// test added with these guards. Measured, not estimated —
+// `node tools/selftest.mjs | grep -c '^  ok'`.
+const TEST_FLOOR = 166;
+
+function shrinkage(silentModules, total) {
+  const out = [];
+  if (silentModules.length) {
+    out.push(
+      `${silentModules.join(", ")} reported no test at all — imported, so the module set is intact, and empty`,
+    );
+  }
+  if (total < TEST_FLOOR) {
+    out.push(
+      `${total} tests reported, and there were ${TEST_FLOOR} on 2026-09-19; ` +
+      `a floor only moves down when checks stop running`,
+    );
+  }
+  return out;
+}
+
 checkModuleSet();
 
-for (const [, mod] of MODULES) await mod.run();
+const reported = () => {
+  const r = results();
+  return r.passed + r.failures.length;
+};
+
+const silent = [];
+for (const [name, mod] of MODULES) {
+  const before = reported();
+  await mod.run();
+  if (reported() === before) silent.push(name);
+}
 
 cleanupTmp();
 
 const { passed, failures } = results();
-console.log(`\n${failures.length === 0 ? "PASS" : "FAIL"}  ${passed} passed, ${failures.length} failed`);
-if (failures.length) {
-  for (const f of failures) console.log(`      - ${f}`);
-  process.exit(1);
-}
+const shortfalls = shrinkage(silent, passed + failures.length);
+console.log(`\n${failures.length === 0 && shortfalls.length === 0 ? "PASS" : "FAIL"}  ${passed} passed, ${failures.length} failed`);
+for (const f of failures) console.log(`      - ${f}`);
+for (const s of shortfalls) console.log(`      - the suite is smaller than it was: ${s}`);
+if (failures.length || shortfalls.length) process.exit(1);
