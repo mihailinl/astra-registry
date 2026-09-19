@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://registry.astra.app/schema/hold-record-v1.json",
+  "title": "astra.registry.hold-record/1",
+  "description": "state/holds/<service_decision_id>.confirm.json and .cancel.json — the operator's answer to a hold (MOD-52). REGISTRY-ONLY. Written by .github/workflows/operator.yml and by nothing else: MOD-52 accepts a confirmation only from a dispatch of that workflow by an admin or maintainer, and the `operator` environment (RC-R0-3a) is what pins it to `main`, because the role check lives in the tree at whatever ref the dispatcher chose.\n\nTHERE IS NO ACKNOWLEDGEMENT ACT HERE, DELIBERATELY. A TRUST-42 acknowledgement at the service is not an operator's confirmation and must never release a hold (BOT-32's 0.12.0 note); `act` is a closed enum of two so that a third value cannot be introduced by a file rather than by a decision.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "act", "service_decision_id", "at"],
+  "properties": {
+    "$comment": { "type": "string" },
+    "schema": { "const": "astra.registry.hold-record/1" },
+    "act": {
+      "$comment": "`confirm` releases the kinds that a confirmation can release — and NOT `unbound_yank`, which no confirmation ever reaches. `cancel` ends any hold, including that one.",
+      "enum": ["confirm", "cancel"]
+    },
+    "service_decision_id": {
+      "$comment": "The decision this record answers. It must equal the hold entry's, and holds.mjs matches on it and on nothing else. Matching on the plugin instead would let one confirmation release every held decision against the same listing, which is precisely the blast radius TRUST-26's bound exists to cap.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "plugin_id": {
+      "$comment": "A convenience for the person reading `state/holds/` — the id is opaque and the listing is not. NOT a matching key: see `service_decision_id`. bot/tests/holds.test.mjs watches this by matching on it and showing what that releases.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+    },
+    "run": {
+      "$comment": "The `operator.yml` run that wrote it. Nothing in git separates a legitimate dispatch from a branch dispatch except this URL and the environment that refused the branch one before it started (attack B-2), so it is worth recording even though nothing decides on it.",
+      "type": "string",
+      "pattern": "^https://"
+    },
+    "actor": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "reason": { "type": "string", "maxLength": 300 }
+  }
+}
