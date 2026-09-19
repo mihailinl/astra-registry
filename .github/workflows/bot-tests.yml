@@ -170,6 +170,16 @@ jobs:
       - name: The historic export, against the comments the bot actually posts
         run: node bot/tests/export-issues.test.mjs
 
+      # RC-R1-0. The alarm channel and the dead-man heartbeat, against a
+      # loopback stub. Half of it asks that a working channel works; the half
+      # that matters asks what happens when a secret is missing, the Bot API
+      # answers non-2xx or `ok: false`, or a 2xx carries no `result.date` —
+      # every one of those has to be a non-zero exit with no `delivered_at`,
+      # because an alarm that could not be sent looks exactly like nothing
+      # having gone wrong.
+      - name: The alarm channel, and every way it can fail to be one
+        run: node bot/tests/alert.test.mjs
+
       - name: The moderation records, against their own schema
         run: node bot/moderation.mjs --check
 

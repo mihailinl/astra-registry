@@ -1,0 +1,185 @@
+# The one step every `alert` job calls (registry plan RC-R1-0).
+#
+# Four things happen here, in an order that is the whole point:
+#
+#   1. the two scripts are actually present;
+#   2. environment `alerts` carries the three channel secrets — asked on EVERY
+#      run, green or red;
+#   3. the alarm, if the verdict is red, and the start signal for BOT-86's
+#      acknowledgement check in the same step as the alarm it is about;
+#   4. BOT-85's heartbeat, LAST.
+#
+# **Why the heartbeat is last, and never first.** The heartbeat tells the
+# dead-man receiver that this check ran and is healthy; silence at the receiver
+# is what pages a person when GitHub is the thing that failed. If the heartbeat
+# went first, a job that then could not deliver its alarm would have already
+# told the receiver everything was fine: the run goes red where nobody is
+# looking, the receiver stays quiet, and the estate's two independent paths to
+# a person have been collapsed into one by the order of two steps. Last means a
+# channel that is broken takes the receiver's path down with it, and the
+# receiver pages on silence within the check's bound.
+#
+# **Why step 2 runs on green runs too.** A missing `ASTRA_ALERT_TELEGRAM_TOKEN`
+# is invisible on a green run: nothing was going to be sent anyway. Left
+# unasked, the first run that discovers the channel is unreachable is the run
+# that needed it. Asked every time, the answer arrives on the first scheduled
+# run after the secret is lost, in a red job, with the name of the secret in
+# it. This is also what `main` looks like until the owner performs §2.12's R1
+# act — every alert job red, every run, saying which secret is missing. That is
+# the intended state and not a defect to route around: an estate with no alarm
+# channel must not be indistinguishable from an estate with nothing to report.
+#
+# This action is inside TRUST-31's hashed set (§2.4) precisely because it
+# outputs the `delivered_at` that TRUST-32 gates publication on: a registry
+# writer who could change what an ingest run reports as delivered, without bot
+# calls returning to shadow, is the thing TRUST-31 exists to prevent.
+#
+# **The calling job, in full.** Two things about it are not optional and both
+# are checked by `bot/tests/workflows.test.mjs`: the environment, without which
+# the secrets are simply absent and every run is red; and the `env:` block,
+# because an environment secret is not ambient — a job sees one only where it
+# says so. The block lists the three channel secrets and the whole ping URL of
+# each check THIS job posts to, and nothing else.
+#
+#     alert:
+#       needs: check
+#       if: always() && !cancelled()
+#       runs-on: ubuntu-24.04
+#       environment: alerts
+#       permissions:
+#         contents: read
+#       env:
+#         ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+#         ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+#         ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+#         ASTRA_DEADMAN_URL_SERVED_SET: ${{ secrets.ASTRA_DEADMAN_URL_SERVED_SET }}
+#       steps:
+#         - uses: actions/checkout@v4
+#           with:
+#             ref: ${{ github.sha }}
+#             sparse-checkout: |
+#               .github/actions/alert
+#               bot/alert.mjs
+#               bot/heartbeat.mjs
+#               bot/lib/alert-verdict.mjs
+#               bot/lib/alert-checks.mjs
+#               tools/lib/ids.mjs
+#             sparse-checkout-cone-mode: false
+#         - … write verdict.json from the checking job's outputs …
+#         - uses: ./.github/actions/alert
+#           with:
+#             verdict: verdict.json
+#             check: served-set
+
+name: Alert and heartbeat
+description: >-
+  Send a grammar-checked verdict to the owner's alarm chat with a copy to
+  KNICE, and post the check's BOT-85 heartbeat to the dead-man receiver.
+
+inputs:
+  verdict:
+    description: Path to the verdict JSON this job wrote (astra.registry.alert-verdict/1).
+    required: true
+  check:
+    description: >-
+      The receiver check this job posts its heartbeat to. Must be a registry
+      check named in bot/lib/alert-checks.mjs. Exactly one of this and
+      `no-heartbeat-because` is given.
+    required: false
+    default: ''
+  no-heartbeat-because:
+    description: >-
+      Why this alert job posts no BOT-85 heartbeat. §2.0 says every SCHEDULED
+      check posts one, and most alert jobs are scheduled — but some are not,
+      and some are watched by another party. `ingest.yml` is the named case:
+      BOT-51's schedule is deliberately absent from BOT-85's list because the
+      plugins service's BOT-47 watches it, so an `alerts` job there would be
+      posting to a check nobody meant to create. The omission is written down
+      with its reason rather than inferred from an empty input, because an
+      absent heartbeat is invisible and a reason is not.
+    required: false
+    default: ''
+  ack-check:
+    description: >-
+      Optional. A receiver check to send a START signal to, in the same step as
+      the alarm. Only BOT-86's weekly drill uses it, with `alarm-ack`.
+    required: false
+    default: ''
+
+outputs:
+  delivered_at:
+    description: The Bot API's message time for the owner's chat (TRUST-14, TRUST-32), or empty.
+    value: ${{ steps.alarm.outputs.delivered_at }}
+  alerted:
+    description: Whether an alarm was sent, as `true` or `false`.
+    value: ${{ steps.alarm.outputs.alerted }}
+
+runs:
+  using: composite
+  steps:
+    # A sparse checkout that forgot a path fails four lines later with a Node
+    # resolver error about a file nobody asked for. Saying it here costs one
+    # step and names the checkout instead.
+    - name: The scripts this step runs are actually here
+      shell: bash
+      run: |
+        set -euo pipefail
+        missing=()
+        for f in bot/alert.mjs bot/heartbeat.mjs bot/lib/alert-verdict.mjs bot/lib/alert-checks.mjs tools/lib/ids.mjs; do
+          [ -f "$f" ] || missing+=("$f")
+        done
+        if [ ${#missing[@]} -ne 0 ]; then
+          echo "::error::this job's sparse checkout is missing ${missing[*]}; the alert step cannot run"
+          exit 1
+        fi
+        if [ ! -f "${{ inputs.verdict }}" ]; then
+          echo "::error::no verdict at ${{ inputs.verdict }}; the job that calls this step writes one before it"
+          exit 1
+        fi
+
+    - name: Environment `alerts` can reach a person at all
+      shell: bash
+      run: node bot/alert.mjs --check-credentials
+
+    - name: The alarm, and BOT-86's start signal with it
+      id: alarm
+      shell: bash
+      env:
+        ASTRA_ALERT_VERDICT: ${{ inputs.verdict }}
+        ASTRA_ALERT_ACK_CHECK: ${{ inputs.ack-check }}
+      run: |
+        set -euo pipefail
+        if [ -n "$ASTRA_ALERT_ACK_CHECK" ]; then
+          node bot/alert.mjs --verdict "$ASTRA_ALERT_VERDICT" --if-red --ack
+        else
+          node bot/alert.mjs --verdict "$ASTRA_ALERT_VERDICT" --if-red
+        fi
+        # The start signal follows a DELIVERED alarm, in this same step, and
+        # not before it. BOT-86 escalates to KNICE 48 hours after a start with
+        # no acknowledgement; starting the clock for an alarm that never
+        # arrived would page the second responder about an unacknowledged
+        # message nobody was sent. If the alarm did not deliver, the line above
+        # already failed this step.
+        if [ -n "$ASTRA_ALERT_ACK_CHECK" ]; then
+          node bot/heartbeat.mjs --check "$ASTRA_ALERT_ACK_CHECK" --signal start
+        fi
+
+    - name: BOT-85's heartbeat, after the channel proved it works
+      shell: bash
+      env:
+        ASTRA_ALERT_CHECK: ${{ inputs.check }}
+        ASTRA_ALERT_NO_HEARTBEAT: ${{ inputs.no-heartbeat-because }}
+      run: |
+        set -euo pipefail
+        if [ -n "$ASTRA_ALERT_CHECK" ] && [ -n "$ASTRA_ALERT_NO_HEARTBEAT" ]; then
+          echo "::error::this job names both a check and a reason not to post one; it can mean only one"
+          exit 1
+        fi
+        if [ -n "$ASTRA_ALERT_CHECK" ]; then
+          node bot/heartbeat.mjs --check "$ASTRA_ALERT_CHECK"
+        elif [ -n "$ASTRA_ALERT_NO_HEARTBEAT" ]; then
+          echo "ok    no BOT-85 heartbeat from this job: $ASTRA_ALERT_NO_HEARTBEAT"
+        else
+          echo "::error::this job names neither a receiver check nor a reason it posts no heartbeat"
+          exit 1
+        fi
