@@ -14,6 +14,51 @@ import { REPO_ROOT } from "../lib/sources.mjs";
 import { test, assert, assertEqual, walkRepo, grepRepo, isSuiteFile } from "./harness.mjs";
 
 export async function run() {
+  // Every rule below that scans the repository asks `walkRepo`, and `walkRepo`
+  // answers with a list. A skip in its exclusion list does not make a rule fail
+  // — it makes the rule find nothing, which is the same output as compliance.
+  // **An exclusion is a refusal that every caller reads as "nothing to check
+  // here", and the condition is a name in a list one word long.** Watched: one
+  // word, `|| e.name === ".github"`, and every workflow-shape rule below passes
+  // vacuously — `PASS`, exit 0, the same 166 names, while a planted
+  // `maintainer as required reviewer` in a workflow goes unseen.
+  //
+  // This is what the split created rather than inherited, and it is the reason
+  // it is guarded now. Before 2026-09-19 the walk and the rules that use it were
+  // one file: widening the skip list and weakening a rule were the same edit, in
+  // front of the same reviewer. `walkRepo` now lives in harness.mjs and eighteen
+  // modules depend on it, so the two are far apart and only one of them looks
+  // like a change to a check. The generalisation is minice-be's, from an SSRF
+  // that lived in neither of the two careful functions that composed it: **when
+  // a split preserves each unit's behaviour, the thing to attack is the
+  // composition.** Byte-identical test bodies and a byte-identical transcript
+  // say nothing about the seam the split just made.
+  //
+  // The floors are what the walk reached on 2026-09-19, halved and rounded down
+  // so honest deletion does not fire them. They are not an inventory: the
+  // question each one asks is "is this area still being looked at at all".
+  await test("the walk still reaches every area the rules below are about", () => {
+    const seen = walkRepo().map((f) => path.relative(REPO_ROOT, f));
+    const AREAS = [
+      [".github/workflows", 4, "every workflow-shape rule — one signer, no required reviewer, the publish guard"],
+      ["bot", 150, "the plugin-id and policy-surface scans"],
+      ["tools", 30, "the id and tag scans: the modules they are about live here too"],
+      ["docs", 2, "the runbook rules, including the one that allows revoke.yml only there"],
+      ["policy", 2, "the reserved-id and limits rules"],
+      ["schema", 2, "the schema-versus-module comparisons"],
+    ];
+    const blind = [];
+    for (const [dir, floor, whatGoesVacuous] of AREAS) {
+      const n = seen.filter((r) => r.startsWith(`${dir}${path.sep}`)).length;
+      if (n < floor) blind.push(`${dir}: ${n} files, floor ${floor} — ${whatGoesVacuous} now passes by finding nothing`);
+    }
+    assertEqual(blind.join("; "), "",
+      "walkRepo no longer reaches somewhere the rules are about, so those rules are green because they are blind");
+    assert(seen.length >= 300,
+      `the walk returned ${seen.length} files and returned 633 on 2026-09-19; this is a broken walk rather than a ` +
+      `smaller repository, and every scan below it would have passed`);
+  });
+
   // ─────────────────────────────────────────────────────────────────────────────
   // R0: the properties that kept this repository from having two signers, and
   // from saying things about itself that were not true (registry plan RC-R0-1).
