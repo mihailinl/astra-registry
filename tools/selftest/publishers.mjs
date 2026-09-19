@@ -238,6 +238,104 @@ export async function run() {
       "policy/reserved-ids.json admits everybody; the prefix is no longer reserved");
   });
 
+  // The other two files that can hand the freed login something, and until this
+  // test neither was read by anything: the containment above is three guards
+  // over `policy/reserved-ids.json` alone, and `policy/reserved-ids.json`'s own
+  // note leans on both of these ("E_TRADEMARK refuses any astra- release from a
+  // KNICE-TECH repository") without anything checking that they still say so.
+  //
+  //   - `bot/policy/trademarks.json`'s `allow_repo_owners` is the knob that lets
+  //     a mark's real owner list under it, matched against the repository owner
+  //     login. `astra` is a mark. An entry for the freed login there is not a
+  //     narrow exception, it is the whole `astra-` namespace handed to whoever
+  //     registers the name on GitHub — the second of the three guards above,
+  //     refusing `KNICE-TECH/anything` the `astra-` prefix at validate time,
+  //     would still hold and ingest would admit the release anyway, because the
+  //     two rules are different files read by different halves;
+  //   - a `publishers/*.json` `owner` or `covers` entry is a verified badge
+  //     keyed on the owner half of `source.repo`. `KnlCE.json`'s `covers` said
+  //     `KNICE-TECH` until 2026-09-12 and was moved to `MINICE-AI` by hand when
+  //     the organisation was renamed, so this is not a hypothetical edit: it is
+  //     the edit being undone. Moved back, every listing published from a
+  //     repository under a login anybody can register wears Astra's own
+  //     `astra_team` badge.
+  //
+  // Read off the committed files rather than off `loadPublishers`, which skips a
+  // record it rejects: a publishers file that fails the owner/file-name rule
+  // still ships in the tree, and the question here is what the tree says, not
+  // what the index builder was willing to key on.
+  await test("the freed login KNICE-TECH has no trademark allowance and no publisher record", () => {
+    const FREED = "knice-tech";
+
+    const tm = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "bot/policy/trademarks.json"), "utf8"));
+    // Floors first, because every assertion below is a walk and an empty walk
+    // passes. A `marks` list that stopped parsing, or an `allow_repo_owners`
+    // that lost its `astra` key in a bad merge, would make this test green by
+    // having nothing to look at — and the `astra` key is the one whose contents
+    // this test exists to police, so its disappearance must be loud rather than
+    // convenient. 55 marks and two allowed owners on 2026-09-19.
+    assert(Array.isArray(tm.marks) && tm.marks.length >= 50,
+      `bot/policy/trademarks.json parsed ${Array.isArray(tm.marks) ? tm.marks.length : "no"} marks and there were 55 ` +
+      `on 2026-09-19; this is a broken read of the policy, not a shorter list, and the allowance walk below would pass on it`);
+    const astraAllow = tm.allow_repo_owners?.astra;
+    // The `astra` floor is two assertions and not one, because the single
+    // `Array.isArray(x) && x.length >= 1` it replaces said the WRONG THING
+    // about the one case it most has to be right about. Watched on this tree:
+    // `"astra": "KNICE-TECH"` — an entry that hands the freed login the whole
+    // mark — printed *"has no `astra` entry under allow_repo_owners; the mark
+    // this containment is about is no longer allowed to anybody"*. Red for the
+    // right reason and wrong in every word of why, which sends the reader to
+    // restore a first-party allowance that was never missing and to leave the
+    // takeover in the file.
+    assert(astraAllow !== undefined,
+      "bot/policy/trademarks.json has no `astra` entry under allow_repo_owners; the mark this containment is about " +
+      "is no longer allowed to anybody, which is either a first-party release broken or the file read wrong");
+    assert(Array.isArray(astraAllow) && astraAllow.length >= 1,
+      `bot/policy/trademarks.json's allow_repo_owners.astra is ${JSON.stringify(astraAllow)} and not a non-empty ` +
+      `list of logins; read the value, because the walk below is what decides who holds the mark`);
+
+    for (const [mark, owners] of Object.entries(tm.allow_repo_owners ?? {})) {
+      // `$comment` is how this file documents itself — `allow_ids` carries one
+      // — so a key that is one is not a mark, and an honest note added here
+      // must not be a red build.
+      if (mark.startsWith("$")) continue;
+      // The shape, before the walk over it. `for (const o of "KNICE-TECH")`
+      // yields eleven characters and not one of them is the login, so a mark
+      // whose value is a bare string is a walk this test passes by not being
+      // able to read it. Measured rather than reasoned: `"spotify":
+      // "KNICE-TECH"` added to allow_repo_owners left the suite at
+      // `PASS  168 passed, 0 failed`, this test green over a file handing the
+      // freed login a mark, while its own message below claims to speak for
+      // every mark in the object. Nothing else notices either — there is no
+      // `schema/trademarks-v1.json`, this file is validated by nothing, and
+      // `bot/lib/names.mjs:169` calls `.some()` on the value, so at ingest the
+      // same edit is a TypeError rather than a refusal.
+      assert(Array.isArray(owners),
+        `bot/policy/trademarks.json's allow_repo_owners.${mark} is ${JSON.stringify(owners)} and not a list of ` +
+        `logins; the freed-login walk below cannot read it, and bot/lib/names.mjs calls .some() on it at ingest`);
+      for (const owner of owners) {
+        assert(String(owner).toLowerCase() !== FREED,
+          `bot/policy/trademarks.json lets the freed login KNICE-TECH publish under the mark "${mark}"; the ` +
+          `organisation renamed to MINICE-AI and GitHub frees a renamed login, so whoever registers it gets ` +
+          `E_TRADEMARK's blessing for every "${mark}" name at ingest`);
+      }
+    }
+
+    const pubDir = path.join(REPO_ROOT, "publishers");
+    const pubFiles = fs.readdirSync(pubDir).filter((n) => n.endsWith(".json"));
+    assert(pubFiles.length >= 1,
+      "publishers/ holds no .json record at all; the covers walk below would pass by having nothing to read");
+    for (const name of pubFiles) {
+      const doc = JSON.parse(fs.readFileSync(path.join(pubDir, name), "utf8"));
+      const claims = [doc.owner, ...(Array.isArray(doc.covers) ? doc.covers : [])];
+      for (const claim of claims) {
+        assert(String(claim).toLowerCase() !== FREED,
+          `publishers/${name} claims the freed login KNICE-TECH as an owner or in covers; that paints its ` +
+          `${doc.tier ?? "publisher"} badge on every listing whose source.repo sits under a login anybody can register`);
+      }
+    }
+  });
+
   // A `verified` badge rests on a document that keeps saying the same thing. The
   // whole-line test is the part that matters: a page MENTIONING a login — a blog
   // post, a directory, somebody else's README — is not that person asserting it,
