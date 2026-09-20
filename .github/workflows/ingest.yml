@@ -377,12 +377,17 @@ jobs:
   #
   # **The `env:` block is not optional and is not ambient.** An environment
   # secret reaches a job only where the job names it. Without these three
-  # lines the environment is empty, `bot/alert.mjs --check-credentials` is red
-  # on every run for ever, and nothing about the file looks wrong — the same
-  # shape as a release workflow whose comment described a checkout step nobody
-  # wrote. No `ASTRA_DEADMAN_URL_*` is mapped, because this job posts to no
-  # receiver check and a job that mapped one could silence a check it never
-  # posts to.
+  # lines the environment is empty and nothing about the file looks wrong —
+  # the same shape as a release workflow whose comment described a checkout
+  # step nobody wrote. It used to be red on every run for ever, which was the
+  # second way of finding out; since 2026-09-19 it is not, because an empty
+  # environment is exactly what this repository looks like before §2.12's R1
+  # act and the alert action reports that state green. **So the only thing
+  # that now catches these three lines going missing is
+  # `bot/tests/workflows.test.mjs`**, which asserts that every job in `alerts`
+  # maps all three. No `ASTRA_DEADMAN_URL_*` is mapped, because this job posts
+  # to no receiver check and a job that mapped one could silence a check it
+  # never posts to.
   #
   # This is the job B-T3.1's `alert` grows into when `plugins-ingest.yml`
   # takes over: same environment, same credential, more verdicts to carry.

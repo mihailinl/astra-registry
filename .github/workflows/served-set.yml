@@ -33,10 +33,15 @@
 # inside a scheduled job on GitHub.
 #
 # Until the owner performs §2.12's R1 act — environment `alerts`, its secrets,
-# the receiver account — the `alert` job below is red on every run and says
-# which secret is missing. At four runs an hour that is loud, and it is the
-# intended state (RC-R1-0): an estate with no alarm channel must not be
-# indistinguishable from an estate with nothing to report.
+# the receiver account — the `alert` job below sends nothing, and since
+# 2026-09-19 it says so in a notice and stays GREEN. At four runs an hour, the
+# red it used to go was ninety-six a day about a state that has a named owner
+# act in front of it, which is not information: it is the training that makes
+# the next real alarm invisible. What must not happen — an estate with no alarm
+# channel looking like an estate with nothing to report — is held by
+# `alarm-drill.yml`, which asserts the channel exists and is red once a week
+# until it does. A channel that exists and is BROKEN is still red here, on
+# every run, naming the secret (RC-R1-0).
 
 name: Served set
 

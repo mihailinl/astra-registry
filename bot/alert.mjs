@@ -16,12 +16,21 @@
 // paths to a person, and the one that is left when the channel is the thing
 // that broke is the one that does not use the channel.
 //
-// Until the owner performs §2.12's R1 act — environment `alerts`, the
-// registry's own Telegram bot, the receiver account — that is the state of
-// `main`: every job with an `alert` step is red, on every run, naming the
-// secret it has not got. That is deliberate. The alternative reading, that a
-// missing secret should be a skip, is the reading that makes an estate with no
-// alarm channel indistinguishable from an estate with nothing to report.
+// That holds here whatever the caller is doing: this script never treats a
+// missing secret as a skip, because the reading that a missing secret is a
+// skip is the reading that makes an estate with no alarm channel
+// indistinguishable from an estate with nothing to report.
+//
+// **One state is decided one level up, and not here** (2026-09-19). Before the
+// owner performs §2.12's R1 act — environment `alerts`, the registry's own
+// Telegram bot, the receiver account — NONE of the three secrets exists, and
+// that is not the same fact as one of them having gone missing. The composite
+// action `.github/actions/alert/action.yml` is where the two are told apart:
+// all three absent is said out loud, once, and is green there; anything else
+// is this script's business and is red. `--check-credentials` still exits
+// non-zero on an empty environment, and `runAlert` still refuses to send with
+// a secret missing — the distinction is which job calls them, never what they
+// answer.
 //
 // **`delivered_at` is TRUST-32's value.** It is the message time the Bot API
 // reports (`result.date`) for the OWNER's chat, in §0.7's format, and it is

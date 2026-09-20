@@ -17,6 +17,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
+import { REQUIRED_SECRETS } from "../alert.mjs";
 import { CHECKS, alertsEnvironmentSecrets, secretName } from "../lib/alert-checks.mjs";
 
 const REPO = path.resolve(import.meta.dirname, "..", "..");
@@ -410,7 +411,19 @@ test("an `alerts` job maps the channel's secrets and no ping URL that is not its
     const named = new Set([...code(job).join("\n").matchAll(/secrets\.([A-Z0-9_]+)/g)].map((m) => m[1]));
     for (const secret of ["ASTRA_ALERT_TELEGRAM_TOKEN", "ASTRA_ALERT_CHAT_ID", "ASTRA_ALERT_COPY_CHAT_ID"]) {
       if (!named.has(secret)) {
-        problems.push(`${where(job)} never maps ${secret}, so every run of it is red on a secret it could have had`);
+        // This used to be caught twice — here, and by every run of the job
+        // going red. Since 2026-09-19 it is caught only here: an alert job
+        // that maps NONE of the three is indistinguishable, from inside the
+        // job, from the repository before §2.12's R1 act, and the action
+        // reports that state and stays green. So a forgotten `env:` block is
+        // now a silent alert job that pages nobody, and this assertion is the
+        // whole of what stands between the two.
+        problems.push(
+          `${where(job)} never maps ${secret}, so that secret cannot reach it: an environment secret is not ` +
+          `ambient. A job mapping none of the three looks exactly like a repository whose owner has not created ` +
+          `the channel yet, which the alert action reports and does NOT fail on — so nothing but this line is ` +
+          `between a forgotten env: block and an alert job that is green and pages nobody`,
+        );
       }
     }
     for (const secret of named) {
@@ -511,4 +524,125 @@ test("the alert action itself reaches for nothing an `alerts` job may not hold",
   assert.ok(src.indexOf(BEAT) > alarmAt,
     "BOT-85's heartbeat must be posted after the alarm, so a channel that is broken takes the receiver's path " +
     "down with it instead of certifying a run that paged nobody");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// "Never configured yet" is not "configured and broken" (2026-09-19).
+//
+// The alert action treats the absence of ALL THREE channel secrets as the
+// repository before §2.12's R1 act: it says so once, loudly, sets `configured`
+// to `false`, sends nothing, posts no heartbeat and does not fail. Anything
+// else — one secret present and two gone, a Bot API refusal, a 2xx with no
+// `result.date` — is red, unweakened.
+//
+// Three things have to hold together for that to be an improvement rather than
+// a mute button, and each is a separate mutation:
+//
+//   * the derivation covers every secret `bot/alert.mjs` requires. A fourth
+//     added there and not here means a channel missing only its fourth reads
+//     as "never created" and goes quiet;
+//   * the alarm and the heartbeat are actually skipped in that state, and
+//     `--check-credentials` still runs in every other, so the refusals in
+//     `bot/alert.mjs` are reached exactly as before;
+//   * `alarm-drill.yml` is RED while `configured` is not `true`. Delete that
+//     and the state is visible nowhere — which is the failure the noise was
+//     protecting against, arrived at from the other side.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ACTION = path.join(REPO, ".github", "actions", "alert", "action.yml");
+
+/** A step list from a `steps:` block, line-oriented like everything else here. */
+function stepsOf(lines) {
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^\s+- (name|uses):/.test(lines[i])) continue;
+    let end = i + 1;
+    while (end < lines.length && !/^\s+- (name|uses):/.test(lines[end])) end++;
+    out.push({ line: i + 1, body: lines.slice(i, end) });
+    i = end - 1;
+  }
+  return out;
+}
+
+const GUARD = "steps.channel.outputs.configured == 'true'";
+
+test("the unconfigured state is derived from the secrets bot/alert.mjs requires, and from nothing else", () => {
+  const src = fs.readFileSync(ACTION, "utf8");
+  const loop = /\n\s*for name in ([A-Z0-9_ ]+); do\n/.exec(src);
+  assert.ok(loop,
+    "the alert action no longer counts the channel secrets by name, so nothing here can say what it treats as " +
+    "an unconfigured channel");
+  assert.deepEqual(
+    loop[1].trim().split(/\s+/).sort(),
+    REQUIRED_SECRETS.map(([name]) => name).sort(),
+    "the action decides `never configured` over a different set of secrets than bot/alert.mjs requires: a " +
+    "channel missing only the secret this loop has never heard of would read as a repository whose owner has " +
+    "not acted yet, and go quiet",
+  );
+
+  // No switch. The state is the absence of all three, and a repository that
+  // can declare it can be told to stop alarming for a reason that outlives
+  // whoever had it.
+  const inputs = src.slice(src.indexOf("\ninputs:"), src.indexOf("\noutputs:"));
+  assert.equal(
+    [...inputs.matchAll(/^ {2}([a-z0-9-]+):$/gm)].map((m) => m[1]).sort().join(" "),
+    "ack-check check no-heartbeat-because verdict",
+    "an input was added to the alert action; if it can turn the alarm off, the unconfigured state stopped being " +
+    "derived and became declared",
+  );
+});
+
+test("no alarm and no heartbeat go out while the channel does not exist, and the refusals are otherwise untouched", () => {
+  const lines = fs.readFileSync(ACTION, "utf8").split("\n");
+  const steps = stepsOf(lines.slice(lines.findIndex((l) => /^\s+steps:\s*$/.test(l))));
+  const find = (needle) => steps.find((s) => s.body.some((l) => !l.trim().startsWith("#") && l.includes(needle)));
+
+  const channel = find("node bot/alert.mjs --check-credentials");
+  assert.ok(channel, "nothing in the alert action asks bot/alert.mjs whether the channel is whole");
+  assert.equal(channel.body.find((l) => /^\s+id:\s*channel\s*$/.test(l)) !== undefined, true,
+    "the step that classifies the channel is not `id: channel`, so the guards below name a step that is gone");
+  assert.equal(channel.body.some((l) => /^\s+if:/.test(l)), false,
+    "the step that asks whether a channel exists is itself conditional; on the run where the condition is false " +
+    "nothing asks the question at all");
+
+  for (const [needle, what] of [
+    ["node bot/alert.mjs --verdict", "the alarm"],
+    ['node bot/heartbeat.mjs --check "$ASTRA_ALERT_CHECK"', "BOT-85's heartbeat"],
+  ]) {
+    const step = find(needle);
+    assert.ok(step, `${what} is no longer in the alert action`);
+    const guard = step.body.find((l) => /^\s+if:/.test(l));
+    assert.equal(guard?.trim(), `if: ${GUARD}`,
+      `${what} is not guarded on the channel existing. Unguarded, every alert job is red again on a state with ` +
+      `a named owner act in front of it; guarded on anything but this, it is a switch`);
+  }
+
+  // The output the drill reads, sourced from the step that sets it. Deleted,
+  // `steps.alert.outputs.configured` is empty everywhere, the drill is red for
+  // ever and the reason a reader finds is the wrong one.
+  assert.match(fs.readFileSync(ACTION, "utf8"),
+    /\n\s*configured:\n[\s\S]*?value: \$\{\{ steps\.channel\.outputs\.configured \}\}/,
+    "the alert action declares no `configured` output from the step that decides it");
+});
+
+test("the weekly drill is red while the channel does not exist", () => {
+  const lines = read("alarm-drill.yml").split("\n");
+  const steps = stepsOf(lines);
+  const caller = steps.find((s) => s.body.some((l) => /uses:\s*\.\/\.github\/actions\/alert\s*$/.test(l)));
+  assert.ok(caller, "the alarm drill no longer calls the alert action");
+  const id = caller.body.map((l) => /^\s+id:\s*([A-Za-z0-9_-]+)\s*$/.exec(l)).find(Boolean)?.[1];
+  assert.ok(id, "the drill's alert step has no id, so nothing in this workflow can read whether a channel existed");
+
+  const assertion = steps.find((s) => {
+    const body = s.body.join("\n");
+    return body.includes(`steps.${id}.outputs.configured`) && /\bexit 1\b/.test(body);
+  });
+  assert.ok(assertion,
+    "no step of the alarm drill fails on an unconfigured channel. Every other alert job is green with a notice " +
+    "in that state, so this workflow is the one place it is loud: without this step a repository with no way to " +
+    "reach a person is green everywhere, which is the failure ninety-six red runs a day were paying for");
+  const guard = assertion.body.find((l) => /^\s+if:/.test(l))?.trim();
+  assert.equal(guard, `if: steps.${id}.outputs.configured != 'true'`,
+    "the drill's assertion does not fire on exactly `not configured`; a condition that also covers the broken " +
+    "channel reports the wrong one of the two states");
 });

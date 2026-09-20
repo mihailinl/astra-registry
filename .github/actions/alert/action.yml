@@ -4,7 +4,8 @@
 #
 #   1. the two scripts are actually present;
 #   2. environment `alerts` carries the three channel secrets — asked on EVERY
-#      run, green or red;
+#      run, green or red — with ONE state excepted: a channel that has never
+#      been created at all, which is said out loud and is not a failure;
 #   3. the alarm, if the verdict is red, and the start signal for BOT-86's
 #      acknowledgement check in the same step as the alarm it is about;
 #   4. BOT-85's heartbeat, LAST.
@@ -24,10 +25,39 @@
 # unasked, the first run that discovers the channel is unreachable is the run
 # that needed it. Asked every time, the answer arrives on the first scheduled
 # run after the secret is lost, in a red job, with the name of the secret in
-# it. This is also what `main` looks like until the owner performs §2.12's R1
-# act — every alert job red, every run, saying which secret is missing. That is
-# the intended state and not a defect to route around: an estate with no alarm
-# channel must not be indistinguishable from an estate with nothing to report.
+# it.
+#
+# **The one distinction step 2 makes, and why it is not a way out of the
+# rule above.** "Never created yet" and "created and now broken" look identical
+# to a job that asks only *is this secret set*, and they are not alike at all.
+#
+#   * **Unconfigured** — NONE of the three channel secrets is present. That is
+#     the repository before the owner performs §2.12's R1 act, it has a named
+#     owner act and a date nobody has yet, and it is not a defect. The step
+#     says so, loudly, in the log and in the job summary; sets `configured` to
+#     `false`; sends nothing; and posts NO heartbeat, because the receiver does
+#     not exist either and a heartbeat to a check nobody created is a 404 that
+#     reads like a typo. The job is green.
+#   * **Broken** — SOME are present and some are not, or the Bot API refuses,
+#     or a 2xx carries no `result.date`. Red, exactly as before, with the name
+#     of each missing secret. A half-configured channel is somebody's edit, or
+#     an `env:` block naming fewer secrets than the environment holds, and it
+#     looks nothing like a fresh repository.
+#
+# The state is DERIVED from the absence of all three and never declared: there
+# is no input, flag or variable here that turns the alarm off, because a switch
+# is how a channel ends up muted for a reason nobody remembers.
+#
+# **What makes the silence safe is that it is not silent everywhere.**
+# `.github/workflows/alarm-drill.yml` asserts `configured == true` and is RED
+# every Monday until the owner's act — one red run a week, on the workflow
+# whose whole subject is whether this channel exists, instead of ninety-six a
+# day on `served-set.yml` and one per listing issue on `ingest.yml`, whose
+# subjects are something else. An estate with no alarm channel must not be
+# indistinguishable from an estate with nothing to report; it also must not
+# shout about a known, expected state until the next real alarm is invisible,
+# because a check that fires when nothing differs is a check on its way to
+# being ignored.
 #
 # This action is inside TRUST-31's hashed set (§2.4) precisely because it
 # outputs the `delivered_at` that TRUST-32 gates publication on: a registry
@@ -35,11 +65,18 @@
 # calls returning to shadow, is the thing TRUST-31 exists to prevent.
 #
 # **The calling job, in full.** Two things about it are not optional and both
-# are checked by `bot/tests/workflows.test.mjs`: the environment, without which
-# the secrets are simply absent and every run is red; and the `env:` block,
-# because an environment secret is not ambient — a job sees one only where it
-# says so. The block lists the three channel secrets and the whole ping URL of
-# each check THIS job posts to, and nothing else.
+# are checked by `bot/tests/workflows.test.mjs`: the environment, and the
+# `env:` block, because an environment secret is not ambient — a job sees one
+# only where it says so. The block lists the three channel secrets and the
+# whole ping URL of each check THIS job posts to, and nothing else.
+#
+# **Both of those used to be caught twice, and since 2026-09-19 are caught
+# once.** A job with no environment, or with no `env:` block, sees none of the
+# three secrets — which is exactly what the repository before §2.12's R1 act
+# looks like from inside a job, and this action now reports that state and
+# stays green. So a forgotten `env:` block no longer turns anything red, and
+# the test above is the whole of what stands between it and an alert job that
+# pages nobody in silence. Do not weaken it.
 #
 #     alert:
 #       needs: check
@@ -113,6 +150,15 @@ outputs:
   alerted:
     description: Whether an alarm was sent, as `true` or `false`.
     value: ${{ steps.alarm.outputs.alerted }}
+  configured:
+    description: >-
+      Whether an alarm channel exists to be sent on, as `true` or `false`.
+      `false` means none of the three channel secrets is present — the state
+      before §2.12's R1 act, in which this action sends nothing, posts no
+      heartbeat and does not fail. A channel that is present and broken is red
+      here and never reaches this output. `alarm-drill.yml` asserts it is
+      `true`, which is where that state is loud.
+    value: ${{ steps.channel.outputs.configured }}
 
 runs:
   using: composite
@@ -137,12 +183,55 @@ runs:
           exit 1
         fi
 
+    # The three names are `bot/alert.mjs`'s `REQUIRED_SECRETS`, and a copy of a
+    # list is a list that goes stale: `bot/tests/workflows.test.mjs` compares
+    # this loop's names with that export and is red when they differ. Without
+    # that, a fourth channel secret added there would leave this step counting
+    # three — and a channel missing only its fourth would read as "never
+    # created" and go quiet, which is the exact failure this whole file is
+    # written against.
+    #
+    # Nothing is printed but names. A value is tested for presence and never
+    # echoed, and `${value//[[:space:]]/}` is the same question `alert.mjs`
+    # asks — an unset GitHub secret interpolates to the empty string, and a
+    # secret somebody set to a space is not a secret.
     - name: Environment `alerts` can reach a person at all
+      id: channel
       shell: bash
-      run: node bot/alert.mjs --check-credentials
+      run: |
+        set -euo pipefail
+        present=0
+        for name in ASTRA_ALERT_TELEGRAM_TOKEN ASTRA_ALERT_CHAT_ID ASTRA_ALERT_COPY_CHAT_ID; do
+          value="${!name:-}"
+          if [ -n "${value//[[:space:]]/}" ]; then
+            present=$((present + 1))
+          fi
+        done
+
+        if [ "$present" -eq 0 ]; then
+          echo "configured=false" >> "$GITHUB_OUTPUT"
+          line="THE ALARM CHANNEL DOES NOT EXIST YET. None of ASTRA_ALERT_TELEGRAM_TOKEN, ASTRA_ALERT_CHAT_ID and ASTRA_ALERT_COPY_CHAT_ID is present in this job, so this repository cannot reach a person at all: nothing was sent, no BOT-85 heartbeat was posted, and this job is green because a repository whose channel has never been created is not a repository with a defect. The act that creates it is registry plan RC-R1-0's owner approval, the R1 row of the plan's 2.12 — environment alerts in astra-registry, admitting only main, holding the registry's own Telegram bot token, the owner's alarm chat id, KNICE's copy chat id and one ASTRA_DEADMAN_URL_<CHECK> per receiver check, with the receiver account created beside it. Until that act, the workflow that says so is .github/workflows/alarm-drill.yml, which is red once a week for exactly this reason and is the one workflow whose whole subject is this question."
+          # One line, once: the annotation form is also what the raw log shows,
+          # so a second bare echo of it would be the same sentence twice in the
+          # place a reader is skimming.
+          echo "::warning title=The alarm channel does not exist yet::$line"
+          {
+            echo "## The alarm channel does not exist yet"
+            echo
+            echo "$line"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+
+        echo "configured=true" >> "$GITHUB_OUTPUT"
+        if [ "$present" -lt 3 ]; then
+          echo "::error::the alarm channel is HALF-CONFIGURED: $present of the three channel secrets are present in this job and the rest are not. This is not a repository waiting on §2.12's R1 act — that state has none of the three — it is a channel somebody created and something then took apart: a secret deleted from environment alerts, or an env: block naming fewer of them than the environment holds. The names follow; nothing is sent and no heartbeat is posted."
+        fi
+        node bot/alert.mjs --check-credentials
 
     - name: The alarm, and BOT-86's start signal with it
       id: alarm
+      if: steps.channel.outputs.configured == 'true'
       shell: bash
       env:
         ASTRA_ALERT_VERDICT: ${{ inputs.verdict }}
@@ -164,7 +253,12 @@ runs:
           node bot/heartbeat.mjs --check "$ASTRA_ALERT_ACK_CHECK" --signal start
         fi
 
+    # Skipped, and not merely quiet, when there is no channel. A heartbeat is a
+    # statement to the dead-man receiver that this check ran and is healthy,
+    # and there is no receiver yet either: the POST would 404 on a check nobody
+    # created. Silence is the honest signal while nothing is listening for it.
     - name: BOT-85's heartbeat, after the channel proved it works
+      if: steps.channel.outputs.configured == 'true'
       shell: bash
       env:
         ASTRA_ALERT_CHECK: ${{ inputs.check }}
