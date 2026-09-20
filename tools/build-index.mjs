@@ -221,6 +221,28 @@ function presentation(root, plugin) {
   const errors = [];
   const bad = (file, message) => errors.push({ file, message });
 
+  // BOT-79. `icon_url` was passed through into the signed catalogue whenever no
+  // icon file was committed, and that was the one path by which an `https://`
+  // URL — a host the plugin author chose — reached a signed document. A store
+  // rendering that card announces the user to that host once per listing per
+  // refresh, and draws unauthenticated bytes beside authenticated ones with
+  // nothing marking which is which.
+  //
+  // Refused rather than dropped. Dropping it would produce a catalogue that
+  // differs from its sources in a way no diff explains, and the author who
+  // wrote the field would never learn the picture is not being shown.
+  // `schema/index-v1.json`'s pattern says the same thing about the output and
+  // `tools/validate.mjs` says it about the input; this is the one of BOT-79's
+  // three a `build-index` run reaches first.
+  if (p.icon_url !== undefined) {
+    bad(
+      `plugins/${plugin.dir}/plugin.json`,
+      `carries icon_url ${JSON.stringify(p.icon_url)}, and the signed catalogue takes a committed icon or ` +
+        "nothing (BOT-79). Commit the picture beside plugin.json — icon.png, .webp, .svg, .jpg, .jpeg or .ico " +
+        "— and name it in `icon`: the generator inlines those bytes as a data: URI, inside the signature.",
+    );
+  }
+
   if (p.icon) {
     const file = path.join(dir, p.icon);
     if (!fs.existsSync(file)) {
@@ -228,8 +250,6 @@ function presentation(root, plugin) {
     } else {
       out.icon_url = iconDataUri({ name: p.icon, bytes: fs.readFileSync(file) });
     }
-  } else if (p.icon_url !== undefined) {
-    out.icon_url = p.icon_url;
   } else {
     out.icon_url = "";
   }
