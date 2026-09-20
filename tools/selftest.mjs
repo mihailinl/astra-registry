@@ -88,10 +88,17 @@ const MODULES = [
   "update-signing.mjs",
   "update-notes.mjs",
   "repo-rules.mjs",
-  // Last, and with a section header of its own, because `repo-rules.mjs` has
-  // none: anything inserted above it would move that module's names under a
-  // header they do not belong to. The two boundaries the comment above
-  // protects are both earlier, so appending here moves nothing at all.
+  // After `repo-rules.mjs` rather than before it, and with a section header
+  // of its own. `repo-rules.mjs` has no header, so its names print under
+  // `update-notes.mjs`'s — inserting ABOVE it would move them under this
+  // module's header instead. Inserting below moves nothing, and `baseline.mjs`
+  // stays last.
+  "claims.mjs",
+  // Last, and with a section header of its own. The boundary to protect is
+  // `update-notes.mjs` → `repo-rules.mjs`: `repo-rules.mjs` prints no header,
+  // so its names come out under `update-notes.mjs`'s, and anything inserted
+  // between that pair would take them. Appending after a module that prints
+  // its own header moves nothing at all.
   "baseline.mjs",
 ];
 

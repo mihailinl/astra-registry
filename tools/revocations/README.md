@@ -12,6 +12,16 @@ thing to get right here is not the format; it is that the daemon has five places
 it enforces this list and that a wrong `kind` or a mistyped digest silently
 matches nothing.
 
+Two sentences on this page are claims about a program in another repository —
+that number, and the `kind` table below being the set `RevocationKind` parses.
+Both are rows in `tools/selftest/claims.mjs`, which carries the literal search
+that finds each one and goes red when it comes back empty. Measured at Astra
+`2d68bd6f`: `five enforcement points` appears five times under
+`astra-daemon/src/plugins/`, and `pub enum RevocationKind` is at
+`astra-daemon/src/plugins/trust.rs:2818` with seven variants. Where no Astra
+checkout is reachable — which is every registry CI run — those rows print
+`COULD NOT ASK` and name what they did not read. **They never print a pass.**
+
 ## Writing one
 
 ```json
