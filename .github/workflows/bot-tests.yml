@@ -299,3 +299,19 @@ jobs:
       # this one exists to prevent, one level up.
       - name: The risk tiers, against the manifest crate at the pin
         run: node --test bot/tests/risk-tiers.test.mjs
+
+      # M-T5.1. MIG-1's listing states, decided from git: fixtures either side
+      # of the deadline and of `log/cutover.json`, one listing with a revoked
+      # binding, one with no baseline, one whose `identity.json` a B-T4.2 reset
+      # deleted, and a shallow checkout that cannot answer ID-25's "ever" and
+      # refuses to instead of guessing. Real git repositories, because every
+      # one of those is a statement about HISTORY and a fixture that stubbed
+      # `git log` would be a fixture of the stub.
+      #
+      # It is also the only thing that reads `schema/deadline-v1.json` and
+      # `schema/cutover-v1.json` through `tools/validate.mjs`, so without this
+      # step the two new B.4 records are documents rather than checks — and
+      # both are written by hand, one by the owner (MIG-2) and one by the
+      # cutover commit (ROLL-33). ~0.3 s, no probe, no network.
+      - name: MIG-1's listing states, against repositories and both new records
+        run: node --test bot/tests/listing-state.test.mjs
