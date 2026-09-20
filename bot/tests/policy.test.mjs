@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 
 import { markerOnMain } from "../baseline.mjs";
 import { alreadyPublished, decideRelease, noListingNoBinding, readIdentityRecord, terminalOnMain, writeOutputs } from "../decide.mjs";
+import { recordCommitRefusal } from "../publish-apply.mjs";
 import { bot74Filter } from "../watch.mjs";
 import { DEFAULT_SIGNER_WORKFLOW } from "../ingest.mjs";
 import { parseMaintainerCommand } from "../lib/intake.mjs";
@@ -2750,6 +2751,101 @@ await test("B-T0.2 stage 2 — /approve is refused when no `held` record on main
     JSON.stringify({ schema: "astra.registry.decision/1", decision_id: "pub", state: "published", fingerprint: fp }));
   assertEqual((await command(line, "the-maintainer", { root })).mode, "reply",
     "a published record was read as a standing hold, which makes every cleared approval replayable");
+});
+
+
+// ── B-T3.4: one commit holding every record, and none at all in shadow ─────
+
+section("shadow suppression (B-T3.4, BOT-92)");
+
+// BOT-92's Check is a PAIR, and it has to be one fixture: "a stubbed service
+// answering `shadow: true` yields no commit for that work, and the same
+// fixture answered `shadow: false` publishes". Two fixtures would let the
+// shadow half pass because the fixture never published in the first place.
+await test("the same submission publishes under `shadow: false` and commits nothing under `shadow: true`", () => {
+  const notShadow = decide(publishable({ shadow: false }));
+  assertEqual(notShadow.outcome, "publish", "the not-shadow half of the pair does not publish, so the pair proves nothing");
+  assertEqual(notShadow.publishes_now, true, "same");
+  assertEqual(notShadow.record.write, true, "same");
+
+  const shadow = decide(publishable({ shadow: true }));
+  assertEqual(shadow.publishes_now, false, "a shadow answer published a listing");
+  assertEqual(shadow.record.write, false, "a shadow answer wrote a decision record");
+  assertEqual(shadow.queue_entry, null, "a shadow answer wrote a queue entry");
+  assertEqual(shadow.shadow, true, "the answer does not say it was shadow, so the step summary cannot");
+  assert(String(shadow.record.why).includes("BOT-92"), "and it does not say which rule withheld it");
+});
+
+// The named risk for this task: the suppression enumerating record kinds, and
+// a sibling adding a fifth. This is the property that makes that impossible —
+// suppression is deny-by-default over everything the decision returns, so a
+// member added later is withheld without anybody editing the shadow rule.
+await test("a member nobody thought about is suppressed by construction", () => {
+  // A DELAY, chosen deliberately: it is the only outcome that carries a
+  // `publish_after`, a `queue_entry` and a `notify_author` at once, and
+  // `publish_after` is the member the plan's own wording — "no publication,
+  // decision, identity or queue record" — does not name. Written the first
+  // time against a `review` fixture, this test passed for a suppression that
+  // blanked exactly those four kinds, because a review carries none of the
+  // other three anyway. A fixture that cannot leak proves nothing about a
+  // leak.
+  // The plugin already HOLDS `client` in its listed version, so nothing is
+  // newly requested (no `R_NEW_HIGH_RISK` hold) and `P_DELAY_HIGH_RISK` is
+  // what remains: the delay branch, reached with nobody in the loop.
+  const delaying = (over = {}) => publishable({
+    existing: { versions: [{ doc: { version: "1.0.0", capabilities: ["client"] } }] },
+    derived: {
+      plugin: { id: "dice-roller", source: { kind: "github", repo: "you/dice-roller" } },
+      version: {
+        version: "1.0.1", capabilities: ["client"],
+        release: { repo: "you/dice-roller", commit: "a".repeat(40) }, artifacts: [],
+      },
+    },
+    ...over,
+  });
+  assert(decide(delaying()).publish_after,
+    "the fixture no longer produces a `publish_after`, so it cannot detect one leaking");
+  const shadow = decide(delaying({ shadow: true }));
+  const ALLOWED = new Set([
+    "outcome", "reasons", "track", "decided_at", "sla_deadline", "notify_author",
+    "fingerprint", "repo", "tag", "issue", "artifact_digests", "wait", "shadow",
+    "approval_refused", "approved_by", "approved_at", "record",
+  ]);
+  const leaked = Object.entries(shadow)
+    .filter(([m, v]) => !ALLOWED.has(m))
+    .filter(([, v]) => !(v === null || v === false || (Array.isArray(v) && v.length === 0)))
+    .map(([m]) => m);
+  assertEqual(leaked.join(", "), "",
+    "a shadow answer carried a member that is not on the allow-list and is not empty. Either the " +
+    "suppression stopped being deny-by-default, or a new output was added to the allow-list without " +
+    "a reason — and the whole point of BOT-92's shape is that the second is a visible edit");
+  // And the floor from the other end: the allow-list is not the whole object,
+  // or "deny by default" denies nothing.
+  assert(Object.keys(shadow).some((m) => !ALLOWED.has(m)),
+    "every member of a decision is on the shadow allow-list, so the suppression suppresses nothing");
+});
+
+await test("an answer with no `shadow` member is read as shadow, never as not-shadow", () => {
+  // The default direction is the whole safety of the shadow period: an answer
+  // that lost the member — a mis-deployed service, a proxy stripping it — must
+  // not publish. `decide()` reads `input.shadow === true`, so anything that is
+  // not the literal `true` is shadow at the CALLER, and the caller is the one
+  // that knows an answer arrived at all. What this asserts is the half that
+  // lives here: nothing in `decide()` invents a not-shadow answer.
+  const d = decide(publishable({ shadow: undefined }));
+  assertEqual(d.shadow, false,
+    "`decide()` is given no verdict at all on the legacy path, and a legacy run is not a shadow run — " +
+    "the not-shadow default belongs to the caller that saw the answer, and B-T3.6's canary is the one " +
+    "that watches a missing member being read as shadow");
+});
+
+await test("B-T3.4's record commit is refused by name, and this file grows no second writer", () => {
+  const refused = recordCommitRefusal({});
+  assertEqual(refused.ok, false, "the record commit reported itself buildable, and neither half is on main");
+  assert(refused.reason.includes("bot/lib/decisions.mjs"), "the refusal does not name the writer it needs");
+  assert(refused.reason.includes("plugins-ingest.yml"), "the refusal does not name the job graph it belongs to");
+  assertEqual(recordCommitRefusal({ decisionsWriter: {}, jobGraph: {} }).ok, true,
+    "the refusal cannot be lifted, so it is a wall rather than a gap somebody can close");
 });
 
 // ── result ──────────────────────────────────────────────────────────────────
