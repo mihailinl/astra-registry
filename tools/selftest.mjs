@@ -63,6 +63,13 @@ const MODULES = [
   "revocations.mjs",
   "cli.mjs",
   "root-delegation.mjs",
+  // After root-delegation.mjs because it is the same subject from the other
+  // end — that module asks whether the offline ceremony's command refuses a
+  // key that is not a published root; this one asks whether the published
+  // roots are still the keys the bot compiles in (B-T1.5). It prints its own
+  // section header, and so does update-signing.mjs below it, so inserting
+  // here moves no existing name under a header it does not belong to.
+  "roots.mjs",
   "update-signing.mjs",
   "update-notes.mjs",
   "repo-rules.mjs",

@@ -71,6 +71,29 @@ function inAlerts(job) {
 const code = (job) => job.body.filter((l) => !l.trim().startsWith("#"));
 const where = (job) => `${job.file}:${job.line} (job ${job.job})`;
 
+/**
+ * A job's whole `if:` expression, folded block scalar or not.
+ *
+ * Line-oriented like everything else here, and for a reason this file learned
+ * the hard way: a regex over the joined body stops at the end of the `if: >-`
+ * line and reports the marker as the condition, which reads as a condition
+ * that satisfies every rule asked of it. The continuation lines are the ones
+ * indented deeper than the `if:` itself.
+ */
+function condition(job) {
+  const lines = code(job);
+  const i = lines.findIndex((l) => /^\s+if:/.test(l));
+  if (i < 0) return "";
+  const indent = lines[i].search(/\S/);
+  const parts = [lines[i].replace(/^\s*if:\s*/, "").replace(/^[>|][-+]?$/, "")];
+  for (let k = i + 1; k < lines.length; k++) {
+    if (lines[k].trim() === "") continue;
+    if (lines[k].search(/\S/) <= indent) break;
+    parts.push(lines[k].trim());
+  }
+  return parts.join(" ").trim();
+}
+
 test("there are workflows to check at all", () => {
   assert.ok(files.length >= 5, `only ${files.length} workflow(s) found; this suite would prove nothing`);
 });
@@ -139,6 +162,112 @@ test("comment waits for publish", () => {
   assert.ok(at >= 0, "ingest.yml has no comment job");
   const needs = lines.slice(at, at + 12).find((l) => /^\s+needs:/.test(l));
   assert.match(needs ?? "", /publish/, "comment no longer waits for the job that makes its promise true");
+});
+
+// B-T1.5 (BOT-7). `ingest.yml`'s first job compares the published root.json
+// with the keys `bot/lib/roots.mjs` compiles in, and the value of putting it
+// first is entirely in the edge from it to everything else: a run that reaches
+// `publish` while the registry's anchor is in dispute commits a listing on a
+// trust set nobody can name.
+//
+// Two rules, because the second is how the first stops being true without
+// anybody deciding that it should. `always()` in an `if:` runs a job over a
+// dependency that FAILED, so `needs: roots` alone says nothing about the two
+// jobs that carry one — and those two are `comment`, which talks to the
+// author, and `publish`, which is the only job that commits.
+test("every job in ingest.yml waits for the roots check", () => {
+  const jobs = allJobs().filter((j) => j.file === "ingest.yml");
+  assert.ok(jobs.length >= 8, `only ${jobs.length} job(s) in ingest.yml; this check would prove little`);
+  assert.ok(jobs.some((j) => j.job === "roots"), "ingest.yml has no roots job");
+
+  const problems = [];
+  for (const job of jobs) {
+    if (job.job === "roots") continue;
+    const body = code(job).join("\n");
+    const needs = /^\s+needs:\s*(.+)$/m.exec(body)?.[1] ?? "";
+    if (!/\broots\b/.test(needs)) {
+      problems.push(`${where(job)} does not need the roots job, so it can run on an anchor nobody checked`);
+      continue;
+    }
+    // `alert` is the one job that MUST run when roots failed: it is the job
+    // that says so.
+    if (job.job === "alert") continue;
+    const cond = condition(job);
+    // The floor, and it is not decoration. The first spelling of this read
+    // the condition with `/^\s+if:\s*([\s\S]*?)(?=…|$)/m` over the joined
+    // body and captured the two characters ">-" — `$` under /m matches at the
+    // end of the `if: >-` line, and `publish`'s whole condition is on the two
+    // lines below it. So the rule reported as satisfied over the one job in
+    // this file that commits, having never seen its condition. Found by
+    // deleting the gate and watching this test stay green.
+    if (/^\s+if:/m.test(body)) {
+      assert.ok(cond.length > 2 && !/^[>|]/.test(cond),
+        `${where(job)}: this test read ${JSON.stringify(cond)} as an if-condition, which it is not`);
+    }
+    if (/always\(\)/.test(cond) && !/needs\.roots\.result\s*==\s*'success'/.test(cond)) {
+      problems.push(
+        `${where(job)} runs on always() and never asks whether the roots check passed, so it runs anyway when ` +
+        `the published root keys and the compiled ones disagree`,
+      );
+    }
+  }
+  assert.equal(problems.join("\n"), "", "a job in ingest.yml can outrun the check that says the anchor is sound");
+});
+
+// B-T1.5. A sparse checkout that forgot one module fails four lines later with
+// a Node resolver error about a file nobody asked for, and it fails that way
+// only when the job runs — which for `roots` and `alert` is on a schedule,
+// where the first reader is whoever eventually looks. The composite alert
+// action says this in its own first step for its own five files; these two
+// jobs run scripts of their own, and this is the same assertion for those.
+//
+// Scoped to `ingest.yml` on purpose. The rule is general — every job with a
+// sparse checkout owes it — but the other workflows that will have one belong
+// to tasks that are still being written, and a test that went red on their
+// branches before they were finished would be a test they worked around.
+test("ingest.yml's sparse checkouts hold everything the scripts they run import", () => {
+  const REPO_FILE = /^(?:\.\.\/|\.\/)/;
+  const closure = (entry) => {
+    const seen = new Set();
+    const stack = [entry];
+    while (stack.length) {
+      const file = stack.pop();
+      if (seen.has(file)) continue;
+      seen.add(file);
+      const src = fs.readFileSync(path.join(REPO, file), "utf8");
+      for (const m of src.matchAll(/^import\s+[\s\S]*?from\s+"([^"]+)";/gm)) {
+        if (!REPO_FILE.test(m[1])) continue;
+        stack.push(path.relative(REPO, path.resolve(path.dirname(path.join(REPO, file)), m[1])));
+      }
+    }
+    return seen;
+  };
+
+  const problems = [];
+  let checked = 0;
+  for (const job of allJobs().filter((j) => j.file === "ingest.yml")) {
+    const body = code(job).join("\n");
+    if (!/sparse-checkout-cone-mode:\s*false/.test(body)) continue;
+    const listed = new Set(
+      [...body.matchAll(/^\s{12}(\S+)\s*$/gm)].map((m) => m[1]).filter((p) => !p.endsWith(":")),
+    );
+    // The floor: a list this test could not read is a list every assertion
+    // below agrees with.
+    if (listed.size < 3) {
+      problems.push(`${where(job)}: this test read ${listed.size} sparse-checkout path(s), which cannot be right`);
+      continue;
+    }
+    for (const m of body.matchAll(/node\s+(bot\/[\w./-]+\.mjs)/g)) {
+      checked++;
+      for (const file of closure(m[1])) {
+        if (!listed.has(file)) {
+          problems.push(`${where(job)} runs ${m[1]}, which imports ${file}, and its sparse checkout omits it`);
+        }
+      }
+    }
+  }
+  assert.ok(checked >= 2, `only ${checked} script(s) checked; ingest.yml's sparse jobs run more than that`);
+  assert.equal(problems.join("\n"), "", "a job will die on a module its checkout did not fetch");
 });
 
 // B-T0.6 (AV-5, INV-6, OPEN-OPS-6). A dispatch that names a submitter lets

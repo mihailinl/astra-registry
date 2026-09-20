@@ -26,10 +26,19 @@ and if you ask for the feature *without* `debug_assertions` the crate fails to
 compile with a `compile_error!` that says so. A shipped binary cannot contain
 these bytes.
 
-The production root list in that same file is currently **empty**, because the
-ceremony has not been run. An empty root set means no `trust.json` verifies,
+The production root list in that same file — `PRODUCTION_ROOT_KEYS` — holds the
+two keys the ceremony produced on 2026-08-11, the same two `registry/v1/root.json`
+publishes and `bot/lib/roots.mjs` compiles into this repository's bot. Read in
+`Astra` at `2d68bd6f` on 2026-09-19; `astra-daemon/src/consistency.rs`'s
+`the_published_root_document_and_the_compiled_roots_are_one_set` is what holds
+those two halves together, and it skips when there is no astra-registry
+checkout beside the daemon.
+
+This paragraph said that list was **empty** and that the ceremony had not been
+run, for the five weeks after it was. The rule it was written for survives and
+is a rule rather than a date: an empty root set means no `trust.json` verifies,
 which is the correct fail-closed behaviour for a chain whose anchor does not
-exist yet — not a hole to be plugged with a test key.
+exist — not a hole to be plugged with a test key.
 
 ## The keys
 
