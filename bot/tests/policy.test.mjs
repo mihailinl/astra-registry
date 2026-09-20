@@ -54,7 +54,13 @@ import {
   parseReleasesAtom,
   watchPlan,
 } from "../lib/notify.mjs";
-import { pollFeed, runDrain, runWatch } from "../watch.mjs";
+// `pollFeed` moved to `bot/lib/poll.mjs` with B-T2.6, and `watch.mjs` imports
+// it rather than re-exporting it, so this import follows the function. The
+// `parseReleasesAtom` above deliberately still comes from `notify.mjs`, which
+// re-exports it: that re-export is what keeps five importers unchanged, and a
+// test that stopped reading it would stop witnessing it.
+import { pollFeed } from "../lib/poll.mjs";
+import { runDrain, runWatch } from "../watch.mjs";
 import { recordPermissionProbe, triage } from "../triage.mjs";
 import { makeBundle, fakeGitHub, fakeGh, fakeOwnership, FIXTURE_COMMIT } from "../fixtures/ingest/make.mjs";
 import { loadSources } from "../../tools/lib/sources.mjs";

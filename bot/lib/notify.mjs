@@ -65,8 +65,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { compareSemver, parseSemver } from "../../tools/lib/semver.mjs";
-import { TAG_PATTERN } from "../../tools/lib/tags.mjs";
 import { STATE_DIR } from "./policy.mjs";
+import { isUsableTag, parseReleasesAtom } from "./poll.mjs";
 
 /** `state/releases-seen.json` — one row per watched repository. */
 export const SEEN_FILE = path.join(STATE_DIR, "releases-seen.json");
@@ -78,25 +78,13 @@ export const WATCH_AFTER_DAYS = 7;
 export const WATCH_BATCH = 100;
 
 const REPO_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
-// One place decides what a tag is: tools/lib/tags.mjs.
-const TAG_RE = new RegExp(TAG_PATTERN);
 const DAY_MS = 86400 * 1000;
 
-/**
- * `bot/ingest.mjs`'s tag charset, minus the shapes that only ever appear in an
- * attack.
- *
- * Git permits a slash in a tag (`release/2026-08`), so the charset has to, and
- * `..` is then the obvious thing to try: `../../evil` satisfies the charset and
- * is a path. It reaches nothing here — the ingest URL-encodes it and `git`
- * refuses it — but a notification that carries a traversal is worth refusing at
- * the door rather than relying on three downstream encoders staying correct.
- */
-function isUsableTag(tag) {
-  if (!TAG_RE.test(tag)) return false;
-  if (tag.includes("..")) return false;
-  return !tag.startsWith("/") && !tag.endsWith("/") && !tag.startsWith("-");
-}
+// `isUsableTag` — the tag charset minus the shapes that only ever appear in an
+// attack — was declared here and is imported from `./poll.mjs` now (B-T2.6).
+// Both parsers need it, the ping grammar below and the feed parse that moved,
+// and this file re-exports from that one, so the predicate has to live there
+// for the import graph to stay acyclic with a single copy of the rule.
 
 // ── layer 1: the ping ───────────────────────────────────────────────────────
 
@@ -304,39 +292,20 @@ export function watchPlan(sources, seen, now = new Date(), opts = {}) {
   return { poll: poll.slice(0, batch), deferred: poll.slice(batch), quiet };
 }
 
-/**
- * The releases in `<owner>/<repo>/releases.atom`, newest first.
- *
- * A hand-rolled parse of four fields, because this repository has no
- * dependencies on purpose (see `.github/workflows/build-index.yml`) and an XML
- * parser is a large attack surface for `<link href>` and `<updated>`.
- *
- * Every entry is required to point back at the repository that was asked about:
- * the tag comes out of a URL, the URL is what a later ingest turns into an API
- * call, and a feed that answered with somebody else's releases would otherwise
- * choose which repository gets checked.
- */
-export function parseReleasesAtom(xml, repo) {
-  const text = String(xml ?? "");
-  const want = `https://github.com/${repo}/releases/tag/`.toLowerCase();
-  const out = [];
-  for (const m of text.matchAll(/<entry>([\s\S]*?)<\/entry>/g)) {
-    const entry = m[1];
-    const href = /<link[^>]*\shref="([^"]+)"/i.exec(entry)?.[1] ?? "";
-    if (!href.toLowerCase().startsWith(want)) continue;
-    let tag;
-    try {
-      tag = decodeURIComponent(href.slice(want.length));
-    } catch {
-      continue;
-    }
-    if (!tag || !isUsableTag(tag)) continue;
-    const updated = /<updated>([^<]+)<\/updated>/i.exec(entry)?.[1]?.trim() ?? null;
-    const title = /<title>([^<]*)<\/title>/i.exec(entry)?.[1]?.trim() ?? null;
-    out.push({ tag, updated, title });
-  }
-  return out;
-}
+// The feed parse moved to `./poll.mjs` with `pollFeed`, its only caller in
+// production code (B-T2.6). It is re-exported rather than repointed because
+// **this module's surface is what five importers read**, and a move that also
+// renames the door is two changes wearing one commit. `bot/tests/policy.test.mjs`
+// takes it from here today, and so would anything written against the twelve
+// names this file exported before the split; the re-export is what keeps the
+// move invisible to all of them, which is the only reason it fits in one.
+//
+// `bot/tests/poll.test.mjs` pins those twelve by name. A barrel can silently
+// shrink when a function moves and nobody re-exports it, which breaks every
+// importer at once, and can silently grow when the module behind it exports
+// something new — `isUsableTag` is imported above and deliberately NOT
+// re-exported here, because it was never part of this surface.
+export { parseReleasesAtom } from "./poll.mjs";
 
 /**
  * Given a listing and its feed, is there a release this registry has not seen?
