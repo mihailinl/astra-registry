@@ -22,8 +22,14 @@
 # no alarm in it.
 #
 # Until the owner creates environment `alerts`, its secrets and the receiver
-# account (§2.12's R1 row), every run of this workflow is red and says which
-# secret is missing. That is the intended state.
+# account (§2.12's R1 row), every run of this workflow is red and names the act
+# that is missing. That is the intended state, and since 2026-09-19 this
+# workflow is the ONLY place it is red: an unconfigured channel is a notice in
+# every other alert job, because ninety-six red runs a day on `served-set.yml`
+# about a state with a named owner act in front of it is not information, it is
+# the training that makes the next real alarm invisible. One red run a week, on
+# the workflow whose whole subject is whether the channel exists, is the whole
+# of that state's cost. The assertion is the last step of the job below.
 
 name: Alarm drill
 
@@ -97,7 +103,29 @@ jobs:
           JSON
 
       - uses: ./.github/actions/alert
+        id: alert
         with:
           verdict: verdict.json
           check: alarm-drill
           ack-check: alarm-ack
+
+      # The assertion this workflow exists to make, and the one place in the
+      # estate where an unconfigured channel is red.
+      #
+      # The alert action is green while no channel exists — that is what stops
+      # `served-set.yml` going red ninety-six times a day about a state with a
+      # named owner act in front of it. Green is the right answer for a
+      # workflow whose subject is the served set. It is the wrong answer here:
+      # a drill that sent nothing proved nothing, and a weekly job that passes
+      # without the alarm arriving is the failure BOT-86 exists to prevent,
+      # dressed as its own success.
+      #
+      # `if:` carries an implicit `success()`, so a channel that exists and is
+      # broken has already failed the step above and this one is skipped: its
+      # message would be wrong about which of the two states the run is in.
+      - name: A drill that sent nothing proved nothing
+        if: steps.alert.outputs.configured != 'true'
+        run: |
+          set -euo pipefail
+          echo "::error::BOT-86's weekly drill sent no alarm, because there is no alarm channel yet: none of the three channel secrets is present in this job. This run is red on purpose and it is the ONLY place in this repository that is red about it — every other alert job is green with a notice, so that the day something real goes wrong the red run is a real one. It goes green when the owner performs registry plan RC-R1-0's owner approval, the R1 row of the plan's 2.12: environment alerts, its three channel secrets and one ASTRA_DEADMAN_URL_<CHECK> per receiver check, with the receiver account created beside it. Nothing in this repository can be edited to make it green; that is the point of it."
+          exit 1
