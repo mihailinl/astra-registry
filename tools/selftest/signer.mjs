@@ -141,9 +141,69 @@ function makeTree(name) {
   return { dir, git, write, commit, addListing, head: () => git("rev-parse", "HEAD") };
 }
 
+const NUMERALS = { 1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten" };
+
+/**
+ * The rotation model, as the two documents a person reads describe it, against
+ * the one number the signer holds.
+ *
+ * Written 2026-09-20, after the operator-runbook lane found that `SECURITY.md`
+ * and `docs/RUNBOOK.md` both still opened with *"Quarterly, and immediately on
+ * suspicion… with a **30-day overlap** between the outgoing and incoming
+ * key"*. That is the model SERVE-30 replaced: the outgoing key does not stop
+ * after an overlap measured in days, it keeps signing until R9b, and what a
+ * rotation starts is a SEVEN-HOUR window against the client's six-hour
+ * `trust.json` refresh.
+ *
+ * **Four lines below its own wrong sentence, `RUNBOOK.md` §5 had been saying
+ * the right thing the whole time.** So this is not a document that was never
+ * written; it is one where a reader who stops at the opening line schedules a
+ * quarterly rotation and then finds no step in the procedure that matches.
+ *
+ * Two assertions, and they fail for different reasons on purpose. The first
+ * catches the number drifting from the code — the ordinary coupling. The
+ * second catches the MODEL coming back, which is the thing that was actually
+ * wrong: no overlap measured in days, anywhere in either file, because a
+ * duration in days is only sayable about the model that no longer exists.
+ */
+function rotationModel() {
+  const docs = ["SECURITY.md", "docs/RUNBOOK.md"];
+  const word = NUMERALS[INDEX_KEY_WINDOW_HOURS];
+  for (const rel of docs) {
+    const text = fs.readFileSync(path.join(REPO_ROOT, rel), "utf8");
+
+    // The number, spelled either way. A prose window that disagrees with the
+    // code is a reader computing a margin against the wrong figure.
+    const hasNumber = text.includes(`${INDEX_KEY_WINDOW_HOURS} hours`) ||
+      (word && (text.includes(`${word} hours`) || text.includes(`${word}-hour`)));
+    assert(
+      hasNumber,
+      `${rel} never states the index-key window, which is ${INDEX_KEY_WINDOW_HOURS} hours ` +
+      "(INDEX_KEY_WINDOW_HOURS, tools/signer/key-window.mjs). A document about rotating the key that does " +
+      "not carry the one number a rotation turns on sends its reader to guess it",
+    );
+
+    // The retired model. `30-day overlap` is the exact phrase that was there;
+    // the pattern is general because the next spelling of a wrong idea is
+    // never the previous spelling of it.
+    const overlapInDays = text.match(/\b(?:\d+|thirty|sixty|ninety)[ -]day\b[^.\n]{0,40}overlap/i);
+    assert(
+      !overlapInDays,
+      `${rel} describes the index-key overlap in DAYS — "${overlapInDays?.[0]}" — and SERVE-30 replaced that ` +
+      "model: the outgoing key keeps signing until R9b, and a rotation starts a window of hours, not an " +
+      "overlap of days. This exact sentence sat four lines above the correct one in docs/RUNBOOK.md §5 " +
+      "until 2026-09-20",
+    );
+  }
+}
+
 export async function run() {
   // ── SERVE-30's key windows, and D10's one exception ─────────────────────────
   console.log("\nthe signer's key windows");
+
+  await test("the two documents a person reads describe the window the signer implements", () => {
+    rotationModel();
+  });
 
   await test("the delegation time of a key is the FIRST `signed` commit that delegated it", () => {
     const times = delegationTimes([

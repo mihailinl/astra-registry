@@ -456,7 +456,14 @@ acceptance matches the one `keygen-root.sh` printed.
 
 ## 5. Rotating the index key
 
-Quarterly, and immediately on suspicion.
+On suspicion, and at the 2027 renewal (ROLL-45). **Not quarterly** — that line
+was here and in `SECURITY.md` until 2026-09-20 and it describes the model
+SERVE-30 replaced, in which the outgoing key stopped after an overlap measured
+in days. It does not stop: it keeps signing until **R9b**, and what the
+rotation does is start a seven-hour window, not a thirty-day one. Four lines
+below, this same section has said so correctly the whole time — which is how a
+reader could follow the opening sentence, schedule a quarterly rotation, and
+find nothing in the procedure that matched it.
 
 **Nothing here publishes anything by hand.** `trust.json` is committed to
 `main` like any other file and reaches a client through the signer's next run:
@@ -543,7 +550,7 @@ is a ceremony whose first failure is discovered by users.
 ### 5.5 On suspicion: the compromise procedure is a PROPOSAL, not a decision
 
 **Read this before following anything in it.** What `tools/signer/key-window.mjs`
-implements, and what `SECURITY.md` §5.2 describes, is **D10 — this plan's
+implements, and what `SECURITY.md` §5.1 describes, is **D10 — this plan's
 proposal**. **OPEN-OWNER-25's compromise half has not been decided**, and the
 owner's answer may rewrite the procedure; R1 cannot exit without it
 (RC-R1-10(c)). Do not read the steps below as settled, and do not tidy this
