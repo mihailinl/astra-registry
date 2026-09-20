@@ -37,6 +37,11 @@ import {
 import {
   DOCUMENT_MEMBERS, HISTORY_FLOOR as PRIV_HISTORY_FLOOR, run as privScan, withoutAuthorship,
 } from "../../tools/priv-scan.mjs";
+import { ADVISORY_BASE, DOC as DOCS_DOC, run as docsRule } from "../../tools/coverage/docs-advisory-url.mjs";
+import {
+  AP7_LANDED, ASTRAPLUGINS_URL, astraPluginsRemote, loadPolicyReserved,
+  parseReservedIdsYaml, repoSlug, run as mirrorRule,
+} from "../../tools/coverage/reserved-id-mirror.mjs";
 import { RULES, outstandingActs, ruleNames } from "../../tools/coverage/rules.mjs";
 import { compose } from "../../tools/coverage-verdict.mjs";
 import { CHECKS } from "../lib/alert-checks.mjs";
@@ -507,6 +512,249 @@ test("every declared document kind lists members, a source and its exempt sets",
   }
 });
 
+// ── M-T1.3: the advisory URL the withdrawal docs teach ──────────────────────
+//
+// No git here. This rule reads one document in the working tree, so its
+// fixtures are one document in a temp directory — and the case that matters is
+// the last one: a github.com link that is NOT an advisory stays green, because
+// a canary that goes red for an ordinary link is a canary somebody deletes.
+
+function docsFixture(name, body) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `astra-docs-${name}-`));
+  tmpRoots.push(dir);
+  if (body !== null) {
+    fs.mkdirSync(path.join(dir, path.dirname(DOCS_DOC)), { recursive: true });
+    fs.writeFileSync(path.join(dir, DOCS_DOC), body);
+  }
+  return dir;
+}
+
+test("M-T1.3: this repository's withdrawal docs name no advisory URL it does not serve", () => {
+  const r = docsRule(REPO);
+  assert.equal(r.status, "green", r.detail.join("\n"));
+});
+
+test("M-T1.3: the example this task deleted is red the moment it comes back", () => {
+  // Verbatim the line that was in `tools/revocations/README.md` until today,
+  // which is the mutation this rule exists for.
+  const r = docsRule(docsFixture("restored",
+    '```json\n{\n  "id": "ASTRA-2026-0001",\n' +
+    '  "advisory_url": "https://github.com/mihailinl/astra-registry/security/advisories/ASTRA-2026-0001",\n' +
+    "}\n```\n"));
+  assert.equal(r.status, "red");
+  assert.match(codesOf(r), /MOD_13_DOCS_ADVISORY_EXAMPLE/);
+  assert.match(codesOf(r), /MOD_13_DOCS_GITHUB_ADVISORY/, "the host leg has to fire on it too, not only the base leg");
+});
+
+test("M-T1.3: an advisory_url under any other base is red, github or not", () => {
+  const r = docsRule(docsFixture("other-host",
+    '"advisory_url": "https://advisories.example.invalid/ASTRA-2026-0001"\n'));
+  assert.equal(r.status, "red");
+  assert.match(codesOf(r), /MOD_13_DOCS_ADVISORY_EXAMPLE/);
+  assert.doesNotMatch(codesOf(r), /GITHUB/, "example.invalid is not a github host and must not be reported as one");
+});
+
+test("M-T1.3: a github.io advisory page is the same mistake with a different host", () => {
+  const r = docsRule(docsFixture("pages",
+    "The advisory is at https://mihailinl.github.io/advisories/ASTRA-2026-0001.html today.\n" +
+    "Leave advisory_url out.\n"));
+  assert.equal(r.status, "red");
+  assert.match(codesOf(r), /MOD_13_DOCS_GITHUB_ADVISORY/);
+});
+
+test("M-T1.3: MOD-13's own base is green, so M-T3.9's README edit lands without touching this rule", () => {
+  const r = docsRule(docsFixture("base",
+    `The bot sets it:\n\n    "advisory_url": "${ADVISORY_BASE}ASTRA-2026-0001"\n`));
+  assert.equal(r.status, "green", r.detail.join("\n"));
+});
+
+test("M-T1.3: an ordinary github.com link is not what this rule is about", () => {
+  const r = docsRule(docsFixture("plain-link",
+    "The policy is at https://github.com/mihailinl/astra-registry/blob/main/docs/POLICY.md.\n\n" +
+    "A hand-written advisory omits advisory_url.\n"));
+  assert.equal(r.status, "green",
+    `a link to a repository is not an advisory URL, and a rule red for one is a rule somebody deletes: ${r.detail.join("\n")}`);
+});
+
+test("M-T1.3: a document that has stopped mentioning the field is red, not vacuously green", () => {
+  const r = docsRule(docsFixture("silent", "# Withdrawals\n\nOne JSON file per advisory.\n"));
+  assert.equal(r.status, "red");
+  assert.match(codesOf(r), /MOD_13_DOCS_SILENT/);
+});
+
+test("M-T1.3: a document that has moved is red, because the rule would otherwise pass about nothing", () => {
+  const r = docsRule(docsFixture("gone", null));
+  assert.equal(r.status, "red");
+  assert.match(codesOf(r), /MOD_13_DOCS_ABSENT/);
+});
+
+// ── M-T5.7: the reserved-id mirror ──────────────────────────────────────────
+//
+// No network in any of these. The rule takes its reader as an argument
+// precisely so that the four answers a forge can give — the file, a 404, an
+// unreachable host, a HEAD that does not resolve — are all four testable, and
+// so that a test suite never depends on github.com being up.
+
+const SPEC_URL = "https://raw.githubusercontent.com/mihailinl/AstraPlugins/master/spec/reserved-ids.yaml";
+
+const specYaml = ({ reserved, prefixes, pattern = "^[a-z0-9][a-z0-9-]{0,62}$" }) =>
+  "# Mirrored from astra-registry@0000000:policy/reserved-ids.json (AP-7).\n" +
+  "# first_party_repos and first_party_owners are deliberately NOT mirrored.\n" +
+  "reserved:\n" + reserved.map((r) => `  - ${r}\n`).join("") +
+  "reserved_prefixes:\n" + prefixes.map((p) => `  - "${p}"\n`).join("") +
+  `id_pattern: "${pattern}"\n`;
+
+const serves = (text) => async () => ({ kind: "spec", url: SPEC_URL, branch: "master", text });
+
+const ours = loadPolicyReserved(REPO);
+
+test("M-T5.7: the mirror compares the list this repository actually holds", () => {
+  // The plan predicted 30 reserved ids; M-T1.1 landed 22 and 3 prefixes on
+  // 2026-09-19, having released eight panel names (about, docs, feed, help,
+  // new, rss, search, sitemap) on purpose. The floor is what was measured, and
+  // WHICH names are reserved is tools/selftest/validation.mjs's assertion, not
+  // a second list here.
+  assert.ok(ours.reserved.length >= 20, `${ours.reserved.length} reserved id(s); there were 22 on 2026-09-19`);
+  assert.ok(ours.prefixes.length >= 3, `${ours.prefixes.length} prefix(es); there were 3 on 2026-09-19`);
+});
+
+test("M-T5.7: an equal mirror is green", async () => {
+  const r = await mirrorRule(REPO, { readSpec: serves(specYaml({ reserved: ours.reserved, prefixes: ours.prefixes })) });
+  assert.equal(r.status, "green", r.detail.join("\n"));
+});
+
+test("M-T5.7: a name we reserve and the spec does not says re-mirror", async () => {
+  // `moderation`, not `rss`: the plan's canary named `rss`, which ID-66
+  // RELEASED on 2026-09-19. Written against `rss` this case would pass for the
+  // wrong reason — the two lists agree about rss, because neither holds it.
+  assert.ok(ours.reserved.includes("moderation"), "policy/reserved-ids.json no longer reserves `moderation`");
+  const r = await mirrorRule(REPO, {
+    readSpec: serves(specYaml({ reserved: ours.reserved.filter((n) => n !== "moderation"), prefixes: ours.prefixes })),
+  });
+  assert.equal(r.status, "red");
+  assert.match(codesOf(r), /RESERVED_MIRROR_NAME_MISSING/);
+  assert.match(r.detail.join("\n"), /re-mirror/);
+  assert.match(r.detail.join("\n"), /moderation/);
+});
+
+test("M-T5.7: a name the spec reserves and we do not says re-mirror too", async () => {
+  const r = await mirrorRule(REPO, {
+    readSpec: serves(specYaml({ reserved: [...ours.reserved, "sitemap"], prefixes: ours.prefixes })),
+  });
+  assert.equal(r.status, "red");
+  assert.match(codesOf(r), /RESERVED_MIRROR_NAME_EXTRA/);
+});
+
+test("M-T5.7: a prefix that drifts in either direction is the same alarm", async () => {
+  const dropped = await mirrorRule(REPO, {
+    readSpec: serves(specYaml({ reserved: ours.reserved, prefixes: ours.prefixes.filter((p) => p !== "astra-") })),
+  });
+  assert.match(codesOf(dropped), /RESERVED_MIRROR_PREFIX_MISSING/);
+
+  const added = await mirrorRule(REPO, {
+    readSpec: serves(specYaml({ reserved: ours.reserved, prefixes: [...ours.prefixes, "minice-"] })),
+  });
+  assert.match(codesOf(added), /RESERVED_MIRROR_PREFIX_EXTRA/);
+});
+
+test("M-T5.7: no reserved name or prefix ever reaches the verdict's `ids`", async () => {
+  // `astra-` is not a plugin id, and `bot/lib/alert-verdict.mjs` checks every
+  // entry of `ids` against the id grammar before the channel will carry the
+  // message. A drift alarm that put one there would arrive as
+  // E_VERDICT_UNSENDABLE — the alarm complaining about itself.
+  const r = await mirrorRule(REPO, {
+    readSpec: serves(specYaml({ reserved: ours.reserved, prefixes: [...ours.prefixes, "minice-"] })),
+  });
+  assert.deepEqual(r.ids, []);
+  const lines = ruleNames().map((n) => (n === "reserved-id-mirror"
+    ? { rule: n, ...r }
+    : { rule: n, status: "green", codes: [], ids: [], hexes: [], detail: [] }));
+  const composed = compose({ lines, bad: [] });
+  assert.match(composed.verdict.codes.join(" "), /RESERVED_MIRROR_PREFIX_EXTRA/);
+  assert.notDeepEqual(composed.verdict.codes, ["E_VERDICT_UNSENDABLE"],
+    "the drift alarm arrived as a complaint about the alarm");
+});
+
+test("M-T5.7: the file AP-7 has not written yet is pending, and names AP-7", async () => {
+  const r = await mirrorRule(REPO, {
+    readSpec: async () => ({ kind: "absent", url: SPEC_URL, branch: "master" }),
+  });
+  assert.equal(r.status, "pending", "a rule red from today until R3 is a rule somebody switches off");
+  assert.deepEqual(r.codes, []);
+  assert.match(r.detail.join("\n"), /AP-7/);
+  assert.match(r.detail.join("\n"), /spec\/reserved-ids\.yaml/);
+});
+
+test("M-T5.7: once AP-7 has landed, the same 404 is a deletion and is red", async () => {
+  const r = await mirrorRule(REPO, {
+    ap7Landed: true,
+    readSpec: async () => ({ kind: "absent", url: SPEC_URL, branch: "master" }),
+  });
+  assert.equal(r.status, "red");
+  assert.match(codesOf(r), /RESERVED_MIRROR_SPEC_DELETED/);
+});
+
+test("M-T5.7: a green run while AP7_LANDED is false says so on every run", async () => {
+  // The one hand-maintained fact in this rule, and the thing that makes a
+  // later deletion red. It nags in `detail` rather than in a code, because a
+  // constant nobody has flipped is not an estate emergency.
+  assert.equal(AP7_LANDED, false, "AP-7 has landed; this assertion and the nag below both retire");
+  const r = await mirrorRule(REPO, { readSpec: serves(specYaml({ reserved: ours.reserved, prefixes: ours.prefixes })) });
+  assert.match(r.detail.join("\n"), /AP7_LANDED/);
+});
+
+test("M-T5.7: an unresolvable default branch and an unreachable file both name the URL", async () => {
+  const noBranch = await mirrorRule(REPO, {
+    readSpec: async () => ({ kind: "no-branch", remote: ASTRAPLUGINS_URL, why: "no symbolic HEAD" }),
+  });
+  assert.equal(noBranch.status, "red");
+  assert.match(codesOf(noBranch), /RESERVED_MIRROR_BRANCH_UNRESOLVED/);
+  assert.match(noBranch.detail.join("\n"), /AstraPlugins/,
+    "the plan asks for the URL by name: an operator clearing this has to know which remote failed");
+
+  const down = await mirrorRule(REPO, {
+    readSpec: async () => ({ kind: "unreachable", url: SPEC_URL, branch: "master", why: "HTTP 502" }),
+  });
+  assert.equal(down.status, "red");
+  assert.match(codesOf(down), /RESERVED_MIRROR_UNREACHABLE/);
+  assert.match(down.detail.join("\n"), new RegExp(SPEC_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
+test("M-T5.7: a spec whose shape is not the one AP-7 defines is one code, not forty", async () => {
+  const renamed = await mirrorRule(REPO, { readSpec: serves("reserved_ids:\n  - astra\nreserved_prefixes:\n  - astra-\n") });
+  assert.equal(renamed.status, "red");
+  assert.match(codesOf(renamed), /RESERVED_MIRROR_UNPARSEABLE/);
+  assert.doesNotMatch(codesOf(renamed), /NAME_MISSING/,
+    "a renamed member must not read as every name in this repository having been dropped");
+
+  const nested = await mirrorRule(REPO, { readSpec: serves("reserved:\n  ids:\n    - astra\n") });
+  assert.match(codesOf(nested), /RESERVED_MIRROR_UNPARSEABLE/);
+});
+
+test("M-T5.7: the parser reads comments, quotes and flow lists, and refuses what it does not know", () => {
+  const doc = parseReservedIdsYaml(
+    "# a header\nreserved:  # the names\n  - astra\n  - 'account'\n  - \"api\"\n" +
+    'reserved_prefixes: [astra-, "official-"]\nid_pattern: "^[a-z0-9][a-z0-9-]{0,62}$"\n',
+  );
+  assert.deepEqual(doc.reserved, ["astra", "account", "api"]);
+  assert.deepEqual(doc.reserved_prefixes, ["astra-", "official-"]);
+  assert.equal(doc.id_pattern, "^[a-z0-9][a-z0-9-]{0,62}$");
+  assert.throws(() => parseReservedIdsYaml("reserved:\n\t- astra\n"), /tab/);
+  assert.throws(() => parseReservedIdsYaml("- astra\n"), /under no key/);
+});
+
+test("M-T5.7: the remote this rule reads is the one the repository declares", () => {
+  // Two copies of a URL is two copies that can disagree, and the day B-T1.4
+  // moves the declaration out of ingest.yml into astra-plugins.pin this rule
+  // must follow it rather than go red.
+  const declared = astraPluginsRemote(REPO);
+  assert.equal(declared.url, ASTRAPLUGINS_URL,
+    `${declared.source} names ${declared.url} and the rule's fallback names ${ASTRAPLUGINS_URL}`);
+  assert.notEqual(declared.source, "tools/coverage/reserved-id-mirror.mjs",
+    "no file in this repository declares AstraPlugins' URL any more; the rule is running on its fallback");
+  assert.equal(repoSlug(declared.url), "mihailinl/AstraPlugins");
+});
+
 // ── the register, and the rule that never ran ───────────────────────────────
 
 const finding = (rule, status = "green", extra = {}) =>
@@ -562,7 +810,7 @@ test("a verdict the channel would refuse becomes a red verdict saying so, never 
 });
 
 test("every register entry names a script that exists and a task that owns it", () => {
-  assert.ok(RULES.length >= 3, `${RULES.length} rules registered; there were 3 on 2026-09-19`);
+  assert.ok(RULES.length >= 5, `${RULES.length} rules registered; there were 5 on 2026-09-19`);
   for (const rule of RULES) {
     assert.ok(fs.existsSync(path.join(REPO, rule.script)), `${rule.name} names ${rule.script}, which is not in the tree`);
     assert.match(rule.owner, /T\d|RC-/, `${rule.name} names no owning task`);

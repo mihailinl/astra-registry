@@ -88,6 +88,20 @@ export const RULES = [
     what: "state/keepalive.json is no more than 35 days old, so no schedule in this repository is 60 days from being disabled",
     network: false,
   },
+  {
+    name: "docs-advisory-url",
+    owner: "M-T1.3 (MOD-13, precondition)",
+    script: "tools/coverage/docs-advisory-url.mjs",
+    what: "tools/revocations/README.md names no github.com or github.io advisory URL, no advisory_url under another base, and still tells an operator what to do with the field",
+    network: false,
+  },
+  {
+    name: "reserved-id-mirror",
+    owner: "M-T5.7 (OPEN-OPS-11, the registry half)",
+    script: "tools/coverage/reserved-id-mirror.mjs",
+    what: "policy/reserved-ids.json and AstraPlugins' spec/reserved-ids.yaml name the same set, in both directions — `pending` until AP-7 writes that file",
+    network: true,
+  },
   // ── the seam. Each line below is one other task's, and lands with it. ─────
   //
   // Written here as a comment rather than as a disabled entry, because an
@@ -95,14 +109,6 @@ export const RULES = [
   // reports nothing is red on every run from the day this lands until the day
   // that task does — which for M-T6.2 is R6. An alarm that fires for six
   // milestones is an alarm somebody switches off in month one (TRUST-45).
-  //
-  //   { name: "docs-advisory-url",  owner: "M-T1.3 (MOD-13)",
-  //     script: "tools/coverage/docs-advisory-url.mjs", network: false,
-  //     what: "tools/revocations/README.md names no github.com or github.io advisory URL" },
-  //
-  //   { name: "reserved-id-mirror", owner: "M-T5.7 (OPEN-OPS-11)",
-  //     script: "tools/coverage/reserved-id-mirror.mjs", network: true,
-  //     what: "policy/reserved-ids.json and AstraPlugins' spec/reserved-ids.yaml name the same set, in both directions" },
   //
   //   { name: "examples-staging-id", owner: "M-T2.1 (MOD-16)", network: true, … }   R2
   //   { name: "roll47-promises",     owner: "M-T4.2, M-T4.3, M-T6.2",  … }          R4a
