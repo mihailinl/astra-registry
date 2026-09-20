@@ -711,12 +711,18 @@ const NOT_HEARD = new Map([
 
 test("the signer hears every workflow that commits, by the name in the file", () => {
   const heard = signerHears();
-  // The two D1 names. `Plugins ingest` has no file yet and a trigger naming an
-  // absent workflow is inert, so it is listed early on purpose: the
-  // alternative is a signer that goes deaf on the day it lands and waits an
-  // hour for the cron, with nothing red. RC-R3-3 adds two more.
-  // Watched by removing `Ingest` from sign.yml's list.
-  for (const name of ["Ingest", "Plugins ingest"]) {
+  // D1's two names and RC-R3-3's two. Three of the four have no file yet and a
+  // trigger naming an absent workflow is inert, so they are listed early on
+  // purpose: the alternative is a signer that goes deaf on the day one of them
+  // lands and waits an hour for the cron, with nothing red.
+  //
+  // **This list is RC-R3-3's whole testable half today**, and it is asserted
+  // over sign.yml's text rather than over the workflows, because the two R3
+  // names have nothing behind them yet. The floor below — how many COMMITTING
+  // workflows the signer actually hears — is the half that cannot rise until
+  // they land. Watched by removing `Operator` from sign.yml's list, and by
+  // removing `Ingest`.
+  for (const name of ["Ingest", "Plugins ingest", "Plugins moderation", "Operator"]) {
     assert.ok(heard.includes(name), `sign.yml's workflow_run list does not name ${JSON.stringify(name)} (D1, RC-R3-3)`);
   }
 

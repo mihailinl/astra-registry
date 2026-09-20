@@ -58,18 +58,20 @@ on:
 
   # Every workflow that commits, heard on COMPLETION whatever its conclusion.
   #
-  # `Plugins ingest` has no file yet and **a trigger naming an absent workflow
-  # is inert**: there is nothing to hear until B-T1.4 lands it, and listing it
-  # now means the signer hears it from its first run rather than from whoever
-  # remembers to come back. RC-R3-3 adds `Plugins moderation` and `Operator`
-  # the same way.
+  # Three of these four have no file yet, and **a trigger naming an absent
+  # workflow is inert**: there is nothing to hear until B-T1.4 lands `Plugins
+  # ingest`, M-T3.4 lands `Plugins moderation` and B-T3.10 lands `Operator`.
+  # They are listed now because the alternative is a signer that goes deaf on
+  # the day one of them lands — GITHUB_TOKEN pushes start no push runs, so
+  # whatever that workflow commits waits up to an hour for the cron below,
+  # with nothing red anywhere and a withdrawal inside the delay.
   #
   # The names are the `name:` line of each file, not its path, and
   # `bot/tests/workflows.test.mjs` reads them out of the files and compares:
   # a renamed workflow that still commits would otherwise wait an hour for the
   # cron with nothing red anywhere.
   workflow_run:
-    workflows: ["Ingest", "Plugins ingest"]
+    workflows: ["Ingest", "Plugins ingest", "Plugins moderation", "Operator"]
     types: [completed]
 
   # Hourly, for the reason D4 gives: the documents expire whether or not
