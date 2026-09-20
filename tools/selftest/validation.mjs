@@ -103,7 +103,7 @@ export async function run() {
       `unverifiable entries are reachable through the compatibility fields: ${leaky.map((e) => e.id).join(", ")}`);
   });
 
-  // ID-66's sixteen, as a list something checks rather than as prose.
+  // ID-66's panel names, as two lists something checks rather than as prose.
   //
   // policy/reserved-ids.json deliberately does NOT restate which of its entries
   // are here for the panel: a list written twice is a list with one stale copy,
@@ -111,24 +111,34 @@ export async function run() {
   // the enumeration lives here, where the two tests below read it — one against
   // the committed policy, one against what the validator actually does with it.
   //
-  // Reserving a name costs an author, not us: it is a name nobody can ever
-  // list under. Sixteen ordinary English words is a policy decision and the
-  // reason it was taken is in policy/reserved-ids.json's `reserved_note`.
-  const PANEL_ROUTES = [
-    "search", "publish", "moderation", "transparency", "authors", "account", "new", "api",
-    "login", "logout", "about", "help", "docs", "feed", "rss", "sitemap",
+  // The SECOND list is the one that needs explaining. Reserving a name costs an
+  // author and nobody else: it is a name no plugin can ever be called. ID-66
+  // asked for sixteen; eight are reserved because they name Astra or the
+  // machinery a user is asked to trust, and eight ordinary English words were
+  // released on 2026-09-19, once the two risks behind the sixteen were told
+  // apart — contract ID-67's `/plugins/_/` settles the route half on its own,
+  // and impersonation, which it does not touch, is about the first eight and
+  // not about `rss`. `reserved_note` carries that argument. An absence states
+  // nothing by itself, so the release is asserted here too: otherwise the next
+  // reader re-adds a name as an oversight and no test disagrees.
+  const PANEL_NAMES_RESERVED = [
+    "account", "api", "authors", "login", "logout", "moderation", "publish", "transparency",
+  ];
+  const PANEL_NAMES_RELEASED = [
+    "about", "docs", "feed", "help", "new", "rss", "search", "sitemap",
   ];
 
-  await test("every panel route name is reserved, and no listing has already taken one", () => {
+  await test("the panel names that read as Astra are reserved, the ordinary words deliberately are not, " +
+    "and no listing has already taken one", () => {
     const policy = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "policy/reserved-ids.json"), "utf8"));
 
     // The SHAPE before anything else, and read off the RAW members rather than
     // through the `?? []` the two callers use. Written the other way first and
     // watched saying the wrong thing: `reserved` renamed to `reserved_ids`
     // defaults to `[]`, which is an array, so the shape assertion passed and
-    // the name check below reported all sixteen panel routes as dropped. True,
-    // and it sends the reader to re-add sixteen names to a file that still has
-    // all thirty, under a key nothing reads. `?? []` is right in the predicate
+    // the name check below reported every panel name as dropped. True, and it
+    // sends the reader to re-add them to a file that still has all twenty-two,
+    // under a key nothing reads. `?? []` is right in the predicate
     // — a policy file that lost a member must reserve nothing rather than
     // throw — and it is exactly what a test about that file must not inherit.
     assert(Array.isArray(policy.reserved) && Array.isArray(policy.reserved_prefixes),
@@ -141,18 +151,30 @@ export async function run() {
 
     // Then WHICH names, before any count. A dropped name is the failure this
     // test exists for and it has to say the name: with the floor first, taking
-    // `rss` back out reports "lists 29 and listed 30", which is true and does
-    // not name the word that a stranger may now list under.
-    const dropped = PANEL_ROUTES.filter((n) => !reserved.includes(n));
+    // `login` back out reports "lists 21 and listed 22", which is true and does
+    // not name the word that a stranger may now list under. Watched saying
+    // exactly that, both ways round, on 2026-09-19.
+    const dropped = PANEL_NAMES_RESERVED.filter((n) => !reserved.includes(n));
     assertEqual(dropped.join(", "), "",
-      "ID-66 names sixteen panel route names the registry must reserve and policy/reserved-ids.json no longer " +
-      "carries all of them; the missing ones are free for a stranger to list under");
+      "these panel names name Astra or the machinery a user is asked to trust, so the registry reserves them " +
+      "(ID-66, as narrowed on 2026-09-19) and policy/reserved-ids.json no longer carries all of them; the " +
+      "missing ones are free for a stranger to list under");
+
+    // The other half of the same decision, and the half an absence cannot state
+    // on its own. Without this, re-adding `rss` is a one-line edit that neither
+    // a test nor a reviewer can tell apart from repairing an oversight, which
+    // is how a namespace narrows by accident rather than by argument.
+    const readded = PANEL_NAMES_RELEASED.filter((n) => reserved.includes(n));
+    assertEqual(readded.join(", "), "",
+      "policy/reserved-ids.json reserves a panel name that was released on purpose on 2026-09-19 — its " +
+      "reserved_note says why each of the eight is an ordinary word an author may want, and reserving one " +
+      "again is a policy change: make it in the note and in this list together, never in the array alone");
 
     // And then the counts, which are about the other fourteen and about the
     // prefixes — the entries no list in this file enumerates.
-    assert(reserved.length >= 30,
-      `policy/reserved-ids.json lists ${reserved.length} reserved ids and listed 30 on 2026-09-19; every panel ` +
-      `route is still there, so this is one of the older reservations taken out, which is a security change`);
+    assert(reserved.length >= 22,
+      `policy/reserved-ids.json lists ${reserved.length} reserved ids and listed 22 on 2026-09-19; every panel ` +
+      `name is still there, so this is one of the older reservations taken out, which is a security change`);
     assert(prefixes.length >= 3,
       `policy/reserved-ids.json lists ${prefixes.length} reserved prefixes and listed 3 on 2026-09-19 ` +
       `(astra-, official-, verified-); a prefix dropped here is an impersonation primitive handed back`);
@@ -196,14 +218,15 @@ export async function run() {
   console.log("\nrejections");
   // The canary for the reservation: not that the name is in a file, but that a
   // listing under it is refused. One tree per reserved name, every one of them,
-  // so the sixteen added for the panel and the fourteen that were here before
-  // are proved by the same loop and a seventeenth is proved the day it lands.
+  // so the eight kept for the panel and the fourteen that were here before are
+  // proved by the same loop and a twenty-third is proved the day it lands. The
+  // eight released names get the same treatment from the other side, below.
   //
   // The bot refuses the same names at ingest through the same array —
   // bot/lib/derive.mjs reads `policy.reserved.reserved` and raises
   // E_ID_RESERVED — so there is one list and one answer, and no fixture here
   // can drift from what a stranger's submission meets.
-  await test("a listing under any reserved id is refused, one tree per name", async () => {
+  await test("a listing under any reserved id is refused, and one under a released panel name is not", async () => {
     const src = path.join(REPO_ROOT, "tests/fixtures/id-collision/plugins/dice-roller");
     const reserved = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "policy/reserved-ids.json"), "utf8")).reserved;
 
@@ -252,12 +275,28 @@ export async function run() {
       }
     }
     // `assert` and not `assertEqual` here, and the difference is legibility
-    // rather than taste: assertEqual JSON-stringifies both sides, so thirty
+    // rather than taste: assertEqual JSON-stringifies both sides, so twenty-two
     // findings print as one line with `\n` in it. Watched, neutering the rule
     // in tools/validate.mjs: the whole list arrived escaped on a single line.
     assert(problems.length === 0,
       `a reserved id was not refused by tools/validate.mjs, so it is free for a stranger to list under:\n` +
       problems.join("\n"));
+
+    // The release, proved the same way round. A name missing from the array is
+    // only a claim that a plugin may be called that; this runs the validator
+    // over a listing that is, for each of the eight. The control above is what
+    // makes a red here readable: the fixture is known good under a name nobody
+    // reserved, so a refusal is about the name and not about the tree.
+    const stillRefused = [];
+    for (const id of PANEL_NAMES_RELEASED) {
+      const { report } = await validateTree(treeFor(id));
+      if (report.errors.length !== 0) {
+        stillRefused.push(`${id}: ${report.errors.map((e) => e.message).join("; ")}`);
+      }
+    }
+    assert(stillRefused.length === 0,
+      `a panel name policy/reserved-ids.json released on purpose is still refused, so the release is on paper ` +
+      `only and an author who takes the name at its word meets a red run:\n` + stillRefused.join("\n"));
   });
 
   await test("an id that is not a safe path component is rejected", async () => {
