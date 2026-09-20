@@ -213,6 +213,10 @@ async function run({
         repo,
         signerDigest: ALLOWED_WORKFLOW_SHA,
         sourceCommit: attestedCommit,
+        // `.14` is `refs/tags/<tag>` on every bundle in the catalogue and the
+        // bot now enforces it (ID-28; registry plan B-T1.1), so the stub is
+        // told which tag it is attesting rather than omitting the field.
+        tag,
         subjectDigest: crypto.createHash("sha256").update(fs.readFileSync(args[2])).digest("hex"),
       })(args),
     },

@@ -43,7 +43,7 @@ import { extractSignerFacts, loadRootKeys, loadWorkflowAllowlist } from "../lib/
 import { proveOwnership } from "../lib/ownership.mjs";
 import { isRecheckCommand, parseIssueForm } from "../lib/issue.mjs";
 import { findProbe, runProbe } from "../lib/probe.mjs";
-import { makeBundle, fakeGitHub, fakeGh, fakeOwnership, FIXTURE_SIGNER_WORKFLOW } from "../fixtures/ingest/make.mjs";
+import { makeBundle, fakeGitHub, fakeGh, fakeOwnership, FIXTURE_SIGNER_WORKFLOW, FIXTURE_REPOSITORY_ID, FIXTURE_OWNER_ID } from "../fixtures/ingest/make.mjs";
 
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const VECTOR_DIR = path.join(REPO_ROOT, "tests", "vectors");
@@ -128,6 +128,11 @@ async function run({
   ownershipOk = true, signerUri = undefined, subjectOverride = null, certRepo = null,
   rootKeys = TEST_ROOT_KEYS, trustFile = TRUST_FILE,
   signerWorkflow = DEFAULT_SIGNER_WORKFLOW,
+  // ID-28's other rows, so a test can move one field of the certificate and
+  // leave the rest of a healthy release alone (registry plan B-T1.1).
+  cert = {},
+  /** Per-bundle certificates, by asset name: the cross-bundle canary. */
+  certByAsset = null,
 } = {}) {
   const github = fakeGitHub({ repo, tag, assets });
   const result = await ingest(
@@ -145,7 +150,16 @@ async function run({
         const file = args[2];
         const bytes = fs.readFileSync(file);
         const digest = subjectOverride ?? crypto.createHash("sha256").update(bytes).digest("hex");
-        return fakeGh({ repo: attestRepo, signerDigest, subjectDigest: digest, signerUri, certRepo, fail: ghFail })(args);
+        const perAsset = certByAsset?.[path.basename(file)] ?? {};
+        return fakeGh({
+          repo: attestRepo, signerDigest, subjectDigest: digest, signerUri, certRepo, fail: ghFail,
+          // The tag is handed to the stub because `.14` is `refs/tags/<tag>`
+          // and a fixture whose certificate says otherwise is a fixture of a
+          // release built from another ref.
+          tag,
+          ...cert,
+          ...perAsset,
+        })(args);
       },
     },
   );
@@ -609,6 +623,207 @@ await test("an attestation carrying no resolved signer commit proves nothing", (
   assertEqual(facts.signerDigest, null, "a field that is absent must be null, never a default");
 });
 
+// ── ID-28, one fixture per row (registry plan B-T1.1) ───────────────────────
+//
+// The rows are enforced because B-T1.2's survey found every listing passing
+// them (ID-29): 18 ids, 24 artifacts, all ten OIDs present, `.9` under the
+// reusable workflow, `.10` in `reusable_workflow_shas`, `.11` `github-hosted`,
+// `.13` equal to `release.commit`, `.14` `refs/tags/<tag>`, `.20` `push`, on
+// 18/18. Enforcing a row the catalogue fails would have delisted the
+// catalogue; the survey is why these are errors and not notes.
+
+await test("ID-28 .9 — a build signed by some other workflow's path", async () => {
+  const r = await run({
+    assets: [conformingAsset()],
+    signerUri: `https://github.com/mihailinl/AstraPlugins/.github/workflows/something-else.yml@${"c".repeat(40)}`,
+  });
+  assertBlockedWith(r, "E_ATTESTATION_INVALID");
+  assert(r.findings.some((i) => i.message.includes("job_workflow_ref (.9)")), JSON.stringify(errorCodes(r)));
+});
+
+await test("ID-28 .9 — the suffix is a commit today, and the matcher still takes any ref", async () => {
+  // The survey measured it: `.9`'s suffix is a 40-hex SHA on all 24 artifacts,
+  // never a symbolic ref. ID-28's row says "@ any ref" all the same, and a
+  // matcher written `@refs/…` would have refused the entire catalogue — so
+  // both spellings pass here, deliberately, and this test is the record of
+  // why the stricter one was not written.
+  for (const suffix of ["c".repeat(40), "refs/heads/main", "refs/tags/v1"]) {
+    const r = await run({
+      assets: [conformingAsset()],
+      signerUri: `https://github.com/${DEFAULT_SIGNER_WORKFLOW}@${suffix}`,
+    });
+    assert(!r.blocked, `@${suffix} was refused: ${JSON.stringify(errorCodes(r))}`);
+  }
+});
+
+await test("ID-28 .11 — a self-hosted runner is a machine the registry knows nothing about", async () => {
+  const r = await run({ assets: [conformingAsset()], cert: { runnerEnvironment: "self-hosted" } });
+  assertBlockedWith(r, "E_ATTESTATION_INVALID");
+  assert(r.findings.some((i) => i.message.includes("runner_environment (.11)")), JSON.stringify(errorCodes(r)));
+});
+
+await test("ID-28 .14 — built from a ref that is not the tag being listed", async () => {
+  const r = await run({ assets: [conformingAsset()], cert: { ref: "refs/heads/main" } });
+  assertBlockedWith(r, "E_ATTESTATION_INVALID");
+  assert(r.findings.some((i) => i.message.includes("ref (.14)")), JSON.stringify(errorCodes(r)));
+});
+
+await test("ID-28 .20 — a dispatch somebody typed is not a tag push", async () => {
+  const r = await run({ assets: [conformingAsset()], cert: { eventName: "workflow_dispatch" } });
+  assertBlockedWith(r, "E_ATTESTATION_INVALID");
+  assert(r.findings.some((i) => i.message.includes("event_name (.20)")), JSON.stringify(errorCodes(r)));
+});
+
+await test("ID-28 — a missing field is refused by name, one row at a time", async () => {
+  for (const [field, oid] of Object.entries({
+    job_workflow_ref: ".9", job_workflow_sha: ".10", runner_environment: ".11",
+    source_repository_uri: ".12", sha: ".13", ref: ".14", repository_id: ".15",
+    repository_owner_id: ".17", event_name: ".20", run: ".21",
+  })) {
+    const r = await run({ assets: [conformingAsset()], cert: { omitFields: [field] } });
+    assertBlockedWith(r, "E_ATTESTATION_INVALID");
+    assert(r.findings.some((i) => i.message.includes(field)),
+      `${oid} went missing and the report did not name ${field}: ${JSON.stringify(errorCodes(r))}`);
+  }
+});
+
+await test("ID-28 .15/.17 — the two ids reach the caller, as base-10 strings", async () => {
+  const r = await run({ assets: [conformingAsset()], root: registryWith({}) });
+  assert(!r.blocked, JSON.stringify(errorCodes(r)));
+  const facts = extractSignerFacts(JSON.parse((await fakeGh({
+    repo: REPO, signerDigest: ALLOWED_WORKFLOW_SHA, subjectDigest: "d".repeat(64), tag: TAG,
+  })(["attestation", "verify", "x", "--repo", REPO])).stdout), "d".repeat(64));
+  assertEqual(facts.fields.repository_id, FIXTURE_REPOSITORY_ID, ".15 is read from the certificate");
+  assertEqual(facts.fields.repository_owner_id, FIXTURE_OWNER_ID, ".17 is read from the certificate");
+  assertEqual(typeof facts.fields.repository_id, "string", "SCOPE-5: base-10 STRINGS, never numbers");
+  assert(facts.fields.run.includes("/actions/runs/"), ".21 is returned for B-T3.3a's actor read (MIG-31)");
+});
+
+await test("SCOPE-5 — an id that arrives as a JSON number is refused, never coerced", async () => {
+  // `9007199254740993` parses to `…992`. `String(n)` then hands the registry
+  // plausible digits naming a repository that never published anything. The
+  // type is refused before any grammar sees the value.
+  const r = await run({
+    assets: [conformingAsset()],
+    cert: { certificateOverrides: { sourceRepositoryIdentifier: 9007199254740993 } },
+  });
+  assertBlockedWith(r, "E_ATTESTATION_INVALID");
+  assert(r.findings.some((i) => i.message.includes("SCOPE-5")), JSON.stringify(errorCodes(r)));
+});
+
+await test("a predicate-only attestation proves nothing — the fallbacks are gone", async () => {
+  // The predicate carries a repository, a signer path and a commit, all
+  // correct, and there is no certificate at all.
+  const r = await run({ assets: [conformingAsset()], cert: { predicateOnly: true } });
+  assertBlockedWith(r, "E_ATTESTATION_INVALID");
+  assert(r.findings.some((i) => i.message.includes("carries no")), JSON.stringify(errorCodes(r)));
+});
+
+await test("a field the certificate omits is NOT taken from the predicate", async () => {
+  // The sharp version of the rule, and the one that is a canary: everything
+  // about this release is perfect except that `.12` is absent from the
+  // certificate, while the predicate names the repository correctly. Before
+  // B-T1.1 `extractSignerFacts` read `externalParameters.workflow.repository`
+  // whenever the certificate had no `sourceRepositoryURI` — so this ingested,
+  // and the listing's `source.repo` came from a string the builder composed.
+  // Restoring that one fallback turns this test green, which is how it was
+  // watched failing.
+  const r = await run({
+    assets: [conformingAsset()],
+    root: registryWith({}),
+    cert: { omitFields: ["source_repository_uri"], predicateFacts: true },
+  });
+  assertBlockedWith(r, "E_ATTESTATION_INVALID");
+  assert(r.findings.some((i) => i.message.includes("source_repository_uri")),
+    `the report must name the field it would not guess: ${JSON.stringify(errorCodes(r))}`);
+});
+
+await test("the DER fallback reads a field gh's JSON has no key for", async () => {
+  // Dead code for today's catalogue and kept anyway: B-T1.2 found all ten
+  // fields in gh 2.100.0's JSON on 18/18 bundles, AND found a live example of
+  // the class this exists for — `.24` is on every certificate and in nobody's
+  // JSON. Here `.15` and `.21` are hidden from the JSON and left in the DER,
+  // which is what a gh that renamed or dropped a key would look like.
+  const r = await run({
+    assets: [conformingAsset()],
+    root: registryWith({}),
+    cert: { derOnlyFields: ["repository_id", "run"] },
+  });
+  assert(!r.blocked, `the DER fallback did not fire: ${JSON.stringify(errorCodes(r))}`);
+});
+
+await test("an attestation for another file of the same release contributes no field", async () => {
+  // B-T1.1's "a release-file bundle naming other ids is ignored". gh answers
+  // with an array; only the attestation whose subject is THESE bytes may say
+  // anything about where they came from.
+  const other = {
+    verificationResult: {
+      signature: {
+        certificate: {
+          buildSignerURI: `https://github.com/${DEFAULT_SIGNER_WORKFLOW}@${"c".repeat(40)}`,
+          buildSignerDigest: "e".repeat(40),
+          sourceRepositoryURI: "https://github.com/someone-else/other",
+          sourceRepositoryDigest: "b".repeat(40),
+          sourceRepositoryRef: "refs/tags/v9.9.9",
+          sourceRepositoryIdentifier: "999999",
+          sourceRepositoryOwnerIdentifier: "888888",
+          runnerEnvironment: "self-hosted",
+          buildTrigger: "workflow_dispatch",
+          runInvocationURI: "https://github.com/someone-else/other/actions/runs/9",
+        },
+      },
+      statement: { subject: [{ name: "other.astraplugin", digest: { sha256: "9".repeat(64) } }] },
+    },
+  };
+  const r = await run({ assets: [conformingAsset()], root: registryWith({}), cert: { extraResults: [other] } });
+  assert(!r.blocked, `the wrong attestation was read: ${JSON.stringify(errorCodes(r))}`);
+});
+
+await test("two bundles of one release disagreeing on .15, or on .12, are refused", async () => {
+  // **A fixture is the only place this can be exercised, and that is
+  // measured.** B-T1.2: one bundle per RELEASE, not per artifact — the six
+  // listings shipping two artifacts verify both against the same attestation,
+  // which carries both as subjects and produces byte-identical JSON. No tree
+  // in the catalogue can make this fire, so nobody should conclude from a
+  // clean catalogue that it works.
+  const linux = conformingAsset();
+  const windows = conformingAsset({ os: "windows", arch: "x86_64" });
+  for (const [field, override] of Object.entries({
+    ".15": { repositoryId: "999999" },
+    ".12": { certRepo: "someone-else/other" },
+  })) {
+    const r = await run({
+      assets: [linux, windows],
+      root: registryWith({}),
+      certByAsset: { [windows.name]: override },
+    });
+    assert(errorCodes(r).includes("E_ATTESTATION_INVALID") || errorCodes(r).includes("E_ATTESTATION_REPO_MISMATCH"),
+      `${field}: expected a refusal, got ${JSON.stringify(errorCodes(r))}`);
+  }
+});
+
+await test("gh's policy refusal is not a missing attestation", async () => {
+  // The survey's finding, as a test. `Error: verifying with issuer
+  // "sigstore.dev"` is exit 1 with nothing on stdout and no named check —
+  // and it means the flags and the certificate disagree, which is the
+  // registry's problem. Reading it as E_ATTESTATION_MISSING tells an author to
+  // add an attestation they already have, which is what happened to 12 of 18
+  // ids in the survey's first pass.
+  const r = await run({ assets: [conformingAsset()], ghFail: 'Error: verifying with issuer "sigstore.dev"' });
+  assertBlockedWith(r, "E_ATTESTATION_INVALID");
+  assert(!errorCodes(r).includes("E_ATTESTATION_MISSING"), "a policy refusal is not an absence");
+  const finding = r.findings.find((i) => i.code === "E_ATTESTATION_INVALID");
+  assert(finding.message.includes("NOT a missing attestation"), finding.message);
+});
+
+await test("a 404 is the only thing that means there is no attestation", async () => {
+  const r = await run({
+    assets: [conformingAsset()],
+    ghFail: "Error: HTTP 404: Not Found (https://api.github.com/repos/a-stranger/dice-roller/attestations/sha256:abc)",
+  });
+  assertBlockedWith(r, "E_ATTESTATION_MISSING");
+});
+
 section("names");
 
 await test("E_TYPOSQUAT_COLLISION — an id that folds onto a listed one", async () => {
@@ -782,7 +997,7 @@ await test("E_MIN_ASTRA_TOO_NEW — a plugin that needs an Astra nobody has", as
       downloadAsset: github.downloadAsset.bind(github),
       proveOwnership: fakeOwnership(true),
       ghRunner: (args) => fakeGh({
-        repo: REPO, signerDigest: ALLOWED_WORKFLOW_SHA,
+        repo: REPO, signerDigest: ALLOWED_WORKFLOW_SHA, tag: TAG,
         subjectDigest: crypto.createHash("sha256").update(fs.readFileSync(args[2])).digest("hex"),
       })(args),
     },

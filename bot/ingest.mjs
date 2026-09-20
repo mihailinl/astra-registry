@@ -53,6 +53,7 @@ import { CODES, LEVEL_GLYPH, codeDef } from "./lib/codes.mjs";
 import { deriveListing } from "./lib/derive.mjs";
 import * as gh from "./lib/github.mjs";
 import { loadWorkflowAllowlist, verifyAttestation } from "./lib/attestation.mjs";
+import { checkBundlesAgree } from "./lib/certificate.mjs";
 import { localeSignature } from "./lib/locales.mjs";
 import { checkDisplayName, checkNames, loadTrademarks } from "./lib/names.mjs";
 import { proveOwnership } from "./lib/ownership.mjs";
@@ -275,6 +276,9 @@ export async function ingest(opts, deps = {}) {
         signerWorkflow,
         allowlist: trust.allowlist,
         artifactSha256: digest,
+        // ID-28 row .14: the ref that built these bytes is the tag being
+        // listed. Only this function knows which tag was submitted.
+        tag: opts.tag,
         runner: deps.ghRunner,
       });
     } finally {
@@ -337,9 +341,15 @@ export async function ingest(opts, deps = {}) {
     artifacts[key] = { url, filename: asset.name, sha256: digest, size: bytes.length };
     perBundle.push({
       where, facts: probed.manifest, manifest: inspected.manifest, files: inspected.files,
-      // The commit the SIGNED predicate names. Kept so step 10 can insist that
-      // the Release agrees with it; see the check there for why that matters.
+      // The commit the CERTIFICATE names (.13). Kept so step 10 can insist the
+      // Release agrees with it; see the check there for why that matters. It
+      // used to be read from the signed predicate, which ID-28 forbids.
       sourceDigest: att.facts?.sourceDigest ?? null,
+      // The ten ID-28 fields for this bundle, so step 7a can hold the bundles
+      // of one release to one identity and B-T3.2 can write it into the
+      // listing. `.21` travels this way to B-T3.3a's actor check (MIG-31).
+      certificate: att.facts?.fields ?? null,
+      certificateSource: att.facts?.fieldSource ?? null,
     });
     f.pass("E_DIGEST_MISMATCH", where, `sha256 ${digest.slice(0, 16)}…, ${bytes.length} bytes, ${key}`);
   }
@@ -379,6 +389,24 @@ export async function ingest(opts, deps = {}) {
         "different plugins. Build every platform from the same tree.");
     }
   }
+
+  // ── 7a. and about where they came from (ID-28) ────────────────────────────
+  //
+  // The bundles of one release attest one tree, built by one run, in one
+  // repository — or at least one of them is not this release. ID-28 names
+  // .13, .14, .15 and .17; .12 is compared too and flagged for the contract
+  // (B-T1.1), because .12 is the name BOT-21 writes into the listing.
+  //
+  // **No tree can make this fire today**, and that is measured: B-T1.2 found
+  // one bundle per RELEASE, not per artifact — the six listings shipping two
+  // artifacts verify both against the same attestation, which carries both as
+  // subjects. The fixtures in `ingest.test.mjs` are the only place this is
+  // exercised, and anybody who checks it against the catalogue will conclude,
+  // wrongly, that it does nothing.
+  f.absorb(
+    checkBundlesAgree(perBundle.filter((b) => b.certificate).map((b) => ({ where: b.where, fields: b.certificate }))),
+    "provenance",
+  );
   if (f.errors.length) return finish(f, null, opts);
 
   const facts = first.facts;
