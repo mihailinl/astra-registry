@@ -567,6 +567,17 @@ export function readDecisionRecords(root = REPO_ROOT, dir = path.join("log", "de
   return out;
 }
 
+/** MIG-20's marker, which B-T3.7's condition is keyed on. */
+export function markerOnMain(root) {
+  const file = path.join("log", "baseline.json");
+  try {
+    const doc = JSON.parse(fs.readFileSync(path.join(root, file), "utf8"));
+    return { present: doc?.schema === "astra.registry.baseline/1", file, doc };
+  } catch {
+    return { present: false, file, doc: null };
+  }
+}
+
 // ── CLI ─────────────────────────────────────────────────────────────────────
 
 const USAGE = `usage:

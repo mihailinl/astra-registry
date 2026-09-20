@@ -23,7 +23,9 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { alreadyPublished, decideRelease, noListingNoBinding, terminalOnMain, writeOutputs } from "../decide.mjs";
+import { markerOnMain } from "../baseline.mjs";
+import { alreadyPublished, decideRelease, noListingNoBinding, readIdentityRecord, terminalOnMain, writeOutputs } from "../decide.mjs";
+import { bot74Filter } from "../watch.mjs";
 import { DEFAULT_SIGNER_WORKFLOW } from "../ingest.mjs";
 import { parseMaintainerCommand } from "../lib/intake.mjs";
 import {
@@ -2599,6 +2601,155 @@ await test("FLOW-65 — a new id from a listed monorepo meets the first-listing 
   assertEqual(d.outcome, "review", "a new id from a listed monorepo published without a person reading it");
   assert(d.reasons.some((r) => r.code === "R_FIRST_LISTING"), "and it did not raise the first-listing hold");
   assertEqual(d.record.write, true, "a first-listing hold is a decision, and a decision is recorded");
+});
+
+
+// ── B-T3.9: the legacy path under the new records (R3 to R6) ───────────────
+
+section("the legacy path under the new records (B-T3.9)");
+
+await test("BOT-77 — a legacy run on a bound listing publishes nothing, queues nothing, clears nothing", () => {
+  const identityRecord = {
+    schema: "astra.registry.identity/1", plugin_id: "dice-roller",
+    repository_id: "111", repository_owner_id: "222", repo: "you/dice-roller",
+  };
+  // The strongest case, and it has to be built rather than described: a clean
+  // release with a maintainer's `/publish` BOUND to this run's own
+  // fingerprint. Written with a made-up fingerprint the first time, this test
+  // passed with the guard removed — the approval was refused as stale and the
+  // `P_APPROVAL_STALE` hold produced the same `review` the guard does, so four
+  // of its five assertions were about a code path the mutation never reached.
+  const fingerprint = decide(publishable({})).fingerprint;
+  assert(fingerprint, "the clean run produced no fingerprint to bind an approval to");
+  const d = decide(publishable({
+    identityRecord,
+    approval: { by: "maintainer", at: "2026-09-19T00:00:00Z", for: fingerprint, publishNow: true },
+  }));
+  assertEqual(d.outcome, "review", "the legacy path published a bound listing");
+  assertEqual(d.publishes_now, false, "the legacy path published a bound listing");
+  assertEqual(d.queue_entry, null, "the legacy path queued a bound listing");
+  assertEqual(d.approved_by, null,
+    "a `/publish` on the legacy path cleared the hold on a bound listing — which is the binding being " +
+    "routed around by whoever can comment on an issue in this repository");
+  assert(d.reasons.some((r) => String(r.message).includes("BOT-77")), "and the comment does not say why");
+  // The same release, unbound, publishes. Without this the assertions above
+  // pass for a `decide()` that refuses everything.
+  const unbound = decide(publishable({}));
+  assertEqual(unbound.outcome, "publish", "the floor: an unbound listing stopped publishing, so BOT-77's guard proves nothing");
+});
+
+await test("BOT-77 does not bind the service path, which is the path that holds the binding", () => {
+  const d = decide(publishable({
+    path: "service",
+    identityRecord: { schema: "astra.registry.identity/1", plugin_id: "dice-roller", repo: "you/dice-roller" },
+  }));
+  assertEqual(d.outcome, "publish",
+    "BOT-77 stopped the service path too, which would leave a bound listing publishable by nothing at all");
+});
+
+await test("BOT-74 — a `cli-v` ping gives no ingest, and so no record", () => {
+  const listedTags = ["v0.1.0", "v0.2.0"];
+  assertEqual(bot74Filter({ tag: "cli-v1.4.0", listedTags }).pass, false,
+    "a monorepo's CLI tag was dispatched as a plugin release, and from R3 the refusal is a public record");
+  assertEqual(bot74Filter({ tag: "v0.3.0", listedTags }).pass, true,
+    "the listing's own next release was filtered out, which stops the backstop working at all");
+  assertEqual(bot74Filter({ tag: "v0.2.0", listedTags }).pass, false,
+    "a tag already recorded on the listing was re-ingested");
+  // The prefix set is read from the recorded tags, so a listing that uses a
+  // prefix nothing in this repository uses still works. This is the property,
+  // not a list of `v` and `cli-v`.
+  assertEqual(bot74Filter({ tag: "release-2026.3", listedTags: ["release-2026.1", "release-2026.2"] }).pass, true,
+    "the filter has a hard-coded idea of what a release tag looks like, and this listing does not share it");
+  assertEqual(bot74Filter({ tag: "nightly-2026.3", listedTags: ["release-2026.1"] }).pass, false,
+    "a second tag shape on a listing that only ever used one was dispatched");
+  // A first listing has no evidence to filter by, and inventing some here
+  // would be this module deciding what a release tag is.
+  assertEqual(bot74Filter({ tag: "anything", listedTags: [] }).pass, true,
+    "a listing with no recorded tag cannot be filtered, and a filter that refuses everything there " +
+    "silently turns the backstop off for every new listing");
+});
+
+await test("B-T3.7 — the legacy path writes no record until the baseline marker is on main", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "b4-marker-"));
+  try {
+    assertEqual(markerOnMain(dir).present, false, "a tree with no log/baseline.json reported a marker");
+    fs.mkdirSync(path.join(dir, "log"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "log", "baseline.json"), JSON.stringify({ schema: "astra.registry.baseline/1", version_count: 1, record_count: 1 }));
+    assertEqual(markerOnMain(dir).present, true, "a real marker was not recognised");
+    // The shape is checked, not merely the path: an empty file, or somebody
+    // else's JSON, is not MIG-20's baseline and must not switch the writer on.
+    fs.writeFileSync(path.join(dir, "log", "baseline.json"), JSON.stringify({ schema: "something.else/1" }));
+    assertEqual(markerOnMain(dir).present, false, "any JSON at that path switched the legacy decision log on");
+    fs.writeFileSync(path.join(dir, "log", "baseline.json"), "not json");
+    assertEqual(markerOnMain(dir).present, false, "an unreadable marker switched the legacy decision log on");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+await test("an unreadable identity.json is not an absent one", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "b4-identity-"));
+  try {
+    assertEqual(readIdentityRecord(dir, "dice-roller"), null, "an absent binding was not absent");
+    fs.mkdirSync(path.join(dir, "plugins", "dice-roller"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "plugins", "dice-roller", "identity.json"), "{ broken");
+    let threw = null;
+    try { readIdentityRecord(dir, "dice-roller"); } catch (e) { threw = e; }
+    assert(threw, "an unreadable binding read as absent, and BOT-77's guard is keyed on present-or-absent: " +
+      "a corrupt file would have let the legacy path publish a bound listing");
+    assert(String(threw.message).includes("BOT-77"), "and the failure does not say what it protects");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+await test("B-T0.2 stage 2 — /approve is refused when no `held` record on main carries its fingerprint", async () => {
+  const fp = "a".repeat(16);
+  const line = `/approve ${REPO}@${TAG} ${fp}`;
+
+  // Before the baseline marker there are no records at all, and the rule is
+  // OFF. Ungated, it would refuse every approval this registry has ever
+  // accepted — the gate is the condition under which the thing being checked
+  // exists, not a softening of it.
+  const noMarker = await command(line, "the-maintainer");
+  assertEqual(noMarker.mode, "approve",
+    "the held-record rule fired before any record could exist, so every /approve is refused at once");
+
+  // With the marker on main and no matching `held` record, it is refused.
+  const root = registryTree([{}]);
+  fs.mkdirSync(path.join(root, "log"), { recursive: true });
+  fs.writeFileSync(path.join(root, "log", "baseline.json"),
+    JSON.stringify({ schema: "astra.registry.baseline/1", version_count: 1, record_count: 1 }));
+  const unrecorded = await command(line, "the-maintainer", { root });
+  assertEqual(unrecorded.mode, "reply", unrecorded.why);
+  assert(unrecorded.reply.includes(fp), "the refusal does not name the fingerprint it could not find");
+
+  // And accepted once the record is there. Without this the assertion above
+  // passes for a rule that refuses everything.
+  fs.mkdirSync(path.join(root, "log", "decisions", "2026", "09"), { recursive: true });
+  fs.writeFileSync(path.join(root, "log", "decisions", "2026", "09", "held1.json"),
+    JSON.stringify({ schema: "astra.registry.decision/1", decision_id: "held1", state: "held", fingerprint: fp }));
+  const recorded = await command(line, "the-maintainer", { root });
+  assertEqual(recorded.mode, "approve", recorded.why);
+
+  // A `held` record for SOME OTHER fingerprint does not do. This is the case
+  // the rule exists for: a fingerprint copied out of a comment on another
+  // thread reads exactly like a valid one until it is compared.
+  fs.rmSync(path.join(root, "log", "decisions", "2026", "09", "held1.json"));
+  fs.writeFileSync(path.join(root, "log", "decisions", "2026", "09", "held2.json"),
+    JSON.stringify({ schema: "astra.registry.decision/1", decision_id: "held2", state: "held", fingerprint: "b".repeat(16) }));
+  assertEqual((await command(line, "the-maintainer", { root })).mode, "reply",
+    "an approval bound to somebody else's hold");
+
+  // A record that is not `held` is not a hold. A `published` record naming the
+  // same fingerprint is the ordinary aftermath of the hold being cleared, and
+  // reading it as a hold would make every approval replayable for ever.
+  fs.rmSync(path.join(root, "log", "decisions", "2026", "09", "held2.json"));
+  fs.writeFileSync(path.join(root, "log", "decisions", "2026", "09", "pub.json"),
+    JSON.stringify({ schema: "astra.registry.decision/1", decision_id: "pub", state: "published", fingerprint: fp }));
+  assertEqual((await command(line, "the-maintainer", { root })).mode, "reply",
+    "a published record was read as a standing hold, which makes every cleared approval replayable");
 });
 
 // ── result ──────────────────────────────────────────────────────────────────

@@ -207,6 +207,51 @@ export function decide(input) {
     );
   }
 
+  // 1c ── BOT-77: the legacy path stops at a bound listing.
+  //
+  // From R3 a listing can carry `plugins/<id>/identity.json` — the registry's
+  // record of which repository it is bound to, written by the service path
+  // with a decision record beside it. The legacy path (an issue, a `/release`
+  // ping, the backstop, the queue drain) may not publish one, may not queue
+  // one, and may not clear a hold on one.
+  //
+  // Not tidiness. The two paths answer "may this be listed" with different
+  // evidence: the service path holds a verdict, an eligibility and a binding
+  // line read at the attested commit, and the legacy path holds an issue
+  // comment from somebody with write access to THIS repository. Once a listing
+  // is bound, letting the weaker path publish it means the binding can be
+  // routed around by opening an issue — and the route is open to exactly the
+  // people the binding was introduced to stop trusting by default.
+  //
+  // It expires. From R6 there is no legacy path (B-T5.2 deletes `ingest.yml`),
+  // and this guard goes with it.
+  const identityRecord = input.identityRecord ?? null;
+  if (identityRecord && path !== "service") {
+    add(
+      "R_CHECK_HELD",
+      `${derived.plugin.id} carries an identity record (bound to ${identityRecord.repo ?? "a repository"}, ` +
+      `repository ${identityRecord.repository_id ?? "?"}), and this run came in on the legacy path. A bound ` +
+      "listing is published by the path that holds the binding evidence — a verdict, an eligibility and the " +
+      "line at the attested commit — and an issue comment is none of those (BOT-77).",
+    );
+    return finish({
+      outcome: "review",
+      reasons,
+      track,
+      now,
+      sla_deadline: iso(now.getTime() + REVIEW_SLA_HOURS * HOUR_MS),
+      // No `artifact_digests`, no `queue_entry` and no `approval`: the three
+      // things BOT-77 names are publish, queue and clear-a-hold, and each of
+      // them is reachable from one of those members. The approval is carried
+      // in `approval_refused` instead, so the thread can still say a
+      // maintainer typed a command and the registry did not honour it.
+      approval: null,
+      refused: typed,
+      repo,
+      tag: input.tag,
+    });
+  }
+
   const requested = requestedAuthority(derived.version);
   // Computed here rather than at the delay branch, because two later decisions
   // need it: the approval record ("against which digest") and the queue clock.
