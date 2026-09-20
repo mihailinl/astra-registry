@@ -71,6 +71,11 @@ export function decide(input) {
   const finish = (d) => finishDecision({
     issue: input.issue
       ?? (queued && queued.repo === repo && queued.tag === input.tag ? queued.issue ?? null : null),
+    // BOT-92, threaded here and nowhere else: every outcome goes through this
+    // helper, so a branch added later cannot forget it. The verdict the
+    // service returned carries the member (ID-71); an answer WITHOUT it is
+    // read as shadow by the caller, never defaulted to not-shadow here.
+    shadow: input.shadow === true,
     ...d,
   });
 
@@ -604,8 +609,64 @@ function normaliseApproval(approval) {
   return { by, at: iso(at), for: forWhat, publishNow: approval?.publishNow === true };
 }
 
+// ── BOT-92, applied at the funnel and not to a list of kinds (B-T3.4) ─────
+//
+// "Nothing for work a `shadow: true` answer named: no publication, decision,
+// identity or queue record for that submission."
+//
+// The obvious implementation is to walk those four kinds and blank each one.
+// It is wrong the day a fifth is added — and a fifth IS planned: B-T3.4 also
+// commits `state/alerts/` records, and B-T3.5's result path grows more. The
+// task that adds it will add a member to the object below and will not think
+// to come here, because nothing about adding an output looks like editing a
+// shadow rule. The result is a shadow run that quietly commits the one kind
+// nobody suppressed, which is precisely the failure the shadow period exists
+// to make impossible.
+//
+// So the suppression is DENY-BY-DEFAULT over everything this function
+// returns. `WRITES_IN_SHADOW` is the short list of members a shadow run may
+// still carry, and every other member that could cause a write is emptied
+// whether or not anybody remembered it. A new output is suppressed by
+// construction; making it survive shadow takes a deliberate edit to the
+// allow-list, which is a line a reviewer can see.
+//
+// Two things stay outside the rule, because no service answer drives them:
+// B-T3.7b's `migration` records, and the legacy path until R6. Neither
+// reaches this function under a shadow answer — the legacy path has no
+// verdict to be shadow — so neither needs an exemption here, and adding one
+// would be a hole in the shape of a comment.
+
+/** Members a `shadow: true` answer still allows through — everything else is emptied. */
+const WRITES_IN_SHADOW = new Set([
+  // The answer itself, so the step summary can carry the kind and body hash
+  // the run WOULD have posted (B-T3.5's shadow rule).
+  "outcome", "reasons", "track", "decided_at", "sla_deadline", "notify_author",
+  "fingerprint", "repo", "tag", "issue", "artifact_digests", "wait", "shadow",
+  "approval_refused", "approved_by", "approved_at", "record",
+]);
+
+/** Everything a shadow answer withholds, emptied by type rather than by name. */
+function suppressForShadow(out) {
+  const withheld = [];
+  for (const [member, value] of Object.entries(out)) {
+    if (WRITES_IN_SHADOW.has(member)) continue;
+    const empty = typeof value === "boolean" ? false : Array.isArray(value) ? [] : null;
+    if (JSON.stringify(value) === JSON.stringify(empty)) continue;
+    withheld.push(member);
+    out[member] = empty;
+  }
+  out.record = {
+    write: false,
+    why:
+      "BOT-92: a `shadow: true` answer named this work, so nothing is committed and no result is posted for " +
+      `it. Withheld: ${withheld.join(", ") || "nothing this run had to write"}.`,
+  };
+  out.shadow = true;
+  return out;
+}
+
 function finishDecision(d) {
-  return {
+  const out = {
     outcome: d.outcome,
     reasons: d.reasons,
     track: d.track,
@@ -654,5 +715,8 @@ function finishDecision(d) {
     // knows when it started (B-T3.5's determinism rule — a wait's clock comes
     // from the step's recorded start, never from the moment the body is sent).
     wait: d.wait ?? null,
+    /** True when a `shadow: true` answer named this work (BOT-92). */
+    shadow: d.shadow === true,
   };
+  return out.shadow ? suppressForShadow(out) : out;
 }

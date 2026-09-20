@@ -85,6 +85,69 @@ const LISTING_FILE =
   /^plugins\/[^/]+\/(plugin\.json|README\.md|icon\.(png|webp|svg|jpg|jpeg|ico)|versions\/[^/]+\.json)$/;
 const QUEUE_FILE = /^state\/queue\/[^/]+\.json$/;
 
+/**
+ * B-T3.4's half of this file, refused by name.
+ *
+ * Shaped like `bot/baseline.mjs`'s own refusals and for the reason
+ * `dev/couplings.md` now carries as a rule: a refusal that holds a defect out
+ * of reach is a refusal whose removal SHIPS the defect, so it names what it
+ * protects, and whoever lifts it runs what was behind it end to end.
+ *
+ * B-T3.4 asks this job to commit, in ONE commit: a decision record per state
+ * entry, identity records, queue entries carrying `decision_id`, and
+ * `state/alerts/` records — with **a version or queue addition carrying no
+ * record refused**. The allow-list above is what would have to widen for any
+ * of it, and widening it is the whole risk: it is the line between a job that
+ * may write four shapes of file and one that may write `log/` as well.
+ *
+ * TWO THINGS ARE NOT ON `main`, measured 2026-09-20:
+ *
+ *   * **`bot/lib/decisions.mjs`** (B-T2.2) — the record writer. Without it no
+ *     record exists for an addition to be checked against, so "a version
+ *     without its record is refused" is either inert or refuses every
+ *     publication this registry makes. Inert is the worse of the two: it
+ *     reads, in a wall of green, exactly like a check that passed.
+ *   * **`.github/workflows/plugins-ingest.yml`** (B-T3.1) — the job graph
+ *     whose `publish` job this is. `ingest.yml`'s publish job is the legacy
+ *     one, and B-T3.7 keys ITS record writing on `log/baseline.json`.
+ *
+ * So the allow-list is not widened here. Widening it now opens the door
+ * before anything is behind it — a `publish` job entitled to write `log/`,
+ * with no writer, no record requirement and no canary, is strictly worse than
+ * one that cannot — and on the day the writer lands nobody re-reads this
+ * function.
+ *
+ * What IS built: BOT-92's suppression, at `bot/lib/policy/decision.mjs`'s
+ * funnel, where a shadow answer empties every member that could cause a write
+ * rather than the four kinds the plan happens to name.
+ *
+ * @param {{decisionsWriter?: unknown, jobGraph?: unknown}} available
+ */
+export function recordCommitRefusal(available = {}) {
+  const missing = [];
+  if (!available.decisionsWriter) {
+    missing.push(
+      "`bot/lib/decisions.mjs` (B-T2.2), which derives BOT-35's `decision_id` and renders BOT-37's " +
+      "trailers. Nothing else may compose a record: a second composer is a second answer to what a " +
+      "decision id is, and the two collide silently because both are 32 hex characters",
+    );
+  }
+  if (!available.jobGraph) {
+    missing.push(
+      "`.github/workflows/plugins-ingest.yml` (B-T3.1), whose `publish` job this is. `ingest.yml`'s " +
+      "publish job is the legacy one, and B-T3.7 keys its record writing on `log/baseline.json`",
+    );
+  }
+  if (missing.length === 0) return { ok: true, reason: "every input the record commit needs is present" };
+  return {
+    ok: false,
+    reason:
+      "this job cannot commit decision records, and says so rather than widening its allow-list to a " +
+      "directory nothing writes: " + missing.join("; ") +
+      ". BOT-92's suppression is in bot/lib/policy/decision.mjs and is not affected.",
+  };
+}
+
 /** Every file under `dir`, as paths relative to it, `/`-separated and sorted. */
 export function filesUnder(dir) {
   if (!fs.existsSync(dir)) return [];
