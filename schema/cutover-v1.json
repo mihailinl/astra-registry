@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://registry.astra.app/schema/cutover-v1.json",
+  "title": "astra.registry.cutover/1",
+  "description": "log/cutover.json — the marker that says cutover has happened, added by the cutover commit and by nothing else (contract ROLL-33; B.4). From that commit the plugins service is the only publication channel.\n\nTHE FILE IS THE FACT. MIG-1, ID-25 and registry plan BOT-72 all key on \"`log/cutover.json` is on `main`\", so a reader outside this repository can settle the question with one path and no API: the marker's PRESENCE is what those rules test. `cutover_at` is the moment, for the arithmetic MIG-1 needs — `grandfathered` until the LATER of the deadline and cutover — and it is the cutover commit's own time (registry plan M-T6.2).\n\nEXACTLY TWO MEMBERS, and `$comment` is NOT among them, for the reason schema/deadline-v1.json gives at length: B.4 fixes the member set, the service parses this record, and a member one party admits and another refuses is a two-way-test failure (§0.8) discovered in production.\n\nWHOLE SECONDS, AND `Z` (§0.7). A pattern cannot tell a real date from `2026-02-31T00:00:00Z`; tools/validate.mjs round-trips the value through Date, which is the other half of the check.\n\nWHAT NOTHING HERE CAN CHECK. That `cutover_at` is in fact the commit's time is not a property of the file, and neither is ROLL-33's \"only the cutover commit adds it\" — both are statements about git. The second is B-T3.6's and BOT-54's to enforce on the pull-request door; the first would need a reader that knows which commit added the path (bot/detectors.mjs's `addedBy` is the shape of it) and today nobody does. Recorded as a gap rather than implied by this file's existence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "cutover_at"],
+  "properties": {
+    "schema": { "const": "astra.registry.cutover/1" },
+    "cutover_at": {
+      "$comment": "The cutover commit's time. MIG-1 grandfathers a listing until the later of this and the deadline, so a marker committed before the deadline changes no listing's state on its own — it is the deadline that then decides.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    }
+  }
+}
