@@ -40,6 +40,7 @@ import { classifyFile, scanHostRpcs } from "../lib/rpcscan.mjs";
 import { checkDisplayName, checkNames, foldDisplayName, loadTrademarks } from "../lib/names.mjs";
 import { scriptsUsed } from "../../tools/lib/ids.mjs";
 import { extractSignerFacts, loadRootKeys, loadWorkflowAllowlist } from "../lib/attestation.mjs";
+import * as gh from "../lib/github.mjs";
 import { proveOwnership } from "../lib/ownership.mjs";
 import { isRecheckCommand, parseIssueForm } from "../lib/issue.mjs";
 import { findProbe, runProbe } from "../lib/probe.mjs";
@@ -822,6 +823,192 @@ await test("a 404 is the only thing that means there is no attestation", async (
     ghFail: "Error: HTTP 404: Not Found (https://api.github.com/repos/a-stranger/dice-roller/attestations/sha256:abc)",
   });
   assertBlockedWith(r, "E_ATTESTATION_MISSING");
+});
+
+section("GitHub, read by id (B-T1.3)");
+
+/**
+ * A GitHub that answers from a table of URLs, with headers.
+ *
+ * Nothing here touches the network. The SHAPES are not invented: each was
+ * measured against api.github.com on 2026-09-19 and the measurements are
+ * recorded at the top of `bot/lib/github.mjs` — including the one that matters
+ * most, that a renamed repository answers `301` with
+ * `location: https://api.github.com/repositories/<id>`.
+ */
+function stubFetch(routes) {
+  const seen = [];
+  const impl = async (url) => {
+    seen.push(String(url));
+    const route = routes[String(url)];
+    if (!route) throw new Error(`the stub was not told about ${url}`);
+    if (route.throws) throw new Error(route.throws);
+    const headers = new Map(Object.entries(route.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v]));
+    return {
+      status: route.status,
+      ok: route.status >= 200 && route.status < 300,
+      headers: { get: (k) => headers.get(k.toLowerCase()) ?? null },
+      async text() { return route.body ?? ""; },
+    };
+  };
+  impl.seen = seen;
+  return impl;
+}
+
+const API = "https://api.github.com";
+
+await test("a renamed repository answers 301, and the id survives the rename", async () => {
+  const fetchImpl = stubFetch({
+    [`${API}/repos/KNICE-TECH/astra-chess`]: {
+      status: 301,
+      headers: { location: `${API}/repositories/1343092393` },
+    },
+    [`${API}/repositories/1343092393`]: {
+      status: 200,
+      body: JSON.stringify({
+        id: 1343092393, full_name: "MINICE-AI/astra-chess",
+        owner: { login: "MINICE-AI", id: 280318216 },
+      }),
+    },
+  });
+  const answer = await gh.fetchRepositoryIds("KNICE-TECH/astra-chess", { fetchImpl });
+  assertEqual(answer.status, "found", answer.reason);
+  assertEqual(answer.id, "1343092393", "the id of the repository the assets came from (BOT-21)");
+  assertEqual(answer.owner_id, "280318216", "and its owner's");
+  assertEqual(answer.full_name, "MINICE-AI/astra-chess", "the name GitHub uses TODAY, not the one we asked with");
+  assert(answer.renamed, "a caller has to be able to say that a rename happened");
+  // The live pair this fixture copies: the certificate of both chess listings
+  // says `KNICE-TECH/astra-chess`, and `KNICE-TECH` is a freed login anybody
+  // can register. The name froze at signing; the id did not move.
+});
+
+await test("a 404 is absence and a 403 is not", async () => {
+  const gone = await gh.fetchRepositoryIds("nobody/nothing", {
+    fetchImpl: stubFetch({ [`${API}/repos/nobody/nothing`]: { status: 404 } }),
+  });
+  assertEqual(gone.status, "not_found", gone.reason);
+
+  const limited = await gh.fetchRepositoryIds("a/b", {
+    fetchImpl: stubFetch({
+      [`${API}/repos/a/b`]: {
+        status: 403,
+        headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1758300000" },
+      },
+    }),
+  });
+  assertEqual(limited.status, "transient", limited.reason);
+  assert(limited.reason.includes("rate-limit"), limited.reason);
+  assertEqual(limited.id, null, "a read that did not happen produces no id");
+
+  const refused = await gh.fetchRepositoryIds("a/b", {
+    fetchImpl: stubFetch({ [`${API}/repos/a/b`]: { status: 403 } }),
+  });
+  assertEqual(refused.status, "transient", "a bare 403 is a refusal, and a refusal is never absence");
+});
+
+await test("a 502 and a dropped connection are both reads that did not happen", async () => {
+  const bad = await gh.fetchRepositoryIds("a/b", {
+    fetchImpl: stubFetch({ [`${API}/repos/a/b`]: { status: 502 } }),
+  });
+  assertEqual(bad.status, "transient", bad.reason);
+  const dropped = await gh.fetchRepositoryIds("a/b", {
+    fetchImpl: stubFetch({ [`${API}/repos/a/b`]: { throws: "ECONNRESET" } }),
+  });
+  assertEqual(dropped.status, "transient", dropped.reason);
+  assert(dropped.reason.includes("ECONNRESET"), dropped.reason);
+});
+
+await test("an id past 2^53 comes out of the response text, not out of JSON.parse", async () => {
+  // `JSON.parse` turns 9007199254740993 into …992 before any code here sees
+  // it, and `String()` then makes the loss unreadable. SCOPE-5 says base-10
+  // strings for exactly this, and this is the test that proves the string is
+  // not just a coercion of the lossy number.
+  const body = '{"id":9007199254740993,"full_name":"big/repo","owner":{"login":"big","id":9007199254740995}}';
+  const answer = await gh.fetchRepositoryIds("big/repo", {
+    fetchImpl: stubFetch({ [`${API}/repos/big/repo`]: { status: 200, body } }),
+  });
+  assertEqual(answer.id, "9007199254740993", "the digits GitHub sent");
+  assertEqual(answer.owner_id, "9007199254740995", "and the owner's");
+  assert(answer.reason.includes("2^53"), "and the answer says where they came from");
+  assert(String(JSON.parse(body).id) !== answer.id, "the parse really does lose it — the premise holds");
+});
+
+await test("ID-63's two reads: the owner-file commit, and whether a pull request carried it", async () => {
+  const listUrl = `${API}/repositories/1203676452/commits` +
+    `?sha=${"a".repeat(40)}&path=.well-known%2Fastra-plugin-owner&per_page=1`;
+  const withPull = stubFetch({
+    [listUrl]: { status: 200, body: JSON.stringify([{ sha: "b".repeat(40) }]) },
+    [`${API}/repositories/1203676452/commits/${"b".repeat(40)}/pulls`]: {
+      status: 200, body: JSON.stringify([{ number: 17 }]),
+    },
+  });
+  const last = await gh.lastCommitTouching(1203676452, "a".repeat(40), ".well-known/astra-plugin-owner", { fetchImpl: withPull });
+  assertEqual(last.status, "found", last.reason);
+  assertEqual(last.commit, "b".repeat(40), "the newest commit touching the file up to the attested one");
+  const pulls = await gh.pullsForCommit(1203676452, "b".repeat(40), { fetchImpl: withPull });
+  assertEqual(pulls.status, "found", pulls.reason);
+  assertEqual(pulls.pulls.join(","), "17", "GitHub ties it to #17");
+
+  const noPull = await gh.pullsForCommit(1203676452, "c".repeat(40), {
+    fetchImpl: stubFetch({
+      [`${API}/repositories/1203676452/commits/${"c".repeat(40)}/pulls`]: { status: 200, body: "[]" },
+    }),
+  });
+  assertEqual(noPull.status, "found", noPull.reason);
+  assertEqual(noPull.pulls.length, 0, "tied to no pull request is an answer");
+});
+
+await test("a transient read reports no pull request — it reports that it did not read", async () => {
+  // The distinction the record has to keep. "GitHub was rate-limited" and
+  // "this commit reached the default branch with nobody reviewing it" look
+  // the same to anyone reading `pull_request: false`, and only one of them is
+  // evidence. `pulls` is null, never an empty list, when the read failed.
+  const answer = await gh.pullsForCommit(1203676452, "d".repeat(40), {
+    fetchImpl: stubFetch({
+      [`${API}/repositories/1203676452/commits/${"d".repeat(40)}/pulls`]: {
+        status: 403, headers: { "retry-after": "60" },
+      },
+    }),
+  });
+  assertEqual(answer.status, "transient", answer.reason);
+  assertEqual(answer.pulls, null, "an unread list is null, never []");
+});
+
+await test("a file is read at the attested commit, by repository id", async () => {
+  // ID-22: at the attested commit, whatever the default branch says today.
+  const url = `${API}/repositories/1203676452/contents/.well-known/astra-plugin-owner?ref=${"a".repeat(40)}`;
+  const answer = await gh.fileAtCommit(1203676452, "a".repeat(40), ".well-known/astra-plugin-owner", {
+    fetchImpl: stubFetch({ [url]: { status: 200, body: "astra-binding: tok_example\n" } }),
+  });
+  assertEqual(answer.status, "found", answer.reason);
+  assert(answer.content.includes("astra-binding:"), answer.content);
+
+  const absent = await gh.fileAtCommit(1203676452, "a".repeat(40), ".well-known/astra-plugin-owner", {
+    fetchImpl: stubFetch({ [url]: { status: 404 } }),
+  });
+  assertEqual(absent.status, "not_found", "no file is a fact; a rate limit is not");
+});
+
+await test("the run's triggering actor, for MIG-31's comparison with .17", async () => {
+  const answer = await gh.workflowRun("mihailinl/AstraPlugins", "32409258885", {
+    fetchImpl: stubFetch({
+      [`${API}/repos/mihailinl/AstraPlugins/actions/runs/32409258885`]: {
+        status: 200,
+        body: JSON.stringify({ id: 32409258885, actor: { id: 1 }, triggering_actor: { login: "mihailinl", id: 193032699 } }),
+      },
+    }),
+  });
+  assertEqual(answer.status, "found", answer.reason);
+  assertEqual(answer.triggering_actor_id, "193032699", "read as a base-10 string, and from triggering_actor");
+  // The live value: run 32409258885 of text-utils 0.1.3 was triggered by
+  // account 193032699, which is `.17` on that same certificate.
+});
+
+await test("a repository id that is not an id is refused before a request is made", async () => {
+  const impl = stubFetch({});
+  const answer = await gh.commitInRepository("mihailinl/AstraPlugins", "a".repeat(40), { fetchImpl: impl });
+  assertEqual(answer.status, "transient", answer.reason);
+  assertEqual(impl.seen.length, 0, "a name where an id belongs must not become a URL");
 });
 
 section("names");
