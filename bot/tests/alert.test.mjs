@@ -542,5 +542,51 @@ await test("environment `alerts` is given no secret that addresses another party
     "there is no base URL anywhere in this estate");
 });
 
+await test("the heartbeat dials the secret's bytes, and composes nothing onto them", async () => {
+  // The rule above asks a question about secret NAMES. This one asks it about
+  // behaviour, and the two are not the same sentence: a script can hold no
+  // secret called `..._BASE` and still build a URL out of one.
+  //
+  // It is here because the protection was an accident until tonight. This
+  // script takes whole URLs and appends nothing, which was decided against
+  // base URLs (attack M-5) and not against composition in general — so it
+  // happened to be safe rather than being made safe, and the next suffix
+  // anybody adds is the moment the accident stops covering us.
+  //
+  // What composition costs, measured by minice-be on their own sink tonight
+  // and not hypothetical: `rstrip("/") + "/fail"` applied to a ping URL ending
+  // `…/u#x` composes `…/u#x/fail`, whose FRAGMENT is `x/fail` — and a fragment
+  // is never sent on the wire. So the degraded post fetches the healthy URL,
+  // one character in a capability file makes the check permanently green, and
+  // nothing anywhere compares the two. A composed URL is a second grammar
+  // standing beside the parser, which is the same sentence as their SSRF and
+  // as comparing two URLs as text.
+  //
+  // So: for every shape that composition mangles, the dialled URL must be the
+  // secret's bytes, unchanged.
+  const shapes = [
+    ["a fragment", "https://ping.example/u#x"],
+    ["a query", "https://ping.example/u?token=abc"],
+    ["a trailing slash", "https://ping.example/u/"],
+    ["no path at all", "https://ping.example"],
+    ["a query and a fragment", "https://ping.example/u?a=1#frag"],
+    ["a percent-encoded segment", "https://ping.example/u%2Fv"],
+  ];
+  for (const [what, secret] of shapes) {
+    let dialled = null;
+    const res = await postHeartbeat({
+      check: "served-set",
+      env: { ASTRA_DEADMAN_URL_SERVED_SET: secret },
+      fetchImpl: async (u) => { dialled = u; return { ok: true, status: 200 }; },
+      log: { log() {}, error() {} },
+    });
+    assert.equal(res.code, 0, `${what}: ${res.problems.join("; ")}`);
+    assert.equal(dialled, secret,
+      `${what}: the heartbeat dialled ${JSON.stringify(dialled)} for a secret carrying ` +
+      `${JSON.stringify(secret)}. One whole URL per check means the bytes the owner pasted, not a URL built ` +
+      `from them — and a fragment or a query is where the difference stops being visible on the wire.`);
+  }
+});
+
 console.log(`\n${failures === 0 ? "PASS" : "FAIL"}  bot/tests/alert.test.mjs, ${failures} failed`);
 if (failures) process.exit(1);
