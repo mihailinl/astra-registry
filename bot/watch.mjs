@@ -23,13 +23,13 @@ import { fetchRelease } from "./lib/github.mjs";
 import {
   SEEN_FILE,
   newReleases,
-  parseReleasesAtom,
   readSeen,
   resolveSubmitter,
   serialiseSeen,
   watchPlan,
 } from "./lib/notify.mjs";
 import { readQueue, ripeQueueEntries, slaReport } from "./lib/policy.mjs";
+import { pollFeed } from "./lib/poll.mjs";
 
 /** At most this many ingests are started by one cron run. */
 const MAX_DISPATCH = 20;
@@ -89,27 +89,15 @@ export function bot74Filter({ tag, listedTags = [] }) {
 
 const iso = (d) => `${new Date(d).toISOString().slice(0, 19)}Z`;
 
-/**
- * One conditional GET of a repository's releases feed.
- *
- * `If-None-Match` is the entire economy of the backstop: GitHub answers 304
- * with no body, which is what makes "a repo with no new release costs one
- * conditional request" true rather than aspirational.
- */
-export async function pollFeed(repo, etag, fetchImpl = fetch) {
-  const url = `https://github.com/${repo}/releases.atom`;
-  const headers = { Accept: "application/atom+xml", "User-Agent": "astra-registry-bot" };
-  if (etag) headers["If-None-Match"] = etag;
-  const res = await fetchImpl(url, { headers, redirect: "follow" });
-  if (res.status === 304) return { changed: false, etag, entries: [] };
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  const body = await res.text();
-  return {
-    changed: true,
-    etag: res.headers.get("etag") ?? null,
-    entries: parseReleasesAtom(body, repo),
-  };
-}
+// `pollFeed` — the one conditional GET the whole backstop economy rests on —
+// moved to `./lib/poll.mjs` (B-T2.6), which is where the poll's memory, the
+// signed Actions cache and the `ls-remote` sweep are being written. It is
+// IMPORTED here rather than re-exported: this file is a CLI entry point, and a
+// re-export would leave a second door onto a function whose readers should be
+// naming the module that owns it. The only reader that took it from here was
+// `bot/tests/policy.test.mjs`, whose import moved with it, and
+// `bot/tests/poll.test.mjs` pins this file's three remaining exports by name so
+// a fourth cannot reappear unnoticed.
 
 /**
  * Poll every listing that has been quiet, and report what is new.
