@@ -259,3 +259,29 @@ jobs:
 
       - name: docs/BOT-CHECKS.md still describes the checks that exist
         run: node bot/gen-checks-doc.mjs --check
+
+      # B-T1.7 (BOT-78). The two risk tiers, against the crate that defines
+      # them. `HIGH_RISK` and `CONSENT_HIGH_RISK` in bot/lib/policy/constants.mjs
+      # decide what stops a release and asks a person; PRODUCTION_PLAN §5.5 and
+      # §5.6 decide what they are, and the place that reading is written as
+      # code is `TIER2_REFUSED_PERMISSIONS` and `HIGH_RISK_PERMISSIONS` in
+      # AstraPlugins' vendored manifest crate. Until this suite the two agreed
+      # by hand, and a disagreement is silent in BOTH directions: a release
+      # auto-published for an authority the daemon refuses an imported file
+      # over, or one held for a person over an authority nobody upstream calls
+      # high-risk. Each side's own tests could only prove it agreed with itself.
+      #
+      # It must run AFTER `Fetch the manifest crate the daemon uses`, which is
+      # the step that puts a checkout on disk. It needs nothing else — not the
+      # cargo build, not the probe binary — and it reads the crate out of git
+      # at the pin's own commit rather than off that checkout's working tree,
+      # so the answer is the same here and on a workstation whose sibling copy
+      # is on some branch. That is deliberate: this repository has already
+      # shipped a floor measured against build artifacts, and it went red in CI
+      # on the commit that added it.
+      #
+      # With no checkout reachable it FAILS, naming every place it looked. A
+      # cross-repository check that skips quietly is the failure the step above
+      # this one exists to prevent, one level up.
+      - name: The risk tiers, against the manifest crate at the pin
+        run: node --test bot/tests/risk-tiers.test.mjs
