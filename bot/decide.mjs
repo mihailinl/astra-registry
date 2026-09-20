@@ -64,6 +64,134 @@ import {
 
 const EXIT = { publish: 0, refuse: 1, review: 3, delay: 4 };
 
+// ── the outcomes that are reached before the policy is asked (B-T3.3c) ─────
+//
+// Three of B-T3.3c's five rules are not policy questions at all. They are
+// answers about what is ALREADY in git — a terminal record, a published
+// version, a repository no listing names — and the run that meets one has
+// nothing to decide and nothing to write.
+//
+// They live here, in the caller, and not in `decide()`, for the reason
+// B-T3.3a wrote down when it refused to add a fifth outcome for a wait:
+// `decide()` answers `publish`, `delay`, `review` or `refuse`, and a fifth
+// value has to be understood by `bot/lib/policy/comment.mjs`'s headline map
+// and by the exit map below — with the failure mode of an unrecognised
+// outcome being a comment with no headline and exit 2. A caller that stops
+// before asking needs neither.
+//
+// Each one carries `record.write: false` in the same shape `decide()` returns,
+// so the writer downstream asks one question of every answer rather than
+// asking a different question of each kind.
+
+/**
+ * BOT-19: what `main` already says about this submission.
+ *
+ * Searched BEFORE the service is asked, so that a stop recorded in the panel
+ * stops a ping too. A terminal record is REPORTED and nothing is written: a
+ * second record saying the same thing is a second answer to "what did the
+ * registry decide", and the two can drift.
+ *
+ * Terminal is asked as a property of the record's state, over the set of
+ * states `records` carries, rather than as a list of the terminal state names
+ * that existed when this was written. The set is `main`'s to grow.
+ *
+ * @param {{records: object[], pluginId: string|null, repo: string, tag: string|null}} opts
+ */
+export function terminalOnMain({ records = [], pluginId, repo, tag }) {
+  const TERMINAL = new Set(["refused", "revoked", "yanked", "withdrawn", "deprecated"]);
+  const mine = records.filter((r) =>
+    (pluginId && r?.plugin_id === pluginId) ||
+    (r?.repo === repo && tag && r?.tag === tag));
+  const hit = mine.filter((r) => TERMINAL.has(String(r?.state))).at(-1) ?? null;
+  if (!hit) return null;
+  return {
+    reported: hit.state,
+    names: hit.decision_id ?? null,
+    record: {
+      write: false,
+      why:
+        `BOT-19: \`main\` already carries a ${hit.state} record for this work ` +
+        `(${hit.decision_id ?? "no decision_id"}), and a second record saying the same thing is a second ` +
+        "answer to what the registry decided",
+    },
+  };
+}
+
+/**
+ * BOT-74: a registered tag already listed with identical digests.
+ *
+ * Reported `published`, naming the existing record. Not "already listed, so
+ * refuse" and not "list it again": the registry's answer to a re-submission of
+ * bytes it has already published is the publication it already made, and the
+ * result names the record so the asker can go and read it.
+ *
+ * The digests are what makes this safe. A tag that moved to different bytes is
+ * NOT this case — it is a new submission of the same name — and comparing by
+ * tag alone would answer `published` for bytes nobody ever verified.
+ *
+ * @param {{listed: {version: string, artifact_digests?: string[], decision_id?: string}|null,
+ *   digests: string[]}} opts
+ */
+export function alreadyPublished({ listed, digests }) {
+  if (!listed || !Array.isArray(digests) || digests.length === 0) return null;
+  const theirs = [...(listed.artifact_digests ?? [])].sort();
+  const mine = [...digests].sort();
+  if (theirs.length === 0 || JSON.stringify(theirs) !== JSON.stringify(mine)) return null;
+  return {
+    reported: "published",
+    names: listed.decision_id ?? null,
+    record: {
+      write: false,
+      why:
+        `BOT-74: ${listed.version} is listed already with these exact ${mine.length} artifact digest(s), and ` +
+        `the answer to a re-submission of published bytes is the publication that already happened` +
+        (listed.decision_id ? ` (${listed.decision_id})` : ""),
+    },
+  };
+}
+
+/**
+ * FLOW-67: a `panel` or `ci` submission that no listing names, with no usable
+ * binding line.
+ *
+ * Nothing is written. The submission is from a repository this registry has
+ * never listed and which has not said, at the attested commit, that it wants
+ * to be — so there is nothing to decide about, and a refusal record would be a
+ * durable statement about a stranger's repository made on the strength of one
+ * unsolicited call.
+ *
+ * FLOW-78: the result carries the COMMIT the absence was read at. Without it
+ * "no listing names this repository" is a claim about a moving target, and an
+ * author who adds the line cannot tell whether the registry looked before or
+ * after they pushed it.
+ *
+ * The two sources are read from the submission rather than hard-coded here,
+ * and the rule is "a source that reaches the registry without a thread" — the
+ * legacy `issue` and `ping` paths have a thread to answer on, so a refusal
+ * there is a sentence somebody reads.
+ *
+ * @param {{source: string|null, listingNamesRepo: boolean, binding: {present: boolean, code?: string|null}|null,
+ *   readCommit: string|null, repo: string}} opts
+ */
+export function noListingNoBinding({ source, listingNamesRepo, binding, readCommit, repo }) {
+  const THREADLESS = new Set(["panel", "ci"]);
+  if (!THREADLESS.has(String(source))) return null;
+  if (listingNamesRepo) return null;
+  const unusable = !binding?.present || binding?.code === "B_BINDING_UNUSABLE";
+  if (!unusable) return null;
+  return {
+    reported: "refused",
+    read_commit: readCommit ?? null,
+    record: {
+      write: false,
+      why:
+        `FLOW-67: no listing names ${repo} at ${readCommit ?? "the read commit"} and its binding line is ` +
+        `${binding?.present ? binding.code : "absent"}. A ${source} submission has no thread to answer on, so a ` +
+        "recorded refusal would be a durable statement about a stranger's repository made on one unsolicited call",
+    },
+  };
+}
+
 /** @param {string[]} argv */
 export function parseArgs(argv) {
   // No `--roots`: the root keys are compiled into `bot/lib/roots.mjs` and no

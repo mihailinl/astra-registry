@@ -23,7 +23,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { decideRelease, writeOutputs } from "../decide.mjs";
+import { alreadyPublished, decideRelease, noListingNoBinding, terminalOnMain, writeOutputs } from "../decide.mjs";
 import { DEFAULT_SIGNER_WORKFLOW } from "../ingest.mjs";
 import { parseMaintainerCommand } from "../lib/intake.mjs";
 import {
@@ -34,6 +34,7 @@ import {
   REVIEW_SLA_HOURS,
   TRUSTED_DELAY_HOURS,
   decide,
+  policyCodeDef,
   queueFile,
   readQueue,
   requestedAuthority,
@@ -2399,6 +2400,205 @@ await test("POLICY.md points at the detail rather than restating it", () => {
   assert(doc.includes("docs/POLICY.md"), "the listing policy has to link the publication policy");
   assert(doc.includes(`${REVIEW_SLA_HOURS} hours`) || doc.includes(`${REVIEW_SLA_HOURS} h`),
     "and §8 has to carry the number now that there is one");
+});
+
+
+// ── B-T3.3c: the outcomes that write nothing ────────────────────────────────
+
+section("no-record outcomes (B-T3.3c)");
+
+// A minimal `decide()` input that publishes, so each test below changes one
+// thing and the change is what the assertion is about.
+function publishable(over = {}) {
+  return {
+    findings: [],
+    derived: {
+      plugin: { id: "dice-roller", source: { kind: "github", repo: "you/dice-roller" } },
+      version: { version: "1.0.1", release: { repo: "you/dice-roller", commit: "a".repeat(40) }, artifacts: [] },
+    },
+    existing: null,
+    repo: "you/dice-roller",
+    tag: "v1.0.1",
+    now: new Date("2026-09-20T00:00:00Z"),
+    ...over,
+  };
+}
+
+await test("FLOW-72 — a wait on the service path gives a wait and writes nothing", () => {
+  const d = decide(publishable({
+    path: "service",
+    findings: [{ level: "error", code: "E_PROBE_UNAVAILABLE", where: "probe", message: "the manifest probe did not answer" }],
+  }));
+  assertEqual(d.record.write, false, "a wait was going to be written into log/decisions/ as a refusal");
+  assertEqual(d.wait?.code, "E_PROBE_UNAVAILABLE", "the result carries no wait for the caller to re-ask on");
+  assert(d.reasons.every((r) => r.code !== "P_REFUSED"),
+    "the wait reached stage 1 and came out as a refusal of the author's release");
+});
+
+// The watched failure the plan names, in the direction it would actually
+// arrive: the SAME code on the legacy path is an error and IS recorded,
+// because there the author has a thread and a `/recheck`.
+await test("FLOW-72 — the same code on the legacy path still refuses, and still records", () => {
+  const d = decide(publishable({
+    findings: [{ level: "error", code: "E_PROBE_UNAVAILABLE", where: "probe", message: "the manifest probe did not answer" }],
+  }));
+  assertEqual(d.outcome, "refuse", "the legacy path stopped refusing a probe failure");
+  assertEqual(d.record.write, true,
+    "the legacy path stopped recording a refusal the author can answer with /recheck; FLOW-72's " +
+    "reclassification is the SERVICE path's and widening it silently drops the legacy decision log");
+  assertEqual(d.wait, null, "a legacy refusal is not a wait");
+});
+
+// The property, not the list. This is the failure mode the plan names for this
+// task: B-T3.3c listing the wait codes by hand, and a sibling coining a sixth.
+await test("FLOW-72 is keyed on the declared level, so a wait nobody enumerated still waits", () => {
+  for (const code of ["W_SERVICE_UNREACHABLE", "W_ELIGIBILITY_UNREADABLE", "W_OPERATOR_WINDOW",
+                      "W_GITHUB_RATE_LIMITED", "W_REGISTRY_UNACKNOWLEDGED", "E_ATTESTATION_UNCHECKED",
+                      "E_TRUST_UNPROVISIONED", "E_PROBE_INPUT", "E_DERIVED_LISTING_INVALID"]) {
+    const d = decide(publishable({
+      path: "service",
+      findings: [{ level: "error", code, where: "x", message: `${code} happened` }],
+    }));
+    assertEqual(d.record.write, false, `${code} is declared a wait and was recorded anyway`);
+    assertEqual(d.wait?.code, code, `${code} is declared a wait and produced no wait`);
+  }
+  // And the floor: if `policyCodeDef` stopped answering `wait` for anything,
+  // every assertion above would pass vacuously on an empty loop. It does not
+  // loop over an empty set, but it does loop over a list — so the floor is
+  // that the list is a SUBSET of what is declared, checked from the other end.
+  const declaredWaits = ["W_SERVICE_UNREACHABLE", "W_ELIGIBILITY_UNREADABLE", "W_OPERATOR_WINDOW",
+                         "W_GITHUB_RATE_LIMITED", "W_REGISTRY_UNACKNOWLEDGED"]
+    .filter((c) => policyCodeDef(c).level === "wait");
+  assertEqual(declaredWaits.length, 5,
+    "a W_* code stopped being declared a wait in constants.mjs, and every rule above keys on that level");
+});
+
+await test("a check that PASSED is never reclassified as a wait", () => {
+  // Found by running the rule against the real corpus rather than by reading
+  // it. `codes.mjs` codes name a CHECK, and the same code carries its pass:
+  // every green ingest emits `E_TRUST_UNPROVISIONED` at level `pass` ("trust.json
+  // serial 7 … allows 1 release-workflow commit(s)") and
+  // `E_DERIVED_LISTING_INVALID` at level `pass`. Keyed on the code alone, a
+  // service-path run waits on its own passing checks and the release is never
+  // decided at all.
+  const d = decide(publishable({
+    path: "service",
+    findings: [
+      { level: "pass", code: "E_TRUST_UNPROVISIONED", where: "trust", message: "trust.json serial 7 allows 1 commit" },
+      { level: "pass", code: "E_DERIVED_LISTING_INVALID", where: "derive", message: "the derived listing passes tools/validate.mjs" },
+    ],
+  }));
+  assertEqual(d.wait, null, "a passing check was reclassified as a wait, and this release will never be decided");
+  assertEqual(d.outcome, "publish", "a green service-path run did not publish");
+  assertEqual(d.record.write, true, "a green service-path run wrote no record");
+});
+
+await test("a wait never reaches the delay clock or the queue", () => {
+  const d = decide(publishable({
+    path: "service",
+    findings: [{ level: "error", code: "W_SERVICE_UNREACHABLE", where: "ask", message: "no answer" }],
+  }));
+  assertEqual(d.queue_entry, null, "a wait queued the release, so an unanswered call starts a publication clock");
+  assertEqual(d.publishes_now, false, "a wait published");
+});
+
+await test("`decide()` passes the path to every level lookup", () => {
+  // Watched by dropping the argument: with `path` ignored, the service-path
+  // run below reads `E_PROBE_UNAVAILABLE` at `codes.mjs`'s level — `error` —
+  // and records a refusal. The two runs differ only in `path`.
+  const service = decide(publishable({ path: "service", findings: [{ level: "error", code: "E_PROBE_INPUT", where: "p", message: "m" }] }));
+  const legacy = decide(publishable({ findings: [{ level: "error", code: "E_PROBE_INPUT", where: "p", message: "m" }] }));
+  assert(service.record.write !== legacy.record.write,
+    "the same code on the two paths produced the same answer, so `path` is not reaching policyCodeDef " +
+    "and FLOW-72's whole distinction is inert");
+});
+
+await test("BOT-19 — a terminal record on main is reported, and nothing is written", () => {
+  const hit = terminalOnMain({
+    records: [{ plugin_id: "dice-roller", state: "revoked", decision_id: "d0" }],
+    pluginId: "dice-roller", repo: "you/dice-roller", tag: "v1.0.1",
+  });
+  assertEqual(hit?.reported, "revoked", "a panel stop in git did not stop a ping");
+  assertEqual(hit.record.write, false, "a second record was written for a decision main already carries");
+  assertEqual(hit.names, "d0", "the report names no existing record, so nobody can go and read it");
+  // A non-terminal record does not stop anything.
+  assertEqual(
+    terminalOnMain({ records: [{ plugin_id: "dice-roller", state: "published", decision_id: "d1" }], pluginId: "dice-roller", repo: "you/dice-roller", tag: "v1.0.1" }),
+    null,
+    "a published record was read as terminal, which stops every later release of a live plugin",
+  );
+});
+
+await test("BOT-74 — a tag already listed with identical digests is reported `published`", () => {
+  const digests = ["sha256:aa", "sha256:bb"];
+  const same = alreadyPublished({ listed: { version: "1.0.1", artifact_digests: [...digests].reverse(), decision_id: "d7" }, digests });
+  assertEqual(same?.reported, "published", "a re-submission of published bytes was not recognised");
+  assertEqual(same.record.write, false, "a second record was written for a version already listed");
+  assertEqual(same.names, "d7", "the `published` result names no record (BOT-23)");
+  // The tag moved to different bytes: that is a new submission, not a
+  // re-submission, and answering `published` for it would report a
+  // publication of bytes nobody verified.
+  assertEqual(
+    alreadyPublished({ listed: { version: "1.0.1", artifact_digests: ["sha256:aa"], decision_id: "d7" }, digests }),
+    null,
+    "different bytes under the same version were reported as already published",
+  );
+  assertEqual(
+    alreadyPublished({ listed: { version: "1.0.1", artifact_digests: [], decision_id: "d7" }, digests }),
+    null,
+    "a listing with no recorded digests compared equal to something, which makes the digest check decoration",
+  );
+});
+
+await test("FLOW-67 — a threadless submission no listing names writes nothing, and carries the read commit", () => {
+  const commit = "b".repeat(40);
+  for (const source of ["panel", "ci"]) {
+    const out = noListingNoBinding({ source, listingNamesRepo: false, binding: { present: false }, readCommit: commit, repo: "stranger/thing" });
+    assertEqual(out?.record.write, false, `a ${source} submission from an unlisted repository was recorded`);
+    assertEqual(out.read_commit, commit, "FLOW-78: the result carries no read commit, so the absence is a claim about a moving target");
+  }
+  // `B_BINDING_UNUSABLE` is the same case as an absent line.
+  assertEqual(
+    noListingNoBinding({ source: "panel", listingNamesRepo: false, binding: { present: true, code: "B_BINDING_UNUSABLE" }, readCommit: "c".repeat(40), repo: "stranger/thing" })?.record.write,
+    false,
+    "an unusable binding line was treated as a usable one",
+  );
+  // A USABLE line is a request to be listed, and is decided rather than dropped.
+  assertEqual(
+    noListingNoBinding({ source: "panel", listingNamesRepo: false, binding: { present: true, code: null }, readCommit: "c".repeat(40), repo: "stranger/thing" }),
+    null,
+    "a repository that asked to be listed was silently dropped",
+  );
+  // A listed repository is decided, whatever its line says.
+  assertEqual(
+    noListingNoBinding({ source: "panel", listingNamesRepo: true, binding: { present: false }, readCommit: "c".repeat(40), repo: "you/dice-roller" }),
+    null,
+    "a listing this registry already carries stopped being decided because its line went missing",
+  );
+  // And the legacy sources keep their thread: a refusal there is a sentence
+  // somebody reads on an issue.
+  for (const source of ["issue", "ping", "backstop", "queue"]) {
+    assertEqual(
+      noListingNoBinding({ source, listingNamesRepo: false, binding: { present: false }, readCommit: "c".repeat(40), repo: "stranger/thing" }),
+      null,
+      `a ${source} submission stopped being answered, and that path's only output is the answer`,
+    );
+  }
+});
+
+await test("FLOW-65 — a new id from a listed monorepo meets the first-listing rules", () => {
+  // The rule is a property of how `existing` is looked up: by plugin ID, never
+  // by repository. Keyed on the repository, a monorepo's second plugin would
+  // inherit the first one's listing and skip R_FIRST_LISTING — the one check
+  // that is a person reading a submission, skipped for every plugin after the
+  // first in any repository that ships more than one.
+  const d = decide(publishable({
+    existing: null,   // no listing carries THIS id, though the repo is listed
+    findings: [{ level: "review", code: "R_FIRST_LISTING", where: "version", message: "never listed" }],
+  }));
+  assertEqual(d.outcome, "review", "a new id from a listed monorepo published without a person reading it");
+  assert(d.reasons.some((r) => r.code === "R_FIRST_LISTING"), "and it did not raise the first-listing hold");
+  assertEqual(d.record.write, true, "a first-listing hold is a decision, and a decision is recorded");
 });
 
 // ── result ──────────────────────────────────────────────────────────────────
