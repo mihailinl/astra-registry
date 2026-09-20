@@ -32,7 +32,7 @@ deliberately incapable of rejecting a correctly-signed catalogue.
 | Key | Custody | Signs | Rotation |
 |---|---|---|---|
 | **Root** — two public keys ship in every Astra binary, one active, one reserve | One person, two copies (§3). Generated offline by `tools/keygen-root.sh`. | `trust.json`, and nothing else | The reserve is already in every shipped binary, so replacing a root is a signature rather than a flag day |
-| **Index** | GitHub Environment secret on this repository, on the `publish` environment, which carries no required reviewer today (LM-1) | `index.json`, `revocations.json`, per-release countersignatures | Quarterly, and immediately on suspicion, by publishing a root-signed `trust.json` with a **30-day overlap** between the outgoing and incoming key |
+| **Index** | GitHub Environment secret on this repository, on the `publish` environment, which carries no required reviewer today (LM-1) | `index.json`, `revocations.json`, per-release countersignatures | On suspicion, by publishing a root-signed `trust.json` that delegates both keys. The outgoing key **keeps signing until R9b** (SERVE-30), and the catalogue is not signed by the incoming one for **seven hours** — seven against the client's six-hour `trust.json` refresh, so a client still running has already fetched the delegation before anything needs it. `docs/RUNBOOK.md` §5 is the procedure; `tools/signer/key-window.mjs` is the code |
 
 **There is no author row, and that is the design.** Astra pins the author's
 *repository identity* and the artifact's SHA-256; it never pins a key the author
