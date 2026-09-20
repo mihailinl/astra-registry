@@ -211,6 +211,49 @@ jobs:
       - name: The coverage canary, against repositories it has to judge
         run: node --test bot/tests/moderation-coverage.test.mjs
 
+      # B-T3.7b. The once-only migration baseline. These two steps are late
+      # because they are a repair: both suites landed in `b248a34` and **were
+      # run by nothing for a day** — 46 tests, green on a laptop, absent from
+      # every workflow. Nothing globs in this repository; every suite is named
+      # here or in `ingest.yml` by hand, and these two are the ones the
+      # coordinator missed while adding eleven others in the same batch.
+      #
+      # §2.0 is the rule they fell through: *a new registry test file is a
+      # check only once a workflow names it.* It is stated once, in the
+      # `Repo/files` line of two tasks out of forty-seven, and a derivation
+      # over per-item fields cannot see a rule that quantifies over items — so
+      # the omission was invisible to the lane, to the plan and to CI at the
+      # same time. What found it was somebody listing every test file's name
+      # and subtracting the ones a workflow runs.
+      #
+      # What the baseline suite holds that nothing else does: the marker's
+      # shape; the refusal ORDER — a second dispatch must refuse before the
+      # absent-writer refusal, or the day B-T2.2 lands a second migration
+      # record is written for every version; PRIV-2's name-free record; and
+      # SCOPE-5's refusal of a certificate id that arrives as a JSON number,
+      # because 9007199254740993 rounds to …92 and names a repository that
+      # never published the bytes.
+      - name: The migration baseline, and the one dispatch that writes it
+        run: node --test bot/tests/baseline.test.mjs
+
+      # B-T3.8. Detector A, the reconciliation that reads only public git.
+      #
+      # One test in here outranks the rest and is why this step is not
+      # optional: *the skip is derived from the marker, not written down*.
+      # Four of the five detectors skip until `log/baseline.json` exists, and
+      # that test is the only thing in the repository that can tell a DERIVED
+      # skip from a hard-coded one. Without it, `if (true)` ships and all five
+      # detectors are permanently off while every run reports green — the
+      # exact shape RC-R1-0 calls the repair this estate must never reach for.
+      #
+      # The shipped detector is not untested by the world: A7 fired in
+      # production on 2026-09-20, run 35502265394, and the finding was real
+      # enough to be worth a fix. But a rule watched red by an incident is not
+      # the same as its unit tests running, and the four A7 cases here include
+      # both bounds and the no-trailer case, which no incident has exercised.
+      - name: Detector A, and the skips that have to be derived
+        run: node --test bot/tests/detectors.test.mjs
+
       - name: The moderation records, against their own schema
         run: node bot/moderation.mjs --check
 
