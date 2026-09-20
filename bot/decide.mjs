@@ -202,6 +202,7 @@ export function parseArgs(argv) {
     repo: null, tag: null, submitter: null, root: REPO_ROOT, out: null,
     issue: null, trustFile: null, signerWorkflow: null,
     hostAstraVersion: null, now: null, approvedBy: null, approvedAt: null, approvedFor: null, publishNow: false,
+    source: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -221,6 +222,9 @@ export function parseArgs(argv) {
     // trusted: `decide()` recomputes it from the bytes this run hashed.
     else if (a === "--approved-for") opts.approvedFor = String(argv[++i] ?? "").toLowerCase();
     else if (a === "--publish-now") opts.publishNow = true;
+    // Where this run came from. DEC-7 records it as the decision's
+    // `trigger`; `legacyTrigger` refuses one it cannot map (B-T3.7).
+    else if (a === "--source") opts.source = argv[++i];
     else if (a === "--registry-dir") opts.root = path.resolve(argv[++i]);
     else if (a === "--trust") opts.trustFile = path.resolve(argv[++i]);
     else if (a === "--signer-workflow") opts.signerWorkflow = argv[++i];
@@ -306,6 +310,33 @@ export async function decideRelease(opts, deps = {}) {
   // MIG-28 holds every id with no baseline — and a record written now would
   // be a statement this registry cannot yet check.
   const marker = markerOnMain(opts.root);
+
+  // DEC-7's `trigger`, derived once and attached to the decision.
+  //
+  // An unmappable source does NOT throw here, and the reason is worth the
+  // paragraph. Throwing was the first shape, and it turned every run that
+  // sets no `--source` red at once — which today is the manual dispatch, the
+  // CLI, and every caller written before this argument existed. The other
+  // obvious shape, defaulting to `legacy`, is the one B-T3.7 forbids: a
+  // record would then state that the backstop found a release when nobody
+  // knows what found it.
+  //
+  // So the third: no trigger, and therefore NO RECORD, said out loud in
+  // `decision.json`. The run still publishes, comments and closes its thread
+  // exactly as it does today; what it cannot do is write a decision record
+  // whose `trigger` would be a guess. The day the baseline lands and records
+  // start being written, a caller that never set a source produces a visible
+  // "no record, and here is the missing argument" rather than a plausible
+  // wrong one — and `migration` still throws, because no legacy run has any
+  // business composing MIG-20's baseline.
+  try {
+    decision.trigger = legacyTrigger(opts.source);
+  } catch (e) {
+    if (String(opts.source) === "migration") throw e;
+    decision.trigger = null;
+    decision.record = { write: false, why: e.message };
+  }
+
   if (terminal) {
     decision.record = terminal.record;
     decision.reported = terminal.reported;
@@ -325,6 +356,62 @@ export async function decideRelease(opts, deps = {}) {
     decision,
     comment: `${result.comment}\n${renderPolicySection(decision, result.derived)}`,
   };
+}
+
+// ── B-T3.7: what a legacy decision record is triggered BY ─────────────────
+//
+// DEC-7 gives a record a `trigger`, and the legacy path's four are `issue`,
+// `ping`, `dispatch`, and `legacy` for the backstop and drain publications.
+// `migration` is never one of them, and that is not a naming preference: a
+// `migration` record IS MIG-20's baseline, the thing TRUST-23 compares every
+// later release against, and `bot/lib/identity.mjs`'s `effectiveBaseline`
+// selects baselines by exactly `trigger === "migration" && state ===
+// "published"`. A legacy publication that composed one would silently become
+// the baseline for that id — written off an issue comment rather than off the
+// single audited dispatch MIG-20 requires — and every later identity
+// comparison for that plugin would be made against it.
+//
+// `bot/baseline.mjs` refuses every trigger BUT `migration`; this refuses
+// `migration`, and refuses an unmapped source too. An unmapped source does
+// not fall through to `legacy`, because "this run came from the backstop" and
+// "nobody knows where this run came from" are different facts and a record
+// must not state the first when the second is true.
+
+/** The four triggers the legacy path may write (DEC-7; B-T3.7). */
+export const LEGACY_TRIGGERS = Object.freeze(["issue", "ping", "dispatch", "legacy"]);
+
+/**
+ * The trigger for a legacy run, from the source that started it.
+ *
+ * @param {string|null} source `bot/triage.mjs`'s mode, or `bot/watch.mjs`'s
+ *   dispatch `source`.
+ * @returns {string} one of `LEGACY_TRIGGERS`
+ */
+export function legacyTrigger(source) {
+  const SOURCES = {
+    form: "issue", issue: "issue", approve: "issue", reject: "issue", recheck: "issue",
+    ping: "ping",
+    dispatch: "dispatch", repository_dispatch: "dispatch",
+    backstop: "legacy", queue: "legacy", drain: "legacy", schedule: "legacy",
+  };
+  if (source === "migration") {
+    throw new Error(
+      "the legacy path composed a `migration` record. `migration` is MIG-20's baseline — the record " +
+      "TRUST-23 compares every later release against, written once by `baseline.yml`'s single audited " +
+      "dispatch — and one composed here would become the baseline for this id on the strength of an " +
+      "issue comment (B-T3.7; BOT-39).",
+    );
+  }
+  const trigger = SOURCES[String(source)];
+  if (!trigger) {
+    throw new Error(
+      `\`${source}\` is not a source this registry knows how to trigger a decision record from. It is ` +
+      "refused rather than recorded as `legacy`, because \"the run came from the backstop\" and \"nobody " +
+      "knows where the run came from\" are different facts, and a record cannot state the first when the " +
+      `second is true. The four legacy triggers are ${LEGACY_TRIGGERS.join(", ")} (DEC-7).`,
+    );
+  }
+  return trigger;
 }
 
 /** `plugins/<id>/identity.json` on the checked-out tree, or null. */
@@ -377,6 +464,14 @@ export function writeOutputs(out, opts, result) {
         notify_author: decision.notify_author,
         track: decision.track,
         decided_at: decision.decided_at,
+        // DEC-7's trigger, and whether this run writes a record at all. The
+        // publish job reads both: `record.write` is false for a wait, for a
+        // decision `main` already carries, and for every shadow answer, and
+        // the four outcomes cannot express any of those three (B-T3.3c,
+        // B-T3.4, B-T3.7).
+        trigger: decision.trigger,
+        record: decision.record,
+        shadow: decision.shadow === true,
         // The audit record, in the file the publish job reads: who cleared the
         // hold, when, and the digests THIS run hashed. All three or none — an
         // approval without the bytes it applied to cannot be checked later.

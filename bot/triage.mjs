@@ -543,8 +543,11 @@ async function main(argv) {
   console.log(`triage: ${out.mode} — ${out.why}`);
   if (opts.modeFile) fs.writeFileSync(opts.modeFile, out.mode);
   if (opts.targetsFile) {
+    // `source` travels on every target: DEC-7 records it as the decision's
+    // `trigger`, and `bot/decide.mjs` refuses a source it cannot map rather
+    // than recording `legacy` for a run whose origin nobody knows (B-T3.7).
     const targets = out.mode === "ping"
-      ? [{ repo: out.repo, tag: out.tag, submitter: out.submitter }]
+      ? [{ repo: out.repo, tag: out.tag, submitter: out.submitter, source: "ping" }]
       : out.mode === "approve"
         // The approval travels ON the target, so that a matrix entry carries its
         // own authority and a second target in the same run cannot borrow it.
@@ -560,6 +563,7 @@ async function main(argv) {
           // The submission the maintainer named. Checked against the bytes in
           // `check`, which is the only job that has any.
           approved_for: out.approvedFor,
+          source: "approve",
         }]
         : [];
     fs.writeFileSync(opts.targetsFile, JSON.stringify(targets));

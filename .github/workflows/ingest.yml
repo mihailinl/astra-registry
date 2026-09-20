@@ -809,6 +809,14 @@ jobs:
           # idiom every other argument on this line uses would have passed
           # --publish-now on every run and waived every delay silently.
           PUBLISH_NOW: ${{ matrix.publish_now }}
+          # Where this run came from, which DEC-7 records as the decision's
+          # `trigger` (B-T3.7). `bot/triage.mjs` sets it on an issue target and
+          # `bot/watch.mjs` on a backstop or drain one; `bot/decide.mjs`
+          # refuses a source it cannot map rather than recording `legacy`,
+          # because "the backstop found it" and "nobody knows" are different
+          # facts. Empty on a path that sets no source, which is the same
+          # refusal by a shorter route.
+          SOURCE: ${{ matrix.source }}
         run: |
           set -uo pipefail
           mkdir -p out
@@ -833,6 +841,7 @@ jobs:
             ${APPROVED_AT:+--approved-at "$APPROVED_AT"} \
             ${APPROVED_FOR:+--approved-for "$APPROVED_FOR"} \
             $([ "$PUBLISH_NOW" = "true" ] && echo --publish-now) \
+            ${SOURCE:+--source "$SOURCE"} \
             --out out > out/comment.log || code=$?
           echo "code=$code" >> "$GITHUB_OUTPUT"
           cat out/comment.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || cat out/comment.log >> "$GITHUB_STEP_SUMMARY"
