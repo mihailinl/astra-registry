@@ -1137,3 +1137,53 @@ test("every workflow that judges manifests by the pin reads it from the pin file
     "a workflow that no longer needs the pin, or one that grew a second copy somewhere this scan does not look",
   );
 });
+
+// ── §2.0, as a check rather than as a sentence in two `Repo/files` lines ─────
+
+test("every suite under bot/tests/ is named by a workflow, and the list has a floor", () => {
+  // The failure this ends, measured 2026-09-20: `bot/tests/baseline.test.mjs`
+  // (21 tests) and `bot/tests/detectors.test.mjs` (25) had been on `main` for
+  // a day and **no workflow ran either of them**. 46 tests, all green on a
+  // laptop, executed by nothing — including the one test in the repository
+  // that can tell a derived skip from a hard-coded one.
+  //
+  // It was not a mistake anybody could see. §2.0 says *a new registry test
+  // file is a check only once a workflow names it*, and that rule governs
+  // forty-seven tasks while being written into the `Repo/files` line of two.
+  // A derivation over per-item fields cannot see a rule that quantifies over
+  // items, so the lane's plan entry did not carry it, the coordinator added
+  // eleven other steps in the same batch, and CI — which only runs what it is
+  // told to run — reported green about a suite it had never heard of.
+  //
+  // Nothing globs here, deliberately: a glob would have hidden this by making
+  // every file run, and would also have made a half-written suite a required
+  // check the moment it was saved. The answer is not a glob, it is this.
+  //
+  // Watched red twice, both ways: by deleting the `baseline.test.mjs` step
+  // from bot-tests.yml, which names it; and by adding an empty
+  // `bot/tests/nobody-runs-this.test.mjs`, which is named as the unrun file.
+  const testsDir = path.join(REPO, "bot", "tests");
+  const suites = fs.readdirSync(testsDir).filter((n) => n.endsWith(".test.mjs")).sort();
+  const everyWorkflow = files.map(read).join("\n");
+
+  const unrun = suites.filter((n) => !everyWorkflow.includes(`bot/tests/${n}`));
+  assert.deepEqual(
+    unrun,
+    [],
+    `${unrun.length} suite(s) under bot/tests/ are run by no workflow: ${unrun.join(", ")}. ` +
+    "A test file no workflow names is a check that does not run, and it reports nothing while it does not " +
+    "run — add a step to .github/workflows/bot-tests.yml (§2.0). If a suite is deliberately not a gate, " +
+    "that is a decision and it needs a line here saying so, not an absence",
+  );
+
+  // Two floors, because this scan can go vacuous in two directions: a readdir
+  // that returns nothing makes `unrun` empty, and a workflow set that returns
+  // nothing makes every suite look unrun — the second fails loudly, the first
+  // does not, which is the one that needs the number.
+  assert.ok(
+    suites.length >= 14,
+    `only ${suites.length} suite(s) found under bot/tests/; there were 14 on 2026-09-20. A walk that lost ` +
+    "its directory reports every suite as run",
+  );
+  assert.ok(files.length >= 10, `only ${files.length} workflow file(s) read; there were 13 on 2026-09-20`);
+});
