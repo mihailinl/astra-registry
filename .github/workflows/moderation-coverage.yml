@@ -1,0 +1,245 @@
+# MOD-39's coverage canary, in a workflow that can actually see the commits it
+# judges and can actually reach a person about them.
+#
+# ── WHY THIS IS ITS OWN WORKFLOW ────────────────────────────────────────────
+#
+# Three reasons, and each one on its own rules out the obvious alternative of
+# a step in `bot-tests.yml`:
+#
+#   1. **A GITHUB_TOKEN push starts no run.** Almost every moderation effect
+#      here arrives as a bot commit — `publish-apply` writing a delist, the
+#      operator workflow writing a deny. GitHub deliberately does not trigger
+#      `push` workflows for commits made with the automatic token, precisely to
+#      stop recursion. A canary that only ran on `push` would therefore never
+#      see the commits it exists to judge. Hence the `schedule`, and hence
+#      `workflow_run` on the workflows that make those commits.
+#   2. **`bot-tests.yml` cancels in progress per ref.** `cancel-in-progress:
+#      true` is right for a test suite — the newest commit's answer is the one
+#      you want. It is wrong for a canary: the run that would have found the
+#      uncovered commit is cancelled by the commit that covers the next one,
+#      and the finding is lost rather than delayed. This workflow's concurrency
+#      is `cancel-in-progress: false` and `bot/tests/moderation-coverage.test.mjs`
+#      asserts it.
+#   3. **A job with no environment cannot alert.** The alarm channel's secrets
+#      live in environment `alerts` (RC-R1-0), a job reads an environment secret
+#      only where it names it, and `bot-tests.yml` has no environment and must
+#      not get one — it runs a stranger's manifest through a Rust probe.
+#
+# ── THE TWO JOBS, AND THE LINE BETWEEN THEM ─────────────────────────────────
+#
+# `check` reads the repository and writes a verdict. `alert` holds the
+# credential and reads nothing but that verdict. Nothing that parses a plugin
+# id, a commit message or a moderation reason runs in the job that can reach
+# the owner's Telegram (BOT-46: the credential sits in jobs that run no
+# submitter code), and the verdict crossing between them is put through
+# `bot/lib/alert-verdict.mjs`'s grammar twice — once by the composer that
+# writes it and once by `bot/alert.mjs` before it is sent.
+#
+# ── WHAT IT MAY NOT DO ──────────────────────────────────────────────────────
+#
+# It gates nothing (MOD-46). No signing job and no publishing job runs any of
+# these rules, and none of them may ever be added to one: a takedown that waits
+# for a transparency check is a takedown a transparency check can stop. The
+# only thing a red canary blocks is the release of a held `M_RELIST` or
+# `M_UNREVOKE` (MOD-9), which costs time.
+#
+# ── ADDING A RULE (M-T1.3, M-T5.7, M-T2.1, M-T4.2/4.3, M-T6.2) ──────────────
+#
+# One step in `check`, below the marker, plus one entry in
+# `tools/coverage/rules.mjs`. Both, or the run is red naming your rule — see
+# that file's header. The step's shape is fixed:
+#
+#     - name: <one sentence saying what is true when it is green>   # <task>
+#       if: always()
+#       run: node <your script> --report "$ASTRA_COVERAGE_FINDINGS"
+#
+# `if: always()` so that one red rule does not hide the six after it. No
+# `continue-on-error`: a rule that crashes must fail its step, because a
+# crashed rule and a green rule have to look different.
+#
+# ── UNTIL THE OWNER PERFORMS §2.12's R1 ACT ─────────────────────────────────
+#
+# Every run's `alert` job is red, saying which secret of environment `alerts`
+# is missing. That is the intended state and not a defect to route around: an
+# estate with no alarm channel must not be indistinguishable from an estate
+# with nothing to report.
+
+name: Moderation coverage
+
+on:
+  # Fifteen minutes is the interval `bot/lib/alert-checks.mjs` records for the
+  # `coverage-canary` receiver check, and the two have to agree: the receiver
+  # pages on silence after 3 × the interval or 90 minutes, whichever is longer,
+  # and a cron slower than the number in that file would page every night.
+  schedule:
+    - cron: '*/15 * * * *'
+  # The commits this canary judges are made by the automatic token, which
+  # starts no `push` run. These are the workflows that make them. Three of the
+  # four do not exist yet — `Plugins ingest` is B-T5.1's, `Plugins moderation`
+  # is M-T3.4's, `Operator` is M-T3.5's — and naming a workflow that does not
+  # exist is inert, which is the right way round: the alternative is a canary
+  # that stays blind to a new committer until somebody remembers this file.
+  workflow_run:
+    workflows: ['Ingest', 'Plugins ingest', 'Plugins moderation', 'Operator']
+    types: [completed]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: moderation-coverage
+  # NOT cancel-in-progress. A test suite wants the newest answer; a canary
+  # wants every answer. Cancelling the run that was about to report an
+  # uncovered commit, because a later commit arrived, loses the finding rather
+  # than delaying it — and the two look identical from the run list.
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    outputs:
+      verdict: ${{ steps.verdict.outputs.verdict }}
+      status: ${{ steps.verdict.outputs.status }}
+    env:
+      # One file, appended to by every rule. The composer reads it and compares
+      # the reporters against the register.
+      ASTRA_COVERAGE_FINDINGS: ${{ github.workspace }}/coverage-findings.jsonl
+    steps:
+      # `fetch-depth: 0` is load-bearing and is the line most likely to be
+      # deleted by somebody making this job faster. Both walking rules refuse
+      # to run on a shallow checkout and say so by name rather than walking the
+      # commits that happened to be fetched and reporting green.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # ── the rules ────────────────────────────────────────────────────────
+      #
+      # Each one `if: always()`, so the fifth rule still runs after the second
+      # goes red. None of them fails its step for a finding — a finding is a
+      # line in the findings file — so a step that DOES fail is a rule that
+      # crashed, which is a different thing and is reported as one.
+
+      - name: Every delist, yank and advisory is covered by a record        # M-T1.5
+        if: always()
+        run: node tools/moderation-coverage.mjs --report "$ASTRA_COVERAGE_FINDINGS"
+
+      - name: No composed document or commit body carries a personal shape  # M-T1.5, PRIV-2
+        if: always()
+        run: node tools/priv-scan.mjs --report "$ASTRA_COVERAGE_FINDINGS"
+
+      - name: The keepalive that stops every schedule here from lapsing     # RC-R1-9(b), ROLL-62
+        if: always()
+        run: node tools/coverage/keepalive-age.mjs --report "$ASTRA_COVERAGE_FINDINGS"
+
+      # ── NEW RULES GO BELOW THIS LINE ─────────────────────────────────────
+      #
+      # and in `tools/coverage/rules.mjs`, in the same commit. The register is
+      # what makes a step that never ran visible; a step with no entry is red,
+      # and an entry with no step is red.
+      #
+      #   M-T1.3   tools/coverage/docs-advisory-url.mjs     R1
+      #   M-T5.7   tools/coverage/reserved-id-mirror.mjs    R3, needs the network
+      #   M-T2.1   the examples rule                        R2, needs the network
+      #   M-T4.2, M-T4.3, M-T6.2   the ROLL-47 promise greps
+      #   M-T6.2   no issue channel, no `issues: write`     R6
+      #
+      # M-T5.8's badge-withdrawal trailer is not a step: it goes inside
+      # `tools/moderation-coverage.mjs`'s walk, where its seam is written.
+
+      # ── the verdict ──────────────────────────────────────────────────────
+
+      - name: One verdict, and a red one for every rule that did not report
+        id: verdict
+        if: always()
+        run: node tools/coverage-verdict.mjs --findings "$ASTRA_COVERAGE_FINDINGS" --out verdict.json
+
+      # The job's red X, as its own step. It is deliberately not the composer's
+      # exit code: the composer has to write its output before anything fails,
+      # because the `alert` job reads that output, and a job that failed with
+      # no verdict is a case the alert job handles differently from a job whose
+      # verdict says red.
+      - name: A red canary is a red run
+        if: always() && steps.verdict.outputs.status == 'red'
+        run: |
+          echo "::error::the coverage canary is red; the verdict and every rule's detail are in the job summary"
+          exit 1
+
+  alert:
+    needs: check
+    if: always() && !cancelled()
+    runs-on: ubuntu-24.04
+    environment: alerts
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    # An environment secret is not ambient: a job sees one only where it says
+    # so. This block is the complete list — the three channel secrets and the
+    # whole ping URL of the one check THIS job posts to. A job that mapped
+    # another check's URL would be a job whose compromise silences a check it
+    # never posts to (attack M-5); `bot/tests/workflows.test.mjs` refuses one.
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_DEADMAN_URL_COVERAGE_CANARY: ${{ secrets.ASTRA_DEADMAN_URL_COVERAGE_CANARY }}
+    steps:
+      # Only what the alert step runs. A job holding the alarm channel's
+      # credential checks out no rule, no plugin and no bundle.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            .github/actions/alert
+            bot/alert.mjs
+            bot/heartbeat.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+
+      # **Through `env:`, never through `${{ }}` in the script body.** The
+      # verdict is composed from bytes that came out of plugin files, commit
+      # messages and moderation reasons — a stranger's bytes, several steps
+      # removed. Interpolating that into a `run:` is the classic injection, and
+      # the grammar check that makes the verdict safe to SEND happens after the
+      # shell has already seen it. `printf '%s'` with the value in a quoted
+      # variable is the whole defence, and it is enough.
+      #
+      # An empty value means the `check` job died before its composer ran. That
+      # is its own alarm, not a reason to say nothing: a canary whose job
+      # crashes every run and pages nobody is worse than no canary.
+      - name: The verdict the checking job wrote, or the alarm that it wrote none
+        env:
+          VERDICT: ${{ needs.check.outputs.verdict }}
+          CHECK_RESULT: ${{ needs.check.result }}
+        run: |
+          set -euo pipefail
+          if [ -n "$VERDICT" ]; then
+            printf '%s\n' "$VERDICT" > verdict.json
+          else
+            cat > verdict.json <<JSON
+          {
+            "schema": "astra.registry.alert-verdict/1",
+            "check": "coverage-canary",
+            "status": "red",
+            "codes": ["E_CHECK_DID_NOT_REPORT"],
+            "run": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          JSON
+            echo "::warning::the check job finished '$CHECK_RESULT' with no verdict; alarming about that instead"
+          fi
+
+      - uses: ./.github/actions/alert
+        with:
+          verdict: verdict.json
+          check: coverage-canary

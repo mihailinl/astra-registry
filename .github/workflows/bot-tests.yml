@@ -187,6 +187,11 @@ jobs:
       # refused even when root.json is edited to publish that key.
       - name: The compiled root keys, and the only set they can be
         run: node --test bot/tests/roots.test.mjs
+      # M-T1.5. The coverage canary's own canaries: real git fixture
+      # repositories, because both rules read HISTORY and a fixture that
+      # stubbed git would be a fixture that tested the stub. ~1s, no probe.
+      - name: The coverage canary, against repositories it has to judge
+        run: node --test bot/tests/moderation-coverage.test.mjs
 
       - name: The moderation records, against their own schema
         run: node bot/moderation.mjs --check
