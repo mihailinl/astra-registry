@@ -180,6 +180,14 @@ jobs:
       - name: The alarm channel, and every way it can fail to be one
         run: node bot/tests/alert.test.mjs
 
+      # B-T1.5 (BOT-7). The root keys are compiled into bot/lib/roots.mjs and a
+      # trust.json is verified against those and nothing else. This asks
+      # whether that is still true: that no flag, argument or tree reaches past
+      # the compiled set, and that a trust.json signed by any other key is
+      # refused even when root.json is edited to publish that key.
+      - name: The compiled root keys, and the only set they can be
+        run: node --test bot/tests/roots.test.mjs
+
       - name: The moderation records, against their own schema
         run: node bot/moderation.mjs --check
 
