@@ -800,9 +800,20 @@ export async function run() {
 
     // And the floor is a floor rather than a formality: the same walk with a
     // floor it can meet answers the question instead of refusing it.
+    //
+    // The needle is ASSEMBLED rather than written, and that is not cleverness.
+    // Written as a literal it appeared in this file, which is under
+    // `tools/selftest/` — so the moment this module was committed and `git
+    // ls-files` began returning it, the search found itself and the canary
+    // came back FOUND. It was green for as long as the file was untracked and
+    // red on the first run after the commit, which is the most useful way that
+    // failure could possibly have arrived. `isSuiteFile` in harness.mjs exists
+    // for the same reason: the file that states a rule is not an instance of
+    // it.
+    const absentToken = new RegExp(["no", "such", "token", "in", "this", "tree"].join("-"));
     const realWalk = resolve({
       ...base,
-      subject: { kind: "code", tree: "here", under: ["tools/selftest"], exts: [".mjs"], floorFiles: 10, needle: /no-such-token-anywhere/ },
+      subject: { kind: "code", tree: "here", under: ["tools/selftest"], exts: [".mjs"], floorFiles: 10, needle: absentToken },
     });
     assertEqual(realWalk.verdict, MEASURED_ABSENT,
       "a walk that met its floor and matched nothing is an ANSWER, and refusing to give it would make the floor " +
