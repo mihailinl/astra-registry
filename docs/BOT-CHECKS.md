@@ -53,14 +53,28 @@ Everything else about a conforming release is zero-touch.
 failed. The last is deliberately distinct: "your plugin is bad" and "our tooling
 is bad" must never render as the same comment to a stranger.
 
-## Failing closed, today
+## The anchor, and failing closed
 
-`registry/v1/root.json` ships with **no root keys** — the ceremony in
-`SECURITY.md` has not been run — so there is no root-signed `trust.json`, no
-reusable-workflow allowlist, and every ingest stops at
-`E_TRUST_UNPROVISIONED`. That is the same state `astra-daemon` compiles in
-with an empty `PRODUCTION_ROOT_KEYS`, and it is correct on both sides: a trust
-chain whose anchor does not exist must verify nothing rather than everything.
+The root keys are **compiled into this bot**, in `bot/lib/roots.mjs`, and a
+`trust.json` is verified against those and nothing else. They are the two
+public keys the ceremony in `SECURITY.md` produced on 2026-08-11 and that
+`registry/v1/root.json` publishes; `bot/check-roots.mjs` runs before every
+ingest and raises an alarm when the published file and the compiled set stop
+agreeing. The same two keys are compiled into `astra-daemon`.
+
+They are compiled rather than read because `registry/v1/root.json` is a file
+in this repository, which the bot's own publish job rewrites. Reading the
+anchor out of it put the anchor inside the thing it anchors: one commit could
+add a key and a `trust.json` signed by that key, and every ingest afterwards
+would verify — correctly, against the roots it was told about — an attestation
+from a build of the committer's choosing.
+
+A verifier given no root keys verifies **nothing rather than everything**, and
+stops at `E_TRUST_UNPROVISIONED`. That was this registry's state until the
+ceremony was run, and it is still `astra-daemon`'s with an empty
+`PRODUCTION_ROOT_KEYS`. This section said that state was the present one for a
+month after it stopped being true, and told every reader of this document that
+nothing could be listed.
 
 ## What a derived record always carries
 
