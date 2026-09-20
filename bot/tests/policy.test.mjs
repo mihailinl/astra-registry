@@ -24,7 +24,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { markerOnMain } from "../baseline.mjs";
-import { alreadyPublished, decideRelease, noListingNoBinding, readIdentityRecord, terminalOnMain, writeOutputs } from "../decide.mjs";
+import { LEGACY_TRIGGERS, alreadyPublished, decideRelease, legacyTrigger, noListingNoBinding, readIdentityRecord, terminalOnMain, writeOutputs } from "../decide.mjs";
 import { recordCommitRefusal } from "../publish-apply.mjs";
 import { bot74Filter } from "../watch.mjs";
 import { DEFAULT_SIGNER_WORKFLOW } from "../ingest.mjs";
@@ -194,7 +194,7 @@ const conforming = (spec = {}) => ({ name: bundleName(spec), bytes: makeBundle(s
 async function run({
   assets = [conforming()], repo = REPO, tag = TAG, submitter = SUBMITTER, root,
   now = NOW, out = null, issue = null, approvedBy = null, approvedAt = null, approvedFor = null,
-  publishNow = false,
+  publishNow = false, source = null,
   // The commit the Release names and the commit the attestation names. Equal by
   // default, because in a healthy release they are the same commit; a test that
   // moves one and not the other is asking about `E_RELEASE_COMMIT_MISMATCH`.
@@ -203,7 +203,7 @@ async function run({
   const github = fakeGitHub({ repo, tag, assets, commit });
   return decideRelease(
     {
-      repo, tag, submitter, root, issue, now, approvedBy, approvedAt, approvedFor, publishNow,
+      repo, tag, submitter, root, issue, now, approvedBy, approvedAt, approvedFor, publishNow, source,
       trustFile: TRUST_FILE, signerWorkflow: DEFAULT_SIGNER_WORKFLOW,
       out,
     },
@@ -2846,6 +2846,92 @@ await test("B-T3.4's record commit is refused by name, and this file grows no se
   assert(refused.reason.includes("plugins-ingest.yml"), "the refusal does not name the job graph it belongs to");
   assertEqual(recordCommitRefusal({ decisionsWriter: {}, jobGraph: {} }).ok, true,
     "the refusal cannot be lifted, so it is a wall rather than a gap somebody can close");
+});
+
+
+// ── B-T3.7: the legacy half of the decision log ───────────────────────────
+
+section("legacy decision records (B-T3.7)");
+
+await test("the legacy path's four triggers, and the one it may never write", () => {
+  assertEqual(legacyTrigger("ping"), "ping", "a /release ping");
+  assertEqual(legacyTrigger("approve"), "issue", "a maintainer's command is an issue trigger");
+  assertEqual(legacyTrigger("form"), "issue", "the submission form is an issue trigger");
+  assertEqual(legacyTrigger("backstop"), "legacy", "the backstop's publications are `legacy`");
+  assertEqual(legacyTrigger("queue"), "legacy", "the drain's publications are `legacy`");
+  assertEqual(legacyTrigger("repository_dispatch"), "dispatch", "a dispatch");
+  for (const t of ["issue", "ping", "dispatch", "legacy"]) {
+    assert(LEGACY_TRIGGERS.includes(t), `${t} is not in LEGACY_TRIGGERS, so DEC-7's four are not four`);
+  }
+  assertEqual(LEGACY_TRIGGERS.length, 4, "the legacy path grew a fifth trigger, which DEC-7 does not have");
+});
+
+await test("a legacy `migration` composition is refused, loudly", () => {
+  // `migration` is MIG-20's baseline, and `bot/lib/identity.mjs` selects
+  // baselines by exactly `trigger === "migration" && state === "published"`.
+  // One composed here becomes the baseline this plugin's every later identity
+  // comparison is made against — written off an issue comment rather than off
+  // `baseline.yml`'s single audited dispatch.
+  let threw = null;
+  try { legacyTrigger("migration"); } catch (e) { threw = e; }
+  assert(threw, "the legacy path composed a `migration` record");
+  assert(String(threw.message).includes("MIG-20"), "and the refusal does not say what it would have overwritten");
+  // The refusal reaches the whole program, not just the helper: `decideRelease`
+  // re-throws for `migration` specifically rather than turning it into a
+  // no-record, because "do not write this" and "write the wrong baseline" are
+  // not the same mistake.
+  assert(String(threw.message).includes("baseline"), "and it does not name the thing it protects");
+});
+
+await test("a source nobody mapped writes no record, and never writes `legacy`", () => {
+  // Three shapes were possible here and two are wrong. Throwing turns every
+  // caller that predates `--source` red at once. Defaulting to `legacy` is
+  // what B-T3.7 forbids: a record stating the backstop found a release when
+  // nobody knows what found it. What is built is the third — no trigger, so
+  // no record, said out loud.
+  let threw = null;
+  try { legacyTrigger("something-new"); } catch (e) { threw = e; }
+  assert(threw, "an unmapped source was silently given a trigger");
+  assert(!String(threw.message).includes("came from the backstop\", and"),
+    "the refusal must not read as though `legacy` were the fallback");
+  assert(String(threw.message).includes("legacy"), "the refusal names the four triggers so the caller can pick one");
+});
+
+await test("end to end — a drained publication with the marker on main carries one `legacy` trigger", async () => {
+  // The thing itself, run the way the drain runs it: a real bundle, the real
+  // archive walk, the real manifest probe, the real derivation and the real
+  // policy — with `log/baseline.json` on the tree and `--source queue`, which
+  // is what `bot/watch.mjs --drain` puts on every dispatch entry.
+  const root = registryTree([{}]);
+  fs.mkdirSync(path.join(root, "log"), { recursive: true });
+  fs.writeFileSync(path.join(root, "log", "baseline.json"),
+    JSON.stringify({ schema: "astra.registry.baseline/1", version_count: 1, record_count: 1 }));
+
+  const drained = await run({ root, source: "queue" });
+  assertEqual(drained.decision.outcome, "publish", JSON.stringify(codes(drained)));
+  assertEqual(drained.decision.trigger, "legacy",
+    "a drained publication is a `legacy` trigger — it has no thread and no command behind it");
+  assertEqual(drained.decision.record.write, true,
+    "the marker is on main and the drain published, and still no record is owed");
+
+  // And the gate, from the other side, on the same tree and the same bytes.
+  const beforeBaseline = await run({ root: registryTree([{}]), source: "queue" });
+  assertEqual(beforeBaseline.decision.outcome, "publish", "the floor: the same release without the marker");
+  assertEqual(beforeBaseline.decision.record.write, false,
+    "a record was written before MIG-20's baseline exists, and a record with nothing to be compared " +
+    "against is a statement this registry cannot check (B-T3.7)");
+  assert(String(beforeBaseline.decision.record.why).includes("baseline.json"),
+    "and it does not name the marker it is waiting for");
+
+  // What the publish job actually reads, written out as a user's run would
+  // write it. Asserted from the FILE rather than from the object, because the
+  // object is not what `plugins-ingest.yml` will read.
+  const outDir = tmp("astra-b4-legacy-out-");
+  writeOutputs(outDir, { repo: REPO, tag: TAG, issue: null }, drained);
+  const written = JSON.parse(fs.readFileSync(path.join(outDir, "decision.json"), "utf8"));
+  assertEqual(written.trigger, "legacy", "decision.json carries no trigger, so the writer has nothing to stamp");
+  assertEqual(written.record?.write, true, "decision.json does not say whether a record is owed");
+  assertEqual(written.shadow, false, "decision.json does not say whether the answer was shadow");
 });
 
 // ── result ──────────────────────────────────────────────────────────────────
