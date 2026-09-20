@@ -151,6 +151,12 @@ export async function signRun({
     const file = SIGNED_FILES[name];
 
     if (decided.decision === "blocked") {
+      // Recorded, not skipped. The first spelling of this left `documents`
+      // without the entry, and the run's own summary line then printed
+      // `catalogue 2 (undefined)` for the one outcome a reader most needs
+      // named — found by running the CLI end to end against a fixture whose
+      // catalogue would not build, which is the only way it shows.
+      documents[name] = { decision: "blocked", serial: decided.serial, bytes: null, doc: null };
       codes.push(CODES.blocked);
       continue;
     }
@@ -189,6 +195,7 @@ export async function signRun({
           expires_at: headDoc?.signed?.expires_at ?? null,
         }));
       } else {
+        documents[name] = { decision: "blocked", serial: decided.serial, bytes: null, doc: null };
         codes.push(CODES.blocked, CODES.noKey);
         refusals.push(
           `BLOCKED ${file}: ${reason}, and there is nothing to carry. A \`signed\` commit holds all four ` +
@@ -214,6 +221,7 @@ export async function signRun({
   for (const name of ["trust", "root"]) {
     const bytes = blobAt({ root, ref: sourceCommit, path: SIGNED_FILES[name] });
     if (bytes === null) {
+      documents[name] = { decision: "blocked", serial: null, bytes: null, doc: null };
       codes.push(CODES.blocked);
       refusals.push(
         `BLOCKED ${SIGNED_FILES[name]}: main@${sourceCommit.slice(0, 12)} does not have it, and a \`signed\` ` +
