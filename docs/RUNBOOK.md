@@ -632,9 +632,12 @@ that one, the procedure below is not it. What is **not** here yet:
 §7.7's confirmations, cancellations, reverts and denies have no dispatch to run
 and are performed as hand commits with the trailer in §7.3; `state/holds/**`
 has its library (`bot/lib/holds.mjs`) and its schemas, and nothing yet writes
-an entry; the takedown bound of §7.10 is stated in policy and is not yet
-counted by code. Each of those says so in its own subsection. Nothing below
-depends on them for the withdrawal itself.
+an entry; and the takedown bound of §7.10 **has its counter now
+(`bot/lib/takedown-bound.mjs`) and nothing yet calls it** — which is the same
+sentence as the holds one beside it, and a different state from the "stated in
+policy and not yet counted by code" this line carried until M-T3.2 landed.
+Each of those says so in its own subsection. Nothing below depends on them for
+the withdrawal itself.
 
 ### 7.1 The procedure
 
