@@ -46,6 +46,14 @@ cargo build --release
 listing is judged by should come from a commit somebody chose, not from whatever
 `HEAD` happens to be.
 
+That commit is `astra-plugins.pin`, beside this file: `KEY=VALUE` lines a shell
+can `source` and a workflow can append to `$GITHUB_ENV` unchanged. It is the
+only place the SHA is written. Every reader — `ingest.yml`'s `selftest` job,
+`build-index.yml`'s `check` job, `bot-tests.yml`, and
+`tools/coverage/reserved-id-mirror.mjs` for the URL — reads it from there, and
+`bot/tests/workflows.test.mjs` fails a workflow that writes the pin as a
+literal instead.
+
 ## Error codes
 
 The crate answers `Result<PluginManifest>`: valid or not, with a sentence for a

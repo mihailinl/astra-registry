@@ -145,24 +145,39 @@ jobs:
       - name: Self-test (schemas, canonical JSON, the rejections)
         run: node tools/selftest.mjs
 
-      # `ingest.yml` pins the AstraPlugins commit whose `astra-plugin-manifest`
-      # this bot judges a stranger's manifest with. It is a SHA typed by hand,
-      # and for a while it named a commit on a branch that was rewritten before
-      # it was pushed — so it existed nowhere, `link-deps.sh --clone` died with
-      # `fatal: unable to read tree`, and the first real submission was answered
-      # with "the ingest job did not produce a report".
+      # `bot/manifest-probe/astra-plugins.pin` names the AstraPlugins commit
+      # whose `astra-plugin-manifest` this bot judges a stranger's manifest
+      # with. It is a SHA typed by hand, and for a while it named a commit on a
+      # branch that was rewritten before it was pushed — so it existed nowhere,
+      # `link-deps.sh --clone` died with `fatal: unable to read tree`, and the
+      # first real submission was answered with "the ingest job did not produce
+      # a report".
       #
       # That answer is honest and it is useless: it points at the whole bot. A
       # bad pin belongs to whoever pushed it, so it is checked here, on push,
       # rather than discovered by a stranger opening an issue.
-      - name: The AstraPlugins pin ingest.yml judges manifests by is fetchable
+      #
+      # Read from the pin file, not out of `ingest.yml` (B-T1.4): that workflow
+      # is deleted at R6 and this grep would then have matched nothing, which
+      # `|| true` turns into an empty `ref` and the shape check below into the
+      # only thing standing between R6 and an unpinned judgement.
+      - name: The AstraPlugins pin this bot judges manifests by is fetchable
         id: pin
         run: |
           set -euo pipefail
-          ref=$(grep -oP '^\s*ASTRA_PLUGINS_REF:\s*\K[0-9a-f]+' .github/workflows/ingest.yml || true)
-          url=$(grep -oP '^\s*ASTRA_PLUGINS_URL:\s*\K\S+' .github/workflows/ingest.yml || true)
+          pin=bot/manifest-probe/astra-plugins.pin
+          if [ ! -f "$pin" ]; then
+            echo "::error::$pin is missing. It is the only place ASTRA_PLUGINS_REF is written (B-T1.4)."
+            exit 1
+          fi
+          ref=$(grep -oP '^ASTRA_PLUGINS_REF=\K[0-9a-f]+' "$pin" || true)
+          url=$(grep -oP '^ASTRA_PLUGINS_URL=\K\S+' "$pin" || true)
           if ! [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::ASTRA_PLUGINS_REF is not a 40-hex commit: '$ref'"
+            echo "::error::ASTRA_PLUGINS_REF is not a 40-hex commit in $pin: '$ref'"
+            exit 1
+          fi
+          if [ -z "$url" ]; then
+            echo "::error::ASTRA_PLUGINS_URL is not in $pin"
             exit 1
           fi
           # `--filter=blob:none` fetches the commit and its trees without the

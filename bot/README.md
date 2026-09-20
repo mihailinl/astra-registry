@@ -85,9 +85,12 @@ bot/manifest-probe/link-deps.sh --clone  # CI, with ASTRA_PLUGINS_REF pinned to 
 cargo build --release --manifest-path bot/manifest-probe/Cargo.toml
 ```
 
-`.github/workflows/ingest.yml` pins `ASTRA_PLUGINS_REF` to a commit SHA. Bumping
-it is a reviewed commit, because it changes the rules a stranger's listing is
-judged by.
+`bot/manifest-probe/astra-plugins.pin` pins `ASTRA_PLUGINS_REF` to a commit SHA,
+and it is the only place that SHA is written — `ingest.yml`, `build-index.yml`
+and `bot-tests.yml` all read it out of there. Bumping it is a reviewed commit,
+because it changes the rules a stranger's listing is judged by; after R3 exits
+it also needs an operator acknowledgement, because the file is in TRUST-31's
+hashed set.
 
 ## What runs, in order
 

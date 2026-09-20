@@ -1160,7 +1160,9 @@ export function checkEveryCapDeclaresItsAuthorSide(ctx) {
  * looking at `policy/limits.json` and nothing else.
  *
  * **A missing row is usually the pin, not a deletion.** `build-index.yml`
- * checks AstraPlugins out at `ASTRA_PLUGINS_REF`, pinned in `ingest.yml`, so a
+ * checks AstraPlugins out at `ASTRA_PLUGINS_REF`, pinned in
+ * `bot/manifest-probe/astra-plugins.pin` (B-T1.4; it used to be in
+ * `ingest.yml`, which R6 deletes), so a
  * row added there arrives here when the pin moves — not when it merges. The
  * message names both causes because they need opposite fixes.
  */
@@ -1280,7 +1282,7 @@ export function checkMirroredListingLimits(ctx) {
       "comment above a `" + name + ": " + limits[name] + "` row there, mirrored into " +
       "astra-plugin-cli/src/listing-limits.yaml, with a rule in `astra-plugin` that executes on it. " +
       "TWO CAUSES, opposite fixes: the row may never have landed upstream, OR it landed and ASTRA_PLUGINS_REF " +
-      "in .github/workflows/ingest.yml still points at a commit from before it — this job checks that " +
+      "in bot/manifest-probe/astra-plugins.pin still points at a commit from before it — this job checks that " +
       "repository out at the pin, so a merge upstream does not reach here until the pin moves. " +
       "Do NOT fix it by deleting the `_mirrored_by` sibling: that greens both halves of C20 in one keystroke, " +
       "leaves the cap enforced here exactly as it was, and puts the number back to being a copy nobody compares.");
