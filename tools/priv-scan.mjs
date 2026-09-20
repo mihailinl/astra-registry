@@ -74,10 +74,15 @@
 //   that flagged them would be red on every commit this repository will ever
 //   receive. That is the whole difference between a check and a nuisance.
 //
-//   **reserved TLDs** — `.example`, `.invalid`, `.test`, `.localhost` (RFC
-//   2606, RFC 6761). These are addresses that cannot belong to a person by
-//   construction. `1@evil.example` is in a commit body here, as a test vector
-//   in a sentence about a host parser, and it is not a leak.
+//   **reserved names** — the TLDs `.example`, `.invalid`, `.test`,
+//   `.localhost` (RFC 2606 §2, RFC 6761) **and the domains `example.com`,
+//   `example.net`, `example.org` (RFC 2606 §3)**, subdomains included. These
+//   are addresses that cannot belong to a person by construction.
+//   `1@evil.example` is in a commit body here, as a test vector in a sentence
+//   about a host parser, and it is not a leak. §3 was cited in this comment
+//   and missing from the code until 2026-09-20, when the first commit body to
+//   quote `someone@example.com` — recording what a new guard printed when it
+//   was watched red — turned `main` red.
 //
 //   **role addresses (MOD-45)** — PRIV-2 permits them by name, and
 //   `security@minice.ai` is published in `bot/security-contact.json` and in
@@ -277,8 +282,32 @@ const UUID_RE = /\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[
 const TELEGRAM_RE = /(?:\B-100\d{9,12}\b|\bt\.me\/[A-Za-z0-9_+/-]+|\btg:\/\/\S+)/g;
 const TELEGRAM_MEMBER_RE = /telegram|chat_id/i;
 
-/** RFC 2606 and RFC 6761: domains that cannot belong to a person. */
+/** RFC 2606 §2 and RFC 6761: top-level domains that cannot belong to a person. */
 const RESERVED_TLDS = [".example", ".invalid", ".test", ".localhost"];
+
+/**
+ * RFC 2606 **§3**, which the comment at the top of this file cites and the
+ * code did not implement: `example.com`, `example.net` and `example.org` are
+ * reserved for documentation exactly as the four TLDs above are, and are the
+ * addresses a person actually writes when they need a fake one.
+ *
+ * It was the omission rather than the rule that was wrong, and the way it
+ * surfaced says why it matters: the first commit body in this repository to
+ * quote an example address did so to record a **watched-red** run — the
+ * evidence that a new guard fires — and the privacy scan went red on `main`
+ * about it. A rule whose failure mode is punishing the one habit this estate
+ * most wants (write down what the check printed when you broke it) is a rule
+ * on its way to being switched off.
+ *
+ * Subdomains count: `a@mail.example.com` is no more a person's address than
+ * `a@example.com`. Matched on the registrable domain, not by `endsWith` on
+ * the whole address, so `a@notexample.com` is still a finding.
+ */
+const RESERVED_DOMAINS = ["example.com", "example.net", "example.org"];
+
+function reservedDomain(host) {
+  return RESERVED_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
+}
 
 /**
  * A role address is a mailbox that is a FUNCTION rather than a person, and
@@ -321,6 +350,7 @@ function addressExempt(address, roles) {
   const lower = address.toLowerCase();
   if (roles.has(lower)) return true;
   if (RESERVED_TLDS.some((tld) => lower.endsWith(tld))) return true;
+  if (reservedDomain(lower.split("@").pop() ?? "")) return true;
   if (ROLE_LOCAL_PARTS.has(lower.split("@")[0])) return true;
   return looksLikeAFile(lower);
 }
