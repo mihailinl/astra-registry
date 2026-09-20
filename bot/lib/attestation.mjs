@@ -59,6 +59,7 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import { promisify } from "node:util";
 
+import { checkCertificateRows, readCertificateFields } from "./certificate.mjs";
 import { compiledRootKeys } from "./roots.mjs";
 import { publicKeyFromBase64, verifyEnvelope, TRUST_SCHEMA } from "./sign.mjs";
 
@@ -136,55 +137,75 @@ export function loadWorkflowAllowlist({ trustFile, roots = compiledRootKeys() })
 }
 
 /**
- * The signer facts, dug out of whatever shape `gh` produced.
+ * The signer facts — **from the certificate, and from nothing else**.
  *
- * `gh attestation verify --format json` has changed its envelope more than once,
- * and this has to keep working across the versions a runner might have. So every
- * field is looked for in each of the places it has lived, and **a field that is
- * not found anywhere is `null`, never a default** — the caller treats a missing
- * signer digest as a failed verification, because "we could not find out which
- * workflow signed this" and "the right workflow signed this" must not produce
- * the same outcome.
+ * This used to fall back to the in-toto predicate for four of the five fields:
+ * `externalParameters.workflow.repository` stood in for the source repository,
+ * `resolvedDependencies[0].digest.gitCommit` for the signer digest, and so on.
+ * Those fallbacks are gone (registry plan B-T1.1; ID-28: read each field "from
+ * the certificate extensions of every bundle, never the predicate or a name
+ * lookup"). The predicate is a statement the BUILDER composed; the certificate
+ * is one Fulcio would not have issued unless the OIDC token said so. Reading
+ * the two into one variable meant an attestation whose certificate had been
+ * stripped could still answer "which repository built this" with a string the
+ * builder chose — which is the one question the certificate exists to answer.
+ *
+ * `bot/lib/certificate.mjs` owns the reading, the DER fallback included. **A
+ * field that is not found is `null`, never a default**: "we could not find out
+ * which workflow signed this" and "the right workflow signed this" must not
+ * produce the same outcome.
+ *
+ * @param {object|object[]} results gh's parsed `--format json`
+ * @param {string} [artifactSha256] the digest THESE bytes hash to. Given, it
+ *   selects the attestation covering them and ignores every other one in the
+ *   array — a release-file bundle naming other ids contributes no field here.
  */
-export function extractSignerFacts(results) {
-  const list = Array.isArray(results) ? results : [results];
-  const first = (...vals) => vals.find((v) => typeof v === "string" && v.length > 0) ?? null;
-
-  for (const r of list) {
-    const cert = r?.verificationResult?.signature?.certificate ?? r?.signature?.certificate ?? {};
-    const statement = r?.verificationResult?.statement ?? r?.statement ?? {};
-    const predicate = statement.predicate ?? {};
-    const ext = predicate.buildDefinition?.externalParameters ?? {};
-
-    const signerDigest = first(
-      cert.buildSignerDigest,
-      cert.build_signer_digest,
-      predicate.buildDefinition?.resolvedDependencies?.[0]?.digest?.gitCommit,
-    );
-    const signerUri = first(cert.buildSignerURI, cert.build_signer_uri, ext.workflow?.path);
-    const sourceRepo = first(cert.sourceRepositoryURI, cert.source_repository_uri, ext.workflow?.repository);
-    const sourceDigest = first(cert.sourceRepositoryDigest, cert.source_repository_digest, ext.workflow?.ref);
-    const runUri = first(cert.runInvocationURI, cert.run_invocation_uri, predicate.runDetails?.metadata?.invocationId);
-
-    const subjects = Array.isArray(statement.subject) ? statement.subject : [];
-    const subjectDigests = subjects.map((s) => s?.digest?.sha256).filter(Boolean);
-
-    if (signerDigest || signerUri || subjectDigests.length) {
-      return { signerDigest, signerUri, sourceRepo, sourceDigest, runUri, subjectDigests };
-    }
-  }
-  return { signerDigest: null, signerUri: null, sourceRepo: null, sourceDigest: null, runUri: null, subjectDigests: [] };
+export function extractSignerFacts(results, artifactSha256 = null) {
+  const read = readCertificateFields({ parsed: results, artifactSha256 });
+  const { fields } = read;
+  return {
+    signerDigest: fields.job_workflow_sha,
+    signerUri: fields.job_workflow_ref,
+    sourceRepo: fields.source_repository_uri,
+    sourceDigest: fields.sha,
+    runUri: fields.run,
+    subjectDigests: read.seenDigests,
+    /** The ten ID-28 fields, under the contract's names. */
+    fields,
+    /** `certificate` or `der`, per field, so a report can say where it read. */
+    fieldSource: read.source,
+    /** Whether an attestation in the array actually covered these bytes. */
+    matched: read.matched,
+    /** Values of the wrong TYPE — the SCOPE-5 refusal, before any coercion. */
+    problems: read.problems,
+  };
 }
 
 /**
  * Run `gh attestation verify` and check what it says.
  *
+ * **The signer flag is not optional, and the reason is measured.** B-T1.2's
+ * survey (O:notes/state.md, 2026-09-19) ran the obvious command —
+ * `gh attestation verify <file> --repo <source.repo> --format json`, with no
+ * signer flag — against all 18 listings and it FAILED on 12 of them, on
+ * attestations that are perfectly good: gh derives its SAN matcher from
+ * `--repo`, and the SAN is the REUSABLE workflow's URI, so only the six ids
+ * released out of `mihailinl/AstraPlugins` itself match. What it says when it
+ * refuses is `Error: verifying with issuer "sigstore.dev"` — exit 1, nothing
+ * on stdout, and not one word about which check refused. A genuinely missing
+ * attestation says `HTTP 404: Not Found (…/attestations/sha256:…)`. **The two
+ * differ in the message and never in the exit code**, so this function
+ * classifies on the text and never on the status, and the flags below are the
+ * flags the survey verified all 18 pass under.
+ *
  * @param {{file: string, repo: string, signerWorkflow: string, allowlist: string[],
- *          artifactSha256: string, runner?: (args: string[]) => Promise<{stdout: string}>}} opts
+ *          artifactSha256: string, tag?: string|null,
+ *          runner?: (args: string[]) => Promise<{stdout: string}>}} opts
  * @returns {Promise<{findings: {level: string, code: string, message: string}[], facts: object|null}>}
  */
 export async function verifyAttestation(opts) {
   const { file, repo, signerWorkflow, allowlist, artifactSha256 } = opts;
+  const tag = opts.tag ?? null;
   const findings = [];
   const run = opts.runner ?? (async (args) =>
     // `gh` is given an argument array, never a shell string: the repository and
@@ -208,7 +229,16 @@ export async function verifyAttestation(opts) {
     const text = `${e.stderr ?? ""}${e.message ?? ""}`;
     // "no attestations found" is a different answer from "the attestation is
     // wrong", and an author fixes them differently.
-    const missing = /no attestation|could not find any attestations|404/i.test(text);
+    //
+    // The 404 is the only thing that means "there is no attestation", and it
+    // is matched on the text because the exit code says 1 either way. gh's
+    // policy refusal — `verifying with issuer "sigstore.dev"` — is deliberately
+    // NOT in this pattern: it means the flags and the certificate disagree,
+    // which is the registry's bug or the author's workflow, never "no
+    // attestation exists". Telling an author to add an attestation they
+    // already have is the failure B-T1.2's first pass made, on 12 of 18.
+    const missing = /no attestation|could not find any attestations|HTTP 404|404: Not Found/i.test(text);
+    const policyRefusal = /verifying with issuer/i.test(text);
     // "The verifier could not start" is not "the bytes are wrong", and telling
     // an author the second when the first happened sends them to rebuild a
     // release that was never broken. Seen in the wild: `gh` failed with
@@ -219,6 +249,7 @@ export async function verifyAttestation(opts) {
     // Still blocking, because an unverified artifact must not be listed. What
     // changes is what it says and who it points at: retry, not rebuild.
     const unavailable = /verifier is not available|initializ|trust(ed)? root|tuf|timeout|timed out|connection|network|temporar/i.test(text);
+    const first = text.trim().split("\n")[0] || "failed";
     findings.push({
       level: "error",
       code: missing
@@ -226,12 +257,22 @@ export async function verifyAttestation(opts) {
         : unavailable
           ? "E_ATTESTATION_UNCHECKED"
           : "E_ATTESTATION_INVALID",
-      message: `gh attestation verify --repo ${repo} --signer-workflow ${signerWorkflow}: ${text.trim().split("\n")[0] || "failed"}`,
+      message:
+        `gh attestation verify --repo ${repo} --signer-workflow ${signerWorkflow}: ${first}` +
+        (policyRefusal && !missing
+          ? ". gh refuses with that one line whenever its verification policy and the certificate " +
+            "disagree, and names no check; it is NOT a missing attestation (the 404 is)."
+          : ""),
     });
     return { findings, facts: null };
   }
 
-  const facts = extractSignerFacts(parsed);
+  const facts = extractSignerFacts(parsed, artifactSha256);
+
+  // A field of the wrong type, refused before anything reads it (SCOPE-5).
+  for (const p of facts.problems) {
+    findings.push({ level: "error", code: "E_ATTESTATION_INVALID", message: p.message });
+  }
 
   // The digest, in the third of its three places (§5.2: attestation subject,
   // index record, and what the daemon hashes — one number).
@@ -256,16 +297,17 @@ export async function verifyAttestation(opts) {
     }
   }
 
-  // The pin that makes the rest mean something.
-  if (!facts.signerDigest) {
-    findings.push({
-      level: "error",
-      code: "E_ATTESTATION_INVALID",
-      message:
-        "the attestation carries no resolved signer-workflow commit. Without it, this proves only " +
-        "that GitHub built something — not which workflow did.",
-    });
-  } else if (!allowlist.includes(facts.signerDigest)) {
+  // ID-28's rows, from the certificate: presence of all ten, plus .9, .11,
+  // .14 and .20. `.10` is the next branch (only this function knows the
+  // allowlist) and `.13` is compared with the Release at ingest step 10 (only
+  // that function has the Release). `.15`, `.17` and `.12`'s name are read
+  // here and compared from R3.
+  findings.push(...checkCertificateRows({ fields: facts.fields, tag, signerWorkflow }));
+
+  // The pin that makes the rest mean something. Its ABSENCE is reported by the
+  // row check above, which states every missing field in one finding; this
+  // branch is about a signer commit that is present and not allowed.
+  if (facts.signerDigest && !allowlist.includes(facts.signerDigest)) {
     findings.push({
       level: "error",
       code: "E_WORKFLOW_NOT_ALLOWED",

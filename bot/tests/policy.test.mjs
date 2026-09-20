@@ -213,6 +213,10 @@ async function run({
         repo,
         signerDigest: ALLOWED_WORKFLOW_SHA,
         sourceCommit: attestedCommit,
+        // `.14` is `refs/tags/<tag>` on every bundle in the catalogue and the
+        // bot now enforces it (ID-28; registry plan B-T1.1), so the stub is
+        // told which tag it is attesting rather than omitting the field.
+        tag,
         subjectDigest: crypto.createHash("sha256").update(fs.readFileSync(args[2])).digest("hex"),
       })(args),
     },
@@ -757,6 +761,95 @@ await test("the shorter delay actually reaches the decision", async () => {
   assertEqual(r.decision.outcome, "delay", "");
   assertEqual(hours(r.decision.publish_after, NOW), TRUSTED_DELAY_HOURS, JSON.stringify(r.decision.track));
   assert(codes(r).includes("P_TRUSTED_AUTHOR"), JSON.stringify(codes(r)));
+});
+
+section("the identity verdict, before the policy has a say (B-T3.3a)");
+
+/** A release that would otherwise publish itself with nobody in the loop. */
+const cleanRelease = () => ({
+  findings: [],
+  derived: {
+    plugin: { id: "astra-chess", source: { kind: "github", repo: "KNICE-TECH/astra-chess" } },
+    version: { version: "0.1.18", capabilities: ["tools"], release: { repo: "KNICE-TECH/astra-chess", tag: "v0.1.18" } },
+  },
+  existing: { versions: [{ doc: { version: "0.1.17", capabilities: ["tools"] } }] },
+  repo: "KNICE-TECH/astra-chess",
+  tag: "v0.1.18",
+  now: NOW,
+});
+
+const RECYCLED = {
+  code: "B_REPOSITORY_RECYCLED",
+  terminal: true,
+  reason:
+    "KNICE-TECH/astra-chess was baselined as repository 1343092393 (owner 280318216) and this release " +
+    "attests repository 2000000001 (owner 2000000002) under the same name",
+};
+
+await test("B_REPOSITORY_RECYCLED refuses a release that would otherwise publish itself", () => {
+  const d = decide({ ...cleanRelease(), identity: RECYCLED });
+  assertEqual(d.outcome, "refuse", JSON.stringify(d.reasons));
+  assert(d.reasons.some((r) => r.message.includes("B_REPOSITORY_RECYCLED")), JSON.stringify(d.reasons));
+  assert(d.reasons.some((r) => r.message.includes("1343092393") && r.message.includes("2000000001")),
+    "the refusal names both id pairs, or nobody can tell what happened");
+});
+
+await test("the recycled refusal is permanent: not a new tag, not an approval", () => {
+  // ID-41 row 1 with OPEN-OWNER-15's answer. The refusal is about which
+  // repository produced the bytes; a maintainer typing `/approve` has not
+  // changed that, and neither has the author pushing another tag. Only
+  // B-T4.2's identity reset lifts it.
+  const underANewTag = decide({
+    ...cleanRelease(), tag: "v0.1.19",
+    derived: { plugin: { id: "astra-chess" }, version: { version: "0.1.19", capabilities: ["tools"] } },
+    identity: RECYCLED,
+  });
+  assertEqual(underANewTag.outcome, "refuse", "a new tag is refused again");
+
+  const approved = decide({
+    ...cleanRelease(),
+    identity: RECYCLED,
+    approval: { by: "a-maintainer", at: "2026-09-19T10:00:00Z", for: "0".repeat(12) },
+  });
+  assertEqual(approved.outcome, "refuse", "an approval does not clear it");
+  assertEqual(approved.approved_by, "a-maintainer",
+    "and it is still recorded, so the thread and the record can be reconciled");
+  assert(approved.reasons.some((r) => r.message.includes("permanent")), JSON.stringify(approved.reasons));
+});
+
+await test("a rename is a hold, not a refusal, and it names both id pairs", () => {
+  // The identity module answers `R_IDENTITY_CHANGED` for a rename, a transfer
+  // and a re-creation; the ingest raises it as a review finding, and the
+  // policy's job is to hand it to a person rather than to rule on it.
+  const d = decide({
+    ...cleanRelease(),
+    findings: [{
+      level: "review", code: "R_IDENTITY_CHANGED", where: "version",
+      message: "both ids are unchanged (1343092393/280318216) and the name moved from KNICE-TECH/astra-chess to MINICE-AI/astra-chess: a rename",
+    }],
+  });
+  assertEqual(d.outcome, "review", JSON.stringify(d.reasons));
+  assert(d.reasons.some((r) => r.code === "R_IDENTITY_CHANGED"), JSON.stringify(d.reasons));
+});
+
+await test("a transient identity read never becomes a decision", () => {
+  // A wait is the reader's answer, not the policy's. A rate-limited
+  // `fetchRepositoryIds` that reached `decide()` would be recorded as
+  // something — and every one of the four outcomes is a record about a
+  // repository nobody managed to look up.
+  let threw = null;
+  try {
+    decide({ ...cleanRelease(), identity: { code: "W_GITHUB_RATE_LIMITED", reason: "HTTP 403 with rate-limit headers" } });
+  } catch (e) {
+    threw = e;
+  }
+  assert(threw, "a wait must not be turned into an outcome");
+  assert(threw.message.includes("a read that did not happen is not a fact"), threw.message);
+});
+
+await test("no identity verdict changes nothing — the legacy path still decides", () => {
+  const d = decide(cleanRelease());
+  assertEqual(d.outcome, "publish", JSON.stringify(d.reasons));
 });
 
 section("the decision function on its own");

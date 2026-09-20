@@ -119,6 +119,13 @@ jobs:
       - name: The workflow files' own tests
         run: node --test bot/tests/workflows.test.mjs
 
+      # B-T3.2 / B-T3.3a. Which repository published these bytes: the
+      # certificate's .12/.15/.17 against MIG-20's baseline, a rename, a
+      # transfer, a re-creation, and a freed login somebody else registered.
+      # Pure, no probe, ~50 ms.
+      - name: The identity comparison, one fixture per outcome
+        run: node --test bot/tests/identity.test.mjs
+
       # Two clones and a bare remote: what `bot/publish-apply.mjs` does when two
       # publications reach `main` at once. It needs no probe and no second
       # checkout, only git (registry plan B-T0.3).
