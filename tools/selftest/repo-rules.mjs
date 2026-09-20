@@ -476,6 +476,11 @@ export async function run() {
     "listings.mjs", "origins.mjs", "bundles.mjs", "index-signature.mjs", "revocations.mjs",
     "cli.mjs", "root-delegation.mjs", "update-signing.mjs", "update-notes.mjs", "repo-rules.mjs",
     "signer.mjs",
+    // `roots.mjs` was added on 2026-09-19 with B-T1.5, watched failing by
+    // deleting the file and its runner entry together — which is the one loss
+    // `checkModuleSet` is silent about, because that guard compares those two
+    // sides with each other and is quiet whenever they agree.
+    "roots.mjs",
   ];
   await test("no module has left the runner's list since the suite was split", async () => {
     const runner = fs.readFileSync(path.join(REPO_ROOT, "tools", "selftest.mjs"), "utf8");
