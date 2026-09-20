@@ -404,20 +404,171 @@ export async function run() {
     assertEqual(hits.join(", "), "", "a required reviewer is claimed somewhere");
   });
 
-  // The deleted withdrawal workflow may still be named in the runbook, and only
-  // until the real path is written at R1 (RC-R1-2 rewrites §7 then).
-  await test("only the runbook still names the deleted withdrawal workflow", async () => {
-    const all = grepRepo("revoke.yml");
-    // The liveness floor, and the reason it is here rather than in a test of its
-    // own: `revoke.yml` is written in this file and in grepRepo's own
-    // documentation in harness.mjs, so the suite exclusion has to cover the whole
-    // directory — and an exclusion that swallowed the tree would make the line
-    // below pass by finding nothing at all. The runbook names it twice; if
-    // grepRepo stops seeing even one of them, it has stopped seeing the tree.
-    assert(all.some((h) => h.startsWith("docs/RUNBOOK.md:")),
-      "grepRepo found no revoke.yml in docs/RUNBOOK.md, where there are two; the exclusion is now swallowing the repository");
-    const stray = all.filter((h) => !h.startsWith("docs/RUNBOOK.md:"));
-    assertEqual(stray.join(", "), "", "a file other than the runbook still points at revoke.yml");
+  // The deleted withdrawal workflow, now named nowhere.
+  //
+  // RC-R0-1 deleted `revoke.yml` and allowed `docs/RUNBOOK.md` to go on naming
+  // it, because §7 described a procedure that ran through it and there was no
+  // other procedure to describe. **That exception ends here** (RC-R1-2): §7 is
+  // rewritten around `sign.yml`, so a surviving mention is a reader sent to
+  // run a workflow that does not exist, in the middle of a withdrawal.
+  await test("nothing in this repository names the deleted withdrawal workflow", async () => {
+    // The liveness anchor, and it is not decoration. Both needles are written
+    // in this file and in `grepRepo`'s own documentation in harness.mjs, so
+    // the suite exclusion covers that whole directory — and an exclusion that
+    // swallowed the tree would make the assertion below pass by finding
+    // nothing at all, which is the same output as compliance. The old floor
+    // was "the runbook names revoke.yml twice"; removing those two lines is
+    // the point of this commit, so the floor moves to what replaced them.
+    const signer = grepRepo("sign.yml");
+    assert(signer.some((h) => h.startsWith("docs/RUNBOOK.md:")),
+      "grepRepo found no sign.yml in docs/RUNBOOK.md, where §7's procedure now runs through it; either the " +
+      "runbook stopped naming the signer, or the exclusion is swallowing the repository");
+    const hits = grepRepo("revoke.yml");
+    assertEqual(hits.join(", "), "",
+      "a file still points at revoke.yml, which was deleted at R0. docs/RUNBOOK.md §7 is the procedure now, and " +
+      "it runs through .github/workflows/sign.yml");
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ROLL-44's "One publisher" rows (registry plan D1, RC-R1-2).
+  //
+  // Two documents, one branch, one origin, and exactly one thing allowed to
+  // write any of them. Every row below was watched failing, in turn, by adding
+  // a second deploy-pages workflow, by putting `id-token: write` in `publish`,
+  // by dropping `!cancelled()` from `pages`, and by adding an AstraPlugins
+  // checkout to `publish`.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** Every job in every workflow, as `{file, job, line, body}`. Comments kept. */
+  const workflowJobs = () => {
+    const out = [];
+    for (const name of workflowFiles()) {
+      const lines = fs.readFileSync(path.join(WORKFLOW_DIR, name), "utf8").split("\n");
+      const at = lines.findIndex((l) => /^jobs:\s*$/.test(l));
+      if (at < 0) continue;
+      const starts = [];
+      for (let i = at + 1; i < lines.length; i++) {
+        if (/^\S/.test(lines[i])) break;
+        const m = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(lines[i]);
+        if (m) starts.push([i, m[1]]);
+      }
+      for (let k = 0; k < starts.length; k++) {
+        const [i, job] = starts[k];
+        let end = k + 1 < starts.length ? starts[k + 1][0] : lines.length;
+        for (let j = i + 1; j < end; j++) {
+          if (/^\S/.test(lines[j])) { end = j; break; }
+        }
+        out.push({ file: name, job, line: i + 1, body: lines.slice(i, end).filter((l) => !l.trim().startsWith("#")) });
+      }
+    }
+    return out;
+  };
+
+  await test("exactly one workflow writes `signed`, and exactly one deploys Pages", async () => {
+    const pushers = new Set();
+    const deployers = new Set();
+    for (const job of workflowJobs()) {
+      const body = job.body.join("\n");
+      if (/--step\s+commit/.test(body) || /git push[^\n]*\bsigned\b/.test(body)) pushers.add(job.file);
+      if (/actions\/deploy-pages/.test(body)) deployers.add(job.file);
+    }
+    assertEqual([...pushers].sort().join(", "), "sign.yml",
+      "the `signed` branch has more than one writer, or none. D1: one publisher, and a two-publisher interval is " +
+      "the race this design removes");
+    assertEqual([...deployers].sort().join(", "), "sign.yml",
+      "something other than the signer deploys Pages. Two deployers is two answers to what a shipped 0.2.x " +
+      "daemon is served, decided by whichever finished last");
+  });
+
+  await test("every publishing job is serialised, and none of them may be cancelled", async () => {
+    // A cancelled signer run is a run that may have signed and not pushed, or
+    // pushed and not uploaded its receipt. `cancel-in-progress: true` on
+    // either group would make the newer run kill the older one mid-publication
+    // — and the older one is the one holding the key.
+    const GROUPS = ["registry-signer", "pages"];
+    const problems = [];
+    let checked = 0;
+    for (const name of workflowFiles()) {
+      const text = fs.readFileSync(path.join(WORKFLOW_DIR, name), "utf8");
+      const lines = text.split("\n");
+      lines.forEach((line, i) => {
+        const m = /^\s*group:\s*(\S+)\s*$/.exec(line);
+        if (!m || !GROUPS.includes(m[1])) return;
+        checked++;
+        // The `cancel-in-progress:` belonging to this group is the next
+        // non-blank line at the same indentation; read as the neighbour
+        // rather than searched for in the file, because a workflow may carry
+        // several concurrency blocks and the wrong one would answer.
+        const indent = line.search(/\S/);
+        let next = i + 1;
+        while (next < lines.length && lines[next].trim() === "") next++;
+        const sibling = lines[next] ?? "";
+        if (sibling.search(/\S/) !== indent || !/^\s*cancel-in-progress:\s*false\s*$/.test(sibling)) {
+          problems.push(`${name}:${i + 1} group ${m[1]} is not immediately followed by \`cancel-in-progress: false\``);
+        }
+      });
+    }
+    assert(checked >= 2, `only ${checked} publishing concurrency group(s) found; the signer declares two`);
+    assertEqual(problems.join("; "), "", "a publishing run can be cancelled by a newer one");
+  });
+
+  await test("the signing job holds the key and nothing else", async () => {
+    const job = workflowJobs().find((j) => j.file === "sign.yml" && j.job === "publish");
+    assert(job !== undefined, "sign.yml has no `publish` job, so every rule in this test passes by finding nothing");
+    const body = job.body.join("\n");
+
+    const FORBIDDEN = [
+      [/^\s+id-token:\s*write\s*$/m,
+        "an OIDC token. The one job that can publish to every Astra installation is the last place to mint a " +
+        "credential for something outside this repository"],
+      [/actions\/download-artifact/m,
+        "an artifact download. The signer generates what it signs, at the Source-Commit, in this job — bytes " +
+        "another job produced are bytes this one did not gate"],
+      [/actions\/cache/m, "a cache; a cache is bytes a pull request can poison"],
+      [/repository:\s*mihailinl\/AstraPlugins/m,
+        "an AstraPlugins checkout. Signing that waits on another repository stops when that repository is " +
+        "unavailable, which is the state a withdrawal is most likely to be needed in (seam 4)"],
+      [/ASTRA_PLUGINS_DIR/m,
+        "$ASTRA_PLUGINS_DIR, which is the same checkout by another name: `validate.mjs` would then gate signing " +
+        "on a sibling tree"],
+    ];
+    const problems = [];
+    for (const [pattern, what] of FORBIDDEN) {
+      if (pattern.test(body)) problems.push(`sign.yml's publish job holds ${what}`);
+    }
+
+    // TRUST-5. One URL is allowed in this job and it is SERVE-94's wake hint:
+    // a POST with no token and an empty body, whose answer is discarded. Any
+    // other host reached from the job that holds the index key is a job that
+    // can be made to hand it somewhere.
+    const WAKE = "https://api.minice.ai/plugins/v1/signed/wake";
+    for (const line of job.body) {
+      for (const m of line.matchAll(/https?:\/\/[^\s"'`)]+/g)) {
+        if (m[0] === WAKE) continue;
+        problems.push(`sign.yml's publish job reaches ${m[0]}, and the only URL it may name is the wake hint (TRUST-5)`);
+      }
+    }
+    assertEqual(problems.join("; "), "", "the job that holds the index signing key can do more than sign");
+  });
+
+  await test("Pages is redeployed even when the publish job failed", async () => {
+    // D5. Pages serves `signed`'s head, and that head exists whether or not
+    // this run added to it. A `pages` job gated on `success()` would let one
+    // failed publish age the withdrawal list on the one surface every shipped
+    // 0.2.x client reads — and the failure that produced it is already being
+    // alerted on, so the deploy would be withheld precisely when somebody is
+    // looking at something else.
+    const job = workflowJobs().find((j) => j.file === "sign.yml" && j.job === "pages");
+    assert(job !== undefined, "sign.yml has no `pages` job");
+    const condition = job.body.find((l) => /^\s{4}if:/.test(l))?.trim() ?? "";
+    assert(/!cancelled\(\)/.test(condition),
+      `sign.yml's pages job runs on ${JSON.stringify(condition)}; D5 asks for !cancelled(), so that a failed ` +
+      `publish still redeploys what \`signed\` holds`);
+    assert(!/success\(\)/.test(condition),
+      `sign.yml's pages job asks for success(): ${JSON.stringify(condition)}`);
+    assert(job.body.some((l) => /^\s+needs:\s*publish\s*$/.test(l)),
+      "sign.yml's pages job does not need `publish`, so it can deploy `signed`'s old head beside a run that was " +
+      "about to move it");
   });
 
   // The way this suite gets smaller that no count can see: a whole module
@@ -491,6 +642,13 @@ export async function run() {
     // because the two sides it compares agree that the module is gone.
     "baseline.mjs",
     "served-set.mjs",
+    // `signer-run.mjs` was added on 2026-09-19 with RC-R1-2 — the signer's
+    // acts, SERVE-95's caller among them. Watched both ways: deleted from disk
+    // together with its runner entry, which is the loss `checkModuleSet`
+    // cannot see because the two sides it compares agree that the module is
+    // gone; and left out of this list, which is the silent half, since
+    // omitting a name here costs nothing and fails nothing.
+    "signer-run.mjs",
   ];
   await test("no module has left the runner's list since the suite was split", async () => {
     // The list itself first. It is a SUBSET assertion, so a name appearing

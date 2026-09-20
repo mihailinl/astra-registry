@@ -71,6 +71,28 @@ export const CHECKS = [
     signals: ["success"],
   },
   {
+    name: "signer",
+    party: "registry",
+    // ROLL-62's row in RC-R1-0's own table reads "the signer, RC-R1-2", and
+    // this is it. One check for the whole workflow and not one per job:
+    // `publish` and `pages` sit behind one `alert` job, as `served-set`'s two
+    // comparisons do below, and two checks would page twice for one silence.
+    //
+    // The interval is the signer's cron, `23 * * * *`, and it is the CADENCE
+    // rather than the publication rate on purpose. D4 re-signs an unchanged
+    // document only once `signed`'s copy is 20 hours old, so about one run in
+    // twenty commits anything — but every completed run posts a heartbeat,
+    // because what this check watches for is the signer not RUNNING. A signer
+    // that stopped looks exactly like an hour in which nothing changed, and
+    // the withdrawal list it is not refreshing expires in seven days, at
+    // which point every armed client blocks installs.
+    source: "RC-R1-2 (ROLL-62), .github/workflows/sign.yml",
+    interval_seconds: 3600,
+    created_disarmed: false,
+    armed_at: null,
+    signals: ["success"],
+  },
+  {
     name: "served-set",
     party: "registry",
     // SERVE-85 and SERVE-39 are two jobs of one workflow behind one `alert`

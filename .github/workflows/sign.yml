@@ -1,0 +1,446 @@
+# The one publisher (registry plan D1, RC-R1-2).
+#
+# Everything a client is served comes from here and from nowhere else: the
+# `signed` branch, and the Pages deployment. Before this file existed the
+# catalogue was signed and deployed by `build-index.yml` and the withdrawal
+# list by a workflow of its own, which is two publishers of documents that must
+# have exactly one. That second one was deleted at R0 (D0) — it had failed
+# every scheduled run it ever made — and `build-index.yml` loses its `sign` and
+# `deploy` jobs in this same commit, because a two-publisher interval is the
+# race being removed and an interval is what two commits would create.
+#
+# WHAT THIS FILE IS DEFENDING
+#
+#   A withdrawal that waits for a catalogue.  Each document stands alone (D4):
+#     every run regenerates both from main's head, each passes or fails its own
+#     gates, and a document that fails is carried forward byte for byte while
+#     the other one still commits. A signer that refused the whole run on one
+#     bad listing would hold a takedown behind a listing problem, which is the
+#     one direction this estate cannot afford.
+#   A signature nobody can attribute.  Every document about to be committed is
+#     verified against the trust.json committed BESIDE it (SERVE-95), including
+#     the ones this run did not sign. A carried catalogue signed by a key the
+#     new trust.json has just dropped is byte-perfect, correctly signed, and
+#     refused by every client the moment SERVE-91 sees the commit.
+#   A committer the signer never hears.  `workflow_run` names every workflow
+#     that commits, because GITHUB_TOKEN pushes start no push runs: a committer
+#     missing from the list below waits an hour for the cron. The condition is
+#     COMPLETION, never success — a run that committed and then failed a later
+#     job must not leave its takedown waiting (D1).
+#   Pages ageing behind a failed publish.  `pages` runs on `!cancelled()`, so a
+#     `publish` that could not commit still redeploys what `signed` holds, and
+#     the site build is non-fatal: a template that cannot render must not be
+#     able to take the catalogue and the withdrawal list down with it (D5).
+#
+# WHAT IT IS NOT.  It is not a gate on anything in another repository. The
+# `publish` job has no AstraPlugins checkout and must never grow one: signing
+# that waits on another repository is signing that stops when that repository
+# is unavailable, which is the state a withdrawal is most likely to be needed
+# in. `tools/validate.mjs`'s `NOT verified` notes are recorded here and decide
+# nothing (seam 4); `build-index.yml` has the checkout and is right to turn one
+# into exit 1.
+#
+# WHERE THE RULES LIVE.  In `tools/signer/`, not here. These steps read the
+# world and run a module; the modules decide. Every one of them is exercised in
+# `tools/selftest/signer.mjs` and `tools/selftest/signer-run.mjs` against a
+# fixture tree and the committed TEST keys — which is the only way any of this
+# can be watched failing, because the first time a rule here runs for real it
+# runs in a job holding the index key, against `signed`, with no way to take a
+# commit back.
+
+name: Signer
+
+on:
+  # main moved. Human pushes and PR merges reach this; the bot's own commits do
+  # not, which is what the `workflow_run` list below is for.
+  push:
+    branches: [main]
+
+  # Every workflow that commits, heard on COMPLETION whatever its conclusion.
+  #
+  # Three of these four have no file yet, and **a trigger naming an absent
+  # workflow is inert**: there is nothing to hear until B-T1.4 lands `Plugins
+  # ingest`, M-T3.4 lands `Plugins moderation` and B-T3.10 lands `Operator`.
+  # They are listed now because the alternative is a signer that goes deaf on
+  # the day one of them lands — GITHUB_TOKEN pushes start no push runs, so
+  # whatever that workflow commits waits up to an hour for the cron below,
+  # with nothing red anywhere and a withdrawal inside the delay.
+  #
+  # The names are the `name:` line of each file, not its path, and
+  # `bot/tests/workflows.test.mjs` reads them out of the files and compares:
+  # a renamed workflow that still commits would otherwise wait an hour for the
+  # cron with nothing red anywhere.
+  workflow_run:
+    workflows: ["Ingest", "Plugins ingest", "Plugins moderation", "Operator"]
+    types: [completed]
+
+  # Hourly, for the reason D4 gives: the documents expire whether or not
+  # anybody commits. The catalogue's TTL is 30 days and the withdrawal list's
+  # is 7, and an unchanged document is re-signed only once `signed`'s copy is
+  # 20 hours old — so this runs every hour and publishes on about one run in
+  # twenty, which is what keeps a takedown's publication latency at minutes
+  # rather than at the freshness window.
+  schedule:
+    - cron: '23 * * * *'
+
+  # No inputs. There is nothing to aim a signer run at: it reads main's head
+  # and decides. An input here would be a way to ask for a different answer.
+  workflow_dispatch:
+
+# One signer in flight at a time, and never cancelled. Two runs racing would
+# each plan against a head, each sign, and whichever pushed second would be
+# refused — or, worse, would win with documents planned against a head that is
+# gone. The run already in flight holds the key and may have committed; queue
+# behind it.
+concurrency:
+  group: registry-signer
+  cancel-in-progress: false
+
+permissions: {}
+
+# SERVE-94's wake hint, off. `POST https://api.minice.ai/plugins/v1/signed/wake`
+# is what OPEN-MBE-7 closed with, and nothing serves that path until the R2
+# deploy: a step calling it now would be a step that fails, or worse succeeds
+# against something else, on every run for a step gate away. RC-R2-3's commit
+# turns this to `on` in one line, once ops.19 has recorded the 202 and the
+# `{"schema":"astra.plugins.wake-ack/1"}` body (§1.3 row 8.4).
+#
+# `"off"` is deliberately not one of TRUST-31's hashed values: this is a
+# workflow env, not a bot call's, and flipping it returns nothing to shadow.
+env:
+  WAKE_HINT: "off"
+
+jobs:
+  # ── publish ───────────────────────────────────────────────────────────────
+  #
+  # The only job in this repository that may write `signed`, and the only one
+  # that holds the index signing key. It holds nothing else, and each absence
+  # below is asserted in `tools/selftest/repo-rules.mjs`:
+  #
+  #   no `id-token: write` — an OIDC token here is a credential for something
+  #     outside this repository, and the one job that can publish to every
+  #     Astra installation is the last place to mint one;
+  #   no `download-artifact` — bytes another job produced. The signer generates
+  #     what it signs, at the Source-Commit, in this job;
+  #   no cache — a cache is bytes a pull request can poison;
+  #   no AstraPlugins checkout and no `ASTRA_PLUGINS_DIR` (seam 4);
+  #   no service URL but the wake hint (TRUST-5).
+  publish:
+    runs-on: ubuntu-24.04
+    environment: publish
+    permissions:
+      # The `signed` branch.
+      contents: write
+      # D2's receipt. `signed-commit-<sha>` is what SERVE-90 asks a run for
+      # when a `Run:` trailer claims it: a trailer is a line of text anybody
+      # who can push can copy, and the artifact names the commit.
+      actions: write
+    timeout-minutes: 20
+    outputs:
+      status: ${{ steps.sign.outputs.status }}
+      codes: ${{ steps.sign.outputs.codes }}
+      hexes: ${{ steps.sign.outputs.hexes }}
+      committed: ${{ steps.commit.outputs.committed }}
+      signed_sha: ${{ steps.commit.outputs.signed_sha }}
+    steps:
+      # main's head at run start, with the whole history: D3's serials are
+      # `rev-list --count` and a shallow clone counts what it was given, which
+      # would publish serial 1 over a catalogue at 46.
+      #
+      # `ref: main` and not `github.sha`, because on a `workflow_run` event
+      # `github.sha` is the head the TRIGGERING run saw. The signer signs what
+      # `main` says now — including the commit that triggering run just made.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: The Source-Commit is main's head at run start
+        id: source
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "ok    Source-Commit $sha"
+
+      # The key is in this step's `env:` and in no other. It is passed through
+      # the environment and never on a command line: `ps` is readable by every
+      # process on the runner and `set -x` would put it in the log.
+      #
+      # This step generates, gates, signs and verifies; it writes the four
+      # documents into `dist/signed/` and a record of what it decided into
+      # `record.json`. It does not push, which is why the step that does needs
+      # no key.
+      - name: Plan the run, sign what changed, and verify it against the trust.json beside it
+        id: sign
+        env:
+          ASTRA_INDEX_SIGNING_KEY: ${{ secrets.ASTRA_INDEX_SIGNING_KEY }}
+          ASTRA_INDEX_SIGNING_KEY_ID: ${{ secrets.ASTRA_INDEX_SIGNING_KEY_ID }}
+          # Present only during a rotation (SERVE-30). Absent, the run signs
+          # with one key and `indexSignersFromEnv` returns one signer.
+          ASTRA_INDEX_SIGNING_KEY_NEXT: ${{ secrets.ASTRA_INDEX_SIGNING_KEY_NEXT }}
+          ASTRA_INDEX_SIGNING_KEY_NEXT_ID: ${{ secrets.ASTRA_INDEX_SIGNING_KEY_NEXT_ID }}
+        run: |
+          set -euo pipefail
+          node tools/signer/run.mjs \
+            --step sign \
+            --source-commit "${{ steps.source.outputs.sha }}" \
+            --out dist/signed \
+            --record record.json
+
+      # No key here. The bytes are on disk and the record says what to do with
+      # them; the commit is made with plumbing into an index of its own, so
+      # nothing ever checks `signed` out over a working tree that holds main.
+      - name: Commit to `signed` and push, fast-forward only
+        id: commit
+        run: node tools/signer/run.mjs --step commit --record record.json --tree dist/signed
+
+      # D2's receipt: a zero-byte artifact named after the commit. Only a run
+      # that had already made the commit can have uploaded it, which is the one
+      # step a copied `Run:` trailer cannot pass (SERVE-90, RC-R1-5).
+      #
+      # Retried, because losing it does not lose the commit — it makes
+      # `served-set.yml` red about a real commit with no way to prove it, for
+      # as long as that commit is inside SERVE-90's 7-day window, and the head
+      # is in that window for ever.
+      - name: The receipt
+        id: receipt
+        if: steps.commit.outputs.committed == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p dist/receipt
+          : > "dist/receipt/${{ steps.commit.outputs.signed_sha }}"
+      - uses: actions/upload-artifact@v4
+        id: receipt-upload
+        if: steps.commit.outputs.committed == 'true'
+        continue-on-error: true
+        with:
+          name: signed-commit-${{ steps.commit.outputs.signed_sha }}
+          path: dist/receipt
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/upload-artifact@v4
+        id: receipt-retry
+        if: steps.commit.outputs.committed == 'true' && steps.receipt-upload.outcome == 'failure'
+        with:
+          name: signed-commit-${{ steps.commit.outputs.signed_sha }}
+          path: dist/receipt
+          if-no-files-found: error
+          retention-days: 90
+      - name: A commit with no receipt is a commit SERVE-90 cannot attest
+        if: steps.commit.outputs.committed == 'true' && steps.receipt-upload.outcome == 'failure' && steps.receipt-retry.outcome == 'failure'
+        run: |
+          echo "::error::the receipt signed-commit-${{ steps.commit.outputs.signed_sha }} did not upload after two attempts."
+          echo "The commit is pushed and served; served-set.yml's SERVE-90 job will be red about it until the"
+          echo "artifact exists, because a Run: trailer alone can be copied onto a hand-pushed commit."
+          exit 1
+
+      # SERVE-94. A hint, not a delivery: no token, an empty body, the response
+      # discarded, ten seconds, and it can never fail the job — the service
+      # polls anyway (DEC-11), so a failed hint costs a poll interval and a
+      # failed JOB would cost the commit above its green tick.
+      #
+      # Off until RC-R2-3 (see `WAKE_HINT` at the top of this file).
+      - name: Tell the service a new `signed` head exists
+        if: ${{ always() && env.WAKE_HINT == 'on' && steps.commit.outputs.committed == 'true' }}
+        continue-on-error: true
+        run: |
+          curl -sS --max-time 10 -X POST --data '' \
+            https://api.minice.ai/plugins/v1/signed/wake >/dev/null 2>&1 || true
+          echo "ok    wake hint posted; the answer is discarded by design"
+
+  # ── pages ─────────────────────────────────────────────────────────────────
+  #
+  # `!cancelled()` and not `success()`: Pages serves `signed`'s head, and
+  # `signed`'s head exists whether or not this run added to it. A `pages` job
+  # that waited for a green `publish` would let one failed publish age the
+  # withdrawal list on the one surface every shipped 0.2.x client reads.
+  pages:
+    needs: publish
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+      # The `pages-site` fallback reads this repository's runs and artifacts.
+      actions: read
+      contents: read
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # `cancel-in-progress: false`, on the job and not on the workflow, because
+    # the workflow's own group serialises signer runs and this one has to
+    # serialise against every other deploy to the same origin.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    timeout-minutes: 20
+    outputs:
+      status: ${{ steps.assemble.outputs.status }}
+      codes: ${{ steps.assemble.outputs.codes }}
+      hexes: ${{ steps.assemble.outputs.hexes }}
+    steps:
+      # Full history: D5's latch is "any commit reachable from the
+      # Source-Commit ADDED policy/pages-withdrawal-list.json", and a shallow
+      # clone answers that with a shrug — which reads as "not armed", which
+      # puts an unsigned list in front of clients that have already armed.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # NON-FATAL, and that is the whole of MOD-46 and ROLL-55 in one line. The
+      # site is prose and templates; the four documents are what a daemon
+      # fetches. A render failure must cost the website and nothing else.
+      - name: The website, from what `signed` holds
+        id: site
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p dist/registry/v1
+          git fetch --quiet --no-tags origin '+refs/heads/signed:refs/astra-signer/signed'
+          for f in index.json revocations.json trust.json root.json; do
+            git show "refs/astra-signer/signed:registry/v1/$f" > "dist/registry/v1/$f"
+          done
+          node site/build.mjs \
+            --index dist/registry/v1/index.json \
+            --revocations dist/registry/v1/revocations.json \
+            --registry-dir dist/registry/v1 \
+            --repo "${{ github.repository }}" \
+            --out dist/site
+
+      # D5's fallback. The newest `pages-site` from a run that DID render, with
+      # this run's documents laid over it below — so a site that cannot render
+      # redeploys yesterday's pages around today's catalogue and withdrawal
+      # list, rather than taking them down with it.
+      - name: The newest site that did render, when this one did not
+        if: steps.site.outcome == 'failure'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "::warning::the site did not render; falling back to the newest pages-site artifact (D5)"
+          run_id=$(gh run list --workflow sign.yml --branch main --limit 50 \
+            --json databaseId --jq '.[].databaseId' | while read -r id; do
+              if gh api "repos/${{ github.repository }}/actions/runs/$id/artifacts" \
+                   --jq '.artifacts[].name' 2>/dev/null | grep -qx pages-site; then
+                echo "$id"; break
+              fi
+            done)
+          if [ -z "${run_id:-}" ]; then
+            echo "::warning::no run in the last 50 holds a pages-site artifact; deploying the documents alone"
+            exit 0
+          fi
+          mkdir -p dist/site
+          gh run download "$run_id" --name pages-site --dir dist/site
+          echo "ok    pages-site from run $run_id"
+
+      # The four documents go OVER the site, never under it: a stale
+      # `registry/v1/index.json` inside an old artifact must not win against
+      # this run's.
+      - name: Assemble what Pages serves, and ask whether it differs
+        id: assemble
+        env:
+          # D5 asks for an ALERT on a render failure, and the step above is
+          # non-fatal by design, so its outcome has to be carried somewhere a
+          # verdict can read it.
+          ASTRA_SIGNER_SITE_OUTCOME: ${{ steps.site.outcome }}
+        run: node tools/signer/run.mjs --step pages --out dist/pages --site dist/site --record pages.json
+
+      # 90 days, so the fallback above has something to find.
+      - uses: actions/upload-artifact@v4
+        if: steps.site.outcome == 'success'
+        with:
+          name: pages-site
+          path: dist/site
+          if-no-files-found: error
+          retention-days: 90
+
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.assemble.outputs.deploy == 'true'
+        with:
+          path: dist/pages
+
+      - id: deployment
+        if: steps.assemble.outputs.deploy == 'true'
+        uses: actions/deploy-pages@v4
+
+  # ── alert ─────────────────────────────────────────────────────────────────
+  #
+  # The carries and the failures, as one verdict, and ROLL-62's heartbeat on
+  # every completed run. A carry is the case this job exists for: the run
+  # succeeded, the commit landed, and one of the two documents is `signed`'s
+  # old bytes because it could not be regenerated. Nothing is red, and clients
+  # are being served something nobody is producing any more.
+  alert:
+    needs: [publish, pages]
+    if: always() && !cancelled()
+    runs-on: ubuntu-24.04
+    environment: alerts
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    # An environment secret is not ambient: a job reads one only where it says
+    # so. The three channel secrets and the whole ping URL of the one check
+    # this job posts to — nothing else, because a job that mapped another
+    # check's URL is a job whose compromise silences a check it never posts to
+    # (attack M-5).
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_DEADMAN_URL_SIGNER: ${{ secrets.ASTRA_DEADMAN_URL_SIGNER }}
+    steps:
+      # Only what this job runs, at this commit. A job holding the alarm
+      # channel's credential reads no author code and checks out no more of
+      # this repository than the scripts it executes (BOT-46).
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert
+            bot/alert.mjs
+            bot/heartbeat.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+            tools/served-set/compose.mjs
+            tools/signer/verdict.mjs
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # `ASTRA_SIGNER_JOBS` names the jobs this alarm speaks for, so a job
+      # deleted from this workflow and forgotten here pages rather than going
+      # quiet: a named job whose variables are absent is a job that did not
+      # report, which is red.
+      - name: The verdict, from what the two jobs above reported
+        env:
+          ASTRA_SIGNER_JOBS: publish pages
+          PUBLISH_RESULT: ${{ needs.publish.result }}
+          PUBLISH_STATUS: ${{ needs.publish.outputs.status }}
+          PUBLISH_CODES: ${{ needs.publish.outputs.codes }}
+          PUBLISH_HEXES: ${{ needs.publish.outputs.hexes }}
+          PAGES_RESULT: ${{ needs.pages.result }}
+          PAGES_STATUS: ${{ needs.pages.outputs.status }}
+          PAGES_CODES: ${{ needs.pages.outputs.codes }}
+          PAGES_HEXES: ${{ needs.pages.outputs.hexes }}
+        run: node tools/signer/verdict.mjs --out verdict.json --check signer
+
+      - uses: ./.github/actions/alert
+        with:
+          verdict: verdict.json
+          check: signer
