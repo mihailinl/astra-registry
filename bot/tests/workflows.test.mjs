@@ -939,3 +939,63 @@ test("the receipt sign.yml uploads is the artifact SERVE-90 looks for", async ()
     `every commit a run of that kind makes would be reported as a hand-pushed forgery`,
   );
 });
+
+// An alarm speaks for a list of jobs, and the list is written twice.
+//
+// `sign.yml`'s alert job names `ASTRA_SIGNER_JOBS: publish pages`, and
+// `served-set.yml`'s names `ASTRA_SERVED_SET_JOBS: main-vs-signed
+// served-vs-signed`. Both composers treat a named job with no variables as a
+// job that DID NOT REPORT, which is red — so deleting a job from a workflow
+// and forgetting the list pages rather than going quiet, and that direction is
+// safe by construction.
+//
+// **The other direction is silent, and this is the assertion for it.** A job
+// that exists, that the alert job waits for, and that is NOT in the list is a
+// job whose failure the alarm never mentions: the composer never looks for it,
+// the verdict comes out green, and the heartbeat posts. The run is red in the
+// Actions tab, where nothing is watching at three in the morning — that is the
+// whole reason the alarm channel exists.
+//
+// Written over every alert job rather than over `sign.yml`'s, because the two
+// that exist have the same shape and a rule scoped to one of them is a rule
+// the next one will not inherit.
+test("an alert job's verdict speaks for every job it waits for", () => {
+  const problems = [];
+  let checked = 0;
+  for (const job of allJobs().filter(inAlerts)) {
+    const body = code(job).join("\n");
+    const listed = /^\s+ASTRA_[A-Z0-9_]*JOBS:\s*(.+)$/m.exec(body);
+    // Not every alert job composes from other jobs — `alarm-drill.yml`'s sends
+    // a synthetic alarm of its own — so the absence of a list is not a defect.
+    // A list that is present and short is.
+    if (!listed) continue;
+    checked++;
+    const speaksFor = new Set(listed[1].trim().split(/\s+/).filter(Boolean));
+    const needs = /^\s+needs:\s*\[?([^\]\n]+)\]?\s*$/m.exec(body)?.[1] ?? "";
+    const waitsFor = needs.split(",").map((n) => n.trim()).filter(Boolean);
+    assert.ok(
+      waitsFor.length >= 1,
+      `${where(job)} composes a verdict from other jobs and this test read no \`needs:\`, so it would compare ` +
+      `two empty lists`,
+    );
+    for (const name of waitsFor) {
+      if (!speaksFor.has(name)) {
+        problems.push(
+          `${where(job)} waits for ${name} and its verdict does not speak for it. The composer only looks at the ` +
+          `jobs it is named, so a failure of ${name} produces a GREEN verdict and a posted heartbeat, and the ` +
+          `only place it shows is a red run nobody is watching`,
+        );
+      }
+    }
+    for (const name of speaksFor) {
+      if (!waitsFor.includes(name)) {
+        problems.push(
+          `${where(job)}'s verdict speaks for ${name} and it does not wait for it, so ${name} reports nothing and ` +
+          `every run is red about a job that may be fine`,
+        );
+      }
+    }
+  }
+  assert.ok(checked >= 2, `only ${checked} verdict-composing alert job(s) found; there were 2 on 2026-09-19`);
+  assert.equal(problems.join("\n"), "", "an alarm is silent about a job whose failure it is there to report");
+});
