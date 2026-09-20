@@ -83,6 +83,19 @@ export const KINDS = {
   publisher_key: { value: "key_id", versions: false },
 };
 
+/**
+ * Hosts an `advisory_url` may not sit on, subdomains included (ROLL-50).
+ *
+ * The field is optional and the whole point of refusing these two is that a
+ * withdrawal list is SIGNED and kept: a URL that goes into one outlives the
+ * page it names. Every address this project has on `github.com` and
+ * `*.github.io` is scheduled to stop resolving — the Pages deployment is
+ * retired at R9a — so an advisory pointing there becomes a signed link to a
+ * 404, on the one document a user reads when something has already gone wrong.
+ * Until the project's own advisory pages exist, the field is omitted.
+ */
+export const REFUSED_ADVISORY_HOSTS = ["github.com", "github.io"];
+
 /** What the daemon does about a plugin an entry covers. */
 export const ACTIONS = ["block_install", "disable", "warn"];
 
@@ -152,6 +165,22 @@ export function checkAdvisory(doc, where = "<advisory>") {
   if (doc.advisory_url !== undefined) {
     if (typeof doc.advisory_url !== "string" || !doc.advisory_url.startsWith("https://")) {
       bad(`advisory_url ${JSON.stringify(doc.advisory_url)} must be an https URL`);
+    } else {
+      let host = null;
+      try {
+        host = new URL(doc.advisory_url).hostname.toLowerCase();
+      } catch { /* not a URL at all; reported below */ }
+      if (host === null) {
+        bad(`advisory_url ${JSON.stringify(doc.advisory_url)} is not a URL`);
+      } else if (REFUSED_ADVISORY_HOSTS.some((h) => host === h || host.endsWith(`.${h}`))) {
+        bad(
+          `advisory_url ${JSON.stringify(doc.advisory_url)} is on ${host}, and a withdrawal list may not ` +
+            `point at ${REFUSED_ADVISORY_HOSTS.join(" or ")} (ROLL-50). This URL is about to be SIGNED into a ` +
+            "document clients keep, and the pages these hosts serve for this project stop resolving when " +
+            "Pages is retired — leaving a signed advisory whose only explanation is a 404. Omit the field " +
+            "until the project's own advisory pages exist; it is optional, and a withdrawal works without it.",
+        );
+      }
     }
   }
 

@@ -31,6 +31,9 @@
 // when the latch closed, and three readings of "is the flag there" in three
 // languages is three chances to read it differently.
 
+import fs from "node:fs";
+import path from "node:path";
+
 import { blobAt, gitMaybe } from "./git.mjs";
 import { SIGNED_FILES } from "./plan.mjs";
 
@@ -87,6 +90,82 @@ export function armingState({ root, sourceCommit, flagPath = FLAG_PATH }) {
     flag,
     adds: lines.length,
   };
+}
+
+/**
+ * RC-R1-6's "Arming flag is permanent", as a rule rather than as a promise.
+ *
+ * `armingState` above reads HISTORY and is deliberately unable to notice the
+ * flag being edited or deleted — that is what makes a revert a no-op, which is
+ * the honest model of clients that have armed and do not disarm. The cost is
+ * that the file itself is unguarded, and this is the guard: **once added it is
+ * never modified, never deleted and never re-added, and it holds exactly
+ * `schema` and `armed_at`.** There is no R9b exception; when Pages is retired
+ * the flag stays as a dated record of the day the field armed.
+ *
+ * A function rather than four git commands inside a test, so it can be run
+ * against a fixture repository and watched failing — the flag does not exist
+ * in this repository yet (2026-09-19), and a rule whose only subject is a file
+ * that is not there is a rule nobody has seen work.
+ *
+ * Modifications and deletions are asked for directly instead of "find the add,
+ * then look after it": a shallow clone can hide the adding commit, and a rule
+ * that needs it would go quiet exactly there. A shallow clone can hide older
+ * history; it cannot invent a clean answer for a change in front of it.
+ *
+ * @param {{root: string, ref?: string, flagPath?: string}} opts
+ * @returns {{problems: string[], added: string[], changed: string[], present: boolean}}
+ */
+export function flagPermanenceProblems({ root, ref = "HEAD", flagPath = FLAG_PATH }) {
+  const problems = [];
+  const log = (filter) => {
+    const out = gitMaybe(
+      ["log", "--full-history", `--diff-filter=${filter}`, "--format=%H", ref, "--", flagPath],
+      { root },
+    );
+    if (!out.ok) throw new Error(`could not read the history of ${flagPath} at ${ref}: ${out.error}`);
+    return out.out.split("\n").map((l) => l.trim()).filter(Boolean);
+  };
+
+  const changed = log("MDR");
+  const added = log("A");
+  if (changed.length) {
+    problems.push(
+      `${flagPath} was modified, renamed or deleted after it was added, by ${changed.length} commit(s) ` +
+      `(${changed.map((s) => s.slice(0, 12)).join(", ")}). It records that clients in the field have armed, and ` +
+      "they do not disarm: changing it alters nothing they do and hides what they are doing. There is no R9b " +
+      "exception — the flag stays as a dated record when Pages is retired.",
+    );
+  }
+  if (added.length > 1) {
+    problems.push(
+      `${flagPath} was added ${added.length} times, so it has been deleted and re-added. The latch is the FIRST ` +
+      "add, and every reader that takes the newest one now disagrees with every reader that takes the oldest.",
+    );
+  }
+
+  const file = path.join(root, flagPath);
+  const present = fs.existsSync(file);
+  if (!present) return { problems, added, changed, present };
+
+  let flag = null;
+  try {
+    flag = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (e) {
+    problems.push(`${flagPath} is not readable JSON (${e.message}), so nothing can say what it arms`);
+    return { problems, added, changed, present };
+  }
+  const keys = Object.keys(flag).sort();
+  if (keys.join(",") !== "armed_at,schema") {
+    problems.push(
+      `${flagPath} holds [${keys.join(", ")}] and must hold exactly \`schema\` and \`armed_at\`. Anything else in ` +
+      "it is a field some reader will eventually branch on, and the latch's whole value is that it says one thing.",
+    );
+  }
+  if (flag.schema !== FLAG_SCHEMA) {
+    problems.push(`${flagPath} carries schema ${JSON.stringify(flag.schema)} and no reader here knows it`);
+  }
+  return { problems, added, changed, present };
 }
 
 /**

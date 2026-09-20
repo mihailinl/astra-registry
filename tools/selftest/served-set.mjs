@@ -1,5 +1,6 @@
-// The served-set canaries: SERVE-85, SERVE-39's Pages half, D5's latch and
-// SERVE-90's provenance fallback (registry plan RC-R1-4, RC-R1-5).
+// The served-set canaries: SERVE-85, SERVE-39's Pages half, D5's latch,
+// SERVE-90's provenance fallback (registry plan RC-R1-4, RC-R1-5) and
+// ROLL-45's trust.json runway (RC-R1-6's one live row).
 //
 // Every rule in `tools/served-set/` decides whether a person is woken, and
 // none of them will ever run anywhere but a scheduled job on GitHub against a
@@ -35,7 +36,10 @@ import { serve39 } from "../served-set/served-vs-signed.mjs";
 import {
   PROVENANCE_WINDOW_DAYS, parseRunUrl, provenance, receiptName, signedCommits, trailersOf,
 } from "../served-set/provenance.mjs";
-import { SILENT_JOB_CODE, UNRENDERABLE_CODE, composeVerdict } from "../served-set/compose.mjs";
+import { SILENT_JOB_CODE, UNRENDERABLE_CODE, composeVerdict, jobsFromEnv } from "../served-set/compose.mjs";
+import { RUNWAY_DAYS, runwayVerdict } from "../served-set/runway.mjs";
+import { JOBS } from "../served-set/check.mjs";
+import { REPO_ROOT } from "../lib/sources.mjs";
 import { test, assert, assertEqual, tmp } from "./harness.mjs";
 
 const KEY_A = "TEST-ONLY-DO-NOT-TRUST-index-2026a";
@@ -576,5 +580,124 @@ export async function run() {
     assertEqual(problems.join("; "), "", "the channel refused a verdict this file built");
     assertEqual(v.status, "green", "two green comparisons paged");
     assertEqual(v.codes, undefined, "a green verdict carried codes");
+  });
+
+  // ── ROLL-45's runway ───────────────────────────────────────────────────────
+  console.log("\nROLL-45: how much runway trust.json has left");
+
+  // Its own clock, named apart from the SERVE-90 section's `NOW` above: these
+  // fixtures measure months and that one measures minutes, and a shared
+  // constant between two sections with different units is a constant somebody
+  // eventually moves for one of them.
+  const RUNWAY_NOW = "2026-09-19T12:00:00Z";
+  const plusDays = (n) => new Date(Date.parse(RUNWAY_NOW) + n * 86400000).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const trustExpiring = (when, keys = [{ key_id: "astra-index-2026a" }]) =>
+    ({ signed: { schema: TRUST_SCHEMA, serial: 2, issued_at: "2026-08-19T11:00:49Z", expires_at: when, index_keys: keys } });
+
+  await test("89 days of runway pages and 91 does not, so the ceremony is the alarm and not the outage", () => {
+    // The whole value of this row is WHEN it fires. Renewal is a hand-run root
+    // ceremony with a dress rehearsal in front of it (ROLL-45 fixes the
+    // rehearsal at 2027-05-01 and the ceremony at 2027-06-15 for an expiry of
+    // 2027-08-19), so an alarm that first speaks the week the document expires
+    // is an alarm about an outage. Both sides of the boundary, because a
+    // threshold asserted from one side is satisfied by a check that fires
+    // always or never.
+    const near = runwayVerdict({ documents: [{ where: "main", doc: trustExpiring(plusDays(RUNWAY_DAYS - 1)) }], now: RUNWAY_NOW });
+    assertEqual(near.status, "red", `${RUNWAY_DAYS - 1} days of runway did not alarm`);
+    assertEqual(codesOf(near), "ROLL_45_TRUST_EXPIRES_SOON", "the wrong code reached the channel");
+
+    const far = runwayVerdict({ documents: [{ where: "main", doc: trustExpiring(plusDays(RUNWAY_DAYS + 1)) }], now: RUNWAY_NOW });
+    assertEqual(far.status, "green", `${RUNWAY_DAYS + 1} days of runway alarmed, which is the shape of an alarm nobody reads`);
+    assert(far.notes.join(" ").includes("days out"), "a green runway says nothing about how long is left");
+
+    // And the document this repository actually carries, at the same clock the
+    // job will use. A fixture-only threshold is a threshold nothing measures.
+    const real = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, SIGNED_FILES.trust), "utf8"));
+    const live = runwayVerdict({ documents: [{ where: `main:${SIGNED_FILES.trust}`, doc: real }], now: new Date().toISOString() });
+    assertEqual(live.status, "green",
+      `registry/v1/trust.json is inside ROLL-45's ${RUNWAY_DAYS}-day runway NOW: ${live.findings.map((f) => f.message).join("; ")}`);
+  });
+
+  await test("an index key's not_after is the same ceremony under another name, and is watched too", () => {
+    // ROLL-45's renewal batches a `not_after` for `astra-index-2026a`, which
+    // the key does not carry today. Without this the requirement's own commit
+    // would silently narrow what is watched: the envelope would still say
+    // 2027-08-19 while the key signing every catalogue under it went dead
+    // months earlier, and nothing would have said so.
+    const doc = trustExpiring(plusDays(400), [{ key_id: "astra-index-2026a", not_after: plusDays(30) }]);
+    const v = runwayVerdict({ documents: [{ where: "main", doc }], now: RUNWAY_NOW });
+    assertEqual(v.status, "red", "a key that lapses in 30 days passed because the envelope was far from expiry");
+    assertEqual(codesOf(v), "ROLL_45_INDEX_KEY_EXPIRES_SOON", "the finding did not name the key's own window");
+    assert(v.findings[0].message.includes("astra-index-2026a"), "the operator is not told which key");
+  });
+
+  await test("an expiry nothing can read is the fault, and an empty set is never a clean bill of health", () => {
+    for (const [what, doc] of [
+      ["no expires_at", trustExpiring(undefined)],
+      ["a date that is not an instant", trustExpiring("soon")],
+      ["no signed member", { signatures: [] }],
+    ]) {
+      const v = runwayVerdict({ documents: [{ where: "main", doc }], now: RUNWAY_NOW });
+      assertEqual(v.status, "red", `${what} was read as a healthy runway`);
+      assertEqual(codesOf(v), "ROLL_45_TRUST_UNREADABLE", `${what} reported the wrong code`);
+    }
+    // The floor ROLL-44 asks every set-enumerating check for: this rule is a
+    // loop, and a loop over nothing is green.
+    const empty = runwayVerdict({ documents: [], now: RUNWAY_NOW });
+    assertEqual(empty.status, "red", "no trust document at all was reported as nothing to report");
+    assertEqual(codesOf(empty), "ROLL_45_NO_TRUST_DOCUMENT", "an empty population reported the wrong code");
+  });
+
+  await test("every comparison job in served-set.yml is named to the alarm, wired to it, and one check.mjs can run", () => {
+    // The third job is the reason this exists. `compose.mjs` reports a job
+    // named in `ASTRA_SERVED_SET_JOBS` with no variables as one that did not
+    // report, which is red — but the converse is silent: a job added to the
+    // workflow and forgotten in that list, or in the alert job's `needs`,
+    // contributes nothing to the verdict, and the alarm goes out GREEN while
+    // one comparison is red in a tab nobody has open. Line-oriented, the way
+    // bot/tests/workflows.test.mjs reads workflows, because this repository
+    // has no YAML parser and this rule must run when a lockfile is being
+    // argued about.
+    const src = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/served-set.yml"), "utf8");
+    const lines = src.split("\n");
+    const at = lines.findIndex((l) => /^jobs:\s*$/.test(l));
+    assert(at >= 0, "served-set.yml has no `jobs:` key, so every assertion below would be about an empty list");
+    const jobNames = [];
+    for (let i = at + 1; i < lines.length; i++) {
+      if (/^\S/.test(lines[i])) break;
+      const m = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(lines[i]);
+      if (m) jobNames.push(m[1]);
+    }
+    assert(jobNames.length >= 3, `the walk found ${jobNames.length} job(s) in served-set.yml; it is broken, not smaller`);
+
+    const declared = /ASTRA_SERVED_SET_JOBS:\s*(.+)/.exec(src)?.[1].trim().split(/\s+/) ?? [];
+    const comparisons = jobNames.filter((n) => n !== "alert");
+    assertEqual(comparisons.slice().sort().join(" "), declared.slice().sort().join(" "),
+      "the jobs in served-set.yml and the jobs ASTRA_SERVED_SET_JOBS names are not the same set, so a comparison " +
+      "either pages for nothing or reports into nothing");
+
+    const needs = /^\s+needs:\s*\[(.+)\]\s*$/m.exec(src)?.[1].split(",").map((s) => s.trim()) ?? [];
+    for (const name of declared) {
+      assert(needs.includes(name), `the alert job does not wait for ${name}, so its result may not be read at all`);
+      assert(Object.keys(JOBS).includes(name),
+        `served-set.yml names a job \`${name}\` that tools/served-set/check.mjs cannot run`);
+      const stem = name.toUpperCase().replaceAll("-", "_");
+      for (const part of ["RESULT", "STATUS", "CODES", "HEXES"]) {
+        assert(src.includes(`${stem}_${part}:`), `the alert job maps no ${stem}_${part}, so ${name} reports nothing`);
+      }
+    }
+
+    // And the mapping the workflow writes is the one compose.mjs reads: the
+    // two agree on the env-var spelling here rather than at 3 a.m.
+    const env = { ASTRA_SERVED_SET_JOBS: declared.join(" ") };
+    for (const name of declared) {
+      const stem = name.toUpperCase().replaceAll("-", "_");
+      env[`${stem}_RESULT`] = "success";
+      env[`${stem}_STATUS`] = "green";
+    }
+    const jobs = jobsFromEnv(env);
+    assertEqual(jobs.length, declared.length, "compose.mjs read a different number of jobs than the workflow declares");
+    assertEqual(jobs.filter((j) => j.status === "green").length, declared.length,
+      "compose.mjs could not find a status for every job the workflow declares; the env-var spellings differ");
   });
 }

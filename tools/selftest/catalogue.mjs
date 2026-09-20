@@ -181,6 +181,129 @@ export async function run() {
       "the pattern refuses the data: URI tools/build-index.mjs actually writes");
   });
 
+  // INV-29. The two fields this registry does not keep, on the document rather
+  // than in the generator.
+  //
+  // `tools/build-index.mjs` writes `downloads: 0` and `stars: 0` as literals
+  // and the schema says "Always 0" in both descriptions, so the only thing
+  // that can put a number there is a hand edit to `registry/v1/index.json` —
+  // which is exactly the edit this row is for. A count in a signed catalogue
+  // is a claim the registry has no way to substantiate and no way to correct:
+  // there is no telemetry behind it, a store sorts by it, and the first
+  // listing to carry one is ranked above every honest listing for as long as
+  // the document is served.
+  await test("no listing in the signed catalogue claims a download or a star (INV-29)", () => {
+    const doc = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "registry/v1/index.json"), "utf8"));
+    assert(doc.signed.plugins.length >= 5,
+      `${doc.signed.plugins.length} entries — a broken read passes any rule below it`);
+    const counted = doc.signed.plugins
+      .filter((p) => p.downloads !== 0 || p.stars !== 0)
+      .map((p) => `${p.id}: downloads=${JSON.stringify(p.downloads)} stars=${JSON.stringify(p.stars)}`);
+    assertEqual(counted.join("\n"), "",
+      `a signed listing carries a popularity number this registry does not measure:\n${counted.join("\n")}`);
+  });
+
+  // INV-39. Where the bytes come from, checked against the entry's OWN source.
+  //
+  // `tools/validate.mjs` already holds every artifact URL to a prefix — but to
+  // the prefix its own `release` object implies, which is a different claim in
+  // two ways: a `direct` release anchors itself to any `base_url` it likes,
+  // and a `github_release` may name a repo that is not the listing's
+  // `source.repo`. Both are the same picture to a user: a card that says one
+  // repository and downloads from another. This asks the signed document the
+  // question the card asks, and it is the registry's leg of the artifact-host
+  // row rather than the submission's.
+  await test("every artifact in the catalogue comes from the repository its card names (INV-39)", () => {
+    const doc = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "registry/v1/index.json"), "utf8"));
+    const wrong = [];
+    let urls = 0;
+    for (const entry of doc.signed.plugins) {
+      const repo = entry.source?.repo;
+      assert(typeof repo === "string" && repo.includes("/"), `${entry.id} has no source.repo to be held to`);
+      const prefix = `https://github.com/${repo}/releases/download/`;
+      const seen = [
+        ...(entry.download_url ? [["download_url", entry.download_url]] : []),
+        ...Object.entries(entry.platform_downloads ?? {}),
+        ...(entry.releases ?? []).flatMap((r) =>
+          Object.entries(r.artifacts ?? {}).map(([k, a]) => [`releases[${r.version}].${k}`, a.url])),
+      ];
+      for (const [where, url] of seen) {
+        urls++;
+        if (!String(url).startsWith(prefix)) wrong.push(`${entry.id} ${where}: ${url} is not under ${prefix}`);
+      }
+    }
+    // Two floors, because one loop nested in another can empty at either
+    // level: a catalogue with no entries and a catalogue whose entries have no
+    // artifacts both make the check above vacuous, and they look identical
+    // from the assertion's side.
+    assert(doc.signed.plugins.length >= 5, `${doc.signed.plugins.length} entries is a broken read, not a small catalogue`);
+    assert(urls >= 20, `${urls} artifact URL(s) were examined; the walk into releases[] has stopped finding them`);
+    assertEqual(wrong.join("\n"), "",
+      `a signed listing downloads from somewhere other than the repository it names:\n${wrong.join("\n")}`);
+  });
+
+  // The serial does not move for every change, and the signer only publishes
+  // on one that rose.
+  //
+  // `resolveSerial` counts commits under `plugins/`, so a commit that changes
+  // what the catalogue RENDERS without touching a listing — this generator, a
+  // policy file, a publisher record — leaves the number where it was. The
+  // daemon replaces its set on a strictly greater serial, so the new bytes sit
+  // in `main` while every client keeps the old ones, and nothing anywhere says
+  // so. The fix is never to suppress the difference: it is to know, at the
+  // commit that makes it, that publication waits for the next listing change.
+  //
+  // `publisher` is excluded deliberately. `bot/recheck-publishers.mjs` moves a
+  // badge on a schedule with no listing commit behind it, so including it
+  // would turn an honest hourly job red; the cost is that a badge change waits
+  // for the next serial too, which is the same wait and a smaller consequence.
+  await test("an equal serial means an equal catalogue, or the served one stays until the serial rises", () => {
+    const git = (...a) => {
+      try {
+        return execFileSync("git", ["-C", REPO_ROOT, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      } catch {
+        return null;
+      }
+    };
+    // `HEAD^` is the parent on a push and the BASE on a pull request, because
+    // the merge commit `actions/checkout` builds has the base as its first
+    // parent. One expression for both, rather than a `GITHUB_BASE_REF` branch
+    // that is only exercised in CI.
+    const base = git("rev-parse", "--verify", "HEAD^")?.trim();
+    if (!base) {
+      console.log("      (no parent commit here — a shallow checkout or the first commit — so nothing to compare)");
+      return;
+    }
+    const baseText = git("show", `${base}:registry/v1/index.json`);
+    if (baseText === null) {
+      console.log(`      (${base.slice(0, 12)} carries no registry/v1/index.json, so there is nothing to compare)`);
+      return;
+    }
+    const baseDoc = JSON.parse(baseText);
+    const serial = resolveSerial({ root: REPO_ROOT });
+    if (baseDoc.signed.serial !== serial) {
+      console.log(`      (serial ${baseDoc.signed.serial} → ${serial}: the catalogue's version rose, so a difference publishes)`);
+      return;
+    }
+    const strip = (entry) => {
+      const { publisher, ...rest } = entry;
+      return rest;
+    };
+    const before = stableStringify(baseDoc.signed.plugins.map(strip)).split("\n");
+    const after = stableStringify(buildIndex({ root: REPO_ROOT, serial }).signed.plugins.map(strip)).split("\n");
+    let first = null;
+    for (let i = 0; i < Math.max(before.length, after.length); i++) {
+      if (before[i] !== after[i]) {
+        first = `first difference at line ${i + 1}:\n  ${base.slice(0, 12)}: ${before[i] ?? "<end>"}\n  HEAD:         ${after[i] ?? "<end>"}`;
+        break;
+      }
+    }
+    assertEqual(first, null,
+      `this commit renders a different catalogue at the SAME serial (${serial}), so the signer will keep serving ` +
+      `the one clients already have until some listing change bumps the number. Either make the change under ` +
+      `plugins/ in the same commit, or expect the content to wait.\n${first}`);
+  });
+
   // And the catalogue on disk, because the three rules above are about what
   // may be written and this is about what IS written. It is the row the
   // renderers' legs (the client plan's C1.5, SERVE-96) are entitled to assume.
