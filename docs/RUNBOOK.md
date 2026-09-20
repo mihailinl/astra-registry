@@ -20,7 +20,7 @@ pair of eyes, this document says what compensates instead.
 4. [Signing `trust.json`](#4-signing-trustjson)
 5. [Rotating the index key](#5-rotating-the-index-key)
 6. [Promoting the reserve root](#6-promoting-the-reserve-root)
-7. [Emergency revocation](#7-emergency-revocation)
+7. [Withdrawing a plugin](#7-withdrawing-a-plugin)
 8. [Testing the chain without any real key](#8-testing-the-chain-without-any-real-key)
 9. [Upgrades this runbook is written to accept](#9-upgrades-this-runbook-is-written-to-accept)
 
@@ -496,32 +496,328 @@ with the reserve rather than the active key for exactly this reason.
 
 ---
 
-## 7. Emergency revocation
+## 7. Withdrawing a plugin
 
-> **Not yet buildable.** `registry/v1/revocations.json`, `revoke.yml` and the
-> daemon's five enforcement points land in 3.9. This section is written now so
-> the procedure is decided before the incident, not during one; check the files
-> exist before relying on it.
+The path a withdrawal actually takes, end to end, and the moderation acts
+around it. **§7.1 is the one to follow with somebody on the phone**; everything
+after it is the vocabulary that procedure uses and the acts that touch the same
+files.
 
-Target: signed and reachable within five minutes.
+**What exists today, so you find out here and not mid-incident.**
+`.github/workflows/sign.yml` is the one publisher of the catalogue and the
+withdrawal list, and it is live. It replaces a withdrawal workflow that was
+deleted at R0 having failed every scheduled run it ever made; if you remember
+that one, the procedure below is not it. What is **not** here yet:
+`.github/workflows/operator.yml`, so
+§7.7's confirmations, cancellations, reverts and denies have no dispatch to run
+and are performed as hand commits with the trailer in §7.3; `state/holds/**`
+has its library (`bot/lib/holds.mjs`) and its schemas, and nothing yet writes
+an entry; the takedown bound of §7.10 is stated in policy and is not yet
+counted by code. Each of those says so in its own subsection. Nothing below
+depends on them for the withdrawal itself.
 
-1. Add the entry to `registry/v1/revocations.json` — `kind` is one of `digest`,
-   `version_range`, `publisher_key`, `identity`; include a human-readable
-   `reason` and an advisory URL.
-2. Run the `revoke.yml` workflow. It regenerates and signs revocations plus the
-   index only, bypassing the site build.
-3. Confirm the published `serial` is higher than the previous one, and that the
-   file's age is under the daemon's 7-day revocation-freshness limit — past that,
-   daemons block **new installs** with "Astra can't check whether this plugin has
-   been withdrawn", which is a different and much noisier failure.
+### 7.1 The procedure
 
-Digest-keyed revocation reaches a bundle however it arrived: the store, a local
-import, or a copy from a friend. A source directory sideload has no archive and
-therefore no digest — for those, the `binary_sha256` entry is what applies.
+Target: committed, signed and reachable at the edge within **ten minutes**.
 
-A stale index never disables a working plugin. Revocation takes effect only from
-a **fresh, signature-valid** list, and the last applied revocation serial is
-persisted so an attacker cannot un-revoke by serving an older list.
+1. **Write the advisory.** One file, `tools/revocations/ASTRA-<year>-<nnnn>.json`.
+   `tools/revocations/README.md` is the format and — more importantly — the
+   `kind` table, which is where this goes wrong: a wrong `kind` or a mistyped
+   digest matches nothing, silently, and the plugin stays installed.
+   **Prefer `digest`, and never ship only a `digest`**: a sideloaded source
+   directory has no archive and therefore no bundle digest, so add a `binary`,
+   an `id_version` or a `version_range` entry beside it.
+
+   ```sh
+   node tools/build-revocations.mjs --check   # refuses anything the daemon would not read
+   ```
+
+2. **Commit it, with the trailer**, and push to `main`:
+
+   ```
+   revocations: ASTRA-2026-0007, clipboard exfiltration in example-plugin 1.2.0
+
+   Moderation-Exempt: mihailin: hand advisory during an active report; the
+   service decision follows
+   ```
+
+   §7.3 says what the trailer is for and when it may be left off.
+
+3. **The signer runs.** A human push to `main` starts `Signer` at once; it
+   plans against main's head, signs the list, commits it to `signed` and
+   deploys Pages. If no run appears within a minute or two, dispatch it — the
+   Actions tab, `Signer`, *Run workflow* (it takes no inputs; there is nothing
+   to aim it at).
+
+   ```sh
+   gh workflow run sign.yml
+   gh run watch "$(gh run list --workflow sign.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+   ```
+
+   Read the `publish` job's log. It prints one line per document saying what it
+   decided: `changed`, `resign`, `unchanged`, `carry` or `blocked`. **`carry` on
+   the withdrawal list means the list did not publish** — the old bytes were
+   re-committed and clients are being served yesterday's list. The line says
+   why; fix that and run it again. `blocked` means the run committed nothing at
+   all, and the reason is in the same log.
+
+4. **Verify at each serving host.** Do not take the workflow's word for it:
+   what matters is the bytes a daemon fetches.
+
+   ```sh
+   # `signed`'s head, read the way a client reads it
+   sha=$(git ls-remote https://github.com/mihailinl/astra-registry refs/heads/signed | cut -f1)
+   curl -fsS "https://raw.githubusercontent.com/mihailinl/astra-registry/$sha/registry/v1/revocations.json" > /tmp/r.json
+
+   # Pages
+   curl -fsS https://mihailinl.github.io/astra-registry/registry/v1/revocations.json > /tmp/p.json
+
+   # the catalogue host, from R2, once its DNS record resolves
+   curl -fsS https://registry.minice.ai/registry/v1/revocations.json > /tmp/h.json
+   ```
+
+   For each: the `serial` is higher than the one before, the advisory's entry
+   is in it, and the signature verifies against the published `trust.json`:
+
+   ```sh
+   node tools/sign-revocations.mjs --verify /tmp/r.json --trust registry/v1/trust.json
+   ```
+
+   The freshness window is **7 days**. Past it, daemons block **new installs**
+   with "Astra can't check whether this plugin has been withdrawn" — a
+   different and much noisier failure than the one you are fixing.
+
+**Two things that are true whatever went wrong.** A stale list never disables a
+working plugin: withdrawal takes effect only from a fresh, signature-valid list,
+and the last applied serial is persisted, so an attacker cannot un-withdraw by
+serving an older one. And digest-keyed withdrawal reaches a bundle however it
+arrived — the store, `ImportPluginFile`, or a copy from a friend.
+
+### 7.2 Lifting one
+
+Delete the advisory file and commit, **with the same trailer on the deleting
+commit**. The list's serial is a commit count over `tools/revocations/`, so it
+rises on a deletion exactly as it rose on the addition — which is why the
+serial is not the number of advisories, and why an un-withdrawal cannot make it
+go backwards.
+
+Then §7.1 step 4 again. A lift is the case where verifying at the edge matters
+most: the plugin is working for you the moment you delete the file, and it is
+still blocked for everybody else until the list they hold expires or is
+replaced.
+
+### 7.3 The trailer, on both commits
+
+```
+Moderation-Exempt: <actor>: <reason>
+```
+
+`<actor>` is a person, `<reason>` is a sentence. It goes on the commit that
+**adds** a hand advisory and on the commit that **deletes** it — both, because
+the coverage canary (§7.11) walks both directions and a delete with no cover is
+the same defect as an add with no cover.
+
+It is not a bridge that disappears. It is the standing escape hatch for any
+hand-committed `unlisted`, `yanked` or `tools/revocations/**` change: the
+break-glass of §7.5, the withdrawal drills, and anything else a person does
+without a service decision behind it. Leave it off **only** when a decision
+record covers the commit — a log entry, or an author-action record — which is
+the case for everything the bot commits.
+
+A commit that should have carried it and did not is not rewritten. It is
+cleared afterwards, from a later commit; see §7.11.
+
+### 7.4 The flag, and the latch
+
+Every shipped 0.2.x daemon reads the withdrawal list **from Pages**, and stays
+`NotEnforced` while what it reads carries no valid signature. The moment Pages
+serves a list that verifies, those clients arm themselves — and seven days
+after each one's last accepted fetch, a stale or unsigned list **blocks
+installs** on that machine.
+
+So arming is one-way in the field, whatever git says, and it is one file:
+
+```
+policy/pages-withdrawal-list.json     {"schema": "astra.registry.pages-withdrawal-list/1", "armed_at": "…"}
+```
+
+* **Before that file exists**, Pages gets `main`'s unsigned list, exactly as it
+  does today, and shipped clients stay `NotEnforced`.
+* **From the first commit that ADDS it**, Pages gets `signed`'s list.
+
+The latch is the commit, not the file. Reverting the commit changes nothing,
+because the clients do not disarm — they block installs a week later while the
+person who reverted watches a green build. The flag is therefore **never
+changed and never deleted**, and a check fails on any commit that touches it.
+
+**Adding that file needs the owner's approval** (ROLL-14), and the drill in
+§7.6 is what the approval is given against. §7.5 is the exception.
+
+### 7.5 Break-glass: withdrawing before the drill
+
+A plugin may have to come down before the flag is armed. That is a real state,
+not an oversight: from the day `sign.yml` landed until the day the owner arms
+Pages, a withdrawal reaches `signed` and the catalogue host and does **not**
+reach a shipped 0.2.x client.
+
+What to do:
+
+1. Do §7.1 anyway. The advisory is published, `signed` carries it, and every
+   reader of `signed` and of the catalogue host is protected.
+2. Say so, in the commit and in the report: **shipped 0.2.x clients are not
+   covered by this withdrawal** until the flag is armed.
+3. If the incident warrants it, ask the owner to arm the flag early
+   (**owner approval**), accepting that the drill has not run. He is accepting
+   one thing: every 0.2.x daemon in the field arms itself, and from then on an
+   unsigned or stale list blocks installs on it after seven days. The signer
+   is what keeps the list fresh, and §7.1 step 4 is how you know it is.
+
+### 7.6 The drill
+
+Before the flag is armed, once, end to end, on a bundle nobody depends on:
+
+1. publish a test bundle from the test repository and install it on a machine
+   running a released 0.2.x daemon pointed at this registry;
+2. write and commit a `digest` advisory for that bundle, with the §7.3 trailer;
+3. watch the signer run, and verify at every host as in §7.1 step 4;
+4. record what the installed copy does, and when — the build tag, the digest the
+   advisory matched, both serials, and the client's state;
+5. lift it (§7.2), and record what the copy does after the lift.
+
+A drill with no client is not this drill. The whole question is what an
+installed copy does, and that is only observable on one.
+
+### 7.7 Confirming, cancelling or reverting a service decision
+
+**Not yet dispatchable.** `.github/workflows/operator.yml` and `bot/operator.mjs`
+land with the moderation workflows. Until they do, each act below is a hand
+commit carrying `Moderation-Exempt:` (§7.3) and the same files. This subsection
+is written now so the procedure is decided before it is needed.
+
+The operator workflow is dispatched with one `act` and one
+`service_decision_id`, and that is the whole interface:
+
+| `act` | What it writes |
+|---|---|
+| `confirm` | `state/holds/<id>.confirm.json`. Releases a held decision — see §7.8 |
+| `cancel` | `state/holds/<id>.cancel.json`. Ends the hold without applying the decision |
+| `revert` | Finds the log entry by `service_decision_id`; refuses unless it is a `delist`, `deprecate` or `revoke`; removes the `unlisted` flag or deletes the advisory; and writes a `relist` or `unrevoke` entry naming what it reverses |
+| `deny` | `state/deny/<fingerprint>.json` — §7.9. This one takes a `fingerprint` as well |
+
+Three things about it that are load-bearing:
+
+* it runs in the `operator` environment, which admits **only `main`**. That is
+  not tidiness. The authority check lives in the tree at the ref the dispatcher
+  chooses, the dispatch API takes a ref, and the permission needed to dispatch
+  is plain **write** — so without an environment pinned to `main`, anyone with
+  write access could push a branch whose role check returns `admin` and confirm
+  a hold from it. GitHub refuses the job before it starts; that refusal is the
+  boundary, and the role check inside is defence in depth;
+* it refuses anyone who is not an **admin or a maintainer**, and it checks both
+  the actor and the triggering actor;
+* a **revert is outside the takedown bound** (§7.10) — it is the one act the
+  bound deliberately does not count, because a revert un-does a withdrawal.
+
+### 7.8 Holds
+
+A hold is a decision that has been made and **not applied**. It is a file under
+`state/holds/`, and it ends in exactly one of three ways: a release, a cancel,
+or a hand deletion that a later commit names.
+
+What is held:
+
+| Held | Kind | Ends |
+|---|---|---|
+| `M_RELIST`, `M_UNREVOKE` | `reversal` | **24 hours** after it was held, *and* a confirm record. Both |
+| `M_REVOKE` with action `disable` | `disable_confirmation` | A confirm record, at once. No period |
+| Any takedown over the bound (§7.10) | `bound` | A confirm record, at once |
+| `A_REMOVAL_REQUEST` for a listing with no identity record | `unbound_removal` | An applied `author_request` delist, or a cancel |
+| `A_YANK` for a listing with no identity record | `unbound_yank` | **Never applied.** A cancel record, or the entry's deletion |
+
+The 24-hour period on a reversal is a reversal period, not a review queue: it
+is there so that a relist issued in error can be caught before it reaches
+installed copies. A `disable` is held for a **confirmation** and not for a
+period, because a disable is the irreversible direction and the owner chose a
+person over a clock. An `M_REVOKE` with `block_install` is held only if it is
+over the bound.
+
+`unbound_yank` is the one that surprises people: it is never applied, not on a
+confirm, not after any period, not by an applied delist of the same plugin. An
+author yank can only come from the bound account, so an unbound one means the
+service got something wrong, and no confirmation makes it right.
+
+**How a release reaches git.** One commit: it applies the held decision from the
+entry, writes the log entry, deletes the hold entry **and** its confirm record,
+and carries `Service-Decision:`. A cancel is one commit that deletes the entry
+with a trailer. An entry that disappears with neither is a hand cancellation,
+and the commit that removed it is what records that.
+
+**A red coverage canary blocks a `reversal` and nothing else** (§7.11). It never
+blocks a takedown: a withdrawal that waits for a transparency check is a
+withdrawal a transparency check can stop.
+
+### 7.9 Operator deny
+
+`state/deny/<fingerprint>.json` withholds a release **permanently**, by the
+submission's fingerprint. It is written by the operator workflow's `deny` act
+and by nothing else, and there is no expiry and no undo but deleting the file.
+
+The record is four members and no prose: `schema`, `fingerprint`, `run`, `at`.
+Nothing about the person, nothing about the submission — that is PRIV-2, and
+the scan in §7.11 reads this directory.
+
+Use it when a release must not be published again however many times it is
+re-submitted. Anything short of that is a decision with a reason, and belongs in
+the log where a reader can find it.
+
+### 7.10 The takedown bound
+
+**Three in any trailing 24 hours, estate-wide.** Above it, a moderator's
+takedown — `block_install` included — is held (`bound`) until an operator
+confirms it.
+
+What counts toward it: every listed plugin id that moved to `yanked` or
+`unlisted`; every listed id newly matched by an entry added under
+`tools/revocations/`, siblings included; a bound account's removal request; and
+an author's yank. **Whatever trailer the commit carries** — the count is taken
+from the tree, so the hand advisories of §7.1 and §7.5 count exactly as a
+service decision does. Two exclusions and only two: a MOD-52 revert (§7.7), and
+the staging listing, excluded by its reserved id.
+
+The consequence to keep in mind on a bad day: **three hand advisories fill the
+bound**, and the fourth withdrawal that day — a moderator's `disable`, say —
+will be held for a confirmation you then have to give. That is the bound
+working, not a fault. It caps the blast radius of a compromised panel or
+service at three withdrawals a day, and the price is that the one day the
+registry is withdrawing by hand is a day it has to confirm the fourth.
+
+Author actions count. The service caps each account at one listed plugin id in
+any trailing 24 hours, so filling the bound by author actions takes three
+distinct accounts; the registry cannot see accounts and does not try to.
+
+### 7.11 Clearing a red coverage canary
+
+`Moderation coverage` runs every fifteen minutes and asks one question: did
+whoever took a moderation action leave a record a reader can find? It has no
+opinion about whether the action was right, and it **gates nothing** — the one
+thing it holds back is the release of a held reversal (§7.8).
+
+Three ways to clear a red one, in order of preference:
+
+1. **Write the log entry that was owed.** The honest repair, and the only one
+   that makes the transparency log true.
+2. **On the commit itself**, if it has not been pushed yet:
+   `Moderation-Exempt: <actor>: <reason>`.
+3. **Afterwards, from a later commit**, naming the commit being cleared:
+   `Moderation-Exempt: <sha>: <actor>: <reason>`.
+
+History is not rewritten to clear a canary. The third form exists precisely so
+that it never has to be.
+
+The tool refuses edits to existing `bot/moderation/*.json` and to `log/**`
+outright, and it will not accept a deleted advisory unless a log entry names it
+as reversed or the deleting commit carries the trailer — which is why §7.2 puts
+the trailer on the deletion.
 
 ---
 

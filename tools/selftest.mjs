@@ -60,6 +60,13 @@ const MODULES = [
   // the PREVIOUS module's header are primitives→catalogue and
   // catalogue→validation; nothing may be inserted between either pair.
   "signer.mjs",
+  // Immediately after signer.mjs, because it is that module's other half:
+  // signer.mjs asks what the signer DECIDES, and this one asks what it DOES —
+  // the four documents it writes, the commit it makes, the push it retries,
+  // and SERVE-95's refusal, which is the one rule that can only be asked once
+  // all four documents exist. It prints its own section header, so inserting
+  // here moves no existing name under a header it does not belong to.
+  "signer-run.mjs",
   // Beside signer.mjs for the reason signer.mjs is beside index-signature.mjs:
   // it is the same subject one step on. That module asks what the signer
   // decides to publish; this one asks whether what is published is what `main`

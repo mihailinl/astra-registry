@@ -646,3 +646,290 @@ test("the weekly drill is red while the channel does not exist", () => {
     "the drill's assertion does not fire on exactly `not configured`; a condition that also covers the broken " +
     "channel reports the wrong one of the two states");
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The signer (registry plan D1, RC-R1-2; RC-R3-3; M-T1.7b; M-T3.6).
+//
+// `sign.yml` is the one publisher of the catalogue, the withdrawal list and
+// Pages. Three of its properties are properties of the YAML and of nothing
+// else, so they are here rather than in `tools/selftest/`:
+//
+//   * it HEARS every workflow that commits, by name, read out of the files;
+//   * the jobs that publish run none of the checks that must not gate a
+//     withdrawal (M-T1.7b);
+//   * the receipt it uploads is spelled the way the check that reads it spells
+//     it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SIGNER = "sign.yml";
+
+/** Every name in sign.yml's `workflow_run.workflows:` list. */
+function signerHears() {
+  const src = read(SIGNER);
+  const at = src.indexOf("\n  workflow_run:");
+  assert.ok(at > 0, "sign.yml has no workflow_run trigger, so no committer starts it at all");
+  const list = /workflows:\s*\[([^\]]*)\]/.exec(src.slice(at));
+  assert.ok(list, "sign.yml's workflow_run trigger names no `workflows:` list this test can read");
+  return [...list[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+}
+
+/** A workflow's own `name:`, read from the file. Never inferred from the path. */
+function workflowName(file) {
+  const line = read(file).split("\n").find((l) => /^name:\s*\S/.test(l));
+  return line ? line.replace(/^name:\s*/, "").trim() : null;
+}
+
+/** Does any job in this workflow declare `contents: write`? */
+const commitsAnything = (file) =>
+  // The trailing-comment form is not decoration: `publisher-recheck.yml` says
+  // `contents: write   # commit a renewed window, or a withdrawal`, and a
+  // `$`-anchored needle walked straight past the one job in this repository
+  // whose own comment says out loud that it commits.
+  allJobs().some((j) => j.file === file && code(j).some((l) => /^\s+contents:\s*write\s*(#.*)?$/.test(l)));
+
+// The workflows that hold `contents: write` and that the signer deliberately
+// does NOT hear, each with the paths it writes. An exception list rather than
+// a path scan, and the difference is deliberate: `Ingest` commits `plugins/**`
+// from inside `bot/publish-apply.mjs`, not from a line of YAML, so a scan of
+// the workflow files would find nothing and pass over the one committer that
+// exists. Naming the exceptions puts the question in front of whoever adds the
+// next `contents: write` job — which is the moment it can still be answered
+// cheaply — and the assertion below refuses an entry that has gone stale.
+const NOT_HEARD = new Map([
+  [
+    "Migration baseline",
+    "writes log/decisions/** and log/baseline.json (MIG-20, BOT-73). None of them reaches a signed document: " +
+    "D3 counts the catalogue's serial over plugins/ and the list's over tools/revocations/.",
+  ],
+  [
+    "publisher re-check",
+    "commits publishers/** alone. A badge change does reach the catalogue — build-index embeds a publisher " +
+    "block per listing — but it reaches it at the next serial rise by design: publishers/ is outside the path " +
+    "D3 counts, which is exactly why TRUST-28's equal-serial comparison takes the publisher block off each entry.",
+  ],
+]);
+
+test("the signer hears every workflow that commits, by the name in the file", () => {
+  const heard = signerHears();
+  // The two D1 names. `Plugins ingest` has no file yet and a trigger naming an
+  // absent workflow is inert, so it is listed early on purpose: the
+  // alternative is a signer that goes deaf on the day it lands and waits an
+  // hour for the cron, with nothing red. RC-R3-3 adds two more.
+  // Watched by removing `Ingest` from sign.yml's list.
+  for (const name of ["Ingest", "Plugins ingest"]) {
+    assert.ok(heard.includes(name), `sign.yml's workflow_run list does not name ${JSON.stringify(name)} (D1, RC-R3-3)`);
+  }
+
+  const committers = files.filter((f) => f !== SIGNER && commitsAnything(f));
+  const problems = [];
+  const heardCommitters = [];
+  for (const file of committers) {
+    const name = workflowName(file);
+    if (name === null) {
+      problems.push(`${file} has a contents: write job and no name: line, so nothing can put it in sign.yml's list`);
+      continue;
+    }
+    if (heard.includes(name)) {
+      heardCommitters.push(name);
+      continue;
+    }
+    if (NOT_HEARD.has(name)) continue;
+    problems.push(
+      `${file} is named ${JSON.stringify(name)}, holds a contents: write job, and sign.yml does not hear it. ` +
+      `GITHUB_TOKEN pushes start no push runs (D1), so whatever it commits waits up to an hour for the signer's ` +
+      `cron. Add the name to sign.yml's workflow_run list, or add it to NOT_HEARD here with the paths it writes.`,
+    );
+  }
+  // The floor, and it is the one RC-R3-3 raises. One committing workflow is
+  // heard today — `Ingest`. It becomes three when M-T3.4's `Plugins
+  // moderation` and B-T3.10's `Operator` land, and this number rises with
+  // them, in their commit. Without it the loop above runs over nothing and
+  // reports a signer that hears everything because there is nothing to hear.
+  assert.ok(
+    heardCommitters.length >= 1,
+    `sign.yml hears ${heardCommitters.length} of this repository's committing workflows and heard 1 on ` +
+    `2026-09-19; this is a broken read, not a smaller repository`,
+  );
+  // An exception that no longer names a workflow is an exception nobody will
+  // notice has stopped applying.
+  for (const [name, why] of NOT_HEARD) {
+    const file = files.find((f) => workflowName(f) === name);
+    assert.ok(file, `NOT_HEARD names ${JSON.stringify(name)} and no workflow is called that any more (${why})`);
+    assert.ok(
+      commitsAnything(file),
+      `NOT_HEARD excuses ${JSON.stringify(name)} and ${file} no longer has a contents: write job; delete the entry`,
+    );
+  }
+  assert.equal(problems.join("\n"), "", "a workflow commits and the signer will not hear it");
+});
+
+test("the signer runs on a committer's COMPLETION and never on its success", () => {
+  // D1: "a run that committed and then failed a later job must not leave its
+  // takedown waiting for the cron". `build-index.yml` gates on success for the
+  // opposite and correct reason — a failed ingest published nothing to
+  // re-check — and the two rules being opposites is exactly how one gets
+  // copied into the other.
+  const src = read(SIGNER);
+  const at = src.indexOf("\n  workflow_run:");
+  const trigger = src.slice(at, src.indexOf("\n  schedule:", at));
+  assert.match(trigger, /types:\s*\[completed\]/, "sign.yml's workflow_run trigger is not completion-only");
+  const offenders = src
+    .split("\n")
+    .map((l, i) => [l, i + 1])
+    .filter(([l]) => !l.trim().startsWith("#") && /workflow_run\.conclusion/.test(l))
+    .map(([, n]) => `${SIGNER}:${n}`);
+  assert.equal(
+    offenders.join(", "),
+    "",
+    "sign.yml reads the triggering run's conclusion. A committer that failed a later job still committed, and " +
+    "gating on success leaves its withdrawal waiting for the hourly cron",
+  );
+});
+
+// M-T1.7b (MOD-3, MOD-46). What a publishing job may not run.
+//
+// The rule is one sentence: **nothing that can fail for a reason unrelated to
+// the documents may stand between a withdrawal and its publication.** The
+// moderation log's own consistency, the coverage canary, the whole registry
+// selftest and PRIV-2's scan are all checks this repository needs and all of
+// them are checks of something else. A withdrawal held back because
+// `log/moderation/**` disagreed with its schema is a plugin left installed.
+//
+// `site/build.mjs` is the one that is allowed, and only inside a step that
+// cannot fail the job: the website is prose, and prose must not be able to
+// take the catalogue and the withdrawal list down with it (MOD-46, ROLL-55).
+const MUST_NOT_GATE_A_PUBLICATION = [
+  "bot/moderation.mjs",
+  "tools/moderation-coverage.mjs",
+  "tools/selftest.mjs",
+  "tools/priv-scan.mjs",
+];
+
+/** Does this job publish — hold the key, write `signed`, or deploy Pages? */
+function publishes(job) {
+  const body = code(job).join("\n");
+  if (/^\s+environment:\s*publish\s*$/m.test(body) || /^\s+name:\s*publish\s*$/m.test(body)) return "the publish environment";
+  // Pages BEFORE the push heuristic, because the `pages` job reads `signed`
+  // through a `git fetch +refs/heads/signed:…` and a needle for that string
+  // alone would report it as a pusher — true answer, wrong sentence, and the
+  // sentence is what a reader acts on.
+  if (/actions\/deploy-pages|upload-pages-artifact/.test(body)) return "a Pages deploy";
+  if (/--step\s+commit/.test(body) || /git push[^\n]*\bsigned\b/.test(body)) return "a push to `signed`";
+  return null;
+}
+
+test("no publishing job runs a check that is about something other than the documents", () => {
+  const publishing = allJobs().map((j) => [j, publishes(j)]).filter(([, why]) => why !== null);
+  // The floor, written before the mutation: with none found every loop below
+  // runs over nothing. Two today — sign.yml's `publish` and `pages`.
+  assert.ok(
+    publishing.length >= 2,
+    `only ${publishing.length} publishing job(s) found and there were 2 on 2026-09-19; this rule would pass by ` +
+    `finding nothing`,
+  );
+  assert.ok(
+    publishing.some(([j]) => j.file === SIGNER && j.job === "publish"),
+    "sign.yml has no `publish` job, so M-T1.7b's floor is being met by something else",
+  );
+
+  const problems = [];
+  for (const [job, why] of publishing) {
+    const lines = code(job);
+    for (let i = 0; i < lines.length; i++) {
+      for (const script of MUST_NOT_GATE_A_PUBLICATION) {
+        if (lines[i].includes(script)) {
+          problems.push(
+            `${job.file}:${job.line + i} (job ${job.job}) holds ${why} and runs ${script}; a withdrawal must not ` +
+            `wait behind a check that is about something else (M-T1.7b)`,
+          );
+        }
+      }
+      if (!lines[i].includes("site/build.mjs")) continue;
+      // The step this line is in, and whether that step may fail the job.
+      let start = i;
+      while (start > 0 && !/^\s+- (name|uses):/.test(lines[start])) start--;
+      let end = start + 1;
+      while (end < lines.length && !/^\s+- (name|uses):/.test(lines[end])) end++;
+      const step = lines.slice(start, end).join("\n");
+      if (!/^\s+continue-on-error:\s*true\s*$/m.test(step)) {
+        problems.push(
+          `${job.file}:${job.line + i} (job ${job.job}) holds ${why} and runs site/build.mjs in a step that can ` +
+          `fail the job. A template that cannot render would take the catalogue and the withdrawal list down ` +
+          `with it (M-T1.7b, MOD-46, ROLL-55)`,
+        );
+      }
+    }
+  }
+  assert.equal(problems.join("\n"), "", "a job that publishes can be held back by a check about something else");
+});
+
+// SERVE-90's receipt, spelled once (registry plan RC-R1-5, `dev/couplings.md`).
+//
+// `tools/served-set/provenance.mjs` asks a run for the artifact
+// `signed-commit-<the commit's sha>` before it will believe a `Run:` trailer,
+// and `sign.yml` is what uploads it. Nothing tied those two spellings
+// together: a signer uploading `signed_commit_<sha>`, or a `pages-site`-style
+// suffix, makes SERVE-90 red on EVERY `signed` commit for ever — which reads
+// as noise and gets switched off, and the check that goes with it is the only
+// control left, because SERVE-90 through a ruleset is not expressible on this
+// repository (measured 2026-09-19: the bypass list offers four installed Apps,
+// roles and deploy keys, and `GitHub Actions` is not among them).
+test("the receipt sign.yml uploads is the artifact SERVE-90 looks for", async () => {
+  const { SIGNER_EVENTS, receiptName } = await import("../../tools/served-set/provenance.mjs");
+  const { SIGNER_WORKFLOW } = await import("../../tools/served-set/main-vs-signed.mjs");
+
+  assert.equal(
+    SIGNER_WORKFLOW,
+    `.github/workflows/${SIGNER}`,
+    "SERVE-90 compares a run's `path` with this string; a signer at another path fails every commit",
+  );
+  assert.ok(fs.existsSync(path.join(REPO, SIGNER_WORKFLOW)), `${SIGNER_WORKFLOW} is not on disk`);
+
+  const sha = "b".repeat(40);
+  const spellings = [...new Set(
+    [...read(SIGNER).matchAll(/^\s+name:\s*(signed-commit-.*?)\s*$/gm)].map((m) => m[1]),
+  )];
+  assert.equal(
+    spellings.length,
+    1,
+    `sign.yml uploads ${spellings.length} distinct receipt name(s) (${spellings.join(" | ") || "none"}); it uploads ` +
+    `one name from two steps, the second being the retry, and two spellings would mean one of them is unread`,
+  );
+  const uploaded = spellings;
+  // The template, rendered with a sha, against the function the check uses.
+  // Compared as strings rather than by a shared regex, because the failure
+  // this is about is two spellings that each look right on their own.
+  const rendered = uploaded[0].replace(/\$\{\{[^}]*\}\}/g, sha);
+  assert.equal(
+    rendered,
+    receiptName(sha),
+    "sign.yml uploads the receipt under a name provenance.mjs does not look for; SERVE-90 would be red on every " +
+    "`signed` commit, and a check that is red on every run is a check somebody turns off",
+  );
+
+  // The other half of the same coupling: an event the signer can be started by
+  // and SERVE-90 does not accept is a commit the check calls a forgery.
+  // The `on:` block ALONE. The first spelling of this took everything above
+  // `jobs:` and reported `group` — the workflow's concurrency key — as an
+  // event SERVE-90 refuses, which is a test failing for a reason that has
+  // nothing to do with what it is about.
+  const src = read(SIGNER);
+  const lines = src.split("\n");
+  const from = lines.findIndex((l) => /^on:\s*$/.test(l));
+  assert.ok(from >= 0, "sign.yml has no `on:` block this test can read");
+  let to = from + 1;
+  while (to < lines.length && !/^\S/.test(lines[to])) to++;
+  const triggers = lines
+    .slice(from + 1, to)
+    .map((l) => /^ {2}([a-z_]+):/.exec(l))
+    .filter(Boolean)
+    .map((m) => m[1]);
+  assert.ok(triggers.length >= 4, `this test read ${triggers.length} trigger(s) in sign.yml; D1 names four`);
+  const unaccepted = triggers.filter((t) => !SIGNER_EVENTS.includes(t));
+  assert.equal(
+    unaccepted.join(", "),
+    "",
+    `sign.yml can be started by an event SERVE-90 does not list as one the signer runs on (${SIGNER_EVENTS.join(", ")}); ` +
+    `every commit a run of that kind makes would be reported as a hand-pushed forgery`,
+  );
+});

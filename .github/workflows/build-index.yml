@@ -3,6 +3,18 @@ name: Registry index
 # ─────────────────────────────────────────────────────────────────────────────
 # Regenerates and validates registry/v1/index.json on every push and every PR.
 #
+# **THIS FILE NO LONGER SIGNS OR DEPLOYS ANYTHING** (registry plan D1,
+# RC-R1-2). Its `sign` and `deploy` jobs are gone; `.github/workflows/sign.yml`
+# is the one publisher of the catalogue, the withdrawal list and Pages, and it
+# is the one job in this repository that holds the index signing key. The two
+# left in the same commit those jobs left, because a two-publisher interval is
+# the race being removed and two commits are what would create one.
+#
+# What remains here is every CHECK, and that is the point of the split: these
+# run on a pull request, for strangers, and must never be able to reach a key.
+# The signer runs them again in its own way at the Source-Commit and decides
+# what to publish; this job decides whether a change may land on `main` at all.
+#
 # WHAT THIS FILE IS DEFENDING
 #
 #   A listing that nobody can verify.  `validate.mjs` refuses an artifact with
@@ -13,34 +25,37 @@ name: Registry index
 #     or a digest straight into the index — the single highest-value edit an
 #     attacker with commit access could make — is a red build, not a merge.
 #   An index that is not reproducible.  The `determinism` step generates twice
-#     and diffs. This file is signed below, and a signature over bytes a rerun
-#     cannot reproduce is a signature nobody can audit. It is also why the
-#     generator stamps no timestamp and bot/sign-index.mjs does: content is
-#     reproducible, publication time is not, and only one of them is generated.
-#   An unsigned catalogue reaching users.  On `main` the signing key must be
-#     present and the signature must verify against the published root-signed
-#     trust.json, or this job fails. An unsigned file arriving at the CDN under
-#     the name of a signed one is a downgrade attack the registry would have
-#     performed on itself.
+#     and diffs. The signer signs bytes it generates the same way, and a
+#     signature over bytes a rerun cannot reproduce is a signature nobody can
+#     audit. It is also why the generator stamps no timestamp and the signer
+#     does: content is reproducible, publication time is not, and only one of
+#     them is generated.
+#   A cross-repository coupling that silently did not run.  This job HAS the
+#     AstraPlugins checkout, so a `NOT verified` line here means a check that
+#     should have run did not, and it is exit 1. The signer has no checkout by
+#     design and its notes decide nothing (seam 4) — signing that waits on
+#     another repository is signing that stops when that repository is
+#     unavailable, which is when a withdrawal is most likely to be needed.
 #
 #   A website that disagrees with the catalogue.  Task 6.5. The site is
-#     generated from `dist/index.json` — the SIGNED deploy candidate, in this
-#     job, after the signature — and the same file is published under
-#     `/registry/v1/` inside the site tree. A plugin page therefore exists if
-#     and only if an index entry does, by construction rather than by
-#     discipline; there is no second source for a page to be generated from and
-#     no second job for it to drift in.
+#     generated from `dist/index.json` — the candidate this job built — and the
+#     same file is published under `/registry/v1/` inside the site tree. A
+#     plugin page therefore exists if and only if an index entry does, by
+#     construction rather than by discipline. The site that is DEPLOYED is
+#     built the same way by `sign.yml`'s `pages` job, over `signed`'s bytes.
 #
 # WHAT IT IS NOT.  It does not prove where any artifact came from. Phase 3.3
 # adds the attestation checks; until then, say so rather than letting a green
-# tick imply more than it means.
+# tick imply more than it means. Nothing it produces reaches a user: the
+# artifact it uploads is unsigned and is for inspection.
 
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
-  # The bot just finished. Ask, now, rather than at the top of the next hour.
+  # The bot just finished. Check what it committed, now, rather than at the top
+  # of the next hour.
   #
   # `workflow_run` fires when another workflow COMPLETES. That is the whole
   # point of using it here: the rule that keeps `ingest.yml`'s publish commit
@@ -51,49 +66,35 @@ on:
   # which `ingest.yml` argues against at length and for good reason: the job it
   # would sit in exists precisely to hold no credentials.
   #
-  # What this buys, measured rather than assumed: on 2026-08-20 the catalogue
-  # published `minecraft-for-astra 0.3.3` at 18:03 and mihailinl.github.io went
-  # on serving 0.3.1 until a maintainer ran this workflow by hand at 18:09. The
-  # next scheduled run would have been 18:23. Twenty minutes is the SHORT case —
-  # a publication landing at :24 waits fifty-nine.
+  # **What it no longer buys is publication latency.** It used to: signing and
+  # the Pages deploy lived here, and on 2026-08-20 the catalogue published
+  # `minecraft-for-astra 0.3.3` at 18:03 while mihailinl.github.io served 0.3.1
+  # until 18:09. That is `sign.yml`'s job now, and it hears the same completion
+  # on its own trigger. What is left here is worth keeping on its own: the
+  # bot's commit is the one commit that reaches `main` without a pull request,
+  # so it is the one commit whose checks would otherwise wait for the hour.
   #
-  # Deliberately not narrowed to "and only when something was actually
-  # published". Knowing that would mean an output or an artifact threaded out of
-  # `ingest.yml`, i.e. a second thing to keep in step with the first, and the
-  # run it would save is one this file already performs every hour on the hour
-  # regardless. `success` is gated on below for a different reason: a failed
-  # ingest has published nothing, so re-signing after one is pure noise.
-  #
-  # The schedule below STAYS. This trigger answers publication latency; the
-  # cron's second reason — the catalogue expires whether or not anybody commits
-  # — is untouched by it and would still be true if nothing were ever published
-  # again.
+  # `success` is gated on below because a failed ingest committed nothing, so
+  # re-checking after one is pure noise. **The signer's rule is the opposite,
+  # and deliberately so** (D1): a run that committed and THEN failed a later
+  # job must not leave its takedown waiting for the cron, so `sign.yml` gates
+  # on completion alone.
   workflow_run:
     workflows: ["Ingest"]
     types: [completed]
-  # Hourly, for two independent reasons — either alone would justify it.
+  # Hourly. THE BOT'S PUBLISH COMMIT DOES NOT TRIGGER THIS FILE by `push`:
+  # `ingest.yml`'s publish job commits with the repository's own
+  # `GITHUB_TOKEN`, and GitHub does not start workflow runs from events raised
+  # by that token — the same rule `ingest.yml` documents at the top of itself
+  # for its cron paths. The `workflow_run` trigger above covers that case and
+  # this is the backstop for the run that never started.
   #
-  # 1. THE BOT'S PUBLISH COMMIT DOES NOT TRIGGER THIS FILE. `ingest.yml`'s
-  #    publish job commits with the repository's own `GITHUB_TOKEN`, and GitHub
-  #    does not start workflow runs from events raised by that token — the same
-  #    rule `ingest.yml` documents at the top of itself for its cron paths. So
-  #    the bot would add a listing, regenerate the index in that commit, and the
-  #    SIGNING and the Pages deployment — which live here — would never run. The
-  #    catalogue users actually fetch would sit at the previous listing until a
-  #    human happened to push something unrelated. Measured, not theorised: the
-  #    first successful zero-touch publication landed `dice-roller 0.1.2` in
-  #    `plugins/` and `mihailinl.github.io` kept serving 0.1.1.
-  #
-  # 2. THE CATALOGUE EXPIRES. `CATALOG_TTL_DAYS` is 30, and `issued_at` is
-  #    stamped at signing. A registry nobody edits for a month would serve a
-  #    catalogue past its own expiry and every daemon would be right to complain
-  #    — a freshness window has to be refreshed by something that runs whether
-  #    or not anybody committed.
-  #
-  # Hourly rather than daily because publication latency is the point of the
-  # first reason; hourly rather than every few minutes because the run re-signs
-  # and redeploys, and the publication delay it follows is already measured in
-  # hours. The job is idempotent: same tree, same serial, same content.
+  # **The catalogue's expiry is no longer a reason for this schedule.**
+  # `CATALOG_TTL_DAYS` is 30 and `issued_at` is stamped at SIGNING, which
+  # happens in `sign.yml`; its own hourly cron is what refreshes a document
+  # nobody has changed (D4's cadence: re-signed once `signed`'s copy is 20
+  # hours old). Nothing this job produces has an expiry, because nothing it
+  # produces is published.
   schedule:
     - cron: '23 * * * *'
 
@@ -117,7 +118,7 @@ jobs:
   # than a matter of remembering the `if:` on one step (registry plan RC-R0-1).
   check:
     runs-on: ubuntu-24.04
-    # A failed ingest published nothing, so there is nothing new to sign. Every
+    # A failed ingest published nothing, so there is nothing new to check. Every
     # other event carries no `workflow_run` object and the condition is vacuously
     # true for them — the push, the schedule, the dispatch and the pull request
     # all reach this job exactly as they did before.
@@ -343,13 +344,14 @@ jobs:
           if-no-files-found: error
 
       - name: Say plainly that nothing here is signed
-        run: echo "::notice::dist/index.json is UNSIGNED — this job holds no signing key by construction. This artefact is for inspection, not for deploy."
+        run: echo "::notice::dist/index.json is UNSIGNED — this workflow holds no signing key by construction, and since RC-R1-2 no job in it publishes anything. This artefact is for inspection. sign.yml is the one publisher."
       # ── 6.5: the website, built here from the candidate to assert the page set ──
       #
-      # This job never signs, so what it builds is the UNSIGNED candidate: the
-      # assertion it exists for — a page exists iff an entry does — is a property
-      # of the entry set, which signing does not change. `sign` rebuilds the site
-      # from the signed bytes and asserts it again before anything is uploaded.
+      # This workflow never signs, so what it builds is the UNSIGNED candidate:
+      # the assertion it exists for — a page exists iff an entry does — is a
+      # property of the entry set, which signing does not change. `sign.yml`'s
+      # `pages` job builds the site again from `signed`'s bytes, which is the
+      # tree that is actually deployed.
       #
       # `dist/registry/v1/` is assembled first and `--index` points INTO it, so
       # the bytes the generator reads and the bytes published under
@@ -358,11 +360,11 @@ jobs:
       # is no second input that could be stale.
       #
       # The withdrawal list and the trust documents are taken from the committed
-      # tree — the R1 withdrawal workflow will own their generation and signing,
-      # and a listing
-      # build that re-signed them would be a second publisher of a document that
-      # must have exactly one.
-      - name: Assemble the deploy tree, then generate the site from it
+      # tree, unsigned. `sign.yml` owns their generation and signing, and a
+      # listing build that re-signed them would be the second publisher of a
+      # document that must have exactly one. Nothing assembled here is
+      # deployed — this tree exists so the page set can be asserted.
+      - name: Assemble the tree the site is generated from
         run: |
           set -euo pipefail
           mkdir -p dist/registry/v1
@@ -395,152 +397,3 @@ jobs:
             }
             console.log(`ok  ${ids.length} entr(y/ies), ${pages.length} page(s), and they are the same set`);
           '
-
-
-  # ── sign ─────────────────────────────────────────────────────────────────
-  #
-  # The only job in this repository that can reach the index signing key. It
-  # runs on `main` and never on a pull request, and it says so in its own `if:`
-  # rather than relying on a step-level guard inside a job that also runs for
-  # strangers. `needs: check` carries the ingest condition: when `check` is
-  # skipped because an ingest failed, this is skipped with it.
-  #
-  # The `publish` environment carries no required reviewer today. It is where a
-  # protection rule WOULD attach if the owner ever adds one (LM-1), and this
-  # file no longer claims one exists.
-  sign:
-    needs: check
-    runs-on: ubuntu-24.04
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-    environment: publish
-    outputs:
-      deploy: ${{ steps.sign.outputs.signed }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      # The candidate `check` built, byte for byte. Rebuilding it here would
-      # make the signed bytes a second generation of the same inputs rather
-      # than the artefact every check above was run against.
-      - uses: actions/download-artifact@v4
-        with:
-          name: registry-index-v1
-          path: dist
-
-      - name: Sign the deploy candidate
-        id: sign
-        env:
-          ASTRA_INDEX_SIGNING_KEY: ${{ secrets.ASTRA_INDEX_SIGNING_KEY }}
-          ASTRA_INDEX_SIGNING_KEY_ID: ${{ secrets.ASTRA_INDEX_SIGNING_KEY_ID }}
-        run: |
-          set -euo pipefail
-          if [ -z "${ASTRA_INDEX_SIGNING_KEY:-}" ]; then
-            echo "::error::no ASTRA_INDEX_SIGNING_KEY on main. Refusing to publish an unsigned catalogue."
-            exit 1
-          fi
-          # The key is passed through the environment and never appears on a
-          # command line: `ps` is readable by every process on the runner and
-          # `set -x` would put it in the log.
-          node bot/sign-index.mjs --in dist/index.json --out dist/index.signed.json
-          mv dist/index.signed.json dist/index.json
-          echo "sha256: $(sha256sum dist/index.json | cut -d' ' -f1)"
-          echo "signed=true" >> "$GITHUB_OUTPUT"
-
-      # Verified against the CURRENTLY PUBLISHED root-signed trust.json, not
-      # against the key we just signed with. Signing with a key and then
-      # checking the signature with the same key proves the crypto library
-      # works; checking it against trust.json proves the daemon will accept it.
-      # A key that has fallen out of its validity window fails here rather than
-      # in every user's client.
-
-      - name: Verify the signature the way the daemon will
-        run: |
-          set -euo pipefail
-          if [ ! -f registry/v1/trust.json ]; then
-            echo "::error::registry/v1/trust.json is not published yet, so nothing can check this signature."
-            exit 1
-          fi
-          node bot/sign-index.mjs --verify dist/index.json --trust registry/v1/trust.json
-
-
-      # ── 6.5: the website, from the file that was just signed ──────────────
-      #
-      # `dist/registry/v1/` is assembled first and `--index` points INTO it, so
-      # the bytes the generator reads and the bytes published under
-      # `/registry/v1/index.json` are one file rather than two copies of one.
-      # That is what makes "a page exists iff an entry does" structural: there
-      # is no second input that could be stale.
-      #
-      # The withdrawal list and the trust documents are taken from the committed
-      # tree — the R1 withdrawal workflow will own their generation and signing,
-      # and a listing
-      # build that re-signed them would be a second publisher of a document that
-      # must have exactly one.
-      - name: Assemble the deploy tree, then generate the site from it
-        run: |
-          set -euo pipefail
-          mkdir -p dist/registry/v1
-          cp dist/index.json dist/registry/v1/index.json
-          for f in revocations.json trust.json root.json; do
-            [ -f "registry/v1/$f" ] && cp "registry/v1/$f" "dist/registry/v1/$f"
-          done
-          node site/build.mjs \
-            --index dist/registry/v1/index.json \
-            --revocations dist/registry/v1/revocations.json \
-            --registry-dir dist/registry/v1 \
-            --repo "${{ github.repository }}" \
-            --out dist/site
-
-      # The acceptance criterion, asserted against what was actually written
-      # rather than against what the generator says it wrote.
-      - name: A page exists for every entry, and for nothing else
-        run: |
-          set -euo pipefail
-          node -e '
-            const fs = require("node:fs");
-            const ids = JSON.parse(fs.readFileSync("dist/registry/v1/index.json", "utf8"))
-              .signed.plugins.map((p) => p.id).sort();
-            const pages = fs.readdirSync("dist/site/p").sort();
-            const missing = ids.filter((i) => !pages.includes(i));
-            const extra = pages.filter((p) => !ids.includes(p));
-            if (missing.length || extra.length) {
-              console.error(`::error::pages and entries disagree — missing ${missing.join(", ") || "none"}, extra ${extra.join(", ") || "none"}`);
-              process.exit(1);
-            }
-            console.log(`ok  ${ids.length} entr(y/ies), ${pages.length} page(s), and they are the same set`);
-          '
-
-
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist/site
-
-  # Publishing is a separate job because `actions/deploy-pages` needs write
-  # scopes that the job downloading and reading a catalogue has no business
-  # holding. It runs only when the index above was signed, which is only ever
-  # on `main`: an unsigned catalogue reaching the published origin under the
-  # name of a signed one is the downgrade attack this repository spends most of
-  # its CI refusing to perform on itself.
-  deploy:
-    needs: sign
-    if: needs.sign.outputs.deploy == 'true'
-    runs-on: ubuntu-24.04
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    # `cancel-in-progress: false`, and the withdrawal path uses `true` on the
-    # same group. A revocation deploy may cancel a listing deploy; a listing
-    # deploy waits behind a revocation. That ordering is the point: the two jobs
-    # publish to one origin and only one of them is urgent.
-    concurrency:
-      group: pages
-      cancel-in-progress: false
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
