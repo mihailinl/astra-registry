@@ -71,6 +71,29 @@ function inAlerts(job) {
 const code = (job) => job.body.filter((l) => !l.trim().startsWith("#"));
 const where = (job) => `${job.file}:${job.line} (job ${job.job})`;
 
+/**
+ * A job's whole `if:` expression, folded block scalar or not.
+ *
+ * Line-oriented like everything else here, and for a reason this file learned
+ * the hard way: a regex over the joined body stops at the end of the `if: >-`
+ * line and reports the marker as the condition, which reads as a condition
+ * that satisfies every rule asked of it. The continuation lines are the ones
+ * indented deeper than the `if:` itself.
+ */
+function condition(job) {
+  const lines = code(job);
+  const i = lines.findIndex((l) => /^\s+if:/.test(l));
+  if (i < 0) return "";
+  const indent = lines[i].search(/\S/);
+  const parts = [lines[i].replace(/^\s*if:\s*/, "").replace(/^[>|][-+]?$/, "")];
+  for (let k = i + 1; k < lines.length; k++) {
+    if (lines[k].trim() === "") continue;
+    if (lines[k].search(/\S/) <= indent) break;
+    parts.push(lines[k].trim());
+  }
+  return parts.join(" ").trim();
+}
+
 test("there are workflows to check at all", () => {
   assert.ok(files.length >= 5, `only ${files.length} workflow(s) found; this suite would prove nothing`);
 });
@@ -169,7 +192,18 @@ test("every job in ingest.yml waits for the roots check", () => {
     // `alert` is the one job that MUST run when roots failed: it is the job
     // that says so.
     if (job.job === "alert") continue;
-    const cond = /^\s+if:\s*([\s\S]*?)(?=\n\s{4}[a-z-]+:|\n\s{4}#|$)/m.exec(body)?.[1] ?? "";
+    const cond = condition(job);
+    // The floor, and it is not decoration. The first spelling of this read
+    // the condition with `/^\s+if:\s*([\s\S]*?)(?=…|$)/m` over the joined
+    // body and captured the two characters ">-" — `$` under /m matches at the
+    // end of the `if: >-` line, and `publish`'s whole condition is on the two
+    // lines below it. So the rule reported as satisfied over the one job in
+    // this file that commits, having never seen its condition. Found by
+    // deleting the gate and watching this test stay green.
+    if (/^\s+if:/m.test(body)) {
+      assert.ok(cond.length > 2 && !/^[>|]/.test(cond),
+        `${where(job)}: this test read ${JSON.stringify(cond)} as an if-condition, which it is not`);
+    }
     if (/always\(\)/.test(cond) && !/needs\.roots\.result\s*==\s*'success'/.test(cond)) {
       problems.push(
         `${where(job)} runs on always() and never asks whether the roots check passed, so it runs anyway when ` +
