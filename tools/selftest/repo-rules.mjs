@@ -442,7 +442,10 @@ export async function run() {
   // whenever they agree. A module missing from the list below has exactly that
   // hole, and its author is the last person who will ever think about it.
   // `signer.mjs` was added on 2026-09-19 with RC-R1-1, watched failing by
-  // deleting the file and its runner entry together.
+  // deleting the file and its runner entry together; `served-set.mjs` the same
+  // day with RC-R1-4 and RC-R1-5, watched the same way and also by leaving it
+  // out of this list — which is the silent half, since omitting a name here
+  // costs nothing and fails nothing.
   //
   // Two checks per name, and together they say the module still RUNS: it is on
   // disk and exports `run`; and it is still in the runner's `MODULES`, read out
@@ -487,8 +490,24 @@ export async function run() {
     // with its runner entry, which is the loss `checkModuleSet` cannot see
     // because the two sides it compares agree that the module is gone.
     "baseline.mjs",
+    "served-set.mjs",
   ];
   await test("no module has left the runner's list since the suite was split", async () => {
+    // The list itself first. It is a SUBSET assertion, so a name appearing
+    // twice changes nothing it checks and nothing reports it — and a
+    // rebase that resolves a conflict by keeping both sides produces exactly
+    // that. It happened on 2026-09-19 when two lanes added a module in the
+    // same commit position: `signer.mjs` landed twice, the suite printed
+    // `PASS 223 passed, 0 failed`, and the only reason anyone looked was that
+    // the conflict had just been resolved by hand. The runner's own MODULES
+    // list is checked for duplicates because a repeat there prints a module's
+    // names twice; here a repeat prints nothing at all, which is why it needs
+    // its own line rather than inheriting that one's.
+    const twice = SPLIT_MODULES.filter((n, i) => SPLIT_MODULES.indexOf(n) !== i);
+    assertEqual([...new Set(twice)].join(", "), "",
+      "a module is pinned twice in SPLIT_MODULES; this list is a subset assertion, so a duplicate asserts nothing " +
+      "extra and nothing else in the suite would say so");
+
     const runner = fs.readFileSync(path.join(REPO_ROOT, "tools", "selftest.mjs"), "utf8");
     const listSrc = /^const MODULES = \[([\s\S]*?)^\];$/m.exec(runner)?.[1];
     // The parse is the thing this test stands on, so it says so when it fails

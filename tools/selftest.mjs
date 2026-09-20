@@ -60,6 +60,13 @@ const MODULES = [
   // the PREVIOUS module's header are primitives→catalogue and
   // catalogue→validation; nothing may be inserted between either pair.
   "signer.mjs",
+  // Beside signer.mjs for the reason signer.mjs is beside index-signature.mjs:
+  // it is the same subject one step on. That module asks what the signer
+  // decides to publish; this one asks whether what is published is what `main`
+  // says, and whether what a stranger is served is what was published
+  // (RC-R1-4, RC-R1-5). It prints its own five section headers, so inserting
+  // here moves no existing name under a header it does not belong to.
+  "served-set.mjs",
   "revocations.mjs",
   "cli.mjs",
   "root-delegation.mjs",
