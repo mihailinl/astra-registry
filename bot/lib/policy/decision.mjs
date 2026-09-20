@@ -93,6 +93,61 @@ export function decide(input) {
     return finish({ outcome: "refuse", reasons, track, now, approval: typed, repo, tag: input.tag });
   }
 
+  // 1a ── the identity verdict, before any policy question is asked.
+  //
+  // Registry plan B-T3.3a. `bot/lib/identity.mjs` compares the certificate's
+  // `.15`, `.17` and `.12` with MIG-20's baseline and answers in the
+  // CONTRACT's vocabulary; this is where that answer becomes a decision. The
+  // two vocabularies are kept apart deliberately — every key of
+  // `POLICY_CODES` has to be explained to authors in `docs/POLICY.md`, and the
+  // bound world's author-facing text is written once, by reg.61a (B-T3.3b).
+  // So the contract code travels in the MESSAGE of a documented policy code
+  // rather than becoming an eleventh undocumented one.
+  //
+  // **`B_REPOSITORY_RECYCLED` is permanent** (ID-41 row 1; OPEN-OWNER-15).
+  // No `/recheck`, no new tag and no approval clears it: the refusal is about
+  // which repository these bytes came out of, and a maintainer typing
+  // `/approve` has not changed that. Only B-T4.2's `identity_reset` record
+  // lifts it, and until a contract version adds that code the refusal stands.
+  // An approval is still RECORDED, exactly as on the failed-check branch, so
+  // the thread can be reconciled with what the registry did.
+  //
+  // **A read that did not happen is a wait, not a difference** (FLOW-72:
+  // waits never record). A rate-limited `fetchRepositoryIds` must not become
+  // "the repository moved".
+  const identity = input.identity ?? null;
+  if (identity?.code === "B_REPOSITORY_RECYCLED") {
+    add("P_REFUSED", `B_REPOSITORY_RECYCLED: ${identity.reason}`);
+    add("P_REFUSED",
+      "This refusal is permanent. A new tag, a `/recheck` or an `/approve` does not clear it — only a " +
+      "moderator's identity reset does, and a release published under the reset id is compared again " +
+      "from scratch (OPEN-OWNER-15).");
+    return finish({ outcome: "refuse", reasons, track, now, approval: typed, repo, tag: input.tag });
+  }
+  if (identity?.code === "W_GITHUB_RATE_LIMITED") {
+    // Deliberately a throw and not a fifth outcome.
+    //
+    // `decide()` answers `publish`, `delay`, `review` or `refuse`, and each of
+    // those four is RECORDED. There is no outcome here that means "ask again
+    // next run", and inventing one would have to be understood by
+    // `bot/lib/policy/comment.mjs`'s headline map and `bot/decide.mjs`'s exit
+    // map — two files this task does not own — with the failure mode of an
+    // unrecognised outcome being a comment with no headline and exit 2.
+    //
+    // A wait is the READER's answer, not the policy's: the job that could not
+    // read the identity stops before it ever asks what should happen to the
+    // release (FLOW-72, waits never record). A caller that got here anyway has
+    // a bug, and a loud job failure is the right size of noise for it —
+    // quieter than publishing, and much quieter than recording a refusal for a
+    // repository nobody managed to look up.
+    throw new Error(
+      "decide() was handed an identity that could not be read " +
+      `(${identity.reason}). A transient GitHub read is a wait, and a wait never reaches a decision: ` +
+      "the caller stops and asks again next run, because a read that did not happen is not a fact " +
+      "about the repository (B-T1.3; FLOW-72).",
+    );
+  }
+
   const requested = requestedAuthority(derived.version);
   // Computed here rather than at the delay branch, because two later decisions
   // need it: the approval record ("against which digest") and the queue clock.

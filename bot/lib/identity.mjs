@@ -223,6 +223,64 @@ export function checkDownloadRepository({ identity, downloadRepoIds }) {
 }
 
 /**
+ * The floor MIG-31 imposes when the account that ran the build is not the
+ * account that owns the repository.
+ *
+ * Fourteen days. It is not in `docs/POLICY.md` and must not be quoted there
+ * by this task: `docs/POLICY.md` is reg.61a's (B-T3.3b), which publishes the
+ * bound world's numbers in one edit, and a second file publishing a third
+ * number is how a document and its code start disagreeing.
+ */
+export const ACTOR_MISMATCH_FLOOR_DAYS = 14;
+
+/**
+ * MIG-31: the run's triggering actor against the repository's owner id.
+ *
+ * `.21` names the run, B-T1.3's `workflowRun` reads its `triggering_actor.id`,
+ * and `.17` says whose repository it is. A difference is not a refusal — an
+ * organisation member releasing an organisation's plugin is the ordinary case
+ * — but it is the shape a stolen credential takes too, so the release waits
+ * out a floor before it can publish.
+ *
+ * **A failed read waits.** It does not pass and it does not impose the floor:
+ * "GitHub did not answer" is not "somebody else pressed the button", and a
+ * decision record that says the second when the first happened cannot be
+ * un-written.
+ *
+ * @param {{identity: object, actor: {status: string, triggering_actor_id?: string|null, reason?: string}}} opts
+ */
+export function compareActor({ identity, actor }) {
+  if (!actor || actor.status === "transient") {
+    return {
+      outcome: "wait",
+      code: IDENTITY_CODES.W_GITHUB_RATE_LIMITED,
+      reason: `the run's triggering actor could not be read (${actor?.reason ?? "no answer"}); this run decides nothing and asks again`,
+    };
+  }
+  if (actor.status === "not_found") {
+    return {
+      outcome: "wait",
+      code: IDENTITY_CODES.W_GITHUB_RATE_LIMITED,
+      reason: "GitHub has no such run. The certificate names it, so this is a disagreement to re-read rather than a fact about the author",
+    };
+  }
+  if (!actor.triggering_actor_id) {
+    return { outcome: "wait", code: IDENTITY_CODES.W_GITHUB_RATE_LIMITED, reason: "the run carries no triggering actor id" };
+  }
+  if (actor.triggering_actor_id === identity?.repository_owner_id) {
+    return { outcome: "ok", floor_days: 0, reason: "the account that ran the build owns the repository" };
+  }
+  return {
+    outcome: "floor",
+    floor_days: ACTOR_MISMATCH_FLOOR_DAYS,
+    reason:
+      `the build was started by account ${actor.triggering_actor_id} and the repository's owner is ` +
+      `${identity?.repository_owner_id}. That is ordinary inside an organisation and it is also what a ` +
+      `stolen credential looks like, so this release waits ${ACTOR_MISMATCH_FLOOR_DAYS} days (MIG-31).`,
+  };
+}
+
+/**
  * BOT-15 / INV-37: the `publish` job composes from facts it re-reads, and a
  * facts file that disagrees with the verification writes nothing.
  *
