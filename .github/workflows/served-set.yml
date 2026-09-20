@@ -1,7 +1,6 @@
-# Is what we signed what `main` says?
+# Is what we serve what we signed, and is what we signed what `main` says?
 #
-# One comparison and one alarm (registry plan RC-R1-4). RC-R1-5 adds the
-# second comparison, `served-vs-signed`, to this same file — they are one
+# Two comparisons and one alarm (registry plan RC-R1-4, RC-R1-5). They are one
 # workflow because they are one receiver check: `bot/lib/alert-checks.mjs`
 # gives `served-set` a single BOT-85 heartbeat, since two checks would page
 # twice for one silence and would need a second poster that does not exist.
@@ -11,20 +10,27 @@
 #                     compares those two: SERVE-39 compares Pages with `signed`
 #                     and would find a dropped advisory perfectly consistent.
 #
+#   served-vs-signed  SERVE-39's Pages half, D5's arming latch, and SERVE-90's
+#                     provenance fallback — every `signed` commit younger than
+#                     7 days, and always the head, shown to have been pushed by
+#                     a run of sign.yml that holds its receipt.
+#
 #   alert             The one page, and the one heartbeat.
 #
-# **The comparison runs no author code and holds no alarm credential**, which
-# is SERVE-39's own wording and the reason the alert job is separate:
-# `main-vs-signed` builds the withdrawal list from `tools/revocations/**` and
-# touches `plugins/**` nowhere. It cannot reach the channel, and the job that
-# can reach the channel reads only what it reported.
+# **The comparisons run no author code and hold no alarm credential**, which is
+# SERVE-39's own wording and the reason the alert job is separate. `main-vs-
+# signed` builds the withdrawal list from `tools/revocations/**` and touches
+# `plugins/**` nowhere; `served-vs-signed` compares bytes. Neither job can
+# reach the channel, and the job that can reach the channel reads only what
+# they reported.
 #
 # **Every rule lives in `tools/served-set/`, not here.** These steps read the
 # world and run a module; the modules decide. That is not tidiness — each of
-# these rules decides whether a person is woken at three in the morning,
-# RC-R1-4's canary is "a fixture clone with an advisory commit and no signer
-# run goes red after 30 minutes", and that cannot be watched failing if the
-# rule only exists inside a scheduled job on GitHub.
+# these rules decides whether a person is woken at three in the morning, the
+# canaries RC-R1-4 and RC-R1-5 ask for are "a hand-pushed commit fails", "a
+# Pages copy held back 31 minutes fails", "a signed list before the flag
+# fails", and none of those can be watched failing if the rule only exists
+# inside a scheduled job on GitHub.
 #
 # Until the owner performs §2.12's R1 act — environment `alerts`, its secrets,
 # the receiver account — the `alert` job below is red on every run and says
@@ -95,9 +101,45 @@ jobs:
           echo "::error::main-vs-signed reported ${{ steps.check.outputs.status || 'nothing at all' }}"
           exit 1
 
+  served-vs-signed:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      # SERVE-90's fallback reads runs and their artifacts of this repository.
+      # It is the only reason this job differs from the one above.
+      actions: read
+    timeout-minutes: 15
+    outputs:
+      status: ${{ steps.check.outputs.status }}
+      codes: ${{ steps.check.outputs.codes }}
+      hexes: ${{ steps.check.outputs.hexes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The token is handed to this one step, for the Actions API and nothing
+      # else: `persist-credentials: false` above keeps it out of git's config,
+      # so a `git fetch` here cannot quietly become an authenticated one.
+      - name: SERVE-39 and SERVE-90 — what Pages serves, and who pushed `signed`
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node tools/served-set/check.mjs --job served-vs-signed
+
+      - name: A red comparison is a red run
+        if: steps.check.outputs.status != 'green'
+        run: |
+          echo "::error::served-vs-signed reported ${{ steps.check.outputs.status || 'nothing at all' }}"
+          exit 1
+
   alert:
-    needs: [main-vs-signed]
-    # `always()` so a red comparison still pages — the job above fails on
+    needs: [main-vs-signed, served-vs-signed]
+    # `always()` so a red comparison still pages — the jobs above fail on
     # purpose — and `!cancelled()` so a cancelled run does not send an alarm
     # about a comparison that never finished.
     if: always() && !cancelled()
@@ -138,13 +180,17 @@ jobs:
       # a job deleted from this workflow and forgotten here pages rather than
       # going quiet: `compose.mjs` reports a named job with no variables as one
       # that did not report, which is red.
-      - name: The verdict, from what the comparison reported
+      - name: The verdict, from what the two comparisons reported
         env:
-          ASTRA_SERVED_SET_JOBS: main-vs-signed
+          ASTRA_SERVED_SET_JOBS: main-vs-signed served-vs-signed
           MAIN_VS_SIGNED_RESULT: ${{ needs.main-vs-signed.result }}
           MAIN_VS_SIGNED_STATUS: ${{ needs.main-vs-signed.outputs.status }}
           MAIN_VS_SIGNED_CODES: ${{ needs.main-vs-signed.outputs.codes }}
           MAIN_VS_SIGNED_HEXES: ${{ needs.main-vs-signed.outputs.hexes }}
+          SERVED_VS_SIGNED_RESULT: ${{ needs.served-vs-signed.result }}
+          SERVED_VS_SIGNED_STATUS: ${{ needs.served-vs-signed.outputs.status }}
+          SERVED_VS_SIGNED_CODES: ${{ needs.served-vs-signed.outputs.codes }}
+          SERVED_VS_SIGNED_HEXES: ${{ needs.served-vs-signed.outputs.hexes }}
         run: node tools/served-set/compose.mjs --out verdict.json --check served-set
 
       - uses: ./.github/actions/alert

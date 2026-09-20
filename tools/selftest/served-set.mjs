@@ -1,14 +1,15 @@
-// The served-set canaries: SERVE-85, the list `main` implies against the one
-// `signed` publishes (registry plan RC-R1-4). RC-R1-5 adds the Pages half,
-// D5's latch and SERVE-90's provenance fallback to this module, beside them.
+// The served-set canaries: SERVE-85, SERVE-39's Pages half, D5's latch and
+// SERVE-90's provenance fallback (registry plan RC-R1-4, RC-R1-5).
 //
 // Every rule in `tools/served-set/` decides whether a person is woken, and
 // none of them will ever run anywhere but a scheduled job on GitHub against a
 // branch and a CDN. So each is exercised here against a fixture tree, a
-// fixture `signed` head, and each is watched failing by removing the guard it
-// names. RC-R1-4's own canary is below by the name it is asked for by — a
-// fixture clone with an advisory commit and no signer run, red after 30
-// minutes.
+// fixture `signed` head and a fixture deployment, and each is watched failing
+// by removing the guard it names. The canaries RC-R1-4 and RC-R1-5 ask for are
+// below by the names they are asked for by — a hand-pushed commit copying a
+// real run's trailers, a Pages copy held back 31 minutes, a signed list before
+// the flag, an unsigned list after a flag that was deleted, and a queued run
+// that must raise nothing.
 //
 // One of these tests is not in either task's list and is the reason this
 // module found a hole rather than only covering one: *the 30 minutes run from
@@ -25,13 +26,22 @@ import { execFileSync } from "node:child_process";
 import { REVOCATIONS_SCHEMA, TRUST_SCHEMA } from "../../bot/lib/sign.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
 import { loadTestRoot } from "../testkeys/regenerate.mjs";
+import { signRevocations } from "../sign-revocations.mjs";
+import { armingState } from "../signer/pages.mjs";
+import { SIGNED_FILES } from "../signer/plan.mjs";
 import { GRACE_MINUTES, emit, finding, verdict } from "../served-set/report.mjs";
 import { gather, serve85 } from "../served-set/main-vs-signed.mjs";
+import { serve39 } from "../served-set/served-vs-signed.mjs";
+import {
+  PROVENANCE_WINDOW_DAYS, parseRunUrl, provenance, receiptName, signedCommits, trailersOf,
+} from "../served-set/provenance.mjs";
 import { SILENT_JOB_CODE, UNRENDERABLE_CODE, composeVerdict } from "../served-set/compose.mjs";
 import { test, assert, assertEqual, tmp } from "./harness.mjs";
 
 const KEY_A = "TEST-ONLY-DO-NOT-TRUST-index-2026a";
 const testKey = loadTestRoot(KEY_A);
+const signerFor = () => ({ key_id: KEY_A, privateKey: testKey.privateKey, public_key: testKey.publicKeyB64 });
+
 const trustDelegating = () => ({
   signatures: [],
   signed: {
@@ -93,8 +103,30 @@ function headFrom({ revocations, trust = trustDelegating(), index = { signed: { 
   return { present: true, reason: null, sha, bytes, documents, parseErrors: [] };
 }
 
+/** A deployment that serves exactly what `signed`'s head holds. */
+const servedFrom = (head, overrides = {}) => {
+  const served = {};
+  for (const name of Object.keys(SIGNED_FILES)) {
+    served[name] = { ok: true, url: `https://example.invalid/${name}`, status: 200, body: head.bytes[name], error: null };
+  }
+  return { ...served, ...overrides };
+};
+
 const minutesAgo = (from, n) => new Date(Date.parse(from) + n * 60000).toISOString();
 const codesOf = (v) => v.findings.map((f) => f.code).join(",");
+
+const HEAD_CLOCK = "2026-09-19T12:00:00Z";
+const REPO = "mihailinl/astra-registry";
+
+const signerRun = (overrides = {}) => ({
+  ok: true,
+  path: ".github/workflows/sign.yml",
+  head_branch: "main",
+  event: "schedule",
+  head_sha: "b".repeat(40),
+  artifacts: [],
+  ...overrides,
+});
 
 export async function run() {
   // ── the grammar the alarm channel will carry ───────────────────────────────
@@ -250,6 +282,247 @@ export async function run() {
     const armed = serve85({ ...facts, head: absent, signerWorkflowPresent: true, now: "2026-09-19T23:00:00Z" });
     assertEqual(codesOf(armed), "SERVE_85_NO_SIGNED_BRANCH",
       "sign.yml is on main and a missing `signed` was still treated as a wait");
+  });
+
+  // ── SERVE-39 and the latch ─────────────────────────────────────────────────
+  console.log("\nSERVE-39: what Pages serves, and D5's arming latch");
+
+  await test("a Pages copy held back 31 minutes fails, and at 29 it does not", () => {
+    // RC-R1-5's canary, and the same shape answers "a run queued behind
+    // another while `main` moves raises no alarm": the window is measured from
+    // the `signed` commit, so a deployment that has not caught up with a
+    // commit made five minutes ago is silent.
+    const head = headFrom({
+      revocations: { signatures: [], signed: { schema: REVOCATIONS_SCHEMA, serial: 2, revocations: [] } },
+    });
+    const stale = servedFrom(head, {
+      index: { ok: true, url: "https://example.invalid/index", status: 200, body: "{\"old\":true}\n", error: null },
+    });
+    const args = { head, headClock: HEAD_CLOCK, served: stale, arming: { armed: false }, signerWorkflowPresent: true };
+
+    const queued = serve39({ ...args, now: minutesAgo(HEAD_CLOCK, 5) });
+    assertEqual(queued.status, "green", `a deploy five minutes behind paged: ${codesOf(queued)}`);
+
+    const within = serve39({ ...args, now: minutesAgo(HEAD_CLOCK, 29) });
+    assertEqual(within.status, "green", `a deploy 29 minutes behind paged: ${codesOf(within)}`);
+
+    const over = serve39({ ...args, now: minutesAgo(HEAD_CLOCK, 31) });
+    assertEqual(codesOf(over), "SERVE_39_DOCUMENT_DRIFT", "a split view between `signed` and the deployment");
+  });
+
+  await test("a withdrawal list that VERIFIES on Pages before the flag is early arming, with no grace at all", () => {
+    // Every shipped 0.2.x daemon arms itself on the first list it can verify
+    // and blocks installs seven days after its last accepted one. Arming is
+    // one-way in the field, so there is nothing to wait thirty minutes for:
+    // the clients that fetched in the last fifteen minutes have already armed.
+    const signedList = signRevocations(
+      { signatures: [], signed: { schema: REVOCATIONS_SCHEMA, serial: 2, revocations: [] } },
+      { signer: signerFor(), issuedAt: new Date(HEAD_CLOCK) },
+    );
+    const head = headFrom({ revocations: signedList });
+    const v = serve39({
+      head,
+      headClock: HEAD_CLOCK,
+      served: servedFrom(head),
+      arming: { armed: false },
+      signerWorkflowPresent: true,
+      now: HEAD_CLOCK,
+    });
+    assertEqual(codesOf(v), "SERVE_39_EARLY_ARMING", "a verifiable list before the flag was served and not reported");
+    assert(v.findings[0].message.includes(KEY_A), "the alarm has to name the key that would have armed a client");
+  });
+
+  await test("an unsigned list after a flag that was then DELETED still fails: the latch is history", () => {
+    // Reading the current tree would let a revert of the flag commit put an
+    // unsigned list back in front of clients that have already armed. They do
+    // not disarm — they block installs a week later — and the person who
+    // reverted sees a green build. `armingState` reads the history, and this
+    // is the test that says so from the check's side.
+    const t = makeTree("flag-reverted");
+    t.write("policy/pages-withdrawal-list.json", { schema: "astra.registry.pages-withdrawal-list/1", armed_at: HEAD_CLOCK });
+    t.commit("arm Pages", { at: "2026-09-19T10:00:00Z" });
+    fs.rmSync(path.join(t.dir, "policy/pages-withdrawal-list.json"));
+    t.commit("revert the flag", { at: "2026-09-19T10:30:00Z" });
+
+    const arming = armingState({ root: t.dir, sourceCommit: t.head() });
+    assertEqual(arming.armed, true, "a deleted flag disarmed the latch; clients in the field do not disarm");
+
+    const head = headFrom({
+      revocations: signRevocations(
+        { signatures: [], signed: { schema: REVOCATIONS_SCHEMA, serial: 2, revocations: [] } },
+        { signer: signerFor(), issuedAt: new Date(HEAD_CLOCK) },
+      ),
+    });
+    const unsigned = servedFrom(head, {
+      revocations: {
+        ok: true,
+        url: "https://example.invalid/revocations",
+        status: 200,
+        body: stableStringify({ signatures: [], signed: { schema: REVOCATIONS_SCHEMA, serial: 2, revocations: [] } }),
+        error: null,
+      },
+    });
+    const v = serve39({
+      head, headClock: HEAD_CLOCK, served: unsigned, arming, signerWorkflowPresent: true,
+      now: minutesAgo(HEAD_CLOCK, 31),
+    });
+    assertEqual(codesOf(v), "SERVE_39_DISARMING", "an unsigned list in front of armed clients was accepted");
+  });
+
+  await test("Pages that cannot be read at all is reported, not skipped", () => {
+    const head = headFrom({
+      revocations: { signatures: [], signed: { schema: REVOCATIONS_SCHEMA, serial: 2, revocations: [] } },
+    });
+    const down = servedFrom(head, {
+      index: { ok: false, url: "https://example.invalid/index", status: 404, body: null, error: "HTTP 404" },
+    });
+    const v = serve39({
+      head, headClock: HEAD_CLOCK, served: down, arming: { armed: false }, signerWorkflowPresent: true,
+      now: minutesAgo(HEAD_CLOCK, 31),
+    });
+    assertEqual(codesOf(v), "SERVE_39_PAGES_UNREACHABLE", "a 404 read as `nothing differs`");
+  });
+
+  // ── SERVE-90 ───────────────────────────────────────────────────────────────
+  console.log("\nSERVE-90: every `signed` commit shown to be a signer run's");
+
+  const NOW = "2026-09-19T12:00:00Z";
+  const commitOf = ({ sha, minutesOld = 10, run = "77", source = "b".repeat(40) }) => ({
+    sha,
+    committed_at: new Date(Date.parse(NOW) - minutesOld * 60000).toISOString(),
+    trailers: {
+      "Source-Commit": source,
+      Run: `https://github.com/${REPO}/actions/runs/${run}`,
+      Signer: "sign.yml",
+    },
+  });
+  const ancestry = { reachableFromMain: () => true, descendsFrom: () => true };
+
+  await test("a hand-pushed commit that copied a real run's trailers fails: the receipt names the other commit", () => {
+    // RC-R1-5's first canary. Everything about the forged commit is real — the
+    // trailers are a working run's, the documents can be lifted from the
+    // branch's own history — and the one thing the forger cannot produce is an
+    // artifact named after a commit they made after the run finished.
+    const real = "1".repeat(40);
+    const forged = "2".repeat(40);
+    const runs = new Map([["77", signerRun({ artifacts: [receiptName(real)] })]]);
+
+    const honest = provenance({ commits: [commitOf({ sha: real })], repo: REPO, runs, now: NOW, ...ancestry });
+    assertEqual(honest.status, "green", `an honest commit was refused: ${codesOf(honest)}`);
+
+    const v = provenance({ commits: [commitOf({ sha: forged })], repo: REPO, runs, now: NOW, ...ancestry });
+    assertEqual(codesOf(v), "SERVE_90_NO_RECEIPT", "a commit citing somebody else's run was accepted");
+  });
+
+  await test("two `signed` commits citing one run fails, even when the older is outside the 7-day window", () => {
+    // The duplicate check is over the WHOLE branch and the others are over the
+    // window, and that difference is the check: a forged commit's cheapest
+    // disguise is a run URL copied off a commit old enough that nothing
+    // re-examines it.
+    const old = commitOf({ sha: "3".repeat(40), minutesOld: (PROVENANCE_WINDOW_DAYS + 3) * 1440, run: "99" });
+    const fresh = commitOf({ sha: "4".repeat(40), minutesOld: 5, run: "99" });
+    const runs = new Map([["99", signerRun({ artifacts: [receiptName(fresh.sha), receiptName(old.sha)] })]]);
+    const v = provenance({ commits: [fresh, old], repo: REPO, runs, now: NOW, ...ancestry });
+    assert(codesOf(v).includes("SERVE_90_RUN_CITED_TWICE"),
+      `one run made two commits and nothing said so: ${codesOf(v)}`);
+  });
+
+  await test("a run of another workflow, another branch or an event the signer never runs on is refused", () => {
+    const sha = "5".repeat(40);
+    const commits = [commitOf({ sha })];
+    for (const [what, run] of [
+      ["another workflow", signerRun({ path: ".github/workflows/build-index.yml", artifacts: [receiptName(sha)] })],
+      ["another branch", signerRun({ head_branch: "wip", artifacts: [receiptName(sha)] })],
+      ["a pull request", signerRun({ event: "pull_request", artifacts: [receiptName(sha)] })],
+      ["a run that is gone", { ok: false, error: "HTTP 404" }],
+    ]) {
+      const v = provenance({ commits, repo: REPO, runs: new Map([["77", run]]), now: NOW, ...ancestry });
+      assertEqual(codesOf(v), "SERVE_90_RUN_NOT_A_SIGNER_RUN", `${what} was accepted as a signer run`);
+    }
+  });
+
+  await test("a Source-Commit the run could not have read, or that `main` cannot reach, is refused", () => {
+    // The Source-Commit is deliberately NOT the run's own head here: the rule
+    // is "equal to, or a descendant of", and a fixture where the two are equal
+    // passes through the equality half and never reaches the predicate under
+    // test. It did, in the first draft, and the test was green with
+    // `descendsFrom` returning false.
+    const sha = "6".repeat(40);
+    const commits = [commitOf({ sha, source: "c".repeat(40) })];
+    const runs = new Map([["77", signerRun({ artifacts: [receiptName(sha)] })]]);
+
+    const notDescendant = provenance({
+      commits, repo: REPO, runs, now: NOW,
+      reachableFromMain: () => true,
+      descendsFrom: () => false,
+    });
+    assertEqual(codesOf(notDescendant), "SERVE_90_SOURCE_COMMIT_NOT_DESCENDANT",
+      "a tree the run could not have read was accepted as the tree it signed");
+
+    const offMain = provenance({
+      commits, repo: REPO, runs, now: NOW,
+      reachableFromMain: () => false,
+      descendsFrom: () => true,
+    });
+    assertEqual(codesOf(offMain), "SERVE_90_SOURCE_COMMIT_UNREACHABLE",
+      "bytes signed over a tree that is not in public history were accepted");
+  });
+
+  await test("the head is checked however old it is, and older commits fall out of the window", () => {
+    // Artifacts expire, so a receipt for last year's commit is gone and a
+    // check demanding one would be permanently red about history nobody can
+    // re-attest. The head is the exception because the head is what is served.
+    const head = commitOf({ sha: "7".repeat(40), minutesOld: 400 * 1440, run: "70" });
+    const older = commitOf({ sha: "8".repeat(40), minutesOld: 500 * 1440, run: "71" });
+    const runs = new Map([["70", signerRun({ artifacts: [] })], ["71", signerRun({ artifacts: [] })]]);
+    const v = provenance({ commits: [head, older], repo: REPO, runs, now: NOW, ...ancestry });
+    assertEqual(codesOf(v), "SERVE_90_NO_RECEIPT", "the head's receipt was not required, or an old commit's was");
+    assert(v.hexes.length === 1 && v.hexes[0] === head.sha, "the window let a commit outside it be examined");
+  });
+
+  await test("a run URL in another repository proves nothing, and a missing one is not a pass", () => {
+    assertEqual(parseRunUrl("https://github.com/o/r/actions/runs/12")?.run_id, "12", "a plain run URL");
+    assertEqual(parseRunUrl("https://evil.example/o/r/actions/runs/12"), null, "a run URL off github.com");
+    // Everything about this commit is in order EXCEPT the repository its run
+    // URL names: the receipt is there, the run is a signer run, the ancestry
+    // holds. Written any other way the test passes for another reason — the
+    // first draft put no run in the table at all, so deleting the repository
+    // check left the commit failing on "the run could not be read", the code
+    // came out identical, and the guard was covered by nothing. Watched
+    // failing by deleting the check: green, 220 passed.
+    const sha = "9".repeat(40);
+    const foreign = commitOf({ sha, source: "c".repeat(40) });
+    foreign.trailers.Run = "https://github.com/someone/else/actions/runs/77";
+    const runs = new Map([["77", signerRun({ artifacts: [receiptName(sha)] })]]);
+    const v = provenance({ commits: [foreign], repo: REPO, runs, now: NOW, ...ancestry });
+    assertEqual(codesOf(v), "SERVE_90_RUN_NOT_A_SIGNER_RUN", "a fork's run was accepted as this repository's");
+    assert(v.findings[0].message.includes("someone/else"),
+      `the refusal has to name the repository that is not ours: ${v.findings[0].message}`);
+
+    const bare = { sha, committed_at: NOW, trailers: {} };
+    const none = provenance({ commits: [bare], repo: REPO, runs: new Map(), now: NOW, ...ancestry });
+    assertEqual(codesOf(none), "SERVE_90_NO_RUN_TRAILER", "a commit that says nothing was read as saying it is fine");
+  });
+
+  await test("the trailers are read off a real commit, not only off a fixture object", () => {
+    // Everything above hands `provenance` objects. This is the one test that
+    // asks git, because a parse that is never run against a real commit
+    // message is a parse that can be wrong in exactly one way — silently, by
+    // returning no trailers, which reads as `SERVE_90_NO_RUN_TRAILER` about
+    // every honest commit and gets switched off.
+    const t = makeTree("trailers");
+    t.write("registry/v1/revocations.json", { signed: {} });
+    execFileSync("git", ["-C", t.dir, "add", "-A"], { stdio: "ignore" });
+    execFileSync(
+      "git",
+      ["-C", t.dir, "commit", "-qm", "signed: the withdrawal list\n\nSource-Commit: " + "b".repeat(40) +
+        "\nRun: https://github.com/" + REPO + "/actions/runs/4242\nSigner: sign.yml"],
+      { stdio: "ignore", env: { ...process.env, GIT_AUTHOR_DATE: NOW, GIT_COMMITTER_DATE: NOW } },
+    );
+    const [commit] = signedCommits({ root: t.dir, ref: "HEAD" });
+    assertEqual(commit.trailers["Source-Commit"], "b".repeat(40), "Source-Commit did not survive the parse");
+    assertEqual(parseRunUrl(commit.trailers.Run)?.run_id, "4242", "the run URL did not survive the parse");
+    assertEqual(trailersOf("Run: x\nRun: y").Run, "y", "the last occurrence wins; trailers live at the end");
   });
 
   // ── the one verdict ────────────────────────────────────────────────────────
