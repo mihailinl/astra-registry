@@ -315,3 +315,15 @@ jobs:
       # cutover commit (ROLL-33). ~0.3 s, no probe, no network.
       - name: MIG-1's listing states, against repositories and both new records
         run: node --test bot/tests/listing-state.test.mjs
+
+      # M-T3.2. TRUST-26's takedown bound, counted out of git: real repositories
+      # again, because every part of the rule is a comparison between a commit
+      # and its parent — was this listing listed a commit ago, did this advisory
+      # match this id before it matched it now, did this happen inside the
+      # trailing 24 hours. The case that matters most is the one attack M-2
+      # named: a hand advisory committed under `Moderation-Exempt:` and no
+      # `Service-Decision:` must COUNT, because a counter that filtered on that
+      # trailer returned 0 on the one day the registry was withdrawing by hand
+      # and let a fourth withdrawal out unheld. ~0.4 s, no probe, no network.
+      - name: The takedown bound, against repositories that withdrew something
+        run: node --test bot/tests/takedown-bound.test.mjs

@@ -90,6 +90,32 @@ export const TRIAGE_DECISION_DAYS = 7;
 /** From an appeal being filed to a reasoned answer. */
 export const APPEAL_RESPONSE_DAYS = 7;
 
+// ── TRUST-26's takedown bound ───────────────────────────────────────────────
+//
+// How many listed plugin ids the estate may withdraw in any trailing 24 hours
+// before the next takedown — `block_install` included — waits for an
+// operator's MOD-52 confirmation (MOD-9). It caps the blast radius of a
+// compromised panel or service; `bot/lib/takedown-bound.mjs` is what counts
+// the window, out of git, and `bot/lib/holds.mjs` is what holds above it.
+//
+// **IT IS 1 BECAUSE NO POLICY DOCUMENT PUBLISHES A NUMBER YET, AND THAT IS THE
+// WHOLE OF THE REASON.** The owner closed OPEN-OWNER-3 at 3 — three in the
+// trailing 24 h, a bound account's removal request and an author's yank
+// counting — and `reg.61a` lands that 3 here and the sentence that carries it
+// in POLICY.md §7, in one commit, before TRUST-10's acknowledgement (M-T3.2,
+// B-T3.3b). Until then the bot enforces the strictest bound it can that is
+// still a bound: 1 lets the first withdrawal of a day through and holds every
+// one after it for a person, where 0 would hold the first as well and be a
+// stop rather than a bound. A bot enforcing 3 against a policy that promises
+// nothing would be making the estate's most consequential promise out of a
+// literal nobody can read.
+//
+// `bot/tests/policy.test.mjs` holds the pair together in both directions: with
+// no bound published this must be 1, and with one published it must be that
+// number and the document must also say that a takedown above it waits for an
+// operator. So reg.61a cannot land half of itself.
+export const TAKEDOWN_BOUND = 1;
+
 /** Which advisory actions a log entry of each kind is allowed to be backed by. */
 export const BACKING = {
   deprecate: ["warn"],

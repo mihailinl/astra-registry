@@ -2464,6 +2464,135 @@ await test("MIG-3 — the deadline is in one place, and no document states one t
   }
 });
 
+// M-T3.2's half of reg.61a, written — like MIG-3 above — against the ABSENCE,
+// because the number is not published yet and inventing one here would be the
+// registry promising a blast-radius cap nobody can read.
+//
+// `TAKEDOWN_BOUND` in `bot/lib/moderation.mjs` decides how many listed plugin
+// ids the estate may withdraw in a trailing 24 h before the next takedown
+// waits for an operator (TRUST-26, MOD-9). The owner closed OPEN-OWNER-3 at 3;
+// reg.61a lands that 3 and the POLICY.md §7 sentence together, and until it
+// does the constant is 1 — the strictest value that is still a bound. Both
+// directions are live from today:
+//
+//   no published bound → the constant is 1. A bot enforcing 3 against a policy
+//                        that promises nothing is a promise with no document
+//                        behind it, and the day somebody reads the constant as
+//                        the published rule is the day the estate learns it was
+//                        never published.
+//   a published bound  → the constant is that number, every policy document
+//                        stating one states the same one, and the document also
+//                        says that above the bound a takedown waits for an
+//                        operator, that a removal request counts and that an
+//                        author's yank counts. So reg.61a cannot land half of
+//                        itself in either order.
+//
+// THE CANONICAL FORM is this check's own requirement, as `YYYY-MM-DD` is
+// MIG-3's: a bound is claimed by a number — digit or word — followed within 40
+// characters by "in any/a/the trailing 24 hours". It is how `docs/RUNBOOK.md`
+// §7.10 already writes it, and it is the only way a machine can hold three
+// documents to one number.
+//
+// FLOW-42's PER-ACCOUNT CAP IS EXCLUDED BY NAME, and that exclusion is the
+// subtle half. "each account at one listed plugin id in any trailing 24 hours"
+// is a different number in identical units, it is the SERVICE's cap and not the
+// registry's — the bot never learns which account acted (TRUST-37, DEC-7) — and
+// a scan that conflated them would pin TRUST-26's bound to FLOW-42's 1 and be
+// green about it. Any claim with "account" within 120 characters is not this
+// bound.
+//
+// docs/RUNBOOK.md IS IN THE SCAN, and not as decoration. It is the operator's
+// document, not the published policy, and it has stated the bound at 3 since
+// before any code counted one. Nothing compared it with anything. The leg
+// asserted here is the one that is live today and non-vacuous: the code may
+// never hold LATER than the runbook says it will. Holding sooner is a surprise
+// in the safe direction; holding later means an operator who planned by §7.10
+// watched a fourth withdrawal go out.
+await test("M-T3.2 — the takedown bound the code enforces is the one a document publishes", async () => {
+  const { TAKEDOWN_BOUND } = await import("../lib/moderation.mjs");
+  const { execFileSync } = await import("node:child_process");
+
+  assert(Number.isInteger(TAKEDOWN_BOUND) && TAKEDOWN_BOUND >= 1,
+    `TAKEDOWN_BOUND is ${JSON.stringify(TAKEDOWN_BOUND)}; a bound below 1 holds the first withdrawal of every ` +
+    "day, which is a stop and not a bound");
+
+  // The floor, measured against the TRACKED set rather than a readdir: a third
+  // published policy document is a document this scan would never open, and the
+  // absence branch would go on being green about the number in it.
+  const tracked = execFileSync("git", ["-C", REPO_ROOT, "ls-files"], { encoding: "utf8" })
+    .split("\n").filter((p) => /(^|\/)POLICY\.md$/.test(p)).sort();
+  assertEqual(tracked.join(", "), "POLICY.md, docs/POLICY.md",
+    "the published policy documents are not the two this check reads; a document it does not open can state " +
+    "any bound it likes and nothing here will notice");
+
+  const WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9 };
+  const CLAIM = /\b(\d+|one|two|three|four|five|six|seven|eight|nine)\b[^.\n]{0,40}?\bin\s+(?:any|a|the)\s+trailing\s+24\s+hours?\b/gi;
+  const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, rel), "utf8");
+  const claimsIn = (rel) => {
+    const text = read(rel);
+    const out = [];
+    for (const m of text.matchAll(CLAIM)) {
+      const around = text.slice(Math.max(0, m.index - 120), m.index + m[0].length + 120);
+      if (/\baccounts?\b/i.test(around)) continue;            // FLOW-42's cap, not TRUST-26's bound
+      const raw = m[1].toLowerCase();
+      out.push({ where: `${rel}:${text.slice(0, m.index).split("\n").length}`, value: WORDS[raw] ?? Number(raw) });
+    }
+    return out;
+  };
+
+  // ── the operator's document, which has carried the number all along ───────
+  const runbook = claimsIn("docs/RUNBOOK.md");
+  assertEqual(runbook.length, 1,
+    `docs/RUNBOOK.md §7.10 states ${runbook.length} takedown bound(s) in the form this check reads ` +
+    `(${runbook.map((c) => `${c.where} ${c.value}`).join(", ") || "none"}); it stated exactly one on 2026-09-20, ` +
+    "and a scan that finds none reports every number as agreeing");
+  assert(TAKEDOWN_BOUND <= runbook[0].value,
+    `bot/lib/moderation.mjs enforces ${TAKEDOWN_BOUND} and ${runbook[0].where} tells an operator the bound is ` +
+    `${runbook[0].value}. The code may hold sooner than the runbook promises, never later: an operator who ` +
+    "planned a day's withdrawals by §7.10 would watch the one past the bound go out unheld");
+
+  // ── the published policy, which does not carry it yet ─────────────────────
+  const published = tracked.flatMap(claimsIn);
+  const mentions = tracked.filter((rel) => /takedown/i.test(read(rel)));
+
+  if (mentions.length === 0) {
+    assertEqual(published.length, 0,
+      `no published policy document mentions a takedown and yet ${published.map((c) => c.where).join(", ")} ` +
+      "states a trailing-24-hour bound; a number with nothing around it saying what it bounds is worse than none");
+    assertEqual(TAKEDOWN_BOUND, 1,
+      `POLICY.md and docs/POLICY.md publish no takedown bound, so bot/lib/moderation.mjs must enforce 1 — the ` +
+      `strictest bound that is still one — and it enforces ${TAKEDOWN_BOUND}. reg.61a lands the owner's 3 ` +
+      "(OPEN-OWNER-3) and the POLICY.md §7 sentence in ONE commit (M-T3.2, B-T3.3b); neither half lands alone");
+    return;
+  }
+
+  assert(published.length >= 1,
+    `${mentions.join(" and ")} mention${mentions.length === 1 ? "s" : ""} a takedown and state no bound this ` +
+    "check can read. Write it as `<n> in any trailing 24 hours` — a digit or the word — and this check will " +
+    "compare it with bot/lib/moderation.mjs");
+  for (const c of published) {
+    assertEqual(c.value, TAKEDOWN_BOUND,
+      `${c.where} publishes a takedown bound of ${c.value} and bot/lib/moderation.mjs enforces ${TAKEDOWN_BOUND}. ` +
+      "The published number is the promise; the constant is what keeps it");
+  }
+  // What the sentence has to carry beside the number (OPEN-OWNER-3, OPEN-OWNER-14,
+  // FLOW-79, and the C16 correction reg.61a's line must say rather than the
+  // overstated framing the owner was shown).
+  const paragraphs = mentions
+    .flatMap((rel) => read(rel).split(/\n\s*\n/).map((p) => ({ rel, p })))
+    .filter(({ p }) => /takedown/i.test(p));
+  const said = paragraphs.map(({ p }) => p).join("\n\n");
+  for (const [what, re] of [
+    ["that above the bound a takedown waits for an operator", /\boperator\b/i],
+    ["that a removal request counts toward it", /removal request/i],
+    ["that an author's yank counts toward it", /\byank/i],
+  ]) {
+    assert(re.test(said),
+      `the published takedown-bound paragraphs never say ${what}. An author reads that sentence before using ` +
+      "the yank, and it is the only place this side reduces the surprise (M-T3.2, OPEN-OWNER-45's C16)");
+  }
+});
+
 
 // ── B-T3.3c: the outcomes that write nothing ────────────────────────────────
 
