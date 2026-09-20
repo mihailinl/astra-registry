@@ -48,6 +48,48 @@ import { parseSemver } from "./semver.mjs";
 /** Where advisories are written, one JSON file per advisory. */
 export const SOURCE_DIR = "tools/revocations";
 
+/**
+ * The same directory as a **git pathspec**, narrowed to the files the document
+ * is actually built from.
+ *
+ * `SOURCE_DIR` answers *where do advisories live*. This answers *which commits
+ * changed the withdrawal list*, and the two are not the same question — the
+ * directory also holds a README.
+ *
+ * It exists because detector A7 asked the first question and used the answer
+ * for the second. On 2026-09-20 at 09:25 `a6a4c55` added **ten lines to
+ * `tools/revocations/README.md`** and A7 alarmed:
+ *
+ *     ALARM A7 A7_SIGNED_BEHIND_REVOCATIONS: `signed`'s Source-Commit is 223
+ *     minutes older than the newest tools/revocations/ commit a6a4c552cb3a;
+ *     the bound is 30
+ *
+ * Every number in that sentence is correct. The subject is wrong: nothing about
+ * the signed withdrawal list changed, and `signed` was not behind anything. The
+ * run went red, `detectors.yml` went red with it, and it stayed red until the
+ * next push to `main` happened to re-run the signer — because `sign.yml`'s cron
+ * is hourly and the bound is thirty minutes. **A documentation edit made an
+ * alarm channel fire for up to an hour**, which is the specific failure this
+ * repository spent 2026-09-19 removing from `served-set.yml` and `ingest.yml`.
+ *
+ * The rule it is an instance of is in ops `dev/couplings.md`: *an instrument
+ * can be right about the number and wrong about the subject.* Every earlier
+ * instance was answered the same way — stop naming the subject, let the tool
+ * resolve it — and that is why this is an export here rather than a narrower
+ * string typed into `bot/detectors.mjs`. The module that owns *what the
+ * withdrawal list is built from* is the module that should answer it, so a
+ * change of layout moves one line and every reader follows.
+ *
+ * Deliberately NOT symmetric with A7's other half. Its `plugins` pathspec stays
+ * the whole directory, because a plugin's `README.md` and `icon.png` **do**
+ * reach the catalogue — the index carries `readme`, and a publish that changes
+ * only those still rewrites `registry/v1/index.json`. Measured on `6659a61`:
+ * README, icon, `plugin.json`, the version file and `index.json` in one commit.
+ * The asymmetry is the two documents having different inputs, not an oversight,
+ * and it is written here so the next reader does not "fix" it.
+ */
+export const SOURCE_PATHSPEC = `${SOURCE_DIR}/*.json`;
+
 /** Where the generated, deployable document lands. */
 export const OUTPUT_FILE = "registry/v1/revocations.json";
 
