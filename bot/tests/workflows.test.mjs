@@ -60,14 +60,19 @@ function allJobs() {
   return out;
 }
 
-/** Is this job pinned to environment `alerts`? Both spellings YAML allows. */
-function inAlerts(job) {
+/** Is this job pinned to environment `name`? Both spellings YAML allows. */
+function inEnvironment(job, name) {
+  const bare = new RegExp(`^\\s+environment:\\s*${name}\\s*$`);
+  const named = new RegExp(`^\\s+name:\\s*${name}\\s*$`);
   for (let i = 0; i < job.body.length; i++) {
-    if (/^\s+environment:\s*alerts\s*$/.test(job.body[i])) return true;
-    if (/^\s+environment:\s*$/.test(job.body[i]) && /^\s+name:\s*alerts\s*$/.test(job.body[i + 1] ?? "")) return true;
+    if (bare.test(job.body[i])) return true;
+    if (/^\s+environment:\s*$/.test(job.body[i]) && named.test(job.body[i + 1] ?? "")) return true;
   }
   return false;
 }
+
+/** Is this job pinned to environment `alerts`? */
+const inAlerts = (job) => inEnvironment(job, "alerts");
 
 const code = (job) => job.body.filter((l) => !l.trim().startsWith("#"));
 const where = (job) => `${job.file}:${job.line} (job ${job.job})`;
@@ -176,10 +181,30 @@ test("comment waits for publish", () => {
 // dependency that FAILED, so `needs: roots` alone says nothing about the two
 // jobs that carry one — and those two are `comment`, which talks to the
 // author, and `publish`, which is the only job that commits.
-test("every job in ingest.yml waits for the roots check", () => {
-  const jobs = allJobs().filter((j) => j.file === "ingest.yml");
-  assert.ok(jobs.length >= 8, `only ${jobs.length} job(s) in ingest.yml; this check would prove little`);
-  assert.ok(jobs.some((j) => j.job === "roots"), "ingest.yml has no roots job");
+//
+// **Written over every workflow that HAS a roots job, not over `ingest.yml`**
+// (B-T3.1). `plugins-ingest.yml` is the second, and the rule is the same one
+// for the same reason — it is the file whose `publish` job commits and whose
+// `claim` job speaks for this registry to the plugins service. A rule scoped
+// to one file is a rule the next file does not inherit, and the next file
+// arrived three weeks later written by somebody who never read this one.
+test("every job in a workflow that has a roots check waits for it", () => {
+  const withRoots = files.filter((f) => allJobs().some((j) => j.file === f && j.job === "roots"));
+  // The floor. Two on 2026-09-20 — `ingest.yml` and `plugins-ingest.yml` — and
+  // without it a renamed job leaves this test looping over nothing and green.
+  assert.ok(
+    withRoots.length >= 2,
+    `only ${withRoots.length} workflow(s) have a roots job (${withRoots.join(", ") || "none"}); there were 2 on ` +
+    `2026-09-20. A file that lost its roots job lost the edge this rule is about, silently`,
+  );
+  assert.ok(withRoots.includes("ingest.yml") && withRoots.includes("plugins-ingest.yml"),
+    `the two files this rule was written for are ${withRoots.join(", ")}; one of them no longer has a roots job`);
+
+  const jobs = allJobs().filter((j) => withRoots.includes(j.file));
+  for (const file of withRoots) {
+    const n = jobs.filter((j) => j.file === file).length;
+    assert.ok(n >= 8, `only ${n} job(s) in ${file}; this check would prove little`);
+  }
 
   const problems = [];
   for (const job of jobs) {
@@ -212,7 +237,7 @@ test("every job in ingest.yml waits for the roots check", () => {
       );
     }
   }
-  assert.equal(problems.join("\n"), "", "a job in ingest.yml can outrun the check that says the anchor is sound");
+  assert.equal(problems.join("\n"), "", "a job can outrun the check that says the anchor is sound");
 });
 
 // B-T1.5. A sparse checkout that forgot one module fails four lines later with
@@ -1186,4 +1211,666 @@ test("every suite under bot/tests/ is named by a workflow, and the list has a fl
     "its directory reports every suite as run",
   );
   assert.ok(files.length >= 10, `only ${files.length} workflow file(s) read; there were 13 on 2026-09-20`);
+
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// The bot workflows' job graph (registry plan B-T3.1; BOT-1, BOT-2, BOT-4,
+// BOT-5, BOT-6, BOT-51, BOT-55, BOT-56, BOT-89, ID-38, INV-7).
+//
+// `plugins-ingest.yml` is twelve jobs, and every property that makes it safe
+// is a property of the YAML: which job may mint a token that speaks for this
+// registry, which may write to `main`, which may open a stranger's archive,
+// which may reach the alarm channel — and, above all, that no job may do two
+// of those. None of it is expressible in the scripts those jobs run, because
+// the thing being constrained is what the RUNNER hands the job before a line
+// of script executes.
+//
+// The rule underneath all of them: **each job holds at most one of a bot OIDC
+// token, `contents: write`, stranger bytes, an `alerts` credential.** The
+// lints below are that sentence taken apart into the mutations that would
+// each break one piece of it, because the sentence itself is not checkable and
+// the pieces are.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// The two workflows that hold a bot OIDC token. Named, rather than derived
+// from "mentions plugins-service", because two of the rules below are about
+// what a file must NOT contain — and a set defined by a needle cannot hold a
+// rule about that needle's absence.
+const BOT_WORKFLOWS = ["plugins-ingest.yml", "plugins-moderation.yml"];
+const botWorkflows = () => BOT_WORKFLOWS.filter((f) => files.includes(f));
+
+const INGEST = "plugins-ingest.yml";
+
+/** Does this job declare `id-token: write`? */
+const mintsToken = (job) => code(job).some((l) => /^\s+id-token:\s*write\s*$/.test(l));
+/** Does this job declare `contents: write`? */
+const writesRepo = (job) => code(job).some((l) => /^\s+contents:\s*write\s*(#.*)?$/.test(l));
+/** Does this job name the plugins-service environment, anywhere? */
+const namesService = (job) => code(job).some((l) => l.includes("plugins-service"));
+
+/** The keys of a two-level block (`outputs:`, `env:`) inside a job body. */
+function blockKeys(job, block) {
+  const lines = code(job);
+  const at = lines.findIndex((l) => new RegExp(`^\\s+${block}:\\s*$`).test(l));
+  if (at < 0) return null;
+  const indent = lines[at].search(/\S/);
+  const keys = [];
+  for (let i = at + 1; i < lines.length; i++) {
+    if (lines[i].trim() === "") continue;
+    const here = lines[i].search(/\S/);
+    if (here <= indent) break;
+    const m = new RegExp(`^\\s{${indent + 2}}([A-Za-z0-9_-]+):`).exec(lines[i]);
+    if (m) keys.push(m[1]);
+  }
+  return keys;
+}
+
+/** One job of one file, or a failure that says which is missing. */
+function jobOf(file, name) {
+  const job = allJobs().find((j) => j.file === file && j.job === name);
+  assert.ok(job, `${file} has no \`${name}\` job; the rule below has no subject`);
+  return job;
+}
+
+test("the bot workflows exist, and this section has something to check", () => {
+  const present = botWorkflows();
+  assert.ok(
+    present.includes(INGEST),
+    `${INGEST} is not in .github/workflows. B-T3.1 creates it, and every rule below would pass by finding ` +
+    `nothing without it`,
+  );
+  // The floor B-T3.1 names. Twelve jobs: roots, load, poll, claim, remember,
+  // verify, check, ask, decide, alert, publish, report. Fewer means two of
+  // them were merged, and merging any two of them is exactly the move every
+  // rule in this section exists to refuse.
+  const jobs = allJobs().filter((j) => j.file === INGEST);
+  assert.ok(
+    jobs.length >= 12,
+    `${INGEST} has ${jobs.length} jobs and B-T3.1's graph is 12 (${jobs.map((j) => j.job).join(", ")}). ` +
+    `The split between them is the whole subject of that file: a job that holds two of {a bot token, ` +
+    `contents: write, stranger bytes, the alarm credential} is one exploit away from a bot that can both ` +
+    `speak for this registry and write its catalogue`,
+  );
+  for (const name of ["roots", "claim", "verify", "check", "ask", "decide", "alert", "publish", "report"]) {
+    assert.ok(jobs.some((j) => j.job === name), `${INGEST} has no \`${name}\` job`);
+  }
+});
+
+// BOT-1 and ID-38. A job that mints a token which speaks for this registry
+// runs no submitter code, downloads no submitter file and parses no stranger
+// text beyond grammar-validated values. "Runs no submitter code" is not a
+// property a reviewer can check by reading a job once — the way it stops being
+// true is a step added later — so the three things that WOULD make it false
+// are named instead, and asserted absent.
+//
+// Written over every job in the repository rather than over the bot workflows,
+// because the property is about the token and the token is what the
+// `plugins-service` environment gates.
+const SERVICE_JOB_FORBIDDEN = [
+  [/gh attestation/, "calls `gh attestation`, which verifies a stranger's bundle"],
+  [/gh release download|releases\/download\//, "downloads a release asset"],
+  [/\.well-known\//, "reads `.well-known/`, which is a stranger's server's answer"],
+  [/bot\/ingest\.mjs/, "runs bot/ingest.mjs, which downloads and unpacks"],
+  [/actions\/upload-artifact/, "uploads an artifact; a token job's output travels as a job output (BOT-55)"],
+];
+
+test("no job that reaches the plugins service also reaches a stranger's bytes", () => {
+  const service = allJobs().filter(namesService);
+  // The floor, written before the mutation. With none found the loop runs over
+  // nothing and this whole rule is green about a file it never opened.
+  assert.ok(
+    service.length >= 3,
+    `only ${service.length} job(s) reference plugins-service and there were 3 on 2026-09-20 (claim, ask, ` +
+    `report); this is a broken read, not a smaller graph`,
+  );
+  const offenders = [];
+  for (const job of service) {
+    code(job).forEach((line, i) => {
+      for (const [pattern, what] of SERVICE_JOB_FORBIDDEN) {
+        if (pattern.test(line)) offenders.push(`${job.file}:${job.line + i} (job ${job.job}) ${what}`);
+      }
+    });
+  }
+  assert.equal(
+    offenders.join("\n"),
+    "",
+    "a job holding a bot OIDC token can reach a stranger's bytes. The token is not a read credential: it " +
+    "claims submissions, reads binding verdicts and posts results the service records as this registry's " +
+    "word (DEC-4). One exploited unpack in that job is a bot that speaks for the registry",
+  );
+});
+
+// BOT-2. One compromised job must not both speak for the bot and write the
+// catalogue. The two halves of the estate's trust in a publication are "the
+// service said so" and "the registry committed it", and a job holding both is
+// a job that can manufacture the agreement.
+test("no job mints a bot token and writes the repository", () => {
+  const offenders = allJobs()
+    .filter((j) => mintsToken(j) && writesRepo(j))
+    .map((j) => where(j));
+  assert.equal(
+    offenders.join(", "),
+    "",
+    "a job holds `id-token: write` and `contents: write`. Whoever reaches that job can both claim a " +
+    "submission as this registry and commit the listing it claimed (BOT-2)",
+  );
+});
+
+// ID-38, second half. In a bot workflow, a job either mints a token — and then
+// it references `plugins-service` — or it declares `id-token: none` out loud.
+//
+// The declaration is the point. GitHub's default for an unlisted scope under a
+// job-level `permissions:` block is already `none`, so this rule buys nothing
+// at run time; it buys the review. A job that grows a token later is then a
+// one-line diff from `none` to `write`, in front of a reviewer, instead of a
+// `permissions:` block that never mentioned the scope at all.
+test("every job in a bot workflow declares what it does about an OIDC token", () => {
+  const present = botWorkflows();
+  assert.ok(present.length >= 1, "no bot workflow is on disk; this rule has no subject");
+  const problems = [];
+  let checked = 0;
+  for (const job of allJobs().filter((j) => present.includes(j.file))) {
+    checked++;
+    const declares = code(job).some((l) => /^\s+id-token:\s*(write|none)\s*$/.test(l));
+    if (!declares) {
+      problems.push(
+        `${where(job)} declares no \`id-token:\`. ID-38: the jobs of a bot workflow that do not mint a token ` +
+        `say \`id-token: none\`, so that growing one is a visible edit`,
+      );
+      continue;
+    }
+    if (mintsToken(job) && !namesService(job)) {
+      problems.push(
+        `${where(job)} declares \`id-token: write\` and never references plugins-service. ID-38 binds the two: ` +
+        `bot/lib/oidc.mjs refuses to run outside that environment, so a token job that is not in it is either ` +
+        `red on every run or minting for something else`,
+      );
+    }
+  }
+  assert.ok(checked >= 12, `only ${checked} job(s) checked across ${present.join(", ")}; the graph is 12`);
+  assert.equal(problems.join("\n"), "", "a bot workflow job is silent about whether it holds a bot OIDC token");
+});
+
+// ID-38's last sentence. Outside the bot workflows, `id-token: write` is
+// allowed — the Pages deploys need it — but only in jobs that do not reference
+// `plugins-service`. An OIDC token minted in a job the service's audience
+// would accept, from a workflow nobody is holding to BOT-1, is the boundary
+// gone by a different door.
+test("`id-token: write` outside the bot workflows never sits beside plugins-service", () => {
+  const present = botWorkflows();
+  const offenders = allJobs()
+    .filter((j) => !present.includes(j.file) && mintsToken(j) && namesService(j))
+    .map((j) => where(j));
+  assert.equal(
+    offenders.join(", "),
+    "",
+    "a workflow outside the bot's own mints an OIDC token in a job that names plugins-service (ID-38)",
+  );
+  // The floor: `id-token: write` exists somewhere outside them, so the filter
+  // above is filtering something. `sign.yml`'s `pages` job is the case.
+  const minters = allJobs().filter((j) => !present.includes(j.file) && mintsToken(j));
+  assert.ok(
+    minters.length >= 1,
+    `no job outside ${present.join(", ")} declares id-token: write, and sign.yml's pages job did on ` +
+    `2026-09-20; this rule is passing by finding nothing`,
+  );
+});
+
+// The `bot-state` environment (B-T5.0, BOT-42), held by `load` and `remember`
+// and by nothing else.
+//
+// Its secret is the HMAC key over the poll and sweep memory, and the attack it
+// is guarded against is not theft of the key but FORGERY with it: a writer who
+// could read that key could sign a sweep memory in which an unregistered tag
+// reads as already seen, and `load`'s signature check would pass because the
+// forgery carries the real key. What that suppresses is BOT-87 — the only
+// detector for a release that silently never reached the service.
+//
+// So a `bot-state` job holds the key and nothing else: no token, no write
+// access, no release feed, no release download. It DOES restore a cache, which
+// is the one difference from an `alerts` job and is the whole reason the
+// environment exists.
+const BOT_STATE_FORBIDDEN = [
+  [/^\s+contents:\s*write\s*(#.*)?$/, "`contents: write`; the memory lives in the Actions cache, never in git"],
+  [/^\s+id-token:\s*write\s*$/, "a bot OIDC token"],
+  [/secrets\.GITHUB_TOKEN|github\.token/, "the GitHub token"],
+  [/releases\.atom/, "the releases feed, which is a stranger's bytes"],
+  [/gh release download|releases\/download\//, "a release download"],
+];
+
+test("every job in environment `bot-state` holds the memory key and nothing else", () => {
+  const stateJobs = allJobs().filter((j) => inEnvironment(j, "bot-state"));
+  assert.ok(
+    stateJobs.length >= 2,
+    `${stateJobs.length} job(s) are in environment bot-state and B-T3.1's graph has 2 (load, remember); ` +
+    `with none found every loop below runs over nothing`,
+  );
+  const offenders = [];
+  for (const job of stateJobs) {
+    code(job).forEach((line, i) => {
+      for (const [pattern, what] of BOT_STATE_FORBIDDEN) {
+        if (pattern.test(line)) offenders.push(`${job.file}:${job.line + i} (job ${job.job}) holds ${what}`);
+      }
+    });
+  }
+  assert.equal(
+    offenders.join("\n"),
+    "",
+    "a job holding the poll memory's signing key can do more than sign the poll memory. Whoever reaches it " +
+    "can forge a sweep memory in which an unregistered tag reads as seen, and BOT-87 — the only detector " +
+    "for a release that silently never reached the service — goes quiet about it (attack M-6)",
+  );
+});
+
+// BOT-4 and BOT-5. Two lints, one test, because they fail the same way: a
+// dispatch that can be aimed, and a job group that can drop a pending run.
+//
+// **Inputs.** A dispatch of a token-holding workflow may mean exactly one
+// thing, "pull now". An input is how it comes to mean "pull THIS release, for
+// THIS account" — and whoever may dispatch then chooses whose authority the
+// run re-proves. `ingest.yml` had exactly that shape and B-T0.6 removed it.
+//
+// **Job-level concurrency.** GitHub keeps one PENDING run per group and
+// cancels the middle one when a third queues. On a workflow-level group that
+// is harmless: a run that has not started has claimed nothing. On a JOB-level
+// group inside a run that has already claimed leases, it is not — those
+// submissions are then leased to a run that will never report, and they wait
+// out the lease before anybody can have them.
+test("a bot workflow takes no dispatch input and puts no job in its own group", () => {
+  const present = botWorkflows();
+  assert.ok(present.length >= 1, "no bot workflow is on disk; this rule has no subject");
+  const problems = [];
+  for (const file of present) {
+    const lines = read(file).split("\n");
+
+    const at = lines.findIndex((l) => /^\s{2}workflow_dispatch:/.test(l));
+    assert.ok(at >= 0, `${file} has no workflow_dispatch trigger`);
+    let end = at + 1;
+    while (end < lines.length && (lines[end].trim() === "" || /^\s{4}/.test(lines[end]))) end++;
+    const body = lines.slice(at + 1, end).filter((l) => l.trim() && !l.trim().startsWith("#"));
+    if (body.length > 0) {
+      problems.push(
+        `${file}'s workflow_dispatch carries ${JSON.stringify(body.join(" ").trim())}. BOT-4: a dispatch of a ` +
+        `token-holding workflow means "pull now" and nothing else; an input lets whoever may press the button ` +
+        `aim one run at one release`,
+      );
+    }
+
+    for (const trigger of ["repository_dispatch"]) {
+      const line = lines.findIndex((l) => new RegExp(`^\\s{2}${trigger}:`).test(l));
+      if (line >= 0) problems.push(`${file}:${line + 1} declares ${trigger}, which BOT-4 refuses in a bot workflow`);
+    }
+
+    for (const job of allJobs().filter((j) => j.file === file)) {
+      code(job).forEach((l, i) => {
+        if (/^\s+concurrency:/.test(l)) {
+          problems.push(
+            `${file}:${job.line + i} (job ${job.job}) is in a concurrency group of its own. BOT-5: one group ` +
+            `for the workflow, cancel-in-progress: false, and none on a job — a cancelled job inside a run ` +
+            `that already claimed leaves those leases to expire`,
+          );
+        }
+      });
+    }
+
+    const src = read(file);
+    const workflowGroup = /^concurrency:\n(?:\s+#.*\n)*\s+group:\s*\S+/m.test(src);
+    if (!workflowGroup) problems.push(`${file} declares no workflow-level concurrency group (BOT-5)`);
+    if (!/^\s{2}cancel-in-progress:\s*false\s*$/m.test(src)) {
+      problems.push(`${file}'s workflow-level group is not cancel-in-progress: false (BOT-5)`);
+    }
+  }
+  assert.equal(problems.join("\n"), "", "a bot workflow can be aimed, or can drop a run that already claimed");
+});
+
+// BOT-56. A bot job holding a bot OIDC token or `contents: write` restores no
+// Actions cache and downloads no artifact by pattern.
+//
+// Both are bytes some other job produced. An artifact pattern in the job that
+// commits is the door `ingest.yml`'s publish job still has — it downloads
+// `pattern: ingest-report-*` — and that is tolerable there only because the
+// job that produces them holds no token. In `plugins-ingest.yml` the producing
+// job unpacks a stranger's archive, so the credentialled jobs take exactly the
+// names `claim` reported and nothing that merely matches them.
+test("no token job and no write job in a bot workflow globs an artifact or restores a cache", () => {
+  const present = botWorkflows();
+  assert.ok(present.length >= 1, "no bot workflow is on disk; this rule has no subject");
+  const credentialled = allJobs().filter((j) => present.includes(j.file) && (mintsToken(j) || writesRepo(j)));
+  assert.ok(
+    credentialled.length >= 4,
+    `${credentialled.length} credentialled job(s) found in ${present.join(", ")} and there were 4 on ` +
+    `2026-09-20 (claim, ask, report, publish); this rule would pass by finding nothing`,
+  );
+  const problems = [];
+  for (const job of credentialled) {
+    const lines = code(job);
+    lines.forEach((line, i) => {
+      if (/^\s+pattern:\s*\S/.test(line)) {
+        problems.push(
+          `${job.file}:${job.line + i} (job ${job.job}) downloads artifacts by pattern while holding a ` +
+          `credential. BOT-56: a pattern takes whatever was uploaded under a matching name, and the job that ` +
+          `uploads in this graph is the one that opened a stranger's archive`,
+        );
+      }
+      if (/uses:\s*actions\/cache/.test(line)) {
+        problems.push(
+          `${job.file}:${job.line + i} (job ${job.job}) restores an Actions cache while holding a credential. ` +
+          `BOT-56: a cache is bytes a pull request can poison`,
+        );
+      }
+    });
+  }
+  assert.equal(problems.join("\n"), "", "a credentialled bot job takes bytes another job chose the name of");
+});
+
+// BOT-55. What `decide` may take from the job that opened the archive, and
+// what `publish` and `report` may take from anybody.
+//
+// `decide` holds nothing — no token, no write, no key — so it is the one place
+// in the graph where globbing over other jobs' uploads costs nothing, and it
+// is therefore the funnel. Everything downstream of it takes one artifact by
+// one exact name. The rule below is the property that makes the funnel real:
+// the two `check` artifacts are `facts-` and `listing-` and there is no third.
+test("`check` uploads exactly the two artifacts the rest of the graph expects", () => {
+  const job = jobOf(INGEST, "check");
+  // The `name:` of each upload step, read out of that step and not out of the
+  // job: a job-wide scan for `name:` takes every step's own title and every
+  // download's artifact too, and reports a job that uploads nine things.
+  const uploaded = stepsOf(code(job))
+    .filter((s) => s.body.some((l) => /uses:\s*actions\/upload-artifact/.test(l)))
+    .map((s) => /^\s+name:\s*(.+?)\s*$/m.exec(s.body.join("\n"))?.[1] ?? "(no name:)");
+  assert.deepEqual(
+    uploaded,
+    ["facts-${{ matrix.submission_id }}", "listing-${{ matrix.submission_id }}"],
+    "the job that unpacks a stranger's archive uploads something other than exactly `facts-<submission_id>` " +
+    "and `listing-<submission_id>`. A third artifact is a third channel out of the one job in this graph " +
+    "that runs code from a release, and nothing downstream validates a name it was not expecting (BOT-55)",
+  );
+});
+
+// BOT-89, and it is a privacy rule as much as a security one.
+//
+// The run logs of this repository are public. A binding verdict is a fact
+// about a person's GitHub account and the state of a token they hold; an
+// eligibility value is a fact about whether the service will let them publish.
+// Contract BOT-89: the bot MUST NOT print any of it in a run log, a step
+// summary, an artifact or a commit — the job that asks outputs only the
+// outcome the bot acts on, and that outcome comes from a closed list of four.
+//
+// Two assertions, because the list and the output are two different ways to
+// leak. A second declared output is a value in the run's own metadata; a fifth
+// word in the list is a value the step may write into the one output there is.
+test("`ask` declares one output, and the four words it is allowed to contain", () => {
+  const job = jobOf(INGEST, "ask");
+
+  assert.deepEqual(
+    blockKeys(job, "outputs"),
+    ["outcome"],
+    "the verdict job declares an output other than `outcome`. BOT-89: what it asked the service is a fact " +
+    "about somebody's account, and this repository's run metadata is public — the job outputs the outcome " +
+    "the bot ACTS on and nothing it was told",
+  );
+
+  const declared = /^\s+ASTRA_ASK_OUTCOMES:\s*(.+)$/m.exec(code(job).join("\n"))?.[1];
+  assert.ok(
+    declared,
+    "the verdict job declares no ASTRA_ASK_OUTCOMES. The four values BOT-89 allows are written in the job " +
+    "rather than only inside a script so that a fifth one is a visible edit, and so that this test can see " +
+    "the list the step validates against",
+  );
+  assert.deepEqual(
+    declared.trim().split(/\s+/).sort(),
+    ["B_BINDING_UNUSABLE", "W_ELIGIBILITY_UNREADABLE", "pass", "shadow"].sort(),
+    "the verdict job's outcome vocabulary is not BOT-89's four (`pass`, `B_BINDING_UNUSABLE`, " +
+    "`W_ELIGIBILITY_UNREADABLE`, `shadow`). A fifth value is either a verdict reaching a public log, or a " +
+    "state the deciding job has no rule for",
+  );
+});
+
+// BOT-6. The report job runs only after its commit job SUCCEEDED.
+//
+// `needs: publish` alone does not say that: under `always()` a job runs over a
+// dependency that failed, and this is the job that tells the service — and
+// through it the author — that something landed. A promise without a commit is
+// this registry's oldest defect.
+test("`report` cannot outrun the commit whose result it reports", () => {
+  const job = jobOf(INGEST, "report");
+  const needs = /^\s+needs:\s*(.+)$/m.exec(code(job).join("\n"))?.[1] ?? "";
+  assert.match(needs, /\bpublish\b/, "the report job does not wait for publish (BOT-6)");
+  const cond = condition(job);
+  assert.ok(
+    !/always\(\)/.test(cond) || /needs\.publish\.result\s*==\s*'success'/.test(cond),
+    `the report job's condition is ${JSON.stringify(cond)}: it runs on always() and never asks whether the ` +
+    `commit succeeded, so a failed publish still posts a result the service records as this registry's word`,
+  );
+});
+
+// A placeholder that exits 0 is the failure this estate has paid for twice.
+//
+// `plugins-ingest.yml` lands before the scripts of most of its jobs exist, and
+// each such step says so and exits non-zero, naming the task that replaces it.
+// The mutation this guards is not malice: it is somebody wiring up half a job,
+// leaving the other half's placeholder in place, and softening it to an echo
+// so the run goes green. The run then reports success for work nobody wrote —
+// which is what a release workflow whose comment described a checkout step
+// that was never written looked like from outside.
+test("a step marked `not built` cannot let its job report success", () => {
+  const problems = [];
+  let found = 0;
+  for (const job of allJobs().filter((j) => j.file === INGEST)) {
+    const lines = code(job);
+    for (let i = 0; i < lines.length; i++) {
+      if (!/^\s+- name:.*\(not built:/.test(lines[i])) continue;
+      found++;
+      let end = i + 1;
+      while (end < lines.length && !/^\s+- (name|uses):/.test(lines[end])) end++;
+      const step = lines.slice(i, end).join("\n");
+      const label = `${INGEST}:${job.line + i} (job ${job.job})`;
+      if (!/\bexit 1\b/.test(step)) {
+        problems.push(
+          `${label} is marked \`not built\` and cannot fail its job. A placeholder that exits 0 reports ` +
+          `success for work nobody has written`,
+        );
+      }
+      if (/^\s+continue-on-error:\s*true\s*$/m.test(step)) {
+        problems.push(`${label} is marked \`not built\` and carries continue-on-error: true, which is the same thing`);
+      }
+      if (!/::error::/.test(step)) {
+        problems.push(`${label} is marked \`not built\` and prints no ::error::, so the reason is not in the log`);
+      }
+    }
+  }
+  // The floor. When every job is built this number is 0 and the rule becomes
+  // vacuous — correctly, and visibly, because this assertion is what has to be
+  // deleted for that to happen.
+  assert.ok(
+    found >= 1,
+    `no \`not built\` step was found in ${INGEST}, and there were 10 on 2026-09-20 — counted from the step ` +
+    `names and not from the marker, which also appears once in the file's header comment. Either every job is ` +
+    `now ` +
+    `built — in which case delete this floor in the commit that builds the last one — or the marker was ` +
+    `renamed and this rule has stopped applying to anything`,
+  );
+  assert.equal(problems.join("\n"), "", "a placeholder step can let its job report success");
+});
+
+// ── BOT-51's interval, and the two places it is written ─────────────────────
+//
+// The ingest workflow claims on a schedule whose interval is at most 600 s.
+// Since contract amendment A6 that is a MUST, recorded in SCOPE-7's token file
+// and in ROLL-7's R0 file, and SCOPE-1 makes an interval change a contract
+// MINOR version published BEFORE the cron edit. So the cron line is not a
+// tuning knob: it is one end of a three-way agreement between this file, the
+// token file and a published contract version.
+//
+// This is the workflow half. RC-R2-2 runs the same comparison from
+// `tools/selftest/` once `schema/contract-tokens-v1.json` exists, and the
+// interval is asserted here as a literal as well, so that the check says
+// something on the day the token file does not exist yet — which is today.
+//
+// **The cron line is read whether it is commented out or not.** The file lands
+// dark at R2 exit with the schedule commented and the R3-open commit
+// uncomments it (§2.5). A test that only read a live `schedule:` block would
+// assert nothing for the whole of R2 and then start asserting, unwatched, in a
+// commit about something else.
+
+const BOT51_INTERVAL_SECONDS = 600;
+const TOKEN_FILE = path.join(REPO, "schema", "contract-tokens-v1.json");
+
+/** Every `- cron: '…'` in a workflow, live or commented, with its line. */
+function crons(file) {
+  const out = [];
+  read(file).split("\n").forEach((line, i) => {
+    const m = /^\s*#?\s*-\s*cron:\s*['"]([^'"]+)['"]/.exec(line);
+    if (m) out.push({ expr: m[1], line: i + 1, commented: /^\s*#/.test(line) });
+  });
+  return out;
+}
+
+/** Does the minute field of a cron expression fire at this minute? */
+function firesAt(field, minute) {
+  return field.split(",").some((part) => {
+    const [range, stepText] = part.split("/");
+    const step = stepText === undefined ? 1 : Number(stepText);
+    if (!Number.isInteger(step) || step < 1) return false;
+    let from;
+    let to;
+    if (range === "*") { from = 0; to = 59; }
+    else if (/^\d+-\d+$/.test(range)) { [from, to] = range.split("-").map(Number); }
+    else if (/^\d+$/.test(range)) { from = Number(range); to = stepText === undefined ? from : 59; }
+    else return false;
+    return minute >= from && minute <= to && (minute - from) % step === 0;
+  });
+}
+
+/**
+ * The seconds between two firings of a cron expression, or a reason there is
+ * no single such number.
+ *
+ * Computed from the minutes it actually fires at rather than read off the
+ * `/n`, because `/n` is not the interval: `3-40/10` fires at 3, 13, 23 and 33
+ * and then waits thirty minutes for the next hour. A rule that read the `10`
+ * would call that a 600-second schedule, which is the number BOT-51 is a MUST
+ * about.
+ */
+function cronIntervalSeconds(expr) {
+  const fields = expr.trim().split(/\s+/);
+  if (fields.length !== 5) return { error: `${JSON.stringify(expr)} is not five cron fields` };
+  if (fields.slice(1).some((f) => f !== "*")) {
+    return { error: `${JSON.stringify(expr)} is not every hour of every day, so it has no single interval` };
+  }
+  const fire = [];
+  for (let m = 0; m < 60; m++) if (firesAt(fields[0], m)) fire.push(m);
+  if (fire.length < 2) return { error: `${JSON.stringify(expr)} fires ${fire.length} time(s) an hour` };
+  const gaps = fire.map((m, i) => (i === 0 ? fire[0] + 60 - fire[fire.length - 1] : m - fire[i - 1]));
+  const distinct = [...new Set(gaps)];
+  if (distinct.length !== 1) {
+    return { error: `${JSON.stringify(expr)} fires at uneven gaps of ${distinct.join(", ")} minutes` };
+  }
+  return { seconds: distinct[0] * 60, minutes: fire };
+}
+
+/** Every `{path, value}` in the token file that looks like the ingest interval. */
+function tokenFileIngestIntervals() {
+  const json = JSON.parse(fs.readFileSync(TOKEN_FILE, "utf8"));
+  const found = [];
+  const walk = (node, at) => {
+    if (Array.isArray(node)) { node.forEach((v, i) => walk(v, `${at}[${i}]`)); return; }
+    if (node === null || typeof node !== "object") return;
+    const context = JSON.stringify(node);
+    for (const [key, value] of Object.entries(node)) {
+      if (typeof value === "number" && /interval/i.test(key) && /ingest/i.test(context) && !/moderation/i.test(context)) {
+        found.push({ path: `${at}.${key}`, value });
+      }
+      walk(value, `${at}.${key}`);
+    }
+  };
+  walk(json, "$");
+  return found;
+}
+
+test("the ingest cron is BOT-51's interval, and the token file agrees once it exists", () => {
+  const found = crons(INGEST);
+  assert.equal(
+    found.length,
+    1,
+    `${INGEST} carries ${found.length} cron expression(s) (${found.map((c) => c.expr).join(" | ") || "none"}) ` +
+    `and BOT-51 is one schedule. A second one is a second interval, and the token file records one number`,
+  );
+
+  const [cron] = found;
+  const interval = cronIntervalSeconds(cron.expr);
+  assert.ok(!interval.error, `${INGEST}:${cron.line}: ${interval.error}`);
+  assert.equal(
+    interval.seconds,
+    BOT51_INTERVAL_SECONDS,
+    `${INGEST}:${cron.line} claims every ${interval.seconds} s and BOT-51 pins ${BOT51_INTERVAL_SECONDS} s. ` +
+    `That number is a contract MUST since amendment A6 and is recorded in the token file and in ROLL-7's R0 ` +
+    `file; SCOPE-1 makes a change to it a contract MINOR version published BEFORE this line moves. Changing ` +
+    `the cron first is the wrong order, and it also silently moves BOT-47's, BOT-76's and BOT-84's alarm ` +
+    `bounds, which are all "max(5400 s, 3 × this interval)"`,
+  );
+  // Minutes off the hour, as BOT-51 words it: the moderation run's cron sits
+  // five minutes away from these, so a run of each never starts in the same
+  // minute as the other.
+  assert.ok(
+    !interval.minutes.includes(0),
+    `${INGEST}:${cron.line} fires on the hour. BOT-51 says "at minutes off the hour", and BOT-83 puts the ` +
+    `moderation run five minutes from these`,
+  );
+
+  if (!fs.existsSync(TOKEN_FILE)) {
+    // Not a skip. The comparison RC-R2-1's file makes possible is not running,
+    // and the reason is a file that does not exist yet — which this test says
+    // out loud rather than passing quietly on one of its two halves.
+    console.log(
+      `note  schema/contract-tokens-v1.json is not on disk (RC-R2-1, due before R2 opens), so the cron above ` +
+      `was compared with BOT-51's literal ${BOT51_INTERVAL_SECONDS} and with nothing else. RC-R2-2 runs the ` +
+      `same comparison from tools/selftest/ once the file exists.`,
+    );
+    return;
+  }
+
+  const recorded = tokenFileIngestIntervals();
+  assert.ok(
+    recorded.length >= 1,
+    `schema/contract-tokens-v1.json exists and this test found no ingest schedule interval in it. SCOPE-7 ` +
+    `says the file carries "the schedule interval of the ingest and moderation workflows (BOT-51; BOT-83)", ` +
+    `so either RC-R2-1's generator does not emit it — which is the defect — or it emits it under a shape this ` +
+    `walk does not recognise, in which case teach the walk rather than deleting this assertion. A cron and a ` +
+    `token file that are never compared are the two ends of SCOPE-1 with nothing between them`,
+  );
+  for (const { path: at, value } of recorded) {
+    assert.equal(
+      value,
+      interval.seconds,
+      `the token file records ${value} s for the ingest schedule at ${at} and ${INGEST}:${cron.line} claims ` +
+      `every ${interval.seconds} s. The service computes BOT-47's silence bound from the token file's number ` +
+      `and this workflow runs on the other one, so the two disagree about when a missing run is an outage`,
+    );
+  }
+});
+
+// The service path commits through the same file the legacy path does.
+//
+// `bot/publish-apply.mjs` carries the BOT-33 allow-list, the re-validation and
+// the race handling, and its own refusal function says out loud that the
+// `publish` job it belongs to is this workflow's. Two committers with two
+// allow-lists is two answers to "what may a bot job write", and the second one
+// is written by somebody who has not read the first.
+test("`plugins-ingest.yml`'s publish job commits through publish-apply and not by hand", () => {
+  const job = jobOf(INGEST, "publish");
+  const body = code(job).join("\n");
+  assert.match(
+    body,
+    /node bot\/publish-apply\.mjs/,
+    "the service path's publish job does not go through bot/publish-apply.mjs. That file is where BOT-33's " +
+    "allow-list, INV-12's version check and the two-runs-racing refusal live; a second committer is a second " +
+    "answer to what a bot job may write to `main`",
+  );
+  assert.ok(
+    !/^\s+run:[\s\S]*?git (commit|push)/m.test(body.replace(/node bot\/publish-apply\.mjs[\s\S]*/, "")),
+    "the service path's publish job runs `git commit` or `git push` of its own before publish-apply.mjs, so " +
+    "something reaches `main` without the rules that file holds",
+  );
 });
