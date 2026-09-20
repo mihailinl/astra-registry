@@ -159,12 +159,31 @@ export function classify(p) {
 export const DOCUMENT_MEMBERS = {
   // MOD-33, as `bot/moderation/README.md` documents it, plus M-T1.6's
   // additions so that task lands green rather than turning this red.
+  //
+  // `$comment` is here because five entries on `main` carry one and this table
+  // did not. It was not caught when they landed: `c16be2d` added them, and
+  // `a7495ed` — which built this scan — starts its walk at its own commit, so
+  // the rule was green about a tree it had never looked at. Its commit message
+  // claims "green over all 213 commits"; run from the root today it is red on
+  // exactly those five, and it was red on the day it was written.
+  //
+  // **The cost was not the red run; it was WHEN the red run arrives.** Nothing
+  // fails until somebody next edits one of those five files — and the most
+  // likely reason to edit a retroactive moderation entry is to correct it,
+  // which is the worst moment to meet an unrelated refusal you did not cause.
+  // A trap laid for whoever touches the file next is the shape this repository
+  // spent 2026-09-19 pulling out of a plan three at a time.
+  //
+  // Declaring it is not a loosening. An undeclared member is skipped by the
+  // value scan entirely — `continue`, below — so `$comment` free text was the
+  // one place in a composed document where an address could sit unread.
+  // Declared, it is walked like every other member: the shapes apply.
   "moderation-entry": {
-    members: ["date", "action", "plugin", "versions", "reason", "advisory", "appeal",
+    members: ["$comment", "date", "action", "plugin", "versions", "reason", "advisory", "appeal",
       "category", "reverses", "appeal_of", "outcome", "service_decision_id", "declared_interest"],
     uuidOk: ["service_decision_id"],
     handleOk: [],
-    source: "contract MOD-33; bot/moderation/README.md; M-T1.6",
+    source: "contract MOD-33; bot/moderation/README.md; M-T1.6; `$comment` per bot/moderation/*.json on main",
   },
   // DEC-7 (contract §2), whose own sentence is "with only these members". The
   // author-action record's members are a subset of these, so one table serves
