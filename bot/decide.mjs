@@ -53,6 +53,7 @@ import path from "node:path";
 
 import { loadSources, REPO_ROOT } from "../tools/lib/sources.mjs";
 
+import { markerOnMain, readDecisionRecords } from "./baseline.mjs";
 import { ingest, writeListing } from "./ingest.mjs";
 import {
   decide,
@@ -64,6 +65,134 @@ import {
 
 const EXIT = { publish: 0, refuse: 1, review: 3, delay: 4 };
 
+// ── the outcomes that are reached before the policy is asked (B-T3.3c) ─────
+//
+// Three of B-T3.3c's five rules are not policy questions at all. They are
+// answers about what is ALREADY in git — a terminal record, a published
+// version, a repository no listing names — and the run that meets one has
+// nothing to decide and nothing to write.
+//
+// They live here, in the caller, and not in `decide()`, for the reason
+// B-T3.3a wrote down when it refused to add a fifth outcome for a wait:
+// `decide()` answers `publish`, `delay`, `review` or `refuse`, and a fifth
+// value has to be understood by `bot/lib/policy/comment.mjs`'s headline map
+// and by the exit map below — with the failure mode of an unrecognised
+// outcome being a comment with no headline and exit 2. A caller that stops
+// before asking needs neither.
+//
+// Each one carries `record.write: false` in the same shape `decide()` returns,
+// so the writer downstream asks one question of every answer rather than
+// asking a different question of each kind.
+
+/**
+ * BOT-19: what `main` already says about this submission.
+ *
+ * Searched BEFORE the service is asked, so that a stop recorded in the panel
+ * stops a ping too. A terminal record is REPORTED and nothing is written: a
+ * second record saying the same thing is a second answer to "what did the
+ * registry decide", and the two can drift.
+ *
+ * Terminal is asked as a property of the record's state, over the set of
+ * states `records` carries, rather than as a list of the terminal state names
+ * that existed when this was written. The set is `main`'s to grow.
+ *
+ * @param {{records: object[], pluginId: string|null, repo: string, tag: string|null}} opts
+ */
+export function terminalOnMain({ records = [], pluginId, repo, tag }) {
+  const TERMINAL = new Set(["refused", "revoked", "yanked", "withdrawn", "deprecated"]);
+  const mine = records.filter((r) =>
+    (pluginId && r?.plugin_id === pluginId) ||
+    (r?.repo === repo && tag && r?.tag === tag));
+  const hit = mine.filter((r) => TERMINAL.has(String(r?.state))).at(-1) ?? null;
+  if (!hit) return null;
+  return {
+    reported: hit.state,
+    names: hit.decision_id ?? null,
+    record: {
+      write: false,
+      why:
+        `BOT-19: \`main\` already carries a ${hit.state} record for this work ` +
+        `(${hit.decision_id ?? "no decision_id"}), and a second record saying the same thing is a second ` +
+        "answer to what the registry decided",
+    },
+  };
+}
+
+/**
+ * BOT-74: a registered tag already listed with identical digests.
+ *
+ * Reported `published`, naming the existing record. Not "already listed, so
+ * refuse" and not "list it again": the registry's answer to a re-submission of
+ * bytes it has already published is the publication it already made, and the
+ * result names the record so the asker can go and read it.
+ *
+ * The digests are what makes this safe. A tag that moved to different bytes is
+ * NOT this case — it is a new submission of the same name — and comparing by
+ * tag alone would answer `published` for bytes nobody ever verified.
+ *
+ * @param {{listed: {version: string, artifact_digests?: string[], decision_id?: string}|null,
+ *   digests: string[]}} opts
+ */
+export function alreadyPublished({ listed, digests }) {
+  if (!listed || !Array.isArray(digests) || digests.length === 0) return null;
+  const theirs = [...(listed.artifact_digests ?? [])].sort();
+  const mine = [...digests].sort();
+  if (theirs.length === 0 || JSON.stringify(theirs) !== JSON.stringify(mine)) return null;
+  return {
+    reported: "published",
+    names: listed.decision_id ?? null,
+    record: {
+      write: false,
+      why:
+        `BOT-74: ${listed.version} is listed already with these exact ${mine.length} artifact digest(s), and ` +
+        `the answer to a re-submission of published bytes is the publication that already happened` +
+        (listed.decision_id ? ` (${listed.decision_id})` : ""),
+    },
+  };
+}
+
+/**
+ * FLOW-67: a `panel` or `ci` submission that no listing names, with no usable
+ * binding line.
+ *
+ * Nothing is written. The submission is from a repository this registry has
+ * never listed and which has not said, at the attested commit, that it wants
+ * to be — so there is nothing to decide about, and a refusal record would be a
+ * durable statement about a stranger's repository made on the strength of one
+ * unsolicited call.
+ *
+ * FLOW-78: the result carries the COMMIT the absence was read at. Without it
+ * "no listing names this repository" is a claim about a moving target, and an
+ * author who adds the line cannot tell whether the registry looked before or
+ * after they pushed it.
+ *
+ * The two sources are read from the submission rather than hard-coded here,
+ * and the rule is "a source that reaches the registry without a thread" — the
+ * legacy `issue` and `ping` paths have a thread to answer on, so a refusal
+ * there is a sentence somebody reads.
+ *
+ * @param {{source: string|null, listingNamesRepo: boolean, binding: {present: boolean, code?: string|null}|null,
+ *   readCommit: string|null, repo: string}} opts
+ */
+export function noListingNoBinding({ source, listingNamesRepo, binding, readCommit, repo }) {
+  const THREADLESS = new Set(["panel", "ci"]);
+  if (!THREADLESS.has(String(source))) return null;
+  if (listingNamesRepo) return null;
+  const unusable = !binding?.present || binding?.code === "B_BINDING_UNUSABLE";
+  if (!unusable) return null;
+  return {
+    reported: "refused",
+    read_commit: readCommit ?? null,
+    record: {
+      write: false,
+      why:
+        `FLOW-67: no listing names ${repo} at ${readCommit ?? "the read commit"} and its binding line is ` +
+        `${binding?.present ? binding.code : "absent"}. A ${source} submission has no thread to answer on, so a ` +
+        "recorded refusal would be a durable statement about a stranger's repository made on one unsolicited call",
+    },
+  };
+}
+
 /** @param {string[]} argv */
 export function parseArgs(argv) {
   // No `--roots`: the root keys are compiled into `bot/lib/roots.mjs` and no
@@ -73,6 +202,7 @@ export function parseArgs(argv) {
     repo: null, tag: null, submitter: null, root: REPO_ROOT, out: null,
     issue: null, trustFile: null, signerWorkflow: null,
     hostAstraVersion: null, now: null, approvedBy: null, approvedAt: null, approvedFor: null, publishNow: false,
+    source: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -92,6 +222,9 @@ export function parseArgs(argv) {
     // trusted: `decide()` recomputes it from the bytes this run hashed.
     else if (a === "--approved-for") opts.approvedFor = String(argv[++i] ?? "").toLowerCase();
     else if (a === "--publish-now") opts.publishNow = true;
+    // Where this run came from. DEC-7 records it as the decision's
+    // `trigger`; `legacyTrigger` refuses one it cannot map (B-T3.7).
+    else if (a === "--source") opts.source = argv[++i];
     else if (a === "--registry-dir") opts.root = path.resolve(argv[++i]);
     else if (a === "--trust") opts.trustFile = path.resolve(argv[++i]);
     else if (a === "--signer-workflow") opts.signerWorkflow = argv[++i];
@@ -117,11 +250,36 @@ export async function decideRelease(opts, deps = {}) {
   const result = await ingest(opts, deps);
   const now = opts.now ?? new Date();
   const { plugins } = loadSources(opts.root);
+  // FLOW-65: by plugin ID, never by repository. A monorepo's second plugin is
+  // a first listing — `R_FIRST_LISTING` is the one check that is a person
+  // reading a submission, and keyed on the repository it would be skipped for
+  // every plugin after the first in any repository that ships more than one.
   const existing = result.derived
     ? plugins.find((p) => p.doc?.id === result.derived.plugin.id) ?? null
     : null;
 
+  // The listing's binding, if it has one (BOT-77). Read from the checked-out
+  // tree rather than passed in as a flag: `ingest.yml` hands this program a
+  // repository and a tag, and a workflow input saying "this listing is bound"
+  // would be a second, weaker answer to a question `main` already answers.
+  const identityRecord = result.derived ? readIdentityRecord(opts.root, result.derived.plugin.id) : null;
+
+  // BOT-19, searched BEFORE anything is decided: a stop recorded in the panel
+  // stops a ping. `readDecisionRecords` reads B-T2.2's layout and needs none
+  // of B-T2.2's writer, so this works from the first record and answers
+  // nothing before that — which is the honest answer, not a skip.
+  const records = (deps.readDecisionRecords ?? readDecisionRecords)(opts.root)
+    .map((r) => r.doc).filter(Boolean);
+  const terminal = terminalOnMain({
+    records,
+    pluginId: result.derived?.plugin?.id ?? null,
+    repo: opts.repo,
+    tag: opts.tag,
+  });
+
   const decision = decide({
+    identityRecord,
+    path: opts.path === "service" ? "service" : "legacy",
     findings: result.findings,
     derived: result.derived,
     existing,
@@ -139,12 +297,145 @@ export async function decideRelease(opts, deps = {}) {
     now,
   });
 
+  // BOT-19 overrides the record, and only the record. The decision itself is
+  // still computed and still commented on — an author who pings a plugin the
+  // registry has revoked is owed the sentence saying so — but nothing is
+  // written, because `main` already carries the answer and a second record is
+  // a second answer that can drift from the first.
+  //
+  // And B-T3.7's condition, in the same place and for the same reason: the
+  // legacy path writes decision records when, and only when,
+  // `log/baseline.json` is on the checked-out `main`. Before the baseline
+  // exists there is nothing for a legacy record to be compared against —
+  // MIG-28 holds every id with no baseline — and a record written now would
+  // be a statement this registry cannot yet check.
+  const marker = markerOnMain(opts.root);
+
+  // DEC-7's `trigger`, derived once and attached to the decision.
+  //
+  // An unmappable source does NOT throw here, and the reason is worth the
+  // paragraph. Throwing was the first shape, and it turned every run that
+  // sets no `--source` red at once — which today is the manual dispatch, the
+  // CLI, and every caller written before this argument existed. The other
+  // obvious shape, defaulting to `legacy`, is the one B-T3.7 forbids: a
+  // record would then state that the backstop found a release when nobody
+  // knows what found it.
+  //
+  // So the third: no trigger, and therefore NO RECORD, said out loud in
+  // `decision.json`. The run still publishes, comments and closes its thread
+  // exactly as it does today; what it cannot do is write a decision record
+  // whose `trigger` would be a guess. The day the baseline lands and records
+  // start being written, a caller that never set a source produces a visible
+  // "no record, and here is the missing argument" rather than a plausible
+  // wrong one — and `migration` still throws, because no legacy run has any
+  // business composing MIG-20's baseline.
+  try {
+    decision.trigger = legacyTrigger(opts.source);
+  } catch (e) {
+    if (String(opts.source) === "migration") throw e;
+    decision.trigger = null;
+    decision.record = { write: false, why: e.message };
+  }
+
+  if (terminal) {
+    decision.record = terminal.record;
+    decision.reported = terminal.reported;
+    decision.names_record = terminal.names;
+  } else if (!marker.present && decision.record.write) {
+    decision.record = {
+      write: false,
+      why:
+        `B-T3.7: \`${marker.file}\` is not on the checked-out main, so the legacy path writes no decision ` +
+        "records yet. MIG-20's baseline is what a record is compared against, and one written before it " +
+        "exists is a statement nothing can check (B-T3.7b's dispatch writes it).",
+    };
+  }
+
   return {
     ...result,
     decision,
     comment: `${result.comment}\n${renderPolicySection(decision, result.derived)}`,
   };
 }
+
+// ── B-T3.7: what a legacy decision record is triggered BY ─────────────────
+//
+// DEC-7 gives a record a `trigger`, and the legacy path's four are `issue`,
+// `ping`, `dispatch`, and `legacy` for the backstop and drain publications.
+// `migration` is never one of them, and that is not a naming preference: a
+// `migration` record IS MIG-20's baseline, the thing TRUST-23 compares every
+// later release against, and `bot/lib/identity.mjs`'s `effectiveBaseline`
+// selects baselines by exactly `trigger === "migration" && state ===
+// "published"`. A legacy publication that composed one would silently become
+// the baseline for that id — written off an issue comment rather than off the
+// single audited dispatch MIG-20 requires — and every later identity
+// comparison for that plugin would be made against it.
+//
+// `bot/baseline.mjs` refuses every trigger BUT `migration`; this refuses
+// `migration`, and refuses an unmapped source too. An unmapped source does
+// not fall through to `legacy`, because "this run came from the backstop" and
+// "nobody knows where this run came from" are different facts and a record
+// must not state the first when the second is true.
+
+/** The four triggers the legacy path may write (DEC-7; B-T3.7). */
+export const LEGACY_TRIGGERS = Object.freeze(["issue", "ping", "dispatch", "legacy"]);
+
+/**
+ * The trigger for a legacy run, from the source that started it.
+ *
+ * @param {string|null} source `bot/triage.mjs`'s mode, or `bot/watch.mjs`'s
+ *   dispatch `source`.
+ * @returns {string} one of `LEGACY_TRIGGERS`
+ */
+export function legacyTrigger(source) {
+  const SOURCES = {
+    form: "issue", issue: "issue", approve: "issue", reject: "issue", recheck: "issue",
+    ping: "ping",
+    dispatch: "dispatch", repository_dispatch: "dispatch",
+    backstop: "legacy", queue: "legacy", drain: "legacy", schedule: "legacy",
+  };
+  if (source === "migration") {
+    throw new Error(
+      "the legacy path composed a `migration` record. `migration` is MIG-20's baseline — the record " +
+      "TRUST-23 compares every later release against, written once by `baseline.yml`'s single audited " +
+      "dispatch — and one composed here would become the baseline for this id on the strength of an " +
+      "issue comment (B-T3.7; BOT-39).",
+    );
+  }
+  const trigger = SOURCES[String(source)];
+  if (!trigger) {
+    throw new Error(
+      `\`${source}\` is not a source this registry knows how to trigger a decision record from. It is ` +
+      "refused rather than recorded as `legacy`, because \"the run came from the backstop\" and \"nobody " +
+      "knows where the run came from\" are different facts, and a record cannot state the first when the " +
+      `second is true. The four legacy triggers are ${LEGACY_TRIGGERS.join(", ")} (DEC-7).`,
+    );
+  }
+  return trigger;
+}
+
+/** `plugins/<id>/identity.json` on the checked-out tree, or null. */
+export function readIdentityRecord(root, pluginId) {
+  if (!pluginId) return null;
+  try {
+    const doc = JSON.parse(fs.readFileSync(path.join(root, "plugins", pluginId, "identity.json"), "utf8"));
+    return doc && typeof doc === "object" ? doc : null;
+  } catch {
+    // Absent is the ordinary case before R3 and the whole case until a listing
+    // is bound. Unreadable is NOT silently the same thing — but the guard this
+    // feeds refuses to publish when the record is present, so a parse failure
+    // that returned "absent" would be the unsafe direction, and it is reported
+    // rather than swallowed.
+    if (fs.existsSync(path.join(root, "plugins", pluginId, "identity.json"))) {
+      throw new Error(
+        `plugins/${pluginId}/identity.json is on main and could not be read. The legacy path must not ` +
+        "publish a bound listing (BOT-77), and an unreadable binding is not an absent one.",
+      );
+    }
+    return null;
+  }
+}
+
 
 /** Lay the outcome out under `--out` in the shape of the repository. */
 export function writeOutputs(out, opts, result) {
@@ -173,6 +464,14 @@ export function writeOutputs(out, opts, result) {
         notify_author: decision.notify_author,
         track: decision.track,
         decided_at: decision.decided_at,
+        // DEC-7's trigger, and whether this run writes a record at all. The
+        // publish job reads both: `record.write` is false for a wait, for a
+        // decision `main` already carries, and for every shadow answer, and
+        // the four outcomes cannot express any of those three (B-T3.3c,
+        // B-T3.4, B-T3.7).
+        trigger: decision.trigger,
+        record: decision.record,
+        shadow: decision.shadow === true,
         // The audit record, in the file the publish job reads: who cleared the
         // hold, when, and the digests THIS run hashed. All three or none — an
         // approval without the bytes it applied to cannot be checked later.

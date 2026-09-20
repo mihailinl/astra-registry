@@ -62,6 +62,7 @@ import fs from "node:fs";
 
 import { REPO_ROOT, loadSources } from "../tools/lib/sources.mjs";
 
+import { markerOnMain, readDecisionRecords } from "./baseline.mjs";
 import { fetchRelease } from "./lib/github.mjs";
 import {
   LISTING_LABEL,
@@ -471,6 +472,41 @@ async function decideCommand({ command, opts, registry, labelled, issueTitle, fo
     };
   }
 
+  // ── stage 2 of B-T0.2: the approval binds to a `held` RECORD on main ─────
+  //
+  // Everything above binds the approval to what the maintainer was looking at.
+  // From R3 there is a third thing to bind to, and it is the durable one: the
+  // decision record this registry wrote when it raised the hold. An `/approve`
+  // that names a fingerprint no `held` record carries is answering a hold this
+  // registry never recorded — a hold from a run whose record was lost, or a
+  // fingerprint out of a comment on some other thread.
+  //
+  // **Gated on the same marker B-T3.7's writer is**, and this is the half that
+  // has to be said out loud: before `log/baseline.json` is on `main` the
+  // legacy path writes no records at all, so there is no `held` record for any
+  // fingerprint and an ungated rule would refuse EVERY approval this registry
+  // has ever accepted. The gate is not a softening — it is the condition under
+  // which the thing being checked exists.
+  const marker = (deps.markerOnMain ?? markerOnMain)(opts.root);
+  if (marker.present) {
+    const heldFor = (deps.readDecisionRecords ?? readDecisionRecords)(opts.root)
+      .map((r) => r.doc)
+      .filter((d) => d && d.state === "held" && String(d.fingerprint ?? "") === command.fingerprint);
+    if (heldFor.length === 0) {
+      return {
+        mode: "reply",
+        why:
+          `/approve from @${commenter} named \`${command.fingerprint}\` and no \`held\` decision record on ` +
+          "main carries that fingerprint, so there is no recorded hold for it to clear",
+        reply:
+          `\`/approve\` names submission \`${command.fingerprint}\`, and this registry has no \`held\` ` +
+          "decision record for it.\n\nAn approval clears a hold that was recorded. If the hold comment you " +
+          "are answering is older than the decision log, re-run the check with `/recheck` and approve the " +
+          "fingerprint the new comment prints — that run records its hold, and the approval binds to it.",
+      };
+    }
+  }
+
   return {
     mode: "approve",
     // `/publish` is `/approve` and one thing more: it also waives the rest of
@@ -507,8 +543,11 @@ async function main(argv) {
   console.log(`triage: ${out.mode} — ${out.why}`);
   if (opts.modeFile) fs.writeFileSync(opts.modeFile, out.mode);
   if (opts.targetsFile) {
+    // `source` travels on every target: DEC-7 records it as the decision's
+    // `trigger`, and `bot/decide.mjs` refuses a source it cannot map rather
+    // than recording `legacy` for a run whose origin nobody knows (B-T3.7).
     const targets = out.mode === "ping"
-      ? [{ repo: out.repo, tag: out.tag, submitter: out.submitter }]
+      ? [{ repo: out.repo, tag: out.tag, submitter: out.submitter, source: "ping" }]
       : out.mode === "approve"
         // The approval travels ON the target, so that a matrix entry carries its
         // own authority and a second target in the same run cannot borrow it.
@@ -524,6 +563,7 @@ async function main(argv) {
           // The submission the maintainer named. Checked against the bytes in
           // `check`, which is the only job that has any.
           approved_for: out.approvedFor,
+          source: "approve",
         }]
         : [];
     fs.writeFileSync(opts.targetsFile, JSON.stringify(targets));

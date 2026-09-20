@@ -212,15 +212,116 @@ export const POLICY_CODES = {
   },
 };
 
-/** @param {string} code */
-export function policyCodeDef(code) {
-  return (
-    POLICY_CODES[code] ?? {
-      level: "error",
-      title: `undeclared policy code ${code}`,
-      remedy: "This is a bug in the registry bot: the code is not in bot/lib/policy.mjs.",
-    }
-  );
+// ── the bound world's codes, declared for their LEVEL and nothing else ──────
+//
+// Registry plan B-T2.3 coins these; B-T3.3b (reg.61a) writes their
+// author-facing text into `docs/POLICY.md` in one edit. They are declared here
+// FIRST, ahead of both, because three sibling tasks each need to ask "what
+// kind of answer is this" and the alternative is three hand-written lists of
+// codes — each correct on the day it is written, each silently wrong the day a
+// fourth task coins a fifth code.
+//
+// So: the rules downstream key on the LEVEL. `decide()`'s `add()` already
+// reads `policyCodeDef(code).level`, and B-T3.3c's no-record rule is
+// `reasons.some((r) => r.level === "wait")` rather than a list of the waits
+// that existed when it was written.
+//
+// **Not in `POLICY_CODES`, deliberately.** `bot/tests/policy.test.mjs` holds
+// every key of that object to being explained in `docs/POLICY.md`, and that
+// document's bound-world text is reg.61a's single edit. Declaring a level here
+// commits to no author-facing sentence and pre-empts none.
+//
+// **Not exported, also deliberately.** `bot/lib/policy.mjs` re-exports this
+// module with `export *`, and `tools/selftest/repo-rules.mjs` holds that
+// barrel to exactly the 26 names it had before the split. A new export is a
+// change to a surface ten files import; a new level behind `policyCodeDef` is
+// not.
+//
+// ── the level `wait`, and why it is not `error` ────────────────────────────
+//
+//   wait    this run could not get an answer, so it has none. NOTHING IS
+//           RECORDED (FLOW-72) and nothing is posted; the run stops and asks
+//           again. The distinction from `error` is the whole point: an error
+//           is a fact about the submission and is written down, and a wait is
+//           the absence of a fact. A rate-limited read recorded as a refusal
+//           cannot be un-written.
+//
+/** @type {Record<string, {level: string, service_path_only?: boolean}>} */
+const BOUND_WORLD_CODES = {
+  // B.7's waits. `W_REGISTRY_UNACKNOWLEDGED` is the service's alone — the bot
+  // never emits it — and is declared so that a rule which meets one behaves
+  // rather than falling through to the undeclared-code default.
+  W_GITHUB_RATE_LIMITED: { level: "wait" },
+  W_SERVICE_UNREACHABLE: { level: "wait" },
+  W_ELIGIBILITY_UNREADABLE: { level: "wait" },
+  W_OPERATOR_WINDOW: { level: "wait" },
+  W_REGISTRY_UNACKNOWLEDGED: { level: "wait" },
+
+  // FLOW-72 reclassifies these five ON THE SERVICE PATH ONLY, and the
+  // qualifier is load-bearing in both directions. On the legacy path they are
+  // what they have always been: errors, refused and recorded, answered by a
+  // `/recheck`. On the service path there is no issue thread to answer and the
+  // same condition means "this run could not check", which must not become a
+  // recorded refusal of somebody's release.
+  E_ATTESTATION_UNCHECKED: { level: "wait", service_path_only: true },
+  E_TRUST_UNPROVISIONED: { level: "wait", service_path_only: true },
+  E_PROBE_INPUT: { level: "wait", service_path_only: true },
+  E_PROBE_UNAVAILABLE: { level: "wait", service_path_only: true },
+  E_DERIVED_LISTING_INVALID: { level: "wait", service_path_only: true },
+
+  // The binding refusals. `B_REPOSITORY_RECYCLED` is terminal (ID-41 row 1);
+  // the rest are errors an author can answer.
+  B_UNBOUND: { level: "error" },
+  B_BINDING_MALFORMED: { level: "error" },
+  B_BINDING_UNUSABLE: { level: "error" },
+  B_BINDING_INVALID: { level: "error" },
+  B_ACCOUNT_INELIGIBLE: { level: "error" },
+  B_OWNER_CHANGED: { level: "error" },
+  B_REPOSITORY_RECYCLED: { level: "error" },
+
+  // The bound world's two holds. `R_IDENTITY_CHANGED` is NOT here: it is
+  // already a documented `POLICY_CODES` key, and a second declaration is a
+  // second answer to what its level is.
+  R_FIRST_BINDING: { level: "review" },
+  R_BINDING_CHANGED: { level: "review" },
+};
+
+/**
+ * What kind of answer a code is.
+ *
+ * @param {string} code
+ * @param {{path?: "legacy"|"service"}} [opts] which path is asking. **It
+ *   defaults to `legacy`**, which is the conservative direction for the five
+ *   `E_*` above: a caller that forgets the argument records a refusal, as this
+ *   repository has always done, rather than silently waiting for ever on a
+ *   release nobody will look at again. `decide()` passes it explicitly and
+ *   `bot/tests/policy.test.mjs` fails if it stops.
+ */
+export function policyCodeDef(code, opts = {}) {
+  const documented = POLICY_CODES[code];
+  if (documented) return documented;
+  const bound = BOUND_WORLD_CODES[code];
+  if (bound && (!bound.service_path_only || opts.path === "service")) {
+    return {
+      level: bound.level,
+      title: `${code}`,
+      // Deliberately not an author-facing sentence. reg.61a (B-T3.3b) writes
+      // those, once, into docs/POLICY.md; a placeholder here would be a second
+      // one, and the second one is the one that ships.
+      remedy: "See docs/POLICY.md.",
+    };
+  }
+  if (bound) {
+    // Declared, but this path is not the one that reclassifies it. Fall
+    // through to `codes.mjs`'s own level by way of the default below, which is
+    // `error` — which is exactly what these five are on the legacy path.
+    return { level: "error", title: `${code}`, remedy: "See docs/BOT-CHECKS.md." };
+  }
+  return {
+    level: "error",
+    title: `undeclared policy code ${code}`,
+    remedy: "This is a bug in the registry bot: the code is not in bot/lib/policy.mjs.",
+  };
 }
 
 /**

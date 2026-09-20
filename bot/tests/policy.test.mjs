@@ -23,7 +23,10 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { decideRelease, writeOutputs } from "../decide.mjs";
+import { markerOnMain } from "../baseline.mjs";
+import { LEGACY_TRIGGERS, alreadyPublished, decideRelease, legacyTrigger, noListingNoBinding, readIdentityRecord, terminalOnMain, writeOutputs } from "../decide.mjs";
+import { recordCommitRefusal } from "../publish-apply.mjs";
+import { bot74Filter } from "../watch.mjs";
 import { DEFAULT_SIGNER_WORKFLOW } from "../ingest.mjs";
 import { parseMaintainerCommand } from "../lib/intake.mjs";
 import {
@@ -34,6 +37,7 @@ import {
   REVIEW_SLA_HOURS,
   TRUSTED_DELAY_HOURS,
   decide,
+  policyCodeDef,
   queueFile,
   readQueue,
   requestedAuthority,
@@ -190,7 +194,7 @@ const conforming = (spec = {}) => ({ name: bundleName(spec), bytes: makeBundle(s
 async function run({
   assets = [conforming()], repo = REPO, tag = TAG, submitter = SUBMITTER, root,
   now = NOW, out = null, issue = null, approvedBy = null, approvedAt = null, approvedFor = null,
-  publishNow = false,
+  publishNow = false, source = null,
   // The commit the Release names and the commit the attestation names. Equal by
   // default, because in a healthy release they are the same commit; a test that
   // moves one and not the other is asking about `E_RELEASE_COMMIT_MISMATCH`.
@@ -199,7 +203,7 @@ async function run({
   const github = fakeGitHub({ repo, tag, assets, commit });
   return decideRelease(
     {
-      repo, tag, submitter, root, issue, now, approvedBy, approvedAt, approvedFor, publishNow,
+      repo, tag, submitter, root, issue, now, approvedBy, approvedAt, approvedFor, publishNow, source,
       trustFile: TRUST_FILE, signerWorkflow: DEFAULT_SIGNER_WORKFLOW,
       out,
     },
@@ -2399,6 +2403,535 @@ await test("POLICY.md points at the detail rather than restating it", () => {
   assert(doc.includes("docs/POLICY.md"), "the listing policy has to link the publication policy");
   assert(doc.includes(`${REVIEW_SLA_HOURS} hours`) || doc.includes(`${REVIEW_SLA_HOURS} h`),
     "and §8 has to carry the number now that there is one");
+});
+
+
+// ── B-T3.3c: the outcomes that write nothing ────────────────────────────────
+
+section("no-record outcomes (B-T3.3c)");
+
+// A minimal `decide()` input that publishes, so each test below changes one
+// thing and the change is what the assertion is about.
+function publishable(over = {}) {
+  return {
+    findings: [],
+    derived: {
+      plugin: { id: "dice-roller", source: { kind: "github", repo: "you/dice-roller" } },
+      version: { version: "1.0.1", release: { repo: "you/dice-roller", commit: "a".repeat(40) }, artifacts: [] },
+    },
+    existing: null,
+    repo: "you/dice-roller",
+    tag: "v1.0.1",
+    now: new Date("2026-09-20T00:00:00Z"),
+    ...over,
+  };
+}
+
+await test("FLOW-72 — a wait on the service path gives a wait and writes nothing", () => {
+  const d = decide(publishable({
+    path: "service",
+    findings: [{ level: "error", code: "E_PROBE_UNAVAILABLE", where: "probe", message: "the manifest probe did not answer" }],
+  }));
+  assertEqual(d.record.write, false, "a wait was going to be written into log/decisions/ as a refusal");
+  assertEqual(d.wait?.code, "E_PROBE_UNAVAILABLE", "the result carries no wait for the caller to re-ask on");
+  assert(d.reasons.every((r) => r.code !== "P_REFUSED"),
+    "the wait reached stage 1 and came out as a refusal of the author's release");
+});
+
+// The watched failure the plan names, in the direction it would actually
+// arrive: the SAME code on the legacy path is an error and IS recorded,
+// because there the author has a thread and a `/recheck`.
+await test("FLOW-72 — the same code on the legacy path still refuses, and still records", () => {
+  const d = decide(publishable({
+    findings: [{ level: "error", code: "E_PROBE_UNAVAILABLE", where: "probe", message: "the manifest probe did not answer" }],
+  }));
+  assertEqual(d.outcome, "refuse", "the legacy path stopped refusing a probe failure");
+  assertEqual(d.record.write, true,
+    "the legacy path stopped recording a refusal the author can answer with /recheck; FLOW-72's " +
+    "reclassification is the SERVICE path's and widening it silently drops the legacy decision log");
+  assertEqual(d.wait, null, "a legacy refusal is not a wait");
+});
+
+// The property, not the list. This is the failure mode the plan names for this
+// task: B-T3.3c listing the wait codes by hand, and a sibling coining a sixth.
+await test("FLOW-72 is keyed on the declared level, so a wait nobody enumerated still waits", () => {
+  for (const code of ["W_SERVICE_UNREACHABLE", "W_ELIGIBILITY_UNREADABLE", "W_OPERATOR_WINDOW",
+                      "W_GITHUB_RATE_LIMITED", "W_REGISTRY_UNACKNOWLEDGED", "E_ATTESTATION_UNCHECKED",
+                      "E_TRUST_UNPROVISIONED", "E_PROBE_INPUT", "E_DERIVED_LISTING_INVALID"]) {
+    const d = decide(publishable({
+      path: "service",
+      findings: [{ level: "error", code, where: "x", message: `${code} happened` }],
+    }));
+    assertEqual(d.record.write, false, `${code} is declared a wait and was recorded anyway`);
+    assertEqual(d.wait?.code, code, `${code} is declared a wait and produced no wait`);
+  }
+  // And the floor: if `policyCodeDef` stopped answering `wait` for anything,
+  // every assertion above would pass vacuously on an empty loop. It does not
+  // loop over an empty set, but it does loop over a list — so the floor is
+  // that the list is a SUBSET of what is declared, checked from the other end.
+  const declaredWaits = ["W_SERVICE_UNREACHABLE", "W_ELIGIBILITY_UNREADABLE", "W_OPERATOR_WINDOW",
+                         "W_GITHUB_RATE_LIMITED", "W_REGISTRY_UNACKNOWLEDGED"]
+    .filter((c) => policyCodeDef(c).level === "wait");
+  assertEqual(declaredWaits.length, 5,
+    "a W_* code stopped being declared a wait in constants.mjs, and every rule above keys on that level");
+});
+
+await test("a check that PASSED is never reclassified as a wait", () => {
+  // Found by running the rule against the real corpus rather than by reading
+  // it. `codes.mjs` codes name a CHECK, and the same code carries its pass:
+  // every green ingest emits `E_TRUST_UNPROVISIONED` at level `pass` ("trust.json
+  // serial 7 … allows 1 release-workflow commit(s)") and
+  // `E_DERIVED_LISTING_INVALID` at level `pass`. Keyed on the code alone, a
+  // service-path run waits on its own passing checks and the release is never
+  // decided at all.
+  const d = decide(publishable({
+    path: "service",
+    findings: [
+      { level: "pass", code: "E_TRUST_UNPROVISIONED", where: "trust", message: "trust.json serial 7 allows 1 commit" },
+      { level: "pass", code: "E_DERIVED_LISTING_INVALID", where: "derive", message: "the derived listing passes tools/validate.mjs" },
+    ],
+  }));
+  assertEqual(d.wait, null, "a passing check was reclassified as a wait, and this release will never be decided");
+  assertEqual(d.outcome, "publish", "a green service-path run did not publish");
+  assertEqual(d.record.write, true, "a green service-path run wrote no record");
+});
+
+await test("a wait never reaches the delay clock or the queue", () => {
+  const d = decide(publishable({
+    path: "service",
+    findings: [{ level: "error", code: "W_SERVICE_UNREACHABLE", where: "ask", message: "no answer" }],
+  }));
+  assertEqual(d.queue_entry, null, "a wait queued the release, so an unanswered call starts a publication clock");
+  assertEqual(d.publishes_now, false, "a wait published");
+});
+
+await test("`decide()` passes the path to every level lookup", () => {
+  // Watched by dropping the argument: with `path` ignored, the service-path
+  // run below reads `E_PROBE_UNAVAILABLE` at `codes.mjs`'s level — `error` —
+  // and records a refusal. The two runs differ only in `path`.
+  const service = decide(publishable({ path: "service", findings: [{ level: "error", code: "E_PROBE_INPUT", where: "p", message: "m" }] }));
+  const legacy = decide(publishable({ findings: [{ level: "error", code: "E_PROBE_INPUT", where: "p", message: "m" }] }));
+  assert(service.record.write !== legacy.record.write,
+    "the same code on the two paths produced the same answer, so `path` is not reaching policyCodeDef " +
+    "and FLOW-72's whole distinction is inert");
+});
+
+await test("BOT-19 — a terminal record on main is reported, and nothing is written", () => {
+  const hit = terminalOnMain({
+    records: [{ plugin_id: "dice-roller", state: "revoked", decision_id: "d0" }],
+    pluginId: "dice-roller", repo: "you/dice-roller", tag: "v1.0.1",
+  });
+  assertEqual(hit?.reported, "revoked", "a panel stop in git did not stop a ping");
+  assertEqual(hit.record.write, false, "a second record was written for a decision main already carries");
+  assertEqual(hit.names, "d0", "the report names no existing record, so nobody can go and read it");
+  // A non-terminal record does not stop anything.
+  assertEqual(
+    terminalOnMain({ records: [{ plugin_id: "dice-roller", state: "published", decision_id: "d1" }], pluginId: "dice-roller", repo: "you/dice-roller", tag: "v1.0.1" }),
+    null,
+    "a published record was read as terminal, which stops every later release of a live plugin",
+  );
+});
+
+await test("BOT-74 — a tag already listed with identical digests is reported `published`", () => {
+  const digests = ["sha256:aa", "sha256:bb"];
+  const same = alreadyPublished({ listed: { version: "1.0.1", artifact_digests: [...digests].reverse(), decision_id: "d7" }, digests });
+  assertEqual(same?.reported, "published", "a re-submission of published bytes was not recognised");
+  assertEqual(same.record.write, false, "a second record was written for a version already listed");
+  assertEqual(same.names, "d7", "the `published` result names no record (BOT-23)");
+  // The tag moved to different bytes: that is a new submission, not a
+  // re-submission, and answering `published` for it would report a
+  // publication of bytes nobody verified.
+  assertEqual(
+    alreadyPublished({ listed: { version: "1.0.1", artifact_digests: ["sha256:aa"], decision_id: "d7" }, digests }),
+    null,
+    "different bytes under the same version were reported as already published",
+  );
+  assertEqual(
+    alreadyPublished({ listed: { version: "1.0.1", artifact_digests: [], decision_id: "d7" }, digests }),
+    null,
+    "a listing with no recorded digests compared equal to something, which makes the digest check decoration",
+  );
+});
+
+await test("FLOW-67 — a threadless submission no listing names writes nothing, and carries the read commit", () => {
+  const commit = "b".repeat(40);
+  for (const source of ["panel", "ci"]) {
+    const out = noListingNoBinding({ source, listingNamesRepo: false, binding: { present: false }, readCommit: commit, repo: "stranger/thing" });
+    assertEqual(out?.record.write, false, `a ${source} submission from an unlisted repository was recorded`);
+    assertEqual(out.read_commit, commit, "FLOW-78: the result carries no read commit, so the absence is a claim about a moving target");
+  }
+  // `B_BINDING_UNUSABLE` is the same case as an absent line.
+  assertEqual(
+    noListingNoBinding({ source: "panel", listingNamesRepo: false, binding: { present: true, code: "B_BINDING_UNUSABLE" }, readCommit: "c".repeat(40), repo: "stranger/thing" })?.record.write,
+    false,
+    "an unusable binding line was treated as a usable one",
+  );
+  // A USABLE line is a request to be listed, and is decided rather than dropped.
+  assertEqual(
+    noListingNoBinding({ source: "panel", listingNamesRepo: false, binding: { present: true, code: null }, readCommit: "c".repeat(40), repo: "stranger/thing" }),
+    null,
+    "a repository that asked to be listed was silently dropped",
+  );
+  // A listed repository is decided, whatever its line says.
+  assertEqual(
+    noListingNoBinding({ source: "panel", listingNamesRepo: true, binding: { present: false }, readCommit: "c".repeat(40), repo: "you/dice-roller" }),
+    null,
+    "a listing this registry already carries stopped being decided because its line went missing",
+  );
+  // And the legacy sources keep their thread: a refusal there is a sentence
+  // somebody reads on an issue.
+  for (const source of ["issue", "ping", "backstop", "queue"]) {
+    assertEqual(
+      noListingNoBinding({ source, listingNamesRepo: false, binding: { present: false }, readCommit: "c".repeat(40), repo: "stranger/thing" }),
+      null,
+      `a ${source} submission stopped being answered, and that path's only output is the answer`,
+    );
+  }
+});
+
+await test("FLOW-65 — a new id from a listed monorepo meets the first-listing rules", () => {
+  // The rule is a property of how `existing` is looked up: by plugin ID, never
+  // by repository. Keyed on the repository, a monorepo's second plugin would
+  // inherit the first one's listing and skip R_FIRST_LISTING — the one check
+  // that is a person reading a submission, skipped for every plugin after the
+  // first in any repository that ships more than one.
+  const d = decide(publishable({
+    existing: null,   // no listing carries THIS id, though the repo is listed
+    findings: [{ level: "review", code: "R_FIRST_LISTING", where: "version", message: "never listed" }],
+  }));
+  assertEqual(d.outcome, "review", "a new id from a listed monorepo published without a person reading it");
+  assert(d.reasons.some((r) => r.code === "R_FIRST_LISTING"), "and it did not raise the first-listing hold");
+  assertEqual(d.record.write, true, "a first-listing hold is a decision, and a decision is recorded");
+});
+
+
+// ── B-T3.9: the legacy path under the new records (R3 to R6) ───────────────
+
+section("the legacy path under the new records (B-T3.9)");
+
+await test("BOT-77 — a legacy run on a bound listing publishes nothing, queues nothing, clears nothing", () => {
+  const identityRecord = {
+    schema: "astra.registry.identity/1", plugin_id: "dice-roller",
+    repository_id: "111", repository_owner_id: "222", repo: "you/dice-roller",
+  };
+  // The strongest case, and it has to be built rather than described: a clean
+  // release with a maintainer's `/publish` BOUND to this run's own
+  // fingerprint. Written with a made-up fingerprint the first time, this test
+  // passed with the guard removed — the approval was refused as stale and the
+  // `P_APPROVAL_STALE` hold produced the same `review` the guard does, so four
+  // of its five assertions were about a code path the mutation never reached.
+  const fingerprint = decide(publishable({})).fingerprint;
+  assert(fingerprint, "the clean run produced no fingerprint to bind an approval to");
+  const d = decide(publishable({
+    identityRecord,
+    approval: { by: "maintainer", at: "2026-09-19T00:00:00Z", for: fingerprint, publishNow: true },
+  }));
+  assertEqual(d.outcome, "review", "the legacy path published a bound listing");
+  assertEqual(d.publishes_now, false, "the legacy path published a bound listing");
+  assertEqual(d.queue_entry, null, "the legacy path queued a bound listing");
+  assertEqual(d.approved_by, null,
+    "a `/publish` on the legacy path cleared the hold on a bound listing — which is the binding being " +
+    "routed around by whoever can comment on an issue in this repository");
+  assert(d.reasons.some((r) => String(r.message).includes("BOT-77")), "and the comment does not say why");
+  // The same release, unbound, publishes. Without this the assertions above
+  // pass for a `decide()` that refuses everything.
+  const unbound = decide(publishable({}));
+  assertEqual(unbound.outcome, "publish", "the floor: an unbound listing stopped publishing, so BOT-77's guard proves nothing");
+});
+
+await test("BOT-77 does not bind the service path, which is the path that holds the binding", () => {
+  const d = decide(publishable({
+    path: "service",
+    identityRecord: { schema: "astra.registry.identity/1", plugin_id: "dice-roller", repo: "you/dice-roller" },
+  }));
+  assertEqual(d.outcome, "publish",
+    "BOT-77 stopped the service path too, which would leave a bound listing publishable by nothing at all");
+});
+
+await test("BOT-74 — a `cli-v` ping gives no ingest, and so no record", () => {
+  const listedTags = ["v0.1.0", "v0.2.0"];
+  assertEqual(bot74Filter({ tag: "cli-v1.4.0", listedTags }).pass, false,
+    "a monorepo's CLI tag was dispatched as a plugin release, and from R3 the refusal is a public record");
+  assertEqual(bot74Filter({ tag: "v0.3.0", listedTags }).pass, true,
+    "the listing's own next release was filtered out, which stops the backstop working at all");
+  assertEqual(bot74Filter({ tag: "v0.2.0", listedTags }).pass, false,
+    "a tag already recorded on the listing was re-ingested");
+  // The prefix set is read from the recorded tags, so a listing that uses a
+  // prefix nothing in this repository uses still works. This is the property,
+  // not a list of `v` and `cli-v`.
+  assertEqual(bot74Filter({ tag: "release-2026.3", listedTags: ["release-2026.1", "release-2026.2"] }).pass, true,
+    "the filter has a hard-coded idea of what a release tag looks like, and this listing does not share it");
+  assertEqual(bot74Filter({ tag: "nightly-2026.3", listedTags: ["release-2026.1"] }).pass, false,
+    "a second tag shape on a listing that only ever used one was dispatched");
+  // A first listing has no evidence to filter by, and inventing some here
+  // would be this module deciding what a release tag is.
+  assertEqual(bot74Filter({ tag: "anything", listedTags: [] }).pass, true,
+    "a listing with no recorded tag cannot be filtered, and a filter that refuses everything there " +
+    "silently turns the backstop off for every new listing");
+});
+
+await test("B-T3.7 — the legacy path writes no record until the baseline marker is on main", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "b4-marker-"));
+  try {
+    assertEqual(markerOnMain(dir).present, false, "a tree with no log/baseline.json reported a marker");
+    fs.mkdirSync(path.join(dir, "log"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "log", "baseline.json"), JSON.stringify({ schema: "astra.registry.baseline/1", version_count: 1, record_count: 1 }));
+    assertEqual(markerOnMain(dir).present, true, "a real marker was not recognised");
+    // The shape is checked, not merely the path: an empty file, or somebody
+    // else's JSON, is not MIG-20's baseline and must not switch the writer on.
+    fs.writeFileSync(path.join(dir, "log", "baseline.json"), JSON.stringify({ schema: "something.else/1" }));
+    assertEqual(markerOnMain(dir).present, false, "any JSON at that path switched the legacy decision log on");
+    fs.writeFileSync(path.join(dir, "log", "baseline.json"), "not json");
+    assertEqual(markerOnMain(dir).present, false, "an unreadable marker switched the legacy decision log on");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+await test("an unreadable identity.json is not an absent one", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "b4-identity-"));
+  try {
+    assertEqual(readIdentityRecord(dir, "dice-roller"), null, "an absent binding was not absent");
+    fs.mkdirSync(path.join(dir, "plugins", "dice-roller"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "plugins", "dice-roller", "identity.json"), "{ broken");
+    let threw = null;
+    try { readIdentityRecord(dir, "dice-roller"); } catch (e) { threw = e; }
+    assert(threw, "an unreadable binding read as absent, and BOT-77's guard is keyed on present-or-absent: " +
+      "a corrupt file would have let the legacy path publish a bound listing");
+    assert(String(threw.message).includes("BOT-77"), "and the failure does not say what it protects");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+await test("B-T0.2 stage 2 — /approve is refused when no `held` record on main carries its fingerprint", async () => {
+  const fp = "a".repeat(16);
+  const line = `/approve ${REPO}@${TAG} ${fp}`;
+
+  // Before the baseline marker there are no records at all, and the rule is
+  // OFF. Ungated, it would refuse every approval this registry has ever
+  // accepted — the gate is the condition under which the thing being checked
+  // exists, not a softening of it.
+  const noMarker = await command(line, "the-maintainer");
+  assertEqual(noMarker.mode, "approve",
+    "the held-record rule fired before any record could exist, so every /approve is refused at once");
+
+  // With the marker on main and no matching `held` record, it is refused.
+  const root = registryTree([{}]);
+  fs.mkdirSync(path.join(root, "log"), { recursive: true });
+  fs.writeFileSync(path.join(root, "log", "baseline.json"),
+    JSON.stringify({ schema: "astra.registry.baseline/1", version_count: 1, record_count: 1 }));
+  const unrecorded = await command(line, "the-maintainer", { root });
+  assertEqual(unrecorded.mode, "reply", unrecorded.why);
+  assert(unrecorded.reply.includes(fp), "the refusal does not name the fingerprint it could not find");
+
+  // And accepted once the record is there. Without this the assertion above
+  // passes for a rule that refuses everything.
+  fs.mkdirSync(path.join(root, "log", "decisions", "2026", "09"), { recursive: true });
+  fs.writeFileSync(path.join(root, "log", "decisions", "2026", "09", "held1.json"),
+    JSON.stringify({ schema: "astra.registry.decision/1", decision_id: "held1", state: "held", fingerprint: fp }));
+  const recorded = await command(line, "the-maintainer", { root });
+  assertEqual(recorded.mode, "approve", recorded.why);
+
+  // A `held` record for SOME OTHER fingerprint does not do. This is the case
+  // the rule exists for: a fingerprint copied out of a comment on another
+  // thread reads exactly like a valid one until it is compared.
+  fs.rmSync(path.join(root, "log", "decisions", "2026", "09", "held1.json"));
+  fs.writeFileSync(path.join(root, "log", "decisions", "2026", "09", "held2.json"),
+    JSON.stringify({ schema: "astra.registry.decision/1", decision_id: "held2", state: "held", fingerprint: "b".repeat(16) }));
+  assertEqual((await command(line, "the-maintainer", { root })).mode, "reply",
+    "an approval bound to somebody else's hold");
+
+  // A record that is not `held` is not a hold. A `published` record naming the
+  // same fingerprint is the ordinary aftermath of the hold being cleared, and
+  // reading it as a hold would make every approval replayable for ever.
+  fs.rmSync(path.join(root, "log", "decisions", "2026", "09", "held2.json"));
+  fs.writeFileSync(path.join(root, "log", "decisions", "2026", "09", "pub.json"),
+    JSON.stringify({ schema: "astra.registry.decision/1", decision_id: "pub", state: "published", fingerprint: fp }));
+  assertEqual((await command(line, "the-maintainer", { root })).mode, "reply",
+    "a published record was read as a standing hold, which makes every cleared approval replayable");
+});
+
+
+// ── B-T3.4: one commit holding every record, and none at all in shadow ─────
+
+section("shadow suppression (B-T3.4, BOT-92)");
+
+// BOT-92's Check is a PAIR, and it has to be one fixture: "a stubbed service
+// answering `shadow: true` yields no commit for that work, and the same
+// fixture answered `shadow: false` publishes". Two fixtures would let the
+// shadow half pass because the fixture never published in the first place.
+await test("the same submission publishes under `shadow: false` and commits nothing under `shadow: true`", () => {
+  const notShadow = decide(publishable({ shadow: false }));
+  assertEqual(notShadow.outcome, "publish", "the not-shadow half of the pair does not publish, so the pair proves nothing");
+  assertEqual(notShadow.publishes_now, true, "same");
+  assertEqual(notShadow.record.write, true, "same");
+
+  const shadow = decide(publishable({ shadow: true }));
+  assertEqual(shadow.publishes_now, false, "a shadow answer published a listing");
+  assertEqual(shadow.record.write, false, "a shadow answer wrote a decision record");
+  assertEqual(shadow.queue_entry, null, "a shadow answer wrote a queue entry");
+  assertEqual(shadow.shadow, true, "the answer does not say it was shadow, so the step summary cannot");
+  assert(String(shadow.record.why).includes("BOT-92"), "and it does not say which rule withheld it");
+});
+
+// The named risk for this task: the suppression enumerating record kinds, and
+// a sibling adding a fifth. This is the property that makes that impossible —
+// suppression is deny-by-default over everything the decision returns, so a
+// member added later is withheld without anybody editing the shadow rule.
+await test("a member nobody thought about is suppressed by construction", () => {
+  // A DELAY, chosen deliberately: it is the only outcome that carries a
+  // `publish_after`, a `queue_entry` and a `notify_author` at once, and
+  // `publish_after` is the member the plan's own wording — "no publication,
+  // decision, identity or queue record" — does not name. Written the first
+  // time against a `review` fixture, this test passed for a suppression that
+  // blanked exactly those four kinds, because a review carries none of the
+  // other three anyway. A fixture that cannot leak proves nothing about a
+  // leak.
+  // The plugin already HOLDS `client` in its listed version, so nothing is
+  // newly requested (no `R_NEW_HIGH_RISK` hold) and `P_DELAY_HIGH_RISK` is
+  // what remains: the delay branch, reached with nobody in the loop.
+  const delaying = (over = {}) => publishable({
+    existing: { versions: [{ doc: { version: "1.0.0", capabilities: ["client"] } }] },
+    derived: {
+      plugin: { id: "dice-roller", source: { kind: "github", repo: "you/dice-roller" } },
+      version: {
+        version: "1.0.1", capabilities: ["client"],
+        release: { repo: "you/dice-roller", commit: "a".repeat(40) }, artifacts: [],
+      },
+    },
+    ...over,
+  });
+  assert(decide(delaying()).publish_after,
+    "the fixture no longer produces a `publish_after`, so it cannot detect one leaking");
+  const shadow = decide(delaying({ shadow: true }));
+  const ALLOWED = new Set([
+    "outcome", "reasons", "track", "decided_at", "sla_deadline", "notify_author",
+    "fingerprint", "repo", "tag", "issue", "artifact_digests", "wait", "shadow",
+    "approval_refused", "approved_by", "approved_at", "record",
+  ]);
+  const leaked = Object.entries(shadow)
+    .filter(([m, v]) => !ALLOWED.has(m))
+    .filter(([, v]) => !(v === null || v === false || (Array.isArray(v) && v.length === 0)))
+    .map(([m]) => m);
+  assertEqual(leaked.join(", "), "",
+    "a shadow answer carried a member that is not on the allow-list and is not empty. Either the " +
+    "suppression stopped being deny-by-default, or a new output was added to the allow-list without " +
+    "a reason — and the whole point of BOT-92's shape is that the second is a visible edit");
+  // And the floor from the other end: the allow-list is not the whole object,
+  // or "deny by default" denies nothing.
+  assert(Object.keys(shadow).some((m) => !ALLOWED.has(m)),
+    "every member of a decision is on the shadow allow-list, so the suppression suppresses nothing");
+});
+
+await test("an answer with no `shadow` member is read as shadow, never as not-shadow", () => {
+  // The default direction is the whole safety of the shadow period: an answer
+  // that lost the member — a mis-deployed service, a proxy stripping it — must
+  // not publish. `decide()` reads `input.shadow === true`, so anything that is
+  // not the literal `true` is shadow at the CALLER, and the caller is the one
+  // that knows an answer arrived at all. What this asserts is the half that
+  // lives here: nothing in `decide()` invents a not-shadow answer.
+  const d = decide(publishable({ shadow: undefined }));
+  assertEqual(d.shadow, false,
+    "`decide()` is given no verdict at all on the legacy path, and a legacy run is not a shadow run — " +
+    "the not-shadow default belongs to the caller that saw the answer, and B-T3.6's canary is the one " +
+    "that watches a missing member being read as shadow");
+});
+
+await test("B-T3.4's record commit is refused by name, and this file grows no second writer", () => {
+  const refused = recordCommitRefusal({});
+  assertEqual(refused.ok, false, "the record commit reported itself buildable, and neither half is on main");
+  assert(refused.reason.includes("bot/lib/decisions.mjs"), "the refusal does not name the writer it needs");
+  assert(refused.reason.includes("plugins-ingest.yml"), "the refusal does not name the job graph it belongs to");
+  assertEqual(recordCommitRefusal({ decisionsWriter: {}, jobGraph: {} }).ok, true,
+    "the refusal cannot be lifted, so it is a wall rather than a gap somebody can close");
+});
+
+
+// ── B-T3.7: the legacy half of the decision log ───────────────────────────
+
+section("legacy decision records (B-T3.7)");
+
+await test("the legacy path's four triggers, and the one it may never write", () => {
+  assertEqual(legacyTrigger("ping"), "ping", "a /release ping");
+  assertEqual(legacyTrigger("approve"), "issue", "a maintainer's command is an issue trigger");
+  assertEqual(legacyTrigger("form"), "issue", "the submission form is an issue trigger");
+  assertEqual(legacyTrigger("backstop"), "legacy", "the backstop's publications are `legacy`");
+  assertEqual(legacyTrigger("queue"), "legacy", "the drain's publications are `legacy`");
+  assertEqual(legacyTrigger("repository_dispatch"), "dispatch", "a dispatch");
+  for (const t of ["issue", "ping", "dispatch", "legacy"]) {
+    assert(LEGACY_TRIGGERS.includes(t), `${t} is not in LEGACY_TRIGGERS, so DEC-7's four are not four`);
+  }
+  assertEqual(LEGACY_TRIGGERS.length, 4, "the legacy path grew a fifth trigger, which DEC-7 does not have");
+});
+
+await test("a legacy `migration` composition is refused, loudly", () => {
+  // `migration` is MIG-20's baseline, and `bot/lib/identity.mjs` selects
+  // baselines by exactly `trigger === "migration" && state === "published"`.
+  // One composed here becomes the baseline this plugin's every later identity
+  // comparison is made against — written off an issue comment rather than off
+  // `baseline.yml`'s single audited dispatch.
+  let threw = null;
+  try { legacyTrigger("migration"); } catch (e) { threw = e; }
+  assert(threw, "the legacy path composed a `migration` record");
+  assert(String(threw.message).includes("MIG-20"), "and the refusal does not say what it would have overwritten");
+  // The refusal reaches the whole program, not just the helper: `decideRelease`
+  // re-throws for `migration` specifically rather than turning it into a
+  // no-record, because "do not write this" and "write the wrong baseline" are
+  // not the same mistake.
+  assert(String(threw.message).includes("baseline"), "and it does not name the thing it protects");
+});
+
+await test("a source nobody mapped writes no record, and never writes `legacy`", () => {
+  // Three shapes were possible here and two are wrong. Throwing turns every
+  // caller that predates `--source` red at once. Defaulting to `legacy` is
+  // what B-T3.7 forbids: a record stating the backstop found a release when
+  // nobody knows what found it. What is built is the third — no trigger, so
+  // no record, said out loud.
+  let threw = null;
+  try { legacyTrigger("something-new"); } catch (e) { threw = e; }
+  assert(threw, "an unmapped source was silently given a trigger");
+  assert(!String(threw.message).includes("came from the backstop\", and"),
+    "the refusal must not read as though `legacy` were the fallback");
+  assert(String(threw.message).includes("legacy"), "the refusal names the four triggers so the caller can pick one");
+});
+
+await test("end to end — a drained publication with the marker on main carries one `legacy` trigger", async () => {
+  // The thing itself, run the way the drain runs it: a real bundle, the real
+  // archive walk, the real manifest probe, the real derivation and the real
+  // policy — with `log/baseline.json` on the tree and `--source queue`, which
+  // is what `bot/watch.mjs --drain` puts on every dispatch entry.
+  const root = registryTree([{}]);
+  fs.mkdirSync(path.join(root, "log"), { recursive: true });
+  fs.writeFileSync(path.join(root, "log", "baseline.json"),
+    JSON.stringify({ schema: "astra.registry.baseline/1", version_count: 1, record_count: 1 }));
+
+  const drained = await run({ root, source: "queue" });
+  assertEqual(drained.decision.outcome, "publish", JSON.stringify(codes(drained)));
+  assertEqual(drained.decision.trigger, "legacy",
+    "a drained publication is a `legacy` trigger — it has no thread and no command behind it");
+  assertEqual(drained.decision.record.write, true,
+    "the marker is on main and the drain published, and still no record is owed");
+
+  // And the gate, from the other side, on the same tree and the same bytes.
+  const beforeBaseline = await run({ root: registryTree([{}]), source: "queue" });
+  assertEqual(beforeBaseline.decision.outcome, "publish", "the floor: the same release without the marker");
+  assertEqual(beforeBaseline.decision.record.write, false,
+    "a record was written before MIG-20's baseline exists, and a record with nothing to be compared " +
+    "against is a statement this registry cannot check (B-T3.7)");
+  assert(String(beforeBaseline.decision.record.why).includes("baseline.json"),
+    "and it does not name the marker it is waiting for");
+
+  // What the publish job actually reads, written out as a user's run would
+  // write it. Asserted from the FILE rather than from the object, because the
+  // object is not what `plugins-ingest.yml` will read.
+  const outDir = tmp("astra-b4-legacy-out-");
+  writeOutputs(outDir, { repo: REPO, tag: TAG, issue: null }, drained);
+  const written = JSON.parse(fs.readFileSync(path.join(outDir, "decision.json"), "utf8"));
+  assertEqual(written.trigger, "legacy", "decision.json carries no trigger, so the writer has nothing to stamp");
+  assertEqual(written.record?.write, true, "decision.json does not say whether a record is owed");
+  assertEqual(written.shadow, false, "decision.json does not say whether the answer was shadow");
 });
 
 // ── result ──────────────────────────────────────────────────────────────────

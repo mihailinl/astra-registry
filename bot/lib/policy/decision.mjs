@@ -71,13 +71,77 @@ export function decide(input) {
   const finish = (d) => finishDecision({
     issue: input.issue
       ?? (queued && queued.repo === repo && queued.tag === input.tag ? queued.issue ?? null : null),
+    // BOT-92, threaded here and nowhere else: every outcome goes through this
+    // helper, so a branch added later cannot forget it. The verdict the
+    // service returned carries the member (ID-71); an answer WITHOUT it is
+    // read as shadow by the caller, never defaulted to not-shadow here.
+    shadow: input.shadow === true,
     ...d,
   });
 
-  const add = (code, message) => reasons.push({ code, level: policyCodeDef(code).level, message });
+  // Which path is asking. It changes what five codes MEAN (FLOW-72: on the
+  // service path `E_PROBE_UNAVAILABLE` and its four siblings are waits, not
+  // refusals), so it is threaded through every level lookup rather than
+  // consulted once. Default `legacy`, which is what every caller on `main`
+  // today is.
+  const path = input.path === "service" ? "service" : "legacy";
+  const add = (code, message) => reasons.push({ code, level: policyCodeDef(code, { path }).level, message });
+
+  // 0 ── FLOW-72: a wait is not a finding about the submission, and waits
+  //      never record.
+  //
+  // Written as a property over the SET of findings, read through the level
+  // each code is DECLARED at in `constants.mjs`, and not as a list of the wait
+  // codes that existed when this was written. The list-shaped version of this
+  // rule is wrong the moment a sibling task coins a sixth wait: the code is
+  // handed straight to stage 1 below, `level === "error"` is true of it, and a
+  // read that did not happen is written into `log/decisions/` as a refusal of
+  // somebody's release. That record cannot be un-written, and the author's
+  // answer to it — a `/recheck` — is the one thing that cannot help.
+  //
+  // Only ever an UPGRADE. `policyCodeDef` answers `error` for every code it
+  // does not know, so a downgrade here would quietly re-level the whole of
+  // `codes.mjs`; the condition asks whether the code is declared a wait on
+  // THIS path, and leaves every other finding exactly as the check left it.
+  // **Only an `error` is reclassified**, and this qualifier was not obvious
+  // until the rule was run against the real corpus. A code in `codes.mjs`
+  // names a CHECK, not an outcome, and the same code carries the check's pass
+  // as well as its failure: every green ingest emits `E_TRUST_UNPROVISIONED`
+  // at level `pass` with the message "trust.json serial 7 … allows 1
+  // release-workflow commit(s)", and `E_DERIVED_LISTING_INVALID` at `pass`
+  // with "the derived listing passes tools/validate.mjs". Reclassified on the
+  // code alone, every successful service-path run would have waited on its
+  // own passing checks, for ever, and the release would never have been
+  // decided at all. FLOW-72 reclassifies a REFUSAL into a wait; it has nothing
+  // to say about a check that answered.
+  const levelled = findings.map((f) => {
+    if (f.level !== "error") return f;
+    const declared = policyCodeDef(f.code, { path });
+    return declared.level === "wait" ? { ...f, level: "wait" } : f;
+  });
+  const waits = levelled.filter((f) => f.level === "wait");
+  if (waits.length) {
+    for (const w of waits) reasons.push({ code: w.code, level: "wait", message: w.message });
+    return finish({
+      // No fifth outcome, on purpose — `bot/lib/policy/comment.mjs`'s headline
+      // map and `bot/decide.mjs`'s exit map are two files this task does not
+      // own, and an unrecognised outcome renders as a comment with no headline
+      // and exit 2. What distinguishes a wait from a refusal is `record.write`
+      // and the `wait` member, which is what B-T3.5's result body reads.
+      outcome: "refuse",
+      reasons,
+      track,
+      now,
+      approval: typed,
+      repo,
+      tag: input.tag,
+      wait: { code: waits[0].code, cause: String(waits[0].message ?? "").slice(0, 512) },
+      record: { write: false, why: `FLOW-72: ${waits[0].code} is a wait, and a wait is the absence of a fact` },
+    });
+  }
 
   // 1 ── a failed check is not a policy decision.
-  const errors = findings.filter((f) => f.level === "error");
+  const errors = levelled.filter((f) => f.level === "error");
   if (errors.length || !derived?.plugin || !derived?.version) {
     add(
       "P_REFUSED",
@@ -146,6 +210,51 @@ export function decide(input) {
       "the caller stops and asks again next run, because a read that did not happen is not a fact " +
       "about the repository (B-T1.3; FLOW-72).",
     );
+  }
+
+  // 1c ── BOT-77: the legacy path stops at a bound listing.
+  //
+  // From R3 a listing can carry `plugins/<id>/identity.json` — the registry's
+  // record of which repository it is bound to, written by the service path
+  // with a decision record beside it. The legacy path (an issue, a `/release`
+  // ping, the backstop, the queue drain) may not publish one, may not queue
+  // one, and may not clear a hold on one.
+  //
+  // Not tidiness. The two paths answer "may this be listed" with different
+  // evidence: the service path holds a verdict, an eligibility and a binding
+  // line read at the attested commit, and the legacy path holds an issue
+  // comment from somebody with write access to THIS repository. Once a listing
+  // is bound, letting the weaker path publish it means the binding can be
+  // routed around by opening an issue — and the route is open to exactly the
+  // people the binding was introduced to stop trusting by default.
+  //
+  // It expires. From R6 there is no legacy path (B-T5.2 deletes `ingest.yml`),
+  // and this guard goes with it.
+  const identityRecord = input.identityRecord ?? null;
+  if (identityRecord && path !== "service") {
+    add(
+      "R_CHECK_HELD",
+      `${derived.plugin.id} carries an identity record (bound to ${identityRecord.repo ?? "a repository"}, ` +
+      `repository ${identityRecord.repository_id ?? "?"}), and this run came in on the legacy path. A bound ` +
+      "listing is published by the path that holds the binding evidence — a verdict, an eligibility and the " +
+      "line at the attested commit — and an issue comment is none of those (BOT-77).",
+    );
+    return finish({
+      outcome: "review",
+      reasons,
+      track,
+      now,
+      sla_deadline: iso(now.getTime() + REVIEW_SLA_HOURS * HOUR_MS),
+      // No `artifact_digests`, no `queue_entry` and no `approval`: the three
+      // things BOT-77 names are publish, queue and clear-a-hold, and each of
+      // them is reachable from one of those members. The approval is carried
+      // in `approval_refused` instead, so the thread can still say a
+      // maintainer typed a command and the registry did not honour it.
+      approval: null,
+      refused: typed,
+      repo,
+      tag: input.tag,
+    });
   }
 
   const requested = requestedAuthority(derived.version);
@@ -224,7 +333,7 @@ export function decide(input) {
   // R_FIRST_LISTING and R_IDENTITY_CHANGED are raised by the ingest checks
   // (they are facts about the submission); this module adds the third and
   // states all three in one place so POLICY.md has one table to quote.
-  const held = findings.filter((f) => f.level === "review");
+  const held = levelled.filter((f) => f.level === "review");
   for (const f of held) {
     const code = Object.hasOwn(POLICY_CODES, f.code) ? f.code : "R_CHECK_HELD";
     add(code, f.message);
@@ -500,8 +609,64 @@ function normaliseApproval(approval) {
   return { by, at: iso(at), for: forWhat, publishNow: approval?.publishNow === true };
 }
 
+// ── BOT-92, applied at the funnel and not to a list of kinds (B-T3.4) ─────
+//
+// "Nothing for work a `shadow: true` answer named: no publication, decision,
+// identity or queue record for that submission."
+//
+// The obvious implementation is to walk those four kinds and blank each one.
+// It is wrong the day a fifth is added — and a fifth IS planned: B-T3.4 also
+// commits `state/alerts/` records, and B-T3.5's result path grows more. The
+// task that adds it will add a member to the object below and will not think
+// to come here, because nothing about adding an output looks like editing a
+// shadow rule. The result is a shadow run that quietly commits the one kind
+// nobody suppressed, which is precisely the failure the shadow period exists
+// to make impossible.
+//
+// So the suppression is DENY-BY-DEFAULT over everything this function
+// returns. `WRITES_IN_SHADOW` is the short list of members a shadow run may
+// still carry, and every other member that could cause a write is emptied
+// whether or not anybody remembered it. A new output is suppressed by
+// construction; making it survive shadow takes a deliberate edit to the
+// allow-list, which is a line a reviewer can see.
+//
+// Two things stay outside the rule, because no service answer drives them:
+// B-T3.7b's `migration` records, and the legacy path until R6. Neither
+// reaches this function under a shadow answer — the legacy path has no
+// verdict to be shadow — so neither needs an exemption here, and adding one
+// would be a hole in the shape of a comment.
+
+/** Members a `shadow: true` answer still allows through — everything else is emptied. */
+const WRITES_IN_SHADOW = new Set([
+  // The answer itself, so the step summary can carry the kind and body hash
+  // the run WOULD have posted (B-T3.5's shadow rule).
+  "outcome", "reasons", "track", "decided_at", "sla_deadline", "notify_author",
+  "fingerprint", "repo", "tag", "issue", "artifact_digests", "wait", "shadow",
+  "approval_refused", "approved_by", "approved_at", "record",
+]);
+
+/** Everything a shadow answer withholds, emptied by type rather than by name. */
+function suppressForShadow(out) {
+  const withheld = [];
+  for (const [member, value] of Object.entries(out)) {
+    if (WRITES_IN_SHADOW.has(member)) continue;
+    const empty = typeof value === "boolean" ? false : Array.isArray(value) ? [] : null;
+    if (JSON.stringify(value) === JSON.stringify(empty)) continue;
+    withheld.push(member);
+    out[member] = empty;
+  }
+  out.record = {
+    write: false,
+    why:
+      "BOT-92: a `shadow: true` answer named this work, so nothing is committed and no result is posted for " +
+      `it. Withheld: ${withheld.join(", ") || "nothing this run had to write"}.`,
+  };
+  out.shadow = true;
+  return out;
+}
+
 function finishDecision(d) {
-  return {
+  const out = {
     outcome: d.outcome,
     reasons: d.reasons,
     track: d.track,
@@ -533,5 +698,25 @@ function finishDecision(d) {
       : null,
     /** True when the derived listing should be committed by this run. */
     publishes_now: d.outcome === "publish",
+    // ── whether this run writes a decision record (B-T3.3c) ────────────────
+    //
+    // Separate from `outcome`, because the two answer different questions and
+    // the four outcomes cannot express the second. `refuse` is the outcome of
+    // a failed check AND of a wait AND of a submission no listing names, and
+    // exactly one of those three is written down.
+    //
+    // Default true: a decision this module actually reached is recorded, which
+    // is what every path on `main` does today. The no-record cases each say so
+    // by name, and `bot/decide.mjs` adds the three it answers before this
+    // module is called at all (BOT-19, BOT-74, FLOW-67).
+    record: d.record ?? { write: true, why: "a decision was reached, and a decision is recorded (BOT-34)" },
+    // FLOW-72's answer, in the shape §4.4 gives a `wait`: `{code, cause}`
+    // here, with `started_at` and `earliest_retry_at` added by the job that
+    // knows when it started (B-T3.5's determinism rule — a wait's clock comes
+    // from the step's recorded start, never from the moment the body is sent).
+    wait: d.wait ?? null,
+    /** True when a `shadow: true` answer named this work (BOT-92). */
+    shadow: d.shadow === true,
   };
+  return out.shadow ? suppressForShadow(out) : out;
 }

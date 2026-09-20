@@ -55,18 +55,29 @@ jobs:
       # anything going red. `build-index.yml` reads it the same way and for the
       # same reason; `link-deps.sh` refuses to clone without it, which is how
       # this workflow found out.
-      - name: The AstraPlugins pin ingest.yml judges manifests by
+      # B-T1.4 moved the pin out of `ingest.yml` and into a file of its own,
+      # because `ingest.yml` is deleted at R6 and three workflows read the pin
+      # out of it. This step read it with a grep over that workflow; after the
+      # move the grep matches nothing, which is why it is replaced rather than
+      # repointed — a grep that can match nothing is the shape this repository
+      # has spent two days removing.
+      - name: The AstraPlugins pin this bot judges manifests by
         id: pin
         run: |
           set -euo pipefail
-          ref=$(grep -oP '^\s*ASTRA_PLUGINS_REF:\s*\K[0-9a-f]+' .github/workflows/ingest.yml || true)
-          if ! [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::ASTRA_PLUGINS_REF is not a 40-hex commit in .github/workflows/ingest.yml: '$ref'"
+          pin=bot/manifest-probe/astra-plugins.pin
+          if [ ! -f "$pin" ]; then
+            echo "::error::$pin is missing. It is the only place ASTRA_PLUGINS_REF is written (B-T1.4)."
             exit 1
           fi
-          url=$(grep -oP '^\s*ASTRA_PLUGINS_URL:\s*\K\S+' .github/workflows/ingest.yml || true)
+          ref=$(grep -oP '^ASTRA_PLUGINS_REF=\K[0-9a-f]+' "$pin" || true)
+          if ! [[ "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::ASTRA_PLUGINS_REF is not a 40-hex commit in $pin: '$ref'"
+            exit 1
+          fi
+          url=$(grep -oP '^ASTRA_PLUGINS_URL=\K\S+' "$pin" || true)
           if [ -z "$url" ]; then
-            echo "::error::ASTRA_PLUGINS_URL is not in .github/workflows/ingest.yml"
+            echo "::error::ASTRA_PLUGINS_URL is not in $pin"
             exit 1
           fi
           echo "ASTRA_PLUGINS_REF=$ref" >> "$GITHUB_ENV"
