@@ -999,3 +999,141 @@ test("an alert job's verdict speaks for every job it waits for", () => {
   assert.ok(checked >= 2, `only ${checked} verdict-composing alert job(s) found; there were 2 on 2026-09-19`);
   assert.equal(problems.join("\n"), "", "an alarm is silent about a job whose failure it is there to report");
 });
+
+// ── B-T1.4: the AstraPlugins pin lives in one file ──────────────────────────
+//
+// Written as a property over the SET of workflows rather than as a list of the
+// three that read the pin today. A list is correct on the day it is written:
+// the fourth reader is added by somebody who never sees this file, and the way
+// it goes wrong is that they copy a literal SHA rather than a `grep` — which a
+// list-shaped test cannot notice, because the workflow it would have to notice
+// is not on the list.
+//
+// The pin's old home was `.github/workflows/ingest.yml`, which B-T5.2 DELETES
+// at R6. Three readers grepped it out of there, and two of the three turned a
+// grep that matched nothing into an error. The third did not.
+
+const PIN_FILE = path.join(REPO, "bot", "manifest-probe", "astra-plugins.pin");
+const PIN_REL = "bot/manifest-probe/astra-plugins.pin";
+
+/** The pin file, parsed the way a shell would read it. */
+function pinValues() {
+  const out = {};
+  for (const line of fs.readFileSync(PIN_FILE, "utf8").split("\n")) {
+    const m = /^([A-Z_][A-Z0-9_]*)=(.*)$/.exec(line);
+    if (m) out[m[1]] = m[2];
+  }
+  return out;
+}
+
+test("the pin file yields a 40-hex ref and an https url", () => {
+  assert.ok(fs.existsSync(PIN_FILE), `${PIN_REL} does not exist. It is the only place ASTRA_PLUGINS_REF is written (B-T1.4), and every reader below resolves to nothing without it`);
+  const pin = pinValues();
+  assert.match(
+    pin.ASTRA_PLUGINS_REF ?? "",
+    /^[0-9a-f]{40}$/,
+    `${PIN_REL} must carry a full 40-hex commit, and carries ${JSON.stringify(pin.ASTRA_PLUGINS_REF ?? null)}. ` +
+    "An abbreviated sha is ambiguous to `git fetch` against a repository this one does not control",
+  );
+  assert.match(
+    pin.ASTRA_PLUGINS_URL ?? "",
+    /^https:\/\/\S+$/,
+    `${PIN_REL}'s ASTRA_PLUGINS_URL must be an https url, and is ${JSON.stringify(pin.ASTRA_PLUGINS_URL ?? null)}. ` +
+    "A `git@`/ssh remote needs a key no read-only job holds, and an http one is a manifest rule-set a network can rewrite",
+  );
+  // The shape a workflow appends to `$GITHUB_ENV`, and a shell sources. A YAML
+  // `KEY: VALUE` line here would be read by `grep -E '^KEY='` as nothing, and
+  // `>> "$GITHUB_ENV"` would then export nothing, silently.
+  assert.ok(
+    !/^\s*ASTRA_PLUGINS_(REF|URL)\s*:/m.test(fs.readFileSync(PIN_FILE, "utf8")),
+    `${PIN_REL} carries a YAML-style \`KEY: VALUE\` line. This file is KEY=VALUE: every reader greps for the '=' form`,
+  );
+});
+
+test("every workflow that judges manifests by the pin reads it from the pin file, and none writes it as a literal", () => {
+  const mentions = files.filter((f) => /ASTRA_PLUGINS_(REF|URL)/.test(read(f)));
+  const readers = [];
+  const problems = [];
+
+  for (const f of mentions) {
+    const body = read(f);
+    // A literal: the name assigned a value that would actually WORK as a pin —
+    // a commit-shaped hex string, or a clonable url. Defined that way, rather
+    // than as "anything that is not one of these known-good spellings",
+    // because the second is a list and this has to hold for a spelling nobody
+    // has written yet. A `$VAR`, a `${{ }}` expression, or the pattern inside
+    // a `grep -oP` assigns nothing usable and is not a second copy of the
+    // decision.
+    //
+    // This is the mutation the canary is watched by — re-adding the pin to a
+    // workflow — and it is the shape a fourth reader arrives in.
+    const usable = { REF: /^[0-9a-f]{7,40}$/, URL: /^(https?:\/\/|git@)\S+$/ };
+    for (const m of body.matchAll(/^[^#\n]*?ASTRA_PLUGINS_(REF|URL)\s*[:=]\s*(\S+)/gm)) {
+      const value = m[2].replace(/^["']|["']$/g, "");
+      if (!usable[m[1]].test(value)) continue;
+      problems.push(
+        `${f} writes ASTRA_PLUGINS_${m[1]} as the literal ${JSON.stringify(value)}. The pin is one decision — ` +
+        `which AstraPlugins commit states the manifest rules a stranger's listing is judged by — and a second ` +
+        `copy of it is a copy that goes stale with nothing going red. Read ${PIN_REL} instead.`,
+      );
+    }
+    if (body.includes(PIN_REL)) readers.push(f);
+    else {
+      problems.push(
+        `${f} uses ASTRA_PLUGINS_REF/URL and never names ${PIN_REL}, so it is reading the pin from somewhere ` +
+        `else. There is nowhere else: ingest.yml stopped carrying it (B-T1.4) and is deleted outright at R6 ` +
+        `(B-T5.2), and a grep against a file that is not there yields the empty string, not an error.`,
+      );
+    }
+  }
+
+  // `sign.yml` is not among the readers, and this is a seam rather than a
+  // tidiness rule: no signing job reads another repository (registry plan
+  // seam 4). A signing job that checks AstraPlugins out has fetched a stranger
+  // repository's bytes into the one process that holds a key.
+  assert.ok(
+    !readers.includes("sign.yml") && !/ASTRA_PLUGINS_(REF|URL)/.test(read("sign.yml")),
+    "sign.yml reads the AstraPlugins pin. No signing job reads another repository (seam 4): the pin fetches a " +
+    "stranger's tree, and the one job that must not is the one holding a key",
+  );
+
+  assert.equal(
+    problems.join("\n"),
+    "",
+    "the pin is written or read somewhere other than " + PIN_REL + ".\n\n" +
+    "IF THE FAILURE NAMES bot-tests.yml, THIS IS THE STEP IT IS OWED. This lane may not edit that file; the " +
+    "step below replaces its `The AstraPlugins pin ingest.yml judges manifests by` step verbatim:\n\n" +
+    "      - name: The AstraPlugins pin this bot judges manifests by\n" +
+    "        id: pin\n" +
+    "        run: |\n" +
+    "          set -euo pipefail\n" +
+    "          pin=bot/manifest-probe/astra-plugins.pin\n" +
+    "          if [ ! -f \"$pin\" ]; then\n" +
+    "            echo \"::error::$pin is missing. It is the only place ASTRA_PLUGINS_REF is written (B-T1.4).\"\n" +
+    "            exit 1\n" +
+    "          fi\n" +
+    "          ref=$(grep -oP '^ASTRA_PLUGINS_REF=\\K[0-9a-f]+' \"$pin\" || true)\n" +
+    "          if ! [[ \"$ref\" =~ ^[0-9a-f]{40}$ ]]; then\n" +
+    "            echo \"::error::ASTRA_PLUGINS_REF is not a 40-hex commit in $pin: '$ref'\"\n" +
+    "            exit 1\n" +
+    "          fi\n" +
+    "          url=$(grep -oP '^ASTRA_PLUGINS_URL=\\K\\S+' \"$pin\" || true)\n" +
+    "          if [ -z \"$url\" ]; then\n" +
+    "            echo \"::error::ASTRA_PLUGINS_URL is not in $pin\"\n" +
+    "            exit 1\n" +
+    "          fi\n" +
+    "          echo \"ASTRA_PLUGINS_REF=$ref\" >> \"$GITHUB_ENV\"\n" +
+    "          echo \"ASTRA_PLUGINS_URL=$url\" >> \"$GITHUB_ENV\"\n" +
+    "          echo \"ok    judging manifests by $ref from $url\"\n",
+  );
+
+  // The floor. Without it the whole test above passes vacuously the day
+  // somebody renames the variable, or moves the last reader to a composite
+  // action: zero mentions is zero problems.
+  assert.ok(
+    readers.length >= 3,
+    `only ${readers.length} workflow(s) read ${PIN_REL} (${readers.join(", ") || "none"}); there were 3 when ` +
+    "B-T1.4 landed — ingest.yml, build-index.yml and bot-tests.yml. A reader that stopped reading it is either " +
+    "a workflow that no longer needs the pin, or one that grew a second copy somewhere this scan does not look",
+  );
+});

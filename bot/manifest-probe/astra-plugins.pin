@@ -1,0 +1,134 @@
+# Which AstraPlugins commit states the manifest rules this bot enforces.
+#
+# THIS FILE IS THE ONLY PLACE THE PIN IS WRITTEN. Registry plan B-T1.4.
+#
+# It lived in `.github/workflows/ingest.yml`'s workflow-level `env:` and three
+# readers grepped it out of there with `grep -oP '^\s*ASTRA_PLUGINS_REF:\s*\K…'`.
+# Two things were wrong with that and only one of them is cosmetic:
+#
+#   * B-T5.2 DELETES `ingest.yml` at R6. A pin that lives inside a file with a
+#     deletion date is a pin whose readers all break on the day it is deleted,
+#     and they break by finding nothing — `grep || true` yields the empty
+#     string, and only `bot-tests.yml` and `build-index.yml` turn that into an
+#     error. `tools/coverage/reserved-id-mirror.mjs` reads it for a URL and had
+#     no such guard.
+#   * Between R1 and R4b the pin is BUMPED (AP-7's registry readers; M-T5.7).
+#     Every bump was a diff inside a 1300-line workflow, where the reviewer
+#     reads YAML and the change is a fact about another repository.
+#
+# Shape: `KEY=VALUE`, one per line, `#` comments. Not YAML and not JSON, so a
+# shell can `source` it, a workflow can append it to `$GITHUB_ENV` unchanged,
+# and `link-deps.sh` — which already refuses to clone without
+# `ASTRA_PLUGINS_REF` — needs no parser.
+#
+# `sign.yml` does not read this file and must not: no signing job reads another
+# repository (registry plan seam 4). `bot/tests/workflows.test.mjs` asserts it.
+#
+# AFTER R3 EXITS, MOVING THE SHA BELOW NEEDS AN OPERATOR ACKNOWLEDGEMENT. This
+# file is in TRUST-31's hashed set, and that is the right price: the pin selects
+# the manifest rules a stranger's listing is judged by.
+#
+# ── the history, moved here verbatim from ingest.yml ────────────────────────
+env:
+# The AstraPlugins commit whose `astra-plugin-manifest` this bot validates
+# manifests with. Pinned by SHA, never by branch: the crate is the daemon's
+# own parser, and "whatever HEAD says today" is not a thing to decide a
+# stranger's listing with. Bump it deliberately, in a reviewed commit.
+#
+# The note that used to be here said this SHA was the tip of an unpushed
+# branch, and that a pin nobody can fetch "fails loudly, which is the right
+# failure". Both halves stopped being true. That branch was rewritten before it
+# was pushed, so the commit is on no reachable ref and never will be —
+# `fatal: unable to read tree (50eaa616…)` — and the failure was not loud at
+# all: `selftest` failed, `check` was skipped, and the first real submission
+# got "the ingest job did not produce a report", which reads as a fault
+# somewhere in the bot rather than as a one-line pin.
+#
+# It was for a while the same commit as `plugin-release/v1` and as the one
+# `trust.json` allows an attestation from. **They have now diverged, and that
+# is correct.** This pin says which manifest rules a listing is judged by, and
+# moving it is a code review. `trust.json`'s allowlist says which builder's
+# word is worth anything, and moving that is a root-key ceremony. Tying a
+# cheap decision to an expensive one means either the cheap one stops moving
+# or the expensive one gets made casually.
+#
+# Bumped to `aaf480ea` for `spec/icon-formats.yaml`, which the icon-format
+# coupling in `tools/validate.mjs` reads. Safe to move: `astra-plugin-manifest`
+# and `plugin-release.yml` are byte-identical between the two commits
+# (`git diff --stat e3329df2 aaf480ea -- <path>` is empty for both), so no
+# manifest is judged differently and no attestation changes meaning.
+#
+# Bumped to `6d6861f` for `spec/locales.yaml`, `spec/listing-limits.yaml` and
+# `testdata/locales/`, which the three locale couplings in `tools/validate.mjs`
+# read. This one is NOT byte-identical, and the check is the same one, run
+# again rather than repeated from memory:
+#
+#   * `astra-plugin-cli/vendor/astra-plugin-manifest` gains a `Cargo.lock` and
+#     one named constant — `NOARCH_PLATFORM_KEY = "noarch"`, replacing the
+#     literal in `RESERVED_PLATFORM_KEYS` and re-exported from `lib.rs`. No
+#     parse, no rule, no field changes, so no manifest is judged differently.
+#     (`git diff aaf480ea 6d6861f -- astra-plugin-cli/vendor/astra-plugin-manifest/src`.)
+#   * `plugin-release.yml` moves its own `ASTRA_TOOLING_REF` to the CLI that
+#     knows about `locales/`. That is a change to what an AUTHOR's release
+#     builds with, and it reaches this registry through the bundle, not
+#     through this pin. Which builder's word counts is the
+#     `reusable_workflow_shas` allowlist inside the root-signed `trust.json`
+#     — its own list of commits, which this variable does not appear in and
+#     cannot move — so no attestation changes meaning here either.
+#
+# Bumped to `c545528` for the three locale caps `spec/listing-limits.yaml`
+# gained. `checkMirroredListingLimits` in `tools/validate.mjs` enumerates this
+# repository's `<cap>_mirrored_by` declarations and asks whether the copy each
+# names exists over there — so with the pin at `6d6861f` that check reported
+# three real errors about a file that had since grown the rows, which is the
+# correct verdict about the pinned commit and the wrong one about AstraPlugins.
+# Measured, both ways:
+#
+#   $ ASTRA_PLUGINS_DIR=<AstraPlugins@6d6861f> node tools/validate.mjs --allow-staging
+#   ERROR ... max_locale_bytes is declared `_mirrored_by` this file, which has no
+#         `max_locale_bytes` row                                    (x3)  FAIL
+#   $ ASTRA_PLUGINS_DIR=<AstraPlugins@c545528> node tools/validate.mjs --allow-staging
+#   PASS  15 plugin(s), 0 error(s)
+#
+# This is the C16 discipline again — that checkout moved in its own commit
+# BEFORE anything read it — applied to a comparison rather than to a corpus.
+#
+# Bumped again to `2d35d2d`, and THIS bump is not optional in the way the
+# others were. `CORPUS_RULE_IDS` in bot/lib/locales.mjs now maps
+# `E_LOCALE_CARD_TOO_LARGE` to the corpus id `E19`, and the reader below holds
+# every mapped rule to having a fail case upstream. That case —
+# `testdata/locales/fail/card-i18n-over-budget` — exists only from `2d35d2d`.
+# Map without pin is an immediate red: `rule E19 is implemented here and has
+# no fail case in the corpus`. So the two land together, and this comment is
+# the reason they cannot be separated later by somebody tidying.
+#
+# That pairing is also what broke a cycle. The fixture could not go upstream
+# first — a case expecting `E19` errored in this reader, which maps no id to
+# it — and the map could not come first, for the reason above. What resolves
+# it is that AstraPlugins' own CI checks out no registry at all, so the
+# fixture lands there green and is invisible here until this line moves.
+#
+# Bumped again to `bc51241` for `max_artifact_bytes`. Same shape as the E19
+# pairing above and for the same reason: this file now declares that cap
+# `_mirrored_by` AstraPlugins/spec/listing-limits.yaml, and that row exists
+# only from `bc51241`. Measured both ways rather than argued:
+#
+#   $ ASTRA_PLUGINS_DIR=<AstraPlugins@2d35d2d> node tools/validate.mjs --allow-staging
+#   ERROR ... max_artifact_bytes is declared `_mirrored_by` this file, which has
+#         no `max_artifact_bytes` row                                     FAIL
+#   $ ASTRA_PLUGINS_DIR=<AstraPlugins@bc51241> node tools/validate.mjs --allow-staging
+#   PASS  15 plugin(s), 0 error(s)
+#
+# `bc51241` is AstraPlugins master, and every value this variable takes must be
+# a commit on master. A pin at a feature branch head is a pin somebody can
+# force-push out from under this repository; one was set that way on
+# 2026-08-23 while a pair was still open, so the registry half could run before
+# its counterpart existed, and it was moved to the merge commit before that
+# pair was closed.
+#
+# A note for the next person to move this line, learned by getting it wrong on
+# this very bump: grepping the file for the OUTGOING 40-hex sha finds nothing,
+# because the prose above carries the 7-character form. Search for both.
+
+ASTRA_PLUGINS_REF=bc5124177fa0c14070f644d51cd298bf041e359b
+ASTRA_PLUGINS_URL=https://github.com/mihailinl/AstraPlugins.git
