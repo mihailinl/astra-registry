@@ -493,6 +493,21 @@ export async function run() {
     "served-set.mjs",
   ];
   await test("no module has left the runner's list since the suite was split", async () => {
+    // The list itself first. It is a SUBSET assertion, so a name appearing
+    // twice changes nothing it checks and nothing reports it — and a
+    // rebase that resolves a conflict by keeping both sides produces exactly
+    // that. It happened on 2026-09-19 when two lanes added a module in the
+    // same commit position: `signer.mjs` landed twice, the suite printed
+    // `PASS 223 passed, 0 failed`, and the only reason anyone looked was that
+    // the conflict had just been resolved by hand. The runner's own MODULES
+    // list is checked for duplicates because a repeat there prints a module's
+    // names twice; here a repeat prints nothing at all, which is why it needs
+    // its own line rather than inheriting that one's.
+    const twice = SPLIT_MODULES.filter((n, i) => SPLIT_MODULES.indexOf(n) !== i);
+    assertEqual([...new Set(twice)].join(", "), "",
+      "a module is pinned twice in SPLIT_MODULES; this list is a subset assertion, so a duplicate asserts nothing " +
+      "extra and nothing else in the suite would say so");
+
     const runner = fs.readFileSync(path.join(REPO_ROOT, "tools", "selftest.mjs"), "utf8");
     const listSrc = /^const MODULES = \[([\s\S]*?)^\];$/m.exec(runner)?.[1];
     // The parse is the thing this test stands on, so it says so when it fails
