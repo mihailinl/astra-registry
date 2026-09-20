@@ -53,6 +53,7 @@ import path from "node:path";
 
 import { loadSources, REPO_ROOT } from "../tools/lib/sources.mjs";
 
+import { markerOnMain, readDecisionRecords } from "./baseline.mjs";
 import { ingest, writeListing } from "./ingest.mjs";
 import {
   decide,
@@ -245,11 +246,36 @@ export async function decideRelease(opts, deps = {}) {
   const result = await ingest(opts, deps);
   const now = opts.now ?? new Date();
   const { plugins } = loadSources(opts.root);
+  // FLOW-65: by plugin ID, never by repository. A monorepo's second plugin is
+  // a first listing — `R_FIRST_LISTING` is the one check that is a person
+  // reading a submission, and keyed on the repository it would be skipped for
+  // every plugin after the first in any repository that ships more than one.
   const existing = result.derived
     ? plugins.find((p) => p.doc?.id === result.derived.plugin.id) ?? null
     : null;
 
+  // The listing's binding, if it has one (BOT-77). Read from the checked-out
+  // tree rather than passed in as a flag: `ingest.yml` hands this program a
+  // repository and a tag, and a workflow input saying "this listing is bound"
+  // would be a second, weaker answer to a question `main` already answers.
+  const identityRecord = result.derived ? readIdentityRecord(opts.root, result.derived.plugin.id) : null;
+
+  // BOT-19, searched BEFORE anything is decided: a stop recorded in the panel
+  // stops a ping. `readDecisionRecords` reads B-T2.2's layout and needs none
+  // of B-T2.2's writer, so this works from the first record and answers
+  // nothing before that — which is the honest answer, not a skip.
+  const records = (deps.readDecisionRecords ?? readDecisionRecords)(opts.root)
+    .map((r) => r.doc).filter(Boolean);
+  const terminal = terminalOnMain({
+    records,
+    pluginId: result.derived?.plugin?.id ?? null,
+    repo: opts.repo,
+    tag: opts.tag,
+  });
+
   const decision = decide({
+    identityRecord,
+    path: opts.path === "service" ? "service" : "legacy",
     findings: result.findings,
     derived: result.derived,
     existing,
@@ -267,12 +293,62 @@ export async function decideRelease(opts, deps = {}) {
     now,
   });
 
+  // BOT-19 overrides the record, and only the record. The decision itself is
+  // still computed and still commented on — an author who pings a plugin the
+  // registry has revoked is owed the sentence saying so — but nothing is
+  // written, because `main` already carries the answer and a second record is
+  // a second answer that can drift from the first.
+  //
+  // And B-T3.7's condition, in the same place and for the same reason: the
+  // legacy path writes decision records when, and only when,
+  // `log/baseline.json` is on the checked-out `main`. Before the baseline
+  // exists there is nothing for a legacy record to be compared against —
+  // MIG-28 holds every id with no baseline — and a record written now would
+  // be a statement this registry cannot yet check.
+  const marker = markerOnMain(opts.root);
+  if (terminal) {
+    decision.record = terminal.record;
+    decision.reported = terminal.reported;
+    decision.names_record = terminal.names;
+  } else if (!marker.present && decision.record.write) {
+    decision.record = {
+      write: false,
+      why:
+        `B-T3.7: \`${marker.file}\` is not on the checked-out main, so the legacy path writes no decision ` +
+        "records yet. MIG-20's baseline is what a record is compared against, and one written before it " +
+        "exists is a statement nothing can check (B-T3.7b's dispatch writes it).",
+    };
+  }
+
   return {
     ...result,
     decision,
     comment: `${result.comment}\n${renderPolicySection(decision, result.derived)}`,
   };
 }
+
+/** `plugins/<id>/identity.json` on the checked-out tree, or null. */
+export function readIdentityRecord(root, pluginId) {
+  if (!pluginId) return null;
+  try {
+    const doc = JSON.parse(fs.readFileSync(path.join(root, "plugins", pluginId, "identity.json"), "utf8"));
+    return doc && typeof doc === "object" ? doc : null;
+  } catch {
+    // Absent is the ordinary case before R3 and the whole case until a listing
+    // is bound. Unreadable is NOT silently the same thing — but the guard this
+    // feeds refuses to publish when the record is present, so a parse failure
+    // that returned "absent" would be the unsafe direction, and it is reported
+    // rather than swallowed.
+    if (fs.existsSync(path.join(root, "plugins", pluginId, "identity.json"))) {
+      throw new Error(
+        `plugins/${pluginId}/identity.json is on main and could not be read. The legacy path must not ` +
+        "publish a bound listing (BOT-77), and an unreadable binding is not an absent one.",
+      );
+    }
+    return null;
+  }
+}
+
 
 /** Lay the outcome out under `--out` in the shape of the repository. */
 export function writeOutputs(out, opts, result) {

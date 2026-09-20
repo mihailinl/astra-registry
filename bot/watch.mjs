@@ -34,6 +34,59 @@ import { readQueue, ripeQueueEntries, slaReport } from "./lib/policy.mjs";
 /** At most this many ingests are started by one cron run. */
 const MAX_DISPATCH = 20;
 
+// ── BOT-74's filters, applied before anything is dispatched (B-T3.9) ───────
+//
+// A monorepo publishes tags this registry has no opinion about.
+// `mihailinl/AstraPlugins` alone tags `cli-v…`, `plugin-release/v…` and the
+// plugin's own `v…`, and the backstop's releases feed shows all of them. Every
+// one it dispatches costs a full ingest — a clone, an archive walk, an
+// attestation verification — and from R3 it also costs a decision RECORD, a
+// durable public statement that this registry refused `cli-v1.4.0` as a plugin
+// release. It never was one.
+//
+// Written as a property over the tags the listing has ALREADY recorded, and
+// not as a list of the prefixes this repository happens to use. A list is
+// wrong for the first monorepo that names its tags differently, and the way it
+// is wrong is silent: the tag passes the filter, the ingest runs, and the
+// refusal is recorded.
+
+/** Everything before the first digit: `cli-v1.4.0` → `cli-v`, `v0.2.0` → `v`. */
+const tagPrefix = (tag) => /^([^0-9]*)/.exec(String(tag ?? ""))?.[1] ?? "";
+
+/**
+ * Should this tag be ingested at all?
+ *
+ * @param {{tag: string, listedTags: string[]}} opts `listedTags` are the tags
+ *   the listing's own version documents record — the registry's evidence of
+ *   what a release tag looks like for THIS plugin.
+ * @returns {{pass: boolean, why: string}}
+ */
+export function bot74Filter({ tag, listedTags = [] }) {
+  const recorded = listedTags.filter(Boolean).map(String);
+  if (recorded.some((t) => t === tag)) {
+    return { pass: false, why: `${tag} is already recorded on this listing, so there is nothing new to ingest` };
+  }
+  const prefixes = new Set(recorded.map(tagPrefix));
+  if (prefixes.size === 0) {
+    // A listing with no recorded tag has no evidence to filter by, and
+    // inventing one here would be this module deciding what a release tag
+    // looks like. It passes, and says why — a first listing is exactly the
+    // case a human reads anyway (R_FIRST_LISTING).
+    return { pass: true, why: `${tag}: this listing records no tag yet, so there is no prefix to compare against` };
+  }
+  const mine = tagPrefix(tag);
+  if (!prefixes.has(mine)) {
+    return {
+      pass: false,
+      why:
+        `${tag} has the prefix ${JSON.stringify(mine)} and every tag this listing records has one of ` +
+        `${[...prefixes].map((p) => JSON.stringify(p)).join(", ")}. A monorepo tags more than one thing, and ` +
+        "an ingest of the wrong one records a public refusal of a release that was never a plugin release",
+    };
+  }
+  return { pass: true, why: `${tag} matches the prefix this listing's recorded tags use` };
+}
+
 const iso = (d) => `${new Date(d).toISOString().slice(0, 19)}Z`;
 
 /**
@@ -70,6 +123,20 @@ export async function runWatch({ root = REPO_ROOT, now = new Date(), deps = {} }
   const seen = readSeen(root);
   const plan = watchPlan(sources, seen, now, deps.planOpts);
 
+  // Every tag each listing has recorded, for BOT-74's prefix filter. Read
+  // from `sources` here rather than added to `watchPlan`'s entry, because the
+  // plan's entry carries the NEWEST tag and the filter needs the set: one tag
+  // yields one prefix, and a listing that has ever changed its tag shape would
+  // then filter out its own releases.
+  const recordedTags = new Map(
+    (sources.plugins ?? [])
+      .filter((p) => p.doc?.source?.repo)
+      .map((p) => [
+        String(p.doc.source.repo).toLowerCase(),
+        (p.versions ?? []).map((v) => v.doc?.release?.tag).filter(Boolean).map(String),
+      ]),
+  );
+
   const dispatch = [];
   const log = [];
   for (const entry of plan.poll) {
@@ -88,12 +155,29 @@ export async function runWatch({ root = REPO_ROOT, now = new Date(), deps = {} }
       if (fresh.length === 0) {
         log.push(`  200  ${entry.repo} — ${feed.entries.length} release(s), all of them already known`);
       } else {
-        const newest = fresh[0];
+        // BOT-74's filters, before a single ingest is started. A tag this
+        // listing would never have published is recorded as seen — so the
+        // backstop does not re-offer it tomorrow and every day after — and
+        // dispatched to nothing.
+        const listedTags = recordedTags.get(key) ?? [];
+        const wanted = [];
+        for (const f of fresh) {
+          const verdict = bot74Filter({ tag: f.tag, listedTags });
+          if (verdict.pass) wanted.push(f);
+          else log.push(`  skip ${entry.repo} — ${verdict.why}`);
+        }
+        // Every tag the feed showed is recorded — the filtered ones included,
+        // so a `cli-v` tag is skipped once rather than skipped daily for ever
+        // — and so a release this registry refuses is not re-dispatched
+        // tomorrow and every day after.
+        row.checked_tags = [...new Set([...(row.checked_tags ?? []), ...fresh.map((f) => f.tag)])].slice(-20);
+        if (wanted.length === 0) {
+          seen.repos[key] = row;
+          continue;
+        }
+        const newest = wanted[0];
         row.last_seen_tag = newest.tag;
         row.last_seen_at = newest.updated ?? iso(now);
-        // Every tag the feed showed is recorded, so a release this registry
-        // refuses is not re-dispatched tomorrow and every day after.
-        row.checked_tags = [...new Set([...(row.checked_tags ?? []), ...fresh.map((f) => f.tag)])].slice(-20);
         if (dispatch.length < MAX_DISPATCH) {
           try {
             const submitter = await resolveSubmitter(entry.repo, newest.tag, release);
