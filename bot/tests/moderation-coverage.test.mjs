@@ -37,6 +37,7 @@ import {
 import {
   DOCUMENT_MEMBERS, HISTORY_FLOOR as PRIV_HISTORY_FLOOR, run as privScan, withoutAuthorship,
 } from "../../tools/priv-scan.mjs";
+import { ADVISORY_BASE, DOC as DOCS_DOC, run as docsRule } from "../../tools/coverage/docs-advisory-url.mjs";
 import { RULES, outstandingActs, ruleNames } from "../../tools/coverage/rules.mjs";
 import { compose } from "../../tools/coverage-verdict.mjs";
 import { CHECKS } from "../lib/alert-checks.mjs";
@@ -507,6 +508,82 @@ test("every declared document kind lists members, a source and its exempt sets",
   }
 });
 
+// ── M-T1.3: the advisory URL the withdrawal docs teach ──────────────────────
+//
+// No git here. This rule reads one document in the working tree, so its
+// fixtures are one document in a temp directory — and the case that matters is
+// the last one: a github.com link that is NOT an advisory stays green, because
+// a canary that goes red for an ordinary link is a canary somebody deletes.
+
+function docsFixture(name, body) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `astra-docs-${name}-`));
+  tmpRoots.push(dir);
+  if (body !== null) {
+    fs.mkdirSync(path.join(dir, path.dirname(DOCS_DOC)), { recursive: true });
+    fs.writeFileSync(path.join(dir, DOCS_DOC), body);
+  }
+  return dir;
+}
+
+test("M-T1.3: this repository's withdrawal docs name no advisory URL it does not serve", () => {
+  const r = docsRule(REPO);
+  assert.equal(r.status, "green", r.detail.join("\n"));
+});
+
+test("M-T1.3: the example this task deleted is red the moment it comes back", () => {
+  // Verbatim the line that was in `tools/revocations/README.md` until today,
+  // which is the mutation this rule exists for.
+  const r = docsRule(docsFixture("restored",
+    '```json\n{\n  "id": "ASTRA-2026-0001",\n' +
+    '  "advisory_url": "https://github.com/mihailinl/astra-registry/security/advisories/ASTRA-2026-0001",\n' +
+    "}\n```\n"));
+  assert.equal(r.status, "red");
+  assert.match(codesOf(r), /MOD_13_DOCS_ADVISORY_EXAMPLE/);
+  assert.match(codesOf(r), /MOD_13_DOCS_GITHUB_ADVISORY/, "the host leg has to fire on it too, not only the base leg");
+});
+
+test("M-T1.3: an advisory_url under any other base is red, github or not", () => {
+  const r = docsRule(docsFixture("other-host",
+    '"advisory_url": "https://advisories.example.invalid/ASTRA-2026-0001"\n'));
+  assert.equal(r.status, "red");
+  assert.match(codesOf(r), /MOD_13_DOCS_ADVISORY_EXAMPLE/);
+  assert.doesNotMatch(codesOf(r), /GITHUB/, "example.invalid is not a github host and must not be reported as one");
+});
+
+test("M-T1.3: a github.io advisory page is the same mistake with a different host", () => {
+  const r = docsRule(docsFixture("pages",
+    "The advisory is at https://mihailinl.github.io/advisories/ASTRA-2026-0001.html today.\n" +
+    "Leave advisory_url out.\n"));
+  assert.equal(r.status, "red");
+  assert.match(codesOf(r), /MOD_13_DOCS_GITHUB_ADVISORY/);
+});
+
+test("M-T1.3: MOD-13's own base is green, so M-T3.9's README edit lands without touching this rule", () => {
+  const r = docsRule(docsFixture("base",
+    `The bot sets it:\n\n    "advisory_url": "${ADVISORY_BASE}ASTRA-2026-0001"\n`));
+  assert.equal(r.status, "green", r.detail.join("\n"));
+});
+
+test("M-T1.3: an ordinary github.com link is not what this rule is about", () => {
+  const r = docsRule(docsFixture("plain-link",
+    "The policy is at https://github.com/mihailinl/astra-registry/blob/main/docs/POLICY.md.\n\n" +
+    "A hand-written advisory omits advisory_url.\n"));
+  assert.equal(r.status, "green",
+    `a link to a repository is not an advisory URL, and a rule red for one is a rule somebody deletes: ${r.detail.join("\n")}`);
+});
+
+test("M-T1.3: a document that has stopped mentioning the field is red, not vacuously green", () => {
+  const r = docsRule(docsFixture("silent", "# Withdrawals\n\nOne JSON file per advisory.\n"));
+  assert.equal(r.status, "red");
+  assert.match(codesOf(r), /MOD_13_DOCS_SILENT/);
+});
+
+test("M-T1.3: a document that has moved is red, because the rule would otherwise pass about nothing", () => {
+  const r = docsRule(docsFixture("gone", null));
+  assert.equal(r.status, "red");
+  assert.match(codesOf(r), /MOD_13_DOCS_ABSENT/);
+});
+
 // ── the register, and the rule that never ran ───────────────────────────────
 
 const finding = (rule, status = "green", extra = {}) =>
@@ -562,7 +639,7 @@ test("a verdict the channel would refuse becomes a red verdict saying so, never 
 });
 
 test("every register entry names a script that exists and a task that owns it", () => {
-  assert.ok(RULES.length >= 3, `${RULES.length} rules registered; there were 3 on 2026-09-19`);
+  assert.ok(RULES.length >= 4, `${RULES.length} rules registered; there were 4 on 2026-09-19`);
   for (const rule of RULES) {
     assert.ok(fs.existsSync(path.join(REPO, rule.script)), `${rule.name} names ${rule.script}, which is not in the tree`);
     assert.match(rule.owner, /T\d|RC-/, `${rule.name} names no owning task`);

@@ -88,6 +88,13 @@ export const RULES = [
     what: "state/keepalive.json is no more than 35 days old, so no schedule in this repository is 60 days from being disabled",
     network: false,
   },
+  {
+    name: "docs-advisory-url",
+    owner: "M-T1.3 (MOD-13, precondition)",
+    script: "tools/coverage/docs-advisory-url.mjs",
+    what: "tools/revocations/README.md names no github.com or github.io advisory URL, no advisory_url under another base, and still tells an operator what to do with the field",
+    network: false,
+  },
   // ── the seam. Each line below is one other task's, and lands with it. ─────
   //
   // Written here as a comment rather than as a disabled entry, because an
@@ -95,10 +102,6 @@ export const RULES = [
   // reports nothing is red on every run from the day this lands until the day
   // that task does — which for M-T6.2 is R6. An alarm that fires for six
   // milestones is an alarm somebody switches off in month one (TRUST-45).
-  //
-  //   { name: "docs-advisory-url",  owner: "M-T1.3 (MOD-13)",
-  //     script: "tools/coverage/docs-advisory-url.mjs", network: false,
-  //     what: "tools/revocations/README.md names no github.com or github.io advisory URL" },
   //
   //   { name: "reserved-id-mirror", owner: "M-T5.7 (OPEN-OPS-11)",
   //     script: "tools/coverage/reserved-id-mirror.mjs", network: true,

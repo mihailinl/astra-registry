@@ -147,7 +147,6 @@ jobs:
       # what makes a step that never ran visible; a step with no entry is red,
       # and an entry with no step is red.
       #
-      #   M-T1.3   tools/coverage/docs-advisory-url.mjs     R1
       #   M-T5.7   tools/coverage/reserved-id-mirror.mjs    R3, needs the network
       #   M-T2.1   the examples rule                        R2, needs the network
       #   M-T4.2, M-T4.3, M-T6.2   the ROLL-47 promise greps
@@ -155,6 +154,10 @@ jobs:
       #
       # M-T5.8's badge-withdrawal trailer is not a step: it goes inside
       # `tools/moderation-coverage.mjs`'s walk, where its seam is written.
+
+      - name: The withdrawal docs teach no advisory URL we do not serve      # M-T1.3, MOD-13
+        if: always()
+        run: node tools/coverage/docs-advisory-url.mjs --report "$ASTRA_COVERAGE_FINDINGS"
 
       # ── the verdict ──────────────────────────────────────────────────────
 

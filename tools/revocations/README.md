@@ -21,7 +21,6 @@ matches nothing.
   "severity": "critical",
   "action": "disable",
   "reason": "Version 1.2.0 exfiltrates the contents of the clipboard to a third-party host.",
-  "advisory_url": "https://github.com/mihailinl/astra-registry/security/advisories/ASTRA-2026-0001",
   "entries": [
     { "kind": "digest", "value": "9f2c…64 lowercase hex…" },
     { "kind": "version_range", "value": "example-plugin",
@@ -32,6 +31,30 @@ matches nothing.
 
 `node tools/build-revocations.mjs` refuses anything the daemon would not read,
 and says which field and why.
+
+### Leave `advisory_url` out
+
+The field is optional, and **a hand-written advisory omits it**. The registry
+compiles one advisory page per id on its own host and the bot sets the field
+from that base plus the id, ignoring any value a decision carries (MOD-13); the
+base is recorded once, in `tools/lib/revocations.mjs`, by the task that turns it
+into a refusal (M-T3.9). Until then, no URL written here is a URL anything
+checks.
+
+The example above used to carry
+`…/security/advisories/ASTRA-2026-0001` on `github.com`, and that link could not
+have worked twice over: GitHub numbers advisories `GHSA-xxxx-xxxx-xxxx` and this
+repository numbers its own `ASTRA-YYYY-NNNN`, so the path is a 404 by
+construction — and it is not a 404 in a document. `advisory_url` is copied into
+every entry the advisory deploys and the daemon shows it to the **user**, on the
+screen that says their plugin has been disabled. The first real advisory would
+have been written by copying that block.
+
+`tools/coverage/docs-advisory-url.mjs` fails the coverage canary if a
+`github.com` or `github.io` advisory URL, or an `advisory_url` value under any
+other base, comes back into this file — and also if the file stops mentioning
+the field at all, because a rule whose subject can be deleted goes green by
+deletion.
 
 ## `kind`
 
@@ -47,7 +70,8 @@ and says which field and why.
 
 An advisory may carry several entries; each becomes one entry in the deployed
 document, and each carries the advisory's `id`, `severity`, `action`, `reason`
-and URL, because the daemon shows exactly one of them — the first that matches.
+and — once there is one to carry — its `advisory_url`, because the daemon shows
+exactly one of them: the first that matches.
 
 ### At least one entry has to be able to see a directory
 
