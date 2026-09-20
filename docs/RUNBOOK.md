@@ -456,22 +456,135 @@ acceptance matches the one `keygen-root.sh` printed.
 
 ## 5. Rotating the index key
 
-Quarterly, and immediately on suspicion. The planned form has a **30-day
-overlap** so no window exists in which nothing can sign.
+Quarterly, and immediately on suspicion.
 
-1. Generate a new index keypair and store the private half as the
-   `ASTRA_INDEX_SIGNING_KEY` secret on the `publish` environment.
-2. Sign a new `trust.json` (serial +1) whose `index_keys` contains **both**:
-   the outgoing key with `not_after` = today + 30 days, and the incoming key with
-   `not_before` = today.
-3. Publish it. Daemons now accept an index signed by either key.
-4. Switch the CI signer to the new key.
-5. After the overlap, publish a `trust.json` (serial +1) with the old key
-   removed.
+**Nothing here publishes anything by hand.** `trust.json` is committed to
+`main` like any other file and reaches a client through the signer's next run:
+`.github/workflows/sign.yml` builds one `signed` commit holding all four
+documents (D2) and lays the same four over Pages. There is no second publisher,
+and a `trust.json` sitting on `main` with no signer run behind it is a document
+nobody is serving. Watch the run, then read `signed`'s head and Pages, in that
+order — §7.6 and RC-R1-4's check do the same thing every fifteen minutes.
 
-**On suspicion, skip the overlap.** Publish a `trust.json` naming only the new
-key, with the old key's `not_after` in the past. Then follow `SECURITY.md` §5.1
-— rotation alone does not undo anything already published.
+### 5.1 What the signer does on its own, so you do not do it twice
+
+SERVE-30's rotation is implemented in `tools/signer/key-window.mjs` rather than
+in shell, and you do not drive any of it. From the **first `signed` commit
+whose `trust.json` delegates the incoming key**:
+
+- **every withdrawal list is dual-signed** — the outgoing key's signature
+  first, then the incoming key's. Either trust.json verifies it, and the list is
+  the document clients refresh most often (within 6 hours, §5.1 of the
+  contract), so it is what carries the new key into circulation;
+- **the catalogue is not signed by the incoming key for seven hours.** Seven
+  against a six-hour refresh is the margin: after it, a client that is still
+  running has already fetched the trust.json that delegates the incoming key.
+  Until then the signer carries the previous catalogue rather than re-signing
+  it.
+
+`astra-index-2026a` is exempt from the seven hours, and that exemption is
+load-bearing rather than a courtesy: its window never started, because there
+was no `signed` branch when it was delegated.
+
+**The outgoing key keeps signing until R9b**, which now follows R5
+(OPEN-OWNER-27). Do not drop it earlier to tidy up: the trust.json that drops a
+key the head delegated is what `key-window.mjs` reads as compromise mode, and in
+that mode a catalogue whose gates fail is blocked rather than carried — which
+also withholds that run's withdrawal list, because one commit holds all four
+documents.
+
+### 5.2 The planned rotation, step by step
+
+1. **OPERATOR ONLY, OWNER APPROVAL — the root ceremony.** Generate the incoming
+   index key (§4.1) and sign a `trust.json`, serial +1, whose `index_keys`
+   holds **both** the outgoing key and the incoming one with `not_before` =
+   today. This is §4's offline ceremony with the active root on removable
+   media. **The root private key never passes through an agent's environment,
+   shell history or tool logs**; `tools/keygen-root.sh` and
+   `tools/sign-trust.mjs` are run by the operator, and if a key ever reaches a
+   log, treat it as compromised and redo the ceremony. No rotation begins
+   without this step, because SERVE-30's windows count from the first `signed`
+   commit whose trust.json delegates the incoming key — until that document
+   exists there is nothing for them to count from.
+2. **OWNER APPROVAL — the secret.** Add `ASTRA_INDEX_SIGNING_KEY_NEXT` and
+   `ASTRA_INDEX_SIGNING_KEY_NEXT_ID` to the `publish` environment, holding the
+   incoming key's base64 raw seed and its `key_id`. `bot/lib/sign.mjs` refuses
+   the pair if the id is missing, and refuses it if the seed is the same
+   Ed25519 key as `ASTRA_INDEX_SIGNING_KEY` — a copy of the first key is not a
+   rotation, and two signatures by one key look dual-signed to every reader.
+3. Commit the new `trust.json` to `main`. The next signer run publishes it and
+   the dual signing above starts by itself.
+4. After the overlap, and **not before R9b**, a second root ceremony publishes a
+   `trust.json`, serial +1, with the outgoing key removed. Then remove
+   `ASTRA_INDEX_SIGNING_KEY_NEXT`/`_NEXT_ID` and promote the incoming seed into
+   `ASTRA_INDEX_SIGNING_KEY`.
+
+### 5.3 Changing a root key (SERVE-92), in three steps and this order
+
+Two of the three leave the published set and the compiled set disagreeing, and
+only the first of those does so without an alarm. `tools/selftest/roots.mjs`
+says which state you are in.
+
+1. Ship an Astra release whose `PRODUCTION_ROOT_KEYS` holds the **new** compiled
+   set. From here the compiled set holds a key `registry/v1/root.json` does not
+   publish, which is correct for as long as the rotation takes.
+2. Commit `registry/v1/root.json` publishing that same set. The two agree again.
+3. Drop the outgoing root from the compiled set, in a later release.
+
+### 5.4 An emergency ceremony (BOT-88)
+
+BOT-88's test repository holds the weekly canary tag and its own keepalive, and
+a ceremony run in anger is the one nobody has rehearsed. Rehearse it there, on
+the **test** roots (§8), before you need it: sign a `trust.json` with the test
+reserve root, run a debug-profile daemon that trusts the test roots, and confirm
+the document verifies end to end. A ceremony first performed during an incident
+is a ceremony whose first failure is discovered by users.
+
+### 5.5 On suspicion: the compromise procedure is a PROPOSAL, not a decision
+
+**Read this before following anything in it.** What `tools/signer/key-window.mjs`
+implements, and what `SECURITY.md` §5.2 describes, is **D10 — this plan's
+proposal**. **OPEN-OWNER-25's compromise half has not been decided**, and the
+owner's answer may rewrite the procedure; R1 cannot exit without it
+(RC-R1-10(c)). Do not read the steps below as settled, and do not tidy this
+paragraph away: a decision written down as its expected branch is false from the
+moment it is typed, and nothing that runs later can tell.
+
+The proposal, as implemented:
+
+- a root ceremony publishes a `trust.json`, serial +1, that **drops** the
+  compromised key. Dropping a key the head delegated is how the signer detects
+  compromise mode — there is no flag;
+- in that mode the list is signed by the delegated key **alone**: there is no
+  outgoing key to go first, because the outgoing key is the compromised one;
+- the seven-hour window is **waived**, and the catalogue is re-signed in the
+  same run and **must not be carried**. A carried catalogue is the old bytes
+  signed by a key the new trust.json no longer delegates; SERVE-91 would refuse
+  the whole commit, withholding the repair along with it. The cost of the waiver
+  is one refused catalogue fetch on a client that has not refreshed trust.json
+  yet, which it does within 6 hours;
+- then follow `SECURITY.md` §5.1 — rotation alone undoes nothing already
+  published.
+
+**A planned retirement has the same shape as a compromise**, and the detector
+cannot tell them apart: R9b's trust.json also drops a key the head delegated. On
+that day a catalogue whose gates fail is blocked rather than carried. This is
+left as it is on purpose, because narrowing it now would answer the owner's
+question on his behalf.
+
+### 5.6 Renewal, 2027 (ROLL-45)
+
+Today's `trust.json` expires **2027-08-19**. The owner's answer is **one
+batched ceremony**, carrying master's workflow SHA and a `not_after` for
+`astra-index-2026a`, together with his decision on the notify job:
+
+- workflow frozen by **2027-04-01**;
+- rehearsed by **2027-05-01**;
+- held by **2027-06-15**;
+- published by **2027-07-20**.
+
+No notify job is planned. RC-R1-6's runway canary alerts while the expiry is
+less than 90 days away, which is the thing that will remind you.
 
 ---
 
