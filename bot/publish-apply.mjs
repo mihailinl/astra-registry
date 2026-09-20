@@ -100,16 +100,29 @@ const QUEUE_FILE = /^state\/queue\/[^/]+\.json$/;
  * of it, and widening it is the whole risk: it is the line between a job that
  * may write four shapes of file and one that may write `log/` as well.
  *
- * TWO THINGS ARE NOT ON `main`, measured 2026-09-20:
+ * ONE THING IS NOT ON `main`, re-measured 2026-09-20 **after** B-T3.1 landed:
  *
  *   * **`bot/lib/decisions.mjs`** (B-T2.2) — the record writer. Without it no
  *     record exists for an addition to be checked against, so "a version
  *     without its record is refused" is either inert or refuses every
  *     publication this registry makes. Inert is the worse of the two: it
  *     reads, in a wall of green, exactly like a check that passed.
- *   * **`.github/workflows/plugins-ingest.yml`** (B-T3.1) — the job graph
- *     whose `publish` job this is. `ingest.yml`'s publish job is the legacy
- *     one, and B-T3.7 keys ITS record writing on `log/baseline.json`.
+ *   * ~~`.github/workflows/plugins-ingest.yml`~~ (B-T3.1) — **landed
+ *     `e6520be`**, twelve jobs, and the `publish` job this function belongs
+ *     to is one of them. The line above used to say TWO, and this is the
+ *     third module header in this repository to state an absence that had
+ *     stopped being true — after `bot/baseline.mjs` and `bot/lib/identity.mjs`,
+ *     both the same day. A header stating an absence has no reader that can
+ *     disagree with it: nothing executes a comment, so there is no run in
+ *     which it goes red, and the commits that edit the file around it do not
+ *     re-read it.
+ *
+ * **The refusal below is unchanged, deliberately.** It checks the `available`
+ * argument its caller passes, not which files exist, so it stops being a
+ * refusal when a caller can supply both — not when one of the two lands.
+ * `recordCommitRefusal`'s two-argument shape and `bot/tests/policy.test.mjs`'s
+ * assertions stay exactly as they are: landing the piece a refusal names is
+ * not a licence to loosen the refusal.
  *
  * So the allow-list is not widened here. Widening it now opens the door
  * before anything is behind it — a `publish` job entitled to write `log/`,
