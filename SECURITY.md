@@ -205,9 +205,20 @@ exists for.
 1. **Rotate within the hour.** Sign a new `trust.json` with the **active root**
    whose `index_keys` contains only the new key, with a serial strictly greater
    than the current one. Publish it. Daemons pick it up on their next refresh and
-   stop accepting anything the old key signs after its `not_after`.
+   stop accepting anything the old key signs, **because the new document does
+   not delegate it at all** — not because it expired. Today's delegated index
+   key `astra-index-2026a` carries no `not_after`; it carries only a
+   `not_before`, so there is no expiry to wait for and none to bring forward.
+   Dropping the key IS the cut-off, and its speed is the client's refresh
+   interval — within 6 hours — not a date in a document.
    *Do not* give the compromised key an overlap window. Overlaps are for planned
    rotations.
+
+   This sentence used to say daemons stop "after its `not_after`", which was a
+   cut-off nobody could have performed: there was no such field to move. The
+   2027 renewal ceremony adds a `not_after` for `astra-index-2026a` (ROLL-45),
+   and `tools/selftest/claims.mjs` goes red on the day it appears, so this
+   paragraph is re-read then rather than left to be discovered mid-incident.
 2. **Re-sign the catalogue** with the new index key and bump `index.json`'s
    serial. The daemon refuses a serial lower than one it has already seen, so an
    attacker cannot replay the last good index either.

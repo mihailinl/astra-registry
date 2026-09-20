@@ -26,18 +26,31 @@ no shipped Astra build can compile them in.
 | reader | where | how it gets the file |
 |---|---|---|
 | the signer's selftest | `tools/selftest/index-signature.mjs` | imports `loadSignedSetVectors` from `../regenerate.mjs` |
-| the ROLL-15 probe | `astra-registry` | the same path in this checkout |
+| the ROLL-15 probe | `astra-plugins-ops` | **not yet** — `tools/probe-signed-set/probe.mjs`, unbuilt (RC-R1-7) |
 | the plugins service | minice-be | **not yet** — this repository at a commit it will pin (ROLL-61) |
 | `astra-daemon` | `Astra` | **not yet** — to be vendored into `astra-daemon/testdata/signed-set-vectors/` with `SHA256SUMS` and `SOURCE` (client plan C1.8) |
 
-**One of the three reads it today.** The table said "vendored" and "at a pinned
-commit" in the present tense when this file was written, and both were false:
-measured at Astra `2d68bd6f`, `astra-daemon/testdata/signed-set-vectors/` does
-not exist and nothing under `astra-rs/` names it, and minice CI does not yet pin
-this repository. Until C1.8 and ROLL-61 land, **a corpus built so that two
-languages must agree proves that this repository agrees with itself** — the
-closed vocabulary, the floor and the two copies of the daemon column are all
-real and all on one side. `O:dev/couplings.md` gap 18 holds the other two.
+**One of the four reads it today**, and it is the first row. The table said
+"vendored" and "at a pinned commit" in the present tense when this file was
+written, and both were false: measured at Astra `2d68bd6f`,
+`astra-daemon/testdata/signed-set-vectors/` does not exist and nothing under
+`astra-rs/` names it, and minice CI does not yet pin this repository. Until
+C1.8 and ROLL-61 land, **a corpus built so that two languages must agree proves
+that this repository agrees with itself** — the closed vocabulary, the floor and
+the two copies of the daemon column are all real and all on one side.
+`O:dev/couplings.md` gap 18 holds the other two.
+
+**Row 2 said the same thing about this repository, and survived the correction.**
+It read "the ROLL-15 probe | `astra-registry` | the same path in this checkout",
+present tense, unhedged. Measured 2026-09-20 with
+`git grep -ln "signed-set\|signed_set"`: four files name the corpus — the
+generator, its two READMEs, and row 1's reader. `bot/lib/probe.mjs` is the
+manifest probe and names it zero times, there is no ROLL-15 probe in this
+repository at all, and RC-R1-7 puts it in `astra-plugins-ops`, unbuilt. It was
+wrong about the repository as well as the tense. Every row of this table is now
+in `tools/selftest/claims.mjs`, which runs the searches above on every suite
+run and goes red when one of them starts disagreeing with this page — in either
+direction.
 
 The tense mattered more than it looks. This table is what a reader consults
 before changing a verdict name, and "vendored" told them a rename here would be

@@ -649,6 +649,17 @@ export async function run() {
     // gone; and left out of this list, which is the silent half, since
     // omitting a name here costs nothing and fails nothing.
     "signer-run.mjs",
+    // `claims.mjs` was added on 2026-09-20 with gap 21's instrument — the
+    // table of claims this repository makes about readers in OTHER
+    // repositories, each carrying the literal search that finds it. Watched
+    // both ways: deleted from disk together with its runner entry, which is
+    // the loss `checkModuleSet` cannot see because the two sides it compares
+    // agree that the module is gone; and left out of this list, which is the
+    // silent half, since omitting a name here costs nothing and fails
+    // nothing. It is the module a name list matters most for: nearly every
+    // row in it is COULD NOT ASK in CI, so a suite that stopped running it
+    // would look identical to a suite that ran it.
+    "claims.mjs",
   ];
   await test("no module has left the runner's list since the suite was split", async () => {
     // The list itself first. It is a SUBSET assertion, so a name appearing
