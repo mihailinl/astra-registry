@@ -1,0 +1,192 @@
+# Detector A (BOT-43): the reconciliation that reads only public git.
+#
+# Five of contract §4.8's nine rows are this side's — A1, A3, A5, A7 and A9 —
+# and detector B answers the same questions inside the plugins service, from a
+# store that shares no code with this one. **Neither repairs.** This workflow
+# alarms with codes, ids and commits, and a person resolves the disagreement
+# through a `system` decision record or an audited service correction.
+#
+# BOT-43: on every push to `main` and at least hourly. BOT-46: a failing
+# detector MUST fail its run, which is why `detect` exits non-zero and the
+# alert job runs anyway.
+#
+# **No token, no write, and nothing a stranger chose reaches the message.** The
+# detectors read `plugins/**`, `state/queue/**`, `log/**` and the `signed`
+# branch out of a full checkout; what they produce is fixed codes, plugin ids
+# and hex, and `bot/lib/alert-verdict.mjs` refuses anything else before it can
+# reach the owner's Telegram.
+#
+# ── the dispatch, and ROLL-23's drill ─────────────────────────────────────
+#
+# `workflow_dispatch` takes one input: a directory in this checkout holding a
+# seeded fixture tree, each of which breaks one detector. That is ROLL-23's
+# live drill — a dispatch on a seeded tree fires each detector and the alert
+# arrives through the real channel — and it is the only way to watch this
+# workflow's alarm path without breaking `main`. The shapes are
+# `bot/tests/detectors.test.mjs`'s builders; the drill runs them on a runner.
+#
+# This is not a bot workflow in BOT-4's sense — it claims no lease, holds no
+# bot token and calls no service — so the no-inputs rule does not bind it, the
+# same exemption `service-conformance.yml` takes (B-T3.11).
+#
+# ── skipping, loudly ──────────────────────────────────────────────────────
+#
+# Four of the five need `log/baseline.json` (BOT-75) and one needs the `signed`
+# branch. Until those exist each prints SKIP with the task that lifts it, and
+# the run is GREEN. An hourly alarm about a state the plan puts weeks of work
+# inside is the alarm whose repair is switching the check off, and that repair
+# is the one this estate must never reach for (RC-R1-0, attack B-1). What keeps
+# a skip from being permanent is that it is derived from the thing being absent
+# rather than written down, and `bot/tests/detectors.test.mjs` asserts exactly
+# that: a detector that skips with its input present is red in CI.
+
+name: Detectors
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '41 * * * *'
+  workflow_dispatch:
+    inputs:
+      fixture-tree:
+        description: >-
+          ROLL-23's drill. A directory in this checkout to run the detectors
+          over instead of the repository root, holding a seeded tree that
+          breaks one detector. Empty means the real repository.
+        required: false
+        default: ''
+
+permissions: {}
+
+concurrency:
+  group: detectors-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    outputs:
+      status: ${{ steps.run.outputs.status }}
+    steps:
+      # Full history, and the `signed` branch with it. Every one of these five
+      # is a statement about history — what was added after a commit, what a
+      # commit added alongside what, how far one branch has fallen behind —
+      # and a shallow checkout would make four of them silently find nothing.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: The `signed` branch, which A7 is about
+        run: git fetch --quiet origin '+refs/heads/signed:refs/heads/signed' || echo "ok    there is no `signed` branch yet; A7 will say so"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Detector A over rows 1, 3, 5, 7 and 9
+        id: run
+        env:
+          FIXTURE_TREE: ${{ inputs.fixture-tree }}
+        run: |
+          set -uo pipefail
+          # The fixture path is a dispatch input, so it is resolved inside this
+          # checkout and never used to reach out of it. A drill that could name
+          # `/etc` would be a drill that reads whatever the runner can.
+          root=.
+          if [ -n "$FIXTURE_TREE" ]; then
+            case "$FIXTURE_TREE" in
+              /*|*..*) echo "::error::the fixture tree is a path inside this checkout"; exit 1 ;;
+            esac
+            root="$FIXTURE_TREE"
+            [ -d "$root" ] || { echo "::error::no such fixture tree: $root"; exit 1; }
+          fi
+          node bot/detectors.mjs --registry-dir "$root" --verdict verdict.json
+          code=$?
+          if [ $code -eq 0 ]; then echo "status=green" >> "$GITHUB_OUTPUT"; else echo "status=red" >> "$GITHUB_OUTPUT"; fi
+          exit $code
+
+      # Written on both paths, because the alert job below reads it on a red
+      # run too and a missing verdict is the one thing the alert action cannot
+      # recover from.
+      - name: The verdict, even when the step above failed
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ ! -f verdict.json ]; then
+            cat > verdict.json <<JSON
+          {
+            "schema": "astra.registry.alert-verdict/1",
+            "check": "detectors",
+            "status": "red",
+            "codes": ["A_DETECTOR_RUN_FAILED"],
+            "run": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          JSON
+          fi
+          cat verdict.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: detector-verdict
+          path: verdict.json
+          if-no-files-found: error
+
+  alert:
+    needs: detect
+    if: always() && !cancelled()
+    runs-on: ubuntu-24.04
+    environment: alerts
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_DEADMAN_URL_DETECTORS: ${{ secrets.ASTRA_DEADMAN_URL_DETECTORS }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            .github/actions/alert
+            bot/alert.mjs
+            bot/heartbeat.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+
+      # The verdict comes from the detecting job as a JOB OUTPUT re-rendered
+      # here, never as a downloaded artifact: an `alerts` job downloads no
+      # artifact, because an artifact is bytes another job produced and this
+      # job holds the alarm channel's credential
+      # (`bot/tests/workflows.test.mjs`).
+      - name: The verdict this run reached
+        env:
+          STATUS: ${{ needs.detect.result == 'success' && needs.detect.outputs.status || 'red' }}
+        run: |
+          set -euo pipefail
+          codes=""
+          [ "$STATUS" = red ] && codes='"A_DETECTOR_FINDING"'
+          cat > verdict.json <<JSON
+          {
+            "schema": "astra.registry.alert-verdict/1",
+            "check": "detectors",
+            "status": "$STATUS",
+            "codes": [$codes],
+            "run": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          JSON
+          if [ -z "$codes" ]; then
+            grep -v '"codes": \[\]' verdict.json > verdict.tmp && mv verdict.tmp verdict.json
+          fi
+          cat verdict.json
+
+      - uses: ./.github/actions/alert
+        with:
+          verdict: verdict.json
+          check: detectors
