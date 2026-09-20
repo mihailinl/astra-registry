@@ -191,6 +191,100 @@ export const FIXTURE_SIGNER_WORKFLOW =
  * that path and exits non-zero when none match, so the stub does too — and a
  * transposed filename is now a test failure rather than a production outage.
  */
+/**
+ * The two ids the fixture certificate carries, as base-10 STRINGS.
+ *
+ * Strings here and not numbers on purpose: gh prints them as strings, the
+ * registry records them as strings (SCOPE-5), and a fixture that used numbers
+ * would be a fixture in which the one hazard those rules exist for — a
+ * repository id past 2^53 losing its last digits in `JSON.parse` — cannot
+ * happen. One test below hands the bot a number deliberately.
+ */
+export const FIXTURE_REPOSITORY_ID = "1203676452";
+export const FIXTURE_OWNER_ID = "193032699";
+
+/** ID-28's ten, by the name the contract's table gives each OID. */
+const CERT_KEY_BY_FIELD = {
+  job_workflow_ref: "buildSignerURI",
+  job_workflow_sha: "buildSignerDigest",
+  runner_environment: "runnerEnvironment",
+  source_repository_uri: "sourceRepositoryURI",
+  sha: "sourceRepositoryDigest",
+  ref: "sourceRepositoryRef",
+  repository_id: "sourceRepositoryIdentifier",
+  repository_owner_id: "sourceRepositoryOwnerIdentifier",
+  event_name: "buildTrigger",
+  run: "runInvocationURI",
+};
+
+const OID_BY_FIELD = {
+  job_workflow_ref: "1.3.6.1.4.1.57264.1.9",
+  job_workflow_sha: "1.3.6.1.4.1.57264.1.10",
+  runner_environment: "1.3.6.1.4.1.57264.1.11",
+  source_repository_uri: "1.3.6.1.4.1.57264.1.12",
+  sha: "1.3.6.1.4.1.57264.1.13",
+  ref: "1.3.6.1.4.1.57264.1.14",
+  repository_id: "1.3.6.1.4.1.57264.1.15",
+  repository_owner_id: "1.3.6.1.4.1.57264.1.17",
+  event_name: "1.3.6.1.4.1.57264.1.20",
+  run: "1.3.6.1.4.1.57264.1.21",
+};
+
+// ── a certificate, in DER, for the fallback nothing in the catalogue needs ──
+
+function derLength(n) {
+  if (n < 0x80) return Buffer.from([n]);
+  const bytes = [];
+  for (let v = n; v > 0; v = Math.floor(v / 256)) bytes.unshift(v % 256);
+  return Buffer.from([0x80 | bytes.length, ...bytes]);
+}
+
+function tlv(tag, content) {
+  return Buffer.concat([Buffer.from([tag]), derLength(content.length), content]);
+}
+
+function encodeOid(dotted) {
+  const parts = dotted.split(".").map(Number);
+  const body = [parts[0] * 40 + parts[1]];
+  for (const part of parts.slice(2)) {
+    const chunk = [];
+    let v = part;
+    do {
+      chunk.unshift(v & 0x7f);
+      v >>>= 7;
+    } while (v > 0);
+    for (let i = 0; i < chunk.length - 1; i++) chunk[i] |= 0x80;
+    body.push(...chunk);
+  }
+  return tlv(0x06, Buffer.from(body));
+}
+
+/**
+ * A certificate-shaped DER carrying Fulcio extensions and nothing else.
+ *
+ * Not a valid X.509 certificate and not signed by anything — it is bytes in
+ * the SHAPE `bot/lib/certificate.mjs` walks: `SEQUENCE { SEQUENCE { …, [3]
+ * SEQUENCE OF Extension } }`, each extension being `SEQUENCE { OID, OCTET
+ * STRING { UTF8String } }`, which is Fulcio's v2 encoding for `.9` and up.
+ * Nothing here verifies a signature, so nothing here needs one; what is being
+ * tested is the reader.
+ *
+ * @param {Record<string, string>} fields field name → value
+ */
+export function fakeCertificateDer(fields) {
+  const extensions = Object.entries(fields)
+    .filter(([name, value]) => OID_BY_FIELD[name] && typeof value === "string")
+    .map(([name, value]) => tlv(0x30, Buffer.concat([
+      encodeOid(OID_BY_FIELD[name]),
+      tlv(0x04, tlv(0x0c, Buffer.from(value, "utf8"))),
+    ])));
+  const tbs = tlv(0x30, Buffer.concat([
+    tlv(0x02, Buffer.from([0x01])),                    // a member to walk past
+    tlv(0xa3, tlv(0x30, Buffer.concat(extensions))),   // [3] extensions
+  ]));
+  return tlv(0x30, Buffer.concat([tbs, tlv(0x03, Buffer.from([0x00]))]));
+}
+
 export function fakeGh({
   repo,
   signerDigest,
@@ -199,9 +293,35 @@ export function fakeGh({
   certRepo = null,
   fail = null,
   signerWorkflow = FIXTURE_SIGNER_WORKFLOW,
-  // The commit the signed predicate names. A test that wants
+  // The commit the CERTIFICATE names (.13). A test that wants
   // `E_RELEASE_COMMIT_MISMATCH` moves this one and leaves the Release alone.
   sourceCommit = FIXTURE_COMMIT,
+  // ── the rest of ID-28's ten ─────────────────────────────────────────────
+  //
+  // Measured, not invented: each default is what B-T1.2's survey read off all
+  // 18 bundles on 2026-09-19, and the KEY NAMES are `gh 2.100.0`'s, confirmed
+  // against the DER of every bundle. `.9`'s suffix is a 40-hex commit on all
+  // 24 artifacts, so the fixture's is too — the bot accepts any suffix (ID-28:
+  // "@ any ref") and this fixture must not be why somebody believes otherwise.
+  tag = null,
+  ref = undefined,
+  runnerEnvironment = "github-hosted",
+  eventName = "push",
+  repositoryId = FIXTURE_REPOSITORY_ID,
+  repositoryOwnerId = FIXTURE_OWNER_ID,
+  runId = "1",
+  /** Field NAMES to leave out of the certificate — ID-28's missing row. */
+  omitFields = [],
+  /** Field names to put in the DER ONLY, never in gh's JSON. */
+  derOnlyFields = [],
+  /** Replace the certificate object wholesale, for a malformed value. */
+  certificateOverrides = {},
+  /** Extra attestations in the array — another file of the same release. */
+  extraResults = [],
+  /** Put a complete, correct build predicate beside the certificate. */
+  predicateFacts = false,
+  /** A predicate and NO certificate at all — the pre-B-T1.1 fallback's food. */
+  predicateOnly = false,
 }) {
   return async (args) => {
     if (fail) {
@@ -226,26 +346,69 @@ export function fakeGh({
       e.stderr = message;
       throw e;
     }
-    return {
-      stdout: JSON.stringify([{
-        verificationResult: {
-          signature: {
-            certificate: {
-              buildSignerURI: signerUri ?? `https://github.com/${signerWorkflow}@refs/heads/main`,
-              buildSignerDigest: signerDigest,
-              sourceRepositoryURI: `https://github.com/${certRepo ?? repo}`,
-              sourceRepositoryDigest: sourceCommit,
-              runInvocationURI: `https://github.com/${repo}/actions/runs/1`,
-            },
-          },
-          statement: {
-            _type: "https://in-toto.io/Statement/v1",
-            subject: [{ name: "bundle", digest: { sha256: subjectDigest } }],
-            predicate: { buildDefinition: { externalParameters: {} } },
+
+    const fields = {
+      job_workflow_ref: signerUri ?? `https://github.com/${signerWorkflow}@${"c".repeat(40)}`,
+      job_workflow_sha: signerDigest,
+      runner_environment: runnerEnvironment,
+      source_repository_uri: `https://github.com/${certRepo ?? repo}`,
+      sha: sourceCommit,
+      ref: ref ?? (tag ? `refs/tags/${tag}` : null),
+      repository_id: repositoryId,
+      repository_owner_id: repositoryOwnerId,
+      event_name: eventName,
+      run: `https://github.com/${repo}/actions/runs/${runId}`,
+    };
+
+    const certificate = {};
+    for (const [name, value] of Object.entries(fields)) {
+      if (omitFields.includes(name) || derOnlyFields.includes(name)) continue;
+      if (value === null || value === undefined) continue;
+      certificate[CERT_KEY_BY_FIELD[name]] = value;
+    }
+    Object.assign(certificate, certificateOverrides);
+
+    // The DER gh embeds beside its JSON. It carries every field the JSON does
+    // — as the real one does — plus whichever fields a test asked to hide from
+    // the JSON, which is the only way the fallback branch is ever reached.
+    const derFields = {};
+    for (const [name, value] of Object.entries(fields)) {
+      if (omitFields.includes(name) || value === null || value === undefined) continue;
+      derFields[name] = String(value);
+    }
+
+    const result = {
+      verificationResult: {
+        signature: { certificate },
+        statement: {
+          _type: "https://in-toto.io/Statement/v1",
+          subject: [{ name: "bundle", digest: { sha256: subjectDigest } }],
+          // The predicate a builder composes. Nothing in the bot may read an
+          // identity fact out of it (ID-28), and a fixture that carries a
+          // richer one than the certificate is how that is proved.
+          predicate: predicateOnly || predicateFacts
+            ? {
+              buildDefinition: {
+                externalParameters: { workflow: { repository: `https://github.com/${repo}`, path: signerWorkflow } },
+                resolvedDependencies: [{ digest: { gitCommit: sourceCommit } }],
+              },
+              runDetails: { metadata: { invocationId: `https://github.com/${repo}/actions/runs/${runId}` } },
+            }
+            : { buildDefinition: { externalParameters: {} } },
+        },
+      },
+      attestation: {
+        bundle: {
+          verificationMaterial: {
+            certificate: { rawBytes: fakeCertificateDer(derFields).toString("base64") },
           },
         },
-      }]),
+      },
     };
+    if (predicateOnly) delete result.verificationResult.signature;
+    if (predicateOnly) delete result.attestation;
+
+    return { stdout: JSON.stringify([...extraResults, result]) };
   };
 }
 
