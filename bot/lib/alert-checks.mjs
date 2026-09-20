@@ -208,6 +208,60 @@ export const CHECKS = [
     armed_at: null,
     signals: ["success"],
   },
+  {
+    name: "baseline-names",
+    party: "registry",
+    // **Not in RC-R1-0's table, and it is owed one.** `baseline.yml` has a
+    // daily `names` job: for every baseline `repository_id` it asks GitHub
+    // what that repository is called today and compares the answer with
+    // `source.repo`. It is MIG-20's last sentence — "the bot MUST alarm when a
+    // baseline repository's current name differs, never re-baselining from a
+    // name" — and it is the registry's only defence against threat row 18, the
+    // name recycler: clients key on names, so a freed `owner/name` that
+    // somebody else registers is an update channel into every installation of
+    // that plugin.
+    //
+    // §2.0 says every scheduled check posts a BOT-85 heartbeat from such a
+    // job, and this is a scheduled check. The alternative the alert action
+    // offers — `no-heartbeat-because:` — needs a true sentence, and the two
+    // true ones it is for do not apply: nobody else watches this job (the
+    // service's BOT-47 watches BOT-51's ingest schedule and nothing else), and
+    // it is not unscheduled. Writing one anyway would be writing down a reason
+    // that is not the reason.
+    //
+    // What silence here would hide is specific and quiet. The job going RED is
+    // visible: it fails the run. The job not RUNNING is not — GitHub disables
+    // schedules on a repository with no activity, a concurrency group can
+    // swallow a run, and a daily job that stopped looks exactly like a day
+    // with no rename in it. That is the same argument `alarm-drill` above is
+    // here for, and it is the argument BOT-85 is.
+    //
+    // **Created ARMED, like every other registry check, and that is a
+    // deliberate choice made against the merits — see the note below.** The
+    // owner creates the receiver at R1 (§2.12); `baseline.yml` lands at R3.
+    // Between those an armed check has no poster and pages on its bound about
+    // a workflow nobody has written yet, which is attack B-1's failure with a
+    // registry poster instead of a service one.
+    //
+    // It is armed anyway because **this is not one check's decision.** Read
+    // off the plan on 2026-09-19, five registry checks already in this table
+    // have posters later than R1: `detectors` (B-T3.8, R3), `moderation-run`
+    // (M-T3.4, R3), `conformance` (B-T3.11, R3), `deadline-watch` (M-T5.4,
+    // R4b) and `poll-and-sweep` (B-T5.0/B-T5.1, R5). The comment on `no
+    // registry check is created disarmed` in `bot/tests/alert.test.mjs` gives
+    // the reason for the invariant as "every other check's poster lands in the
+    // same step as the check", and for those five it does not. Disarming this
+    // one would split the table for the sixth case of a pattern nobody has
+    // decided about, and leave a reader with no way to tell why. So the
+    // question goes to the coordinator and the owner as ONE question, with
+    // that measurement, in B-T3.7b's report — and until it is answered this
+    // row reads the same as its five neighbours.
+    source: "B-T3.7b (MIG-20's rename watch), .github/workflows/baseline.yml, the `names` job",
+    interval_seconds: 86400,
+    created_disarmed: false,
+    armed_at: null,
+    signals: ["success"],
+  },
   // ── the two the plugins service posts to ───────────────────────────────────
   //
   // Created here, with the rest, because the receiver is this plan's to create

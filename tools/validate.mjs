@@ -37,7 +37,17 @@ import {
   unsafeDisplayText,
   unsafePathComponent,
 } from "./lib/ids.mjs";
-import { loadSources, loadPolicy, loadSchemas, readJson, REPO_ROOT } from "./lib/sources.mjs";
+import {
+  BASELINE_FILE,
+  BASELINE_SCHEMA,
+  loadBaseline,
+  loadPolicy,
+  loadSchemas,
+  loadSources,
+  nonStagingVersions,
+  readJson,
+  REPO_ROOT,
+} from "./lib/sources.mjs";
 import { ALLOWED_IMAGE_HOSTS, ICON_NAMES, MAX_README_BYTES, checkIcon } from "../bot/lib/assets.mjs";
 import { checkMetadata, summarise } from "../bot/lib/derive.mjs";
 import { foldDisplayName, renderedNames } from "../bot/lib/names.mjs";
@@ -1587,6 +1597,121 @@ function readFixtureManifest(file) {
   return out;
 }
 
+// ── MIG-20's baseline marker ────────────────────────────────────────────────
+
+/**
+ * What `log/baseline.json` may hold, and the grammar of each member.
+ *
+ * An ALLOWLIST, for the reason `bot/export-issues.mjs` gives at length: PRIV-2
+ * keeps names out of git, and "does this value look like a person" has no safe
+ * answer for a value that could be anything. "Is this a count" has one. The
+ * marker is name-free by construction if and only if every member it may hold
+ * is a schema string, a §0.7 time, a commit or a number — so a member nobody
+ * listed is refused outright rather than passed through.
+ *
+ * `source_commit` is NOT in the plan's sentence and is here on purpose; the
+ * reason is in `checkBaselineMarker` below.
+ */
+const BASELINE_MEMBERS = {
+  schema: (v) => v === BASELINE_SCHEMA,
+  written_at: (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(v),
+  source_commit: (v) => typeof v === "string" && /^[0-9a-f]{40}$/.test(v),
+  version_count: (v) => Number.isInteger(v) && v >= 0,
+  record_count: (v) => Number.isInteger(v) && v >= 0,
+};
+
+/**
+ * The marker MIG-20's baseline is recognised by, checked when it is there.
+ *
+ * **Why this check exists at all, when nothing rejected the file before it.**
+ * The plan's line is "`tools/validate.mjs` and `tools/lib/sources.mjs` accept
+ * `log/baseline.json`", which reads like the removal of a refusal. There is no
+ * refusal to remove: a `log/` directory was written into this tree and both
+ * tools stayed green and silent, because neither has ever looked outside
+ * `plugins/**`. That silence is the defect. Four mechanisms key on this file —
+ * B-T3.7's legacy writer, detector A1's ignore set (BOT-75), MIG-28's hold, and
+ * B-T3.6 step 0 — and it is written once, by one dispatch, by a job that then
+ * never runs again. A marker with a mistyped schema string or a count that lies
+ * would be read by all four as the thing they were waiting for. So "accept"
+ * means "know about", and this is what knowing about it looks like.
+ *
+ * **The counts are compared with the tree, in the one direction that stays
+ * true.** `version_count` is the number of non-staging published versions at
+ * the commit the baseline was taken over. Versions are added afterwards and
+ * never removed — a delisted listing keeps its version files, "because they
+ * were published and signed" (`plugins/astra-chess/plugin.json`) — so the count
+ * may fall behind the tree and may never exceed it. A marker claiming more
+ * versions than the tree holds means a baselined version file has been deleted,
+ * which orphans its `migration` record and silently shrinks the population
+ * ROLL-42 and M-T8.1 compare. That is an error. Being behind is not.
+ */
+export function checkBaselineMarker(plugins, ctx) {
+  const { report } = ctx;
+  const loaded = loadBaseline(ctx.root);
+  if (loaded === null) {
+    report.note(
+      BASELINE_FILE,
+      "absent: MIG-20's baseline has not been written, so B-T3.7's legacy writer stays off, detector A1 skips " +
+      "and MIG-28 holds every id with no baseline",
+      "This is the state before R3. B-T3.7b's single dispatch writes it.",
+    );
+    return;
+  }
+  if (loaded.error) {
+    report.error(loaded.file, `is not readable JSON — ${loaded.error}`,
+      "Four mechanisms read this file. An unreadable one is not a soft failure for any of them.");
+    return;
+  }
+
+  const doc = loaded.doc;
+  if (doc === null || typeof doc !== "object" || Array.isArray(doc)) {
+    report.error(loaded.file, "is not a JSON object");
+    return;
+  }
+
+  for (const member of Object.keys(doc)) {
+    if (!Object.prototype.hasOwnProperty.call(BASELINE_MEMBERS, member)) {
+      report.error(loaded.file, `carries ${JSON.stringify(member)}, which is not a member this marker may hold`,
+        `The marker is name-free by allowlist: ${Object.keys(BASELINE_MEMBERS).join(", ")} and nothing else.`);
+    }
+  }
+  for (const [member, grammar] of Object.entries(BASELINE_MEMBERS)) {
+    if (doc[member] === undefined) {
+      report.error(loaded.file, `is missing ${JSON.stringify(member)}`);
+    } else if (!grammar(doc[member])) {
+      report.error(loaded.file, `${member} is ${JSON.stringify(doc[member])}, which is not the thing it claims to be`);
+    }
+  }
+  if (report.errors.some((e) => e.where === loaded.file)) return;
+
+  // A baseline over nothing is a baseline that did not run. The same floor
+  // `bot/export-issues.mjs --facts` takes on its own output, for the same
+  // reason: the failure mode is a `verify` job that returned an empty list and
+  // a `write` job that committed the marker anyway, with nothing red.
+  if (doc.version_count === 0) {
+    report.error(loaded.file, "records a baseline over zero versions",
+      "MIG-20's population is every non-staging published version, and this tree has some. A zero count is a run " +
+      "that stopped working, not a registry with nothing in it.");
+  }
+  if (doc.record_count < doc.version_count) {
+    report.error(loaded.file,
+      `records ${doc.record_count} record(s) for ${doc.version_count} version(s)`,
+      "MIG-20 asks for one `migration` record per non-staging published version, and MIG-21's historic export " +
+      "adds more on top. Fewer records than versions is a write that lost some.");
+  }
+
+  const inTree = nonStagingVersions(plugins).length;
+  if (doc.version_count > inTree) {
+    report.error(loaded.file,
+      `claims ${doc.version_count} non-staging published version(s) and this tree holds ${inTree}`,
+      "Versions are added after the baseline and never removed — a delisted listing keeps its version files. A " +
+      "count above the tree means a baselined version file was deleted, orphaning its `migration` record.");
+  } else if (doc.version_count < inTree) {
+    report.note(loaded.file,
+      `baselined ${doc.version_count} version(s); ${inTree - doc.version_count} have been published since`);
+  }
+}
+
 // ── driver ──────────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
@@ -1645,6 +1770,7 @@ export async function runValidation(opts) {
   }
   checkSquatting(usable, ctx);
   checkListingLanguage(usable, ctx);
+  checkBaselineMarker(usable, ctx);
 
   let hashed = 0;
   if (opts.artifactsDir) hashed += checkLocalArtifacts(usable, ctx);

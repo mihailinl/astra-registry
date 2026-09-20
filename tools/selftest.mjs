@@ -73,6 +73,11 @@ const MODULES = [
   "update-signing.mjs",
   "update-notes.mjs",
   "repo-rules.mjs",
+  // Last, and with a section header of its own, because `repo-rules.mjs` has
+  // none: anything inserted above it would move that module's names under a
+  // header they do not belong to. The two boundaries the comment above
+  // protects are both earlier, so appending here moves nothing at all.
+  "baseline.mjs",
 ];
 
 const SUITE_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "selftest");

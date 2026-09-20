@@ -109,6 +109,65 @@ export function loadSources(root = REPO_ROOT) {
   return { errors, plugins };
 }
 
+/**
+ * MIG-20's migration baseline marker (registry plan B-T3.7b).
+ *
+ * `log/` is the first directory in this repository that holds records the bot
+ * writes ABOUT its own decisions rather than about a listing, and this marker is
+ * its first file. Four things key on it — B-T3.7's legacy writer, detector A1's
+ * ignore set (BOT-75), MIG-28's hold for ids with no baseline, and B-T3.6 step
+ * 0's work source — so a marker that is the wrong shape is not a cosmetic
+ * problem: it is four mechanisms reading a file they each believe something
+ * different about.
+ */
+export const BASELINE_FILE = path.join("log", "baseline.json");
+
+export const BASELINE_SCHEMA = "astra.registry.baseline/1";
+
+/**
+ * The marker, or null when the baseline has not been written.
+ *
+ * Absence is the ordinary state until R3 and is NOT an error here: this is the
+ * loader, and "there is no baseline yet" is a fact the callers act on. What is
+ * an error is a file that exists and cannot be read, which is returned as
+ * `{file, error}` so the caller reports the path rather than throwing a
+ * `SyntaxError` with no location in it.
+ *
+ * @returns {{file: string, doc?: object, error?: string}|null}
+ */
+export function loadBaseline(root = REPO_ROOT) {
+  const file = path.join(root, BASELINE_FILE);
+  if (!fs.existsSync(file)) return null;
+  try {
+    return { file: BASELINE_FILE, doc: readJson(file) };
+  } catch (e) {
+    return { file: BASELINE_FILE, error: e.message };
+  }
+}
+
+/**
+ * The population MIG-20's baseline is taken over: every published version that
+ * is not a staging entry.
+ *
+ * One line, in one place, because three readers need the same answer and the
+ * one that disagreed would be the one nobody re-read: `tools/validate.mjs`
+ * checks the marker's count against it, `bot/baseline.mjs` writes one
+ * `migration` record per member, and `bot/detectors.mjs` runs MIG-20's tree
+ * check over it. "staging entries and null ids never count" is MIG-20's own
+ * sentence; this is the first half of it.
+ */
+export function nonStagingVersions(plugins) {
+  const out = [];
+  for (const plugin of plugins) {
+    for (const version of plugin.versions ?? []) {
+      if (!version.doc || typeof version.doc !== "object") continue;
+      if (version.doc.staging === true) continue;
+      out.push({ plugin, version });
+    }
+  }
+  return out;
+}
+
 export function loadPolicy(root = REPO_ROOT) {
   return {
     limits: readJson(path.join(root, "policy", "limits.json")),
