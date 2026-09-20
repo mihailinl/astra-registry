@@ -254,6 +254,20 @@ jobs:
       - name: Detector A, and the skips that have to be derived
         run: node --test bot/tests/detectors.test.mjs
 
+      # B-T2.6. The releases feed after it got a module of its own: `pollFeed`
+      # and `parseReleasesAtom` moved out of `bot/watch.mjs` and
+      # `bot/lib/notify.mjs` into `bot/lib/poll.mjs`. Half the file is the guard
+      # on that cut — the three export surfaces pinned BY NAME, the sixteen
+      # pre-cut names pinned as a list that is deliberately NOT derived from
+      # those three, one definition of each moved function in the whole tree,
+      # and every module under `bot/lib/` imported by something other than
+      # itself. The independent list is the one that matters: the other three
+      # cannot see a name moved out of one module with both pins updated in
+      # step and never exported at the far end, which is the break that was
+      # watched. Pure, no probe, no network, ~65 ms.
+      - name: The feed poll, and the surfaces the split had to keep
+        run: node --test bot/tests/poll.test.mjs
+
       - name: The moderation records, against their own schema
         run: node bot/moderation.mjs --check
 
