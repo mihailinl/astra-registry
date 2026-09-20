@@ -1,0 +1,27 @@
+{
+  "$comment": "Derived from Voltur792/SPT@v0.2.6. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: release-author.",
+  "schema": "astra.registry.version/1",
+  "id": "sleep-pause-timer",
+  "version": "0.2.6",
+  "published_at": "2026-09-20T10:12:47Z",
+  "release": {
+    "kind": "github_release",
+    "repo": "Voltur792/SPT",
+    "tag": "v0.2.6",
+    "commit": "8c770edd32eb05ba71a81cc96537ea3e58b27b9e"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/Voltur792/SPT/releases/download/v0.2.6/sleep-pause-timer-0.2.6-noarch.astraplugin",
+      "filename": "sleep-pause-timer-0.2.6-noarch.astraplugin",
+      "sha256": "9130c265c1707dae704efd81d754efcae6fc645cfa37e1c172d1160064120c7b",
+      "size": 102706
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "tools",
+    "ui_contributions"
+  ],
+  "permissions": {}
+}
