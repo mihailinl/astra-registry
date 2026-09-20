@@ -2116,6 +2116,28 @@ await test("R_IDENTITY_CHANGED — the same plugin from a different repository",
   assert(codes(r).includes("R_IDENTITY_CHANGED"), JSON.stringify(codes(r)));
 });
 
+await test("ID-74 — an id belongs to the first release that published under it", async () => {
+  // Checked rather than quoted. B-T3.3a says "the bot already works this way
+  // at the pin" and cites two line ranges; this is that claim as a test, so
+  // the service path cannot grow a second answer to it.
+  //
+  // Nothing held before the first publication counts — no reservation, no
+  // binding token, no pending submission — and afterwards a release of the
+  // same id from another repository is compared with the listing that exists
+  // rather than being offered the first-listing path.
+  const first = await run({ assets: [conformingAsset()], root: registryWith({ id: "something-else" }) });
+  assert(codes(first).includes("R_FIRST_LISTING"),
+    `an id nobody has listed is a first listing: ${JSON.stringify(codes(first))}`);
+
+  const second = await run({
+    assets: [conformingAsset()],
+    root: registryWith({ repo: "the-first-publisher/dice-roller" }),
+  });
+  assert(codes(second).includes("R_IDENTITY_CHANGED"), JSON.stringify(codes(second)));
+  assert(!codes(second).includes("R_FIRST_LISTING"),
+    "the second repository is never offered the first-listing path, which is what ID-74 forbids");
+});
+
 section("the host-RPC heuristic");
 
 await test("E_HOST_RPC_UNDECLARED — author source calling one of the four", async () => {

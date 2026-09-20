@@ -19,10 +19,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  ACTOR_MISMATCH_FLOOR_DAYS,
   IDENTITY_CODES,
   applyIdentity,
   bindingDecision,
   checkDownloadRepository,
+  compareActor,
   compareFactsFile,
   compareWithBaseline,
   effectiveBaseline,
@@ -256,6 +258,34 @@ test("a baseline ends at the newest voiding record, and the reset is not refused
     pluginId: "astra-chess",
   });
   assert.equal(rebaselined.baseline.repository_id, "2000000001", "a baseline written after the reset counts");
+});
+
+test("MIG-31: a different account pressing the button waits; a failed read decides nothing", () => {
+  const identity = identityFromCertificate(CHESS_FIELDS);
+
+  const owner = compareActor({ identity, actor: { status: "found", triggering_actor_id: "280318216" } });
+  assert.equal(owner.outcome, "ok");
+  assert.equal(owner.floor_days, 0);
+
+  const someoneElse = compareActor({ identity, actor: { status: "found", triggering_actor_id: "193032699" } });
+  assert.equal(someoneElse.outcome, "floor");
+  assert.equal(someoneElse.floor_days, ACTOR_MISMATCH_FLOOR_DAYS);
+
+  for (const actor of [
+    { status: "transient", reason: "HTTP 502" },
+    { status: "not_found", reason: "HTTP 404" },
+    { status: "found", triggering_actor_id: null },
+    // The shape that catches a reader keying on the FIELD instead of on the
+    // STATUS: a caller that filled the id in anyway — from a cache, from a
+    // retry, from a half-written object — while the read itself failed. The
+    // status is what says whether GitHub answered.
+    { status: "transient", triggering_actor_id: "193032699", reason: "HTTP 502" },
+  ]) {
+    const answer = compareActor({ identity, actor });
+    assert.equal(answer.outcome, "wait", JSON.stringify(actor));
+    assert.notEqual(answer.floor_days, ACTOR_MISMATCH_FLOOR_DAYS,
+      "a read that did not happen must not impose the floor either — it decides nothing at all");
+  }
 });
 
 test("a binding decision this tree cannot make is refused by name", () => {
