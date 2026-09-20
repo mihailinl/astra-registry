@@ -56,6 +56,7 @@ import {
   loadSources,
   nonStagingVersions,
 } from "../tools/lib/sources.mjs";
+import { SOURCE_PATHSPEC as REVOCATIONS_PATHSPEC } from "../tools/lib/revocations.mjs";
 
 export const DETECTORS = ["A1", "A3", "A5", "A7", "A9"];
 
@@ -439,7 +440,14 @@ export function a7({ git, now }, findings, skipped, scanned) {
     return;
   }
   scanned.signed_source_commit = sourceCommit;
-  for (const [what, pathspec] of [["plugins", "plugins"], ["revocations", "tools/revocations"]]) {
+  // Each half's pathspec is *what that document is built from*, and neither is
+  // "the directory it lives in". `plugins` is the whole tree because a README
+  // or an icon does reach `registry/v1/index.json`; the withdrawal list's is
+  // `SOURCE_PATHSPEC` because its directory also holds a README that reaches
+  // nothing. A7 used the directory for both until 2026-09-20, when ten lines
+  // of documentation alarmed it — `tools/lib/revocations.mjs` carries the run
+  // and the reasoning.
+  for (const [what, pathspec] of [["plugins", "plugins"], ["revocations", REVOCATIONS_PATHSPEC]]) {
     const newest = git.newestTouching(pathspec);
     if (!newest) continue;
     const driftMinutes = Math.floor((newest.at - at) / 60);
@@ -449,7 +457,7 @@ export function a7({ git, now }, findings, skipped, scanned) {
         detector: "A7",
         code: what === "plugins" ? "A7_SIGNED_BEHIND_PLUGINS" : "A7_SIGNED_BEHIND_REVOCATIONS",
         message:
-          `\`signed\`'s Source-Commit is ${driftMinutes} minutes older than the newest ${pathspec}/ commit ` +
+          `\`signed\`'s Source-Commit is ${driftMinutes} minutes older than the newest ${pathspec} commit ` +
           `${newest.sha.slice(0, 12)}; the bound is ${A7_BOUND_MINUTES[what]}`,
         hex: newest.sha,
       });

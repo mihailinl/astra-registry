@@ -28,6 +28,10 @@ import test from "node:test";
 
 import { A7_BOUND_MINUTES, DETECTORS, detect, verdict } from "../detectors.mjs";
 import { verdictProblems } from "../lib/alert-verdict.mjs";
+import {
+  SOURCE_DIR as REVOCATIONS_SOURCE_DIR,
+  SOURCE_PATHSPEC as REVOCATIONS_SOURCE_PATHSPEC,
+} from "../../tools/lib/revocations.mjs";
 
 const git = (cwd, args, env = {}) =>
   execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...env } }).trim();
@@ -365,6 +369,54 @@ test("A7: the revocations bound is thirty minutes, not two hours", () => {
   const found = codes(detect({ root: dir }));
   assert.ok(found.includes("A7_SIGNED_BEHIND_REVOCATIONS"), JSON.stringify(found));
   assert.ok(!found.includes("A7_SIGNED_BEHIND_PLUGINS"), "the plugins bound fired at 40 minutes");
+});
+
+test("A7: the withdrawal list's README is not the withdrawal list", () => {
+  // The live failure, 2026-09-20 09:25. `a6a4c55` added ten lines to
+  // `tools/revocations/README.md`; A7 read the directory, computed 223 minutes
+  // against a thirty-minute bound and alarmed. Every number was right and the
+  // subject was wrong: nothing that gets signed had changed. `detectors.yml`
+  // went red and stayed red until an unrelated push happened to re-run the
+  // signer, because `sign.yml`'s cron is hourly and the bound is half that.
+  //
+  // Three hours here rather than forty minutes, so this stays red for the
+  // original defect however the bound is later tuned.
+  const dir = estate();
+  const source = git(dir, ["rev-parse", "HEAD"]);
+  write(dir, "tools/revocations/README.md", "# advisories\n\nHow to write one.\n");
+  commit(dir, "docs: how to write an advisory", "2026-01-01T03:00:00Z");
+  signedAt(dir, source, "2026-01-01T03:01:00Z");
+  const found = codes(detect({ root: dir }));
+  assert.ok(
+    !found.includes("A7_SIGNED_BEHIND_REVOCATIONS"),
+    `a documentation commit alarmed the withdrawal-list detector: ${JSON.stringify(found)}`,
+  );
+});
+
+test("A7: an advisory beside that README still alarms", () => {
+  // The control, and it is the half that matters. A fix for the test above
+  // that stopped A7 firing at all would pass it, and the alarm exists because
+  // a stale signed withdrawal list is how a revoked plugin stays installable.
+  // Same directory, same commit time, one `.json` instead of one `.md`.
+  const dir = estate();
+  const source = git(dir, ["rev-parse", "HEAD"]);
+  write(dir, "tools/revocations/README.md", "# advisories\n");
+  write(dir, "tools/revocations/ASTRA-2026-0001.json", { schema: "astra.registry.revocation/1" });
+  commit(dir, "registry: an advisory, and a line about advisories", "2026-01-01T03:00:00Z");
+  signedAt(dir, source, "2026-01-01T03:01:00Z");
+  const found = codes(detect({ root: dir }));
+  assert.ok(found.includes("A7_SIGNED_BEHIND_REVOCATIONS"), JSON.stringify(found));
+});
+
+test("A7 asks the revocations module which files the list is built from", () => {
+  // The pathspec is not typed in `detectors.mjs`, and this is what notices if
+  // somebody types it back. A detector carrying its own copy of another
+  // module's answer is the shape `tools/lib/ids.mjs` and `tools/lib/tags.mjs`
+  // both exist to end.
+  assert.equal(REVOCATIONS_SOURCE_PATHSPEC, `${REVOCATIONS_SOURCE_DIR}/*.json`);
+  const text = fs.readFileSync(new URL("../detectors.mjs", import.meta.url), "utf8");
+  const typed = text.split("\n").filter((l) => /["'`]tools\/revocations["'`]/.test(l));
+  assert.deepEqual(typed, [], "bot/detectors.mjs names tools/revocations directly again; import it from tools/lib/revocations.mjs");
 });
 
 test("A7: `signed` with no Source-Commit trailer says so rather than passing", () => {
