@@ -41,6 +41,7 @@ import { checkDisplayName, checkNames, foldDisplayName, loadTrademarks } from ".
 import { scriptsUsed } from "../../tools/lib/ids.mjs";
 import { extractSignerFacts, loadRootKeys, loadWorkflowAllowlist } from "../lib/attestation.mjs";
 import * as gh from "../lib/github.mjs";
+import { certificateIds } from "../lib/certificate.mjs";
 import { applyIdentity } from "../lib/identity.mjs";
 import { proveOwnership } from "../lib/ownership.mjs";
 import { isRecheckCommand, parseIssueForm } from "../lib/issue.mjs";
@@ -824,6 +825,25 @@ await test("a 404 is the only thing that means there is no attestation", async (
     ghFail: "Error: HTTP 404: Not Found (https://api.github.com/repos/a-stranger/dice-roller/attestations/sha256:abc)",
   });
   assertBlockedWith(r, "E_ATTESTATION_MISSING");
+});
+
+await test("the two functions bot/baseline.mjs refuses to run without", async () => {
+  // MIG-20's baseline is written ONCE, and `bot/baseline.mjs` refuses to
+  // write it until two functions exist under exactly these names:
+  // `certificateIds` in `bot/lib/certificate.mjs` and `fetchRepositoryIds` in
+  // `bot/lib/github.mjs`. Its own suite asserts the REFUSAL, against a
+  // fixture directory — so nothing, until now, asserted that the real modules
+  // satisfy it. Renaming either function would restore a refusal that reads
+  // like an unstarted task, on a file whose comment says the task is done.
+  const bundle = JSON.parse((await fakeGh({
+    repo: REPO, signerDigest: ALLOWED_WORKFLOW_SHA, subjectDigest: "e".repeat(64), tag: TAG,
+  })(["attestation", "verify", "x", "--repo", REPO])).stdout);
+  const ids = certificateIds({ bundle, artifactSha256: "e".repeat(64) });
+  assertEqual(ids.repository_id, FIXTURE_REPOSITORY_ID, "base-10 string or null, and this one is the string");
+  assertEqual(ids.repository_owner_id, FIXTURE_OWNER_ID, "the same for .17");
+  const none = certificateIds({ bundle, artifactSha256: "f".repeat(64) });
+  assertEqual(none.repository_id, null, "a bundle that does not cover these bytes yields null, never a guess");
+  assertEqual(typeof gh.fetchRepositoryIds, "function", "B-T1.3's by-id read, under the name baseline.mjs asks for");
 });
 
 section("identity, from the certificate (B-T3.2)");
