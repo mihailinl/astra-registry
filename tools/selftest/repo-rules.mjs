@@ -442,7 +442,10 @@ export async function run() {
   // whenever they agree. A module missing from the list below has exactly that
   // hole, and its author is the last person who will ever think about it.
   // `signer.mjs` was added on 2026-09-19 with RC-R1-1, watched failing by
-  // deleting the file and its runner entry together.
+  // deleting the file and its runner entry together; `served-set.mjs` the same
+  // day with RC-R1-4 and RC-R1-5, watched the same way and also by leaving it
+  // out of this list — which is the silent half, since omitting a name here
+  // costs nothing and fails nothing.
   //
   // Two checks per name, and together they say the module still RUNS: it is on
   // disk and exports `run`; and it is still in the runner's `MODULES`, read out
@@ -487,6 +490,7 @@ export async function run() {
     // with its runner entry, which is the loss `checkModuleSet` cannot see
     // because the two sides it compares agree that the module is gone.
     "baseline.mjs",
+    "served-set.mjs",
   ];
   await test("no module has left the runner's list since the suite was split", async () => {
     const runner = fs.readFileSync(path.join(REPO_ROOT, "tools", "selftest.mjs"), "utf8");
