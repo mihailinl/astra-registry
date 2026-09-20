@@ -30,9 +30,13 @@
     "license": { "type": "string", "minLength": 1, "maxLength": 64 },
     "source": { "$ref": "#/$defs/source" },
     "homepage": { "type": "string", "pattern": "^https://" },
-    "icon_url": { "type": "string", "pattern": "^https://" },
+    "icon_url": {
+      "$comment": "REFUSED, and still described here on purpose (BOT-79). No listing carries this field and nothing may add one: tools/validate.mjs errors on its presence, tools/build-index.mjs refuses to render a listing that has it, and schema/index-v1.json's `icon_url` pattern admits only a data: URI or the empty string. The shape is kept so that a hand-written listing gets the validator's sentence — what to do instead, and why — rather than a bare `additional property is not allowed` from this file. Delete the shape and that message goes with it.",
+      "type": "string",
+      "pattern": "^https://"
+    },
     "icon": {
-      "$comment": "A FILENAME beside this document, not a URL. The bytes are committed to the registry so a reviewer sees the actual picture in the pull request diff instead of a base64 blob, and tools/build-index.mjs inlines them into the signed index as a data: URI. Extracted from the attested bundle by bot/ingest.mjs. Takes precedence over `icon_url`, which names a host the plugin author controls and so makes rendering the store a request to a third party once per listing per refresh.",
+      "$comment": "A FILENAME beside this document, not a URL. The bytes are committed to the registry so a reviewer sees the actual picture in the pull request diff instead of a base64 blob, and tools/build-index.mjs inlines them into the signed index as a data: URI. Extracted from the attested bundle by bot/ingest.mjs. It is the only way a listing gets a picture: `icon_url` above is refused (BOT-79).",
       "enum": ["icon.png", "icon.webp", "icon.svg", "icon.jpg", "icon.jpeg", "icon.ico"]
     },
     "readme": {

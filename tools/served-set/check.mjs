@@ -24,10 +24,11 @@ import { pathToFileURL } from "node:url";
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { gitMaybe, gitText } from "../signer/git.mjs";
 import { armingState } from "../signer/pages.mjs";
-import { fetchSignedHead } from "../signer/plan.mjs";
+import { SIGNED_FILES, fetchSignedHead } from "../signer/plan.mjs";
 import { emit, finding, verdict } from "./report.mjs";
 import { SIGNER_WORKFLOW, gather, serve85 } from "./main-vs-signed.mjs";
 import { fetchServed, serve39 } from "./served-vs-signed.mjs";
+import { runwayVerdict } from "./runway.mjs";
 import { actionsRunLookup, gitAncestry, provenance, runsInScope, signedCommits } from "./provenance.mjs";
 import fs from "node:fs";
 
@@ -127,9 +128,64 @@ async function servedVsSigned({ root, now, repo, token }) {
   });
 }
 
-const JOBS = {
+/**
+ * ROLL-45's runway, on every trust document this estate can be asked for.
+ *
+ * Two copies, because they can differ and the difference is the interesting
+ * case: `main` holds what the operator last signed and `signed` holds what the
+ * population is actually verifying under. A renewal committed and never
+ * published leaves the served copy running out on its own schedule.
+ *
+ * `main`'s copy is read from the checkout rather than from the remote: this
+ * job checks out `main` at the run's commit, and re-fetching the branch to
+ * read a file the workspace already holds buys nothing. SERVE-90's question —
+ * which branch a commit is reachable from — is the one that needs the remote,
+ * and it is asked in the other job.
+ */
+async function trustRunway({ root, now }) {
+  const documents = [];
+  const waiting = [];
+  const extra = [];
+
+  const rel = SIGNED_FILES.trust;
+  try {
+    documents.push({ where: `main:${rel}`, doc: JSON.parse(fs.readFileSync(path.join(root, rel), "utf8")) });
+  } catch (e) {
+    extra.push(finding(
+      "ROLL_45_TRUST_UNREADABLE",
+      `main:${rel} could not be read in this checkout: ${String(e?.message ?? e)}. The document every client ` +
+      `verifies the catalogue under is missing from the branch that is supposed to hold it.`,
+    ));
+  }
+
+  const head = fetchSignedHead({ root });
+  if (!head.present) {
+    // Stated, green, and still heartbeating — the third state `report.mjs`
+    // describes. Before sign.yml's first run there is no published copy, and
+    // an alarm about that is an alarm about the estate not having started.
+    waiting.push(`no \`signed\` branch yet (${head.reason}), so only main's copy of ${rel} has a runway`);
+  } else if (head.documents.trust) {
+    documents.push({ where: `signed@${head.sha.slice(0, 12)}:${rel}`, doc: head.documents.trust });
+  } else {
+    extra.push(finding(
+      "ROLL_45_TRUST_UNREADABLE",
+      `${rel} is missing or unreadable at signed@${head.sha.slice(0, 12)}, so the copy the population verifies ` +
+      `under has no measurable runway.`,
+    ));
+  }
+
+  const v = runwayVerdict({ documents, waiting, now });
+  return verdict({ findings: [...v.findings, ...extra], waiting: v.waiting, notes: v.notes });
+}
+
+/**
+ * The jobs `served-set.yml` may ask for, exported so the suite can compare
+ * this list with the workflow's rather than take the workflow's word for it.
+ */
+export const JOBS = {
   "main-vs-signed": mainVsSigned,
   "served-vs-signed": servedVsSigned,
+  "trust-runway": trustRunway,
 };
 
 function parseArgs(argv) {

@@ -237,6 +237,23 @@ function checkPresentationFiles(plugin, ctx) {
   const where = plugin.file;
   const dir = path.join(ctx.root, "plugins", plugin.dir);
 
+  // BOT-79, the input side. `icon_url` names a host the plugin author controls,
+  // and the listing's own schema still describes the field, so a hand-written
+  // or hand-edited listing can carry one. Refused here rather than at generation
+  // alone, because this is the check a submission meets: the author gets a
+  // sentence in the pull request instead of a red `build-index` run on `main`
+  // that names a file they did not touch. `tools/build-index.mjs` refuses it
+  // again on the generating side and `schema/index-v1.json` refuses it in the
+  // signed document, and the three are watched together in
+  // `tools/selftest/catalogue.mjs`.
+  if (plugin.doc.icon_url !== undefined) {
+    report.error(where, `carries icon_url ${JSON.stringify(plugin.doc.icon_url)}`,
+      "The signed catalogue takes a committed icon or nothing (BOT-79): an https icon is fetched from the " +
+      "author's host once per listing every time a store card is drawn, and it puts unauthenticated bytes " +
+      "beside authenticated ones inside a signed document. Commit the picture beside plugin.json as icon.png, " +
+      ".webp, .svg, .jpg, .jpeg or .ico and name it in `icon`.");
+  }
+
   const icon = plugin.doc.icon;
   if (icon !== undefined) {
     const file = path.join(dir, icon);

@@ -226,7 +226,9 @@
         },
         "icon_url": {
           "type": "string",
-          "description": "The store card's picture. A `data:image/png;base64,…` or `data:image/svg+xml;base64,…` URI when the listing committed an icon (the normal case since bot/ingest.mjs started extracting one from the attested bundle), an `https://` URL for an older hand-written listing, and empty when there is neither. Deliberately unpatterned: a client renders whichever it is handed, and both forms have shipped."
+          "pattern": "^(data:image/[a-z0-9.+-]+;base64,[A-Za-z0-9+/]+={0,2})?$",
+          "description": "The store card's picture: a `data:image/<subtype>;base64,…` URI inlined by tools/build-index.mjs from the icon committed beside the listing, or the empty string when the listing has none. NOT an `https://` URL (BOT-79). An https icon is a request to a host the plugin author chose, made once per listing every time a store card is rendered, and it puts unauthenticated bytes beside authenticated ones inside a signed document with nothing marking the difference. The subtype is left open on purpose rather than enumerated here: bot/lib/assets.mjs' ICON_FORMATS is the vocabulary and checkIcon enforces it against the bytes, and a second copy of that list in this file is a list with one stale half.",
+          "$comment": "The three places BOT-79 names are this pattern, tools/validate.mjs (which refuses an `icon_url` in a listing's plugin.json) and tools/build-index.mjs (which refuses instead of passing one through). tools/selftest/catalogue.mjs watches all three refuse one fixture."
         },
         "source": {
           "$ref": "#/$defs/source"

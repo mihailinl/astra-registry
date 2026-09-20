@@ -1,7 +1,8 @@
-# Is what we serve what we signed, and is what we signed what `main` says?
+# Is what we serve what we signed, is what we signed what `main` says, and how
+# long has the document under all of it got left?
 #
-# Two comparisons and one alarm (registry plan RC-R1-4, RC-R1-5). They are one
-# workflow because they are one receiver check: `bot/lib/alert-checks.mjs`
+# Three checks and one alarm (registry plan RC-R1-4, RC-R1-5, RC-R1-6). They are
+# one workflow because they are one receiver check: `bot/lib/alert-checks.mjs`
 # gives `served-set` a single BOT-85 heartbeat, since two checks would page
 # twice for one silence and would need a second poster that does not exist.
 #
@@ -14,6 +15,15 @@
 #                     provenance fallback — every `signed` commit younger than
 #                     7 days, and always the head, shown to have been pushed by
 #                     a run of sign.yml that holds its receipt.
+#
+#   trust-runway      ROLL-45. How many days `registry/v1/trust.json` has left,
+#                     on main's copy and on the one `signed` publishes, and the
+#                     same question for any index key carrying a `not_after`.
+#                     It is here rather than in CI because it is the one row of
+#                     RC-R1-6 that is a property of the CALENDAR rather than of
+#                     a commit: the repository can sit untouched for a month
+#                     while the runway runs out, and renewal is a hand-run root
+#                     ceremony with a dress rehearsal in front of it.
 #
 #   alert             The one page, and the one heartbeat.
 #
@@ -142,8 +152,41 @@ jobs:
           echo "::error::served-vs-signed reported ${{ steps.check.outputs.status || 'nothing at all' }}"
           exit 1
 
+  trust-runway:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    outputs:
+      status: ${{ steps.check.outputs.status }}
+      codes: ${{ steps.check.outputs.codes }}
+      hexes: ${{ steps.check.outputs.hexes }}
+    steps:
+      # The same depth as its two siblings. This job counts no commits — it
+      # reads one file out of the checkout and one blob out of `signed` — but a
+      # third answer to "how much history" in one workflow is a third thing to
+      # reason about at three in the morning, and the fetch of `signed` below
+      # must not be where a shallow clone is first discovered.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: ROLL-45 — how long trust.json has left, on main and on `signed`
+        id: check
+        run: node tools/served-set/check.mjs --job trust-runway
+
+      - name: A red comparison is a red run
+        if: steps.check.outputs.status != 'green'
+        run: |
+          echo "::error::trust-runway reported ${{ steps.check.outputs.status || 'nothing at all' }}"
+          exit 1
+
   alert:
-    needs: [main-vs-signed, served-vs-signed]
+    needs: [main-vs-signed, served-vs-signed, trust-runway]
     # `always()` so a red comparison still pages — the jobs above fail on
     # purpose — and `!cancelled()` so a cancelled run does not send an alarm
     # about a comparison that never finished.
@@ -187,7 +230,7 @@ jobs:
       # that did not report, which is red.
       - name: The verdict, from what the two comparisons reported
         env:
-          ASTRA_SERVED_SET_JOBS: main-vs-signed served-vs-signed
+          ASTRA_SERVED_SET_JOBS: main-vs-signed served-vs-signed trust-runway
           MAIN_VS_SIGNED_RESULT: ${{ needs.main-vs-signed.result }}
           MAIN_VS_SIGNED_STATUS: ${{ needs.main-vs-signed.outputs.status }}
           MAIN_VS_SIGNED_CODES: ${{ needs.main-vs-signed.outputs.codes }}
@@ -196,6 +239,10 @@ jobs:
           SERVED_VS_SIGNED_STATUS: ${{ needs.served-vs-signed.outputs.status }}
           SERVED_VS_SIGNED_CODES: ${{ needs.served-vs-signed.outputs.codes }}
           SERVED_VS_SIGNED_HEXES: ${{ needs.served-vs-signed.outputs.hexes }}
+          TRUST_RUNWAY_RESULT: ${{ needs.trust-runway.result }}
+          TRUST_RUNWAY_STATUS: ${{ needs.trust-runway.outputs.status }}
+          TRUST_RUNWAY_CODES: ${{ needs.trust-runway.outputs.codes }}
+          TRUST_RUNWAY_HEXES: ${{ needs.trust-runway.outputs.hexes }}
         run: node tools/served-set/compose.mjs --out verdict.json --check served-set
 
       - uses: ./.github/actions/alert

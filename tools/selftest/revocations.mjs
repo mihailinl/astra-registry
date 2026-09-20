@@ -6,9 +6,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 import { stableStringify } from "../lib/canonical.mjs";
-import { buildRevocations, checkAdvisory } from "../lib/revocations.mjs";
+import { KINDS, REFUSED_ADVISORY_HOSTS, buildRevocations, checkAdvisory } from "../lib/revocations.mjs";
+import { FLAG_PATH, FLAG_SCHEMA, flagPermanenceProblems } from "../signer/pages.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { signRevocations } from "../sign-revocations.mjs";
 import { loadTestRoot } from "../testkeys/regenerate.mjs";
@@ -17,7 +19,7 @@ import {
   CATALOG_TTL_DAYS, INDEX_SCHEMA, REVOCATIONS_SCHEMA, REVOCATION_TTL_DAYS, TRUST_SCHEMA,
   signEnvelope, verifyEnvelope,
 } from "../../bot/lib/sign.mjs";
-import { test, assert, tmp } from "./harness.mjs";
+import { test, assert, assertEqual, tmp } from "./harness.mjs";
 import { TEST_INDEX_KEY, TEST_STRANGER_KEY, trustedIndexKeys } from "./fixtures.mjs";
 
 export async function run() {
@@ -96,6 +98,80 @@ export async function run() {
     const errs = checkAdvisory({ ...GOOD_ADVISORY, entries: [{ kind: "author", value: "someone" }] });
     assert(errs.some((e) => e.includes("not one the daemon reads")), errs.join("; "));
   });
+
+  // ── the kind vocabulary, and the two legs that do not exist ────────────────
+  //
+  // `KINDS` is hand-maintained, and its own docstring says why: "`astra-daemon/
+  // src/plugins/trust.rs`'s `RevocationKind` is the authority; this table exists
+  // so the registry cannot publish a kind the daemon would silently ignore."
+  //
+  // NOTHING COMPARES THE TWO. Measured on 2026-09-19, each side opened rather
+  // than inferred:
+  //
+  //   * here — `KINDS` appears in three places repo-wide, all in
+  //     `tools/lib/revocations.mjs`: its definition and its two uses. Before
+  //     this test no test imported it and nothing named the seven, so this
+  //     floor is the FIRST assertion about the list's membership rather than a
+  //     second copy of one;
+  //   * the daemon — `pub enum RevocationKind` is at
+  //     `astra-daemon/src/plugins/trust.rs`, seven variants under
+  //     `#[serde(rename_all = "snake_case")]`, which is the enum this list is
+  //     about. `consistency.rs` does not mention it: 0 occurrences. What is
+  //     absent there is the COMPARISON, not the enum — the sibling-checkout
+  //     pair belongs to the client plan's C1.4 and has not been written;
+  //   * the plugins service — no reader, reported by that session's own grep
+  //     of its tree (zero hits for `AV-7`, `advisory_kind` or `advisory
+  //     kinds`), which this repository has not verified for itself. Their
+  //     words, recorded as theirs: it has no design entry to be unimplemented
+  //     from.
+  //
+  // So all three legs are absent as comparisons and this floor is the only one
+  // that will notice an eighth key. The cost of missing it is AV-7's: ONE
+  // unknown kind makes the daemon refuse the WHOLE list, so every armed build
+  // of that population blocks installs seven days later — the failure is not
+  // gradual, and it arrives a week after the publish that caused it.
+  //
+  // The literal list is the point. A test that compared `KINDS` with itself,
+  // or counted it, would pass on a renamed key.
+  await test("KINDS is exactly the seven kinds the daemon parses, and nothing else compares them (TRUST-26; AV-7)", () => {
+    const SEVEN = ["digest", "binary", "id", "id_version", "version_range", "identity", "publisher_key"];
+    const listed = Object.keys(KINDS);
+
+    // The floor first, so a `KINDS` that lost half its entries cannot be
+    // reported as a set that merely differs.
+    assert(listed.length >= 7,
+      `KINDS holds ${listed.length} kind(s) and the daemon's RevocationKind has 7 variants; a kind the registry ` +
+      `stopped accepting is a withdrawal an author cannot publish`);
+
+    const extra = listed.filter((k) => !SEVEN.includes(k));
+    const missing = SEVEN.filter((k) => !listed.includes(k));
+    assertEqual(extra.join(", "), "",
+      "KINDS accepts a kind that is not in astra-daemon/src/plugins/trust.rs's RevocationKind. AV-7: one unknown " +
+      "kind makes the daemon refuse the WHOLE list, so every armed client blocks installs 7 days later. Add the " +
+      "variant to the daemon FIRST, then to this list and to the literal in this test");
+    assertEqual(missing.join(", "), "",
+      "a kind the daemon parses is no longer one this registry will publish; the withdrawal it is for cannot be " +
+      "written at all");
+
+    // The reason, asserted where it is written rather than paraphrased here: a
+    // hand-maintained table whose explanation has been deleted is a table the
+    // next reader tidies.
+    // Unwrapped before it is searched for: the sentence is three lines of a
+    // block comment, and a needle that only matches one line's worth of it
+    // would go red the next time somebody reflows the paragraph.
+    const src = fs.readFileSync(path.join(REPO_ROOT, "tools/lib/revocations.mjs"), "utf8")
+      .split("\n").map((l) => l.replace(/^\s*\*\s?|^\s*\/\/\s?/, "")).join(" ").replace(/\s+/g, " ");
+    assert(src.includes("this table exists so the registry cannot publish a kind the daemon would silently ignore"),
+      "the sentence explaining why KINDS is hand-maintained has left tools/lib/revocations.mjs, and it is the only " +
+      "place a reader learns that the daemon's enum is the authority");
+
+    // M-T3.1 and `checkAdvisory` compile only TRUST-26's four, which is a
+    // SUBSET of the seven and must stay one: a compiler emitting a kind this
+    // list does not accept would fail its own validation.
+    for (const k of ["digest", "id", "id_version", "version_range"]) {
+      assert(listed.includes(k), `TRUST-26's ${k} is not in KINDS, so the compiler emits what the registry refuses`);
+    }
+  });
   await test("an uppercase or truncated digest is refused", () => {
     for (const value of ["A".repeat(64), "abc", "a".repeat(63)]) {
       const errs = checkAdvisory({ ...GOOD_ADVISORY, entries: [{ kind: "digest", value }] });
@@ -146,6 +222,109 @@ export async function run() {
       entries: [{ kind: "identity", value: "https://github.com/owner/repo" }],
     });
     assert(bad.length > 0, "a URL was accepted where AuthorIdentity::revocation_key was required");
+  });
+  await test("an advisory_url on GitHub is refused, because a signed link outlives the page (ROLL-50)", () => {
+    // The field is optional, and that is exactly why refusing these two hosts
+    // costs nothing. A withdrawal list is SIGNED and kept by every client that
+    // fetched it, so a URL inside one outlives the page it names — and every
+    // address this project has on github.com or *.github.io stops resolving
+    // when the Pages deployment is retired at R9a. What is left is a signed
+    // advisory whose only explanation is a 404, on the one document a user
+    // reads after something has already gone wrong.
+    //
+    // Subdomains included, because `<owner>.github.io` is where Pages serves
+    // and the bare host is not what anyone would write.
+    for (const url of [
+      "https://github.com/mihailinl/astra-registry/security/advisories/ASTRA-2026-0001",
+      "https://mihailinl.github.io/astra-registry/advisories/ASTRA-2026-0001",
+      "https://github.io/anything",
+      "https://raw.github.com/mihailinl/astra-registry/main/advisory.md",
+      "https://GitHub.com/mihailinl/astra-registry/advisories/1",
+    ]) {
+      const errs = checkAdvisory({ ...GOOD_ADVISORY, advisory_url: url });
+      assert(errs.some((e) => e.includes("ROLL-50")),
+        `${url} was accepted into a signed document: ${errs.join("; ") || "no error at all"}`);
+    }
+    // Both directions: a host that is not one of these, and the field omitted
+    // entirely, are what an advisory is supposed to look like today.
+    assert(checkAdvisory({ ...GOOD_ADVISORY, advisory_url: "https://astra.minice.ai/plugins/_/advisories/ASTRA-2026-0001" }).length === 0,
+      "the project's own advisory host was refused");
+    const { advisory_url, ...withoutUrl } = GOOD_ADVISORY;
+    assert(checkAdvisory(withoutUrl).length === 0, "omitting the optional field was refused");
+    // And the rule names both hosts rather than one, which is the half a
+    // one-host check would silently lose.
+    assertEqual(REFUSED_ADVISORY_HOSTS.slice().sort().join(","), "github.com,github.io",
+      "the refused-host list changed; ROLL-50 names github.com and github.io");
+  });
+  await test("the arming flag, once added, is never changed and never deleted — no R9b exception", () => {
+    // D5's latch is HISTORY: `armingState` asks whether any commit reachable
+    // from the Source-Commit ADDED `policy/pages-withdrawal-list.json`, and it
+    // deliberately cannot notice the file being edited or deleted afterwards.
+    // That is the right shape for the field — a client that has armed does not
+    // disarm, so a revert must not put an unsigned list back in front of it
+    // and look green — but it leaves the file itself unguarded. This is the
+    // guard.
+    //
+    // Watched on a fixture repository rather than only on this one, because
+    // the flag has not been added here yet: on the real tree every assertion
+    // below is about an empty history, which is a rule nobody has seen work.
+    // The fixture is the same rule at the three ways it is broken.
+    const problemsFor = (build) => {
+      const dir = path.join(tmp, `flag-${build.name}`);
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.mkdirSync(path.join(dir, "policy"), { recursive: true });
+      const git = (...a) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      git("init", "-q", "-b", "main");
+      git("config", "user.email", "flag-fixture@example.invalid");
+      git("config", "user.name", "flag fixture");
+      git("config", "commit.gpgsign", "false");
+      const write = (value) => fs.writeFileSync(path.join(dir, FLAG_PATH), `${JSON.stringify(value, null, 2)}\n`);
+      const commit = (m) => { git("add", "-A"); git("commit", "-qm", m); };
+      build({ write, commit, remove: () => fs.rmSync(path.join(dir, FLAG_PATH)), dir });
+      return flagPermanenceProblems({ root: dir }).problems;
+    };
+    const armed = { schema: FLAG_SCHEMA, armed_at: "2026-09-20T09:00:00Z" };
+
+    const honest = problemsFor(function honest({ write, commit }) {
+      write(armed); commit("arm Pages' withdrawal list");
+    });
+    assertEqual(honest.join("\n"), "", "an arming commit that does nothing else was refused");
+
+    const edited = problemsFor(function edited({ write, commit }) {
+      write(armed); commit("arm");
+      write({ ...armed, armed_at: "2026-10-01T09:00:00Z" }); commit("tidy the date");
+    });
+    assert(edited.some((p) => p.includes("modified, renamed or deleted")),
+      `an edit of the flag after the arming commit produced no problem: ${edited.join("\n") || "none at all"}`);
+
+    const deleted = problemsFor(function deleted({ write, commit, remove }) {
+      write(armed); commit("arm");
+      remove(); commit("Pages is retired at R9b, so this is moot");
+    });
+    assert(deleted.some((p) => p.includes("modified, renamed or deleted")),
+      `a deletion justified by R9b passed: ${deleted.join("\n") || "no problem at all"}`);
+
+    const readded = problemsFor(function readded({ write, commit, remove }) {
+      write(armed); commit("arm");
+      remove(); commit("drop it");
+      write({ ...armed, armed_at: "2027-01-01T09:00:00Z" }); commit("arm again, later");
+    });
+    assert(readded.some((p) => p.includes("added 2 times")),
+      `a delete-then-re-add produced no problem: ${readded.join("\n") || "none at all"}`);
+
+    const extra = problemsFor(function extra({ write, commit }) {
+      write({ ...armed, note: "temporary, remove after R9b" }); commit("arm, with a note");
+    });
+    assert(extra.some((p) => p.includes("must hold exactly")),
+      `a third field in the flag produced no problem: ${extra.join("\n") || "none at all"}`);
+
+    // And this repository, which is the subject the rule exists for. Today it
+    // says nothing because the flag is not here; the day it is added this
+    // assertion starts checking it with nobody having to remember.
+    const real = flagPermanenceProblems({ root: REPO_ROOT });
+    assertEqual(real.problems.join("\n"), "", "the arming flag in this repository is not permanent");
+    assertEqual(real.present, fs.existsSync(path.join(REPO_ROOT, FLAG_PATH)),
+      "the rule disagrees with the filesystem about whether the flag is here");
   });
   await test("the generator flattens an advisory into one entry per key, carrying the advisory", () => {
     const dir = path.join(tmp, "revsrc");
