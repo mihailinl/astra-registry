@@ -530,12 +530,27 @@ await test("the permission check says what the endpoint did, and the probe line 
   assertEqual(answered.ok, true, "and admin may decide");
 
   const lines = [];
-  const wrote = recordPermissionProbe(answered, { GITHUB_STEP_SUMMARY: "/dev/null" }, (_p, l) => lines.push(l));
+  const logged = [];
+  const wrote = recordPermissionProbe(answered, { GITHUB_STEP_SUMMARY: "/dev/null" }, (_p, l) => lines.push(l), (l) => logged.push(l));
   assertEqual(wrote, true, "the line is written when a summary exists");
   assertEqual(lines.length, 1, "one line");
   assert(lines[0].startsWith("collaborator-permission: answered=true outcome="), lines[0]);
   assert(!lines[0].includes("someone"), "the summary is public, so it carries no login");
-  assertEqual(recordPermissionProbe(answered, {}, () => {}), false, "and nothing is written outside Actions");
+
+  // The measurement has to reach the thing that asks for it. A step summary is
+  // reachable by no API — not on the job object, not in the run's artifacts,
+  // not in the logs — so for three weeks R0's answer existed only on a web
+  // page, and the runbook told the owner to read it off that page by eye.
+  // Measured 2026-09-20 on run 35485336476: the line was written, and nothing
+  // but a browser could retrieve it.
+  assertEqual(logged.length, 1, "and the same line goes to the log, which an API can read");
+  assertEqual(logged[0], lines[0].trimEnd(), "the two copies are one line, not two spellings of it");
+  assert(!logged[0].includes("someone"), "the log is public too");
+
+  const outsideActions = [];
+  assertEqual(recordPermissionProbe(answered, {}, () => {}, (l) => outsideActions.push(l)), false,
+    "and nothing is written to a summary outside Actions");
+  assertEqual(outsideActions.length, 1, "but the line is still logged, because a local run is a measurement too");
 });
 
 await test("and the file the publish job reads carries that recovered number, not the empty one", async () => {

@@ -87,19 +87,34 @@ import { isRecheckCommand, parseIssueForm } from "./lib/issue.mjs";
 import { proveMaintainer } from "./lib/maintainer.mjs";
 
 /**
- * Append one line to the job summary saying whether GitHub answered the
- * collaborator-permission question and with what. Never the login, never the
- * role: the measurement is about the token's reach.
+ * Say whether GitHub answered the collaborator-permission question, and with
+ * what. Never the login, never the role: the measurement is about the token's
+ * reach, not about who asked.
+ *
+ * **To the log as well as to the job summary, and the second half is the
+ * repair.** It wrote only to `$GITHUB_STEP_SUMMARY`, and a step summary is
+ * reachable by no API: not on the job object, not in the run's artifacts, not
+ * in the logs. Measured 2026-09-20 against run 35485336476 — the measurement
+ * ran, and the only copy of its answer was on a web page. R0's runbook duly
+ * told the owner to open that page and read a line off it by eye, which is
+ * how a measurement ends up being retyped, or skipped, or remembered wrongly
+ * by whoever needs it three weeks later. The bot's own answer has to be
+ * legible to the thing that asks the question.
+ *
+ * The summary write stays: it is the copy a person reads without leaving the
+ * page they are already on. What changed is that it is no longer the only one.
  */
-export function recordPermissionProbe(proof, env = process.env, appendFile = fs.appendFileSync) {
+export function recordPermissionProbe(proof, env = process.env, appendFile = fs.appendFileSync, log = console.log) {
+  const line = `collaborator-permission: answered=${proof?.answered === true} outcome=${proof?.outcome ?? "unknown"}`;
+  log(line);
   const summary = env.GITHUB_STEP_SUMMARY;
   if (!summary) return false;
-  const line = `collaborator-permission: answered=${proof?.answered === true} outcome=${proof?.outcome ?? "unknown"}\n`;
   try {
-    appendFile(summary, line);
+    appendFile(summary, `${line}\n`);
     return true;
   } catch {
-    // A summary that cannot be written is not worth failing a triage run over.
+    // A summary that cannot be written is not worth failing a triage run over,
+    // and since the line is on stdout too, it is no longer a lost measurement.
     return false;
   }
 }
