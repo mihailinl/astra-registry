@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "WyUkngvwF18cHBvGRRqci1aoal9Qrtbhk5lMV6iNArwOit6n4nox7zzkbBIAU+89LKRa+uLNg0fE3IuwcfnwAw=="
+      "sig": "l/6gIEx0gALRBJP7KgETcf9HqdTTji+EtfmUvT9cgHwbmVdowol/emq8XuIRjVSnz7jVoTcikSQg0vZnH2OtCw=="
     }
   ],
   "signed": {
-    "expires_at": "2026-10-20T09:37:00Z",
-    "issued_at": "2026-09-20T09:37:00Z",
+    "expires_at": "2026-10-20T09:41:53Z",
+    "issued_at": "2026-09-20T09:41:53Z",
     "plugins": [
       {
         "added_at": "2026-08-10",
@@ -1168,7 +1168,7 @@
           "ui_contributions"
         ],
         "description": "Pause timer with a Home-screen countdown widget. At zero it presses the media play/pause key (optionally activating a chosen window first), shuts the PC down, or puts it to sleep.",
-        "download_url": "https://github.com/Voltur792/SPT/releases/download/v0.1.0/sleep-pause-timer-0.1.0-noarch.astraplugin",
+        "download_url": "https://github.com/Voltur792/SPT/releases/download/v0.2.5/sleep-pause-timer-0.2.5-noarch.astraplugin",
         "downloads": 0,
         "i18n": {
           "ru": {
@@ -1176,17 +1176,41 @@
             "name": "Sleep Pause Timer"
           }
         },
-        "icon_url": "data:image/png;base64,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",
+        "icon_url": "",
         "id": "sleep-pause-timer",
         "license": "MIT",
         "name": "Sleep Pause Timer",
         "platform_downloads": {
-          "linux-x64": "https://github.com/Voltur792/SPT/releases/download/v0.1.0/sleep-pause-timer-0.1.0-noarch.astraplugin",
-          "noarch": "https://github.com/Voltur792/SPT/releases/download/v0.1.0/sleep-pause-timer-0.1.0-noarch.astraplugin",
-          "windows-x64": "https://github.com/Voltur792/SPT/releases/download/v0.1.0/sleep-pause-timer-0.1.0-noarch.astraplugin"
+          "linux-x64": "https://github.com/Voltur792/SPT/releases/download/v0.2.5/sleep-pause-timer-0.2.5-noarch.astraplugin",
+          "noarch": "https://github.com/Voltur792/SPT/releases/download/v0.2.5/sleep-pause-timer-0.2.5-noarch.astraplugin",
+          "windows-x64": "https://github.com/Voltur792/SPT/releases/download/v0.2.5/sleep-pause-timer-0.2.5-noarch.astraplugin"
         },
-        "readme": "# Sleep Pause Timer\n\nПлагин [Astra](https://github.com/mihailinl/AstraPlugins) от **Voltur** (лицензия MIT) —\nпортирование автономной программы «Таймер паузы» (`sleep_pause.py`).\n\n## Что умеет\n\n- **Обратный отсчёт** с паузой, продолжением и отменой — управляется голосом\n  или текстом через Астру.\n- **Действие по завершении** (как в оригинальной программе):\n  - `playpause` — нажать медиа-клавишу play/pause (пауза видео/музыки);\n  - `shutdown` — выключить ПК;\n  - `sleep` — усыпить ПК.\n- **Активация окна** перед нажатием клавиши: по подстроке заголовка или по\n  номеру `#N` из списка окон (поддержка Chromium-браузеров — Яндекс.Браузер,\n  Chrome, Edge — как в оригинале).\n- **Виджет на главном экране** Astra (слот `home.widgets`): отсчёт, прогресс,\n  кнопки «пауза/продолжить» и «отмена». Прозрачный, следует теме Astra.\n\n## Инструменты для Астры\n\n| Инструмент | Что делает |\n|---|---|\n| `start_timer` | Запустить отсчёт: `hours`, `minutes`, `seconds`, `action`, `window` |\n| `pause_timer` | Пауза |\n| `resume_timer` | Продолжить |\n| `cancel_timer` | Отменить (действие не выполняется) |\n| `timer_status` | Сколько осталось и что будет по завершении |\n| `list_windows` | Нумерованный список открытых окон для выбора цели |\n\nПримеры: *«поставь таймер на 5 минут, потом нажми play в YouTube»*,\n*«таймер на полчаса и выключи компьютер»*, *«сколько осталось?»*.\n\n## Настройки\n\nВ настройках плагина (Астра рисует форму сама): действие по умолчанию и окно\nпо умолчанию — тогда `start_timer` можно звать без этих аргументов.\n\n## Разрешения\n\nПлагин **не запрашивает ни одного разрешения**: виджет сам опрашивает плагин,\nинструменты вызывает Астра, наружные вызовы демону не нужны.\n\n## Установка (режим разработчика)\n\n1. В Astra: **Settings → Privacy** → включить **«Allow unsigned plugins»**.\n2. **Plugins → Dev** → вставить путь к папке в поле **«Load a plugin»** → нажать загрузку.\n3. После перезапуска Astra плагин из папки возвращается **выключенным** —\n   включите его во вкладке Installed.\n\nСобственное виртуальное окружение (`.venv`) лежит внутри папки плагина —\nсистемный Python не используется.\n\n## Отличия от оригинальной программы\n\n- Не нужны pyautogui/pygetwindow/win32gui/pystray — всё на чистом `ctypes`.\n- Исправлен спящий режим: `SetSuspendState` вызывается из `PowrProf.dll`\n  (в оригинале вызов через `kernel32` падал с `AttributeError`).\n- GUI на Tkinter заменён виджетом в окне Astra; трей не нужен — управляет Астра.\n\n## Development\n\nLanguage: python\n\n```bash\nastra-plugin dev .\n```\n\n## Build\n\n```bash\nastra-plugin build\n```\n\nThis produces a `.astraplugin` file for distribution.\n",
+        "readme": "# Sleep Pause Timer\n\nПлагин [Astra](https://github.com/mihailinl/AstraPlugins) от **Voltur** (лицензия MIT) —\nпортирование автономной программы «Таймер паузы» (`sleep_pause.py`).\n\n## Что умеет\n\n- **Обратный отсчёт** с паузой, продолжением и отменой — управляется голосом\n  или текстом через Астру.\n- **Будильник** на заданное время с воспроизведением локального аудиофайла\n  (MP3, WAV, WMA, M4A, AAC, MIDI). Однократный или ежедневный.\n- **Действие по завершении таймера** (как в оригинальной программе):\n  - `playpause` — нажать медиа-клавишу play/pause (пауза видео/музыки);\n  - `shutdown` — выключить ПК;\n  - `sleep` — усыпить ПК.\n- **Активация окна** перед нажатием клавиши: по подстроке заголовка или по\n  номеру `#N` из списка окон (поддержка Chromium-браузеров — Яндекс.Браузер,\n  Chrome, Edge — как в оригинале).\n- **Виджеты на главном экране** Astra (слот `home.widgets`), одного размера:\n  - Таймер: отсчёт, прогресс, кнопки «пауза/продолжить» и «отмена».\n  - Будильник: отсчёт до звонка, время и мелодия, «отмена»; во время звонка —\n    «стоп» (заглушить) и «отмена». Время и мелодия ставятся инструментами\n    (`set_alarm`, `choose_alarm_sound`) или в настройках плагина.\n  Оба прозрачные, следуют теме Astra.\n\n## Инструменты для Астры\n\n| Инструмент | Что делает |\n|---|---|\n| `start_timer` | Запустить отсчёт: `hours`, `minutes`, `seconds`, `action`, `window` |\n| `pause_timer` | Пауза |\n| `resume_timer` | Продолжить |\n| `cancel_timer` | Отменить (действие не выполняется) |\n| `timer_status` | Сколько осталось и что будет по завершении |\n| `list_windows` | Нумерованный список открытых окон для выбора цели |\n| `set_alarm` | Установить будильник: `time` (`ЧЧ:ММ`), `sound_path`, `repeat`, `interval` |\n| `set_alarm_sound` | Задать мелодию будильника (путь к файлу) |\n| `alarm_status` | Статус будильника: время, повтор, мелодия |\n| `cancel_alarm` | Отменить будильник |\n| `stop_alarm_sound` | Остановить воспроизведение будильника |\n| `choose_alarm_sound` | Открыть системный диалог выбора аудиофайла |\n\nПримеры: *«поставь таймер на 5 минут, потом нажми play в YouTube»*,\n*«таймер на полчаса и выключи компьютер»*, *«сколько осталось?»*,\n*«разбуди меня в 7:30 под мою мелодию»*, *«отмени будильник»*.\n\n## Настройки\n\nВ настройках плагина (Астра рисует форму сама): действие по умолчанию и окно\nпо умолчанию для таймера — тогда `start_timer` можно звать без этих аргументов.\n\nНастройки будильника (мелодия, повтор) задаются инструментами Астры или в\nнастройках плагина.\n\n## Разрешения\n\nПлагин **не запрашивает ни одного разрешения**: виджеты сами опрашивают плагин,\nинструменты вызывает Астра, наружные вызовы демону не нужны.\n\n## Установка (режим разработчика)\n\n1. В Astra: **Settings → Privacy** → включить **«Allow unsigned plugins»**.\n2. **Plugins → Dev** → вставить путь к папке в поле **«Load a plugin»** → нажать загрузку.\n3. После перезапуска Astra плагин из папки возвращается **выключенным** —\n   включите его во вкладке Installed.\n\nСобственное виртуальное окружение (`.venv`) лежит внутри папки плагина —\nсистемный Python не используется.\n\n## Отличия от оригинальной программы\n\n- Не нужны pyautogui/pygetwindow/win32gui/pystray — всё на чистом `ctypes`.\n- Исправлен спящий режим: `SetSuspendState` вызывается из `PowrProf.dll`\n  (в оригинале вызов через `kernel32` падал с `AttributeError`).\n- GUI на Tkinter заменён виджетами в окне Astra; трей не нужен — управляет Астра.\n\n## Development\n\nLanguage: python\n\n```bash\nastra-plugin dev .\n```\n\n## Build\n\n```bash\nastra-plugin build\n```\n\nThis produces a `.astraplugin` file for distribution.\n\n## Лицензия\n\nMIT © Voltur\n\n## Поддержать автора\n\nЕсли плагин оказался полезным, можно поддержать разработку:\n\n**[boosty.to/voltur/donate](https://boosty.to/voltur/donate)**\n",
         "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "sleep-pause-timer-0.2.5-noarch.astraplugin",
+                "sha256": "ecb77c6c19346ff13403a93ceafcabc30e92d5f5742c33aa5da40eee2b35cc42",
+                "size": 292366,
+                "url": "https://github.com/Voltur792/SPT/releases/download/v0.2.5/sleep-pause-timer-0.2.5-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {},
+            "protocol": 1,
+            "published_at": "2026-09-18T17:05:40Z",
+            "release": {
+              "commit": "3d1fbc39443d6c89ec4b9720b037c6ab5220baf0",
+              "kind": "github_release",
+              "repo": "Voltur792/SPT",
+              "tag": "v0.2.5"
+            },
+            "version": "0.2.5"
+          },
           {
             "artifacts": {
               "noarch": {
@@ -1218,8 +1242,8 @@
           "repo": "Voltur792/SPT"
         },
         "stars": 0,
-        "updated_at": "2026-09-06T06:54:06Z",
-        "version": "0.1.0"
+        "updated_at": "2026-09-18T17:05:40Z",
+        "version": "0.2.5"
       },
       {
         "added_at": "2026-08-20",
@@ -1869,6 +1893,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 50
+    "serial": 51
   }
 }
