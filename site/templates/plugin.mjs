@@ -42,6 +42,7 @@
 // convenience.
 
 import { esc, href, page } from "../lib/html.mjs";
+import { DEFAULT_SIGNER_WORKFLOW } from "../../bot/ingest.mjs";
 
 /** Bytes, in the unit a person reads. */
 export function humanSize(n) {
@@ -190,11 +191,31 @@ full privileges.</strong></p>
  * `--repo` is the invocation `bot/lib/attestation.mjs:176` makes on every
  * ingest, so a reader running it is running the registry's own check.
  *
- * `--signer-workflow` is on the bot's command line and is NOT on this one: the
- * value is the reusable workflow pinned by commit in root-signed `trust.json`,
- * and a reader who has not read `trust.json` cannot supply it. Omitting it makes
- * the reader's check strictly weaker than the registry's, so the caption says
- * so rather than letting the shorter command imply parity.
+ * `--signer-workflow` used to be left off this command, on the reasoning that a
+ * reader who has not read `trust.json` cannot supply the pinned value, and that
+ * omitting it merely makes their check *weaker* than the registry's.
+ *
+ * **That reasoning was wrong, and measured wrong on 2026-09-20.** Without the
+ * flag `gh` derives its certificate-identity matcher from `--repo`, and the SAN
+ * in these certificates is the URI of the **reusable** workflow in
+ * `mihailinl/AstraPlugins` — not of the plugin's own repository. So the short
+ * command does not verify more loosely; it **fails**, with
+ * `Error: verifying with issuer "sigstore.dev"`, naming no check. Run against a
+ * real published artifact — dice-roller 0.1.3 out of
+ * `mihailinl/astra-dice-roller` — it errors, and the same command with the flag
+ * passes. A survey of every listing put the count at **12 of 18**.
+ *
+ * So for two thirds of this catalogue the page was telling a reader their good
+ * artifact does not verify, in a block headed "Verify it yourself", with a
+ * caption assuring them the result was merely weaker. The flag is on the
+ * command now.
+ *
+ * The old objection stands and is answered rather than dismissed: the reader
+ * cannot know the pinned value on their own, so the page prints it. Printing it
+ * costs nothing — `trust.json` is public and root-signed, and the page already
+ * tells the reader where it lives — and a reader who takes the workflow path
+ * from this page and the pin from `trust.json` is doing exactly what the bot
+ * does.
  */
 function verifyBlock(entry, release) {
   const rel = release.release ?? {};
@@ -225,19 +246,25 @@ the attestation, and in what the daemon hashes: one number in three places.</p>`
     ...(repo
       ? [
           ``,
-          `# 3. GitHub attests that this file came out of a build in that repository`,
-          `gh attestation verify ${art.filename} --repo ${repo}`,
+          `# 3. GitHub attests that this file came out of the reusable workflow`,
+          `#    this registry allows, in that repository`,
+          `gh attestation verify ${art.filename} --repo ${repo} \\`,
+          `  --signer-workflow ${DEFAULT_SIGNER_WORKFLOW}`,
         ]
       : []),
   ].join("\n");
 
   return `<h3>Verify it yourself</h3>
 <pre class="copy"><code>${esc(cmd)}</code></pre>
-<p class="thin">Step 3 is weaker than the check this registry ran before listing: the bot also
-passes <code>--signer-workflow</code>, pinned by commit SHA in the root-signed
-<code>trust.json</code>, so that &ldquo;some workflow in that repository built it&rdquo; becomes
-&ldquo;the reusable workflow we allow built it&rdquo;. Without that flag a build produced by any
-workflow in the repository passes.</p>`;
+<p class="thin">Step 3 is the check this registry ran before listing, less one thing: the bot
+pins <code>--signer-workflow</code> to a commit SHA out of the root-signed
+<code>trust.json</code>, while the command above names the workflow without a pin. That is the
+difference between &ldquo;the reusable workflow we allow built it&rdquo; and &ldquo;that workflow
+at whichever commit&rdquo;. To close it, read <code>reusable_workflow_shas</code> out of
+<a href="/registry/v1/trust.json"><code>trust.json</code></a> and append <code>@&lt;sha&gt;</code>.
+<strong>Do not drop the flag.</strong> Without it <code>gh</code> builds its identity matcher from
+<code>--repo</code>, and these certificates name the reusable workflow's repository rather than the
+plugin's, so the command fails on a perfectly good artifact.</p>`;
 }
 
 /**

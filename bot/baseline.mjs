@@ -62,6 +62,7 @@ import { promisify } from "node:util";
 import { resolveWriter } from "./export-issues.mjs";
 import { artifactDigests, submissionFingerprint } from "./lib/policy/release.mjs";
 import { safeRepo, safeTag } from "./lib/intake.mjs";
+import { DEFAULT_SIGNER_WORKFLOW } from "./ingest.mjs";
 import { ID_PATTERN } from "../tools/lib/ids.mjs";
 import { SEMVER_PATTERN } from "../tools/lib/semver.mjs";
 import {
@@ -705,7 +706,25 @@ async function verifyOne(v, certificateIds, deps = {}) {
   const tmp = path.join(fs.mkdtempSync(path.join(process.env.RUNNER_TEMP ?? "/tmp", "astra-baseline-")), "asset");
   fs.writeFileSync(tmp, bytes);
   try {
-    const { stdout } = await run(["attestation", "verify", tmp, "--repo", v.repo, "--format", "json"]);
+    // `--signer-workflow` is not optional here, and leaving it out is not a
+    // weaker check — it is a failing one. `gh` derives its certificate-identity
+    // matcher from `--repo`, and the SAN in these certificates is the URI of
+    // the REUSABLE workflow in AstraPlugins, not of the plugin's own
+    // repository. Measured 2026-09-19 over every listing: the command without
+    // the flag fails on **12 of 18** perfectly good attestations, with
+    // `Error: verifying with issuer "sigstore.dev"` and no named check.
+    //
+    // What that would have cost here and nowhere else: MIG-20's baseline is
+    // written ONCE — `--write` refuses a second run — so two thirds of the
+    // catalogue would have been recorded for ever as `unverified` with null
+    // ids, and detector A1, MIG-28 and TRUST-23 all read that record. The
+    // `catch` below turns the failure into exactly that, silently, which is
+    // why this line and that `catch` have to be read together.
+    const { stdout } = await run([
+      "attestation", "verify", tmp, "--repo", v.repo,
+      "--signer-workflow", DEFAULT_SIGNER_WORKFLOW,
+      "--format", "json",
+    ]);
     const ids = await certificateIds({ bundle: JSON.parse(stdout), artifactSha256 });
     return { outcome: "verified", repository_id: ids?.repository_id ?? null, repository_owner_id: ids?.repository_owner_id ?? null };
   } catch {
