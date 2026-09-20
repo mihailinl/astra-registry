@@ -3,5 +3,5 @@
   "date": "2026-08-22",
   "action": "delist",
   "plugin": "knice-chess",
-  "reason": "Retired in favour of astra-chess, the same plugin under its original id; a daemon treats the two ids as different plugins"
+  "reason": "Retired as a duplicate of astra-chess, the same plugin under its original id; a daemon treats the two ids as different plugins"
 }
