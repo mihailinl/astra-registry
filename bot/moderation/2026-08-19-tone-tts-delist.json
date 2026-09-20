@@ -1,0 +1,7 @@
+{
+  "$comment": "Written retroactively on 2026-09-19. The action itself is 4a3d9fe, corrected by ef7c81f the same day; no log entry was written at the time, which is what OPEN-OWNER-21 closed.",
+  "date": "2026-08-19",
+  "action": "delist",
+  "plugin": "tone-tts",
+  "reason": "A test double, not a plugin for users; removed from the catalogue"
+}
