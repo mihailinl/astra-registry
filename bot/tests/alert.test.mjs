@@ -529,7 +529,17 @@ await test("environment `alerts` is given no secret that addresses another party
       `${check.name} is ${check.party}'s, and no credential the registry holds may resolve it`);
   }
   assert.ok(secrets.includes("ASTRA_DEADMAN_URL_ALARM_ACK_START"), "BOT-86's start signal needs its own whole URL");
-  assert.ok(!secrets.some((s) => /BASE/.test(s)), "there is no base URL anywhere in this estate");
+  // The rule is "no secret carries a BASE URL" — `ASTRA_DEADMAN_BASE_URL`,
+  // attack M-5's project-level ping key. The first spelling was a substring
+  // match for `BASE`, which is a different sentence: the day `baseline-names`
+  // was added to the table (B-T3.7b, 2026-09-19) this went red over
+  // `ASTRA_DEADMAN_URL_BASELINE_NAMES`, a secret carrying one check's whole
+  // URL and nothing like a base. A check that is red about a correct name
+  // teaches its next reader to rename around it, and the rename after that is
+  // the one that mattered — so it asks the question it means: a secret whose
+  // name ENDS in a base rather than in a check.
+  assert.ok(!secrets.some((s) => /_BASE(_URL)?$/.test(s) || s === "ASTRA_DEADMAN_BASE_URL"),
+    "there is no base URL anywhere in this estate");
 });
 
 console.log(`\n${failures === 0 ? "PASS" : "FAIL"}  bot/tests/alert.test.mjs, ${failures} failed`);

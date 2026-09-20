@@ -481,6 +481,12 @@ export async function run() {
     // `checkModuleSet` is silent about, because that guard compares those two
     // sides with each other and is quiet whenever they agree.
     "roots.mjs",
+    // `baseline.mjs` was added on 2026-09-19 with B-T3.7b, watched failing
+    // both ways: unlisted from the runner — `a module the runner ran on
+    // 2026-09-19 is no longer in its list` — and deleted from disk together
+    // with its runner entry, which is the loss `checkModuleSet` cannot see
+    // because the two sides it compares agree that the module is gone.
+    "baseline.mjs",
   ];
   await test("no module has left the runner's list since the suite was split", async () => {
     const runner = fs.readFileSync(path.join(REPO_ROOT, "tools", "selftest.mjs"), "utf8");

@@ -1,0 +1,252 @@
+# MIG-20's migration baseline: the run that happens once, and the daily job
+# that outlives it.
+#
+# One `migration` record per non-staging published version, plus MIG-21's
+# historic export, plus `log/baseline.json` — the marker four other mechanisms
+# wait on (registry plan B-T3.7b). `write` refuses when the marker is already
+# there, so this is a workflow whose main path executes exactly one time in the
+# life of the repository.
+#
+# **The daily half is not the same job and does not end.** `names` asks GitHub,
+# for every baseline `repository_id`, what that repository is called today, and
+# alarms when the answer is not the `source.repo` the catalogue serves. It never
+# re-baselines from a name (MIG-20). It is the registry's only defence against
+# threat row 18 — clients key on names, so a freed `owner/name` somebody else
+# registers is an update channel into every installation — and it runs every day
+# from the moment this file lands, whether or not a baseline exists yet. Before
+# there is one it says so and exits green, which is how the schedule proves it is
+# alive for the weeks between this file landing and the dispatch.
+#
+# ── what this workflow cannot do today, and will not pretend to ────────────
+#
+# Three gates are not on `main` (measured 2026-09-19), and each job refuses by
+# name rather than working around them:
+#
+#   * `verify` needs B-T1.1's `bot/lib/certificate.mjs` for OIDs .15 and .17.
+#     There is no second place those live: ID-28 forbids a predicate fallback
+#     and forbids a name lookup. A run that wrote null ids because the READER
+#     was missing would record a registry-wide attestation failure that did not
+#     happen, in a file written once.
+#   * `write` needs B-T2.2's `bot/lib/decisions.mjs` to derive BOT-35's
+#     `decision_id` and place the record.
+#   * `write` also needs MIG-21's composition, and `bot/export-issues.mjs
+#     --compose` refuses: 24 of BOT-35's `migration:<owner/name>@<tag>` keys are
+#     shared by two to eight decisions on the live archive. That domain
+#     separates versions, which is right for THIS workflow's own records and
+#     wrong for MIG-21's. Widening it is an amendment to BOT-35 (ops.22, §1.3
+#     row 6).
+#
+# So a dispatch today goes red at `verify`, with the module's name in the log.
+# That is the intended state: the alternative is a green dispatch that writes
+# the marker, and the marker cannot be written twice.
+
+name: Migration baseline
+
+on:
+  # No inputs (BOT-4). The one thing a dispatch could usefully parameterise is
+  # which commit to baseline, and that is `github.sha` — an input would be a
+  # second answer to it.
+  workflow_dispatch:
+  schedule:
+    # Daily, 04:17 UTC, for the `names` job alone. Not on the hour: a job that
+    # shares its minute with every other cron on the runner fleet is a job that
+    # waits, and BOT-85's bound is measured from completion.
+    - cron: '17 4 * * *'
+
+permissions: {}
+
+concurrency:
+  # Workflow-level, and never cancelling. Two baseline runs in flight would each
+  # see no marker and each try to write one; the second losing its work to a
+  # cancellation mid-commit is worse than the second waiting and then refusing,
+  # which is what it does.
+  group: migration-baseline
+  cancel-in-progress: false
+
+jobs:
+  # ── the one-time half ────────────────────────────────────────────────────
+  verify:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The population first, from git alone, before anything is downloaded.
+      # It is the list the rest of the run is about, it costs nothing, and its
+      # floors — no versions at all, or any version file this cannot read —
+      # are the two failures that would otherwise be discovered as an empty
+      # facts file three jobs later.
+      - name: MIG-20's population, from the committed version files
+        run: node bot/baseline.mjs --population --out population.json
+
+      # Downloads and hashes each asset, runs `gh attestation verify`, reads
+      # the certificate ids. It NEVER unpacks an archive: a baseline run must
+      # not be the thing that opens forty strangers' archives.
+      - name: The certificate ids, from the verified certificate only
+        run: node bot/baseline.mjs --verify --population-file population.json --out facts.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: baseline-facts
+          path: |
+            population.json
+            facts.json
+          if-no-files-found: error
+
+  export:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: read
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # MIG-21's historic export (M-T3.8). It is the only job in this workflow
+      # that reads a stranger's bytes, which is why it is a job of its own with
+      # no write permission anywhere near it: what leaves here is a fixed, tiny
+      # grammar, and `--compose` in `write` can quote nothing this job did not
+      # emit.
+      - name: The decisions that exist only on an issue thread
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node bot/export-issues.mjs --facts --repo ${{ github.repository }} --out historic.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: baseline-historic
+          path: historic.json
+          if-no-files-found: error
+
+  write:
+    needs: [verify, export]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: baseline-*
+          merge-multiple: true
+
+      # INV-37: the writing job composes from facts it re-reads, never from a
+      # job that parsed submitter bytes. The two artifacts above are that
+      # grammar and nothing else, and `bot/baseline.mjs` refuses any member it
+      # was not told to expect.
+      - name: One `migration` record per version, and the marker
+        run: |
+          node bot/baseline.mjs --write \
+            --facts-file facts.json \
+            --historic-file historic.json \
+            --source-commit ${{ github.sha }}
+
+      # BOT-71: regenerate both unsigned documents and pass the selftest before
+      # committing. BOT-73: one commit, holding every record.
+      - name: The catalogue the records were composed beside
+        run: |
+          node tools/build-index.mjs
+          node tools/build-revocations.mjs
+          node tools/selftest.mjs
+          node tools/validate.mjs --allow-staging
+
+  # ── the half that does not end ───────────────────────────────────────────
+  names:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: MIG-20's rename watch, by repository id and never by name
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node bot/baseline.mjs --names
+
+  alert:
+    needs: [verify, export, write, names]
+    if: always() && !cancelled()
+    runs-on: ubuntu-24.04
+    environment: alerts
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_DEADMAN_URL_BASELINE_NAMES: ${{ secrets.ASTRA_DEADMAN_URL_BASELINE_NAMES }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            .github/actions/alert
+            bot/alert.mjs
+            bot/heartbeat.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+
+      # Codes, never sentences. `skipped` is not a failure: on a scheduled run
+      # the three dispatch-only jobs are skipped and that is the ordinary day.
+      - name: What this run has to say
+        env:
+          VERIFY: ${{ needs.verify.result }}
+          EXPORT: ${{ needs.export.result }}
+          WRITE: ${{ needs.write.result }}
+          NAMES: ${{ needs.names.result }}
+        run: |
+          set -euo pipefail
+          codes=""
+          add() { codes="${codes:+$codes, }\"$1\""; }
+          [ "$VERIFY" = "failure" ] && add BASELINE_VERIFY_FAILED
+          [ "$EXPORT" = "failure" ] && add BASELINE_EXPORT_FAILED
+          [ "$WRITE"  = "failure" ] && add BASELINE_WRITE_FAILED
+          [ "$NAMES"  = "failure" ] && add MIG20_BASELINE_NAME_DRIFT
+          status=green
+          [ -n "$codes" ] && status=red
+          cat > verdict.json <<JSON
+          {
+            "schema": "astra.registry.alert-verdict/1",
+            "check": "baseline-names",
+            "status": "$status",
+            "codes": [$codes],
+            "run": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          JSON
+          if [ "$status" = green ]; then
+            # An empty `codes` is a member the channel renders as nothing; it
+            # is dropped rather than sent as `[]`.
+            grep -v '"codes": \[\]' verdict.json > verdict.tmp && mv verdict.tmp verdict.json
+          fi
+          cat verdict.json
+
+      # `check: baseline-names`, because what the receiver's silence is about
+      # is the DAILY job, not the one-time dispatch. The dispatch posts the
+      # same heartbeat once, which is harmless: it happens a single time, and
+      # a check that is fed one extra ping is a check that is quiet for one
+      # extra bound, not a check that is wrong.
+      - uses: ./.github/actions/alert
+        with:
+          verdict: verdict.json
+          check: baseline-names
