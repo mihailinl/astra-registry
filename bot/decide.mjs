@@ -66,9 +66,12 @@ const EXIT = { publish: 0, refuse: 1, review: 3, delay: 4 };
 
 /** @param {string[]} argv */
 export function parseArgs(argv) {
+  // No `--roots`: the root keys are compiled into `bot/lib/roots.mjs` and no
+  // command line chooses them (B-T1.5). `deps.rootKeys` is the test seam, and
+  // it passes straight through `decideRelease` into `ingest`.
   const opts = {
     repo: null, tag: null, submitter: null, root: REPO_ROOT, out: null,
-    issue: null, rootsFile: null, trustFile: null, signerWorkflow: null,
+    issue: null, trustFile: null, signerWorkflow: null,
     hostAstraVersion: null, now: null, approvedBy: null, approvedAt: null, approvedFor: null, publishNow: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -90,7 +93,6 @@ export function parseArgs(argv) {
     else if (a === "--approved-for") opts.approvedFor = String(argv[++i] ?? "").toLowerCase();
     else if (a === "--publish-now") opts.publishNow = true;
     else if (a === "--registry-dir") opts.root = path.resolve(argv[++i]);
-    else if (a === "--roots") opts.rootsFile = path.resolve(argv[++i]);
     else if (a === "--trust") opts.trustFile = path.resolve(argv[++i]);
     else if (a === "--signer-workflow") opts.signerWorkflow = argv[++i];
     else if (a === "--astra-version") opts.hostAstraVersion = argv[++i];

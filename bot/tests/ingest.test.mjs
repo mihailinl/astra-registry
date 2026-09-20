@@ -39,7 +39,7 @@ import { loadPolicy } from "../../tools/lib/sources.mjs";
 import { classifyFile, scanHostRpcs } from "../lib/rpcscan.mjs";
 import { checkDisplayName, checkNames, foldDisplayName, loadTrademarks } from "../lib/names.mjs";
 import { scriptsUsed } from "../../tools/lib/ids.mjs";
-import { extractSignerFacts, loadWorkflowAllowlist } from "../lib/attestation.mjs";
+import { extractSignerFacts, loadRootKeys, loadWorkflowAllowlist } from "../lib/attestation.mjs";
 import { proveOwnership } from "../lib/ownership.mjs";
 import { isRecheckCommand, parseIssueForm } from "../lib/issue.mjs";
 import { findProbe, runProbe } from "../lib/probe.mjs";
@@ -85,9 +85,16 @@ const ALLOWED_WORKFLOW_SHA = "0".repeat(40);
  *
  * Built from `tools/testkeys/*.pub.json` rather than committed, so it cannot
  * drift from the keys that signed the trust fixture, and so no file in this
- * repository ever looks like a provisioned production root. The real
- * `registry/v1/root.json` stays empty, and one of the tests below asserts that
- * an ingest against it fails closed.
+ * repository ever looks like a provisioned production root.
+ *
+ * It reaches the bot through `deps.rootKeys` and not through an argument
+ * (B-T1.5): the production roots are compiled into `bot/lib/roots.mjs`, and a
+ * roots file that a caller could name would be the anchor as a parameter. The
+ * comment here used to say "the real `registry/v1/root.json` stays empty" —
+ * it has not been empty since `b13759a` published the two roots on
+ * 2026-08-11, and one of the tests below now asserts that a trust.json signed
+ * by THESE keys is refused against the compiled set no matter what that file
+ * says.
  */
 function testRootsFile() {
   const keys = ["root-a", "root-b"].map((n) =>
@@ -104,6 +111,8 @@ function testRootsFile() {
 }
 
 const ROOTS_FILE = testRootsFile();
+/** The TEST roots as a verifier wants them, for `deps.rootKeys`. */
+const TEST_ROOT_KEYS = loadRootKeys(ROOTS_FILE);
 const TRUST_FILE = path.join(REPO_ROOT, "tools", "testkeys", "fixtures", "trust-active-signed.json");
 
 /**
@@ -117,13 +126,14 @@ async function run({
   assets, repo = REPO, tag = TAG, submitter = SUBMITTER, root = REPO_ROOT,
   signerDigest = ALLOWED_WORKFLOW_SHA, attestRepo = repo, ghFail = null,
   ownershipOk = true, signerUri = undefined, subjectOverride = null, certRepo = null,
-  rootsFile = ROOTS_FILE, trustFile = TRUST_FILE,
+  rootKeys = TEST_ROOT_KEYS, trustFile = TRUST_FILE,
   signerWorkflow = DEFAULT_SIGNER_WORKFLOW,
 } = {}) {
   const github = fakeGitHub({ repo, tag, assets });
   const result = await ingest(
-    { repo, tag, submitter, root, rootsFile, trustFile, signerWorkflow },
+    { repo, tag, submitter, root, trustFile, signerWorkflow },
     {
+      rootKeys,
       fetchRelease: github.fetchRelease.bind(github),
       headAsset: github.headAsset.bind(github),
       downloadAsset: github.downloadAsset.bind(github),
@@ -378,7 +388,9 @@ await test("with no signed trust.json, nothing is listed and the reason says so"
   // than proceed on a catalogue nobody vouched for.
   const r = await run({
     assets: [conformingAsset()],
-    rootsFile: path.join(REPO_ROOT, "registry", "v1", "root.json"),
+    // The COMPILED roots, which is what production uses: `rootKeys` is left
+    // out rather than named, so this test runs the production path.
+    rootKeys: undefined,
     trustFile: path.join(REPO_ROOT, "registry", "v1", "trust.json.no-such-file"),
   });
   assertBlockedWith(r, "E_TRUST_UNPROVISIONED");
@@ -393,7 +405,6 @@ await test("the published trust.json delegates a non-empty allowlist", () => {
   // gets says the anchor is missing rather than that it went stale.
   const verdict = loadWorkflowAllowlist({
     trustFile: path.join(REPO_ROOT, "registry", "v1", "trust.json"),
-    rootsFile: path.join(REPO_ROOT, "registry", "v1", "root.json"),
   });
   assert(verdict.ok, verdict.message ?? "the committed trust.json does not verify under the roots");
   assert(
@@ -405,7 +416,7 @@ await test("the published trust.json delegates a non-empty allowlist", () => {
 await test("a trust.json signed by a stranger is not a trust.json", () => {
   const verdict = loadWorkflowAllowlist({
     trustFile: path.join(REPO_ROOT, "tools", "testkeys", "fixtures", "trust-stranger-signed.json"),
-    rootsFile: ROOTS_FILE,
+    roots: TEST_ROOT_KEYS,
   });
   assert(!verdict.ok, "a document signed by a key no root vouches for must not deliver an allowlist");
   assertEqual(verdict.code, "E_TRUST_UNPROVISIONED", verdict.message);
@@ -414,7 +425,7 @@ await test("a trust.json signed by a stranger is not a trust.json", () => {
 await test("a trust.json tampered with after signing is refused", () => {
   const verdict = loadWorkflowAllowlist({
     trustFile: path.join(REPO_ROOT, "tools", "testkeys", "fixtures", "trust-reserve-signed-tampered.json"),
-    rootsFile: ROOTS_FILE,
+    roots: TEST_ROOT_KEYS,
   });
   assert(!verdict.ok, verdict.message ?? "");
 });
@@ -422,7 +433,7 @@ await test("a trust.json tampered with after signing is refused", () => {
 await test("the reserve root is a root", () => {
   const verdict = loadWorkflowAllowlist({
     trustFile: path.join(REPO_ROOT, "tools", "testkeys", "fixtures", "trust-reserve-signed.json"),
-    rootsFile: ROOTS_FILE,
+    roots: TEST_ROOT_KEYS,
   });
   assert(verdict.ok, "replacing a root must be a signature, not a flag day");
 });
@@ -463,8 +474,8 @@ await test("E_INPUT_TAG — a tag with a space in it", async () => {
 await test("E_RELEASE_NOT_FOUND — the tag does not exist", async () => {
   const github = fakeGitHub({ repo: REPO, tag: "v9.9.9", assets: [conformingAsset()] });
   const r = await ingest(
-    { repo: REPO, tag: TAG, submitter: SUBMITTER, root: REPO_ROOT, rootsFile: ROOTS_FILE, trustFile: TRUST_FILE },
-    { fetchRelease: github.fetchRelease.bind(github), proveOwnership: fakeOwnership() },
+    { repo: REPO, tag: TAG, submitter: SUBMITTER, root: REPO_ROOT, trustFile: TRUST_FILE },
+    { rootKeys: TEST_ROOT_KEYS, fetchRelease: github.fetchRelease.bind(github), proveOwnership: fakeOwnership() },
   );
   for (const i of r.findings) emitted.add(i.code);
   assertBlockedWith(r, "E_RELEASE_NOT_FOUND");
@@ -762,9 +773,10 @@ await test("E_CAPABILITY_UNKNOWN — the capability that drifted", async () => {
 await test("E_MIN_ASTRA_TOO_NEW — a plugin that needs an Astra nobody has", async () => {
   const github = fakeGitHub({ repo: REPO, tag: TAG, assets: [conformingAsset({ minAstraVersion: "99.0.0" })] });
   const r = await ingest(
-    { repo: REPO, tag: TAG, submitter: SUBMITTER, root: registryWith({}), rootsFile: ROOTS_FILE,
+    { repo: REPO, tag: TAG, submitter: SUBMITTER, root: registryWith({}),
       trustFile: TRUST_FILE, hostAstraVersion: "0.9.0" },
     {
+      rootKeys: TEST_ROOT_KEYS,
       fetchRelease: github.fetchRelease.bind(github),
       headAsset: github.headAsset.bind(github),
       downloadAsset: github.downloadAsset.bind(github),

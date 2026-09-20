@@ -40,6 +40,7 @@ import {
   slaReport,
   trackRecord,
 } from "../lib/policy.mjs";
+import { loadRootKeys } from "../lib/attestation.mjs";
 import { proveMaintainer } from "../lib/maintainer.mjs";
 import {
   WATCH_AFTER_DAYS,
@@ -111,6 +112,14 @@ function testRootsFile() {
   return file;
 }
 const ROOTS_FILE = testRootsFile();
+/**
+ * The TEST roots as a verifier wants them.
+ *
+ * Handed in through `deps.rootKeys`, not through an argument: the production
+ * roots are compiled into `bot/lib/roots.mjs` and `--roots` no longer exists
+ * (registry plan B-T1.5).
+ */
+const TEST_ROOT_KEYS = loadRootKeys(ROOTS_FILE);
 const TRUST_FILE = path.join(REPO_ROOT, "tools", "testkeys", "fixtures", "trust-active-signed.json");
 
 /**
@@ -191,10 +200,11 @@ async function run({
   return decideRelease(
     {
       repo, tag, submitter, root, issue, now, approvedBy, approvedAt, approvedFor, publishNow,
-      rootsFile: ROOTS_FILE, trustFile: TRUST_FILE, signerWorkflow: DEFAULT_SIGNER_WORKFLOW,
+      trustFile: TRUST_FILE, signerWorkflow: DEFAULT_SIGNER_WORKFLOW,
       out,
     },
     {
+      rootKeys: TEST_ROOT_KEYS,
       fetchRelease: github.fetchRelease.bind(github),
       headAsset: github.headAsset.bind(github),
       downloadAsset: github.downloadAsset.bind(github),

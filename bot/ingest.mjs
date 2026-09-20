@@ -117,9 +117,14 @@ const sha256 = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
 
 /**
  * @param {{repo: string, tag: string, submitter: string|null, root?: string,
- *          rootsFile?: string, trustFile?: string, signerWorkflow?: string,
+ *          trustFile?: string, signerWorkflow?: string,
  *          hostAstraVersion?: string|null}} opts
- * @param {object} deps injection seam for the tests; production passes nothing
+ * @param {object} deps injection seam for the tests; production passes nothing.
+ *   `deps.rootKeys` is where a test's `tools/testkeys` root set comes in. It
+ *   is a DEP and not an opt, and moving it there was the point of B-T1.5:
+ *   `opts` are arguments a production caller supplies, so a roots file among
+ *   them was a way for a run to choose its own anchor — and `--roots` on the
+ *   command line was that way spelled out loud.
  */
 export async function ingest(opts, deps = {}) {
   const f = new Findings();
@@ -150,9 +155,16 @@ export async function ingest(opts, deps = {}) {
   // importantly: if there is no root, the bot has no basis for any of its
   // conclusions and should not spend a stranger's bandwidth pretending
   // otherwise.
+  //
+  // The ROOTS are not read from `root`'s tree (B-T1.5). `--registry-dir` names
+  // the catalogue this run judges against, and it used to name the root keys
+  // too — so a run pointed at any directory was a run whose anchor came out of
+  // that directory. The keys are compiled in now; the trust.json is still read
+  // from the tree, which is correct, because a signature by a compiled key is
+  // what makes that document worth reading wherever it was found.
   const trust = loadWorkflowAllowlist({
     trustFile: opts.trustFile ?? path.join(root, "registry", "v1", "trust.json"),
-    rootsFile: opts.rootsFile ?? path.join(root, "registry", "v1", "root.json"),
+    roots: deps.rootKeys,
   });
   if (!trust.ok) {
     f.error(trust.code, "trust", trust.message);
@@ -773,10 +785,17 @@ export function renderComment(f, derived, opts) {
 
 // ── CLI ─────────────────────────────────────────────────────────────────────
 
-function parseArgs(argv) {
+// Exported so `bot/tests/roots.test.mjs` can ask this function what flags
+// exist rather than asking the file's text (B-T1.5). A test that greps for a
+// string is a test that passes the day the string moves into a variable.
+export function parseArgs(argv) {
+  // No `--roots`. There was one, and it let a command line choose which keys
+  // this bot would verify a trust.json under — the anchor as an argument
+  // (B-T1.5). The keys are compiled into `bot/lib/roots.mjs`; a test hands its
+  // own set in through `deps.rootKeys`, which no command line can reach.
   const opts = {
     repo: null, tag: null, submitter: null, root: REPO_ROOT,
-    rootsFile: null, trustFile: null, signerWorkflow: null, out: null,
+    trustFile: null, signerWorkflow: null, out: null,
     hostAstraVersion: null,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -785,7 +804,6 @@ function parseArgs(argv) {
     else if (a === "--tag") opts.tag = argv[++i];
     else if (a === "--submitter") opts.submitter = String(argv[++i]).replace(/^@/, "");
     else if (a === "--registry-dir") opts.root = path.resolve(argv[++i]);
-    else if (a === "--roots") opts.rootsFile = path.resolve(argv[++i]);
     else if (a === "--trust") opts.trustFile = path.resolve(argv[++i]);
     else if (a === "--signer-workflow") opts.signerWorkflow = argv[++i];
     else if (a === "--astra-version") opts.hostAstraVersion = argv[++i];

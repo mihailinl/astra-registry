@@ -302,9 +302,152 @@ env:
   ASTRA_PLUGINS_URL: https://github.com/mihailinl/AstraPlugins.git
 
 jobs:
+  # ── the anchor, before anything else in this file runs ─────────────────────
+  #
+  # `bot/lib/roots.mjs` compiles the two public root keys in, and
+  # `bot/ingest.mjs` verifies `registry/v1/trust.json` against those and
+  # nothing else (registry plan B-T1.5, BOT-7). This job asks the one question
+  # that arrangement leaves open: does the PUBLISHED `registry/v1/root.json`
+  # still say the same thing?
+  #
+  # It is first, and every other job needs it, because a disagreement between
+  # the two is a disagreement about who may vouch for a release — and an
+  # ingest that publishes a listing while that is unresolved publishes it on an
+  # anchor nobody can name. `bot/check-roots.mjs` says which direction the
+  # divergence runs and which of the two is SERVE-92's rotation done correctly.
+  #
+  # No bot token, no write, no stranger bytes: it reads two files out of this
+  # repository's own tree and compares them with a constant. `contents: read`
+  # is what `actions/checkout` needs and is all it has.
+  roots:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      # Read by `alert` below. A job output and not an artifact: the `alerts`
+      # environment must not download one (`bot/tests/workflows.test.mjs`),
+      # because an artifact is bytes another job produced and a cache is bytes
+      # a pull request can poison.
+      status: ${{ steps.check.outputs.status }}
+      verdict: ${{ steps.check.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Every job in this run reads the same tree.
+          ref: ${{ github.sha }}
+          # Six files and the document under test. Listed rather than cloned
+          # whole so that what this job can read is a statement somebody wrote,
+          # and so that a module added to the import graph of
+          # `bot/check-roots.mjs` is a red run here rather than a mystery.
+          sparse-checkout: |
+            bot/check-roots.mjs
+            bot/lib/roots.mjs
+            bot/lib/sign.mjs
+            bot/lib/alert-verdict.mjs
+            tools/lib/canonical.mjs
+            tools/lib/ids.mjs
+            registry/v1/root.json
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: The published root keys are the ones this bot compiles in
+        id: check
+        run: node bot/check-roots.mjs
+
+  # ── the alarm for the job above ────────────────────────────────────────────
+  #
+  # A SEPARATE JOB, and that is a correction to the plan rather than a
+  # decoration. The plan reads as though the alert could be a step of the
+  # `roots` job — "whose `alert` step is in `alerts`" — and it cannot be: a
+  # GitHub environment is a JOB-level property. There is no way to put one
+  # step of a job in an environment, so an `alert` step inside `roots` would
+  # either give the whole roots job the alarm credential (which
+  # `bot/tests/workflows.test.mjs` refuses, correctly: an alert job may hold
+  # nothing else) or give it no credential at all and be red for ever.
+  #
+  # **It posts no BOT-85 heartbeat, and says so in a sentence rather than by
+  # leaving an input empty.** `ingest.yml` runs on BOT-51's schedule, which is
+  # deliberately outside BOT-85's dead-man list because the plugins service's
+  # BOT-47 watches it; a heartbeat from here would be a POST to a receiver
+  # check nobody created, which 404s and reads like a typo. `no-heartbeat-because`
+  # is the input for that, and naming neither it nor a `check:` is a red
+  # workflow test.
+  #
+  # **The `env:` block is not optional and is not ambient.** An environment
+  # secret reaches a job only where the job names it. Without these three
+  # lines the environment is empty, `bot/alert.mjs --check-credentials` is red
+  # on every run for ever, and nothing about the file looks wrong — the same
+  # shape as a release workflow whose comment described a checkout step nobody
+  # wrote. No `ASTRA_DEADMAN_URL_*` is mapped, because this job posts to no
+  # receiver check and a job that mapped one could silence a check it never
+  # posts to.
+  #
+  # This is the job B-T3.1's `alert` grows into when `plugins-ingest.yml`
+  # takes over: same environment, same credential, more verdicts to carry.
+  alert:
+    needs: roots
+    # The whole point is the red runs. `always()` so a roots job that failed
+    # still gets its alarm sent, and `!cancelled()` so a cancelled run does
+    # not page anybody about a decision nobody took.
+    if: always() && !cancelled()
+    runs-on: ubuntu-24.04
+    environment: alerts
+    permissions:
+      contents: read
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            .github/actions/alert
+            bot/alert.mjs
+            bot/check-roots.mjs
+            bot/heartbeat.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            bot/lib/roots.mjs
+            bot/lib/sign.mjs
+            tools/lib/canonical.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # An EMPTY relay is the case this step exists for. The roots job dying
+      # before it wrote its output looks, to an alert job that simply sends
+      # what it was given, exactly like a roots job with nothing to say — and
+      # that is the shape every "the alarm was never wired up" defect takes.
+      # `relayVerdict` turns an absent or ungrammatical verdict into a red one
+      # saying the check did not report.
+      - name: The verdict the roots job reported, or an alarm saying it did not
+        env:
+          ASTRA_ROOTS_VERDICT: ${{ needs.roots.outputs.verdict }}
+        run: node bot/check-roots.mjs --relay --out verdict.json
+
+      - uses: ./.github/actions/alert
+        with:
+          verdict: verdict.json
+          no-heartbeat-because: >-
+            ingest.yml runs on BOT-51's 600-second schedule, which is
+            deliberately outside BOT-85's dead-man list: the plugins service's
+            BOT-47 watches that schedule, so a receiver check for it would be
+            one the owner created and this estate is not the party that
+            notices its silence.
+
   # Does this event ask for an ingest at all, and of what? Runs no submitter
   # code and touches no network beyond the public reads it was already given.
   triage:
+    # Every job in this file needs `roots`, explicitly and not through a
+    # chain. A job that inherits the dependency through another one loses it
+    # the day that other one's `needs` is edited, and nothing says so.
+    needs: roots
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -549,7 +692,7 @@ jobs:
   # because "and also close the issue" is an instruction and instructions must
   # not travel in text a stranger influenced.
   respond:
-    needs: triage
+    needs: [roots, triage]
     if: needs.triage.outputs.reply == 'true' && needs.triage.outputs.issue != ''
     runs-on: ubuntu-24.04
     permissions:
@@ -586,7 +729,7 @@ jobs:
   # that only runs on pull requests is a suite that is green on the day it
   # matters and unverified on every other one.
   selftest:
-    needs: triage
+    needs: [roots, triage]
     if: needs.triage.outputs.targets != '[]'
     runs-on: ubuntu-24.04
     permissions:
@@ -657,6 +800,14 @@ jobs:
       - name: What the workflow files may and may not say
         run: node --test bot/tests/workflows.test.mjs
 
+      # The anchor, from the other side. The `roots` job above asks whether
+      # the published root.json still matches the compiled set on this one
+      # run; this asks whether the compiled set can still be the ONLY set —
+      # that no argument, flag or tree reaches past it, and that a trust.json
+      # signed by any other key is refused (registry plan B-T1.5).
+      - name: The compiled root keys, and the only set they can be
+        run: node --test bot/tests/roots.test.mjs
+
       - uses: actions/upload-artifact@v4
         with:
           name: manifest-probe
@@ -664,7 +815,7 @@ jobs:
           retention-days: 1
 
   check:
-    needs: [triage, selftest]
+    needs: [roots, triage, selftest]
     if: needs.triage.outputs.targets != '[]'
     runs-on: ubuntu-24.04
     strategy:
@@ -809,8 +960,12 @@ jobs:
     # the only record of the release was a comment promising it would appear.
     # The promise is now made from `publish`'s `queued` output: the entries that
     # are in the pushed commit, not the ones the decision wanted.
-    needs: [triage, check, publish]
-    if: always() && needs.triage.outputs.targets != '[]'
+    needs: [roots, triage, check, publish]
+    # `always()` runs this job over a SKIPPED triage too, so the roots gate is
+    # spelled out here rather than left to the dependency. Without it a run
+    # that stopped at the anchor would go on to post on the thread about a
+    # decision no job took.
+    if: always() && needs.roots.result == 'success' && needs.triage.outputs.targets != '[]'
     runs-on: ubuntu-24.04
     permissions:
       issues: write
@@ -992,12 +1147,14 @@ jobs:
   # already ran inside `bot/ingest.mjs`, and it runs again here because this is
   # the job with write access and the one that has to be right.
   publish:
-    needs: [triage, check]
+    needs: [roots, triage, check]
     # Also on a backstop run that found nothing: the etag memory it just wrote
     # is the entire reason the next run is cheap, and a poll whose result is
     # never committed is a poll that happens again tomorrow.
+    # Same as `comment`: `always()` would otherwise carry this job past a
+    # failed roots check, and this is the job that commits.
     if: >-
-      always() && !cancelled() &&
+      always() && !cancelled() && needs.roots.result == 'success' &&
       (needs.triage.outputs.targets != '[]' || needs.triage.outputs.watch == 'true')
     runs-on: ubuntu-24.04
     permissions:
@@ -1103,7 +1260,7 @@ jobs:
   # a listing that is not in the catalogue. `comment` was given the output that
   # says what actually landed, in the same change where this gate was not.
   close:
-    needs: [triage, check, publish, comment]
+    needs: [roots, triage, check, publish, comment]
     if: needs.publish.outputs.outcome == 'committed'
     runs-on: ubuntu-24.04
     permissions:
@@ -1173,6 +1330,7 @@ jobs:
   # to widen auto-publication rather than let the queue rot, and that decision
   # only ever gets made if the breach is visible without anybody going to look.
   sla:
+    needs: roots
     if: github.event_name == 'schedule' && github.event.schedule == '17 * * * *'
     runs-on: ubuntu-24.04
     permissions:

@@ -24,29 +24,53 @@
 // from the right repository". Changing the allowlist is a root-key ceremony
 // (PRODUCTION_PLAN §5.5), which is the property the whole arrangement is for.
 //
+// ── where the roots come from, and why not from a file ─────────────────────
+//
+// The roots are COMPILED IN, in `bot/lib/roots.mjs` (registry plan B-T1.5,
+// BOT-7), and `loadWorkflowAllowlist` verifies against those and nothing else.
+// They used to be read out of `registry/v1/root.json` — a file in this
+// repository, in the same tree as this code, rewritten by the bot's own
+// `publish` job — which put the anchor inside the thing it anchors: a commit
+// that added a key to that file moved what this function would accept, in the
+// same breath as the trust.json signed by it. `bot/lib/roots.mjs` has the
+// whole argument, and `bot/check-roots.mjs` alarms when the published file and
+// the compiled set stop agreeing.
+//
+// The file is still read, by `loadRootKeys` below: by `check-roots.mjs`, which
+// is comparing the two on purpose, and by the tests, which build a roots
+// document out of the clearly-labelled TEST keys in `tools/testkeys/` and hand
+// it in through the injection seam — exactly as the daemon's tests do behind
+// `insecure-test-trust-roots`. Production names no file and has no flag that
+// would let it.
+//
 // ── failing closed ─────────────────────────────────────────────────────────
 //
-// `registry/v1/root.json` ships with **no roots** — the ceremony in
-// SECURITY.md has not been run — so there is no signed `trust.json` to read an
-// allowlist out of, and every ingest stops at `E_TRUST_UNPROVISIONED`. That is
-// the same state `astra-daemon` compiles in with an empty `PRODUCTION_ROOT_KEYS`,
-// and it is deliberate on both sides: a trust chain whose anchor does not exist
-// must verify nothing, not everything. The tests supply the clearly-labelled
-// TEST roots from `tools/testkeys/`, exactly as the daemon's tests do behind
-// `insecure-test-trust-roots`.
+// A key set with nothing in it verifies nothing, not everything, and says
+// `E_TRUST_UNPROVISIONED`. That was the state of this registry until
+// `b13759a` published the two roots the ceremony in SECURITY.md produced, and
+// it remains the state of any verifier handed an empty set — which is what
+// `astra-daemon` compiles in when `PRODUCTION_ROOT_KEYS` is empty. The message
+// below said the ceremony "has not been run" as a fact about the world; it now
+// says it as a fact about the key set it was given, because the first version
+// outlived its truth by a month and told a reader to go and run a ceremony
+// that had already happened.
 
 import { execFile } from "node:child_process";
 import fs from "node:fs";
-import path from "node:path";
 import { promisify } from "node:util";
 
+import { compiledRootKeys } from "./roots.mjs";
 import { publicKeyFromBase64, verifyEnvelope, TRUST_SCHEMA } from "./sign.mjs";
 
 const execFileAsync = promisify(execFile);
 
 /**
- * Load the root keys the way the daemon does: from a document that says plainly
- * whether it has any.
+ * Load a root key set out of a `root.json`-shaped document.
+ *
+ * Not the production path. `bot/check-roots.mjs` uses it to compare the
+ * published file with the compiled set, and the tests use it to build a set
+ * from `tools/testkeys`; `loadWorkflowAllowlist` defaults to the compiled set
+ * and no caller in the bot names a file.
  *
  * @param {string} file `registry/v1/root.json`, or a test roots file
  * @returns {{keys: {key_id: string, publicKey: import("node:crypto").KeyObject}[], status: string}}
@@ -68,25 +92,21 @@ export function loadRootKeys(file) {
  * file being read. A document that names its own domain can be replayed from
  * one document type to another by editing one field.
  *
- * @param {{trustFile: string, rootsFile: string}} opts
+ * @param {{trustFile: string, roots?: {status: string, keys: object[]}}} opts
+ *   `roots` is the injection seam the tests hand a `tools/testkeys` set
+ *   through. Production passes it not at all, and gets the compiled set.
  * @returns {{ok: true, allowlist: string[], serial: number, key_id: string} |
  *           {ok: false, code: string, message: string}}
  */
-export function loadWorkflowAllowlist({ trustFile, rootsFile }) {
-  let roots;
-  try {
-    roots = loadRootKeys(rootsFile);
-  } catch (e) {
-    return { ok: false, code: "E_TRUST_UNPROVISIONED", message: `cannot read ${rootsFile}: ${e.message}` };
-  }
+export function loadWorkflowAllowlist({ trustFile, roots = compiledRootKeys() }) {
   if (roots.keys.length === 0) {
     return {
       ok: false,
       code: "E_TRUST_UNPROVISIONED",
       message:
-        `${path.basename(rootsFile)} carries no root keys (status: ${roots.status}). The root-key ` +
-        "ceremony has not been run, so there is no signed trust.json and no reusable-workflow " +
-        "allowlist to check a build against. Nothing is listed until it exists.",
+        `this verifier was given no root keys (status: ${roots.status}), so there is no key a signed ` +
+        "trust.json could be checked against and no reusable-workflow allowlist to hold a build to. " +
+        "Nothing is listed until there is one.",
     };
   }
   if (!fs.existsSync(trustFile)) {
