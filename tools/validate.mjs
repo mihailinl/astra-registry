@@ -49,6 +49,15 @@ import {
   REPO_ROOT,
 } from "./lib/sources.mjs";
 import { ALLOWED_IMAGE_HOSTS, ICON_NAMES, MAX_README_BYTES, checkIcon } from "../bot/lib/assets.mjs";
+import {
+  CUTOVER_FILE,
+  CUTOVER_SCHEMA,
+  DEADLINE_FILE,
+  DEADLINE_SCHEMA,
+  cutoverSchema,
+  deadlineSchema,
+  parseTime,
+} from "../bot/lib/listing-state.mjs";
 import { checkMetadata, summarise } from "../bot/lib/derive.mjs";
 import { foldDisplayName, renderedNames } from "../bot/lib/names.mjs";
 import {
@@ -1731,6 +1740,99 @@ export function checkBaselineMarker(plugins, ctx) {
   }
 }
 
+// ── MIG-1's two records: the deadline and the cutover marker ────────────────
+
+/**
+ * `policy/binding-deadline.json` and `log/cutover.json`, checked when they are
+ * there (registry plan M-T5.1; contract B.4).
+ *
+ * **Why a validator at all, for two files with two members each.** Between them
+ * they decide every listing's state: MIG-1 grandfathers a listing with no
+ * identity record until the LATER of the deadline and cutover, and freezes it
+ * afterwards. Four readers act on that — the bot through
+ * `bot/lib/listing-state.mjs`, the plugins service from git at the served
+ * `Source-Commit` (MIG-7), the listing banner that tells third-party accounts
+ * the date (MIG-13), and `bot/tests/policy.test.mjs`, which holds POLICY.md to
+ * quoting it (MIG-3). Both files are written by hand — the owner commits the
+ * deadline (MIG-2), the cutover commit adds the marker (ROLL-33) — and neither
+ * has ever been read by anything in this repository, so a mistyped member would
+ * have reached all four as the thing they were waiting for.
+ *
+ * **Absent is a state, not a finding.** Neither file exists today, and that is
+ * the ordinary state: no deadline means everything unbound stays
+ * `grandfathered` and nothing alerts (BOT-72), no marker means cutover has not
+ * happened. Both are notes, so a reader can tell "checked and absent" from "not
+ * checked".
+ *
+ * **The grammar cannot say the date is real.** `2026-02-31T00:00:00Z` matches
+ * the pattern in both schemas, and `Date` rolls it forward to 3 March rather
+ * than refusing. So each value is round-tripped through the same `parseTime`
+ * the bot's reader uses — one grammar, in one place, rather than a second
+ * opinion here.
+ */
+export function checkMigrationMarkers(ctx) {
+  const { report } = ctx;
+  const specs = [
+    { file: DEADLINE_FILE, member: "deadline", schemaString: DEADLINE_SCHEMA, schema: deadlineSchema(REPO_ROOT),
+      absent: "absent: no binding deadline is committed, so every listing with no identity record — and none ever — " +
+        "is `grandfathered` and nothing alerts (MIG-1, BOT-72)",
+      absentHint: "The owner commits it before R4b (MIG-2), with the same date in POLICY.md (MIG-3)." },
+    { file: CUTOVER_FILE, member: "cutover_at", schemaString: CUTOVER_SCHEMA, schema: cutoverSchema(REPO_ROOT),
+      absent: "absent: cutover has not happened, so the issue channel is still open and no listing freezes (MIG-1, ROLL-33)",
+      absentHint: "Only the cutover commit adds it." },
+  ];
+
+  const times = {};
+  for (const spec of specs) {
+    const abs = path.join(ctx.root, spec.file);
+    if (!fs.existsSync(abs)) {
+      report.note(spec.file, spec.absent, spec.absentHint);
+      continue;
+    }
+    let doc;
+    try {
+      doc = readJson(abs);
+    } catch (e) {
+      report.error(spec.file, `is not readable JSON — ${e.message}`,
+        "Four readers key on this file. An unreadable one is not a soft failure for any of them.");
+      continue;
+    }
+    const problems = validateSchema(spec.schema, doc, "$");
+    for (const p of problems) {
+      report.error(spec.file, `${p.path} ${p.message}`,
+        `B.4 fixes ${spec.schemaString}'s members exactly; the plugins service parses this record too.`);
+    }
+    if (problems.length) continue;
+    try {
+      times[spec.member] = parseTime(doc[spec.member], `${spec.file}'s \`${spec.member}\``);
+    } catch (e) {
+      report.error(spec.file, e.message,
+        "The pattern admits dates that are not moments; this is the round-trip that does not.");
+    }
+  }
+
+  // MIG-2's floor, which is a fact about the two files TOGETHER: the deadline
+  // is kept at least 30 days after cutover, and ROLL-32 refuses to begin
+  // cutover unless it is. Nothing else compares them — the bot reads each on
+  // its own and the service reads them at a served commit — so if this check
+  // does not make the comparison, nobody does.
+  //
+  // A WARNING RATHER THAN AN ERROR, deliberately. This tool gates the signer
+  // (D4), and an error here would stop the catalogue over a policy date that
+  // changes no listing's bytes: a self-inflicted outage in the one job whose
+  // failure users see. The fix is the owner's (MIG-29 lets him move the date
+  // later and never earlier), and it wants a person, not a red signer.
+  if (times.deadline !== undefined && times.cutover_at !== undefined) {
+    const days = (times.deadline - times.cutover_at) / 86_400_000;
+    if (days < 30) {
+      report.warn(DEADLINE_FILE,
+        `is ${days.toFixed(1)} day(s) after ${CUTOVER_FILE}'s cutover_at, and MIG-2 keeps it at least 30`,
+        "MIG-29 permits moving the deadline later and never earlier, and ROLL-32 holds cutover until the deadline " +
+        "is at least 30 days away. Not an error only because this tool gates the signer.");
+    }
+  }
+}
+
 // ── driver ──────────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
@@ -1790,6 +1892,7 @@ export async function runValidation(opts) {
   checkSquatting(usable, ctx);
   checkListingLanguage(usable, ctx);
   checkBaselineMarker(usable, ctx);
+  checkMigrationMarkers(ctx);
 
   let hashed = 0;
   if (opts.artifactsDir) hashed += checkLocalArtifacts(usable, ctx);

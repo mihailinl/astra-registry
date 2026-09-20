@@ -2411,6 +2411,59 @@ await test("POLICY.md points at the detail rather than restating it", () => {
     "and §8 has to carry the number now that there is one");
 });
 
+// MIG-3, and the shape of it that can run TODAY. The bot reads the binding
+// deadline only from `policy/binding-deadline.json` (contract MIG-2), and a
+// registry test must fail when that file and POLICY.md disagree. Neither the
+// file nor the sentence exists yet — the date is the owner's, committed before
+// R4b with the POLICY.md line in the same commit (M-T5.2, reg.87) — so the
+// check is written against the ABSENCE, and is live from today in both
+// directions:
+//
+//   file absent  → no policy document may state a deadline date. A date in
+//                  prose that no committed record backs is MIG-3's failure
+//                  arriving from the side nobody watches: the bot would read
+//                  no deadline at all while the published policy promised one,
+//                  and every listing would stay `grandfathered` past it.
+//   file present → at least one policy document states it, and every deadline
+//                  date either document carries is that one.
+//
+// The comparison is on the ISO form: a date counts as a deadline claim when
+// `deadline` appears within 200 characters of it, and the committed value is a
+// §0.7 time, so the prose must carry `YYYY-MM-DD` (spelling the date out as
+// well is fine). That requirement is this check's own rather than MIG-3's, and
+// it is the only way a machine can hold two documents to one date.
+await test("MIG-3 — the deadline is in one place, and no document states one that is not there", async () => {
+  const { DEADLINE_FILE, readMarkers } = await import("../lib/listing-state.mjs");
+  const committed = readMarkers(REPO_ROOT).deadline;
+
+  const claims = [];
+  for (const rel of ["POLICY.md", "docs/POLICY.md"]) {
+    const text = fs.readFileSync(path.join(REPO_ROOT, rel), "utf8");
+    for (const m of text.matchAll(/\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}Z)?/g)) {
+      const around = text.slice(Math.max(0, m.index - 200), m.index + m[0].length + 200);
+      if (/deadline/i.test(around)) {
+        claims.push({ file: rel, date: m[0], line: text.slice(0, m.index).split("\n").length });
+      }
+    }
+  }
+  const where = claims.map((c) => `${c.file}:${c.line} ${c.date}`).join(", ");
+
+  if (committed === null) {
+    assertEqual(claims.length, 0,
+      `${DEADLINE_FILE} is not committed, so the bot reads no binding deadline — and these say there is one: ` +
+      `${where}. The date lands in the same commit as the file (MIG-2, MIG-3), never before it`);
+    return;
+  }
+  assert(claims.length >= 1,
+    `${DEADLINE_FILE} commits ${committed} and neither POLICY.md states it. MIG-14's notices send authors to the ` +
+    "published policy for the date, so write it there as `YYYY-MM-DD` and this check will compare the two");
+  for (const c of claims) {
+    assert(c.date === committed || c.date === committed.slice(0, 10),
+      `${c.file}:${c.line} states the deadline ${c.date} and ${DEADLINE_FILE} commits ${committed}. The bot reads ` +
+      "the file (MIG-3), so the document is the half that is wrong");
+  }
+});
+
 
 // ── B-T3.3c: the outcomes that write nothing ────────────────────────────────
 

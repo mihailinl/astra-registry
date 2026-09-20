@@ -30,10 +30,24 @@
 //
 // ── what this module cannot do yet, and refuses to pretend about ───────────
 //
-// B-T3.3a's full decision needs four things that are not on `main`:
-// `bot/lib/listing-state.mjs` (M-T5.1), the binding-line grammar (B-T2.4, R2),
-// the service verdict `ask` returns (B-T3.1), and B-T4.2's `identity_reset`
-// writer. What IS here is every rule those four do not gate: the TRUST-23
+// B-T3.3a's full decision needs four things. **Three of them are not on
+// `main`** — the binding-line grammar (B-T2.4, R2), the service verdict `ask`
+// returns (B-T3.1), and B-T4.2's `identity_reset` writer. The fourth,
+// `bot/lib/listing-state.mjs` (M-T5.1), **landed in this commit's merge**, and
+// the count here is edited rather than left at four because a header saying a
+// module does not exist is exactly the class of claim that outlives its truth
+// in this estate — nothing executes a comment.
+//
+// `bindingDecision`'s refusal still names all four and still fires, and that
+// is correct rather than an oversight: it checks the inputs a CALLER obtained,
+// not which files exist, so a caller that has not read `listingState` still
+// cannot decide a binding. Landing the piece a refusal names is not a licence
+// to loosen the refusal — *a refusal can be holding a defect out of reach, and
+// removing it ships the defect* — and three of the four are genuinely still
+// missing. `bot/tests/identity.test.mjs:291` asserts that wording, so it is
+// load-bearing and not editable in passing.
+//
+// What IS here is every rule those four do not gate: the TRUST-23
 // comparison, MIG-28's hold for an id with no baseline, and the rule that a
 // baseline ends at the newest voiding record. `bindingDecision` refuses by
 // name for the rest, in the shape `bot/baseline.mjs` uses for the same

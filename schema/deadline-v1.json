@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://registry.astra.app/schema/deadline-v1.json",
+  "title": "astra.registry.deadline/1",
+  "description": "policy/binding-deadline.json — the binding deadline, and the ONE place it is written (contract MIG-2, MIG-3; B.4). The owner commits it by hand before R4b; nothing generates it.\n\nWHO READS IT, which is why the shape is this strict: the bot, through bot/lib/listing-state.mjs, to decide MIG-1's `grandfathered` and `frozen`; the plugins service, from git at the served Source-Commit, for the same decision (MIG-7); and the listing banner, which shows the date to the third-party accounts MIG-13 must notify. Three parties, one file, and no second copy anywhere — POLICY.md states the same date in prose and bot/tests/policy.test.mjs refuses the two disagreeing (MIG-3).\n\nEXACTLY TWO MEMBERS, and `$comment` is NOT among them. B.4 says `astra.registry.deadline/1` carries exactly `schema` and `deadline`, and this record crosses a party boundary: a member this registry allowed and another party's parser did not would be a two-way-test failure (§0.8) found by whichever party guessed wrong, in production. The registry-only records in this directory admit `$comment` because nobody outside reads them; this one does not.\n\nWHOLE SECONDS, AND `Z`. §0.7: RFC 3339 UTC, whole seconds, ending in `Z`. Fractional seconds are refused rather than truncated, because the deadline is a moment two independent implementations compare a clock against, and `.5` rounding one way here and the other way there is a listing that is `grandfathered` at the registry and `frozen` at the service for half a second — a disagreement neither side could reproduce. The pattern cannot say the date is real (`2026-02-31T00:00:00Z` matches it); tools/validate.mjs round-trips the value through Date for that, and the two checks together are the whole of what makes a committed date readable.\n\nABSENCE IS A STATE, NOT AN ERROR. Until the owner commits it every listing with no identity record — and none ever — is `grandfathered`, and nothing alerts (registry plan BOT-72, M-T5.1). listing-state.mjs and tools/validate.mjs both say so out loud rather than defaulting a date.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "deadline"],
+  "properties": {
+    "schema": { "const": "astra.registry.deadline/1" },
+    "deadline": {
+      "$comment": "The moment listings stop being `grandfathered`, once the cutover marker is also on `main` (MIG-1 takes the LATER of the two). The owner's value is his estimate of cutover plus 60 days (OPEN-OWNER-8, answered 2026-09-13), and MIG-29 forbids moving it earlier.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    }
+  }
+}
