@@ -182,6 +182,48 @@ export function extractSignerFacts(results, artifactSha256 = null) {
 }
 
 /**
+ * What a failed `gh attestation verify` actually said, in three readings.
+ *
+ * `gh` exits 1 for every one of them, so the exit code answers nothing and the
+ * text is the only evidence there is. The three differ in **who has to do
+ * something**, and collapsing any two sends a person to fix the wrong thing:
+ *
+ *   * `missing` — there is genuinely no attestation. The author adds one.
+ *   * `unavailable` — the verifier could not run at all: Sigstore's trust root
+ *     unreachable, a timeout, no network. **Nobody's bytes are wrong.** The
+ *     answer is to run it again, and — this is the part that matters for a
+ *     once-only run — it is emphatically NOT evidence that the artifact is
+ *     unattested.
+ *   * neither — the attestation exists and does not satisfy the policy.
+ *     `policyRefusal` additionally says gh gave its one-line refusal with no
+ *     named check, which is a flags-versus-certificate disagreement.
+ *
+ * Extracted to one owner on 2026-09-20 because there were two readers and only
+ * one reading. `bot/baseline.mjs`'s `verifyOne` had a bare `catch` that turned
+ * all three into `{outcome: "unverified"}` — and that value is written into
+ * MIG-20's migration record, which is written **once** and can never be
+ * corrected. So a runner with no network, or a five-minute Sigstore outage,
+ * would have recorded the whole catalogue as permanently unattested, with a
+ * green exit code, and detector A1, MIG-28 and TRUST-23 all read that record.
+ *
+ * This is the estate's four-verdicts rule at the place it was most expensive
+ * to collapse: *measured absent* and *could not ask* are different answers,
+ * and only one of them is a fact about the artifact.
+ *
+ * @param {string} text stderr and message of the failed run, concatenated
+ * @returns {{missing: boolean, policyRefusal: boolean, unavailable: boolean}}
+ */
+export function classifyVerifyFailure(text) {
+  const s = String(text ?? "");
+  const missing = /no attestation|could not find any attestations|HTTP 404|404: Not Found/i.test(s);
+  const policyRefusal = /verifying with issuer/i.test(s);
+  const unavailable = /verifier is not available|initializ|trust(ed)? root|tuf|timeout|timed out|connection|network|temporar/i.test(s);
+  // `missing` wins: a 404 is a fact about the artifact, and the word "network"
+  // appearing somewhere in the same stderr does not make it less of one.
+  return { missing, policyRefusal, unavailable: unavailable && !missing };
+}
+
+/**
  * Run `gh attestation verify` and check what it says.
  *
  * **The signer flag is not optional, and the reason is measured.** B-T1.2's
@@ -227,6 +269,7 @@ export async function verifyAttestation(opts) {
     parsed = JSON.parse(stdout);
   } catch (e) {
     const text = `${e.stderr ?? ""}${e.message ?? ""}`;
+    const { missing, policyRefusal, unavailable } = classifyVerifyFailure(text);
     // "no attestations found" is a different answer from "the attestation is
     // wrong", and an author fixes them differently.
     //
@@ -237,8 +280,7 @@ export async function verifyAttestation(opts) {
     // which is the registry's bug or the author's workflow, never "no
     // attestation exists". Telling an author to add an attestation they
     // already have is the failure B-T1.2's first pass made, on 12 of 18.
-    const missing = /no attestation|could not find any attestations|HTTP 404|404: Not Found/i.test(text);
-    const policyRefusal = /verifying with issuer/i.test(text);
+    //
     // "The verifier could not start" is not "the bytes are wrong", and telling
     // an author the second when the first happened sends them to rebuild a
     // release that was never broken. Seen in the wild: `gh` failed with
@@ -246,9 +288,11 @@ export async function verifyAttestation(opts) {
     // fetch Sigstore's trust root — and the same bundle verified from another
     // machine, unchanged, minutes later.
     //
-    // Still blocking, because an unverified artifact must not be listed. What
-    // changes is what it says and who it points at: retry, not rebuild.
-    const unavailable = /verifier is not available|initializ|trust(ed)? root|tuf|timeout|timed out|connection|network|temporar/i.test(text);
+    // Still blocking here, because an unverified artifact must not be listed.
+    // What changes is what it says and who it points at: retry, not rebuild.
+    //
+    // The three-way reading itself lives in `classifyVerifyFailure` above,
+    // because `bot/baseline.mjs` needs the same one and had a bare `catch`.
     const first = text.trim().split("\n")[0] || "failed";
     findings.push({
       level: "error",

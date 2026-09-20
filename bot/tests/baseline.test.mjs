@@ -34,6 +34,7 @@ import {
   resolveNameReader,
   verificationFacts,
 } from "../baseline.mjs";
+import { classifyVerifyFailure } from "../lib/attestation.mjs";
 import { resolveWriter } from "../export-issues.mjs";
 import { submissionFingerprint } from "../lib/policy/release.mjs";
 import { REPO_ROOT } from "../../tools/lib/sources.mjs";
@@ -278,6 +279,115 @@ test("two versions under one tag would derive one id, and the baseline refuses",
   const two = [fact(), fact({ version: "1.0.1", plugin_id: "alpha" })];
   assert.deepEqual(keyCollisions(two), [{ key: "migration:example/alpha@v1.0.0", facts_sharing_it: 2 }]);
   assert.throws(() => composeRecords(two, at), /would derive one id and overwrite each other/);
+});
+
+// ── "the verifier could not run" is not "the artifact does not verify" ──────
+
+test("a verifier that could not run is its own outcome, and never `unverified`", async () => {
+  // The bare `catch` this replaces turned three answers into one. `gh` exits 1
+  // whether the attestation is absent, wrong, or never checked — no network,
+  // Sigstore's trust root unreachable, a timeout — and only the first two are
+  // facts about anybody's artifact. The third is a fact about the runner, and
+  // MIG-20's record is written once and cannot be corrected.
+  const versions = [
+    { plugin_id: "alpha", version: "1.0.0", repo: "example/alpha", tag: "v1.0.0", commit: "a".repeat(40), fingerprint: "c".repeat(64) },
+    { plugin_id: "beta", version: "1.0.0", repo: "example/beta", tag: "v1.0.0", commit: "b".repeat(40), fingerprint: "d".repeat(64) },
+  ];
+  const { facts, unrecoverable, unchecked } = await verificationFacts(versions, (v) =>
+    v.plugin_id === "alpha"
+      ? { outcome: "unchecked", why: "public good verifier is not available (initialization)", repository_id: null, repository_owner_id: null }
+      : { outcome: "unverified", repository_id: null, repository_owner_id: null });
+  assert.equal(unchecked.length, 1, JSON.stringify(unchecked));
+  assert.match(unchecked[0], /alpha 1\.0\.0 \(example\/alpha@v1\.0\.0\)/);
+  assert.match(unchecked[0], /verifier is not available/);
+  // Both still become `unverified` IN THE FACT, because that vocabulary is
+  // DEC-7's and this change does not widen it. What `unchecked` buys is that
+  // the run refuses before any of it is written down.
+  assert.deepEqual(facts.map((f) => f.outcome), ["unverified", "unverified"]);
+  assert.equal(unrecoverable.length, 2);
+});
+
+test("the three readings of a failed `gh attestation verify`, and which one wins", () => {
+  // One owner, in bot/lib/attestation.mjs, because there were two readers and
+  // one reading: `verifyAttestation` classified and `verifyOne` did not.
+  assert.deepEqual(classifyVerifyFailure("HTTP 404: Not Found (.../attestations/sha256:aa)"),
+    { missing: true, policyRefusal: false, unavailable: false });
+  assert.deepEqual(classifyVerifyFailure('Error: verifying with issuer "sigstore.dev"'),
+    { missing: false, policyRefusal: true, unavailable: false });
+  assert.deepEqual(classifyVerifyFailure("public good verifier is not available (initialization failed)"),
+    { missing: false, policyRefusal: false, unavailable: true });
+  // A 404 is a fact about the artifact, and the word "connection" turning up
+  // elsewhere in the same stderr does not make it less of one. Written the
+  // other way first, and this is the case that caught it.
+  assert.equal(classifyVerifyFailure("connection reset\nHTTP 404: Not Found").missing, true);
+  assert.equal(classifyVerifyFailure("connection reset\nHTTP 404: Not Found").unavailable, false);
+});
+
+test("--write refuses a facts file that records anything as not checked", () => {
+  // Checked at the WRITE, not only at the verify, because the facts file is an
+  // artifact handed between two jobs and `write` needs only that `verify`
+  // exited 0. A re-run, a hand-edited artifact, or any future change to either
+  // job's gating breaks that claim; this one reads the file in front of it.
+  const dir = tree();
+  write(dir, "facts.json", {
+    facts: [{ plugin_id: "alpha", version: "1.0.0", outcome: "unverified", repository_id: null, repository_owner_id: null }],
+    unchecked: ["alpha 1.0.0 (example/alpha@v1.0.0): public good verifier is not available"],
+  });
+  let message = "";
+  try {
+    execFileSync(process.execPath, [
+      path.join(REPO_ROOT, "bot", "baseline.mjs"), "--write",
+      "--facts-file", path.join(dir, "facts.json"),
+      "--historic-file", path.join(dir, "facts.json"),
+      "--source-commit", "a".repeat(40),
+      "--registry-dir", dir,
+    ], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  } catch (e) {
+    message = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+  }
+  assert.match(message, /1 version\(s\) the verifier could not check/);
+  assert.match(message, /written once/);
+});
+
+test("--write refuses a wholly unverified baseline unless the operator says the number", () => {
+  // The shape that actually happened: dropping `--signer-workflow` failed 12
+  // of 18 perfectly good attestations with exit 1 and no named check. A
+  // wholesale failure is a broken tool far more often than it is a catalogue
+  // in which every attestation is bad — so it is refused, and the escape is a
+  // COUNT rather than a flag, because a flag meaning "yes, whatever it is" is
+  // one somebody adds to a red run without reading it.
+  const dir = tree();
+  listed(dir, "alpha", "1.0.0");
+  listed(dir, "beta", "1.0.0");
+  const facts = [
+    { plugin_id: "alpha", version: "1.0.0", repo: "example/alpha", tag: "v1.0.0", commit: "a".repeat(40), fingerprint: "c".repeat(16), outcome: "unverified", repository_id: null, repository_owner_id: null },
+    { plugin_id: "beta", version: "1.0.0", repo: "example/beta", tag: "v1.0.0", commit: "b".repeat(40), fingerprint: "d".repeat(16), outcome: "unverified", repository_id: null, repository_owner_id: null },
+  ];
+  write(dir, "facts.json", { facts, unchecked: [] });
+  const run = (extra) => {
+    try {
+      execFileSync(process.execPath, [
+        path.join(REPO_ROOT, "bot", "baseline.mjs"), "--write",
+        "--facts-file", path.join(dir, "facts.json"),
+        "--historic-file", path.join(dir, "facts.json"),
+        "--source-commit", "a".repeat(40),
+        "--registry-dir", dir,
+        ...extra,
+      ], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      return "";
+    } catch (e) {
+      return `${e.stdout ?? ""}${e.stderr ?? ""}`;
+    }
+  };
+  assert.match(run([]), /not one of 2 fact\(s\) in the facts file is `verified`/);
+  // The wrong number is not an answer either: an operator who expected one and
+  // got two has learnt something, and the run should not proceed.
+  assert.match(run(["--expect-unverified", "1"]), /not one of 2 fact\(s\)/);
+  // With the right number it gets past this gate and refuses at the next one,
+  // which is B-T2.2's writer. That it is a DIFFERENT refusal is the assertion.
+  const past = run(["--expect-unverified", "2"]);
+  assert.doesNotMatch(past, /not one of 2 fact\(s\)/);
+  assert.match(past, /decisions\.mjs/);
 });
 
 test("a second dispatch with the marker present writes nothing, and the refusal comes first", () => {

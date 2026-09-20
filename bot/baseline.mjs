@@ -29,9 +29,24 @@
 //
 // ── what is refused by name, and why nothing stands in for it ──────────────
 //
-// Three of this task's gates are not on `main`, measured 2026-09-19:
+// **One of this task's three gates is still absent. Re-measured 2026-09-20,
+// because the paragraph below said three and had been wrong for a day.**
+// `edab81a` landed both `certificateIds` (`bot/lib/certificate.mjs:368`) and
+// `fetchRepositoryIds` (`bot/lib/github.mjs:297`); `f1a9d49` then edited this
+// file and left the header saying they were missing. Only B-T2.2's
+// `bot/lib/decisions.mjs` is `MEASURED ABSENT` today.
 //
-//   * **B-T1.1** — `bot/lib/certificate.mjs`. `bot/lib/attestation.mjs`'s
+// That is not a tidying note. Two sentences a few lines down — "unreachable
+// until B-T1.1 lands" over `verifyOne`, and the refusals that "stand in for
+// the parts that cannot be built yet" — stopped being true at the same moment,
+// and **`--verify` runs end to end now.** It was run: 41 facts, 0 verified,
+// exit 0. Which is how the missing floor below was found.
+//
+// The three gates as they were, kept because the reasoning is still the
+// reasoning and only the tense has moved:
+//
+//   * **B-T1.1** — `bot/lib/certificate.mjs`. LANDED `edab81a`.
+//     `bot/lib/attestation.mjs`'s
 //     `extractSignerFacts` returns `sourceRepo`, `sourceDigest`, `signerUri`
 //     and the subject digests, and no ids: OIDs .15 and .17 are exactly the
 //     two fields B-T1.1 adds and the two MIG-20's baseline is FOR. There is no
@@ -42,9 +57,10 @@
 //     that wrote it for a missing READER would be a baseline that recorded a
 //     registry-wide attestation failure that never happened, permanently, in
 //     a file that is written once.
-//   * **B-T1.3** — `fetchRepositoryIds` in `bot/lib/github.mjs`. `--names`
-//     needs it, and refuses by name once there is a baseline to compare.
-//   * **B-T2.2** — `bot/lib/decisions.mjs`, which derives BOT-35's
+//   * **B-T1.3** — `fetchRepositoryIds` in `bot/lib/github.mjs`. LANDED
+//     `edab81a`. `--names` needs it, and refuses by name once there is a
+//     baseline to compare.
+//   * **B-T2.2** — STILL ABSENT. `bot/lib/decisions.mjs`, which derives BOT-35's
 //     `decision_id` and places the record. `--write` refuses through
 //     `resolveWriter`, which is imported from `bot/export-issues.mjs` rather
 //     than re-written here, so that the two composers cannot come to disagree
@@ -244,8 +260,16 @@ export async function resolveCertificateReader({ root, load = (s) => import(s) }
 export async function verificationFacts(versions, verify) {
   const facts = [];
   const unrecoverable = [];
+  // "The verifier could not run" is not a verdict about anybody's bytes, and it
+  // is the one answer that must never be written down. Counted separately from
+  // `unrecoverable` — which is a real, recordable "this did not verify" — so
+  // the caller can refuse the whole run rather than record the wrong thing.
+  const unchecked = [];
   for (const v of versions) {
     const answer = await verify(v);
+    if (answer?.outcome === "unchecked") {
+      unchecked.push(`${v.plugin_id} ${v.version} (${v.repo}@${v.tag}): ${answer.why ?? "the verifier could not run"}`);
+    }
     const outcome = answer?.outcome === "verified" ? "verified" : "unverified";
     const fact = {
       plugin_id: v.plugin_id,
@@ -280,7 +304,7 @@ export async function verificationFacts(versions, verify) {
     }
     facts.push(fact);
   }
-  return { facts, unrecoverable };
+  return { facts, unrecoverable, unchecked };
 }
 
 // ── the records ─────────────────────────────────────────────────────────────
@@ -587,7 +611,16 @@ const USAGE = `usage:
   bot/baseline.mjs --names [--registry-dir DIR]`;
 
 function parseArgs(argv) {
-  const opts = { mode: null, root: REPO_ROOT, out: null, populationFile: null, factsFile: null, historicFile: null, sourceCommit: null };
+  const opts = {
+    mode: null, root: REPO_ROOT, out: null, populationFile: null, factsFile: null, historicFile: null,
+    sourceCommit: null,
+    // The escape hatch for a catalogue that really is wholly unattested, and
+    // it is a NUMBER rather than a boolean on purpose: a flag that means "yes,
+    // whatever it is" is a flag somebody adds to a red run without reading it.
+    // Saying the count out loud makes the operator state what they expect, and
+    // the run refuses if the tree disagrees.
+    expectUnverified: null,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--population") opts.mode = "population";
@@ -600,6 +633,11 @@ function parseArgs(argv) {
     else if (a === "--facts-file") opts.factsFile = path.resolve(argv[++i]);
     else if (a === "--historic-file") opts.historicFile = path.resolve(argv[++i]);
     else if (a === "--source-commit") opts.sourceCommit = argv[++i];
+    else if (a === "--expect-unverified") {
+      const raw = argv[++i];
+      if (!/^\d+$/.test(String(raw))) throw new Error(`--expect-unverified needs a count, not ${JSON.stringify(raw)}\n${USAGE}`);
+      opts.expectUnverified = Number(raw);
+    }
     else throw new Error(`unknown argument: ${a}\n${USAGE}`);
   }
   if (!opts.mode) throw new Error(`one of --population, --verify, --write or --names is required\n${USAGE}`);
@@ -642,10 +680,37 @@ async function main(argv) {
     // the same afterwards and forty downloads to reach it would read like a
     // network problem.
     const certificateIds = await resolveCertificateReader({});
-    const { facts, unrecoverable } = await verificationFacts(doc.versions ?? [], (v) => verifyOne(v, certificateIds));
-    emit(opts, { generated_at: `${new Date().toISOString().slice(0, 19)}Z`, facts, unrecoverable });
+    const { facts, unrecoverable, unchecked } = await verificationFacts(doc.versions ?? [], (v) => verifyOne(v, certificateIds));
+    emit(opts, { generated_at: `${new Date().toISOString().slice(0, 19)}Z`, facts, unrecoverable, unchecked });
     console.error(`verified ${facts.length - unrecoverable.length} of ${facts.length} version(s)`);
-    return facts.length === 0 ? 1 : 0;
+    for (const u of unchecked) console.error(`  NOT CHECKED: ${u}`);
+    if (facts.length === 0) {
+      console.error("bot: the population held no version, so this run verified nothing");
+      return 1;
+    }
+    // Two floors, and `population` mode has had both since it was written.
+    // `--verify` had neither, so `41 of 41 unverified` exited 0 and `--write`
+    // — which needs only that this job succeeded — would then have composed
+    // forty-one permanent records saying the catalogue is unattested.
+    if (unchecked.length) {
+      console.error(
+        `bot: ${unchecked.length} of ${facts.length} version(s) were NOT CHECKED — the verifier could not run, ` +
+        "which is not a fact about anybody's artifact. MIG-20's baseline is written once and cannot be " +
+        "corrected, so this run stops rather than recording a runner problem as a registry-wide attestation " +
+        "failure. Run it again.",
+      );
+      return 1;
+    }
+    if (unrecoverable.length === facts.length) {
+      console.error(
+        `bot: not one of ${facts.length} version(s) verified. A wholesale failure is a broken tool far more ` +
+        "often than it is a catalogue where every attestation is bad — measured 2026-09-19, dropping " +
+        "`--signer-workflow` alone did exactly this to 12 of 18. If the catalogue really is in that state, " +
+        "say so with --expect-unverified " + facts.length + ".",
+      );
+      return opts.expectUnverified === facts.length ? 0 : 1;
+    }
+    return 0;
   }
 
   if (opts.mode === "names") {
@@ -685,6 +750,30 @@ async function main(argv) {
     );
   }
   const verified = JSON.parse(fs.readFileSync(opts.factsFile, "utf8"));
+  // The facts file is an artifact handed between two jobs, so `--write` checks
+  // it rather than trusting that `--verify` succeeded. The `write` job needs
+  // only `[verify, export]`, and "the verify job exited 0" is a weaker claim
+  // than "this file says nothing went unchecked" — a re-run, a hand-edited
+  // artifact or a future change to either job's gating all break the first and
+  // none of them break the second.
+  if (Array.isArray(verified.unchecked) && verified.unchecked.length) {
+    throw new Error(
+      `the facts file records ${verified.unchecked.length} version(s) the verifier could not check:\n  ` +
+      verified.unchecked.slice(0, 3).join("\n  ") +
+      (verified.unchecked.length > 3 ? `\n  … and ${verified.unchecked.length - 3} more` : "") +
+      "\nMIG-20's baseline is written once. A version nobody could check is not a version that failed, and " +
+      "recording it as one is permanent.",
+    );
+  }
+  const factList = verified.facts ?? [];
+  const noneVerified = factList.length > 0 && factList.every((f) => f.outcome !== "verified");
+  if (noneVerified && opts.expectUnverified !== factList.length) {
+    throw new Error(
+      `not one of ${factList.length} fact(s) in the facts file is \`verified\`, and this write is the one that ` +
+      "cannot be taken back. Dropping `--signer-workflow` produced exactly this shape on 12 of 18 good " +
+      `attestations. If the catalogue really is unattested, say the number: --expect-unverified ${factList.length}.`,
+    );
+  }
   const historic = JSON.parse(fs.readFileSync(opts.historicFile, "utf8"));
   const { versions } = population(opts.root);
   const publishedAt = new Map(versions.map((v) => [`${v.plugin_id}@${v.version}`, v.published_at]));
@@ -698,10 +787,17 @@ async function main(argv) {
 /**
  * One version, verified: download, hash, `gh attestation verify`, read the ids.
  *
- * Unreachable until B-T1.1 lands, because `resolveCertificateReader` refuses
- * before this is called. It is written out anyway rather than left as a TODO,
- * so that what the `verify` job does is a thing a reader can check against the
- * plan rather than a hole shaped like one.
+ * **Reachable since `edab81a`.** This said "unreachable until B-T1.1 lands,
+ * because `resolveCertificateReader` refuses before this is called", and that
+ * stopped being true when B-T1.1 landed — which nothing noticed, because a
+ * docstring saying a function cannot run is not a thing anything executes.
+ *
+ * It is worth keeping the original reason it was written out in full rather
+ * than left as a TODO: so that what the `verify` job does is a thing a reader
+ * can check against the plan rather than a hole shaped like one. The sentence
+ * that followed it is now the interesting one — the day it became reachable,
+ * `--verify` ran end to end and exited **0** having verified **0 of 41**,
+ * because the only floor it had was `facts.length === 0`.
  */
 async function verifyOne(v, certificateIds, deps = {}) {
   const fetchImpl = deps.fetch ?? fetch;
@@ -738,8 +834,25 @@ async function verifyOne(v, certificateIds, deps = {}) {
     ]);
     const ids = await certificateIds({ bundle: JSON.parse(stdout), artifactSha256 });
     return { outcome: "verified", repository_id: ids?.repository_id ?? null, repository_owner_id: ids?.repository_owner_id ?? null };
-  } catch {
-    return { outcome: "unverified", repository_id: null, repository_owner_id: null };
+  } catch (e) {
+    // This `catch` used to be bare, and the comment above already said it had
+    // to be read together with the `--signer-workflow` line. It had to be read
+    // together with one more thing: `gh` exits 1 whether the attestation is
+    // absent, wrong, or **never checked at all** — no network, Sigstore's trust
+    // root unreachable, a timeout. Collapsing the third into "unverified"
+    // writes a fact about the RUNNER into a record about the ARTIFACT, in a
+    // file that is written once and can never be corrected.
+    //
+    // So the third is its own outcome and it stops the run. `unchecked` never
+    // reaches a record: `verificationFacts` counts it, `--verify` exits
+    // non-zero on it, and `--write` refuses a facts file that carries one.
+    const { unavailable } = classifyVerifyFailure(`${e?.stderr ?? ""}${e?.message ?? ""}`);
+    return {
+      outcome: unavailable ? "unchecked" : "unverified",
+      why: unavailable ? (String(e?.stderr ?? e?.message ?? "").trim().split("\n")[0] || "the verifier could not run") : null,
+      repository_id: null,
+      repository_owner_id: null,
+    };
   } finally {
     fs.rmSync(path.dirname(tmp), { recursive: true, force: true });
   }
