@@ -15,7 +15,7 @@ import { stableStringify } from "../lib/canonical.mjs";
 import { compareSemver } from "../lib/semver.mjs";
 import { REPO_ROOT, loadSources } from "../lib/sources.mjs";
 import { makeFixtures } from "../make-fixtures.mjs";
-import { test, assert, tmp, validateTree, errorsMatching } from "./harness.mjs";
+import { test, assert, assertEqual, tmp, validateTree, errorsMatching } from "./harness.mjs";
 import { withFakeAstraPlugins } from "./fixtures.mjs";
 
 export async function run() {
@@ -103,7 +103,163 @@ export async function run() {
       `unverifiable entries are reachable through the compatibility fields: ${leaky.map((e) => e.id).join(", ")}`);
   });
 
+  // ID-66's sixteen, as a list something checks rather than as prose.
+  //
+  // policy/reserved-ids.json deliberately does NOT restate which of its entries
+  // are here for the panel: a list written twice is a list with one stale copy,
+  // and this repository has been bitten by that shape more than any other. So
+  // the enumeration lives here, where the two tests below read it — one against
+  // the committed policy, one against what the validator actually does with it.
+  //
+  // Reserving a name costs an author, not us: it is a name nobody can ever
+  // list under. Sixteen ordinary English words is a policy decision and the
+  // reason it was taken is in policy/reserved-ids.json's `reserved_note`.
+  const PANEL_ROUTES = [
+    "search", "publish", "moderation", "transparency", "authors", "account", "new", "api",
+    "login", "logout", "about", "help", "docs", "feed", "rss", "sitemap",
+  ];
+
+  await test("every panel route name is reserved, and no listing has already taken one", () => {
+    const policy = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "policy/reserved-ids.json"), "utf8"));
+
+    // The SHAPE before anything else, and read off the RAW members rather than
+    // through the `?? []` the two callers use. Written the other way first and
+    // watched saying the wrong thing: `reserved` renamed to `reserved_ids`
+    // defaults to `[]`, which is an array, so the shape assertion passed and
+    // the name check below reported all sixteen panel routes as dropped. True,
+    // and it sends the reader to re-add sixteen names to a file that still has
+    // all thirty, under a key nothing reads. `?? []` is right in the predicate
+    // — a policy file that lost a member must reserve nothing rather than
+    // throw — and it is exactly what a test about that file must not inherit.
+    assert(Array.isArray(policy.reserved) && Array.isArray(policy.reserved_prefixes),
+      `policy/reserved-ids.json has reserved=${JSON.stringify(policy.reserved)?.slice(0, 40)} and ` +
+      `reserved_prefixes=${JSON.stringify(policy.reserved_prefixes)?.slice(0, 40)}; tools/lib/reserved.mjs and ` +
+      `tools/validate.mjs read both as arrays and fall back to an empty one, so nothing is reserved right now — ` +
+      `the member has been renamed or reshaped, not emptied`);
+    const reserved = policy.reserved;
+    const prefixes = policy.reserved_prefixes;
+
+    // Then WHICH names, before any count. A dropped name is the failure this
+    // test exists for and it has to say the name: with the floor first, taking
+    // `rss` back out reports "lists 29 and listed 30", which is true and does
+    // not name the word that a stranger may now list under.
+    const dropped = PANEL_ROUTES.filter((n) => !reserved.includes(n));
+    assertEqual(dropped.join(", "), "",
+      "ID-66 names sixteen panel route names the registry must reserve and policy/reserved-ids.json no longer " +
+      "carries all of them; the missing ones are free for a stranger to list under");
+
+    // And then the counts, which are about the other fourteen and about the
+    // prefixes — the entries no list in this file enumerates.
+    assert(reserved.length >= 30,
+      `policy/reserved-ids.json lists ${reserved.length} reserved ids and listed 30 on 2026-09-19; every panel ` +
+      `route is still there, so this is one of the older reservations taken out, which is a security change`);
+    assert(prefixes.length >= 3,
+      `policy/reserved-ids.json lists ${prefixes.length} reserved prefixes and listed 3 on 2026-09-19 ` +
+      `(astra-, official-, verified-); a prefix dropped here is an impersonation primitive handed back`);
+
+    // Twice in the list is how a merge of two people's additions reads, and the
+    // predicate would not notice: `includes` is true either way.
+    const dupes = reserved.filter((n, i) => reserved.indexOf(n) !== i);
+    assertEqual([...new Set(dupes)].join(", "), "", "a reserved id is listed twice in policy/reserved-ids.json");
+
+    // The collision the preflight asked about, kept as a check rather than as a
+    // date in a note. A reserved id that a listing already holds does not fail
+    // safe: tools/validate.mjs refuses that listing, so `main` goes red and the
+    // catalogue cannot be rebuilt until somebody either unlists a stranger's
+    // plugin or takes the reservation back out.
+    //
+    // The full-tree run two tests above would catch it too, as one more error
+    // among however many. This one names the plugin and the name it collides
+    // with, which is the difference between a reviewer reverting one line and a
+    // reviewer reading a validator transcript.
+    const pluginsRoot = path.join(REPO_ROOT, "plugins");
+    const dirs = fs.readdirSync(pluginsRoot)
+      .filter((d) => fs.existsSync(path.join(pluginsRoot, d, "plugin.json")));
+    assert(dirs.length >= 20,
+      `the walk of plugins/ found ${dirs.length} listings and there were 22 on 2026-09-19; this is a broken walk ` +
+      `rather than a smaller catalogue, and the collision check below would pass by finding nothing`);
+    const collisions = [];
+    for (const dir of dirs) {
+      // Both the directory and the id inside it. tools/validate.mjs refuses the
+      // pair when they disagree and reads the id for the reserved rule, so a
+      // check that asked only the directory name would be asking the wrong one
+      // of the two on exactly the tree where they differ.
+      const id = JSON.parse(fs.readFileSync(path.join(pluginsRoot, dir, "plugin.json"), "utf8")).id;
+      if (reserved.includes(dir)) collisions.push(`plugins/${dir}`);
+      if (id !== dir && reserved.includes(id)) collisions.push(`plugins/${dir} (id ${JSON.stringify(id)})`);
+    }
+    assertEqual(collisions.join(", "), "",
+      "a reserved id is already held by a listing, so tools/validate.mjs refuses the committed tree; either the " +
+      "reservation comes back out or that listing is renamed, and both are the owner's call");
+  });
+
   console.log("\nrejections");
+  // The canary for the reservation: not that the name is in a file, but that a
+  // listing under it is refused. One tree per reserved name, every one of them,
+  // so the sixteen added for the panel and the fourteen that were here before
+  // are proved by the same loop and a seventeenth is proved the day it lands.
+  //
+  // The bot refuses the same names at ingest through the same array —
+  // bot/lib/derive.mjs reads `policy.reserved.reserved` and raises
+  // E_ID_RESERVED — so there is one list and one answer, and no fixture here
+  // can drift from what a stranger's submission meets.
+  await test("a listing under any reserved id is refused, one tree per name", async () => {
+    const src = path.join(REPO_ROOT, "tests/fixtures/id-collision/plugins/dice-roller");
+    const reserved = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "policy/reserved-ids.json"), "utf8")).reserved;
+
+    // One listing, renamed throughout — id, directory, source.repo, the release
+    // URL and the artifact filename — so that the only thing wrong with the
+    // tree is the NAME. A fixture that also tripped the filename rule would
+    // give a red validator for a reserved id whatever the policy said.
+    const treeFor = (id) => {
+      const dir = path.join(tmp, `reserved-${id}`);
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.cpSync(src, path.join(dir, "plugins", id), { recursive: true });
+      for (const rel of ["plugin.json", "versions/1.0.0.json"]) {
+        const file = path.join(dir, "plugins", id, rel);
+        const renamed = fs.readFileSync(file, "utf8").replaceAll("dice-roller", id);
+        // Parsed and re-serialised rather than written as text, so a rename
+        // that produced something that is not JSON any more fails here, in the
+        // fixture builder, instead of arriving below as a parse error the
+        // assertion would read as a refusal.
+        fs.writeFileSync(file, stableStringify(JSON.parse(renamed)));
+      }
+      return dir;
+    };
+
+    // The control, and it is not decoration. The first draft of this test
+    // asserted only that a reserved name produces a "is reserved" error, and it
+    // would have passed just as well over a fixture that no longer validated at
+    // all — which is how the assertion below, that the reserved rule is the
+    // ONLY thing refusing these trees, can be made at all.
+    assert(!reserved.includes("dice-roller"),
+      "the control id is itself reserved now, so this test proves nothing; pick a name nobody reserved");
+    const control = await validateTree(treeFor("dice-roller"));
+    assert(control.report.errors.length === 0,
+      `the fixture tree is refused under a name nobody reserved, so nothing below is about the reservation:\n` +
+      control.report.errors.map((e) => `${e.where}: ${e.message}`).join("\n"));
+
+    const problems = [];
+    for (const id of reserved) {
+      const { report } = await validateTree(treeFor(id));
+      const hits = errorsMatching(report, `id ${JSON.stringify(id)} is reserved`);
+      if (hits.length !== 1) {
+        problems.push(`${id}: ${hits.length} reserved refusals, expected 1 — a stranger may list under it`);
+      } else if (report.errors.length !== 1) {
+        problems.push(
+          `${id}: refused ${report.errors.length} times over, so this tree no longer isolates the reserved rule ` +
+          `(${report.errors.map((e) => e.message).join("; ")})`);
+      }
+    }
+    // `assert` and not `assertEqual` here, and the difference is legibility
+    // rather than taste: assertEqual JSON-stringifies both sides, so thirty
+    // findings print as one line with `\n` in it. Watched, neutering the rule
+    // in tools/validate.mjs: the whole list arrived escaped on a single line.
+    assert(problems.length === 0,
+      `a reserved id was not refused by tools/validate.mjs, so it is free for a stranger to list under:\n` +
+      problems.join("\n"));
+  });
+
   await test("an id that is not a safe path component is rejected", async () => {
     const { report } = await validateTree(path.join(REPO_ROOT, "tests/fixtures/unsafe-id"));
     assert(errorsMatching(report, "not a safe path component").length >= 1,
