@@ -218,8 +218,20 @@ export function deriveListing(input) {
   // release.
   const addedAt = existingPlugin?.added_at ?? publishedAt.slice(0, 10);
 
+  // `source.repo` is a PLACEHOLDER here (registry plan B-T3.2, BOT-21).
+  //
+  // This function is handed the repository the submitter named. That is the
+  // only name the legacy path has, and the ownership check is what stands
+  // behind it — but it is a name a person typed, and from R3 the name a
+  // listing records comes from the certificate's `.12` and from nowhere else.
+  // `bot/lib/identity.mjs`'s `applyIdentity` overwrites this and every
+  // `release.repo` with it before anything is committed. The two are equal on
+  // today's path, because the attestation check refuses a certificate naming
+  // another repository; writing it down is what stops a later path — a
+  // service answer, a lease, an artifact — from supplying the name instead
+  // and passing every test while doing it.
   const plugin = {
-    $comment: `Derived from ${repo}@${tag} by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which the submitter names and the ownership check proves.`,
+    $comment: `Derived from ${repo}@${tag} by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.`,
     schema: "astra.registry.plugin/1",
     id: facts.id,
     name: facts.name,

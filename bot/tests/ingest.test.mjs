@@ -41,6 +41,7 @@ import { checkDisplayName, checkNames, foldDisplayName, loadTrademarks } from ".
 import { scriptsUsed } from "../../tools/lib/ids.mjs";
 import { extractSignerFacts, loadRootKeys, loadWorkflowAllowlist } from "../lib/attestation.mjs";
 import * as gh from "../lib/github.mjs";
+import { applyIdentity } from "../lib/identity.mjs";
 import { proveOwnership } from "../lib/ownership.mjs";
 import { isRecheckCommand, parseIssueForm } from "../lib/issue.mjs";
 import { findProbe, runProbe } from "../lib/probe.mjs";
@@ -823,6 +824,40 @@ await test("a 404 is the only thing that means there is no attestation", async (
     ghFail: "Error: HTTP 404: Not Found (https://api.github.com/repos/a-stranger/dice-roller/attestations/sha256:abc)",
   });
   assertBlockedWith(r, "E_ATTESTATION_MISSING");
+});
+
+section("identity, from the certificate (B-T3.2)");
+
+await test("the listing's repository name comes from .12, not from the submission", async () => {
+  const r = await run({ assets: [conformingAsset()], root: registryWith({}) });
+  assert(!r.blocked, JSON.stringify(errorCodes(r)));
+  assertEqual(r.derived.plugin.source.repo, REPO, "source.repo");
+  assertEqual(r.derived.version.release.repo, REPO, "release.repo");
+  // The two are equal here because the attestation check refuses a
+  // certificate naming another repository — so the pipeline cannot, by
+  // itself, tell which of the two strings was used. That is why the rule is
+  // asserted directly below as well, on a listing where they differ.
+  const applied = applyIdentity(
+    { plugin: { source: { kind: "github", repo: "submitter/typed-this" } }, version: { release: { repo: "submitter/typed-this" } } },
+    { repo: "certificate/says-this" },
+  );
+  assert(applied.ok, applied.reason);
+  assertEqual(applied.derived.plugin.source.repo, "certificate/says-this", "BOT-21: .12 wins over the submission");
+  assertEqual(applied.derived.version.release.repo, "certificate/says-this", "and over every release.repo");
+});
+
+await test("the run returns the identity the certificate stated", async () => {
+  const r = await run({ assets: [conformingAsset()], root: registryWith({}) });
+  assertEqual(r.identity.repository_id, FIXTURE_REPOSITORY_ID, ".15 travels to the caller");
+  assertEqual(r.identity.repository_owner_id, FIXTURE_OWNER_ID, "and .17");
+  assertEqual(r.identity.repo, REPO, "and .12's owner/name");
+  assertEqual(r.identity.run_id, "1", "and the run id out of .21, for MIG-31");
+});
+
+await test("INV-14 — a reserved id is refused whichever path asked", async () => {
+  const r = await run({ assets: [conformingAsset({ id: "astra" })] });
+  assert(r.blocked, JSON.stringify(codes(r)));
+  assert(errorCodes(r).some((c) => c.startsWith("E_ID_RESERVED")), JSON.stringify(errorCodes(r)));
 });
 
 section("GitHub, read by id (B-T1.3)");

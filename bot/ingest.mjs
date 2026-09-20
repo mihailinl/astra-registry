@@ -54,6 +54,7 @@ import { deriveListing } from "./lib/derive.mjs";
 import * as gh from "./lib/github.mjs";
 import { loadWorkflowAllowlist, verifyAttestation } from "./lib/attestation.mjs";
 import { checkBundlesAgree } from "./lib/certificate.mjs";
+import { applyIdentity, identityFromCertificate } from "./lib/identity.mjs";
 import { localeSignature } from "./lib/locales.mjs";
 import { checkDisplayName, checkNames, loadTrademarks } from "./lib/names.mjs";
 import { proveOwnership } from "./lib/ownership.mjs";
@@ -517,6 +518,23 @@ export async function ingest(opts, deps = {}) {
   });
   f.absorb(derived.findings, "metadata");
 
+  // ── the listing's repository name comes from the certificate (B-T3.2) ─────
+  //
+  // BOT-21: `source.repo` and every `release.repo` are `.12`'s owner/name, not
+  // the string the submitter typed. On this path the two are equal —
+  // `verifyAttestation` refuses a certificate naming another repository — and
+  // the point of doing it here anyway is that the listing's belief about where
+  // it came from now has exactly one source. `publish` does the same
+  // overwrite on the service path, from the same function.
+  const identity = identityFromCertificate(first.certificate ?? {});
+  if (identity.ok) {
+    const applied = applyIdentity(derived, identity);
+    if (applied.ok) {
+      derived.plugin = applied.derived.plugin;
+      derived.version = applied.derived.version;
+    }
+  }
+
   // ── the name rules, once per language the card is drawn in ────────────────
   //
   // `checkNames` above runs once, on `facts.name` — the English name out of
@@ -556,7 +574,7 @@ export async function ingest(opts, deps = {}) {
     }
   }
 
-  return finish(f, derived, opts);
+  return finish(f, derived, opts, identity.ok ? identity : null);
 }
 
 /**
@@ -643,13 +661,20 @@ function normaliseTime(value) {
   return `${(Number.isNaN(d.getTime()) ? new Date() : d).toISOString().slice(0, 19)}Z`;
 }
 
-function finish(f, derived, opts) {
+function finish(f, derived, opts, identity = null) {
   return {
     findings: f.items,
     derived,
     blocked: f.errors.length > 0,
     needsReview: f.reviews.length > 0,
     comment: renderComment(f, derived, opts),
+    // What the certificate said about where these bytes came from: `.12`'s
+    // owner/name, `.15`, `.17`, the attested commit and `.21`'s run. Returned
+    // rather than printed, because its readers are programs — B-T3.3a's
+    // identity comparison and MIG-31's actor read — and because a report that
+    // recited two repository ids at a stranger would be a report nobody
+    // finishes. Null when the run never got to a verified certificate.
+    identity,
   };
 }
 
