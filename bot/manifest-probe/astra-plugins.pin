@@ -129,6 +129,46 @@ env:
 # A note for the next person to move this line, learned by getting it wrong on
 # this very bump: grepping the file for the OUTGOING 40-hex sha finds nothing,
 # because the prose above carries the 7-character form. Search for both.
+#
+# Bumped to `5291f29` for `testdata/locales/digest-vectors.json`, which
+# `checkLocaleDigestVectors` in tools/validate.mjs reads. Same pairing as the
+# E19 bump and for the same reason, one level up: that one paired a MAP with a
+# fixture, this one pairs a CHECK with the table it checks against. Without the
+# bump the check reports `NOT verified` and `build-index.yml` turns that into an
+# `::error::`, so the two cannot be separated later by somebody tidying.
+#
+# The table is the first thing that has ever compared the two implementations of
+# the `locales.lock.json` digest — `digest` in AstraPlugins writes those values,
+# `englishDigest` here reads them, and nothing compared them. Its 32 digests were
+# produced by coreutils `sha256sum` rather than by either, which is what makes
+# this a comparison and not a third opinion.
+#
+# Measured both ways rather than argued:
+#
+#   $ ASTRA_PLUGINS_DIR=<AstraPlugins@bc51241> node tools/validate.mjs --allow-staging
+#   note  ... NOT verified: the checkout has testdata/locales but no
+#         digest-vectors.json                                              FAIL
+#   $ ASTRA_PLUGINS_DIR=<AstraPlugins@5291f29> node tools/validate.mjs --allow-staging
+#   note  ... 32 lock digest vector(s) verified against englishDigest;
+#         5 non-collision pair(s) hold
+#   PASS  22 plugin(s), 0 error(s)
+#
+# Safe to move, checked rather than assumed — the question this file has asked on
+# every previous bump: `astra-plugin-cli/vendor/astra-plugin-manifest` and
+# `.github/workflows/plugin-release.yml` are BYTE-IDENTICAL between `bc51241` and
+# `5291f29` (`git diff --stat` empty for both paths), so no manifest is judged
+# differently and no attestation changes meaning. What did move upstream in those
+# 62 commits and is read here: `spec/reserved-ids.yaml` grew, and
+# moderation-coverage.yml reads that file off AstraPlugins' DEFAULT BRANCH with
+# `git ls-remote` rather than off this pin, so it was already reading the grown
+# file before this line moved.
+#
+# `5291f29` is a merge commit on AstraPlugins master, not a branch head — the
+# rule the `bc51241` note above records having got wrong once.
+#
+# R3 has not exited (no `log/rollout/*-exit.json` is on the tree; the code-paths
+# canary prints so on every run), so the operator acknowledgement this file
+# requires AFTER R3 does not apply to this bump.
 
-ASTRA_PLUGINS_REF=bc5124177fa0c14070f644d51cd298bf041e359b
+ASTRA_PLUGINS_REF=5291f29a22c337fb330cdbe880b6ed000d7fc216
 ASTRA_PLUGINS_URL=https://github.com/mihailinl/AstraPlugins.git
