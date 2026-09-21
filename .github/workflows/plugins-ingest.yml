@@ -626,14 +626,36 @@ jobs:
           pattern: listing-*
           path: listings
 
-      - name: "Decide, and name the alerts that must go out first (not built: B-T3.3a, B-T3.3b, B-T3.3c)"
+      # B-T3.3c is NOT in this list, and the correction is the point.
+      #
+      # This step landed naming three tasks as unbuilt. One of them — B-T3.3c —
+      # had merged **forty-six minutes earlier** (`4b5c331`'s ancestor at
+      # 09:37Z; this file at 10:23Z), in a merge order the coordinator chose. So
+      # the tree carried a workflow asserting a task was not built and the task
+      # sitting beside it, which is the same defect as a module header stating
+      # an absence that had stopped being true — four of those were found and
+      # fixed the same day, and this is the fifth wearing different clothes.
+      #
+      # What is honestly still missing is B-T3.3a's remainder and B-T3.3b,
+      # which is blocked on B-T3.10's contract version.
+      #
+      # **B-T3.3c's two service-path rules are written and have no caller, and
+      # THIS STEP is the caller they are waiting for.** `alreadyPublished` and
+      # `noListingNoBinding` are exported from `bot/decide.mjs` and referenced
+      # nowhere outside `bot/tests/policy.test.mjs`; `bot/decide.mjs` itself is
+      # invoked from exactly one place, `ingest.yml`'s legacy path, whose
+      # sources are issue/ping/dispatch/legacy/backstop/queue — never the
+      # `panel` or `ci` that `noListingNoBinding` gates on. So B-T3.3c's rules
+      # are true of a function and not yet true of the registry, and whoever
+      # builds this step wires them rather than writing them again.
+      - name: "Decide, and name the alerts that must go out first (not built: B-T3.3a, B-T3.3b)"
         id: decide
         env:
           ASTRA_VERIFIED: ${{ needs.verify.outputs.verified }}
           ASTRA_OUTCOME: ${{ needs.ask.outputs.outcome }}
         run: |
           set -euo pipefail
-          echo "::error::B-T3.3a, B-T3.3b and B-T3.3c build this step: the binding and identity decisions, the approvals, stops, notices, windows and deny records, and the no-record outcomes. It refuses any BOT-21 identity value that arrives from the facts file rather than from ASTRA_VERIFIED, and it names TRUST-14's alerts before any commit that publishes."
+          echo "::error::B-T3.3a's remainder and B-T3.3b build this step: the binding and identity decisions, the approvals, stops, notices, windows and deny records. It refuses any BOT-21 identity value that arrives from the facts file rather than from ASTRA_VERIFIED, and it names TRUST-14's alerts before any commit that publishes. B-T3.3c's no-record outcomes are already written — bot/decide.mjs exports alreadyPublished and noListingNoBinding, and this step is the caller they have been waiting for; wire them, do not rewrite them."
           exit 1
 
       # One artifact, one exact name, and it is the only thing the job holding
