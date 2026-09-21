@@ -675,8 +675,15 @@ test("M-T5.7: no reserved name or prefix ever reaches the verdict's `ids`", asyn
     "the drift alarm arrived as a complaint about the alarm");
 });
 
-test("M-T5.7: the file AP-7 has not written yet is pending, and names AP-7", async () => {
+test("M-T5.7: before AP-7, an absent file was pending and named AP-7", async () => {
+  // `ap7Landed: false` is passed explicitly now, because the constant it
+  // overrides was flipped on 2026-09-20. The branch is still in the code and
+  // still worth pinning: it is the shape of every rule this estate writes
+  // against another repository's unlanded task, and getting it wrong in the
+  // other direction — red from the day it lands until the day the other task
+  // does — is what TRUST-45 calls the rule somebody switches off in between.
   const r = await mirrorRule(REPO, {
+    ap7Landed: false,
     readSpec: async () => ({ kind: "absent", url: SPEC_URL, branch: "master" }),
   });
   assert.equal(r.status, "pending", "a rule red from today until R3 is a rule somebody switches off");
@@ -694,13 +701,21 @@ test("M-T5.7: once AP-7 has landed, the same 404 is a deletion and is red", asyn
   assert.match(codesOf(r), /RESERVED_MIRROR_SPEC_DELETED/);
 });
 
-test("M-T5.7: a green run while AP7_LANDED is false says so on every run", async () => {
-  // The one hand-maintained fact in this rule, and the thing that makes a
-  // later deletion red. It nags in `detail` rather than in a code, because a
-  // constant nobody has flipped is not an estate emergency.
-  assert.equal(AP7_LANDED, false, "AP-7 has landed; this assertion and the nag below both retire");
+test("M-T5.7: AP7_LANDED is flipped, so an absent mirror is a deletion and not a wait", async () => {
+  // This test used to assert the constant was `false` and that the rule nagged
+  // about it on every green run, with the message "AP-7 has landed; this
+  // assertion and the nag below both retire". AP-7 landed as AstraPlugins
+  // `1b8849c` on 2026-09-20 and both retired, so what it pins now is the other
+  // side: the constant is true, and the rule no longer nags.
+  //
+  // The design worth keeping is that the nag is what found it. A constant that
+  // records a fact living in another repository's history cannot verify
+  // itself, so instead it was written to say, on every successful run, that it
+  // had not been checked — the only thing a hand-maintained fact can do for
+  // itself, and strictly better than a comment nobody executes.
+  assert.equal(AP7_LANDED, true, "AP-7 landed 2026-09-20; a 404 is now a deletion");
   const r = await mirrorRule(REPO, { readSpec: serves(specYaml({ reserved: ours.reserved, prefixes: ours.prefixes })) });
-  assert.match(r.detail.join("\n"), /AP7_LANDED/);
+  assert.doesNotMatch(r.detail.join("\n"), /AP7_LANDED/, "the rule still nags about a constant that has been flipped");
 });
 
 test("M-T5.7: an unresolvable default branch and an unreachable file both name the URL", async () => {

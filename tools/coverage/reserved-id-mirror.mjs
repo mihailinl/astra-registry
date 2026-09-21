@@ -98,8 +98,16 @@ export const ASTRAPLUGINS_URL = "https://github.com/mihailinl/AstraPlugins.git";
  *
  * Flip it in the registry commit that follows AP-7 (the plan's commit order:
  * M-T1.1, then AP-7, then this alarm — this alarm landed first, in wave 1).
+ *
+ * **Flipped 2026-09-20.** AP-7 landed on AstraPlugins `master` as `1b8849c`,
+ * and `spec/reserved-ids.yaml` is there. Until this line moved, the rule read
+ * its own staleness out loud on every run — *"AP-7 has landed, this run read
+ * the file, and `AP7_LANDED` is still false, so a DELETION of the mirror would
+ * report as `pending` rather than red. Flip it."* That nag is what found it,
+ * not a person: the constant was designed to notice it had gone stale, which
+ * is the one thing a hand-maintained fact in this estate can do for itself.
  */
-export const AP7_LANDED = false;
+export const AP7_LANDED = true;
 
 /** Both network calls. Long enough for a slow forge, short enough for a 15-minute cron. */
 const TIMEOUT_MS = 20_000;
