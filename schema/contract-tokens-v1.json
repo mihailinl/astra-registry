@@ -1,0 +1,4291 @@
+{
+  "contract_version": "0.19.0",
+  "source_commit": "c473db9c2b98557925892043a1e8a5e3258f5752",
+  "source_file": "astra-plugins-ops dev/server-registry-contract.md",
+  "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
+  "readme": [
+    "SCOPE-7's token file. Generated from the contract and from nothing else; no value here was invented.",
+    "People read the contract, tests read this file: the plugins service, the registry (SCOPE-9) and a new client (SCOPE-10) each fail their tests on a value this file does not list for them, and on one it lists for them that they do not handle and that is neither `reserved` nor `retired` (SCOPE-8).",
+    "`emitter` and `acceptor` are arrays of party strings from `parties`; §0.8's Callers letters map onto them as C client, P panel, B bot, G guest. `registry` covers the bot and the signer where an entry is not the bot's alone.",
+    "A `service-only` entry is listed with no members and for no party: it is outside SCOPE-8's two-way test, and neither the registry's scan nor the client's expects or forbids one.",
+    "`pending` is what SCOPE-7 says this file carries and the contract does not yet record. Each record names what is missing, who owes it, the version that lands it and what the floor asserts until then. The generator refuses to run once the contract records one of them and no extractor has been written."
+  ],
+  "parties": [
+    "client",
+    "panel",
+    "bot",
+    "guest",
+    "service",
+    "registry",
+    "author-ci"
+  ],
+  "states": [
+    "live",
+    "until <step>",
+    "reserved",
+    "service-only",
+    "retired"
+  ],
+  "rollout_markers": {
+    "read": false,
+    "why": "no --markers given, so no entry was moved to `retired` and none may be",
+    "steps_exited": null
+  },
+  "schedules": [
+    {
+      "id": "schedule:ingest",
+      "kind": "schedule",
+      "name": "ingest",
+      "requirement": "BOT-51",
+      "workflow": ".github/workflows/plugins-ingest.yml",
+      "interval_seconds": 600,
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "BOT-51; amendment A6",
+      "requirements": [
+        "BOT-51",
+        "SCOPE-1",
+        "SCOPE-7",
+        "BOT-47",
+        "BOT-76",
+        "BOT-84"
+      ]
+    },
+    {
+      "id": "schedule:moderation",
+      "kind": "schedule",
+      "name": "moderation",
+      "requirement": "BOT-83",
+      "workflow": ".github/workflows/plugins-moderation.yml",
+      "interval_seconds": 600,
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "BOT-83; amendment A6",
+      "requirements": [
+        "BOT-83",
+        "SCOPE-1",
+        "SCOPE-7",
+        "BOT-47",
+        "BOT-76",
+        "BOT-84"
+      ]
+    }
+  ],
+  "entries": [
+    {
+      "id": "token:unauthenticated",
+      "kind": "refusal_token",
+      "name": "unauthenticated",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "client",
+        "panel"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:not_owner",
+      "kind": "refusal_token",
+      "name": "not_owner",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "client",
+        "panel"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:account_restricted",
+      "kind": "refusal_token",
+      "name": "account_restricted",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "client",
+        "panel"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:unavailable",
+      "kind": "refusal_token",
+      "name": "unavailable",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "client",
+        "panel",
+        "bot",
+        "guest",
+        "author-ci"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:rate_limited",
+      "kind": "refusal_token",
+      "name": "rate_limited",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "client",
+        "panel",
+        "bot",
+        "guest",
+        "author-ci"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:invalid",
+      "kind": "refusal_token",
+      "name": "invalid",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "client",
+        "panel",
+        "bot",
+        "author-ci"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:not_eligible",
+      "kind": "refusal_token",
+      "name": "not_eligible",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "client"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:own_plugin",
+      "kind": "refusal_token",
+      "name": "own_plugin",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "client"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:plugin_not_listed",
+      "kind": "refusal_token",
+      "name": "plugin_not_listed",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "client",
+        "panel",
+        "guest"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:no_binding",
+      "kind": "refusal_token",
+      "name": "no_binding",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:tag_stopped",
+      "kind": "refusal_token",
+      "name": "tag_stopped",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:too_late",
+      "kind": "refusal_token",
+      "name": "too_late",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:state_refused",
+      "kind": "refusal_token",
+      "name": "state_refused",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:not_moderator",
+      "kind": "refusal_token",
+      "name": "not_moderator",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:decision_refused",
+      "kind": "refusal_token",
+      "name": "decision_refused",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:too_early",
+      "kind": "refusal_token",
+      "name": "too_early",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:token_refused",
+      "kind": "refusal_token",
+      "name": "token_refused",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot",
+        "author-ci"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:replay",
+      "kind": "refusal_token",
+      "name": "replay",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot",
+        "author-ci"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:lease_not_held",
+      "kind": "refusal_token",
+      "name": "lease_not_held",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:conflict",
+      "kind": "refusal_token",
+      "name": "conflict",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "list:states:submission",
+      "kind": "closed_list",
+      "name": "submission states",
+      "values": [
+        "received",
+        "checking",
+        "held",
+        "approved",
+        "delayed",
+        "published",
+        "served",
+        "refused",
+        "stopped"
+      ],
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.3",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:states:listing",
+      "kind": "closed_list",
+      "name": "listing states",
+      "values": [
+        "listed",
+        "unlisted",
+        "grandfathered",
+        "frozen"
+      ],
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.3",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:states:version",
+      "kind": "closed_list",
+      "name": "version states",
+      "values": [
+        "yanked"
+      ],
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.3",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:states:advisory",
+      "kind": "closed_list",
+      "name": "advisory states",
+      "values": [
+        "deprecated",
+        "revoked"
+      ],
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.3",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:states:binding",
+      "kind": "closed_list",
+      "name": "binding states",
+      "values": [
+        "minted",
+        "seen",
+        "bound",
+        "revoked",
+        "expired",
+        "superseded"
+      ],
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.3",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:states:report",
+      "kind": "closed_list",
+      "name": "report states",
+      "values": [
+        "received",
+        "acknowledged",
+        "actioned",
+        "dismissed"
+      ],
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "client",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.3",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:states:appeal",
+      "kind": "closed_list",
+      "name": "appeal states",
+      "values": [
+        "received",
+        "decided"
+      ],
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "client",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.3",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:events",
+      "kind": "closed_list",
+      "name": "events",
+      "values": [
+        "install",
+        "update",
+        "rating",
+        "report",
+        "appeal",
+        "stop"
+      ],
+      "emitter": [
+        "client",
+        "panel"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "B.5",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:notice_kinds",
+      "kind": "closed_list",
+      "name": "notice kinds",
+      "values": [
+        "notice.held",
+        "notice.delayed",
+        "notice.published",
+        "notice.refused",
+        "notice.stopped",
+        "notice.moderated",
+        "notice.binding",
+        "notice.sign_in"
+      ],
+      "rows": [
+        {
+          "kind": "notice.held",
+          "on": "→ `held`",
+          "to": "recipients (FLOW-69)"
+        },
+        {
+          "kind": "notice.delayed",
+          "on": "→ `delayed`",
+          "to": "recipients"
+        },
+        {
+          "kind": "notice.published",
+          "on": "→ `published`",
+          "to": "recipients"
+        },
+        {
+          "kind": "notice.refused",
+          "on": "→ `refused`, by the bot or `M_REJECT`",
+          "to": "recipients, else submitter"
+        },
+        {
+          "kind": "notice.stopped",
+          "on": "→ `stopped`",
+          "to": "recipients; from `received`, bound account and actor"
+        },
+        {
+          "kind": "notice.moderated",
+          "on": "MOD-36's decisions",
+          "to": "bound account; MOD-37 for a listing with none"
+        },
+        {
+          "kind": "notice.binding",
+          "on": "bound; changed (ID-41 row 6); revoked (`A_BINDING_REVOKE`, `M_BINDING_REVOKE`, ID-21)",
+          "to": "bound: the new bound account; changed: the previous and incoming accounts; revoked: the account whose token was revoked"
+        },
+        {
+          "kind": "notice.sign_in",
+          "on": "a reported `W_ELIGIBILITY_UNREADABLE` wait for an account whose newest verified reading is aged under ID-7 (past either bound), at most once a day per submission",
+          "to": "the account whose reading is aged (ID-7)"
+        }
+      ],
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "client",
+        "panel"
+      ],
+      "state": "live",
+      "source": "§3.6",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-35"
+      ]
+    },
+    {
+      "id": "code:E_OWNERSHIP_UNPROVEN",
+      "kind": "reason_code",
+      "name": "E_OWNERSHIP_UNPROVEN",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "until R7",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:R_FIRST_BINDING",
+      "kind": "reason_code",
+      "name": "R_FIRST_BINDING",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:R_BINDING_CHANGED",
+      "kind": "reason_code",
+      "name": "R_BINDING_CHANGED",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:P_DELAY_WAIVED_BY_COMMAND",
+      "kind": "reason_code",
+      "name": "P_DELAY_WAIVED_BY_COMMAND",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "until R3",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:P_FIRST_LISTING_APPROVED",
+      "kind": "reason_code",
+      "name": "P_FIRST_LISTING_APPROVED",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "until R3",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:B_UNBOUND",
+      "kind": "reason_code",
+      "name": "B_UNBOUND",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:B_BINDING_MALFORMED",
+      "kind": "reason_code",
+      "name": "B_BINDING_MALFORMED",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:B_BINDING_UNUSABLE",
+      "kind": "reason_code",
+      "name": "B_BINDING_UNUSABLE",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:B_BINDING_INVALID",
+      "kind": "reason_code",
+      "name": "B_BINDING_INVALID",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:B_ACCOUNT_INELIGIBLE",
+      "kind": "reason_code",
+      "name": "B_ACCOUNT_INELIGIBLE",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:B_OWNER_CHANGED",
+      "kind": "reason_code",
+      "name": "B_OWNER_CHANGED",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:B_REPOSITORY_RECYCLED",
+      "kind": "reason_code",
+      "name": "B_REPOSITORY_RECYCLED",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:M_APPROVE",
+      "kind": "reason_code",
+      "name": "M_APPROVE",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:M_REJECT",
+      "kind": "reason_code",
+      "name": "M_REJECT",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:M_APPEAL",
+      "kind": "reason_code",
+      "name": "M_APPEAL",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:A_STOP",
+      "kind": "reason_code",
+      "name": "A_STOP",
+      "emitter": [
+        "client",
+        "panel"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:A_WITHDRAW",
+      "kind": "reason_code",
+      "name": "A_WITHDRAW",
+      "emitter": [
+        "client",
+        "panel"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:A_BINDING_REVOKE",
+      "kind": "reason_code",
+      "name": "A_BINDING_REVOKE",
+      "emitter": [
+        "client",
+        "panel"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:A_REMOVAL_REQUEST",
+      "kind": "reason_code",
+      "name": "A_REMOVAL_REQUEST",
+      "emitter": [
+        "client",
+        "panel"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ],
+      "fixed_reason": null,
+      "fixed_reason_pending": "fixed_reasons"
+    },
+    {
+      "id": "code:A_YANK",
+      "kind": "reason_code",
+      "name": "A_YANK",
+      "emitter": [
+        "client",
+        "panel"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ],
+      "fixed_reason": null,
+      "fixed_reason_pending": "fixed_reasons"
+    },
+    {
+      "id": "wait:W_LEASE_EXPIRED",
+      "kind": "wait",
+      "name": "W_LEASE_EXPIRED",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "never_in_git": true,
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "wait:W_ELIGIBILITY_UNREADABLE",
+      "kind": "wait",
+      "name": "W_ELIGIBILITY_UNREADABLE",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "never_in_git": true,
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "wait:W_NOTICE_PENDING",
+      "kind": "wait",
+      "name": "W_NOTICE_PENDING",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "never_in_git": true,
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "wait:W_GITHUB_RATE_LIMITED",
+      "kind": "wait",
+      "name": "W_GITHUB_RATE_LIMITED",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "never_in_git": true,
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "wait:W_SERVICE_UNREACHABLE",
+      "kind": "wait",
+      "name": "W_SERVICE_UNREACHABLE",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "never_in_git": true,
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "wait:W_MODERATION_HOLD",
+      "kind": "wait",
+      "name": "W_MODERATION_HOLD",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "never_in_git": true,
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "wait:W_ALERT_UNDELIVERED",
+      "kind": "wait",
+      "name": "W_ALERT_UNDELIVERED",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "never_in_git": true,
+      "fix": "registry",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "wait:W_OPERATOR_WINDOW",
+      "kind": "wait",
+      "name": "W_OPERATOR_WINDOW",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "never_in_git": true,
+      "fix": "registry",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "wait:W_REGISTRY_UNACKNOWLEDGED",
+      "kind": "wait",
+      "name": "W_REGISTRY_UNACKNOWLEDGED",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "never_in_git": true,
+      "fix": "registry",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "list:appeal_outcome",
+      "kind": "closed_list",
+      "name": "appeal outcome",
+      "values": [
+        "stands",
+        "reversed"
+      ],
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel",
+        "guest"
+      ],
+      "state": "live",
+      "source": "DEC-7; B.3's appeal states",
+      "requirements": [
+        "DEC-7",
+        "MOD-33",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:decision_actors",
+      "kind": "closed_list",
+      "name": "decision-record actors",
+      "values": [
+        "bot",
+        "moderator",
+        "author",
+        "operator",
+        "system"
+      ],
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel",
+        "guest"
+      ],
+      "state": "live",
+      "source": "DEC-7",
+      "requirements": [
+        "DEC-7",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:decision_triggers",
+      "kind": "closed_list",
+      "name": "decision-record triggers",
+      "values": [
+        "panel",
+        "ci",
+        "poll",
+        "drain",
+        "approval",
+        "moderation",
+        "stop",
+        "appeal",
+        "migration",
+        "issue",
+        "ping",
+        "dispatch",
+        "legacy"
+      ],
+      "per_value_state": {
+        "issue": "until R6",
+        "ping": "until R6",
+        "dispatch": "until R6",
+        "legacy": "until R6"
+      },
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel",
+        "guest"
+      ],
+      "state": "live",
+      "source": "DEC-7",
+      "requirements": [
+        "DEC-7",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "code:M_YANK",
+      "kind": "reason_code",
+      "name": "M_YANK",
+      "artefact": "`yanked`, log `yank`",
+      "emitter": [
+        "panel"
+      ],
+      "acceptor": [
+        "service",
+        "registry"
+      ],
+      "state": "live",
+      "source": "§7.2",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "code:M_DELIST",
+      "kind": "reason_code",
+      "name": "M_DELIST",
+      "artefact": "`unlisted`, log `delist`; no updates",
+      "emitter": [
+        "panel"
+      ],
+      "acceptor": [
+        "service",
+        "registry"
+      ],
+      "state": "live",
+      "source": "§7.2",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "code:M_RELIST",
+      "kind": "reason_code",
+      "name": "M_RELIST",
+      "artefact": "`unlisted` removed, log `relist`",
+      "emitter": [
+        "panel"
+      ],
+      "acceptor": [
+        "service",
+        "registry"
+      ],
+      "state": "live",
+      "source": "§7.2",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "code:M_DEPRECATE",
+      "kind": "reason_code",
+      "name": "M_DEPRECATE",
+      "artefact": "advisory `warn`, log `deprecate`; badged",
+      "emitter": [
+        "panel"
+      ],
+      "acceptor": [
+        "service",
+        "registry"
+      ],
+      "state": "live",
+      "source": "§7.2",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "code:M_REVOKE",
+      "kind": "reason_code",
+      "name": "M_REVOKE",
+      "artefact": "advisory with the decision's `action`, log `revoke`; refused or stopped",
+      "emitter": [
+        "panel"
+      ],
+      "acceptor": [
+        "service",
+        "registry"
+      ],
+      "state": "live",
+      "source": "§7.2",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "code:M_UNREVOKE",
+      "kind": "reason_code",
+      "name": "M_UNREVOKE",
+      "artefact": "advisory deleted, log `unrevoke`; lifted at a higher serial",
+      "emitter": [
+        "panel"
+      ],
+      "acceptor": [
+        "service",
+        "registry"
+      ],
+      "state": "live",
+      "source": "§7.2",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "code:M_BINDING_REVOKE",
+      "kind": "reason_code",
+      "name": "M_BINDING_REVOKE",
+      "artefact": "none; the next release gets `B_BINDING_UNUSABLE`",
+      "emitter": [
+        "panel"
+      ],
+      "acceptor": [
+        "service",
+        "registry"
+      ],
+      "state": "live",
+      "source": "§7.2",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:moderation_categories",
+      "kind": "closed_list",
+      "name": "moderation categories",
+      "values": [
+        "review_passed",
+        "malicious",
+        "account_compromise",
+        "account_sanction",
+        "privacy",
+        "impersonation",
+        "broken",
+        "security_defect",
+        "licence",
+        "naming",
+        "legal",
+        "author_request",
+        "error",
+        "appeal_reversed",
+        "path_test"
+      ],
+      "emitter": [
+        "panel"
+      ],
+      "acceptor": [
+        "service",
+        "registry",
+        "guest"
+      ],
+      "state": "live",
+      "source": "§7.2",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:result_acknowledgements",
+      "kind": "closed_list",
+      "name": "result_acknowledgements",
+      "values": [
+        "accepted",
+        "duplicate"
+      ],
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:service_decision_results",
+      "kind": "closed_list",
+      "name": "service_decision_results",
+      "values": [
+        "applied",
+        "held",
+        "cancelled",
+        "refused"
+      ],
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:service_decision_refusal_codes",
+      "kind": "closed_list",
+      "name": "service_decision_refusal_codes",
+      "values": [
+        "target_not_in_registry",
+        "kind_refused",
+        "relist_under_advisory",
+        "relist_unbound",
+        "relist_contained",
+        "reason_refused",
+        "target_changed"
+      ],
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:event_outcomes",
+      "kind": "closed_list",
+      "name": "event_outcomes",
+      "values": [
+        "accepted",
+        "invalid",
+        "too_old"
+      ],
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "client"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:token_state",
+      "kind": "closed_list",
+      "name": "token_state",
+      "values": [
+        "minted",
+        "seen",
+        "bound",
+        "revoked",
+        "expired",
+        "superseded",
+        "unknown"
+      ],
+      "resolved_from": "B.3's binding states, as §0.8 words it, plus `unknown`",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists; B.3",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "ID-2"
+      ]
+    },
+    {
+      "id": "list:eligibility",
+      "kind": "closed_list",
+      "name": "eligibility",
+      "values": [
+        "eligible",
+        "ineligible",
+        "unreadable"
+      ],
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:stop_status",
+      "kind": "closed_list",
+      "name": "stop_status",
+      "values": [
+        "no_stop",
+        "stopped",
+        "unavailable"
+      ],
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:notice_status",
+      "kind": "closed_list",
+      "name": "notice_status",
+      "values": [
+        "sent",
+        "previous_sent",
+        "previous_ended",
+        "pending",
+        "none_unbound"
+      ],
+      "members": [
+        "accepted_at",
+        "ended_at"
+      ],
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:notice_query_kind",
+      "kind": "closed_list",
+      "name": "notice_query_kind",
+      "values": [
+        "delayed",
+        "approved",
+        "binding_changed"
+      ],
+      "emitter": [
+        "bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:reason_code_fix",
+      "kind": "closed_list",
+      "name": "reason_code_fix",
+      "values": [
+        "recheck",
+        "new_tag",
+        "moderator",
+        "registry",
+        "none"
+      ],
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "panel",
+        "service"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:advisory_severity",
+      "kind": "closed_list",
+      "name": "advisory_severity",
+      "values": [
+        "critical",
+        "high",
+        "moderate",
+        "low"
+      ],
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "client"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:revoke_action",
+      "kind": "closed_list",
+      "name": "revoke_action",
+      "values": [
+        "block_install",
+        "disable"
+      ],
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "client"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:report_reasons",
+      "kind": "closed_list",
+      "name": "report_reasons",
+      "values": [
+        "malware",
+        "privacy",
+        "impersonation",
+        "broken",
+        "other"
+      ],
+      "emitter": [
+        "client"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "member:shadow",
+      "kind": "required_member",
+      "name": "shadow",
+      "applies_to": "every §4.2 success body except `astra.plugins.wake-ack/1`",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot"
+      ],
+      "state": "live",
+      "source": "§0.8; §4.2's Shadow paragraph; ID-71",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "DEC-4"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.author-wake-result/1",
+      "kind": "schema",
+      "name": "astra.plugins.author-wake-result/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "author-ci"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "ID-32, stated as literal bytes",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.author-wake/1",
+      "kind": "schema",
+      "name": "astra.plugins.author-wake/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "author-ci"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "ID-32, stated as literal bytes",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.bot-ack/1",
+      "kind": "schema",
+      "name": "astra.plugins.bot-ack/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "shadow",
+          "required": true
+        },
+        {
+          "name": "outcome",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot"
+      ],
+      "source": "§4.2, the request and success bodies",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.bot-claim/1",
+      "kind": "schema",
+      "name": "astra.plugins.bot-claim/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "wanted",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "§4.2, the request and success bodies",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.bot-gates-query/1",
+      "kind": "schema",
+      "name": "astra.plugins.bot-gates-query/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "items",
+          "required": true,
+          "of": [
+            "submission_id",
+            "fingerprint"
+          ]
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "§4.2, the request and success bodies",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.bot-gates/1",
+      "kind": "schema",
+      "name": "astra.plugins.bot-gates/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "shadow",
+          "required": true
+        },
+        {
+          "name": "items",
+          "required": true,
+          "of": [
+            "submission_id",
+            "fingerprint",
+            "stop_status",
+            "decisions"
+          ]
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot"
+      ],
+      "source": "§4.2, the request and success bodies",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.bot-leases/1",
+      "kind": "schema",
+      "name": "astra.plugins.bot-leases/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "shadow",
+          "required": true
+        },
+        {
+          "name": "leases",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot"
+      ],
+      "source": "§4.2, the request and success bodies",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.bot-moderation-work/1",
+      "kind": "schema",
+      "name": "astra.plugins.bot-moderation-work/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "shadow",
+          "required": true
+        },
+        {
+          "name": "submissions",
+          "required": true
+        },
+        {
+          "name": "service_decisions",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot"
+      ],
+      "source": "§4.2, the request and success bodies",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.bot-notice-query/1",
+      "kind": "schema",
+      "name": "astra.plugins.bot-notice-query/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "submission_id",
+          "required": true
+        },
+        {
+          "name": "fingerprint",
+          "required": true
+        },
+        {
+          "name": "kind",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "§4.2, the request and success bodies",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.bot-notice-status/1",
+      "kind": "schema",
+      "name": "astra.plugins.bot-notice-status/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "shadow",
+          "required": true
+        },
+        {
+          "name": "status",
+          "required": true
+        },
+        {
+          "name": "accepted_at",
+          "required": false
+        },
+        {
+          "name": "ended_at",
+          "required": false
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot"
+      ],
+      "source": "§4.2, the request and success bodies",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.bot-register/1",
+      "kind": "schema",
+      "name": "astra.plugins.bot-register/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "repo",
+          "required": true
+        },
+        {
+          "name": "repository_id",
+          "required": false
+        },
+        {
+          "name": "tag",
+          "required": true
+        },
+        {
+          "name": "trigger",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "§4.2, the request and success bodies",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.bot-registered/1",
+      "kind": "schema",
+      "name": "astra.plugins.bot-registered/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "shadow",
+          "required": true
+        },
+        {
+          "name": "submission_id",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot"
+      ],
+      "source": "§4.2, the request and success bodies",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.bot-result/1",
+      "kind": "schema",
+      "name": "astra.plugins.bot-result/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "submission_id",
+          "required": true
+        },
+        {
+          "name": "attempt",
+          "required": false,
+          "when": "ingest results"
+        },
+        {
+          "name": "state",
+          "required": true
+        },
+        {
+          "name": "wait",
+          "required": true,
+          "of": [
+            "code",
+            "started_at",
+            "cause",
+            "earliest_retry_at"
+          ]
+        },
+        {
+          "name": "reasons",
+          "required": true
+        },
+        {
+          "name": "decision_id",
+          "required": false,
+          "when": "when a record was written, or found already on `main` (registry plan: BOT-19, BOT-74)"
+        },
+        {
+          "name": "main_commit",
+          "required": false,
+          "when": "when a record was written, or found already on `main` (registry plan: BOT-19, BOT-74)"
+        },
+        {
+          "name": "read_commit",
+          "required": false,
+          "when": "with a FLOW-67 refusal (FLOW-78)"
+        },
+        {
+          "name": "plugin_id",
+          "required": false,
+          "when": "when derived"
+        },
+        {
+          "name": "version",
+          "required": false,
+          "when": "when derived"
+        },
+        {
+          "name": "tag",
+          "required": false,
+          "when": "when derived"
+        },
+        {
+          "name": "commit",
+          "required": false,
+          "when": "when derived"
+        },
+        {
+          "name": "artifact_digests",
+          "required": false,
+          "when": "when derived"
+        },
+        {
+          "name": "fingerprint",
+          "required": false,
+          "when": "when derived"
+        },
+        {
+          "name": "repository_id",
+          "required": false,
+          "when": "when derived"
+        },
+        {
+          "name": "repository_owner_id",
+          "required": false,
+          "when": "when derived"
+        },
+        {
+          "name": "recorded",
+          "required": false,
+          "when": "moderation-workflow results for a stop or `M_REJECT`",
+          "of": [
+            "fingerprint",
+            "decision_id"
+          ]
+        },
+        {
+          "name": "publish_after",
+          "required": false,
+          "when": "when `delayed`"
+        },
+        {
+          "name": "objection_window",
+          "required": false,
+          "when": "with an `R_BINDING_CHANGED` hold (ID-61)"
+        },
+        {
+          "name": "owner_file_commit",
+          "required": false,
+          "when": "with an `R_FIRST_BINDING` or `R_BINDING_CHANGED` hold"
+        },
+        {
+          "name": "owner_file_pull_request",
+          "required": false,
+          "when": "with an `R_FIRST_BINDING` or `R_BINDING_CHANGED` hold"
+        },
+        {
+          "name": "triggering_actor_id",
+          "required": false,
+          "when": "with an `R_FIRST_BINDING` hold of a `grandfathered` or `frozen` listing"
+        },
+        {
+          "name": "triggering_actor_is_owner",
+          "required": false,
+          "when": "with an `R_FIRST_BINDING` hold of a `grandfathered` or `frozen` listing"
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "§4.4",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.bot-service-decision-result/1",
+      "kind": "schema",
+      "name": "astra.plugins.bot-service-decision-result/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "service_decision_id",
+          "required": true
+        },
+        {
+          "name": "outcome",
+          "required": true
+        },
+        {
+          "name": "commit",
+          "required": true
+        },
+        {
+          "name": "refusal_code",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "§4.2, the request and success bodies",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.bot-verdict-query/1",
+      "kind": "schema",
+      "name": "astra.plugins.bot-verdict-query/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "submission_id",
+          "required": true
+        },
+        {
+          "name": "binding_token",
+          "required": true
+        },
+        {
+          "name": "repository_id",
+          "required": true
+        },
+        {
+          "name": "repository_owner_id",
+          "required": true
+        },
+        {
+          "name": "plugin_id",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "§4.2, the request and success bodies",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.bot-verdict/1",
+      "kind": "schema",
+      "name": "astra.plugins.bot-verdict/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "shadow",
+          "required": true
+        },
+        {
+          "name": "token_state",
+          "required": true
+        },
+        {
+          "name": "minted_for_repository",
+          "required": true
+        },
+        {
+          "name": "eligibility",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot"
+      ],
+      "source": "§4.2, the request and success bodies",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.card/1",
+      "kind": "schema",
+      "name": "astra.plugins.card/1",
+      "state": "reserved",
+      "members": [],
+      "members_recorded": false,
+      "emitter": [],
+      "acceptor": [],
+      "source": "§0.8, the schema clause",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.error/1",
+      "kind": "schema",
+      "name": "astra.plugins.error/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true
+        },
+        {
+          "name": "error",
+          "required": true
+        },
+        {
+          "name": "message",
+          "required": true
+        },
+        {
+          "name": "retry_after",
+          "required": false,
+          "when": "with `rate_limited` and `too_early`"
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "client",
+        "panel",
+        "bot",
+        "guest",
+        "author-ci"
+      ],
+      "source": "§0.8's refusal body",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.events-result/1",
+      "kind": "schema",
+      "name": "astra.plugins.events-result/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "results",
+          "required": true,
+          "of": [
+            "event_id",
+            "outcome"
+          ]
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "client"
+      ],
+      "source": "CLIENT-80's table",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.events/1",
+      "kind": "schema",
+      "name": "astra.plugins.events/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true
+        },
+        {
+          "name": "events",
+          "required": true,
+          "of": [
+            "event_id",
+            "kind",
+            "plugin_id",
+            "version",
+            "occurred_at"
+          ]
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "client"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "CLIENT-80's table",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.rating-state/1",
+      "kind": "schema",
+      "name": "astra.plugins.rating-state/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "plugin_id",
+          "required": true
+        },
+        {
+          "name": "value",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "client"
+      ],
+      "source": "CLIENT-80's table",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.rating/1",
+      "kind": "schema",
+      "name": "astra.plugins.rating/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true
+        },
+        {
+          "name": "plugin_id",
+          "required": true
+        },
+        {
+          "name": "value",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "client"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "CLIENT-46",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.report-list/1",
+      "kind": "schema",
+      "name": "astra.plugins.report-list/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "reports",
+          "required": true,
+          "of": [
+            "report_id",
+            "plugin_id",
+            "version",
+            "reason",
+            "state",
+            "outcome",
+            "received_at",
+            "updated_at"
+          ]
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "client"
+      ],
+      "source": "CLIENT-80's table",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.report-state/1",
+      "kind": "schema",
+      "name": "astra.plugins.report-state/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "report_id",
+          "required": true
+        },
+        {
+          "name": "state",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "client"
+      ],
+      "source": "CLIENT-80's table",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.report/1",
+      "kind": "schema",
+      "name": "astra.plugins.report/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true
+        },
+        {
+          "name": "report_id",
+          "required": true
+        },
+        {
+          "name": "plugin_id",
+          "required": true
+        },
+        {
+          "name": "version",
+          "required": true
+        },
+        {
+          "name": "reason",
+          "required": true
+        },
+        {
+          "name": "details",
+          "required": true
+        },
+        {
+          "name": "quarantined",
+          "required": true
+        },
+        {
+          "name": "install_source",
+          "required": true
+        },
+        {
+          "name": "astra_version",
+          "required": true
+        },
+        {
+          "name": "os",
+          "required": true
+        },
+        {
+          "name": "arch",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "client"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "CLIENT-60",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.stats/1",
+      "kind": "schema",
+      "name": "astra.plugins.stats/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true,
+          "nested": false
+        },
+        {
+          "name": "generated_at",
+          "required": true,
+          "nested": false
+        },
+        {
+          "name": "catalogue_serial",
+          "required": true,
+          "nested": false
+        },
+        {
+          "name": "plugins",
+          "required": true,
+          "nested": false
+        },
+        {
+          "name": "installs",
+          "required": true,
+          "nested": true
+        },
+        {
+          "name": "updates",
+          "required": true,
+          "nested": true
+        },
+        {
+          "name": "ratings",
+          "required": false,
+          "nested": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "client",
+        "panel",
+        "guest"
+      ],
+      "source": "Table 5-D",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.wake-ack/1",
+      "kind": "schema",
+      "name": "astra.plugins.wake-ack/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "bot"
+      ],
+      "source": "§4.2, the request and success bodies",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.registry.cutover/1",
+      "kind": "schema",
+      "name": "astra.registry.cutover/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true
+        },
+        {
+          "name": "cutover_at",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "B.4, an exact member list",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.registry.deadline/1",
+      "kind": "schema",
+      "name": "astra.registry.deadline/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true
+        },
+        {
+          "name": "deadline",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "B.4, an exact member list",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.registry.decision/1",
+      "kind": "schema",
+      "name": "astra.registry.decision/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "decision_id",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "submission_id",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "decided_at",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "actor",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "moderator",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "trigger",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "plugin_id",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "version",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "repo",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "repository_id",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "repository_owner_id",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "tag",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "commit",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "artifact_digests",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "fingerprint",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "state",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "reasons",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "category",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "appeal_of",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "outcome",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "declared_interest",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "publish_after",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "run",
+          "required": false,
+          "when": "absent where it does not apply"
+        },
+        {
+          "name": "advisory",
+          "required": false,
+          "when": "absent where it does not apply"
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel",
+        "guest"
+      ],
+      "source": "DEC-7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.registry.identity/1",
+      "kind": "schema",
+      "name": "astra.registry.identity/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true
+        },
+        {
+          "name": "plugin_id",
+          "required": true
+        },
+        {
+          "name": "repository_id",
+          "required": true
+        },
+        {
+          "name": "repository_owner_id",
+          "required": true
+        },
+        {
+          "name": "repo",
+          "required": true
+        },
+        {
+          "name": "token_hash",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "B.4's identity-record sentence",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.registry.index/1",
+      "kind": "schema",
+      "name": "astra.registry.index/1",
+      "state": "live",
+      "members": [],
+      "members_recorded": false,
+      "members_pending": "the contract names this schema and records no member list for it",
+      "emitter": [],
+      "acceptor": [],
+      "source": "§0.8, the schema clause",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.registry.migration-notice/1",
+      "kind": "schema",
+      "name": "astra.registry.migration-notice/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true
+        },
+        {
+          "name": "round",
+          "required": true
+        },
+        {
+          "name": "sent_at",
+          "required": true
+        },
+        {
+          "name": "cutover_planned_at",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "B.4, an exact member list",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.registry.moderation-log/1",
+      "kind": "schema",
+      "name": "astra.registry.moderation-log/1",
+      "state": "live",
+      "members": [],
+      "members_recorded": false,
+      "members_pending": "the contract names this schema and records no member list for it",
+      "emitter": [],
+      "acceptor": [],
+      "source": "§0.8, the schema clause",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.registry.plugin/1",
+      "kind": "schema",
+      "name": "astra.registry.plugin/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "source.repo",
+          "required": true
+        },
+        {
+          "name": "unlisted",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "B.4, the members other parties read",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.registry.publisher/1",
+      "kind": "schema",
+      "name": "astra.registry.publisher/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "owner",
+          "required": true
+        },
+        {
+          "name": "covers",
+          "required": true
+        },
+        {
+          "name": "tier",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "B.4, the members other parties read",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.registry.queue/1",
+      "kind": "schema",
+      "name": "astra.registry.queue/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "submission_id",
+          "required": true
+        },
+        {
+          "name": "decision_id",
+          "required": true
+        },
+        {
+          "name": "publish_after",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "B.4, the members other parties read",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.registry.revocations/1",
+      "kind": "schema",
+      "name": "astra.registry.revocations/1",
+      "state": "live",
+      "members": [],
+      "members_recorded": false,
+      "members_pending": "the contract names this schema and records no member list for it",
+      "emitter": [],
+      "acceptor": [],
+      "source": "§0.8, the schema clause",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.registry.root/1",
+      "kind": "schema",
+      "name": "astra.registry.root/1",
+      "state": "live",
+      "members": [],
+      "members_recorded": false,
+      "members_pending": "the contract names this schema and records no member list for it",
+      "emitter": [],
+      "acceptor": [],
+      "source": "§0.8, the schema clause",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.registry.trust/1",
+      "kind": "schema",
+      "name": "astra.registry.trust/1",
+      "state": "live",
+      "members": [],
+      "members_recorded": false,
+      "members_pending": "the contract names this schema and records no member list for it",
+      "emitter": [],
+      "acceptor": [],
+      "source": "§0.8, the schema clause",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.registry.version/1",
+      "kind": "schema",
+      "name": "astra.registry.version/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "yanked",
+          "required": true
+        },
+        {
+          "name": "release.repo",
+          "required": true
+        },
+        {
+          "name": "release.tag",
+          "required": true
+        },
+        {
+          "name": "artifacts.<platform>.sha256",
+          "required": true
+        },
+        {
+          "name": "artifacts",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "source": "B.4, the members other parties read",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "operation:client:events.submit",
+      "kind": "operation",
+      "name": "events.submit",
+      "method": "POST",
+      "path": "events",
+      "path_base": "the service API base (DEC-18)",
+      "request_schema": "astra.plugins.events/1",
+      "success_schema": "astra.plugins.events-result/1",
+      "idempotency": "`event_id` (CLIENT-31)",
+      "refusal_tokens": [
+        "account_restricted",
+        "invalid",
+        "unauthenticated",
+        "not_owner",
+        "rate_limited",
+        "unavailable"
+      ],
+      "emitter": [
+        "client"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "CLIENT-80",
+      "requirements": [
+        "CLIENT-80",
+        "CLIENT-71",
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "operation:client:rating.put",
+      "kind": "operation",
+      "name": "rating.put",
+      "method": "PUT",
+      "path": "ratings/<plugin_id>",
+      "path_base": "the service API base (DEC-18)",
+      "request_schema": "astra.plugins.rating/1",
+      "success_schema": "astra.plugins.rating-state/1",
+      "idempotency": "(account, plugin)",
+      "refusal_tokens": [
+        "account_restricted",
+        "not_eligible",
+        "own_plugin",
+        "plugin_not_listed",
+        "invalid",
+        "unauthenticated",
+        "not_owner",
+        "rate_limited",
+        "unavailable"
+      ],
+      "emitter": [
+        "client"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "CLIENT-80",
+      "requirements": [
+        "CLIENT-80",
+        "CLIENT-71",
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "operation:client:rating.get",
+      "kind": "operation",
+      "name": "rating.get",
+      "method": "GET",
+      "path": "ratings/<plugin_id>",
+      "path_base": "the service API base (DEC-18)",
+      "request_schema": null,
+      "success_schema": "astra.plugins.rating-state/1",
+      "idempotency": "—",
+      "refusal_tokens": [
+        "plugin_not_listed",
+        "unauthenticated",
+        "not_owner",
+        "rate_limited",
+        "unavailable"
+      ],
+      "emitter": [
+        "client"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "CLIENT-80",
+      "requirements": [
+        "CLIENT-80",
+        "CLIENT-71",
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "operation:client:rating.delete",
+      "kind": "operation",
+      "name": "rating.delete",
+      "method": "DELETE",
+      "path": "ratings/<plugin_id>",
+      "path_base": "the service API base (DEC-18)",
+      "request_schema": null,
+      "success_schema": "astra.plugins.rating-state/1",
+      "idempotency": "(account, plugin)",
+      "refusal_tokens": [
+        "account_restricted",
+        "unauthenticated",
+        "not_owner",
+        "rate_limited",
+        "unavailable"
+      ],
+      "emitter": [
+        "client"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "CLIENT-80",
+      "requirements": [
+        "CLIENT-80",
+        "CLIENT-71",
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "operation:client:reports.submit",
+      "kind": "operation",
+      "name": "reports.submit",
+      "method": "POST",
+      "path": "reports",
+      "path_base": "the service API base (DEC-18)",
+      "request_schema": "astra.plugins.report/1",
+      "success_schema": "astra.plugins.report-state/1",
+      "idempotency": "(account, `report_id`) (CLIENT-86)",
+      "refusal_tokens": [
+        "account_restricted",
+        "plugin_not_listed",
+        "invalid",
+        "unauthenticated",
+        "not_owner",
+        "rate_limited",
+        "unavailable"
+      ],
+      "emitter": [
+        "client"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "CLIENT-80",
+      "requirements": [
+        "CLIENT-80",
+        "CLIENT-71",
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "operation:client:reports.mine",
+      "kind": "operation",
+      "name": "reports.mine",
+      "method": "GET",
+      "path": "reports?plugin_id=<id>",
+      "path_base": "the service API base (DEC-18)",
+      "request_schema": null,
+      "success_schema": "astra.plugins.report-list/1",
+      "idempotency": "—",
+      "refusal_tokens": [
+        "invalid",
+        "unauthenticated",
+        "not_owner",
+        "rate_limited",
+        "unavailable"
+      ],
+      "emitter": [
+        "client"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "CLIENT-80",
+      "requirements": [
+        "CLIENT-80",
+        "CLIENT-71",
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "operation:bot:register",
+      "kind": "operation",
+      "name": "register",
+      "method": "POST",
+      "path": "bot/submissions",
+      "path_base": "the service API base (§4.2)",
+      "workflow": "ingest",
+      "request_schema": "astra.plugins.bot-register/1",
+      "success_schema": "astra.plugins.bot-registered/1",
+      "emitter": [
+        "bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§4.2",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "BOT-91",
+        "DEC-4"
+      ]
+    },
+    {
+      "id": "operation:bot:claim",
+      "kind": "operation",
+      "name": "claim",
+      "method": "POST",
+      "path": "bot/leases",
+      "path_base": "the service API base (§4.2)",
+      "workflow": "ingest",
+      "request_schema": "astra.plugins.bot-claim/1",
+      "success_schema": "astra.plugins.bot-leases/1",
+      "emitter": [
+        "bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§4.2",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "BOT-91",
+        "DEC-4"
+      ]
+    },
+    {
+      "id": "operation:bot:verdict",
+      "kind": "operation",
+      "name": "verdict",
+      "method": "POST",
+      "path": "bot/verdicts",
+      "path_base": "the service API base (§4.2)",
+      "workflow": "ingest",
+      "request_schema": "astra.plugins.bot-verdict-query/1",
+      "success_schema": "astra.plugins.bot-verdict/1",
+      "emitter": [
+        "bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§4.2",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "BOT-91",
+        "DEC-4"
+      ]
+    },
+    {
+      "id": "operation:bot:decisions-stops",
+      "kind": "operation",
+      "name": "decisions, stops",
+      "method": "POST",
+      "path": "bot/gates",
+      "path_base": "the service API base (§4.2)",
+      "workflow": "ingest",
+      "request_schema": "astra.plugins.bot-gates-query/1",
+      "success_schema": "astra.plugins.bot-gates/1",
+      "emitter": [
+        "bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§4.2",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "BOT-91",
+        "DEC-4"
+      ]
+    },
+    {
+      "id": "operation:bot:notice-status",
+      "kind": "operation",
+      "name": "notice status",
+      "method": "POST",
+      "path": "bot/notice-status",
+      "path_base": "the service API base (§4.2)",
+      "workflow": "ingest",
+      "request_schema": "astra.plugins.bot-notice-query/1",
+      "success_schema": "astra.plugins.bot-notice-status/1",
+      "emitter": [
+        "bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§4.2",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "BOT-91",
+        "DEC-4"
+      ]
+    },
+    {
+      "id": "operation:bot:submission-result",
+      "kind": "operation",
+      "name": "submission result",
+      "method": "POST",
+      "path": "bot/results",
+      "path_base": "the service API base (§4.2)",
+      "workflow": "both (BOT-91)",
+      "request_schema": "astra.plugins.bot-result/1",
+      "success_schema": "astra.plugins.bot-ack/1",
+      "emitter": [
+        "bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§4.2",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "BOT-91",
+        "DEC-4"
+      ]
+    },
+    {
+      "id": "operation:bot:list-moderation-work",
+      "kind": "operation",
+      "name": "list moderation work",
+      "method": "GET",
+      "path": "bot/moderation-work",
+      "path_base": "the service API base (§4.2)",
+      "workflow": "moderation",
+      "request_schema": null,
+      "success_schema": "astra.plugins.bot-moderation-work/1",
+      "emitter": [
+        "bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§4.2",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "BOT-91",
+        "DEC-4"
+      ]
+    },
+    {
+      "id": "operation:bot:service-decision-result",
+      "kind": "operation",
+      "name": "service-decision result",
+      "method": "POST",
+      "path": "bot/service-decision-results",
+      "path_base": "the service API base (§4.2)",
+      "workflow": "moderation",
+      "request_schema": "astra.plugins.bot-service-decision-result/1",
+      "success_schema": "astra.plugins.bot-ack/1",
+      "emitter": [
+        "bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§4.2",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "BOT-91",
+        "DEC-4"
+      ]
+    },
+    {
+      "id": "operation:bot:wake-hint",
+      "kind": "operation",
+      "name": "wake hint",
+      "method": "POST",
+      "path": "signed/wake",
+      "path_base": "the service API base (§4.2)",
+      "workflow": "the signer's publish job, no token (SERVE-94)",
+      "request_schema": null,
+      "success_schema": null,
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§4.2",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "BOT-91",
+        "SERVE-11"
+      ]
+    },
+    {
+      "id": "audience:author",
+      "kind": "audience",
+      "name": "author",
+      "value": "https://api.minice.ai/plugins/v1/author",
+      "emitter": [
+        "author-ci"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "ID-32",
+      "requirements": [
+        "ID-32",
+        "ID-73",
+        "SCOPE-3",
+        "SCOPE-7"
+      ],
+      "note": "ID-73 forbids marking this `retired` while a listed template or an allowlisted reusable-workflow commit compiles it"
+    },
+    {
+      "id": "operation:author-ci:author.wake",
+      "kind": "operation",
+      "name": "author.wake",
+      "method": "POST",
+      "path": "https://api.minice.ai/plugins/v1/author/wake",
+      "path_base": "absolute, as ID-32 records it",
+      "request_schema": "astra.plugins.author-wake/1",
+      "success_schema": "astra.plugins.author-wake-result/1",
+      "emitter": [
+        "author-ci"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "ID-32",
+      "requirements": [
+        "ID-32",
+        "ID-73",
+        "SCOPE-7"
+      ]
+    },
+    {
+      "id": "audience:bot",
+      "kind": "audience",
+      "name": "bot",
+      "value": "https://api.minice.ai/plugins/v1/bot",
+      "emitter": [
+        "bot"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "ID-34",
+      "requirements": [
+        "ID-34",
+        "SCOPE-7"
+      ]
+    },
+    {
+      "id": "page:FLOW-77",
+      "kind": "page",
+      "name": "FLOW-77",
+      "url": "https://astra.minice.ai/plugins/_/submit",
+      "query": [
+        "repo",
+        "tag"
+      ],
+      "emitter": [
+        "panel"
+      ],
+      "acceptor": [
+        "client",
+        "guest"
+      ],
+      "state": "live",
+      "source": "FLOW-77",
+      "requirements": [
+        "FLOW-77",
+        "SCOPE-7"
+      ]
+    },
+    {
+      "id": "page:MOD-13-advisory-base",
+      "kind": "page",
+      "name": "advisory base",
+      "url": "https://astra.minice.ai/plugins/_/advisories/",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "client",
+        "guest"
+      ],
+      "state": "live",
+      "source": "MOD-13",
+      "requirements": [
+        "MOD-13",
+        "SERVE-77",
+        "SCOPE-7"
+      ]
+    },
+    {
+      "id": "page:5F:/,/search/",
+      "kind": "page",
+      "name": "Table 5-F: /, /search/",
+      "pages_today": [
+        "/",
+        "/search/"
+      ],
+      "successors": [
+        "/plugins",
+        "/plugins?q="
+      ],
+      "emitter": [
+        "panel"
+      ],
+      "acceptor": [
+        "guest",
+        "client"
+      ],
+      "state": "live",
+      "source": "Table 5-F",
+      "requirements": [
+        "SERVE-84",
+        "ROLL-55",
+        "SCOPE-7"
+      ]
+    },
+    {
+      "id": "page:5F:/p/<id>/",
+      "kind": "page",
+      "name": "Table 5-F: /p/<id>/",
+      "pages_today": [
+        "/p/<id>/"
+      ],
+      "successors": [
+        "/plugins/<id>"
+      ],
+      "emitter": [
+        "panel"
+      ],
+      "acceptor": [
+        "guest",
+        "client"
+      ],
+      "state": "live",
+      "source": "Table 5-F",
+      "requirements": [
+        "SERVE-84",
+        "ROLL-55",
+        "SCOPE-7"
+      ]
+    },
+    {
+      "id": "page:5F:/publisher/<owner>/",
+      "kind": "page",
+      "name": "Table 5-F: /publisher/<owner>/",
+      "pages_today": [
+        "/publisher/<owner>/"
+      ],
+      "successors": [
+        "/plugins/_/publishers/<owner>"
+      ],
+      "emitter": [
+        "panel"
+      ],
+      "acceptor": [
+        "guest",
+        "client"
+      ],
+      "state": "live",
+      "source": "Table 5-F",
+      "requirements": [
+        "SERVE-84",
+        "ROLL-55",
+        "SCOPE-7"
+      ]
+    },
+    {
+      "id": "page:5F:/publish/",
+      "kind": "page",
+      "name": "Table 5-F: /publish/",
+      "pages_today": [
+        "/publish/"
+      ],
+      "successors": [
+        "/plugins/_/publish"
+      ],
+      "emitter": [
+        "panel"
+      ],
+      "acceptor": [
+        "guest",
+        "client"
+      ],
+      "state": "live",
+      "source": "Table 5-F",
+      "requirements": [
+        "SERVE-84",
+        "ROLL-55",
+        "SCOPE-7"
+      ]
+    },
+    {
+      "id": "page:5F:/policy/,/security/",
+      "kind": "page",
+      "name": "Table 5-F: /policy/, /security/",
+      "pages_today": [
+        "/policy/",
+        "/security/"
+      ],
+      "successors": [
+        "/plugins/_/policy",
+        "/plugins/_/security"
+      ],
+      "emitter": [
+        "panel"
+      ],
+      "acceptor": [
+        "guest",
+        "client"
+      ],
+      "state": "live",
+      "source": "Table 5-F",
+      "requirements": [
+        "SERVE-84",
+        "ROLL-55",
+        "SCOPE-7"
+      ]
+    },
+    {
+      "id": "page:5F:/transparency/",
+      "kind": "page",
+      "name": "Table 5-F: /transparency/",
+      "pages_today": [
+        "/transparency/"
+      ],
+      "successors": [
+        "/plugins/_/transparency",
+        "/plugins/_/transparency/moderation-log.json"
+      ],
+      "emitter": [
+        "panel"
+      ],
+      "acceptor": [
+        "guest",
+        "client"
+      ],
+      "state": "live",
+      "source": "Table 5-F",
+      "requirements": [
+        "SERVE-84",
+        "ROLL-55",
+        "SCOPE-7"
+      ]
+    },
+    {
+      "id": "page:5F:/advisory/<id>/",
+      "kind": "page",
+      "name": "Table 5-F: /advisory/<id>/",
+      "pages_today": [
+        "/advisory/<id>/"
+      ],
+      "successors": [
+        "/plugins/_/advisories/<id>"
+      ],
+      "emitter": [
+        "panel"
+      ],
+      "acceptor": [
+        "guest",
+        "client"
+      ],
+      "state": "live",
+      "source": "Table 5-F",
+      "requirements": [
+        "SERVE-84",
+        "ROLL-55",
+        "SCOPE-7"
+      ]
+    }
+  ],
+  "service_only": [
+    {
+      "id": "service-only:the-panel-s-server-calls",
+      "kind": "service_only",
+      "name": "the panel's server calls",
+      "members": [],
+      "emitter": [],
+      "acceptor": [],
+      "state": "service-only",
+      "path": null,
+      "path_pending": "the contract names this category and no path for it",
+      "source": "SCOPE-8",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "service-only:the-mail-provider-s-bounce-intake",
+      "kind": "service_only",
+      "name": "the mail provider's bounce intake",
+      "members": [],
+      "emitter": [],
+      "acceptor": [],
+      "state": "service-only",
+      "path": "POST under https://api.minice.ai/plugins/v1/",
+      "source": "SCOPE-8; FLOW-36's Mechanism",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "service-only:health",
+      "kind": "service_only",
+      "name": "health",
+      "members": [],
+      "emitter": [],
+      "acceptor": [],
+      "state": "service-only",
+      "path": null,
+      "path_pending": "the contract names this category and no path for it",
+      "source": "SCOPE-8",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "service-only:metrics",
+      "kind": "service_only",
+      "name": "metrics",
+      "members": [],
+      "emitter": [],
+      "acceptor": [],
+      "state": "service-only",
+      "path": null,
+      "path_pending": "the contract names this category and no path for it",
+      "source": "SCOPE-8",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    }
+  ],
+  "flow13_table": null,
+  "flow13_source": null,
+  "fixed_reasons": null,
+  "templates": [],
+  "staging_listing_id": null,
+  "shared_vector_paths": [],
+  "pending": [
+    {
+      "id": "fixed_reasons",
+      "what": "the one fixed registry reason string each of `A_YANK` and `A_REMOVAL_REQUEST` carries",
+      "why": "BOT-80 says an `A_*` entry's `reason` is \"the one fixed registry string SCOPE-7's file lists for that code\", and §0.8 records no string. The service's decision type carries `public_reason`, which is NULL by design for an author action, so the first author yank either fails a body check or carries an invented string that the registry silently substitutes its own copy for.",
+      "owed_by": "astra-plugins-ops (contract version ops.15, §0.8); minice-be's half is §1.3 row 8.5",
+      "lands_with": "ops.15, before R2",
+      "floor": "until ops.15 lands, `fixed_reasons` is null and the selftest asserts that it is null and that this record is present; from ops.15 it is two non-empty strings and the selftest asserts that."
+    },
+    {
+      "id": "flow13_table",
+      "what": "FLOW-13's reason-code table, one entry per code with its level, stage, `fix`, panel-only flag, title and remedy",
+      "why": "n8 publishes the table inside this file rather than in one of its own, so that the panel, SCOPE-1's comparison and the canary read one artifact at one commit. The codes themselves live in the bot's `bot/lib/codes.mjs` and `POLICY_CODES`, not in the contract, so this generator cannot read them: registry `bot/gen-codes-table.mjs` (B-T2.3) emits the table and this program merges it through --codes.",
+      "owed_by": "astra-registry B-T2.3",
+      "lands_with": "B-T2.3, with or after this file",
+      "floor": "without --codes the table is null and the selftest asserts that it is null and that this record is present; with --codes it asserts one entry per code, each carrying all six members."
+    },
+    {
+      "id": "templates",
+      "what": "the generated-workflow template list: every version `init-ci` has emitted, with the author audience and author-notify path it compiles",
+      "why": "SCOPE-7 requires the list and the contract names no entry of it. ID-73 forbids marking an audience or the notify path `retired` while a listed template compiles it, so an empty list is not the same claim as a list with template `1` in it: the empty one lets a later regeneration retire a name that authors' repositories still compile.",
+      "owed_by": "astra-plugins-ops (contract version ops.15, §0.8)",
+      "lands_with": "ops.15, before R2",
+      "floor": "until ops.15 lands, `templates` is an empty array, this record is present, and nothing may be marked `retired` on the strength of it; from ops.15 the selftest asserts at least one template, each with an audience, a notify path and a state."
+    },
+    {
+      "id": "staging_listing_id",
+      "what": "the staging listing id",
+      "why": "MOD-10 refuses `path_test` on any id but MOD-16's staging listing, and MOD-16 names no id. M-T1.6, M-T2.1 and B-T2.4 read it out of this file.",
+      "owed_by": "astra-plugins-ops (contract version ops.15, §0.8)",
+      "lands_with": "ops.15, before R2",
+      "floor": "until ops.15 lands the member is null and this record is present."
+    },
+    {
+      "id": "shared_vector_paths",
+      "what": "the shared-vector paths `tests/binding-line/vectors.json`, `tests/moderation-reasons.json`, `tools/testkeys/vectors/signed-set-v1.json` and `tests/results/`",
+      "why": "Three corpora are read from a pinned registry commit by a party that is not this one (§1.3 row 8.3). A corpus whose path is agreed in prose and nowhere else is a corpus two readers can disagree about while both suites stay green.",
+      "owed_by": "astra-plugins-ops (contract version ops.15, §0.8)",
+      "lands_with": "ops.15, before R2",
+      "floor": "until ops.15 lands the list is empty and this record is present."
+    },
+    {
+      "id": "mod54_report_page",
+      "what": "MOD-54's report page path",
+      "why": "MOD-54 says the panel serves a report page \"under `/plugins/_/`\" and names no path. minice-be cites `https://astra.minice.ai/plugins/_/report?plugin=<id>` in its own panel document (§1.3 row 7), which is a citation and not a contract entry; the file carries what a contract version records.",
+      "owed_by": "astra-plugins-ops or minice-be, in the version that records it (§1.3 row 7)",
+      "lands_with": "the version that records MOD-54's path",
+      "floor": "until that version lands the entry is absent and this record is present."
+    },
+    {
+      "id": "service_only_named_paths",
+      "what": "the two `service-only` entries `GET plugins/v1/listings/{plugin_id}` and `GET plugins/v1/health`, published with no members",
+      "why": "B-T3.11 compiles its `plugin_not_listed` expectation and its closing ordinary read from these two and from nothing else: every CLIENT-80 operation that can answer `plugin_not_listed` sits behind a bearer that job does not hold, and `GET cards/{plugin_id}` is not routed until a MINOR records OPEN-MBE-32 (attack M-8).",
+      "owed_by": "minice-be (§1.3 row 8.6, accepted as its W-6)",
+      "lands_with": "the version that publishes them; ops.22 at the latest, before R3",
+      "floor": "until that version lands, `service_only` carries the four categories SCOPE-8 names and this record says the two paths are absent; from then the selftest asserts both paths are present, with no members and no party, which is what B-T3.11 compiles against."
+    },
+    {
+      "id": "report_outcome_codes",
+      "what": "the public report-outcome code vocabulary `reports.mine` may return",
+      "why": "CLIENT-80's `reports.mine` returns an `outcome`, \"a public code or null\", and no party has written the list down (attack m-2). The client branches on it to render a reporter's own reports, so a floor that counts the schema and not this list leaves the client's SCOPE-10 scan passing vacuously over a vocabulary a human reporter actually reads.",
+      "owed_by": "minice-be supplies the enumeration (accepted as its W-16); either plan publishes it into §0.8",
+      "lands_with": "the report-outcome version, before R5",
+      "floor": "until that version lands the client-side floor is written for B.3's four report states alone and this record says the outcome list is not floored; from then it counts both."
+    }
+  ]
+}
