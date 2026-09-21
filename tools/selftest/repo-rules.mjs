@@ -673,6 +673,53 @@ export async function run() {
     // that" true of nothing, and look identical to a suite that ran it.
     "contract-tokens.mjs",
   ];
+  // A literal control character in a tracked source file is invisible, and that
+  // is the whole of the defect. `bot/lib/moderation.mjs` carried three NUL
+  // bytes as a Map-key separator from the day it was written. `file(1)` called
+  // it `data`; **`grep` treated it as binary and printed nothing, exit 1, for
+  // every pattern** — including `^export`, of which there are 25. That silence
+  // is byte-identical to a true absence, and over one night it produced four
+  // wrong facts in briefings handed to lanes, one of them nearly a repair that
+  // would have invented a value for a published safety bound.
+  //
+  // The rule is a grammar and not a blocklist: anything below 0x20 that is not
+  // tab, newline or carriage return, plus DEL. Escapes are unaffected — `\u0000`
+  // in source is six printable characters — so this costs nothing and every
+  // future instance arrives as a named failure instead of as a quiet one.
+  //
+  // It is here rather than in a linter because the subject is the REPOSITORY,
+  // not a language: the same silence would hide a control character in a
+  // workflow, a schema or a policy document, and `walkRepo` already reaches all
+  // of them.
+  await test("no tracked text file carries a literal control character", async () => {
+    const BAD = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
+    const offenders = [];
+    let scanned = 0;
+    for (const abs of walkRepo()) {
+      const rel = path.relative(REPO_ROOT, abs);
+      if (/\.(png|jpe?g|gif|ico|webp|woff2?|zip|gz|astraplugin|wasm)$/i.test(rel)) continue;
+      // No `catch { continue }` here: a read that throws is a file this rule did
+      // not look at, and swallowing it is how the first draft scanned zero files
+      // and would have passed without the floor below.
+      const text = fs.readFileSync(abs, "utf8");
+      scanned += 1;
+      const at = text.search(BAD);
+      if (at === -1) continue;
+      const line = text.slice(0, at).split("\n").length;
+      const code = text.charCodeAt(at).toString(16).padStart(4, "0");
+      offenders.push(`${rel}:${line} carries U+${code.toUpperCase()}`);
+    }
+    // The floor first, so a walk that reached nothing cannot report compliance.
+    assert(scanned >= 150,
+      `this rule read ${scanned} tracked text file(s) and there were 335 on 2026-09-19; a walk that reaches ` +
+      "nothing passes this check and every other rule in this file for the same reason");
+    assertEqual(offenders.join(", "), "",
+      "a tracked text file carries a literal control character. It is invisible in an editor, `file(1)` reports " +
+      "the file as `data`, and `grep` prints nothing and exits 1 for EVERY pattern — a silence that cannot be " +
+      "told from a true absence. Write it as an escape (`\\u0000`) instead; that is six printable characters and " +
+      "the same value");
+  });
+
   await test("no module has left the runner's list since the suite was split", async () => {
     // The list itself first. It is a SUBSET assertion, so a name appearing
     // twice changes nothing it checks and nothing reports it — and a

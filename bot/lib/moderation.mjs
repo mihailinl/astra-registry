@@ -612,7 +612,7 @@ export function loadEntries({ root = REPO_ROOT } = {}) {
       errors.push(`${where}: the file name must be ${fileNameFor(doc)}, or ${fileNameFor(doc, 2)} for a second one the same day`);
       continue;
     }
-    const key = `${doc.date} ${doc.plugin} ${doc.action}`;
+    const key = `${doc.date}\u0000${doc.plugin}\u0000${doc.action}`;
     const group = seen.get(key) ?? new Set();
     if (group.has(n)) {
       errors.push(`${where}: a second file already claims ${fileNameFor(doc, n)}`);
@@ -629,7 +629,7 @@ export function loadEntries({ root = REPO_ROOT } = {}) {
   // cost of tolerating it is that the next writer computes `-3` again from the
   // count and silently overwrites somebody's entry.
   for (const [key, group] of seen) {
-    const [date, plugin, action] = key.split(" ");
+    const [date, plugin, action] = key.split("\u0000");
     const missing = [];
     for (let n = 1; n <= group.size; n++) if (!group.has(n)) missing.push(fileNameFor({ date, plugin, action }, n));
     if (missing.length) {
