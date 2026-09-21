@@ -1206,9 +1206,19 @@ test("every suite under bot/tests/ is named by a workflow, and the list has a fl
   // Watched red twice, both ways: by deleting the `baseline.test.mjs` step
   // from bot-tests.yml, which names it; and by adding an empty
   // `bot/tests/nobody-runs-this.test.mjs`, which is named as the unrun file.
+  // **COMMENT LINES ARE STRIPPED, and that is part of the check rather than
+  // tidiness.** The scan is a substring search for the suite's path, so a
+  // workflow that MENTIONS a suite in a comment satisfied it exactly as well
+  // as one that runs it. A lane could then land a new suite, a header comment
+  // saying which suite asserts what about its file, and a green §2.0 check
+  // over a test nothing executes — which is this test's own subject arriving
+  // one level up, at the check written to hold it. Measured 2026-09-21:
+  // `plugins-moderation.yml` landed with M-T3.4's suite named in its header
+  // and in no `run:` line, and this assertion stayed green.
   const testsDir = path.join(REPO, "bot", "tests");
   const suites = fs.readdirSync(testsDir).filter((n) => n.endsWith(".test.mjs")).sort();
-  const everyWorkflow = files.map(read).join("\n");
+  const uncommented = (text) => text.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+  const everyWorkflow = files.map((f) => uncommented(read(f))).join("\n");
 
   const unrun = suites.filter((n) => !everyWorkflow.includes(`bot/tests/${n}`));
   assert.deepEqual(

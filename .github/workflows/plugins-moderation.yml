@@ -1,0 +1,408 @@
+name: Plugins moderation
+
+# The moderation run: the second of the two workflows that hold a bot OIDC
+# token (registry plan M-T3.4; contract ID-34, TRUST-31).
+#
+# ── what this file is for ──────────────────────────────────────────────────
+#
+# `plugins-ingest.yml` takes a release and decides whether it may be listed.
+# This one takes a MODERATION DECISION and turns it into the artefacts that
+# stop a plugin: an edit to a listing, an entry in the moderation log, a signed
+# advisory, the decision records DEC-7 owes. It is the only path in this
+# estate by which software already running on somebody's machine is turned off.
+#
+# That asymmetry decides everything about the file. An ingest that refuses too
+# eagerly delays a release; a takedown that refuses too eagerly leaves a plugin
+# installed, and BOT-81 makes `refused` FINAL — the moderator is told the
+# takedown did not land, nobody is paged, and re-deciding refuses again. So the
+# bias runs the other way from `plugins-ingest.yml`: everything this file does
+# not understand FAILS THE RUN loudly, and only a condition the registry has
+# actually judged becomes one of §0.8's seven refusals.
+#
+# **The rule, in one line: each job holds at most one of — a bot token,
+# `contents: write`, the alarm channel's credential.**
+#
+#   | job       | holds                          |
+#   |-----------|--------------------------------|
+#   | `list`    | a bot token                    |
+#   | `alert`   | the alarm channel's credential |
+#   | `commit`  | `contents: write`              |
+#   | `report`  | a bot token                    |
+#   | `settled` | the alarm channel's credential |
+#
+# Nothing in YAML enforces that table; `bot/tests/workflows.test.mjs` does.
+#
+# ── why `alert` is a job and not a step, and why `commit` needs it ─────────
+#
+# MOD-8 requires every advisory and every hold to be alerted BEFORE the push,
+# and TRUST-14 requires the alarm to go out in the run that first reads the
+# event. A GitHub environment is a JOB-level property: there is no way to put
+# one step of `commit` into `alerts` without giving the whole committing job
+# the alarm credential, which `bot/tests/workflows.test.mjs` refuses. So the
+# ordering is expressed in the graph — `commit` needs `alert` — which is the
+# same shape `plugins-ingest.yml`'s `publish` uses, and for the same reason.
+#
+# The alarms are therefore derived from the LIST entry and not from the
+# compile: `alarmsFor()` reads the `code`, `action` and `severity` the service
+# sent. An alarm that named the advisory id would have to wait for the compile,
+# which happens after this job, which is the ordering MOD-8 forbids.
+#
+# ── it is dark, and this is what dark means ────────────────────────────────
+#
+# The `schedule:` block below is COMMENTED OUT. The file lands at R2 exit with
+# no schedule, and the R3-open commit uncomments it (§2.5). `DRY_RUN` stays
+# `"true"` through R3.
+#
+# The workflow suite reads the cron line whether it is commented or not, and
+# this run's own suite compares its interval with the token file's
+# `schedule:moderation`. (Neither is named here by path, and that is not
+# squeamishness: §2.0's check that every suite under `bot/tests/` is run by a
+# workflow scans these files for the suite's path as a SUBSTRING, so a path in
+# a comment reports a suite as run when nothing runs it. That is the defect
+# this file found on its first green run.) BOT-83 pins 600 s, five minutes off
+# `plugins-ingest.yml`'s `3-59/10`, so that a run of each never starts in the
+# same minute. Since amendment A6 that interval is a contract MUST, and
+# SCOPE-1 makes an edit to it a contract MINOR published BEFORE the line moves:
+# a cron edit here is not a cron edit.
+#
+# So a `workflow_dispatch` of this file today is RED at `commit`, because
+# TRUST-26's bound is not measured in a bot run yet — `bot/lib/takedown-bound.mjs`
+# imports a desk tool outside TRUST-31's hashed set, which contract 0.23.0
+# prices as a thirteenth path and a MINOR of its own. `compileAll` refuses to
+# read an unmeasured bound as "under the bound", because that is the direction
+# that APPLIES a takedown MOD-9 should have held.
+
+on:
+  # ── BOT-83's schedule, off until R3 opens ─────────────────────────────────
+  #
+  # Every 600 seconds, five minutes after the ingest run's `3-59/10`.
+  #
+  # schedule:
+  #   - cron: '8-59/10 * * * *'
+
+  # No inputs, and there will never be any (BOT-4). A dispatch of a
+  # token-holding workflow may mean exactly one thing — "pull now". The
+  # operator confirmations MOD-52 defines run in `operator.yml` (M-T3.5),
+  # which holds no bot OIDC token and is deliberately outside TRUST-31's set.
+  workflow_dispatch:
+
+permissions: {}
+
+# One group for the whole workflow, and no group on any job (BOT-5).
+#
+# `cancel-in-progress: false` matters more here than in the ingest graph: a
+# cancelled run that had already pushed a release commit and not yet posted its
+# result leaves a decision applied on `main` and unsettled at the service, and
+# the next run re-posts it under BOT-82's key — which is fine — but a run
+# cancelled mid-push leaves nothing at all, and the hold it was releasing waits
+# another ten minutes. Never killing a started run is what keeps that to ten
+# minutes rather than to an operator noticing.
+concurrency:
+  group: registry-moderation
+  cancel-in-progress: false
+
+env:
+  DRY_RUN: "true"
+
+jobs:
+  # ── list: the only job that asks the service what there is to do ──────────
+  #
+  # It mints a masked bot OIDC token per call, calls `GET bot/moderation-work`
+  # at most three times (BOT-63), and checks the ANSWER and every entry in it
+  # against `schema/moderation-work-v1.json`.
+  #
+  # **It prints ids and codes and nothing else** (PRIV-2, BOT-89). The run logs
+  # of this repository are public and a moderation decision is a fact about a
+  # person's plugin; `listSummary` composes what goes to stdout and fails the
+  # run past 900 kB rather than letting a long list truncate in the middle,
+  # because `settled` compares what was listed with what got a result.
+  list:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: plugins-service
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      # `shadow` travels as a job output and never as an artifact (BOT-55): any
+      # job in a run can write that run's artifacts, and this one value decides
+      # whether anything at all is committed and posted.
+      shadow: ${{ steps.work.outputs.shadow }}
+      entries: ${{ steps.work.outputs.entries }}
+      submissions: ${{ steps.work.outputs.submissions }}
+      refused: ${{ steps.work.outputs.refused }}
+      listed: ${{ steps.work.outputs.listed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Every job in this run reads the same tree, which is also the tree
+          # whose `job_workflow_sha` the service hashes under TRUST-31.
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: "List the moderation work, and check every entry against the schema (not built: B-T5.1)"
+        id: work
+        run: |
+          set -euo pipefail
+          echo "::error::B-T5.1 turns this call live. The step runs 'node bot/moderation-run.mjs --job list', which mints one bot OIDC token per attempt with the bot audience, masks it before first use, GETs bot/moderation-work at most three times, and checks the answer and every entry against schema/moderation-work-v1.json — writing shadow, entries, submissions, refused and listed to this job's outputs. It stays a placeholder while the file is dark: a step that called the service on a workflow_dispatch would be a live call from a workflow nobody has acknowledged (TRUST-42)."
+          exit 1
+
+  # ── alert: MOD-8's alarms, before anything is pushed ───────────────────────
+  #
+  # It runs `always()`, because the runs it exists for are the red ones, and it
+  # downloads nothing at all: no artifact, no cache, no releases feed, no
+  # `GITHUB_TOKEN` (BOT-46). Everything it says comes from `list`'s outputs.
+  #
+  # It posts NO heartbeat. `settled` is this run's liveness signal — it is the
+  # last job and runs on `always()` — and two jobs posting to one receiver
+  # check would mean a run in which `settled` never ran still looked alive.
+  alert:
+    needs: list
+    if: always() && !cancelled()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: alerts
+    permissions:
+      contents: read
+      id-token: none
+    outputs:
+      delivered_at: ${{ steps.alert.outputs.delivered_at }}
+      alerted: ${{ steps.alert.outputs.alerted }}
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # An EMPTY entry list is the case this step exists for. A `list` job that
+      # died before writing its output looks, to an alert job that simply sends
+      # what it was given, exactly like a list job with nothing to say — which
+      # is the shape every "the alarm was never wired up" defect takes. The
+      # composer refuses a verdict the channel would refuse, here, where the
+      # refusal is red in a job somebody is reading.
+      - name: The alarms MOD-8 owes for the work this run was handed
+        env:
+          ASTRA_ENTRIES: ${{ needs.list.outputs.entries }}
+          ASTRA_LIST_RESULT: ${{ needs.list.result }}
+        run: |
+          set -euo pipefail
+          if [ "$ASTRA_LIST_RESULT" != "success" ]; then
+            ASTRA_VERDICT_CODES='["BOT_80_LIST_UNAVAILABLE"]' \
+            ASTRA_VERDICT_IDS='[]' \
+              node bot/moderation-run.mjs --job verdict --check moderation-run --out verdict.json
+          else
+            node bot/moderation-run.mjs --job alarms --entries "$ASTRA_ENTRIES" --out verdict.json
+          fi
+
+      - uses: ./.github/actions/alert
+        id: alert
+        with:
+          verdict: verdict.json
+          no-heartbeat-because: >-
+            `settled` is this run's BOT-85 heartbeat for check `moderation-run`.
+            It is the last job and runs on always(), so it is the one that can
+            say the run finished; a second poster here would keep the receiver
+            quiet in exactly the runs where `settled` never ran.
+
+  # ── commit: the only job that writes to `main` ────────────────────────────
+  #
+  # `contents: write` and therefore **no bot OIDC token** (BOT-2): one
+  # compromised job must not both speak for the bot and write the catalogue.
+  #
+  # **It reads only `needs.list.outputs`, re-checked, plus `main`, and
+  # downloads no artifact.** The re-check is not ceremony: `list` is a
+  # different job and its outputs travel through the run's public metadata, so
+  # the same schema is applied again here, a millisecond's work that closes the
+  # door between the two jobs.
+  #
+  # **It walks every hold even when `list` failed**, which is why it runs on
+  # `always() && !cancelled()` and asks the list result by name rather than
+  # inheriting it. A confirmed hold is not work the list answer names: a
+  # settled `held` result took it off BOT-80's list and its release is driven
+  # by the MOD-52 record in git (BOT-81, M-T3.3). The service being down must
+  # not be able to keep an operator's confirmation from landing.
+  commit:
+    needs: [list, alert]
+    if: always() && !cancelled()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: none
+    outputs:
+      results: ${{ steps.apply.outputs.results }}
+      main_commit: ${{ steps.apply.outputs.main_commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The compile reads git history: MOD-13's next advisory id is "one
+          # more than the highest ever ADDED", which a shallow clone cannot
+          # answer, and MOD-19's identity entries walk every historic
+          # `source.repo` of the listing.
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: "Compile, walk the holds, and write what this run produced (not built: M-T3.2)"
+        id: compile
+        env:
+          ASTRA_SHADOW: ${{ needs.list.outputs.shadow }}
+          ASTRA_ENTRIES: ${{ needs.list.outputs.entries }}
+          ASTRA_SUBMISSIONS: ${{ needs.list.outputs.submissions }}
+          ASTRA_DELIVERED_AT: ${{ needs.alert.outputs.delivered_at }}
+        run: |
+          set -euo pipefail
+          echo "::error::This step runs 'node bot/moderation-run.mjs --job commit', and it needs one thing nothing supplies yet: ASTRA_OVER_BOUND, TRUST-26's count for this run. M-T3.2 landed the count in bot/lib/takedown-bound.mjs, and that module imports stagingListingId and triggersOf from the moderation-coverage desk tool, which is OUTSIDE TRUST-31's hashed set. Importing it from bot/moderation-run.mjs pulls it into a bot run's import closure, which contract 0.23.0 states is a thirteenth hashed path and a contract MINOR owed BEFORE that commit lands; the alternative is to move those two functions under tools/lib/, which is already a directory entry. See the header of bot/moderation-run.mjs for the path and the argument. compileAll() refuses to read an absent bound as 'under the bound', because that is the direction that applies a takedown MOD-9 should have held."
+          exit 1
+
+      # The gates, in the order the plan states, and every one of them is about
+      # the documents this job is about to commit. `tools/validate.mjs` is
+      # where BOT-34's second Check clause lives — a commit yanking n versions
+      # under an `A_YANK` carries n author-action records — so a short-counted
+      # yank never leaves the runner (B-T2.1; M-T3.1's canary).
+      - name: The documents this commit produces, regenerated
+        if: ${{ !cancelled() && steps.compile.conclusion == 'success' }}
+        run: |
+          set -euo pipefail
+          node tools/build-index.mjs
+          node tools/build-revocations.mjs
+
+      - name: Every registry rule, over the staged tree
+        if: ${{ !cancelled() && steps.compile.conclusion == 'success' }}
+        run: |
+          set -euo pipefail
+          node tools/validate.mjs
+          node tools/selftest.mjs
+          node bot/moderation.mjs --check
+
+      - name: "Commit once, with a Service-Decision: trailer per decision, and push (not built: M-T3.2)"
+        id: apply
+        if: ${{ !cancelled() && steps.compile.conclusion == 'success' }}
+        run: |
+          set -euo pipefail
+          git config user.name "astra-registry-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add --pathspec-from-file=moderation/paths.txt
+          git commit --file=moderation/commit-message.txt
+          git push origin HEAD:main
+
+  # ── report: the result, and only once the commit landed ───────────────────
+  #
+  # BOT-6. There is no `always()` here, so the default success() condition is
+  # the gate. A promise without a commit is this registry's oldest defect, and
+  # the service records what this job posts.
+  #
+  # Under a `shadow: true` list answer it posts NOTHING that settles a
+  # decision. A `held` result says the registry has not decided and is posted;
+  # `applied`, `cancelled` and `refused` settle, which BOT-92 calls
+  # state-setting, so they wait for the next run whose answer is `shadow:
+  # false` — and BOT-82's key settles the repeat as `duplicate`.
+  report:
+    needs: [list, commit]
+    if: needs.commit.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: plugins-service
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: "Post each result once, and re-send it byte-identical (not built: B-T5.1)"
+        env:
+          ASTRA_MAIN_COMMIT: ${{ needs.commit.outputs.main_commit }}
+        run: |
+          set -euo pipefail
+          echo "::error::B-T5.1 turns this call live. The step runs 'node bot/moderation-run.mjs --job report', which POSTs at most one held and exactly one final result per decision to bot/service-decision-results, and stop and M_REJECT results with recorded[] to bot/results, 20 seconds per call. An identical re-post after a lost acknowledgement is answered duplicate under BOT-82's key. It stays a placeholder while the file is dark."
+          exit 1
+
+  # ── settled: every listed id got a result, and the run said it was alive ───
+  #
+  # It runs `always()` and it is the last job, which is what makes it the one
+  # that can post BOT-85's heartbeat: a run in which `commit` died still ran,
+  # and the receiver's silence must mean the WORKFLOW stopped rather than that
+  # one job did.
+  #
+  # It fails and alerts when a listed id got no result, or when `list` failed.
+  # BOT-84 pages only for a decision with NO settled result, so this is the one
+  # place in the estate that can see an id which was listed, not refused, not
+  # compiled and not held — a decision that fell out of the run in silence.
+  settled:
+    needs: [list, alert, commit, report]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: alerts
+    permissions:
+      contents: read
+      id-token: none
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_DEADMAN_URL_MODERATION_RUN: ${{ secrets.ASTRA_DEADMAN_URL_MODERATION_RUN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Every decision this run was handed has a result
+        id: settle
+        continue-on-error: true
+        env:
+          ASTRA_LISTED_IDS: ${{ needs.list.outputs.listed }}
+          ASTRA_RESULTS: ${{ needs.commit.outputs.results }}
+          ASTRA_LIST_FAILED: ${{ needs.list.result != 'success' }}
+        run: node bot/moderation-run.mjs --job settled
+
+      # The verdict is composed from the step above rather than from its exit
+      # code alone, so that the alarm carries the ids. `continue-on-error` on
+      # that step and a red verdict here is the order that matters: a job that
+      # died before composing a verdict would send nothing, and a dead-man
+      # receiver that had already been told the run was healthy would stay
+      # quiet about it.
+      - name: The verdict this run sends
+        env:
+          ASTRA_VERDICT_CODES: ${{ steps.settle.outcome == 'success' && '[]' || '["BOT_84_UNSETTLED_DECISION"]' }}
+          ASTRA_VERDICT_IDS: '[]'
+        run: node bot/moderation-run.mjs --job verdict --check moderation-run --out verdict.json
+
+      - uses: ./.github/actions/alert
+        id: alert
+        with:
+          verdict: verdict.json
+          check: moderation-run
+
+      # The red comes AFTER the alarm, and that order is the whole of it. A job
+      # that failed on the settle step would never have reached the alert
+      # action, and a decision that fell out of a run in silence would be
+      # reported by a red tick on a page nobody is watching at 03:00 — which is
+      # the state BOT-84 pages for and cannot see, because a refused decision
+      # is settled and this one is not refused, it is missing.
+      - name: A run that lost a decision is a red run
+        if: steps.settle.outcome != 'success'
+        run: |
+          set -euo pipefail
+          echo "::error::a decision the service listed got no result in this run; the alarm above carries the reason"
+          exit 1

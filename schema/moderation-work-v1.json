@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://registry.astra.app/schema/moderation-work-v1.json",
+  "title": "astra.plugins.bot-moderation-work/1",
+  "description": "The registry's check of the service's answer to `GET bot/moderation-work` (contract §4.2; registry plan M-T3.4; BOT-80). It is a WIRE body and not a record: nothing in this repository writes one, and `bot/moderation-run.mjs` reads it by literal path, which is why contract 0.23.0 put this file inside TRUST-31's hashed set — a writer who could edit it from outside the set could widen what a moderation run accepts from the service, and compile an advisory from an entry nobody validated, without the bot returning to shadow. THE READ SIDE IGNORES WHAT IT DOES NOT KNOW, and that is the whole of SCOPE-3: `additionalProperties` is TRUE at every level here, on purpose, so that an optional member minice-be adds in a legal MINOR is ignored rather than refused. The refusal is not survivable: BOT-81 makes `refused` one of three FINAL results, so a strict schema would settle EVERY entry in `service_decisions[]` as `kind_refused` at the next run, take them all off BOT-80's list, page nobody (BOT-84 pages only for a decision with no settled result), and stop `M_YANK`, `M_DELIST` and `M_REVOKE` reaching `main` at all — with a green run. The first person to notice is a moderator wondering why the takedown did not land. The other half of the rule lives on the WRITE side, in `bot/lib/compile-decision.mjs`'s ENTRY_ALLOWLIST and SUBMISSION_ALLOWLIST: a member ignored here can never ride into git, because every composer copies its inputs member by member out of BOT-80's list for the kind (DEC-7). TWO THINGS ARE STILL REFUSED BY NAME, because they are a denylist and not a consequence of a closed world: `moderator` and `declared_interest` on an `A_*` entry. No moderator decided an author's action, and 0.12.0's wording would have committed a moderator's handle to the public log under an author's yank (DEC-14; MOD-41; n4). `bot/tests/moderation-run.test.mjs` compares this file's top-level members with the token file's `schema:astra.plugins.bot-moderation-work/1` record IN BOTH DIRECTIONS, so a member added to the contract at a token-moving version turns registry CI red at the moment it is added rather than turning every takedown into a silent refusal in production.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["shadow", "submissions", "service_decisions"],
+  "properties": {
+    "$comment": { "type": "string" },
+    "schema": { "const": "astra.plugins.bot-moderation-work/1" },
+    "shadow": {
+      "$comment": "ID-71, BOT-92. `true` means compile for timing and commit nothing for the work this answer names, and post nothing at all for it. The member is REQUIRED and typed `boolean` rather than defaulted, because `bot/moderation-run.mjs` reads a missing or non-boolean `shadow` as shadow AND alerts: the silent direction has to be the one a missing member produces, and a run that cannot tell which mode it is in must not be able to look like a run that was told `false`.",
+      "type": "boolean"
+    },
+    "submissions": {
+      "description": "Stops and `M_REJECT`s. These remove the queue entry and write the terminal record (BOT-30); they do not go through the decision compiler. `maxItems` is a sanity bound on one answer, not a contract number.",
+      "type": "array",
+      "maxItems": 1000,
+      "items": { "$ref": "#/$defs/submission" }
+    },
+    "service_decisions": {
+      "description": "The moderator and author decisions M-T3.1 compiles, M-T3.3 may hold, and M-T3.2's bound may delay.",
+      "type": "array",
+      "maxItems": 1000,
+      "items": { "$ref": "#/$defs/serviceDecision" }
+    }
+  },
+  "$defs": {
+    "timestamp": {
+      "$comment": "§0.7's RFC 3339 UTC. A fraction is admitted here and truncated by the compiler, never rounded: a record's PATH is derived from its `decided_at`, and `…T23:59:59.7Z` rounded forward on the last second of December files the record under the next year.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+    },
+    "uuid": {
+      "$comment": "§0.7's lowercase UUID v4 or v7.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[47][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "submission": {
+      "description": "A stop or an `M_REJECT` (BOT-80). `required` is deliberately SHORT — `submission_id`, `repo`, `tag`, `code` — and the rest are validated only when present. Requiring a member the service may legally omit has the same shape as refusing one it may legally add: it turns a lawful answer into a final refusal, silently, at the next run.",
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["submission_id", "repo", "tag", "code"],
+      "properties": {
+        "$comment": { "type": "string" },
+        "submission_id": { "$ref": "#/$defs/uuid" },
+        "repo": {
+          "$comment": "`owner/name`, as GitHub spells it.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9._-])?/[A-Za-z0-9._-]{1,100}$"
+        },
+        "tag": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "trigger": {
+          "$comment": "DEC-7's decision-record trigger. The closed list is the token file's `list:decision_triggers`, which `bot/moderation-run.mjs` compares this enum against in both directions — a value the contract adds and this file has not is a record the bot would refuse to write.",
+          "enum": [
+            "panel", "ci", "poll", "drain", "approval", "moderation", "stop",
+            "appeal", "migration", "issue", "ping", "dispatch", "legacy"
+          ]
+        },
+        "service_repository_id": {
+          "$comment": "§0.7: a canonical base-10 digit string, never a number. It is typed `string` here for the reason §0.7 states it: a JSON number loses the distinction between `07` and `7` and between an id and its float rounding.",
+          "type": "string",
+          "pattern": "^[0-9]{1,20}$"
+        },
+        "stop_status": {
+          "$comment": "Present for a stop, absent for an `M_REJECT`.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "fingerprints": {
+          "type": "array",
+          "maxItems": 500,
+          "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+        },
+        "code": {
+          "$comment": "A FLOW-13 reason code for a stop, or `M_REJECT`. The vocabulary is NOT enumerated here: FLOW-13's table is 121 rows generated from `bot/lib/codes.mjs` and `POLICY_CODES` into the token file, and a second copy of it in a schema is a second answer that goes stale in the direction that refuses a code the bot's own tables already carry. `bot/moderation-run.mjs` checks it against those tables, which is where the one answer lives.",
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
+        },
+        "category": {
+          "$comment": "`M_REJECT` only. §7.2's closed list; the compiler holds it.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "moderator": {
+          "$comment": "`M_REJECT` only — it is a moderator decision. A stop carries none, and neither does any `A_*` entry (see `serviceDecision`).",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "decided_at": { "$ref": "#/$defs/timestamp" },
+        "declared_interest": { "type": "boolean" }
+      }
+    },
+    "serviceDecision": {
+      "description": "One service decision (BOT-80). The members are those BOT-80 names for the kind, and the object is OPEN: SCOPE-3 makes a new optional member a MINOR that readers ignore.",
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["service_decision_id", "code", "plugin_id", "decided_at"],
+      "not": {
+        "$comment": "THE ONE DENYLIST, and it is a denylist by name rather than a consequence of a closed world. An `A_REMOVAL_REQUEST` or `A_YANK` carrying `moderator` or `declared_interest` is refused, because no moderator decided an author's action and DEC-14 and MOD-41 forbid either reaching the public log (n4). It is stated here so the FILE is a correct statement of the rule on its own; `bot/moderation-run.mjs` runs the same check a step earlier so that the refusal can name the member, which `not` cannot.",
+        "allOf": [
+          {
+            "required": ["code"],
+            "properties": { "code": { "enum": ["A_REMOVAL_REQUEST", "A_YANK"] } }
+          },
+          {
+            "anyOf": [{ "required": ["moderator"] }, { "required": ["declared_interest"] }]
+          }
+        ]
+      },
+      "properties": {
+        "$comment": { "type": "string" },
+        "service_decision_id": { "$ref": "#/$defs/uuid" },
+        "code": {
+          "$comment": "Every code the compiler has an answer for. A code OUTSIDE this list is refused `kind_refused` at the schema, which is the one place that refusal is right: `bot/lib/compile-decision.mjs` THROWS on an unknown code rather than refusing it, because settling a decision the registry did not understand as a final result is how a takedown disappears quietly. Here the registry has judged the value against a published list, which is a different statement.",
+          "enum": [
+            "M_YANK", "M_DELIST", "M_DEPRECATE", "M_REVOKE", "M_APPEAL",
+            "M_RELIST", "M_UNREVOKE", "M_BINDING_REVOKE",
+            "A_YANK", "A_REMOVAL_REQUEST"
+          ]
+        },
+        "category": {
+          "$comment": "§7.2's closed list, and it is the token file's `list:moderation_categories` — compared with it in both directions by `bot/tests/moderation-run.test.mjs`. `M_APPEAL` carries none, which §7.2 states by giving `appeal` an empty allowed-category list; that conditional lives in the compiler, where the refusal can say which categories the action allows.",
+          "enum": [
+            "review_passed", "malicious", "account_compromise", "account_sanction",
+            "privacy", "impersonation", "broken", "security_defect", "licence",
+            "naming", "legal", "author_request", "error", "appeal_reversed", "path_test"
+          ]
+        },
+        "plugin_id": {
+          "$comment": "`tools/lib/ids.mjs`'s ID_PATTERN, which is the one place in this repository that decides what a plugin id is. A copy, because a schema cannot import; `bot/tests/moderation-run.test.mjs` compares the two strings.",
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])$"
+        },
+        "versions": {
+          "$comment": "semver.org 2.0.0, from `tools/lib/semver.mjs`. A malformed version routes to `target_changed` and not to `kind_refused`: the member names a target, and a target this tree cannot resolve is the case TRUST-26 gives that code to.",
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "type": "string",
+            "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
+          }
+        },
+        "decided_at": { "$ref": "#/$defs/timestamp" },
+        "reason": {
+          "$comment": "MOD-41's bounds, in CODE POINTS — which this pattern-free length check cannot express, because JSON Schema's minLength counts them and `tools/lib/jsonschema.mjs` uses [...s].length for exactly that reason. For an `A_*` code the value must equal the one fixed registry string the token file's `fixed_reasons` lists; that is a VALUE comparison the compiler makes, and it is not expressible here at all, because the token file is generated from the contract and this file may not read it.",
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 300
+        },
+        "reverses": {
+          "$comment": "`M_RELIST` and `M_UNREVOKE`: the decision being given back.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "appeal_of": {
+          "$comment": "`M_APPEAL`: the `service_decision_id` or `decision_id` appealed (MOD-33).",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "outcome": {
+          "$comment": "`M_APPEAL` only. `reversed` is the estate's one Recheck (FLOW-18); MOD-34 makes it a NEW artefact and leaves the originals alone.",
+          "enum": ["stands", "reversed"]
+        },
+        "severity": {
+          "$comment": "`M_DEPRECATE` and `M_REVOKE`. The vocabulary is `tools/lib/revocations.mjs`'s SEVERITIES, compared with this enum by the suite.",
+          "enum": ["critical", "high", "moderate", "low"]
+        },
+        "action": {
+          "$comment": "`M_REVOKE` only (MOD-10). `warn` is what a deprecate compiles to and is never carried by the payload, which is why the compiler derives it rather than reading it — but it stays in the enum because `tools/lib/revocations.mjs` accepts all three and a schema that refused one of them would disagree with the withdrawal list it feeds.",
+          "enum": ["block_install", "disable", "warn"]
+        },
+        "moderator": {
+          "$comment": "`M_*` only, and forbidden on an `A_*` entry by the `not` above.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "declared_interest": { "type": "boolean" }
+      }
+    }
+  }
+}
