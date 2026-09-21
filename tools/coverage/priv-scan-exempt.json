@@ -7,6 +7,12 @@
       "where": "commit-message",
       "code": "E_PRIV_HANDLE",
       "reason": "A fixture identity inside a quoted watched-red transcript. The commit records what B-T0.2's canary printed when the guard was broken on purpose, and the test's stand-in maintainer is called `@the-maintainer`; it names no person and exists only in bot/tests/policy.test.mjs. Exempted by ENTRY and not by rule, deliberately: unlike RFC 2606's reserved names, which are exempted by rule because the address IS the evidence in an e-mail finding, a handle here is decoration inside a quoted block and the transcript reads the same with it elided. So the convention this entry records is to elide identity-shaped values when quoting a transcript, and a second and third occurrence would be the signal that the convention is not holding and the shape wants a rule instead."
+    },
+    {
+      "commit": "aee830a",
+      "where": "commit-message",
+      "code": "E_PRIV_HANDLE",
+      "reason": "The commit that added the exemption above, carrying the same fixture handle twice — once quoting the finding it cleared and once naming the test's stand-in maintainer. Its own entry had just written the convention 'elide identity-shaped values when quoting a transcript', and it broke that convention in the act of recording it. The specific defect is one I had not connected: a PULL REQUEST BODY becomes the squash commit message, so a convention about commit messages is a convention about PR bodies and I wrote neither down as the other. Recorded as a second entry rather than as a rule because the recurrence is self-inflicted — the same author quoting himself minutes later — and the repair is mechanical (check the body before merging) rather than definitional. The next INDEPENDENT occurrence, by somebody who was not quoting this, is the trigger to exempt the shape by rule instead."
     }
   ]
 }
