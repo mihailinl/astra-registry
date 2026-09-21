@@ -328,6 +328,20 @@ jobs:
         if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node bot/gen-checks-doc.mjs --check
 
+      # FLOW-13's reason-code table is the published interface the panel reads,
+      # and it is published inside SCOPE-7's token file in another repository —
+      # so this is the only place a stale table is caught before it is merged
+      # there. `--selftest` holds the floors: one full entry per code, the table
+      # and its declared population equal in both directions, no panel-only code
+      # in a table the bot emits from, no service-path remedy naming a channel
+      # that path does not have (FLOW-15). `--check` holds the committed
+      # intermediate against `bot/lib/codes.mjs` and `POLICY_CODES`.
+      - name: FLOW-13's reason-code table, against the code tables it comes from
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
+        run: |
+          node tools/gen-codes-table.mjs --selftest
+          node tools/gen-codes-table.mjs --check tools/codes-table.json
+
       # B-T1.7 (BOT-78). The two risk tiers, against the crate that defines
       # them. `HIGH_RISK` and `CONSENT_HIGH_RISK` in bot/lib/policy/constants.mjs
       # decide what stops a release and asks a person; PRODUCTION_PLAN §5.5 and

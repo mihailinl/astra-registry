@@ -30,6 +30,7 @@ const STAGES = [
   ["names", "Whether the name is already taken, or dressed as someone else's", "A heuristic. Read the caveat below before citing it as a defence."],
   ["metadata", "What the store card will say", "Length, licence, and text that renders as something other than what it contains."],
   ["version", "Whether this release may follow the last one", "And whether a person has to look at it."],
+  ["policy", "The events that block on a person", "Not findings against the release. Contract FLOW-11 reports every `R_*` and `P_*` at this stage; `docs/POLICY.md` is where the policy itself is written down, and `bot/lib/policy/constants.mjs` holds the rest of these codes."],
   ["rpc-scan", "Declared versus called host RPCs", "A string search. Read the caveat below; it is not a sandbox."],
   ["derive", "The listing the bot writes", "Held to the same rules a hand-written listing is held to."],
 ];
