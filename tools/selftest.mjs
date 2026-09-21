@@ -94,6 +94,13 @@ const MODULES = [
   // module's header instead. Inserting below moves nothing, and `baseline.mjs`
   // stays last.
   "claims.mjs",
+  // RC-R2-2 — the token file's own version discipline, and the register of
+  // which half of the cron-versus-file comparison runs here and which runs in
+  // `bot/tests/workflows.test.mjs`. It prints its own section header, so
+  // appending here moves no existing name under a header it does not belong
+  // to; the boundary to protect is still `update-notes.mjs` → `repo-rules.mjs`,
+  // and nothing is inserted between that pair.
+  "contract-tokens.mjs",
   // Last, and with a section header of its own. The boundary to protect is
   // `update-notes.mjs` → `repo-rules.mjs`: `repo-rules.mjs` prints no header,
   // so its names come out under `update-notes.mjs`'s, and anything inserted
