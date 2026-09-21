@@ -100,7 +100,21 @@ const QUEUE_FILE = /^state\/queue\/[^/]+\.json$/;
  * of it, and widening it is the whole risk: it is the line between a job that
  * may write four shapes of file and one that may write `log/` as well.
  *
- * ONE THING IS NOT ON `main`, re-measured 2026-09-20 **after** B-T3.1 landed:
+ * THE FILE THIS PARAGRAPH WAITED FOR IS ON `main`, since B-T2.2 — **and the
+ * work below is not done**, which is a different sentence and the reason this
+ * edit is narrow.
+ *
+ * `bot/lib/decisions.mjs` exists. The allow-list is still not widened, because
+ * widening it is B-T3.4's, and `recordCommitRefusal` still refuses — correctly,
+ * because it checks the `available` argument a CALLER passes rather than which
+ * files exist, so it stops refusing when a caller can supply both and not when
+ * one of them lands.
+ *
+ * This said TWO, then ONE, and now this. Three edits to one paragraph in a day,
+ * and the first draft of this very edit said "nothing is missing any more" —
+ * true of the file list and false about the work, which is the exact failure
+ * the paragraph is being edited for. Gap 28's `@absent <path> (<task>)` marker
+ * is the answer; a count a person re-reads is not.
  *
  *   * **`bot/lib/decisions.mjs`** (B-T2.2) — the record writer. Without it no
  *     record exists for an addition to be checked against, so "a version

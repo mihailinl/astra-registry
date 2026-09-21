@@ -327,3 +327,22 @@ jobs:
       # and let a fourth withdrawal out unheld. ~0.4 s, no probe, no network.
       - name: The takedown bound, against repositories that withdrew something
         run: node --test bot/tests/takedown-bound.test.mjs
+
+      # B-T2.2. The decision-record writer, the only thing in this repository
+      # that derives BOT-35's `decision_id`. Four callers refuse by name
+      # against its absence, so the test that matters most here is not a shape
+      # test: it runs `bot/export-issues.mjs`'s `resolveWriter` against the
+      # real module, and it compares all three spellings of BOT-35's
+      # `migration:<owner/name>@<tag>` key this repository carries — one in
+      # the writer, one in `bot/export-issues.mjs` over `fact.repository`, one
+      # in `bot/baseline.mjs` over `fact.repo`. A drift between any two writes
+      # one record where MIG-20 and MIG-21 owe two, and nothing else compares
+      # them.
+      #
+      # It also holds the scan that says no SECOND derivation of a decision id
+      # is on the tree, over `git ls-files` with a floor of 100 against 130
+      # measured — a directory walk under `bot/` follows
+      # `bot/manifest-probe/_deps/AstraPlugins` and would report findings in
+      # another repository under this one's name. ~0.1 s, no probe, no network.
+      - name: The decision record, and the one place its id is derived
+        run: node --test bot/tests/decisions.test.mjs

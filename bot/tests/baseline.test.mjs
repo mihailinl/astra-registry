@@ -385,9 +385,17 @@ test("--write refuses a wholly unverified baseline unless the operator says the 
   assert.match(run(["--expect-unverified", "1"]), /not one of 2 fact\(s\)/);
   // With the right number it gets past this gate and refuses at the next one,
   // which is B-T2.2's writer. That it is a DIFFERENT refusal is the assertion.
+  // Until 2026-09-20 this line read `assert.match(past, /decisions\.mjs/)` and
+  // its comment said "with the right number it gets past this gate and refuses
+  // at the next one, which is B-T2.2's writer". B-T2.2 landed, so the next one
+  // is not a refusal any more: the run succeeds. The tripwire did exactly what
+  // it was for — it went red on the day its premise stopped holding, in the
+  // commit that changed it, which is more than the four module headers that
+  // stated an absence and could not.
   const past = run(["--expect-unverified", "2"]);
   assert.doesNotMatch(past, /not one of 2 fact\(s\)/);
-  assert.match(past, /decisions\.mjs/);
+  assert.doesNotMatch(past, /decisions\.mjs is not in this checkout/,
+    "the writer is on main since B-T2.2; a refusal naming it means resolveWriter regressed");
 });
 
 test("a second dispatch with the marker present writes nothing, and the refusal comes first", () => {

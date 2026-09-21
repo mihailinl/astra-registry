@@ -369,8 +369,17 @@ await test("two decisions about one tag share BOT-35's key, and composing them i
 });
 
 await test("--compose refuses by name while B-T2.2's writer is absent, and takes it when it is there", async () => {
-  await assert.rejects(() => resolveWriter({}), /decision-record writer/,
-    "there is no second composer here, and the refusal says whose the first one is");
+  // The first half of this test asserted the refusal until 2026-09-20. B-T2.2
+  // landed `bot/lib/decisions.mjs`, so `resolveWriter({})` now resolves, and
+  // the title's second clause — "and takes it when it is there" — is the half
+  // that still has work to do. The refusal branch is kept by passing a root
+  // where the module genuinely is not, so the sentence it prints is still
+  // pinned for whoever meets it in a checkout without the module.
+  await assert.rejects(
+    () => resolveWriter({ root: "/nowhere", load: async () => { throw new Error("ENOENT"); } }),
+    /decision-record writer/,
+    "there is no second composer here, and the refusal says whose the first one is",
+  );
   const writer = await resolveWriter({
     root: "/nowhere",
     load: async () => ({ writeDecisionRecord: () => ({ path: "log/decisions/2026/08/abc.json" }) }),
