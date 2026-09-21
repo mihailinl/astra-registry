@@ -373,3 +373,18 @@ jobs:
       # No probe, no network, ~90 ms.
       - name: The binding line, and the window that is measured in bytes
         run: node --test bot/tests/binding.test.mjs
+
+      # B-T3.10. TRUST-31's hashed code paths, and the one thing a path list
+      # cannot say about itself: whether the code the two bot workflows
+      # actually reach is inside it. It walks out from each workflow file
+      # through every `node` entry point, every `uses: ./…` composite action
+      # and the entry points inside it, the static import closure of all of
+      # them and every node script those modules spawn — and fails on a target
+      # the published set does not name. It found one on its first run:
+      # `bot/publish-apply.mjs` runs `node tools/selftest.mjs` as the last of
+      # five gates before it commits, and the draft set had that file outside.
+      # It also prints the set hash a TRUST-42 acknowledgement names, as a
+      # value rather than a description of one. Pure, no probe, no network,
+      # ~60 ms; it shells out to `git ls-tree` only.
+      - name: TRUST-31's hashed set, and everything a bot run can reach
+        run: node --test bot/tests/code-paths.test.mjs
