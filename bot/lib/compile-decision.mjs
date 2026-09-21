@@ -246,6 +246,41 @@ export const ENTRY_ALLOWLIST = Object.freeze({
   ]),
 });
 
+/**
+ * BOT-80's THIRD kind, which is not a service decision and does not come
+ * through `compileDecision` at all.
+ *
+ * A stop or an `M_REJECT` arrives in the answer's `submissions[]`, removes the
+ * queue entry and gets the terminal record (BOT-30), so M-T3.4's `commit` job
+ * composes it directly rather than through the switch below. That is exactly
+ * why the allowlist belongs HERE and not in the run: the rule M-1 states is
+ * "`bot/lib/compile-decision.mjs` **and the record composers** take their
+ * inputs from an allowlist", and a third entry kind whose composer took the
+ * service's object whole would be the same hole in a place nobody was looking,
+ * because the two lists above would still read as complete.
+ *
+ * The `M_REJECT` row is the longer one: `category`, `moderator`, `decided_at`
+ * and `declared_interest` are a moderator's, and a STOP has none of them — a
+ * stop is the author's own act through the panel, so a stop entry that arrived
+ * carrying a moderator handle would put one into a terminal record under an
+ * act no moderator made. That is the same failure n4 names for `A_*`, one
+ * record shape over.
+ */
+export const SUBMISSION_ALLOWLIST = Object.freeze({
+  stop: Object.freeze([
+    "submission_id", "repo", "tag", "trigger", "service_repository_id",
+    "stop_status", "fingerprints", "code",
+  ]),
+  reject: Object.freeze([
+    "submission_id", "repo", "tag", "trigger", "service_repository_id",
+    "stop_status", "fingerprints", "code",
+    "category", "moderator", "decided_at", "declared_interest",
+  ]),
+});
+
+/** The one submission code that is a moderator's decision rather than a stop. */
+export const REJECT_CODE = "M_REJECT";
+
 /** The author-action codes. Neither carries a moderator (BOT-80; n4). */
 export const AUTHOR_CODES = Object.freeze(["A_REMOVAL_REQUEST", "A_YANK"]);
 
@@ -454,15 +489,42 @@ function wholeSeconds(at) {
   return `${m[1]}Z`;
 }
 
-/** The entry, copied through BOT-80's allowlist for its kind. */
-function allowlisted(entry) {
-  const code = entry?.code;
-  const members = AUTHOR_CODES.includes(code) ? ENTRY_ALLOWLIST.author : ENTRY_ALLOWLIST.moderator;
+/**
+ * One object, copied member by member out of a named list.
+ *
+ * A COPY and not a filtered view, and the difference is the whole mechanism:
+ * a `delete` over the service's own object leaves the caller holding that
+ * object, and the next composer that takes it whole undoes the work. Nothing
+ * downstream of this ever sees the wire object again.
+ */
+function copyThrough(source, members) {
   const out = {};
   for (const member of members) {
-    if (Object.hasOwn(entry ?? {}, member) && entry[member] !== undefined) out[member] = entry[member];
+    if (Object.hasOwn(source ?? {}, member) && source[member] !== undefined) out[member] = source[member];
   }
   return out;
+}
+
+/** The entry, copied through BOT-80's allowlist for its kind. */
+export function allowlisted(entry) {
+  const code = entry?.code;
+  const members = AUTHOR_CODES.includes(code) ? ENTRY_ALLOWLIST.author : ENTRY_ALLOWLIST.moderator;
+  return copyThrough(entry, members);
+}
+
+/**
+ * A `submissions[]` entry, copied through BOT-80's allowlist for a stop or an
+ * `M_REJECT` (BOT-30).
+ *
+ * The discriminant is `code === "M_REJECT"` and not "does it carry a
+ * moderator", which is the reading that would make the entry choose its own
+ * allowlist: an entry arriving with a moderator handle would be read as a
+ * rejection, widen its own list, and commit the handle. The code names the
+ * kind; the kind names the members.
+ */
+export function allowlistedSubmission(entry) {
+  const members = entry?.code === REJECT_CODE ? SUBMISSION_ALLOWLIST.reject : SUBMISSION_ALLOWLIST.stop;
+  return copyThrough(entry, members);
 }
 
 /**

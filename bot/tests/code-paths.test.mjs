@@ -101,6 +101,11 @@ export const ENTRIES = [
   "bot/gen-checks-doc.mjs",
   "bot/heartbeat.mjs",
   "bot/ingest.mjs",
+  // Contract 0.23.0's, and the first entry to arrive through the cost the two
+  // tests below state rather than before it: `bot/moderation-run.mjs` is the
+  // nineteenth top-level entry point, and the moderation workflow's `list`,
+  // `alert`, `commit`, `report` and `settled` jobs all run it.
+  "bot/moderation-run.mjs",
   "bot/moderation.mjs",
   "bot/publish-apply.mjs",
   "bot/read-submission.mjs",
@@ -163,6 +168,14 @@ export const ENTRIES = [
   "schema/hold-v1.json",
   "schema/identity-v1.json",
   "schema/index-v1.json",
+  // Contract 0.23.0's, and the one entry under `schema/` that is not a record
+  // schema: it is the registry's check of the SERVICE's own
+  // `astra.plugins.bot-moderation-work/1` answer, read by
+  // `bot/moderation-run.mjs` by literal path. A writer who could edit it from
+  // outside the set could widen what a moderation run accepts from the service
+  // — and compile an advisory out of an entry nobody validated — without the
+  // bot returning to shadow.
+  "schema/moderation-work-v1.json",
   "schema/plugin-v1.json",
   "schema/publisher-v1.json",
   "schema/queue-v1.json",
@@ -278,18 +291,17 @@ test("every entry is a well-formed path, and one bad entry refuses the whole set
 //     naming both the row and the near path when something does. That is the
 //     leg that catches a typo today, without waiting for a marker — and the
 //     split is why it needs no exception list, which would be a new shelter.
-const UNRESOLVED_BY = new Map([
-  [
-    ".github/workflows/plugins-moderation.yml",
-    {
-      by: "M-T3.4",
-      why: "ID-34 pins its `job_workflow_ref` before the file exists (contract 0.20.0's TRUST-31)",
-      // Observable: `log/rollout/R3-exit.json`. R3 cannot exit with the
-      // moderation workflow still unwritten — the step is what it is for.
-      due: "R3",
-    },
-  ],
-]);
+//
+// **It is empty, and it is empty because the one row it ever held did what a
+// row is for.** `.github/workflows/plugins-moderation.yml` was excused by
+// M-T3.4 until R3; M-T3.4 landed it, and the third assertion below — *the row
+// dies when the file arrives* — is what turns leaving the row behind into a
+// failure rather than into shelter the next entry inherits. An empty map is
+// therefore the correct state and not a deleted check: every assertion in the
+// test still runs, the `empty` list above it is what does the work while
+// nothing is pending, and the next entry that names a path not yet on the
+// tree writes its row here with a task and a step.
+const UNRESOLVED_BY = new Map([]);
 
 /** Edit distance, with an early exit: anything over `max` is just "far". */
 function editDistance(a, b, max) {
