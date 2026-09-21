@@ -651,6 +651,296 @@ id = "sink-panel"
         );
     }
 
+    // ── `HOST_RPCS`, and the proto it is a copy of ──────────────────────────
+    //
+    // The test above pins `RPC_RULES`'s permission **ids** to the daemon's
+    // vocabulary. Nothing pinned the **method names** beside them, and the
+    // asymmetry was invisible precisely because the neighbouring literal was
+    // held: `HOST_RPCS` appeared exactly twice in the whole registry — its
+    // declaration at `bot/lib/rpcscan.mjs:49` and its one loop at `:297` — and
+    // was compared with nothing at all.
+    //
+    // What that costs is not an error. It is silence. `scanHostRpcs` only ever
+    // searches a bundle for names that are IN that array, so an eleventh host
+    // RPC is never searched for: the author who copies a snippet, calls it and
+    // ships a manifest that never declared the permission gets a clean scan, a
+    // green listing, and a plugin that fails at run time on a user's machine
+    // with a permission error nobody can debug from the store page — which is
+    // the exact failure the scan exists to prevent. Nothing goes red, in this
+    // repository or anywhere else, on the day the proto grows a method.
+    //
+    // These tests are here, in Rust, for the same reason the permission test
+    // is: this is the one part of the bot that already has a checkout of
+    // AstraPlugins at the commit `astra-plugins.pin` names, so `plugin.proto`
+    // can be read rather than re-described. `bot-tests.yml` and `ingest.yml`
+    // already run `cargo test` on this crate, so the check has a workflow
+    // without one being added.
+
+    /// `bot/lib/rpcscan.mjs`, read as text — the alternative is a fourth copy
+    /// of the list, which is the thing being prevented.
+    const RPCSCAN_MJS: &str = include_str!("../../lib/rpcscan.mjs");
+
+    /// `proto/plugin.proto` out of the pinned AstraPlugins checkout.
+    ///
+    /// A missing file is a FAILURE and never a skip. A test that quietly
+    /// passed because it could not find the thing it compares would be worse
+    /// than no test: it would close this gap on paper.
+    fn pinned_proto() -> String {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("_deps/AstraPlugins/proto/plugin.proto");
+        std::fs::read_to_string(&p).unwrap_or_else(|e| {
+            panic!(
+                "cannot read {}: {e}. That path is the AstraPlugins checkout \
+                 `bot/manifest-probe/astra-plugins.pin` names — the same one this \
+                 crate's path dependency links. Run `bot/manifest-probe/link-deps.sh`. \
+                 This test does not skip when the proto is absent, because a host \
+                 RPC list compared against nothing is what it exists to refuse.",
+                p.display()
+            )
+        })
+    }
+
+    /// The `rpc` method names inside one `service` block of a `.proto`.
+    ///
+    /// Scoped to the named service on purpose: `SubscribeEvents` is declared by
+    /// `CoreService` and `ChatService` as well, so a whole-file search for a
+    /// method name would answer "yes" for a name `PluginHostService` does not
+    /// serve — wrong in the permissive direction, which is the direction that
+    /// does not go red.
+    ///
+    /// Line comments are removed before the braces are counted, so a `{` in
+    /// prose cannot move the end of the block.
+    fn proto_service_rpcs(proto: &str, service: &str) -> Vec<String> {
+        let uncommented: String = proto
+            .lines()
+            .map(|l| match l.find("//") {
+                Some(i) => &l[..i],
+                None => l,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let needle = format!("service {service} {{");
+        let start = uncommented
+            .find(&needle)
+            .unwrap_or_else(|| panic!("`{needle}` is not in proto/plugin.proto"))
+            + needle.len();
+        let rest = &uncommented[start..];
+
+        let mut depth = 1usize;
+        let mut end = rest.len();
+        for (i, c) in rest.char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        rest[..end]
+            .lines()
+            .filter_map(|l| l.trim_start().strip_prefix("rpc "))
+            .map(|r| {
+                r.chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect::<String>()
+            })
+            .filter(|n| !n.is_empty())
+            .collect()
+    }
+
+    /// The double-quoted strings of a JS array literal that begins at `opener`.
+    fn js_string_list(js: &str, opener: &str) -> Vec<String> {
+        let body = js
+            .split(opener)
+            .nth(1)
+            .unwrap_or_else(|| panic!("`{opener}` is not in bot/lib/rpcscan.mjs"))
+            .split(']')
+            .next()
+            .expect("a closing bracket");
+        body.split('"')
+            .skip(1)
+            .step_by(2)
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// The keys of the `RPC_RULES` object literal.
+    fn rpc_rules_keys(js: &str) -> Vec<String> {
+        let body = js
+            .split("export const RPC_RULES = {")
+            .nth(1)
+            .expect("RPC_RULES must still be exported from rpcscan.mjs")
+            .split("\n};")
+            .next()
+            .expect("the RPC_RULES literal");
+        body.lines()
+            .filter_map(|l| l.trim().split_once(": {"))
+            .map(|(k, _)| k.to_string())
+            .filter(|k| !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric()))
+            .collect()
+    }
+
+    fn set(v: &[String]) -> std::collections::BTreeSet<String> {
+        v.iter().cloned().collect()
+    }
+
+    /// `HOST_RPCS` is `PluginHostService`, or the scan has a blind spot.
+    #[test]
+    fn the_host_rpc_list_is_the_protos_and_not_a_copy_of_it() {
+        let proto = pinned_proto();
+        let in_proto = proto_service_rpcs(&proto, "PluginHostService");
+        let in_js = js_string_list(RPCSCAN_MJS, "export const HOST_RPCS = [");
+
+        // Vacuity guards, both directions. A parse that stopped matching either
+        // file's shape would otherwise compare two empty sets and pass.
+        assert!(
+            in_proto.len() >= 8,
+            "only {} rpc(s) parsed out of PluginHostService — the proto parse has \
+             stopped matching the file, so this test is checking nothing",
+            in_proto.len()
+        );
+        assert!(
+            in_js.len() >= 8,
+            "only {} name(s) parsed out of HOST_RPCS — the JS parse has stopped \
+             matching rpcscan.mjs, so this test is checking nothing",
+            in_js.len()
+        );
+
+        let p = set(&in_proto);
+        let j = set(&in_js);
+        assert_eq!(p.len(), in_proto.len(), "PluginHostService declares a duplicate rpc name");
+        assert_eq!(j.len(), in_js.len(), "HOST_RPCS lists a name twice");
+
+        let unsearched: Vec<_> = p.difference(&j).cloned().collect();
+        assert!(
+            unsearched.is_empty(),
+            "PluginHostService in proto/plugin.proto declares {unsearched:?}, which \
+             bot/lib/rpcscan.mjs's HOST_RPCS does not list. `scanHostRpcs` only \
+             searches a bundle for the names in that array, so this method is \
+             never searched for at all: a plugin that calls it without declaring \
+             the permission gets a clean scan, a green listing, and a permission \
+             error at run time on the user's machine. Add it to HOST_RPCS, AND to \
+             either RPC_RULES or ALWAYS_ALLOWED beside it — the next test says why \
+             the array alone is not enough."
+        );
+
+        let stale: Vec<_> = j.difference(&p).cloned().collect();
+        assert!(
+            stale.is_empty(),
+            "bot/lib/rpcscan.mjs's HOST_RPCS lists {stale:?}, which PluginHostService \
+             in proto/plugin.proto does not declare. The scan would refuse a listing, \
+             or tell an author to buy a permission, over a string that names no call \
+             the daemon serves."
+        );
+    }
+
+    /// Adding the name is half the edit, and the other half fails silently.
+    ///
+    /// `isDeclared` at `bot/lib/rpcscan.mjs:270` opens `const rule =
+    /// RPC_RULES[rpc]; if (!rule) return true;` — an rpc in `HOST_RPCS` with no
+    /// rule and no `ALWAYS_ALLOWED` entry is treated as *already declared* by
+    /// every manifest, so the loop at `:297` skips it for every bundle for ever.
+    /// It does not throw and it does not warn. So the eleventh host RPC can be
+    /// added to `HOST_RPCS` — passing the test above — and still be searched for
+    /// in no plugin ever submitted.
+    ///
+    /// The disjointness half is the same failure mirrored: `ALWAYS_ALLOWED` is
+    /// consulted first, so a rule written for a name that is also always-allowed
+    /// is dead while reading exactly like a live gate.
+    #[test]
+    fn every_host_rpc_is_either_always_allowed_or_carries_a_rule() {
+        let host = js_string_list(RPCSCAN_MJS, "export const HOST_RPCS = [");
+        let free = js_string_list(RPCSCAN_MJS, "const ALWAYS_ALLOWED = new Set([");
+        let ruled = rpc_rules_keys(RPCSCAN_MJS);
+
+        assert!(host.len() >= 8, "HOST_RPCS parse is checking nothing");
+        assert!(free.len() >= 3, "ALWAYS_ALLOWED parse is checking nothing");
+        assert!(ruled.len() >= 5, "RPC_RULES key parse is checking nothing");
+
+        let (h, f, r) = (set(&host), set(&free), set(&ruled));
+
+        let ungoverned: Vec<_> = h.difference(&f).filter(|n| !r.contains(*n)).cloned().collect();
+        assert!(
+            ungoverned.is_empty(),
+            "bot/lib/rpcscan.mjs lists {ungoverned:?} in HOST_RPCS with neither an \
+             ALWAYS_ALLOWED entry nor an RPC_RULES row. `isDeclared` returns true for \
+             an rpc it has no rule for, so the scan treats it as declared by every \
+             manifest and never reports it — the name is in the array and the check is \
+             off. Give it a permission row, or put it in ALWAYS_ALLOWED if the daemon \
+             gates it on nothing."
+        );
+
+        let both: Vec<_> = f.intersection(&r).cloned().collect();
+        assert!(
+            both.is_empty(),
+            "{both:?} are in both ALWAYS_ALLOWED and RPC_RULES. ALWAYS_ALLOWED is \
+             consulted first, so the rule never runs: it reads as a gate and is dead."
+        );
+
+        let orphan_rules: Vec<_> = r.difference(&h).cloned().collect();
+        assert!(
+            orphan_rules.is_empty(),
+            "RPC_RULES has a row for {orphan_rules:?}, which is not in HOST_RPCS. \
+             The loop only visits HOST_RPCS, so the row is unreachable — a permission \
+             the bot appears to enforce and never looks for."
+        );
+
+        let orphan_free: Vec<_> = f.difference(&h).cloned().collect();
+        assert!(
+            orphan_free.is_empty(),
+            "ALWAYS_ALLOWED names {orphan_free:?}, which is not in HOST_RPCS — \
+             an exemption from a scan that was never going to look."
+        );
+    }
+
+    /// The three counts `rpcscan.mjs` states in prose about its own literals.
+    ///
+    /// Its header opens *"ten methods, four of which every plugin may always
+    /// call … and six of which act on the user's session"*, and the
+    /// declaration's own doc comment says *"The ten methods"*. That sentence is
+    /// what a maintainer reads before deciding whether the array is complete,
+    /// which makes it the one sentence that must not outlive its truth: a
+    /// literal that grew and a comment that still says `ten` tells the next
+    /// reader the list is finished.
+    #[test]
+    fn rpcscan_mjs_prose_still_counts_the_literals_it_describes() {
+        const WORDS: [&str; 21] = [
+            "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+            "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen",
+            "eighteen", "nineteen", "twenty",
+        ];
+        let word = |n: usize| -> &str {
+            WORDS.get(n).copied().unwrap_or_else(|| {
+                panic!("{n} is off the end of WORDS — extend it rather than dropping the check")
+            })
+        };
+
+        let host = word(js_string_list(RPCSCAN_MJS, "export const HOST_RPCS = [").len());
+        let free = word(js_string_list(RPCSCAN_MJS, "const ALWAYS_ALLOWED = new Set([").len());
+        let ruled = word(rpc_rules_keys(RPCSCAN_MJS).len());
+
+        for phrase in [
+            format!("{host} methods, {free} of"),
+            format!("and {ruled} of"),
+            format!("names all {host}"),
+            format!("The {host} methods of `PluginHostService`"),
+        ] {
+            assert!(
+                RPCSCAN_MJS.contains(&phrase),
+                "bot/lib/rpcscan.mjs no longer says {phrase:?} anywhere, so one of its \
+                 own sentences is now counting a literal that has changed size. The \
+                 array is the thing a reader trusts that comment about."
+            );
+        }
+    }
+
     /// The response is the bot's whole view of the manifest. If it stops being
     /// serializable the bot sees nothing at all, so the shape is asserted rather
     /// than trusted.

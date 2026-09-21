@@ -65,5 +65,29 @@ crate's test run red rather than silently degrading every diagnosis to
 `E_MANIFEST_INVALID`.
 
 ```bash
-cargo test    # 11 tests, including the `ui_panels` drift and the id-as-path-component rules
+cargo test    # 15 tests, including the `ui_panels` drift and the id-as-path-component rules
 ```
+
+## Why it also reads the JS half, and the proto
+
+Four of those tests assert nothing about a manifest. They are here because this
+is the only part of the bot that has both halves in one process: the crate the
+daemon judges by, and — through `_deps/AstraPlugins`, at the commit
+`astra-plugins.pin` names — `proto/plugin.proto`. The JS half has neither, so
+`bot/lib/rpcscan.mjs` carried three hand-maintained copies of things it could
+not check:
+
+| | held against |
+|---|---|
+| `RPC_RULES`'s permission ids | `astra_plugin_manifest::PERMISSION_NAMES` |
+| `HOST_RPCS`'s method names | `service PluginHostService` in `proto/plugin.proto` |
+| `HOST_RPCS` vs `ALWAYS_ALLOWED` + `RPC_RULES` | each other — every method governed exactly once |
+| the header's `ten` / `four` / `six` | the three literals they count |
+
+Only the first existed. The second is the one that cost something: the scan
+searches a bundle only for names that are in `HOST_RPCS`, so an eleventh host
+RPC was never searched for by anybody, and nothing anywhere went red on the day
+the proto grew one. The third is subtler and is why fixing the array alone is
+not the fix — `isDeclared` returns `true` for an rpc it has no rule for, so a
+name added to `HOST_RPCS` and nowhere else is in the list and still exempt from
+the check.
