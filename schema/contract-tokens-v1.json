@@ -1,6 +1,6 @@
 {
-  "contract_version": "0.19.0",
-  "source_commit": "c473db9c2b98557925892043a1e8a5e3258f5752",
+  "contract_version": "0.20.0",
+  "source_commit": "8f001a24941f1ef86c9a724a698eb17e2071b5cf",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -3317,7 +3317,7 @@
       "members": [
         {
           "name": "submission_id",
-          "required": true
+          "required": false
         },
         {
           "name": "decision_id",

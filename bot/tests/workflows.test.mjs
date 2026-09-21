@@ -781,9 +781,20 @@ test("the signer hears every workflow that commits, by the name in the file", ()
   }
   // The floor, and it is the one RC-R3-3 raises. One committing workflow is
   // heard today — `Ingest`. It becomes three when M-T3.4's `Plugins
-  // moderation` and B-T3.10's `Operator` land, and this number rises with
-  // them, in their commit. Without it the loop above runs over nothing and
+  // moderation` and M-T3.5's `Operator` land, and this number rises with them,
+  // in RC-R3-3's commit, which is the task that adds both names to `sign.yml`'s
+  // `workflow_run` list. Without it the loop above runs over nothing and
   // reports a signer that hears everything because there is nothing to hear.
+  //
+  // This comment said "B-T3.10's `Operator`" and was wrong twice, in a way
+  // that sent a reader to the wrong task and would have sent a lane to edit a
+  // file it did not own. `operator.yml` is M-T3.5's; B-T3.10 publishes what
+  // the plugins service pins about the BOT, and its own values say in terms
+  // that `operator.yml` is not a bot workflow — it holds no bot token, mints
+  // none, and MOD-52 binds it through environment `operator` instead
+  // (contract 0.20.0's TRUST-31; registry plan §1.2 and M-T3.5). The floor
+  // raise itself is RC-R3-3's `Repo/files` line, not B-T3.10's. Both halves
+  // of the sentence had been true of some task; neither was true of that one.
   assert.ok(
     heardCommitters.length >= 1,
     `sign.yml hears ${heardCommitters.length} of this repository's committing workflows and heard 1 on ` +
