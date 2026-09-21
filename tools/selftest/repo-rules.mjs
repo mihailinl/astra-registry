@@ -660,6 +660,18 @@ export async function run() {
     // row in it is COULD NOT ASK in CI, so a suite that stopped running it
     // would look identical to a suite that ran it.
     "claims.mjs",
+    // `contract-tokens.mjs` was added on 2026-09-21 with RC-R2-2 — the token
+    // file's own version discipline, and the register of which half of the
+    // cron-versus-file comparison lives here and which lives in
+    // `bot/tests/workflows.test.mjs`. Watched both ways: deleted from disk
+    // together with its runner entry, which is the loss `checkModuleSet` cannot
+    // see because the two sides it compares agree that the module is gone; and
+    // left out of this list, which is the silent half, since omitting a name
+    // here costs nothing and fails nothing. It matters for this module in
+    // particular because one of its four checks is a canary over a DELEGATION:
+    // a suite that stopped running it would leave "the other half compares
+    // that" true of nothing, and look identical to a suite that ran it.
+    "contract-tokens.mjs",
   ];
   await test("no module has left the runner's list since the suite was split", async () => {
     // The list itself first. It is a SUBSET assertion, so a name appearing
