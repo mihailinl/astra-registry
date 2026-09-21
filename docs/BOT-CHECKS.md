@@ -266,7 +266,7 @@ The half that makes the registry a trust boundary rather than a consistency chec
 |---|---|---|---|
 | `E_ATTESTATION_MISSING` | error | The bundle has no build attestation | Build it in GitHub Actions with `actions/attest-build-provenance`, which the Astra reusable release workflow already does. A hand-built bundle is refused however good it is: CI is the only signer, so an author's compromised laptop cannot publish. |
 | `E_ATTESTATION_INVALID` | error | The attestation does not verify | Re-run the release workflow. Do not re-upload the asset by hand — the attestation covers the exact bytes, and hand-uploading is how they stop matching. |
-| `E_ATTESTATION_UNCHECKED` | error | The attestation could not be checked — this is not about your release | Nothing to fix and nothing to rebuild: the verifier could not start. `gh attestation verify` fetches Sigstore's trust root before it can check anything, and when that fetch fails it reports a failure that reads like a bad signature. Comment `/recheck` — the same bytes usually verify on the next run. It still blocks, because an artifact nobody could verify must not be listed; it blocks as "we could not look", not as "we looked and it was wrong". |
+| `E_ATTESTATION_UNCHECKED` | error | The attestation could not be checked — this is not about your release | Nothing to fix and nothing to rebuild: the verifier could not start. `gh attestation verify` fetches Sigstore's trust root before it can check anything, and when that fetch fails it reports a failure that reads like a bad signature. Run a Recheck — the same bytes usually verify on the next run. It still blocks, because an artifact nobody could verify must not be listed; it blocks as "we could not look", not as "we looked and it was wrong". |
 | `E_ATTESTATION_SUBJECT_MISMATCH` | error | The attestation is for different bytes | The asset was replaced after CI attested it. Cut a new release; never overwrite an asset in place. |
 | `E_RELEASE_COMMIT_MISMATCH` | error | The Release points at a different commit than the one that built it | `release.target_commitish` and the commit named in the build attestation must be the same. They are not, which means the Release was created against — or re-pointed at — a tree that did not produce these bytes. This matters beyond tidiness: the listing records that commit as the release's provenance, and every relative image in your README is pinned to it, so a mismatch renders pictures from a tree nothing attested. Re-create the Release at the commit the workflow built (`gh release create <tag> --target <sha>`), or re-run the release workflow on the tag. |
 | `E_ATTESTATION_REPO_MISMATCH` | error | The attestation was issued to another repository | The bundle was built somewhere other than the repository being listed. That is exactly the case this check exists to catch. |
@@ -383,6 +383,13 @@ And whether a person has to look at it.
 |---|---|---|---|
 | `E_VERSION_NOT_NEW` | error | That version is already listed, or is older than one that is | Releases go forward. Bump the version and cut a new release — a version that is republished with different bytes is how a downgrade attack starts. |
 | `E_VERSION_INCONSISTENT` | error | The release's bundles do not agree on a version | One release, one version, every target. Check the build matrix. |
+
+### The events that block on a person
+
+Not findings against the release. Contract FLOW-11 reports every `R_*` and `P_*` at this stage; `docs/POLICY.md` is where the policy itself is written down, and `bot/lib/policy/constants.mjs` holds the rest of these codes.
+
+| Code | Level | Meaning | What to do |
+|---|---|---|---|
 | `R_IDENTITY_CHANGED` | review | This plugin was listed from a different repository | Held for a human, always. A repository change is an author change until somebody says otherwise, and every installed copy carries a pin to the old one. |
 | `R_FIRST_LISTING` | review | First listing for this plugin | A human reads the first one, once, ever. Later releases from the same repository are zero-touch. |
 

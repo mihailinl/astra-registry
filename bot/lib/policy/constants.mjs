@@ -71,29 +71,47 @@ export const REVIEW_SLA_HOURS = 48;
  */
 export const SLA_BREACH_HOURS = REVIEW_SLA_HOURS * 2;
 
-/** @typedef {{level: string, title: string, remedy: string}} PolicyCodeDef */
+/**
+ * `stage` is `policy` for every entry here, and the contract says so rather
+ * than this file: FLOW-11 requires a stage with every reason code and fixes it
+ * at `policy` for `R_*` and `P_*`, which is all nineteen of these. It is
+ * written out per entry rather than defaulted by the emitter, because FLOW-13's
+ * table is one entry per code with six members each, and a member a generator
+ * supplies when the table omits it is a member that silently keeps the old
+ * value after somebody adds a twentieth entry with a different stage.
+ *
+ * `fix` is FLOW-13's closed list — `recheck`, `new_tag`, `moderator`,
+ * `registry`, `none` — and the rule that decides it is stated once, in
+ * `bot/lib/codes.mjs`'s header. Here it collapses to three answers: a `review`
+ * waits on a person (`moderator`); `P_REFUSED` points at findings the author
+ * clears and then re-runs against the same tag (`recheck`); and every other
+ * `P_*` reports something that has already happened, which nothing clears
+ * (`none`).
+ *
+ * @typedef {{level: string, title: string, remedy: string, stage: string, fix: string}} PolicyCodeDef
+ */
 
 /** @type {Record<string, PolicyCodeDef>} */
 export const POLICY_CODES = {
   P_PUBLISHED: {
-    level: "pass",
+    level: "pass", stage: "policy", fix: "none",
     title: "Published, with nobody in the loop",
     remedy: "Nothing to do. This is what a routine release is supposed to look like.",
   },
   P_REFUSED: {
-    level: "error",
+    level: "error", stage: "policy", fix: "recheck",
     title: "Not published, because a check failed",
     remedy: "Fix the blocking findings above and comment `/recheck`. The policy did not reject this; a check did.",
   },
   R_FIRST_LISTING: {
-    level: "review",
+    level: "review", stage: "policy", fix: "moderator",
     title: "First listing — a person reads it, once, ever",
     remedy:
       "Nothing to do but wait. This is one of exactly three events that block on a human, and it " +
       "happens once per plugin: every later release from the same repository is zero-touch.",
   },
   R_IDENTITY_CHANGED: {
-    level: "review",
+    level: "review", stage: "policy", fix: "moderator",
     title: "The repository this plugin is listed from changed",
     remedy:
       "Say in the issue what happened — a rename, a transfer, a fork taking over maintenance. " +
@@ -101,7 +119,7 @@ export const POLICY_CODES = {
       "until somebody says otherwise.",
   },
   R_NEW_HIGH_RISK: {
-    level: "review",
+    level: "review", stage: "policy", fix: "moderator",
     title: "The release asks for a high-risk permission it did not have before",
     remedy:
       "Say in the issue what the new permission is for, in one sentence a user would accept. " +
@@ -109,14 +127,14 @@ export const POLICY_CODES = {
       "`set_theme_contribution`; each reaches outside the plugin's own surface.",
   },
   P_APPROVED: {
-    level: "pass",
+    level: "pass", stage: "policy", fix: "none",
     title: "A maintainer cleared the hold",
     remedy:
       "Nothing to do. The hold is gone; every check above was re-run from scratch in this run, " +
       "against the release as it is today, and what publishes is what this run verified.",
   },
   P_APPROVAL_STALE: {
-    level: "review",
+    level: "review", stage: "policy", fix: "moderator",
     title: "The approval named a different submission from this one",
     remedy:
       "Nothing published and nothing was lost. An `/approve` carries the fingerprint printed in " +
@@ -126,14 +144,14 @@ export const POLICY_CODES = {
       "comment. An approval has to be about something a person actually read.",
   },
   R_CHECK_HELD: {
-    level: "review",
+    level: "review", stage: "policy", fix: "moderator",
     title: "A check handed the decision to a person",
     remedy:
       "Not a rejection and not one of the three policy events — a near-miss name or a display-name " +
       "collision that the bot is not entitled to rule on. Same 48-hour SLA.",
   },
   P_DELAY_WAIVED_BY_COMMAND: {
-    level: "note",
+    level: "note", stage: "policy", fix: "none",
     title: "A maintainer published this without waiting",
     remedy:
       "Nothing to do, and the shortened window is on the record. Somebody with write access to this " +
@@ -142,7 +160,7 @@ export const POLICY_CODES = {
       "again from scratch first, which a hand-written listing would not have.",
   },
   P_FIRST_LISTING_APPROVED: {
-    level: "note",
+    level: "note", stage: "policy", fix: "none",
     title: "Approved, and published without waiting",
     remedy:
       "Nothing to do. A first listing has no installed copies, so the publication delay would have " +
@@ -151,7 +169,7 @@ export const POLICY_CODES = {
       "this repository, where existing installs follow an update whether or not anybody looked.",
   },
   P_DELAY_HIGH_RISK: {
-    level: "note",
+    level: "note", stage: "policy", fix: "none",
     title: "Held for the publication delay because the plugin holds a high-risk permission",
     remedy:
       "Nothing to do. Every auto-published release of a plugin holding any high-risk permission " +
@@ -160,14 +178,14 @@ export const POLICY_CODES = {
       "would never fire on it.",
   },
   P_DELAY_WIDENED: {
-    level: "note",
+    level: "note", stage: "policy", fix: "none",
     title: "Held for the publication delay because the permission set grew",
     remedy:
       "Nothing to do. A widening inside the non-high-risk set publishes itself after the delay; " +
       "the delay exists so the author hears about it first.",
   },
   P_DELAY_BYTES_CHANGED: {
-    level: "warn",
+    level: "warn", stage: "policy", fix: "none",
     title: "The release assets changed during the delay, so the clock restarted",
     remedy:
       "Do not overwrite a published release asset. The delay is a delay on *these bytes*; " +
@@ -175,17 +193,17 @@ export const POLICY_CODES = {
       "timed for the end of the window.",
   },
   P_DELAY_WAITING: {
-    level: "note",
+    level: "note", stage: "policy", fix: "none",
     title: "Waiting out the publication delay",
     remedy: "Nothing to do. It publishes itself at the time stated above without anybody touching it.",
   },
   P_DELAY_ELAPSED: {
-    level: "pass",
+    level: "pass", stage: "policy", fix: "none",
     title: "The publication delay has elapsed",
     remedy: "Nothing to do. Every check was re-run from scratch just now, against the bytes as they are today.",
   },
   P_DELAY_BROUGHT_FORWARD: {
-    level: "note",
+    level: "note", stage: "policy", fix: "none",
     title: "A maintainer waived part of the publication delay",
     remedy:
       "Nothing to do, but the shortened window is on the record: somebody with write access to this " +
@@ -193,7 +211,7 @@ export const POLICY_CODES = {
       "Every check still ran from scratch against today's bytes.",
   },
   P_UNKNOWN_PERMISSION: {
-    level: "warn",
+    level: "warn", stage: "policy", fix: "none",
     title: "The manifest declares a permission this registry has no name for",
     remedy:
       "Check the spelling against POLICY.md's permission table. An unknown key grants nothing — " +
@@ -201,12 +219,12 @@ export const POLICY_CODES = {
       "can name is also a permission no consent sheet can describe.",
   },
   P_TRUSTED_AUTHOR: {
-    level: "note",
+    level: "note", stage: "policy", fix: "none",
     title: "Shorter delay: this author has a clean release history here",
     remedy: "Nothing to do.",
   },
   P_SLA: {
-    level: "note",
+    level: "note", stage: "policy", fix: "none",
     title: "What happens next, and by when",
     remedy: "See docs/POLICY.md. If this passes the stated deadline, say so on this issue — a missed SLA is a bug in the policy, not in your release.",
   },

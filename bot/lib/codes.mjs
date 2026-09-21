@@ -24,22 +24,53 @@
 //
 // `skip` exists too, for a check that could not run in this mode (offline, no
 // `gh`); it renders like `note` and is never counted as a pass.
+//
+// **`fix` says what clears the code, and it is not the same question as what
+// caused it.** Contract FLOW-13 publishes it as a closed list — `recheck`,
+// `new_tag`, `moderator`, `registry`, `none` — inside SCOPE-7's token file, and
+// the panel renders an author's next action out of it alone. The rule that
+// decides it, stated once here rather than re-derived per entry:
+//
+//   * a Recheck re-runs **the same tag** (FLOW-4; FLOW-18). So anything read
+//     out of bytes the build attestation already covers — the bundle, the
+//     manifest, the card, the version, the declared RPCs — cannot be cleared
+//     by one, however small the mistake: `new_tag`.
+//   * a finding about something **outside** those bytes, which the bot reads
+//     live on every run — the two typed facts, `.well-known/astra-plugin-owner`,
+//     a release asset that can still be added, a fetch that failed once — is
+//     `recheck`.
+//   * `review` levels hand the decision to a person: `moderator`.
+//   * a finding that is about this registry and not about the release —
+//     no trust root, a probe that could not run, a listing the bot itself
+//     derived and then refused — is `registry`. An author who reads
+//     `new_tag` there rebuilds for nothing.
+//   * `warn` and `note` block nothing, so nothing clears them: `none`.
+//
+// The one place the contract fixes a value directly is FLOW-13's own worked
+// example — `B_UNBOUND` is `new_tag`, because ID-22 reads the binding line at
+// the attested commit — and it is an instance of the first rule, not an
+// exception to it.
+//
+// A panel-only flag is FLOW-13's sixth member and is **not** written per entry
+// here: every code in this file is one the bot emits, which is what panel-only
+// denies. `tools/gen-codes-table.mjs` derives it, and asserts the denial.
 
 /**
  * @typedef {"error"|"review"|"warn"|"note"|"pass"|"skip"} Level
- * @typedef {{level: Level, title: string, remedy: string, stage: string}} CodeDef
+ * @typedef {"recheck"|"new_tag"|"moderator"|"registry"|"none"} Fix
+ * @typedef {{level: Level, title: string, remedy: string, stage: string, fix: Fix}} CodeDef
  */
 
 /** @type {Record<string, CodeDef>} */
 export const CODES = {
   // ── the two facts the submitter types ──────────────────────────────────────
   E_INPUT_REPO: {
-    level: "error", stage: "submission",
+    level: "error", stage: "submission", fix: "recheck",
     title: "The source repository is not `owner/name`",
     remedy: "Write it exactly as GitHub does: `you/dice-roller`. No URL, no trailing slash, no branch.",
   },
   E_INPUT_TAG: {
-    level: "error", stage: "submission",
+    level: "error", stage: "submission", fix: "recheck",
     title: "The release tag is not a tag",
     remedy: "Copy the tag from the release page — `v0.2.0`, not a commit SHA and not a branch name.",
   },
@@ -50,7 +81,7 @@ export const CODES = {
   // Two of those three cannot fire for an honest first submission at all — see
   // `bot/lib/ownership.mjs` — so a correct author was refused once by design.
   E_OWNERSHIP_UNPROVEN: {
-    level: "error", stage: "ownership",
+    level: "error", stage: "ownership", fix: "recheck",
     title: "The repository has not vouched for the account asking",
     remedy:
       "Commit `.well-known/astra-plugin-owner` on the repository's default branch with your " +
@@ -69,21 +100,21 @@ export const CODES = {
 
   // ── the release and its assets ─────────────────────────────────────────────
   E_RELEASE_NOT_FOUND: {
-    level: "error", stage: "release",
+    level: "error", stage: "release", fix: "recheck",
     title: "That repository has no release with that tag",
     remedy:
       "Publish the release (a draft is invisible to everyone but you) and check the tag spelling. " +
       "The bot reads it unauthenticated, so a private repository looks the same as a missing one.",
   },
   E_NO_BUNDLE_ASSETS: {
-    level: "error", stage: "release",
+    level: "error", stage: "release", fix: "recheck",
     title: "The release carries no `.astraplugin` asset",
     remedy:
       "`astra-plugin build` produces one file per target; attach every one of them to the release. " +
       "The reusable release workflow does this for you.",
   },
   E_ASSET_URL_FOREIGN: {
-    level: "error", stage: "release",
+    level: "error", stage: "release", fix: "recheck",
     title: "An asset URL does not belong to the repository being listed",
     remedy:
       "Every download URL must sit under `https://github.com/<owner>/<repo>/releases/download/<tag>/`. " +
@@ -91,7 +122,7 @@ export const CODES = {
       "listing that fails it here would fail there too.",
   },
   E_ASSET_FILENAME: {
-    level: "error", stage: "release",
+    level: "error", stage: "release", fix: "recheck",
     title: "The asset is not named `<id>-<version>-<target>.astraplugin`",
     remedy:
       "`astra-plugin build` names bundles that way and the reusable release workflow asserts it. A " +
@@ -100,22 +131,22 @@ export const CODES = {
       "digest, because the digest is taken of whatever was uploaded.",
   },
   E_ASSET_HEAD_FAILED: {
-    level: "error", stage: "release",
+    level: "error", stage: "release", fix: "recheck",
     title: "The asset could not be fetched",
     remedy: "Re-upload it and comment `/recheck`. If the release is private or the asset was deleted, nothing downstream can run.",
   },
   E_ASSET_SIZE: {
-    level: "error", stage: "release",
+    level: "error", stage: "release", fix: "new_tag",
     title: "The asset changed size between the listing and the download",
     remedy: "Do not overwrite a published release asset. Cut a new version instead — a digest that moves is a digest that pins nothing.",
   },
   E_ARTIFACT_TOO_LARGE: {
-    level: "error", stage: "release",
+    level: "error", stage: "release", fix: "new_tag",
     title: "The bundle is over the size cap",
     remedy: "See `policy/limits.json`. Ship models and datasets as a download the plugin fetches on first run, not inside the bundle.",
   },
   E_DIGEST_MISMATCH: {
-    level: "error", stage: "release",
+    level: "error", stage: "release", fix: "new_tag",
     title: "The bytes do not hash to what the attestation covers",
     remedy:
       "The file at the URL is not the file CI built. Re-run the release workflow; if it happens twice, " +
@@ -124,7 +155,7 @@ export const CODES = {
 
   // ── provenance ─────────────────────────────────────────────────────────────
   E_ATTESTATION_MISSING: {
-    level: "error", stage: "attestation",
+    level: "error", stage: "attestation", fix: "new_tag",
     title: "The bundle has no build attestation",
     remedy:
       "Build it in GitHub Actions with `actions/attest-build-provenance`, which the Astra reusable " +
@@ -132,27 +163,27 @@ export const CODES = {
       "only signer, so an author's compromised laptop cannot publish.",
   },
   E_ATTESTATION_INVALID: {
-    level: "error", stage: "attestation",
+    level: "error", stage: "attestation", fix: "new_tag",
     title: "The attestation does not verify",
     remedy: "Re-run the release workflow. Do not re-upload the asset by hand — the attestation covers the exact bytes, and hand-uploading is how they stop matching.",
   },
   E_ATTESTATION_UNCHECKED: {
-    level: "error", stage: "attestation",
+    level: "error", stage: "attestation", fix: "recheck",
     title: "The attestation could not be checked — this is not about your release",
     remedy:
       "Nothing to fix and nothing to rebuild: the verifier could not start. `gh attestation verify` " +
       "fetches Sigstore's trust root before it can check anything, and when that fetch fails it " +
-      "reports a failure that reads like a bad signature. Comment `/recheck` — the same bytes usually " +
+      "reports a failure that reads like a bad signature. Run a Recheck — the same bytes usually " +
       "verify on the next run. It still blocks, because an artifact nobody could verify must not be " +
       "listed; it blocks as \"we could not look\", not as \"we looked and it was wrong\".",
   },
   E_ATTESTATION_SUBJECT_MISMATCH: {
-    level: "error", stage: "attestation",
+    level: "error", stage: "attestation", fix: "new_tag",
     title: "The attestation is for different bytes",
     remedy: "The asset was replaced after CI attested it. Cut a new release; never overwrite an asset in place.",
   },
   E_RELEASE_COMMIT_MISMATCH: {
-    level: "error", stage: "attestation",
+    level: "error", stage: "attestation", fix: "new_tag",
     title: "The Release points at a different commit than the one that built it",
     remedy:
       "`release.target_commitish` and the commit named in the build attestation must be the same. " +
@@ -164,12 +195,12 @@ export const CODES = {
       "workflow on the tag.",
   },
   E_ATTESTATION_REPO_MISMATCH: {
-    level: "error", stage: "attestation",
+    level: "error", stage: "attestation", fix: "new_tag",
     title: "The attestation was issued to another repository",
     remedy: "The bundle was built somewhere other than the repository being listed. That is exactly the case this check exists to catch.",
   },
   E_WORKFLOW_NOT_ALLOWED: {
-    level: "error", stage: "attestation",
+    level: "error", stage: "attestation", fix: "new_tag",
     title: "The build ran a release workflow this registry does not allow",
     remedy:
       "Call the Astra reusable release workflow and pin it by commit SHA " +
@@ -179,7 +210,7 @@ export const CODES = {
       "ceremony, not a pull request.",
   },
   E_TRUST_UNPROVISIONED: {
-    level: "error", stage: "attestation",
+    level: "error", stage: "attestation", fix: "registry",
     title: "This registry has no root-signed trust document yet",
     remedy:
       "Nothing a submitter can do — the root-key ceremony (SECURITY.md) has not been run, so there " +
@@ -188,59 +219,59 @@ export const CODES = {
   },
 
   // ── the archive ────────────────────────────────────────────────────────────
-  E_BUNDLE_UNREADABLE: { level: "error", stage: "bundle", title: "The archive cannot be read", remedy: "Rebuild with `astra-plugin build`. A truncated upload is the usual cause." },
-  E_BUNDLE_TOO_MANY_ENTRIES: { level: "error", stage: "bundle", title: "Too many files in the archive", remedy: "The daemon refuses to extract it, so listing it would publish something uninstallable. See `policy/limits.json`." },
-  E_BUNDLE_TOO_LARGE_EXTRACTED: { level: "error", stage: "bundle", title: "The archive expands past the extraction cap", remedy: "Same cap the daemon enforces. Shrink the payload or fetch it at runtime." },
-  E_BUNDLE_DUPLICATE_ENTRY: { level: "error", stage: "bundle", title: "Two archive entries share a name", remedy: "Rebuild. The second copy would overwrite a file that already matched the manifest, after it was verified." },
-  E_BUNDLE_ABSOLUTE_PATH: { level: "error", stage: "bundle", title: "An entry is an absolute or Windows-style path", remedy: "Bundle paths are relative and use `/`. Rebuild with `astra-plugin build` rather than a hand-made zip." },
-  E_BUNDLE_TRAVERSAL: { level: "error", stage: "bundle", title: "An entry contains `..`", remedy: "Rebuild. A `..` component is how an archive writes outside the directory it was extracted into." },
-  E_BUNDLE_ADS: { level: "error", stage: "bundle", title: "An entry name contains `:`", remedy: "Rename the file. On Windows `:` opens an NTFS alternate data stream, so the bytes land somewhere nothing looks." },
-  E_BUNDLE_TRAILING_DOT: { level: "error", stage: "bundle", title: "An entry name ends in a dot or space", remedy: "Rename it. Windows strips both silently, so the name in the manifest and the name on disk stop being the same string." },
-  E_BUNDLE_SYMLINK: { level: "error", stage: "bundle", title: "The archive contains a symlink", remedy: "Ship the file itself. A symlink's target is not covered by any of the checks its path passes." },
-  E_BUNDLE_CONTROL_CHARACTER: { level: "error", stage: "bundle", title: "An entry name contains a control or invisible character", remedy: "Rename the file to printable characters. An entry name is not only a path: it is printed in this report, in the run log and in the job summary, and a newline or a pipe in one forges rows in the table a maintainer reads before approving a listing." },
+  E_BUNDLE_UNREADABLE: { level: "error", stage: "bundle", fix: "new_tag", title: "The archive cannot be read", remedy: "Rebuild with `astra-plugin build`. A truncated upload is the usual cause." },
+  E_BUNDLE_TOO_MANY_ENTRIES: { level: "error", stage: "bundle", fix: "new_tag", title: "Too many files in the archive", remedy: "The daemon refuses to extract it, so listing it would publish something uninstallable. See `policy/limits.json`." },
+  E_BUNDLE_TOO_LARGE_EXTRACTED: { level: "error", stage: "bundle", fix: "new_tag", title: "The archive expands past the extraction cap", remedy: "Same cap the daemon enforces. Shrink the payload or fetch it at runtime." },
+  E_BUNDLE_DUPLICATE_ENTRY: { level: "error", stage: "bundle", fix: "new_tag", title: "Two archive entries share a name", remedy: "Rebuild. The second copy would overwrite a file that already matched the manifest, after it was verified." },
+  E_BUNDLE_ABSOLUTE_PATH: { level: "error", stage: "bundle", fix: "new_tag", title: "An entry is an absolute or Windows-style path", remedy: "Bundle paths are relative and use `/`. Rebuild with `astra-plugin build` rather than a hand-made zip." },
+  E_BUNDLE_TRAVERSAL: { level: "error", stage: "bundle", fix: "new_tag", title: "An entry contains `..`", remedy: "Rebuild. A `..` component is how an archive writes outside the directory it was extracted into." },
+  E_BUNDLE_ADS: { level: "error", stage: "bundle", fix: "new_tag", title: "An entry name contains `:`", remedy: "Rename the file. On Windows `:` opens an NTFS alternate data stream, so the bytes land somewhere nothing looks." },
+  E_BUNDLE_TRAILING_DOT: { level: "error", stage: "bundle", fix: "new_tag", title: "An entry name ends in a dot or space", remedy: "Rename it. Windows strips both silently, so the name in the manifest and the name on disk stop being the same string." },
+  E_BUNDLE_SYMLINK: { level: "error", stage: "bundle", fix: "new_tag", title: "The archive contains a symlink", remedy: "Ship the file itself. A symlink's target is not covered by any of the checks its path passes." },
+  E_BUNDLE_CONTROL_CHARACTER: { level: "error", stage: "bundle", fix: "new_tag", title: "An entry name contains a control or invisible character", remedy: "Rename the file to printable characters. An entry name is not only a path: it is printed in this report, in the run log and in the job summary, and a newline or a pipe in one forges rows in the table a maintainer reads before approving a listing." },
   W_BUNDLE_DUPLICATE_ENTRY_CASE: {
-    level: "warn", stage: "bundle",
+    level: "warn", stage: "bundle", fix: "none",
     title: "Two entries differ only in letter case",
     remedy:
       "Rename one. Linux keeps both; Windows and macOS keep one, and the daemon refuses the bundle " +
       "there — so this lists cleanly and then fails to install for most of your users.",
   },
   E_PLUGIN_TOML_MISSING: {
-    level: "error", stage: "bundle",
+    level: "error", stage: "bundle", fix: "new_tag",
     title: "The bundle has no `plugin.toml`",
     remedy: "Every plugin carries one; it is what the daemon reads to know what the plugin is. Rebuild with `astra-plugin build`.",
   },
 
-  E_MANIFEST_MISSING: { level: "error", stage: "bundle", title: "No `MANIFEST.json` — this is not a v2 bundle", remedy: "Rebuild with a current `astra-plugin`." },
-  E_MANIFEST_NOT_FIRST: { level: "error", stage: "bundle", title: "`MANIFEST.json` is not the first archive entry", remedy: "The daemon reads it from byte zero. Rebuild rather than repacking by hand." },
-  E_MANIFEST_COMPRESSED: { level: "error", stage: "bundle", title: "`MANIFEST.json` is compressed", remedy: "It must be stored uncompressed so it can be read without inflating attacker-supplied bytes." },
-  E_MANIFEST_INVALID: { level: "error", stage: "bundle", title: "`MANIFEST.json` is malformed", remedy: "Rebuild with `astra-plugin build`." },
-  E_MANIFEST_ID_MISMATCH: { level: "error", stage: "bundle", title: "The manifest names a different plugin", remedy: "One release, one plugin. A bundle whose manifest names another id installs as that other id." },
-  E_MANIFEST_VERSION_MISMATCH: { level: "error", stage: "bundle", title: "The manifest names a different version", remedy: "Retag and rebuild so the tag, the manifest and the filename agree." },
-  E_MANIFEST_PLATFORM_UNKNOWN: { level: "error", stage: "bundle", title: "The manifest's platform has no registry key", remedy: "`os`/`arch` must be one of the pairs in `tools/lib/platform.mjs`." },
-  E_MANIFEST_PLATFORM_MISMATCH: { level: "error", stage: "bundle", title: "Two artifacts of this release claim the same platform", remedy: "Each target gets its own file. Check the build matrix." },
-  E_MANIFEST_UNSORTED: { level: "error", stage: "bundle", title: "`MANIFEST.files` is not sorted by path", remedy: "Rebuild. The order is part of the format so two builders produce the same bytes." },
-  E_MANIFEST_EXTRA_FILE: { level: "error", stage: "bundle", title: "The archive holds a file the manifest does not list", remedy: "An unlisted file is a file nothing verifies — at install, and at every start afterwards. Rebuild." },
-  E_MANIFEST_MISSING_FILE: { level: "error", stage: "bundle", title: "The manifest lists a file the archive does not hold", remedy: "Rebuild; the manifest and the archive were produced from different trees." },
-  E_MANIFEST_SIZE_MISMATCH: { level: "error", stage: "bundle", title: "A file's size disagrees with the manifest", remedy: "Rebuild. The archive was edited after the manifest was written." },
-  E_MANIFEST_HASH_MISMATCH: { level: "error", stage: "bundle", title: "A file's content disagrees with the manifest", remedy: "Rebuild. If the build is reproducible and this persists, the release asset was tampered with after CI." },
+  E_MANIFEST_MISSING: { level: "error", stage: "bundle", fix: "new_tag", title: "No `MANIFEST.json` — this is not a v2 bundle", remedy: "Rebuild with a current `astra-plugin`." },
+  E_MANIFEST_NOT_FIRST: { level: "error", stage: "bundle", fix: "new_tag", title: "`MANIFEST.json` is not the first archive entry", remedy: "The daemon reads it from byte zero. Rebuild rather than repacking by hand." },
+  E_MANIFEST_COMPRESSED: { level: "error", stage: "bundle", fix: "new_tag", title: "`MANIFEST.json` is compressed", remedy: "It must be stored uncompressed so it can be read without inflating attacker-supplied bytes." },
+  E_MANIFEST_INVALID: { level: "error", stage: "bundle", fix: "new_tag", title: "`MANIFEST.json` is malformed", remedy: "Rebuild with `astra-plugin build`." },
+  E_MANIFEST_ID_MISMATCH: { level: "error", stage: "bundle", fix: "new_tag", title: "The manifest names a different plugin", remedy: "One release, one plugin. A bundle whose manifest names another id installs as that other id." },
+  E_MANIFEST_VERSION_MISMATCH: { level: "error", stage: "bundle", fix: "new_tag", title: "The manifest names a different version", remedy: "Retag and rebuild so the tag, the manifest and the filename agree." },
+  E_MANIFEST_PLATFORM_UNKNOWN: { level: "error", stage: "bundle", fix: "new_tag", title: "The manifest's platform has no registry key", remedy: "`os`/`arch` must be one of the pairs in `tools/lib/platform.mjs`." },
+  E_MANIFEST_PLATFORM_MISMATCH: { level: "error", stage: "bundle", fix: "new_tag", title: "Two artifacts of this release claim the same platform", remedy: "Each target gets its own file. Check the build matrix." },
+  E_MANIFEST_UNSORTED: { level: "error", stage: "bundle", fix: "new_tag", title: "`MANIFEST.files` is not sorted by path", remedy: "Rebuild. The order is part of the format so two builders produce the same bytes." },
+  E_MANIFEST_EXTRA_FILE: { level: "error", stage: "bundle", fix: "new_tag", title: "The archive holds a file the manifest does not list", remedy: "An unlisted file is a file nothing verifies — at install, and at every start afterwards. Rebuild." },
+  E_MANIFEST_MISSING_FILE: { level: "error", stage: "bundle", fix: "new_tag", title: "The manifest lists a file the archive does not hold", remedy: "Rebuild; the manifest and the archive were produced from different trees." },
+  E_MANIFEST_SIZE_MISMATCH: { level: "error", stage: "bundle", fix: "new_tag", title: "A file's size disagrees with the manifest", remedy: "Rebuild. The archive was edited after the manifest was written." },
+  E_MANIFEST_HASH_MISMATCH: { level: "error", stage: "bundle", fix: "new_tag", title: "A file's content disagrees with the manifest", remedy: "Rebuild. If the build is reproducible and this persists, the release asset was tampered with after CI." },
   E_MANIFEST_HEADER_DISAGREE: {
-    level: "error", stage: "bundle",
+    level: "error", stage: "bundle", fix: "new_tag",
     title: "The archive holds two different `MANIFEST.json`s",
     remedy:
       "The manifest the central directory points at is not the one at byte zero, and the daemon " +
       "reads byte zero. This is not something a build tool does by accident.",
   },
-  E_MANIFEST_LOCAL_HEADER: { level: "error", stage: "bundle", title: "`MANIFEST.json` cannot be read from byte zero", remedy: "Rebuild with `astra-plugin build`." },
+  E_MANIFEST_LOCAL_HEADER: { level: "error", stage: "bundle", fix: "new_tag", title: "`MANIFEST.json` cannot be read from byte zero", remedy: "Rebuild with `astra-plugin build`." },
   W_MANIFEST_MODE_MISMATCH: {
-    level: "warn", stage: "bundle",
+    level: "warn", stage: "bundle", fix: "none",
     title: "A file's recorded mode differs from the archive's",
     remedy:
       "The daemon applies the manifest's mode and refuses the mismatch, so this lists and then does " +
       "not install. Rebuild.",
   },
   E_PERMISSIONS_HASH_MISMATCH: {
-    level: "error", stage: "bundle",
+    level: "error", stage: "bundle", fix: "new_tag",
     title: "`permissions_hash` does not cover the declared permissions",
     remedy:
       "Rebuild with `astra-plugin build`, which derives the hash from the permissions and cannot " +
@@ -251,50 +282,50 @@ export const CODES = {
       "another.",
   },
   W_LEGACY_SIGNATURE_ENTRY: {
-    level: "warn", stage: "bundle",
+    level: "warn", stage: "bundle", fix: "none",
     title: "The bundle carries a legacy in-ZIP `SIGNATURE`/`PUBKEY`",
     remedy:
       "Harmless and ignored. It is never a trust signal here — trust comes from the attestation and " +
       "from this registry's countersignature. `astra-plugin build` stops writing it.",
   },
 
-  E_ENTRY_MISSING: { level: "error", stage: "bundle", title: "`entry.command` is missing", remedy: "Declare the program the daemon should run." },
-  E_ENTRY_ABSOLUTE: { level: "error", stage: "bundle", title: "`entry.command` is an absolute path", remedy: "It must be relative to the install directory, or the name of a declared runtime." },
-  E_ENTRY_TRAVERSAL: { level: "error", stage: "bundle", title: "`entry.command` escapes the install directory", remedy: "Point it at a file inside the bundle." },
+  E_ENTRY_MISSING: { level: "error", stage: "bundle", fix: "new_tag", title: "`entry.command` is missing", remedy: "Declare the program the daemon should run." },
+  E_ENTRY_ABSOLUTE: { level: "error", stage: "bundle", fix: "new_tag", title: "`entry.command` is an absolute path", remedy: "It must be relative to the install directory, or the name of a declared runtime." },
+  E_ENTRY_TRAVERSAL: { level: "error", stage: "bundle", fix: "new_tag", title: "`entry.command` escapes the install directory", remedy: "Point it at a file inside the bundle." },
   E_ENTRY_SHELL: {
-    level: "error", stage: "bundle",
+    level: "error", stage: "bundle", fix: "new_tag",
     title: "`entry.command` is a shell",
     remedy:
       "Run your program directly. A shell as the entry point means the daemon executes whatever " +
       "`args` say, which is arbitrary code with none of the review the rest of this list applies.",
   },
-  E_ENTRY_NOT_IN_BUNDLE: { level: "error", stage: "bundle", title: "`entry.command` is neither a bundled file nor a declared runtime", remedy: "Ship the binary in the bundle, or name `python` / `node` / `deno` / `bun`." },
+  E_ENTRY_NOT_IN_BUNDLE: { level: "error", stage: "bundle", fix: "new_tag", title: "`entry.command` is neither a bundled file nor a declared runtime", remedy: "Ship the binary in the bundle, or name `python` / `node` / `deno` / `bun`." },
 
   // ── the manifest, parsed by the daemon's own crate ─────────────────────────
-  E_ID_CHARSET: { level: "error", stage: "manifest", title: "`plugin.id` is not a safe directory name", remedy: "Lowercase letters, digits and single hyphens. The id becomes `<plugins_dir>/<id>/` on every user's disk." },
-  E_ID_RESERVED_DEVICE: { level: "error", stage: "manifest", title: "`plugin.id` is a reserved Windows device name", remedy: "Rename. `con`, `prn`, `aux`, `nul`, `com1`-`com9`, `lpt1`-`lpt9` are devices, not directories." },
-  E_MIN_ASTRA_INVALID: { level: "error", stage: "manifest", title: "`min_astra_version` is not a semver version", remedy: "Write `\"0.9.0\"`. A value that does not parse is a requirement that requires nothing." },
-  E_MIN_ASTRA_TOO_NEW: { level: "error", stage: "manifest", title: "The plugin needs a newer Astra than this registry publishes for", remedy: "Lower `min_astra_version`, or wait for that Astra to ship. A listing nobody can install is worse than no listing." },
-  E_ENTRY_COMMAND_MISSING: { level: "error", stage: "manifest", title: "`[entry] command` is missing from `plugin.toml`", remedy: "Add it." },
-  E_MANIFEST_FIELD_MISSING: { level: "error", stage: "manifest", title: "`plugin.toml` is missing a required field", remedy: "`id`, `name` and `version` are all required." },
+  E_ID_CHARSET: { level: "error", stage: "manifest", fix: "new_tag", title: "`plugin.id` is not a safe directory name", remedy: "Lowercase letters, digits and single hyphens. The id becomes `<plugins_dir>/<id>/` on every user's disk." },
+  E_ID_RESERVED_DEVICE: { level: "error", stage: "manifest", fix: "new_tag", title: "`plugin.id` is a reserved Windows device name", remedy: "Rename. `con`, `prn`, `aux`, `nul`, `com1`-`com9`, `lpt1`-`lpt9` are devices, not directories." },
+  E_MIN_ASTRA_INVALID: { level: "error", stage: "manifest", fix: "new_tag", title: "`min_astra_version` is not a semver version", remedy: "Write `\"0.9.0\"`. A value that does not parse is a requirement that requires nothing." },
+  E_MIN_ASTRA_TOO_NEW: { level: "error", stage: "manifest", fix: "new_tag", title: "The plugin needs a newer Astra than this registry publishes for", remedy: "Lower `min_astra_version`, or wait for that Astra to ship. A listing nobody can install is worse than no listing." },
+  E_ENTRY_COMMAND_MISSING: { level: "error", stage: "manifest", fix: "new_tag", title: "`[entry] command` is missing from `plugin.toml`", remedy: "Add it." },
+  E_MANIFEST_FIELD_MISSING: { level: "error", stage: "manifest", fix: "new_tag", title: "`plugin.toml` is missing a required field", remedy: "`id`, `name` and `version` are all required." },
   E_CAPABILITY_UNKNOWN: {
-    level: "error", stage: "manifest",
+    level: "error", stage: "manifest", fix: "new_tag",
     title: "`[capabilities]` names something the daemon has never had",
     remedy:
       "Use the exact name — `ui_contributions`, not `ui_panels`. An unknown key used to be dropped " +
       "silently, which is how three shipped examples declared nothing at all.",
   },
-  E_TOML_MANIFEST_DISAGREE: { level: "error", stage: "manifest", title: "`plugin.toml` and `MANIFEST.json` describe different plugins", remedy: "Rebuild from one tree. The daemon installs under the manifest's id and runs what plugin.toml describes." },
-  W_ENTRY_COMMAND_DISAGREE: { level: "warn", stage: "manifest", title: "The bundle runs a different command than `plugin.toml` declares", remedy: "The daemon executes the manifest's. Usually a stale `plugin.toml`." },
-  E_PLATFORM_UNSUPPORTED: { level: "error", stage: "manifest", title: "Astra ships no daemon for that platform", remedy: "`linux-x64`, `windows-x64` and `noarch` are the hosts that exist. macOS and arm64 names are reserved and unusable." },
-  E_PROBE_INPUT: { level: "error", stage: "manifest", title: "The manifest probe rejected the bot's own request", remedy: "A bug in this registry, not in your plugin. Please leave the issue open." },
-  E_PROBE_UNAVAILABLE: { level: "error", stage: "manifest", title: "The manifest probe could not be run", remedy: "A bug in this registry, not in your plugin. `plugin.toml` was not validated by anything, so the run fails closed." },
+  E_TOML_MANIFEST_DISAGREE: { level: "error", stage: "manifest", fix: "new_tag", title: "`plugin.toml` and `MANIFEST.json` describe different plugins", remedy: "Rebuild from one tree. The daemon installs under the manifest's id and runs what plugin.toml describes." },
+  W_ENTRY_COMMAND_DISAGREE: { level: "warn", stage: "manifest", fix: "none", title: "The bundle runs a different command than `plugin.toml` declares", remedy: "The daemon executes the manifest's. Usually a stale `plugin.toml`." },
+  E_PLATFORM_UNSUPPORTED: { level: "error", stage: "manifest", fix: "new_tag", title: "Astra ships no daemon for that platform", remedy: "`linux-x64`, `windows-x64` and `noarch` are the hosts that exist. macOS and arm64 names are reserved and unusable." },
+  E_PROBE_INPUT: { level: "error", stage: "manifest", fix: "registry", title: "The manifest probe rejected the bot's own request", remedy: "A bug in this registry, not in your plugin. Please leave the issue open." },
+  E_PROBE_UNAVAILABLE: { level: "error", stage: "manifest", fix: "registry", title: "The manifest probe could not be run", remedy: "A bug in this registry, not in your plugin. `plugin.toml` was not validated by anything, so the run fails closed." },
 
   // ── names ──────────────────────────────────────────────────────────────────
-  E_ID_RESERVED: { level: "error", stage: "names", title: "That id is reserved", remedy: "See `policy/reserved-ids.json`. Ids that read as first-party are an impersonation primitive." },
-  E_ID_RESERVED_PREFIX: { level: "error", stage: "names", title: "That id uses a reserved prefix", remedy: "`astra-`, `official-` and `verified-` are first-party only." },
+  E_ID_RESERVED: { level: "error", stage: "names", fix: "new_tag", title: "That id is reserved", remedy: "See `policy/reserved-ids.json`. Ids that read as first-party are an impersonation primitive." },
+  E_ID_RESERVED_PREFIX: { level: "error", stage: "names", fix: "new_tag", title: "That id uses a reserved prefix", remedy: "`astra-`, `official-` and `verified-` are first-party only." },
   E_TYPOSQUAT_COLLISION: {
-    level: "error", stage: "names",
+    level: "error", stage: "names", fix: "new_tag",
     title: "The id is indistinguishable from a listed plugin",
     remedy:
       "After NFKC normalisation, case folding, hyphen stripping and confusable folding it is the " +
@@ -302,7 +333,7 @@ export const CODES = {
       "Pick a different name.",
   },
   E_TRADEMARK: {
-    level: "error", stage: "names",
+    level: "error", stage: "names", fix: "new_tag",
     title: "The id or display name claims someone else's mark",
     remedy:
       "Name it for what it does, not for the service it talks to: `telegram-client` becomes " +
@@ -310,21 +341,21 @@ export const CODES = {
       "rightsholder's say-so. See `bot/policy/trademarks.json`.",
   },
   R_TYPOSQUAT_NEAR: {
-    level: "review", stage: "names",
+    level: "review", stage: "names", fix: "moderator",
     title: "The id is one edit away from a listed plugin",
     remedy:
       "Held for a human, not rejected — plenty of honest names are near-misses. If it is deliberate, " +
       "say so in the issue and it will be approved faster.",
   },
   R_DISPLAY_NAME_COLLISION: {
-    level: "review", stage: "names",
+    level: "review", stage: "names", fix: "moderator",
     title: "The display name matches a listed plugin's, bar case, spacing or lookalike letters",
     remedy:
       "Held for a human. The store shows names, not ids, so two identical names are two identical cards. " +
       "A byte-identical name counts: it is the strongest form of the collision, not an exception to it.",
   },
   R_DISPLAY_NAME_MIXED_SCRIPT: {
-    level: "review", stage: "names",
+    level: "review", stage: "names", fix: "moderator",
     title: "The display name mixes alphabets",
     remedy:
       "Held for a human. Write the name in one alphabet. A name that borrows a single Cyrillic or Greek " +
@@ -334,24 +365,24 @@ export const CODES = {
 
   // ── metadata, licence, size ────────────────────────────────────────────────
   E_METADATA_UNSAFE_TEXT: {
-    level: "error", stage: "metadata",
+    level: "error", stage: "metadata", fix: "new_tag",
     title: "Metadata contains invisible or direction-changing characters",
     remedy:
       "Remove the zero-width, bidi-override or control characters. They are what makes a card render " +
       "as a name it does not contain.",
   },
-  E_METADATA_TOO_LONG: { level: "error", stage: "metadata", title: "A metadata field is over its length cap", remedy: "See `policy/limits.json`. The store's card has a fixed size; a longer string is truncated somewhere less pleasant." },
+  E_METADATA_TOO_LONG: { level: "error", stage: "metadata", fix: "new_tag", title: "A metadata field is over its length cap", remedy: "See `policy/limits.json`. The store's card has a fixed size; a longer string is truncated somewhere less pleasant." },
   E_METADATA_MISSING: {
-    level: "error", stage: "metadata",
+    level: "error", stage: "metadata", fix: "new_tag",
     title: "`plugin.toml` does not say what the plugin is",
     remedy:
       "Fill in `description` (and `author`). The store card is built entirely out of the bundle — " +
       "there is no form to type a summary into, by design — so a manifest with no description " +
       "produces a listing with nothing on it.",
   },
-  E_LICENSE_MISSING: { level: "error", stage: "metadata", title: "`plugin.license` is empty", remedy: "Declare an SPDX identifier. A plugin with no licence is code nobody may legally run." },
+  E_LICENSE_MISSING: { level: "error", stage: "metadata", fix: "new_tag", title: "`plugin.license` is empty", remedy: "Declare an SPDX identifier. A plugin with no licence is code nobody may legally run." },
   E_LICENSE_NOT_ALLOWED: {
-    level: "error", stage: "metadata",
+    level: "error", stage: "metadata", fix: "new_tag",
     title: "That licence is not on the allowlist",
     remedy:
       "See `policy/spdx-allowlist.json`. It is an allowlist, not a denylist: a licence nobody here " +
@@ -365,7 +396,7 @@ export const CODES = {
   // the two reserved keys `listing.name` and `listing.description`. Nothing here
   // is typed by a submitter and nothing here is a second download.
   E_LISTING_NOT_ENGLISH: {
-    level: "error", stage: "metadata",
+    level: "error", stage: "metadata", fix: "new_tag",
     title: "The store card's summary is not in English",
     remedy:
       "Write `plugin.description` in English and put your own language in `locales/<code>.json` " +
@@ -375,14 +406,14 @@ export const CODES = {
       "letters are under 60% Latin, and it cannot tell English from French.",
   },
   W_LISTING_NAME_NOT_LATIN: {
-    level: "warn", stage: "metadata",
+    level: "warn", stage: "metadata", fix: "none",
     title: "The plugin's name is mostly outside the Latin script",
     remedy:
       "Nothing to fix, necessarily — a product name is not prose and is legitimately anything. " +
       "The summary beside it is held to English, so check that the two read as one listing.",
   },
   E_LOCALE_NO_ENGLISH: {
-    level: "error", stage: "metadata",
+    level: "error", stage: "metadata", fix: "new_tag",
     title: "`locales/` has translations and no `en.json`",
     remedy:
       "`astra-plugin locale add en`. English is the base every other language falls back to, and " +
@@ -391,7 +422,7 @@ export const CODES = {
       "itself reaches the screen.",
   },
   E_LOCALE_UNKNOWN_CODE: {
-    level: "error", stage: "metadata",
+    level: "error", stage: "metadata", fix: "new_tag",
     title: "A locale file is named for a language Astra cannot be set to",
     remedy:
       "The ten codes are in `AstraPlugins/spec/locales.yaml`. Matching is exact string equality and " +
@@ -399,7 +430,7 @@ export const CODES = {
       "file named anything else is packed, digested, signed, installed, and read by nothing.",
   },
   E_LOCALE_MALFORMED: {
-    level: "error", stage: "metadata",
+    level: "error", stage: "metadata", fix: "new_tag",
     title: "A locale file is not a flat map of string to string",
     remedy:
       "Flatten it. The daemon deserialises `HashMap<String,String>` and drops the WHOLE file on one " +
@@ -407,7 +438,7 @@ export const CODES = {
       "that file and says nothing. Plurals are key suffixes (`msg.done.one`), never nested objects.",
   },
   E_LOCALE_KEY_MISSING: {
-    level: "error", stage: "metadata",
+    level: "error", stage: "metadata", fix: "new_tag",
     title: "A locale file is missing keys `en.json` declares",
     remedy:
       "`astra-plugin locale add <code>` seeds the missing keys from English and leaves what is " +
@@ -415,14 +446,14 @@ export const CODES = {
       "per file: a key missing here is not filled in from English, it is shown to the user as a key.",
   },
   E_LOCALE_KEY_EXTRA: {
-    level: "error", stage: "metadata",
+    level: "error", stage: "metadata", fix: "new_tag",
     title: "A locale file declares keys `en.json` does not",
     remedy:
       "Add them to `en.json` or delete them. `en.json` is the base, so a key that is not in it can " +
       "never be reached from any other language and is dead weight in every bundle.",
   },
   E_LISTING_TEXT_MISMATCH: {
-    level: "error", stage: "metadata",
+    level: "error", stage: "metadata", fix: "new_tag",
     title: "`en.json`'s `listing.*` disagrees with `plugin.toml`",
     remedy:
       "`astra-plugin locale sync` rewrites `en.json` from `plugin.toml`. They are the same fact in " +
@@ -431,14 +462,14 @@ export const CODES = {
       "says two things.",
   },
   E_LOCALE_CARD_TOO_LONG: {
-    level: "error", stage: "metadata",
+    level: "error", stage: "metadata", fix: "new_tag",
     title: "A localized card string is over its cap",
     remedy:
       "See `policy/limits.json`: 64 characters for a name, 4000 for a description. The block is " +
       "refused, so that language's card falls back to English with nothing explaining why.",
   },
   E_LOCALE_CARD_TOO_LARGE: {
-    level: "error", stage: "metadata",
+    level: "error", stage: "metadata", fix: "new_tag",
     title: "One listing's translations are over the per-listing budget",
     remedy:
       "See `max_listing_i18n_bytes` in `policy/limits.json`. The catalogue is one signed document " +
@@ -446,7 +477,7 @@ export const CODES = {
       "from being everybody's download.",
   },
   E_LOCALE_TOO_LARGE: {
-    level: "error", stage: "metadata",
+    level: "error", stage: "metadata", fix: "new_tag",
     title: "A locale file is too big to read",
     remedy:
       "See `max_locale_bytes` and `max_locale_keys` in `policy/limits.json`. The file is refused " +
@@ -454,7 +485,7 @@ export const CODES = {
       "the parse is the only cheap place to stop a runaway one.",
   },
   E_LOCALE_BUNDLE_MISMATCH: {
-    level: "error", stage: "bundle",
+    level: "error", stage: "bundle", fix: "new_tag",
     title: "This release's bundles carry different translations",
     remedy:
       "Build every platform from the same tree. The store card is derived from one bundle and each " +
@@ -462,7 +493,7 @@ export const CODES = {
       "different halves of the users.",
   },
   W_LOCALE_STALE: {
-    level: "warn", stage: "metadata",
+    level: "warn", stage: "metadata", fix: "none",
     title: "A translation describes English that has since been rewritten",
     remedy:
       "`astra-plugin locale sync` before the next release. The affected strings fall back to English " +
@@ -471,7 +502,7 @@ export const CODES = {
       "refused over prose.",
   },
   W_LOCALE_NO_CARD_TEXT: {
-    level: "warn", stage: "metadata",
+    level: "warn", stage: "metadata", fix: "none",
     title: "`en.json` declares neither reserved listing key",
     remedy:
       "`astra-plugin locale sync` writes `listing.name` and `listing.description`. They are the only " +
@@ -479,7 +510,7 @@ export const CODES = {
       "whole interface still gets an English-only store card.",
   },
   N_LISTING_LANGUAGE_EXEMPT: {
-    level: "note", stage: "metadata",
+    level: "note", stage: "metadata", fix: "none",
     title: "The English card rule was waived for this repository",
     remedy:
       "Nothing to do. The waiver is a reviewed entry in `policy/listing-language-exemptions.json`, " +
@@ -487,33 +518,43 @@ export const CODES = {
   },
 
   // ── versions and identity ──────────────────────────────────────────────────
-  E_VERSION_NOT_NEW: { level: "error", stage: "version", title: "That version is already listed, or is older than one that is", remedy: "Releases go forward. Bump the version and cut a new release — a version that is republished with different bytes is how a downgrade attack starts." },
-  E_VERSION_INCONSISTENT: { level: "error", stage: "version", title: "The release's bundles do not agree on a version", remedy: "One release, one version, every target. Check the build matrix." },
+  E_VERSION_NOT_NEW: { level: "error", stage: "version", fix: "new_tag", title: "That version is already listed, or is older than one that is", remedy: "Releases go forward. Bump the version and cut a new release — a version that is republished with different bytes is how a downgrade attack starts." },
+  E_VERSION_INCONSISTENT: { level: "error", stage: "version", fix: "new_tag", title: "The release's bundles do not agree on a version", remedy: "One release, one version, every target. Check the build matrix." },
+  // These two are also declared in `POLICY_CODES`, and they are the only two
+  // codes declared twice. They are policy events, not version findings —
+  // `bot/lib/policy/constants.mjs` calls them two of "exactly three events that
+  // block on a human" — and contract FLOW-11 reports every `R_*` and `P_*` at
+  // stage `policy`. They carried `version` here, so the same code reached the
+  // panel with two stages depending on which table was read, which is what the
+  // FLOW-13 emitter's cross-table check found the moment it was written. The
+  // four other `R_*` codes are NOT moved: they are holds a named check raised
+  // (`names`, `rpc-scan`), the policy block reports them as `R_CHECK_HELD`, and
+  // reporting them at stage `policy` would say the wrong check found them.
   R_IDENTITY_CHANGED: {
-    level: "review", stage: "version",
+    level: "review", stage: "policy", fix: "moderator",
     title: "This plugin was listed from a different repository",
     remedy:
       "Held for a human, always. A repository change is an author change until somebody says " +
       "otherwise, and every installed copy carries a pin to the old one.",
   },
   R_FIRST_LISTING: {
-    level: "review", stage: "version",
+    level: "review", stage: "policy", fix: "moderator",
     title: "First listing for this plugin",
     remedy: "A human reads the first one, once, ever. Later releases from the same repository are zero-touch.",
   },
 
   // ── the host-RPC heuristic ─────────────────────────────────────────────────
   E_HOST_RPC_UNDECLARED: {
-    level: "error", stage: "rpc-scan",
+    level: "error", stage: "rpc-scan", fix: "new_tag",
     title: "Source in the bundle calls a high-risk host RPC the manifest does not declare",
     remedy:
       "Declare the capability the call needs, or remove the call. The four that block are " +
       "`FireTrigger`, `SendChatMessage`, `SetVariable` and `SetThemeContribution` — each of them " +
       "acts on the user's session rather than inside your plugin.",
   },
-  W_HOST_RPC_UNDECLARED: { level: "warn", stage: "rpc-scan", title: "Source in the bundle names a host RPC the manifest does not declare", remedy: "Not blocking. Declare the capability if the call is real; ignore this if the string is a comment or a log line." },
+  W_HOST_RPC_UNDECLARED: { level: "warn", stage: "rpc-scan", fix: "none", title: "Source in the bundle names a host RPC the manifest does not declare", remedy: "Not blocking. Declare the capability if the call is real; ignore this if the string is a comment or a log line." },
   W_HOST_RPC_IN_OPAQUE_FILE: {
-    level: "warn", stage: "rpc-scan",
+    level: "warn", stage: "rpc-scan", fix: "none",
     title: "A compiled file contains a host RPC name",
     remedy:
       "Not blocking, and usually not a call: a linked SDK client contains the name of every method " +
@@ -521,7 +562,7 @@ export const CODES = {
       "evidence.",
   },
   R_HOST_RPC_IN_VENDOR_DIR: {
-    level: "review", stage: "rpc-scan",
+    level: "review", stage: "rpc-scan", fix: "moderator",
     title: "One of the four acting-outside-the-plugin RPCs is named inside a `generated/` or `vendor/` directory",
     remedy:
       "Held for a human. Those two directory names are chosen by whoever built the bundle, not by a " +
@@ -530,12 +571,12 @@ export const CODES = {
       "the file.",
   },
   W_HOST_RPC_IN_VENDOR_DIR: {
-    level: "warn", stage: "rpc-scan",
+    level: "warn", stage: "rpc-scan", fix: "none",
     title: "A non-blocking host RPC is named inside a `generated/` or `vendor/` directory",
     remedy: "Recorded. Declare the capability if the call is yours.",
   },
   N_HOST_RPC_SCAN_SCOPE: {
-    level: "note", stage: "rpc-scan",
+    level: "note", stage: "rpc-scan", fix: "none",
     title: "The RPC scan read source files only",
     remedy:
       "Compiled binaries and vendored SDK code are not decidable by string matching. This check " +
@@ -544,7 +585,7 @@ export const CODES = {
 
   // ── the bot's own output ───────────────────────────────────────────────────
   E_DERIVED_LISTING_INVALID: {
-    level: "error", stage: "derive",
+    level: "error", stage: "derive", fix: "registry",
     title: "The listing the bot derived does not pass this repository's own validator",
     remedy: "A bug in this registry, not in your plugin. Please leave the issue open.",
   },
@@ -556,7 +597,7 @@ export function codeDef(code) {
   if (!def) {
     // Better a loud unknown than a comment that renders `undefined` at a
     // stranger. Every code the bot emits has to be declared above.
-    return { level: "error", stage: "?", title: `undeclared code ${code}`, remedy: "This is a bug in the registry bot: the code is not in bot/lib/codes.mjs." };
+    return { level: "error", stage: "?", fix: "registry", title: `undeclared code ${code}`, remedy: "This is a bug in the registry bot: the code is not in bot/lib/codes.mjs." };
   }
   return def;
 }
