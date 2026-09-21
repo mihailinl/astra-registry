@@ -212,6 +212,73 @@ test("an entry carrying a member BOT-80 does not name compiles normally, and the
   assert.equal(JSON.stringify(r).includes("withheld_since"), false);
 });
 
+// ── BOT-37's Decided-At, on every branch rather than on the one that had it ──
+
+// Both plans say a `Decided-At:` sits beside each `Service-Decision:`. Until
+// 2026-09-21 ONE of the four compile branches supplied it: `decidedAt` is
+// computed once, before the dispatch, and the switch handed it to the yank and
+// to nothing else. Three kinds of decision reached git with a
+// `Service-Decision:` and no time beside it.
+//
+// Nothing was red. The suite had a fixture per code and asserted edits, log
+// entries and records — never the trailers — so the defect and its repair were
+// equally invisible, and adding the missing lines without this test would have
+// left the next branch free to omit it again.
+//
+// THE CODE LIST IS DERIVED, NOT COPIED. `KNOWN_CODES` is not exported, and its
+// refusal prints every key it knows; this reads the list out of that message,
+// so a code added to the module is covered here without anybody editing this
+// file. The floor is what stops the loop passing by reaching nothing.
+test("every compiled decision carries a Decided-At beside its Service-Decision", () => {
+  const root = estate();
+
+  const listed = (() => {
+    try {
+      compileDecision(entry({ code: "M_NOT_A_CODE" }), { root });
+    } catch (e) {
+      const m = /\(([^)]*)\)/.exec(String(e.message));
+      if (m) return m[1].split(",").map((s) => s.trim()).filter(Boolean);
+    }
+    return [];
+  })();
+  assert.ok(listed.length >= 4,
+    `the module's refusal named ${listed.length} code(s) and it knows at least four; this test derives its ` +
+    "subject from that message, so a refusal that stops printing the list would leave this loop with nothing " +
+    "to iterate and it would pass by reaching nothing");
+
+  const shapes = {
+    M_YANK: { category: "broken", versions: ["1.1.0"], moderator: "knice" },
+    M_DELIST: { category: "broken", moderator: "knice" },
+    M_DEPRECATE: { category: "broken", moderator: "knice", advisory: { kind: "id" } },
+    M_REVOKE: { category: "broken", moderator: "knice", advisory: { kind: "id" } },
+    M_APPEAL: { category: "broken", moderator: "knice", outcome: "stands" },
+  };
+
+  const compiled = [];
+  const missing = [];
+  for (const code of listed) {
+    let r;
+    try {
+      r = compileDecision(entry({ code, ...(shapes[code] ?? { category: "broken", moderator: "knice" }) }), { root });
+    } catch {
+      continue; // this code needs a shape this test does not build; the floor below covers the loss
+    }
+    if (!r || r.outcome !== "compiled" || !r.trailers) continue;
+    compiled.push(code);
+    if (r.trailers["Decided-At"] !== "2026-09-20T12:00:00Z") {
+      missing.push(`${code}: ${JSON.stringify(r.trailers["Decided-At"])}`);
+    }
+  }
+
+  assert.ok(compiled.length >= 2,
+    `this test compiled ${compiled.length} of ${listed.length} known code(s) (${compiled.join(", ") || "none"}); ` +
+    "a loop that reaches one branch asserts nothing about the others, which is the defect it exists to catch");
+  assert.deepEqual(missing, [],
+    "a compiled decision carries a `Service-Decision:` with no `Decided-At:` beside it. Both plans say every " +
+    "one has both, and `decidedAt` is in scope for every branch — it is computed once before the dispatch, so " +
+    "omitting it is a branch that did not pass an argument it already had");
+});
+
 // ── a fixture per code and outcome ──────────────────────────────────────────
 
 test("M_YANK yanks the versions it names and writes one log entry", () => {

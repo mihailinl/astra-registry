@@ -777,7 +777,7 @@ export function compileDecision(entry, { root = REPO_ROOT, overBound = false } =
   // at all — while MOD-33 requires the log entry for every decided appeal and
   // FLOW-18 turns a reversed one into the estate's only Recheck. Nothing in
   // this branch reads the tree for the listing, so there is nothing to derive.
-  if (code === "M_APPEAL") return compileAppeal(root, d, { date, reason });
+  if (code === "M_APPEAL") return compileAppeal(root, d, { decidedAt, date, reason });
 
   // ── target_not_in_registry ───────────────────────────────────────────────
   const listing = readListing(root, d.plugin_id);
@@ -827,8 +827,8 @@ export function compileDecision(entry, { root = REPO_ROOT, overBound = false } =
   // ── what is left compiles ────────────────────────────────────────────────
   switch (KNOWN_CODES[code]) {
     case "yank": return compileYank(root, d, listing, { decidedAt, date, reason });
-    case "delist": return compileDelist(root, d, listing, { date, reason });
-    case "advisory": return compileAdvisory(root, d, listing, { date, reason });
+    case "delist": return compileDelist(root, d, listing, { decidedAt, date, reason });
+    case "advisory": return compileAdvisory(root, d, listing, { decidedAt, date, reason });
     default:
       // `reversal` with no hold cannot happen: `holdKindFor` returns "reversal"
       // for both reversal codes unconditionally. Said out loud rather than
@@ -981,7 +981,7 @@ function compileYank(root, d, listing, { decidedAt, date, reason }) {
 }
 
 /** `M_DELIST` and a bound `A_REMOVAL_REQUEST` (§7.2; FLOW-28). */
-function compileDelist(root, d, listing, { date, reason }) {
+function compileDelist(root, d, listing, { decidedAt, date, reason }) {
   if (!listing.listed) {
     return refuse(d, "target_changed",
       `${listing.id} is already unlisted on this tree, so there is nothing left for this decision to take away`);
@@ -1007,12 +1007,12 @@ function compileDelist(root, d, listing, { date, reason }) {
     advisories: [],
     records: [],
     alerts: [],
-    trailers: { "Service-Decision": d.service_decision_id },
+    trailers: { "Service-Decision": d.service_decision_id, "Decided-At": decidedAt },
   };
 }
 
 /** `M_DEPRECATE` and `M_REVOKE` (§7.2; MOD-4; MOD-13; MOD-19). */
-function compileAdvisory(root, d, listing, { date, reason }) {
+function compileAdvisory(root, d, listing, { decidedAt, date, reason }) {
   // §7.2: a deprecate IS an advisory with action `warn`. The payload carries an
   // `action` only for `M_REVOKE` (MOD-10), so taking one from a deprecate would
   // be taking a field the contract says is not there.
@@ -1068,7 +1068,7 @@ function compileAdvisory(root, d, listing, { date, reason }) {
     // MOD-8: every advisory is alerted before the push, `warn` included. A
     // signed `warn` reaches every installed copy.
     alerts: [{ kind: "advisory", advisory: id, action, severity: d.severity }],
-    trailers: { "Service-Decision": d.service_decision_id },
+    trailers: { "Service-Decision": d.service_decision_id, "Decided-At": decidedAt },
   };
 }
 
@@ -1079,7 +1079,7 @@ function compileAdvisory(root, d, listing, { date, reason }) {
  * one — so a compile that copied `category` through would be refused by the log
  * it was written for.
  */
-function compileAppeal(root, d, { date, reason }) {
+function compileAppeal(root, d, { decidedAt, date, reason }) {
   const entry = {
     date,
     action: "appeal",
@@ -1107,7 +1107,7 @@ function compileAppeal(root, d, { date, reason }) {
     // NEW artefact and the originals are left alone".
     recheck: reversed ? { plugin_id: d.plugin_id, appeal_of: d.appeal_of } : null,
     record_owed: reversed ? appealRecordOwed(d) : null,
-    trailers: { "Service-Decision": d.service_decision_id },
+    trailers: { "Service-Decision": d.service_decision_id, "Decided-At": decidedAt },
   };
 }
 
