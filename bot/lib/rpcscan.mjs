@@ -45,7 +45,19 @@
 // The note row `N_HOST_RPC_SCAN_SCOPE` is printed on every run so nobody reads
 // a clean scan as "this plugin makes no undeclared calls".
 
-/** The ten methods of `PluginHostService`, from `proto/plugin.proto`. */
+/**
+ * The ten methods of `PluginHostService`, from `proto/plugin.proto`.
+ *
+ * Held against it, rather than remembered: `bot/manifest-probe`'s
+ * `the_host_rpc_list_is_the_protos_and_not_a_copy_of_it` reads this array as
+ * text and the proto out of the pinned AstraPlugins checkout, and fails
+ * `cargo test` in either direction. Two more sit beside it — every name here
+ * must be governed exactly once, by `ALWAYS_ALLOWED` or by an `RPC_RULES` row
+ * and never both or neither (`isDeclared` below treats an rpc with no rule as
+ * declared by everybody, so a name added here and nowhere else is listed and
+ * still exempt), and the sentences above that count these literals must still
+ * be counting them.
+ */
 export const HOST_RPCS = [
   "Register",
   "SubscribeEvents",
