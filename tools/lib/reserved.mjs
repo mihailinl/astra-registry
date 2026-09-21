@@ -27,6 +27,39 @@
 // Both are matched case-insensitively, because GitHub logins are.
 
 /**
+ * MOD-16's staging listing id, or null while none is reserved.
+ *
+ * ── why this is a function and not `policy.reserved.staging_listing_id` ─────
+ *
+ * Three callers decide different things from this one member — `bot/lib/
+ * derive.mjs` turns a first listing unlisted, `tools/validate.mjs` refuses a
+ * listed one on the tree, `tools/moderation-coverage.mjs` excludes it from the
+ * unlogged-delist walk and, through it, from TRUST-26's takedown bound — and
+ * the three have to agree about the EDGE, not only about the value. A member
+ * that is absent, `null`, `""`, or (a merge away) `["astra-withdrawal-canary"]`
+ * is "no staging listing is reserved" to one caller and something else to the
+ * next, and the caller that reads the empty string as an id excludes the
+ * listing whose id is `""`, which is every malformed record the walk meets.
+ *
+ * So: one predicate, returning a non-empty string or null, and no caller reads
+ * the key. `tools/moderation-coverage.mjs`'s `stagingListingId(repo)` — which
+ * `bot/lib/takedown-bound.mjs` already imports — is the file-reading wrapper
+ * around this, so there is still exactly one reader of the key.
+ *
+ * Absence is deliberately not an error. The key was not on `main` until
+ * M-T2.1, every one of those callers was written against its absence, and a
+ * predicate that threw would have turned "the reservation has not landed yet"
+ * into a red validator.
+ *
+ * @param {{staging_listing_id?: unknown}} reserved the parsed policy/reserved-ids.json
+ * @returns {string | null}
+ */
+export function stagingListingId(reserved) {
+  const id = reserved?.staging_listing_id;
+  return typeof id === "string" && id !== "" ? id : null;
+}
+
+/**
  * Why this id may not be listed from this repository, or null if it may.
  *
  * @param {string} id the plugin id

@@ -68,6 +68,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { ACTIONS } from "../bot/lib/moderation.mjs";
+import { stagingListingId as reservedStagingListingId } from "./lib/reserved.mjs";
 import { report } from "./coverage/rules.mjs";
 import {
   changedPaths, commitMeta, commitsAfter, firstParent, historyCount,
@@ -225,13 +226,23 @@ export function loadLog(repo) {
   return { entries, bad };
 }
 
-/** The staging listing id M-T2.1 reserves, or null. Absent from `main` until R2. */
+/**
+ * The staging listing id M-T2.1 reserves, or null.
+ *
+ * The file read stays here — this rule takes a repository root and may be
+ * pointed at a fixture tree — and the JUDGEMENT of what the member means moved
+ * to `tools/lib/reserved.mjs` when M-T2.1 landed the value, because
+ * `tools/validate.mjs` and `bot/lib/derive.mjs` now ask the same question of a
+ * policy object they already hold. Three copies of "a non-empty string is an
+ * id and anything else is null" is three chances to disagree about `""`, and
+ * the walk below EXCLUDES whatever this returns: a copy that read `""` as an
+ * id would silently stop reporting every listing with a malformed id.
+ */
 export function stagingListingId(repo) {
   const file = path.join(repo, "policy", "reserved-ids.json");
   if (!fs.existsSync(file)) return null;
   const { value } = readJsonFile(file);
-  const id = value?.staging_listing_id;
-  return typeof id === "string" && id ? id : null;
+  return reservedStagingListingId(value ?? {});
 }
 
 /** Author-action records (DEC-7), which cover a yank instead of a log entry. */

@@ -19,7 +19,7 @@
 // output is held to the rules its input would have been.
 
 import { unsafeDisplayText } from "../../tools/lib/ids.mjs";
-import { reservedPrefixViolation } from "../../tools/lib/reserved.mjs";
+import { reservedPrefixViolation, stagingListingId } from "../../tools/lib/reserved.mjs";
 import { README_NAME, checkIcon, pickIcon, rewriteReadme } from "./assets.mjs";
 import { deriveLocaleText, isLanguageExempt } from "./locales.mjs";
 
@@ -304,6 +304,39 @@ export function deriveListing(input) {
   // `facts.*` may reach this field, because the bundle is written by exactly
   // the person the delisting is about.
   if (existingPlugin?.unlisted === true) plugin.unlisted = true;
+
+  // MOD-16's staging listing is born unlisted, on its FIRST derivation, when
+  // there is no `existingPlugin` for the line above to carry anything from.
+  //
+  // ── why a derive rule and not a publish-then-delist ─────────────────────
+  //
+  // The obvious alternative is to let the canary list normally and delist it
+  // in the next commit. Both of its outcomes are worse than this line:
+  //
+  //   * between the two commits `main` carries a LISTED `astra-withdrawal-
+  //     canary`. `tools/build-index.mjs` and the signer read whatever is on
+  //     `main`, so a signer run in that window puts an id that exists to be
+  //     withdrawn into a signed catalogue a daemon fetches — with this
+  //     registry's own name on it (TRUST-26: never a listed id);
+  //   * or the publish commit is made red on purpose so no signer can run,
+  //     which means the FIRST of two commits in the publishing path is a
+  //     commit whose selftest fails. A red that is expected is a red nobody
+  //     reads, and `bot/publish-apply.mjs` runs that selftest as the last of
+  //     five gates before it commits at all.
+  //
+  // So the id is unlisted from the moment the document exists, and there is no
+  // window to get wrong. `tools/validate.mjs` refuses the listing if this line
+  // is ever removed or bypassed by a hand-written commit, and
+  // `tools/selftest/validation.mjs` watches both halves.
+  //
+  // **No `facts.*` reaches this field**, exactly as above. The bundle decides
+  // nothing here: the only thing read out of it is the id, which is compared
+  // against a value in `policy/reserved-ids.json`, and the value written is
+  // the constant `true`. There is no spelling of a plugin.toml that turns the
+  // staging listing back into a listed one — which matters because the canary
+  // is published from a repository the estate controls, and "the estate
+  // controls it" is a statement about people rather than about the code.
+  if (stagingListingId(policy.reserved) === facts.id) plugin.unlisted = true;
 
   const version = {
     $comment:
