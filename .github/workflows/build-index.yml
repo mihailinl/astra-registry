@@ -162,6 +162,7 @@ jobs:
       # `|| true` turns into an empty `ref` and the shape check below into the
       # only thing standing between R6 and an unpinned judgement.
       - name: The AstraPlugins pin this bot judges manifests by is fetchable
+        if: ${{ !cancelled() }}
         id: pin
         run: |
           set -euo pipefail
@@ -227,6 +228,7 @@ jobs:
       # into `::error::` and `exit 1`, which stops the catalogue deploying for
       # every plugin — not only for one that ships `locales/`.
       - uses: actions/checkout@v4
+        if: ${{ !cancelled() && steps.pin.conclusion == 'success' }}
         with:
           repository: mihailinl/AstraPlugins
           ref: ${{ steps.pin.outputs.ref }}
@@ -249,6 +251,7 @@ jobs:
       # icon and README derivation could reach `main` with nothing having run
       # its tests. This workflow is the one that gates a PR.
       - name: Self-test (the site, the moderation log, the asset check, the presentation rules)
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           node site/selftest.mjs
@@ -257,6 +260,7 @@ jobs:
           node bot/tests/presentation.test.mjs
 
       - name: Validate the listings
+        if: ${{ !cancelled() }}
         # --allow-staging tolerates plugins/dice-roller/versions/0.1.1.json,
         # whose release does not exist yet. REMOVE IT the moment Phase 2.13
         # publishes that release and the entry gains a real digest. A registry
@@ -286,9 +290,11 @@ jobs:
           exit $status
 
       - name: The committed index is exactly what the generator produces
+        if: ${{ !cancelled() }}
         run: node tools/build-index.mjs --check
 
       - name: Compute the serial from the commit count on the default branch
+        if: ${{ !cancelled() }}
         id: serial
         run: |
           set -euo pipefail
@@ -306,6 +312,8 @@ jobs:
           echo "serial ${SERIAL} (commits touching plugins/ on ${BRANCH})"
 
       - name: Generate the deploy candidate, twice, and diff it
+        id: candidate
+        if: ${{ !cancelled() && steps.serial.conclusion == 'success' }}
         env:
           ASTRA_REGISTRY_SERIAL: ${{ steps.serial.outputs.serial }}
         run: |
@@ -339,6 +347,7 @@ jobs:
           echo "index: $bytes / $ceiling bytes ($(( bytes * 100 / ceiling ))%)"
 
       - name: Validate the deploy candidate against schema/index-v1.json
+        if: ${{ !cancelled() && steps.candidate.conclusion == 'success' }}
         run: |
           set -euo pipefail
           node -e '
@@ -353,12 +362,14 @@ jobs:
             });
           '
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && steps.candidate.conclusion == 'success' }}
         with:
           name: registry-index-v1
           path: dist/index.json
           if-no-files-found: error
 
       - name: Say plainly that nothing here is signed
+        if: ${{ !cancelled() && steps.candidate.conclusion == 'success' }}
         run: echo "::notice::dist/index.json is UNSIGNED — this workflow holds no signing key by construction, and since RC-R1-2 no job in it publishes anything. This artefact is for inspection. sign.yml is the one publisher."
       # ── 6.5: the website, built here from the candidate to assert the page set ──
       #
@@ -380,6 +391,8 @@ jobs:
       # document that must have exactly one. Nothing assembled here is
       # deployed — this tree exists so the page set can be asserted.
       - name: Assemble the tree the site is generated from
+        id: site
+        if: ${{ !cancelled() && steps.candidate.conclusion == 'success' }}
         run: |
           set -euo pipefail
           mkdir -p dist/registry/v1
@@ -397,6 +410,7 @@ jobs:
       # The acceptance criterion, asserted against what was actually written
       # rather than against what the generator says it wrote.
       - name: A page exists for every entry, and for nothing else
+        if: ${{ !cancelled() && steps.site.conclusion == 'success' }}
         run: |
           set -euo pipefail
           node -e '
