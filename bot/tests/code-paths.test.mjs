@@ -43,7 +43,7 @@ const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..",
 const git = (...args) =>
   execFileSync("git", args, { cwd: REPO, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
 
-// ── the set, exactly as contract 0.20.0's TRUST-31 publishes it ─────────────
+// ── the set, exactly as contract 0.21.0's TRUST-31 publishes it ─────────────
 //
 // Order matters only for the one exception: `schema/contract-tokens-v1.json`
 // is generated FROM the contract, so a contract version would otherwise be a
@@ -55,8 +55,10 @@ const WORKFLOWS = [
   ".github/workflows/plugins-moderation.yml",
 ];
 
-// **Literal paths, and nothing else.** A file, or a directory with a trailing
-// slash. No `*`, `?` or `[` — and the reason is not tidiness.
+// **Literal paths, and nothing else**, to a grammar rather than a blocklist:
+// segments of `A-Za-z0-9._-` joined by `/`, at most one trailing `/` marking a
+// directory, never absolute and never a `.` or `..` segment. The reason is not
+// tidiness, and it is not that globs are ugly.
 //
 // The service resolves each entry with a literal tree lookup, and compares the
 // entry's id at the acknowledged commit with its id at the presented one. An
@@ -83,7 +85,7 @@ const WORKFLOWS = [
 // `bot/` also holds records, fixtures and tests that must stay OUTSIDE, and
 // `schema/` holds `contract-tokens-v1.json`, which is generated from the
 // contract and would make every contract version a shadow transition. A
-// nineteenth bot entry point or a ninth schema is a contract MINOR before the
+// nineteenth bot entry point or a twelfth schema is a contract MINOR before the
 // file lands — which is the right cost, and which the two tests below make
 // loud rather than leaving to a reader.
 export const ENTRIES = [
@@ -125,16 +127,45 @@ export const ENTRIES = [
   "tools/selftest.mjs",
   "tools/selftest/",
   "policy/limits.json",
+  // Contract 0.21.0. The same finding as `tools/selftest.mjs`, one gate
+  // EARLIER: `tools/validate.mjs` — the first of the five checks
+  // `bot/publish-apply.mjs` runs before it commits — imports
+  // `bot/lib/decisions.mjs`, which takes `DOCUMENT_MEMBERS`, `roleAddresses`,
+  // `scanDocument` and `shapeFindings` from `tools/priv-scan.mjs`. PRIV-2's
+  // member table and shape rules, which decide what a decision record may
+  // contain, were outside the set while the bot wrote records by them.
+  // `tools/priv-scan.mjs` imports `tools/coverage/rules.mjs`, and
+  // `tools/coverage/git.mjs` comes with it.
+  //
+  // `tools/coverage/` is ENUMERATED and not taken whole: `docs-advisory-url`,
+  // `keepalive-age` and `reserved-id-mirror` are rule reporters only the desk
+  // tools run, and `priv-scan-exempt.json` is read by `loadExemptions`, the
+  // standalone history walk's entry point, which is not among the four symbols
+  // the decision writer imports. A directory entry is right when everything
+  // beneath it belongs; here four of six do not. What makes enumerating safe
+  // is leg (b): a file under `tools/coverage/` that a bot run starts reaching
+  // fails there, by name, the day it does.
+  "tools/priv-scan.mjs",
+  "tools/coverage/rules.mjs",
+  "tools/coverage/git.mjs",
   "policy/reserved-ids.json",
   "policy/spdx-allowlist.json",
   "policy/listing-language-exemptions.json",
   "schema/cutover-v1.json",
   "schema/deadline-v1.json",
+  // B-T2.1's three, added by contract 0.21.0. `tools/lib/sources.mjs`'s
+  // `loadSchemas` loads all eleven by literal path and `tools/validate.mjs`
+  // judges records against them — from THIS repository, never from the tree
+  // under test, so that `--registry-dir` cannot supply the rules it is judged
+  // by. That is what makes them gate inputs rather than documents.
+  "schema/decision-v1.json",
   "schema/hold-record-v1.json",
   "schema/hold-v1.json",
+  "schema/identity-v1.json",
   "schema/index-v1.json",
   "schema/plugin-v1.json",
   "schema/publisher-v1.json",
+  "schema/queue-v1.json",
   "schema/version-v1.json",
 ];
 
@@ -145,39 +176,149 @@ export function inSet(p) {
 
 const tracked = () => git("ls-tree", "-r", "--name-only", "HEAD").split("\n").filter(Boolean);
 
-test("no entry is a pattern, and one bad entry refuses the whole set", () => {
-  // The mirror of the service's own `TrackedPaths::new`. It refuses `*`, `?`
-  // and `[` as well as an absolute path, a `..`, an empty entry and
-  // whitespace, and it refuses the WHOLE list rather than dropping the
-  // offending entry — a set that silently lost a member is narrower than the
-  // one an operator acknowledged. This test collects every bad entry and
-  // reports them together, for the same reason.
+// **A grammar, not a blocklist**, and the reason is the second instance in one
+// night of the shape this file already records.
+//
+// The first version of this test refused `*`, `?` and `[`, an absolute path, a
+// `..` and whitespace — and said it closed the class. It closed six spellings.
+// A control character passes all six and makes the service's loader refuse the
+// WHOLE list; so would a spelling nobody has thought of. That is the same
+// error as the one that put `tools/selftest/**` into the set — *the author saw
+// the class and did not see the spelling* — arriving one level up, at the
+// check written to hold it. Both times the fix was to stop enumerating what is
+// forbidden and state what is allowed.
+//
+// So: an entry is one or more segments joined by `/`, each segment one or more
+// of `A-Za-z0-9._-`, with an optional single trailing `/` marking a directory.
+// Never absolute, never a `.` or `..` segment, never an empty one. That is a
+// statement about what an entry IS, so the service's validator and this fence
+// agree by construction rather than by coincidence.
+//
+// The character class alone would not do it: `^[A-Za-z0-9._/-]+$` admits
+// `/bot/lib/`, which their loader rejects outright as absolute, and `a//b`,
+// whose empty segment resolves to nothing. The segment walk below covers both.
+export const ENTRY_SEGMENT = /^[A-Za-z0-9._-]+$/;
+
+/** Why this entry is not a well-formed path, or null. */
+export function entryProblem(e) {
+  if (typeof e !== "string" || e === "") return "empty";
+  if (e.startsWith("/")) return "absolute; their loader rejects it and refuses the whole list";
+  const segs = e.split("/");
+  if (segs[segs.length - 1] === "") segs.pop(); // one trailing `/` marks a directory
+  if (!segs.length) return "no segments";
+  for (const s of segs) {
+    if (s === "") return "carries an empty segment (`//`), which resolves to nothing";
+    if (s === "." || s === "..") return `carries a \`${s}\` segment`;
+    if (!ENTRY_SEGMENT.test(s)) {
+      return `segment ${JSON.stringify(s)} is outside the grammar ${ENTRY_SEGMENT} — a glob character, ` +
+        `a space, a backtick or a control character is all the same failure here`;
+    }
+  }
+  return null;
+}
+
+test("every entry is a well-formed path, and one bad entry refuses the whole set", () => {
+  // The mirror of the service's own `TrackedPaths::new`, which refuses the
+  // WHOLE list rather than dropping the offending entry — a set that silently
+  // lost a member is narrower than the one an operator acknowledged. This test
+  // collects every bad entry and reports them together, for the same reason.
   const bad = [];
   for (const e of ENTRIES) {
-    if (/[*?[]/.test(e)) bad.push(`${e} — a pattern; it resolves to nothing and so checks nothing`);
-    if (e === "" || /\s/.test(e)) bad.push(`${JSON.stringify(e)} — empty or carries whitespace`);
-    if (e.startsWith("/")) bad.push(`${e} — absolute`);
-    if (e.split("/").includes("..")) bad.push(`${e} — climbs out with ..`);
+    const why = entryProblem(e);
+    if (why) bad.push(`${JSON.stringify(e)} — ${why}`);
   }
   assert.deepEqual(bad, [], "TRUST-31's set would be refused whole by a party that compiles it");
   assert.equal(new Set(ENTRIES).size, ENTRIES.length, "a duplicated entry");
+
+  // The grammar is asserted to still refuse the spellings that have actually
+  // arrived, so that widening it later is a deliberate act and not a typo in a
+  // regex. A glob, a control character, an absolute path, a climb, a space.
+  // The control character is written as an escape on purpose: a literal one
+  // in a source file is invisible, which is the property that makes this
+  // whole class hard to see in the first place.
+  for (const e of ["tools/selftest/**", "bot/lib/\u0007x.mjs", "/bot/lib/", "bot/../etc",
+                   "bot/ lib/", "bot//lib/", "bot/./lib/", "bot/lib/`x`.mjs"]) {
+    assert.ok(entryProblem(e), `${JSON.stringify(e)} must not be a well-formed entry`);
+  }
+  assert.equal(entryProblem("bot/lib/"), null);
+  assert.equal(entryProblem("bot/alert.mjs"), null);
 });
 
 // An entry may legitimately name a path that is not on the tree yet, and the
 // distinction is the whole of the finding rather than an exception to it.
 // `None == None` is SAFE for a path that WILL exist: the commit that creates
 // it turns `None` into a tree id, which is a difference, which is a shadow
-// transition — the entry starts working at exactly the right moment. It is
-// unsafe only for a path that can NEVER exist, which is what a pattern is.
+// transition — the entry starts working at exactly the right moment.
 //
-// So an unresolved entry is allowed, and must name the task that lands it. The
-// row is asserted in both directions, so it cannot rot into an excuse for an
-// entry that quietly stopped being about anything.
+// It is unsafe for an entry that can NEVER resolve. A pattern is ONE MEMBER of
+// that class and contract 0.20.0 wrote it as though it were the class; 0.21.0
+// strikes that. **A misspelling is the same class and is not a pattern.**
+// `bot/lib/idenity.mjs` passes every check above — not absolute, no `..`, not
+// empty, no whitespace, no glob character — reads as deliberate and correctly
+// spelled, and compares equal for ever while `bot/lib/identity.mjs` is covered
+// by nothing.
+//
+// The row below is what makes "not yet" distinguishable from "never", and a
+// row with only a task name is not enough: a false excuse is indistinguishable
+// from a real pending file and INHERITS the shelter built for a real one. So
+// each row carries, beside the owning task, a landing condition observable
+// from the tree — the rollout step whose exit marker must not appear before
+// the file does. It is the shape `tools/contract-tokens.mjs`'s pending records
+// already use, where each names the contract version that lands it and a probe
+// that fires when the reason closes.
+//
+// Three checks hang off it, and they close different halves:
+//
+//   * the row dies when the file arrives (a real excuse cannot outlive its
+//     reason and shelter the next entry that names nothing);
+//   * the row dies when its step exits without the file (an excuse with no
+//     expiry is permanent shelter);
+//   * an unresolved entry that is one or two edits from a path that DOES
+//     exist is a FAILURE when nothing claims it is pending, and a WARNING
+//     naming both the row and the near path when something does. That is the
+//     leg that catches a typo today, without waiting for a marker — and the
+//     split is why it needs no exception list, which would be a new shelter.
 const UNRESOLVED_BY = new Map([
-  [".github/workflows/plugins-moderation.yml", "M-T3.4 writes it; ID-34 pins its `job_workflow_ref` before then"],
+  [
+    ".github/workflows/plugins-moderation.yml",
+    {
+      by: "M-T3.4",
+      why: "ID-34 pins its `job_workflow_ref` before the file exists (contract 0.20.0's TRUST-31)",
+      // Observable: `log/rollout/R3-exit.json`. R3 cannot exit with the
+      // moderation workflow still unwritten — the step is what it is for.
+      due: "R3",
+    },
+  ],
 ]);
 
-test("every entry resolves, or names the task that lands it", () => {
+/** Edit distance, with an early exit: anything over `max` is just "far". */
+function editDistance(a, b, max) {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = [...Array(b.length + 1).keys()];
+  for (let i = 1; i <= a.length; i += 1) {
+    const cur = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (cur[j] < best) best = cur[j];
+    }
+    if (best > max) return max + 1;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/** Which rollout steps have exited, read off the tree and never declared. */
+function exitedSteps(files) {
+  const out = new Set();
+  for (const f of files) {
+    const m = /^log\/rollout\/([A-Za-z0-9]+)-exit\.json$/.exec(f);
+    if (m) out.add(m[1]);
+  }
+  return out;
+}
+
+test("every entry resolves, or carries an excuse that expires", () => {
   // THE test that would have caught `tools/selftest/**` before it was
   // published. An entry naming nothing is not an entry that fails; it is an
   // entry that passes for ever, in the permissive direction, and a set full of
@@ -191,14 +332,92 @@ test("every entry resolves, or names the task that lands it", () => {
     "an entry of TRUST-31's set resolves to nothing at HEAD and names nobody who will land it, so it " +
       "compares equal at every commit and checks nothing while the set reads as though it covered it",
   );
-  for (const [e, by] of UNRESOLVED_BY) {
+
+  const exited = exitedSteps(files);
+  for (const [e, row] of UNRESOLVED_BY) {
     assert.ok(ENTRIES.includes(e), `${e} is excused as not-yet-landed and is not in the set at all`);
+    assert.ok(row.by && row.why && row.due, `${e}'s excuse is missing a task, a reason or a due step`);
     assert.ok(
       !resolves(e),
-      `${e} is on the tree now (${by}); delete its UNRESOLVED_BY row, or the next entry that names ` +
-        `nothing hides behind a row that stopped being true`,
+      `${e} is on the tree now (${row.by}: ${row.why}); delete its UNRESOLVED_BY row, or the next entry ` +
+        `that names nothing hides behind a row that stopped being true`,
+    );
+    assert.ok(
+      !exited.has(row.due),
+      `${e} is excused until ${row.due} and log/rollout/${row.due}-exit.json is on the tree, so that step ` +
+        `exited without the file appearing. Either ${row.by} did not land what it owed, or this entry is a ` +
+        `misspelling wearing a real task's name — which is the case this expiry exists to separate`,
     );
   }
+
+  // The expiry has never fired, because no step has exited. That is a DERIVED
+  // state, and it is asserted rather than assumed, or the loop above is
+  // `if (true)` with a comment on it. Two instruments, because an absence is a
+  // claim about the tool: `git ls-tree` over HEAD, and the working directory.
+  if (exited.size === 0) {
+    assert.equal(files.filter((f) => f.startsWith("log/rollout/")).length, 0);
+    assert.equal(fs.existsSync(path.join(REPO, "log", "rollout")), false);
+    console.log(
+      `note  no rollout exit marker is on the tree, so ${UNRESOLVED_BY.size} excuse(s) have not expired: ` +
+        `${[...UNRESOLVED_BY].map(([e, r]) => `${e} until ${r.due}`).join(", ")}.`,
+    );
+  }
+});
+
+test("an unresolved entry with no excuse is not a near-miss of a path that exists", () => {
+  // The leg that catches a misspelling TODAY, without waiting for a rollout
+  // marker. A pending file is normally nothing like an existing one; a typo is
+  // one or two edits from it by construction.
+  //
+  // **It splits on whether the entry carries a row, and that split is part of
+  // its correctness rather than a softening of it.** A legitimately pending
+  // file can be one edit from an existing one BY CONSTRUCTION: sibling modules
+  // are the normal case, and `bot/lib/decisions.mjs` exists while a pending
+  // `bot/lib/decision.mjs` would be one edit away and entirely innocent. If
+  // that were a failure, its only remedy would be an exception list — and an
+  // exception list is a new shelter, which is the exact thing the expiry above
+  // exists to prevent. A guard whose only remedy is an exemption has rebuilt
+  // the hole it was closing.
+  //
+  // So: no row at all is a FAILURE — nothing claims the entry is pending, and
+  // that is the `bot/lib/idenity.mjs` case. A valid row is a WARNING that
+  // names BOTH the row and the near path, so a reader can see a typo wearing a
+  // real task's name. The expiry stays the authority; this is the early
+  // signal. No entry ever needs an exception to pass.
+  const files = tracked();
+  const resolves = (e) => (e.endsWith("/") ? files.some((f) => f.startsWith(e)) : files.includes(e));
+  const fail = [];
+  const warn = [];
+  for (const e of ENTRIES) {
+    if (resolves(e)) continue;
+    let best = 3;
+    const near = [];
+    for (const f of files) {
+      const d = editDistance(e, f, 2);
+      if (d <= 2) {
+        near.push(`${f} (${d})`);
+        if (d < best) best = d;
+      }
+    }
+    if (!near.length) continue;
+    const row = UNRESOLVED_BY.get(e);
+    if (row) {
+      warn.push(
+        `${e} — excused by ${row.by} until ${row.due}, and ${best} edit(s) from ${near.slice(0, 3).join(", ")}. ` +
+          `If that row is wrong, this entry checks nothing until ${row.due} exits.`,
+      );
+    } else {
+      fail.push(`${e} — names nothing, is ${best} edit(s) from ${near.slice(0, 3).join(", ")}, and nothing claims it is pending`);
+    }
+  }
+  for (const w of warn) console.log(`warn  ${w}`);
+  assert.deepEqual(
+    fail,
+    [],
+    "an entry of TRUST-31's set names nothing, is one or two characters from a path that does exist, and " +
+      "carries no row saying it is pending. That is a misspelling: it passes every structural check, reads " +
+      "as deliberate, compares equal for ever, and leaves the file it meant to name covered by nothing",
+  );
 });
 
 test("the two enumerated groups are exactly what is on the tree", () => {
@@ -219,7 +438,7 @@ test("the two enumerated groups are exactly what is on the tree", () => {
     ENTRIES.filter((e) => /^schema\/[^/]+\.json$/.test(e)).sort(),
     onTree(/^schema\/[^/]+\.json$/).filter((f) => f !== "schema/contract-tokens-v1.json"),
     "the record schemas and TRUST-31's enumeration of them differ; `schema/contract-tokens-v1.json` is " +
-      "the one deliberate omission, and a ninth schema is a contract MINOR before the file lands",
+      "the one deliberate omission, and a twelfth schema is a contract MINOR before the file lands",
   );
 });
 
