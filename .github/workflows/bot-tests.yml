@@ -112,15 +112,18 @@ jobs:
       # says so out loud anyway, so the reason is in the log and not only in a
       # test name.
       - name: The probe is actually there
+        id: probe
         run: |
           set -euo pipefail
           test -x bot/manifest-probe/target/release/astra-manifest-probe
           bot/manifest-probe/target/release/astra-manifest-probe --version || true
 
       - name: The bot's tests, including every shared bundle vector
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node bot/tests/ingest.test.mjs
 
       - name: The publication policy's tests, including its published numbers
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node bot/tests/policy.test.mjs
 
       # What the workflow files may and may not say: which job can reach the
@@ -128,6 +131,7 @@ jobs:
       # a dispatch can name a submitter. Properties of the YAML, so no other
       # suite can hold them (registry plan B-T0.3, B-T0.5, B-T0.6).
       - name: The workflow files' own tests
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/workflows.test.mjs
 
       # B-T3.2 / B-T3.3a. Which repository published these bytes: the
@@ -135,12 +139,14 @@ jobs:
       # transfer, a re-creation, and a freed login somebody else registered.
       # Pure, no probe, ~50 ms.
       - name: The identity comparison, one fixture per outcome
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/identity.test.mjs
 
       # Two clones and a bare remote: what `bot/publish-apply.mjs` does when two
       # publications reach `main` at once. It needs no probe and no second
       # checkout, only git (registry plan B-T0.3).
       - name: The publish path, under contention
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/publish-apply.test.mjs
 
       # These four ran nowhere on the path to `main` until now. Each is cheap,
@@ -154,9 +160,11 @@ jobs:
       # published something, so the documentation of what the bot refuses could
       # sit stale on `main` for as long as nobody submitted a release.
       - name: The presentation the card is built from
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node bot/tests/presentation.test.mjs
 
       - name: The icon and README lifted out of the bundle
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node bot/tests/asset-check.test.mjs
 
       # The steps below this line are added by the batch's coordinator, not by
@@ -177,6 +185,7 @@ jobs:
       # afterwards goes in ONE commit, after the lanes that own the suites have
       # finished.
       - name: The holds, and the four ways one of them ends
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node bot/tests/holds.test.mjs
 
       # MIG-21's historic export, and the one suite here that cannot be re-run
@@ -186,6 +195,7 @@ jobs:
       # After ROLL-42 switches Issues off there is no archive left to compare
       # against (registry plan M-T3.8).
       - name: The historic export, against the comments the bot actually posts
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node bot/tests/export-issues.test.mjs
 
       # RC-R1-0. The alarm channel and the dead-man heartbeat, against a
@@ -196,6 +206,7 @@ jobs:
       # because an alarm that could not be sent looks exactly like nothing
       # having gone wrong.
       - name: The alarm channel, and every way it can fail to be one
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node bot/tests/alert.test.mjs
 
       # B-T1.5 (BOT-7). The root keys are compiled into bot/lib/roots.mjs and a
@@ -204,11 +215,13 @@ jobs:
       # the compiled set, and that a trust.json signed by any other key is
       # refused even when root.json is edited to publish that key.
       - name: The compiled root keys, and the only set they can be
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/roots.test.mjs
       # M-T1.5. The coverage canary's own canaries: real git fixture
       # repositories, because both rules read HISTORY and a fixture that
       # stubbed git would be a fixture that tested the stub. ~1s, no probe.
       - name: The coverage canary, against repositories it has to judge
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/moderation-coverage.test.mjs
 
       # M-T1.6. The moderation log's schema and MOD-41's shared reason corpus.
@@ -218,6 +231,7 @@ jobs:
       # and by the time one is written by hand at the moment of a takedown the
       # rule has to already be right.
       - name: The moderation schema, and the reason corpus both validators read
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/moderation.test.mjs
 
       # B-T3.7b. The once-only migration baseline. These two steps are late
@@ -243,6 +257,7 @@ jobs:
       # because 9007199254740993 rounds to …92 and names a repository that
       # never published the bytes.
       - name: The migration baseline, and the one dispatch that writes it
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/baseline.test.mjs
 
       # B-T3.8. Detector A, the reconciliation that reads only public git.
@@ -261,6 +276,7 @@ jobs:
       # the same as its unit tests running, and the four A7 cases here include
       # both bounds and the no-trailer case, which no incident has exercised.
       - name: Detector A, and the skips that have to be derived
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/detectors.test.mjs
 
       # B-T2.6. The releases feed after it got a module of its own: `pollFeed`
@@ -275,12 +291,15 @@ jobs:
       # step and never exported at the far end, which is the break that was
       # watched. Pure, no probe, no network, ~65 ms.
       - name: The feed poll, and the surfaces the split had to keep
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/poll.test.mjs
 
       - name: The moderation records, against their own schema
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node bot/moderation.mjs --check
 
       - name: docs/BOT-CHECKS.md still describes the checks that exist
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node bot/gen-checks-doc.mjs --check
 
       # B-T1.7 (BOT-78). The two risk tiers, against the crate that defines
@@ -307,6 +326,7 @@ jobs:
       # cross-repository check that skips quietly is the failure the step above
       # this one exists to prevent, one level up.
       - name: The risk tiers, against the manifest crate at the pin
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/risk-tiers.test.mjs
 
       # M-T5.1. MIG-1's listing states, decided from git: fixtures either side
@@ -323,6 +343,7 @@ jobs:
       # both are written by hand, one by the owner (MIG-2) and one by the
       # cutover commit (ROLL-33). ~0.3 s, no probe, no network.
       - name: MIG-1's listing states, against repositories and both new records
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/listing-state.test.mjs
 
       # M-T3.2. TRUST-26's takedown bound, counted out of git: real repositories
@@ -335,6 +356,7 @@ jobs:
       # trailer returned 0 on the one day the registry was withdrawing by hand
       # and let a fourth withdrawal out unheld. ~0.4 s, no probe, no network.
       - name: The takedown bound, against repositories that withdrew something
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/takedown-bound.test.mjs
 
       # B-T2.2. The decision-record writer, the only thing in this repository
@@ -354,6 +376,7 @@ jobs:
       # `bot/manifest-probe/_deps/AstraPlugins` and would report findings in
       # another repository under this one's name. ~0.1 s, no probe, no network.
       - name: The decision record, and the one place its id is derived
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/decisions.test.mjs
 
       # B-T2.4. The binding line, against thirty-one files a stranger could
@@ -372,6 +395,7 @@ jobs:
       # outside the window, and passes every other case in the file.
       # No probe, no network, ~90 ms.
       - name: The binding line, and the window that is measured in bytes
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/binding.test.mjs
 
       # B-T3.10. TRUST-31's hashed code paths, and the one thing a path list
@@ -387,4 +411,5 @@ jobs:
       # value rather than a description of one. Pure, no probe, no network,
       # ~60 ms; it shells out to `git ls-tree` only.
       - name: TRUST-31's hashed set, and everything a bot run can reach
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/code-paths.test.mjs
