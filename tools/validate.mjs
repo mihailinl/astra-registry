@@ -60,6 +60,7 @@ import {
   refuseUncomposableAuthorAction,
 } from "../bot/lib/decisions.mjs";
 import { SOURCE_DIR as MODERATION_DIR, loadEntries as loadModerationEntries } from "../bot/lib/moderation.mjs";
+import { fixedReason } from "../bot/lib/compile-decision.mjs";
 import { ALLOWED_IMAGE_HOSTS, ICON_NAMES, MAX_README_BYTES, checkIcon } from "../bot/lib/assets.mjs";
 import {
   CUTOVER_FILE,
@@ -2029,15 +2030,59 @@ export function checkRecords(ctx, sources, records = loadRecords(ctx.root, sourc
  * what makes it runnable here at all — and it is the same count: the moderation
  * entry states which versions the yank covered, and the decision log either has
  * a record per version or does not.
+ *
+ * ── WHICH LOG ENTRIES ARE AUTHOR YANKS, AND WHY THAT IS NOT OBVIOUS ─────────
+ *
+ * `action: yank` with `category: author_request` is NOT the same set as "an
+ * `A_YANK`". FLOW-79 sends the author of an UNBOUND listing to a moderator —
+ * "its author asks a moderator (`M_YANK`, category `author_request`) until it
+ * is bound" — and §7.2's category table allows `author_request` on `M_YANK`.
+ * An `M_YANK` writes no author-action record (BOT-34 writes them "for an
+ * `A_YANK`" and instead of a submission record), so counting one here refuses a
+ * legal tree for carrying zero of the records it does not owe.
+ *
+ * The log entry cannot say which: MOD-47 fixes its member set and neither the
+ * decision code nor a moderator handle is in it (PRIV-2 keeps the handle out).
+ * What separates them is the REASON. An `A_YANK`'s log reason is the one fixed
+ * registry string SCOPE-7's file lists for that code, which no moderator and no
+ * author types (BOT-80; DEC-14; MOD-41), and `bot/lib/compile-decision.mjs`
+ * compiles exactly that string. An `M_YANK` carries the moderator's own MOD-48
+ * reason, which MOD-41 requires to be 10 to 300 code points of free-ish text.
+ *
+ * **Today that string is not published**, so the discriminant falls back to
+ * (action, category) and a note says so. The fallback is the strict direction —
+ * it reads an `M_YANK` with `author_request` as an author yank and asks it for
+ * records — and it is live rather than dormant, which matters because no yank
+ * of either kind is on `main` yet and a check that waited for ops.15 would be
+ * a check nobody had ever seen run.
  */
 export function checkAuthorActionRecords(ctx, sources, records = loadRecords(ctx.root, sources)) {
   const { report } = ctx;
   const { decisions } = records;
   const { entries, files } = loadModerationEntries({ root: ctx.root });
 
-  const yanks = entries
-    .map((doc, i) => ({ doc, file: `${MODERATION_DIR}/${files[i]}` }))
+  // Read from REPO_ROOT and never from the tree under test: this is a contract
+  // fact, and `--registry-dir` supplies sources to be judged, not the rules it
+  // is judged by. `ctx.authorYankReason` is how `runValidation` hands it over,
+  // and how a test supplies one without a published token file.
+  const fixed = Object.hasOwn(ctx, "authorYankReason")
+    ? ctx.authorYankReason
+    : fixedReason("A_YANK", { root: REPO_ROOT });
+
+  const allYanks = entries.map((doc, i) => ({ doc, file: `${MODERATION_DIR}/${files[i]}` }))
     .filter(({ doc }) => doc.action === "yank" && doc.category === "author_request");
+
+  const yanks = fixed === null ? allYanks : allYanks.filter(({ doc }) => doc.reason === fixed);
+
+  if (fixed === null && allYanks.length > 0) {
+    report.note(MODERATION_DIR,
+      `${allYanks.length} \`author_request\` yank(s) are being counted as \`A_YANK\`s by action and category ` +
+      "alone, because `schema/contract-tokens-v1.json` carries `fixed_reasons: null`",
+      "SCOPE-7's fixed `A_YANK` reason is what tells an author's yank from an `M_YANK` a moderator took on an " +
+      "unbound listing's behalf (FLOW-79), and it lands with contract version ops.15. Until it does this check " +
+      "is strict in the safe direction — it asks an `M_YANK` for records it does not owe, which is a red a " +
+      "person resolves, rather than letting a short-counted `A_YANK` through, which nothing else catches.");
+  }
   if (yanks.length === 0) return;
 
   const authorActions = decisions.filter(({ doc }) => isAuthorAction(doc));
@@ -2121,6 +2166,11 @@ export async function runValidation(opts) {
     allowStaging: opts.allowStaging,
     allowDirect: opts.allowDirect,
     artifactsDir: opts.artifactsDir,
+    // SCOPE-7's fixed `A_YANK` reason, from THIS repository's token file for the
+    // same reason `schemas` and `policy` are: it is a rule, not a source.
+    // `null` until contract version ops.15 publishes it; see
+    // `checkAuthorActionRecords` for what the null does.
+    authorYankReason: fixedReason("A_YANK", { root: REPO_ROOT }),
   };
 
   checkMirroredLimits(ctx);
