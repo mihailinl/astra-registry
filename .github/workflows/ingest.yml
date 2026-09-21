@@ -411,16 +411,16 @@ jobs:
           # `/reject` is honoured. A login, never a claim: `bot/lib/maintainer.mjs`
           # asks GitHub about it.
           COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
-          # The one payload field that check will look at, and only when the
-          # permission API declines to answer: `OWNER` is GitHub asserting that
-          # this commenter is the account the repository belongs to. This job's
-          # token holds `contents: read`, the collaborators endpoint is
-          # documented as needing push access, and `administration` is not a
-          # scope a workflow token can ask for — so without this the endpoint
-          # 403ing would make `/approve` refuse the owner of the repository, on
-          # every path, silently. See the block at the top of maintainer.mjs;
-          # the API is still tried first and an answered denial still stands.
-          COMMENT_ASSOCIATION: ${{ github.event.comment.author_association }}
+          # There is no COMMENT_ASSOCIATION here, and that is a decision rather
+          # than an omission. `github.event.comment.author_association` used to
+          # travel to `bot/lib/maintainer.mjs`, which accepted `OWNER` when the
+          # collaborator-permission endpoint declined to answer — a fallback for
+          # a 403 nobody had ever observed, because this job's token holds
+          # `contents: read` and the endpoint is documented as needing push
+          # access. Run 35487527105 (issue #93, 2026-09-20) measured it:
+          # `collaborator-permission: answered=true outcome=role is 'admin'`.
+          # The endpoint answers, the fallback went, and no payload field is a
+          # permission in this pipeline any more (registry plan B-T0.4b).
           # Stranger text. All three go to files, never into a command.
           ISSUE_BODY: ${{ github.event.issue.body }}
           ISSUE_TITLE: ${{ github.event.issue.title }}
@@ -507,21 +507,21 @@ jobs:
               # commenter may decide. Its answers arrive as three files; nothing
               # here sources a file written from stranger text.
               #
-              # It also appends one line to this job's summary when it asks:
-              # `collaborator-permission: answered=<bool> outcome=<token>`, with
-              # no login. That line is R0's measurement (registry plan B-T0.4a).
-              # The `OWNER` fallback in `bot/lib/maintainer.mjs` is there because
-              # nobody has ever seen whether this token can read that endpoint in
-              # a real run, and removing it on a guess would strand every held
-              # submission if the endpoint is silent. The summary is where the
-              # answer becomes a fact instead of an assumption.
+              # It also writes one line when it asks, to the log and to this
+              # job's summary: `collaborator-permission: answered=<bool>
+              # outcome=<token>`, with no login. That line was R0's measurement
+              # (registry plan B-T0.4a) and it stays after it. The measurement
+              # came back `answered=true outcome=role is 'admin'` on run
+              # 35487527105, which is why `bot/lib/maintainer.mjs` no longer
+              # carries an `OWNER` fallback and why no `--commenter-association`
+              # is passed below. "The endpoint answers" is a fact with a date on
+              # it; this line is what would notice the day it stops being one.
               node bot/triage.mjs \
                 --event "$EVENT" --action "$ACTION" --labels "$LABELS" \
                 --repository "$REGISTRY" \
                 --issue-body issue-body.md --issue-title issue-title.md \
                 --comment-body comment-body.md \
                 --issue-author "$ISSUE_AUTHOR" --commenter "$COMMENT_AUTHOR" \
-                --commenter-association "$COMMENT_ASSOCIATION" \
                 --mode-file mode.txt --targets-file targets.json \
                 --reply-file out/reply.md
               mode="$(cat mode.txt)"

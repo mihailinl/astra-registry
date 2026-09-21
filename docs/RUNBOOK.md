@@ -59,7 +59,14 @@ this registry downloads archives from.
 `gh run list --workflow=Ingest --limit 5 --repo mihailinl/astra-registry` for a
 run against that issue. If there is no run at all, the event never fired; if
 there is a green run with everything skipped, `bot/triage.mjs` decided the issue
-is not a listing request and `bot/tests/policy.test.mjs` wants a case for it.
+is not a listing request.
+
+**Until 2026-09-20 this page told you that was a missing test case.** It was
+not — it was B-T0.2's defect, and a green run with everything skipped on a
+bot-authored `[notice]` thread was the registry printing a command on a thread
+it would not then read it off. Fixed; the diagnosis is kept because a runbook
+that quietly drops a wrong instruction teaches nobody what it was wrong
+about.
 
 ### Step 2 — Read the bot's comment
 
@@ -177,9 +184,9 @@ nothing and tells you so. A silent close is the one thing this flow will not do.
 | The bot replies | What it means, and the fix |
 |---|---|
 | "is refused" … "role is `read`" | GitHub does report a role for you on **this** repository, and it is not `admin` or `maintain`. Check which account you commented from. An answered role stands: `author_association` cannot override it, because it is not a permission — `COLLABORATOR` is true for a `triage` role that cannot push a byte, and `CONTRIBUTOR` never expires. |
-| "is refused" … "would not say" | The permission call itself failed **and** you are not the account this repository belongs to. Re-run it. If it keeps happening from the owner's account, that is a bug: `author_association: OWNER` is meant to carry the command through exactly this case. From any other account the fallback is to publish the listing by hand through a pull request — `bot/run-checks.mjs` is that path. |
-| "would not say … but the event payload marks the comment `author_association: OWNER`" | Not a failure. `GITHUB_TOKEN` could not read `GET /repos/{owner}/{repo}/collaborators/{login}/permission` — it holds `contents: read`, and that endpoint is documented as needing push access — so the command was honoured on GitHub's own assertion that you are the repository's owner instead. **Whether the API path works at all with a real Actions token has not been observed in a live run**; if every `/approve` comes through this line, that is the answer. |
-| "has nothing to act on here" | The issue carries no readable form. Ask the author to open a fresh request with the listing template. |
+| "is refused" … "would not say" | The permission call itself failed. Re-run it. There is **no fallback any more and that is deliberate**: B-T0.4b removed the `author_association: OWNER` branch on 2026-09-20, because run `35487527105` printed `collaborator-permission: answered=true outcome=role is 'admin'` — the endpoint answers a workflow `GITHUB_TOKEN`, so the silence the fallback handled has been observed **not** to happen. If it ever does, the command is refused from every account including the owner's, and the way round is to publish the listing by hand through a pull request — `bot/run-checks.mjs` is that path. |
+| ~~"would not say … but the event payload marks the comment `author_association: OWNER`"~~ | **This line cannot be printed any more, and the sentence that retired it is the one it asked for.** It used to say the API path "has not been observed in a live run". It has: run `35487527105`, 2026-09-20, `answered=true outcome=role is 'admin'`. So the fallback was dead code keeping a second authority alive — `COLLABORATOR` is true of a `triage` role that cannot push a byte — and B-T0.4b deleted it. The row is struck rather than removed because a maintainer who saw this wording once should be able to find out what happened to it. |
+| "has nothing to act on here" | The issue carries no readable form — **and since B-T0.2 that is the only thing it means.** Before 2026-09-20 a `/approve` on a bot-authored `[notice]` or `[release]` thread was refused with *"not a listing request"* before anything read the command, so this wording and that one both really meant "the bot would not look". Ask the author to open a fresh request with the listing template. |
 | "`/approve` has to name what it is approving" | You typed the bare word, or the line lost a field on the way into the comment box. Copy the whole line out of the bot's **Held for a maintainer** comment: `/approve <owner/repo>@<tag> <fingerprint>`. |
 | "this issue no longer describes what you approved" | The repository or tag in the issue is not the one your command named. **Look at the issue's edit history before doing anything else** — this is what an author swapping a submission under review looks like from here, and it is also what a stale browser tab looks like. If the issue as it stands is what you meant, comment `/recheck`, read the new comment, and copy the line out of *that* one. |
 | `P_APPROVAL_STALE` in the new comment | Your command was well formed and named an earlier state of the release: the tag moved, or a release asset was replaced, after the comment you answered. Nothing published and the hold stands. Re-read the table as it now is; the same comment prints the current line. |

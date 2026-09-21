@@ -17,6 +17,7 @@
 //
 // Nothing touches the network.
 
+import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -28,7 +29,7 @@ import { LEGACY_TRIGGERS, alreadyPublished, decideRelease, legacyTrigger, noList
 import { recordCommitRefusal } from "../publish-apply.mjs";
 import { bot74Filter } from "../watch.mjs";
 import { DEFAULT_SIGNER_WORKFLOW } from "../ingest.mjs";
-import { parseMaintainerCommand } from "../lib/intake.mjs";
+import { BOT_AUTHOR, decidableThread, parseMaintainerCommand, safeLogin } from "../lib/intake.mjs";
 import {
   CLEAN_RELEASES_FOR_TRUSTED,
   DELAY_HOURS,
@@ -1425,50 +1426,108 @@ await test("when GitHub will not answer, the command fails closed", async () => 
 });
 
 // The real `proveMaintainer`, against a stubbed `fetch`. Every test above
-// injects a stub for it, which is exactly why the endpoint's own behaviour has
-// never been exercised: `GET /collaborators/{login}/permission` is documented
-// as requiring push access, the triage job's `GITHUB_TOKEN` holds
+// injects a stub for it, which is exactly why the endpoint's own behaviour went
+// unexercised for so long: `GET /collaborators/{login}/permission` is
+// documented as requiring push access, the triage job's `GITHUB_TOKEN` holds
 // `contents: read`, and `administration` is not a scope a workflow token can
-// request — so a 403 there would make `/approve` refuse the repository's owner
-// on every path, silently, and no stubbed test could see it.
+// request — so from here a 403 was entirely plausible, and no stubbed test
+// could tell. It took a live run to find out. Registry issue #93, run
+// 35487527105, 2026-09-20: `collaborator-permission: answered=true outcome=role
+// is 'admin'`. B-T0.4a is that measurement, B-T0.4b is the deletion it
+// authorised, and the three tests below are what the deletion changed.
 const respond = (status, body) => async () => ({
   ok: status >= 200 && status < 300,
   status,
   json: async () => body ?? {},
 });
 
-await test("a 403 on the permission endpoint no longer refuses the repository's owner", async () => {
+await test("a silent permission endpoint refuses everybody, the repository's owner included", async () => {
+  // What the `OWNER` fallback used to do here: return `ok: true, role: "owner"`
+  // for a 403 plus `author_association: OWNER`. It was a happy path for a
+  // silence that the measurement says does not happen — so what is left is the
+  // fail-closed refusal this module always gave everybody else, and the module
+  // no longer has a second way to say yes.
   const denied = await proveMaintainer({
     repo: REGISTRY_REPO, login: "the-maintainer", fetchImpl: respond(403),
   });
-  assertEqual(denied.ok, false, "no association: still fails closed, which is the default");
-
-  const owner = await proveMaintainer({
-    repo: REGISTRY_REPO, login: "the-maintainer", association: "OWNER", fetchImpl: respond(403),
-  });
-  assertEqual(owner.ok, true, owner.detail);
-  assertEqual(owner.role, "owner", "");
-  assert(owner.detail.includes("author_association"), owner.detail);
+  assertEqual(denied.ok, false, denied.detail);
+  assertEqual(denied.role, null, "and no role is invented out of a silence");
+  assertEqual(denied.answered, false, "the probe still reports which it was");
+  assert(denied.detail.includes("would not say"), denied.detail);
+  // A refusal, not a crash and not a bare `false`: whoever reads it has to be
+  // able to tell an unreadable endpoint from a `read` role, because the two
+  // have different fixes.
+  assert(/re-run|pull request/i.test(denied.detail),
+    `a refusal on an outage has to name the way round it: ${denied.detail}`);
 });
 
-await test("no association below OWNER fills the silence", async () => {
-  for (const association of ["COLLABORATOR", "MEMBER", "CONTRIBUTOR", "NONE", "", null]) {
-    const out = await proveMaintainer({
-      repo: REGISTRY_REPO, login: "a-stranger", association, fetchImpl: respond(403),
+await test("no `author_association` value is a permission any more, `OWNER` included", async () => {
+  // The floor matters: `association` is no longer a parameter, so a loop that
+  // passed nothing would pass vacuously. Every value the payload can carry is
+  // enumerated, `OWNER` first, and each is handed in the way the caller used
+  // to hand it in.
+  const values = ["OWNER", "COLLABORATOR", "MEMBER", "CONTRIBUTOR", "NONE", "", null];
+  assert(values.includes("OWNER") && values.length === 7,
+    "the enumeration is what this test is; shrinking it silently is the failure mode");
+  for (const association of values) {
+    const silent = await proveMaintainer({
+      repo: REGISTRY_REPO, login: "the-maintainer", association, fetchImpl: respond(403),
     });
-    assertEqual(out.ok, false, `${association} must not stand in for a permission`);
+    assertEqual(silent.ok, false, `${association} must not stand in for a permission`);
+    assertEqual(silent.role, null, `${association}`);
+
+    // And it does not subtract either: an answered `admin` is still an
+    // approval, whatever the payload said about the commenter.
+    const answered = await proveMaintainer({
+      repo: REGISTRY_REPO, login: "the-maintainer", association,
+      fetchImpl: respond(200, { role_name: "admin" }),
+    });
+    assertEqual(answered.ok, true, `${association}: ${answered.detail}`);
+    assertEqual(answered.role, "admin", `${association}`);
   }
 });
 
-await test("OWNER never overrides an answer GitHub did give", async () => {
-  // The narrowing that keeps this from being a reversal of the module's rule:
-  // it fills a silence, it does not outrank a `read`.
+await test("an answered `read` is still a denial, which is what it always was", async () => {
   const out = await proveMaintainer({
-    repo: REGISTRY_REPO, login: "a-stranger", association: "OWNER",
-    fetchImpl: respond(200, { role_name: "read" }),
+    repo: REGISTRY_REPO, login: "a-stranger", fetchImpl: respond(200, { role_name: "read" }),
   });
   assertEqual(out.ok, false, out.detail);
   assertEqual(out.role, "read", "");
+});
+
+await test("no workflow reads `author_association`, and the scan has a floor", () => {
+  // B-T0.4b's second canary. The plan puts it in `workflows.test.mjs`; that
+  // file belongs to another lane this wave, so it lives here until it can be
+  // moved, and moving it is a cut-and-paste — it imports nothing from this
+  // suite.
+  //
+  // The coupling it guards: `bot/lib/maintainer.mjs` no longer accepts an
+  // `association`, and `bot/triage.mjs` no longer parses
+  // `--commenter-association`. A workflow that still exported
+  // `github.event.comment.author_association` would either be dead YAML or,
+  // worse, the first half of somebody reintroducing the fallback.
+  const dir = path.join(REPO_ROOT, ".github", "workflows");
+  const files = fs.readdirSync(dir).filter((n) => n.endsWith(".yml") || n.endsWith(".yaml"));
+
+  // The floor, written before the assertion and measured against what git
+  // actually tracks — a `readdirSync` of a renamed directory returns [] and an
+  // empty scan reads exactly like a pass.
+  const tracked = execFileSync("git", ["ls-files", ".github/workflows"], { cwd: REPO_ROOT, encoding: "utf8" })
+    .split("\n").filter((l) => /\.ya?ml$/.test(l));
+  assertEqual(files.length, tracked.length,
+    `scanned ${files.length} workflow file(s), git tracks ${tracked.length} — the scan is reading the wrong place`);
+  assert(files.length >= 8, `only ${files.length} workflow(s) found; this scan has stopped covering the estate`);
+
+  for (const name of files) {
+    const body = fs.readFileSync(path.join(dir, name), "utf8");
+    for (const [i, line] of body.split("\n").entries()) {
+      if (line.trim().startsWith("#")) continue;
+      assert(!line.includes("author_association"),
+        `${name}:${i + 1} reads author_association, which B-T0.4b removed from this pipeline:\n  ${line.trim()}`);
+      assert(!line.includes("--commenter-association"),
+        `${name}:${i + 1} passes --commenter-association, an argument bot/triage.mjs no longer accepts:\n  ${line.trim()}`);
+    }
+  }
 });
 
 /** A fingerprint of the right shape. Whether it names these bytes is decided later. */
@@ -1647,6 +1706,210 @@ await test("prose that mentions the command is not the command", async () => {
 await test("a quoted reply does not re-run the command", async () => {
   const out = await command("> /approve\n\nno, not yet", "the-maintainer");
   assert(out.mode !== "approve", `${out.mode}: ${out.why}`);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// B-T0.2 stage 1: a hold raised OFF the listing issue.
+//
+// Every test above goes through `command()`, which hardcodes
+// `labels: "listing"` and `title: "[listing] a-stranger/dice-roller"` — so the
+// whole of the section above proves only that the commands work on the one
+// thread shape they were written for. That is why the defect survived: a
+// listed plugin's second release is held on a `[notice]` issue the bot opens
+// itself, with no label and a title `looksLikeListing` excludes by name, and
+// `decideCommand`'s `!labelled && !shape.shaped` early return answered the
+// copy-paste line the same bot had just printed with "an issue that is not a
+// listing request". Reproduced before it was fixed, on a tree where
+// `a-stranger/dice-roller` is listed and the commenter proves `admin`:
+//
+//     { "mode": "reply", "why": "/approve on an issue that is not a listing request" }
+//
+// and live, where issue #74 prints
+// `/approve dwertyfa288/dwertyfa-astra-tg@v0.1.15 be6bc6b4f4139c5d` on a
+// thread nothing would ever have read it off.
+//
+// `command()` stays as it is — it is the listing-issue path, and that path did
+// not change. These use a sibling that names the thread instead.
+
+section("a hold raised off the listing issue (B-T0.2)");
+
+/** The bot's own `[notice]` title, in the shape `bot/comment.mjs` writes it. */
+const NOTICE_TITLE = "[notice] dice-roller 0.2.0 publishes itself at 2026-08-11T12:00:00Z";
+
+/**
+ * `command()`'s sibling, for threads that are not listing requests.
+ *
+ * No `listing` label and no `[listing]` title, because those are the two things
+ * a `[notice]` does not have; the body is the bot's notice rather than a form,
+ * for the same reason. Everything else — the permission stub, the clock, the
+ * release — is the same, so a difference in the result is a difference in the
+ * thread and nothing else.
+ */
+const onThread = (text, commenter, { title = NOTICE_TITLE, issueAuthor = BOT_AUTHOR, ...extra } = {}) => triage(
+  intake({
+    event: "issue_comment", action: "created", labels: "",
+    issue: "`a-stranger/dice-roller@v0.2.0` reached the registry without a submission issue.\n",
+    title,
+    comment: text, commenter, issueAuthor, now: NOW, ...extra,
+  }),
+  releaseBy(SUBMITTER),
+  { proveMaintainer: extra.prove ?? MAINTAINERS },
+);
+
+await test("canary 1 — /approve on a bot-authored [notice] for a LISTED repository approves", async () => {
+  const out = await onThread(`/approve ${REPO}@${TAG} ${FP}`, "the-maintainer");
+  assertEqual(out.mode, "approve", out.why);
+  assertEqual(out.repo, REPO, "the target is the one the maintainer's line named");
+  assertEqual(out.tag, TAG, "");
+  assertEqual(out.approvedBy, "the-maintainer", "");
+  assertEqual(out.approvedFor, FP, "and it still carries what it is an approval OF");
+  // The submitter cannot be the issue author here: the issue author is the bot,
+  // and `github-actions[bot]` is not even a login the charset admits. It comes
+  // from the release, exactly as a ping's does.
+  assertEqual(out.submitter, SUBMITTER, "resolved from the release author, not from the thread");
+  assert(!("findings" in out) && !("decision" in out),
+    `an approval carries no verification with it: ${Object.keys(out).join(", ")}`);
+});
+
+await test("canary 1b — /publish too, and it still waives the delay", async () => {
+  const out = await onThread(`/publish ${REPO}@${TAG} ${FP}`, "the-maintainer");
+  assertEqual(out.mode, "approve", out.why);
+  assertEqual(out.publishNow, true, "`/publish` is `/approve` plus the waiver, on every thread");
+});
+
+await test("canary 2 — an UNLISTED repository gets a reply, and no target", async () => {
+  // The rule that makes an unlabelled thread safe at all, and it is the same
+  // one that makes an unauthenticated `/release` ping safe: off a listing issue
+  // nobody applied the label, so the only thing standing in for a person's
+  // decision is a pin that already exists. A first listing is not reachable
+  // through a command.
+  const out = await onThread(`/approve a-stranger/never-listed@${TAG} ${FP}`, "the-maintainer");
+  assertEqual(out.mode, "reply", out.why);
+  assert(!out.repo && !out.tag, "and emits no target: nothing is fetched for a repository with no pin");
+  assert(out.reply.includes("is not listed"), out.reply);
+  assert(out.reply.includes("a-stranger/never-listed"), "the reply names what was refused");
+});
+
+await test("a [release] thread qualifies whoever opened it, because the other three checks do the work", async () => {
+  // The release-ping form is a stranger's door by design. What keeps this safe
+  // is not the author: it is `admin`/`maintain` on THIS registry, an already
+  // listed repository, and `bot/decide.mjs` re-hashing the release.
+  const out = await onThread(`/approve ${REPO}@${TAG} ${FP}`, "the-maintainer", {
+    title: `[release] ${REPO} ${TAG}`, issueAuthor: "a-stranger",
+  });
+  assertEqual(out.mode, "approve", out.why);
+
+  // And the authority is unchanged on it — the stranger who opened it cannot
+  // answer their own thread.
+  const refused = await onThread(`/approve ${REPO}@${TAG} ${FP}`, "a-stranger", {
+    title: `[release] ${REPO} ${TAG}`, issueAuthor: "a-stranger",
+  });
+  assertEqual(refused.mode, "reply", refused.why);
+  assert(refused.reply.includes("`/approve` is refused"), refused.reply);
+});
+
+await test("a [notice] somebody else opened is not one of the bot's, and is refused", async () => {
+  // A human-authored `[notice]` is an imitation of the thread this registry
+  // prints copy-paste commands on. Not a wall — anyone can retitle an issue
+  // `[release]` and meet the other three checks instead — but a maintainer who
+  // copies a line out of a fake notice gets a refusal rather than a publication.
+  const out = await onThread(`/approve ${REPO}@${TAG} ${FP}`, "the-maintainer", {
+    issueAuthor: "a-stranger",
+  });
+  assertEqual(out.mode, "reply", out.why);
+  assert(!out.repo, "and no target");
+  assert(out.reply.includes("nothing to act on"), out.reply);
+  assert(out.why.includes(BOT_AUTHOR), out.why);
+});
+
+await test("a bare /approve on a [notice] has nothing to fall back on, and says so", async () => {
+  // On a listing issue a bare `/approve` is refused because the form it would
+  // have read is the author's to edit. Here there is no form at all, so the
+  // command line is the only thing that names a release — and the reply is the
+  // same one, because the fix is the same: name what you are approving.
+  for (const line of ["/approve", `/approve ${REPO}`, `/approve ${REPO}@${TAG}`]) {
+    const out = await onThread(line, "the-maintainer");
+    assertEqual(out.mode, "reply", `${line} → ${out.why}`);
+    assert(out.reply.includes("has to name what it is approving"), line);
+    assert(!out.repo, `${line} emitted a target`);
+  }
+});
+
+await test("/reject stays a listing-issue command, because it can never name a release", async () => {
+  // B-T0.2 admits a command to these threads only when it names
+  // `owner/repo@tag <fingerprint>`, and `parseMaintainerCommand` gives
+  // `/reject` a sentence instead — by construction, because a rejection is
+  // something said to a submitter about a submission under review. A `[notice]`
+  // belongs to the bot; there is nothing on it to close and nobody to close it
+  // for. Refusing is the point: an unbindable command on an unlabelled thread
+  // is the exact shape this task exists to stop.
+  const out = await onThread("/reject this one is not ready", "the-maintainer");
+  assertEqual(out.mode, "reply", out.why);
+  assertEqual(out.close, undefined, "and nothing is closed");
+  assert(out.reply.includes("nothing to act on"), out.reply);
+
+  // Unchanged where it belongs.
+  const onListing = await command("/reject the licence is not one this registry allows", "the-maintainer");
+  assertEqual(onListing.mode, "reject", onListing.why);
+});
+
+await test("the permission is still asked first on these threads too", async () => {
+  // Ordering, for the same reason as on a listing issue: an account that may
+  // not decide gets the same answer whatever it typed, or the bot becomes an
+  // oracle for which threads are decidable and which repositories are listed.
+  const out = await onThread(`/approve a-stranger/never-listed@${TAG} ${FP}`, "a-stranger");
+  assert(out.reply.includes("`/approve` is refused"), out.reply);
+  assert(!out.reply.includes("is not listed"),
+    "a stranger must not learn from the refusal whether that repository is listed");
+});
+
+await test("an ordinary issue is still not decidable, which is the half that must not widen", async () => {
+  // The floor under all of the above. `decidableThread` admits two title
+  // prefixes and nothing else; if it ever admitted "any issue with no form"
+  // then every one of this registry's issues would be a command surface, and
+  // every test above would still pass.
+  for (const [title, issueAuthor] of [
+    ["site 500s", BOT_AUTHOR],
+    ["[appeal] dice-roller", BOT_AUTHOR],
+    ["[report] dice-roller", BOT_AUTHOR],
+    ["", BOT_AUTHOR],
+  ]) {
+    const out = await onThread(`/approve ${REPO}@${TAG} ${FP}`, "the-maintainer", { title, issueAuthor });
+    assertEqual(out.mode, "reply", `${JSON.stringify(title)} → ${out.why}`);
+    assert(!out.repo, `${JSON.stringify(title)} emitted a target`);
+    assert(out.reply.includes("nothing to act on"), out.reply);
+  }
+});
+
+await test("B-T0.2's admissible threads are exactly two, and the list is asserted, not described", () => {
+  // The rule as a table rather than as four calls, so that widening it is an
+  // edit to something a reviewer can count. `decidableThread` is pure, so this
+  // costs nothing and covers the cases the calls above do not.
+  const cases = [
+    [NOTICE_TITLE, BOT_AUTHOR, "notice"],
+    ["[NOTICE] shouting is still a notice", BOT_AUTHOR, "notice"],
+    [NOTICE_TITLE, "a-stranger", null],
+    [NOTICE_TITLE, "", null],
+    [NOTICE_TITLE, "github-actions", null],
+    [`[release] ${REPO} ${TAG}`, "a-stranger", "release"],
+    [`[release] ${REPO} ${TAG}`, BOT_AUTHOR, "release"],
+    ["[listing] a-stranger/dice-roller", BOT_AUTHOR, null],
+    ["[appeal] dice-roller", BOT_AUTHOR, null],
+    ["[report] dice-roller", BOT_AUTHOR, null],
+    ["site 500s", BOT_AUTHOR, null],
+    ["", BOT_AUTHOR, null],
+    [null, null, null],
+  ];
+  assertEqual(cases.length, 13, "the enumeration IS the test; shrinking it silently is the failure mode");
+  for (const [title, issueAuthor, kind] of cases) {
+    assertEqual(decidableThread({ title, issueAuthor }).kind, kind,
+      `${JSON.stringify(title)} by ${JSON.stringify(issueAuthor)}`);
+  }
+  // `github-actions[bot]` is not a login GitHub's charset admits, which is what
+  // makes it unregisterable and therefore worth comparing against. If this ever
+  // starts passing `safeLogin`, the author check above has become forgeable.
+  assertEqual(safeLogin(BOT_AUTHOR), null, "the bot's name must stay outside the login charset");
 });
 
 section("an approval clears the hold, and only the hold");
@@ -2939,6 +3202,19 @@ await test("B-T0.2 stage 2 — /approve is refused when no `held` record on main
     JSON.stringify({ schema: "astra.registry.decision/1", decision_id: "pub", state: "published", fingerprint: fp }));
   assertEqual((await command(line, "the-maintainer", { root })).mode, "reply",
     "a published record was read as a standing hold, which makes every cleared approval replayable");
+
+  // And the same on a `[notice]` thread, which is where stage 1 opened a second
+  // way in. Stage 2's bind is the durable one and it is shared code — asserted
+  // rather than assumed, because "it is the same code path" is exactly the
+  // sentence that stops being true one refactor later, and a second route into
+  // `mode: approve` that skipped this would be a second set of rules.
+  assertEqual((await onThread(line, "the-maintainer", { root })).mode, "reply",
+    "a hold raised off the listing issue bypassed the held-record bind");
+  fs.rmSync(path.join(root, "log", "decisions", "2026", "09", "pub.json"));
+  fs.writeFileSync(path.join(root, "log", "decisions", "2026", "09", "held3.json"),
+    JSON.stringify({ schema: "astra.registry.decision/1", decision_id: "held3", state: "held", fingerprint: fp }));
+  assertEqual((await onThread(line, "the-maintainer", { root })).mode, "approve",
+    "and with the record there it goes through, so the assertion above is not passing for a rule that refuses everything");
 });
 
 

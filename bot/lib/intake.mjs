@@ -230,6 +230,75 @@ export function looksLikeListing({ title, form }) {
  */
 export const looksLikeReleasePing = (title) => /^\[release\]/i.test(String(title ?? "").trim());
 
+/**
+ * The account GitHub attributes an issue opened by a workflow to.
+ *
+ * `github.event.issue.user.login` in the payload, `user.login` over REST —
+ * checked against issue #74 on 2026-09-20, which reports
+ * `{"user":"github-actions[bot]","type":"Bot","labels":[]}`. Note that `gh
+ * issue list --json author` says `app/github-actions` for the same issue: that
+ * is the GraphQL actor spelling, and it is **not** what the workflow passes.
+ *
+ * It deliberately fails `safeLogin`: the brackets are outside GitHub's login
+ * charset, so no human can register this name, and no human-authored issue can
+ * carry it.
+ */
+export const BOT_AUTHOR = "github-actions[bot]";
+
+/**
+ * Not a listing request — but is it a thread a maintainer's command may decide
+ * something on? (registry plan B-T0.2)
+ *
+ * A hold is not always raised on a listing issue. A second release of a listed
+ * plugin arrives as a `/release` ping or off the backstop, and when it is held
+ * the bot opens a `[notice]` issue of its own and prints the exact `/approve`
+ * line on it. `looksLikeListing` refuses that shape by name — rightly, because
+ * it is the intake path's defence against answering itself — and
+ * `decideCommand` used to refuse the *command* on the same signal. So this
+ * registry was posting maintainers a line it would then decline to read:
+ * issue #74, `/approve dwertyfa288/dwertyfa-astra-tg@v0.1.15 be6bc6b4f4139c5d`,
+ * answered with "an issue that is not a listing request".
+ *
+ * Two thread shapes qualify, and neither of them is an authority:
+ *
+ *   * a `[notice]` **opened by the bot**. A human-authored `[notice]` is
+ *     somebody imitating the thread the bot prints copy-paste commands on, and
+ *     a maintainer who copies a line out of one should get a refusal. Anyone
+ *     can retitle an issue `[release]` and reach the other branch, so this is
+ *     not a wall; it is the difference between a mistake and a decision.
+ *   * a `[release]` issue, whoever opened it. The release-ping form is a
+ *     stranger's door by design, and what keeps it safe here is what keeps an
+ *     unauthenticated ping safe: the caller still needs `admin` or `maintain`
+ *     on this registry, the named repository must already be listed, and
+ *     `bot/decide.mjs` re-hashes the release before anything publishes.
+ *
+ * The rest of B-T0.2's rule is the caller's, because it is about the command
+ * rather than the thread: the line must carry `owner/repo@tag <fingerprint>`,
+ * and that `owner/repo` must already be listed.
+ *
+ * @param {{title?: string|null, issueAuthor?: string|null}} input
+ * @returns {{kind: "notice"|"release"|null, why: string}}
+ */
+export function decidableThread({ title, issueAuthor }) {
+  const t = String(title ?? "").trim();
+  if (looksLikeReleasePing(t)) {
+    return { kind: "release", why: "the title says `[release]`" };
+  }
+  if (!/^\[notice\]/i.test(t)) {
+    return {
+      kind: null,
+      why: "it is neither a listing request nor one of this registry's `[notice]` or `[release]` threads",
+    };
+  }
+  if (String(issueAuthor ?? "") !== BOT_AUTHOR) {
+    return {
+      kind: null,
+      why: `this \`[notice]\` was not opened by \`${BOT_AUTHOR}\`, and only the bot's own notices carry holds`,
+    };
+  }
+  return { kind: "notice", why: "a `[notice]` this registry's own bot opened" };
+}
+
 // ── what the author reads ───────────────────────────────────────────────────
 
 const FOOTER =
@@ -375,9 +444,10 @@ export function renderCommandRefused({ command, login, detail }) {
       "`GET /repos/{owner}/{repo}/collaborators/{login}/permission` on **this** repository and " +
       "require `admin` or `maintain` — the same bar `bot/lib/ownership.mjs` sets for a submitter, " +
       "asked about the registry instead of about the plugin. The comment's `author_association` " +
-      "is not a permission — `COLLABORATOR` covers `read` and `triage`, and `CONTRIBUTOR` never " +
-      "expires — so the only value of it that counts for anything here is `OWNER`, and only as a " +
-      "fallback for when GitHub declines to answer the API at all.",
+      "is not consulted at all, because it is not a permission — `COLLABORATOR` covers `read` and " +
+      "`triage`, and `CONTRIBUTOR` never expires. Its `OWNER` value was accepted until " +
+      "2026-09-20, but only when the API declined to answer; the API was then measured answering, " +
+      "and the fallback went with the silence it stood in for.",
     "",
     who ? `Nothing about the submission changed, and @${who} has not been blocked from anything ` +
       "else — a maintainer can still run the same command." : null,
@@ -396,6 +466,44 @@ export function renderNothingToDecide({ registry, command, reason }) {
     `A decision applies to a specific release, so it needs the two facts the listing form ` +
       `asks for — the source repository and the release tag. ${newIssueUrl(registry)} is the ` +
       "shape it reads.",
+    "",
+    FOOTER,
+  ]);
+}
+
+/**
+ * `/approve` on a `[notice]` or `[release]` thread, naming a repository this
+ * registry has never listed (registry plan B-T0.2, canary 2).
+ *
+ * The rule these threads are admitted under is the one an unauthenticated ping
+ * is admitted under, and for the same reason: off a listing issue there is no
+ * label, and therefore no person who decided this repository was worth
+ * downloading from. What is left is the pin — a repository identity already
+ * written into `plugins/<id>/plugin.json` — and a command may only decide about
+ * something that has one. A first listing is not reachable this way at all.
+ */
+export function renderApprovalUnlisted({ registry, command, repo, tag }) {
+  const r = safeRepo(repo);
+  const t = safeTag(tag);
+  return join([
+    `**\`/${command}\` is refused: ${r ? `\`${r}\`` : "that repository"} is not listed.**`,
+    "",
+    "Nothing was downloaded, nothing was verified and nothing was published.",
+    "",
+    `This thread is not a listing request, so the only submissions a command may decide here are ` +
+      "releases of a plugin this registry has **already** listed — the same rule that lets an " +
+      "unlabelled `/release` ping ask for a re-check and nothing more. The listing is what pins " +
+      "an id to a repository; without one there is no pin, and a command would be choosing which " +
+      "stranger's archive this registry fetches.",
+    "",
+    r && t
+      ? `If \`${r}@${t}\` should be listed for the first time, it goes through the form, which a ` +
+        `person reads once: ${newIssueUrl(registry)}.`
+      : `A first listing goes through the form, which a person reads once: ${newIssueUrl(registry)}.`,
+    "",
+    "If it **is** listed and this still says otherwise, check the repository in the command " +
+      "against `source.repo` in its `plugins/<id>/plugin.json` — a transferred or renamed " +
+      "repository is a listing that needs moving, not an approval that needs retyping.",
     "",
     FOOTER,
   ]);

@@ -66,11 +66,13 @@ import { markerOnMain, readDecisionRecords } from "./baseline.mjs";
 import { fetchRelease } from "./lib/github.mjs";
 import {
   LISTING_LABEL,
+  decidableThread,
   formProblem,
   looksLikeListing,
   looksLikeReleasePing,
   parseMaintainerCommand,
   renderApprovalMoved,
+  renderApprovalUnlisted,
   renderApproveNeedsBinding,
   renderCommandRefused,
   renderIncompleteForm,
@@ -125,7 +127,7 @@ import { readQueue } from "./lib/policy.mjs";
 function parseArgs(argv) {
   const opts = {
     event: null, action: null, labels: "", issueBody: null, commentBody: null,
-    issueTitle: null, issueAuthor: null, commenter: null, commenterAssociation: null,
+    issueTitle: null, issueAuthor: null, commenter: null,
     registry: null,
     root: REPO_ROOT, modeFile: null, targetsFile: null, replyFile: null, now: null,
   };
@@ -141,11 +143,14 @@ function parseArgs(argv) {
     else if (a === "--comment-body") opts.commentBody = argv[++i];
     else if (a === "--issue-author") opts.issueAuthor = String(argv[++i] ?? "").replace(/^@/, "");
     else if (a === "--commenter") opts.commenter = String(argv[++i] ?? "").replace(/^@/, "");
-    // `github.event.comment.author_association`, straight out of the payload.
-    // `bot/lib/maintainer.mjs` reads exactly one of its values, `OWNER`, and
-    // only when the permission API declined to answer — see the block at the
-    // top of that file for why the other values are not permissions.
-    else if (a === "--commenter-association") opts.commenterAssociation = argv[++i] ?? null;
+    // There is no `--commenter-association`, and its absence is load-bearing
+    // rather than an omission: no field of the event payload is a permission
+    // here. `author_association: OWNER` used to be read as one when the
+    // collaborator-permission endpoint declined to answer; run 35487527105
+    // showed that it answers, and B-T0.4b deleted the fallback and this
+    // argument with it. An `ingest.yml` that still passed the flag would now
+    // fail loudly on `unknown argument`, which is the right way for the two
+    // halves of this pair to be found disagreeing.
     // THIS registry, `owner/name`. The repository a maintainer's permission is
     // checked against, and the one whose issue template gets linked.
     else if (a === "--repository") opts.registry = argv[++i];
@@ -199,7 +204,11 @@ export async function triage(opts, release = fetchRelease, deps = {}) {
   //      can act on a command whose authority was never established.
   const command = opts.event === "issue_comment" ? parseMaintainerCommand(commentBody) : null;
   if (command) {
-    return decideCommand({ command, opts, registry, labelled, issueTitle, form, deps });
+    // `sources` and `release` travel with it for B-T0.2's two non-listing
+    // checks: is the named repository already listed, and who published the
+    // bytes. Both were already loaded for the ping path below; a command off a
+    // listing issue needs the same two answers for the same reasons.
+    return decideCommand({ command, opts, registry, labelled, issueTitle, form, sources, release, deps });
   }
 
   // A labelled listing issue, opened or edited, or `/recheck` on one: the
@@ -314,6 +323,54 @@ function nothingAsked({ opts, action, labelled, registry, issueTitle, form }) {
 }
 
 /**
+ * ── the target this registry is already holding ─────────────────────────────
+ *
+ * Does the maintainer's line name something this LISTING ISSUE no longer
+ * describes? The markdown to say so, or null when it does not.
+ *
+ * The comparison is against the ISSUE BODY, and that is right for the
+ * submission the body describes: the body belongs to its author, who can edit
+ * the two form fields between the hold and the answer, and an approval must not
+ * land on something nobody read.
+ *
+ * It is wrong for every release after the first, and it made `/publish`
+ * impossible for all of them. An update arrives as a release PING — a
+ * `/release v0.3.2` comment — which never touches the body. The ingest verifies
+ * it, the delay queues it, and the bot posts the line to publish it now.
+ * Meanwhile the body still says the tag the first listing named, for ever,
+ * because nothing ever rewrites it. So the bot printed
+ * `/publish owner/repo@v0.3.2 <fp>` and then refused that exact line for naming
+ * something "this issue no longer describes" — and the remedy the refusal
+ * offered, `/recheck`, re-reads the same body and returns the same stale tag.
+ * The first listing of a plugin could be published on command and no release
+ * after it ever could.
+ *
+ * The queue is what the maintainer is actually answering, and it is the safe
+ * thing to check against for the reason the body is not: it is a committed file
+ * in THIS repository, written by the bot from a run that downloaded and hashed
+ * the release. A stranger cannot edit it. Nothing else is relaxed — the
+ * fingerprint still names the bytes, and `bot/decide.mjs` still re-hashes the
+ * release and refuses an approval that names anything else.
+ *
+ * **It is a listing-issue check and it stays one.** A `[notice]` or `[release]`
+ * thread has no form, so there is no second description to disagree with, and
+ * running this there would compare the command against two nulls. What plays
+ * this rule's part on those threads is B-T0.2's own pair: the named repository
+ * must already be listed, and — once the marker is on main — the fingerprint
+ * must match a `held` record.
+ */
+function approvalMoved({ named, namedTag, repo, tag, opts, deps }) {
+  const queued = (deps.readQueue ?? readQueue)(opts.root)
+    .some((e) => safeRepo(e.repo) === named && safeTag(e.tag) === namedTag);
+  if (queued || (named === repo && namedTag === tag)) return null;
+  // The loud refusal. Cheap, too: this is the last point before the pipeline
+  // starts downloading a stranger's archive, and it is reached without one.
+  return renderApprovalMoved({
+    approvedRepo: named, approvedTag: namedTag, issueRepo: repo, issueTag: tag,
+  });
+}
+
+/**
  * `/approve` or `/reject <reason>`, once GitHub has said whether this account
  * may.
  *
@@ -322,7 +379,7 @@ function nothingAsked({ opts, action, labelled, registry, issueTitle, form }) {
  * mistypes their own login, or a stranger trying the command, both learn what
  * happened. Silence would teach exactly the wrong lesson to the second one.
  */
-async function decideCommand({ command, opts, registry, labelled, issueTitle, form, deps }) {
+async function decideCommand({ command, opts, registry, labelled, issueTitle, form, sources, release, deps }) {
   const commenter = safeLogin(opts.commenter);
   const at = iso(opts.now ?? new Date());
   if (!commenter) {
@@ -333,15 +390,14 @@ async function decideCommand({ command, opts, registry, labelled, issueTitle, fo
   const proof = await prove({
     repo: registry,
     login: commenter,
-    association: opts.commenterAssociation,
   });
-  // R0's measurement (registry plan B-T0.4a). The `OWNER` fallback in
-  // `maintainer.mjs` exists because nobody has ever seen whether this token can
-  // read the collaborator-permission endpoint in a real Actions run, and it
-  // cannot be removed on a guess: if the endpoint is silent for this token,
-  // removing it strands every held submission with no way to clear it. So every
-  // run records what the endpoint did — and **no login**, because the summary is
-  // public and the question is about the token, not about a person.
+  // R0's measurement (registry plan B-T0.4a), which has been taken: run
+  // 35487527105 printed `answered=true outcome=role is 'admin'`, so B-T0.4b
+  // deleted the `OWNER` fallback that stood in for a silence nobody had ever
+  // observed. The line keeps being written, because a measurement is a fact
+  // about one day and this is the only thing that would notice the endpoint
+  // going quiet again. **No login** on it: the summary and the log are public,
+  // and the question is about the token, not about a person.
   recordPermissionProbe(proof);
   if (!proof.ok) {
     return {
@@ -351,22 +407,77 @@ async function decideCommand({ command, opts, registry, labelled, issueTitle, fo
     };
   }
 
+  // ── which thread is this, and may a command decide anything on it? ───────
+  //
+  // **A hold is not always raised on a listing issue**, and this branch used to
+  // assume it was. A second release of a listed plugin arrives as a `/release`
+  // ping or off the backstop; when the policy holds it there is no submission
+  // issue to comment on, so the bot opens a `[notice]` issue of its own and
+  // prints the exact line to clear the hold. Those issues carry no labels (the
+  // script that opens them applies none), and `looksLikeListing` excludes their
+  // title prefix by name — rightly, because that exclusion is the intake path's
+  // only defence against the bot answering itself.
+  //
+  // So `!labelled && !shape.shaped` was true for every one of them, and this
+  // registry spent months printing maintainers a copy-paste `/approve` line and
+  // then answering it with "an issue that is not a listing request". Live:
+  // issue #74 prints `/approve dwertyfa288/dwertyfa-astra-tg@v0.1.15
+  // be6bc6b4f4139c5d` and nothing in this file would ever have read it. The
+  // remedy the refusal offered — `/recheck` — is honoured only on a labelled
+  // issue, so it did not work there either; every hold raised off a listing
+  // issue was unclearable through the documented path.
+  //
+  // `decidableThread` is the fix, and it is a *widening of the shape*, never of
+  // the authority: the collaborator-role question above is unchanged and is
+  // still asked first. What the thread buys is only the right to be read
+  // (registry plan B-T0.2).
   const shape = looksLikeListing({ title: issueTitle, form });
-  if (!labelled && !shape.shaped) {
+  const onListing = labelled || shape.shaped;
+  const thread = onListing
+    ? { kind: "listing", why: labelled ? `the \`${LISTING_LABEL}\` label` : shape.why }
+    : decidableThread({ title: issueTitle, issueAuthor: opts.issueAuthor });
+  if (!thread.kind) {
     return {
       mode: "reply",
-      why: `/${command.command} on an issue that is not a listing request`,
+      why: `/${command.command} on an issue that is not a listing request — ${thread.why}`,
       reply: renderNothingToDecide({
         registry,
         command: command.command,
         reason:
-          "This issue is neither labelled `listing` nor shaped like a listing request, so there " +
-          "is no submission for the command to decide about.",
+          "This issue is neither labelled `listing` nor shaped like a listing request, and it is " +
+          "not one of the `[notice]` or `[release]` threads a hold can be raised on either " +
+          `(${thread.why}), so there is no submission for the command to decide about.`,
       }),
     };
   }
 
   if (command.command === "reject") {
+    // **`/reject` is a listing-issue command and stays one.** B-T0.2 admits a
+    // command to a `[notice]` or `[release]` thread only when it names
+    // `owner/repo@tag <fingerprint>`, and `/reject` carries a sentence instead
+    // — `parseMaintainerCommand` gives it no binding at all, by construction,
+    // because a rejection is a thing said to a submitter about a submission
+    // under review. Off a listing issue there is no submission to close and no
+    // author to close it for: a `[notice]` belongs to the bot and a `[release]`
+    // ping belongs to whoever asked for a re-check. Refusing rather than
+    // quietly widening is the whole of it — an unbindable command on an
+    // unlabelled thread is exactly the shape this task exists to stop.
+    if (!onListing) {
+      return {
+        mode: "reply",
+        why: `/reject on a ${thread.kind} thread, which carries no submission to reject`,
+        reply: renderNothingToDecide({
+          registry,
+          command: "reject",
+          reason:
+            `This is a \`[${thread.kind}]\` thread rather than a listing request. \`/approve\` and ` +
+            "`/publish` are honoured here because they name the release they decide — " +
+            "`owner/repo@tag <fingerprint>` — and `/reject` names a reason instead, so there is " +
+            "nothing on this thread for it to close. Reject the listing request the submission " +
+            "was opened with, or leave the hold to expire.",
+        }),
+      };
+    }
     if (!command.reason) {
       return {
         mode: "reply",
@@ -399,79 +510,121 @@ async function decideCommand({ command, opts, registry, labelled, issueTitle, fo
   // changed and the approval landed on a submission the maintainer had never
   // seen. So the command names its target, and the form is now what that name is
   // CHECKED AGAINST rather than where it comes from.
-  const problem = formProblem(form);
-  const repo = safeRepo(form.repo);
-  const tag = safeTag(form.tag);
-  const submitter = safeLogin(opts.issueAuthor);
-  if (problem || !repo || !tag || !submitter) {
-    return {
-      mode: "reply",
-      why: `/approve on an issue the bot cannot read a submission out of`,
-      reply: renderNothingToDecide({
-        registry,
-        command: "approve",
-        reason: problem
-          ? `The form is missing ${[...problem.missing, ...problem.unticked].join("; ")}.`
-          : submitter
-            ? "The repository and tag in this issue are not in a shape the bot will put in a URL."
-            : "This issue has no author the ownership check could be run against.",
-      }),
-    };
-  }
-
-  // What the maintainer's own line said. Re-validated here rather than trusted
-  // from the parser, because it is about to become a matrix entry and then a URL.
+  //
+  // Two threads reach this point and they disagree about only one thing: where
+  // the SUBMITTER comes from.
+  //
+  //   * On a listing issue it is the issue's author, whose ownership of the
+  //     repository the pipeline proves again downstream, and the form is the
+  //     second copy the command is checked against.
+  //   * On a `[notice]` or `[release]` thread there is no form and the author
+  //     is `github-actions[bot]` or a stranger who asked for a re-check, so
+  //     neither is a submitter. It comes from the release itself, exactly as a
+  //     ping's does — the account that published these bytes, which required
+  //     push access at that moment (B-T0.2; AV-5; INV-6).
+  //
+  // Everything else is shared, and deliberately: the same binding, the same
+  // `held`-record check, the same target shape, so that a second path into
+  // `mode: approve` cannot become a second, shorter set of rules.
   const named = safeRepo(command.repo);
   const namedTag = safeTag(command.tag);
-  if (!named || !namedTag || !command.fingerprint) {
-    return {
-      mode: "reply",
-      why: `/approve from @${commenter} named no submission, so there is nothing to bind it to`,
-      reply: renderApproveNeedsBinding({ repo, tag }),
-    };
-  }
-  // ── the target this registry is already holding ─────────────────────────
-  //
-  // The refusal below compares the maintainer's line against the ISSUE BODY,
-  // and that is right for the submission the body describes: the body belongs
-  // to its author, who can edit the two form fields between the hold and the
-  // answer, and an approval must not land on something nobody read.
-  //
-  // It is wrong for every release after the first, and it made `/publish`
-  // impossible for all of them. An update arrives as a release PING — a
-  // `/release v0.3.2` comment — which never touches the body. The ingest
-  // verifies it, the delay queues it, and the bot posts the line to publish it
-  // now. Meanwhile the body still says the tag the first listing named, for
-  // ever, because nothing ever rewrites it. So the bot printed
-  // `/publish owner/repo@v0.3.2 <fp>` and then refused that exact line for
-  // naming something "this issue no longer describes" — and the remedy the
-  // refusal offered, `/recheck`, re-reads the same body and returns the same
-  // stale tag. The first listing of a plugin could be published on command and
-  // no release after it ever could.
-  //
-  // The queue is what the maintainer is actually answering, and it is the safe
-  // thing to check against for the reason the body is not: it is a committed
-  // file in THIS repository, written by the bot from a run that downloaded and
-  // hashed the release. A stranger cannot edit it. Nothing else is relaxed —
-  // the fingerprint still names the bytes, and `bot/decide.mjs` still re-hashes
-  // the release and refuses an approval that names anything else.
-  const queued = (deps.readQueue ?? readQueue)(opts.root)
-    .some((e) => safeRepo(e.repo) === named && safeTag(e.tag) === namedTag);
+  let submitter;
+  if (onListing) {
+    const problem = formProblem(form);
+    const repo = safeRepo(form.repo);
+    const tag = safeTag(form.tag);
+    submitter = safeLogin(opts.issueAuthor);
+    if (problem || !repo || !tag || !submitter) {
+      return {
+        mode: "reply",
+        why: `/approve on an issue the bot cannot read a submission out of`,
+        reply: renderNothingToDecide({
+          registry,
+          command: "approve",
+          reason: problem
+            ? `The form is missing ${[...problem.missing, ...problem.unticked].join("; ")}.`
+            : submitter
+              ? "The repository and tag in this issue are not in a shape the bot will put in a URL."
+              : "This issue has no author the ownership check could be run against.",
+        }),
+      };
+    }
 
-  if (!queued && (named !== repo || namedTag !== tag)) {
-    // The loud refusal. Cheap, too: this is the last point before the pipeline
-    // starts downloading a stranger's archive, and it is reached without one.
-    return {
-      mode: "reply",
-      why:
-        `/approve from @${commenter} named ${named}@${namedTag} and this issue now says ` +
-        `${repo}@${tag}; the submission changed after the hold and nothing is being published`,
-      reply: renderApprovalMoved({
-        approvedRepo: named, approvedTag: namedTag, issueRepo: repo, issueTag: tag,
-      }),
-    };
-  }
+    // What the maintainer's own line said. Re-validated here rather than trusted
+    // from the parser, because it is about to become a matrix entry and then a URL.
+    if (!named || !namedTag || !command.fingerprint) {
+      return {
+        mode: "reply",
+        why: `/approve from @${commenter} named no submission, so there is nothing to bind it to`,
+        reply: renderApproveNeedsBinding({ repo, tag }),
+      };
+    }
 
+    const moved = approvalMoved({ named, namedTag, repo, tag, opts, deps });
+    if (moved) {
+      return {
+        mode: "reply",
+        why:
+          `/approve from @${commenter} named ${named}@${namedTag} and this issue now says ` +
+          `${repo}@${tag}; the submission changed after the hold and nothing is being published`,
+        reply: moved,
+      };
+    }
+  } else {
+    // ── B-T0.2: a hold raised off the listing issue ───────────────────────
+    //
+    // The binding is not a nicety here, it is the entire target: there is no
+    // form to fall back to and nothing else on the thread names a release. So
+    // it is checked first, and a bare `/approve` on a `[notice]` gets the same
+    // "name what you are approving" reply it gets anywhere else.
+    if (!named || !namedTag || !command.fingerprint) {
+      return {
+        mode: "reply",
+        why:
+          `/${command.command} on a ${thread.kind} thread named no submission, and there is no ` +
+          "form here to read one out of",
+        reply: renderApproveNeedsBinding({ repo: null, tag: null }),
+      };
+    }
+
+    // Already listed, or nothing. This is the same rule that makes an
+    // unauthenticated `/release` ping safe, applied to the same gap in the same
+    // way: off a listing issue there is no `listing` label, so nobody decided
+    // this repository was worth fetching from, and what stands in for that
+    // decision is a pin that already exists. A first listing is not reachable
+    // through a command at all.
+    if (!findListingByRepo(sources, named)) {
+      return {
+        mode: "reply",
+        why:
+          `/${command.command} from @${commenter} named ${named}@${namedTag} on a ${thread.kind} ` +
+          "thread, and that repository is not listed — off a listing issue a command may only " +
+          "decide releases of a plugin this registry already carries",
+        reply: renderApprovalUnlisted({ registry, command: command.command, repo: named, tag: namedTag }),
+      };
+    }
+
+    // The account that published these bytes. Never the commenter, and never
+    // the thread's author: on a `[notice]` that is this bot, and on a
+    // `[release]` ping it is whoever asked for the re-check.
+    try {
+      submitter = await resolveSubmitter(named, namedTag, release);
+    } catch (e) {
+      return {
+        mode: "reply",
+        why: `/${command.command} on ${named}@${namedTag}: ${e.message}`,
+        reply: renderNothingToDecide({
+          registry,
+          command: command.command,
+          reason:
+            `\`${named}@${namedTag}\` could not be resolved to a release author, so there is ` +
+            `nobody for the ownership check to be run against: ${e.message}. Nothing was ` +
+            "published. If the tag has moved or the release was deleted, that is the thing to " +
+            "look at before the command is retyped.",
+        }),
+      };
+    }
+  }
   // ── stage 2 of B-T0.2: the approval binds to a `held` RECORD on main ─────
   //
   // Everything above binds the approval to what the maintainer was looking at.
@@ -516,9 +669,11 @@ async function decideCommand({ command, opts, registry, labelled, issueTitle, fo
     // that skipped any of them would be a different command wearing this one's
     // checks.
     publishNow: command.command === "publish",
-    // The maintainer's values, not the form's. They are equal — the branch above
-    // is what makes them equal — and taking them from the command is what keeps
-    // that true if this file is ever edited again.
+    // The maintainer's values, always — never the form's. On a listing issue
+    // the two are equal and the branch above is what makes them equal; on a
+    // `[notice]` or `[release]` thread there is no form at all, and the command
+    // line is the only thing that names a release. Taking them from the command
+    // is what keeps both true if this file is ever edited again.
     repo: named,
     tag: namedTag,
     submitter,
@@ -531,7 +686,7 @@ async function decideCommand({ command, opts, registry, labelled, issueTitle, fo
     approvedFor: command.fingerprint,
     why:
       `@${commenter} (\`${proof.role}\`) approved ${named}@${namedTag} (\`${command.fingerprint}\`)` +
-      `${queued && namedTag !== tag ? ", a release this registry is holding in its queue" : ""}. ` +
+      `${onListing ? "" : ` on a \`[${thread.kind}]\` thread, a hold raised off the listing issue`}. ` +
       "The hold is cleared only if this run hashes the same submission; every check runs again " +
       "from scratch against the release as it is now",
   };
