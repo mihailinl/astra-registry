@@ -405,6 +405,19 @@ jobs:
         if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/decisions.test.mjs
 
+      # M-T3.1. The decision compiler, against trees it has to judge. Real git
+      # repositories again: MOD-13's next advisory id is "one more than the
+      # highest ever ADDED", and the add-then-delete case exists precisely
+      # because a tree reading hands the next advisory the id the deleted one
+      # had. It also holds the one clause of M-T3.1's canary that is NOT about
+      # the compiler's return value — BOT-34's count of author-action records
+      # against the versions a commit yanks, which lives in `tools/validate.mjs`
+      # and which the plan says a short-counted yank is otherwise caught by
+      # nothing. ~0.3 s, no probe, no network.
+      - name: The decision compiler, and the yank nothing else counts
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
+        run: node --test bot/tests/compile-decision.test.mjs
+
       # B-T2.4. The binding line, against thirty-one files a stranger could
       # commit. `tests/binding-line/vectors.json` is registry-CANONICAL:
       # AstraPlugins mirrors it byte for byte (AP-6, rule C31) and the plugins
