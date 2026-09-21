@@ -466,3 +466,18 @@ jobs:
       - name: TRUST-31's hashed set, and everything a bot run can reach
         if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/code-paths.test.mjs
+
+      # M-T3.4. The moderation run, against the answers it has to judge. The
+      # two clauses that matter most are not about its return values: an entry
+      # carrying a member BOT-80 does not name is ACCEPTED, compiles normally
+      # and reaches no committed file — watched failing both ways, by making
+      # the schema reject it and by bypassing the write-side allowlist — and
+      # the comparison with the token file's members is TWO-WAY, so a member
+      # the contract adds at a token-moving version turns this red at the
+      # moment it is added rather than turning every takedown into a silent
+      # `kind_refused` in production. Real git repositories, because MOD-13's
+      # next advisory id is a statement about history. ~0.3 s, no probe, no
+      # network.
+      - name: The moderation run, and the member that must reach no file
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
+        run: node --test bot/tests/moderation-run.test.mjs
