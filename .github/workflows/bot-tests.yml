@@ -294,6 +294,32 @@ jobs:
         if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/poll.test.mjs
 
+      # B-T2.5. The service client and the bot OIDC token, against a server on
+      # 127.0.0.1. A socket and not a recording `fetch`, because three of the
+      # rules are properties of HTTP and no stub holds any of them:
+      # `redirect: "manual"` is honoured by the runtime, `Retry-After` is a
+      # header, and "the mask precedes first use" is an ORDER between a log
+      # line and bytes leaving the process, which only a journal both ends
+      # append to can compare.
+      #
+      # The two distinctions it holds that a reading of §4.2 alone would lose.
+      # An item-level `stop_status` `unavailable` is contract DEC-11's wait for
+      # ONE submission (0.13.0, n13); treated as the call-level one, a single
+      # unresolved row costs the whole batched call, and silently, because the
+      # call is green either way and the batch merely gets smaller. And an
+      # `unavailable` carrying `Retry-After` is a stated wait, so the first in
+      # a run is silent and the second is not (attack m-1) — which is what
+      # stops B-T3.6's W0 drill producing a bot-side alert and no shadow page
+      # on its first run after reg.80a, and a walk then recording a failure of
+      # something it is not testing.
+      #
+      # It also compares the compiled operations, audience and every body's
+      # members against `schema/contract-tokens-v1.json`, each with a floor
+      # asserted first. Pure, no probe, no network beyond loopback, ~135 ms.
+      - name: The service client, the bot token, and the mask that precedes it
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
+        run: node --test bot/tests/service.test.mjs
+
       - name: The moderation records, against their own schema
         if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node bot/moderation.mjs --check
