@@ -84,10 +84,13 @@ const WORKFLOWS = [
 // Two groups are enumerated file by file, because no directory spells them:
 // `bot/` also holds records, fixtures and tests that must stay OUTSIDE, and
 // `schema/` holds `contract-tokens-v1.json`, which is generated from the
-// contract and would make every contract version a shadow transition. A
-// nineteenth bot entry point or a twelfth schema is a contract MINOR before the
-// file lands — which is the right cost, and which the two tests below make
-// loud rather than leaving to a reader.
+// contract and would make every contract version a shadow transition. Adding a
+// top-level bot entry point, or a schema to that group, is a contract MINOR
+// published BEFORE the file lands — which is the right cost, and which the two
+// tests below make loud rather than leaving to a reader. **The cost is stated
+// without an ordinal on purpose**: this comment used to say "a nineteenth … or a
+// twelfth", 0.23.0 published both, and the sentence went on naming the release
+// before last as the next one.
 export const ENTRIES = [
   ...WORKFLOWS,
   ".github/actions/",
@@ -440,17 +443,30 @@ test("the two enumerated groups are exactly what is on the tree", () => {
   // the contract states rather than a surprise at a pin move.
   const files = tracked();
   const onTree = (re) => files.filter((f) => re.test(f)).sort();
+  // THE COUNTS ARE COMPUTED, NOT SPELLED. Until 2026-09-21 these two messages
+  // said "a nineteenth entry point" and "a twelfth schema" — the ordinals that
+  // were next when 0.20.0 wrote them. 0.23.0 then published exactly those two,
+  // so by the time anybody could trip these assertions the ordinals had been
+  // wrong for a release, and the comment at the top of this file said one thing
+  // while the comment beside `bot/moderation-run.mjs` said it WAS the
+  // nineteenth. A canary that states the cost it enforces must not carry that
+  // cost as a literal: the numbers below come off the tree and off the set, so
+  // the failure text is right in every release without anyone maintaining it.
+  const setBots = ENTRIES.filter((e) => /^bot\/[^/]+\.mjs$/.test(e)).sort();
+  const treeBots = onTree(/^bot\/[^/]+\.mjs$/);
   assert.deepEqual(
-    ENTRIES.filter((e) => /^bot\/[^/]+\.mjs$/.test(e)).sort(),
-    onTree(/^bot\/[^/]+\.mjs$/),
-    "the bot's top-level entry points and TRUST-31's enumeration of them differ; a nineteenth entry " +
-      "point is a contract MINOR before the file lands (contract 0.20.0's TRUST-31)",
+    setBots, treeBots,
+    `the bot's top-level entry points and TRUST-31's enumeration of them differ: the set enumerates ` +
+      `${setBots.length}, the tree holds ${treeBots.length}. Every entry point beyond the published set is a ` +
+      `contract MINOR published BEFORE the file lands (contract 0.20.0's TRUST-31)`,
   );
+  const setSchemas = ENTRIES.filter((e) => /^schema\/[^/]+\.json$/.test(e)).sort();
+  const treeSchemas = onTree(/^schema\/[^/]+\.json$/).filter((f) => f !== "schema/contract-tokens-v1.json");
   assert.deepEqual(
-    ENTRIES.filter((e) => /^schema\/[^/]+\.json$/.test(e)).sort(),
-    onTree(/^schema\/[^/]+\.json$/).filter((f) => f !== "schema/contract-tokens-v1.json"),
-    "the record schemas and TRUST-31's enumeration of them differ; `schema/contract-tokens-v1.json` is " +
-      "the one deliberate omission, and a twelfth schema is a contract MINOR before the file lands",
+    setSchemas, treeSchemas,
+    `the record schemas and TRUST-31's enumeration of them differ: the set enumerates ${setSchemas.length}, the ` +
+      `tree holds ${treeSchemas.length} once \`schema/contract-tokens-v1.json\` — the one deliberate omission — is ` +
+      `set aside. Every schema beyond the published set is a contract MINOR published BEFORE the file lands`,
   );
 });
 
