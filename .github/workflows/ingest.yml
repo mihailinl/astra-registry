@@ -676,15 +676,19 @@ jobs:
           bot/manifest-probe/link-deps.sh --clone
 
       - name: Build the manifest probe
+        id: probe
         run: cargo build --release --manifest-path bot/manifest-probe/Cargo.toml
 
       - name: The probe's own tests — the daemon's manifest rules, asserted
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: cargo test --manifest-path bot/manifest-probe/Cargo.toml
 
       - name: The bot's tests, including every shared bundle vector
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node bot/tests/ingest.test.mjs
 
       - name: The publication policy's tests, including its published numbers
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node bot/tests/policy.test.mjs
 
       # The icon and the README are the only bytes in a listing that Astra
@@ -693,6 +697,7 @@ jobs:
       # asserts is not that a picture survives the trip, but what a hostile
       # picture and a hostile README are turned into on the way.
       - name: The icon and README derivation, including the hostile cases
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node bot/tests/presentation.test.mjs
 
       # The nightly asset check runs against a stranger's release assets and
@@ -701,15 +706,19 @@ jobs:
       # a suite that only runs on pull requests is a suite that is green on the
       # day it matters and unverified on every other one.
       - name: The asset check, measured against a real HTTP server
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node bot/tests/asset-check.test.mjs
 
       - name: The moderation sources, and the log built from them
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node bot/moderation.mjs --check
 
       - name: The listing rules, unchanged
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node tools/selftest.mjs
 
       - name: The error-code documentation is not stale
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node bot/gen-checks-doc.mjs --check
 
       # The two suites that are about the job with write access, running on the
@@ -719,9 +728,11 @@ jobs:
       # the run that commits. This job's own header states that rule; it did not
       # follow it.
       - name: The publish path, under contention
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/publish-apply.test.mjs
 
       - name: What the workflow files may and may not say
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/workflows.test.mjs
 
       # The anchor, from the other side. The `roots` job above asks whether
@@ -730,6 +741,7 @@ jobs:
       # that no argument, flag or tree reaches past it, and that a trust.json
       # signed by any other key is refused (registry plan B-T1.5).
       - name: The compiled root keys, and the only set they can be
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/roots.test.mjs
 
       - uses: actions/upload-artifact@v4
