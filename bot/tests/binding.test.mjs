@@ -193,7 +193,7 @@ test("a refusal never quotes the line a stranger wrote", () => {
   // The token is public (DEC-2) and is quoted only after it matched
   // [A-Za-z0-9_-]{16,128}. Nothing else from the file may reach a reason,
   // because a reason ends up in a public comment.
-  const hostile = Buffer.from("astra-binding: <img src=x onerror=alert(1)> \n", "utf8");
+  const hostile = Buffer.from("astra-binding: <img src=x onerror=alert(1)> \u0007\n", "utf8");
   const got = parseBindingFile(hostile);
   assert.equal(got.outcome, "malformed");
   assert.ok(!got.reason.includes("onerror"), got.reason);
