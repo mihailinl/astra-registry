@@ -2817,7 +2817,30 @@ await test("M-T3.2 — the takedown bound the code enforces is the one a documen
   // ── the published policy, which does not carry it yet ─────────────────────
   const published = tracked.flatMap(claimsIn);
   const mentions = tracked.filter((rel) => /takedown/i.test(read(rel)));
+  const refers = mentions.filter((rel) => /takedown bound|bound[^.\n]{0,40}takedown/i.test(read(rel)));
 
+  // THREE STATES, NOT TWO — and the two it shipped with were not the wrong two,
+  // they were a conjunction standing in for one of them. The silent branch
+  // asserts `no bound is published` AND `the constant is 1`: two claims about
+  // two different subjects, the document and the value. While both held, one
+  // branch covered both. On 2026-09-20 M-T1.6 wrote one true sentence into
+  // docs/POLICY.md — a reverted delist applies at once, "outside the takedown
+  // bound" — and the conjunction broke. This check reported it in the only
+  // vocabulary it had: THE NUMBER IS MISSING. Right that something changed,
+  // wrong about what.
+  //
+  // That mattered because the remedy a failure names decides what gets done.
+  // "Write the number" makes the cheapest green a reword of the sentence until
+  // the regex stops matching — which would have deleted the only thing pointing
+  // at the gap while leaving the gap. The gap is OLDER than the sentence: this
+  // document promised nothing and defined nothing, and that was safe only while
+  // it also said nothing. A reader who is told a bound exists and cannot look
+  // it up is worse off than one who was never told, and reverting the sentence
+  // restores invisibility rather than correctness.
+  //
+  // So the third state gets its own branch and its message names the DOCUMENT
+  // rather than the constant. Same verdict either way; opposite cheapest
+  // repair, and that is the entire difference.
   if (mentions.length === 0) {
     assertEqual(published.length, 0,
       `no published policy document mentions a takedown and yet ${published.map((c) => c.where).join(", ")} ` +
@@ -2829,10 +2852,22 @@ await test("M-T3.2 — the takedown bound the code enforces is the one a documen
     return;
   }
 
-  assert(published.length >= 1,
-    `${mentions.join(" and ")} mention${mentions.length === 1 ? "s" : ""} a takedown and state no bound this ` +
-    "check can read. Write it as `<n> in any trailing 24 hours` — a digit or the word — and this check will " +
-    "compare it with bot/lib/moderation.mjs");
+  if (published.length === 0) {
+    assert(refers.length === 0,
+      `${refers.join(" and ")} refer${refers.length === 1 ? "s" : ""} to THE TAKEDOWN BOUND and never states ` +
+      "it. This is a defect in the document, not in the constant: a reader is told a bound exists and is given " +
+      "no way to learn it, and the only place the number is written down is docs/RUNBOOK.md, which is the " +
+      "operator's document and not the published policy. TWO REPAIRS, AND THEY ARE NOT EQUAL. Land reg.61a — " +
+      "the owner's 3 (OPEN-OWNER-3) and the §7 sentence in ONE commit (M-T3.2 with B-T3.3b), gated at rollout " +
+      "step R3 — or delete the reference. Deleting it restores INVISIBILITY, not correctness: this document " +
+      "was incomplete before the sentence was written, and the sentence is the only thing pointing at it. " +
+      "Prefer the first, and while R3 is unreached prefer a red main with this message to a green one without");
+    assert(false,
+      `${mentions.join(" and ")} discuss${mentions.length === 1 ? "es" : ""} takedowns and publish` +
+      `${mentions.length === 1 ? "es" : ""} no bound this check can read. Write it as ` +
+      "`<n> in any trailing 24 hours` — a digit or the word — and this check " +
+      "will compare it with bot/lib/moderation.mjs");
+  }
   for (const c of published) {
     assertEqual(c.value, TAKEDOWN_BOUND,
       `${c.where} publishes a takedown bound of ${c.value} and bot/lib/moderation.mjs enforces ${TAKEDOWN_BOUND}. ` +
