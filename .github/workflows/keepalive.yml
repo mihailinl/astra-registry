@@ -1,0 +1,364 @@
+# ROLL-62's keepalive (RC-R1-9(b)): the one commit a month whose only job is to
+# be a commit.
+#
+# GitHub disables a repository's `schedule:` triggers after 60 days with no
+# repository activity. Counted on 2026-09-20, ten other workflows here hold a
+# live cron — the signer, the served-set comparisons, the detectors, the
+# coverage canary, the weekly alarm drill, the index build, the daily asset and
+# publisher re-checks, the baseline names job, and the ingest drain with its
+# backstop — eleven cron lines between them, with BOT-51's ingest schedule in
+# `plugins-ingest.yml` commented out until R3 and landing on top. Every alarm
+# this estate has is built on those, and nothing in the Actions tab goes red
+# when they are switched off: they simply stop, and an estate whose alarms have
+# all been disabled by the forge looks exactly like an estate with nothing to
+# report.
+#
+# So this workflow rewrites `state/keepalive.json` with the current month and
+# commits it, once a month, and the coverage canary's `keepalive-age` rule is
+# red when that file is more than 35 days old.
+#
+# ── WHAT THIS PROVES, AND WHAT IT DOES NOT ─────────────────────────────────
+#
+# It proves: a commit was made to this repository this month, and — because the
+# job compares what it wrote against the date git stamped, before pushing — that
+# the file says the month the commit was made in.
+#
+# It does NOT prove that any other schedule in this repository fired. A
+# keepalive is a PREVENTION, not a detection: it removes the condition GitHub
+# disables schedules for. What notices a schedule that has stopped for some
+# other reason is BOT-85's dead-man receiver, which pages on silence per check,
+# and the one that notices THIS workflow stopping is `keepalive-age` itself,
+# 35 days later — which is inside the 60-day window and is why the bound is 35
+# rather than 30 (a month is 31 days and a commit on the 1st followed by one on
+# the 31st of the next month is 61 days apart at worst).
+#
+# It also cannot prove itself: a keepalive commit made by a workflow that
+# GitHub has disabled is a commit that does not happen, and the file then goes
+# stale, which is exactly the signal `keepalive-age` reads. The two guards are
+# therefore independent of this file in the only way that matters — the rule
+# reads git, not this workflow's runs, and the receiver reads silence, not this
+# workflow's log.
+#
+# ── THREE THINGS A KEEPALIVE GETS WRONG, AND WHAT IS DONE ABOUT EACH ───────
+#
+# 1. **It must not look like a publication.** `plugins/**`, `registry/v1/**`
+#    and `log/**` are watched by other checks, by `sign.yml`'s `workflow_run`
+#    and by the served-set comparisons; a monthly commit that touched any of
+#    them would start a signing run and a served-set comparison over nothing.
+#    The commit step stages one path and then asserts that the staged set IS
+#    that one path — an assertion rather than a convention, because the way
+#    this goes wrong is a `git add -A` somebody writes later in a hurry.
+#
+# 2. **It must not be indistinguishable from the thing it proves.** A commit
+#    that only moves a timestamp proves a workflow ran. That is why the file
+#    carries `by` and `run`: a reader can tell a commit this workflow made with
+#    `GITHUB_TOKEN` from one an operator or an agent pushed from an account,
+#    which is the difference the open measurement is about (below).
+#
+# 3. **A `GITHUB_TOKEN` push starts no workflow run.** That is stated in
+#    `sign.yml`, in `build-index.yml` and in `ingest.yml`, and it is load-bearing
+#    in both directions here. It is why this commit cannot start the signer —
+#    which is the property (1) wants — and it is NOT a reason the keepalive
+#    fails at its own job, because GitHub's 60-day rule counts repository
+#    ACTIVITY and not workflow runs.
+#
+#    **Whether a `GITHUB_TOKEN` commit is activity for that rule is unmeasured**
+#    (RC-R1-9(b), OPEN-OPS-18). Nobody in this estate has watched the 60-day
+#    mark pass, and the measurement takes 60 quiet days this repository will not
+#    have. Until it is answered the honest position is the one the file records:
+#    each month says whether its keepalive was a token push or an account push,
+#    so that if the answer turns out to be "a bot commit is not activity", the
+#    months that were covered by an account push and the months that were not
+#    can be read off the file's own history instead of guessed at. An operator
+#    or an agent may make the monthly commit by hand at any time — `state/README.md`
+#    gives the shape — and this workflow then finds the month already recorded
+#    and does nothing.
+#
+# ── WHY THE SIGNER DOES NOT HEAR THIS WORKFLOW ─────────────────────────────
+#
+# `bot/tests/workflows.test.mjs` asks that every workflow holding a
+# `contents: write` job is either named in `sign.yml`'s `workflow_run` list or
+# excused in `NOT_HEARD` with the paths it writes. This one is excused: it
+# writes `state/keepalive.json` and nothing else, which is outside every path
+# D3 counts a serial over, so there is no document for the signer to refresh.
+#
+# ── THE SCHEDULE ───────────────────────────────────────────────────────────
+#
+# Daily for the first seven days of each month, and the job commits only when
+# the month in the file is not the current one — so it is one commit a month
+# with six retries behind it. A single monthly cron would have none, and
+# GitHub delays and occasionally drops scheduled runs; one dropped run on a
+# once-a-month trigger is a 59-day gap against a 35-day alarm and a 60-day
+# guillotine. 06:19 UTC: off the hour, and not a minute any other cron here
+# takes (:07, :15, :17, :22, :23, :30, :37, :41, :45, :52).
+
+name: Keepalive
+
+on:
+  schedule:
+    - cron: '19 6 1-7 * *'
+  # No inputs. There is nothing to aim a keepalive at: it reads the month out
+  # of the file and the clock. A dispatch is the hand path for a month whose
+  # scheduled runs were all dropped, and ROLL-62 counts a dispatch as activity
+  # in its own right.
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: keepalive
+  cancel-in-progress: false
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write   # one commit: state/keepalive.json, and the assertion below holds it to that
+    timeout-minutes: 10
+    outputs:
+      committed: ${{ steps.record.outputs.committed }}
+      month: ${{ steps.record.outputs.month }}
+    steps:
+      # Full history, for the rebase below and for whoever opens this checkout
+      # to find out why a month is missing. `keepalive-age` dates the file with
+      # `git log -1 -- state/keepalive.json`, and in a `fetch-depth: 1` checkout
+      # HEAD has no parent — so git reports HEAD as the commit that ADDED every
+      # file in the tree, this one included. Measured in a depth-1 clone: the
+      # rule answered "last changed <HEAD's date> (0.0 day(s) ago)" about a
+      # keepalive committed seven weeks earlier. Its 35-day bound cannot fire
+      # at all through a shallow checkout. The job that exists to keep this
+      # file fresh is the last one that should be looking at it through a
+      # checkout that cannot tell.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: The month this repository has already recorded
+        id: month
+        run: |
+          set -euo pipefail
+          file=state/keepalive.json
+          if [ ! -f "$file" ]; then
+            echo "::error::$file is not in the tree, and this workflow does not re-create it. The file carries the prose that says what it is for and what its fields mean; a deletion is a person's decision and re-writing it here would erase one silently. The coverage canary's keepalive-age rule is RED with ROLL_62_KEEPALIVE_DELETED from the moment it goes missing. Restore it from git, in a commit that says why it was gone."
+            exit 1
+          fi
+          # One clock, read once. `date -Iseconds` is local time with its
+          # offset, and the runner is UTC — but the reason it is not `date -u`
+          # is that the same two lines are what an operator runs by hand on a
+          # machine that is not. `keepalive-age` compares the file's month with
+          # `git log --format=%aI`, which git renders in the COMMITTER's offset,
+          # so a hand commit at 17:10 on the last day of a month in UTC-7 is in
+          # the next month by `date -u` and in this one by git. Taking both the
+          # month and `at` from the clock git will stamp the commit with is the
+          # whole of the fix.
+          at=$(date -Iseconds)
+          month=${at:0:7}
+          recorded=$(node -e 'const fs=require("node:fs");const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(String(d.month == null ? "" : d.month))' "$file")
+          echo "at=$at" >> "$GITHUB_OUTPUT"
+          echo "month=$month" >> "$GITHUB_OUTPUT"
+          echo "recorded=$recorded" >> "$GITHUB_OUTPUT"
+          if [ "$recorded" = "$month" ]; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "ok    $month is already recorded in $file; nothing to commit"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "ok    $file says '$recorded' and this run is in $month; the keepalive is owed"
+          fi
+
+      - name: The month, committed, and nothing else with it
+        id: record
+        env:
+          NEEDED: ${{ steps.month.outputs.needed }}
+          AT: ${{ steps.month.outputs.at }}
+          MONTH: ${{ steps.month.outputs.month }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          file=state/keepalive.json
+          echo "month=$MONTH" >> "$GITHUB_OUTPUT"
+          if [ "$NEEDED" != "true" ]; then
+            echo "committed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Read, change four members, write. The file is not composed from a
+          # template here on purpose: its `$comment` is the only place that says
+          # what the file is for, and a workflow that rewrote the whole document
+          # every month would be the thing that quietly deleted it.
+          node -e 'const fs=require("node:fs");const [file,at,month,run]=process.argv.slice(1);const d=JSON.parse(fs.readFileSync(file,"utf8"));d.month=month;d.at=at;d.by="workflow";d.run=run;fs.writeFileSync(file,JSON.stringify(d,null,2)+"\n")' "$file" "$AT" "$MONTH" "$RUN_URL"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "$file"
+
+          # The assertion that keeps a keepalive from becoming a publication.
+          # `plugins/**`, `registry/v1/**`, `log/**` and `tools/revocations/**`
+          # are watched by the signer, by the served-set comparisons and by the
+          # detectors; a monthly commit that carried one of them would start a
+          # signing run and a served-set comparison over a file nobody changed.
+          # Stated as an exact set rather than as a deny list, because the way
+          # this breaks is somebody writing `git add -A` here and a deny list
+          # only catches the paths whoever wrote it thought of.
+          staged=$(git diff --cached --name-only | tr '\n' ' ')
+          if [ "$staged" != "$file " ]; then
+            echo "::error::this commit would carry [$staged] and a keepalive carries $file alone. Anything else here starts a signing run and a served-set comparison for a commit whose whole purpose is to be a commit."
+            exit 1
+          fi
+
+          git commit -m "state: the keepalive for $MONTH (ROLL-62)" -m \
+            "One commit a month so that GitHub does not disable this repository's scheduled workflows after 60 days of quiet. It publishes nothing: state/keepalive.json is outside every path a serial is counted over. The coverage canary is red when this file is more than 35 days old. RC-R1-9(b). $RUN_URL"
+
+          # What this run WROTE, against what git STAMPED. It is this job's own
+          # invariant rather than a copy of the rule's judgement, and the two
+          # come apart when a run crosses midnight between the clock read above
+          # and this commit — on the LAST day of a month, which this cron never
+          # runs on, so in practice only a hand dispatch at 23:59 on the 31st.
+          # It refuses rather than repairing: tomorrow's run finds the month
+          # still unrecorded and writes the month it is actually in, and a
+          # repair nobody ever watches run is worse than a refusal somebody
+          # reads.
+          authored=$(git log -1 --format=%aI -- "$file")
+          if [ "${authored:0:7}" != "$MONTH" ]; then
+            echo "::error::this run wrote $MONTH and git stamped the commit ${authored:0:7}, so it crossed a month boundary between reading the clock and committing. Nothing is pushed and the next run writes the month it is in. Left to stand, that pair reads as ROLL_62_KEEPALIVE_MONTH_STALE — which says somebody automated the commit and not the file, and that would send a reader after the wrong thing."
+            exit 1
+          fi
+          echo "committed=true" >> "$GITHUB_OUTPUT"
+
+      # ── the consumer is NOT run here, and that is a decision ──────────
+      #
+      # The obvious last step of this job is to run the `keepalive-age` rule
+      # itself — the producer asking the only reader this file has whether what
+      # it just wrote is acceptable, before pushing it.
+      # `bot/tests/moderation-coverage.test.mjs` refuses it, and refuses the
+      # rule's PATH appearing anywhere in a workflow file, this comment
+      # included: it greps the whole file rather than the `run:` lines. The test is written as MOD-46 ("a
+      # moderation or privacy check inside a signing or publishing job is a
+      # check that can delay a takedown") and this job neither signs nor
+      # publishes, so the rule as stated does not reach it — but the rule as
+      # WRITTEN is one this lane would have to widen in another task's file in
+      # order to pass, which is the wrong direction. The rules run in the
+      # canary and nowhere else, and the canary judges this file every fifteen
+      # minutes.
+      #
+      # What is left here instead is the one assertion that is this job's own
+      # and not a copy of the rule's judgement: what this run WROTE has to be
+      # what git STAMPED. It is above, in the commit step.
+
+      - name: The push, which starts no workflow run and is not meant to
+        if: steps.record.outputs.committed == 'true'
+        env:
+          MONTH: ${{ steps.month.outputs.month }}
+        run: |
+          set -euo pipefail
+          file=state/keepalive.json
+          # Three attempts with a rebase between them. `main` takes commits
+          # from the ingest publisher and from people, and losing a month's
+          # keepalive to one non-fast-forward is losing the month.
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              echo "ok    pushed on attempt $attempt"
+              exit 0
+            fi
+            echo "ok    push refused on attempt $attempt; rebasing onto what main holds now"
+            git fetch origin main
+            if git rebase FETCH_HEAD; then
+              continue
+            fi
+            # The rebase conflicted, which here means one thing: somebody else
+            # wrote THIS file while this run was working — the hand path in
+            # state/README.md, or an operator restoring it. Watched, in a
+            # throwaway clone: without this branch the job dies inside a rebase
+            # with `UU state/keepalive.json`, having reported a push failure
+            # for what is usually not a failure at all.
+            git rebase --abort
+            theirs=$(git show FETCH_HEAD:"$file" | node -e 'let s="";process.stdin.on("data",(d)=>{s+=d}).on("end",()=>{let m="";try{m=JSON.parse(s).month||""}catch(e){m=""}process.stdout.write(String(m))})')
+            if [ "$theirs" = "$MONTH" ]; then
+              echo "ok    $MONTH reached main from somewhere else while this run was working; there is nothing left to push, and ROLL-62 counts the month either way"
+              exit 0
+            fi
+            echo "::error::main moved under this run with a conflicting change to $file, and what it holds now says '$theirs' rather than $MONTH. Nothing is forced over the top of somebody else's commit: the next scheduled run starts again from what main holds, and if it is still short of a month a person should read both commits before deciding which writer to keep."
+            exit 1
+          done
+          echo "::error::three pushes were refused; the month's keepalive did not land, and state/keepalive.json is 35 days from a red canary"
+          exit 1
+
+  alert:
+    needs: keepalive
+    # `always()` so a job that failed still pages — a keepalive that did not
+    # land is the whole subject of this workflow — and `!cancelled()` so a
+    # cancelled run does not alarm about a commit nobody asked for.
+    if: always() && !cancelled()
+    runs-on: ubuntu-24.04
+    environment: alerts
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    # An environment secret is not ambient: a job reads one only where it names
+    # it. The three channel secrets, and the ping URL of the one check this job
+    # posts to — nothing else, because a job that mapped another check's URL
+    # would be a job whose compromise silences a check it never posts to.
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_DEADMAN_URL_KEEPALIVE: ${{ secrets.ASTRA_DEADMAN_URL_KEEPALIVE }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert
+            bot/alert.mjs
+            bot/heartbeat.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+
+      # The verdict is rendered from the keepalive job's OUTPUTS, never from a
+      # downloaded artifact: an `alerts` job holds the alarm channel's
+      # credential and downloads nothing another job produced.
+      - name: The verdict this run reached
+        env:
+          RESULT: ${{ needs.keepalive.result }}
+          COMMITTED: ${{ needs.keepalive.outputs.committed }}
+          MONTH: ${{ needs.keepalive.outputs.month }}
+        run: |
+          set -euo pipefail
+          # Anything but a successful keepalive job is red, empty included: a
+          # job that died before it wrote an output reports nothing, and the
+          # one outcome that matters here — the month's commit did not land —
+          # arrives in exactly that shape. What it is red ABOUT is one code,
+          # because this job knows one thing: whether the run that was supposed
+          # to make this month's commit finished. Which of the several ways it
+          # can fail is in the run log, behind a login, where a sentence is
+          # allowed to be a sentence.
+          status=red
+          codes='"ROLL_62_KEEPALIVE_RUN_FAILED"'
+          if [ "$RESULT" = success ]; then
+            status=green
+            codes=""
+            echo "ok    the keepalive job finished; committed=$COMMITTED month=$MONTH"
+          fi
+          cat > verdict.json <<JSON
+          {
+            "schema": "astra.registry.alert-verdict/1",
+            "check": "keepalive",
+            "status": "$status",
+            "codes": [$codes],
+            "run": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          JSON
+          if [ -z "$codes" ]; then
+            grep -v '"codes": \[\]' verdict.json > verdict.tmp && mv verdict.tmp verdict.json
+          fi
+          cat verdict.json
+
+      - uses: ./.github/actions/alert
+        with:
+          verdict: verdict.json
+          check: keepalive

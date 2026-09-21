@@ -1,0 +1,7 @@
+{
+  "$comment": "ROLL-62's keepalive (RC-R1-9(b)). GitHub disables a repository's scheduled workflows after 60 days with no repository activity, and says so to nobody this estate is watching; eleven workflows here hold a live cron as of 2026-09-20, this file's own keepalive included, and among the rest the signer, the served-set comparisons, the detectors and the coverage canary that every alarm is built on. This file is rewritten and committed once a month so that this repository is never quiet for 60 days. `month` is the month of the commit that wrote it, read in that commit's own clock, and `at` is that same instant: `tools/coverage/keepalive-age.mjs` refuses the pair when the file's month and the commit's month disagree, because that is what an automated commit over a file nobody rewrote looks like. `by` is `workflow` for a commit .github/workflows/keepalive.yml made with GITHUB_TOKEN and `hand` for one an operator or an agent pushed from an account: whether the first kind counts as activity for the 60-day rule is still unmeasured (RC-R1-9(b), OPEN-OPS-18), and this field is what will answer it from the file's own history. Nothing reads this file but that rule and a person.",
+  "month": "2026-09",
+  "at": "2026-09-20T18:37:41-07:00",
+  "by": "hand",
+  "run": null
+}

@@ -727,6 +727,14 @@ const NOT_HEARD = new Map([
     "D3 counts the catalogue's serial over plugins/ and the list's over tools/revocations/.",
   ],
   [
+    "Keepalive",
+    "commits state/keepalive.json alone, and that commit exists in order to BE a commit: ROLL-62's monthly " +
+    "keepalive (RC-R1-9(b)) is what keeps GitHub from disabling every schedule in this repository after 60 " +
+    "days of quiet. state/ is outside both paths D3 counts a serial over — plugins/ for the catalogue and " +
+    "tools/revocations/ for the withdrawal list — so there is no document for the signer to refresh, and a " +
+    "signer run a month over nothing is one of the three outcomes that workflow's header is written against.",
+  ],
+  [
     "publisher re-check",
     "commits publishers/** alone. A badge change does reach the catalogue — build-index embeds a publisher " +
     "block per listing — but it reaches it at the next serial rise by design: publishers/ is outside the path " +
