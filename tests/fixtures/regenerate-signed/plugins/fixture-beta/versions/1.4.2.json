@@ -1,0 +1,29 @@
+{
+  "schema": "astra.registry.version/1",
+  "id": "fixture-beta",
+  "version": "1.4.2",
+  "published_at": "2026-03-04T08:15:00Z",
+  "release": {
+    "kind": "direct",
+    "base_url": "https://example.invalid/fixture-owner/downloads/fixture-beta/1.4.2"
+  },
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://example.invalid/fixture-owner/downloads/fixture-beta/1.4.2/fixture-beta-1.4.2-linux-x64.astraplugin",
+      "filename": "fixture-beta-1.4.2-linux-x64.astraplugin",
+      "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "size": 4096
+    },
+    "windows-x64": {
+      "url": "https://example.invalid/fixture-owner/downloads/fixture-beta/1.4.2/fixture-beta-1.4.2-windows-x64.astraplugin",
+      "filename": "fixture-beta-1.4.2-windows-x64.astraplugin",
+      "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "size": 4352
+    }
+  },
+  "protocol": 1,
+  "min_astra_version": "0.2.0",
+  "capabilities": [
+    "tools"
+  ]
+}

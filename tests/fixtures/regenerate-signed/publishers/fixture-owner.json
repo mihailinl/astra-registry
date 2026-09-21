@@ -1,0 +1,14 @@
+{
+  "$comment": "A fixture publisher record, so a regeneration has a `signed.publishers` member to produce and a badge to attach. Not a real account.",
+  "schema": "astra.registry.publisher/1",
+  "owner": "fixture-owner",
+  "display_name": "Fixture Owner",
+  "description_text": "The account every listing in this fixture tree but one is published from",
+  "tier": "community",
+  "verified_at": "2026-01-02",
+  "last_confirmed_at": "2026-06-01",
+  "evidence": {
+    "kind": "first-party",
+    "note": "A fixture. The claim is this file, and nothing resolves it anywhere."
+  }
+}

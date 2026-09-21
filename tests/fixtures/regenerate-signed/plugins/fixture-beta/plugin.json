@@ -1,0 +1,27 @@
+{
+  "$comment": "A fixture listing. Not a real plugin; see tests/fixtures/regenerate-signed/README.md.",
+  "schema": "astra.registry.plugin/1",
+  "id": "fixture-beta",
+  "name": "Fixture Beta",
+  "summary": "A listing whose picture is binary and is inlined as base64",
+  "license": "Apache-2.0",
+  "source": {
+    "kind": "github",
+    "repo": "fixture-owner/fixture-beta",
+    "subdirectory": "examples/fixture-beta"
+  },
+  "added_at": "2026-03-04",
+  "description": "A listing whose picture is binary and is inlined as base64",
+  "author": {
+    "name": "Fixture Owner"
+  },
+  "icon": "icon.png",
+  "readme": "README.md",
+  "categories": [
+    "utilities"
+  ],
+  "keywords": [
+    "beta",
+    "fixture"
+  ]
+}
