@@ -1,0 +1,405 @@
+{
+  "$comment": "MOD-41's and MOD-48's shared public-reason vectors. NOT generated: edited by hand, and asserted against both of this repository's validators by bot/tests/moderation.test.mjs. See tests/README.md for the unit, the asymmetries and how to add a vector.",
+  "schema": "astra.registry.moderation-reasons/1",
+  "requirements": [
+    "MOD-41",
+    "MOD-48"
+  ],
+  "unit": "code_points",
+  "unit_note": "Lengths are counted in Unicode code points over the TRIMMED reason — Postgres char_length, Python len, Rust chars().count(), JavaScript [...s].length. NOT JavaScript String.length, which counts UTF-16 code units and differs for every astral character.",
+  "bounds": {
+    "min_code_points": 10,
+    "max_code_points": 300
+  },
+  "classes": [
+    {
+      "name": "not_a_string",
+      "clause": "MOD-41",
+      "what": "the reason is absent or is not a string"
+    },
+    {
+      "name": "too_short",
+      "clause": "MOD-41",
+      "what": "fewer than 10 code points"
+    },
+    {
+      "name": "too_long",
+      "clause": "MOD-41",
+      "what": "more than 300 code points"
+    },
+    {
+      "name": "unsafe_text",
+      "clause": "registry-only",
+      "what": "a control, zero-width, bidi or unpaired-surrogate character"
+    },
+    {
+      "name": "uri_scheme",
+      "clause": "MOD-41",
+      "what": "a URI scheme, with or without `//`"
+    },
+    {
+      "name": "www",
+      "clause": "MOD-41",
+      "what": "a `www.` label"
+    },
+    {
+      "name": "at_sign",
+      "clause": "MOD-41",
+      "what": "an `@`, which is an address or an `id@version`"
+    },
+    {
+      "name": "host_like",
+      "clause": "MOD-41",
+      "what": "a dotted token whose last label is letters and is not a file suffix"
+    }
+  ],
+  "file_suffixes": [
+    "astraplugin",
+    "dll",
+    "dylib",
+    "exe",
+    "js",
+    "json",
+    "lock",
+    "md",
+    "mjs",
+    "rs",
+    "toml",
+    "txt",
+    "yaml",
+    "yml"
+  ],
+  "vectors": [
+    {
+      "name": "name-plugin-toml",
+      "reason": "plugin.toml",
+      "verdict": "accept",
+      "classes": [],
+      "code_points": 11,
+      "utf16_units": 11,
+      "why": "MOD-41 names this one: a manifest file name is not a host."
+    },
+    {
+      "name": "name-astra-chess-json",
+      "reason": "astra-chess.json",
+      "verdict": "accept",
+      "classes": [],
+      "code_points": 16,
+      "utf16_units": 16,
+      "why": "A listing record's file name. `.json` is a suffix, not a TLD."
+    },
+    {
+      "name": "name-version-rc",
+      "reason": "v1.2.3-rc.1",
+      "verdict": "accept",
+      "classes": [],
+      "code_points": 11,
+      "utf16_units": 11,
+      "why": "A pre-release version. Its last label is a digit, so no host-like rule may reach it."
+    },
+    {
+      "name": "name-readme-md",
+      "reason": "Its README.md claimed a permission set the bundle never carried.",
+      "verdict": "accept",
+      "classes": [],
+      "code_points": 64,
+      "utf16_units": 64,
+      "why": "`.md` is Moldova as well as Markdown; the suffix list decides, and the corpus pins the decision."
+    },
+    {
+      "name": "name-cargo-lock",
+      "reason": "The Cargo.lock it shipped pinned a crate that was yanked upstream.",
+      "verdict": "accept",
+      "classes": [],
+      "code_points": 66,
+      "utf16_units": 66,
+      "why": "A lockfile named in a real reason."
+    },
+    {
+      "name": "name-payload-exe",
+      "reason": "It dropped a payload.exe into the user profile directory on first run.",
+      "verdict": "accept",
+      "classes": [],
+      "code_points": 70,
+      "utf16_units": 70,
+      "why": "An extension a malware reason needs, and not a TLD."
+    },
+    {
+      "name": "live-astra-chess",
+      "reason": "Its source repository is under KNICE-TECH, a login freed by the organisation's rename to MINICE-AI and claimable by anyone. Delisted until it is re-released from MINICE-AI/astra-chess.",
+      "verdict": "accept",
+      "classes": [],
+      "code_points": 184,
+      "utf16_units": 184,
+      "why": "`bot/moderation/2026-09-12-astra-chess-delist.json` as it stands on `main`. A rule that refused this one would have refused the delist that is already published."
+    },
+    {
+      "name": "live-test-double",
+      "reason": "A test double, not a plugin for users; removed from the catalogue",
+      "verdict": "accept",
+      "classes": [],
+      "code_points": 65,
+      "utf16_units": 65,
+      "why": "The four August 2026 delists, verbatim."
+    },
+    {
+      "name": "live-advisory-fixture",
+      "reason": "Exfiltrates the clipboard to a third-party host.",
+      "verdict": "accept",
+      "classes": [],
+      "code_points": 48,
+      "utf16_units": 48,
+      "why": "`tools/selftest/revocations.mjs`'s advisory fixture: the sentence ends on `host.`, which no host-like rule may match."
+    },
+    {
+      "name": "unit-299-cp-303-units",
+      "reason": "Плагин отправлял содержимое буфера обмена на сторонний узел и был снят с публикации после проверки вручную после проверки вручную после проверки вручную после проверки вручную после проверки вручную после проверки вручную после проверки вручную после проверки вручную после проверки вручную посл🔥🚨🛑🧨",
+      "verdict": "accept",
+      "classes": [],
+      "code_points": 299,
+      "utf16_units": 303,
+      "why": "299 code points, 303 UTF-16 units. A validator counting `String.length` refuses this and the service accepts it, and the takedown it carries stalls with nothing for the moderator to act on. THIS IS ATTACK M-11."
+    },
+    {
+      "name": "unit-300-cp-304-units",
+      "reason": "Плагин отправлял содержимое буфера обмена на сторонний узел и был снят с публикации после проверки вручную после проверки вручную после проверки вручную после проверки вручную после проверки вручную после проверки вручную после проверки вручную после проверки вручную после проверки вручную после🔥🚨🛑🧨",
+      "verdict": "accept",
+      "classes": [],
+      "code_points": 300,
+      "utf16_units": 304,
+      "why": "Exactly at MOD-41's ceiling, in code points. The boundary is inclusive."
+    },
+    {
+      "name": "unit-301-cp-305-units",
+      "reason": "Плагин отправлял содержимое буфера обмена на сторонний узел и был снят с публикации после проверки вручную после проверки вручную после проверки вручную после проверки вручную после проверки вручную после проверки вручную после проверки вручную после проверки вручную после проверки вручную послеи🔥🚨🛑🧨",
+      "verdict": "refuse",
+      "classes": [
+        "too_long"
+      ],
+      "code_points": 301,
+      "utf16_units": 305,
+      "why": "One code point over. Refused by both readings, which is what makes the vector above a statement about the unit rather than about the bound."
+    },
+    {
+      "name": "unit-300-cp-ascii",
+      "reason": "A moderation reason that is exactly as long as it needs to be A moderation reason that is exactly as long as it needs to be A moderation reason that is exactly as long as it needs to be A moderation reason that is exactly as long as it needs to be A moderation reason that is exactly as long as it ne",
+      "verdict": "accept",
+      "classes": [],
+      "code_points": 300,
+      "utf16_units": 300,
+      "why": "Exactly 300 with no astral character at all, so the ceiling is pinned in the case where the two units agree."
+    },
+    {
+      "name": "unit-301-cp-ascii",
+      "reason": "A moderation reason that is exactly as long as it needs to be A moderation reason that is exactly as long as it needs to be A moderation reason that is exactly as long as it needs to be A moderation reason that is exactly as long as it needs to be A moderation reason that is exactly as long as it nee",
+      "verdict": "refuse",
+      "classes": [
+        "too_long"
+      ],
+      "code_points": 301,
+      "utf16_units": 301,
+      "why": "301 ASCII characters. Both readings refuse it."
+    },
+    {
+      "name": "unit-10-cp-13-units",
+      "reason": "Removed🔥🚨🛑",
+      "verdict": "accept",
+      "classes": [],
+      "code_points": 10,
+      "utf16_units": 13,
+      "why": "10 code points, 13 UTF-16 units. Exactly at the floor; the boundary is inclusive."
+    },
+    {
+      "name": "unit-9-cp-12-units",
+      "reason": "Remove🔥🚨🛑",
+      "verdict": "refuse",
+      "classes": [
+        "too_short"
+      ],
+      "code_points": 9,
+      "utf16_units": 12,
+      "why": "9 code points, 12 UTF-16 units. A validator counting `String.length` ACCEPTS this, because 12 is over the floor, and a nine-character reason is exactly what MOD-41's floor exists to refuse. This is attack M-11 at the other end."
+    },
+    {
+      "name": "floor-9-cp-ascii",
+      "reason": "Too short",
+      "verdict": "refuse",
+      "classes": [
+        "too_short"
+      ],
+      "code_points": 9,
+      "utf16_units": 9,
+      "why": "Nine ASCII characters. The plain case of the floor."
+    },
+    {
+      "name": "probe-https",
+      "reason": "https://x",
+      "verdict": "refuse",
+      "classes": [
+        "too_short",
+        "uri_scheme"
+      ],
+      "code_points": 9,
+      "utf16_units": 9,
+      "why": "MOD-41's URI scheme, as short as it goes. It is also under the floor, and the corpus records both classes rather than pretending it is one."
+    },
+    {
+      "name": "probe-www",
+      "reason": "www.x",
+      "verdict": "refuse",
+      "classes": [
+        "too_short",
+        "www"
+      ],
+      "code_points": 5,
+      "utf16_units": 5,
+      "why": "MOD-41's `www.`, as short as it goes."
+    },
+    {
+      "name": "probe-at",
+      "reason": "a@b",
+      "verdict": "refuse",
+      "classes": [
+        "too_short",
+        "at_sign"
+      ],
+      "code_points": 3,
+      "utf16_units": 3,
+      "why": "MOD-41's `@`."
+    },
+    {
+      "name": "probe-evil-example",
+      "reason": "evil.example",
+      "verdict": "refuse",
+      "classes": [
+        "host_like"
+      ],
+      "code_points": 12,
+      "utf16_units": 12,
+      "why": "MOD-41's host-like token, in the TLD RFC 2606 reserves for exactly this."
+    },
+    {
+      "name": "scheme-in-a-sentence",
+      "reason": "Removed after the writeup at https://192.0.2.1/report was confirmed by hand.",
+      "verdict": "refuse",
+      "classes": [
+        "uri_scheme"
+      ],
+      "code_points": 76,
+      "utf16_units": 76,
+      "why": "A scheme inside a sentence long enough to pass every other clause, and an address whose last label is a digit, so this vector's refusal is about the scheme ALONE."
+    },
+    {
+      "name": "mailto-without-slashes",
+      "reason": "Reported by the maintainer; correspondence at mailto:abuse and then removed.",
+      "verdict": "refuse",
+      "classes": [
+        "uri_scheme"
+      ],
+      "code_points": 76,
+      "utf16_units": 76,
+      "why": "A scheme that carries a payload without `//`. A reader can click it in exactly the same way."
+    },
+    {
+      "name": "www-in-a-sentence",
+      "reason": "See www.example.invalid for the writeup; the plugin was removed from the catalogue.",
+      "verdict": "refuse",
+      "classes": [
+        "www",
+        "host_like"
+      ],
+      "code_points": 83,
+      "utf16_units": 83,
+      "why": "`www.` inside a sentence. It also carries a host-like token, and both classes are recorded."
+    },
+    {
+      "name": "at-in-a-sentence",
+      "reason": "Reported by security@example.invalid and removed from the catalogue after review.",
+      "verdict": "refuse",
+      "classes": [
+        "at_sign",
+        "host_like"
+      ],
+      "code_points": 81,
+      "utf16_units": 81,
+      "why": "An email address. `@` and the host-like token both fire."
+    },
+    {
+      "name": "host-in-a-sentence",
+      "reason": "The build posted the config directory to collector.evil.invalid within a second of starting.",
+      "verdict": "refuse",
+      "classes": [
+        "host_like"
+      ],
+      "code_points": 92,
+      "utf16_units": 92,
+      "why": "A bare host with no scheme, which is the form MOD-41's host-like clause exists for."
+    },
+    {
+      "name": "host-cc-tld",
+      "reason": "The build called tracker.co.uk on every start, which the listing never declared.",
+      "verdict": "refuse",
+      "classes": [
+        "host_like"
+      ],
+      "code_points": 80,
+      "utf16_units": 80,
+      "why": "A two-label country-code TLD, to pin that the rule reads the LAST label."
+    },
+    {
+      "name": "host-short-tld",
+      "reason": "It fetched its model list from evil.io rather than from the endpoint it declared.",
+      "verdict": "refuse",
+      "classes": [
+        "host_like"
+      ],
+      "code_points": 81,
+      "utf16_units": 81,
+      "why": "A two-letter TLD, which is the shortest a host-like final label can be."
+    },
+    {
+      "name": "id-at-version",
+      "reason": "Withdrawn for astra-chess@0.3.0, which shipped the wrong bundle.",
+      "verdict": "refuse",
+      "classes": [
+        "at_sign"
+      ],
+      "code_points": 64,
+      "utf16_units": 64,
+      "why": "`id@version` is the honest mistake this clause costs: name the version in words. Refused, and the corpus says why so nobody reads the refusal as a bug."
+    },
+    {
+      "name": "bidi-override",
+      "reason": "Safe‮elbadaolnwod si, removed from the catalogue after review.",
+      "verdict": "refuse",
+      "classes": [
+        "unsafe_text"
+      ],
+      "code_points": 62,
+      "utf16_units": 62,
+      "why": "A right-to-left override reverses the rest of the sentence on a reader's screen. NOT one of MOD-41's clauses: it is this repository's, it pre-dates MOD-41, and it is the one place the registry is STRICTER than the service. A service that accepted it would have its decision refused here — see the README's asymmetry note."
+    },
+    {
+      "name": "zero-width-joiner",
+      "reason": "Removed from the‍catalogue after a report about its update channel.",
+      "verdict": "refuse",
+      "classes": [
+        "unsafe_text"
+      ],
+      "code_points": 67,
+      "utf16_units": 67,
+      "why": "A zero-width character inside a word. Same clause, same asymmetry."
+    },
+    {
+      "name": "absent",
+      "reason": null,
+      "verdict": "refuse",
+      "classes": [
+        "not_a_string"
+      ],
+      "code_points": null,
+      "utf16_units": null,
+      "why": "No reason at all. Every other vector assumes a string, and an implementation that reads `reason.length` off `undefined` throws rather than refuses."
+    }
+  ]
+}

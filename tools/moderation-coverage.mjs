@@ -67,6 +67,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { ACTIONS } from "../bot/lib/moderation.mjs";
 import { report } from "./coverage/rules.mjs";
 import {
   changedPaths, commitMeta, commitsAfter, firstParent, historyCount,
@@ -175,7 +176,35 @@ function readJsonFile(file) {
   }
 }
 
-/** Every `bot/moderation/*.json`, parsed, sorted by date then by name. */
+/**
+ * A file name split into the part that orders it and the part that numbers it.
+ *
+ * MOD-47's second entry of a day is `<date>-<plugin>-<action>-2.json`, and
+ * `-` sorts BEFORE `.`, so a plain name sort puts `…-delist-2.json` ahead of
+ * `…-delist.json`: the second write ahead of the first, and `…-delist-10`
+ * ahead of `…-delist-2`. Every rule that reads "the last one" then reads a
+ * same-day run of one action backwards.
+ *
+ * **What this does NOT fix**, said here so nobody reads the sort as more than
+ * it is: within one date, a `delist` and a `relist` cannot be ordered at all —
+ * the log carries a date and no time, so `delistCovered` below takes the
+ * alphabetically later of the two and `relist` happens to win. A plugin
+ * delisted, relisted and delisted again inside one day reads as relisted. The
+ * fix for that is a time on the entry, which is a schema change and a contract
+ * question, not a comparator.
+ *
+ * Read off the NAME rather than rebuilt from the entry's members, unlike
+ * `bot/lib/moderation.mjs`'s `suffixOf`, because this file must stay readable
+ * over a malformed entry: a file whose `action` is misspelled still has to
+ * sort somewhere, and the alternative is a canary that throws on the one file
+ * it is there to complain about.
+ */
+function nameParts(name) {
+  const m = /^(.*?)(?:-(\d+))?\.json$/.exec(name);
+  return m ? { base: m[1], n: m[2] ? Number(m[2]) : 1 } : { base: name, n: 1 };
+}
+
+/** Every `bot/moderation/*.json`, parsed, sorted by date, then name, then MOD-47's `-<n>`. */
 export function loadLog(repo) {
   const dir = path.join(repo, "bot", "moderation");
   if (!fs.existsSync(dir)) return { entries: [], bad: [] };
@@ -186,7 +215,13 @@ export function loadLog(repo) {
     if (why) { bad.push(`bot/moderation/${name} is not readable JSON: ${why}`); continue; }
     entries.push({ name, ...value });
   }
-  entries.sort((a, b) => (a.date ?? "").localeCompare(b.date ?? "") || a.name.localeCompare(b.name));
+  entries.sort((a, b) => {
+    const byDate = (a.date ?? "").localeCompare(b.date ?? "");
+    if (byDate) return byDate;
+    const pa = nameParts(a.name);
+    const pb = nameParts(b.name);
+    return pa.base.localeCompare(pb.base) || pa.n - pb.n;
+  });
   return { entries, bad };
 }
 
@@ -228,12 +263,37 @@ export function isAuthorAction(v) {
 /**
  * Is this plugin's delist recorded, and not later undone?
  *
- * `relist` is M-T1.6's action and is read here as data rather than through
- * `bot/lib/moderation.mjs`'s `ACTIONS`, which does not carry it yet. Reading
- * the file directly is what lets this rule be written before that one lands;
- * the cost is that a typo'd action name reads as "no relist", which is the
- * safe direction — it leaves the canary red.
+ * `relist` is still read here as DATA — off the parsed file — rather than
+ * through `bot/lib/moderation.mjs`'s validator, and that is deliberate now
+ * rather than provisional: this canary has to keep judging a log whose entries
+ * do not pass their own schema, because an unreadable entry is one of the
+ * things it reports. The cost is that a typo'd action name reads as "no
+ * relist", which is the safe direction — it leaves the canary red.
+ *
+ * What changed with M-T1.6 is that `ACTIONS` now carries `relist`, so the two
+ * spellings can be COMPARED instead of merely coexisting. `actionVocabulary`
+ * below is that comparison, and it is why this comment no longer says "which
+ * does not carry it yet" — a sentence that was true when it was written and
+ * would have gone on reading as true for as long as nobody checked.
  */
+/**
+ * The action names this file spells out, against the ones the log's validator
+ * will accept.
+ *
+ * Three literals in this file decide what it can see — `delist`, `relist` and
+ * `yank` — and none of them is checked against anything today. Rename one in
+ * `bot/lib/moderation.mjs` and the rules here stop matching: every delisted
+ * plugin reads as unlogged, which is loud, or every relist reads as absent,
+ * which is quiet and leaves the canary red about plugins that are fine. The
+ * second is the one worth a check, because a canary that is red for a reason
+ * nobody can find is a canary somebody switches off.
+ *
+ * @returns {string[]} the names this file uses that `ACTIONS` does not have
+ */
+export function actionVocabulary(actions = ACTIONS) {
+  return ["delist", "relist", "yank"].filter((a) => !actions.includes(a));
+}
+
 function delistCovered(entries, pluginId) {
   const mine = entries.filter((e) => e.plugin === pluginId && (e.action === "delist" || e.action === "relist"));
   const last = mine[mine.length - 1];
@@ -255,6 +315,16 @@ export function stateMode(repo, { unlistedFloor = UNLISTED_FLOOR } = {}) {
   const detail = [];
   const { entries, bad } = loadLog(repo);
   for (const why of bad) { codes.push("MOD_ENTRY_UNREADABLE"); detail.push(why); }
+
+  const strangers = actionVocabulary();
+  if (strangers.length) {
+    codes.push("MOD_ACTION_VOCABULARY");
+    detail.push(
+      `this file matches on the action name(s) ${strangers.join(", ")}, and bot/lib/moderation.mjs's ACTIONS no ` +
+      "longer has them. Every rule below matches on a literal, so a renamed action makes them match nothing — " +
+      "which reads as coverage rather than as a broken rule",
+    );
+  }
 
   const authorActions = loadAuthorActions(repo);
   const staging = stagingListingId(repo);

@@ -582,6 +582,27 @@ strictly greater serial and may only *add* on an equal one, so a mistaken
 advisory is withdrawn by publishing a higher serial without it. That has to be
 possible, or the only way to correct a mistake would be to delete files and hope.
 
+### Undoing one, and saying so
+
+Three more things go in the same public log, and they exist because a log that
+records only the taking overstates what this estate has done, for ever: a reader
+who finds the delist and not the relist reads a listed plugin as withdrawn.
+
+| Action | What it undoes | What is published |
+|---|---|---|
+| **Relist** | a delist. `unlisted` is removed. | the entry, naming the decision it reverses |
+| **Unrevoke** | a deprecate or a revoke. The advisory is deleted and the effect lifts at the next higher serial. | the entry, naming the advisory and the decision it reverses |
+| **Appeal** | nothing by itself. It records that an appeal was decided, and how. | the outcome — `stands` or `reversed` — and the public reason, **never the appeal's text** |
+
+None of the three costs a user anything, which is why they are not in the
+escalation table above: they are the other direction. An appeal that is
+`reversed` is followed by whichever of the first two it calls for.
+
+A reverted delist, deprecate or revoke applies **at once** — unheld, and outside
+the takedown bound — because a correction that queues behind a bound designed to
+slow takedowns down is a correction that leaves a wrongly-withdrawn plugin
+withdrawn for longer.
+
 ### How it reaches a machine, and how fast
 
 The withdrawal workflow built at R1 regenerates, signs and pushes
