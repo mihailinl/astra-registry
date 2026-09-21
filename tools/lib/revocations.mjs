@@ -41,8 +41,17 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 import { REVOCATIONS_SCHEMA } from "../../bot/lib/sign.mjs";
+// MOD-41's public-reason rules have ONE implementation in this repository, and
+// this is the second of the two validators that read it. An advisory's reason
+// and a moderation entry's reason are the same kind of string, reaching the
+// same reader, refused at entry by the same service check (MOD-48). Two
+// hand-written copies of "10 to 300, no scheme, no `www.`, no `@`, no
+// host-like token" is how one of them ends up counting UTF-16 units while the
+// other counts code points — which is attack M-11, and a stalled takedown.
+// `tests/moderation-reasons.json` is the corpus both are run against.
+import { reasonProblems } from "../../bot/lib/moderation.mjs";
 import { REPO_ROOT } from "./sources.mjs";
-import { ID_PATTERN, unsafeDisplayText } from "./ids.mjs";
+import { ID_PATTERN } from "./ids.mjs";
 import { parseSemver } from "./semver.mjs";
 
 /** Where advisories are written, one JSON file per advisory. */
@@ -195,14 +204,10 @@ export function checkAdvisory(doc, where = "<advisory>") {
   // The reason is shown to a user VERBATIM, in a notification the daemon marks
   // persistent. Bidi overrides and zero-width joiners in that position are the
   // spoofing primitive the metadata checks already refuse everywhere else, and
-  // a withdrawal notice is the last place to make an exception.
-  if (typeof doc.reason !== "string" || doc.reason.trim().length < 10) {
-    bad("reason must be a sentence a user can act on (at least 10 characters)");
-  } else if (doc.reason.length > 300) {
-    bad(`reason is ${doc.reason.length} characters; keep it under 300`);
-  } else if (unsafeDisplayText(doc.reason)) {
-    bad(`reason contains ${unsafeDisplayText(doc.reason)}, which must never reach a user's screen`);
-  }
+  // a withdrawal notice is the last place to make an exception. MOD-41's other
+  // clauses are there for the same reader: a withdrawal notice that carries a
+  // host is a withdrawal notice that can send somebody somewhere.
+  for (const p of reasonProblems(doc.reason)) bad(p.why);
 
   if (doc.advisory_url !== undefined) {
     if (typeof doc.advisory_url !== "string" || !doc.advisory_url.startsWith("https://")) {

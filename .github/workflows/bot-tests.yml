@@ -211,6 +211,15 @@ jobs:
       - name: The coverage canary, against repositories it has to judge
         run: node --test bot/tests/moderation-coverage.test.mjs
 
+      # M-T1.6. The moderation log's schema and MOD-41's shared reason corpus.
+      # Pure, no probe, no network, ~60 ms. Every rule in it is about an entry
+      # that does not exist yet — the second same-day delist, the unrevoke that
+      # settles a revoke, the reason at 299 code points and 303 UTF-16 units —
+      # and by the time one is written by hand at the moment of a takedown the
+      # rule has to already be right.
+      - name: The moderation schema, and the reason corpus both validators read
+        run: node --test bot/tests/moderation.test.mjs
+
       # B-T3.7b. The once-only migration baseline. These two steps are late
       # because they are a repair: both suites landed in `b248a34` and **were
       # run by nothing for a day** — 46 tests, green on a laptop, absent from
