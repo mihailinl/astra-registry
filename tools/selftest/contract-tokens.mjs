@@ -192,8 +192,36 @@ export async function run() {
     // not ask rather than a rule it passed. `build-index.yml` checks out with
     // `fetch-depth: 0` and is where this suite's answer counts; `baseline.yml`
     // takes the default depth of 1 and will land here.
-    const parent = (() => {
-      try { return git(["rev-parse", "--verify", "HEAD^{commit}~1"]).trim(); } catch { return null; }
+    // WHAT THIS RULE IS ABOUT IS THE BRANCH'S DELTA, NOT THE LAST COMMIT'S, and
+    // the two differ the moment a branch has more than one commit. Its first
+    // version compared HEAD with HEAD~1, and on 2026-09-21 that was watched
+    // masking a real red: B-T2.3 landed FLOW-13's table with the version
+    // standing still (red at 5e34409, correctly), and then a coordinator commit
+    // adding a bot-tests.yml step landed on top. That commit touches no token,
+    // so `a.body === b.body` returned early and the rule went GREEN at the
+    // branch head while the change was still unversioned.
+    //
+    // It was never silent on `main` — a merge commit's first parent is main's
+    // tip, so it fires there — but a pull request is read at its head, and any
+    // later commit masked it. A check whose subject is a published artifact has
+    // to be asked about the whole change that will be published, and on a
+    // branch that is the merge base.
+    //
+    // The fallbacks are the shape this file already uses for the shallow clone:
+    // say which ref was measured against rather than quietly choosing one.
+    const { parent, against } = (() => {
+      const verify = (rev) => {
+        try { return git(["rev-parse", "--verify", rev]).trim(); } catch { return null; }
+      };
+      const head = verify("HEAD^{commit}");
+      const base = (() => {
+        try { return git(["merge-base", "HEAD", "origin/main"]).trim(); } catch { return null; }
+      })();
+      // On main itself the merge base IS HEAD, which would compare a commit with
+      // itself and pass over everything. There, the previous commit is right.
+      if (base && base !== head) return { parent: base, against: `the merge base with origin/main (${base.slice(0, 7)})` };
+      const prev = verify("HEAD^{commit}~1");
+      return { parent: prev, against: prev ? `HEAD~1 (${prev.slice(0, 7)})` : null };
     })();
     if (!parent) {
       console.log(
@@ -203,6 +231,8 @@ export async function run() {
       );
       return;
     }
+
+    console.log(`  note  comparing against ${against}.`);
 
     const before = showOrNull(parent, TOKEN_FILE);
     if (before === null) {
@@ -235,7 +265,7 @@ export async function run() {
       return (bm - am || bi - ai || bp - ap) > 0;
     };
     assert(rose(a.version, b.version),
-      `${TOKEN_FILE}'s tokens changed between ${parent.slice(0, 7)} and HEAD and contract_version did not rise: ` +
+      `${TOKEN_FILE}'s tokens changed between ${against} and HEAD and contract_version did not rise: ` +
       `it is ${JSON.stringify(a.version)} on both sides. SCOPE-1 makes every published change to this file a new ` +
       `contract version with a dated §0.6 row naming the IDs it touches — the row the plugins service and the ` +
       `client read to find out what they have to re-read. A regenerated file with an unmoved version is the one ` +
