@@ -79,6 +79,7 @@ import {
   CORPUS_RULE_IDS,
   LOCALE_CODES,
   deriveLocaleText,
+  englishDigest,
   isLanguageExempt,
   isLatinScript,
   latinFraction,
@@ -1548,6 +1549,184 @@ function corpusIds(caseDir, ctx) {
 }
 
 /**
+ * The fewest digest vectors this reader may load before it concludes that IT
+ * broke rather than that the table shrank.
+ *
+ * A floor rather than today's count, written above the reader: adding a vector
+ * upstream must be free, and reading none must not be.
+ */
+const MIN_DIGEST_VECTORS = 20;
+
+/**
+ * The pairs in the table that must NOT hash the same.
+ *
+ * Each is one normalisation somebody could add to either implementation. A
+ * per-vector comparison cannot see a pair that has *already* collided — both
+ * halves would agree with the table and with each other, and the vector that
+ * was supposed to catch that normalisation would have quietly stopped being
+ * able to. So the pairs are asserted separately, here and in the CLI's reader
+ * and in `digest-handcheck.sh`.
+ */
+const DIGEST_PAIRS = [
+  ["lf", "crlf"],
+  ["case-upper", "case-lower"],
+  ["nfc-e-acute", "nfd-e-acute"],
+  ["nfc-short-i", "nfd-short-i"],
+  ["empty", "single-space"],
+];
+
+/**
+ * **C19** — the lock digest, and the half of it nothing used to check.
+ *
+ * `locales.lock.json` records, per translated key, the first 12 hex of sha256
+ * over the English bytes that translation was made against. `astra-plugin
+ * locale sync` WRITES those digests (`digest` in
+ * `AstraPlugins/astra-plugin-cli/src/commands/locale.rs`) and `englishDigest`
+ * in `bot/lib/locales.mjs` READS them. One hash, one input, two languages, two
+ * repositories — and until `testdata/locales/digest-vectors.json` existed,
+ * nothing had ever compared the two. They were run against the same English
+ * once and produced the same values, which is agreement by luck: no comparison
+ * existed, so none could have noticed the day it stopped holding.
+ *
+ * What a disagreement costs is quiet and asymmetric. Either every translation
+ * looks stale here — `W_LOCALE_STALE`, every card silently falling back to
+ * English — while `astra-plugin check` reports the lock fresh; or a genuinely
+ * stale translation is published as current. From an author's side both read as
+ * nothing happening.
+ *
+ * **`checkLocaleCorpus` above cannot do this and could not be made to.**
+ * Staleness is a NOTE in the CLI and a WARNING here, and both readers of that
+ * corpus compare ERROR id sets and nothing else — so a case whose lock is one
+ * hash behind proves that both sides stayed *quiet*, never that both computed
+ * the *same number*. `pass/plural-families` ships digests that deliberately
+ * match no English in it, which is what pins that note as a note.
+ *
+ * **The table was written by neither implementation.** Every digest in it is
+ * what coreutils `sha256sum` returns for the vector's exact UTF-8 bytes, and
+ * AstraPlugins' `couplings` job re-derives all of them that way on every run.
+ * Two programs that share a mistake can agree with each other; they cannot
+ * agree with coreutils — the same argument `tests/shared-vectors.mjs` makes
+ * about the three bundle readers.
+ *
+ * Like `checkLocaleCorpus`, this needs the AstraPlugins checkout and says out
+ * loud when it did not run. `build-index.yml` fetches `testdata/locales` in its
+ * sparse-checkout and turns any `NOT verified` line into an `::error::` and
+ * `exit 1`, on every push to `main` and every pull request, which is what stops
+ * the honest answer from reading as a passing one.
+ */
+export function checkLocaleDigestVectors(ctx) {
+  const where = "AstraPlugins/testdata/locales/digest-vectors.json";
+  const rel = "testdata/locales/digest-vectors.json";
+  const file = astraPluginsFile(rel);
+  if (!file) {
+    // **Two absences, and they need opposite fixes.** No checkout at all is a
+    // workflow that did not fetch one; a checkout whose `testdata/locales` is
+    // there but carries no table is a PIN older than the table, and a reader
+    // told "no checkout found" in that second case goes and looks at the
+    // sparse-checkout, which is already right. Both say NOT verified, because
+    // `build-index.yml` turns that string into an `::error::` and neither state
+    // may read as a pass.
+    const corpus = astraPluginsFile("testdata/locales");
+    if (corpus) {
+      ctx.report.note(where,
+        "the lock digest is NOT verified against AstraPlugins: the checkout has testdata/locales but no digest-vectors.json",
+        `Found ${corpus} without the table, so the CHECKOUT is fine and the PIN is behind it. ` +
+        "Move ASTRA_PLUGINS_REF in bot/manifest-probe/astra-plugins.pin to a master commit that carries " +
+        `${rel}. Until then this side of C19 is not comparing anything, which is the state the whole coupling ` +
+        "was in for a month.");
+      return;
+    }
+    ctx.report.note(where, "the lock digest is NOT verified against AstraPlugins: no checkout found",
+      `Looked in ${astraPluginsCandidates().map((d) => path.join(d, rel)).join(", ")}. ` +
+      "Set ASTRA_PLUGINS_DIR, or add testdata/locales to the sparse-checkout that fetches it. " +
+      "This is the only thing that compares englishDigest with the `digest` that writes the values it reads.");
+    return;
+  }
+
+  let doc;
+  try {
+    doc = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (e) {
+    ctx.report.error(where, `cannot be read: ${e.message}`,
+      "A table this reader cannot parse is a table it is not checking, and an unparseable file must not " +
+      "pass for a file with nothing in it. Re-derive it with AstraPlugins/testdata/locales/digest-handcheck.sh.");
+    return;
+  }
+
+  const vectors = Array.isArray(doc?.vectors) ? doc.vectors : null;
+  // The floor, BEFORE any comparison, and the two failures it separates need
+  // opposite fixes: a shorter table is somebody deleting a vector upstream, and
+  // an empty one is this reader pointed at the wrong file or handed a checkout
+  // that did not include it.
+  if (!vectors || vectors.length < MIN_DIGEST_VECTORS) {
+    ctx.report.error(where,
+      `found ${vectors ? vectors.length : 0} vector(s) (floor: ${MIN_DIGEST_VECTORS})`,
+      "If that file still holds one object per vector under `vectors`, VECTORS are what shrank. If it does not, " +
+      "this SCAN is what broke — the table moved or changed shape, and a reader that enumerates nothing passes " +
+      "quietly for ever while reading as coverage.");
+    return;
+  }
+
+  // Every mismatch, not the first. A normalisation added to `englishDigest`
+  // breaks one CLASS of vector and leaves the rest alone, and which class it is
+  // names the change — four whitespace vectors is a trim, two NFC/NFD pairs is
+  // a `String.prototype.normalize`, all of them is a width or an encoding.
+  const wrong = [];
+  const widths = [];
+  for (const v of vectors) {
+    const name = String(v?.name ?? "(unnamed)");
+    const english = v?.english;
+    const want = v?.digest;
+    if (typeof english !== "string" || typeof want !== "string") {
+      ctx.report.error(where, `vector ${name} has no string \`english\`/\`digest\``,
+        "Every vector is { name, english, digest, catches }. A vector this reader cannot read is a vector it is not checking.");
+      continue;
+    }
+    const got = englishDigest(english);
+    if (got !== want) wrong.push(`${name}: sha256sum says ${want}, englishDigest says ${got} — it catches: ${v?.catches ?? "(nothing written down)"}`);
+    if (!/^[0-9a-f]{12}$/.test(got)) widths.push(`${name}: ${JSON.stringify(got)}`);
+  }
+
+  for (const w of wrong) {
+    ctx.report.error(where, w,
+      "The rule is the first 12 hex of sha256 over the EXACT English UTF-8 bytes, with no normalisation of either " +
+      "side. A digest this repository computes differently from `astra-plugin locale sync`'s makes every recorded " +
+      "entry look stale — W_LOCALE_STALE on every listing, every translated card silently falling back to English — " +
+      "while `astra-plugin check` reports the lock fresh. Re-derive the table with " +
+      "AstraPlugins/testdata/locales/digest-handcheck.sh before believing it is the table that is wrong.");
+  }
+
+  // The width, said separately. A `slice(0, 12)` that becomes `slice(0, 16)` is
+  // one of the two changes gap 9 was recorded for, and it would otherwise
+  // arrive as thirty-odd identical-looking mismatches with no sentence naming
+  // the one thing they have in common.
+  for (const w of widths) {
+    ctx.report.error(where, `englishDigest returned ${w}, which is not 12 lower-case hex`,
+      "The lock has one rule and that is it. A width or case change here is silent on this side and turns every " +
+      "digest `astra-plugin locale sync` ever wrote into a mismatch.");
+  }
+
+  const by = new Map(vectors.filter((v) => typeof v?.english === "string").map((v) => [String(v.name), v.english]));
+  for (const [a, b] of DIGEST_PAIRS) {
+    if (!by.has(a) || !by.has(b)) {
+      ctx.report.error(where, `the pair ${a} / ${b} is not both in the table`,
+        "That pair exists because one normalisation added to one side of C19 would make its two halves equal. " +
+        "A pair with a missing half asserts nothing, and it looks exactly like a pair that passed.");
+      continue;
+    }
+    if (englishDigest(by.get(a)) === englishDigest(by.get(b))) {
+      ctx.report.error(where, `the pair ${a} / ${b} hashes the same here`,
+        "So the normalisation that pair exists to catch is already in englishDigest — or the two vectors were " +
+        "edited into each other upstream. Either way every per-vector comparison above still passes, which is why " +
+        "this is asked separately.");
+    }
+  }
+
+  ctx.report.note(where,
+    `${vectors.length} lock digest vector(s) verified against englishDigest; ${DIGEST_PAIRS.length} non-collision pair(s) hold`);
+}
+
+/**
  * **The direction C16 never ran in.** Every error `bot/lib/locales.mjs` can
  * emit is either mapped to a corpus rule id or declared to have none.
  *
@@ -2201,6 +2380,7 @@ export async function runValidation(opts) {
   checkLocaleVocabulary(ctx);
   checkLocaleCorpus(ctx);
   checkLocaleCorpusCoverage(ctx);
+  checkLocaleDigestVectors(ctx);
 
   const { errors, plugins } = loadSources(opts.root);
   for (const e of errors) report.error(e.file, e.message);
