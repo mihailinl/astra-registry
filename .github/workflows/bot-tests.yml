@@ -346,3 +346,21 @@ jobs:
       # another repository under this one's name. ~0.1 s, no probe, no network.
       - name: The decision record, and the one place its id is derived
         run: node --test bot/tests/decisions.test.mjs
+
+      # B-T2.4. The binding line, against thirty-one files a stranger could
+      # commit. `tests/binding-line/vectors.json` is registry-CANONICAL:
+      # AstraPlugins mirrors it byte for byte (AP-6, rule C31) and the plugins
+      # service pins it, so this step is the only place the corpus and the
+      # parser that answers it are ever compared. It regenerates the corpus
+      # with `--check` before it reads a case, which is what turns a hand edit
+      # here — an edit to two other repositories' fixtures — into a named
+      # failure rather than a suite that passes about the wrong bytes.
+      #
+      # The case that outranks the rest is vector 15: 1400 three-byte
+      # characters and then a binding line at byte 4201 and UTF-16 unit 1401.
+      # A reader that slices 4096 UTF-16 units — which `bot/lib/ownership.mjs`
+      # does today for logins — binds the repository off a line ID-23 puts
+      # outside the window, and passes every other case in the file.
+      # No probe, no network, ~90 ms.
+      - name: The binding line, and the window that is measured in bytes
+        run: node --test bot/tests/binding.test.mjs
