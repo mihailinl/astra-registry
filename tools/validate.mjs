@@ -38,16 +38,28 @@ import {
   unsafePathComponent,
 } from "./lib/ids.mjs";
 import {
+  ALERTS_DIR,
   BASELINE_FILE,
   BASELINE_SCHEMA,
+  DECISIONS_DIR,
+  DECISION_SCHEMA,
+  IDENTITY_SCHEMA,
+  QUEUE_SCHEMA,
   loadBaseline,
   loadPolicy,
+  loadRecords,
   loadSchemas,
   loadSources,
   nonStagingVersions,
   readJson,
   REPO_ROOT,
 } from "./lib/sources.mjs";
+import {
+  AUTHOR_ACTION_FORBIDDEN,
+  AUTHOR_ACTION_MEMBERS,
+  refuseUncomposableAuthorAction,
+} from "../bot/lib/decisions.mjs";
+import { SOURCE_DIR as MODERATION_DIR, loadEntries as loadModerationEntries } from "../bot/lib/moderation.mjs";
 import { ALLOWED_IMAGE_HOSTS, ICON_NAMES, MAX_README_BYTES, checkIcon } from "../bot/lib/assets.mjs";
 import {
   CUTOVER_FILE,
@@ -1833,6 +1845,247 @@ export function checkMigrationMarkers(ctx) {
   }
 }
 
+// ── B.4's other records (registry plan B-T2.1) ──────────────────────────────
+
+/**
+ * A `decided_at` that a pattern accepts and a clock does not.
+ *
+ * The same second half checkMigrationMarkers applies to the deadline: the
+ * pattern admits `2026-02-31T00:00:00Z`, and a date two independent
+ * implementations compare a clock against has to be a moment.
+ */
+function unreadableTime(value, what) {
+  try {
+    parseTime(value, what);
+    return null;
+  } catch (e) {
+    return e.message;
+  }
+}
+
+/**
+ * Is this DEC-7's author-action record?
+ *
+ * DISCRIMINATED BY `reasons`, AND NOT BY `actor`, which is the reading that
+ * looks obvious and is wrong. `actor` `author` is a legitimate value on the
+ * SUBMISSION record too — an `A_WITHDRAW` or an `A_STOP` is an author's act on
+ * a submission, and those records carry a `submission_id` and must. DEC-7 ties
+ * the author-action shape to one code: it is "one further file, per version an
+ * `A_YANK` names", `reasons` `["A_YANK"]`. So the code is the discriminant, and
+ * discriminating on `actor` would have refused `submission_id` on every record
+ * an author ever caused — a rule that is red on correct records and silent on
+ * the one it was written for.
+ */
+function isAuthorAction(doc) {
+  const r = doc?.reasons;
+  return Array.isArray(r) && r.length === 1 && r[0] === "A_YANK";
+}
+
+/**
+ * The two rules `schema/decision-v1.json` cannot state and `schema/queue-v1.json`
+ * will not yet, plus the schema check for all four of B.4's other record trees.
+ *
+ * WHY THE CONDITIONALS ARE HERE AND NOT IN THE SCHEMAS. tools/lib/jsonschema.mjs
+ * implements no `if`/`then`/`else`, and it does not ignore an unknown keyword —
+ * it throws, deliberately, because "a validator that silently ignores the one
+ * keyword the schema author was relying on is worse than no validator". So a
+ * conditional written into a schema file would not be a weak check; it would be
+ * a tool that refuses to run. `oneOf` could express the decision record's two
+ * shapes, and the reason not to reach for it is the error message: a record
+ * that fails a two-branch `oneOf` reports "matches 0 of the allowed shapes",
+ * which tells an author nothing about WHICH member was wrong on the branch they
+ * meant. These say it.
+ */
+export function checkRecords(ctx, sources, records = loadRecords(ctx.root, sources)) {
+  const { report, schemas } = ctx;
+  const { identities, decisions, alerts, queue, errors } = records;
+
+  for (const e of errors) report.error(e.file, e.message);
+
+  // ── identity records: B.4's six, exactly ──────────────────────────────────
+  for (const { file, doc } of identities) {
+    const problems = validateSchema(schemas.identity, doc, "$");
+    for (const p of problems) {
+      report.error(file, `${p.path} ${p.message}`,
+        `B.4 fixes ${IDENTITY_SCHEMA}'s members exactly ("has exactly these required members"); the plugins ` +
+        "service parses this record to decide whether a submission is `bound` (ID-15).");
+    }
+    if (problems.length) continue;
+    const dir = file.split("/")[1];
+    if (doc.plugin_id !== dir) {
+      report.error(file, `plugin_id ${JSON.stringify(doc.plugin_id)} is not the listing it sits in (${dir})`,
+        "ID-41 and TRUST-23 compare a certificate against the record for THE LISTING BEING PUBLISHED, found by " +
+        "path. A record naming another id is one that will be read for this listing and believed about another.");
+    }
+  }
+
+  // ── decision records: DEC-7's members, and the shape a schema cannot pick ──
+  for (const { file, doc } of decisions) {
+    const problems = validateSchema(schemas.decision, doc, "$");
+    for (const p of problems) {
+      report.error(file, `${p.path} ${p.message}`,
+        `DEC-7's sentence is "with only these members, absent where they do not apply", and ${DECISION_SCHEMA} ` +
+        "is read by the plugins service, the panel and a guest (SCOPE-3).");
+    }
+    if (problems.length) continue;
+
+    const bad = unreadableTime(doc.decided_at, `${file}'s \`decided_at\``);
+    if (bad) {
+      report.error(file, bad,
+        "The pattern admits dates that are not moments; this is the round-trip that does not.");
+      continue;
+    }
+
+    // The name IS the id, and the directories ARE the month. bot/lib/decisions.mjs's
+    // `recordPath` derives both from the record; a file that disagrees with its
+    // own contents is one BOT-36's dedupe looks for under a path it is not at,
+    // and the second write lands somewhere else with nothing red anywhere.
+    const expected = `${DECISIONS_DIR}/${doc.decided_at.slice(0, 4)}/${doc.decided_at.slice(5, 7)}/${doc.decision_id}.json`;
+    if (file !== expected) {
+      report.error(file, `is not where its own contents put it (${expected})`,
+        "`decision_id` is the basename and `decided_at` is the two directories (DEC-7; registry plan BOT-35). " +
+        "A record found only by a path nobody derives is a record BOT-36 will write a second copy of.");
+    }
+
+    if (!isAuthorAction(doc)) continue;
+
+    // DEC-7's author-action record, and the rule the schema library has no
+    // conditional for. `refuseUncomposableAuthorAction` is bot/lib/decisions.mjs's
+    // own refusal, called here rather than restated: the writer and the
+    // validator disagreeing about DEC-7's thirteen members is exactly the
+    // two-answer failure this whole task exists to stop, and a second copy of
+    // the list is how that starts.
+    const { schema: _s, decision_id: _d, ...rest } = doc;
+    try {
+      refuseUncomposableAuthorAction(rest);
+    } catch (e) {
+      report.error(file, e.message,
+        `An author-action record carries exactly DEC-7's ${AUTHOR_ACTION_MEMBERS.length} members ` +
+        `(${AUTHOR_ACTION_MEMBERS.join(", ")}) and none of ${AUTHOR_ACTION_FORBIDDEN.join(", ")}. The service's ` +
+        "detector B row 2 matches such a record BY its having no `submission_id`, so one that carries either is " +
+        "classified over there as something else entirely (FLOW-79; BOT-34).");
+    }
+  }
+
+  // ── queue entries: the floor the service reads, for entries that claim it ──
+  for (const { file, doc } of queue) {
+    if (doc === null || typeof doc !== "object" || Array.isArray(doc)) {
+      report.error(file, "is not a JSON object");
+      continue;
+    }
+    if (!Object.hasOwn(doc, "schema")) {
+      // Contract §214, in its own words: "today's entries carry neither id nor
+      // `schema`". Refusing them would make this tool red about twenty-odd
+      // files git already carries, for a member BOT-38 has not required yet.
+      report.note(file, `carries no \`schema\`, so it is a pre-BOT-38 queue entry and ${QUEUE_SCHEMA} does not apply`,
+        "BOT-38 adds `schema`, `submission_id` and `decision_id` to the entries the service path writes. Until " +
+        "then bot/publish-apply.mjs owns this shape and the record is not one other parties read.");
+      continue;
+    }
+    for (const p of validateSchema(schemas.queue, doc, "$")) {
+      report.error(file, `${p.path} ${p.message}`,
+        `This entry declares itself ${QUEUE_SCHEMA}, which B.4 lets the plugins service read. An entry that ` +
+        "claims the schema and then omits a member the service reads is a different thing from an entry " +
+        "written before the member existed, and only the first is a defect (registry plan BOT-38).");
+    }
+    if (typeof doc.publish_after === "string") {
+      const bad = unreadableTime(doc.publish_after, `${file}'s \`publish_after\``);
+      if (bad) report.error(file, bad, "The pattern admits dates that are not moments.");
+    }
+  }
+
+  // ── alert records: the path is accepted; the members are RC-R1-4's ────────
+  for (const { file, doc } of alerts) {
+    if (doc === null || typeof doc !== "object" || Array.isArray(doc)) {
+      report.error(file, "is not a JSON object");
+      continue;
+    }
+    if (typeof doc.schema !== "string" || doc.schema.length === 0) {
+      report.error(file, "carries no `schema` string",
+        "Every record in this repository that another party may read says what it is. This one's member set is " +
+        "contract TRUST-14's and registry plan RC-R1-4's to fix; until that schema exists this is the whole of " +
+        "what can be checked, and it is checked rather than assumed.");
+    }
+  }
+  if (alerts.length) {
+    report.note(ALERTS_DIR,
+      `${alerts.length} alert record(s) accepted by path and not schema-checked: TRUST-14's member set is ` +
+      "RC-R1-4's schema to write, and inventing one here would put a second, older answer in the tree",
+      "This note exists so a reader meets the gap rather than reading a silent pass as a check.");
+  }
+}
+
+/**
+ * BOT-34's second Check clause: n versions yanked under an `A_YANK`, n records.
+ *
+ * NO PER-RECORD SCHEMA CAN EXPRESS THIS, and that is not a limitation of the
+ * schema library — it is a statement about a SET of files in which every member
+ * can be individually valid while the set is wrong. An `A_YANK` names listed
+ * versions, PLURAL; DEC-7's `version` is a single member; so a yank of three
+ * versions is three records, and the failure mode is a compiler written against
+ * the submission path, where one submission is one release, emitting one.
+ *
+ * The count is taken over the tree rather than over a commit's diff, which is
+ * what makes it runnable here at all — and it is the same count: the moderation
+ * entry states which versions the yank covered, and the decision log either has
+ * a record per version or does not.
+ */
+export function checkAuthorActionRecords(ctx, sources, records = loadRecords(ctx.root, sources)) {
+  const { report } = ctx;
+  const { decisions } = records;
+  const { entries, files } = loadModerationEntries({ root: ctx.root });
+
+  const yanks = entries
+    .map((doc, i) => ({ doc, file: `${MODERATION_DIR}/${files[i]}` }))
+    .filter(({ doc }) => doc.action === "yank" && doc.category === "author_request");
+  if (yanks.length === 0) return;
+
+  const authorActions = decisions.filter(({ doc }) => isAuthorAction(doc));
+
+  for (const { doc, file } of yanks) {
+    const versions = Array.isArray(doc.versions) ? doc.versions : [];
+    if (versions.length === 0) {
+      report.error(file, "is an author yank naming no version",
+        "FLOW-79's `A_YANK` names at least one listed version. A yank that yanked nothing passes a count of " +
+        "zero against zero, which is the one way this check could be satisfied by a record that says nothing.");
+      continue;
+    }
+
+    const mine = authorActions.filter(({ doc: d }) => d.plugin_id === doc.plugin && versions.includes(d.version));
+    const covered = new Set(mine.map(({ doc: d }) => d.version));
+    const missing = versions.filter((v) => !covered.has(v));
+
+    if (missing.length) {
+      report.error(file,
+        `yanks ${versions.length} version(s) of ${doc.plugin} and the decision log carries ${covered.size} ` +
+        `author-action record(s); no record for ${missing.join(", ")}`,
+        "BOT-34: a commit whose changed listings show n versions moved to `yanked` under an `A_YANK` carries n " +
+        "author-action records, one per version, and is refused otherwise. BOT-35's second tuple carries " +
+        "`version` precisely so their ids differ; one record with a joined `version` is the shape a composer " +
+        "written against the submission path produces, and it is not a semver, so it never reaches this count.");
+    }
+    if (mine.length > covered.size) {
+      report.error(file,
+        `${mine.length} author-action records cover ${covered.size} version(s) of ${doc.plugin}`,
+        "Two records for one version derive one id from BOT-35's tuple, so one of them has overwritten the " +
+        "other and the log is short a decision.");
+    }
+
+    // The other half of BOT-34's sentence: the listings must actually show it.
+    for (const version of versions) {
+      const entry = (sources?.plugins ?? []).find((p) => p.dir === doc.plugin);
+      const record = entry?.versions?.find((v) => v.basename === version);
+      if (!record) continue; // a yank of a version this tree does not carry is MOD-33's to report
+      if (record.doc?.yanked !== true) {
+        report.error(record.file, `is named by the author yank in ${file} and is not \`yanked\``,
+          "The log entry and the listing are two halves of one act (bot/moderation/README.md: a yank IS " +
+          "`\"yanked\": true` on the version record). A published entry whose listing does not show it is the " +
+          "registry claiming a takedown it did not take.");
+      }
+    }
+  }
+}
+
 // ── driver ──────────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
@@ -1893,6 +2146,14 @@ export async function runValidation(opts) {
   checkListingLanguage(usable, ctx);
   checkBaselineMarker(usable, ctx);
   checkMigrationMarkers(ctx);
+
+  // B.4's other record trees, walked once and handed to both checks: the
+  // second one counts author-action records against the yanks a moderation
+  // entry names, and a second walk would be a second answer to "what is in the
+  // decision log" taken a moment apart.
+  const records = loadRecords(opts.root, { plugins: usable });
+  checkRecords(ctx, { plugins: usable }, records);
+  checkAuthorActionRecords(ctx, { plugins: usable }, records);
 
   let hashed = 0;
   if (opts.artifactsDir) hashed += checkLocalArtifacts(usable, ctx);

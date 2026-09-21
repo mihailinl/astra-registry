@@ -86,18 +86,21 @@ export const RECORD_SCHEMA = "astra.registry.decision/1";
 export const DECISIONS_DIR = "log/decisions";
 
 /**
- * B-T2.1's schema, which is NOT in this checkout.
+ * The schema a composed record is read by, which B-T2.1 landed.
  *
  * B-T2.2's canary list asks that an author-action record "validates against
- * `schema/decision-v1.json`". That file is B-T2.1's, in a later batch, and
- * DEC-7 only gained the author-action record's member list in contract 0.13.0
- * — before which the schema "had to guess". Guessing it here would put a
- * second, older answer to the record's shape in the tree on the day B-T2.1
- * writes the first.
+ * `schema/decision-v1.json`". When this module was written that file was a
+ * later task's, and DEC-7 had only just gained the author-action member list
+ * in contract 0.13.0 — before which the schema "had to guess". Guessing it
+ * here would have put a second, older answer to the record's shape in the tree
+ * on the day B-T2.1 wrote the first, so the assertion was left unwired and
+ * `bot/tests/decisions.test.mjs` carried a canary asserting this file's
+ * ABSENCE, which went red the day it arrived and named the assertion to wire.
  *
- * So the assertion is left, and `bot/tests/decisions.test.mjs` carries a
- * canary that goes RED the day this file appears, naming the assertion to
- * wire. A promise in a comment would not have.
+ * That is what happened, and the assertion is wired. The constant stays
+ * exported and `decisionSchema` below stays a probe, now pointing the other
+ * way: the schema is a file on disk, and a rename would turn "validates
+ * against the schema" into "validates against nothing" with nothing red.
  */
 export const DECISION_SCHEMA_FILE = "schema/decision-v1.json";
 
@@ -757,8 +760,15 @@ export function writeDecisionRecord({ key, record, root = REPO_ROOT, terminal = 
 }
 
 /**
- * Whether B-T2.1's schema has landed, so a caller and a canary can say so
+ * Whether the schema is in this checkout, so a caller and a canary can say so
  * rather than assume either way.
+ *
+ * It has landed (B-T2.1), and this stays because the question outlived its
+ * first answer. `bot/tests/decisions.test.mjs` asserts `present` is TRUE
+ * before it validates a record against `full`: without that, deleting or
+ * renaming the schema would turn the one assertion that checks a decision
+ * record's shape into a read of a file that is not there — and a validator
+ * given nothing finds nothing and passes.
  */
 export function decisionSchema(root = REPO_ROOT) {
   const file = DECISION_SCHEMA_FILE;

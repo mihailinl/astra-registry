@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://registry.astra.app/schema/decision-v1.json",
+  "title": "astra.registry.decision/1",
+  "description": "log/decisions/<YYYY>/<MM>/<decision_id>.json — the public decision log (contract DEC-7; B.4). One file per bot decision about a submission or a fingerprint, plus one author-action file per version an `A_YANK` names. bot/lib/decisions.mjs is the only writer (BOT-34); it stamps `schema` and derives `decision_id` (BOT-35), and refuses a caller that supplies either.\n\nEXACTLY DEC-7'S TWENTY-FIVE MEMBERS. DEC-7's own sentence is \"with only these members, absent where they do not apply\", so `additionalProperties` is false and `$comment` is NOT among them. This record crosses a party boundary — the plugins service, the panel and a guest all read it (SCOPE-3) — and a member one party admits and another refuses is a two-way-test failure (§0.8) found in production by whichever side guessed wrong. `issue` is the mutation registry plan B-T2.1's canary list names: it is a member of the queue entry and of nothing else, and a composer that copied one would put an issue number into the public log after OD-2 ended the issue channel.\n\nSIX ARE REQUIRED, AND THE REST ARE \"ABSENT WHERE THEY DO NOT APPLY\". A record with no `decided_at`, `actor`, `trigger` or `state` is not a decision that lacked detail; it is a file that does not say what was decided, when, by whom, or under what. DEC-7's own example of legitimate absence — `fingerprint`, `plugin_id` and `version` for an `A_WITHDRAW` from `received` — touches none of the six. `schema` and `decision_id` are required because the writer stamps them and a reader outside this repository finds the record by its path and identifies it by its `schema`.\n\nABSENT MEANS ABSENT, NOT NULL. No member here admits null. \"Absent where they do not apply\" is DEC-7's phrase and a null is a value: a record carrying `\"commit\": null` states that the release commit is the null one, which is a different claim from not making one, and the two are indistinguishable to a reader that tests for presence. bot/baseline.mjs already meets this — the one published version with no release commit is carried by OMITTING the member and is named in the commit message.\n\n`repository_id` AND `repository_owner_id` ARE STRINGS. §0.7: canonical base-10 digit strings, never coerced. See schema/identity-v1.json for the failure in full; the short form is that JSON's one number type is a double and 9007199254740993 round-trips as …92.\n\n`reasons` IS AN ARRAY OF B.7 CODE STRINGS, NEVER OBJECTS (contract 0.12.0's m4). The `items` rule here refuses an object by type and free text by pattern, which is DEC-7's \"Never: … free text\" made mechanical. It deliberately does NOT enumerate the codes: the closed list lives in bot/lib/codes.mjs and in FLOW-13's table, a schema that copied it would be a second copy that goes stale silently, and a decision record carrying a code this registry has retired is still a true record of what was decided that day. What this pattern buys is the thing a stale enum could not: prose never reaches the public log.\n\nTHE TWO SHAPES, AND WHY ONE OF THEM IS NOT EXPRESSED HERE. Since contract 0.13.0 (n5) DEC-7 describes two records: the submission record, and the AUTHOR-ACTION record an `A_YANK` compiles to, which carries exactly thirteen members — `schema`, `decision_id`, `decided_at`, `actor` `author`, `trigger` `moderation`, `plugin_id`, `version`, `repo`, `repository_id`, `repository_owner_id`, `state` `yanked`, `reasons` `[\"A_YANK\"]`, `category` `author_request` — and NO `submission_id` and NO `fingerprint`, which a yank has not. Every one of those thirteen is a member of the set below, so a valid author-action record validates here; what this file cannot say is the conditional \"when the record is an author action, these two members are forbidden\". tools/lib/jsonschema.mjs implements no `if`/`then` and refuses an unknown keyword outright rather than ignoring it, so the rule sits in tools/validate.mjs beside the queue entry's, and bot/lib/decisions.mjs refuses it a second time at composition. Detector B row 2 on the service's side matches an author-action record BY its having no `submission_id`, so a record that carried one would be classified over there as something else entirely.\n\nTHE OTHER RULE tools/validate.mjs CARRIES, WHICH NO PER-RECORD SCHEMA CAN. BOT-34's second Check clause counts: a commit whose changed listings show n versions moved to `yanked` under an `A_YANK` must carry n author-action records, one per version, and is refused otherwise. It is a statement about a SET of files, and every file in that set can be individually valid while the set is wrong — which is exactly the failure it exists to catch, since an `A_YANK` names versions plural while DEC-7's `version` is a single member.\n\nWHAT NOTHING HERE CAN CHECK. That `decision_id` is in fact the first 32 hex of SHA-256 over BOT-35's domain-separated key is a statement about a derivation, not about this file: the pattern below admits any 32 lowercase hex, and two composers producing two different ids for one tuple both pass it. bot/lib/decisions.mjs is where that is one function, and bot/tests/decisions.test.mjs is where the same tuple is asserted to give the same id twice. Likewise the path: that this record sits under its own `decided_at`'s year and month is `recordPath`'s to enforce. Recorded as gaps rather than implied by this file's existence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "decision_id", "decided_at", "actor", "trigger", "state"],
+  "properties": {
+    "schema": { "const": "astra.registry.decision/1" },
+    "decision_id": {
+      "$comment": "§0.7: 32 lowercase hex, the first 32 of SHA-256 over BOT-35's domain-separated key. The derivation is bot/lib/decisions.mjs's; this only says what a derived id looks like.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "submission_id": {
+      "$comment": "§0.7's lowercase UUID v4 or v7. PRIV-2 exempts it by member name. Absent on an author-action record, which a yank gives no submission — enforced in tools/validate.mjs, which is where the conditional lives.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[47][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "decided_at": {
+      "$comment": "§0.7: RFC 3339 UTC, whole seconds, `Z`. The pattern cannot say the date is real (`2026-02-31T00:00:00Z` matches it); tools/validate.mjs round-trips it through Date, which is the other half.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "actor": {
+      "$comment": "DEC-7's closed list, as schema/contract-tokens-v1.json publishes it under `decision-record actors`. PRIV-10 makes every historic approver `system`.",
+      "enum": ["bot", "moderator", "author", "operator", "system"]
+    },
+    "moderator": {
+      "$comment": "A handle, and THE ONLY MEMBER HERE THAT MAY CARRY ONE. PRIV-2 permits it in this member and in no other; tools/priv-scan.mjs's `handleOk` for this document names `moderator` alone. A handle anywhere else is a moderator's name in a place nobody will think to look for one.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$"
+    },
+    "trigger": {
+      "$comment": "DEC-7's closed list, as the token file publishes it under `decision-record triggers`. `ci` needs ID-72's precondition; `issue`, `ping`, `dispatch` and `legacy` end at R6 (registry plan ROLL-22), and the token file is where that `until <step>` is recorded — not here, because a record written before R6 stays true after it.",
+      "enum": ["panel", "ci", "poll", "drain", "approval", "moderation", "stop", "appeal", "migration", "issue", "ping", "dispatch", "legacy"]
+    },
+    "plugin_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])$"
+    },
+    "version": {
+      "$comment": "A SINGLE semver, and that is load-bearing: an `A_YANK` names versions plural, so a yank of three versions is three records, not one record with a joined `version`. tools/lib/semver.mjs's SEMVER_PATTERN.",
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
+    },
+    "repo": {
+      "$comment": "`owner/name`. PRIV-2 permits a repository coordinate; the owner half is a login and is permitted only here and in `tag`, which is why tools/priv-scan.mjs takes both out before applying the subject-id shape.",
+      "type": "string",
+      "maxLength": 140,
+      "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
+    },
+    "repository_id": {
+      "type": "string",
+      "pattern": "^[0-9]{1,20}$"
+    },
+    "repository_owner_id": {
+      "type": "string",
+      "pattern": "^[0-9]{1,20}$"
+    },
+    "tag": {
+      "$comment": "tools/lib/tags.mjs's TAG_PATTERN, the one spelling of a release tag in this repository.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._/-]{1,128}$"
+    },
+    "commit": {
+      "$comment": "The attested release commit, 40 lowercase hex. OMITTED, never null, when the release has none: one published version in this registry predates release.commit being bound at approval, and bot/baseline.mjs carries it by omission and names it in the run log.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "artifact_digests": {
+      "$comment": "`<platform>:<sha256>`, the form bot/lib/policy/release.mjs builds and bot/baseline.mjs checks, sorted and without repeats. A digest with no sha256 behind it is not a digest.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*:[0-9a-f]{64}$"
+      }
+    },
+    "fingerprint": {
+      "$comment": "bot/lib/policy/release.mjs's FINGERPRINT_CHARS: 16 lowercase hex over six facts about one submission. Absent on an author-action record — a yank hashes no release — which tools/validate.mjs enforces.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$"
+    },
+    "state": {
+      "$comment": "DEFINED BY A SHAPE RATHER THAN BY A LIST, AND DELIBERATELY. The contract fixes closed lists for a SUBMISSION's states (B.3) and for a version's (`yanked`), and DEC-7 covers decisions about both, and about a fingerprint besides; it names no single list of its own. Enumerating the union here would be this file inventing a closed list the contract does not have, and the first legitimate eleventh value would be refused by a schema nobody could point at a requirement for. The shape refuses free text, which is what DEC-7 forbids.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "pattern": "^[a-z][a-z_]*$"
+    },
+    "reasons": {
+      "$comment": "An array of B.7 code strings (m4). An object fails on type; prose fails on pattern. An empty array is refused because DEC-7's answer to \"no reasons apply\" is that the member is absent.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[A-Z]_[A-Z0-9]+(?:_[A-Z0-9]+)*$"
+      }
+    },
+    "category": {
+      "$comment": "§7.2's categories, as the token file publishes them under `moderation categories`. FLOW-79's author yank carries `author_request`.",
+      "enum": ["review_passed", "malicious", "account_compromise", "account_sanction", "privacy", "impersonation", "broken", "security_defect", "licence", "naming", "legal", "author_request", "error", "appeal_reversed", "path_test"]
+    },
+    "appeal_of": {
+      "$comment": "The `service_decision_id` or the `decision_id` appealed (MOD-33, and bot/moderation/README.md's table), so either §0.7's UUID or 32 lowercase hex.",
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{8}-[0-9a-f]{4}-[47][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|[0-9a-f]{32})$"
+    },
+    "outcome": {
+      "$comment": "DEC-7's closed pair, as the token file publishes it under `appeal outcome`.",
+      "enum": ["stands", "reversed"]
+    },
+    "declared_interest": {
+      "$comment": "A FLAG, never a name (MOD-12): true when a moderator declared a conflict. A string here would be the one place a conflict could be described in free text, in the public log, for ever.",
+      "type": "boolean"
+    },
+    "publish_after": {
+      "$comment": "§0.7: RFC 3339 UTC, whole seconds, `Z`. The same moment the queue entry carries (BOT-33; B.4).",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "run": {
+      "$comment": "§0.7's `run_id`, or `run_id/run_attempt` — the same grammar BOT-37's `Run:` trailer takes, and for the same reason: correlation must outlive a 14-day artifact, and a bare id is the only form of it that cannot carry a login. NOT the run URL, whose owner segment is one.",
+      "type": "string",
+      "pattern": "^[0-9]{1,20}(?:/[0-9]{1,5})?$"
+    },
+    "advisory": {
+      "$comment": "tools/lib/revocations.mjs's ADVISORY_ID.",
+      "type": "string",
+      "pattern": "^ASTRA-[0-9]{4}-[0-9]{4,}$"
+    }
+  }
+}

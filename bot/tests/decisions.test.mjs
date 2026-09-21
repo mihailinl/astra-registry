@@ -19,16 +19,25 @@
 // So the assertions are about AGREEMENT — between the two places `main`
 // already spells BOT-35's `migration:` key, between this writer and the
 // callers that refuse against it by name, between a tuple and the id it gives
-// twice — rather than about the shapes, which a schema will catch once B-T2.1
-// writes one.
+// twice — rather than about the shapes, which `schema/decision-v1.json` now
+// catches.
 //
-// ── WHAT THIS SUITE CANNOT SEE ──────────────────────────────────────────────
+// ── THE TRIPWIRE THIS SUITE CARRIED, AND WHAT REPLACED IT ───────────────────
 //
-// `schema/decision-v1.json` (B-T2.1) is not in this checkout, so "validates
-// against the schema" is asserted by nothing here. It is not left as a
-// comment: `the schema B-T2.1 writes` below goes RED the day that file lands,
-// and names the assertion to wire. A promise would have been read once and
-// never again.
+// It used to carry a test called `the schema B-T2.1 writes` whose whole body
+// asserted that `schema/decision-v1.json` was ABSENT, with a message naming
+// the assertion to wire on the day it arrived. That was not a skip and it was
+// not a comment: B-T2.2 could not write "validates against the schema" because
+// the schema was a later task's, and guessing at DEC-7's shape here would have
+// put a second, older answer in the tree on the day B-T2.1 wrote the first.
+//
+// B-T2.1 landed the file, the test went red exactly as designed, and it has
+// been retired in the direction it asked for — not silenced. What stands in
+// its place is in `an author-action record carries exactly DEC-7's thirteen
+// members` below: the record this suite builds is validated against the real
+// schema with `tools/lib/jsonschema.mjs`'s `validate`, and two mutations of it
+// are asserted to FAIL, because an assertion that only ever sees a valid
+// document cannot tell a strict schema from an empty one.
 //
 // Detector B is the plugins service's, so the `Service-Decision:` canary below
 // asserts what this side RENDERS and nothing about what over there matches.
@@ -77,6 +86,7 @@ import {
 import { migrationKey as exportIssuesMigrationKey, resolveWriter } from "../export-issues.mjs";
 import { migrationKey as baselineMigrationKey } from "../baseline.mjs";
 import { REPO_ROOT } from "../../tools/lib/sources.mjs";
+import { validate as validateAgainstSchema } from "../../tools/lib/jsonschema.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -256,7 +266,7 @@ test("an author-action record carries exactly DEC-7's thirteen members", () => {
   const doc = read(root, out.path);
 
   assert.deepEqual(Object.keys(doc).sort(), [...AUTHOR_ACTION_MEMBERS].sort(),
-    "DEC-7's sentence is `with only these members`, and the schema B-T2.1 writes will say so too");
+    "DEC-7's sentence is `with only these members`, and schema/decision-v1.json says so too");
   assert.equal(AUTHOR_ACTION_MEMBERS.length, 13,
     `DEC-7 enumerates thirteen author-action members and this module lists ${AUTHOR_ACTION_MEMBERS.length}`);
 
@@ -272,6 +282,39 @@ test("an author-action record carries exactly DEC-7's thirteen members", () => {
   for (const member of AUTHOR_ACTION_FORBIDDEN) {
     assert.equal(member in doc, false, `DEC-7: a yank has no \`${member}\``);
   }
+
+  // ── B-T2.2's canary list, wired (this is what retired the tripwire) ───────
+  //
+  // "an author-action record … validates against `schema/decision-v1.json`".
+  // Until B-T2.1 landed that file, the assertion could not be written and this
+  // suite carried a test asserting the schema's ABSENCE instead, which went
+  // red the day it arrived and named this. The presence check stays, as the
+  // same tripwire pointing the other way: the schema is a file on disk, and a
+  // rename or a deletion would otherwise turn "validates against the schema"
+  // into "validates against nothing", silently and green.
+  const { present, file, full } = decisionSchema(REPO_ROOT);
+  assert.equal(present, true,
+    `${file} is B-T2.1's schema and it is not in this checkout. This assertion is not optional and must not be ` +
+    "made conditional: a record that validates against a file that is not there is a record nothing checked");
+  assert.equal(file, DECISION_SCHEMA_FILE);
+  const schema = JSON.parse(fs.readFileSync(full, "utf8"));
+
+  assert.deepEqual(validateAgainstSchema(schema, doc, "$"), [],
+    "the record bot/lib/decisions.mjs composes does not validate against the schema the plugins service, the " +
+    "panel and a guest read it by. Two answers to DEC-7's shape, one of which is committed to git for ever");
+
+  // AND TWO THAT MUST FAIL, because an assertion that only ever sees a valid
+  // document cannot tell a strict schema from `{}`. Both are mutations B-T2.1's
+  // own canary list names, and both are the shape a composer copied from the
+  // wrong place makes: `issue` is a member of the QUEUE ENTRY, which is the one
+  // other record that travels beside a decision, and an object in `reasons` is
+  // what a writer reaching for a code's title and remedy produces.
+  assert.notDeepEqual(validateAgainstSchema(schema, { ...doc, issue: 48 }, "$"), [],
+    "the schema accepted an `issue` member. DEC-7's sentence is `with only these members`, OD-2 ended the public " +
+    "issue channel, and a decision record carrying an issue number puts it in the public log for ever");
+  assert.notDeepEqual(validateAgainstSchema(schema, { ...doc, reasons: [{ code: "A_YANK" }] }, "$"), [],
+    "the schema accepted an object in `reasons`. Contract 0.12.0's m4 settled that it is an array of B.7 code " +
+    "strings; an object here is a place free text reaches the public log through a member that looks structured");
 });
 
 test("adding `submission_id` to an author-action record is refused", () => {
@@ -331,23 +374,13 @@ test("a yank of a listing with no ids is refused, because FLOW-79 offers it none
     /`repository_id` does not match its own grammar/);
 });
 
-test("the schema B-T2.1 writes", () => {
-  // NOT a skip, and not a comment. B-T2.2's canary list asks that an
-  // author-action record "validates against `schema/decision-v1.json`". That
-  // file is B-T2.1's and is not in this checkout, so the assertion cannot be
-  // written — and inventing the schema here would put a second, older answer
-  // to DEC-7's shape in the tree on the day B-T2.1 writes the first.
-  //
-  // This line is what makes that a decision with an end rather than a gap:
-  // the day the file lands, this goes RED and names the assertion to wire.
-  const { present, file } = decisionSchema(REPO_ROOT);
-  assert.equal(present, false,
-    `${file} is now in this checkout (B-T2.1). Wire the assertion this line stands in for: validate the record ` +
-    "`an author-action record carries exactly DEC-7's thirteen members` builds against it with " +
-    "tools/lib/jsonschema.mjs's `validate`, assert it passes, then delete this test. Until then nothing in this " +
-    "repository checks a decision record against a schema");
-  assert.equal(file, DECISION_SCHEMA_FILE);
-});
+// `the schema B-T2.1 writes` stood here. It asserted that
+// `schema/decision-v1.json` was absent and named the assertion to wire on the
+// day it appeared; B-T2.1 landed the file, this went red, and the assertion it
+// named is now in `an author-action record carries exactly DEC-7's thirteen
+// members` above, with two mutations beside it. Deleted rather than left
+// disabled, because the tripwire's own message said to delete it and a
+// commented-out test is the promise it existed to avoid.
 
 // ── BOT-37's trailers ───────────────────────────────────────────────────────
 
