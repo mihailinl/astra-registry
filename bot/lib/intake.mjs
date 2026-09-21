@@ -375,9 +375,10 @@ export function renderCommandRefused({ command, login, detail }) {
       "`GET /repos/{owner}/{repo}/collaborators/{login}/permission` on **this** repository and " +
       "require `admin` or `maintain` — the same bar `bot/lib/ownership.mjs` sets for a submitter, " +
       "asked about the registry instead of about the plugin. The comment's `author_association` " +
-      "is not a permission — `COLLABORATOR` covers `read` and `triage`, and `CONTRIBUTOR` never " +
-      "expires — so the only value of it that counts for anything here is `OWNER`, and only as a " +
-      "fallback for when GitHub declines to answer the API at all.",
+      "is not consulted at all, because it is not a permission — `COLLABORATOR` covers `read` and " +
+      "`triage`, and `CONTRIBUTOR` never expires. Its `OWNER` value was accepted until " +
+      "2026-09-20, but only when the API declined to answer; the API was then measured answering, " +
+      "and the fallback went with the silence it stood in for.",
     "",
     who ? `Nothing about the submission changed, and @${who} has not been blocked from anything ` +
       "else — a maintainer can still run the same command." : null,

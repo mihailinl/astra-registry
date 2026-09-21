@@ -30,34 +30,49 @@
 // `ownership.mjs` sets for a submitter, asked about the registry instead of
 // about the plugin's repository.
 //
-// ── the one narrowed exception: `OWNER`, when the API says nothing ──────────
+// ── the `OWNER` fallback that stood here, and the measurement that ended it ─
 //
-// The three reasons above are reasons not to trust `author_association` as a
-// *permission*. Exactly one of its values is not a permission claim at all:
-// `OWNER` is GitHub's own payload asserting that this commenter is the account
-// the repository belongs to. The commenter cannot forge it, it cannot be
-// inherited from a merged pull request the way `CONTRIBUTOR` can, and it does
-// not cover `read` or `triage` the way `COLLABORATOR` does. On a personal
-// repository it names exactly one account, and that account has `admin` by
-// construction.
+// Until 2026-09-20 this module had a fourth path. The three reasons above are
+// reasons not to trust `author_association` as a *permission*, and exactly one
+// of its values is not a permission claim at all: `OWNER` is GitHub's own
+// payload asserting that the commenter is the account the repository belongs
+// to. So `OWNER` was accepted — but only when the API declined to answer, as a
+// stand-in for a silence, never as an override of an answer.
 //
-// It is accepted **only when the API declined to answer**, which is the case it
-// exists for. The triage job holds a `GITHUB_TOKEN` with `contents: read`;
-// GitHub documents this endpoint as requiring push access, and no permissions
-// block can widen it, because `administration` and `members` are not scopes a
-// workflow token can request at all. If that is how it behaves in a real run,
-// then without this fallback `proveMaintainer` refuses the repository's own
-// owner — every held submission becomes unclearable through the documented
-// path, silently, and no test can catch it because they all inject a stub.
+// The reasoning was sound and its premise was never checked. The triage job
+// holds a `GITHUB_TOKEN` with `contents: read`; GitHub documents this endpoint
+// as requiring push access; `administration` and `members` are not scopes a
+// workflow token can request at all. From those three facts it followed that
+// the endpoint *might* 403 for this token, and that without a fallback every
+// held submission would become unclearable through the documented path —
+// silently, and invisibly to a suite that injects a stub for `proveMaintainer`
+// wherever it matters. The comment that stood here admitted the gap in as many
+// words: **"this has not been observed in a real Actions run"**. A fallback for
+// a failure nobody had ever seen.
 //
-// **This has not been observed in a real Actions run**, and that is the honest
-// state of it: the fallback is here so the feature has a happy path either way,
-// not because the API path is known to fail. The API is still tried first and
-// is still the path that generalises to an organisation, where `OWNER` is the
-// org account and the maintainers are collaborators.
+// It has now been seen, and it does not fail. Registry issue #93, run
+// 35487527105 (2026-09-20), triage step: `collaborator-permission:
+// answered=true outcome=role is 'admin'`. The endpoint answers a workflow
+// `GITHUB_TOKEN` holding `contents: read`, about this repository, with the
+// commenter's real role. "Documented as requiring push access" describes what
+// the *caller* needs against a repository they can already see, not a scope
+// this token lacks — so the whole fallback was standing in for a silence that
+// never comes. Registry plan B-T0.4a is that measurement; B-T0.4b is this
+// deletion.
 //
-// An *answered* denial stays a denial. `OWNER` never overrides GitHub saying
-// `read`; it only fills a silence.
+// Which leaves what happens if the endpoint goes silent one day — a 403 after
+// a settings change, a 404 on a rename, a 5xx. The answer is the paragraph
+// below, and it is the answer this module already gave to every account that
+// was not the owner: a missing answer is a refusal. The remedy is a rerun, and
+// if it persists, the hand path — `bot/run-checks.mjs` and a pull request,
+// which never needed a comment to work. What is *not* a remedy is a payload
+// field: the endpoint answers, so a fallback could now only fire during a
+// genuine outage, which is exactly when this registry should be publishing
+// nothing on a maintainer's word alone.
+//
+// The probe line stays, because it is the thing that would tell us if this
+// stopped being true. `bot/triage.mjs` writes it on every command, to the log
+// as well as to the step summary.
 //
 // ── and why it fails closed ─────────────────────────────────────────────────
 //
@@ -80,29 +95,21 @@ export const LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const REPO_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 
 /**
- * The one `author_association` value that is an identity rather than a
- * permission, and therefore the only one this module will look at.
- */
-export const OWNER_ASSOCIATION = "OWNER";
-
-/**
- * @param {{repo: string, login: string, association?: string|null,
+ * @param {{repo: string, login: string,
  *          token?: string, fetchImpl?: typeof fetch}} opts
- *   `repo` is **this registry**, not the plugin's repository. `association` is
- *   `github.event.comment.author_association` from the event payload, used only
- *   as the `OWNER` fallback described at the top of this file.
+ *   `repo` is **this registry**, not the plugin's repository. There is no
+ *   `association`: no field of the event payload reaches this function any
+ *   more, which is the whole of B-T0.4b.
  * @returns {Promise<{ok: boolean, role: string|null, detail: string,
  *           answered: boolean, outcome: string}>}
  *   `answered` and `outcome` are what the collaborator-permission endpoint did,
- *   carried out of here unchanged so R0 can measure whether this token can read
- *   that endpoint at all (registry plan B-T0.4a). The `OWNER` fallback below
- *   exists only because nobody has ever seen the answer in a real run; removing
- *   it without measuring would strand every held submission if the endpoint is
- *   silent for this token.
+ *   carried out of here unchanged. They were R0's measurement (registry plan
+ *   B-T0.4a) and they stay after it, because "the endpoint answers" is a fact
+ *   with a date on it, and the line these two fields feed is the only thing
+ *   that would notice the day it stops being one.
  */
 export async function proveMaintainer(opts) {
   const { repo, login } = opts;
-  const isOwner = String(opts.association ?? "").toUpperCase() === OWNER_ASSOCIATION;
   if (!REPO_RE.test(String(repo ?? ""))) {
     return {
       ok: false,
@@ -130,27 +137,18 @@ export async function proveMaintainer(opts) {
   });
 
   if (!asked.answered) {
-    if (isOwner) {
-      return {
-        ok: true,
-        role: "owner",
-        detail:
-          `GitHub would not say what @${login} has on ${repo} (${asked.outcome}), but the event ` +
-          `payload marks the comment \`author_association: OWNER\` — @${login} is the account ` +
-          "this repository belongs to. That is an identity GitHub asserts, not a role the " +
-          "commenter claimed.",
-        answered: asked.answered,
-        outcome: asked.outcome,
-      };
-    }
     return {
       ok: false,
       role: null,
       detail:
-        `GitHub would not say what @${login} has on ${repo} (${asked.outcome}), and the comment ` +
-        "is not from the repository's owner either, so the command is refused. A command that " +
-        "decides what this registry publishes fails closed when the permission behind it cannot " +
-        "be read.",
+        `GitHub would not say what @${login} has on ${repo} (${asked.outcome}), so the command is ` +
+        "refused. A command that decides what this registry publishes fails closed when the " +
+        "permission behind it cannot be read. This endpoint answered when it was measured " +
+        "(2026-09-20), so a silence here is an outage or a settings change rather than the normal " +
+        "state of things: re-run it, and if it persists, publish through a pull request " +
+        "(`bot/run-checks.mjs`) rather than through a comment. Nothing in the event payload is " +
+        "accepted in its place — `author_association: OWNER` used to be, and was removed once the " +
+        "silence it stood in for was measured and found not to happen.",
       answered: asked.answered,
       outcome: asked.outcome,
     };

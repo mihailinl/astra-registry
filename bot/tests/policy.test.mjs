@@ -17,6 +17,7 @@
 //
 // Nothing touches the network.
 
+import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -1425,50 +1426,108 @@ await test("when GitHub will not answer, the command fails closed", async () => 
 });
 
 // The real `proveMaintainer`, against a stubbed `fetch`. Every test above
-// injects a stub for it, which is exactly why the endpoint's own behaviour has
-// never been exercised: `GET /collaborators/{login}/permission` is documented
-// as requiring push access, the triage job's `GITHUB_TOKEN` holds
+// injects a stub for it, which is exactly why the endpoint's own behaviour went
+// unexercised for so long: `GET /collaborators/{login}/permission` is
+// documented as requiring push access, the triage job's `GITHUB_TOKEN` holds
 // `contents: read`, and `administration` is not a scope a workflow token can
-// request — so a 403 there would make `/approve` refuse the repository's owner
-// on every path, silently, and no stubbed test could see it.
+// request — so from here a 403 was entirely plausible, and no stubbed test
+// could tell. It took a live run to find out. Registry issue #93, run
+// 35487527105, 2026-09-20: `collaborator-permission: answered=true outcome=role
+// is 'admin'`. B-T0.4a is that measurement, B-T0.4b is the deletion it
+// authorised, and the three tests below are what the deletion changed.
 const respond = (status, body) => async () => ({
   ok: status >= 200 && status < 300,
   status,
   json: async () => body ?? {},
 });
 
-await test("a 403 on the permission endpoint no longer refuses the repository's owner", async () => {
+await test("a silent permission endpoint refuses everybody, the repository's owner included", async () => {
+  // What the `OWNER` fallback used to do here: return `ok: true, role: "owner"`
+  // for a 403 plus `author_association: OWNER`. It was a happy path for a
+  // silence that the measurement says does not happen — so what is left is the
+  // fail-closed refusal this module always gave everybody else, and the module
+  // no longer has a second way to say yes.
   const denied = await proveMaintainer({
     repo: REGISTRY_REPO, login: "the-maintainer", fetchImpl: respond(403),
   });
-  assertEqual(denied.ok, false, "no association: still fails closed, which is the default");
-
-  const owner = await proveMaintainer({
-    repo: REGISTRY_REPO, login: "the-maintainer", association: "OWNER", fetchImpl: respond(403),
-  });
-  assertEqual(owner.ok, true, owner.detail);
-  assertEqual(owner.role, "owner", "");
-  assert(owner.detail.includes("author_association"), owner.detail);
+  assertEqual(denied.ok, false, denied.detail);
+  assertEqual(denied.role, null, "and no role is invented out of a silence");
+  assertEqual(denied.answered, false, "the probe still reports which it was");
+  assert(denied.detail.includes("would not say"), denied.detail);
+  // A refusal, not a crash and not a bare `false`: whoever reads it has to be
+  // able to tell an unreadable endpoint from a `read` role, because the two
+  // have different fixes.
+  assert(/re-run|pull request/i.test(denied.detail),
+    `a refusal on an outage has to name the way round it: ${denied.detail}`);
 });
 
-await test("no association below OWNER fills the silence", async () => {
-  for (const association of ["COLLABORATOR", "MEMBER", "CONTRIBUTOR", "NONE", "", null]) {
-    const out = await proveMaintainer({
-      repo: REGISTRY_REPO, login: "a-stranger", association, fetchImpl: respond(403),
+await test("no `author_association` value is a permission any more, `OWNER` included", async () => {
+  // The floor matters: `association` is no longer a parameter, so a loop that
+  // passed nothing would pass vacuously. Every value the payload can carry is
+  // enumerated, `OWNER` first, and each is handed in the way the caller used
+  // to hand it in.
+  const values = ["OWNER", "COLLABORATOR", "MEMBER", "CONTRIBUTOR", "NONE", "", null];
+  assert(values.includes("OWNER") && values.length === 7,
+    "the enumeration is what this test is; shrinking it silently is the failure mode");
+  for (const association of values) {
+    const silent = await proveMaintainer({
+      repo: REGISTRY_REPO, login: "the-maintainer", association, fetchImpl: respond(403),
     });
-    assertEqual(out.ok, false, `${association} must not stand in for a permission`);
+    assertEqual(silent.ok, false, `${association} must not stand in for a permission`);
+    assertEqual(silent.role, null, `${association}`);
+
+    // And it does not subtract either: an answered `admin` is still an
+    // approval, whatever the payload said about the commenter.
+    const answered = await proveMaintainer({
+      repo: REGISTRY_REPO, login: "the-maintainer", association,
+      fetchImpl: respond(200, { role_name: "admin" }),
+    });
+    assertEqual(answered.ok, true, `${association}: ${answered.detail}`);
+    assertEqual(answered.role, "admin", `${association}`);
   }
 });
 
-await test("OWNER never overrides an answer GitHub did give", async () => {
-  // The narrowing that keeps this from being a reversal of the module's rule:
-  // it fills a silence, it does not outrank a `read`.
+await test("an answered `read` is still a denial, which is what it always was", async () => {
   const out = await proveMaintainer({
-    repo: REGISTRY_REPO, login: "a-stranger", association: "OWNER",
-    fetchImpl: respond(200, { role_name: "read" }),
+    repo: REGISTRY_REPO, login: "a-stranger", fetchImpl: respond(200, { role_name: "read" }),
   });
   assertEqual(out.ok, false, out.detail);
   assertEqual(out.role, "read", "");
+});
+
+await test("no workflow reads `author_association`, and the scan has a floor", () => {
+  // B-T0.4b's second canary. The plan puts it in `workflows.test.mjs`; that
+  // file belongs to another lane this wave, so it lives here until it can be
+  // moved, and moving it is a cut-and-paste — it imports nothing from this
+  // suite.
+  //
+  // The coupling it guards: `bot/lib/maintainer.mjs` no longer accepts an
+  // `association`, and `bot/triage.mjs` no longer parses
+  // `--commenter-association`. A workflow that still exported
+  // `github.event.comment.author_association` would either be dead YAML or,
+  // worse, the first half of somebody reintroducing the fallback.
+  const dir = path.join(REPO_ROOT, ".github", "workflows");
+  const files = fs.readdirSync(dir).filter((n) => n.endsWith(".yml") || n.endsWith(".yaml"));
+
+  // The floor, written before the assertion and measured against what git
+  // actually tracks — a `readdirSync` of a renamed directory returns [] and an
+  // empty scan reads exactly like a pass.
+  const tracked = execFileSync("git", ["ls-files", ".github/workflows"], { cwd: REPO_ROOT, encoding: "utf8" })
+    .split("\n").filter((l) => /\.ya?ml$/.test(l));
+  assertEqual(files.length, tracked.length,
+    `scanned ${files.length} workflow file(s), git tracks ${tracked.length} — the scan is reading the wrong place`);
+  assert(files.length >= 8, `only ${files.length} workflow(s) found; this scan has stopped covering the estate`);
+
+  for (const name of files) {
+    const body = fs.readFileSync(path.join(dir, name), "utf8");
+    for (const [i, line] of body.split("\n").entries()) {
+      if (line.trim().startsWith("#")) continue;
+      assert(!line.includes("author_association"),
+        `${name}:${i + 1} reads author_association, which B-T0.4b removed from this pipeline:\n  ${line.trim()}`);
+      assert(!line.includes("--commenter-association"),
+        `${name}:${i + 1} passes --commenter-association, an argument bot/triage.mjs no longer accepts:\n  ${line.trim()}`);
+    }
+  }
 });
 
 /** A fingerprint of the right shape. Whether it names these bytes is decided later. */

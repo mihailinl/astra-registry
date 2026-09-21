@@ -125,7 +125,7 @@ import { readQueue } from "./lib/policy.mjs";
 function parseArgs(argv) {
   const opts = {
     event: null, action: null, labels: "", issueBody: null, commentBody: null,
-    issueTitle: null, issueAuthor: null, commenter: null, commenterAssociation: null,
+    issueTitle: null, issueAuthor: null, commenter: null,
     registry: null,
     root: REPO_ROOT, modeFile: null, targetsFile: null, replyFile: null, now: null,
   };
@@ -141,11 +141,14 @@ function parseArgs(argv) {
     else if (a === "--comment-body") opts.commentBody = argv[++i];
     else if (a === "--issue-author") opts.issueAuthor = String(argv[++i] ?? "").replace(/^@/, "");
     else if (a === "--commenter") opts.commenter = String(argv[++i] ?? "").replace(/^@/, "");
-    // `github.event.comment.author_association`, straight out of the payload.
-    // `bot/lib/maintainer.mjs` reads exactly one of its values, `OWNER`, and
-    // only when the permission API declined to answer — see the block at the
-    // top of that file for why the other values are not permissions.
-    else if (a === "--commenter-association") opts.commenterAssociation = argv[++i] ?? null;
+    // There is no `--commenter-association`, and its absence is load-bearing
+    // rather than an omission: no field of the event payload is a permission
+    // here. `author_association: OWNER` used to be read as one when the
+    // collaborator-permission endpoint declined to answer; run 35487527105
+    // showed that it answers, and B-T0.4b deleted the fallback and this
+    // argument with it. An `ingest.yml` that still passed the flag would now
+    // fail loudly on `unknown argument`, which is the right way for the two
+    // halves of this pair to be found disagreeing.
     // THIS registry, `owner/name`. The repository a maintainer's permission is
     // checked against, and the one whose issue template gets linked.
     else if (a === "--repository") opts.registry = argv[++i];
@@ -333,15 +336,14 @@ async function decideCommand({ command, opts, registry, labelled, issueTitle, fo
   const proof = await prove({
     repo: registry,
     login: commenter,
-    association: opts.commenterAssociation,
   });
-  // R0's measurement (registry plan B-T0.4a). The `OWNER` fallback in
-  // `maintainer.mjs` exists because nobody has ever seen whether this token can
-  // read the collaborator-permission endpoint in a real Actions run, and it
-  // cannot be removed on a guess: if the endpoint is silent for this token,
-  // removing it strands every held submission with no way to clear it. So every
-  // run records what the endpoint did — and **no login**, because the summary is
-  // public and the question is about the token, not about a person.
+  // R0's measurement (registry plan B-T0.4a), which has been taken: run
+  // 35487527105 printed `answered=true outcome=role is 'admin'`, so B-T0.4b
+  // deleted the `OWNER` fallback that stood in for a silence nobody had ever
+  // observed. The line keeps being written, because a measurement is a fact
+  // about one day and this is the only thing that would notice the endpoint
+  // going quiet again. **No login** on it: the summary and the log are public,
+  // and the question is about the token, not about a person.
   recordPermissionProbe(proof);
   if (!proof.ok) {
     return {
