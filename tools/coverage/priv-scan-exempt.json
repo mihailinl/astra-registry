@@ -1,5 +1,12 @@
 {
   "$comment": "Findings of tools/priv-scan.mjs that a person has looked at and cleared. History is not rewritten to clear a canary, so this is the only way a commit that has already reached `main` stops being reported. AN EXEMPTION THAT MATCHES NOTHING FAILS: the scan goes red naming any entry here that its walk does not reproduce, which is what stops this file accumulating entries for findings that no longer exist and stops it being used to pre-authorise a shape nobody has seen. Each entry is {commit, where, code, reason}; `commit` may be a prefix of at least seven hex characters, `where` is a repository path or the literal `commit-message`, and `code` is the finding's code exactly as the scan printed it.",
   "$comment_empty": "Empty on 2026-09-19, and that is a measurement rather than a default: tools/priv-scan.mjs was run over all 213 commits after this repository's root commit and over the 37 composed documents in them, and found nothing. The two shapes that would otherwise have been in here are exempted by rule instead of by entry, because both recur: git's own authorship trailers (51 of the 53 addresses in the last sixty commit messages are `Co-Authored-By: … <noreply@anthropic.com>`) and RFC 2606 reserved TLDs (`1@evil.example`, a test vector in a commit body about a host parser). An exemption written per-commit for something that happens on every commit is a file that grows for ever and is read by nobody.",
-  "exemptions": []
+  "exemptions": [
+    {
+      "commit": "285d5e0",
+      "where": "commit-message",
+      "code": "E_PRIV_HANDLE",
+      "reason": "A fixture identity inside a quoted watched-red transcript. The commit records what B-T0.2's canary printed when the guard was broken on purpose, and the test's stand-in maintainer is called `@the-maintainer`; it names no person and exists only in bot/tests/policy.test.mjs. Exempted by ENTRY and not by rule, deliberately: unlike RFC 2606's reserved names, which are exempted by rule because the address IS the evidence in an e-mail finding, a handle here is decoration inside a quoted block and the transcript reads the same with it elided. So the convention this entry records is to elide identity-shaped values when quoting a transcript, and a second and third occurrence would be the signal that the convention is not holding and the shape wants a rule instead."
+    }
+  ]
 }
