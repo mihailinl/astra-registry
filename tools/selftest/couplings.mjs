@@ -15,6 +15,7 @@ import {
   checkEveryCapDeclaresItsAuthorSide,
   checkLocaleCorpus,
   checkLocaleCorpusCoverage,
+  checkLocaleDigestVectors,
   checkLocaleVocabulary,
   checkMirroredListingLimits,
 } from "../validate.mjs";
@@ -457,5 +458,122 @@ export async function run() {
     }
     assert(stale.some((f) => f.message.includes("E_LOCALE_GONE_TOMORROW")),
       "an exemption outliving its rule is a reason nobody can check, and it makes the debt look serviced");
+  });
+
+  await test("C19 — the lock digest is held to a table neither implementation wrote", () => {
+    // **The gap this closes.** `astra-plugin locale sync` WRITES the digests in
+    // a bundle's `locales.lock.json`; `englishDigest` READS them. One hash, one
+    // input, two languages, two repositories — and nothing compared them. They
+    // were run against the same English once and produced the same values,
+    // which is agreement by luck: no comparison existed, so none could have
+    // noticed the day it stopped holding.
+    //
+    // `checkLocaleCorpus` above cannot reach it. Staleness is a NOTE in the CLI
+    // and a WARNING here, and both readers of that corpus compare ERROR id sets
+    // and nothing else — so a case whose lock is one hash behind proves both
+    // sides stayed QUIET, never that both computed the SAME NUMBER.
+    //
+    // Every digest below came from coreutils `sha256sum`, pasted as a literal,
+    // for the reason the table itself exists: a fixture this module derived
+    // with `englishDigest` would make the test agree with the thing under test.
+
+    // [name, english, the first 12 hex of sha256 of those exact UTF-8 bytes]
+    const TABLE = [
+      ["lf", "one\ntwo", "21066d108d53"],
+      ["crlf", "one\r\ntwo", "29a776bb35ef"],
+      ["case-upper", "Chess", "c1aade825397"],
+      ["case-lower", "chess", "ac739dccd121"],
+      ["nfc-e-acute", "café", "850f7dc43910"],
+      ["nfd-e-acute", "café", "81ef060bcd98"],
+      ["nfc-short-i", "Краткий", "d5f1c098dec2"],
+      ["nfd-short-i", "Краткий", "3c9721e00641"],
+      ["empty", "", "e3b0c44298fc"],
+      ["single-space", " ", "36a9e7f1c95b"],
+      ["f0", "filler 0", "899621a74490"],
+      ["f1", "filler 1", "eca4954b2863"],
+      ["f2", "filler 2", "6baf98ec1db5"],
+      ["f3", "filler 3", "074439fb0cce"],
+      ["f4", "filler 4", "0e1b260e0ae4"],
+      ["f5", "filler 5", "e467bd8624a8"],
+      ["f6", "filler 6", "a64ebdf935d0"],
+      ["f7", "filler 7", "d91b95b61265"],
+      ["f8", "filler 8", "a599740cf34a"],
+      ["f9", "filler 9", "dc0094026d1f"],
+      ["f10", "filler 10", "c31c7975f1cb"],
+      ["f11", "filler 11", "49e3316bad8f"],
+    ];
+    const REL = "testdata/locales/digest-vectors.json";
+    const tableOf = (rows) => JSON.stringify({
+      schema: "astra.locale.digest-vectors/1",
+      vectors: rows.map(([name, english, digest]) => ({ name, english, digest, catches: "a selftest fixture" })),
+    });
+    const runOn = (dirName, rows) =>
+      withFakeCheckout(dirName, { [REL]: tableOf(rows) }, (ctx) => checkLocaleDigestVectors(ctx));
+
+    // The negative control FIRST. A table `englishDigest` agrees with must
+    // produce no errors at all, or every assertion below passes for the wrong
+    // reason — and the coreutils literals above are, in this one line, also the
+    // first thing that has ever compared the two implementations of C19 inside
+    // this repository's own suite.
+    const clean = runOn("fake-ap-digest-clean", TABLE);
+    const cleanErrors = clean.filter((f) => f.level === "error");
+    assertEqual(cleanErrors.length, 0,
+      "englishDigest disagrees with coreutils on a table this repository ships in its own test:\n" +
+      cleanErrors.map((f) => `  ${f.message}`).join("\n"));
+    assert(clean.some((f) => f.level === "note" && /22 lock digest vector/.test(f.message)),
+      `the check said nothing about what it read: ${JSON.stringify(clean)}`);
+
+    // ── the mutation, watched: one number moved ──
+    const oneWrong = TABLE.map(([n, e, d]) => (n === "f3" ? [n, e, "074439fb0ccf"] : [n, e, d]));
+    const drifted = runOn("fake-ap-digest-drift", oneWrong);
+    const named = drifted.filter((f) => f.level === "error" && /\bf3\b/.test(f.message));
+    assertEqual(named.length, 1,
+      `a digest that moved by one character was not reported exactly once: ${JSON.stringify(drifted.map((f) => f.message))}`);
+    assert(named[0].hint.includes("W_LOCALE_STALE"),
+      "the hint has to say what a disagreement COSTS — every card falling back to English while " +
+      "`astra-plugin check` reports the lock fresh — because from an author's side it reads as nothing happening");
+
+    // ── the floor, before any comparison ──
+    //
+    // A table that stopped parsing, or a checkout that fetched a stump of one,
+    // must fail as itself. An eight-row table compared row by row passes eight
+    // times and says nothing about the twenty-four rows that went missing.
+    const short = runOn("fake-ap-digest-short", TABLE.slice(0, 8));
+    const floor = short.find((f) => f.level === "error" && f.message.includes("floor"));
+    assert(floor, `an eight-vector table passed for a full one: ${JSON.stringify(short)}`);
+    assert(floor.hint.includes("this SCAN is what broke"),
+      "the floor's message has to separate `vectors were deleted` from `this reader is looking at the wrong file`");
+
+    // ── the collision a per-vector comparison CANNOT see ──
+    //
+    // The subtlest failure here, and the reason the pairs are asserted at all.
+    // Give `crlf` the same English as `lf` and the digest that English really
+    // has: every per-vector comparison passes, the table looks healthy, and the
+    // vector that was supposed to catch a newline normalisation has quietly
+    // stopped being able to. Nothing else in this file would notice.
+    const collided = TABLE.map(([n, e, d]) => (n === "crlf" ? [n, "one\ntwo", "21066d108d53"] : [n, e, d]));
+    const pairFound = runOn("fake-ap-digest-pair", collided);
+    assertEqual(pairFound.filter((f) => f.level === "error" && /sha256sum says/.test(f.message)).length, 0,
+      "the collided table is per-vector CORRECT on purpose; if that is not true this case is testing something else");
+    assert(pairFound.some((f) => f.level === "error" && /lf \/ crlf/.test(f.message)),
+      `a pair that had already collided passed unremarked: ${JSON.stringify(pairFound.map((f) => f.message))}`);
+
+    // ── a half-missing pair is not a passing pair ──
+    const halfGone = runOn("fake-ap-digest-halfpair", TABLE.filter(([n]) => n !== "nfd-short-i"));
+    assert(halfGone.some((f) => f.level === "error" && /nfc-short-i \/ nfd-short-i/.test(f.message)),
+      `a pair with a deleted half asserted nothing and looked exactly like one that passed: ${JSON.stringify(halfGone.map((f) => f.message))}`);
+
+    // ── no checkout: a NOTE, never silence, and never a pass ──
+    //
+    // `build-index.yml` turns every `NOT verified` line into an `::error::` and
+    // `exit 1`, so the honest answer stops the catalogue instead of reading as
+    // a green tick in a wall of them. That only works if the answer is printed.
+    const absent = withFakeCheckout("fake-ap-digest-absent",
+      { "testdata/locales/pass/only/plugin.toml": "[plugin]\nname = \"x\"\ndescription = \"x\"\n" },
+      (ctx) => checkLocaleDigestVectors(ctx));
+    assert(absent.some((f) => f.level === "note" && f.message.includes("NOT verified")),
+      `an absent digest table was passed over in silence: ${JSON.stringify(absent)}`);
+    assertEqual(absent.filter((f) => f.level === "error").length, 0,
+      "a missing checkout is a check that did not run, not a check that failed; the workflow is what makes it fatal");
   });
 }
