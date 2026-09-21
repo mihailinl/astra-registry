@@ -51,6 +51,7 @@ import {
   checkWorkAnswer,
   compileAll,
   composeCommit,
+  composeTrailers,
   composeVerdict,
   listSummary,
   readShadow,
@@ -517,6 +518,43 @@ test("an `A_YANK` compiles to one log entry, one record per version, and a trail
   assert.match(commit.message, /^Service-Decision: 0192f3a4-5b6c-7d8e-9f01-234567890abc$/m);
   assert.match(commit.message, /^Decided-At: 2026-09-20T12:00:00Z$/m);
   assert.match(commit.message, /^Run: 35502265394$/m);
+});
+
+test("the per-decision trailers are held to `bot/lib/decisions.mjs`'s grammar, not to a copy", () => {
+  // `Decided-At:` is BOT-37's fifth trailer and `TRAILER_GRAMMAR` is where its
+  // §0.7 timestamp lives. This file used to carry its own `TIMESTAMP_RE` — the
+  // consequence of rendering a trailer the declared list did not have — and
+  // that copy was the only thing between a free-text trailer and a value PRIV-2
+  // refuses.
+  //
+  // Asserted on the MESSAGE and not merely on the throw, and that is what makes
+  // this a canary rather than a restatement: "A trailer is correlation and
+  // never authority (BOT-37)" is written once in this repository, in
+  // `trailerLine`. Reinstate a local pattern here and the refusal still fires,
+  // with a different sentence, and this goes red.
+  const ok = composeTrailers({
+    run: "35502265394/2",
+    decisions: [{ service_decision_id: SDI, decision_id: "a".repeat(32), decided_at: "2026-09-20T12:00:00Z" }],
+  });
+  assert.deepEqual(ok, [
+    "Run: 35502265394/2",
+    `Decision: ${"a".repeat(32)}`,
+    `Service-Decision: ${SDI}`,
+    "Decided-At: 2026-09-20T12:00:00Z",
+  ]);
+
+  for (const bad of ["amoderator", "mod-7", "2026-09-20T12:00:00.700Z", "2026-09-20"]) {
+    assert.throws(
+      () => composeTrailers({ run: "35502265394", decisions: [{ service_decision_id: SDI, decided_at: bad }] }),
+      /A trailer is correlation and never authority \(BOT-37\)/,
+      `\`Decided-At: ${bad}\` was rendered, or refused by a second copy of the grammar`,
+    );
+  }
+  assert.throws(
+    () => composeTrailers({ run: "mihailinl", decisions: [] }),
+    /A trailer is correlation and never authority \(BOT-37\)/,
+    "`Run:` goes through the same one grammar",
+  );
 });
 
 test("two same-day delists of one plugin take MOD-47's `-2`", () => {

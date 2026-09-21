@@ -93,6 +93,7 @@ import {
   decisionCommitMessage,
   recordsOnMain,
   submissionKey,
+  trailerLine,
   writeDecisionRecord,
 } from "./lib/decisions.mjs";
 import {
@@ -571,38 +572,30 @@ export function terminalSubmissionRecord(entry, { root = REPO_ROOT, existing = n
 /**
  * The commit's trailer block.
  *
- * **`Decided-At:` is not one of BOT-37's four**, and that is a real seam
- * rather than an oversight here. `bot/lib/decisions.mjs` pins `TRAILERS` to
- * `Run`, `Submission`, `Decision`, `Service-Decision` and its `privacyFindings`
- * refuses any other name with `E_PRIV_UNDECLARED_TRAILER`; the plan asks for a
- * `Decided-At:` beside each `Service-Decision:`, and `bot/lib/compile-decision.mjs`
- * already returns one. So `renderTrailers` is used for the four it owns — one
- * implementation, one grammar, no second copy — and `Decided-At:` is rendered
- * here against §0.7's timestamp, which is narrower than any shape PRIV-2 scans
- * for and so cannot carry a login, an address or a subject id. Raised in the
- * report: either BOT-37 gains a fifth trailer or this stays M-T3.4's.
+ * **`Decided-At:` is BOT-37's fifth trailer**, and the grammar that holds it to
+ * §0.7's timestamp is `bot/lib/decisions.mjs`'s, reached through `trailerLine`.
+ * That import is the point of this paragraph. Until the trailer was declared,
+ * this file carried a `TIMESTAMP_RE` of its own and rendered `Decided-At:`
+ * AFTER `decisionCommitMessage` had composed and scanned the four it knew — so
+ * the one trailer added after the privacy scanner was written was the one
+ * trailer the privacy scanner never saw, and the check that should have said so
+ * (`privacyFindings`'s `E_PRIV_UNDECLARED_TRAILER`) was never handed the name.
+ * A second copy of a grammar is only ever as good as the day it was copied, and
+ * this one was the sole thing standing between a free-text trailer and a value
+ * PRIV-2 refuses.
+ *
+ * `renderTrailers` still cannot do this job: it renders one of each trailer, and
+ * BOT-73's single commit carries a `Decision:`, a `Service-Decision:` and a
+ * `Decided-At:` per decision. What moved is the grammar, not the loop.
  */
-const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
-
 export function composeTrailers({ run, decisions = [] }) {
   const lines = [];
   if (!run) throw new Error("BOT-37: every bot commit carries a `Run:` trailer");
-  if (!/^[0-9]{1,20}(?:\/[0-9]{1,5})?$/.test(String(run))) {
-    throw new Error(`\`Run: ${run}\` is not §0.7's run_id, or run_id/run_attempt`);
-  }
-  lines.push(`Run: ${run}`);
+  lines.push(trailerLine("Run", run));
   for (const d of decisions) {
-    if (d.decision_id) lines.push(`Decision: ${d.decision_id}`);
-    lines.push(`Service-Decision: ${d.service_decision_id}`);
-    if (d.decided_at !== undefined) {
-      if (!TIMESTAMP_RE.test(String(d.decided_at))) {
-        throw new Error(
-          `\`Decided-At: ${d.decided_at}\` is not §0.7's RFC 3339 UTC with whole seconds. The grammar is the only ` +
-          "thing keeping a free-text trailer free of a value PRIV-2 refuses",
-        );
-      }
-      lines.push(`Decided-At: ${d.decided_at}`);
-    }
+    if (d.decision_id) lines.push(trailerLine("Decision", d.decision_id));
+    lines.push(trailerLine("Service-Decision", d.service_decision_id));
+    if (d.decided_at !== undefined) lines.push(trailerLine("Decided-At", d.decided_at));
   }
   return lines;
 }
@@ -654,8 +647,9 @@ export function composeCommit({ compiled, held = [], submissions = [], run, subj
     body: [...paths].sort().map((p) => `- ${p}`).join("\n"),
     run,
   });
-  // `decisionCommitMessage` renders only BOT-37's four; the per-decision pairs
-  // are appended here, after its PRIV-2 scan of the subject and body.
+  // `decisionCommitMessage` renders one of each of BOT-37's five; the
+  // per-decision triples are appended here, after its PRIV-2 scan of the
+  // subject and body, and through the same `trailerLine` grammar.
   const extra = composeTrailers({ run, decisions }).slice(1);
   return {
     message: extra.length ? `${message.trimEnd()}\n${extra.join("\n")}\n` : message,
