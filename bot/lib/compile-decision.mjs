@@ -706,6 +706,17 @@ export function compileDecision(entry, { root = REPO_ROOT, overBound = false } =
     }
   }
 
+  // ── M_APPEAL is about a DECISION, not about a listing ────────────────────
+  //
+  // Checked before `target_not_in_registry`, and the case is not an edge. An
+  // appeal of an `M_REJECT` is an appeal of a REFUSAL: the submission never
+  // became a listing, so `plugins/<id>/` does not exist and cannot, and
+  // refusing it here would mean an appeal of a rejection could never be logged
+  // at all — while MOD-33 requires the log entry for every decided appeal and
+  // FLOW-18 turns a reversed one into the estate's only Recheck. Nothing in
+  // this branch reads the tree for the listing, so there is nothing to derive.
+  if (code === "M_APPEAL") return compileAppeal(root, d, { date, reason });
+
   // ── target_not_in_registry ───────────────────────────────────────────────
   const listing = readListing(root, d.plugin_id);
   if (listing === null) {
@@ -756,7 +767,6 @@ export function compileDecision(entry, { root = REPO_ROOT, overBound = false } =
     case "yank": return compileYank(root, d, listing, { decidedAt, date, reason });
     case "delist": return compileDelist(root, d, listing, { date, reason });
     case "advisory": return compileAdvisory(root, d, listing, { date, reason });
-    case "appeal": return compileAppeal(root, d, { date, reason });
     default:
       // `reversal` with no hold cannot happen: `holdKindFor` returns "reversal"
       // for both reversal codes unconditionally. Said out loud rather than

@@ -343,6 +343,21 @@ test("M_APPEAL logs an appeal; `reversed` adds FLOW-18's Recheck and names the r
     "amendment and not a choice this file makes");
 });
 
+test("an appeal of an M_REJECT is logged even though its listing does not exist", () => {
+  // The submission was REFUSED, so `plugins/<id>/` never came into being. An
+  // appeal is about a decision; refusing it `target_not_in_registry` would mean
+  // an appeal of a rejection could never be logged, while MOD-33 requires the
+  // entry for every decided appeal and FLOW-18 turns a reversed one into the
+  // estate's only Recheck.
+  const root = estate();
+  const r = compileDecision(entry({
+    code: "M_APPEAL", plugin_id: "never-listed", appeal_of: SDI2, outcome: "reversed", moderator: "knice",
+  }), { root });
+  assert.equal(r.outcome, "compiled", `an appeal of a rejection was refused ${r.refusal}`);
+  assert.equal(r.log[0].doc.plugin, "never-listed");
+  assert.equal(r.recheck?.plugin_id, "never-listed");
+});
+
 test("M_RELIST with nothing against it is held `reversal`, not compiled", () => {
   const root = estate({ extra: { "plugins/widgets/plugin.json": plugin("widgets", { unlisted: true }) } });
   const r = compileDecision(entry({ code: "M_RELIST", category: "error", moderator: "knice" }), { root });
