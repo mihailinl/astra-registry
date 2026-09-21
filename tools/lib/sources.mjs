@@ -183,7 +183,199 @@ export function loadSchemas(root = REPO_ROOT) {
     plugin: readJson(path.join(root, "schema", "plugin-v1.json")),
     version: readJson(path.join(root, "schema", "version-v1.json")),
     publisher: readJson(path.join(root, "schema", "publisher-v1.json")),
+    // B-T2.1's three. They are loaded here, beside the four this module has
+    // always loaded, for the reason the comment at tools/validate.mjs's `ctx`
+    // gives: schemas come from THIS repository and never from the tree under
+    // test, so `--registry-dir` cannot supply the rules it is judged by.
+    decision: readJson(path.join(root, "schema", "decision-v1.json")),
+    identity: readJson(path.join(root, "schema", "identity-v1.json")),
+    queue: readJson(path.join(root, "schema", "queue-v1.json")),
   };
+}
+
+// ── B.4's other records: the ones nothing in this repository used to read ────
+//
+// Four paths, and until B-T2.1 this module could not name one of them. That is
+// the defect being repaired, and it is worth stating in the form it actually
+// took rather than as "support was added":
+//
+// `loadSources` walks `plugins/<id>/` for `plugin.json` and `versions/*.json`
+// and IGNORES everything else in that directory. So a hand-committed
+// `plugins/<id>/identity.json` — the file that decides, through ID-41 and
+// TRUST-23, whether a listing's next release is accepted at all — was a file
+// this repository's own validator passed over in silence. It was not refused
+// and it was not checked; it was invisible. The same held for the decision log
+// and for the alert records: `tools/priv-scan.mjs` could CLASSIFY all three by
+// path (its `COMPOSED` table has had them for a while), which meant their
+// contents were scanned for personal data, while nothing anywhere asked
+// whether they were the shape they claimed to be.
+//
+// An invisible file is worse than a refused one in exactly the way row 10 of
+// §1.6 describes: a hand-committed identity record and a `source.repo` take
+// over a listing, with genuine bot results after it, and the only thing that
+// notices is a detector on the service's side, at a party boundary, later.
+//
+// THE NAME IS PART OF THE RECORD for three of the four. A decision record's
+// basename IS its `decision_id`, an alert record's IS its fingerprint, and a
+// queue entry's is `<id>@<version>`; a file whose name does not match its
+// contents is a record two readers disagree about while both parse it fine.
+// So the grammars below are checked against the name, and tools/validate.mjs
+// compares the name with the document where the document repeats it.
+
+/** `plugins/<id>/identity.json` (contract B.4; ID-15; DEC-17). */
+export const IDENTITY_BASENAME = "identity.json";
+export const IDENTITY_SCHEMA = "astra.registry.identity/1";
+
+/** `log/decisions/<YYYY>/<MM>/<decision_id>.json` (DEC-7). */
+export const DECISIONS_DIR = "log/decisions";
+export const DECISION_SCHEMA = "astra.registry.decision/1";
+
+/**
+ * `state/alerts/<fingerprint>.json` (contract TRUST-14; registry plan RC-R1-4).
+ *
+ * ACCEPTED HERE, AND NOT SCHEMA-CHECKED, and the difference is deliberate.
+ * B-T2.1 writes three schemas and this record's is not among them — it is
+ * RC-R1-4's. What this module can say today is that the path is a record
+ * location rather than a stray file, and what its name must look like; what it
+ * cannot say is the member set, and inventing one here would put a second,
+ * older answer in the tree on the day RC-R1-4 writes the first. That is the
+ * same reasoning B-T2.2 applied to this very schema, one task earlier, and it
+ * left a canary instead of a guess.
+ */
+export const ALERTS_DIR = "state/alerts";
+
+/** `state/queue/<id>@<version>.json` (BOT-33's publication queue; BOT-38). */
+export const QUEUE_DIR = "state/queue";
+export const QUEUE_SCHEMA = "astra.registry.queue/1";
+
+/** §0.7: a `decision_id` is 32 lowercase hex, and so is a decision record's name. */
+const DECISION_ID_RE = /^[0-9a-f]{32}$/;
+/** bot/lib/policy/release.mjs's FINGERPRINT_CHARS: 16 lowercase hex. */
+const FINGERPRINT_RE = /^[0-9a-f]{16}$/;
+const YEAR_RE = /^[0-9]{4}$/;
+const MONTH_RE = /^(?:0[1-9]|1[0-2])$/;
+
+function jsonFilesIn(dir) {
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir, { withFileTypes: true })
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+function readRecord(rel, full, out, errors) {
+  try {
+    out.push({ file: rel, doc: readJson(full) });
+  } catch (e) {
+    errors.push({ file: rel, message: e.message });
+  }
+}
+
+/**
+ * Every B.4 record outside `plugins/<id>/plugin.json` and `versions/*.json`.
+ *
+ * Structure and NAME only — no schema, no policy — which is this module's whole
+ * contract. `errors` carries a file that could not be read or whose name is not
+ * the grammar its directory fixes; the documents themselves go to
+ * tools/validate.mjs, which owns the rules.
+ *
+ * ABSENCE IS THE ORDINARY STATE for all four directories and is NOT an error:
+ * no listing is bound yet, no decision has been written yet, R3 has not
+ * happened. An empty result and a missing directory are the same answer on
+ * purpose.
+ *
+ * @param {{plugins?: {dir: string}[]}} sources the result of `loadSources`, for
+ *   the plugin directories to look for an identity record in
+ * @returns {{identities: {file: string, doc: object}[],
+ *            decisions: {file: string, doc: object}[],
+ *            alerts: {file: string, doc: object}[],
+ *            queue: {file: string, doc: object}[],
+ *            errors: {file: string, message: string}[]}}
+ */
+export function loadRecords(root = REPO_ROOT, sources = null) {
+  const errors = [];
+  const identities = [];
+  const decisions = [];
+  const alerts = [];
+  const queue = [];
+
+  // Off the tree rather than off `sources`, when `sources` is not given: an
+  // identity record for a plugin directory that has no `plugin.json` is a
+  // record for a listing that does not exist, and reading only the directories
+  // `loadSources` returned would be the one arrangement that cannot see it.
+  const pluginDirs = sources?.plugins
+    ? sources.plugins.map((p) => p.dir)
+    : (fs.existsSync(path.join(root, "plugins"))
+      ? fs.readdirSync(path.join(root, "plugins"), { withFileTypes: true })
+        .filter((d) => d.isDirectory()).map((d) => d.name).sort()
+      : []);
+
+  for (const dir of pluginDirs) {
+    const full = path.join(root, "plugins", dir, IDENTITY_BASENAME);
+    if (!fs.existsSync(full)) continue;
+    readRecord(`plugins/${dir}/${IDENTITY_BASENAME}`, full, identities, errors);
+  }
+
+  const decisionsRoot = path.join(root, ...DECISIONS_DIR.split("/"));
+  for (const year of jsonFilesIn(decisionsRoot)) {
+    const yrel = `${DECISIONS_DIR}/${year.name}`;
+    if (!year.isDirectory() || !YEAR_RE.test(year.name)) {
+      errors.push({ file: yrel, message: "is not a four-digit year directory; DEC-7's log is <YYYY>/<MM>/<decision_id>.json" });
+      continue;
+    }
+    for (const month of jsonFilesIn(path.join(decisionsRoot, year.name))) {
+      const mrel = `${yrel}/${month.name}`;
+      if (!month.isDirectory() || !MONTH_RE.test(month.name)) {
+        errors.push({ file: mrel, message: "is not a two-digit month directory (01–12)" });
+        continue;
+      }
+      for (const f of jsonFilesIn(path.join(decisionsRoot, year.name, month.name))) {
+        const rel = `${mrel}/${f.name}`;
+        if (!f.isFile() || !f.name.endsWith(".json")) {
+          errors.push({ file: rel, message: "is not a .json file, and DEC-7's log holds records and nothing else" });
+          continue;
+        }
+        if (!DECISION_ID_RE.test(f.name.slice(0, -".json".length))) {
+          errors.push({
+            file: rel,
+            message: "is not named for a `decision_id` (§0.7: 32 lowercase hex). The name IS the id — " +
+              "bot/lib/decisions.mjs's dedupe reads the basename, so a record under any other name is one " +
+              "BOT-36 cannot find and will write a second copy of",
+          });
+          continue;
+        }
+        readRecord(rel, path.join(decisionsRoot, year.name, month.name, f.name), decisions, errors);
+      }
+    }
+  }
+
+  const alertsRoot = path.join(root, ...ALERTS_DIR.split("/"));
+  for (const f of jsonFilesIn(alertsRoot)) {
+    const rel = `${ALERTS_DIR}/${f.name}`;
+    if (!f.isFile() || !f.name.endsWith(".json")) {
+      errors.push({ file: rel, message: "is not a .json file" });
+      continue;
+    }
+    if (!FINGERPRINT_RE.test(f.name.slice(0, -".json".length))) {
+      errors.push({
+        file: rel,
+        message: "is not named for a submission fingerprint (16 lowercase hex). TRUST-14's record is found by " +
+          "fingerprint and by nothing else, so a name that is not one is a record no alert will ever match",
+      });
+      continue;
+    }
+    readRecord(rel, path.join(alertsRoot, f.name), alerts, errors);
+  }
+
+  const queueRoot = path.join(root, ...QUEUE_DIR.split("/"));
+  for (const f of jsonFilesIn(queueRoot)) {
+    const rel = `${QUEUE_DIR}/${f.name}`;
+    if (!f.isFile() || !f.name.endsWith(".json")) {
+      errors.push({ file: rel, message: "is not a .json file" });
+      continue;
+    }
+    readRecord(rel, path.join(queueRoot, f.name), queue, errors);
+  }
+
+  return { identities, decisions, alerts, queue, errors };
 }
 
 /**

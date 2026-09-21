@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://registry.astra.app/schema/identity-v1.json",
+  "title": "astra.registry.identity/1",
+  "description": "plugins/<id>/identity.json — the registry's record of which GitHub repository a listing belongs to, and which binding token proved it (contract B.4; ID-15; DEC-17). The bot writes it at the first bound publication and rewrites siblings in the same commit (ID-64); B-T4.2's reset deletes it.\n\nEXACTLY SIX MEMBERS, ALL REQUIRED, and B.4's own sentence is \"has exactly these required members\". `additionalProperties` is false and `$comment` is NOT among them, for the reason schema/deadline-v1.json gives at length: this record crosses a party boundary. The plugins service parses it to set `bound` (ID-15), and a member one party admits and another refuses is a two-way-test failure (§0.8) found by whichever side guessed wrong, in production. The seventh member is the mutation registry plan B-T2.1's canary list names.\n\nWHY EVERY MEMBER IS REQUIRED AND NONE IS NULLABLE. ID-41's rows and TRUST-23's baseline comparison both decide a listing's fate by comparing a certificate's `repository_id` and `repository_owner_id` with this record's. A record that carried a null for either would not be \"an identity we could not resolve\": it would be the registry publishing a permanent claim it could not check, against which every later run compares and silently agrees. MIG-28 says what happens when there is NO record — which is a state, and a different one.\n\n`repository_id` IS A STRING, NOT A NUMBER. §0.7: a canonical base-10 digit string, never coerced. GitHub repository ids are past 2^31 and heading for 2^53; JSON has one number type and it is a double, and 9007199254740993 round-trips as …92, naming a repository that never published the bytes. bot/baseline.mjs and bot/lib/decisions.mjs both carry the same failure written out in full. A record is written once and never rewritten, so the coercion is caught here or not at all.\n\n`repository_id` IS THE TOKEN'S MINTED-FOR ID (ID-9), not a migration-time id: the bot writes a record only under a verdict \"minted for this `repository_id`\", and the service sets `bound` by matching both against its token (ID-15). No account data ever (registry plan BOT-39).\n\nWHAT NOTHING HERE CAN CHECK. That the `token_hash` is the hash of a token in state `bound`, that `repository_id` is the one the token was minted for, and ID-40's \"written only in publishing commits\" are all statements about a verdict or about git, not about this file. The first two are the bot's at write time; the third is B-T3.6's and BOT-54's on the pull-request door, and TRUST-43's detector pages when a hand-committed record is served unacknowledged. Recorded as a gap rather than implied by this file's existence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "plugin_id", "repository_id", "repository_owner_id", "repo", "token_hash"],
+  "properties": {
+    "schema": { "const": "astra.registry.identity/1" },
+    "plugin_id": {
+      "$comment": "tools/lib/ids.mjs's ID_PATTERN, the one spelling of a plugin id in this repository.",
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])$"
+    },
+    "repository_id": {
+      "$comment": "§0.7: a canonical base-10 digit string. The token's minted-for id (ID-9).",
+      "type": "string",
+      "pattern": "^[0-9]{1,20}$"
+    },
+    "repository_owner_id": {
+      "$comment": "§0.7: a canonical base-10 digit string. ID-41 row 5 keys a transfer on this changing.",
+      "type": "string",
+      "pattern": "^[0-9]{1,20}$"
+    },
+    "repo": {
+      "$comment": "The `owner/name` last seen. A rename moves it; ID-41 decides by the ids above, never by this name (client identity is `github:owner/repo`, so a rename strands installed copies — DEC-17).",
+      "type": "string",
+      "maxLength": 140,
+      "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$"
+    },
+    "token_hash": {
+      "$comment": "Contract §0.7's table: the first 16 lowercase hex of the token's SHA-256. The token itself is public (DEC-2); the account behind it never is (PRIV-2), and a hash is what lets ID-41 row 6 notice the line's token changed without this file naming either.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$"
+    }
+  }
+}
