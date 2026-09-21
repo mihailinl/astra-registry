@@ -80,6 +80,7 @@ import {
   serviceDecisionKey,
   subjectIdFindings,
   submissionKey,
+  trailerLine,
   writeDecisionRecord,
 } from "../lib/decisions.mjs";
 
@@ -409,26 +410,158 @@ test("an `A_YANK` commit carries a `Service-Decision:` trailer", () => {
   );
 });
 
-test("every bot commit carries `Run:`, and the four trailers have a floor", () => {
+test("every bot commit carries `Run:`, and the five trailers have a floor", () => {
   assert.throws(() => renderTrailers({}), /every bot commit carries a `Run:` trailer/);
-  assert.equal(TRAILERS.length, 4,
-    `BOT-37 names four trailers and this module renders ${TRAILERS.length}`);
-  assert.deepEqual([...TRAILERS], ["Run", "Submission", "Decision", "Service-Decision"]);
+  assert.equal(TRAILERS.length, 5,
+    `BOT-37 names five trailers and this module renders ${TRAILERS.length}`);
+  assert.deepEqual([...TRAILERS], ["Run", "Submission", "Decision", "Service-Decision", "Decided-At"]);
   assert.deepEqual(renderTrailers({ run: "35502265394" }), ["Run: 35502265394"],
-    "the three conditional trailers appear `where they exist` and not as empty lines");
+    "the four conditional trailers appear `where they exist` and not as empty lines");
+});
+
+// ── the fifth, and the sixth that must still be refused ─────────────────────
+
+test("all five render, in `TRAILERS` order", () => {
+  // The satisfiable direction, asserted before any refusal below: a check
+  // nobody can pass is not a check. `Decided-At:` was the trailer
+  // `bot/moderation-run.mjs` rendered past the declared set, so this is the
+  // first time the whole block a yank commit carries can be composed by the
+  // module that owns the grammar.
+  const decision_id = decisionId(serviceDecisionKey({
+    service_decision_id: SERVICE_DECISION, plugin_id: "dice-roller", version: "1.0.0", state: "yanked",
+  }));
+  assert.deepEqual(renderTrailers({
+    run: "35502265394/2",
+    submission: SUBMISSION,
+    decision: decision_id,
+    service_decision: SERVICE_DECISION,
+    decided_at: "2026-09-20T12:00:00Z",
+    authorAction: true,
+  }), [
+    "Run: 35502265394/2",
+    `Submission: ${SUBMISSION}`,
+    `Decision: ${decision_id}`,
+    `Service-Decision: ${SERVICE_DECISION}`,
+    "Decided-At: 2026-09-20T12:00:00Z",
+  ]);
+
+  // And the same five through the whole message, since that is what reaches
+  // git: `decisionCommitMessage` scans subject and body under PRIV-2 and then
+  // renders the block, so a trailer it cannot render is a trailer that leaves
+  // by some other door.
+  const message = decisionCommitMessage({
+    subject: "registry: moderation (1 decision(s))",
+    body: "- plugins/dice-roller/versions/1.0.0.json",
+    run: "35502265394/2",
+    decision: decision_id,
+    service_decision: SERVICE_DECISION,
+    decided_at: "2026-09-20T12:00:00Z",
+    authorAction: true,
+  });
+  assert.match(message, /^Decided-At: 2026-09-20T12:00:00Z$/m);
+  assert.deepEqual(privacyFindings({
+    record: { schema: RECORD_SCHEMA, decision_id, state: "yanked" },
+    trailers: {
+      Run: "35502265394/2",
+      Decision: decision_id,
+      "Service-Decision": SERVICE_DECISION,
+      "Decided-At": "2026-09-20T12:00:00Z",
+    },
+    root: REPO_ROOT,
+  }), [], "a record with all five validates, or the refusals below prove nothing");
+});
+
+test("a sixth trailer is refused by name, and `Decided-At:` no longer is", () => {
+  // **Nothing in this repository watched `E_PRIV_UNDECLARED_TRAILER` fire
+  // before this test.** The refusal was written with the set at four and was
+  // read, ever after, as a cap on the count rather than as the thing it is:
+  // the scanner's only way of noticing a trailer nobody declared. It is worth
+  // saying which way that error ran — `Decided-At:` was already reaching git,
+  // rendered past this function by `bot/moderation-run.mjs`, and because it was
+  // appended rather than handed over, this refusal never saw it and never
+  // fired. An undeclared trailer is invisible here, not caught here.
+  const record = { schema: RECORD_SCHEMA, decision_id: "a".repeat(32), state: "yanked" };
+  const sixth = privacyFindings({
+    record,
+    trailers: { Run: "35502265394", "Reviewed-By": "mod-7" },
+    root: REPO_ROOT,
+  });
+  assert.deepEqual(sixth.map((f) => f.code), ["E_PRIV_UNDECLARED_TRAILER"],
+    "a name outside BOT-37's list is refused whatever it holds");
+  assert.throws(
+    () => trailerLine("Reviewed-By", "mod-7"),
+    /is not one of BOT-37's trailers/,
+    "and nothing can render one either",
+  );
+
+  // The declared fifth, from the same function that refuses the sixth.
+  assert.deepEqual(privacyFindings({
+    record,
+    trailers: { "Decided-At": "2026-09-20T12:00:00Z" },
+    root: REPO_ROOT,
+  }), [], "contract 0.20.0 publishes the name; the refusal was the registry's list being behind it");
+});
+
+test("`Decided-At:` carries a time and not an identity (PRIV-2, contract 0.20.0)", () => {
+  // minice-be's condition on their agreement to 0.20.0, in the contract's
+  // words: "a `Decided-At:` trailer carries a time and not a moderator's
+  // identity (PRIV-2)". §0.7 is what enforces it — "Times are RFC 3339 UTC,
+  // whole seconds, ending in `Z`" — and every value below is refused by that
+  // and by nothing else. `mod-7` is §0.7's own moderator-handle shape and is
+  // the case that matters: `HANDLE_RE` needs a leading `@`, so the shape rules
+  // this module imports do not catch it, and the grammar is the whole check.
+  const record = { schema: RECORD_SCHEMA, decision_id: "a".repeat(32), state: "yanked" };
+  for (const bad of [
+    "mod-7",                        // §0.7's moderator handle
+    "@amoderator",                  // a login
+    "amoderator@minice.ai",         // an address
+    "kXm2Qp7vLr9TnA4b",             // PRIV-2's subject-id shape
+    "2026-09-20T12:00:00.700Z",     // a time, but not §0.7's whole seconds
+    "2026-09-20T12:00:00+03:00",    // a time, but not UTC
+    "2026-09-20",                   // §0.7's date, which is not a time
+  ]) {
+    assert.throws(() => renderTrailers({ run: "35502265394", decided_at: bad }),
+      /`Decided-At: .*` is not §0\.7's RFC 3339 UTC/, `\`${bad}\` rendered`);
+    const found = privacyFindings({ record, trailers: { "Decided-At": bad }, root: REPO_ROOT });
+    assert.ok(found.some((f) => f.code === "E_PRIV_TRAILER_GRAMMAR"),
+      `PRIV-2 did not refuse \`Decided-At: ${bad}\`: ${JSON.stringify(found)}`);
+  }
+
+  // Watched by widening: with `Decided-At`'s grammar replaced by `.*`, every
+  // line above passes both checks and the peer's one condition is met by
+  // nothing. That is the mutation, and the reason the grammar is asserted here
+  // rather than described in the module's comment.
 });
 
 test("trailers carry no login", () => {
   // Enforced by GRAMMAR, which is the only thing that can enforce it: a
   // trailer value is free text to git, and there is no value that is both a
-  // login and a run id, a UUID or 32 hex.
+  // login and a run id, a UUID, 32 hex or an RFC 3339 instant.
   for (const bad of [
     { run: "mihailinl" },
     { run: "35502265394", submission: "teletemagame-dev" },
     { run: "35502265394", decision: "github-actions[bot]" },
     { run: "35502265394", service_decision: "@someone" },
+    { run: "35502265394", decided_at: "mihailinl" },
   ]) {
     assert.throws(() => renderTrailers(bad), /is not §0\.7's/);
+  }
+
+  // And the same rule asked of `privacyFindings`, which is the half that was
+  // missing: it looked the grammar up for its `uuidOk` flag and threw the
+  // pattern away, so `Run: mod-7` — a declared name holding §0.7's moderator
+  // handle — was no finding at all. Every shape rule it imports is keyed on a
+  // value that is already an address, a Telegram id, a UUID or an `@login`.
+  const record = { schema: RECORD_SCHEMA, decision_id: "a".repeat(32), state: "yanked" };
+  for (const trailers of [
+    { Run: "mod-7" },
+    { Submission: "teletemagame-dev" },
+    { Decision: "mihailinl" },
+    { "Service-Decision": "mod-12" },
+  ]) {
+    const found = privacyFindings({ record, trailers, root: REPO_ROOT });
+    assert.ok(found.some((f) => f.code === "E_PRIV_TRAILER_GRAMMAR"),
+      `a declared trailer holding ${JSON.stringify(trailers)} was not refused: ${JSON.stringify(found)}`);
   }
 });
 

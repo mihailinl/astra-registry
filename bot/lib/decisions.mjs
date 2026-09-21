@@ -412,14 +412,47 @@ export function refuseUncomposableAuthorAction(record) {
 // ── BOT-37's trailers ───────────────────────────────────────────────────────
 
 /**
- * The four trailers, each with the grammar of its value.
+ * The five trailers, each with the grammar of its value.
  *
  * **The grammar is what makes "trailers carry no login" a check rather than a
  * hope.** A trailer value is free text as far as git is concerned, so the only
  * thing that can keep a handle, an address or a subject id out of one is a
- * pattern narrow enough to exclude them — and all four of these are: digits, a
- * UUID, 32 hex, a UUID. There is no value that is both a login and any of
- * those.
+ * pattern narrow enough to exclude them — and all five of these are: digits, a
+ * UUID, 32 hex, a UUID, an instant. There is no value that is both a login and
+ * any of those.
+ *
+ * ── THE FIFTH, AND WHY IT IS DECLARED HERE RATHER THAN RENDERED PAST HERE ───
+ *
+ * Until this line, `Decided-At:` was a trailer this list did not carry while
+ * `bot/lib/compile-decision.mjs` returned one and `bot/moderation-run.mjs`
+ * rendered it, against a private copy of §0.7's timestamp, immediately after
+ * the block `renderTrailers` composed. That is not "a fifth trailer nobody
+ * declared"; it is worse, and the direction is what matters: `privacyFindings`
+ * below scans the trailers it is HANDED, so a trailer appended after it ran was
+ * a line reaching a public, permanent git record that the privacy scanner could
+ * not see. Declaring it is the narrowing. Leaving it outside the list would
+ * have inverted the scanner's purpose — the refusal exists to force
+ * declaration, not to cap the count at four, and the one trailer added after
+ * the scanner was written is exactly the one it must be able to read.
+ *
+ * The name and its constraint were not this repository's to choose and are
+ * already published: contract 0.20.0 carries, as one of the two conditions
+ * `minice-be` set on their agreement, *"a `Decided-At:` trailer carries a time
+ * and not a moderator's identity (PRIV-2)"*. So the grammar below is not
+ * decoration around a name — it IS that condition, stated as the only thing
+ * that can enforce it. §0.7: "Times are RFC 3339 UTC, whole seconds, ending in
+ * `Z`". `mod-7` is §0.7's moderator handle and does not match it; neither does
+ * a login, an address, or the 1-to-64-character subject-id shape.
+ *
+ * Measured on the peer's side rather than assumed, because a fifth trailer is
+ * a change to bytes they read: `minice` at `plugins/crates/plugins-git/src/
+ * records/trailer.rs` pins three trailer tokens — `Service-Decision`,
+ * `Badge-Withdrawn`, `Source-Commit` — and `Decided-At` is not among them; its
+ * `trailer_values(message, token)` looks up a trailer BY NAME and never
+ * enumerates the block, so it cannot meet an unknown one; and a value it cannot
+ * parse is, in that file's own words, "dropped, not refused". A fifth trailer
+ * is invisible over there today and would need a deliberate change there to
+ * start being read.
  *
  * `Run:` carries `run_id`, or `run_id/run_attempt`, and NOT the run URL that
  * `bot/lib/alert-verdict.mjs`'s `runUrl` builds. The URL embeds
@@ -436,10 +469,46 @@ const TRAILER_GRAMMAR = {
   Submission: { re: UUID_V47_RE, uuidOk: true, says: "§0.7's lowercase UUID v4 or v7" },
   Decision: { re: DECISION_ID_RE, uuidOk: false, says: `§0.7's ${DECISION_ID_CHARS} lowercase hex` },
   "Service-Decision": { re: UUID_V47_RE, uuidOk: true, says: "§0.7's lowercase UUID v4 or v7" },
+  // Last, because the plan's order is "a `Decided-At:` beside each
+  // `Service-Decision:`" and `TRAILERS` is the order a commit carries them in.
+  "Decided-At": { re: TIME_RE, uuidOk: false, says: "§0.7's RFC 3339 UTC with whole seconds, ending in `Z`" },
 };
 
 /** BOT-37's trailer names, in the order a commit carries them. */
 export const TRAILERS = Object.freeze(Object.keys(TRAILER_GRAMMAR));
+
+/**
+ * One trailer line, held to the grammar its NAME declares.
+ *
+ * The one place a trailer's name is turned into a line, so that "every rendered
+ * trailer is declared and every declared trailer has a grammar" is a property
+ * of the code rather than of four callers agreeing. `bot/moderation-run.mjs`
+ * renders the per-decision trailers — a `Decision:`, a `Service-Decision:` and
+ * a `Decided-At:` per decision, which `renderTrailers` cannot express because
+ * it renders one of each — and it calls THIS rather than keeping a second copy
+ * of §0.7's timestamp, which is what it did while `Decided-At:` was undeclared.
+ *
+ * A second copy of a grammar is not a tidiness complaint here: the copy is the
+ * only thing standing between a free-text trailer and a value PRIV-2 refuses,
+ * and the copy that drifts is always the one further from the list.
+ */
+export function trailerLine(name, value) {
+  const grammar = TRAILER_GRAMMAR[name];
+  if (!grammar) {
+    throw new Error(
+      `\`${name}:\` is not one of BOT-37's trailers (${TRAILERS.join(", ")}). A trailer reaches a public git ` +
+      "record for ever and `privacyFindings` scans the declared set, so an undeclared name is a line the privacy " +
+      "scanner cannot see rather than a line it allowed",
+    );
+  }
+  if (!grammar.re.test(String(value))) {
+    throw new Error(
+      `\`${name}: ${value}\` is not ${grammar.says}. A trailer is correlation and never authority (BOT-37), so ` +
+      "its value is a bare id with a grammar — which is also the only thing keeping a login out of one",
+    );
+  }
+  return `${name}: ${value}`;
+}
 
 /**
  * Render BOT-37's trailers for a bot commit.
@@ -455,7 +524,8 @@ export const TRAILERS = Object.freeze(Object.keys(TRAILER_GRAMMAR));
  * rendered as a shorter list.
  *
  * @param {{run: string, submission?: string|null, decision?: string|null,
- *   service_decision?: string|null, authorAction?: boolean}} t
+ *   service_decision?: string|null, decided_at?: string|null,
+ *   authorAction?: boolean}} t
  * @returns {string[]} the trailer lines, in `TRAILERS` order
  */
 export function renderTrailers(t = {}) {
@@ -464,6 +534,7 @@ export function renderTrailers(t = {}) {
     Submission: t.submission,
     Decision: t.decision,
     "Service-Decision": t.service_decision,
+    "Decided-At": t.decided_at,
   };
   if (values.Run === undefined || values.Run === null || values.Run === "") {
     throw new Error("BOT-37: every bot commit carries a `Run:` trailer, and correlation must outlive a 14-day artifact");
@@ -479,14 +550,7 @@ export function renderTrailers(t = {}) {
   for (const name of TRAILERS) {
     const value = values[name];
     if (value === undefined || value === null || value === "") continue;
-    const grammar = TRAILER_GRAMMAR[name];
-    if (!grammar.re.test(String(value))) {
-      throw new Error(
-        `\`${name}: ${value}\` is not ${grammar.says}. A trailer is correlation and never authority (BOT-37), so ` +
-        "its value is a bare id with a grammar — which is also the only thing keeping a login out of one",
-      );
-    }
-    lines.push(`${name}: ${value}`);
+    lines.push(trailerLine(name, value));
   }
   return lines;
 }
@@ -609,6 +673,25 @@ export function subjectIdFindings(text) {
  * `service_decision_id` marked UUID-exempt and `moderator` handle-exempt. For
  * an author-action record this module then narrows it further, to the thirteen.
  *
+ * ── A TRAILER IS CHECKED TWICE: ITS NAME, THEN ITS GRAMMAR ──────────────────
+ *
+ * The name half was here from the first line of this function. The grammar half
+ * was NOT, and its absence was the hole that declaring a fifth trailer would
+ * have widened rather than closed: this function looked up
+ * `TRAILER_GRAMMAR[name]`, kept the `uuidOk` flag out of it, and threw the
+ * pattern away — so `privacyFindings({ trailers: { Run: "mod-7" } })` returned
+ * nothing. Every shape rule this file imports is keyed on a shape that is
+ * ALREADY a login, an address, a Telegram id or a UUID; `HANDLE_RE` needs a
+ * leading `@`, so §0.7's own moderator handle, `^mod-[1-9][0-9]*$`, matched
+ * none of them. Declaration would then have meant "this name is allowed to hold
+ * anything", which is the opposite of the sentence this module states twice:
+ * asking *is this value a semver* of a member that may only ever be a semver
+ * has a safe answer, and that is the whole reason a declared trailer carries a
+ * grammar at all.
+ *
+ * Both halves run, and a value can produce both findings: the grammar says the
+ * value is not the thing its name claims, and the shapes say what it is instead.
+ *
  * @param {{record: object, trailers?: object, root?: string}} opts
  * @returns {{code: string, what: string}[]}
  */
@@ -624,6 +707,12 @@ export function privacyFindings({ record, trailers = {}, root = REPO_ROOT }) {
         what: `\`${name}:\` is not one of BOT-37's trailers (${TRAILERS.join(", ")})`,
       });
       continue;
+    }
+    if (!grammar.re.test(String(value))) {
+      found.push({
+        code: "E_PRIV_TRAILER_GRAMMAR",
+        what: `\`${name}: ${value}\` is not ${grammar.says}, so it is not the thing its name claims to be`,
+      });
     }
     for (const f of shapeFindings(String(value), { roles, member: name, uuidOk: grammar.uuidOk, handleOk: false })) {
       found.push({ ...f, what: `${name}: ${f.what}` });
