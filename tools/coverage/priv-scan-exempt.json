@@ -13,6 +13,12 @@
       "where": "commit-message",
       "code": "E_PRIV_HANDLE",
       "reason": "The commit that added the exemption above, carrying the same fixture handle twice — once quoting the finding it cleared and once naming the test's stand-in maintainer. Its own entry had just written the convention 'elide identity-shaped values when quoting a transcript', and it broke that convention in the act of recording it. The specific defect is one I had not connected: a PULL REQUEST BODY becomes the squash commit message, so a convention about commit messages is a convention about PR bodies and I wrote neither down as the other. Recorded as a second entry rather than as a rule because the recurrence is self-inflicted — the same author quoting himself minutes later — and the repair is mechanical (check the body before merging) rather than definitional. The next INDEPENDENT occurrence, by somebody who was not quoting this, is the trigger to exempt the shape by rule instead."
+    },
+    {
+      "commit": "25c1dbe",
+      "where": "commit-message",
+      "code": "E_PRIV_HANDLE",
+      "reason": "Third entry, one root event, and the third time by the same author writing about the first. The cause each time was identical and is now named precisely: I quoted the scan's OWN FINDING LINE verbatim as the evidence. A finding line contains the offending value by construction, so quoting one is guaranteed to reproduce it, and 'elide identity-shaped values' is unfollowable advice while the thing being recorded is the finding itself. The concrete form of the convention, which the two earlier entries lacked and which is what makes it followable: NEVER QUOTE A PRIVACY FINDING'S LINE. Describe it - the code, the commit, and what kind of value it was - and let the scan's own transcript in the run log be the verbatim record. Not repaired by rule, deliberately: a rule that exempted text matching the scan's own report format would create a structured way to write an identity into a commit message unscanned, and PRIV-2's threat is a real person's name in a permanent public record, which such a rule makes cheaper rather than dearer. Three entries about one event is ugly and safe; that trade is the right way round."
     }
   ]
 }
