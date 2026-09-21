@@ -1,0 +1,62 @@
+{
+  "schema": "astra.registry.signer-run/1",
+  "step": "sign",
+  "now": "2026-09-22T01:00:00Z",
+  "source_commit": "c1327689cf07ef6e4ff6b213eae9289affce5c84",
+  "index_source_commit": "c1327689cf07ef6e4ff6b213eae9289affce5c84",
+  "parent": "753cf52cc5a56817b519684bfbc1dc0466a13113",
+  "branch": "signed",
+  "serials": {
+    "index": 2,
+    "revocations": 3
+  },
+  "key_mode": "normal",
+  "dropped_keys": [],
+  "documents": {
+    "index": {
+      "decision": "changed",
+      "serial": 2,
+      "signed_by": [
+        "astra-index-2026a"
+      ]
+    },
+    "revocations": {
+      "decision": "changed",
+      "serial": 3,
+      "signed_by": [
+        "astra-index-2026a",
+        "TEST-ONLY-DO-NOT-TRUST-index-2026b"
+      ]
+    },
+    "trust": {
+      "decision": "copied",
+      "serial": null,
+      "signed_by": null
+    },
+    "root": {
+      "decision": "copied",
+      "serial": null,
+      "signed_by": null
+    }
+  },
+  "files": [
+    "registry/v1/index.json",
+    "registry/v1/revocations.json",
+    "registry/v1/root.json",
+    "registry/v1/trust.json"
+  ],
+  "alerts": [],
+  "refusals": [],
+  "notes": [
+    "TEST-ONLY-DO-NOT-TRUST-index-2026b was first delegated by this run, 0.00 h ago; it may sign the catalogue after 7 h"
+  ],
+  "codes": [],
+  "hexes": [
+    "c1327689cf07ef6e4ff6b213eae9289affce5c84"
+  ],
+  "status": "green",
+  "commit": true,
+  "$command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit c1327689cf07ef6e4ff6b213eae9289affce5c84 --now 2026-09-22T01:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-01-delegate.json",
+  "$signed_sha": "ee4e8f457959cf591739f05e47744caa07031e7e",
+  "$commit_message": "signed: catalogue 2, withdrawal list 3 at c1327689cf07\n\nregistry/v1/index.json: changed at serial 2\nregistry/v1/revocations.json: changed at serial 3\n\nSource-Commit: c1327689cf07ef6e4ff6b213eae9289affce5c84\nRun: https://github.com/mihailinl/astra-registry/actions/runs/0\nSigner: sign.yml\nIndex-Source-Commit: c1327689cf07ef6e4ff6b213eae9289affce5c84"
+}

@@ -67,6 +67,20 @@ const MODULES = [
   // all four documents exist. It prints its own section header, so inserting
   // here moves no existing name under a header it does not belong to.
   "signer-run.mjs",
+  // RC-R2-5, and third in the same line of thought: signer.mjs asks what the
+  // signer DECIDES, signer-run.mjs what it DOES, and this one asks whether the
+  // documents it produced for ROLL-60's rehearsal — the ones a staging service
+  // and a debug daemon will accept or refuse a key rotation on the strength of
+  // — still verify the way that service will judge them. It prints its own
+  // section header, and served-set.mjs below prints its own six, so inserting
+  // here moves no existing name under a header it does not belong to.
+  //
+  // **This line and tools/selftest/rehearsal-r2.mjs are one change.**
+  // `checkModuleSet` below compares the list and the directory as SETS and
+  // fails in both directions, so the file without the line, or the line without
+  // the file, turns the whole suite red — and bot/publish-apply.mjs runs this
+  // suite as the last of five checks before it commits.
+  "rehearsal-r2.mjs",
   // Beside signer.mjs for the reason signer.mjs is beside index-signature.mjs:
   // it is the same subject one step on. That module asks what the signer
   // decides to publish; this one asks whether what is published is what `main`

@@ -1,0 +1,64 @@
+{
+  "schema": "astra.registry.signer-run/1",
+  "step": "sign",
+  "now": "2026-09-22T05:00:00Z",
+  "source_commit": "3c177c81845f97d092b2bdd5a738aa541eddb864",
+  "index_source_commit": "fca499b66e9400265ca6978f2d1736fe3653bdd9",
+  "parent": "c01c44e5466784729f9a1efdf2f7d987ffc8d8ce",
+  "branch": "signed",
+  "serials": {
+    "index": 3,
+    "revocations": 4
+  },
+  "key_mode": "compromise",
+  "dropped_keys": [
+    "astra-index-2026a"
+  ],
+  "documents": {
+    "index": {
+      "decision": "unchanged",
+      "serial": 3,
+      "signed_by": null
+    },
+    "revocations": {
+      "decision": "unchanged",
+      "serial": 4,
+      "signed_by": null
+    },
+    "trust": {
+      "decision": "copied",
+      "serial": null,
+      "signed_by": null
+    },
+    "root": {
+      "decision": "copied",
+      "serial": null,
+      "signed_by": null
+    }
+  },
+  "files": [
+    "registry/v1/index.json",
+    "registry/v1/revocations.json",
+    "registry/v1/root.json",
+    "registry/v1/trust.json"
+  ],
+  "alerts": [],
+  "refusals": [
+    "BLOCKED: registry/v1/index.json does not verify against the trust.json it would be committed beside (no trusted key signed this document; offered astra-index-2026a; delegated TEST-ONLY-DO-NOT-TRUST-index-2026b) (SERVE-95). SERVE-91 refuses a commit whose documents do not verify against its own trust.json, so committing this would withhold all four and leave the previous bytes served."
+  ],
+  "notes": [
+    "compromise mode (D10): the Source-Commit's trust.json drops astra-index-2026a, which signed the head. The seven-hour window is waived and the catalogue may not be carried."
+  ],
+  "codes": [
+    "SIGNER_TRUST_REFUSED_DOCUMENT"
+  ],
+  "hexes": [
+    "3c177c81845f97d092b2bdd5a738aa541eddb864"
+  ],
+  "status": "red",
+  "commit": false,
+  "$command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 3c177c81845f97d092b2bdd5a738aa541eddb864 --now 2026-09-22T05:00:00Z --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-compromise-01-trust-only-blocked.json",
+  "$signed_sha": null,
+  "$commit_message": null,
+  "$sign_exit": 1
+}

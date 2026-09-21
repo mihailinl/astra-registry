@@ -672,6 +672,18 @@ export async function run() {
     // a suite that stopped running it would leave "the other half compares
     // that" true of nothing, and look identical to a suite that ran it.
     "contract-tokens.mjs",
+    // `rehearsal-r2.mjs` was added on 2026-09-21 with RC-R2-5 — the ROLL-60
+    // rehearsal fixtures, judged the way the plugins service will judge them.
+    // Watched both ways: deleted from disk together with its runner entry,
+    // which is the loss `checkModuleSet` cannot see because the two sides it
+    // compares agree that the module is gone; and left out of this list, which
+    // is the silent half, since omitting a name here costs nothing and fails
+    // nothing. It matters for this module in particular because the bytes it
+    // judges are the ones a staging service and a debug 0.2.x daemon will one
+    // day accept or refuse a real key rotation on the strength of — and a
+    // suite that stopped running it would leave forty-four signed documents
+    // with nothing checking that they still verify.
+    "rehearsal-r2.mjs",
   ];
   // A literal control character in a tracked source file is invisible, and that
   // is the whole of the defect. `bot/lib/moderation.mjs` carried three NUL

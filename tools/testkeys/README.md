@@ -74,9 +74,36 @@ TEST-ONLY-DO-NOT-TRUST-root-b.pub.json
 TEST-ONLY-DO-NOT-TRUST-root-b.SECRET-TEST-KEY.json
 regenerate.mjs                                   rederives all four from the phrases
 sign-trust.mjs                                   signs a trust.json `signed` block
+make-rehearsal-r2.mjs                            builds fixtures/rehearsal-r2/ — see below
 fixtures/                                        signed documents the daemon tests read
+fixtures/rehearsal-r2/                           the ROLL-60 rehearsal series — see its README
 vectors/                                         the signed-set corpus — see vectors/README.md
 ```
+
+## The ROLL-60 rehearsal series
+
+`fixtures/rehearsal-r2/` is a whole key rotation and a whole compromise, as
+`signed`-commit-shaped steps: a trust.json at serial + 1 delegating an incoming
+index key, SERVE-30's seven hours seen from both sides, a dual-signed withdrawal
+list an idle daemon still accepts, a root.json change under SERVE-16 and
+SERVE-92, and D10's compromise as one commit that verifies whole. It is RC-R2-5,
+and it exists because minice-be's staging service and the debug 0.2.x daemon
+that together meet ROLL-60 have nothing to accept without it.
+
+```sh
+node tools/testkeys/make-rehearsal-r2.mjs          # rewrite it
+node tools/testkeys/make-rehearsal-r2.mjs --check  # verify the committed bytes
+```
+
+Unlike the fixtures above it, **none of it is assembled here.** Every document
+comes out of `tools/signer/run.mjs --step sign --test-key …`, the same program
+`sign.yml` runs, against a throwaway registry with real git history — because
+which key may sign a catalogue yet, which keys sign a list and in what order,
+and whether a document may be carried are decisions that program makes about
+four files at once, and a fixture that did not go through it would prove
+something about the fixture and nothing about the signer.
+[`fixtures/rehearsal-r2/README.md`](fixtures/rehearsal-r2/README.md) has the
+series, the borrowed key id and why it is borrowed, and how to replay it.
 
 ## Regenerating
 

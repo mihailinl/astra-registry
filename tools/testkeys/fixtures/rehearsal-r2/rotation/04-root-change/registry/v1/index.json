@@ -1,0 +1,199 @@
+{
+  "$comment": "GENERATED FILE — DO NOT EDIT. Source of truth: plugins/<id>/plugin.json and plugins/<id>/versions/<semver>.json. Regenerate with `node tools/build-index.mjs`. CI (.github/workflows/build-index.yml) fails when this file differs by one byte from what the generator produces, so a hand edit is not a shortcut, it is a red build. Only the `signed` member is covered by the signatures below; nothing outside it is authenticated and nothing may be read out of it.",
+  "signatures": [
+    {
+      "key_id": "astra-index-2026a",
+      "sig": "czalMA7Lq5+asgCXrnvfJXzXIFK198KMOsSuzKlCuWMDLwOXvgAWVKdgohLod+0ZyStSbZOdWmst6HyZStdDAw=="
+    },
+    {
+      "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026b",
+      "sig": "CxfD7T6A9j14xUcjq1BwAlrAuCRKm2NvzRsjxRaCUmqkQyRmWjDWs/Mv0+jFkGq5sAtxEF62WAkPhISYJtjMAA=="
+    }
+  ],
+  "signed": {
+    "expires_at": "2026-10-22T10:00:00Z",
+    "issued_at": "2026-09-22T10:00:00Z",
+    "plugins": [
+      {
+        "added_at": "2026-08-10",
+        "capabilities": [
+          "tools"
+        ],
+        "description": "Rolls dice, so the catalogue is not empty.",
+        "download_url": "",
+        "downloads": 0,
+        "icon_url": "",
+        "id": "dice-roller",
+        "license": "MIT",
+        "name": "dice roller",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/someone/dice-roller/releases/download/v1.3.0/dice-roller-1.3.0-linux-x64.astraplugin"
+        },
+        "releases": [
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "dice-roller-1.3.0-linux-x64.astraplugin",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size": 1234,
+                "url": "https://github.com/someone/dice-roller/releases/download/v1.3.0/dice-roller-1.3.0-linux-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools"
+            ],
+            "protocol": 1,
+            "published_at": "2026-08-10T00:00:00Z",
+            "release": {
+              "kind": "github_release",
+              "repo": "someone/dice-roller",
+              "tag": "v1.3.0"
+            },
+            "version": "1.3.0"
+          },
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "dice-roller-1.1.0-linux-x64.astraplugin",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size": 1234,
+                "url": "https://github.com/someone/dice-roller/releases/download/v1.1.0/dice-roller-1.1.0-linux-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools"
+            ],
+            "protocol": 1,
+            "published_at": "2026-08-10T00:00:00Z",
+            "release": {
+              "kind": "github_release",
+              "repo": "someone/dice-roller",
+              "tag": "v1.1.0"
+            },
+            "version": "1.1.0"
+          },
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "dice-roller-1.0.0-linux-x64.astraplugin",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size": 1234,
+                "url": "https://github.com/someone/dice-roller/releases/download/v1.0.0/dice-roller-1.0.0-linux-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools"
+            ],
+            "protocol": 1,
+            "published_at": "2026-08-10T00:00:00Z",
+            "release": {
+              "kind": "github_release",
+              "repo": "someone/dice-roller",
+              "tag": "v1.0.0"
+            },
+            "version": "1.0.0"
+          }
+        ],
+        "repository_url": "https://github.com/someone/dice-roller",
+        "source": {
+          "kind": "github",
+          "repo": "someone/dice-roller"
+        },
+        "stars": 0,
+        "updated_at": "2026-08-10T00:00:00Z",
+        "version": "1.3.0"
+      },
+      {
+        "added_at": "2026-08-10",
+        "capabilities": [
+          "tools"
+        ],
+        "description": "Takes notes, so the catalogue has two listings.",
+        "download_url": "",
+        "downloads": 0,
+        "icon_url": "",
+        "id": "note-taker",
+        "license": "MIT",
+        "name": "note taker",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/someone/note-taker/releases/download/v1.2.0/note-taker-1.2.0-linux-x64.astraplugin"
+        },
+        "releases": [
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "note-taker-1.2.0-linux-x64.astraplugin",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size": 1234,
+                "url": "https://github.com/someone/note-taker/releases/download/v1.2.0/note-taker-1.2.0-linux-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools"
+            ],
+            "protocol": 1,
+            "published_at": "2026-08-10T00:00:00Z",
+            "release": {
+              "kind": "github_release",
+              "repo": "someone/note-taker",
+              "tag": "v1.2.0"
+            },
+            "version": "1.2.0"
+          },
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "note-taker-1.1.0-linux-x64.astraplugin",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size": 1234,
+                "url": "https://github.com/someone/note-taker/releases/download/v1.1.0/note-taker-1.1.0-linux-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools"
+            ],
+            "protocol": 1,
+            "published_at": "2026-08-10T00:00:00Z",
+            "release": {
+              "kind": "github_release",
+              "repo": "someone/note-taker",
+              "tag": "v1.1.0"
+            },
+            "version": "1.1.0"
+          },
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "note-taker-1.0.0-linux-x64.astraplugin",
+                "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "size": 1234,
+                "url": "https://github.com/someone/note-taker/releases/download/v1.0.0/note-taker-1.0.0-linux-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools"
+            ],
+            "protocol": 1,
+            "published_at": "2026-08-10T00:00:00Z",
+            "release": {
+              "kind": "github_release",
+              "repo": "someone/note-taker",
+              "tag": "v1.0.0"
+            },
+            "version": "1.0.0"
+          }
+        ],
+        "repository_url": "https://github.com/someone/note-taker",
+        "source": {
+          "kind": "github",
+          "repo": "someone/note-taker"
+        },
+        "stars": 0,
+        "updated_at": "2026-08-10T00:00:00Z",
+        "version": "1.2.0"
+      }
+    ],
+    "schema": "astra.registry.index/1",
+    "serial": 5
+  }
+}

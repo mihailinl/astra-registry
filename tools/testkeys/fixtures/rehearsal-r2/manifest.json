@@ -1,0 +1,584 @@
+{
+  "schema": "astra.registry.rehearsal-r2/1",
+  "generated_by": "tools/testkeys/make-rehearsal-r2.mjs",
+  "task": "RC-R2-5",
+  "exit_condition": "ROLL-60",
+  "t0": "2026-09-22T00:00:00Z",
+  "keys": {
+    "roots": {
+      "active_at_start": "TEST-ONLY-DO-NOT-TRUST-root-a",
+      "active_after_root_change": "TEST-ONLY-DO-NOT-TRUST-root-b"
+    },
+    "index": {
+      "outgoing": {
+        "key_id": "astra-index-2026a",
+        "test_key": "TEST-ONLY-DO-NOT-TRUST-index-2026a",
+        "id_borrowed": true
+      },
+      "incoming": {
+        "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026b",
+        "test_key": "TEST-ONLY-DO-NOT-TRUST-index-2026b",
+        "id_borrowed": false
+      }
+    }
+  },
+  "documents": [
+    "registry/v1/index.json",
+    "registry/v1/revocations.json",
+    "registry/v1/trust.json",
+    "registry/v1/root.json"
+  ],
+  "open_questions": {
+    "OPEN-OWNER-25, compromise half": {
+      "status": "open",
+      "built_to": "D10 as proposed, including step 4's two waivers",
+      "published_as": "SERVE-30's amendment G10 (ops.12a)",
+      "untouched_by_any_answer": [
+        "rotation/00-baseline",
+        "rotation/01-delegate",
+        "rotation/02-mid-window",
+        "rotation/03-window-open",
+        "rotation/04-root-change",
+        "rotation/05-after-root"
+      ],
+      "recut_by_an_answer_that_differs": [
+        "compromise/00-drop-2026a",
+        "compromise/01-trust-only-blocked"
+      ],
+      "answers": [
+        {
+          "answer": "D10 as proposed",
+          "recut": [],
+          "note": "Nothing moves."
+        },
+        {
+          "answer": "keep D10's no-carry rule but replace it with `no carry that fails refusesDroppedKey`, which tools/signer/key-window.mjs's own header offers in one line",
+          "recut": [],
+          "note": "A code change, not a fixture change. In this series the carried catalogue genuinely fails refusesDroppedKey, so the same bytes are produced either way."
+        },
+        {
+          "answer": "refuse the seven-hour waiver, or refuse the same-run re-sign — the compromise must wait out SERVE-30",
+          "recut": [
+            "compromise/00-drop-2026a",
+            "compromise/01-trust-only-blocked"
+          ],
+          "also_costs": "RC-R2-5's SECOND canary leg stops being watchable. The fork point moves to rotation/03-window-open, where the head's catalogue is already dual-signed, so a carried catalogue VERIFIES under the trust.json that drops the outgoing key and there is no refusal left to watch. The plan entry's Canary line would need amending with the fixture.",
+          "carry_still_refused": {
+            "rotation/02-mid-window": true,
+            "rotation/03-window-open": false
+          }
+        },
+        {
+          "answer": "expire the compromised key with a `not_after` instead of dropping it from index_keys",
+          "recut": [
+            "compromise/00-drop-2026a",
+            "compromise/01-trust-only-blocked"
+          ],
+          "also_costs": "keyPlan reads compromise mode off a key DISAPPEARING from index_keys, so an expiry is `normal` mode: the window applies, the catalogue is carried, and refusesDroppedKey passes because delegatedVerifierKeys does not filter by window. Compromise mode would stop having a trigger."
+        },
+        {
+          "answer": "no key is ever dropped before R9b; a compromise only adds the incoming key",
+          "recut": [
+            "compromise/00-drop-2026a",
+            "compromise/01-trust-only-blocked"
+          ],
+          "note": "Deleted rather than re-cut: with nothing dropped there is no compromise mode to rehearse."
+        }
+      ],
+      "independent_of_the_answer": "D10's literal inputs — a Source-Commit carrying only trust.json — commit nothing today, whatever the answer: both documents read `unchanged`, the head's bytes are re-committed, and SERVE-95 refuses them. compromise/01-trust-only-blocked is that run's record."
+    }
+  },
+  "steps": [
+    {
+      "id": "rotation/00-baseline",
+      "now": "2026-09-22T00:00:00Z",
+      "key_mode": "normal",
+      "dropped_keys": [],
+      "source_commit": "d4cf5a1f3235be5b2ea9910d1c5231c7dc25aa4e",
+      "parent": null,
+      "signed_sha": "753cf52cc5a56817b519684bfbc1dc0466a13113",
+      "committed": true,
+      "serials": {
+        "index": 1,
+        "revocations": 2
+      },
+      "documents": {
+        "index": {
+          "decision": "changed",
+          "serial": 1,
+          "signed_by": [
+            "astra-index-2026a"
+          ]
+        },
+        "revocations": {
+          "decision": "changed",
+          "serial": 2,
+          "signed_by": [
+            "astra-index-2026a"
+          ]
+        },
+        "trust": {
+          "decision": "copied",
+          "serial": null,
+          "signed_by": null
+        },
+        "root": {
+          "decision": "copied",
+          "serial": null,
+          "signed_by": null
+        }
+      },
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit d4cf5a1f3235be5b2ea9910d1c5231c7dc25aa4e --now 2026-09-22T00:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --out $WORK/.dist-signed --record $WORK/.record-rotation-00-baseline.json",
+      "what": "The state the rehearsal starts from: one index key, one signature on each document.",
+      "trust_serial": 2
+    },
+    {
+      "id": "rotation/01-delegate",
+      "now": "2026-09-22T01:00:00Z",
+      "key_mode": "normal",
+      "dropped_keys": [],
+      "source_commit": "c1327689cf07ef6e4ff6b213eae9289affce5c84",
+      "parent": "753cf52cc5a56817b519684bfbc1dc0466a13113",
+      "signed_sha": "ee4e8f457959cf591739f05e47744caa07031e7e",
+      "committed": true,
+      "serials": {
+        "index": 2,
+        "revocations": 3
+      },
+      "documents": {
+        "index": {
+          "decision": "changed",
+          "serial": 2,
+          "signed_by": [
+            "astra-index-2026a"
+          ]
+        },
+        "revocations": {
+          "decision": "changed",
+          "serial": 3,
+          "signed_by": [
+            "astra-index-2026a",
+            "TEST-ONLY-DO-NOT-TRUST-index-2026b"
+          ]
+        },
+        "trust": {
+          "decision": "copied",
+          "serial": null,
+          "signed_by": null
+        },
+        "root": {
+          "decision": "copied",
+          "serial": null,
+          "signed_by": null
+        }
+      },
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit c1327689cf07ef6e4ff6b213eae9289affce5c84 --now 2026-09-22T01:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-01-delegate.json",
+      "what": "ROLL-60's trust.json at serial + 1. Dual-signed list; catalogue by the outgoing key alone.",
+      "trust_serial": 3,
+      "delegated_at": "2026-09-22T01:00:00Z",
+      "hours_since_delegation": 0
+    },
+    {
+      "id": "rotation/02-mid-window",
+      "now": "2026-09-22T04:00:00Z",
+      "key_mode": "normal",
+      "dropped_keys": [],
+      "source_commit": "fca499b66e9400265ca6978f2d1736fe3653bdd9",
+      "parent": "ee4e8f457959cf591739f05e47744caa07031e7e",
+      "signed_sha": "c01c44e5466784729f9a1efdf2f7d987ffc8d8ce",
+      "committed": true,
+      "serials": {
+        "index": 3,
+        "revocations": 4
+      },
+      "documents": {
+        "index": {
+          "decision": "changed",
+          "serial": 3,
+          "signed_by": [
+            "astra-index-2026a"
+          ]
+        },
+        "revocations": {
+          "decision": "changed",
+          "serial": 4,
+          "signed_by": [
+            "astra-index-2026a",
+            "TEST-ONLY-DO-NOT-TRUST-index-2026b"
+          ]
+        },
+        "trust": {
+          "decision": "copied",
+          "serial": null,
+          "signed_by": null
+        },
+        "root": {
+          "decision": "copied",
+          "serial": null,
+          "signed_by": null
+        }
+      },
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit fca499b66e9400265ca6978f2d1736fe3653bdd9 --now 2026-09-22T04:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-02-mid-window.json",
+      "what": "Three hours after the delegation: SERVE-30's seven still have not passed.",
+      "trust_serial": 3,
+      "delegated_at": "2026-09-22T01:00:00Z",
+      "hours_since_delegation": 3
+    },
+    {
+      "id": "compromise/00-drop-2026a",
+      "now": "2026-09-22T05:00:00Z",
+      "key_mode": "compromise",
+      "dropped_keys": [
+        "astra-index-2026a"
+      ],
+      "source_commit": "4713121f38161d1ede940df186d927438297d023",
+      "parent": "c01c44e5466784729f9a1efdf2f7d987ffc8d8ce",
+      "signed_sha": "cc93648126f7f1e329af695f1df3a32ed3d89f1e",
+      "committed": true,
+      "serials": {
+        "index": 4,
+        "revocations": 5
+      },
+      "documents": {
+        "index": {
+          "decision": "changed",
+          "serial": 4,
+          "signed_by": [
+            "TEST-ONLY-DO-NOT-TRUST-index-2026b"
+          ]
+        },
+        "revocations": {
+          "decision": "changed",
+          "serial": 5,
+          "signed_by": [
+            "TEST-ONLY-DO-NOT-TRUST-index-2026b"
+          ]
+        },
+        "trust": {
+          "decision": "copied",
+          "serial": null,
+          "signed_by": null
+        },
+        "root": {
+          "decision": "copied",
+          "serial": null,
+          "signed_by": null
+        }
+      },
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 4713121f38161d1ede940df186d927438297d023 --now 2026-09-22T05:00:00Z --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-compromise-00-drop-2026a.json",
+      "what": "D10 as proposed, as ONE commit that verifies whole: trust.json at serial + 2 dropping the outgoing key, a list signed by the incoming key alone, and the catalogue re-signed with it.",
+      "trust_serial": 4,
+      "forks_from": "rotation/02-mid-window",
+      "delegated_at": "2026-09-22T01:00:00Z",
+      "hours_since_delegation": 4,
+      "waivers": [
+        "SERVE-30's seven hours",
+        "the carry"
+      ]
+    },
+    {
+      "id": "compromise/01-trust-only-blocked",
+      "now": "2026-09-22T05:00:00Z",
+      "key_mode": "compromise",
+      "dropped_keys": [
+        "astra-index-2026a"
+      ],
+      "source_commit": "3c177c81845f97d092b2bdd5a738aa541eddb864",
+      "parent": "c01c44e5466784729f9a1efdf2f7d987ffc8d8ce",
+      "signed_sha": null,
+      "committed": false,
+      "serials": {
+        "index": 3,
+        "revocations": 4
+      },
+      "documents": {
+        "index": {
+          "decision": "unchanged",
+          "serial": 3,
+          "signed_by": null
+        },
+        "revocations": {
+          "decision": "unchanged",
+          "serial": 4,
+          "signed_by": null
+        },
+        "trust": {
+          "decision": "copied",
+          "serial": null,
+          "signed_by": null
+        },
+        "root": {
+          "decision": "copied",
+          "serial": null,
+          "signed_by": null
+        }
+      },
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 3c177c81845f97d092b2bdd5a738aa541eddb864 --now 2026-09-22T05:00:00Z --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-compromise-01-trust-only-blocked.json",
+      "what": "D10's procedure with nothing in the Source-Commit but trust.json. The signer commits NOTHING: both documents are `unchanged`, so the head's bytes — signed by the dropped key — would be re-committed, and SERVE-95 refuses them. No documents, a record only.",
+      "trust_serial": 4,
+      "forks_from": "rotation/02-mid-window",
+      "documents_present": false
+    },
+    {
+      "id": "rotation/03-window-open",
+      "now": "2026-09-22T09:00:00Z",
+      "key_mode": "normal",
+      "dropped_keys": [],
+      "source_commit": "57e9b86b7c9c95bf3be11b218dc6350e84956696",
+      "parent": "c01c44e5466784729f9a1efdf2f7d987ffc8d8ce",
+      "signed_sha": "bc4502bf3f40ad2092e518603e26cbf8795f251f",
+      "committed": true,
+      "serials": {
+        "index": 4,
+        "revocations": 5
+      },
+      "documents": {
+        "index": {
+          "decision": "changed",
+          "serial": 4,
+          "signed_by": [
+            "astra-index-2026a",
+            "TEST-ONLY-DO-NOT-TRUST-index-2026b"
+          ]
+        },
+        "revocations": {
+          "decision": "changed",
+          "serial": 5,
+          "signed_by": [
+            "astra-index-2026a",
+            "TEST-ONLY-DO-NOT-TRUST-index-2026b"
+          ]
+        },
+        "trust": {
+          "decision": "copied",
+          "serial": null,
+          "signed_by": null
+        },
+        "root": {
+          "decision": "copied",
+          "serial": null,
+          "signed_by": null
+        }
+      },
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 57e9b86b7c9c95bf3be11b218dc6350e84956696 --now 2026-09-22T09:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-03-window-open.json",
+      "what": "Eight hours after the delegation: SERVE-30's seven have passed and the catalogue is dual-signed.",
+      "trust_serial": 3,
+      "delegated_at": "2026-09-22T01:00:00Z",
+      "hours_since_delegation": 8
+    },
+    {
+      "id": "rotation/04-root-change",
+      "now": "2026-09-22T10:00:00Z",
+      "key_mode": "normal",
+      "dropped_keys": [],
+      "source_commit": "94753e56c223d4f27d555f34069616a076eb61ae",
+      "parent": "bc4502bf3f40ad2092e518603e26cbf8795f251f",
+      "signed_sha": "d399fde1f0852d53b974954b4fa0f8b32e3aac7b",
+      "committed": true,
+      "serials": {
+        "index": 5,
+        "revocations": 6
+      },
+      "documents": {
+        "index": {
+          "decision": "changed",
+          "serial": 5,
+          "signed_by": [
+            "astra-index-2026a",
+            "TEST-ONLY-DO-NOT-TRUST-index-2026b"
+          ]
+        },
+        "revocations": {
+          "decision": "changed",
+          "serial": 6,
+          "signed_by": [
+            "astra-index-2026a",
+            "TEST-ONLY-DO-NOT-TRUST-index-2026b"
+          ]
+        },
+        "trust": {
+          "decision": "copied",
+          "serial": null,
+          "signed_by": null
+        },
+        "root": {
+          "decision": "copied",
+          "serial": null,
+          "signed_by": null
+        }
+      },
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 94753e56c223d4f27d555f34069616a076eb61ae --now 2026-09-22T10:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-04-root-change.json",
+      "what": "SERVE-16 and SERVE-92: root.json drops the retiring root and trust.json is re-signed by the new active root at the same serial, with a byte-identical `signed` payload (SERVE-20).",
+      "trust_serial": 3,
+      "root_set": [
+        "TEST-ONLY-DO-NOT-TRUST-root-b"
+      ],
+      "trust_signed_by": "TEST-ONLY-DO-NOT-TRUST-root-b"
+    },
+    {
+      "id": "rotation/05-after-root",
+      "now": "2026-09-22T11:00:00Z",
+      "key_mode": "normal",
+      "dropped_keys": [],
+      "source_commit": "3a073249de407624c8916ccf2d154f137c5af1d9",
+      "parent": "d399fde1f0852d53b974954b4fa0f8b32e3aac7b",
+      "signed_sha": "e4b054f10a3a34d16abaafaac591dbe93d497832",
+      "committed": true,
+      "serials": {
+        "index": 6,
+        "revocations": 7
+      },
+      "documents": {
+        "index": {
+          "decision": "changed",
+          "serial": 6,
+          "signed_by": [
+            "astra-index-2026a",
+            "TEST-ONLY-DO-NOT-TRUST-index-2026b"
+          ]
+        },
+        "revocations": {
+          "decision": "changed",
+          "serial": 7,
+          "signed_by": [
+            "astra-index-2026a",
+            "TEST-ONLY-DO-NOT-TRUST-index-2026b"
+          ]
+        },
+        "trust": {
+          "decision": "copied",
+          "serial": null,
+          "signed_by": null
+        },
+        "root": {
+          "decision": "copied",
+          "serial": null,
+          "signed_by": null
+        }
+      },
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 3a073249de407624c8916ccf2d154f137c5af1d9 --now 2026-09-22T11:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-05-after-root.json",
+      "what": "ROLL-60's last clause: the trust.json and catalogue that FOLLOW the root change, which the daemon must keep accepting because it compiles both test roots and reads root.json never.",
+      "trust_serial": 3,
+      "root_set": [
+        "TEST-ONLY-DO-NOT-TRUST-root-b"
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "command": "node tools/testkeys/sign-trust.mjs --key TEST-ONLY-DO-NOT-TRUST-root-a --in $WORK/.trust-unsigned-baseline.json --out $WORK/registry/v1/trust.json --banner TEST-ONLY REHEARSAL FIXTURE (RC-R2-5 / ROLL-60). Signed with the throwaway keys in tools/testkeys/, whose private halves are published in this repository. No production daemon trusts these roots and nothing a user installs may be signed with them."
+    },
+    {
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit d4cf5a1f3235be5b2ea9910d1c5231c7dc25aa4e --now 2026-09-22T00:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --out $WORK/.dist-signed --record $WORK/.record-rotation-00-baseline.json"
+    },
+    {
+      "command": "node tools/signer/run.mjs --step commit --root $WORK --record $WORK/.record-rotation-00-baseline.json --tree $WORK/.dist-signed",
+      "env": {
+        "GITHUB_SERVER_URL": "https://github.com",
+        "GITHUB_REPOSITORY": "mihailinl/astra-registry",
+        "GITHUB_RUN_ID": "0",
+        "GIT_AUTHOR_DATE": "2026-09-22T00:00:00Z",
+        "GIT_COMMITTER_DATE": "2026-09-22T00:00:00Z"
+      }
+    },
+    {
+      "command": "node tools/testkeys/sign-trust.mjs --key TEST-ONLY-DO-NOT-TRUST-root-a --in $WORK/.trust-unsigned-delegate.json --out $WORK/registry/v1/trust.json --banner TEST-ONLY REHEARSAL FIXTURE (RC-R2-5 / ROLL-60). Signed with the throwaway keys in tools/testkeys/, whose private halves are published in this repository. No production daemon trusts these roots and nothing a user installs may be signed with them."
+    },
+    {
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit c1327689cf07ef6e4ff6b213eae9289affce5c84 --now 2026-09-22T01:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-01-delegate.json"
+    },
+    {
+      "command": "node tools/signer/run.mjs --step commit --root $WORK --record $WORK/.record-rotation-01-delegate.json --tree $WORK/.dist-signed",
+      "env": {
+        "GITHUB_SERVER_URL": "https://github.com",
+        "GITHUB_REPOSITORY": "mihailinl/astra-registry",
+        "GITHUB_RUN_ID": "0",
+        "GIT_AUTHOR_DATE": "2026-09-22T01:00:00Z",
+        "GIT_COMMITTER_DATE": "2026-09-22T01:00:00Z"
+      }
+    },
+    {
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit fca499b66e9400265ca6978f2d1736fe3653bdd9 --now 2026-09-22T04:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-02-mid-window.json"
+    },
+    {
+      "command": "node tools/signer/run.mjs --step commit --root $WORK --record $WORK/.record-rotation-02-mid-window.json --tree $WORK/.dist-signed",
+      "env": {
+        "GITHUB_SERVER_URL": "https://github.com",
+        "GITHUB_REPOSITORY": "mihailinl/astra-registry",
+        "GITHUB_RUN_ID": "0",
+        "GIT_AUTHOR_DATE": "2026-09-22T04:00:00Z",
+        "GIT_COMMITTER_DATE": "2026-09-22T04:00:00Z"
+      }
+    },
+    {
+      "command": "node tools/testkeys/sign-trust.mjs --key TEST-ONLY-DO-NOT-TRUST-root-a --in $WORK/.trust-unsigned-compromise.json --out $WORK/registry/v1/trust.json --banner TEST-ONLY REHEARSAL FIXTURE (RC-R2-5 / ROLL-60). Signed with the throwaway keys in tools/testkeys/, whose private halves are published in this repository. No production daemon trusts these roots and nothing a user installs may be signed with them."
+    },
+    {
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 4713121f38161d1ede940df186d927438297d023 --now 2026-09-22T05:00:00Z --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-compromise-00-drop-2026a.json"
+    },
+    {
+      "command": "node tools/signer/run.mjs --step commit --root $WORK --record $WORK/.record-compromise-00-drop-2026a.json --tree $WORK/.dist-signed",
+      "env": {
+        "GITHUB_SERVER_URL": "https://github.com",
+        "GITHUB_REPOSITORY": "mihailinl/astra-registry",
+        "GITHUB_RUN_ID": "0",
+        "GIT_AUTHOR_DATE": "2026-09-22T05:00:00Z",
+        "GIT_COMMITTER_DATE": "2026-09-22T05:00:00Z"
+      }
+    },
+    {
+      "command": "git -C $WORK reset -q --hard fca499b66e9400265ca6978f2d1736fe3653bdd9"
+    },
+    {
+      "command": "node tools/testkeys/sign-trust.mjs --key TEST-ONLY-DO-NOT-TRUST-root-a --in $WORK/.trust-unsigned-blocked.json --out $WORK/registry/v1/trust.json --banner TEST-ONLY REHEARSAL FIXTURE (RC-R2-5 / ROLL-60). Signed with the throwaway keys in tools/testkeys/, whose private halves are published in this repository. No production daemon trusts these roots and nothing a user installs may be signed with them."
+    },
+    {
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 3c177c81845f97d092b2bdd5a738aa541eddb864 --now 2026-09-22T05:00:00Z --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-compromise-01-trust-only-blocked.json"
+    },
+    {
+      "command": "git -C $WORK reset -q --hard fca499b66e9400265ca6978f2d1736fe3653bdd9"
+    },
+    {
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 57e9b86b7c9c95bf3be11b218dc6350e84956696 --now 2026-09-22T09:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-03-window-open.json"
+    },
+    {
+      "command": "node tools/signer/run.mjs --step commit --root $WORK --record $WORK/.record-rotation-03-window-open.json --tree $WORK/.dist-signed",
+      "env": {
+        "GITHUB_SERVER_URL": "https://github.com",
+        "GITHUB_REPOSITORY": "mihailinl/astra-registry",
+        "GITHUB_RUN_ID": "0",
+        "GIT_AUTHOR_DATE": "2026-09-22T09:00:00Z",
+        "GIT_COMMITTER_DATE": "2026-09-22T09:00:00Z"
+      }
+    },
+    {
+      "command": "node tools/testkeys/sign-trust.mjs --key TEST-ONLY-DO-NOT-TRUST-root-b --in $WORK/.trust-unsigned-rootchange.json --out $WORK/registry/v1/trust.json --banner TEST-ONLY REHEARSAL FIXTURE (RC-R2-5 / ROLL-60). Signed with the throwaway keys in tools/testkeys/, whose private halves are published in this repository. No production daemon trusts these roots and nothing a user installs may be signed with them."
+    },
+    {
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 94753e56c223d4f27d555f34069616a076eb61ae --now 2026-09-22T10:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-04-root-change.json"
+    },
+    {
+      "command": "node tools/signer/run.mjs --step commit --root $WORK --record $WORK/.record-rotation-04-root-change.json --tree $WORK/.dist-signed",
+      "env": {
+        "GITHUB_SERVER_URL": "https://github.com",
+        "GITHUB_REPOSITORY": "mihailinl/astra-registry",
+        "GITHUB_RUN_ID": "0",
+        "GIT_AUTHOR_DATE": "2026-09-22T10:00:00Z",
+        "GIT_COMMITTER_DATE": "2026-09-22T10:00:00Z"
+      }
+    },
+    {
+      "command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 3a073249de407624c8916ccf2d154f137c5af1d9 --now 2026-09-22T11:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-05-after-root.json"
+    },
+    {
+      "command": "node tools/signer/run.mjs --step commit --root $WORK --record $WORK/.record-rotation-05-after-root.json --tree $WORK/.dist-signed",
+      "env": {
+        "GITHUB_SERVER_URL": "https://github.com",
+        "GITHUB_REPOSITORY": "mihailinl/astra-registry",
+        "GITHUB_RUN_ID": "0",
+        "GIT_AUTHOR_DATE": "2026-09-22T11:00:00Z",
+        "GIT_COMMITTER_DATE": "2026-09-22T11:00:00Z"
+      }
+    }
+  ]
+}
