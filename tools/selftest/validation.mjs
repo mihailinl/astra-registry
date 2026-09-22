@@ -16,7 +16,8 @@ import { stableStringify } from "../lib/canonical.mjs";
 import { compareSemver } from "../lib/semver.mjs";
 import { REPO_ROOT, loadSources } from "../lib/sources.mjs";
 import { stagingListingId } from "../lib/reserved.mjs";
-import { RESERVED_KEYS, SUPPORTED_KEYS } from "../lib/platform.mjs";
+import { RESERVED_KEYS, SUPPORTED_KEYS, platformKeyFromManifest } from "../lib/platform.mjs";
+import { CODES } from "../../bot/lib/codes.mjs";
 import { makeFixtures } from "../make-fixtures.mjs";
 import { test, assert, assertEqual, neverAsk, tmp, validateTree, errorsMatching } from "./harness.mjs";
 import { withFakeAstraPlugins } from "./fixtures.mjs";
@@ -496,6 +497,115 @@ export async function run() {
       assertEqual(refused.map((e) => e.message).join("; "), "",
         `${key} is supported in tools/lib/platform.mjs, and tools/validate.mjs refused an artifact under it`);
     }
+  });
+  await test("the platform vocabulary's other copies keep their stated relations: every schema enum of platform keys is the vocabulary and no schema pattern spells one, build-index writes a noarch artifact under every supported key, the committed index publishes supported keys only, platform.mjs's manifest table reaches each key once, and E_PLATFORM_UNSUPPORTED's remedy names the supported keys", () => {
+    // The check above holds the validator, schema/version-v1.json and
+    // tools/lib/platform.mjs to one another. The census of 2026-09-22 found the
+    // vocabulary in five more places it did not compare, and not all of them
+    // are meant to be the same set. Each is asked here for what it holds, and
+    // held to the relation its own comment or description states:
+    //
+    //   schema/index-v1.json's `$defs.platformKey`   EQUAL to the vocabulary —
+    //       reserved names are in the schemas "so nobody else claims the names"
+    //   build-index's noarch expansion                EQUAL to SUPPORTED_KEYS —
+    //       "written under every supported platform key" (index-v1.json)
+    //   the committed registry/v1/index.json          a SUBSET of SUPPORTED_KEYS —
+    //       the validator refuses the reserved ones, so the index never carries one
+    //   platform.mjs's MANIFEST.platform table         ONTO the vocabulary, one
+    //       {os, arch} pair per key
+    //   E_PLATFORM_UNSUPPORTED's remedy (bot/lib/codes.mjs, and generated from
+    //       it into tools/codes-table.json and the token file)   NAMES
+    //       SUPPORTED_KEYS, and "macOS and arm64 names" describes RESERVED_KEYS
+    //
+    // Measured on main (70df193) before this: widening or narrowing the index
+    // schema's enum, and adding a pair to the manifest table, left every check
+    // green. Dropping a key from build-index's then-literal noarch expansion
+    // was red only as "the committed index is not what the generator
+    // produces", which a correct change to the output reads as too, and a
+    // remedy naming the wrong hosts only as a stale codes-table.json, which a
+    // regeneration satisfies.
+    const vocabulary = [...SUPPORTED_KEYS, ...RESERVED_KEYS];
+    const sorted = (keys) => [...keys].sort().join(" ");
+    const isKeyShaped = (s) => typeof s === "string" && (vocabulary.includes(s) || /^(?:linux|windows|macos|darwin|freebsd|android|ios)-[a-z0-9_]+$/.test(s));
+
+    // (a) the schemas, FOUND by walking: every enum with a platform key in it,
+    // and every pattern that spells one — which nothing could compare as a set.
+    const enums = [], patterns = [];
+    const walk = (node, where) => {
+      if (Array.isArray(node)) node.forEach((v, i) => walk(v, `${where}/${i}`));
+      else if (node && typeof node === "object") {
+        if (Array.isArray(node.enum) && node.enum.some(isKeyShaped)) enums.push([where, node.enum]);
+        for (const k of ["pattern"]) {
+          if (typeof node[k] === "string" && vocabulary.some((key) => node[k].includes(key))) patterns.push(`${where}: ${node[k]}`);
+        }
+        for (const [k, v] of Object.entries(node)) walk(v, `${where}/${k}`);
+      }
+    };
+    const schemaDir = path.join(REPO_ROOT, "schema");
+    for (const f of fs.readdirSync(schemaDir).filter((n) => n.endsWith(".json")).sort()) {
+      walk(JSON.parse(fs.readFileSync(path.join(schemaDir, f), "utf8")), `schema/${f}#`);
+    }
+    assert(enums.length >= 2, `found ${enums.length} platform enum(s) under schema/; version-v1.json and index-v1.json each publish one`);
+    for (const [where, values] of enums) {
+      assertEqual(sorted(values), sorted(vocabulary),
+        `${where} is a platform enum that is not tools/lib/platform.mjs's vocabulary (SUPPORTED_KEYS and RESERVED_KEYS)`);
+    }
+    assertEqual(patterns.join("\n  "), "",
+      "a schema spells a platform key inside a pattern, which no set comparison can hold; give it an enum or teach this check its relation");
+
+    // (b) build-index, asked: one listing whose only artifact is `noarch`.
+    const dir = path.join(tmp, "platform-noarch");
+    fs.cpSync(path.join(REPO_ROOT, "tests/fixtures/id-collision/plugins/dice-roller"), path.join(dir, "plugins/dice-roller"), { recursive: true });
+    const vf = path.join(dir, "plugins/dice-roller/versions/1.0.0.json");
+    const v = JSON.parse(fs.readFileSync(vf, "utf8"));
+    const art = { ...v.artifacts["linux-x64"] };
+    art.url = art.url.replace("linux-x64", "noarch");
+    art.filename = art.filename.replace("linux-x64", "noarch");
+    v.artifacts = { noarch: art };
+    fs.writeFileSync(vf, stableStringify(v));
+    const entry = buildIndex({ root: dir, serial: 1 }).signed.plugins.find((p) => p.id === "dice-roller");
+    assert(entry && entry.download_url === art.url, "the noarch fixture did not reach the compatibility projection at all, so its keys prove nothing");
+    assertEqual(sorted(Object.keys(entry.platform_downloads)), sorted(SUPPORTED_KEYS),
+      "tools/build-index.mjs writes a noarch artifact under keys other than every supported key (PLATFORM_KEYS_FOR_NOARCH)");
+    for (const [k, url] of Object.entries(entry.platform_downloads)) {
+      assertEqual(url, art.url, `build-index wrote the noarch artifact's ${k} download as another URL`);
+    }
+
+    // (c) the committed index, which is what a client reads.
+    const committed = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "registry/v1/index.json"), "utf8"));
+    const published = new Set();
+    for (const p of committed.signed?.plugins ?? []) {
+      for (const k of Object.keys(p.platform_downloads ?? {})) published.add(k);
+      for (const r of p.releases ?? []) for (const k of Object.keys(r.artifacts ?? {})) published.add(k);
+    }
+    assert(published.size > 0, "the committed index publishes no platform key at all, so a subset check on it is vacuous");
+    const outside = [...published].filter((k) => !SUPPORTED_KEYS.includes(k));
+    assertEqual(outside.join(" "), "", "registry/v1/index.json publishes a platform key tools/lib/platform.mjs does not support");
+
+    // (d) platform.mjs's own table, asked over a domain wider than it.
+    const reached = new Map();
+    for (const os of ["linux", "windows", "macos", "any", "darwin", "freebsd", ""]) {
+      for (const arch of ["x86_64", "aarch64", "any", "x64", "arm64", "i686", "riscv64", ""]) {
+        const key = platformKeyFromManifest({ os, arch });
+        if (key !== null) reached.set(key, [...(reached.get(key) ?? []), `${os}/${arch}`]);
+      }
+    }
+    assertEqual(sorted(reached.keys()), sorted(vocabulary),
+      "tools/lib/platform.mjs's MANIFEST.platform table reaches a set of keys that is not its own vocabulary");
+    const twice = [...reached].filter(([, pairs]) => pairs.length !== 1).map(([k, pairs]) => `${k} <- ${pairs.join(", ")}`);
+    assertEqual(twice.join("; "), "", "a platform key is reached from more than one MANIFEST.platform pair");
+
+    // (e) the refusal's remedy, which a stranger reads when a bundle is refused.
+    const remedy = CODES.E_PLATFORM_UNSUPPORTED?.remedy;
+    assert(typeof remedy === "string", "bot/lib/codes.mjs has no E_PLATFORM_UNSUPPORTED remedy");
+    const named = [...remedy.matchAll(/`([^`]+)`/g)].map((m) => m[1]).filter(isKeyShaped);
+    assertEqual(sorted(named), sorted(SUPPORTED_KEYS),
+      "E_PLATFORM_UNSUPPORTED's remedy tells an author the hosts that exist, and they are not tools/lib/platform.mjs's SUPPORTED_KEYS");
+    assert(/macOS and arm64 names are reserved/.test(remedy),
+      "E_PLATFORM_UNSUPPORTED's remedy no longer says which names are reserved; this check holds the sentence it had");
+    const described = (k) => k.startsWith("macos-") || k.endsWith("-arm64");
+    assertEqual([...RESERVED_KEYS.filter((k) => !described(k)), ...SUPPORTED_KEYS.filter(described)].join(" "), "",
+      "\"macOS and arm64 names are reserved\" (E_PLATFORM_UNSUPPORTED's remedy) no longer describes RESERVED_KEYS");
   });
 
 

@@ -12,7 +12,10 @@
 export const SUPPORTED_KEYS = ["linux-x64", "windows-x64", "noarch"];
 
 // Reserved in the schema so nobody else claims the names, refused in practice:
-// Astra's release workflow ships no daemon for these hosts.
+// Astra's release workflow ships no daemon for these hosts. `tools/validate.mjs`
+// refuses an artifact under one of them by reading this list, and knows the
+// vocabulary as SUPPORTED_KEYS and this together; until 2026-09-22 it kept two
+// literals of its own and nothing at run time read this one.
 export const RESERVED_KEYS = ["linux-arm64", "windows-arm64", "macos-x64", "macos-arm64"];
 
 const FROM_MANIFEST = new Map([
