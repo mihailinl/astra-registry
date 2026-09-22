@@ -79,6 +79,13 @@ import {
   splitGateItems,
   successProblems,
 } from "../lib/service.mjs";
+// The third kind of reader (contract 0.30.0): a tool in this repository that
+// reads one entry's member table directly. Imported so the census below can
+// PROVE the rule runs rather than record a name — see `TOOL_READERS`.
+import {
+  markerProblems as preflightMarkerProblems,
+  splitTable as preflightSplitTable,
+} from "../../tools/cutover-preflight.mjs";
 
 const REPO = path.resolve(import.meta.dirname, "..", "..");
 const TOKEN_FILE = path.join(REPO, "schema", "contract-tokens-v1.json");
@@ -373,6 +380,23 @@ test("every body's members and required flags are the token file's", () => {
 // contradict the schema side once the generator stops being the only writer,
 // inside a green run.
 //
+// ── the fourth bucket, and how it was found (contract 0.30.0) ──────────────
+//
+// That third assertion fired on 0.30.0's condition for
+// `astra.registry.migration-notice/1`, **and it was wrong**. The census knew
+// two kinds of reader — a body `bot/lib/service.mjs` compiles, and an entry
+// `carried_by` pairs with one — and there is a third: a tool in this repository
+// that reads one entry's member table directly. `tools/cutover-preflight.mjs`
+// does exactly that for the migration-notice marker, refuses a `when` it cannot
+// evaluate, and runs both halves of an `iff` against every marker on a ref.
+//
+// **A census that cannot see a reader reports a rule as unrun**, which is this
+// entry's own failure one level up, and the right repair is not an exemption:
+// `TOOL_READERS` gets in only by having its tool's reader imported and run over
+// the published table, one record per branch of the condition. Adding it also
+// needed a main guard on that tool, which until now ran an eleven-check live
+// gate at module scope — invisible while nothing imported it.
+//
 // The live case is `list:notice_status`, whose `accepted_at` and `ended_at`
 // are §0.8's rendering of the same §4.2 states `astra.plugins.bot-notice-
 // status/1` carries — two of the eight machine-readable conditions in the
@@ -398,6 +422,55 @@ const membered = tokenFile.entries.filter((e) => Array.isArray(e.members));
 const isCompiled = (e) => e.kind === "schema" && Boolean(BODIES[e.name]);
 
 /**
+ * **The third kind of reader, and the census did not have it** (contract
+ * 0.30.0).
+ *
+ * The two buckets above are the two ways `bot/lib/service.mjs` reaches a
+ * member: it compiles the body, or the file's `carried_by` pairs the entry with
+ * one it compiles. Everything else was `unread`, and a condition on an `unread`
+ * entry failed — "a rule published where nothing runs it".
+ *
+ * 0.30.0 published a condition on `astra.registry.migration-notice/1` and that
+ * failure fired, **and it was wrong**. That record is not a bot body and never
+ * will be: it is a git marker, and the thing that reads it is
+ * `tools/cutover-preflight.mjs`, which takes the member table out of this same
+ * file, refuses a `when` it cannot evaluate, and runs both halves of an `iff`
+ * against every marker on a ref. A reader in this repository that the census
+ * could not see is exactly the silence the census exists to end, one level up.
+ *
+ * **So this is a bucket and not an exemption.** An entry gets in by naming a
+ * tool AND by that tool's own reader being imported and run over the published
+ * table, below, with one record per branch of the condition. A name alone would
+ * be the name-level check `dev/couplings.md` entry 50 was written against.
+ */
+const TOOL_READERS = [
+  {
+    schema: "astra.registry.migration-notice/1",
+    tool: "tools/cutover-preflight.mjs",
+    // One record per branch of the published `iff`, so that a condition
+    // relaxed to `if`, or dropped, changes an answer here. `{missing,
+    // forbidden, withheld}` is what that tool's own reader returns.
+    // The flat members are carried by every record here on purpose: this is a
+    // test about ONE member's condition, and a marker missing `sent_at` would
+    // move the counts for a reason that has nothing to do with it.
+    marker: (round, extra) => ({
+      schema: "astra.registry.migration-notice/1",
+      round,
+      sent_at: "2026-08-01T00:00:00Z",
+      ...extra,
+    }),
+    cases: [
+      ["a round-1 marker with no date is clean", [1, {}], { missing: 0, forbidden: 0, withheld: 0 }],
+      ["a round-1 marker carrying one is forbidden", [1, { cutover_planned_at: "2026-09-15T00:00:00Z" }], { missing: 0, forbidden: 1, withheld: 0 }],
+      ["a round-2 marker with no date is missing it", [2, {}], { missing: 1, forbidden: 0, withheld: 0 }],
+      ["a round-2 marker carrying one is clean", [2, { cutover_planned_at: "2026-09-15T00:00:00Z" }], { missing: 0, forbidden: 0, withheld: 0 }],
+    ],
+  },
+];
+
+const isToolRead = (e) => TOOL_READERS.some((r) => r.schema === e.name);
+
+/**
  * The `{if|iff: <predicate>}` shape — a rule a reader must evaluate — as
  * against the prose sentence a `false` member may carry to say why no
  * condition is published for it. Both live in `when`, and only one of them is
@@ -407,10 +480,11 @@ const machineReadable = (when) => when !== null && typeof when === "object";
 
 const compiledEntries = membered.filter(isCompiled);
 const pairedEntries = membered.filter((e) => !isCompiled(e) && Boolean(e.carried_by));
-const unreadEntries = membered.filter((e) => !isCompiled(e) && !e.carried_by);
+const toolReadEntries = membered.filter((e) => !isCompiled(e) && !e.carried_by && isToolRead(e));
+const unreadEntries = membered.filter((e) => !isCompiled(e) && !e.carried_by && !isToolRead(e));
 const countMembers = (entries) => entries.reduce((n, e) => n + e.members.length, 0);
 
-test("the file's membered entries are three buckets, none of which may empty", () => {
+test("the file's membered entries are four buckets, none of which may empty", () => {
   assert.ok(membered.length >= 42, `only ${membered.length} entries carry members; this is a broken read`);
   assert.ok(
     countMembers(membered) >= 150,
@@ -422,9 +496,11 @@ test("the file's membered entries are three buckets, none of which may empty", (
   // quantifies over, and a census over less than the file is the defect this
   // section exists to end rather than to reproduce.
   assert.equal(
-    compiledEntries.length + pairedEntries.length + unreadEntries.length, membered.length,
-    `${compiledEntries.length} compiled + ${pairedEntries.length} paired + ${unreadEntries.length} unread is ` +
-    `not ${membered.length} membered entries, so an entry is in two buckets or in none`,
+    compiledEntries.length + pairedEntries.length + toolReadEntries.length + unreadEntries.length,
+    membered.length,
+    `${compiledEntries.length} compiled + ${pairedEntries.length} paired + ${toolReadEntries.length} tool-read + ` +
+    `${unreadEntries.length} unread is not ${membered.length} membered entries, so an entry is in two buckets ` +
+    "or in none",
   );
 
   // Each bucket floored on its own, because each is the population of an
@@ -440,6 +516,12 @@ test("the file's membered entries are three buckets, none of which may empty", (
     "and passes. `list:notice_status` carried one at contract 0.29.0, and deleting it is one of the mutations " +
     "the generator's own selftest watches go red",
   );
+  assert.equal(
+    toolReadEntries.length, TOOL_READERS.length,
+    `${toolReadEntries.length} of the ${TOOL_READERS.length} entries a tool in this repository reads resolved ` +
+    "to a membered entry outside the other two buckets. A reader named for an entry the file no longer " +
+    "publishes — or one that has since become a compiled body — is a bucket that has stopped meaning anything",
+  );
 
   // The boundary, as a number. An equality and not a floor: a `>=` here says
   // only that the file has not shrunk, and would let the next fifty unread
@@ -448,13 +530,69 @@ test("the file's membered entries are three buckets, none of which may empty", (
   // being made to look is the whole of what this line buys.
   assert.deepEqual(
     { entries: unreadEntries.length, members: countMembers(unreadEntries) },
-    { entries: 25, members: 83 },
+    { entries: 24, members: 79 },
     `${countMembers(unreadEntries)} published members over ${unreadEntries.length} entries are outside every ` +
-    `comparison in this suite; there were 83 over 25 at contract 0.29.0 and this file reads ` +
+    `comparison in this suite; there were 79 over 24 at contract 0.30.0 and this file reads ` +
     `${tokenFile.contract_version}. Nothing in astra-registry composes or reads those bodies, so the number is ` +
     "allowed to move — but it moves by somebody reading the new members and finding them unconditioned, not by " +
-    "a filter quietly widening",
+    "a filter quietly widening. It was 83 over 25 at 0.29.0, and it moved because " +
+    "`astra.registry.migration-notice/1` turned out to HAVE a reader that this census could not see, not " +
+    "because a filter widened",
   );
+});
+
+// Contract 0.30.0. The bucket above is a claim that something runs the rule;
+// this is the claim discharged. The tool's own reader is imported and run over
+// the table the file publishes, with one record per branch of the condition —
+// so `iff` relaxed to `if` (the round-1-carrying case stops being forbidden),
+// the condition dropped (the round-1 case starts being missing), and a `when`
+// the tool cannot evaluate (a refusal) each change an answer here.
+//
+// Watched by editing `schema/contract-tokens-v1.json` on disk, and both
+// messages below are the ones that printed:
+//
+//   * `"iff"` → `"if"` →
+//       tools/cutover-preflight.mjs over astra.registry.migration-notice/1: a
+//       round-1 marker carrying one is forbidden. missing: []; forbidden: [];
+//       withheld: []
+//   * `required` back to `true`, the condition deleted → TWO assertions, and
+//     neither of them is a case above:
+//       astra.registry.migration-notice/1 is in the tool-read bucket and
+//       publishes no condition
+//       the file publishes 8 conditions and there were 9 at contract 0.30.0
+//
+// The second is worth reading twice. Putting the defect back does not make a
+// case fail — the tool then WITHHOLDS on round 1 rather than answering, which
+// is what `DISPUTED_MEMBERS` is for, and a withheld question is not a wrong
+// answer. It fails because the bucket asserts a rule exists to be run. That is
+// the floor doing its job: without it, the defect put back would have left this
+// test green over an entry whose condition had gone.
+test("a tool-read entry's condition is one that tool evaluates, and it discriminates", () => {
+  for (const r of TOOL_READERS) {
+    const entry = membered.find((e) => e.kind === "schema" && e.name === r.schema);
+    assert.ok(entry, `${r.tool} reads ${r.schema} and the file publishes no membered entry of that name`);
+    const { readable, refused } = preflightSplitTable(entry.members);
+    assert.deepEqual(
+      refused.map((m) => `\`${m.name}\` ${m.why}`), [],
+      `${r.tool} cannot read ${r.schema}'s member table, and the token file's readme makes such a file one a ` +
+      "reader MUST refuse rather than read as unconditioned",
+    );
+    assert.ok(
+      entry.members.some((m) => m.required === "conditional"),
+      `${r.schema} is in the tool-read bucket and publishes no condition. The bucket exists so that a rule ` +
+      "has a runner; an entry with no rule belongs in the census above",
+    );
+    for (const [what, [round, extra], expect] of r.cases) {
+      const p = preflightMarkerProblems(readable, r.marker(round, extra));
+      assert.deepEqual(
+        { missing: p.missing.length, forbidden: p.forbidden.length, withheld: p.withheld.length },
+        expect,
+        `${r.tool} over ${r.schema}: ${what}. ` +
+        `missing: ${JSON.stringify(p.missing)}; forbidden: ${JSON.stringify(p.forbidden)}; ` +
+        `withheld: ${JSON.stringify(p.withheld.map((w) => w.message))}`,
+      );
+    }
+  }
 });
 
 test("a value binding rendered in two entries is compared here, and not only by the generator", () => {
@@ -533,7 +671,13 @@ test("a member outside that comparison carries no condition, or the failure name
   for (const e of membered) {
     for (const m of e.members) {
       if (m.required !== "conditional" && !machineReadable(m.when)) continue;
-      const bucket = isCompiled(e) ? "compiled" : e.carried_by ? "paired" : "unread";
+      const bucket = isCompiled(e)
+        ? "compiled"
+        : e.carried_by
+          ? "paired"
+          : isToolRead(e)
+            ? "tool"
+            : "unread";
       conditions.push({ where: `${e.id} \`${m.name}\``, bucket });
     }
   }
@@ -541,14 +685,15 @@ test("a member outside that comparison carries no condition, or the failure name
   // The floor, before anything is said about what was found: a census over no
   // conditions reports no stray ones.
   assert.ok(
-    conditions.length >= 8,
-    `the file publishes ${conditions.length} conditions and there were 8 at contract 0.29.0. A census that finds ` +
+    conditions.length >= 9,
+    `the file publishes ${conditions.length} conditions and there were 9 at contract 0.30.0. A census that finds ` +
     "none proves nothing about the ones it was written for",
   );
   assert.ok(
-    conditions.some((c) => c.bucket === "compiled") && conditions.some((c) => c.bucket === "paired"),
-    `conditions by bucket: ${JSON.stringify(conditions)}. Six were compiled and two paired at contract 0.29.0; ` +
-    "a bucket that has emptied is a comparison that has stopped happening, not a file that has got simpler",
+    ["compiled", "paired", "tool"].every((b) => conditions.some((c) => c.bucket === b)),
+    `conditions by bucket: ${JSON.stringify(conditions)}. Six were compiled, two paired and one tool-read at ` +
+    "contract 0.30.0; a bucket that has emptied is a comparison that has stopped happening, not a file that " +
+    "has got simpler",
   );
 
   assert.deepEqual(

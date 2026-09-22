@@ -156,6 +156,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 
 import { REPO_ROOT, QUEUE_DIR } from "./lib/sources.mjs";
@@ -1527,4 +1528,16 @@ function selftest() {
 // POSIX, and exiting on the line after `console.log` truncates the record this
 // tool exists to produce. The output is the deliverable; the code is a summary
 // of it.
-process.exitCode = main(process.argv.slice(2));
+//
+// And only when this file IS the program. It exports ten readers, and until
+// contract 0.30.0 nothing imported them, so running the whole gate at module
+// scope cost nothing and was invisible. `bot/tests/service.test.mjs` now
+// imports `splitTable` and `markerProblems` to prove that the condition this
+// file evaluates is one something in this repository actually runs — and an
+// import that ran eleven checks, a live `gh` query and a walk of four
+// repositories would make that proof unaffordable. Watched: the first attempt
+// printed the entire cutover gate into the test output before the first
+// assertion.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  process.exitCode = main(process.argv.slice(2));
+}
