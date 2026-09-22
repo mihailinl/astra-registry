@@ -1713,7 +1713,7 @@ const FLOORS = new Map(Object.entries({
   // the list above does.
   "primitives.mjs": 16,
   "catalogue.mjs": 9,
-  "publishers.mjs": 16,
+  "publishers.mjs": 17,
   "validation.mjs": 17,
   "couplings.mjs": 14,
   "listings.mjs": 5,

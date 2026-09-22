@@ -29,6 +29,7 @@ import {
 import { checkPublisherRecords, runValidation } from "../validate.mjs";
 import { NO_LISTING_FILE, proofNamesOwner, recheck } from "../../bot/recheck-publishers.mjs";
 import { test, assert } from "./harness.mjs";
+import { TRUST31_COPY, trust31Covers, trust31Entries } from "./trust31.mjs";
 
 // ── gap 6: a record that reaches no listing ─────────────────────────────────
 //
@@ -994,5 +995,37 @@ export async function run() {
         `publisher-recheck.yml's line that ${what} does not name ${NO_LISTING_FILE}, so a dropped declaration is ` +
         `written and never committed, and main goes red on the withdrawal:\n  ${line.trim()}`);
     }
+  });
+
+  // Entry 109, held rather than remembered. The daily re-check runs unattended,
+  // and after R3 a commit of its that touched contract TRUST-31's hashed set
+  // would put the bot into shadow and raise an alarm for a badge withdrawal
+  // nobody did wrong (registry plan: ROLL-64). Since #231 it commits the
+  // declarations file with the withdrawal, and the file was under
+  // `tools/selftest/`, a directory entry of the set — so the first withdrawal
+  // of a declared record would have been that commit, with every check green,
+  // because nothing asked where the job's paths lie.
+  // Pending item 23 was answered (a): the file is a record a run writes, and it
+  // moved to `state/`. What keeps it there is this: every path the commit step
+  // stages, read off the same one `git add` line (d) reads, held outside the set
+  // as the registry's copy states it — a directory path in both directions,
+  // because staging `bot/` would stage set entries beneath it.
+  await test("the daily re-check commits nothing inside TRUST-31's hashed set", () => {
+    const wf = fs.readFileSync(path.join(REPO_ROOT, ".github", "workflows", "publisher-recheck.yml"), "utf8");
+    const adds = wf.split("\n").filter((l) => !/^\s*#/.test(l) && /\bgit add\b/.test(l));
+    assert(adds.length === 1, `publisher-recheck.yml has ${adds.length} \`git add\` line(s); this check reads exactly one`);
+    const words = adds[0].trim().split(/\s+/);
+    const dashes = words.filter((w) => w === "--").length;
+    assert(dashes === 1, `publisher-recheck.yml's \`git add\` line carries ${dashes} \`--\`, so its paths cannot be told from its flags:\n  ${adds[0].trim()}`);
+    const staged = words.slice(words.indexOf("--") + 1);
+    assert(staged.length >= 2 && staged.includes(NO_LISTING_FILE) && staged.includes("publishers/"),
+      `publisher-recheck.yml stages ${JSON.stringify(staged)}; this check expects publishers/ and ${NO_LISTING_FILE} among them, so the read is broken`);
+    const entries = trust31Entries();
+    assert(entries.length >= 40, `read ${entries.length} entries off ${TRUST31_COPY}'s ENTRIES and TRUST-31 held 50 on 2026-09-22; this is a broken read`);
+    const inside = staged.filter((p) => trust31Covers(entries, p));
+    assert(inside.length === 0,
+      `publisher-recheck.yml, which runs unattended, commits ${inside.join(", ")} — inside TRUST-31's hashed set as ${TRUST31_COPY} ` +
+      "states it. After R3 every such commit returns the bot to shadow and alarms for a routine withdrawal. A record the job " +
+      "writes belongs outside the set (state/ is where the declarations went); a rule it judges by does not belong in this commit");
   });
 }
