@@ -279,9 +279,19 @@ test("every entry is a well-formed path, and one bad entry refuses the whole set
 // from a real pending file and INHERITS the shelter built for a real one. So
 // each row carries, beside the owning task, a landing condition observable
 // from the tree — the rollout step whose exit marker must not appear before
-// the file does. It is the shape `tools/contract-tokens.mjs`'s pending records
-// already use, where each names the contract version that lands it and a probe
-// that fires when the reason closes.
+// the file does. It is the shape the pending records already use in
+// `astra-plugins-ops`'s `tools/contract-tokens.mjs` — THE OTHER ESTATE'S
+// generator, not a file in this repository — where each names the contract
+// version that lands it and a probe that fires when the reason closes.
+//
+// The estate is spelled because it was not, and the omission is the failure
+// this very file exists to catch, one level out. `tools/contract-tokens.mjs`
+// reads as a path here and there is no such path here; the nearest thing on
+// this tree is `tools/selftest/contract-tokens.mjs`, which is a different
+// program doing a different job. A reader looks, does not find it, and
+// concludes the comment is stale — when it is exact, about somewhere else.
+// A bare path beside no estate name is the same defect as a bare section
+// number beside no document name, which cost both estates a day this month.
 //
 // Three checks hang off it, and they close different halves:
 //
