@@ -78,6 +78,7 @@
 //     writes the files and composes the message, so the gates run over a tree
 //     and not over a promise.
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -97,6 +98,9 @@ import {
   writeDecisionRecord,
 } from "./lib/decisions.mjs";
 import {
+  HOLDS_DIR,
+  classifyHoldCommit,
+  holdEntry,
   readHolds,
   resolveHold,
   resultKey,
@@ -621,7 +625,7 @@ export function composeCommit({ compiled, held = [], submissions = [], run, subj
     });
   }
   for (const h of held) {
-    paths.add(`state/holds/${h.service_decision_id}.json`);
+    paths.add(holdEntryPath(h.service_decision_id));
   }
   for (const s of submissions) if (s.path) paths.add(s.path);
 
@@ -658,6 +662,166 @@ export function composeCommit({ compiled, held = [], submissions = [], run, subj
   };
 }
 
+// ── holds: entering one ─────────────────────────────────────────────────────
+
+/** `state/holds`, repository-relative with `/`, whatever the platform joins with. */
+export const HOLDS_PREFIX = HOLDS_DIR.split(path.sep).join("/");
+
+/**
+ * The one statement of where a held decision's entry lives. `composeCommit`
+ * puts this path into `paths.txt` and `writeHoldEntries` writes to it, and
+ * the two used to be two spellings — one of which nothing wrote.
+ */
+export const holdEntryPath = (id) => `${HOLDS_PREFIX}/${id}.json`;
+
+/**
+ * Write `state/holds/<id>.json` for every decision this run held.
+ *
+ * **Until this existed, nothing wrote the file.** `compileDecision`'s `held()`
+ * returns no edits, `applyCompiled` writes compiled edits only, and
+ * `composeCommit` put the entry's path into `paths.txt` anyway — so the
+ * workflow's `git add --pathspec-from-file` met a path that did not exist,
+ * exited 128, and the first held decision failed the commit. Had it not, the
+ * `held` result would have been posted for a hold no file recorded: the
+ * decision leaves BOT-80's list on that result, and a hold that is not in git
+ * is one no confirmation can ever release.
+ *
+ * The entry is `holdEntry`'s, so the decision is copied through the schema's
+ * allowlist and checked before it is written, and the path goes through BOT-33's
+ * moderation allowlist before it is opened. The schema it is checked against is
+ * this repository's (`schemaRoot`), for `readHolds`'s reason: the tree being
+ * written may be a fixture, and the rule is what THIS checkout says.
+ *
+ * **Written in a shadow run too, deliberately.** A `held` result is not
+ * state-setting and `resultsFor` posts it under `shadow: true` (BOT-92), and
+ * that post takes the decision off the service's list; the entry is what makes
+ * the post true. Committing nothing while posting `held` would lose the
+ * decision outright.
+ *
+ * **An entry already on the tree is left as it is**, byte for byte, and is not
+ * listed for the commit. That is the decision being listed again because an
+ * earlier run's `held` result never reached the service; rewriting it would
+ * move `held_at` and restart a reversal's 24 hours every time, and listing an
+ * unchanged file would compose a commit with nothing in it.
+ *
+ * @returns {{written: string[], entered: {service_decision_id: string, file: string}[], kept: string[]}}
+ */
+export function writeHoldEntries(held, { root = REPO_ROOT, schemaRoot = REPO_ROOT, heldAt, run = null } = {}) {
+  const out = { written: [], entered: [], kept: [] };
+  for (const h of held) {
+    const rel = holdEntryPath(h.service_decision_id);
+    if (!allowedPath(rel)) {
+      throw new Error(`a held decision names ${rel}, which BOT-33's moderation allowlist does not carry`);
+    }
+    const full = path.join(root, ...rel.split("/"));
+    if (fs.existsSync(full)) {
+      out.kept.push(rel);
+      continue;
+    }
+    const entry = holdEntry(h.decision, { held_for: h.held_for, held_at: heldAt, ...(run ? { run } : {}), root: schemaRoot });
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, `${JSON.stringify(entry, null, 2)}\n`);
+    out.written.push(rel);
+    out.entered.push({ service_decision_id: h.service_decision_id, file: rel });
+  }
+  return out;
+}
+
+// ── holds: the ones that have left the tree ─────────────────────────────────
+
+/**
+ * Every hold entry that has LEFT the tree, read off the commit that removed it,
+ * in the shape `classifyHoldCommit` reads.
+ *
+ * `readHolds` sees only entries still on disk, so without this the documented
+ * way for a person with no tooling to end a hold — deleting the file (BOT-70,
+ * RUNBOOK §7.8) — was never classified and never reported: the decision stayed
+ * `held` at the service for ever. The record of what happened is the commit,
+ * so this reads commits.
+ *
+ * Here, in `bot/`, and not through `tools/coverage/git.mjs`: that is a desk
+ * tool outside TRUST-31's hashed set, and importing it would pull it into a bot
+ * run's closure. Every call is `execFileSync` with an argument array.
+ *
+ * Per entry, the LATEST commit that deleted it, and none for an id whose entry
+ * is on the tree again. Both facts `classifyHoldCommit` weighs are read FOR
+ * THIS ID, because BOT-73 puts a whole run in one commit:
+ *
+ *   - `trailers["Service-Decision"]` is set only if one of the commit's
+ *     `Service-Decision:` trailers names this id. A commit that cancelled one
+ *     hold and compiled another carries the other's trailer, and reading "has a
+ *     trailer" would call a hand deletion beside it a trailered cancel;
+ *   - `writesLogEntry` is true if the commit added or changed a moderation log
+ *     entry that names this id, OR one that names no decision at all or cannot
+ *     be read. The second half is the conservative one: a hand log entry beside
+ *     a hand deletion is a person applying the decision by hand, and reading it
+ *     as no log entry would post `cancelled` for something the public log says
+ *     was applied. `classifyHoldCommit` calls that `unclear` and posts nothing.
+ *
+ * A shallow clone would hide every deletion before its graft and return fewer
+ * rows with nothing said, so it throws instead.
+ */
+export function holdDeletions(root = REPO_ROOT, { present = new Set() } = {}) {
+  const git = (args) => execFileSync("git", ["-C", root, ...args], {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, GIT_PAGER: "cat", GIT_OPTIONAL_LOCKS: "0" },
+  });
+  if (git(["rev-parse", "--is-shallow-repository"]).trim() !== "false") {
+    throw new Error(
+      `${root} is a shallow clone, so the commits that deleted a hold entry before its graft cannot be read. ` +
+      "A hold a person cancelled by deleting its file would then go unreported with nothing said; the commit " +
+      "job checks out with fetch-depth: 0 for this and for MOD-13's history",
+    );
+  }
+  const prefix = `${HOLDS_PREFIX}/`;
+  const logDir = `${MODERATION_DIR}/`;
+  const out = [];
+  const seen = new Set(present);
+  // Newest first, so the first deletion met for an id is its latest.
+  const shas = git(["log", "--format=%H", "--diff-filter=D", "--", prefix]).split("\n").filter(Boolean);
+  for (const sha of shas) {
+    const fields = git(["diff-tree", "--root", "--no-commit-id", "-r", "-z", "--name-status", sha]).split("\0");
+    const changes = [];
+    for (let i = 0; i + 1 < fields.length; i += 2) changes.push({ status: fields[i], file: fields[i + 1] });
+    const ids = [];
+    for (const { status, file } of changes) {
+      if (status !== "D" || !file.startsWith(prefix)) continue;
+      const name = file.slice(prefix.length);
+      if (name.includes("/") || !name.endsWith(".json")) continue;
+      const id = name.slice(0, -".json".length);
+      if (id.endsWith(".confirm") || id.endsWith(".cancel") || seen.has(id)) continue;
+      seen.add(id);
+      ids.push(id);
+    }
+    if (!ids.length) continue;
+    const named = git(["log", "-1", "--format=%(trailers:key=Service-Decision,valueonly,separator=%x00)", sha])
+      .split("\0").map((v) => v.trim()).filter(Boolean);
+    const logIds = [];
+    for (const { status, file } of changes) {
+      if (!(status === "A" || status === "M") || !file.startsWith(logDir) || !file.endsWith(".json")) continue;
+      let doc = null;
+      try {
+        doc = JSON.parse(git(["show", `${sha}:${file}`]));
+      } catch {
+        doc = null;
+      }
+      logIds.push(typeof doc?.service_decision_id === "string" ? doc.service_decision_id : null);
+    }
+    for (const id of ids) {
+      out.push({
+        id,
+        sha,
+        deletesEntry: true,
+        writesLogEntry: logIds.some((l) => l === null || l === id),
+        trailers: named.includes(id) ? { "Service-Decision": id } : {},
+      });
+    }
+  }
+  return out;
+}
+
 // ── holds, which run whether or not `list` answered ──────────────────────────
 
 /**
@@ -667,10 +831,19 @@ export function composeCommit({ compiled, held = [], submissions = [], run, subj
  * took it off BOT-80's list, and its release is driven by the MOD-52 record in
  * git. So this runs on `if: always() && !cancelled()`, with the list answer's
  * `shadow` used only to decide whether a RESULT may be posted.
+ *
+ * Two sources: the entries still on the tree (`readHolds`, `resolveHold`), and
+ * the entries that have left it (`holdDeletions`, `classifyHoldCommit`). A
+ * row from the second names the commit that removed the entry, because BOT-70
+ * says that commit IS the record, and BOT-82's key carries it. `unclear` —
+ * the entry deleted and a log entry written under no trailer — is reported and
+ * alerted and posts nothing; a hand cancellation posts `cancelled` and alerts
+ * as well, since nobody announced it.
  */
 export function walkHolds({ root = REPO_ROOT, now = new Date(), shadow = true, delistedPlugins = [], coverageRed = false } = {}) {
-  const out = { released: [], cancelled: [], waiting: [], pending: [] };
-  for (const hold of readHolds(root)) {
+  const out = { released: [], cancelled: [], waiting: [], unclear: [], alerts: [], pending: [] };
+  const onTree = readHolds(root);
+  for (const hold of onTree) {
     const verdict = resolveHold(hold, { now, shadow, delistedPlugins, coverageRed });
     const id = hold.entry?.service_decision_id ?? null;
     if (verdict.act === "wait" || !id) {
@@ -680,6 +853,22 @@ export function walkHolds({ root = REPO_ROOT, now = new Date(), shadow = true, d
     const row = { service_decision_id: id, act: verdict.act, outcome: verdict.result, reason: verdict.reason };
     (verdict.act === "cancel" ? out.cancelled : out.released).push(row);
     out.pending.push({ service_decision_id: id, outcome: verdict.result, commit: null });
+  }
+
+  for (const gone of holdDeletions(root, { present: new Set(onTree.map((h) => h.id)) })) {
+    const c = classifyHoldCommit(gone);
+    const row = { service_decision_id: gone.id, act: c.act, outcome: c.result, commit: gone.sha, hand: c.hand, reason: c.reason };
+    if (c.act === "unclear") {
+      out.unclear.push(row);
+      out.alerts.push({ kind: "hold_unclear", service_decision_id: gone.id, commit: gone.sha, why: c.reason });
+      continue;
+    }
+    if (c.act !== "release" && c.act !== "cancel") {
+      throw new Error(`${gone.sha} deleted the hold entry for ${gone.id} and classifyHoldCommit answered ${c.act}`);
+    }
+    if (c.hand) out.alerts.push({ kind: "hold_hand_cancelled", service_decision_id: gone.id, commit: gone.sha, why: c.reason });
+    (c.act === "cancel" ? out.cancelled : out.released).push(row);
+    out.pending.push({ service_decision_id: gone.id, outcome: c.result, commit: gone.sha });
   }
   return out;
 }
@@ -705,8 +894,12 @@ export function resultsFor({ compiled = [], refused = [], held = [], holds = { p
   for (const h of held) {
     results.push({ service_decision_id: h.service_decision_id, outcome: "held", commit: null, refusal_code: null });
   }
+  // A row that names its own commit keeps it: a hold ended by a commit in
+  // history (`holdDeletions`) is reported against THAT commit, and BOT-82's
+  // key carries it, so overwriting it with this run's commit would make every
+  // re-post a new result rather than a `duplicate` of the last one.
   for (const p of holds.pending ?? []) {
-    results.push({ service_decision_id: p.service_decision_id, outcome: p.outcome, commit: commit ?? p.commit, refusal_code: null });
+    results.push({ service_decision_id: p.service_decision_id, outcome: p.outcome, commit: p.commit ?? commit, refusal_code: null });
   }
 
   // BOT-82's key first, and BOT-81's count second, in that order. A run that
@@ -846,7 +1039,7 @@ const arg = (argv, name) => {
   return i === -1 ? undefined : argv[i + 1];
 };
 
-export async function main(argv = [], { env = process.env, log = console, fetchImpl = fetch } = {}) {
+export async function main(argv = [], { env = process.env, log = console, fetchImpl = fetch, now = new Date() } = {}) {
   const job = arg(argv, "--job");
   const root = arg(argv, "--registry-dir") ?? REPO_ROOT;
 
@@ -892,14 +1085,22 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
 
     const compiledAll = compileAll(recheck.entries, { root, overBound });
     const written = applyCompiled(compiledAll.compiled, { root });
+    // Between the compile and the compose, so that every path `composeCommit`
+    // lists for a hold is a file on this tree when `git add` reads it.
+    const holdsEntered = writeHoldEntries(compiledAll.held, {
+      root,
+      heldAt: `${now.toISOString().slice(0, 19)}Z`,
+      run: runUrl(env),
+    });
+    written.push(...holdsEntered.written);
     const terminal = [];
     const existing = recordsOnMain(root);
     for (const s of recheck.submissions) terminal.push(terminalSubmissionRecord(s, { root, existing }));
 
-    const holds = walkHolds({ root, shadow });
+    const holds = walkHolds({ root, now, shadow });
     const commit = composeCommit({
       compiled: compiledAll.compiled,
-      held: compiledAll.held,
+      held: holdsEntered.entered,
       submissions: terminal,
       run: env.GITHUB_RUN_ID ?? "0",
     });
@@ -910,14 +1111,26 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
       compiled: compiledAll.compiled.map((r) => r.service_decision_id),
       refused: compiledAll.refused.map((r) => ({ service_decision_id: r.service_decision_id, refusal: r.refusal })),
       held: compiledAll.held.map((r) => ({ service_decision_id: r.service_decision_id, held_for: r.held_for })),
+      holds_kept: holdsEntered.kept,
       holds,
       written,
       terminal,
     }, null, 2)}\n`);
     if (commit.message) fs.writeFileSync(path.join(out, "commit-message.txt"), commit.message);
     fs.writeFileSync(path.join(out, "paths.txt"), `${commit.paths.join("\n")}\n`);
+    // An unclear deletion is an error: nobody can say what happened, and no
+    // result will be posted until a person does. A hand cancellation is the
+    // documented way to end a hold, so it is a warning — but it is said,
+    // because nothing else announced it. Both repeat on every run for as long as
+    // the commit is in history: nothing on this side records that a result was
+    // accepted, which is also why BOT-82 answers the repeat post `duplicate`.
+    for (const a of holds.alerts) {
+      const level = a.kind === "hold_unclear" ? "error" : "warning";
+      log.error(`::${level}::${a.kind} ${a.service_decision_id} in ${a.commit}: ${a.why}`);
+    }
     log.log(`ok    ${compiledAll.compiled.length} compiled, ${compiledAll.refused.length} refused, ` +
-      `${compiledAll.held.length} held, ${holds.released.length} released, ${holds.cancelled.length} cancelled`);
+      `${compiledAll.held.length} held (${holdsEntered.written.length} entered, ${holdsEntered.kept.length} already on the tree), ` +
+      `${holds.released.length} released, ${holds.cancelled.length} cancelled, ${holds.unclear.length} unclear`);
     if (shadow) {
       log.log("note  shadow: nothing new is committed for the work this answer names, and nothing is posted for it");
     }

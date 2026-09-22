@@ -58,11 +58,22 @@ import {
 } from "../tools/lib/sources.mjs";
 import { SOURCE_PATHSPEC as REVOCATIONS_PATHSPEC } from "../tools/lib/revocations.mjs";
 import { CATALOGUE_PATHSPEC } from "../tools/build-index.mjs";
+import { GRACE_MINUTES, minutesSince, withinGrace } from "../tools/served-set/report.mjs";
 
 export const DETECTORS = ["A1", "A3", "A5", "A7", "A9"];
 
-/** §4.8 row 7's two bounds, in minutes. */
-export const A7_BOUND_MINUTES = { plugins: 120, revocations: 30 };
+/**
+ * §4.8 row 7's two bounds, in minutes: how long `main` may hold a change that
+ * `signed` does not carry. §7.3 reads the same two numbers as takedown latency
+ * — the signed commit within 2 h of the `main` commit for the catalogue, 30
+ * minutes for the withdrawal list — and that is what A7 measures, against the
+ * run's clock (gap 76; `a7` says why).
+ *
+ * The list's is SERVE-85's window, and it is SERVE-85's constant rather than a
+ * second 30: row 7 cites SERVE-85 for the number, and both checks ask how long
+ * the list may wait for the signer. The catalogue's 2 h has no other reader.
+ */
+export const A7_BOUND_MINUTES = { plugins: 120, revocations: GRACE_MINUTES };
 
 /** The branch the signer publishes, and the trailer that says what it was made from. */
 export const SIGNED_REF = "signed";
@@ -135,6 +146,22 @@ export function gitReader(root) {
       if (!v) return null;
       const [sha, at] = v.split(" ");
       return { sha, at: Number(at) };
+    },
+    /**
+     * The commits on `ref`'s first-parent line that `since` does not contain
+     * and that changed a pathspec, OLDEST first — the changes a `signed` made
+     * from `since` does not carry, each dated where main acquired it, as
+     * `newestTouching` dates one and for its reason (gap 68). Empty when
+     * `since` carries every one, including when `since` is newer than `ref`.
+     * Not allowed to fail: an empty answer here reads as "nothing unsigned",
+     * so a git error has to stop the run rather than become that answer.
+     */
+    unsignedTouching(since, pathspec, ref = "HEAD") {
+      const out = git(["log", "--first-parent", "--reverse", "--format=%H %ct", `${since}..${ref}`, "--", pathspec]);
+      return out.split("\n").filter(Boolean).map((line) => {
+        const [sha, at] = line.split(" ");
+        return { sha, at: Number(at) };
+      });
     },
     /** Paths added between two commits. */
     addedBetween(from, to, pathspec) {
@@ -434,6 +461,44 @@ export function a5({ anchor, records }, findings, skipped, scanned) {
 
 // ── A7 · `signed` behind `main` ─────────────────────────────────────────────
 
+/**
+ * A change `main` holds and `signed` does not carry, for longer than row 7's
+ * bound — measured from the moment main acquired the OLDEST such change to
+ * `now`, the way SERVE-85 measures the list from its commit to `now`.
+ *
+ * Until gap 76 this subtracted the Source-Commit's time from the newest
+ * touching commit's and never read `now`, which asks how long main was quiet
+ * before a change, not how long the signer has had it. Measured 2026-09-22 on
+ * fixtures, before this repair:
+ *
+ *   * **it alarmed on a push its signer had not had time to sign.** A
+ *     Source-Commit three hours old and an advisory pushed three seconds ago
+ *     gave `A7_SIGNED_BEHIND_REVOCATIONS`, identical to the answer at three
+ *     hours and at ten. `detectors.yml` and `sign.yml` both start on the same
+ *     push, and on each of the four pushes the signer has committed for since
+ *     `signed` existed, the detector read `signed` first — by 2, 4, 6 and 36
+ *     seconds. The only real A7 red there has ever been is this: run
+ *     35502265394 fetched `signed` at 09:25:28Z and the same push's signer
+ *     committed `ae80bc7` at 09:25:31Z;
+ *   * **and it never alarmed on a signer that stopped, if the change landed
+ *     within the bound of the last Source-Commit.** An advisory 20 minutes
+ *     after it, or a publication 90 minutes after it, with no signer run ever
+ *     again, was silent ten hours later — and would have been for ever, since
+ *     neither number moves with time.
+ *
+ * Measured against `now`, the bound is the grace: no second constant, and the
+ * signer has exactly the time §7.3 gives it. A7 stays a function of history,
+ * `signed` and `now`, so both halves are fixtures. What this costs is that a
+ * push's own run cannot page about that push; the run that does is a later
+ * one, and `detectors.yml` says what delivers it.
+ *
+ * The oldest unsigned change, not the newest, because the newest resets: a
+ * dead signer on a `main` that takes a publication every 90 minutes would keep
+ * the newest inside 2 h for ever — the shape SERVE-85's header refuses for
+ * main's head. A change dated more than the bound AFTER `now` is overdue too:
+ * its wait cannot be read, and an unreadable clock excuses nothing
+ * (`minutesSince`), where a plain `withinGrace` would excuse it until its date.
+ */
 export function a7({ git, now }, findings, skipped, scanned) {
   if (!git.hasRef(SIGNED_REF)) {
     skipped.push({ detector: "A7", why: "there is no `signed` ref in this checkout", lifted_by: "RC-R1-2's signer workflow, at R2" });
@@ -452,6 +517,8 @@ export function a7({ git, now }, findings, skipped, scanned) {
     return;
   }
   scanned.signed_source_commit = sourceCommit;
+  // Throws on a clock that is not one, so the run fails rather than reports.
+  const nowIso = new Date(now).toISOString();
   // Each half's pathspec is *what that document is built from*, and neither is
   // "the directory it lives in". `plugins` is the whole tree because a README
   // or an icon does reach `registry/v1/index.json`; the withdrawal list's is
@@ -466,20 +533,34 @@ export function a7({ git, now }, findings, skipped, scanned) {
     // (gap 68; `newestTouching` carries the measurement).
     const newest = git.newestTouching(pathspec);
     if (!newest) continue;
-    const driftMinutes = Math.floor((newest.at - at) / 60);
-    scanned[`${what}_drift_minutes`] = driftMinutes;
-    if (driftMinutes > A7_BOUND_MINUTES[what]) {
-      findings.push({
-        detector: "A7",
-        code: what === "plugins" ? "A7_SIGNED_BEHIND_PLUGINS" : "A7_SIGNED_BEHIND_REVOCATIONS",
-        message:
-          `\`signed\`'s Source-Commit is ${driftMinutes} minutes older than the newest ${pathspec} commit ` +
-          `${newest.sha.slice(0, 12)}; the bound is ${A7_BOUND_MINUTES[what]}`,
-        hex: newest.sha,
-      });
-    }
+    // How far the Source-Commit trails the newest change by commit time. It
+    // decided A7 until gap 76 and decides nothing now; it stays in the
+    // transcript, and `tools/selftest/couplings.mjs` reads it to ask which
+    // pathspec this half dates (gap 71).
+    scanned[`${what}_drift_minutes`] = Math.floor((newest.at - at) / 60);
+
+    const unsigned = git.unsignedTouching(sourceCommit, pathspec);
+    scanned[`${what}_unsigned_commits`] = unsigned.length;
+    if (unsigned.length === 0) continue;
+    const oldest = unsigned[0];
+    const from = new Date(oldest.at * 1000).toISOString();
+    const waited = minutesSince(from, nowIso);
+    const bound = A7_BOUND_MINUTES[what];
+    scanned[`${what}_unsigned_minutes`] = Math.floor(waited);
+    if (withinGrace(from, nowIso, bound) && waited >= -bound) continue;
+    findings.push({
+      detector: "A7",
+      code: what === "plugins" ? "A7_SIGNED_BEHIND_PLUGINS" : "A7_SIGNED_BEHIND_REVOCATIONS",
+      message:
+        `\`signed\`'s Source-Commit ${sourceCommit.slice(0, 12)} does not carry ${unsigned.length} commit(s) ` +
+        `under ${pathspec}; the oldest, ${oldest.sha.slice(0, 12)}, ` +
+        (waited >= 0
+          ? `has been on main ${Math.floor(waited)} minutes`
+          : `is dated ${Math.ceil(-waited)} minutes after this run's clock, so how long it has waited cannot be read`) +
+        `, and the bound is ${bound}`,
+      hex: oldest.sha,
+    });
   }
-  void now;
 }
 
 // ── A9 · identity or source changed without a decision ──────────────────────
