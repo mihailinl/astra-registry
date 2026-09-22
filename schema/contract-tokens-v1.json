@@ -1,6 +1,6 @@
 {
-  "contract_version": "0.28.0",
-  "source_commit": "08030f3bfa615a996f56a47f94c1e1541d606c25",
+  "contract_version": "0.29.0",
+  "source_commit": "4d71c2f6aff471beafb60096866f1eabfef21824",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -12,6 +12,7 @@
     "A member's requiredness is `true`, `false` or `conditional`. `true` is carried by every entry of its kind; `false` is permitted, and **says only that this contract publishes no condition on it, never that none exists**; `conditional` is carried exactly under the condition the member's `when` states, and **a member that is `conditional` and states no `when`, or states a `when` a reader cannot evaluate, makes the file malformed: a reader MUST refuse it, or refuse every entry of that schema, and MUST NOT read the member as unconditioned** — reading it as unconditioned is the looser direction, and the looser direction is the one this field exists to close.",
     "A `when` is `{\"iff\": <predicate>}` or `{\"if\": <predicate>}`, **never both and never neither, and which of the two applies is decided per condition and never defaulted**: `if` requires the member where the predicate holds and says nothing where it does not; `iff` also forbids it where the predicate does not hold. A field that can only say *when* reproduces the defect it is fixing, because *if this code then this member* leaves the member unconstrained for every other code, which is the looser reading of any condition whose reverse the contract states. A predicate names one sibling member and the values it may take — `{\"code\": [\"M_APPEAL\"]}`, or `{\"code\": {\"not\": [\"M_APPEAL\"]}}` for their complement — and every value it names is one this contract already lists for that member; where the contract names no member that decides, the predicate is `{\"wait\": \"absent\"}`, which holds exactly when that sibling is not carried, and `absent` is the only word with that meaning. A `conditional` member also carries `why`, the sentence a reader meets first on the day the condition is inconvenient, because **a condition whose reason is not written down is relaxed rather than investigated**; a `false` member may carry one to say why no condition is published for it.",
     "A disjunction is published as two biconditionals and never as a group: each member of the pair is `conditional`, and **a reader that requires both refuses every conforming body of that schema**. Where this contract names a member that decides between them, each condition names that member and the values it may take; where it names none, each names the other's absence, and the two together say *exactly one* — both absent fails the first, both present fails the second. A group field was refused rather than added, because it would be a second thing for a reader to evaluate, and a reader who implemented one of the two and not the other would get the looser reading of the member they skipped, which is what this vocabulary exists to end.",
+    "The list's own entry carries the same members in the same shape and names the schema and member that carries its values, so that a reader holding the list entry can evaluate the condition without knowing to go looking two entries away. **The two statements MUST agree, and something MUST compare them**: two hand-kept spellings of one fact in one document is the coupling that has gone wrong here twice, and the generator refuses a run in which §0.8 and §4.2 bind a member to different values, or in which either statement is gone while the other stands.",
     "`pending` is what SCOPE-7 says this file carries and the contract does not yet record. Each record names what is missing, who owes it, the version that lands it and what the floor asserts until then. The generator refuses to run once the contract records one of them and no extractor has been written."
   ],
   "parties": [
@@ -1763,8 +1764,33 @@
         "none_unbound"
       ],
       "members": [
-        "accepted_at",
-        "ended_at"
+        {
+          "name": "accepted_at",
+          "required": "conditional",
+          "when": {
+            "iff": {
+              "status": [
+                "sent",
+                "previous_sent"
+              ]
+            }
+          },
+          "why": "§0.8 gives `accepted_at` to `sent` and `previous_sent` and to no other status, and FLOW-36 makes it the earliest channel acceptance still standing. Relaxed to `if`, a `pending` answer may carry one — and FLOW-36 makes `pending` mean precisely that no acceptance stands, a hard bounce or a complaint having revoked the last one, so that the objection window restarts at the next acceptance. BOT-28 measures that window from this member to the read, so a bot that believes the time it was handed publishes on a window FLOW-36 had already restarted. Dropped, a `sent` answer arrives with no time at all: BOT-28's `W_NOTICE_PENDING` wait and ID-60's `R_BINDING_CHANGED` gate both count from it and have nothing to count from, so the bot either holds for ever on an answer that is not `pending` or publishes at once on a notice accepted a second ago.",
+          "source": "§0.8, other closed lists"
+        },
+        {
+          "name": "ended_at",
+          "required": "conditional",
+          "when": {
+            "iff": {
+              "status": [
+                "previous_ended"
+              ]
+            }
+          },
+          "why": "§0.8 gives `ended_at` to `previous_ended` alone, as the revocation's recorded time and the instant ID-61 counts from. Relaxed to `if`, a `sent` or `pending` answer may carry one, and ID-60 lets the bot publish an `R_BINDING_CHANGED` fingerprint once that time is a window old — a time that is then not a revocation's at all, while ID-61 refuses the matching `M_APPROVE` with `too_early` and a `retry_after` counted from the revocation the service means. The two parties wait out two different windows and the panel's refusal outlives the bot's publication. Dropped, a `previous_ended` answer arrives with no time, ID-60's gate has nothing to hold against the window the bot carries, and the one instant the author objection window is counted from reaches the party that publishes as an absence.",
+          "source": "§0.8, other closed lists"
+        }
       ],
       "emitter": [
         "service"
@@ -1777,7 +1803,11 @@
       "requirements": [
         "SCOPE-7",
         "SCOPE-8"
-      ]
+      ],
+      "carried_by": {
+        "schema": "astra.plugins.bot-notice-status/1",
+        "member": "status"
+      }
     },
     {
       "id": "list:notice_query_kind",
@@ -2391,11 +2421,30 @@
         },
         {
           "name": "accepted_at",
-          "required": false
+          "required": "conditional",
+          "when": {
+            "iff": {
+              "status": [
+                "sent",
+                "previous_sent"
+              ]
+            }
+          },
+          "why": "§0.8 gives `accepted_at` to `sent` and `previous_sent` and to no other status, and FLOW-36 makes it the earliest channel acceptance still standing. Relaxed to `if`, a `pending` answer may carry one — and FLOW-36 makes `pending` mean precisely that no acceptance stands, a hard bounce or a complaint having revoked the last one, so that the objection window restarts at the next acceptance. BOT-28 measures that window from this member to the read, so a bot that believes the time it was handed publishes on a window FLOW-36 had already restarted. Dropped, a `sent` answer arrives with no time at all: BOT-28's `W_NOTICE_PENDING` wait and ID-60's `R_BINDING_CHANGED` gate both count from it and have nothing to count from, so the bot either holds for ever on an answer that is not `pending` or publishes at once on a notice accepted a second ago.",
+          "source": "§4.2, the request and success bodies"
         },
         {
           "name": "ended_at",
-          "required": false
+          "required": "conditional",
+          "when": {
+            "iff": {
+              "status": [
+                "previous_ended"
+              ]
+            }
+          },
+          "why": "§0.8 gives `ended_at` to `previous_ended` alone, as the revocation's recorded time and the instant ID-61 counts from. Relaxed to `if`, a `sent` or `pending` answer may carry one, and ID-60 lets the bot publish an `R_BINDING_CHANGED` fingerprint once that time is a window old — a time that is then not a revocation's at all, while ID-61 refuses the matching `M_APPROVE` with `too_early` and a `retry_after` counted from the revocation the service means. The two parties wait out two different windows and the panel's refusal outlives the bot's publication. Dropped, a `previous_ended` answer arrives with no time, ID-60's gate has nothing to hold against the window the bot carries, and the one instant the author objection window is counted from reaches the party that publishes as an absence.",
+          "source": "§4.2, the request and success bodies"
         }
       ],
       "members_recorded": true,
