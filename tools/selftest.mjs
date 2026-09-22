@@ -1159,7 +1159,7 @@ const FLOORS = new Map(Object.entries({
   "update-notes.mjs": 9,
   "repo-rules.mjs": 18,
   "claims.mjs": 10,
-  "contract-tokens.mjs": 5,
+  "contract-tokens.mjs": 8,
   "regenerate.mjs": 13,
   "migration-notice.mjs": 6,
   "baseline.mjs": 9,
