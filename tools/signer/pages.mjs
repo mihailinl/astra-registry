@@ -113,6 +113,25 @@ export function armingState({ root, sourceCommit, flagPath = FLAG_PATH }) {
  * that needs it would go quiet exactly there. A shallow clone can hide older
  * history; it cannot invent a clean answer for a change in front of it.
  *
+ * **Where it runs, and why the signer is deliberately not one of the places.**
+ * RC-R1-6 makes this a suite row, and the suite is its production caller:
+ * `tools/selftest/revocations.mjs` asks it of this repository, and every lane
+ * `node tools/selftest.mjs --lanes` reports as LIVE runs that — on a pull
+ * request, on the push, and before a publication commits. What a lane sees
+ * depends on its checkout: a depth-1 clone holds one commit with no parent,
+ * so every file in it reads as added exactly once and the history half always
+ * answers clean; only the shape half is asked there. Measured on 2026-09-22,
+ * on a scratch clone whose history adds the flag and then edits it.
+ *
+ * `tools/signer/run.mjs` must not call it (gap 23, decided). What this
+ * refuses is HISTORY, and `main` is append-only, so once it is red it is red
+ * on every run after it for good — no commit can repair it. In the signer that
+ * would stop every later withdrawal list reaching `signed` or Pages, over a
+ * record-keeping breach that changes nothing `armingState` decides (it reads
+ * the first add, not the file), and seven days on every armed client would
+ * block installs. Wiring it there answers the breach with the one outage this
+ * estate cannot afford.
+ *
  * @param {{root: string, ref?: string, flagPath?: string}} opts
  * @returns {{problems: string[], added: string[], changed: string[], present: boolean}}
  */
