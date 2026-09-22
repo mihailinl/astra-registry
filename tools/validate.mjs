@@ -2092,6 +2092,81 @@ export function checkMigrationMarkers(ctx) {
   }
 }
 
+// ── MIG-13's migration-notice markers (contract B.4, 0.31.0) ──────────────
+
+/** `log/migration-notice-<n>.json` — one per MIG-13 round (B.4). */
+export const NOTICE_DIR = "log";
+export const NOTICE_NAME = /^migration-notice-(\d+)\.json$/;
+export const NOTICE_SCHEMA = "astra.registry.migration-notice/1";
+
+/**
+ * Every migration-notice marker on the tree, judged against
+ * `schema/migration-notice-v1.json` (contract B.4 from 0.31.0; MIG-13; MIG-14).
+ *
+ * **Why here, and why an error.** The marker is written by a person committing
+ * a file with each round's sends (registry plan M-T5.3), and the first program
+ * that ever read one was ROLL-32's cutover preflight — at R6, months after
+ * round 1 lands at R4b. A marker spelling its round `"1"` would have passed
+ * every check between the two and been found at the gate that decides whether
+ * the catalogue may move (dev/couplings.md entry 58). Judged here, it is
+ * refused on the pull request that commits it, which is where the person who
+ * can fix it is standing. It is an ERROR for the reason every B.4 record is:
+ * the plugins service parses this file too, and a marker one party admits and
+ * another refuses is a two-way-test failure (§0.8) found in production.
+ *
+ * **What this does not judge, and says so.** That a file's `<n>` is its
+ * `round`, that there is one marker per round, and that no marker announces a
+ * superseded date are facts about several files and about the procedure, not
+ * about one record, and no published sentence states the first of them; the
+ * preflight asks all three. A file under `log/` whose name is not
+ * `migration-notice-<digits>.json` is not a marker to any reader and is not
+ * judged here.
+ *
+ * **Absent is a state, not a finding.** No marker is the ordinary state until
+ * ROLL-26 sends round 1, so it is a note — a reader can tell "checked and
+ * absent" from "not checked".
+ */
+export function checkNoticeMarkers(ctx) {
+  const { report } = ctx;
+  const where = `${NOTICE_DIR}/migration-notice-<n>.json`;
+  const dir = path.join(ctx.root, NOTICE_DIR);
+  const files = fs.existsSync(dir)
+    ? fs.readdirSync(dir).filter((f) => NOTICE_NAME.test(f)).sort()
+    : [];
+  if (!files.length) {
+    report.note(where, "absent: no MIG-13 round has been sent, so there is no marker to judge",
+      "ROLL-26 sends round 1 the day R4b opens; its marker is committed with the sends (registry plan M-T5.3).");
+    return;
+  }
+  for (const name of files) {
+    const file = `${NOTICE_DIR}/${name}`;
+    let doc;
+    try {
+      doc = readJson(path.join(dir, name));
+    } catch (e) {
+      report.error(file, `is not readable JSON — ${e.message}`,
+        "The cutover preflight, the deadline watch and the plugins service's banner all read this file.");
+      continue;
+    }
+    const problems = validateSchema(ctx.schemas.migrationNotice, doc, "$");
+    for (const p of problems) {
+      report.error(file, `${p.path} ${p.message}`,
+        `B.4 fixes ${NOTICE_SCHEMA}'s members exactly and, from contract 0.31.0, their types: \`round\` a JSON ` +
+        "integer of at least 1, `sent_at` and `cutover_planned_at` §0.7 times, the date carried exactly from round 2.");
+    }
+    if (problems.length) continue;
+    for (const member of ["sent_at", "cutover_planned_at"]) {
+      if (doc[member] === undefined) continue;
+      try {
+        parseTime(doc[member], `${file}'s \`${member}\``);
+      } catch (e) {
+        report.error(file, e.message,
+          "The pattern admits dates that are not moments; ROLL-32 and ROLL-63 count days from this one.");
+      }
+    }
+  }
+}
+
 // ── B.4's other records (registry plan B-T2.1) ──────────────────────────────
 
 /**
@@ -2443,6 +2518,7 @@ export async function runValidation(opts) {
   checkListingLanguage(usable, ctx);
   checkBaselineMarker(usable, ctx);
   checkMigrationMarkers(ctx);
+  checkNoticeMarkers(ctx);
 
   // B.4's other record trees, walked once and handed to both checks: the
   // second one counts author-action records against the yanks a moderation

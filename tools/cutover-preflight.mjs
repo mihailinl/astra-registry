@@ -159,39 +159,52 @@
 // meeting `"2"` does not hold, so an `iff` reports the date FORBIDDEN on a
 // marker that carries it correctly.
 //
-// NOTHING COMPARES THE TWO. There is no `schema/migration-notice-v1.json`:
-// `loadSchemas` loads seven schemas and none of them is this record, and
-// `tools/validate.mjs` judges no such file — the marker is the one B.4 record
-// in this repository that no schema judges. `schema/contract-tokens-v1.json`
-// records a member's requiredness and its condition and NEVER its type. B.4
-// states the member list and does not say what a `round` is. So the writer's
-// spelling and the predicate's spelling are two hand-kept facts with nothing
-// between them, which is the shape this register calls a coupling.
+// NOTHING COMPARED THE TWO, UNTIL CONTRACT 0.31.0. There was no
+// `schema/migration-notice-v1.json`: `loadSchemas` loaded seven schemas and
+// none of them was this record, `tools/validate.mjs` judged no such file, and
+// `schema/contract-tokens-v1.json` records a member's requiredness and its
+// condition and NEVER its type. B.4 stated the member list and did not say
+// what a `round` is. So the writer's spelling and the predicate's spelling
+// were two hand-kept facts with nothing between them.
 //
-// THIS FILE DOES NOT CLOSE THAT, and must not pretend to. What it does is stop
-// ANSWERING a question it cannot read, which is the same rule as the paragraph
-// above: where the predicate names values of one type and the marker carries
+// What this file did about it, and still does wherever it cannot read a type,
+// is stop ANSWERING a question it cannot read — the same rule as the paragraph
+// above. Where the predicate names values of one type and the marker carries
 // another, neither branch of the condition is a reading of the contract, so
-// the member is WITHHELD — NOT ASKED, exit 2, naming the party — instead of
-// producing a no about a marker no published document refuses. Withholding is
-// the direction the token file's readme calls safe, and it is also the only
-// direction that puts the missing schema in front of the operator each time a
-// marker is read, rather than in a register.
+// the member is WITHHELD: NOT ASKED, exit 2, naming the party, instead of a no
+// about a marker no published document refuses.
 //
-// WHAT THAT LEAVES OPEN, said here because a guard should say what it is not:
+// ── AND WHAT CHANGES ONCE THE TYPE IS PUBLISHED ────────────────────────────
 //
-//   * it asks only this tool. M-T5.3's writer can still emit a string, and
-//     nothing tells it so; a second reader of `log/migration-notice-<n>.json`
-//     inherits the same untyped member and may coerce, or not, differently.
-//   * it cannot decide which spelling is right, because no document states
-//     one. It reports that two hand-kept facts have diverged.
-//   * the closure that would ask every party is the thirteenth in-set
-//     `schema/*.json`, validated here the way `checkDeadline` already
-//     validates `policy/binding-deadline.json` against `schema/deadline-v1.json`
-//     read from the same ref. TRUST-31 prices that as a contract MINOR
-//     published BEFORE the file lands — `bot/tests/code-paths.test.mjs` holds
-//     the tree red until it is — so it is not a thing a lane adds on the way
-//     past.
+// Contract 0.31.0 puts the types on the page — B.4: `round` a JSON integer of
+// at least 1, `sent_at` and `cutover_planned_at` §0.7 times — and this
+// repository asserts them in `schema/migration-notice-v1.json`, the thirteenth
+// schema in TRUST-31's set. This file reads that schema FROM THE REF IT IS
+// JUDGING, the way `checkDeadline` reads `schema/deadline-v1.json`, and two
+// things follow from it:
+//
+//   * every marker on the ref is judged against it, and a refusal is UNMET —
+//     asked here, of this marker, answer no — because a published document
+//     now refuses it;
+//   * a type mismatch between the predicate and the marker is ANSWERED where
+//     the ref's schema types the member the predicate keys on: `"1"` against a
+//     schema that says `integer` is a marker the schema refuses, so the answer
+//     is no, and the condition is not evaluated against a value of the wrong
+//     type (`mistyped` in `markerProblems`, and the clock in `evalRound2`).
+//
+// **The withholding is kept, and it is not dead code.** It applies exactly
+// where the ref carries no schema, or carries one that states no type for that
+// member — a ref from before the schema landed, or a schema from which the type
+// has been taken out. Both are refs on which no published document in this
+// repository refuses the spelling, and on those the old argument holds word for
+// word. It re-arms by itself the moment a type goes missing, which is the same
+// property `DISPUTED_MEMBERS` has, and the selftest pins both states.
+//
+// WHAT THIS STILL LEAVES OPEN, said here because a guard should say what it is
+// not: M-T5.3's writer is a person committing a file, and what judges that
+// commit before it lands is `tools/validate.mjs` running over the pull request,
+// not this tool; and the plugins service reads the marker with its own parser,
+// which has to agree with the schema by reading it — this file cannot make it.
 //
 // ── IT PRINTS FAIL ON THE TREE IT LANDS ON, AND THAT IS THE DESIGN ──────────
 //
@@ -234,6 +247,13 @@ const THIRTY_DAYS = 30 * DAY;
 const MARKER_DIR = "log";
 const MARKER_RE = /^log\/migration-notice-(\d+)\.json$/;
 const MARKER_SCHEMA = "astra.registry.migration-notice/1";
+
+/**
+ * The marker's schema, from contract 0.31.0: B.4 types the members and this
+ * file asserts them. Read from the ref being judged and never from the working
+ * copy, like `schema/deadline-v1.json` in `checkDeadline`.
+ */
+const MARKER_SCHEMA_FILE = "schema/migration-notice-v1.json";
 
 /** SCOPE-7's token file: where this tool takes the marker's members from. */
 const TOKEN_FILE = "schema/contract-tokens-v1.json";
@@ -279,19 +299,22 @@ const DISPUTED_MEMBERS = Object.freeze([
 ]);
 
 /**
- * Who answers a question about the marker's member TYPES.
+ * Who answers a question about the marker's member TYPES, on a ref whose
+ * schema does not state one.
  *
- * Nobody, and the line says so rather than naming a placeholder party, because
- * a NOT ASKED in this tool is a person to go and find and "go and find nobody"
- * is the finding. See the header, entry 58.
+ * On such a ref, nobody — and the line says so rather than naming a
+ * placeholder party, because a NOT ASKED in this tool is a person to go and
+ * find and "go and find nobody" is the finding. Where the ref's schema does
+ * state the type, this line is never printed: the question is answered. See
+ * the header, entry 58.
  */
 const WHO_TYPES_THE_MARKER =
-  `whoever publishes this record's member TYPES — and today no document does. ${TOKEN_FILE} ` +
-  "records a member's requiredness and its condition and never its type; there is no " +
-  "`schema/migration-notice-v1.json` for tools/validate.mjs to judge a marker against (contract " +
-  "pending-register item 6, second half); and B.4 states the member list without saying what a " +
-  "`round` is. Until one of those does, M-T5.3's writer and the contract's `when` agree by hand and " +
-  "nothing compares them — dev/couplings.md entry 58";
+  `whoever publishes this record's member TYPES on this ref — and on this ref nothing does. Contract B.4 ` +
+  `states them from 0.31.0 and ${MARKER_SCHEMA_FILE} is where this repository asserts them, and that file is ` +
+  "absent from this ref or states no type for the member the condition keys on: either the ref predates the " +
+  `schema or the type has been taken out of it. ${TOKEN_FILE} records a member's requiredness and its condition ` +
+  "and never its type, so until the ref's schema states one, M-T5.3's writer and the contract's `when` agree by " +
+  "hand and nothing on this ref compares them — dev/couplings.md entry 58";
 
 /** The workflow that carries BOT-87's poll and sweep, and the three jobs
  *  B-T5.0 turns on. Until they are on, no shadow poll has run or could have. */
@@ -426,7 +449,7 @@ const days = (ms) => (ms / DAY).toFixed(1);
  * The authoritative marker is the one with the HIGHEST `round` present — not
  * the most recently committed file (M-T5.3, "which marker is authoritative").
  */
-export function evalRound2(markers, now) {
+export function evalRound2(markers, now, types = null) {
   if (markers.length === 0) {
     return unmet("no migration-notice marker is on this ref at all", [
       `looked at: ${MARKER_DIR}/migration-notice-<n>.json`,
@@ -437,16 +460,34 @@ export function evalRound2(markers, now) {
   // rounds are ordered, the highest is taken as authoritative, and `>= 2`
   // decides which markers must agree about a date. A `"2"` breaks all three.
   //
-  // It is NOT ASKED and not UNMET, by the same argument the header makes for
-  // an unevaluable `when`. UNMET would say this tool asked the marker a
-  // question and the marker answered no — but no published document states
-  // this member's type, so a no here refuses a marker nothing refuses, at the
-  // gate that decides whether the catalogue may move, with the finger pointing
-  // at its author. NOT ASKED still fails, still exits 2, and names the party.
+  // WHICH of NOT ASKED and UNMET it is depends on the ref, and `types` is how
+  // the caller says which ref it is (`markerTypes` over the ref's own
+  // `schema/migration-notice-v1.json`, or null where the ref carries none).
+  //
+  // Where that schema types `round` `integer`, a published document refuses
+  // this marker, so the answer is no: UNMET, naming the schema, and the finger
+  // pointing at the marker's author is now correct — B.4 says integer from
+  // contract 0.31.0.
+  //
+  // Where it does not, it is NOT ASKED, by the same argument the header makes
+  // for an unevaluable `when`: UNMET would refuse a marker nothing on this ref
+  // refuses, at the gate that decides whether the catalogue may move. NOT
+  // ASKED still fails, still exits 2, and names the party.
   const untyped = markers.filter((m) => !Number.isInteger(m.doc?.round));
+  if (untyped.length && (types?.get("round") ?? []).includes("integer")) {
+    return unmet(
+      `a marker's \`round\` is not an integer, and ${MARKER_SCHEMA_FILE} on this ref types it \`integer\``,
+      [
+        ...untyped.map((m) => `  ${m.file}: round=${JSON.stringify(m.doc?.round)}`),
+        "B.4 types it from contract 0.31.0: a JSON integer of at least 1, never a string, a fraction or null.",
+        "no clock was read, because this tool orders the rounds and compares `round >= 2`, and neither is",
+        "defined on a value of another type. Re-commit the marker with its round as an integer.",
+      ],
+    );
+  }
   if (untyped.length) {
     return notAsked(
-      "a marker's `round` is not an integer, and no published document says it must be",
+      "a marker's `round` is not an integer, and nothing on this ref says it must be",
       WHO_TYPES_THE_MARKER,
       [
         ...untyped.map((m) => `  ${m.file}: round=${JSON.stringify(m.doc?.round)}`),
@@ -640,12 +681,24 @@ function checkListingIssues(ctx) {
   ]);
 }
 
-function checkRound2(ctx) {
+/**
+ * The ref, as the two reads check 2 makes of it. `checkRound2` takes the tree
+ * as an argument so that its selftest can hand it a tree held in memory and
+ * drive the whole check — schema, token file and markers read "from the ref" —
+ * with no git and no network. Everywhere else it is this: `git ls-tree` and
+ * `git show` against `ctx.ref`, never the working copy.
+ */
+const refTree = (ctx) => ({
+  ls: (dir) => lsTree(ctx.repo, ctx.ref, dir),
+  show: (p) => showFile(ctx.repo, ctx.ref, p),
+});
+
+function checkRound2(ctx, tree = refTree(ctx)) {
   const markers = [];
-  for (const p of lsTree(ctx.repo, ctx.ref, MARKER_DIR)) {
+  for (const p of tree.ls(MARKER_DIR)) {
     const m = MARKER_RE.exec(p);
     if (!m) continue;
-    const raw = showFile(ctx.repo, ctx.ref, p);
+    const raw = tree.show(p);
     let doc = null;
     try {
       doc = JSON.parse(raw);
@@ -654,7 +707,25 @@ function checkRound2(ctx) {
     }
     markers.push({ file: p, round: Number(m[1]), doc: doc ?? {} });
   }
-  const r = evalRound2(markers, ctx.now);
+  // The marker's schema, from THE SAME REF, for the reason `checkDeadline`
+  // reads `schema/deadline-v1.json` from it: this tool and the tree it judges
+  // cannot then disagree about what a marker is. Absent is a state — every ref
+  // from before contract 0.31.0 — and it is printed, not skipped; a schema
+  // that does not parse is a no about this ref, because a reader that could
+  // not read the rules must not report the markers as having passed them.
+  const schemaRaw = tree.show(MARKER_SCHEMA_FILE);
+  let markerSchema = null;
+  if (schemaRaw !== null) {
+    try {
+      markerSchema = JSON.parse(schemaRaw);
+    } catch {
+      return unmet(`${MARKER_SCHEMA_FILE} is on this ref and is not JSON`, [
+        "the markers' schema could not be read, so no marker on this ref was judged and no clock was read.",
+      ]);
+    }
+  }
+  const types = markerTypes(markerSchema);
+  const r = evalRound2(markers, ctx.now, types);
   // `notAsked` appends its own `answered by:` line to the result it builds. The
   // clock's result is folded into this one, and every verdict below appends a
   // line naming the unasked parties, the clock's included — so the inner copy
@@ -664,7 +735,7 @@ function checkRound2(ctx) {
   // literal here, so a member added or retired by a contract release reaches
   // this check without an edit — and a token file that stops naming the record
   // is loud instead of silently checking nothing.
-  const raw = showFile(ctx.repo, ctx.ref, TOKEN_FILE);
+  const raw = tree.show(TOKEN_FILE);
   let table = null;
   if (raw !== null) {
     try {
@@ -697,9 +768,27 @@ function checkRound2(ctx) {
     });
   }
   for (const m of markers) {
-    const p = markerProblems(readable, m.doc);
-    for (const x of [...p.missing, ...p.forbidden]) no.push(`  ${m.file}: ${x}`);
+    const p = markerProblems(readable, m.doc, types);
+    for (const x of [...p.missing, ...p.forbidden, ...p.mistyped]) no.push(`  ${m.file}: ${x}`);
     for (const w of p.withheld) unasked.push({ message: `  ${m.file}: ${w.message}`, who: w.who });
+  }
+  // Every marker, judged by the schema the ref carries. A refusal is an
+  // answered no: asked on this ref, of this marker, by a published document.
+  if (markerSchema) {
+    for (const m of markers) {
+      for (const e of validate(markerSchema, m.doc)) {
+        no.push(`  ${m.file}: ${MARKER_SCHEMA_FILE}: ${e.path || "$"} ${e.message}`);
+      }
+    }
+    lines.push(
+      `every marker judged against ${MARKER_SCHEMA_FILE}, read from this ref` +
+        (markers.length ? "" : " — there are none to judge"),
+    );
+  } else {
+    lines.push(
+      `${MARKER_SCHEMA_FILE} is not on this ref: no marker was judged against a schema, and a member's type is ` +
+        "not asked (entry 58)",
+    );
   }
   if (no.length) {
     lines.push(
@@ -912,6 +1001,32 @@ export function predicateTypeMismatch(predicate, doc) {
   return { member: name, carried: body[name], carriedType, values, valueTypes };
 }
 
+/**
+ * The member types a marker schema states, as JSON Schema type names, keyed by
+ * member. Empty for a ref with no schema, and for a member the schema carries
+ * without a `type` — both are "nothing on this ref types it", which is what
+ * keeps the withholding below armed (entry 58).
+ *
+ * Only `properties.<member>.type` is read. That is where
+ * `schema/migration-notice-v1.json` states every type B.4 gives, and a type
+ * stated anywhere else — inside a `oneOf` branch, say — is one this reader
+ * does not see, so it withholds rather than guessing that a branch it did not
+ * read decides the question.
+ *
+ * @returns {Map<string, string[]>}
+ */
+export function markerTypes(schema) {
+  const out = new Map();
+  const props = schema !== null && typeof schema === "object" ? schema.properties : null;
+  if (props === null || typeof props !== "object" || Array.isArray(props)) return out;
+  for (const [name, sub] of Object.entries(props)) {
+    const t = sub !== null && typeof sub === "object" ? sub.type : undefined;
+    if (typeof t === "string") out.set(name, [t]);
+    else if (Array.isArray(t) && t.length && t.every((x) => typeof x === "string")) out.set(name, [...t]);
+  }
+  return out;
+}
+
 /** A predicate, in words, for the one line a reader of the record meets. */
 export function describePredicate(predicate) {
   const [name] = Object.keys(predicate);
@@ -979,13 +1094,26 @@ export function describeTable(table) {
  * In both, this tool can see the disagreement and cannot see which side is
  * right, so it reports the disagreement instead of answering.
  *
- * @returns {{missing: string[], forbidden: string[], withheld: {message: string, who: string}[]}}
+ * `types` is what the ref's own marker schema states (`markerTypes`), and it
+ * is what decides whether the second producer fires. Where the schema types
+ * the member the predicate keys on and the marker's value is not of that type,
+ * a published document on this ref DOES say which side is right — the marker
+ * is refused on that member — so the answer is a no and it lands in
+ * `mistyped`, with the condition deliberately not evaluated against a value of
+ * the wrong type. Where the schema is absent or states no type for that
+ * member, `types` has no entry and the withholding stands, unchanged. Omitting
+ * `types` is the second case, which is the safe default for a caller that has
+ * not read a schema.
+ *
+ * @returns {{missing: string[], forbidden: string[], withheld: {message: string, who: string}[],
+ *            mistyped: string[]}}
  */
-export function markerProblems(readable, doc) {
+export function markerProblems(readable, doc, types = null) {
   const body = doc !== null && typeof doc === "object" ? doc : {};
   const missing = [];
   const forbidden = [];
   const withheld = [];
+  const mistyped = [];
   for (const m of readable) {
     if (m.required === "conditional") {
       const { kind, predicate } = readWhen(m);
@@ -995,6 +1123,20 @@ export function markerProblems(readable, doc) {
       // that is decides only whether this tool calls the member missing or
       // forbidden. Both are a no about a marker no published document refuses.
       const mismatch = predicateTypeMismatch(predicate, body);
+      // The ref's schema types the sibling, and this value is not of that
+      // type: the schema refuses the marker, so this is an answered no and
+      // not a withheld question. Judged by the validator's own reading of
+      // `type`, so `integer` means here exactly what it means to the schema.
+      const declared = mismatch ? types?.get(mismatch.member) : undefined;
+      if (mismatch && declared && validate({ type: declared }, mismatch.carried).length) {
+        mistyped.push(
+          `\`${m.name}\`: its \`${kind}\` keys on \`${mismatch.member}\`, which ${MARKER_SCHEMA_FILE} on this ` +
+            `ref types \`${declared.join("` or `")}\`, and this marker carries \`${mismatch.member}\` as ` +
+            `${JSON.stringify(mismatch.carried)} (${mismatch.carriedType}). The marker is refused on ` +
+            `\`${mismatch.member}\`, and the condition was not evaluated against a value of the wrong type`,
+        );
+        continue;
+      }
       if (mismatch) {
         withheld.push({
           message:
@@ -1005,7 +1147,7 @@ export function markerProblems(readable, doc) {
             `${JSON.stringify(mismatch.carried)} (${mismatch.carriedType}). The comparison is ` +
             "`Array.includes`, which does not coerce, so the condition would silently take its other " +
             "branch — and a marker the contract EXCLUDES is then indistinguishable from one that spelled " +
-            "the member's type differently. Answering would refuse a marker no published document " +
+            "the member's type differently. Answering would refuse a marker nothing on this ref " +
             "refuses, at the gate that decides whether the catalogue may move, which reads downstream as " +
             "a defect in whoever wrote the marker. So this tool did not ask",
           who: WHO_TYPES_THE_MARKER,
@@ -1043,7 +1185,7 @@ export function markerProblems(readable, doc) {
     }
     if (!(m.name in body)) missing.push(`\`${m.name}\` is required of every marker, and is absent`);
   }
-  return { missing, forbidden, withheld };
+  return { missing, forbidden, withheld, mistyped };
 }
 
 function checkDeadline(ctx) {
@@ -1884,7 +2026,7 @@ function selftest() {
     is("58: the message names the missing coercion", w.message.includes("does not coerce"), true);
     is(
       "58: the message names the failure direction",
-      w.message.includes("refuse a marker no published document refuses"),
+      w.message.includes("refuse a marker nothing on this ref refuses"),
       true,
     );
     is("58: who names the absent schema", w.who.includes("schema/migration-notice-v1.json"), true);
@@ -1919,8 +2061,160 @@ function selftest() {
     const v = evalRound2([m], T("2026-09-21T00:00:00Z"));
     is("58: a string round is a clock this tool did not read", v.verdict, NOT_ASKED);
     is("58: and the clock's unasked line names the party",
-      (v.lines.at(-1) ?? "").includes("no document does"), true);
+      (v.lines.at(-1) ?? "").includes("on this ref nothing does"), true);
   }
+
+  // ── contract 0.31.0: the type is published, and the withholding narrows ──
+  //
+  // B.4 types the marker's members and schema/migration-notice-v1.json asserts
+  // them. Read here from the working copy — this is the selftest — while the
+  // check itself reads it from the ref it is judging; the in-memory tree below
+  // is what stands in for that ref.
+  //
+  // What these hold, and each is a place a plausible wrong implementation
+  // gives the other answer:
+  //   * a string round is ANSWERED (no) where the ref's schema types it, and
+  //     WITHHELD where the ref carries no schema — the measurement the
+  //     withholding's future was decided by;
+  //   * a schema whose `round` has lost its `type` re-arms the withholding, so
+  //     the mechanism is not dead code;
+  //   * every integer marker answers exactly as it did before the schema
+  //     existed, so the schema adds refusals and changes no answer.
+  const schemaDoc = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, MARKER_SCHEMA_FILE), "utf8"));
+  const typed = markerTypes(schemaDoc);
+  is("0.31.0: the committed schema types `round` integer", JSON.stringify(typed.get("round")), '["integer"]');
+  is("0.31.0: and both times as strings", `${typed.get("sent_at")}/${typed.get("cutover_planned_at")}`, "string/string");
+  is("0.31.0: no schema is no type at all", markerTypes(null).size, 0);
+  const untypedSchema = JSON.parse(JSON.stringify(schemaDoc));
+  delete untypedSchema.properties.round.type;
+  is("0.31.0: a `round` with its `type` taken out is untyped", markerTypes(untypedSchema).has("round"), false);
+
+  const readTyped = (types, doc) => {
+    const { readable } = splitTable(publishedTable);
+    return markerProblems(readable, doc, types);
+  };
+  const tally = (p) => `${p.missing.length}/${p.forbidden.length}/${p.withheld.length}/${p.mistyped.length}`;
+  for (const [what, doc] of [
+    ["round 1, undated", strRound("1")],
+    ["round 1, dated", strRound("1", dated)],
+    ["round 2, undated", strRound("2")],
+    ["round 2, dated", strRound("2", dated)],
+  ]) {
+    is(`0.31.0: typed, a string \`round\` is answered, not withheld — ${what}`, tally(readTyped(typed, doc)), "0/0/0/1");
+    is(`0.31.0: no schema, it is still withheld — ${what}`, tally(readTyped(null, doc)), "0/0/1/0");
+    is(`0.31.0: type taken out, the withholding re-arms — ${what}`,
+      tally(readTyped(markerTypes(untypedSchema), doc)), "0/0/1/0");
+  }
+  for (const [what, doc, want] of [
+    ["round 1 undated", r1, "0/0/0/0"],
+    ["round 1 dated", r1Dated, "0/1/0/0"],
+    ["round 2 undated", r2, "1/0/0/0"],
+    ["round 2 dated", r2Dated, "0/0/0/0"],
+  ]) {
+    is(`0.31.0 control: an integer ${what} answers as it did before the schema`, tally(readTyped(typed, doc)), want);
+  }
+  is("0.31.0: the answered line names the schema and both spellings",
+    /migration-notice-v1\.json.*`integer`.*"1" \(string\)/.test(readTyped(typed, strRound("1")).mistyped[0] ?? ""), true);
+  {
+    const m = marker(2, "2026-08-01T00:00:00Z", "2026-09-20T00:00:00Z");
+    m.doc.round = "2";
+    is("0.31.0: a string round is a clock answered no where the schema types it",
+      evalRound2([m], T("2026-09-21T00:00:00Z"), typed).verdict, UNMET);
+    is("0.31.0: and still a clock not read where the type was taken out",
+      evalRound2([m], T("2026-09-21T00:00:00Z"), markerTypes(untypedSchema)).verdict, NOT_ASKED);
+  }
+
+  // ── check 2 end to end, over a tree held in memory ──────────────────────
+  //
+  // The token file and the schema are the committed ones; only the markers,
+  // and in two cases the schema, are synthesised. So this drives the real
+  // reads — the schema "from the ref", the member table "from the ref", every
+  // marker judged by both — without git, which is what makes it affordable in
+  // a selftest whose other half imports this module under recording shims.
+  const committed = (rel) => fs.readFileSync(path.join(REPO_ROOT, rel), "utf8");
+  const memTree = (files) => ({
+    ls: (dir) => Object.keys(files).filter((f) => f.startsWith(`${dir}/`)).sort(),
+    show: (p) => (Object.hasOwn(files, p) ? files[p] : null),
+  });
+  const withMarkers = (markers, { schema = committed(MARKER_SCHEMA_FILE) } = {}) => {
+    const files = { [TOKEN_FILE]: committed(TOKEN_FILE) };
+    if (schema !== null) files[MARKER_SCHEMA_FILE] = schema;
+    for (const [n, doc] of markers) files[`log/migration-notice-${n}.json`] = JSON.stringify(doc);
+    return memTree(files);
+  };
+  const at = { now: T("2026-09-21T00:00:00Z") };
+  const e2e = (markers, opts) => checkRound2(at, withMarkers(markers, opts));
+  const judged = (v) => v.lines.filter((l) => l.includes(`${MARKER_SCHEMA_FILE}: $`)).length;
+
+  {
+    const v = e2e([[1, strRound("1")]]);
+    is("0.31.0 e2e: a string round-1 marker, schema on the ref, is UNMET", v.verdict, UNMET);
+    is("0.31.0 e2e: and the schema's own refusal is in the record", judged(v) >= 1, true);
+    is("0.31.0 e2e: and nothing in it says no document types the marker",
+      v.lines.some((l) => l.includes("on this ref nothing does")), false);
+    // The two places the ref's types have to REACH, each asserted on its own,
+    // because either can be dropped while the verdict above stays UNMET on the
+    // strength of the schema's own refusal alone.
+    is("0.31.0 e2e: the clock itself is answered from the ref's schema",
+      v.headline.includes(`${MARKER_SCHEMA_FILE} on this ref types it \`integer\``), true);
+    is("0.31.0 e2e: and the member question is answered, not withheld",
+      v.lines.some((l) => l.includes("not evaluated against a value of the wrong type")) &&
+        !v.lines.some((l) => l.includes("So this tool did not ask")), true);
+  }
+  {
+    const v = e2e([[1, strRound("1")]], { schema: null });
+    is("0.31.0 e2e: the same marker on a ref with no schema is NOT ASKED", v.verdict, NOT_ASKED);
+    is("0.31.0 e2e: and the record says the schema is not on the ref",
+      v.lines.some((l) => l.startsWith(`${MARKER_SCHEMA_FILE} is not on this ref`)), true);
+  }
+  {
+    // A marker the untyped schema ACCEPTS — `"2"` is "not 1" to it, and the
+    // date is there — so the only thing left to say about it is the withheld
+    // question, and it is said.
+    const v = e2e([[2, strRound("2", dated)]], { schema: JSON.stringify(untypedSchema) });
+    is("0.31.0 e2e: a schema that lost `round`'s type re-arms the withholding", v.verdict, NOT_ASKED);
+  }
+  {
+    // And the case that says what the withholding is NOT. The same untyped
+    // schema's `oneOf` compares `"1"` with `1` exactly as the token file's
+    // predicate does, so it refuses an undated `"1"` for wanting a date — the
+    // wrong-branch answer the withholding exists to avoid, given by a document
+    // on the ref. This tool reports the document's answer (a no stands in a
+    // conjunction) and withholds its own, and the record carries both lines.
+    // The repair is the type, which is why its removal is a mutation above.
+    const v = e2e([[1, strRound("1")]], { schema: JSON.stringify(untypedSchema) });
+    is("0.31.0 e2e: an untyped schema's own wrong-branch refusal is reported as the schema's", v.verdict, UNMET);
+    is("0.31.0 e2e: beside the tool's withheld question, not instead of it",
+      judged(v) >= 1 && v.lines.some((l) => l.includes("So this tool did not ask")), true);
+  }
+  {
+    // The positive control: conforming markers, a round 2 forty-one days old
+    // whose announced date has come. The schema must not refuse it.
+    const v = e2e([
+      [1, { schema: MARKER_SCHEMA, round: 1, sent_at: "2026-07-01T00:00:00Z" }],
+      [2, { schema: MARKER_SCHEMA, round: 2, sent_at: "2026-08-11T00:00:00Z", cutover_planned_at: "2026-09-20T00:00:00Z" }],
+    ]);
+    is("0.31.0 e2e: conforming markers are MET with the schema on the ref", v.verdict, MET);
+    is("0.31.0 e2e: and the record says they were judged against it",
+      v.lines.some((l) => l.startsWith(`every marker judged against ${MARKER_SCHEMA_FILE}`)), true);
+  }
+  {
+    const v = e2e([[1, { schema: MARKER_SCHEMA, round: 1, sent_at: "2026-07-01T00:00:00Z", cutover_planned_at: "2026-09-20T00:00:00Z" }]]);
+    is("0.31.0 e2e: a dated round-1 marker is refused by both readers", v.verdict, UNMET);
+    is("0.31.0 e2e: the token file's `iff` and the schema each say so",
+      v.lines.some((l) => l.includes("permits it only where")) && judged(v) >= 1, true);
+  }
+  {
+    const v = e2e([[2, { schema: MARKER_SCHEMA, round: 2, sent_at: "2026-08-11T00:00:00Z", cutover_planned_at: "2026-09-20T00:00:00Z", accounts: ["x"] }]]);
+    is("0.31.0 e2e: a member outside the four is refused by the schema", v.verdict, UNMET);
+    is("0.31.0 e2e: and the refusal names it", v.lines.some((l) => l.includes('unknown property "accounts"')), true);
+  }
+  // The headline and not only the verdict: this ref has no round-2 marker, so
+  // the clock alone would make it UNMET, and a check reading only the verdict
+  // passed with the unreadable schema quietly treated as absent — watched.
+  is("0.31.0 e2e: a schema on the ref that is not JSON is a no about the ref",
+    e2e([[1, { schema: MARKER_SCHEMA, round: 1, sent_at: "2026-07-01T00:00:00Z" }]], { schema: "{" }).headline,
+    `${MARKER_SCHEMA_FILE} is on this ref and is not JSON`);
 
   // The three predicate shapes, and the refusal.
   is("`absent` holds when the sibling is not carried", predicateHolds({ wait: "absent" }, { state: "x" }), true);

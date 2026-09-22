@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://registry.astra.app/schema/migration-notice-v1.json",
+  "title": "astra.registry.migration-notice/1",
+  "description": "log/migration-notice-<n>.json — MIG-13's marker, one per round (contract B.4; MIG-13; MIG-14; ROLL-32; registry plan ROLL-63). It is committed by hand with each round's sends (registry plan M-T5.3; reg.92 writes round 1 at R4b, reg.99 round 2), and nothing generates it.\n\nWHO READS IT, which is why it has a schema at all: tools/validate.mjs, the first of the checks the publish path runs, judges every marker on the tree against this file, loaded from THIS repository and never from the tree under test; tools/cutover-preflight.mjs, ROLL-32's gate, judges the markers on a ref against this file read from the same ref, the way it judges policy/binding-deadline.json; the plugins service, for the listing banner MIG-13 tells to read the round and the announced date from the marker; and registry plan M-T5.4's deadline watch once it is built. Until contract 0.31.0 none of the four had a published statement of what a marker's members ARE — B.4 listed them and typed none — so each reader typed them for itself, and the one reader in this repository that asked, the preflight, withheld rather than guess (dev/couplings.md entry 58).\n\nTHE TYPES ARE B.4's, AND ONLY B.4's. Contract 0.31.0 states them on the page first: `schema` the string below; `round` a JSON integer of at least 1, the MIG-13 round the marker records, never a string, a fraction or null; `sent_at` and `cutover_planned_at` §0.7 times. A schema asserting `integer` while the page said nothing would have been a file outrunning its source, which is the wrong direction under SCOPE-1, and it is why this file did not exist before that version.\n\n`round` IS AN INTEGER BECAUSE THE CONDITION IS. The token file publishes `cutover_planned_at` as `conditional` with `{\"iff\": {\"round\": {\"not\": [1]}}}`, which names the integer `1`, and every reader compares without coercion. A marker spelling its round `\"1\"` makes that condition take its other branch: a conforming round-1 marker is then required to carry a date it cannot have, at the gate that decides whether the catalogue may move, and the refusal points at whoever wrote the marker.\n\nNO CEILING ON `round`. MIG-13 has three rounds today and the contract states no maximum; a `maximum` here would be a second copy of MIG-13's round count with nothing comparing it to the page, which is a coupling and not a check.\n\nEXACTLY FOUR MEMBERS, and `$comment` is NOT among them, for the reason schema/deadline-v1.json gives at length: B.4 fixes the member set with the word \"exactly\", this record crosses a party boundary, and a member one party admits and another refuses is a two-way-test failure (§0.8) found by whichever side guessed wrong. This file constrains the WRITER; a reader ignoring an unknown member is SCOPE-3's rule and is not contradicted by it.\n\nTHE CONDITION, WRITTEN AS `oneOf` BECAUSE tools/lib/jsonschema.mjs IMPLEMENTS NO `if`. The two branches mirror the token file's predicate exactly, value for value: `round` is `1` and the date is absent; `round` is not `1` and the date is present. A round-1 marker carrying the date matches neither, which is MIG-14's \"never in a marker before it\"; a round-2 marker without it matches neither, which is B.4's \"from round 2\". tools/selftest/migration-notice.mjs holds the two statements of the condition to one another over every round it can name, so this file and the token file cannot drift apart in silence.\n\nWHOLE SECONDS, AND `Z` (§0.7). A pattern cannot tell a real moment from `2026-02-31T00:00:00Z`; tools/validate.mjs round-trips both times through the same parser the bot's own readers use. A §0.7 DATE (`YYYY-MM-DD`) is refused: §0.7 reserves that format for `added_at` and `verified_at`, so MIG-13's \"its date\" and \"the announced cutover date\" are moments on the wire.\n\nWHAT NOTHING HERE CAN CHECK: that the file's `<n>` is its `round` (the preflight refuses a disagreement, and no published sentence states it), that there is one marker per round, and that no marker announces a superseded date (MIG-13, n28). Those are facts about several files, and they are the preflight's and M-T5.4's.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "round", "sent_at"],
+  "properties": {
+    "schema": { "const": "astra.registry.migration-notice/1" },
+    "round": {
+      "$comment": "B.4 from contract 0.31.0: a JSON integer of at least 1, the MIG-13 round this marker records. `type: integer` refuses \"1\", 1.5 and null; `minimum: 1` refuses 0 and every negative. No `maximum`, for the reason the description gives.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "sent_at": {
+      "$comment": "The moment this round was sent — MIG-13's \"its date\". ROLL-32's 30 days and registry plan ROLL-63's alarms count from it and never from the commit, so a re-send that re-commits a marker with a later cutover date keeps this value (MIG-13; n10).",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "cutover_planned_at": {
+      "$comment": "The announced cutover moment, carried exactly where `round` is not 1 — see the `oneOf` below. ROLL-32 holds cutover until it has come.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    }
+  },
+  "oneOf": [
+    {
+      "$comment": "Round 1: the marker committed once, at R4b, before any cutover date exists. It carries no `cutover_planned_at` (B.4: \"from round 2\"; MIG-14: \"never in a marker before it\").",
+      "properties": { "round": { "const": 1 } },
+      "not": { "required": ["cutover_planned_at"] }
+    },
+    {
+      "$comment": "Every other round: the date is required. Written as `not const 1` rather than `minimum: 2`, so that it is the token file's `{\"not\": [1]}` in this file's words and not a second rule that happens to agree with it on today's rounds.",
+      "properties": { "round": { "not": { "const": 1 } } },
+      "required": ["cutover_planned_at"]
+    }
+  ]
+}
