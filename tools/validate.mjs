@@ -28,7 +28,7 @@ import crypto from "node:crypto";
 import { validate as validateSchema } from "./lib/jsonschema.mjs";
 import { stableStringify } from "./lib/canonical.mjs";
 import { compareSemver, parseSemver } from "./lib/semver.mjs";
-import { reservedPrefixViolation } from "./lib/reserved.mjs";
+import { reservedPrefixViolation, stagingListingId } from "./lib/reserved.mjs";
 import {
   editDistance,
   foldId,
@@ -222,6 +222,27 @@ function checkPluginDoc(plugin, ctx) {
   if (prefixHit) {
     report.error(where, `id ${JSON.stringify(id)} uses the reserved prefix "${prefixHit.prefix}"`,
       "Prefixes that read as first-party are an impersonation primitive. See policy/reserved-ids.json.");
+  }
+
+  // MOD-16's staging listing, on the tree. `bot/lib/derive.mjs` derives it
+  // `unlisted: true` and no manifest can lift that — but derivation is only the
+  // path a RELEASE takes. A hand-written commit, a revert of the derive rule,
+  // a merge that resolved `plugin.json` the wrong way: each of those puts a
+  // listed `astra-withdrawal-canary` on `main` without the bot being involved
+  // at all, and the next signer run puts it in a signed catalogue. This is the
+  // rule that reads what is actually committed, which is what the signer reads.
+  //
+  // It is an error and not a warning because of what the listing IS: the id
+  // the estate delists, relists, revokes and un-revokes to drill its own
+  // withdrawal path. A store card for it is a card for a plugin that will be
+  // taken away on purpose, under this registry's name.
+  const staging = stagingListingId(policy.reserved);
+  if (staging !== null && id === staging && plugin.doc.unlisted !== true) {
+    report.error(where,
+      `id ${JSON.stringify(id)} is policy/reserved-ids.json's staging_listing_id and the listing is not unlisted`,
+      "The path-test listing (MOD-16) exists to be withdrawn, never to be offered. Set `\"unlisted\": true` in " +
+      "plugin.json. A release derives it that way on its own (bot/lib/derive.mjs); a listed one on the tree is " +
+      "a hand edit, a revert or a bad merge.");
   }
 
   const license = plugin.doc.license;

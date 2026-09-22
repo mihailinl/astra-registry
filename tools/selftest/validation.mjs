@@ -8,12 +8,14 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 import { runValidation } from "../validate.mjs";
 import { buildIndex } from "../build-index.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
 import { compareSemver } from "../lib/semver.mjs";
 import { REPO_ROOT, loadSources } from "../lib/sources.mjs";
+import { stagingListingId } from "../lib/reserved.mjs";
 import { makeFixtures } from "../make-fixtures.mjs";
 import { test, assert, assertEqual, tmp, validateTree, errorsMatching } from "./harness.mjs";
 import { withFakeAstraPlugins } from "./fixtures.mjs";
@@ -365,4 +367,325 @@ export async function run() {
           "the limit that did NOT drift was reported anyway");
       });
   });
+
+  // ── MOD-16's staging listing, M-T2.1's two guards ────────────────────────
+  //
+  // (b) first, because (a) is only interesting once (b) holds.
+
+  await test("(b) a committed staging listing that is not unlisted is refused, and an unlisted one is not", async () => {
+    const id = stagingListingId(POLICY_RESERVED);
+    assert(id !== null,
+      "policy/reserved-ids.json reserves no staging_listing_id, so both guards below prove nothing. M-T2.1 " +
+      "committed one; if it is gone, the derive rule in bot/lib/derive.mjs and the refusal in " +
+      "tools/validate.mjs are both live code reading a member nothing sets, and the canary can be published " +
+      "listed");
+
+    // The control first, and it is the whole reason a red below is readable:
+    // the same tree under the same id, unlisted, has to be accepted. Written
+    // the other way round once — refusal only — and it would have passed just
+    // as well over a fixture that no longer validated for some other reason.
+    const ok = await validateTree(stagingTree("staging-unlisted", id, { unlisted: true }));
+    assert(ok.report.errors.length === 0,
+      `the unlisted staging listing is refused, so nothing below is about the unlisted rule:\n` +
+      ok.report.errors.map((e) => `${e.where}: ${e.message}`).join("\n"));
+
+    const bad = await validateTree(stagingTree("staging-listed", id, { unlisted: false }));
+    const hits = errorsMatching(bad.report, "staging_listing_id and the listing is not unlisted");
+    assertEqual(hits.length, 1,
+      `a LISTED ${id} was not refused by tools/validate.mjs. The signer reads what is on \`main\`, so the next ` +
+      `run would put the id the estate exists to withdraw into a signed catalogue (TRUST-26):\n` +
+      bad.report.errors.map((e) => `${e.where}: ${e.message}`).join("\n"));
+    assertEqual(bad.report.errors.length, 1,
+      `the listed-staging tree is refused ${bad.report.errors.length} times over, so it no longer isolates ` +
+      `this rule (${bad.report.errors.map((e) => e.message).join("; ")})`);
+  });
+
+  await test("(b) the committed tree's staging listing, if it has one, is unlisted", () => {
+    const id = stagingListingId(POLICY_RESERVED);
+    const here = loadSources(REPO_ROOT).plugins.find((p) => p.doc?.id === id);
+    if (!here) {
+      // Not an assertion about nothing: the fixtures above are what prove the
+      // rule, and this leg is what turns it on the day M-T2.2 publishes the
+      // listing, with no edit here.
+      console.log(`        (no plugins/${id}/ on the tree yet — M-T2.2 publishes it)`);
+      return;
+    }
+    assertEqual(here.doc.unlisted, true,
+      `plugins/${id}/plugin.json is committed without \`"unlisted": true\`. tools/validate.mjs refuses it, so ` +
+      `this is also a red build — but the sentence that matters is the other one: the path-test listing is in ` +
+      `the catalogue`);
+  });
+
+  await test("(a) the staging repository publishes nothing but the staging id after the reservation", async () => {
+    const id = stagingListingId(POLICY_RESERVED);
+    assert(id !== null,
+      "policy/reserved-ids.json reserves no staging_listing_id, so there is no staging repository to ask " +
+      "about and the fixtures below reserve `null`. Stated here as well as in (b) because without it this " +
+      "test's red is about a fallback it took, which sends the reader to the wrong file");
+
+    // The guard, watched doing both things, on real git trees rather than on a
+    // description of them. The `after` fixture is the one that must be red:
+    // the staging repository is first-party enough to list under `astra-`, and
+    // a second listing from it is the catalogue quietly acquiring a publisher
+    // nobody reviewed.
+    const before = stagingRepoFixture("staging-repo-clean", id, { alsoPublish: null });
+    const clean = stagingRepoGuard(before);
+    assertEqual(clean.problems.join(" | "), "",
+      `the guard reports a problem on a tree whose only listing from the staging repository IS the staging ` +
+      `listing, plus one that predates the reservation (how: ${clean.how}, ${clean.note ?? ""})`);
+    assertEqual(clean.how, "history",
+      `the guard fell back to added_at on a fixture with full history (${clean.note ?? ""}); the fallback is ` +
+      `for a shallow CI checkout and a fixture that silently takes it proves the weaker rule only`);
+    assert(clean.checked >= 1,
+      `the guard compared ${clean.checked} sibling listing(s) against the reservation; the fixture commits one ` +
+      `before it and one after, so a 0 here is a walk that found nothing and passed`);
+
+    const after = stagingRepoFixture("staging-repo-second", id, { alsoPublish: "late-arrival" });
+    const dirty = stagingRepoGuard(after);
+    assertEqual(dirty.problems.length, 1,
+      `a second listing published from the staging repository AFTER the reservation was not reported ` +
+      `(how: ${dirty.how}): ${JSON.stringify(dirty.problems)}`);
+    assert(dirty.problems[0].includes("late-arrival"), `the problem does not name the listing: ${dirty.problems[0]}`);
+    assert(!dirty.problems[0].includes("grandfathered-plugin"),
+      `the listing that predates the reservation was reported too, which is the half of the rule that says a ` +
+      `repository already hosting listings keeps them (AP-12, seam 21): ${dirty.problems[0]}`);
+
+    // And the committed tree. Vacuous tonight and deliberately so — nothing on
+    // `main` carries the staging id, so the repository it is published from is
+    // not knowable from here. The fixtures above are what is actually watched;
+    // this leg starts judging on the day M-T2.2's publish commit lands, with
+    // no edit to this file.
+    const real = stagingRepoGuard(REPO_ROOT);
+    assertEqual(real.problems.join(" | "), "",
+      `the committed tree publishes a listing from the staging repository that is not the staging listing ` +
+      `(how: ${real.how})`);
+    console.log(`        (committed tree: ${real.note ?? `${real.checked} sibling(s) checked, via ${real.how}`})`);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MOD-16's staging listing: the two things a tree has to keep true about it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Read once. The guards below ask what the registry actually reserves. */
+const POLICY_RESERVED = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "policy/reserved-ids.json"), "utf8"));
+
+const gitIn = (dir, args) =>
+  execFileSync("git", ["-C", dir, ...args], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, GIT_PAGER: "cat", GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" },
+  });
+
+const gitMaybe = (dir, args) => {
+  try {
+    return gitIn(dir, args);
+  } catch {
+    return null;
+  }
+};
+
+/** Every `plugins/<id>/plugin.json` on a tree, as the guards need it. */
+function listingsOn(root) {
+  const dir = path.join(root, "plugins");
+  if (!fs.existsSync(dir)) return [];
+  const out = [];
+  for (const name of fs.readdirSync(dir).sort()) {
+    const file = path.join(dir, name, "plugin.json");
+    if (!fs.existsSync(file)) continue;
+    try {
+      const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+      out.push({ dir: name, id: doc.id, repo: doc.source?.repo ?? "", addedAt: doc.added_at ?? "", unlisted: doc.unlisted === true });
+    } catch {
+      // A listing that is not JSON is `tools/validate.mjs`'s to report, by
+      // path. Swallowed here rather than thrown, because a guard about the
+      // staging repository that dies on somebody else's syntax error is a
+      // guard that reports nothing about its own subject.
+    }
+  }
+  return out;
+}
+
+/**
+ * **Guard (a).** Every listing published from the staging repository after the
+ * commit that reserved `staging_listing_id` has exactly that id.
+ *
+ * ── what it is for ─────────────────────────────────────────────────────────
+ *
+ * The staging repository is, by construction, a repository this estate can
+ * publish from without anybody reviewing the plugin: it is under `mihailinl`
+ * or `MINICE-AI`, which is what lets `astra-withdrawal-canary` past the
+ * reserved-prefix rule and past `bot/policy/trademarks.json`'s `astra` mark at
+ * all. That permission was granted for ONE listing. A second listing from the
+ * same repository inherits the whole of it — first-party prefix, first-party
+ * mark, a store card that reads as ours — and inherits it silently, because
+ * every rule it meets says yes.
+ *
+ * ── "after the reservation", and why not `added_at` first ──────────────────
+ *
+ * `added_at` is a field in a document somebody can write; the commit that
+ * reserved the id is a fact about this repository's history, and it is the
+ * line the plan draws. So the primary reading is ancestry: the commit that
+ * ADDED `plugins/<id>/plugin.json` is either an ancestor of the commit that
+ * introduced `staging_listing_id` — it predates the reservation and is kept
+ * (AP-12's `mihailinl/AstraPlugins` branch, seam 21) — or it is not, and then
+ * the listing has to be the staging one.
+ *
+ * `added_at` is the FALLBACK, and it exists because two of the four workflows
+ * that run `tools/selftest.mjs` check out at depth 1 (`ingest.yml`,
+ * `baseline.yml`); `build-index.yml` and `plugins-moderation.yml` use
+ * `fetch-depth: 0`. A shallow clone cannot answer an ancestry question, and a
+ * guard that went red on two of its four hosts would be switched off on all
+ * four. The weaker rule still runs there, and `how` says which one answered,
+ * so a fixture cannot pass by quietly taking the easier road.
+ *
+ * @param {string} root a repository working tree
+ * @returns {{how: string, problems: string[], checked: number, note?: string}}
+ */
+export function stagingRepoGuard(root) {
+  const policyFile = path.join(root, "policy", "reserved-ids.json");
+  if (!fs.existsSync(policyFile)) {
+    return { how: "no-policy", checked: 0, problems: [], note: `${policyFile} is absent` };
+  }
+  const id = stagingListingId(JSON.parse(fs.readFileSync(policyFile, "utf8")));
+  if (id === null) {
+    return { how: "no-id", checked: 0, problems: [], note: "no staging_listing_id is reserved on this tree" };
+  }
+
+  const listings = listingsOn(root);
+  const staging = listings.find((l) => l.id === id);
+  if (!staging) {
+    return {
+      how: "no-listing", checked: 0, problems: [],
+      note: `no listing under ${id}, so the repository it is published from is not knowable from this tree ` +
+        "(M-T2.2 publishes it; the repository name is recorded nowhere else)",
+    };
+  }
+  const repo = String(staging.repo).toLowerCase();
+  if (!repo) {
+    return {
+      how: "no-repo", checked: 0,
+      problems: [`plugins/${staging.dir}/plugin.json carries no source.repo, so every other listing compares ` +
+        "equal to an empty string and this guard would report the whole catalogue or none of it"],
+    };
+  }
+
+  const siblings = listings.filter((l) => l.id !== id && String(l.repo).toLowerCase() === repo);
+
+  const shallow = (gitMaybe(root, ["rev-parse", "--is-shallow-repository"]) ?? "true").trim() === "true";
+  // `-S` over the one path: the oldest commit that changed how many times the
+  // member appears in it is the commit that introduced it.
+  const reservedAt = shallow ? null : (gitMaybe(root, [
+    "log", "--reverse", "--format=%H", "-S", "staging_listing_id", "--", "policy/reserved-ids.json",
+  ]) ?? "").split("\n").map((s) => s.trim()).filter(Boolean)[0] ?? null;
+
+  const how = reservedAt ? "history" : "added_at";
+  const problems = [];
+  for (const l of siblings) {
+    let after;
+    if (reservedAt) {
+      const addedIn = (gitMaybe(root, [
+        "log", "--reverse", "--format=%H", "--diff-filter=A", "--", `plugins/${l.dir}/plugin.json`,
+      ]) ?? "").split("\n").map((s) => s.trim()).filter(Boolean)[0] ?? null;
+      // No adding commit means the file is uncommitted — which is "after"
+      // everything, and is the shape a hand-edit arrives in.
+      after = addedIn === null || gitMaybe(root, ["merge-base", "--is-ancestor", addedIn, reservedAt]) === null;
+    } else {
+      after = String(l.addedAt) >= String(staging.addedAt);
+    }
+    if (!after) continue;
+    problems.push(
+      `plugins/${l.dir} (id ${JSON.stringify(l.id)}) is published from ${l.repo}, the repository the staging ` +
+      `listing ${JSON.stringify(id)} comes from, and was added after the id was reserved (${how}). That ` +
+      "repository was made first-party for one listing; every other one it publishes inherits the `astra-` " +
+      "prefix and the `astra` trademark exception without anybody deciding to grant them",
+    );
+  }
+  return { how, checked: siblings.length, problems, note: shallow ? "shallow checkout: ancestry unavailable" : undefined };
+}
+
+/**
+ * A tree holding one listing under `id`, listed or unlisted, and nothing else
+ * wrong with it.
+ *
+ * Renamed out of the id-collision fixture the same way the reserved-id test
+ * does it, with one addition: `source.repo` becomes a repository
+ * `policy/reserved-ids.json` calls first-party. Without that the tree is
+ * refused for the `astra-` PREFIX as well, and an assertion that counts one
+ * error would be counting the wrong one.
+ */
+function stagingTree(name, id, { unlisted }) {
+  const src = path.join(REPO_ROOT, "tests/fixtures/id-collision/plugins/dice-roller");
+  const dir = path.join(tmp, name);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.cpSync(src, path.join(dir, "plugins", id), { recursive: true });
+  for (const rel of ["plugin.json", "versions/1.0.0.json"]) {
+    const file = path.join(dir, "plugins", id, rel);
+    // The repository pair FIRST, then the id. The release URL carries both —
+    // `github.com/<repo>/releases/download/v1.0.0/<id>-1.0.0-…` — and doing
+    // the id first leaves a URL under a repository nobody declared, which
+    // `tools/validate.mjs` refuses for its own good reasons and which would
+    // have been counted as this rule's refusal. Watched: it was.
+    const renamed = fs.readFileSync(file, "utf8")
+      .replaceAll("someone/dice-roller", FIRST_PARTY_REPO)
+      .replaceAll("dice-roller", id);
+    const doc = JSON.parse(renamed);
+    if (rel === "plugin.json" && unlisted) doc.unlisted = true;
+    fs.writeFileSync(file, stableStringify(doc));
+  }
+  return dir;
+}
+
+/** A repository `policy/reserved-ids.json` already vouches for, so only ONE rule is under test. */
+const FIRST_PARTY_REPO = "mihailinl/AstraPlugins";
+
+/**
+ * A real git repository shaped like the history guard (a) reads: a listing
+ * from the staging repository that PREDATES the reservation, the reservation
+ * commit itself, the staging listing, and optionally one more listing from the
+ * same repository afterwards.
+ *
+ * Real commits rather than a stub, because what is under test is a question
+ * about ancestry and a stub would be the description of the answer.
+ */
+function stagingRepoFixture(name, id, { alsoPublish }) {
+  const dir = path.join(tmp, name);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  gitIn(dir, ["init", "-q", "-b", "main"]);
+  gitIn(dir, ["config", "user.email", "selftest@example.invalid"]);
+  gitIn(dir, ["config", "user.name", "selftest"]);
+  gitIn(dir, ["config", "commit.gpgsign", "false"]);
+
+  const STAGING_REPO = "mihailinl/astra-staging-fixture";
+  const listing = (dir_, doc) => {
+    fs.mkdirSync(path.join(dir, "plugins", dir_), { recursive: true });
+    fs.writeFileSync(path.join(dir, "plugins", dir_, "plugin.json"), stableStringify(doc));
+  };
+  const policy = (extra) => {
+    fs.mkdirSync(path.join(dir, "policy"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "policy", "reserved-ids.json"),
+      stableStringify({ reserved: [], reserved_prefixes: ["astra-"], ...extra }));
+  };
+  const commit = (message) => { gitIn(dir, ["add", "-A"]); gitIn(dir, ["commit", "-q", "-m", message]); };
+
+  policy({});
+  listing("grandfathered-plugin", {
+    id: "grandfathered-plugin", source: { kind: "github", repo: STAGING_REPO }, added_at: "2026-01-01",
+  });
+  commit("a listing from the repository, before anything is reserved");
+
+  policy({ staging_listing_id: id });
+  commit("reserve the staging listing id");
+
+  listing(id, { id, source: { kind: "github", repo: STAGING_REPO }, added_at: "2026-09-21", unlisted: true });
+  commit("publish the staging listing");
+
+  if (alsoPublish) {
+    listing(alsoPublish, {
+      id: alsoPublish, source: { kind: "github", repo: STAGING_REPO }, added_at: "2026-09-22",
+    });
+    commit("a second listing from the staging repository");
+  }
+  return dir;
 }

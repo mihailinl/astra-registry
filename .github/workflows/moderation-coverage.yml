@@ -147,7 +147,6 @@ jobs:
       # what makes a step that never ran visible; a step with no entry is red,
       # and an entry with no step is red.
       #
-      #   M-T2.1   the examples rule                        R2, needs the network
       #   M-T4.2, M-T4.3, M-T6.2   the ROLL-47 promise greps
       #   M-T6.2   no issue channel, no `issues: write`     R6
       #
@@ -158,13 +157,23 @@ jobs:
         if: always()
         run: node tools/coverage/docs-advisory-url.mjs --report "$ASTRA_COVERAGE_FINDINGS"
 
-      # The one step here that leaves the runner. No credential: it resolves
-      # AstraPlugins' default branch with `git ls-remote` and reads one public
-      # file. `pending` until AP-7 writes that file, which never reddens the
-      # canary.
+      # The two steps that leave the runner, and neither carries a credential:
+      # both resolve AstraPlugins' default branch with `git ls-remote --symref`
+      # and then read public bytes from it. A token in a job that runs every
+      # fifteen minutes is a token in fifteen-minute Actions logs.
       - name: The reserved ids AstraPlugins refuses are the ones we refuse    # M-T5.7, OPEN-OPS-11
         if: always()
         run: node tools/coverage/reserved-id-mirror.mjs --report "$ASTRA_COVERAGE_FINDINGS"
+
+      # `astra-withdrawal-canary` is reserved by being USED — it is the one
+      # listing the estate publishes in order to withdraw it — so nothing
+      # refuses it upstream, and an AstraPlugins example that takes the name
+      # takes the id. A partial clone (`--filter=blob:none`), not the API:
+      # unauthenticated api.github.com is 60 requests an hour, and a 403 here
+      # would read exactly like "the examples directory is gone".
+      - name: No AstraPlugins example takes MOD-16's staging listing id       # M-T2.1, MOD-16
+        if: always()
+        run: node tools/coverage/examples-staging-id.mjs --report "$ASTRA_COVERAGE_FINDINGS"
 
       # ── the verdict ──────────────────────────────────────────────────────
 

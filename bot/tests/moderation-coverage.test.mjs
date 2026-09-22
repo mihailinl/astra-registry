@@ -42,6 +42,10 @@ import {
   AP7_LANDED, ASTRAPLUGINS_URL, astraPluginsRemote, loadPolicyReserved,
   parseReservedIdsYaml, repoSlug, run as mirrorRule,
 } from "../../tools/coverage/reserved-id-mirror.mjs";
+import {
+  EXAMPLE_RE, pluginId, run as examplesRule,
+} from "../../tools/coverage/examples-staging-id.mjs";
+import { stagingListingId } from "../../tools/lib/reserved.mjs";
 import { RULES, outstandingActs, ruleNames } from "../../tools/coverage/rules.mjs";
 import { compose } from "../../tools/coverage-verdict.mjs";
 import { CHECKS } from "../lib/alert-checks.mjs";
@@ -768,6 +772,158 @@ test("M-T5.7: the remote this rule reads is the one the repository declares", ()
   assert.notEqual(declared.source, "tools/coverage/reserved-id-mirror.mjs",
     "no file in this repository declares AstraPlugins' URL any more; the rule is running on its fallback");
   assert.equal(repoSlug(declared.url), "mihailinl/AstraPlugins");
+});
+
+// ── M-T2.1: no AstraPlugins example takes the staging listing id ────────────
+//
+// No network in any of these either, and for the same reason: the rule takes
+// its reader as an argument so that every answer a forge can give — the
+// examples, an unresolvable HEAD, a clone that failed — is testable without
+// github.com being up. The one thing these cannot prove is that the real
+// partial clone works, which is why `tools/coverage/examples-staging-id.mjs`
+// is a step in the scheduled job and not only a module with tests.
+
+const STAGING_ID = stagingListingId(
+  JSON.parse(fs.readFileSync(path.join(REPO, "policy", "reserved-ids.json"), "utf8")),
+);
+
+/** The remote the repository declares, so these cases read the same URL the job will. */
+const AP_REMOTE = astraPluginsRemote(REPO);
+
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const toml = ({ id, extra = "" }) =>
+  `# an example\n[plugin]\nid = "${id}"\nname = "Example"\nversion = "0.1.0"\n${extra}\n[entry]\ncommand = "./bin/plugin"\n`;
+
+/** An AstraPlugins whose examples are exactly these `{dir: id}` pairs. */
+const servesExamples = (pairs, branch = "master") => async (url) => ({
+  kind: "examples", url, branch,
+  files: Object.entries(pairs).map(([dir, id]) => ({ path: `examples/${dir}/plugin.toml`, text: toml({ id }) })),
+});
+
+const ELEVEN = {
+  "bad-apple": "bad-apple", companion: "companion-cat", "dice-roller": "dice-roller", doom: "doom",
+  "echo-stt": "echo-stt", "json-tools": "json-tools", "mock-stt": "mock-stt",
+  "telegram-client": "telegram-client", "text-utils": "text-utils", "tone-tts": "tone-tts",
+  "web-chat": "web-chat",
+};
+
+test("M-T2.1: the id this rule is about is the one the registry reserves", () => {
+  // The floor under every case below. Written first because all of them pass
+  // vacuously against `null`: a rule looking for nothing finds nothing.
+  assert.ok(STAGING_ID, "policy/reserved-ids.json reserves no staging_listing_id (M-T2.1)");
+  assert.ok(STAGING_ID.startsWith("astra-"),
+    `${STAGING_ID} does not carry a reserved prefix, so the repository it is published from needs no ` +
+    "first-party exception and half of what this rule protects is not what the plan describes");
+});
+
+test("M-T2.1: the eleven examples AstraPlugins ships today are green", async () => {
+  const r = await examplesRule(REPO, { readExamples: servesExamples(ELEVEN), remote: AP_REMOTE });
+  assert.equal(r.status, "green", r.detail.join("\n"));
+  assert.match(r.detail.join("\n"), /11 examples/);
+});
+
+test("M-T2.1: an example that declares the id is red and names the file", async () => {
+  const r = await examplesRule(REPO, {
+    readExamples: servesExamples({ ...ELEVEN, "withdrawal-demo": STAGING_ID }), remote: AP_REMOTE,
+  });
+  assert.equal(r.status, "red");
+  assert.match(codesOf(r), /EXAMPLES_STAGING_ID_TAKEN/);
+  assert.match(r.detail.join("\n"), /examples\/withdrawal-demo\/plugin\.toml/);
+});
+
+test("M-T2.1: an example DIRECTORY named for the id is the same alarm", async () => {
+  // One rename from being the first case, and it is the shape somebody
+  // reaches for first: make the directory, then decide what to call the
+  // plugin inside it.
+  const r = await examplesRule(REPO, {
+    readExamples: servesExamples({ ...ELEVEN, [STAGING_ID]: "withdrawal-demo" }), remote: AP_REMOTE,
+  });
+  assert.equal(r.status, "red");
+  assert.match(codesOf(r), /EXAMPLES_STAGING_ID_TAKEN/);
+  assert.match(r.detail.join("\n"), new RegExp(`examples/${STAGING_ID}/`));
+});
+
+test("M-T2.1: an unresolvable default branch names the URL, and so does a clone that failed", async () => {
+  // Seam 16's fixture, both halves. An operator clearing this has to know
+  // which remote failed before they can do anything about it.
+  const noBranch = await examplesRule(REPO, {
+    readExamples: async (url) => ({ kind: "no-branch", url, why: "no symbolic HEAD" }),
+    remote: AP_REMOTE,
+  });
+  assert.equal(noBranch.status, "red");
+  assert.match(codesOf(noBranch), /EXAMPLES_BRANCH_UNRESOLVED/);
+  assert.match(noBranch.detail.join("\n"), new RegExp(escapeRe(AP_REMOTE.url)));
+
+  const down = await examplesRule(REPO, {
+    readExamples: async (url) => ({ kind: "unreachable", url, branch: "master", why: "fatal: unable to access" }),
+    remote: AP_REMOTE,
+  });
+  assert.equal(down.status, "red");
+  assert.match(codesOf(down), /EXAMPLES_UNREACHABLE/);
+  assert.match(down.detail.join("\n"), new RegExp(escapeRe(AP_REMOTE.url)));
+});
+
+test("M-T2.1: a walk that found no example is red, not green about nothing", async () => {
+  const r = await examplesRule(REPO, { readExamples: servesExamples({}), remote: AP_REMOTE });
+  assert.equal(r.status, "red");
+  assert.match(codesOf(r), /EXAMPLES_NONE_FOUND/);
+  assert.doesNotMatch(codesOf(r), /STAGING_ID_TAKEN/,
+    "an empty walk must not also report the thing it could not look for");
+});
+
+test("M-T2.1: a manifest whose `[plugin] id` cannot be read is reported, not passed over", async () => {
+  const r = await examplesRule(REPO, {
+    readExamples: async (url) => ({
+      kind: "examples", url, branch: "master",
+      files: [
+        { path: "examples/ok/plugin.toml", text: toml({ id: "ok" }) },
+        // `id` under another table is not this file's id, and a rule that read
+        // it as one would be answering a question nobody asked.
+        { path: "examples/odd/plugin.toml", text: "[entry]\nid = \"odd\"\ncommand = \"./bin/plugin\"\n" },
+      ],
+    }),
+    remote: AP_REMOTE,
+  });
+  assert.equal(r.status, "red");
+  assert.match(codesOf(r), /EXAMPLES_MANIFEST_UNREAD/);
+  assert.match(r.detail.join("\n"), /examples\/odd\/plugin\.toml/);
+});
+
+test("M-T2.1: with the reservation taken back out, the rule says so rather than going quiet", async () => {
+  const dir = fixture("no-staging-id").write("policy/reserved-ids.json", { reserved: [], reserved_prefixes: [] }).dir;
+  const r = await examplesRule(dir, { readExamples: servesExamples(ELEVEN), remote: AP_REMOTE });
+  assert.equal(r.status, "red");
+  assert.match(codesOf(r), /EXAMPLES_STAGING_ID_UNRESERVED/);
+});
+
+test("M-T2.1: the reserved id never reaches the verdict's `ids`, and the rule declares its network", async () => {
+  // `astra-withdrawal-canary` is a well-formed plugin id, so this would not
+  // have been caught by the grammar the way `astra-` was in M-T5.7. The reason
+  // is the other one: `ids` is the plugins a finding is ABOUT, and a reader
+  // scanning an alarm for which of THEIR listings is in trouble must not find
+  // our own canary's name in that column.
+  const r = await examplesRule(REPO, {
+    readExamples: servesExamples({ ...ELEVEN, "withdrawal-demo": STAGING_ID }), remote: AP_REMOTE,
+  });
+  assert.equal(r.status, "red");
+  assert.deepEqual(r.ids, []);
+  assert.match(r.detail.join("\n"), new RegExp(escapeRe(STAGING_ID)), "and it is in `detail`, where a human reads it");
+
+  assert.equal(RULES.find((x) => x.name === "examples-staging-id")?.network, true,
+    "the examples rule is registered without `network: true`, and it is the second rule here that leaves the runner");
+});
+
+test("M-T2.1: the path grammar and the id reader, at their edges", () => {
+  assert.ok(EXAMPLE_RE.test("examples/doom/plugin.toml"));
+  assert.ok(!EXAMPLE_RE.test("examples/doom/src/plugin.toml"), "a nested manifest is not an example's manifest");
+  assert.ok(!EXAMPLE_RE.test("staging/doom/plugin.toml"), "AP-12's staging/ is not examples/");
+
+  assert.equal(pluginId('[plugin]\nid = "doom"\n'), "doom");
+  assert.equal(pluginId("[plugin]\nid = 'doom'  # quoted the other way\n"), "doom");
+  assert.equal(pluginId('[entry]\nid = "doom"\n'), null, "another table's id is not the plugin's");
+  assert.equal(pluginId('# id = "doom"\n[plugin]\nname = "Doom"\n'), null, "a commented-out id declares nothing");
+  assert.equal(pluginId('[plugin]\nname = "Doom"\nid = "doom"\n'), "doom", "order inside the table is free");
 });
 
 // ── the register, and the rule that never ran ───────────────────────────────

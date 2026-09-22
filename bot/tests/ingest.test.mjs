@@ -36,6 +36,7 @@ import { CODES, codeDef } from "../lib/codes.mjs";
 import { LOCALE_CODES, deriveLocaleText, localeSignature, readLocales } from "../lib/locales.mjs";
 import { summarise } from "../lib/derive.mjs";
 import { loadPolicy } from "../../tools/lib/sources.mjs";
+import { stagingListingId } from "../../tools/lib/reserved.mjs";
 import { classifyFile, scanHostRpcs } from "../lib/rpcscan.mjs";
 import { checkDisplayName, checkNames, foldDisplayName, loadTrademarks } from "../lib/names.mjs";
 import { scriptsUsed } from "../../tools/lib/ids.mjs";
@@ -353,6 +354,64 @@ await test("a first listing is held for a human, and nothing else is wrong with 
   assert(!r.blocked, `nothing should block: ${JSON.stringify(errorCodes(r))}`);
   assert(r.needsReview, "a first listing is one of the three events a human owns");
   assert(codes(r).includes("R_FIRST_LISTING"), JSON.stringify(codes(r)));
+});
+
+// ── MOD-16's staging listing, born unlisted (M-T2.1) ────────────────────────
+//
+// The FIRST derivation is the whole of the test. Every other path to `unlisted`
+// in `bot/lib/derive.mjs` carries the flag forward off an existing
+// `plugin.json`, and on a first listing there is no existing document to carry
+// anything from — which is exactly the moment the path-test listing would
+// otherwise be born LISTED and sit in the catalogue until a second commit took
+// it out. A signer run in that window signs it (TRUST-26: never a listed id).
+//
+// The repository matters as much as the id and is asserted by being used: the
+// bundle is published from `mihailinl/AstraPlugins`, and the listing has to
+// pass two independent first-party gates on the way — `policy/reserved-ids
+// .json`'s `astra-` prefix, whose exception is `first_party_repos`, and
+// `bot/policy/trademarks.json`'s `astra` mark, whose exception is
+// `allow_repo_owners`. Both are matched against the repository the ownership
+// check proved, never against a claim, and a display name whose first word is
+// the mark is the other half of the second one.
+
+await test("MOD-16 — a first listing under the staging id derives `unlisted: true`", async () => {
+  const id = stagingListingId(loadPolicy(REPO_ROOT).reserved);
+  assert(id !== null,
+    "policy/reserved-ids.json reserves no staging_listing_id, so the derive rule in bot/lib/derive.mjs reads a " +
+    "member nothing sets and the path-test listing would be published listed");
+
+  const r = await run({
+    repo: "mihailinl/AstraPlugins",
+    assets: [conformingAsset({ id, name: "Astra Withdrawal Canary" })],
+    // No existing listing under the staging id: this is its first appearance.
+    root: registryWith({ id: "something-else" }),
+  });
+  assert(!r.blocked, `nothing should block: ${JSON.stringify(r.findings.filter((i) => i.level === "error"))}`);
+  assertEqual(r.derived.plugin.unlisted, true,
+    `${id} derived a LISTED document on its first release. tools/validate.mjs refuses that on the tree, so the ` +
+    "publish commit cannot be made at all — but the failure to read is the other one: the id the estate " +
+    "publishes in order to withdraw it would have been offered to users first");
+  assert(r.findings.some((i) => i.code === "E_DERIVED_LISTING_INVALID" && i.level === "pass"),
+    "the derived listing did not pass tools/validate.mjs, so the two halves of the rule disagree: " +
+    `${JSON.stringify(r.findings.filter((i) => i.code === "E_DERIVED_LISTING_INVALID"))}`);
+  assert(codes(r).includes("R_FIRST_LISTING"),
+    "a first listing is still a human's to approve; being born unlisted does not publish it unattended");
+});
+
+await test("MOD-16 — no `facts.*` can lift the staging listing back into the catalogue", async () => {
+  // The bundle is written by whoever publishes the canary, and the canary is
+  // published from a repository the estate controls — which is a statement
+  // about people. This is the statement about the code: the only thing read
+  // out of the bundle here is the id, and the value written is a constant.
+  const id = stagingListingId(loadPolicy(REPO_ROOT).reserved);
+  const r = await run({
+    repo: "mihailinl/AstraPlugins",
+    assets: [conformingAsset({ id, name: "Astra Withdrawal Canary", extraFiles: [
+      { name: "unlisted", data: "false" },
+    ] })],
+    root: registryWith({ id: "something-else" }),
+  });
+  assertEqual(r.derived.plugin.unlisted, true, "a file in the bundle changed what the derivation decided");
 });
 
 await test("two platforms in one release become two artifact keys", async () => {
