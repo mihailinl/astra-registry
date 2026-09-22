@@ -702,15 +702,18 @@ test("the weekly drill is red while the channel does not exist", () => {
 
 const SIGNER = "sign.yml";
 
-/** Every name in sign.yml's `workflow_run.workflows:` list. */
-function signerHears() {
-  const src = read(SIGNER);
+/** Every name in a workflow's `workflow_run.workflows:` list. */
+function hearsOf(file) {
+  const src = read(file);
   const at = src.indexOf("\n  workflow_run:");
-  assert.ok(at > 0, "sign.yml has no workflow_run trigger, so no committer starts it at all");
+  assert.ok(at > 0, `${file} has no workflow_run trigger, so no committer starts it at all`);
   const list = /workflows:\s*\[([^\]]*)\]/.exec(src.slice(at));
-  assert.ok(list, "sign.yml's workflow_run trigger names no `workflows:` list this test can read");
+  assert.ok(list, `${file}'s workflow_run trigger names no \`workflows:\` list this test can read`);
   return [...list[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
 }
+
+/** Every name in sign.yml's `workflow_run.workflows:` list. */
+const signerHears = () => hearsOf(SIGNER);
 
 /** A workflow's own `name:`, read from the file. Never inferred from the path. */
 function workflowName(file) {
@@ -849,6 +852,112 @@ test("the signer runs on a committer's COMPLETION and never on its success", () 
     "sign.yml reads the triggering run's conclusion. A committer that failed a later job still committed, and " +
     "gating on success leaves its withdrawal waiting for the hourly cron",
   );
+});
+
+// Detector A (BOT-43) hears the same committers, for "on every push to main".
+//
+// GITHUB_TOKEN pushes start no push runs, so before `detectors.yml` had a
+// `workflow_run` trigger no bot commit ever had a detectors run at its head —
+// `6659a61`, `7843cab` and `de2e91e`, the three bot commits `signed` has
+// published, had none between them — and the hourly cron that was meant to
+// cover them delivered 14 of its first 65 slots. The rule is the signer's rule
+// asked of a third hearer, over the same two sources this file already reads:
+// the `contents: write` scan, and `sign.yml`'s own list for the names that have
+// no file yet. Nothing here types the list again.
+const DETECTORS_WORKFLOW = "detectors.yml";
+
+// The committing workflows detectors deliberately does NOT hear. BOT-43 asks
+// for a run on every push to `main`, so the only honest exception is a
+// committer that does not push to `main`.
+const DETECTORS_NOT_HEARD = new Map([
+  [
+    "Signer",
+    "commits to the `signed` branch and never to `main` (D1), so it is no push BOT-43 names. A7, the one " +
+    "detector about `signed`, measures what `signed` does not carry against the run's clock (gap 76), so a " +
+    "run after each signer commit would answer what the next run answers anyway.",
+  ],
+]);
+
+test("detectors hears every workflow that commits to main, and every name the signer hears", () => {
+  const heard = hearsOf(DETECTORS_WORKFLOW);
+  const signer = signerHears();
+  const problems = [];
+  // The names with no file yet are in sign.yml's list on purpose (a trigger
+  // naming an absent workflow is inert until it lands); detectors has to be
+  // listening on the day they do, for the same reason.
+  for (const name of signer) {
+    if (!heard.includes(name)) {
+      problems.push(
+        `sign.yml hears ${JSON.stringify(name)} and detectors.yml does not. Whatever it commits to main would ` +
+        `have no detectors run at its head (BOT-43) until the cron, which GitHub mostly drops.`,
+      );
+    }
+  }
+  const committers = files.filter((f) => f !== DETECTORS_WORKFLOW && commitsAnything(f));
+  const committerNames = [];
+  for (const file of committers) {
+    const name = workflowName(file);
+    if (name === null) {
+      problems.push(`${file} has a contents: write job and no name: line, so nothing can put it in detectors.yml's list`);
+      continue;
+    }
+    committerNames.push(name);
+    if (heard.includes(name) || DETECTORS_NOT_HEARD.has(name)) continue;
+    problems.push(
+      `${file} is named ${JSON.stringify(name)}, holds a contents: write job, and detectors.yml does not hear it. ` +
+      `GITHUB_TOKEN pushes start no push runs, so BOT-43's "on every push to main" is not met for its commits. ` +
+      `Add the name to detectors.yml's workflow_run list, or add it to DETECTORS_NOT_HEARD here with why it ` +
+      `never pushes to main.`,
+    );
+  }
+  for (const name of heard) {
+    if (!committerNames.includes(name) && !signer.includes(name)) {
+      problems.push(
+        `detectors.yml hears ${JSON.stringify(name)}, which is no committing workflow's name and not one sign.yml ` +
+        `lists ahead of its file: a name that matches nothing hears nothing, silently`,
+      );
+    }
+    if (DETECTORS_NOT_HEARD.has(name)) {
+      problems.push(`detectors.yml hears ${JSON.stringify(name)} and DETECTORS_NOT_HEARD excuses it; one of the two is stale`);
+    }
+  }
+  for (const [name, why] of DETECTORS_NOT_HEARD) {
+    const file = files.find((f) => workflowName(f) === name);
+    if (!file) {
+      problems.push(`DETECTORS_NOT_HEARD names ${JSON.stringify(name)} and no workflow is called that any more (${why})`);
+    } else if (!commitsAnything(file)) {
+      problems.push(`DETECTORS_NOT_HEARD excuses ${JSON.stringify(name)} and ${file} no longer has a contents: write job; delete the entry`);
+    }
+  }
+  // The floor, so a broken read of the YAML cannot pass by finding nothing to
+  // ask about: seven committing workflows on 2026-09-22, six of them pushing
+  // to main, all six heard.
+  const heardCommitters = committerNames.filter((n) => heard.includes(n));
+  assert.ok(
+    heardCommitters.length >= 6,
+    `detectors.yml hears ${heardCommitters.length} of this repository's committing workflows and heard 6 on ` +
+    `2026-09-22; this is a broken read or a dropped name, not a smaller repository`,
+  );
+  assert.equal(problems.join("\n"), "", "a workflow commits to main and detectors will not hear it");
+});
+
+test("detectors runs on a committer's COMPLETION and never on its success", () => {
+  // The signer's rule, and for its reason: a committer that failed a later job
+  // still committed, and a detectors run gated on success would leave that
+  // commit without one.
+  const src = read(DETECTORS_WORKFLOW);
+  const at = src.indexOf("\n  workflow_run:");
+  assert.ok(at > 0, "detectors.yml has no workflow_run trigger");
+  const next = src.slice(at + 1).search(/\n {2}[a-z_]+:/);
+  const trigger = next < 0 ? src.slice(at) : src.slice(at, at + 1 + next);
+  assert.match(trigger, /types:\s*\[completed\]/, "detectors.yml's workflow_run trigger is not completion-only");
+  const offenders = src
+    .split("\n")
+    .map((l, i) => [l, i + 1])
+    .filter(([l]) => !l.trim().startsWith("#") && /workflow_run\.conclusion/.test(l))
+    .map(([, n]) => `${DETECTORS_WORKFLOW}:${n}`);
+  assert.equal(offenders.join(", "), "",
+    "detectors.yml reads the triggering run's conclusion; a committer that failed a later job still committed");
 });
 
 // M-T1.7b (MOD-3, MOD-46). What a publishing job may not run.
