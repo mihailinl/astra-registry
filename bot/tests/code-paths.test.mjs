@@ -171,6 +171,15 @@ export const ENTRIES = [
   "schema/hold-v1.json",
   "schema/identity-v1.json",
   "schema/index-v1.json",
+  // Contract 0.31.0's, published before the file landed, as
+  // `schema/moderation-work-v1.json` was at 0.23.0. B.4 typed MIG-13's marker in that
+  // version and this file asserts the types; `loadSchemas` takes it by literal
+  // path and `tools/validate.mjs` — the first of the five checks the publish
+  // path runs — judges every `log/migration-notice-<n>.json` against it. A
+  // writer who could edit it from outside the set could make that check pass a
+  // marker whose `round` the token file's condition cannot compare, without
+  // the bot returning to shadow.
+  "schema/migration-notice-v1.json",
   // Contract 0.23.0's, and the one entry under `schema/` that is not a record
   // schema: it is the registry's check of the SERVICE's own
   // `astra.plugins.bot-moderation-work/1` answer, read by

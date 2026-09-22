@@ -97,6 +97,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { test, assert, assertEqual } from "./harness.mjs";
@@ -105,6 +106,60 @@ export const FOUND = "FOUND";
 export const MEASURED_ABSENT = "MEASURED ABSENT";
 export const COULD_NOT_ASK = "COULD NOT ASK";
 export const OUT_OF_SCOPE = "OUT OF SCOPE";
+
+/**
+ * This file, as a path in this checkout — and never part of any walk of it.
+ *
+ * **The file that states the claims is not an instance of them.** Until
+ * 2026-09-22 the `signed-set/selftest` row searched `tools/selftest/` for
+ * `loadSignedSetVectors`, and two of its nine hits were in this file: the
+ * row's own `claim` string and its own `needle` literal. Measured by renaming
+ * every occurrence in `index-signature.mjs`, the only reader: the row still
+ * resolved FOUND, `2 hit(s)`, both of them here. So the one row in registry CI
+ * that asserts a reader is PRESENT could not go red for losing it — it was
+ * answered by the question. The canary further down that ASSEMBLES its needle
+ * met this on the day it was committed; the real table never did.
+ *
+ * Derived from this module's own location, for the reason `isSuiteFile` in
+ * harness.mjs gives: moving the file moves the exclusion with it. Only this
+ * file — `tools/selftest/` as a whole is the SUBJECT of that row, so excluding
+ * the suite would make it search nothing.
+ */
+const SELF = path.relative(REPO_ROOT, fileURLToPath(import.meta.url)).split(path.sep).join("/");
+
+/**
+ * The floor on rows RESOLVED — FOUND or MEASURED ABSENT — in one run. Gap 24
+ * of `O:dev/couplings.md`.
+ *
+ * COULD NOT ASK is never a red, and must not become one: registry CI checks out
+ * none of the three foreign trees, so a red there would be every fork's PR red
+ * about a private repository it cannot see. But that left nothing under the
+ * count. A runner change (no `git`, a sparse checkout), an input renamed out
+ * from under a row, or a bug in `locate()` turns an answered row into COULD NOT
+ * ASK, and the transcript said so in a line nobody reads while the suite
+ * printed the same headline. The instrument degrading from asking eleven
+ * questions to asking one was a quieter report and nothing else.
+ *
+ * **3, measured, not chosen.** It is the count on the poorest runner that runs
+ * this suite: `build-index.yml`'s `check` job at `89a79b5` (run 35764249417,
+ * Node 22.23.2) printed `1 found, 2 measured absent, 7 could not ask, 1 out of
+ * scope`, and so does any checkout with no `../Astra`, `../minice` or
+ * `../astra-plugins-ops` and no `$ASTRA_*_DIR`. Those three are the rows about
+ * THIS checkout — the only tree CI has.
+ *
+ * **A floor, not an equality.** A row that becomes answerable — a sibling on a
+ * laptop, `$ASTRA_OPS_DIR` set, the day a workflow gets a token and a clone —
+ * raises the count and reddens nothing. **Raised by hand**, in the commit that
+ * makes CI answer more, as `FLOORS` in tools/selftest.mjs is: never from the
+ * last run, because this number is a property of the MACHINE. A laptop with all
+ * three siblings resolves ten; a floor that followed whichever run came last
+ * would be pinned by the richest machine and red on every poorer one, which is
+ * the fork-PR red above arriving by a side door.
+ *
+ * **Lowered only deliberately**, in the same commit as the change that costs
+ * the row, and the red says so with the number to lower it to.
+ */
+export const RESOLVED_FLOOR = 3;
 
 /**
  * The trees a claim can be about, and how to find one.
@@ -209,6 +264,7 @@ export function resolve(claim, trees = TREES) {
     return {
       verdict: COULD_NOT_ASK,
       tree: tree.label,
+      dir: null,
       detail: `no checkout: looked for ${tree.probe} under ${tried.join(", ")}`,
     };
   }
@@ -218,8 +274,39 @@ export function resolve(claim, trees = TREES) {
   try {
     files = trackedFiles(dir, { under, exts });
   } catch (e) {
-    return { verdict: COULD_NOT_ASK, tree: tree.label, detail: `${dir}: ${e.message}` };
+    return { verdict: COULD_NOT_ASK, tree: tree.label, dir, detail: `${dir}: ${e.message}` };
   }
+  if (path.resolve(dir) === path.resolve(REPO_ROOT)) files = files.filter((rel) => rel !== SELF);
+
+  // Read first, and floor what was READ. `git ls-files` lists the index, not
+  // the disk, so a tracked file can be listed and not be there: deleted and not
+  // staged, outside a sparse checkout's cone, a gitlink that is a directory.
+  // The floor used to count the LIST and the loop below skipped an unreadable
+  // file with a bare `continue` — so, measured on 2026-09-22 with
+  // `registry/v1/trust.json` removed from disk and left in the index,
+  // `security/not-after-cutoff` reported `0 hit(s) in 1 tracked file(s)`,
+  // MEASURED ABSENT, about a file nobody opened. That is the confident absence
+  // this instrument exists to refuse, produced by its own walk. A file that was
+  // not read is not part of the denominator.
+  const hits = [];
+  const unread = [];
+  let read = 0;
+  for (const rel of files) {
+    let text;
+    try {
+      text = fs.readFileSync(path.join(dir, rel), "utf8");
+    } catch {
+      unread.push(rel);
+      continue;
+    }
+    read++;
+    text.split("\n").forEach((line, i) => {
+      if (needle.test(line)) hits.push(`${rel}:${i + 1}`);
+    });
+  }
+  const skipped = unread.length
+    ? `; ${unread.length} tracked file(s) could not be read and are not counted: ${unread.slice(0, 4).join(", ")}`
+    : "";
 
   // The floor, before any conclusion. "I searched and found nothing" and "I
   // searched the wrong tree" are one observation until a minimum is asserted,
@@ -227,30 +314,19 @@ export function resolve(claim, trees = TREES) {
   // renamed, an extension list outlives the language. Below the floor this is
   // a broken walk and therefore COULD NOT ASK — never MEASURED ABSENT, which
   // is the collapse the whole instrument is against.
-  if (files.length < floorFiles) {
+  if (read < floorFiles) {
     return {
       verdict: COULD_NOT_ASK,
       tree: tree.label,
-      detail: `the walk of ${dir} saw ${files.length} file(s) under [${under.join(", ") || "the whole tree"}] ` +
-        `with [${exts.join(", ") || "any extension"}] and the floor is ${floorFiles}; this is a broken walk, ` +
-        `not an absent reader, and every conclusion below it would have been a confident absence`,
+      dir,
+      detail: `the walk of ${dir} read ${read} of ${files.length} tracked file(s) under ` +
+        `[${under.join(", ") || "the whole tree"}] with [${exts.join(", ") || "any extension"}] and the floor is ` +
+        `${floorFiles}; this is a broken walk, not an absent reader, and every conclusion below it would have ` +
+        `been a confident absence${skipped}`,
     };
   }
 
-  const hits = [];
-  for (const rel of files) {
-    let text;
-    try {
-      text = fs.readFileSync(path.join(dir, rel), "utf8");
-    } catch {
-      continue;
-    }
-    text.split("\n").forEach((line, i) => {
-      if (needle.test(line)) hits.push(`${rel}:${i + 1}`);
-    });
-  }
-
-  const seen = `${hits.length} hit(s) in ${files.length} tracked file(s) of ${dir}`;
+  const seen = `${hits.length} hit(s) in ${read} tracked file(s) read of ${dir}${skipped}`;
   if (claim.subject.kind === "decision") {
     // A design item's STATE, not its existence. A needle that resolves and a
     // state that was decided are different questions, and only the second one
@@ -259,6 +335,7 @@ export function resolve(claim, trees = TREES) {
       return {
         verdict: MEASURED_ABSENT,
         tree: tree.label,
+        dir,
         detail: `the design item itself is not in that tree — ${seen}`,
       };
     }
@@ -269,19 +346,20 @@ export function resolve(claim, trees = TREES) {
       .filter((line) => claim.subject.needle.test(line))
       .join("\n");
     for (const [state, re] of Object.entries(claim.subject.states)) {
-      if (re.test(text)) return { verdict: FOUND, tree: tree.label, state, detail: `${seen}; state: ${state}` };
+      if (re.test(text)) return { verdict: FOUND, tree: tree.label, dir, state, detail: `${seen}; state: ${state}` };
     }
     return {
       verdict: COULD_NOT_ASK,
       tree: tree.label,
+      dir,
       detail: `${seen}, and none of the state markers [${Object.keys(claim.subject.states).join(", ")}] matched ` +
         `any of them; the item's state cannot be read, which is not the same as the item being open`,
     };
   }
 
   return hits.length
-    ? { verdict: FOUND, tree: tree.label, detail: `${seen} — ${hits.slice(0, 4).join(", ")}` }
-    : { verdict: MEASURED_ABSENT, tree: tree.label, detail: seen };
+    ? { verdict: FOUND, tree: tree.label, dir, detail: `${seen} — ${hits.slice(0, 4).join(", ")}` }
+    : { verdict: MEASURED_ABSENT, tree: tree.label, dir, detail: seen };
 }
 
 // ── the claims ──────────────────────────────────────────────────────────────
@@ -661,9 +739,16 @@ export async function run() {
         console.log(`                        tree: ${r.tree}`);
         console.log(`                        ${r.detail}`);
       }
+      // One line with the four numbers a shrunken run changes: how many rows
+      // there are, how many were resolved, how many could not be asked, and
+      // the floor the second is held to. Gap 24: the old line had the verdict
+      // counts and no denominator and no floor, so `1 found` read the same
+      // whether the table asked three questions or eleven.
       console.log(
-        `        — ${counted(FOUND)} found, ${counted(MEASURED_ABSENT)} measured absent, ` +
-        `${counted(COULD_NOT_ASK)} could not ask, ${counted(OUT_OF_SCOPE)} out of scope (never checked, never fixed)`,
+        `        — ${resolved.length} row(s): ${counted(FOUND) + counted(MEASURED_ABSENT)} resolved ` +
+        `(${counted(FOUND)} found, ${counted(MEASURED_ABSENT)} measured absent), ` +
+        `${counted(COULD_NOT_ASK)} could not ask, ${counted(OUT_OF_SCOPE)} out of scope (never checked, never fixed); ` +
+        `resolved floor ${RESOLVED_FLOOR}`,
       );
     } finally {
       console.log = realLog;
@@ -768,6 +853,50 @@ export async function run() {
     assertEqual(wrong.join("\n  "), "", "a claim about another repository does not match that repository");
   });
 
+  await test("this run resolved at least RESOLVED_FLOOR rows, and one printed line says rows, resolved, could not ask and the floor", () => {
+    // Gap 24. COULD NOT ASK stays a statement and never a red; what is red is
+    // the COUNT of rows that were answered falling below the count the poorest
+    // runner answers. See RESOLVED_FLOOR for why 3, why a floor, and why it is
+    // raised by hand.
+    const answered = resolved.filter((r) => r.verdict === FOUND || r.verdict === MEASURED_ABSENT);
+    const unasked = resolved.filter((r) => r.verdict === COULD_NOT_ASK);
+    if (answered.length < RESOLVED_FLOOR) {
+      // Name the row. A number alone says a row was lost and not which, so the
+      // rows that should have answered are listed first: those about THIS
+      // checkout, which every runner has, and those whose tree was found and
+      // still could not be asked. Either is a renamed input, a broken walk or a
+      // runner without `git` — never a missing private checkout.
+      const shouldHave = (r) => r.claim.subject.tree === "here" || Boolean(r.dir);
+      const lost = unasked.filter(shouldHave).map((r) => `${r.claim.id} — ${r.detail}`);
+      const elsewhere = unasked.filter((r) => !shouldHave(r)).map((r) => `${r.claim.id} — ${r.detail}`);
+      throw new Error(
+        `this run resolved ${answered.length} of ${resolved.length} claims row(s) and the committed floor is ` +
+        `${RESOLVED_FLOOR}, so ${RESOLVED_FLOOR - answered.length} row(s) that registry CI answers went unasked and ` +
+        `the transcript only said so quietly.\n` +
+        `  rows about a tree this run HAD, and could not ask:\n    ${lost.join("\n    ") || "(none)"}\n` +
+        `  rows about a tree this run did not have:\n    ${elsewhere.join("\n    ") || "(none)"}\n` +
+        `If the loss is deliberate — a row about this checkout retired, or moved to a tree registry CI does not ` +
+        `check out — lower RESOLVED_FLOOR in tools/selftest/claims.mjs to ${answered.length} in the SAME commit`,
+      );
+    }
+    // The line, asserted against what reached stdout and written out here
+    // rather than rebuilt by the code that prints it, so dropping a clause from
+    // the printer is red rather than agreed with. The row count is the TABLE's,
+    // not the resolved array's: a resolveAll() that lost a row would print its
+    // own smaller denominator and agree with itself.
+    const want = [
+      `${CLAIMS.length} row(s):`,
+      `${answered.length} resolved`,
+      `${unasked.length} could not ask`,
+      `resolved floor ${RESOLVED_FLOOR}`,
+    ];
+    assert(printed.some((l) => want.every((w) => l.includes(w))),
+      `no line of this run's transcript carries all of ${JSON.stringify(want)}; an empty or shrunken run is ` +
+      `only visible if one line says how many rows there are, how many were answered and what they are held ` +
+      `to. The summary this run wrote was: ` +
+      `${JSON.stringify(printed.filter((l) => l.includes("could not ask"))[0] ?? "(no summary line at all)")}`);
+  });
+
   await test("COULD NOT ASK is not NO COVER: an unreadable tree never resolves to MEASURED ABSENT", () => {
     // The defect one level up, and the reason this verdict exists at all. A
     // sibling checkout goes missing, a path moves, an extension list outlives
@@ -837,7 +966,9 @@ export async function run() {
     // red on the first run after the commit, which is the most useful way that
     // failure could possibly have arrived. `isSuiteFile` in harness.mjs exists
     // for the same reason: the file that states a rule is not an instance of
-    // it.
+    // it. (`SELF` now keeps this file out of every walk of this checkout, since
+    // a real row had the same defect; the needle stays assembled so that this
+    // canary does not depend on the fix it would be checking.)
     const absentToken = new RegExp(["no", "such", "token", "in", "this", "tree"].join("-"));
     const realWalk = resolve({
       ...base,

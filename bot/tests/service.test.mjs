@@ -518,7 +518,19 @@ const NOT_MEMBER_READERS = [
     file: "tools/validate.mjs",
     why:
       "names the token file in one report note, to say why an `author_request` yank is being counted by action " +
-      "and category while `fixed_reasons` is null. It opens no entry",
+      "and category while `fixed_reasons` is null. It opens no entry. From contract 0.31.0 it also names " +
+      "`astra.registry.migration-notice/1`, because it judges every marker on a tree against " +
+      "`schema/migration-notice-v1.json` — a JSON Schema, loaded by `loadSchemas`, and never the token file's " +
+      "member table",
+  },
+  {
+    file: "tools/selftest/migration-notice.mjs",
+    why:
+      "contract 0.31.0's canary between two statements of ONE condition: it reads the marker entry's member " +
+      "table only to hold `schema/migration-notice-v1.json`'s members and `oneOf` to it, round by round, and " +
+      "judges no marker on any ref. The reader of that table is `tools/cutover-preflight.mjs`, which the bucket " +
+      "above proves — and this module deliberately does not import it, because tools/selftest/ is in TRUST-31's " +
+      "set and the publish path runs it",
   },
 ];
 
