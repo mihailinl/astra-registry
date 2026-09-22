@@ -1229,6 +1229,30 @@ test("every suite under bot/tests/ is named by a workflow, and the list has a fl
   // one level up, at the check written to hold it. Measured 2026-09-21:
   // `plugins-moderation.yml` landed with M-T3.4's suite named in its header
   // and in no `run:` line, and this assertion stayed green.
+  //
+  // What the MESSAGE had to learn, gap 40, found 2026-09-22 by the lane closing
+  // gap 26 — by doing it rather than reading about it: it added
+  // `bot/tests/intake.test.mjs`, watched this go red, and put its case in an
+  // existing suite instead. The check is right and stays. What was missing is
+  // that **nothing tells an author before they write the file**, and the thing
+  // that eventually tells them wears another subject's name: a red in
+  // `workflows.test.mjs`, a file they did not open, in a suite whose other
+  // forty assertions are about YAML. The author's first reading is that they
+  // broke the workflow tests.
+  //
+  // And the message then sent them to edit `.github/workflows/bot-tests.yml`,
+  // which is the one thing a lane may not do — that file is the batch
+  // coordinator's, for the reason written above its last steps, where two
+  // lanes collided at one anchor. So it now names the file's owner and hands
+  // the step over ready to paste, the way the AstraPlugins-pin assertion above
+  // does for the step IT is owed.
+  //
+  // Same shape as `MODULES` in tools/selftest.mjs, one directory over: there
+  // too a new file is inert until a list in another file names it, and that
+  // list says so *at the line* — "**This line and tools/selftest/rehearsal-r2
+  // .mjs are one change.**" It can say it there because the author owns both
+  // halves. Here they own one, so the sentence has to be waiting at the
+  // failure, which is the only place this author is guaranteed to arrive.
   const testsDir = path.join(REPO, "bot", "tests");
   const suites = fs.readdirSync(testsDir).filter((n) => n.endsWith(".test.mjs")).sort();
   const uncommented = (text) => text.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
@@ -1239,9 +1263,21 @@ test("every suite under bot/tests/ is named by a workflow, and the list has a fl
     unrun,
     [],
     `${unrun.length} suite(s) under bot/tests/ are run by no workflow: ${unrun.join(", ")}. ` +
-    "A test file no workflow names is a check that does not run, and it reports nothing while it does not " +
-    "run — add a step to .github/workflows/bot-tests.yml (§2.0). If a suite is deliberately not a gate, " +
-    "that is a decision and it needs a line here saying so, not an absence",
+    "IF YOU JUST ADDED THAT FILE, THIS RED IS ABOUT IT AND NOT ABOUT THE WORKFLOWS. Nothing globs in this " +
+    "repository (the comment above this assertion says why), so the check that notices a new suite cannot " +
+    "live in the new suite — it lives here, among forty assertions about YAML, and it is the first thing " +
+    "to tell you. A test file no workflow names is a check that does not run, and it reports nothing while " +
+    "it does not run.\n\n" +
+    "A NEW SUITE AND ITS STEP IN .github/workflows/bot-tests.yml ARE ONE CHANGE, AND YOU OWN HALF OF IT. " +
+    "That file belongs to the batch coordinator; a lane may not edit it (§2.0, and the note above its last " +
+    "steps, which is there because two branches added a step at the same anchor minutes apart). Do not " +
+    "open it — hand the step over with the suite, and say which job it goes in:\n\n" +
+    unrun.map((n) =>
+      "      - name: <what this suite asserts, in the voice of the steps beside it>\n" +
+      "        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}\n" +
+      "        run: node bot/tests/" + n + "\n").join("\n") +
+    "\nIf a suite is deliberately not a gate, that is a decision and it needs a line here saying so, not " +
+    "an absence",
   );
 
   // Two floors, because this scan can go vacuous in two directions: a readdir
