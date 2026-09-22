@@ -69,7 +69,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { ACTIONS } from "../bot/lib/moderation.mjs";
 import { stagingListingId as reservedStagingListingId } from "./lib/reserved.mjs";
-import { SOURCE_DIR as ADVISORY_DIR, pathUnder } from "./lib/revocations.mjs";
+import { ADVISORY_FILE } from "./lib/revocations.mjs";
 import { report } from "./coverage/rules.mjs";
 import {
   changedPaths, commitMeta, commitsAfter, firstParent, historyCount,
@@ -106,10 +106,14 @@ export const UNLISTED_FLOOR = 6;
 // somebody should be told about anyway.
 export const HISTORY_FLOOR = 228;
 
-// The directory is `SOURCE_DIR`'s, not a second spelling of it (gap 72): had
-// advisories moved, a literal here would have stopped seeing every one of them
-// and this canary would have gone green about commits it could not read.
-const ADVISORY_RE = pathUnder(ADVISORY_DIR, String.raw`ASTRA-\d{4}-\d{4}\.json`);
+// `tools/lib/revocations.mjs`'s ADVISORY_FILE, not a pattern of this file's own
+// (gap 72): the directory is `SOURCE_DIR`'s, so had advisories moved a literal
+// here would have stopped seeing every one of them; and the id is
+// `tools/lib/ids.mjs`'s grammar, four serial digits OR MORE. The tail this file
+// typed for itself took exactly four, so from `ASTRA-YYYY-10000` on — which
+// `nextAdvisoryId` writes — this canary would have gone green about advisories
+// it could not see.
+const ADVISORY_RE = ADVISORY_FILE;
 const LOG_ENTRY_RE = /^bot\/moderation\/[^/]+\.json$/;
 const LOG_TREE_RE = /^log\//;
 

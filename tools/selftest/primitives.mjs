@@ -5,7 +5,9 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { stableStringify, jcs } from "../lib/canonical.mjs";
 import { KNOWN, validate as validateSchema } from "../lib/jsonschema.mjs";
@@ -15,6 +17,140 @@ import { readZip, readEntry } from "../lib/zip.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { makeFixtures } from "../make-fixtures.mjs";
 import { test, assert, assertEqual, tmp } from "./harness.mjs";
+
+// ── "the schemas" names three populations, and this is every place they differ ──
+//
+// dev/couplings.md entry 67 measured them on 2026-09-22 — 13 documents under
+// `schema/`, 7 loaded by `loadSchemas`, 12 named in TRUST-31's set — and found
+// that nothing compared them: a schema added to the directory was judged by
+// nothing until somebody added its literal path, and a schema in the published
+// set that no loader loads is a promise to another party about a file this
+// estate does not read. The only reconciliation was a person reading three
+// files, and contract 0.21.0's own count ("`loadSchemas` loaded all eleven")
+// was wrong for a release before anybody did.
+//
+// So a file's ABSENCE from a population is declared here, once, with its
+// reason, and the check below holds every other file to be present. The keys
+// are the three populations a file can be missing from:
+//
+//   * `schema` — it is a JSON Schema: it carries `$schema`. The keyword walk
+//     skips a declared document and walks every other one;
+//   * `loaded` — a loader in SCHEMA_LOADERS reads it by literal path;
+//   * `trust31` — TRUST-31's hashed set covers it, as the registry's copy of
+//     that set (`ENTRIES` in bot/tests/code-paths.test.mjs) states it.
+//
+// A declaration is itself checked: an unknown key, a reason that is not a
+// sentence, or an absence that is no longer true is red — an excuse that
+// outlives its condition is the shelter the next file inherits.
+const SCHEMA_ABSENCES = {
+  "schema/contract-tokens-v1.json": {
+    schema:
+      "the compiled contract token table itself — a DATA document that lives beside the schemas because it " +
+      "is versioned with them. It carries no $schema and nothing is validated against it",
+    loaded:
+      "nothing is judged AGAINST it, so no schema loader takes it: it is read as data, by " +
+      "bot/lib/compile-decision.mjs's `TOKEN_FILE` for SCOPE-7's fixed reasons and by tools/cutover-preflight.mjs " +
+      "from the ref it judges",
+    trust31:
+      "TRUST-31 (contract 0.31.0): \"`schema/contract-tokens-v1.json` is deliberately not among them, and that " +
+      "is why `schema/` is not a directory entry: the token file is generated from this contract, so a directory " +
+      "entry would make every contract version a shadow transition\"",
+  },
+};
+
+/**
+ * Every function in this repository that reads a schema by literal path for a
+ * bot run to judge something against, as TRUST-31's schema paragraph names
+ * them: "They are loaded from three places and not one: `tools/lib/sources.mjs`'s
+ * `loadSchemas` takes eight …, `bot/lib/holds.mjs` takes `hold-v1.json` and
+ * `hold-record-v1.json`, and `bot/lib/listing-state.mjs` takes `deadline-v1.json`
+ * and `cutover-v1.json`", and `schema/moderation-work-v1.json` is "read by
+ * `bot/moderation-run.mjs` by literal path".
+ *
+ * The check below does not PARSE these for the paths they name — it RUNS each
+ * one against this repository and records the files it opens. A path a loader
+ * names in a comment, builds from a variable, or stops reading is then what
+ * the loader does and not what its source text says. A loader added somewhere
+ * else is not found by this list; the schema it reads is, and goes red below
+ * as loaded by nothing until its loader is named here.
+ */
+const SCHEMA_LOADERS = [
+  ["tools/lib/sources.mjs", "loadSchemas"],
+  ["bot/lib/holds.mjs", "holdSchema"],
+  ["bot/lib/holds.mjs", "holdRecordSchema"],
+  ["bot/lib/listing-state.mjs", "deadlineSchema"],
+  ["bot/lib/listing-state.mjs", "cutoverSchema"],
+  ["bot/moderation-run.mjs", "workSchema"],
+];
+
+/** The registry's copy of TRUST-31's set. */
+const TRUST31_COPY = "bot/tests/code-paths.test.mjs";
+
+/**
+ * `ENTRIES` in the TRUST-31 copy, read as TEXT and the way astra-plugins-ops'
+ * `tools/check-trust31-copies.mjs` reads it, so that the two readers of one
+ * list cannot disagree about what it holds.
+ *
+ * Not imported, because it cannot be: the file is a `node:test` suite, and
+ * importing it would run its tests — git calls, the import walk, the set hash —
+ * inside this one. Each anchor must occur exactly once, because a second
+ * `export const ENTRIES = [` read from the first would be a guess.
+ */
+function trust31Entries() {
+  const src = fs.readFileSync(path.join(REPO_ROOT, ...TRUST31_COPY.split("/")), "utf8");
+  const block = (open, close) => {
+    const at = src.indexOf(open);
+    if (at < 0 || src.indexOf(open, at + open.length) >= 0) {
+      throw new Error(
+        `${TRUST31_COPY}: \`${open}\` occurs ${at < 0 ? "nowhere" : "more than once"}, so TRUST-31's set cannot ` +
+        `be read off it. astra-plugins-ops' tools/check-trust31-copies.mjs reads the same anchor`,
+      );
+    }
+    const end = src.indexOf(close, at + open.length);
+    if (end < 0) throw new Error(`${TRUST31_COPY}: \`${open}\` is never closed`);
+    return src.slice(at + open.length, end).replace(/\/\/.*/g, "");
+  };
+  const workflows = block("const WORKFLOWS = [", "];");
+  const entries = block("export const ENTRIES = [", "\n];");
+  // `ENTRIES` spreads `WORKFLOWS` in; reading both is right only while it does.
+  if (!/^\s*\.\.\.WORKFLOWS,/.test(entries)) {
+    throw new Error(`${TRUST31_COPY}: \`ENTRIES\` no longer opens with \`...WORKFLOWS,\`, so reading both lists is a guess`);
+  }
+  const strings = (body) => [...body.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  return [...strings(workflows), ...strings(entries)];
+}
+
+/**
+ * The paths `fn` opens with `fs.readFileSync`, in order — repository-relative
+ * where they are inside it, absolute where they are not.
+ *
+ * Every loader in SCHEMA_LOADERS reads through the default `node:fs` export,
+ * and `syncBuiltinESMExports` carries the wrapper to a named `readFileSync`
+ * import as well. A loader that stopped reading through either records
+ * nothing, and the floor below goes red on the instrument, not on the schemas.
+ */
+function readsOf(fn) {
+  const seen = [];
+  const real = fs.readFileSync;
+  fs.readFileSync = function recorded(file, ...rest) {
+    const abs = file instanceof URL ? fileURLToPath(file) : typeof file === "string" ? path.resolve(file) : null;
+    if (abs === null) {
+      seen.push(`<descriptor ${String(file)}>`);
+    } else {
+      const rel = path.relative(REPO_ROOT, abs);
+      seen.push(rel.startsWith("..") || path.isAbsolute(rel) ? abs : rel.split(path.sep).join("/"));
+    }
+    return real.call(this, file, ...rest);
+  };
+  syncBuiltinESMExports();
+  try {
+    fn();
+  } finally {
+    fs.readFileSync = real;
+    syncBuiltinESMExports();
+  }
+  return seen;
+}
 
 export async function run() {
   console.log("\ncanonical json");
@@ -153,15 +289,13 @@ export async function run() {
   // when it finally does see it it will THROW rather than report, taking
   // `tools/validate.mjs` down with it on the first domain-verified publisher.
   await test("every schema parses, and every keyword in it is one the validator implements", () => {
-    // `schema/` holds one document that is not a JSON Schema. Named here with
-    // its reason rather than skipped by a heuristic: a silent skip is how a
-    // walk quietly stops covering things, and "has no $schema" is a property a
-    // real schema can acquire by accident.
-    const NOT_A_SCHEMA = {
-      "contract-tokens-v1.json":
-        "the compiled contract token table itself — a DATA document that lives beside the schemas because it " +
-        "is versioned with them. It carries no $schema and nothing is validated against it",
-    };
+    // `schema/` holds one document that is not a JSON Schema. It is declared
+    // with its reason in SCHEMA_ABSENCES, at the top of this file, rather than
+    // skipped by a heuristic: a silent skip is how a walk quietly stops
+    // covering things, and "has no $schema" is a property a real schema can
+    // acquire by accident. The check after this one refuses a declaration that
+    // is no longer true.
+    const NOT_A_SCHEMA = (rel) => typeof SCHEMA_ABSENCES[rel]?.schema === "string";
 
     // The same recursion `check()` performs in tools/lib/jsonschema.mjs, and
     // only the same positions. A key of `properties` is a PROPERTY NAME, and an
@@ -222,10 +356,11 @@ export async function run() {
         continue;
       }
       if (doc?.$schema === undefined) {
-        if (!NOT_A_SCHEMA[file]) {
+        if (!NOT_A_SCHEMA(rel)) {
           offences.push(
-            `${rel}: no $schema, and it is not one of the documents declared in NOT_A_SCHEMA above. Either it is a ` +
-            `schema missing its dialect, or it is a data file that has to say so here with its reason`,
+            `${rel}: no $schema, and SCHEMA_ABSENCES at the top of this file does not declare it absent from ` +
+            `\`schema\`. Either it is a schema missing its dialect, or it is a data file that has to say so there ` +
+            `with its reason`,
           );
         }
         continue;
@@ -242,6 +377,185 @@ export async function run() {
       "is the remedy: \"If you need a keyword that is not here, implement it\" — or say the same thing with a " +
       "keyword that is here. Leaving it costs twice: the rule is enforced by nobody meanwhile, and the first " +
       "document that reaches it makes the validator throw rather than report");
+  });
+
+  // ── the three populations, held to each other (dev/couplings.md entry 67) ──
+  //
+  //   (a) every file under `schema/` is opened by a loader in SCHEMA_LOADERS,
+  //       or declared absent from `loaded` — so a schema added with no loader
+  //       is red, by name, on the commit that adds it;
+  //   (b) every file a loader opens is under `schema/`, and nothing excuses one
+  //       that is not;
+  //   (c) every schema TRUST-31's set covers is opened by a loader, or declared
+  //       absent from `loaded`. This is the contract's own test for putting a
+  //       schema in the set, and the clause relied on is TRUST-31's schema
+  //       paragraph: "Each is loaded by literal path from this repository and
+  //       never from the tree under test, so that `--registry-dir` cannot
+  //       supply the rules it is judged by — which is what makes them rules the
+  //       bot enforces on itself before it commits, and what puts them
+  //       inside." An in-set schema no loader opens is outside that sentence:
+  //       a promise to the plugins service about a file nothing here reads;
+  //   (d) every file a loader opens is in TRUST-31's set, or declared absent
+  //       from `trust31` — a gate input outside the set is a rule a registry
+  //       writer could change without the bot returning to shadow;
+  //   (e) every file under `schema/` is in the set, or declared absent from it.
+  //       bot/tests/code-paths.test.mjs asserts the same thing from the set's
+  //       side; it is asked here too so that the token file's `trust31`
+  //       declaration is a claim something checks, not a remark.
+  //
+  // Every clause above is a loop, and an empty loop agrees with everything, so
+  // each population carries a floor — the neighbouring walk's ten, against
+  // 2026-09-22's counts of 14, 13 and 13. The floors guard against an EMPTY
+  // walk, not a shorter one: a population that lost a few members is caught
+  // by the comparisons, by name. Floor failures are collected with the
+  // offences rather than thrown first, so that a removal still names its file.
+  await test("schema/, the schema loaders and TRUST-31's set are one population, and every difference is declared with its reason", async () => {
+    const dir = [];
+    const walkDir = (abs, rel) => {
+      for (const e of fs.readdirSync(abs, { withFileTypes: true }).sort((x, y) => (x.name < y.name ? -1 : 1))) {
+        if (e.isDirectory()) walkDir(path.join(abs, e.name), `${rel}/${e.name}`);
+        else dir.push(`${rel}/${e.name}`);
+      }
+    };
+    walkDir(path.join(REPO_ROOT, "schema"), "schema");
+    const offences = [];
+    if (dir.length < 10) {
+      offences.push(
+        `floor: schema/ holds ${dir.length} file(s) and held 14 on 2026-09-22; a walk this short is a directory ` +
+        `that moved, and every clause below would agree with it`,
+      );
+    }
+
+    const isSchema = new Set();
+    for (const rel of dir) {
+      try {
+        const doc = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, ...rel.split("/")), "utf8"));
+        if (doc && typeof doc === "object" && !Array.isArray(doc) && doc.$schema !== undefined) isSchema.add(rel);
+      } catch {
+        // Not JSON, so not a schema. The keyword walk above names it.
+      }
+    }
+    if (isSchema.size < 10) {
+      offences.push(`floor: only ${isSchema.size} file(s) under schema/ carry $schema; 13 did on 2026-09-22`);
+    }
+
+    const loaded = new Map();
+    const blind = [];
+    for (const [module, name] of SCHEMA_LOADERS) {
+      const mod = await import(new URL(`../../${module}`, import.meta.url).href);
+      assert(typeof mod[name] === "function",
+        `${module} exports no function \`${name}\`, and SCHEMA_LOADERS names it as a schema loader. A loader that ` +
+        `moved must move here in the same commit, or every schema it read goes red below as read by nothing`);
+      const reads = readsOf(() => mod[name](REPO_ROOT));
+      if (!reads.length) blind.push(`${module} · ${name}`);
+      for (const r of reads) loaded.set(r, [...(loaded.get(r) ?? []), `${module} · ${name}`]);
+    }
+    for (const who of blind) {
+      offences.push(
+        `floor: ${who} opened no file the recorder saw. It still loads something, or it would have thrown — so ` +
+        `the INSTRUMENT is blind to it (it reads through something other than fs.readFileSync), and every schema ` +
+        `it loads reads below as loaded by nothing`,
+      );
+    }
+    if (loaded.size < 10) {
+      offences.push(
+        `floor: the loaders opened ${loaded.size} file(s) and opened 13 on 2026-09-22 (loadSchemas 8, holds.mjs 2, ` +
+        `listing-state.mjs 2, moderation-run.mjs 1)`,
+      );
+    }
+
+    const entries = trust31Entries();
+    if (entries.length < 40) {
+      offences.push(
+        `floor: read ${entries.length} entries off ${TRUST31_COPY}'s ENTRIES and TRUST-31 held 51 on 2026-09-22; ` +
+        `this is a broken read, not a smaller set`,
+      );
+    }
+    const covers = (p) => entries.some((e) => (e.endsWith("/") ? p.startsWith(e) : p === e));
+    const inSet = new Set([
+      ...entries.filter((e) => e.startsWith("schema/") && !e.endsWith("/")),
+      ...[...dir, ...loaded.keys()].filter(covers),
+    ]);
+    if (inSet.size < 10) {
+      offences.push(`floor: TRUST-31's set covers ${inSet.size} schema(s) and covered 13 on 2026-09-22`);
+    }
+
+    const declared = (rel, key) => Object.hasOwn(SCHEMA_ABSENCES, rel) && Object.hasOwn(SCHEMA_ABSENCES[rel], key);
+    for (const rel of dir) {
+      if (!loaded.has(rel) && !declared(rel, "loaded")) {
+        offences.push(
+          `(a) ${rel} is under schema/ and no loader in SCHEMA_LOADERS opens it, so nothing a bot run does is judged ` +
+          `against it. Name the loader that reads it in SCHEMA_LOADERS, or declare it absent from \`loaded\` in ` +
+          `SCHEMA_ABSENCES with the reason`,
+        );
+      }
+    }
+    for (const [rel, by] of loaded) {
+      if (!dir.includes(rel)) {
+        offences.push(`(b) ${by.join(", ")} opens ${rel}, which is not a file under schema/ — a schema loader reads schemas`);
+      }
+    }
+    for (const rel of [...inSet].sort()) {
+      if (!loaded.has(rel) && !declared(rel, "loaded")) {
+        offences.push(
+          `(c) ${rel} is in TRUST-31's set (${TRUST31_COPY}) and no loader opens it: a promise to the plugins ` +
+          `service about a file this repository does not read. TRUST-31 puts a schema in the set because a bot ` +
+          `run loads it; declaring it absent from \`loaded\` is a claim the contract has to make first`,
+        );
+      }
+    }
+    for (const [rel, by] of loaded) {
+      if (!inSet.has(rel) && !declared(rel, "trust31")) {
+        offences.push(
+          `(d) ${rel} is opened by ${by.join(", ")} and TRUST-31's set does not cover it: a rule a bot run judges by ` +
+          `that a registry writer could change without the bot returning to shadow. Adding it is a contract MINOR ` +
+          `published before the file lands; or declare it absent from \`trust31\` with the reason`,
+        );
+      }
+    }
+    for (const rel of dir) {
+      if (!inSet.has(rel) && !declared(rel, "trust31")) {
+        offences.push(`(e) ${rel} is under schema/ and TRUST-31's set does not cover it, and SCHEMA_ABSENCES does not say why`);
+      }
+    }
+
+    // The declarations themselves. Each absence must be TRUE, and must say why.
+    const absent = { schema: (rel) => !isSchema.has(rel), loaded: (rel) => !loaded.has(rel), trust31: (rel) => !inSet.has(rel) };
+    for (const [rel, decl] of Object.entries(SCHEMA_ABSENCES)) {
+      if (!dir.includes(rel) && !inSet.has(rel) && !loaded.has(rel)) {
+        offences.push(`SCHEMA_ABSENCES declares ${rel}, which is in no population at all — a declaration about nothing`);
+        continue;
+      }
+      if (!decl || typeof decl !== "object" || !Object.keys(decl).length) {
+        offences.push(`SCHEMA_ABSENCES declares ${rel} and names no population it is absent from`);
+        continue;
+      }
+      for (const [key, reason] of Object.entries(decl)) {
+        if (!Object.hasOwn(absent, key)) {
+          offences.push(`SCHEMA_ABSENCES: ${rel} is declared absent from \`${key}\`, which is not one of ${Object.keys(absent).join(", ")}`);
+          continue;
+        }
+        // Eight words is a floor on a sentence, not a judge of one: below it a
+        // declaration is a label, and a label is a skip that reads like a reason.
+        if (typeof reason !== "string" || reason.trim().split(/\s+/).filter(Boolean).length < 8) {
+          offences.push(
+            `SCHEMA_ABSENCES: ${rel}'s absence from \`${key}\` carries no reason (${JSON.stringify(reason)}). A ` +
+            `difference declared without one is a skip, and a skip is how a comparison quietly stops comparing`,
+          );
+        }
+        if (!absent[key](rel)) {
+          offences.push(
+            `SCHEMA_ABSENCES: ${rel} is declared absent from \`${key}\` and is not — the declaration has outlived ` +
+            `its reason, and the next file would shelter under it. Delete it`,
+          );
+        }
+      }
+    }
+
+    assertEqual(offences.join("\n  "), "",
+      `the populations called "the schemas" disagree where SCHEMA_ABSENCES in tools/selftest/primitives.mjs ` +
+      `declares no difference, or a declaration there is wrong (schema/ ${dir.length}, loaded ${loaded.size}, ` +
+      `TRUST-31 ${inSet.size}). Each line names its clause`);
   });
 
   console.log("\nids");
