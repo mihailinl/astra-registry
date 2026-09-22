@@ -326,14 +326,24 @@ test("A5: a stop on OTHER bytes of the same version is not a bypass", () => {
 
 // ── A7 ──────────────────────────────────────────────────────────────────────
 
-function signedAt(dir, sourceCommit, when) {
+/**
+ * The first commit on `signed`, with the trailers `tools/signer/run.mjs`
+ * writes for a freshly generated catalogue: `Index-Source-Commit` is the run's
+ * `Source-Commit` (B.4). `{ index: null }` leaves `Index-Source-Commit` out,
+ * which no signer run writes and B.4 does not allow; `{ index: sha }` names
+ * another commit.
+ */
+function signedAt(dir, sourceCommit, when, { index = sourceCommit } = {}) {
   const main = git(dir, ["rev-parse", "HEAD"]);
   git(dir, ["checkout", "--quiet", "--orphan", "signed"]);
   git(dir, ["rm", "-rq", "--cached", "."]);
   for (const e of fs.readdirSync(dir)) if (e !== ".git") fs.rmSync(path.join(dir, e), { recursive: true, force: true });
   write(dir, "registry/v1/index.json", { schema: "astra.registry.index/1" });
   git(dir, ["add", "-A"]);
-  git(dir, ["commit", "--quiet", "-m", `registry: signed\n\nSource-Commit: ${sourceCommit}\n`], AT(when));
+  const trailers =
+    `Source-Commit: ${sourceCommit}\nRun: https://example.invalid/runs/0\nSigner: sign.yml\n` +
+    (index === null ? "" : `Index-Source-Commit: ${index}\n`);
+  git(dir, ["commit", "--quiet", "-m", `registry: signed\n\n${trailers}`], AT(when));
   git(dir, ["checkout", "--quiet", "main"]);
   return main;
 }
@@ -629,43 +639,147 @@ test("A7: the signer's time on a merged change starts at the merge", () => {
  * real `signed`, 2 of its 8 commits differ, `ae80bc7` and `f2afd04`, and both
  * were `unchanged`, not carried.
  */
-function signedAgain(dir, sourceCommit, indexSourceCommit, when) {
+function signedAgain(dir, sourceCommit, indexSourceCommit, when, subject = "signed: the list re-signed, the catalogue carried") {
   git(dir, ["checkout", "--quiet", "signed"]);
   write(dir, "registry/v1/revocations.json", { schema: "astra.registry.revocations/1", at: when });
   git(dir, ["add", "-A"]);
   git(dir, ["commit", "--quiet", "-m",
-    `signed: the list re-signed, the catalogue carried\n\n` +
+    `${subject}\n\n` +
     `Source-Commit: ${sourceCommit}\nRun: https://example.invalid/runs/1\nSigner: sign.yml\n` +
     `Index-Source-Commit: ${indexSourceCommit}\n`], AT(when));
   git(dir, ["checkout", "--quiet", "main"]);
 }
 
-test("A7 reads `Source-Commit`: a carried catalogue is the signer's alarm (D4) until a contract version records `Index-Source-Commit` (G8)", () => {
-  // A decision, pinned so that it is revisited on purpose rather than drift.
-  // The signer carried the catalogue and committed anyway (the list changed),
-  // so `signed`'s Source-Commit is main's head and its Index-Source-Commit is
-  // the seed. A7 reads Source-Commit and sees nothing. The reasons are at `a7`
-  // in `bot/detectors.mjs`: registry plan D2 says readers ignore the
-  // Index-Source-Commit name until a contract version records it, detector B
-  // answers row 7 from the served Source-Commit, and D4's carry alert
-  // (SIGNER_CARRIED_INDEX, every run while the carry lasts) owns this shape.
-  // When G8 lands, this test is the one to change.
+/** The first-parent commits in `from..to` under a pathspec, from git and not from A7. */
+const firstParentTouching = (dir, from, to, pathspec) =>
+  git(dir, ["log", "--first-parent", "--format=%H", `${from}..${to}`, "--", pathspec]).split("\n").filter(Boolean);
+
+/**
+ * A carried catalogue: `signed` made from the seed at 00:01, a publication at
+ * 01:00, an advisory at 01:02, and a signer run at 01:05 that carried the
+ * catalogue past a failed gate and committed anyway because the list changed.
+ * So `Source-Commit` is the advisory — main's head — and `Index-Source-Commit`
+ * is still the seed. The publication is in the first and not the second.
+ */
+function carriedCatalogue() {
   const dir = estate();
   const seed = git(dir, ["rev-parse", "HEAD"]);
   signedAt(dir, seed, "2026-01-01T00:01:00Z");
   version_(dir, "alpha", "1.1.0");
-  commit(dir, "registry: publish", "2026-01-01T01:00:00Z");
+  const publish = commit(dir, "registry: publish", "2026-01-01T01:00:00Z");
   write(dir, `${REVOCATIONS_SOURCE_DIR}/ASTRA-2026-0001.json`, { schema: "astra.registry.revocation/1" });
   const advisory = commit(dir, "registry: an advisory", "2026-01-01T01:02:00Z");
   signedAgain(dir, advisory, seed, "2026-01-01T01:05:00Z");
-  const r = detect({ root: dir, now: NOW("2026-01-01T09:05:00Z") });
-  assert.equal(r.scanned.signed_source_commit, advisory,
-    "A7 took `signed`'s Source-Commit from somewhere other than the Source-Commit trailer");
-  assert.deepEqual(a7Codes(r), [],
-    "A7 alarmed on a carried catalogue: it now reads Index-Source-Commit, which registry plan D2 says readers " +
-    "ignore until a contract version records it (G8). If a contract version now does, update `a7`'s comment, " +
-    "detector B's row 7 and this test together");
+  // The fixture guards, from git: the Source-Commit contains the publication,
+  // so a catalogue half reading it sees nothing, and the Index-Source-Commit
+  // does not, so one reading row 7's trailer sees exactly the publication.
+  assert.deepEqual(firstParentTouching(dir, advisory, "main", "plugins"), [],
+    "the fixture's Source-Commit does not contain the publication, so it cannot tell the two trailers apart");
+  assert.deepEqual(firstParentTouching(dir, seed, "main", "plugins"), [publish],
+    "the fixture's Index-Source-Commit is not exactly one publication behind");
+  return { dir, seed, publish, advisory };
+}
+
+test("A7's catalogue half reads the served catalogue's Index-Source-Commit (row 7, 0.32.0)", () => {
+  // Row 7 at 0.32.0: "the oldest commit on main's first-parent line that
+  // brought a change under plugins/ and that the served catalogue's
+  // Index-Source-Commit does not contain … has been on main more than 2 h …
+  // counted to now". Until 0.32.0 A7 read Source-Commit here by decision
+  // (astra-registry PR #219), and was silent on this tree at every hour:
+  // measured 2026-09-22 at 03:00:01 and at 09:00, no finding.
+  const { dir, seed, publish, advisory } = carriedCatalogue();
+  const plugins = (iso) => detect({ root: dir, now: NOW(iso) }).findings.filter((f) => f.code === "A7_SIGNED_BEHIND_PLUGINS");
+  const r = detect({ root: dir, now: NOW("2026-01-01T03:00:00Z") });
+  assert.equal(r.scanned.signed_source_commit, advisory, "A7 took Source-Commit from somewhere other than its trailer");
+  assert.equal(r.scanned.signed_index_source_commit, seed, "A7 took Index-Source-Commit from somewhere other than its trailer");
+  assert.equal(r.scanned.plugins_unsigned_commits, 1,
+    "A7's catalogue half does not see the publication the served catalogue was not generated from: it is reading Source-Commit");
+  // The bound is the grace, inclusive as SERVE-85's is: 120 minutes after the
+  // publication the signer is still inside it, and one second later it is not.
+  assert.deepEqual(plugins("2026-01-01T03:00:00Z"), [], "the catalogue half alarmed with the signer still inside its two hours");
+  const late = plugins("2026-01-01T03:00:01Z");
+  assert.equal(late.length, 1,
+    "a catalogue carried from before a publication, two hours and a second after it, and A7's catalogue half said nothing");
+  assert.equal(late[0].hex, publish, "the finding names a commit other than the publication the served catalogue does not contain");
+  assert.match(late[0].message, /Index-Source-Commit/, "the finding does not say which trailer it measured from");
+  // Eight hours on, the hour astra-registry PR #219 measured silent.
+  assert.equal(plugins("2026-01-01T09:00:00Z").length, 1, "eight hours after the publication, the carried catalogue is still unreported");
+});
+
+test("A7's list half stays on `Source-Commit` (row 7): an advisory the served list carries is not behind, whatever the catalogue's trailer says", () => {
+  // Row 7 keeps the list on Source-Commit, and the list has no trailer of its
+  // own; a carried list is SERVE-85's, by its serial. Here the list was signed
+  // at the advisory while the catalogue was carried from before it, so a list
+  // half that read Index-Source-Commit would report an advisory `signed` holds.
+  const { dir, advisory } = carriedCatalogue();
+  const r = detect({ root: dir, now: NOW("2026-01-01T09:00:00Z") });
+  assert.ok(!codes(r).includes("A7_SIGNED_BEHIND_REVOCATIONS"),
+    `A7's list half alarmed on an advisory the served list carries: it is reading Index-Source-Commit (${JSON.stringify(r.scanned)})`);
+  assert.equal(r.scanned.revocations_unsigned_commits, 0);
+  // The control: the list half is not switched off. An advisory after the
+  // Source-Commit is behind, and at its own 30 minutes.
+  write(dir, `${REVOCATIONS_SOURCE_DIR}/ASTRA-2026-0002.json`, { schema: "astra.registry.revocation/1" });
+  const second = commit(dir, "registry: another advisory", "2026-01-01T02:00:00Z");
+  assert.notEqual(second, advisory);
+  const at = (iso) => detect({ root: dir, now: NOW(iso) }).findings.filter((f) => f.code === "A7_SIGNED_BEHIND_REVOCATIONS").map((f) => f.hex);
+  assert.deepEqual(at("2026-01-01T02:30:00Z"), [], "the list half alarmed inside its 30 minutes");
+  assert.deepEqual(at("2026-01-01T02:30:01Z"), [second], "an advisory the served list does not carry, 30 minutes on, and the list half said nothing");
+});
+
+test("A7: an unchanged catalogue whose two trailers differ is not a carry, and alarms on nothing (the shape of `ae80bc7` and `f2afd04`)", () => {
+  // Ops register entry 96. The signer keeps the head's Index-Source-Commit
+  // when the catalogue is `unchanged` as well as when it is carried, and the
+  // two real `signed` commits whose trailers differ are both unchanged: main
+  // moved, and nothing under `plugins/` did. A reader that took "the trailers
+  // differ" for "carried" would report two carries that never happened.
+  const dir = estate();
+  const seed = git(dir, ["rev-parse", "HEAD"]);
+  signedAt(dir, seed, "2026-01-01T00:01:00Z");
+  write(dir, "docs/elsewhere.md", "main moves on outside plugins/\n");
+  commit(dir, "docs: elsewhere", "2026-01-01T00:30:00Z");
+  write(dir, `${REVOCATIONS_SOURCE_DIR}/ASTRA-2026-0001.json`, { schema: "astra.registry.revocation/1" });
+  const advisory = commit(dir, "registry: an advisory", "2026-01-01T00:40:00Z");
+  signedAgain(dir, advisory, seed, "2026-01-01T00:45:00Z", "signed: the list changed, the catalogue unchanged");
+  // The fixture guards: the trailers differ, nothing under plugins/ lies
+  // between them, and the advisory does — so this tree is the real shape and
+  // also the one a list half reading the wrong trailer would alarm on.
+  assert.deepEqual(firstParentTouching(dir, seed, advisory, "plugins"), [], "the fixture has a plugins/ commit between its trailers");
+  assert.deepEqual(firstParentTouching(dir, seed, advisory, REVOCATIONS_SOURCE_PATHSPEC), [advisory]);
+  const r = detect({ root: dir, now: NOW("2026-01-01T10:45:00Z") });
+  assert.notEqual(r.scanned.signed_index_source_commit, r.scanned.signed_source_commit, "the fixture's two trailers agree");
+  assert.deepEqual(a7Codes(r), [], `an unchanged catalogue with differing trailers alarmed, ten hours on: ${JSON.stringify(r.scanned)}`);
   assert.equal(r.scanned.plugins_unsigned_commits, 0);
+  assert.equal(r.scanned.revocations_unsigned_commits, 0);
+});
+
+test("A7: `signed` with no Index-Source-Commit trailer is a finding, not a fallback to Source-Commit, and the list half still runs", () => {
+  // B.4 has every `signed` commit name both trailers, and every signer run
+  // writes both (all eight on the real branch do). A head without one did not
+  // come from a signer run; reading Source-Commit in its place is the reading
+  // that was blind to a carried catalogue, so the catalogue half says so and
+  // stops, and the list half, which never needed the trailer, goes on.
+  const dir = estate();
+  const seed = git(dir, ["rev-parse", "HEAD"]);
+  signedAt(dir, seed, "2026-01-01T00:01:00Z", { index: null });
+  version_(dir, "alpha", "1.1.0");
+  write(dir, `${REVOCATIONS_SOURCE_DIR}/ASTRA-2026-0001.json`, { schema: "astra.registry.revocation/1" });
+  commit(dir, "registry: an advisory and a publication, never signed", "2026-01-01T01:00:00Z");
+  assert.doesNotMatch(git(dir, ["log", "-1", "--format=%B", "signed"]), /Index-Source-Commit/, "the fixture's `signed` names the trailer");
+  const r = detect({ root: dir, now: NOW("2026-01-01T11:00:00Z") });
+  assert.deepEqual(a7Codes(r), ["A7_NO_INDEX_SOURCE_COMMIT", "A7_SIGNED_BEHIND_REVOCATIONS"],
+    "a `signed` head with no Index-Source-Commit: the catalogue half must say so and not fall back to Source-Commit, " +
+      "and the list half, which reads Source-Commit, must still report the advisory ten hours unsigned");
+  assert.equal(r.scanned.plugins_unsigned_commits, undefined, "the catalogue half walked from some commit with no trailer naming it");
+});
+
+test("A7: an Index-Source-Commit this checkout does not hold is a finding", () => {
+  const dir = estate();
+  const seed = git(dir, ["rev-parse", "HEAD"]);
+  const nowhere = "c".repeat(40);
+  signedAt(dir, seed, "2026-01-01T00:01:00Z", { index: nowhere });
+  const r = detect({ root: dir, now: NOW("2026-01-01T01:00:00Z") });
+  assert.deepEqual(a7Codes(r), ["A7_INDEX_SOURCE_COMMIT_UNKNOWN"]);
+  assert.equal(r.findings.find((f) => f.code === "A7_INDEX_SOURCE_COMMIT_UNKNOWN").hex, nowhere);
 });
 
 test("A7 asks the revocations module which files the list is built from", () => {
