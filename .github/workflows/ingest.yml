@@ -686,6 +686,16 @@ jobs:
           # class of claim this repository treats as a defect in its own right:
           # a comment that describes a change nobody made.
           ref: ${{ github.sha }}
+          # No `fetch-depth`, so depth 1, ON PURPOSE (gap 75). The suite's
+          # checks about HISTORY say NOT ASKED here rather than `ok`; they
+          # are asked of this same commit, with the whole history, by
+          # `publish` below before anything commits and by build-index.yml on
+          # every push, pull request and hour. The flag-permanence one is red
+          # for good once breached, and `check` waits on this job, so asking
+          # it here would add an outage and no detection. The reasoning and
+          # the measurement are above "this repository's arming flag has not
+          # changed since it was added" in tools/selftest/revocations.mjs;
+          # `node tools/selftest.mjs --lanes` shows each lane's history.
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
