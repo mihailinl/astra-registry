@@ -47,7 +47,8 @@ import path from "node:path";
 
 import { REPO_ROOT, loadSchemas } from "../lib/sources.mjs";
 import { validate } from "../lib/jsonschema.mjs";
-import { NOTICE_NAME, NOTICE_SCHEMA } from "../validate.mjs";
+import { NOTICE_NAME, NOTICE_SCHEMA, noticeMarkerProblems } from "../validate.mjs";
+import { POSITIVE_INTEGER_LITERAL, topLevelMembers } from "../lib/json-literal.mjs";
 import { test, assert, assertEqual, tmp, validateTree } from "./harness.mjs";
 
 const SCHEMA_FILE = "schema/migration-notice-v1.json";
@@ -83,6 +84,8 @@ export async function run() {
       ["round 1, undated", marker(1)],
       ["round 2, dated", dated(2)],
       ["round 3, dated", dated(3)],
+      // The ceiling is the acceptor's u32, published in B.4 at their request.
+      ["round 4294967295, dated (the published ceiling)", dated(4294967295)],
     ]) {
       assertEqual(validate(s, doc).map((p) => `${p.path} ${p.message}`).join(" | "), "",
         `${what} is a marker B.4 permits and the schema refuses it`);
@@ -97,6 +100,7 @@ export async function run() {
       ["a null round", marker(null), "$.round expected integer, got null"],
       ["round 0", dated(0), "$.round less than 1"],
       ["a negative round", dated(-2), "$.round less than 1"],
+      ["round 4294967296, one past the ceiling", dated(4294967296), "$.round greater than 4294967295"],
       ["round 2 with no date (B.4: from round 2)", marker(2), "$ matches 0 of the allowed shapes"],
       ["round 1 carrying a date (MIG-14: never in a marker before it)", dated(1), "$ matches 0 of the allowed shapes"],
       ["a member outside the four (M-T5.3's canary)", marker(1, { accounts: ["x"] }), '$ unknown property "accounts"'],
@@ -105,6 +109,11 @@ export async function run() {
       ["a §0.7 DATE for the cutover, which §0.7 reserves for two other members", dated(2, { cutover_planned_at: "2026-11-01" }), "$.cutover_planned_at does not match"],
       ["fractional seconds", marker(1, { sent_at: "2026-08-01T00:00:00.5Z" }), "$.sent_at does not match"],
       ["an offset instead of `Z`", dated(2, { cutover_planned_at: "2026-11-01T00:00:00+00:00" }), "$.cutover_planned_at does not match"],
+      // B.4 from 0.31.0's second round: a real UTC instant, never second 60.
+      // The pattern bounds the fields, so these two are refused by the schema;
+      // a day that does not exist is not, and the next test holds that.
+      ["hour 24 in `sent_at`", marker(1, { sent_at: "2026-08-01T24:00:00Z" }), "$.sent_at does not match"],
+      ["second 60 in `cutover_planned_at`", dated(2, { cutover_planned_at: "2026-12-31T23:59:60Z" }), "$.cutover_planned_at does not match"],
     ];
     for (const [what, doc, reason] of refusals) {
       const got = validate(s, doc).map((p) => `${p.path} ${p.message}`);
@@ -204,5 +213,73 @@ export async function run() {
       "a file no reader takes for a marker was judged as one");
     assertEqual(report.items.filter((i) => i.where === "log/migration-notice-<n>.json").length, 0,
       "a tree carrying markers was reported as carrying none");
+  });
+
+  // Contract 0.31.0, the acceptor's three changes. Each is a rule about the
+  // marker's TEXT that the parsed value cannot carry, so every document here is
+  // a string of bytes and it is judged by `noticeMarkerProblems` — the same
+  // function tools/validate.mjs calls on a tree, not a copy of it.
+  await test("a marker's text is judged where a parsed value cannot be: the `round` literal, and a real instant", () => {
+    const s = schema();
+    const text = (roundLiteral, extra = "") =>
+      `{"schema": "${S}", "round": ${roundLiteral}, "sent_at": "${SENT}"${extra}}`;
+    const withDate = (roundLiteral, at = PLANNED) => text(roundLiteral, `, "cutover_planned_at": "${at}"`);
+    const judged = (t) => noticeMarkerProblems(t, s).map((p) => p.message);
+    for (const [what, t] of [
+      ["`1`", text("1")],
+      ["`2`, dated", withDate("2")],
+      ["`3`, dated", withDate("3")],
+      ["`4294967295`, dated", withDate("4294967295")],
+      ["`1` with RFC 8259 whitespace around the colon", `{"schema":"${S}",\n  "round"\t :\r\n 1 ,"sent_at":"${SENT}"}`],
+      ["`1` under a key spelt with an escape, which IS `round`", `{"schema":"${S}","\\u0072ound":1,"sent_at":"${SENT}"}`],
+    ]) {
+      assertEqual(judged(t).join(" | "), "", `the literal ${what} is one B.4 permits, and the text was refused`);
+    }
+    const LITERAL = "`round` is written ";
+    for (const [what, t, reason] of [
+      ["`1.0`", text("1.0"), `${LITERAL}1.0,`],
+      ["`1e0`", text("1e0"), `${LITERAL}1e0,`],
+      ["`1E0`", text("1E0"), `${LITERAL}1E0,`],
+      ["`2.0`, dated", withDate("2.0"), `${LITERAL}2.0,`],
+      ["`1.0` under an escaped key", `{"schema":"${S}","\\u0072ound":1.0,"sent_at":"${SENT}"}`, `${LITERAL}1.0,`],
+      ["two `round` members, the last one well formed", `{"schema":"${S}","round":"x","round":1,"sent_at":"${SENT}"}`, "carries 2 `round` members"],
+      ["`sent_at` on a day that does not exist", `{"schema":"${S}","round":1,"sent_at":"2026-02-30T00:00:00Z"}`, "`sent_at` is \"2026-02-30T00:00:00Z\", which is not a real moment"],
+      ["`cutover_planned_at` on a day that does not exist", withDate("2", "2026-02-30T00:00:00Z"), "`cutover_planned_at` is \"2026-02-30T00:00:00Z\", which is not a real moment"],
+      ["`sent_at` at hour 24", `{"schema":"${S}","round":1,"sent_at":"2026-08-01T24:00:00Z"}`, "$.sent_at does not match"],
+      ["`cutover_planned_at` at second 60", withDate("2", "2026-12-31T23:59:60Z"), "$.cutover_planned_at does not match"],
+      ["4294967296, dated", withDate("4294967296"), "$.round greater than 4294967295"],
+    ]) {
+      const got = judged(t);
+      assert(got.some((g) => g.startsWith(reason)),
+        `${what}: the marker must be refused with "${reason}…", and was refused with ${JSON.stringify(got)}`);
+    }
+    // The three a PARSED value cannot show, asserted on the parsed value too,
+    // so that the reason this test reads text is a measurement and not a
+    // belief: the schema alone admits every one of them.
+    for (const t of [text("1.0"), text("1e0"), text("1E0"), withDate("2.0")]) {
+      assertEqual(validate(s, JSON.parse(t)).length, 0,
+        `the schema refused ${t} on its parsed value, so the raw-text check above is no longer the only thing refusing it`);
+    }
+  });
+
+  await test("the literal scanner reads depth-one members by their decoded names, and every duplicate", () => {
+    // Its own edges, each a way a regular expression over the file gets it
+    // wrong. The helper is the whole of the literal check in two readers.
+    const rounds = (t) => topLevelMembers(t).filter((m) => m.name === "round").map((m) => m.raw);
+    assertEqual(JSON.stringify(rounds('{"a":{"round":1.0},"round":2}')), '["2"]', "a nested `round` was read as the member");
+    assertEqual(JSON.stringify(rounds('{"a":"\\"round\\": 1.0","round":2}')), '["2"]', "a `round` inside a string was read as the member");
+    assertEqual(JSON.stringify(rounds('{"\\u0072ound":1e0}')), '["1e0"]', "a key spelt with an escape was not read as `round`");
+    assertEqual(JSON.stringify(rounds('{"round":1,"round":1.0}')), '["1","1.0"]', "a duplicate was not reported with its own literal");
+    assertEqual(JSON.stringify(rounds('{ "round" :\n 3 }')), '["3"]', "whitespace around the member changed its literal");
+    let threw = false;
+    try {
+      topLevelMembers("[1]");
+    } catch {
+      threw = true;
+    }
+    assert(threw, "an array was read as an object");
+    for (const [lit, ok] of [["1", true], ["4294967295", true], ["1.0", false], ["1e0", false], ["1E0", false], ["01", false], ["-1", false], ["+1", false], ["0", false]]) {
+      assertEqual(POSITIVE_INTEGER_LITERAL.test(lit), ok, `the literal ${lit} was judged ${!ok ? "an integer" : "not one"}`);
+    }
   });
 }

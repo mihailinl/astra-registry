@@ -26,6 +26,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 
 import { validate as validateSchema } from "./lib/jsonschema.mjs";
+import { POSITIVE_INTEGER_LITERAL, topLevelMembers } from "./lib/json-literal.mjs";
 import { stableStringify } from "./lib/canonical.mjs";
 import { compareSemver, parseSemver } from "./lib/semver.mjs";
 import { reservedPrefixViolation, stagingListingId } from "./lib/reserved.mjs";
@@ -2140,31 +2141,82 @@ export function checkNoticeMarkers(ctx) {
   }
   for (const name of files) {
     const file = `${NOTICE_DIR}/${name}`;
-    let doc;
-    try {
-      doc = readJson(path.join(dir, name));
-    } catch (e) {
-      report.error(file, `is not readable JSON — ${e.message}`,
-        "The cutover preflight, the deadline watch and the plugins service's banner all read this file.");
-      continue;
-    }
-    const problems = validateSchema(ctx.schemas.migrationNotice, doc, "$");
-    for (const p of problems) {
-      report.error(file, `${p.path} ${p.message}`,
-        `B.4 fixes ${NOTICE_SCHEMA}'s members exactly and, from contract 0.31.0, their types: \`round\` a JSON ` +
-        "integer of at least 1, `sent_at` and `cutover_planned_at` §0.7 times, the date carried exactly from round 2.");
-    }
-    if (problems.length) continue;
-    for (const member of ["sent_at", "cutover_planned_at"]) {
-      if (doc[member] === undefined) continue;
-      try {
-        parseTime(doc[member], `${file}'s \`${member}\``);
-      } catch (e) {
-        report.error(file, e.message,
-          "The pattern admits dates that are not moments; ROLL-32 and ROLL-63 count days from this one.");
-      }
+    for (const p of noticeMarkerProblems(fs.readFileSync(path.join(dir, name), "utf8"), ctx.schemas.migrationNotice)) {
+      report.error(file, p.message, p.hint);
     }
   }
+}
+
+/**
+ * Everything B.4 says a marker's TEXT must be, as a list of problems — empty
+ * when the marker is one. Pure, and exported, so the selftest judges exactly
+ * what `checkNoticeMarkers` judges rather than a copy of it.
+ *
+ * Three readings, because a parsed document cannot carry all of B.4:
+ *
+ *   * the schema, over the parsed value — members, types, the ceiling, the
+ *     condition on `cutover_planned_at`, and each time's field ranges;
+ *   * the RAW TEXT of `round`, through tools/lib/json-literal.mjs: exactly one
+ *     top-level `round`, written `1` and never `1.0`, `1e0` or `1E0`, which
+ *     are the value 1 to the schema and to `JSON.parse` and are refused by the
+ *     plugins service's reader. A duplicate `round` is refused outright,
+ *     because JSON.parse keeps the last and a reader that keeps the first
+ *     would see a different round;
+ *   * each time round-tripped through `parseTime` — `Date`, and the ISO string
+ *     compared — so that a day that does not exist (`2026-02-30`) is refused
+ *     where the pattern cannot see it. Second 60 and hour 24 are refused by
+ *     the pattern and by the round trip both.
+ *
+ * NOT READ: any other member's literal, and duplicates of any other member.
+ *
+ * @returns {{message: string, hint: string}[]}
+ */
+export function noticeMarkerProblems(text, schema) {
+  const typesHint =
+    `B.4 fixes ${NOTICE_SCHEMA}'s members exactly and, from contract 0.31.0, their types: \`round\` a JSON ` +
+    "integer from 1 to 4294967295 written with no fraction part and no exponent, `sent_at` and " +
+    "`cutover_planned_at` §0.7 times naming a real UTC instant with no second 60, the date carried exactly from round 2.";
+  let doc;
+  try {
+    doc = JSON.parse(text);
+  } catch (e) {
+    return [{ message: `is not readable JSON — ${e.message}`,
+      hint: "The cutover preflight, the deadline watch and the plugins service's banner all read this file." }];
+  }
+  const problems = validateSchema(schema, doc, "$").map((p) => ({ message: `${p.path} ${p.message}`, hint: typesHint }));
+  let members = [];
+  try {
+    members = topLevelMembers(text);
+  } catch (e) {
+    problems.push({ message: `is not a JSON object — ${e.message}`, hint: typesHint });
+    return problems;
+  }
+  const rounds = members.filter((m) => m.name === "round");
+  if (rounds.length > 1) {
+    problems.push({
+      message: `carries ${rounds.length} \`round\` members; JSON.parse keeps the last and a reader that keeps the first sees another round`,
+      hint: typesHint,
+    });
+  }
+  for (const r of rounds) {
+    if (!POSITIVE_INTEGER_LITERAL.test(r.raw)) {
+      problems.push({
+        message: `\`round\` is written ${r.raw}, and B.4 writes it as an integer with no fraction part and no exponent (\`1\`, never \`1.0\` or \`1e0\`)`,
+        hint: typesHint,
+      });
+    }
+  }
+  const failedAt = new Set(problems.map((p) => p.message.split(" ")[0]));
+  for (const member of ["sent_at", "cutover_planned_at"]) {
+    if (doc === null || typeof doc !== "object" || doc[member] === undefined || failedAt.has(`$.${member}`)) continue;
+    try {
+      parseTime(doc[member], `\`${member}\``);
+    } catch (e) {
+      problems.push({ message: e.message,
+        hint: "B.4: a real UTC instant. The pattern admits days that do not exist; ROLL-32 and ROLL-63 count days from this one." });
+    }
+  }
+  return problems;
 }
 
 // ── B.4's other records (registry plan B-T2.1) ──────────────────────────────

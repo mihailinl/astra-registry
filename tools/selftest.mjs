@@ -988,7 +988,7 @@ const FLOORS = new Map(Object.entries({
   "claims.mjs": 7,
   "contract-tokens.mjs": 5,
   "regenerate.mjs": 12,
-  "migration-notice.mjs": 4,
+  "migration-notice.mjs": 6,
   "baseline.mjs": 9,
 }));
 

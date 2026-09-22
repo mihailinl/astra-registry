@@ -236,6 +236,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 
 import { REPO_ROOT, QUEUE_DIR } from "./lib/sources.mjs";
 import { validate } from "./lib/jsonschema.mjs";
+import { POSITIVE_INTEGER_LITERAL, topLevelMembers } from "./lib/json-literal.mjs";
 // The deadline's path comes from the module that DECIDES on it (M-T5.1), so
 // this preflight cannot end up looking at a path the bot stopped writing.
 import { DEADLINE_FILE, DEADLINE_SCHEMA } from "../bot/lib/listing-state.mjs";
@@ -705,7 +706,7 @@ function checkRound2(ctx, tree = refTree(ctx)) {
     } catch {
       doc = null;
     }
-    markers.push({ file: p, round: Number(m[1]), doc: doc ?? {} });
+    markers.push({ file: p, round: Number(m[1]), doc: doc ?? {}, raw });
   }
   // The marker's schema, from THE SAME REF, for the reason `checkDeadline`
   // reads `schema/deadline-v1.json` from it: this tool and the tree it judges
@@ -775,10 +776,16 @@ function checkRound2(ctx, tree = refTree(ctx)) {
   // Every marker, judged by the schema the ref carries. A refusal is an
   // answered no: asked on this ref, of this marker, by a published document.
   if (markerSchema) {
+    const roundTyped = (types.get("round") ?? []).includes("integer");
     for (const m of markers) {
-      for (const e of validate(markerSchema, m.doc)) {
+      const schemaNo = validate(markerSchema, m.doc);
+      for (const e of schemaNo) {
         no.push(`  ${m.file}: ${MARKER_SCHEMA_FILE}: ${e.path || "$"} ${e.message}`);
       }
+      // B.4's two clauses a parsed value cannot carry, asked on the same ref
+      // and of the same text tools/validate.mjs judges, so the two readers of
+      // one marker cannot disagree about it. See `markerTextProblems`.
+      for (const x of markerTextProblems(m, { roundTyped, schemaNo })) no.push(`  ${m.file}: ${x}`);
     }
     lines.push(
       `every marker judged against ${MARKER_SCHEMA_FILE}, read from this ref` +
@@ -999,6 +1006,63 @@ export function predicateTypeMismatch(predicate, doc) {
   const valueTypes = [...new Set(values.map(jsonType))];
   if (valueTypes.includes(carriedType)) return null;
   return { member: name, carried: body[name], carriedType, values, valueTypes };
+}
+
+/**
+ * What B.4 says of a marker's TEXT that no parsed value can show, as answered
+ * nos. Contract 0.31.0, at the acceptor's request, each measured on their side
+ * by running their reader:
+ *
+ *   * `round` is WRITTEN as an integer — `1`, never `1.0` or `1e0` — and there
+ *     is one of it. `JSON.parse` turns `1.0` into 1, so `Number.isInteger`, the
+ *     schema and every check above see round 1 while the plugins service's
+ *     reader refuses the marker. Asked only where the ref's schema types
+ *     `round` integer, which is a ref at 0.31.0 or later: on an older ref no
+ *     document there fixes the literal, and the withholding rule applies.
+ *   * each of `sent_at` and `cutover_planned_at` names a real UTC instant:
+ *     `rfc3339` round-trips it through `Date` and compares the ISO string,
+ *     which refuses `2026-02-30`, hour 24 and second 60. Asked of EVERY marker,
+ *     not only of the round-2 marker the clock reads, because a marker nobody
+ *     counts from is still a marker the banner shows. Skipped where the schema
+ *     has already refused that member, so one fault is one line.
+ *
+ * Pure, so the selftest drives it without a ref.
+ *
+ * @param {{raw: string|null, doc: object}} m
+ * @param {{roundTyped: boolean, schemaNo: {path: string}[]}} ctx
+ * @returns {string[]}
+ */
+export function markerTextProblems(m, { roundTyped, schemaNo = [] }) {
+  const out = [];
+  if (roundTyped && typeof m.raw === "string") {
+    let members = null;
+    try {
+      members = topLevelMembers(m.raw);
+    } catch {
+      members = null; // not JSON, or not an object: the schema has said so already
+    }
+    const rounds = (members ?? []).filter((x) => x.name === "round");
+    if (rounds.length > 1) {
+      out.push(`carries ${rounds.length} \`round\` members, and JSON.parse keeps only the last`);
+    }
+    for (const r of rounds) {
+      if (!POSITIVE_INTEGER_LITERAL.test(r.raw)) {
+        out.push(
+          `\`round\` is written ${r.raw}, and B.4 writes it as an integer with no fraction part and no ` +
+            "exponent (`1`, never `1.0` or `1e0`) — a parsed value cannot show this, so it is read off the text",
+        );
+      }
+    }
+  }
+  const failed = new Set(schemaNo.map((e) => e.path));
+  for (const member of ["sent_at", "cutover_planned_at"]) {
+    const v = m.doc?.[member];
+    if (typeof v !== "string" || failed.has(`$.${member}`)) continue;
+    if (rfc3339(v) === null) {
+      out.push(`\`${member}\` is ${JSON.stringify(v)}, which names no real UTC instant (B.4)`);
+    }
+  }
+  return out;
 }
 
 /**
@@ -2209,6 +2273,54 @@ function selftest() {
     is("0.31.0 e2e: a member outside the four is refused by the schema", v.verdict, UNMET);
     is("0.31.0 e2e: and the refusal names it", v.lines.some((l) => l.includes('unknown property "accounts"')), true);
   }
+  // ── the acceptor's three changes, as this tool reads them ─────────────────
+  //
+  // Measured before this block existed: a ref carrying round 1 written `1.0`
+  // and a conforming round 2 printed check 2 PASS · MET — the preflight
+  // declared ROLL-32's marker precondition met on a marker the plugins
+  // service's reader refuses. `JSON.parse` had already made `1.0` into 1.
+  {
+    const conformingTwo = { schema: MARKER_SCHEMA, round: 2, sent_at: "2026-08-11T00:00:00Z", cutover_planned_at: "2026-09-20T00:00:00Z" };
+    const withRaw = (roundLiteral) => {
+      const files = { [TOKEN_FILE]: committed(TOKEN_FILE), [MARKER_SCHEMA_FILE]: committed(MARKER_SCHEMA_FILE) };
+      files["log/migration-notice-1.json"] =
+        `{"schema":"${MARKER_SCHEMA}","round":${roundLiteral},"sent_at":"2026-07-01T00:00:00Z"}`;
+      files["log/migration-notice-2.json"] = JSON.stringify(conformingTwo);
+      return memTree(files);
+    };
+    is("0.31.0 e2e: round 1 written `1` beside a conforming round 2 is MET", checkRound2(at, withRaw("1")).verdict, MET);
+    for (const lit of ["1.0", "1e0", "1E0"]) {
+      const v = checkRound2(at, withRaw(lit));
+      is(`0.31.0 e2e: round 1 written \`${lit}\` is UNMET, not MET`, v.verdict, UNMET);
+      is(`0.31.0 e2e: and the record names the literal ${lit}`,
+        v.lines.some((l) => l.includes(`\`round\` is written ${lit},`)), true);
+    }
+    // Not asked of a ref whose schema does not type `round`: nothing on that
+    // ref fixes the literal, and the withholding rule is the header's.
+    is("0.31.0: the literal is not asked where the ref's schema types no `round`",
+      markerTextProblems({ raw: '{"round":1.0}', doc: { round: 1 } }, { roundTyped: false }).length, 0);
+    is("0.31.0: a second `round` is a no",
+      markerTextProblems({ raw: '{"round":"x","round":1}', doc: { round: 1 } }, { roundTyped: true })
+        .some((x) => x.startsWith("carries 2 `round` members")), true);
+    for (const [member, v] of [["sent_at", "2026-02-30T00:00:00Z"], ["cutover_planned_at", "2026-02-30T00:00:00Z"],
+      ["sent_at", "2026-08-01T24:00:00Z"], ["cutover_planned_at", "2026-12-31T23:59:60Z"]]) {
+      is(`0.31.0: \`${member}\` ${v} names no real instant`,
+        markerTextProblems({ raw: null, doc: { [member]: v } }, { roundTyped: false }).length, 1);
+    }
+    is("0.31.0: a time the schema already refused is not refused twice",
+      markerTextProblems({ raw: null, doc: { sent_at: "2026-02-30T00:00:00Z" } },
+        { roundTyped: false, schemaNo: [{ path: "$.sent_at" }] }).length, 0);
+    is("0.31.0 control: a real instant is not refused",
+      markerTextProblems({ raw: null, doc: { sent_at: "2026-12-31T23:59:59Z" } }, { roundTyped: false }).length, 0);
+    // Every marker's times, not only round 2's: round 1 on a day that does not
+    // exist, beside a conforming round 2 that would otherwise make this MET.
+    const files = { [TOKEN_FILE]: committed(TOKEN_FILE), [MARKER_SCHEMA_FILE]: committed(MARKER_SCHEMA_FILE),
+      "log/migration-notice-1.json": JSON.stringify({ schema: MARKER_SCHEMA, round: 1, sent_at: "2026-02-30T00:00:00Z" }),
+      "log/migration-notice-2.json": JSON.stringify(conformingTwo) };
+    const v = checkRound2(at, memTree(files));
+    is("0.31.0 e2e: a round-1 marker on a day that does not exist is a no, though no clock reads it", v.verdict, UNMET);
+  }
+
   // The headline and not only the verdict: this ref has no round-2 marker, so
   // the clock alone would make it UNMET, and a check reading only the verdict
   // passed with the unreadable schema quietly treated as absent — watched.
