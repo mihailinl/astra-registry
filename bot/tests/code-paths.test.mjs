@@ -162,10 +162,16 @@ export const ENTRIES = [
   "schema/cutover-v1.json",
   "schema/deadline-v1.json",
   // B-T2.1's three, added by contract 0.21.0. `tools/lib/sources.mjs`'s
-  // `loadSchemas` loads all eleven by literal path and `tools/validate.mjs`
-  // judges records against them — from THIS repository, never from the tree
-  // under test, so that `--registry-dir` cannot supply the rules it is judged
-  // by. That is what makes them gate inputs rather than documents.
+  // `loadSchemas` loads them by literal path and `tools/validate.mjs` judges
+  // records against them — from THIS repository, never from the tree under
+  // test, so that `--registry-dir` cannot supply the rules it is judged by.
+  // That is what makes them gate inputs rather than documents. This comment
+  // used to say `loadSchemas` loads "all eleven", the sentence contract 0.21.0
+  // carried and later struck: it loads eight of the set's thirteen, and
+  // `bot/lib/holds.mjs`, `bot/lib/listing-state.mjs` and
+  // `bot/moderation-run.mjs` read the other five. Which loader opens each one
+  // is asked now rather than written: tools/selftest/primitives.mjs runs every
+  // loader, records what it opens, and holds this list to it.
   "schema/decision-v1.json",
   "schema/hold-record-v1.json",
   "schema/hold-v1.json",
