@@ -867,13 +867,29 @@ export async function run() {
       const m = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(lines[i]);
       if (m) jobNames.push(m[1]);
     }
-    assert(jobNames.length >= 3, `the walk found ${jobNames.length} job(s) in served-set.yml; it is broken, not smaller`);
+    // "Broken, not smaller" is a claim about the workflow's SIZE, and until
+    // 2026-09-22 it was held by the literal 3, against a workflow of four
+    // jobs: three comparisons and the alert. Measured that day: deleting the trust-runway job from served-set.yml consistently
+    // (the job, its `needs` entry, its ASTRA_SERVED_SET_JOBS word and its four
+    // mappings) left three jobs, satisfied `>= 3`, and all 317 checks stayed
+    // green while ROLL-45's alarm stopped running; so did adding a job to
+    // check.mjs's JOBS that no workflow runs. The size the workflow must not
+    // fall below is the set of comparisons tools/served-set/check.mjs can run,
+    // and that is what it is now held to, in both directions, below.
+    const runnable = Object.keys(JOBS).sort();
+    assert(runnable.length >= 1, "tools/served-set/check.mjs's JOBS names no comparison, so there is nothing to hold the workflow to");
+    assert(jobNames.length > runnable.length,
+      `the walk found ${jobNames.length} job(s) in served-set.yml, fewer than check.mjs's ${runnable.length} comparisons and ` +
+      "the alert; it is broken, or the workflow is smaller than what it has to run");
 
     const declared = /ASTRA_SERVED_SET_JOBS:\s*(.+)/.exec(src)?.[1].trim().split(/\s+/) ?? [];
     const comparisons = jobNames.filter((n) => n !== "alert");
     assertEqual(comparisons.slice().sort().join(" "), declared.slice().sort().join(" "),
       "the jobs in served-set.yml and the jobs ASTRA_SERVED_SET_JOBS names are not the same set, so a comparison " +
       "either pages for nothing or reports into nothing");
+    assertEqual(comparisons.slice().sort().join(" "), runnable.join(" "),
+      "the comparisons served-set.yml runs are not the comparisons tools/served-set/check.mjs can run: one that " +
+      "check.mjs knows and no job runs is an alarm that is never raised, and nothing else would say so");
 
     const needs = /^\s+needs:\s*\[(.+)\]\s*$/m.exec(src)?.[1].split(",").map((s) => s.trim()) ?? [];
     for (const name of declared) {
