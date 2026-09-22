@@ -1156,7 +1156,18 @@ test("a stop's terminal record carries no moderator, whatever the entry carried"
 
 // ── holds, which run whether or not `list` answered ─────────────────────────
 
-test("with `list` down a confirmed reversal still releases, and posts next run", () => {
+// Until 2026-09-22 this test was named "with `list` down a confirmed reversal
+// still releases, and posts next run", and it passed by asserting a REPORT:
+// `released` held one row with outcome `applied`, and a live `resultsFor`
+// posted it against the run's commit. Nothing released anything — the job
+// never applied the held decision nor deleted the entry, because M-T3.3's
+// release commit is not built — so the service would have been told a relist
+// landed in a commit that left `unlisted: true`. The plan's canary for M-T3.4
+// ("with `list` down, a confirmed reversal releases and posts next run") is
+// therefore NOT met today, and this test now asserts what is true instead: the
+// hold is due, it is refused by name, and nothing is posted for it. The builder
+// of the release commit turns this back into the plan's canary.
+test("a confirmed, due hold that nothing applies is refused by name, never reported `applied`", async () => {
   const held = {
     schema: "astra.registry.hold/1",
     held_for: "reversal",
@@ -1173,30 +1184,46 @@ test("with `list` down a confirmed reversal still releases, and posts next run",
     schema: "astra.registry.hold-record/1", act: "confirm", service_decision_id: SDI,
     at: "2026-09-19T13:00:00Z", actor: "operator", run: "https://github.com/a/b/actions/runs/1",
   };
-  const root = estate({
-    extra: {
-      [`state/holds/${SDI}.json`]: held,
-      [`state/holds/${SDI}.confirm.json`]: confirm,
-    },
-  });
+  const cancel = { ...confirm, act: "cancel" };
+  const delisted = { [`plugins/widgets/plugin.json`]: plugin("widgets", { unlisted: true }) };
 
-  // The run in which `list` never answered: shadow defaults to true, and the
-  // hold is released anyway, because a settled `held` result took it off
-  // BOT-80's list and its release is driven by the MOD-52 record in git.
-  const shadowRun = walkHolds({ root, now: new Date("2026-09-20T00:00:00Z"), shadow: true });
-  assert.equal(shadowRun.released.length, 1, "a confirmed reversal is released even with the service down");
-  assert.equal(shadowRun.released[0].outcome, "applied");
+  // Both ends a hold can come to while its entry is still on the tree: a
+  // reversal confirmed past its period (release), and a cancel record
+  // (cancel). Neither commit is built, and each would have been reported.
+  for (const [end, record, wouldPost] of [["release", confirm, "applied"], ["cancel", cancel, "cancelled"]]) {
+    const root = estate({
+      extra: {
+        ...delisted,
+        [`state/holds/${SDI}.json`]: held,
+        [`state/holds/${SDI}.${record.act}.json`]: record,
+      },
+    });
 
-  const shadowPost = resultsFor({ holds: shadowRun, shadow: true });
-  assert.equal(shadowPost.post.length, 0, "an `applied` result settles a decision, which BOT-92 withholds in shadow");
-  assert.equal(shadowPost.withheld.length, 1);
+    for (const shadow of [true, false]) {
+      const walked = walkHolds({ root, now: new Date("2026-09-20T00:00:00Z"), shadow });
+      // The satisfiable half first: the hold IS due, or this proves nothing.
+      assert.deepEqual(walked.due.map((d) => `${d.act} ${d.would_post}`), [`${end} ${wouldPost}`],
+        `the fixture's hold should be due to ${end} (shadow: ${shadow}): ${JSON.stringify(walked)}`);
+      assert.deepEqual(walked.released, [], `a ${end} nothing performed was reported as released`);
+      assert.deepEqual(walked.cancelled, [], `a ${end} nothing performed was reported as cancelled`);
+      assert.deepEqual(walked.pending, [], `a ${end} nothing performed was given a result to post`);
+      assert.deepEqual(walked.alerts.map((a) => `${a.kind} ${a.service_decision_id}`), [`hold_end_not_built ${SDI}`],
+        "a due hold nothing ends must be said, every run, or it waits in silence");
+      const posted = resultsFor({ holds: walked, shadow, commit: "c".repeat(40) });
+      assert.deepEqual(posted.post, [], `\`${wouldPost}\` was posted for a ${end} no commit performed (BOT-81)`);
+    }
 
-  // The next run whose answer is `shadow: false` posts it, once.
-  const liveRun = walkHolds({ root, now: new Date("2026-09-20T00:10:00Z"), shadow: false });
-  const livePost = resultsFor({ holds: liveRun, shadow: false, commit: "c".repeat(40) });
-  assert.equal(livePost.post.length, 1);
-  assert.equal(livePost.post[0].outcome, "applied");
-  assert.equal(livePost.post[0].commit, "c".repeat(40));
+    // Through the job, on the path the workflow runs: nothing listed, the
+    // listing and the entry exactly as they were, and the refusal in the log.
+    const job = await commitJob(root, { entries: [], now: new Date("2026-09-20T00:00:00Z") });
+    assert.equal(job.code, 0, job.logs.join("\n"));
+    assert.deepEqual(job.paths, []);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, "plugins/widgets/plugin.json"), "utf8")).unlisted, true);
+    assert.ok(fs.existsSync(path.join(root, holdEntryPath(SDI))), "the hold entry left the tree");
+    assert.ok(job.logs.some((l) => l.startsWith(`::error::hold_end_not_built ${SDI}:`)),
+      `the commit job did not refuse the due ${end} by name: ${job.logs.join(" | ")}`);
+    assert.deepEqual(resultsFor({ holds: job.results.holds, shadow: false, commit: "c".repeat(40) }).post, []);
+  }
 });
 
 // The commit job, end to end through `main`, on the path the workflow runs.
@@ -1206,7 +1233,7 @@ test("with `list` down a confirmed reversal still releases, and posts next run",
 // the tree had no such file, and `git add --pathspec-from-file` — the next
 // command the workflow runs — exits 128 on a path that does not exist. Measured
 // before the repair on this same shape: `main` returned 0, and the add died.
-async function commitJob(root, { entries, shadow = false, now = new Date("2026-09-20T12:30:00Z") }) {
+async function commitJob(root, { entries, submissions = [], shadow = false, now = new Date("2026-09-20T12:30:00Z") }) {
   const out = path.join(root, "moderation");
   const logs = [];
   const saved = globalThis.fetch;
@@ -1218,7 +1245,7 @@ async function commitJob(root, { entries, shadow = false, now = new Date("2026-0
     const code = await main(["--job", "commit", "--registry-dir", root, "--out", out], {
       env: {
         ASTRA_ENTRIES: JSON.stringify(entries),
-        ASTRA_SUBMISSIONS: "[]",
+        ASTRA_SUBMISSIONS: JSON.stringify(submissions),
         ASTRA_SHADOW: shadow ? "true" : "false",
         ASTRA_OVER_BOUND: "false",
         GITHUB_RUN_ID: "35502265394",
@@ -1235,8 +1262,12 @@ async function commitJob(root, { entries, shadow = false, now = new Date("2026-0
   }
 }
 
+// Live only. It ran in shadow too until 2026-09-22, and asserted there that
+// the hold entry WAS written and listed — which BOT-92 forbids: entering a hold
+// is a commit for the decision the answer names. The shadow half is now the
+// next test's, which asserts the opposite.
 test("a batch with one held decision leaves a tree in which every `paths.txt` entry exists", async () => {
-  for (const shadow of [false, true]) {
+  for (const shadow of [false]) {
     const root = estate();
     const relist = decision({ code: "M_RELIST", category: "error", moderator: "amoderator", reverses: SDI2, x: "leaked" });
     const delist = decision({ service_decision_id: SDI2, code: "M_DELIST", category: "broken", moderator: "amoderator" });
@@ -1275,6 +1306,81 @@ test("a batch with one held decision leaves a tree in which every `paths.txt` en
     assert.ok(!again.paths.includes(holdEntryPath(SDI)), "an unchanged hold entry was listed for the commit");
     assert.deepEqual(again.results.holds_kept, [holdEntryPath(SDI)]);
   }
+});
+
+// BOT-92: "the bot MUST commit nothing for the work that answer names (no
+// publication, decision, identity or queue record for it) and post no
+// state-setting result"; its Check, "a run with no commit for that work and no
+// posted result". Until 2026-09-22 the commit job withheld only the posting:
+// under `shadow: true` it wrote and listed a compiled M_DELIST's listing edit
+// and log entry, a held decision's entry and a stop's terminal record, printed
+// "nothing new is committed for the work this answer names", and the
+// workflow's own `git add`/`git commit` lines then committed the takedown.
+//
+// So the property is stated against a LIVE run of the same batch, which is the
+// only way to say "nothing": the live run's `paths.txt` is the list of what a
+// shadow run must not commit, and the live run is required to reach every one
+// of the three writers first — a batch that only exercised one would let the
+// other two write in shadow with this test green.
+test("a shadow run commits nothing a live run would", async () => {
+  const batch = {
+    entries: [
+      // compiled: the listing edit and the log entry
+      decision({ service_decision_id: SDI2, code: "M_DELIST", category: "broken", moderator: "amoderator" }),
+      // held (MOD-9 holds every M_RELIST): the hold entry
+      decision({ code: "M_RELIST", category: "error", moderator: "amoderator", reverses: SDI2 }),
+    ],
+    // a stop: BOT-30's terminal decision record
+    submissions: [{
+      submission_id: SUB, repo: "acme/widgets", tag: "widgets-v1.0.0", trigger: "panel",
+      service_repository_id: "912345678", stop_status: "stopped", fingerprints: [], code: "R_FIRST_LISTING",
+    }],
+  };
+  const dirty = (root) => sh(["status", "--porcelain", "--untracked-files=all"], root)
+    .split("\n").filter(Boolean).filter((l) => !/^\?\? moderation\//.test(l));
+
+  const liveRoot = estate();
+  const live = await commitJob(liveRoot, { ...batch, shadow: false });
+  assert.equal(live.code, 0, live.logs.join("\n"));
+  // The floor: every writer reached, or "nothing" below is a smaller claim.
+  for (const [what, test] of [
+    ["the compiled listing edit", (p) => p === "plugins/widgets/plugin.json"],
+    ["the compiled log entry", (p) => p.startsWith("bot/moderation/")],
+    ["the hold entry", (p) => p === holdEntryPath(SDI)],
+    ["the stop's terminal record", (p) => p.startsWith("log/decisions/")],
+  ]) {
+    assert.ok(live.paths.some(test), `the live run did not commit ${what}, so the shadow run is not tested on it: ${live.paths.join(", ")}`);
+  }
+  assert.ok(dirty(liveRoot).length >= 4, "the live run wrote nothing to its tree");
+
+  const shadowRoot = estate();
+  const shadow = await commitJob(shadowRoot, { ...batch, shadow: true });
+  assert.equal(shadow.code, 0, shadow.logs.join("\n"));
+  const leaked = shadow.paths.filter((p) => live.paths.includes(p));
+  assert.deepEqual(leaked, [], `a shadow run listed for its commit what a live run commits (BOT-92): ${leaked.join(", ")}`);
+  assert.deepEqual(shadow.paths, [], "a shadow run with no due hold has nothing to commit at all");
+  assert.deepEqual(dirty(shadowRoot), [],
+    "a shadow run wrote to the tree; the workflow's gates and `git add` run over that tree, so a write is one step from a commit");
+
+  // And nothing `report` could post: the members it reads are empty, what the
+  // run would have done is recorded apart, and a shadow `resultsFor` over the
+  // job's own state posts nothing — no `applied`, and no `held` either.
+  assert.deepEqual(
+    { compiled: shadow.results.compiled, held: shadow.results.held, refused: shadow.results.refused,
+      written: shadow.results.written, terminal: shadow.results.terminal },
+    { compiled: [], held: [], refused: [], written: [], terminal: [] },
+  );
+  assert.deepEqual(shadow.results.shadow_withheld.compiled, [SDI2]);
+  assert.deepEqual(shadow.results.shadow_withheld.held.map((h) => h.service_decision_id), [SDI]);
+  assert.deepEqual(shadow.results.shadow_withheld.submissions, [SUB]);
+  const state = shadow.results;
+  const reported = resultsFor({
+    compiled: state.compiled.map((id) => ({ service_decision_id: id })),
+    refused: state.refused, held: state.held, holds: state.holds, shadow: state.shadow !== false,
+  });
+  assert.deepEqual(reported.post, [], "a shadow run posted a result for the work its answer named");
+  assert.ok(shadow.logs.some((l) => l.startsWith("note  shadow:") && l.includes("none is written")),
+    `the shadow note is missing: ${shadow.logs.join(" | ")}`);
 });
 
 // BOT-70: deleting the file is how a person with no tooling ends a hold, and
@@ -1376,14 +1482,25 @@ test("under a shadow answer nothing at all is posted for the work the answer nam
   assert.equal(live.post[0].outcome, "applied");
 });
 
-test("a `held` result is posted in shadow and a settling one is not", () => {
-  // BOT-92 calls a state-setting result what settles a decision. `held` says
-  // the registry has NOT decided, so withholding it would leave a moderator
-  // with no signal at all during shadow.
+// This test asserted the opposite until 2026-09-22 ("a `held` result is posted
+// in shadow and a settling one is not"), on the reading that `held` says the
+// registry has not decided. BOT-81's Why says what it DOES: "a settled `held`
+// result takes the decision off BOT-80's list" — a state move — and it names
+// the hold entry's commit, which a shadow run does not make. The plan's M-T3.4
+// has `report` post "nothing at all" for listed work in shadow, and B-T3.5 is
+// watched by "posting a `held` result under a shadow lease". So `held` is
+// withheld with the rest, and still SAID: it is in `withheld`, not dropped.
+test("under a shadow answer a `held` result is withheld too, and still reported as withheld", () => {
   const held = [{ service_decision_id: SDI, held_for: "reversal" }];
   const shadow = resultsFor({ held, shadow: true });
-  assert.equal(shadow.post.length, 1);
-  assert.equal(shadow.post[0].outcome, "held");
+  assert.deepEqual(shadow.post, [], "a `held` result was posted under a shadow answer (BOT-92; BOT-81)");
+  assert.deepEqual(shadow.withheld.map((r) => `${r.service_decision_id} ${r.outcome}`), [`${SDI} held`],
+    "a withheld `held` must still be visible in the report, or shadow is indistinguishable from an empty run");
+  for (const notFalse of [undefined, null, "false"]) {
+    assert.deepEqual(resultsFor({ held, shadow: notFalse }).post, [], `shadow ${JSON.stringify(notFalse)} posted`);
+  }
+  // The satisfiable direction: live, it is posted.
+  assert.deepEqual(resultsFor({ held, shadow: false }).post.map((r) => r.outcome), ["held"]);
 });
 
 test("BOT-81: at most one `held` and exactly one final result per decision", () => {
