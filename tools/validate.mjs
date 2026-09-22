@@ -87,15 +87,18 @@ import {
   localeEnumProblems,
 } from "../bot/lib/locales.mjs";
 import { buildIndex, indexContent } from "./build-index.mjs";
+import { RESERVED_KEYS, SUPPORTED_KEYS } from "./lib/platform.mjs";
 
-const PLATFORM_KEYS = new Set([
-  "linux-x64", "windows-x64", "noarch",
-  "linux-arm64", "windows-arm64", "macos-x64", "macos-arm64",
-]);
+// `tools/lib/platform.mjs`'s table, not a copy of it. Until 2026-09-22 these
+// were two literals of this file's own, and platform.mjs's RESERVED_KEYS was
+// read by nothing that refuses a listing, only by the selftest that compares
+// the two. Measured that day: dropping a key from the literal refusal list
+// failed OPEN, and a linux-arm64-only listing validated.
+const PLATFORM_KEYS = new Set([...SUPPORTED_KEYS, ...RESERVED_KEYS]);
 // Reserved names, listed in the schema so the vocabulary is fixed, but not
 // emitted and not accepted: Astra's release workflow ships no daemon for these
 // hosts, so an artifact under one of them would have nowhere to run.
-const UNSUPPORTED_KEYS = new Set(["linux-arm64", "windows-arm64", "macos-x64", "macos-arm64"]);
+const UNSUPPORTED_KEYS = new Set(RESERVED_KEYS);
 
 class Report {
   constructor() {
