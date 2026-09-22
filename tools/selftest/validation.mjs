@@ -17,7 +17,7 @@ import { compareSemver } from "../lib/semver.mjs";
 import { REPO_ROOT, loadSources } from "../lib/sources.mjs";
 import { stagingListingId } from "../lib/reserved.mjs";
 import { makeFixtures } from "../make-fixtures.mjs";
-import { test, assert, assertEqual, tmp, validateTree, errorsMatching } from "./harness.mjs";
+import { test, assert, assertEqual, neverAsk, tmp, validateTree, errorsMatching } from "./harness.mjs";
 import { withFakeAstraPlugins } from "./fixtures.mjs";
 
 export async function run() {
@@ -407,8 +407,17 @@ export async function run() {
       // Not an assertion about nothing: the fixtures above are what prove the
       // rule, and this leg is what turns it on the day M-T2.2 publishes the
       // listing, with no edit here.
-      console.log(`        (no plugins/${id}/ on the tree yet — M-T2.2 publishes it)`);
-      return;
+      //
+      // It said exactly that in a parenthetical and then printed `ok`, so the
+      // one check in this suite that has never executed its assertion was
+      // counted inside `300 passed` for its whole life. The sentence was true
+      // and the colour was wrong, which is Gap 17's shape. `neverAsk` throws,
+      // so this cannot become a pass again by somebody adding a line under it.
+      neverAsk(
+        `no plugins/${id}/ is published on this tree, so there is no committed staging listing to hold to ` +
+        `\`"unlisted": true\``,
+        "M-T2.2 publishes the listing; this check arms itself on that commit with no edit here",
+      );
     }
     assertEqual(here.doc.unlisted, true,
       `plugins/${id}/plugin.json is committed without \`"unlisted": true\`. tools/validate.mjs refuses it, so ` +
