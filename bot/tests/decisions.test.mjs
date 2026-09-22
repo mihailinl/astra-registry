@@ -47,6 +47,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -87,6 +88,7 @@ import {
 import { migrationKey as exportIssuesMigrationKey, resolveWriter } from "../export-issues.mjs";
 import { migrationKey as baselineMigrationKey } from "../baseline.mjs";
 import { REPO_ROOT } from "../../tools/lib/sources.mjs";
+import { roleAddresses } from "../../tools/priv-scan.mjs";
 import { validate as validateAgainstSchema } from "../../tools/lib/jsonschema.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -467,7 +469,6 @@ test("all five render, in `TRAILERS` order", () => {
       "Service-Decision": SERVICE_DECISION,
       "Decided-At": "2026-09-20T12:00:00Z",
     },
-    root: REPO_ROOT,
   }), [], "a record with all five validates, or the refusals below prove nothing");
 });
 
@@ -484,7 +485,6 @@ test("a sixth trailer is refused by name, and `Decided-At:` no longer is", () =>
   const sixth = privacyFindings({
     record,
     trailers: { Run: "35502265394", "Reviewed-By": "mod-7" },
-    root: REPO_ROOT,
   });
   assert.deepEqual(sixth.map((f) => f.code), ["E_PRIV_UNDECLARED_TRAILER"],
     "a name outside BOT-37's list is refused whatever it holds");
@@ -498,7 +498,6 @@ test("a sixth trailer is refused by name, and `Decided-At:` no longer is", () =>
   assert.deepEqual(privacyFindings({
     record,
     trailers: { "Decided-At": "2026-09-20T12:00:00Z" },
-    root: REPO_ROOT,
   }), [], "contract 0.20.0 publishes the name; the refusal was the registry's list being behind it");
 });
 
@@ -522,7 +521,7 @@ test("`Decided-At:` carries a time and not an identity (PRIV-2, contract 0.20.0)
   ]) {
     assert.throws(() => renderTrailers({ run: "35502265394", decided_at: bad }),
       /`Decided-At: .*` is not §0\.7's RFC 3339 UTC/, `\`${bad}\` rendered`);
-    const found = privacyFindings({ record, trailers: { "Decided-At": bad }, root: REPO_ROOT });
+    const found = privacyFindings({ record, trailers: { "Decided-At": bad } });
     assert.ok(found.some((f) => f.code === "E_PRIV_TRAILER_GRAMMAR"),
       `PRIV-2 did not refuse \`Decided-At: ${bad}\`: ${JSON.stringify(found)}`);
   }
@@ -559,7 +558,7 @@ test("trailers carry no login", () => {
     { Decision: "mihailinl" },
     { "Service-Decision": "mod-12" },
   ]) {
-    const found = privacyFindings({ record, trailers, root: REPO_ROOT });
+    const found = privacyFindings({ record, trailers });
     assert.ok(found.some((f) => f.code === "E_PRIV_TRAILER_GRAMMAR"),
       `a declared trailer holding ${JSON.stringify(trailers)} was not refused: ${JSON.stringify(found)}`);
   }
@@ -568,16 +567,13 @@ test("trailers carry no login", () => {
 // ── PRIV-2 over composed content ────────────────────────────────────────────
 
 test("a valid `submission_id` passes, and the same UUID elsewhere is refused", () => {
-  const roles = REPO_ROOT;
   const ok = privacyFindings({
     record: { schema: RECORD_SCHEMA, decision_id: "a".repeat(32), submission_id: SUBMISSION, state: "published" },
-    root: roles,
   });
   assert.deepEqual(ok, [], "`submission_id` is exempt by member name (DEC-7 says it holds one)");
 
   const inRepo = privacyFindings({
     record: { schema: RECORD_SCHEMA, decision_id: "a".repeat(32), repo: `you/${SUBMISSION}`, state: "published" },
-    root: roles,
   });
   assert.deepEqual(inRepo.map((f) => f.code), ["E_PRIV_UUID"],
     "the exemption is by member, not by value: the same id in `repo` is an id in a member that never holds one");
@@ -585,7 +581,6 @@ test("a valid `submission_id` passes, and the same UUID elsewhere is refused", (
   const inTrailer = privacyFindings({
     record: { schema: RECORD_SCHEMA, decision_id: "a".repeat(32), state: "published" },
     trailers: { Decision: `${SUBMISSION}` },
-    root: roles,
   });
   assert.ok(inTrailer.some((f) => f.code === "E_PRIV_UUID"),
     "`Decision:` carries 32 hex, so a UUID in it is a UUID somewhere it was not expected");
@@ -596,7 +591,6 @@ test("a valid `submission_id` passes, and the same UUID elsewhere is refused", (
   // and this suite does not get to edit it.
   const exemptionMatters = privacyFindings({
     record: { schema: RECORD_SCHEMA, decision_id: "a".repeat(32), commit: SUBMISSION, state: "published" },
-    root: roles,
   });
   assert.deepEqual(exemptionMatters.map((f) => f.code), ["E_PRIV_UUID"],
     "if this passes, the UUID rule is off and the exemption above was proving nothing");
@@ -605,20 +599,17 @@ test("a valid `submission_id` passes, and the same UUID elsewhere is refused", (
 test("an email is refused, and an undeclared member is refused whatever it holds", () => {
   const withEmail = privacyFindings({
     record: { schema: RECORD_SCHEMA, decision_id: "a".repeat(32), state: "refused", reasons: ["E_X"], moderator: "mod-1", advisory: "write to someone@gmail.com" },
-    root: REPO_ROOT,
   });
   assert.ok(withEmail.some((f) => f.code === "E_PRIV_EMAIL"), "PRIV-2 keeps addresses out of git, permanently");
 
   const undeclared = privacyFindings({
     record: { schema: RECORD_SCHEMA, decision_id: "a".repeat(32), state: "refused", subject: "kXm2Qp7vLr9TnA4b" },
-    root: REPO_ROOT,
   });
   assert.deepEqual(undeclared.map((f) => f.code), ["E_PRIV_UNDECLARED_MEMBER"],
     "the position rule is where a subject id lands: there is no declared member whose grammar it could pass");
 
   assert.throws(() => refusePrivate({
     record: { schema: RECORD_SCHEMA, decision_id: "a".repeat(32), state: "refused", subject: "kXm2Qp7vLr9TnA4b" },
-    root: REPO_ROOT,
   }), /PRIV-2 refuses/);
 
   // The floor under the position rule: DEC-7 has twenty-five members, so a
@@ -626,6 +617,104 @@ test("an email is refused, and an undeclared member is refused whatever it holds
   assert.ok(DECISION_MEMBERS.length >= 20,
     `the decision table lists ${DECISION_MEMBERS.length} members and DEC-7 enumerates 25; a shrunken table ` +
     "refuses valid records and a grown one admits members DEC-7 does not");
+});
+
+// ── no repository file widens the refusal (dev/couplings.md entry 104) ──────
+//
+// `bot/security-contact.json` is outside TRUST-31's hashed set. Until entry
+// 104, `privacyFindings` read it through the canary's `roleAddresses` and
+// exempted every address it held — measured: a private address in a decision's
+// `reasons` was `E_PRIV_EMAIL` with the committed file and passed once added
+// to it. So a registry writer could put an address into a public decision
+// record, which git keeps for ever (DEC-7), with the bot still live.
+//
+// Two tests, because the read can come back two ways. Through a `root` the
+// caller passes, which the first catches by giving the writer a tree whose
+// contact file publishes the address. Or against this checkout — a read of
+// `REPO_ROOT`, which a fixture tree cannot reach and this suite must not edit
+// — which the second catches by watching the filesystem: the refusal may read
+// no file at all.
+
+/**
+ * Every path the synchronous `fs` readers are handed while `fn` runs.
+ * `syncBuiltinESMExports` makes the spies reach a module that took
+ * `readFileSync` as a named import, too, and not only `fs.readFileSync`.
+ */
+function filesReadBy(fn) {
+  const names = ["readFileSync", "existsSync", "statSync", "lstatSync", "openSync", "readdirSync", "accessSync"];
+  const saved = Object.fromEntries(names.map((n) => [n, fs[n]]));
+  const seen = [];
+  for (const n of names) {
+    fs[n] = function spy(...args) { seen.push(`${n} ${String(args[0])}`); return saved[n].apply(this, args); };
+  }
+  syncBuiltinESMExports();
+  try {
+    fn();
+  } finally {
+    for (const n of names) fs[n] = saved[n];
+    syncBuiltinESMExports();
+  }
+  return seen;
+}
+
+const PRIVATE = "someone@gmail.com";
+
+test("the decision writer exempts no address because of a repository file", () => {
+  const root = tree();
+  fs.mkdirSync(path.join(root, "bot"));
+  fs.writeFileSync(path.join(root, "bot", "security-contact.json"), `${JSON.stringify({ email: PRIVATE }, null, 2)}\n`);
+  // The fixture is one the canary honours, or every refusal below is a
+  // refusal of an address nothing was exempting anyway.
+  assert.ok(roleAddresses(root).has(PRIVATE),
+    "the fixture's contact file does not publish the address even to the canary, so this test proves nothing");
+
+  const record = {
+    decided_at: "2026-09-22T10:00:00Z",
+    actor: "system",
+    trigger: "migration",
+    plugin_id: "dice-roller",
+    version: "1.0.0",
+    repo: "teletemagame-dev/dice-roller",
+    tag: "v1.0.0",
+    state: "refused",
+    reasons: [`E_X, and the author asked to be written to at ${PRIVATE}`],
+  };
+  assert.throws(() => writeDecisionRecord({ key: migrationKey(record), record, root }), /E_PRIV_EMAIL/,
+    "an address a repository file publishes went into a decision record on the bot's path");
+  assert.deepEqual(recordsOnMain(root), [], "and nothing was written");
+
+  // The refusal takes no root, so there is nowhere to hand it a file.
+  assert.throws(() => privacyFindings({ record, root }), /takes no `root`/);
+
+  // What made the file redundant still stands, and needs no file: a role
+  // mailbox is exempt by its local part — including the `security@` one the
+  // contact file says it will carry — and a reserved name by its domain.
+  for (const permitted of ["security@minice.ai", "abuse@minice.ai", "noreply@anthropic.com", "a@example.com"]) {
+    assert.deepEqual(
+      privacyFindings({ record: { ...record, reasons: [`E_X, write to ${permitted}`] } }), [],
+      `${permitted} is refused, so the role rule the writer relies on instead of the file has gone`,
+    );
+  }
+});
+
+test("the decision writer's privacy refusal reads no file", () => {
+  // The spy is watched seeing a read first — the canary's own, of the contact
+  // file — because a spy that saw nothing would make the assertion below
+  // true of any code at all.
+  const root = tree();
+  fs.mkdirSync(path.join(root, "bot"));
+  fs.writeFileSync(path.join(root, "bot", "security-contact.json"), `${JSON.stringify({ email: PRIVATE })}\n`);
+  const canary = filesReadBy(() => roleAddresses(root));
+  assert.ok(canary.some((l) => l.startsWith("readFileSync ") && l.endsWith("security-contact.json")),
+    `the spy did not see the canary read its contact file (${JSON.stringify(canary)}), so it cannot see the writer do it`);
+
+  const record = { schema: RECORD_SCHEMA, decision_id: "a".repeat(32), state: "refused", reasons: [`E_X, ${PRIVATE}`] };
+  let found;
+  const reads = filesReadBy(() => { found = privacyFindings({ record, trailers: { Run: "35502265394" } }); });
+  assert.deepEqual(reads, [],
+    "privacyFindings read a file. Whatever it read can decide what the bot writes into a public record, and " +
+    "nothing that decides that may live outside TRUST-31's hashed set (dev/couplings.md entry 104)");
+  assert.deepEqual(found.map((f) => f.code), ["E_PRIV_EMAIL"]);
 });
 
 test("PRIV-2's subject-id shape, and the false positive that must stay green", () => {

@@ -77,7 +77,7 @@ import { ID_PATTERN } from "../../tools/lib/ids.mjs";
 import { SEMVER_PATTERN } from "../../tools/lib/semver.mjs";
 import { stableStringify } from "../../tools/lib/canonical.mjs";
 import { REPO_ROOT } from "../../tools/lib/sources.mjs";
-import { DOCUMENT_MEMBERS, roleAddresses, scanDocument, shapeFindings } from "../../tools/priv-scan.mjs";
+import { DOCUMENT_MEMBERS, scanDocument, shapeFindings } from "../../tools/lib/priv-rules.mjs";
 
 /** `astra.registry.decision/1` (DEC-7). Stamped here and nowhere else. */
 export const RECORD_SCHEMA = "astra.registry.decision/1";
@@ -662,11 +662,13 @@ export function subjectIdFindings(text) {
  * PRIV-2 over one composed record and its trailers.
  *
  * The four shape rules are `tools/priv-scan.mjs`'s, IMPORTED rather than
- * re-written, and that is the load-bearing decision in this function. PRIV-2's
- * published Check and this composition-time refusal are the same rule asked at
- * two moments; two implementations of it would be two answers to "is this
- * personal", and the one that would drift is the one that runs on every commit
- * rather than the one that runs on a composition nobody has made yet.
+ * re-written — from `tools/lib/priv-rules.mjs`, where they live so that this
+ * module need not import the canary — and that is the load-bearing decision in
+ * this function. PRIV-2's published Check and this composition-time refusal
+ * are the same rule asked at two moments; two implementations of it would be
+ * two answers to "is this personal", and the one that would drift is the one
+ * that runs on every commit rather than the one that runs on a composition
+ * nobody has made yet.
  *
  * The position rule comes from the same file's `DOCUMENT_MEMBERS.decision`,
  * which is DEC-7's twenty-five members with `submission_id` and
@@ -692,11 +694,30 @@ export function subjectIdFindings(text) {
  * Both halves run, and a value can produce both findings: the grammar says the
  * value is not the thing its name claims, and the shapes say what it is instead.
  *
- * @param {{record: object, trailers?: object, root?: string}} opts
+ * ── NO REPOSITORY FILE WIDENS IT ───────────────────────────────────────────
+ *
+ * It takes no `root`, and refuses one. It used to take a root and read
+ * `bot/security-contact.json` under it through the canary's `roleAddresses`,
+ * exempting every address the file held — so an address added to a file
+ * outside TRUST-31's hashed set passed this refusal and went into a public
+ * record for ever, and the bot stayed live (dev/couplings.md entry 104). A role
+ * mailbox is still exempt, by its local part, which is what the file's own
+ * intended `security@` address is; that rule needs no file, and the canary
+ * keeps the file-read rule for its own walk. A caller handing over a root is
+ * a caller that believes something under it changes the answer, and nothing
+ * may.
+ *
+ * @param {{record: object, trailers?: object}} opts
  * @returns {{code: string, what: string}[]}
  */
-export function privacyFindings({ record, trailers = {}, root = REPO_ROOT }) {
-  const roles = roleAddresses(root);
+export function privacyFindings({ record, trailers = {}, ...rest }) {
+  if (Object.prototype.hasOwnProperty.call(rest, "root")) {
+    throw new Error(
+      "privacyFindings takes no `root`: no file under a repository changes what PRIV-2 refuses in a record the " +
+      "bot writes (dev/couplings.md entry 104). Role mailboxes are exempt by their local part",
+    );
+  }
+  const roles = new Set(); // none published: the local-part rule is the whole role exemption here
   const found = scanDocument(record, "decision", roles);
   for (const [name, value] of Object.entries(trailers)) {
     if (value === undefined || value === null || value === "") continue;
@@ -815,7 +836,7 @@ export function writeDecisionRecord({ key, record, root = REPO_ROOT, terminal = 
     }
   }
 
-  refusePrivate({ record: composed, root });
+  refusePrivate({ record: composed });
 
   const rel = recordPath(composed);
 
@@ -865,5 +886,5 @@ export function decisionSchema(root = REPO_ROOT) {
   return { present: fs.existsSync(full), file, full };
 }
 
-/** DEC-7's twenty-five members, as `tools/priv-scan.mjs` holds them. Re-exported so a canary can compare. */
+/** DEC-7's twenty-five members, as `tools/lib/priv-rules.mjs` holds them for this writer and the canary. Re-exported so a canary can compare. */
 export const DECISION_MEMBERS = Object.freeze([...DOCUMENT_MEMBERS.decision.members]);
