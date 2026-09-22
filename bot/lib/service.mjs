@@ -69,23 +69,51 @@
 // holds for any other required member — a body this client cannot read is not a
 // body it may act on.
 //
-// ── two places the token file and §4.2's prose disagree ────────────────────
+// ── requiredness is three-valued, and a condition is read, not excepted ────
 //
-// `EITHER_MEMBERS` names them, and it is deliberately a list of exactly two
-// with a test pinning its size, so it cannot grow into a habit.
+// The token file's readme states the vocabulary, and this file follows it
+// rather than paraphrasing it. A member's requiredness is `true`, `false` or
+// **`conditional`**, and a `conditional` member "is carried exactly under the
+// condition the member's `when` states". A `when` is `{"iff": p}` or
+// `{"if": p}` — never both and never neither: `if` requires the member where
+// `p` holds and says nothing where it does not; **`iff` also FORBIDS it where
+// `p` does not hold**, and that second half is the whole of "never both" for a
+// disjunction. A predicate names one sibling member and the values it may take,
+// or `{"member": "absent"}`, which holds exactly when that sibling is not
+// carried.
 //
-// §4.2's rule is that every member it lists is required "except one that a When
-// column, BOT-80's entry list or a qualifier ('with', 'or null', 'where it
-// applies', 'none for') makes conditional". The word **or** is not in that
-// list, so `schema/contract-tokens-v1.json` records both members of
-// "`state`, or `wait`" (§4.4) and of "`commit` or `refusal_code`" (§4.2's
-// service-decision result) as REQUIRED — and a result carrying both is exactly
-// what neither row means. The member tables below equal the token file, because
-// the token file is what SCOPE-7 publishes and what every party compares
-// against; `composeBody` applies the prose, because a composer that required
-// both could not compose a single valid result. The disagreement is reported
-// rather than smoothed over: adjusting either side here would decide, quietly,
-// which of two published documents is wrong.
+// A `conditional` that states no `when`, or a `when` this reader cannot
+// evaluate, makes the file malformed, and the readme says what to do about it:
+// refuse, and "MUST NOT read the member as unconditioned — reading it as
+// unconditioned is the looser direction, and the looser direction is the one
+// this field exists to close." So `predicateHolds` throws rather than shrugging,
+// `composeBody` refuses to write, and `successProblems` — where the withholding
+// direction is a problem and not a throw — returns it as one, which makes the
+// answer shadow and alerts.
+//
+// **What used to be here, and why it went.** §4.2's "`state`, or `wait`" (§4.4)
+// and "`commit` or `refusal_code`" were once recorded in the token file as BOTH
+// REQUIRED, which no conforming body can satisfy, so this file carried
+// `EITHER_MEMBERS`: a private list excepting those four members from a rule it
+// could not meet, plus a local "exactly one of the pair" check standing in for
+// the rule the file did not state. That was a LOCAL PATCH for a narrowing the
+// estate had not published.
+//
+// Contract 0.28.0 published it. The four members became `conditional`, each
+// with a biconditional `when`, and the readme now says in as many words that "a
+// reader that requires both refuses every conforming body of that schema" —
+// which made the patch wrong rather than merely redundant. **Nothing failed at
+// that moment**: `bot/tests/service.test.mjs` compared requiredness through
+// `m.required ? "" : "?"`, and `true` and `"conditional"` are both truthy, so
+// four members went wrong inside a green suite (dev/couplings.md, entry 38).
+//
+// The exemption list is gone, and what replaces it is not a shorter exemption
+// but the file's own conditions, compiled and evaluated. For
+// `bot-service-decision-result/1` that is strictly MORE than the patch
+// enforced: the patch accepted any one of `commit`/`refusal_code`, while the
+// published conditions say `outcome` is what decides which — so a `refused`
+// outcome carrying a `commit` was a body the patch composed and the contract
+// forbids.
 
 import { BOT_AUDIENCE, mintToken } from "./oidc.mjs";
 
@@ -180,6 +208,11 @@ export const WAKE_ACK_BODY = '{"schema":"astra.plugins.wake-ack/1"}';
  * Every body this client writes or reads, with its members and whether each is
  * required, exactly as `schema/contract-tokens-v1.json` records them.
  *
+ * A member is `[name, required]`, or `[name, "conditional", when]` — the
+ * requiredness is the file's three-valued one and the `when` is the file's own
+ * object, copied rather than summarised, so the test can compare both sides
+ * with `deepEqual` and a narrowing cannot arrive as a paraphrase.
+ *
  * `schema` is not listed: §4.2's "Every body names its schema in `schema`"
  * makes it universal, and the token file records it as a member only for the
  * bodies whose source states them as literal bytes. The test compares the two
@@ -237,7 +270,10 @@ export const BODIES = Object.freeze({
   "astra.plugins.bot-result/1": Object.freeze({
     role: "request",
     members: Object.freeze([
-      ["submission_id", true], ["attempt", false], ["state", true], ["wait", true], ["reasons", true],
+      ["submission_id", true], ["attempt", false],
+      ["state", "conditional", Object.freeze({ iff: Object.freeze({ wait: "absent" }) })],
+      ["wait", "conditional", Object.freeze({ iff: Object.freeze({ state: "absent" }) })],
+      ["reasons", true],
       ["decision_id", false], ["main_commit", false], ["read_commit", false], ["plugin_id", false],
       ["version", false], ["tag", false], ["commit", false], ["artifact_digests", false],
       ["fingerprint", false], ["repository_id", false], ["repository_owner_id", false],
@@ -257,7 +293,13 @@ export const BODIES = Object.freeze({
   "astra.plugins.bot-service-decision-result/1": Object.freeze({
     role: "request",
     members: Object.freeze([
-      ["service_decision_id", true], ["outcome", true], ["commit", true], ["refusal_code", true],
+      ["service_decision_id", true], ["outcome", true],
+      ["commit", "conditional", Object.freeze({
+        iff: Object.freeze({ outcome: Object.freeze(["applied", "held", "cancelled"]) }),
+      })],
+      ["refusal_code", "conditional", Object.freeze({
+        iff: Object.freeze({ outcome: Object.freeze(["refused"]) }),
+      })],
     ]),
   }),
   "astra.plugins.wake-ack/1": Object.freeze({
@@ -272,14 +314,99 @@ export const BODIES = Object.freeze({
   }),
 });
 
+/** A predicate, in words, for the one message a reader actually meets. */
+function describePredicate(predicate) {
+  const [name] = Object.keys(predicate);
+  const rule = predicate[name];
+  if (rule === "absent") return `\`${name}\` is absent`;
+  const values = Array.isArray(rule) ? rule : rule.not;
+  const list = values.map((v) => `\`${v}\``).join(", ");
+  return `\`${name}\` is ${Array.isArray(rule) ? "" : "not "}one of ${list}`;
+}
+
 /**
- * The two rows where §4.2's prose says "or" and the token file says "both
- * required". Exactly two; the test pins the count. See the header.
+ * Does a `when`'s predicate hold of this body?
+ *
+ * The three shapes the token file's readme publishes, and only those:
+ * `{"member": "absent"}`, which holds exactly when that sibling is not carried;
+ * `{"member": [values]}`, which holds when it is carried with one of them; and
+ * `{"member": {"not": [values]}}`, their complement — which an ABSENT sibling
+ * does not satisfy, because `not` says which value was carried and a member
+ * that is not carried has none.
+ *
+ * Anything else THROWS. The readme makes a `when` a reader cannot evaluate a
+ * malformed file and requires that reader to refuse it rather than read the
+ * member as unconditioned, which is the looser of the two directions.
  */
-export const EITHER_MEMBERS = Object.freeze({
-  "astra.plugins.bot-result/1": Object.freeze(["state", "wait"]),
-  "astra.plugins.bot-service-decision-result/1": Object.freeze(["commit", "refusal_code"]),
-});
+export function predicateHolds(predicate, body) {
+  const unreadable = () =>
+    new Error(
+      `a \`when\` predicate this reader cannot evaluate: ${JSON.stringify(predicate ?? null)}. The token file's ` +
+      "readme forbids reading the member as unconditioned instead, because that is the looser direction",
+    );
+  if (predicate === null || typeof predicate !== "object" || Array.isArray(predicate)) throw unreadable();
+  const names = Object.keys(predicate);
+  if (names.length !== 1) throw unreadable();
+
+  const [name] = names;
+  const rule = predicate[name];
+  const carried = body !== null && typeof body === "object" && name in body;
+  if (rule === "absent") return !carried;
+  if (Array.isArray(rule)) return carried && rule.includes(body[name]);
+  if (rule !== null && typeof rule === "object" && Array.isArray(rule.not) && Object.keys(rule).length === 1) {
+    return carried && !rule.not.includes(body[name]);
+  }
+  throw unreadable();
+}
+
+/**
+ * Everything this body gets wrong about a schema's `conditional` members.
+ *
+ * Both halves of a biconditional are checked, because the readme says what
+ * happens to a reader who implements one of them: "a reader who implemented one
+ * of the two and not the other would get the looser reading of the member they
+ * skipped, which is what this vocabulary exists to end." Under `if`, only the
+ * requiring half exists — `if` "says nothing where the predicate does not
+ * hold", and inventing the other half here would forbid what the contract
+ * permits.
+ *
+ * Throws on a table it cannot evaluate; callers choose their safe direction.
+ *
+ * @returns {string[]}
+ */
+export function conditionalProblems(schema, body, members = BODIES[schema]?.members ?? []) {
+  const problems = [];
+  for (const [name, required, when] of members) {
+    if (required !== "conditional") continue;
+    if (when === null || typeof when !== "object" || Array.isArray(when)) {
+      throw new Error(
+        `\`${name}\` is \`conditional\` in ${schema} and states no \`when\`. The token file's readme makes that a ` +
+        "malformed file, and this reader refuses it rather than reading the member as unconditioned",
+      );
+    }
+    const kinds = ["if", "iff"].filter((k) => k in when);
+    if (kinds.length !== 1) {
+      throw new Error(
+        `\`${name}\`'s \`when\` in ${schema} is ${JSON.stringify(when)}; a \`when\` is \`if\` or \`iff\`, never ` +
+        "both and never neither, and which of the two applies is decided per condition and never defaulted",
+      );
+    }
+    const [kind] = kinds;
+    const predicate = when[kind];
+    const holds = predicateHolds(predicate, body);
+    const carried = body !== null && typeof body === "object" && name in body;
+
+    if (holds && !carried) {
+      problems.push(`\`${name}\` is required by ${schema} where ${describePredicate(predicate)} and is absent`);
+    } else if (!holds && carried && kind === "iff") {
+      problems.push(
+        `\`${name}\` is carried by ${schema} and its \`iff\` forbids it except where ` +
+        `${describePredicate(predicate)}`,
+      );
+    }
+  }
+  return problems;
+}
 
 /** §4.2: the one success body that carries no `shadow`. */
 export const SHADOW_EXEMPT = "astra.plugins.wake-ack/1";
@@ -365,8 +492,7 @@ export function composeBody(schema, values = {}) {
   if (!def) throw new Error(`no member table for ${schema}`);
   if (def.role !== "request") throw new Error(`${schema} is a ${def.role} body and this side does not write it`);
 
-  const named = new Map(def.members);
-  const either = EITHER_MEMBERS[schema] ?? [];
+  const named = new Map(def.members.map(([member]) => [member, true]));
   const out = { schema };
   const problems = [];
 
@@ -386,18 +512,14 @@ export function composeBody(schema, values = {}) {
   }
 
   for (const [member, required] of def.members) {
-    if (!required || either.includes(member)) continue;
+    if (required !== true) continue;
     if (!(member in out)) problems.push(`\`${member}\` is required by ${schema} and is absent`);
   }
-  if (either.length) {
-    const present = either.filter((m) => m in out);
-    if (present.length !== 1) {
-      problems.push(
-        `${schema} carries ${present.length === 0 ? "neither" : "both"} of \`${either.join("` and `")}\`; ` +
-        "§4.2 and §4.4 state them as one or the other",
-      );
-    }
-  }
+  // The conditional members, both halves of every biconditional, evaluated
+  // against the body actually composed. On the WRITE side an unevaluable
+  // condition throws out of here (`conditionalProblems` does the throwing),
+  // because refusing to write is the safe direction for a composer.
+  problems.push(...conditionalProblems(schema, out, def.members));
   if (problems.length) throw new Error(problems.join("\n"));
   return JSON.stringify(out);
 }
@@ -405,13 +527,18 @@ export function composeBody(schema, values = {}) {
 /**
  * Read a success body under SCOPE-3.
  *
+ * `def` is the schema's compiled definition and is a parameter only so that a
+ * test can provoke the conditional branches on a definition of its own: no
+ * §4.2 SUCCESS body has a `conditional` member today, and a branch reachable in
+ * no environment is a branch nobody has watched fail.
+ *
  * @returns {{problems: string[]}} empty when the body is readable. Unknown
- * members are not problems and are never even looked at — this function has no
- * loop over the body's own keys, which is the shape that cannot regress into a
- * closed world by somebody adding an `else`.
+ * members are not problems and are never even looked at — neither this function
+ * nor `conditionalProblems` loops over the body's own keys, which is the shape
+ * that cannot regress into a closed world by somebody adding an `else`. A
+ * conditional member's predicate reads ONE named sibling and no more.
  */
-export function successProblems(schema, body) {
-  const def = BODIES[schema];
+export function successProblems(schema, body, def = BODIES[schema]) {
   if (!def) return { problems: [`no member table for ${schema}`] };
   const problems = [];
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
@@ -422,7 +549,17 @@ export function successProblems(schema, body) {
   }
   for (const [member, required] of def.members) {
     if (member === "schema") continue;
-    if (required && !(member in body)) problems.push(`\`${member}\` is required by ${schema} and is absent`);
+    if (required === true && !(member in body)) problems.push(`\`${member}\` is required by ${schema} and is absent`);
+  }
+  try {
+    problems.push(...conditionalProblems(schema, body, def.members));
+  } catch (e) {
+    // A compiled `when` this reader cannot evaluate. The readme forbids reading
+    // the member as unconditioned instead, and on the READ side the withholding
+    // direction is a problem rather than a throw: the answer is returned as
+    // shadow and alerts, where a throw would fail a run over a table this file
+    // owns and the service never sent.
+    problems.push(String(e?.message ?? e));
   }
   if (schema !== SHADOW_EXEMPT && "shadow" in body && typeof body.shadow !== "boolean") {
     problems.push(`\`shadow\` is ${typeof body.shadow} and §4.2 makes it a required boolean`);

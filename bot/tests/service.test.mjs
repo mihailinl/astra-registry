@@ -55,7 +55,6 @@ import {
 import {
   API_BASE,
   BODIES,
-  EITHER_MEMBERS,
   FROM_TOKEN_ONLY,
   MAX_ATTEMPTS,
   OPERATIONS,
@@ -66,8 +65,10 @@ import {
   W_SERVICE_UNREACHABLE,
   compiledRows,
   composeBody,
+  conditionalProblems,
   createClient,
   operationProblems,
+  predicateHolds,
   splitGateItems,
   successProblems,
 } from "../lib/service.mjs";
@@ -248,21 +249,62 @@ test("every body's members and required flags are the token file's", () => {
   );
   assert.ok(recorded.size >= 40, `only ${recorded.size} schemas in the token file; this is a broken read`);
 
+  // Requiredness is THREE-valued — `true`, `false`, `conditional` — and this
+  // comparison used to map it through `m.required ? "" : "?"`, which cannot
+  // tell `true` from `"conditional"` because both are truthy. Contract 0.28.0
+  // narrowed four members to `conditional`, the module went on compiling all
+  // four as `true`, and this suite stayed green (dev/couplings.md, entry 38).
+  // The value is compared as itself now, and a paraphrase of it is not enough:
+  // the `when` is compared with `deepEqual` too, because that is where the
+  // condition a reader must evaluate actually lives.
+  const render = (member, required) => `${member}=${JSON.stringify(required)}`;
+
   let compared = 0;
+  let conditionals = 0;
   for (const [name, def] of Object.entries(BODIES)) {
     const entry = recorded.get(name);
     assert.ok(entry, `${name} is compiled into bot/lib/service.mjs and the token file does not record it`);
     assert.equal(entry.members_recorded, true, `${name}: the token file records no members`);
     // `schema` is dropped from both sides: §4.2 makes it universal and the
     // token file lists it only where the source states literal bytes.
-    const mine = def.members.filter(([m]) => m !== "schema").map(([m, r]) => `${m}${r ? "" : "?"}`);
+    const mine = def.members.filter(([m]) => m !== "schema").map(([m, r]) => render(m, r));
     const theirs = entry.members
       .filter((m) => m.name !== "schema")
-      .map((m) => `${m.name}${m.required ? "" : "?"}`);
+      .map((m) => render(m.name, m.required));
     assert.deepEqual(mine, theirs, `${name}: the compiled members are not the token file's`);
+
+    for (const [member, required, when] of def.members) {
+      const published = entry.members.find((m) => m.name === member);
+      if (required === "conditional") {
+        conditionals += 1;
+        assert.deepEqual(
+          when, published.when,
+          `${name}: \`${member}\` is conditional and the compiled \`when\` is not the file's. The readme makes a ` +
+          "`conditional` that states no `when`, or one a reader cannot evaluate, a malformed file",
+        );
+        assert.doesNotThrow(
+          () => conditionalProblems(name, {}, [[member, required, when]]),
+          `${name}: \`${member}\`'s compiled \`when\` is one this reader cannot evaluate, and the readme makes ` +
+          "that a file to refuse rather than a member to read as unconditioned",
+        );
+      } else {
+        assert.equal(
+          when, undefined,
+          `${name}: \`${member}\` is ${JSON.stringify(required)} and carries a machine-readable \`when\`. Only a ` +
+          "`conditional` member does; the file's prose `when` on a `false` member is not one of these",
+        );
+      }
+    }
     compared += 1;
   }
   assert.ok(compared >= 16, `only ${compared} bodies compared; the client compiles 16`);
+  assert.ok(
+    conditionals >= 1,
+    `no member of any compiled body is \`conditional\` in the token file, so the three-valued comparison above ` +
+    `distinguished nothing. At contract 0.28.0 there were four — \`bot-result/1\`'s \`state\` and \`wait\`, ` +
+    `\`bot-service-decision-result/1\`'s \`commit\` and \`refusal_code\` — and this file reads ` +
+    `${tokenFile.contract_version}`,
+  );
 
   // And the other direction, so a body added to §4.2 cannot stay unknown here.
   const botBodies = [...recorded.keys()].filter((n) => /^astra\.plugins\.bot-[a-z-]+\/1$/.test(n));
@@ -284,7 +326,9 @@ test("the bot audience is the token file's, and shadow's exemption is the token 
   // success body this client reads has it as a required member.
   for (const [name, def] of Object.entries(BODIES)) {
     if (def.role !== "success") continue;
-    const has = def.members.some(([m, r]) => m === "shadow" && r);
+    // `r === true` and not `r`: a `shadow` narrowed to `conditional` would be a
+    // marker that is sometimes absent, and §4.2 makes it required outright.
+    const has = def.members.some(([m, r]) => m === "shadow" && r === true);
     assert.equal(has, name !== SHADOW_EXEMPT, `${name}: \`shadow\` required = ${has}`);
   }
 });
@@ -312,24 +356,96 @@ test("the closed lists this client names are the token file's", () => {
   assert.equal(tokens.get("too_early")?.includes("bot"), false, "`too_early` is a panel token (§0.8)");
 });
 
-test("the two `or` rows are exactly two, and each is a disagreement, not a rule", () => {
-  // §4.2: a member is conditional only under a When column, BOT-80's entry list
-  // or one of four qualifiers — "with", "or null", "where it applies", "none
-  // for". "or" is not among them, so the token file marks both sides of
-  // "`state`, or `wait`" and "`commit` or `refusal_code`" required. The member
-  // tables above equal the file; the composer applies the prose. This test
-  // exists so the exception cannot grow a third member quietly.
-  assert.deepEqual(Object.keys(EITHER_MEMBERS).sort(), [
-    "astra.plugins.bot-result/1",
-    "astra.plugins.bot-service-decision-result/1",
-  ]);
-  for (const [schema, pair] of Object.entries(EITHER_MEMBERS)) {
-    assert.equal(pair.length, 2, `${schema}: an \`either\` of ${pair.length} members`);
+test("each disjunction is two biconditionals in the file, and the module reads both halves", () => {
+  // The token file's readme: "A disjunction is published as two biconditionals
+  // and never as a group: each member of the pair is `conditional`, and a
+  // reader that requires both refuses every conforming body of that schema …
+  // a reader who implemented one of the two and not the other would get the
+  // looser reading of the member they skipped."
+  //
+  // This is what replaced `EITHER_MEMBERS`. That list excepted these four
+  // members from a requiredness the file used to state and no longer does; the
+  // conditions below are what the file states instead, and they are read rather
+  // than excepted. The test that stood here asserted each of the four was
+  // compiled `required: true` — which was the wrong half of the coupling by the
+  // time 0.28.0 landed, and passed anyway.
+  for (const [schema, pair] of [
+    ["astra.plugins.bot-result/1", ["state", "wait"]],
+    ["astra.plugins.bot-service-decision-result/1", ["commit", "refusal_code"]],
+  ]) {
+    const entry = tokenFile.entries.find((e) => e.kind === "schema" && e.name === schema);
+    assert.ok(entry, `the token file records no ${schema}`);
     for (const m of pair) {
-      const required = BODIES[schema].members.find(([name]) => name === m)?.[1];
-      assert.equal(required, true, `${schema}: \`${m}\` is not recorded required, so there is nothing to except`);
+      const published = entry.members.find((x) => x.name === m);
+      assert.ok(published, `${schema}: the token file records no \`${m}\``);
+      assert.equal(
+        published.required, "conditional",
+        `${schema}: \`${m}\` is published ${JSON.stringify(published.required)}. A disjunction is two ` +
+        "conditionals; a required half of one is a body no party can send",
+      );
+      assert.ok(
+        "iff" in (published.when ?? {}),
+        `${schema}: \`${m}\`'s condition is \`${Object.keys(published.when ?? {})}\` and not \`iff\`. Only \`iff\` ` +
+        "forbids the member where its predicate does not hold, and that half is the whole of \"never both\"",
+      );
+      assert.equal(
+        BODIES[schema].members.find(([name]) => name === m)?.[1], "conditional",
+        `${schema}: \`${m}\` is compiled as something other than \`conditional\``,
+      );
+      assert.ok(published.why, `${schema}: \`${m}\` is conditional and carries no \`why\``);
     }
   }
+});
+
+test("a condition is read in both directions, and `if` is not read as `iff`", () => {
+  // The two halves, driven over a synthetic member table so that each is
+  // provoked on its own rather than left to whichever branch a real body
+  // happens to reach first.
+  const iff = [["commit", "conditional", { iff: { outcome: ["applied"] } }]];
+  assert.deepEqual(conditionalProblems("S", { outcome: "applied", commit: "c" }, iff), []);
+  assert.deepEqual(conditionalProblems("S", { outcome: "refused" }, iff), []);
+  assert.match(
+    conditionalProblems("S", { outcome: "applied" }, iff).join("\n"),
+    /`commit` is required by S where `outcome` is one of `applied` and is absent/,
+  );
+  assert.match(
+    conditionalProblems("S", { outcome: "refused", commit: "c" }, iff).join("\n"),
+    /`commit` is carried by S and its `iff` forbids it except where `outcome` is one of `applied`/,
+  );
+
+  // `if` requires where the predicate holds and says NOTHING where it does not.
+  // Reading it as `iff` would forbid what the contract permits, which is the
+  // mirror of the defect this entry is about.
+  const cond = [["commit", "conditional", { if: { outcome: ["applied"] } }]];
+  assert.match(conditionalProblems("S", { outcome: "applied" }, cond).join("\n"), /is required by S where/);
+  assert.deepEqual(
+    conditionalProblems("S", { outcome: "refused", commit: "c" }, cond), [],
+    "`if` says nothing where its predicate does not hold; forbidding here would invent the half it does not state",
+  );
+
+  // The three predicate shapes the readme publishes, and the refusal.
+  assert.equal(predicateHolds({ wait: "absent" }, { state: "published" }), true);
+  assert.equal(predicateHolds({ wait: "absent" }, { wait: { code: "W" } }), false);
+  assert.equal(predicateHolds({ code: ["M_APPEAL"] }, { code: "M_APPEAL" }), true);
+  assert.equal(predicateHolds({ code: ["M_APPEAL"] }, {}), false);
+  assert.equal(predicateHolds({ code: { not: ["M_APPEAL"] } }, { code: "M_DELIST" }), true);
+  assert.equal(
+    predicateHolds({ code: { not: ["M_APPEAL"] } }, {}), false,
+    "a complement is over the values the member may take, and a member that is not carried has none",
+  );
+  assert.throws(() => predicateHolds({ code: "M_APPEAL" }, {}), /cannot evaluate/);
+  assert.throws(() => predicateHolds({ a: ["x"], b: ["y"] }, {}), /cannot evaluate/);
+
+  // And a table this reader cannot evaluate is refused, never read as
+  // unconditioned — the readme calls that the looser direction and closes it.
+  assert.throws(
+    () => conditionalProblems("S", {}, [["commit", "conditional", undefined]]),
+    /states no `when`/,
+  );
+  assert.throws(
+    () => conditionalProblems("S", {}, [["commit", "conditional", { if: { a: ["x"] }, iff: { a: ["x"] } }]]),
+    /never both and never neither/,
+  );
 });
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -385,18 +501,86 @@ test("a result carries `state` or `wait`, never both and never neither", () => {
   }));
   assert.equal(withWait.wait.code, W_SERVICE_UNREACHABLE);
 
-  assert.throws(() => composeBody("astra.plugins.bot-result/1", { submission_id: "s1", reasons: [] }), /neither/);
+  // Neither, and both — each named by the member it is wrong about rather than
+  // by a local count of the pair. `state` and `wait` are two biconditionals on
+  // each other's absence, so "neither" trips both requiring halves and "both"
+  // trips both forbidding ones.
+  assert.throws(
+    () => composeBody("astra.plugins.bot-result/1", { submission_id: "s1", reasons: [] }),
+    /`state` is required .* `wait` is absent[\s\S]*`wait` is required .* `state` is absent/,
+  );
   assert.throws(
     () => composeBody("astra.plugins.bot-result/1", {
       submission_id: "s1", reasons: [], state: "published", wait: { code: "W" },
     }),
-    /both/,
+    /`state` is carried .* forbids it[\s\S]*`wait` is carried .* forbids it/,
   );
+});
+
+test("`outcome` decides which of the service-decision pair is carried, which no `either` list could", () => {
+  const applied = JSON.parse(composeBody("astra.plugins.bot-service-decision-result/1", {
+    service_decision_id: "d1", outcome: "applied", commit: "a".repeat(40),
+  }));
+  assert.equal(applied.commit, "a".repeat(40));
+  const refused = JSON.parse(composeBody("astra.plugins.bot-service-decision-result/1", {
+    service_decision_id: "d1", outcome: "refused", refusal_code: "kind_refused",
+  }));
+  assert.equal(refused.refusal_code, "kind_refused");
+
   assert.throws(
     () => composeBody("astra.plugins.bot-service-decision-result/1", {
       service_decision_id: "d1", outcome: "applied", commit: "a".repeat(40), refusal_code: "kind_refused",
     }),
-    /both/,
+    /`refusal_code` is carried .* forbids it except where `outcome` is one of `refused`/,
+  );
+
+  // The case the deleted `EITHER_MEMBERS` accepted: exactly one of the pair,
+  // and the wrong one for the outcome. A list that only counts the pair cannot
+  // see this; the published conditions name the member that decides.
+  assert.throws(
+    () => composeBody("astra.plugins.bot-service-decision-result/1", {
+      service_decision_id: "d1", outcome: "applied", refusal_code: "kind_refused",
+    }),
+    /`commit` is required .* `outcome` is one of `applied`, `held`, `cancelled` and is absent/,
+    "0.28.0 published `outcome` as what decides between the two; a local `exactly one of the pair` check composed " +
+    "a body the contract forbids and nothing was there to say so",
+  );
+  assert.throws(
+    () => composeBody("astra.plugins.bot-service-decision-result/1", {
+      service_decision_id: "d1", outcome: "refused", commit: "a".repeat(40),
+    }),
+    /`refusal_code` is required .* `outcome` is one of `refused` and is absent/,
+  );
+});
+
+test("a success body's conditional members are read the same way, and an unreadable one withholds", () => {
+  // No §4.2 success body has a `conditional` member today, so the wiring from
+  // `successProblems` into the condition reader is provoked here on a
+  // definition of this test's own — a branch reachable in no environment is a
+  // branch nobody has watched fail.
+  const def = {
+    role: "success",
+    members: [["shadow", true], ["state", "conditional", { iff: { wait: "absent" } }]],
+  };
+  assert.deepEqual(
+    successProblems("x/1", { schema: "x/1", shadow: false, state: "published" }, def).problems, [],
+  );
+  assert.match(
+    successProblems("x/1", { schema: "x/1", shadow: false }, def).problems.join("\n"),
+    /`state` is required by x\/1 where `wait` is absent and is absent/,
+  );
+  assert.match(
+    successProblems("x/1", { schema: "x/1", shadow: false, state: "p", wait: {} }, def).problems.join("\n"),
+    /`state` is carried by x\/1 and its `iff` forbids it/,
+  );
+
+  // A `when` this reader cannot evaluate is a PROBLEM on the read side and not
+  // a throw: the answer is withheld as shadow and alerts, where a throw would
+  // fail a run over a table this repository owns and the service never sent.
+  const broken = { role: "success", members: [["state", "conditional", { iff: { a: 7 } }]] };
+  assert.match(
+    successProblems("x/1", { schema: "x/1" }, broken).problems.join("\n"),
+    /cannot evaluate/,
   );
 });
 
@@ -404,13 +588,16 @@ test("a result carries `state` or `wait`, never both and never neither", () => {
 // Reading an answer: SCOPE-3, and the marker that must be there
 // ───────────────────────────────────────────────────────────────────────────
 
-/** The smallest body that satisfies a schema's required members. */
+/**
+ * The smallest body that satisfies a schema's required members.
+ *
+ * `required !== true` and not `!required`: a `conditional` member is carried
+ * exactly under its own condition and is not part of any body's floor.
+ */
 const minimal = (schema) => {
   const body = { schema };
-  const either = EITHER_MEMBERS[schema] ?? [];
   for (const [member, required] of BODIES[schema].members) {
-    if (member === "schema" || !required) continue;
-    if (either.length && either.indexOf(member) > 0) continue;
+    if (member === "schema" || required !== true) continue;
     body[member] = member === "shadow" ? false : member === "items" || member === "leases" ||
       member === "submissions" || member === "service_decisions" || member === "reasons" ? [] : "x";
   }
