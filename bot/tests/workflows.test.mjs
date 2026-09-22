@@ -460,13 +460,36 @@ test("an `alerts` job maps the channel's secrets and no ping URL that is not its
   assert.equal(problems.join("\n"), "", "an alert job's credentials are not the ones it needs, or are more");
 });
 
+/**
+ * The receiver checks a job posts to through `.github/actions/alert`, or null
+ * when the job does not call it: `check:` (BOT-85's heartbeat) and `ack-check:`
+ * (BOT-86's start signal). Those two inputs are the only way anything in
+ * `.github/workflows/` reaches `bot/heartbeat.mjs` (the action's two
+ * `node bot/heartbeat.mjs --check` lines). A `--check <name>` on another
+ * script is not a poster: it names the verdict's subject, and
+ * `plugins-moderation.yml`'s `alert` job carries `--check moderation-run`
+ * beside a `no-heartbeat-because`.
+ *
+ * One definition, read by the two tests below — which checks a job reaches,
+ * and which checks are armed — so they cannot disagree about what a poster is.
+ */
+function alertPosts(job) {
+  const body = code(job).join("\n");
+  if (!/uses:\s*\.\/\.github\/actions\/alert\s*$/m.test(body)) return null;
+  return {
+    main: [...body.matchAll(/^\s+check:\s*([a-z0-9-]+)\s*$/gm)].map((m) => m[1]),
+    ack: [...body.matchAll(/^\s+ack-check:\s*([a-z0-9-]+)\s*$/gm)].map((m) => m[1]),
+  };
+}
+
 test("every job that calls the alert action is in `alerts` and names checks that exist", () => {
   const registryChecks = new Set(CHECKS.filter((c) => c.party === "registry").map((c) => c.name));
   const problems = [];
   let callers = 0;
   for (const job of allJobs()) {
+    const posts = alertPosts(job);
+    if (!posts) continue;
     const body = code(job).join("\n");
-    if (!/uses:\s*\.\/\.github\/actions\/alert\s*$/m.test(body)) continue;
     callers++;
     // Without the environment the three secrets are simply absent, every run
     // is red, and the reason is a line nobody wrote rather than a line
@@ -480,11 +503,8 @@ test("every job that calls the alert action is in `alerts` and names checks that
     // `check:` deleted — the job still "named a check", and the one workflow
     // whose silence nothing else watches would have posted no heartbeat at
     // all.
-    const main = [...body.matchAll(/^\s+check:\s*([a-z0-9-]+)\s*$/gm)].map((m) => [m[1], ["success"]]);
-    const wants = [
-      ...main,
-      ...[...body.matchAll(/^\s+ack-check:\s*([a-z0-9-]+)\s*$/gm)].map((m) => [m[1], ["success", "start"]]),
-    ];
+    const main = posts.main.map((check) => [check, ["success"]]);
+    const wants = [...main, ...posts.ack.map((check) => [check, ["success", "start"]])];
     // Exactly one of a check and a reason there is none. An alert job that
     // posts no heartbeat is invisible — the receiver has nothing to be silent
     // about — so the omission is a sentence somebody wrote, not an empty
@@ -525,6 +545,137 @@ test("every job that calls the alert action is in `alerts` and names checks that
   }
   assert.ok(callers >= 1, "nothing calls the alert action; this check would prove nothing");
   assert.equal(problems.join("\n"), "", "an alert job cannot reach the check it says it posts to");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Which registry receiver checks are created ARMED (dev/couplings.md entry 25).
+//
+// The rule is the one written above `CHECKS` in `bot/lib/alert-checks.mjs`,
+// decided 2026-09-22 by the coordinator session: a registry check is armed at
+// creation only if a poster for it runs on a live trigger in this repository
+// today; otherwise it is created disarmed and arms at its first heartbeat.
+//
+// It replaces `bot/tests/alert.test.mjs`'s "no registry check is created
+// disarmed", which asserted every row armed with the failure message "has a
+// poster in this repository" — false for five checks, one of them with a
+// poster that only a dispatch runs. A hand list would be the same sentence
+// again, so both sides are computed: the posters from the workflow files
+// (`alertPosts`), the arming from the table.
+//
+// **A live trigger means an uncommented `schedule:` with at least one
+// uncommented `- cron:` under it, and nothing else counts.** A dead-man bound
+// is a multiple of an interval, and only a schedule gives a poster one.
+// `push`, `pull_request`, `workflow_run`, `issues` and `repository_dispatch`
+// post when something happens, so a quiet week under them is silence that is
+// not an outage — arming on them would page falsely, which is the failure the
+// rule exists to stop. `workflow_dispatch` is a person. On 2026-09-22 every
+// poster workflow with any of those triggers also has a live cron, except
+// `plugins-moderation.yml`, which has only `workflow_dispatch`, so the choice
+// changes no row today.
+//
+// **Armed means `created_disarmed: false`, or an `armed_at` recorded.** A check
+// created disarmed and armed later at its first post is armed, and
+// `tableProblems` refuses an `armed_at` on a check that was never disarmed —
+// so a rule reading only `created_disarmed` would demand erasing the record of
+// an arming to go green.
+//
+// Red in both directions, by name:
+//   * armed with no live poster — it can only page falsely, from the day the
+//     owner creates the receiver (R1);
+//   * disarmed with a live poster — a poster that runs and fails before its
+//     first successful post never arms it, and its silence pages nobody.
+//     **R3's open commit is the first this stops:** it un-comments
+//     `plugins-moderation.yml`'s schedule, and this is red on `moderation-run`
+//     until the same commit arms its row.
+//
+// NOT derived, and each is a way a "live" poster can still post nothing: a
+// job or step `if:` that excludes scheduled runs, a `needs:` on a job the
+// schedule skips (every poster job here runs on `always()` today, measured
+// 2026-09-22), an earlier step that always fails, and a channel the owner has
+// not created (the action then posts no heartbeat at all, by design).
+
+/**
+ * A workflow's schedule as GitHub reads it: the `- cron:` items under the
+ * `schedule:` key of the top-level `on:` block, split into the ones that are
+ * live and the ones commented out (a commented item, or any item under a
+ * commented `schedule:`). No `on:` block this can read, or an inline `on: […]`,
+ * means no schedule — the direction that turns an armed check red, loudly.
+ */
+function scheduleOf(file) {
+  const lines = read(file).split("\n");
+  const out = { live: [], commented: [] };
+  const on = lines.findIndex((l) => /^on:\s*(#.*)?$/.test(l));
+  if (on < 0) return out;
+  let key = null;
+  for (let i = on + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\S/.test(line) && !line.startsWith("#")) break;
+    const live = /^ {2}([a-z_]+):/.exec(line);
+    if (live) { key = live[1]; continue; }
+    const dead = /^ {2}#\s*([a-z_]+):\s*$/.exec(line);
+    if (dead) { key = `#${dead[1]}`; continue; }
+    const cron = /^\s*(#\s*)?-\s*cron:\s*(.+?)\s*$/.exec(line);
+    if (!cron || (key !== "schedule" && key !== "#schedule")) continue;
+    const item = { file, line: i + 1, expr: cron[2].replace(/^['"]|['"]$/g, "") };
+    (key === "schedule" && !cron[1] ? out.live : out.commented).push(item);
+  }
+  return out;
+}
+
+test("a registry check is armed exactly when a workflow here posts to it on a live schedule", () => {
+  const registry = CHECKS.filter((c) => c.party === "registry");
+  assert.ok(registry.length >= 10, `only ${registry.length} registry checks; the table this reads has shrunk`);
+
+  /** check name → every job that posts to it, with its workflow's schedule */
+  const posters = new Map();
+  for (const job of allJobs()) {
+    const posts = alertPosts(job);
+    if (!posts) continue;
+    const schedule = scheduleOf(job.file);
+    for (const check of [...posts.main, ...posts.ack]) {
+      if (!posters.has(check)) posters.set(check, []);
+      posters.get(check).push({ job, schedule });
+    }
+  }
+  // The floor, before the rule: a parse that found no live schedule anywhere
+  // would call every check poster-less, and the answer to that would be to
+  // disarm the whole table.
+  const liveAnywhere = [...posters.values()].flat().filter((p) => p.schedule.live.length > 0);
+  assert.ok(liveAnywhere.length >= 1, "no poster was found on a live schedule; this rule would be read off nothing");
+
+  const problems = [];
+  for (const check of registry) {
+    const found = posters.get(check.name) ?? [];
+    const live = found.filter((p) => p.schedule.live.length > 0);
+    const armed = check.created_disarmed === false || check.armed_at !== null;
+    const how = check.created_disarmed === false ? "created armed" : `armed at ${check.armed_at}`;
+    if (armed && live.length === 0) {
+      const why = found.length === 0
+        ? "nothing in .github/workflows/ calls the alert action with it"
+        : found.map(({ job, schedule }) => `${where(job)} posts to it, and its workflow has no live schedule` +
+          (schedule.commented.length
+            ? ` (commented out: ${schedule.commented.map((c) => `'${c.expr}' at ${c.file}:${c.line}`).join(", ")})`
+            : "")).join("; ");
+      problems.push(
+        `${check.name} is ${how}, and no workflow in this repository posts to it on a live schedule: ${why}. ` +
+        `Armed with nothing running to feed it, it can only page falsely, and it starts on the day the owner ` +
+        `creates the receiver (R1). Set \`created_disarmed: true\` in bot/lib/alert-checks.mjs; it arms at its ` +
+        `first heartbeat.`,
+      );
+    }
+    if (!armed && live.length > 0) {
+      const at = live.map(({ job, schedule }) =>
+        `${where(job)} on '${schedule.live[0].expr}' (${schedule.live[0].file}:${schedule.live[0].line})`).join("; ");
+      problems.push(
+        `${check.name} is created disarmed with no arming recorded, and a poster for it runs on a live schedule: ` +
+        `${at}. A poster that runs and fails before its first successful post never arms it, and its silence ` +
+        `pages nobody. Arm its row in bot/lib/alert-checks.mjs in this same commit: \`created_disarmed: false\` ` +
+        `(before the receiver exists), or the \`armed_at\` of the first post that armed it. R3's open commit, ` +
+        `un-commenting plugins-moderation.yml's schedule, is the first commit this stops, on moderation-run.`,
+      );
+    }
+  }
+  assert.equal(problems.join("\n"), "", "a registry receiver check's arming disagrees with whether anything posts to it");
 });
 
 test("the alert action itself reaches for nothing an `alerts` job may not hold", () => {

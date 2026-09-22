@@ -510,14 +510,14 @@ await test("the two service-posted checks are created disarmed and not yet armed
   }
 });
 
-await test("no registry check is created disarmed", () => {
-  // Every other check's poster lands in the same step as the check. Creating
-  // one of those disarmed would be a check that is silent about a job that is
-  // running, which is the failure the disarming is a defence against.
-  for (const check of CHECKS.filter((c) => c.party === "registry")) {
-    assert.equal(check.created_disarmed, false, `${check.name} has a poster in this repository`);
-  }
-});
+// Which REGISTRY checks are created disarmed is not asked here. It was, as "no
+// registry check is created disarmed", with the failure message "has a poster
+// in this repository" — false for five of the thirteen, and its reason ("every
+// other check's poster lands in the same step as the check") false with it
+// (dev/couplings.md entry 25). The rule that replaced it is computed from the
+// workflow files, so it lives with them: `bot/tests/workflows.test.mjs`, "a
+// registry check is armed exactly when a workflow here posts to it on a live
+// schedule".
 
 await test("environment `alerts` is given no secret that addresses another party's check", () => {
   const secrets = alertsEnvironmentSecrets();
