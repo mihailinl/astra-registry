@@ -58,6 +58,30 @@ import { parseSemver } from "./semver.mjs";
 export const SOURCE_DIR = "tools/revocations";
 
 /**
+ * A regular expression over a repository-relative path, as git prints one:
+ * `dir`, escaped, then `/`, then `basename` — a RegExp SOURCE for the part
+ * after the slash — anchored at both ends, so a file in a subdirectory, in a
+ * sibling that shares the prefix, or under another tree does not match.
+ *
+ * Gap 72. Two readers parse history for advisories: `nextAdvisoryId` in
+ * `bot/lib/compile-decision.mjs`, whose `git log` pathspec already followed
+ * `SOURCE_DIR`, and `tools/moderation-coverage.mjs`'s `ADVISORY_RE`. Both
+ * spelled the directory into a regex literal. Had the directory moved, the log
+ * would have listed the new paths and the id regex matched none of them:
+ * `nextAdvisoryId` finds no advisory and hands out `ASTRA-YYYY-0001` again,
+ * and the coverage canary stops seeing advisories at all. Both build their
+ * pattern with this now, and `tools/selftest/couplings.mjs` asks each of them
+ * what it saw on a fixture history written under `SOURCE_DIR`.
+ *
+ * @param {string} dir       a literal directory, escaped here
+ * @param {string} basename  a RegExp source; its capture groups keep their numbers
+ */
+export function pathUnder(dir, basename) {
+  const escaped = dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^${escaped}/(?:${basename})$`);
+}
+
+/**
  * The same directory as a **git pathspec**, narrowed to the files the document
  * is actually built from.
  *

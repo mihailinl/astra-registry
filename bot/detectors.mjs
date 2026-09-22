@@ -57,6 +57,7 @@ import {
   nonStagingVersions,
 } from "../tools/lib/sources.mjs";
 import { SOURCE_PATHSPEC as REVOCATIONS_PATHSPEC } from "../tools/lib/revocations.mjs";
+import { CATALOGUE_PATHSPEC } from "../tools/build-index.mjs";
 
 export const DETECTORS = ["A1", "A3", "A5", "A7", "A9"];
 
@@ -447,7 +448,7 @@ export function a7({ git, now }, findings, skipped, scanned) {
   // nothing. A7 used the directory for both until 2026-09-20, when ten lines
   // of documentation alarmed it — `tools/lib/revocations.mjs` carries the run
   // and the reasoning.
-  for (const [what, pathspec] of [["plugins", "plugins"], ["revocations", REVOCATIONS_PATHSPEC]]) {
+  for (const [what, pathspec] of [["plugins", CATALOGUE_PATHSPEC], ["revocations", REVOCATIONS_PATHSPEC]]) {
     const newest = git.newestTouching(pathspec);
     if (!newest) continue;
     const driftMinutes = Math.floor((newest.at - at) / 60);

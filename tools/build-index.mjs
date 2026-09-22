@@ -74,6 +74,28 @@ const BANNER =
 
 const PLATFORM_KEYS_FOR_NOARCH = ["linux-x64", "windows-x64"];
 
+/**
+ * The pathspec the catalogue's serial is counted over — `git rev-list --count
+ * <commit> -- CATALOGUE_PATHSPEC` — and so the commits that can change the
+ * catalogue: the pending-commit test in `resolveSerial` below, the signer's
+ * `serialsAt` in `tools/signer/plan.mjs`, and the plugins half of detector A7
+ * in `bot/detectors.mjs` all ask it.
+ *
+ * Gap 71. Until 2026-09-22 each of those typed `"plugins"` for itself, as did
+ * `serialFor` in `tools/regenerate-signed.mjs` and the "Compute the serial"
+ * step of `.github/workflows/build-index.yml`. Nothing compared them, and
+ * widening one moves one serial or one clock and leaves the rest — the shape
+ * gap 64 closed for the withdrawal list. The last two cannot import this: the
+ * carrier's command loads no module of the working tree (it runs a PINNED
+ * generator, and this file is that generator), and a workflow step is shell.
+ * `tools/selftest/couplings.mjs` asks all six what they counted on one fixture
+ * history, so any of them that counts something else goes red by name.
+ *
+ * The whole directory, deliberately: a listing's README and icon reach the
+ * catalogue (`bot/detectors.mjs` says why A7 reads it this way too).
+ */
+export const CATALOGUE_PATHSPEC = "plugins";
+
 export function resolveSerial({ explicit, root = REPO_ROOT } = {}) {
   if (explicit !== undefined && explicit !== null) return explicit;
   if (process.env.ASTRA_REGISTRY_SERIAL) {
@@ -84,7 +106,7 @@ export function resolveSerial({ explicit, root = REPO_ROOT } = {}) {
     return n;
   }
   try {
-    const out = execFileSync("git", ["rev-list", "--count", "HEAD", "--", "plugins"], {
+    const out = execFileSync("git", ["rev-list", "--count", "HEAD", "--", CATALOGUE_PATHSPEC], {
       cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
@@ -116,7 +138,7 @@ export function resolveSerial({ explicit, root = REPO_ROOT } = {}) {
     // A dirty `plugins/` means exactly one pending commit, because every writer
     // here commits what it staged. A clean tree adds nothing, so `--check` on a
     // pull request is unchanged.
-    const dirty = execFileSync("git", ["status", "--porcelain", "--", "plugins"], {
+    const dirty = execFileSync("git", ["status", "--porcelain", "--", CATALOGUE_PATHSPEC], {
       cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],

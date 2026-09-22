@@ -410,6 +410,14 @@ export function refuseNetworkGlobals(target = globalThis) {
  *
  * There is deliberately no `--serial` override. A carrier's document is the one
  * thing that must not be able to tell this command what its own serial is.
+ *
+ * `"plugins"` is typed here and not imported from `tools/build-index.mjs`'s
+ * `CATALOGUE_PATHSPEC`: this file imports node builtins only, and importing
+ * the working tree's generator into the process that is about to run a pinned
+ * one is the confusion the command exists to avoid. The copy is held instead
+ * by `tools/selftest/couplings.mjs` (gap 71), which asks this function what it
+ * counted on a fixture history and goes red if it is not what the signer
+ * counts.
  */
 export function serialFor(repo, source) {
   const out = git(repo, ["rev-list", "--count", source, "--", "plugins"]).trim();
