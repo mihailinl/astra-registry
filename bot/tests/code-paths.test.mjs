@@ -149,23 +149,31 @@ export const ENTRIES = [
   // takes the rules from `tools/lib/priv-rules.mjs`, under the `tools/lib/`
   // entry, because `tools/priv-scan.mjs` also held `roleAddresses`, which reads
   // `bot/security-contact.json` — outside this set — and exempted whatever
-  // address that file held from the bot's own PRIV-2 refusal. So no bot run
-  // reaches `tools/priv-scan.mjs` or `tools/coverage/rules.mjs` now (leg (b)'s
-  // closure went from 52 modules to 51), and `tools/coverage/git.mjs` is still
-  // reached, through `bot/lib/takedown-bound.mjs` and `bot/moderation-run.mjs`.
-  // The first two stay in the set, because the set is the contract's and a
-  // change to it is a MINOR: an entry no run reaches costs a shadow transition
-  // when somebody edits it, which is loud, and never a hole, which is not.
+  // address that file held from the bot's own PRIV-2 refusal. So leg (b)'s
+  // closure no longer reaches `tools/priv-scan.mjs` or `tools/coverage/rules.mjs`
+  // (52 modules to 51).
+  //
+  // **Contract 0.34.0 takes `tools/priv-scan.mjs` out, and only that one.** It
+  // is reached by no bot run through the closure below AND by none through the
+  // selftest's cases, whose own static imports this walk cannot follow (the
+  // runner loads them by a dynamic `import()`). `tools/coverage/rules.mjs` IS
+  // reached that second way: `tools/selftest/couplings.mjs` imports
+  // `tools/coverage/docs-advisory-url.mjs`, which imports it, and the publish
+  // path runs the selftest as its fifth gate — so taking it out would be the
+  // direction that opens a hole, and it stays until that path is decided (ops
+  // pending item 19, which measures 28 modules outside this set reached the
+  // same way). `tools/coverage/git.mjs` is reached through
+  // `bot/lib/compile-decision.mjs`, which `bot/moderation-run.mjs` and
+  // `tools/validate.mjs` import.
   //
   // `tools/coverage/` is ENUMERATED and not taken whole: `docs-advisory-url`,
-  // `keepalive-age` and `reserved-id-mirror` are rule reporters only the desk
-  // tools run, and `priv-scan-exempt.json` is read by `loadExemptions`, the
-  // standalone history walk's entry point, which is not among the four symbols
-  // the decision writer imports. A directory entry is right when everything
-  // beneath it belongs; here four of six do not. What makes enumerating safe
+  // `drain-age`, `examples-staging-id`, `keepalive-age` and
+  // `reserved-id-mirror` are rule reporters the moderation-coverage workflow
+  // runs, and `priv-scan-exempt.json` is read only by the canary's own history
+  // walk. A directory entry is right when everything beneath it belongs; here
+  // six of eight do not. What makes enumerating safe
   // is leg (b): a file under `tools/coverage/` that a bot run starts reaching
   // fails there, by name, the day it does.
-  "tools/priv-scan.mjs",
   "tools/coverage/rules.mjs",
   "tools/coverage/git.mjs",
   "policy/reserved-ids.json",

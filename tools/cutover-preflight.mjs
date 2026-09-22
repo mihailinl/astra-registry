@@ -237,6 +237,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { REPO_ROOT, QUEUE_DIR } from "./lib/sources.mjs";
 import { validate } from "./lib/jsonschema.mjs";
 import { POSITIVE_INTEGER_LITERAL, topLevelMembers } from "./lib/json-literal.mjs";
+import { isTime } from "./lib/time.mjs";
 // The deadline's path comes from the module that DECIDES on it (M-T5.1), so
 // this preflight cannot end up looking at a path the bot stopped writing.
 import { DEADLINE_FILE, DEADLINE_SCHEMA } from "../bot/lib/listing-state.mjs";
@@ -422,10 +423,7 @@ function lsTree(cwd, ref, dir) {
 /** §0.7's shape, and a date that survives a round trip. Returns null on both
  *  failures, and the caller says which record was unreadable. */
 function rfc3339(v) {
-  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(v)) return null;
-  const d = new Date(v);
-  if (Number.isNaN(d.getTime()) || d.toISOString().replace(/\.\d{3}Z$/, "Z") !== v) return null;
-  return d;
+  return isTime(v) ? new Date(v) : null;
 }
 
 const days = (ms) => (ms / DAY).toFixed(1);

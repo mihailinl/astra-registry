@@ -538,9 +538,14 @@ export function a5({ anchor, records }, findings, skipped, scanned) {
  * here because the walk from its `Index-Source-Commit` finds nothing, not
  * because A7 was told it was unchanged.
  *
- * **The list half stays on `Source-Commit`,** because row 7 says so and the
- * list has no trailer of its own. A carried list is SERVE-85's to see, by the
- * list's serial (registry plan; contract pending item 15), not A7's.
+ * **The list half stays on `Source-Commit`,** and no longer because row 7
+ * says so: from contract 0.34.0 row 7's list half reads the list's serial
+ * (DEC-9's formula) — a commit under `tools/revocations/` is carried once
+ * the served list's serial is at least the serial that commit gives the list —
+ * which is SERVE-85's reading since `9750f2b`, and SERVE-85 is this
+ * repository's implementation of that half. This one is narrower: it reads
+ * `SOURCE_PATHSPEC` and `Source-Commit`, so it cannot see a carried list or a
+ * README commit, and it fires only where row 7's reading does.
  *
  * **A `signed` head with no `Index-Source-Commit:` is a finding, not a
  * fallback.** B.4 has every `signed` commit name both trailers, and falling

@@ -186,6 +186,14 @@ const MODULES = [
   // `baseline.mjs` stays last. **This line, its FLOORS entry and the file are
   // one change**, for the reason written out at `regenerate.mjs` above.
   "migration-notice.mjs",
+  // Contract 0.34.0 — §0.7's time, one statement in every reader: the grammar
+  // in tools/lib/time.mjs, every schema pattern held to it byte for byte, every
+  // code reader driven with second 60, and no private spelling. It prints its
+  // own section header and sits between two modules that print theirs, so it
+  // moves no existing name under a header it does not belong to, and
+  // `baseline.mjs` stays last. **This line, its FLOORS entry and the file are
+  // one change**, for the reason written out at `regenerate.mjs` above.
+  "times.mjs",
   // Last, and with a section header of its own. The boundary to protect is
   // `update-notes.mjs` → `repo-rules.mjs`: `repo-rules.mjs` prints no header,
   // so its names come out under `update-notes.mjs`'s, and anything inserted
@@ -1738,6 +1746,7 @@ const FLOORS = new Map(Object.entries({
   "contract-tokens.mjs": 8,
   "regenerate.mjs": 15,
   "migration-notice.mjs": 6,
+  "times.mjs": 4,
   "baseline.mjs": 9,
 }));
 
