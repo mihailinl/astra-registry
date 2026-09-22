@@ -99,6 +99,32 @@ export const SOURCE_DIR = "tools/revocations";
  */
 export const SOURCE_PATHSPEC = `${SOURCE_DIR}/*.json`;
 
+/**
+ * The pathspec D3 counts the withdrawal list's serial over —
+ * `git rev-list --count <commit> -- SERIAL_PATHSPEC`, plus one — and therefore
+ * the clock SERVE-85 measures a serial difference from.
+ *
+ * Three readers ask this one question: `resolveSerial` below, the signer's
+ * `serialsAt` in `tools/signer/plan.mjs`, and `LIST_PATHSPEC` in
+ * `tools/served-set/main-vs-signed.mjs`. Until gap 64 the last two each typed
+ * the string for themselves, and widening the clock's copy moved the clock and
+ * left the serial. They import this now, and `tools/selftest/couplings.mjs`
+ * holds all three to one answer by counting a fixture history, so a reader
+ * that stops importing it and counts something else goes red by name.
+ *
+ * **Deliberately the whole directory, and NOT `SOURCE_PATHSPEC`,** although
+ * that means a README commit moves the serial while detector A7, which reads
+ * `SOURCE_PATHSPEC`, calls the same commit nothing. The narrowing is not open:
+ * every serial this registry has published came from a README commit. At
+ * `cbbf1e5`, `git rev-list --count` gives 3 commits under this directory, 3
+ * touching its README and 0 under `*.json`, and `signed` (`5966ccf`) serves
+ * serial 4. Narrowed, the formula gives 1; with one advisory committed it would
+ * give 2, and the signer's `listGate` refuses both — SERVE-36, a list that goes
+ * backwards — so `decideDocument` carries the old list and the advisory is not
+ * published.
+ */
+export const SERIAL_PATHSPEC = SOURCE_DIR;
+
 /** Where the generated, deployable document lands. */
 export const OUTPUT_FILE = "registry/v1/revocations.json";
 
@@ -425,7 +451,7 @@ export function resolveSerial({ explicit, root = REPO_ROOT } = {}) {
     return n;
   }
   try {
-    const out = execFileSync("git", ["rev-list", "--count", "HEAD", "--", SOURCE_DIR], {
+    const out = execFileSync("git", ["rev-list", "--count", "HEAD", "--", SERIAL_PATHSPEC], {
       cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
