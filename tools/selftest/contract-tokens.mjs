@@ -266,9 +266,10 @@ export async function run() {
     // comparison the paragraph below says masked a real red on 2026-09-21. So
     // no red comes before the gate either. On a branch, HEAD~1 can also show a
     // change that the whole branch's delta has already versioned. The runner
-    // finds this check by reading it (a test() body whose code names `shallow`
-    // before a `neverAsk(`), prints the live lanes that ask it and fails when
-    // there are none. Keep the gate on the line above the call.
+    // finds this check by reading it (a `neverAsk(` first in the block of an
+    // `if` whose whole condition is the shallowness question), prints the live
+    // lanes that ask it and fails when there are none. Keep the gate written
+    // that way.
     if (isShallow(REPO_ROOT)) {
       neverAsk(
         "this checkout is shallow, so the commit the token file is compared against is not established: at depth " +

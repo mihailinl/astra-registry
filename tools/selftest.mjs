@@ -707,38 +707,177 @@ function historyBefore(job, step) {
 
 /**
  * The checks in this suite that say NOT ASKED in a shallow checkout, found by
- * reading them — `siblingGatedChecks`'s reason, and a tighter read than its:
- * a `test(...)` body in which CODE (not a comment) names `shallow` before a
- * `neverAsk(` in the same body. The title is the `test(...)` it sits inside.
- * Two places are deliberately not read: the title line, so a check whose NAME
- * mentions a shallow clone is not counted for that alone; and the `neverAsk(`
- * call's own arguments, so a message that SAYS "shallow" under a condition
- * that no longer tests it (`if (false) neverAsk("this checkout is shallow…")`)
- * is not counted either. Watched: without the second, that edit to
- * update-notes.mjs's record check left it counted, and the floor below green.
+ * reading them — `siblingGatedChecks`'s reason, and a tighter read than its.
+ * The title is the `test(...)` it sits inside, and the title line is not read
+ * for anything else, so a check whose NAME mentions a shallow clone is not
+ * counted for that alone.
+ *
+ * **A gate is counted by its CONDITION, not its shape.** A `neverAsk(` counts
+ * when it OPENS the block of an `if` (braced or not) whose condition is, whole,
+ * the shallowness question:
+ *
+ *   - `isShallow(…)` — the helper `tools/coverage/git.mjs` exports;
+ *   - `<fn>("rev-parse", "--is-shallow-repository") === "true"` — the question
+ *     itself, asked inline;
+ *   - `<name>.shallow`, where the same body bound `const <name> = <call>(…)`
+ *     before the `if` — the `shallow` a helper returned having asked it, as
+ *     `flagPermanenceProblems` does. This one trusts the helper's field to
+ *     mean what it is called;
+ *   - `<name>`, where the same body bound `const <name> = <either of the two
+ *     above, or the third>;` before the `if` — one gate written over two lines.
+ *
+ * Whole means whole: `!isShallow(…)`, `isShallow(…) && false` and a call in the
+ * `else` are not gates on shallowness, and first means first, so nothing is
+ * asked about what a block's other statements do. Anything this does not
+ * recognise is not counted, which can only lower the count and turn the floor
+ * red — the loud direction.
+ *
+ * Measured 2026-09-22, gap 81's open item: the census this replaced counted a
+ * body in which code named `shallow` anywhere above a `neverAsk(`, so
+ * `const shallow = isShallow(REPO_ROOT);` over `if (false) {` left every one of
+ * the five gates counted and the floor green — and so did the condition
+ * negated, `&& false` added, and the call moved into the `else`. It caught only
+ * a one-line `if (false)` and the block deleted. `checkHistoryCensus` below
+ * makes all five edits to every gate this finds, on every run.
  */
 function historyGatedChecks() {
   const out = [];
   for (const name of fs.readdirSync(SUITE_DIR).filter((n) => n.endsWith(".mjs")).sort()) {
-    let lines;
-    try { lines = fs.readFileSync(path.join(SUITE_DIR, name), "utf8").split("\n"); } catch { continue; }
-    let title = "";
-    let named = false;
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (/^\s*(\/\/|\/?\*)/.test(line)) continue;
-      const opened = /\btest\(\s*["'`](.+?)["'`]\s*,/.exec(line);
-      if (opened) { title = opened[1]; named = false; continue; }
-      if (!title) continue;
-      const call = line.search(/\bneverAsk\(/);
-      if (/shallow/i.test(call < 0 ? line : line.slice(0, call))) named = true;
-      if (named && call >= 0) {
-        out.push(`${title} — tools/selftest/${name}:${i + 1}`);
-        named = false;
-      }
+    let text;
+    try { text = fs.readFileSync(path.join(SUITE_DIR, name), "utf8"); } catch { continue; }
+    for (const g of historyGatesIn(text)) out.push(`${g.title} — tools/selftest/${name}:${g.line}`);
+  }
+  return out;
+}
+
+/** The two spellings of the question that need no binding to be read. */
+const SHALLOW_QUESTION = [
+  /^isShallow\([^()]*\)$/,
+  /^[\w$]+\(\s*(["'])rev-parse\1\s*,\s*(["'])--is-shallow-repository\2\s*\)\s*===\s*(["'])true\3$/,
+];
+
+/**
+ * Is `cond` — an `if`'s whole condition — the shallowness question? `before`
+ * is the body's code above the `if`, where a name it reads must be bound.
+ */
+function asksShallow(cond, before, bindings = 0) {
+  const c = cond.trim();
+  if (SHALLOW_QUESTION.some((re) => re.test(c))) return true;
+  const boundTo = (name) => {
+    const re = new RegExp(`\\bconst\\s+${name.replace(/\$/g, "\\$")}\\s*=\\s*([^;]*);`, "g");
+    return [...before.matchAll(re)].pop()?.[1]?.trim();
+  };
+  const member = /^([\w$]+)\.shallow$/.exec(c);
+  if (member) return /^[\w$.]+\(/.test(boundTo(member[1]) ?? "");
+  const bare = /^[\w$]+$/.exec(c);
+  if (bare && bindings === 0) {
+    const bound = boundTo(c);
+    return bound !== undefined && asksShallow(bound, before, 1);
+  }
+  return false;
+}
+
+/**
+ * The `if` whose block a call at `at` opens, read backwards over `code` no
+ * further than `from`: `{ cond, ifAt, condAt, condEnd }` as offsets, or null.
+ */
+function gateAbove(code, from, at) {
+  const head = code.slice(from, at).trimEnd().replace(/\{$/, "").trimEnd();
+  if (!head.endsWith(")")) return null;
+  let depth = 0;
+  let open = head.length - 1;
+  for (; open >= 0; open--) {
+    if (head[open] === ")") depth++;
+    else if (head[open] === "(" && --depth === 0) break;
+  }
+  if (open < 0) return null;
+  const kw = /(^|[^\w$.])if\s*$/.exec(head.slice(0, open));
+  if (!kw) return null;
+  return {
+    cond: head.slice(open + 1, head.length - 1),
+    ifAt: from + kw.index + kw[1].length,
+    condAt: from + open + 1,
+    condEnd: from + head.length - 1,
+  };
+}
+
+/**
+ * Every history gate in one module's text: `{ title, line, cond, ifAt, condAt,
+ * condEnd }`. Comments are blanked to spaces first, so offsets and line
+ * numbers are the text's own and a commented-out gate is not one.
+ */
+function historyGatesIn(text) {
+  const code = text.split("\n").map((l) => {
+    if (/^\s*(\/\/|\/?\*)/.test(l)) return " ".repeat(l.length);
+    const c = l.search(/\s\/\/.*$/);
+    return c < 0 ? l : l.slice(0, c) + " ".repeat(l.length - c);
+  }).join("\n");
+  const out = [];
+  let title = "";
+  let from = 0;
+  let offset = 0;
+  for (const [i, line] of code.split("\n").entries()) {
+    const start = offset;
+    offset += line.length + 1;
+    const opened = /\btest\(\s*["'`](.+?)["'`]\s*,/.exec(line);
+    if (opened) { title = opened[1]; from = offset; continue; }
+    if (!title) continue;
+    for (const m of line.matchAll(/\bneverAsk\(/g)) {
+      const gate = gateAbove(code, from, start + m.index);
+      if (gate && asksShallow(gate.cond, code.slice(from, gate.ifAt))) out.push({ title, line: i + 1, ...gate });
     }
   }
   return out;
+}
+
+/**
+ * The census, asked of itself on every run with material from the tree: for
+ * each gate it counts, four edits that keep the gate's SHAPE and lose its
+ * CONDITION must each lose that gate, and the same condition moved onto a line
+ * of its own must keep it. Without the second half a census that counted
+ * nothing would pass the first.
+ */
+function checkHistoryCensus() {
+  const problems = [];
+  for (const name of fs.readdirSync(SUITE_DIR).filter((n) => n.endsWith(".mjs")).sort()) {
+    let text;
+    try { text = fs.readFileSync(path.join(SUITE_DIR, name), "utf8"); } catch { continue; }
+    const gates = historyGatesIn(text);
+    for (const g of gates) {
+      const indent = /[ \t]*$/.exec(text.slice(0, g.ifAt))[0];
+      const withCond = (c, line = "") =>
+        text.slice(0, g.ifAt) + line + text.slice(g.ifAt, g.condAt) + c + text.slice(g.condEnd);
+      const lost = {
+        "`if (false)`": withCond("false"),
+        "`const shallow = <the condition>;` over `if (false)`": withCond("false", `const shallow = ${g.cond};\n${indent}`),
+        "the condition negated": withCond(`!(${g.cond})`),
+        "`&& false` added to the condition": withCond(`${g.cond} && false`),
+        "the call moved into the `else`": text.slice(0, g.condEnd + 1) + " {} else" + text.slice(g.condEnd + 1),
+      };
+      for (const [edit, mutated] of Object.entries(lost)) {
+        if (mutated === text) throw new Error(`the census's edit ${edit} changed nothing in ${name}`);
+        if (historyGatesIn(mutated).length !== gates.length - 1) {
+          problems.push(`tools/selftest/${name}:${g.line} (${g.title}) is still counted with ${edit}`);
+        }
+      }
+      // A gate already written over two lines is its own proof of this half,
+      // and binding it again would ask for a second binding, which is one
+      // more than the census follows.
+      if (/^[\w$]+$/.test(g.cond.trim())) continue;
+      const kept = withCond("shallowAsked", `const shallowAsked = ${g.cond};\n${indent}`);
+      if (historyGatesIn(kept).length !== gates.length) {
+        problems.push(`tools/selftest/${name}:${g.line} (${g.title}) is not counted with its condition bound on the line above`);
+      }
+    }
+  }
+  if (problems.length) {
+    fail("the history-gate census does not judge a gate by its condition", [
+      ...problems,
+      "`historyGatedChecks` in tools/selftest.mjs is what broke: a gate it counts must be an `if` whose whole " +
+      "condition is the shallowness question, with the `neverAsk(` first in its block. Gap 81 measured the census " +
+      "counting all five gates under `const shallow = isShallow(REPO_ROOT);` over `if (false) {`, and the floor green",
+    ]);
+  }
 }
 
 /** Every place in this repository that runs this suite, and what gates it. */
@@ -948,8 +1087,11 @@ function checkAbsenceEnvironment(live) {
 // transcript against a depth-1 clone's: catalogue.mjs's equal-serial check,
 // contract-tokens.mjs's version check, and the serial half of regenerate.mjs's
 // head-catalogue check, which is now a check of its own. Each printed `ok` at
-// depth 1 about history it had not asked. Each gate is the code line above its
-// `neverAsk(`, and replacing any one of them with `if (false)` turns this red.
+// depth 1 about history it had not asked. Each gate is an `if` whose whole
+// condition is the shallowness question, with its `neverAsk(` first in the
+// block; `historyGatedChecks` says what counts, and `checkHistoryCensus` makes
+// five edits to every gate that lose its condition and keep its shape, and
+// fails unless each one loses the gate. Deleting a gate's block turns this red.
 const HISTORY_GATED_FLOOR = 5;
 const HISTORY_GATED_DAY = "2026-09-22";
 
@@ -970,8 +1112,9 @@ function checkHistoryEnvironment(live, gated) {
         "see — gap 75, back — and nothing else in this suite notices, because it still reports once. If one " +
         "was retired deliberately, lower HISTORY_GATED_FLOOR in tools/selftest.mjs in the SAME commit; if every " +
         "one was, delete `checkHistoryEnvironment` and the line that calls it too. If not, this SCAN is what " +
-        "broke: it reads each test() body for code naming `shallow` above a `neverAsk(` in the same body, and " +
-        "a rename of either is invisible to it",
+        "broke: it counts a `neverAsk(` that opens the block of an `if` whose whole condition is `isShallow(…)`, " +
+        "the `--is-shallow-repository` question, or a `const` bound to one of those in the same body, so a rename " +
+        "of the helper or of `neverAsk` is invisible to it",
       ],
     );
   }
@@ -1205,6 +1348,7 @@ if (WANT_LANES) {
 }
 const LIVE_LANES = checkLanes(LANES);
 const ABSENCE_LANES = checkAbsenceEnvironment(LIVE_LANES);
+checkHistoryCensus();
 const HISTORY_LANES = checkHistoryEnvironment(LIVE_LANES, HISTORY_GATED);
 
 // `--census` is the one run that is allowed past this, because it is the run
