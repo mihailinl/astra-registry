@@ -325,6 +325,23 @@ export async function run() {
     assert(compareSemver("0.10.0", "0.9.0") === 1, "0.10.0 must be newer than 0.9.0");
     assert(compareSemver("1.0.0-alpha", "1.0.0") === -1);
     assert(compareSemver("1.0.0+a", "1.0.0+b") === 0, "build metadata must be ignored");
+    // semver.org 2.0.0 §11.4's own example, in order, every adjacent pair both
+    // ways. "Prerelease included" used to mean one pair, 1.0.0-alpha < 1.0.0, and
+    // measured 2026-09-22 each of the three rules INSIDE a prerelease could be
+    // broken in tools/lib/semver.mjs with all 317 checks green: numeric
+    // identifiers compared as strings (beta.11 before beta.2), numeric ranked
+    // above alphanumeric (alpha.beta before alpha.1), and a longer identifier
+    // set ranked below a shorter one (alpha.1 before alpha). Each of those
+    // orders two real releases the wrong way round, and the newest release is
+    // chosen by this function.
+    const chain = [
+      "1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta",
+      "1.0.0-beta.2", "1.0.0-beta.11", "1.0.0-rc.1", "1.0.0",
+    ];
+    for (let i = 0; i + 1 < chain.length; i++) {
+      assertEqual(compareSemver(chain[i], chain[i + 1]), -1, `${chain[i]} must precede ${chain[i + 1]} (semver.org §11.4)`);
+      assertEqual(compareSemver(chain[i + 1], chain[i]), 1, `${chain[i + 1]} must follow ${chain[i]} (semver.org §11.4)`);
+    }
   });
 
   console.log("\nzip reader/writer");
