@@ -225,6 +225,48 @@ export async function run() {
       "a second implementation of the release-tag pattern; tools/lib/tags.mjs is the one that decides");
   });
 
+  // One grammar for an ADVISORY id too, and the same shape of rule. It was
+  // typed in five modules until 2026-09-22 (gap 72's tails) and one copy took
+  // exactly four serial digits where the others took four or more.
+  // `tools/selftest/couplings.mjs` asks every reader it knows what it accepts;
+  // this is what catches the reader it does not know yet — a sixth copy.
+  //
+  // The needle is `ASTRA-` followed by a digit class, `\d` or `[0-9]`, with or
+  // without a capture paren and in string or regex spelling: every way the five
+  // copies were written. A prose id (`ASTRA-2026-0001`, `ASTRA-YYYY-NNNN`) has
+  // a literal digit or letter there and is not a grammar. `schema/` is left to
+  // the couplings check, which finds and asks every schema that spells one.
+  // One file is allowed a looser pattern, and it is the one whose relation to
+  // the grammar is held there as a superset: the docs detector must flag every
+  // advisory-looking URL, not validate one.
+  await test("only tools/lib/ids.mjs says what an advisory id is", async () => {
+    const OWNER = path.join("tools", "lib", "ids.mjs");
+    const HEURISTIC = path.join("tools", "coverage", "docs-advisory-url.mjs");
+    const offenders = [];
+    let heuristicSeen = false;
+    for (const file of walkRepo()) {
+      const rel = path.relative(REPO_ROOT, file);
+      if (rel === OWNER || isSuiteFile(rel) || rel.includes(`${path.sep}tests${path.sep}`)) continue;
+      if (rel.startsWith(`schema${path.sep}`) || rel.startsWith(`tests${path.sep}`)) continue;
+      let text;
+      try {
+        text = fs.readFileSync(file, "utf8");
+      } catch {
+        continue;
+      }
+      text.split("\n").forEach((line, i) => {
+        if (!/ASTRA-\(?(?:\\{1,2}d|\[0-9\])/.test(line)) return;
+        if (rel === HEURISTIC) heuristicSeen = true;
+        else offenders.push(`${rel}:${i + 1}`);
+      });
+    }
+    // The needle's own control: the one spelling it is allowed must still be
+    // found, or a needle that matches nothing would pass this for ever.
+    assert(heuristicSeen, `the needle no longer finds the looser pattern in ${HEURISTIC}; it cannot be trusted to find a copy`);
+    assertEqual(offenders.join(", "), "",
+      "a second implementation of the advisory-id grammar; tools/lib/ids.mjs's ADVISORY_ID_PATTERN is the one that decides");
+  });
+
   await test("the version schema's tag rule is the same rule, asserted by behaviour", async () => {
     const { isTag, TAG_MAX } = await import("../lib/tags.mjs");
     const schema = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "schema/version-v1.json"), "utf8"));

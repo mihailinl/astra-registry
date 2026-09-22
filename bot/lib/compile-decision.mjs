@@ -109,11 +109,11 @@ import { git } from "../../tools/coverage/git.mjs";
 import { ID_PATTERN } from "../../tools/lib/ids.mjs";
 import {
   ACTIONS as ADVISORY_ACTIONS,
+  ADVISORY_FILE,
   SEVERITIES,
   SOURCE_DIR as REVOCATIONS_DIR,
   checkAdvisory,
   loadAdvisories,
-  pathUnder,
 } from "../../tools/lib/revocations.mjs";
 import { REPO_ROOT } from "../../tools/lib/sources.mjs";
 import { compareSemver, parseSemver } from "../../tools/lib/semver.mjs";
@@ -410,13 +410,6 @@ function historicRepos(root, listing) {
 }
 
 /**
- * An added advisory's path, as `nextAdvisoryId`'s `git log` prints it. Built
- * from `REVOCATIONS_DIR`, the constant that log's pathspec is built from, so
- * the two cannot name different directories (gap 72).
- */
-const ADDED_ADVISORY_RE = pathUnder(REVOCATIONS_DIR, String.raw`ASTRA-(\d{4})-(\d{4,})\.json`);
-
-/**
  * MOD-13's next advisory id: one more than the highest ever ADDED.
  *
  * `--diff-filter=A` and not the tree, and the canary is the reason: add
@@ -437,9 +430,13 @@ export function nextAdvisoryId({ root = REPO_ROOT, year } = {}) {
   );
   let highest = 0;
   for (const line of out.split("\n")) {
-    const m = ADDED_ADVISORY_RE.exec(line.trim());
+    // `ADVISORY_FILE` is built from `REVOCATIONS_DIR`, the constant this log's
+    // pathspec is built from, so the two cannot name different directories
+    // (gap 72); its group 1 is the id, whose serial is everything after the
+    // second hyphen — four digits or more, which is what this writes.
+    const m = ADVISORY_FILE.exec(line.trim());
     if (!m) continue;
-    const serial = Number(m[2]);
+    const serial = Number(m[1].slice(m[1].lastIndexOf("-") + 1));
     if (Number.isSafeInteger(serial) && serial > highest) highest = serial;
   }
   const next = highest + 1;
