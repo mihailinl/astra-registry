@@ -16,6 +16,7 @@ import { stableStringify } from "../lib/canonical.mjs";
 import { compareSemver } from "../lib/semver.mjs";
 import { REPO_ROOT, loadSources } from "../lib/sources.mjs";
 import { stagingListingId } from "../lib/reserved.mjs";
+import { RESERVED_KEYS, SUPPORTED_KEYS } from "../lib/platform.mjs";
 import { makeFixtures } from "../make-fixtures.mjs";
 import { test, assert, assertEqual, neverAsk, tmp, validateTree, errorsMatching } from "./harness.mjs";
 import { withFakeAstraPlugins } from "./fixtures.mjs";
@@ -441,6 +442,60 @@ export async function run() {
     const { report } = await validateTree(dir);
     assert(errorsMatching(report, "reserved key with no host").length === 1,
       "an artifact was listed for a platform Astra ships no daemon for");
+  });
+  await test("the validator's platform keys are the schema's vocabulary and platform.mjs's table, member for member", async () => {
+    // One vocabulary, four literals, no import between them: tools/validate.mjs's
+    // PLATFORM_KEYS and UNSUPPORTED_KEYS, tools/lib/platform.mjs's SUPPORTED_KEYS
+    // and RESERVED_KEYS, and schema/version-v1.json's artifact enum. Measured
+    // 2026-09-22 against the check above, which asks one reserved key: adding
+    // `freebsd-x64` to PLATFORM_KEYS, deleting `linux-arm64` from it, deleting
+    // `linux-arm64` from UNSUPPORTED_KEYS, and deleting it from RESERVED_KEYS
+    // each left all 317 checks green. The third is the one that fails OPEN:
+    // the schema still allows the key, the validator no longer calls it
+    // reserved, and a listing whose artifact can run on no Astra host is
+    // accepted.
+    //
+    // The validator's set is read from the validator — an unknown key's refusal
+    // lists every key it knows — rather than from its source, and each side of
+    // its partition is asked by listing an artifact under every key of it.
+    const probe = async (key, n) => {
+      const dir = path.join(tmp, `platform-probe-${n}`);
+      fs.cpSync(path.join(REPO_ROOT, "tests/fixtures/id-collision/plugins/dice-roller"), path.join(dir, "plugins/dice-roller"), { recursive: true });
+      const vf = path.join(dir, "plugins/dice-roller/versions/1.0.0.json");
+      const v = JSON.parse(fs.readFileSync(vf, "utf8"));
+      const art = { ...v.artifacts["linux-x64"] };
+      art.url = art.url.replace("linux-x64", key);
+      art.filename = art.filename.replace("linux-x64", key);
+      v.artifacts = { [key]: art };
+      fs.writeFileSync(vf, stableStringify(v));
+      return (await validateTree(dir)).report;
+    };
+    const sorted = (keys) => [...keys].sort().join(" ");
+    const schemaEnum = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "schema/version-v1.json"), "utf8"))
+      .properties?.artifacts?.propertyNames?.enum;
+    assert(Array.isArray(schemaEnum) && schemaEnum.length > 0,
+      "schema/version-v1.json no longer states its platform vocabulary at properties.artifacts.propertyNames.enum");
+
+    const unknown = errorsMatching(await probe("no-such-host", 0), "is not a platform key");
+    assertEqual(unknown.length, 1, "an artifact under a key nobody defines was not refused as one");
+    const listed = /^Known keys: (.+)\. These are /.exec(unknown[0].hint ?? "");
+    assert(listed, `the refusal no longer names the keys the validator knows: ${JSON.stringify(unknown[0].hint)}`);
+    const known = sorted(listed[1].split(", "));
+    assertEqual(known, sorted(schemaEnum),
+      "tools/validate.mjs's PLATFORM_KEYS is not schema/version-v1.json's artifact vocabulary");
+    assertEqual(known, sorted([...SUPPORTED_KEYS, ...RESERVED_KEYS]),
+      "tools/validate.mjs's PLATFORM_KEYS is not tools/lib/platform.mjs's SUPPORTED_KEYS and RESERVED_KEYS");
+
+    let n = 1;
+    for (const key of RESERVED_KEYS) {
+      assertEqual(errorsMatching(await probe(key, n++), "reserved key with no host").length, 1,
+        `${key} is reserved in tools/lib/platform.mjs, and tools/validate.mjs did not refuse an artifact under it as reserved`);
+    }
+    for (const key of SUPPORTED_KEYS) {
+      const refused = (await probe(key, n++)).errors.filter((e) => /platform key|reserved key/.test(e.message));
+      assertEqual(refused.map((e) => e.message).join("; "), "",
+        `${key} is supported in tools/lib/platform.mjs, and tools/validate.mjs refused an artifact under it`);
+    }
   });
 
 
