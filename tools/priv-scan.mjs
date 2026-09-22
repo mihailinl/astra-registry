@@ -109,6 +109,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { report } from "./coverage/rules.mjs";
 import {
   blobAt, changedPaths, commitMeta, commitsAfter, historyCount, introducingCommit, isShallow,
+  mergeOwnChanges, mergesAfter,
 } from "./coverage/git.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -495,38 +496,73 @@ export function run(repo, { from, historyFloor = HISTORY_FLOOR } = {}) {
 
   const roles = roleAddresses(repo);
   const shas = commitsAfter(start, repo);
+  const merges = mergesAfter(start, repo);
   const findings = [];
   let documents = 0;
+  let mergeDocuments = 0;
+  let mergesWithOwnChanges = 0;
 
-  for (const sha of shas) {
+  const scanMessage = (sha) => {
     const meta = commitMeta(sha, repo);
     for (const f of shapeFindings(withoutAuthorship(meta.message), { roles })) {
       findings.push({ sha, where: "commit-message", code: f.code, what: f.what });
     }
+  };
+
+  for (const sha of shas) {
+    scanMessage(sha);
     for (const { status, path: p } of changedPaths(sha, repo)) {
       if (status === "D") continue;
       const { composed, kind } = classify(p);
       if (!composed) continue;
       documents++;
-      const raw = blobAt(sha, p, repo);
-      if (raw === null) continue;
-      if (kind === null) {
-        findings.push({
-          sha, where: p, code: "E_PRIV_UNDECLARED_DOCUMENT",
-          what: `${p} is under a composed path and no kind in tools/priv-scan.mjs declares its members; ` +
-            "declare it there, with the requirement that fixes each member, in the commit that introduces it",
-        });
-        continue;
+      for (const f of documentFindings(blobAt(sha, p, repo), p, kind, roles)) findings.push({ sha, where: p, ...f });
+    }
+  }
+
+  // ── what a merge's own resolution wrote (gap 93) ─────────────────────────
+  //
+  // `commitsAfter` is right to leave merges out — a merge's first-parent diff
+  // is the branch again — and wrong to be the only walk: an address typed
+  // while resolving a conflict is in no side's commit, so it was in no walk.
+  // A merge is judged on the paths its resolution changed (`mergeOwnChanges`,
+  // remerge semantics), and on each one reports only what NO parent's copy of
+  // that document already had. That subtraction is what keeps a conflict
+  // resolved by keeping both sides — which changes the file relative to the
+  // conflicted remerge, and so is in `changes` — from reporting the side's
+  // finding a second time under the merge's SHA, where the side's exemption
+  // entry would not match it.
+  //
+  // **And its message.** A commit message is composed content whoever wrote
+  // it: `git merge -m`, a lane's "Merge origin/main into …" body and the
+  // pull-request title GitHub puts in its own merge message are all typed by
+  // somebody, and until gap 93 this walk read none of them.
+  for (const sha of merges) {
+    scanMessage(sha);
+    const own = mergeOwnChanges(sha, repo);
+    if (!own.judged) {
+      findings.push({
+        sha, where: "merge", code: "E_PRIV_MERGE_NOT_JUDGED",
+        what: `a merge of ${own.parents.length} parents has no two-sided remerge, so what its own resolution ` +
+          "wrote was not scanned; an octopus merge is not a clean one because this walk could not read it",
+      });
+      continue;
+    }
+    if (own.changes.length) mergesWithOwnChanges++;
+    for (const { status, path: p } of own.changes) {
+      if (status === "D") continue;
+      const { composed, kind } = classify(p);
+      if (!composed) continue;
+      mergeDocuments++;
+      const inherited = new Set();
+      for (const parent of own.parents) {
+        const before = blobAt(parent, p, repo);
+        if (before === null) continue;
+        for (const f of documentFindings(before, p, kind, roles)) inherited.add(JSON.stringify([f.code, f.what]));
       }
-      let value;
-      try {
-        value = JSON.parse(raw);
-      } catch (e) {
-        findings.push({ sha, where: p, code: "E_PRIV_UNREADABLE", what: String(e.message) });
-        continue;
-      }
-      for (const f of scanDocument(value, kind, roles)) {
-        findings.push({ sha, where: p, code: f.code, what: f.what });
+      for (const f of documentFindings(blobAt(sha, p, repo), p, kind, roles)) {
+        if (inherited.has(JSON.stringify([f.code, f.what]))) continue;
+        findings.push({ sha, where: p, ...f });
       }
     }
   }
@@ -560,7 +596,36 @@ export function run(repo, { from, historyFloor = HISTORY_FLOOR } = {}) {
     `walk: ${shas.length} commit(s) after ${start.slice(0, 12)}, ${documents} composed document(s), ` +
     `${roles.size} exempt role address(es), ${exemptions.length} exemption(s)`,
   );
+  detail.push(
+    `merges: ${merges.length} merge(s) in range, messages scanned; ${mergesWithOwnChanges} whose own ` +
+    `resolution changed a path, ${mergeDocuments} composed document(s) among those changes`,
+  );
   return { status: codes.length ? "red" : "green", codes, ids: [], hexes, detail };
+}
+
+/**
+ * The findings one composed document yields, without a SHA or a place — the
+ * commit walk and the merge walk both attach those.
+ *
+ * @param {string|null} raw the blob, or null when the path is absent
+ * @returns {{code: string, what: string}[]}
+ */
+function documentFindings(raw, p, kind, roles) {
+  if (raw === null) return [];
+  if (kind === null) {
+    return [{
+      code: "E_PRIV_UNDECLARED_DOCUMENT",
+      what: `${p} is under a composed path and no kind in tools/priv-scan.mjs declares its members; ` +
+        "declare it there, with the requirement that fixes each member, in the commit that introduces it",
+    }];
+  }
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch (e) {
+    return [{ code: "E_PRIV_UNREADABLE", what: String(e.message) }];
+  }
+  return scanDocument(value, kind, roles);
 }
 
 function parseArgs(argv) {
