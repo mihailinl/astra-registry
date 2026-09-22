@@ -143,6 +143,56 @@
 // what this is for — and `withheld` is part of `markerProblems`'s return shape,
 // consumed in the unasked summary. What is stale is prose, and only prose.
 //
+// ── THE PREDICATE NAMES A TYPE AND THE WIRE MEMBER HAS NONE ────────────────
+//
+// dev/couplings.md entry 58. Contract 0.30.1 conditions `cutover_planned_at`
+// on `{"iff": {"round": {"not": [1]}}}`. The predicate names the INTEGER `1`,
+// and `predicateHolds` compares with `Array.includes`, which does not coerce.
+//
+// So if M-T5.3's writer ever emits `"round": "1"` as a string, `[1].includes`
+// says no, the complement says yes, the condition HOLDS, and a conforming
+// round-1 marker is reported missing a date the contract does not ask it for —
+// FAIL · UNMET, at the gate that decides whether the catalogue may move, with
+// the finger pointing at whoever wrote the marker. That is the direction
+// SCOPE-8 exists to prevent, and it would have been created by discharging a
+// SCOPE-8 finding. The mirror case is as bad and quieter: `{"round": [2]}`
+// meeting `"2"` does not hold, so an `iff` reports the date FORBIDDEN on a
+// marker that carries it correctly.
+//
+// NOTHING COMPARES THE TWO. There is no `schema/migration-notice-v1.json`:
+// `loadSchemas` loads seven schemas and none of them is this record, and
+// `tools/validate.mjs` judges no such file — the marker is the one B.4 record
+// in this repository that no schema judges. `schema/contract-tokens-v1.json`
+// records a member's requiredness and its condition and NEVER its type. B.4
+// states the member list and does not say what a `round` is. So the writer's
+// spelling and the predicate's spelling are two hand-kept facts with nothing
+// between them, which is the shape this register calls a coupling.
+//
+// THIS FILE DOES NOT CLOSE THAT, and must not pretend to. What it does is stop
+// ANSWERING a question it cannot read, which is the same rule as the paragraph
+// above: where the predicate names values of one type and the marker carries
+// another, neither branch of the condition is a reading of the contract, so
+// the member is WITHHELD — NOT ASKED, exit 2, naming the party — instead of
+// producing a no about a marker no published document refuses. Withholding is
+// the direction the token file's readme calls safe, and it is also the only
+// direction that puts the missing schema in front of the operator each time a
+// marker is read, rather than in a register.
+//
+// WHAT THAT LEAVES OPEN, said here because a guard should say what it is not:
+//
+//   * it asks only this tool. M-T5.3's writer can still emit a string, and
+//     nothing tells it so; a second reader of `log/migration-notice-<n>.json`
+//     inherits the same untyped member and may coerce, or not, differently.
+//   * it cannot decide which spelling is right, because no document states
+//     one. It reports that two hand-kept facts have diverged.
+//   * the closure that would ask every party is the thirteenth in-set
+//     `schema/*.json`, validated here the way `checkDeadline` already
+//     validates `policy/binding-deadline.json` against `schema/deadline-v1.json`
+//     read from the same ref. TRUST-31 prices that as a contract MINOR
+//     published BEFORE the file lands — `bot/tests/code-paths.test.mjs` holds
+//     the tree red until it is — so it is not a thing a lane adds on the way
+//     past.
+//
 // ── IT PRINTS FAIL ON THE TREE IT LANDS ON, AND THAT IS THE DESIGN ──────────
 //
 // reg.93's row says so: "must print FAIL on the tree it lands on". At R0/R1
@@ -169,7 +219,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 import { REPO_ROOT, QUEUE_DIR } from "./lib/sources.mjs";
 import { validate } from "./lib/jsonschema.mjs";
@@ -227,6 +277,21 @@ const DISPUTED_MEMBERS = Object.freeze([
       "disagreement, and the file carrying it flat again is what re-armed the withholding",
   }),
 ]);
+
+/**
+ * Who answers a question about the marker's member TYPES.
+ *
+ * Nobody, and the line says so rather than naming a placeholder party, because
+ * a NOT ASKED in this tool is a person to go and find and "go and find nobody"
+ * is the finding. See the header, entry 58.
+ */
+const WHO_TYPES_THE_MARKER =
+  `whoever publishes this record's member TYPES — and today no document does. ${TOKEN_FILE} ` +
+  "records a member's requiredness and its condition and never its type; there is no " +
+  "`schema/migration-notice-v1.json` for tools/validate.mjs to judge a marker against (contract " +
+  "pending-register item 6, second half); and B.4 states the member list without saying what a " +
+  "`round` is. Until one of those does, M-T5.3's writer and the contract's `when` agree by hand and " +
+  "nothing compares them — dev/couplings.md entry 58";
 
 /** The workflow that carries BOT-87's poll and sweep, and the three jobs
  *  B-T5.0 turns on. Until they are on, no shadow poll has run or could have. */
@@ -368,9 +433,30 @@ export function evalRound2(markers, now) {
       "round 2 has not been sent, so ROLL-32's 30 days have not started.",
     ]);
   }
-  const bad = markers.filter((m) => !Number.isInteger(m.doc?.round));
-  if (bad.length) {
-    return unmet("a marker carries no integer `round`", bad.map((m) => `  ${m.file}`));
+  // Entry 58. Every line below this one needs `round` to be an integer: the
+  // rounds are ordered, the highest is taken as authoritative, and `>= 2`
+  // decides which markers must agree about a date. A `"2"` breaks all three.
+  //
+  // It is NOT ASKED and not UNMET, by the same argument the header makes for
+  // an unevaluable `when`. UNMET would say this tool asked the marker a
+  // question and the marker answered no — but no published document states
+  // this member's type, so a no here refuses a marker nothing refuses, at the
+  // gate that decides whether the catalogue may move, with the finger pointing
+  // at its author. NOT ASKED still fails, still exits 2, and names the party.
+  const untyped = markers.filter((m) => !Number.isInteger(m.doc?.round));
+  if (untyped.length) {
+    return notAsked(
+      "a marker's `round` is not an integer, and no published document says it must be",
+      WHO_TYPES_THE_MARKER,
+      [
+        ...untyped.map((m) => `  ${m.file}: round=${JSON.stringify(m.doc?.round)}`),
+        "this tool orders the rounds, takes the highest as authoritative, and compares `round >= 2`;",
+        "none of those is defined on a value that is not an integer, so no clock was read.",
+        "and the contract's own condition on `cutover_planned_at` names the INTEGER `1`, compared with",
+        "`Array.includes`, which does not coerce — against a `\"1\"` that condition silently takes its",
+        "other branch and requires a date of the one marker B.4 does not ask for one.",
+      ],
+    );
   }
   // The file name carries the round too (`migration-notice-<n>.json`), and two
   // readers pick different ones: this preflight and M-T5.4's watch read the
@@ -569,6 +655,11 @@ function checkRound2(ctx) {
     markers.push({ file: p, round: Number(m[1]), doc: doc ?? {} });
   }
   const r = evalRound2(markers, ctx.now);
+  // `notAsked` appends its own `answered by:` line to the result it builds. The
+  // clock's result is folded into this one, and every verdict below appends a
+  // line naming the unasked parties, the clock's included — so the inner copy
+  // is dropped rather than printed twice in one record.
+  const clockLines = r.verdict === NOT_ASKED ? r.lines.slice(0, -1) : r.lines;
   // The member list comes from the contract's own token file rather than from a
   // literal here, so a member added or retired by a contract release reaches
   // this check without an edit — and a token file that stops naming the record
@@ -584,7 +675,7 @@ function checkRound2(ctx) {
   }
   if (!table) {
     return unmet(`${TOKEN_FILE} no longer names ${MARKER_SCHEMA}`, [
-      ...r.lines,
+      ...clockLines,
       "this preflight takes the marker's members from the token file.",
       "if the contract retired the record, this check is checking nothing until somebody says what replaced it.",
     ]);
@@ -593,7 +684,7 @@ function checkRound2(ctx) {
   // Requiredness is read as the three-valued field it is, and a condition is
   // evaluated rather than excepted. The header says what each of the three
   // answers is worth here, and why an unevaluable condition is NOT ASKED.
-  const lines = [...r.lines, ...describeTable(table)];
+  const lines = [...clockLines, ...describeTable(table)];
   const { readable, refused } = splitTable(table);
   const no = [];
   const unasked = [];
@@ -623,22 +714,37 @@ function checkRound2(ctx) {
     );
   }
 
-  // An answered no about the clock stands whatever else went unasked: a
-  // conjunction with a false conjunct is false. Only where the clock is MET do
-  // the member readings decide the word.
+  // An answered no stands whatever else went unasked: a conjunction with a
+  // false conjunct is false. Where nothing is answered no, one unasked
+  // conjunct — the clock's or a member's — makes the conjunction unasked.
+  // Three conjuncts now, not two: entry 58 gave the CLOCK a way to come back
+  // NOT ASKED, and a clock that was never read must not be printed under a
+  // headline beginning "the clock is met".
   if (r.verdict === UNMET) return { ...r, lines };
   if (no.length) {
-    return unmet("the clock is met, and a marker does not carry the members the contract states", [
-      `the clock: ${r.headline}`,
-      ...lines,
-    ]);
-  }
-  if (unasked.length) {
-    return notAsked(
-      "the clock is met, and this tool cannot say what a conforming marker is",
-      [...new Set(unasked.map((u) => u.who))].join("; and "),
+    return unmet(
+      `${r.verdict === MET ? "the clock is met, and a" : "a"} marker does not carry the members the contract states`,
       [`the clock: ${r.headline}`, ...lines],
     );
+  }
+  if (r.verdict === NOT_ASKED || unasked.length) {
+    const who = [
+      ...new Set([
+        ...(r.verdict === NOT_ASKED ? [WHO_TYPES_THE_MARKER] : []),
+        ...unasked.map((u) => u.who),
+      ]),
+    ];
+    // `the clock: …` is prefixed only where the headline is about something
+    // else. Where the clock IS the unasked conjunct it is already the
+    // headline, and repeating it under itself is a record saying one fact
+    // twice in two lines.
+    return r.verdict === NOT_ASKED
+      ? notAsked(r.headline, who.join("; and "), lines)
+      : notAsked(
+          "the clock is met, and this tool cannot say what a conforming marker is",
+          who.join("; and "),
+          [`the clock: ${r.headline}`, ...lines],
+        );
   }
   return { ...r, lines };
 }
@@ -753,6 +859,59 @@ export function predicateHolds(predicate, doc) {
   throw unreadable();
 }
 
+/** A JSON value's type, in the words a record's reader would use. */
+function jsonType(v) {
+  if (v === null) return "null";
+  if (Array.isArray(v)) return "array";
+  return typeof v;
+}
+
+/**
+ * The predicate names values of one type, and this marker carries the member
+ * with another. Entry 58, and the header says why it is a refusal.
+ *
+ * `predicateHolds` is RIGHT as published — the readme says a value list holds
+ * "when it is carried with one of them", and `"1"` is not one of `[1]`. What
+ * it cannot do is tell the two readings apart: a marker the contract genuinely
+ * EXCLUDES looks exactly like a marker that spelled the member's type
+ * differently, and there is no document that says which. So this asks the
+ * question `predicateHolds` cannot, BEFORE the answer is taken.
+ *
+ * It is a MARKER fact, so it lives here and not in `splitTable`: a table with
+ * a perfectly readable `when` is still readable, and stays readable on a ref
+ * carrying no markers at all. Only a marker can disagree with it.
+ *
+ * Three cases return null, each for a published reason:
+ *   * `{"member": "absent"}` asks about presence, and presence has no type.
+ *   * a member that is not carried has no value to type, and the readme
+ *     already publishes what both value shapes do with that: neither holds.
+ *   * a carried value whose type IS among the listed ones — there the
+ *     comparison is a real comparison and its answer is a real answer.
+ *
+ * @returns {null | {member: string, carried: unknown, carriedType: string,
+ *                   values: unknown[], valueTypes: string[]}}
+ */
+export function predicateTypeMismatch(predicate, doc) {
+  if (predicate === null || typeof predicate !== "object" || Array.isArray(predicate)) return null;
+  const names = Object.keys(predicate);
+  if (names.length !== 1) return null;
+  const [name] = names;
+  const rule = predicate[name];
+  if (rule === "absent") return null;
+  const values = Array.isArray(rule)
+    ? rule
+    : rule !== null && typeof rule === "object" && Array.isArray(rule.not)
+      ? rule.not
+      : null;
+  if (values === null || values.length === 0) return null;
+  const body = doc !== null && typeof doc === "object" ? doc : {};
+  if (!(name in body)) return null;
+  const carriedType = jsonType(body[name]);
+  const valueTypes = [...new Set(values.map(jsonType))];
+  if (valueTypes.includes(carriedType)) return null;
+  return { member: name, carried: body[name], carriedType, values, valueTypes };
+}
+
 /** A predicate, in words, for the one line a reader of the record meets. */
 export function describePredicate(predicate) {
   const [name] = Object.keys(predicate);
@@ -814,6 +973,12 @@ export function describeTable(table) {
  * over the marker's own keys here, which is the shape that cannot regress into
  * a closed world by somebody adding an `else`.
  *
+ * `withheld` has two producers and they are the same rule twice: two published
+ * documents disagreeing about a flat member (`DISPUTED_MEMBERS`), and a
+ * published predicate whose value types the marker does not share (entry 58).
+ * In both, this tool can see the disagreement and cannot see which side is
+ * right, so it reports the disagreement instead of answering.
+ *
  * @returns {{missing: string[], forbidden: string[], withheld: {message: string, who: string}[]}}
  */
 export function markerProblems(readable, doc) {
@@ -824,6 +989,29 @@ export function markerProblems(readable, doc) {
   for (const m of readable) {
     if (m.required === "conditional") {
       const { kind, predicate } = readWhen(m);
+      // Entry 58, and it is asked BEFORE the answer is taken. Where the
+      // predicate's values and the marker's value are of different types, the
+      // strict compare below silently takes the other branch, and which branch
+      // that is decides only whether this tool calls the member missing or
+      // forbidden. Both are a no about a marker no published document refuses.
+      const mismatch = predicateTypeMismatch(predicate, body);
+      if (mismatch) {
+        withheld.push({
+          message:
+            `\`${m.name}\`: its \`${kind}\` asks whether \`${mismatch.member}\` is ` +
+            `${Array.isArray(predicate[mismatch.member]) ? "" : "not "}one of ` +
+            `${mismatch.values.map((v) => JSON.stringify(v)).join(", ")} ` +
+            `(${mismatch.valueTypes.join(", ")}), and this marker carries \`${mismatch.member}\` as ` +
+            `${JSON.stringify(mismatch.carried)} (${mismatch.carriedType}). The comparison is ` +
+            "`Array.includes`, which does not coerce, so the condition would silently take its other " +
+            "branch — and a marker the contract EXCLUDES is then indistinguishable from one that spelled " +
+            "the member's type differently. Answering would refuse a marker no published document " +
+            "refuses, at the gate that decides whether the catalogue may move, which reads downstream as " +
+            "a defect in whoever wrote the marker. So this tool did not ask",
+          who: WHO_TYPES_THE_MARKER,
+        });
+        continue;
+      }
       const holds = predicateHolds(predicate, body);
       const carried = m.name in body;
       // Both halves of a biconditional, and only the requiring half of an `if`:
@@ -1285,6 +1473,122 @@ function main(argv) {
 // implementation gives the opposite answer, which is the only kind worth
 // asserting.
 
+/**
+ * dev/couplings.md entry 60. IMPORTING THIS MODULE MUST DO NOTHING.
+ *
+ * This file exports its evaluators and used to run its whole eleven-check gate at
+ * module scope. Nothing imported it, so that cost nothing and was invisible —
+ * until contract 0.30.0 made `bot/tests/service.test.mjs` import `splitTable`
+ * and `markerProblems`, and the first attempt printed the entire cutover gate,
+ * a live `gh` query and a walk of four repositories, before its first
+ * assertion. The main guard at the bottom of this file fixed it.
+ *
+ * THE GAP WAS THAT REMOVING THE GUARD SAYS NOTHING, and the register's phrase
+ * for it — "still passes" — is half right and worth correcting here, because
+ * it was measured. Removed, `node --test bot/tests/service.test.mjs` prints
+ * 201 lines of cutover gate into its own transcript, runs 134 ms → 710 ms, and
+ * reports 47 of 48 pass with the 48th being THE FILE, failing as `'test
+ * failed'`: no assertion, no message, no file to open. That is not a pass, and
+ * it is not a finding either. It is also conditional — the non-zero comes from
+ * `process.exitCode = main(…)` — so the day this gate goes green the test
+ * quietly passes with a live `gh` query inside it, which is the register's
+ * case exactly. A test that starts making network calls is a test whose
+ * environment has changed and whose verdict has not.
+ *
+ * Two instruments, because a single green line here is load-bearing, and the
+ * mutation showed why it has to be two:
+ *
+ *   OUTPUT     the child's stdout and stderr — the symptom that was actually
+ *              watched. Under the shims below it sees only the FIRST line the
+ *              program manages to print, because a failing `git` stops `main`
+ *              at `cannot resolve ref`. It is the weaker of the two here and
+ *              it is kept because it is the one that still means something
+ *              when the shims are what has broken.
+ *   SUBPROCESS `git` and `gh` are replaced on the child's PATH by shims that
+ *              record being called. This is the property by name: a module
+ *              whose top level reaches no network entry point. `gh` is the
+ *              network one; `git` is in because the walk of four repositories
+ *              is what makes the import slow, and because it fires first — it
+ *              reported all seven calls where OUTPUT reported one line.
+ *
+ * AND A POSITIVE CONTROL, so that two empty results are a measurement and not
+ * a silence: the same file is run as a PROGRAM through the same shims, and
+ * both instruments must see it. Without that, a typo in a shim, an unset PATH
+ * or a child that never started reads exactly like a guard that works.
+ *
+ * The importer is a real file run as `node <file>`, not `node -e`, so that
+ * `process.argv[1]` is a path — a faithful stand-in for the test runner, and
+ * not a cosmetic choice. Watched: with the guard cut down to `process.argv[1]`
+ * alone, all three assertions still fire. Under `-e`, where argv[1] is
+ * undefined, that mutation would have come back green.
+ *
+ * WHAT IT DOES NOT COVER: a module-scope `fs.readFileSync` passes both
+ * instruments. That is deliberate rather than overlooked — it is not a network
+ * acquisition, and the alternatives that would catch it (monkeypatching a
+ * builtin's ESM facade before the dynamic import, or a permission flag) are
+ * version-dependent machinery in exchange for a property nothing here asks for.
+ *
+ * NOT A TIMING FLOOR, and the reason is the same reason this entry exists. A
+ * floor ("the import must finish in under N ms") measures the machine: red on
+ * a loaded runner, green on a fast one with the network warm. Its failure
+ * names no defect and points at no file — "the import took 3.2 s" is a fact
+ * about an afternoon. And the thing it is meant to catch IS network latency,
+ * so its true positives and its false positives arrive in the same words, which
+ * is the position `bot/tests/service.test.mjs` is already in.
+ */
+function importIsInert(is) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "preflight-import-"));
+  try {
+    const bin = path.join(dir, "bin");
+    fs.mkdirSync(bin);
+    const calls = path.join(dir, "calls");
+    for (const name of ["git", "gh"]) {
+      const shim = path.join(bin, name);
+      fs.writeFileSync(shim, `#!/bin/sh\nprintf '${name}\\n' >> "$PREFLIGHT_SELFTEST_CALLS"\nexit 1\n`);
+      fs.chmodSync(shim, 0o755);
+    }
+    const self = fileURLToPath(import.meta.url);
+    const importer = path.join(dir, "importer.mjs");
+    fs.writeFileSync(importer, `await import(${JSON.stringify(import.meta.url)});\n`);
+
+    const run = (argv) => {
+      fs.writeFileSync(calls, "");
+      const r = spawnSync(process.execPath, argv, {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        timeout: 120_000,
+        env: {
+          ...process.env,
+          PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+          PREFLIGHT_SELFTEST_CALLS: calls,
+        },
+      });
+      const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+      return {
+        status: r.status,
+        calls: fs.readFileSync(calls, "utf8").split("\n").filter(Boolean),
+        // Named rather than dumped: a failure here would otherwise paste the
+        // whole cutover gate into the selftest's own transcript, which is the
+        // defect being reported, twice.
+        output: out === ""
+          ? "silent"
+          : `${out.split("\n").filter(Boolean).length} lines, first: ${JSON.stringify(out.split("\n")[0])}`,
+      };
+    };
+
+    const imported = run([importer]);
+    is("60: importing this module prints nothing", imported.output, "silent");
+    is("60: importing this module starts no `git` and no `gh`", imported.calls.join(",") || "none", "none");
+    is("60: importing this module exits 0", imported.status, 0);
+
+    const program = run([self, "--no-github"]);
+    is("60 control: run as a program it does start `git`", program.calls.includes("git"), true);
+    is("60 control: run as a program it does print", program.output === "silent", false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 function selftest() {
   const fails = [];
   const is = (what, got, want) => {
@@ -1527,6 +1831,97 @@ function selftest() {
     true,
   );
 
+  // ── entry 58: a PUBLISHED `when` meeting a string round ──────────────────
+  //
+  // Not a broken file. `publishedTable` is 0.30.1's, byte for byte, and the
+  // only thing wrong is the type of a member no document types. Every case
+  // below is one where the strict compare gives an ANSWER, and the answer is
+  // about a marker no published document refuses.
+  //
+  // The counts before this guard existed, measured by putting the fixtures in
+  // first, are in the middle column, and two of them are the bad direction:
+  //
+  //   round "1", no date        1/0/0/0  a CONFORMING round-1 marker reported
+  //                                      missing a date B.4 does not ask it for
+  //   round "1", dated          0/0/0/0  and its mirror: the `iff`'s forbidding
+  //                                      half stops forbidding
+  //   round "2", no date        1/0/0/0  right by accident
+  //   round "2", dated          0/0/0/0  right by accident
+  //
+  // The first is the one that reaches an operator: FAIL · UNMET at the R6
+  // cutover gate, pointing at whoever wrote the marker.
+  const strRound = (round, extra = {}) => ({
+    schema: MARKER_SCHEMA, round, sent_at: "2026-08-01T00:00:00Z", ...extra,
+  });
+  const dated = { cutover_planned_at: "2026-09-15T00:00:00Z" };
+  for (const [what, doc] of [
+    ["round 1, undated", strRound("1")],
+    ["round 1, dated", strRound("1", dated)],
+    ["round 2, undated", strRound("2")],
+    ["round 2, dated", strRound("2", dated)],
+  ]) {
+    is(`58: a string \`round\` is withheld, not answered — ${what}`, counts(publishedTable, doc), "0/0/1/0");
+  }
+  // And the control, so that four withheld lines are a measurement and not a
+  // function that withholds on everything: the same table, the same members,
+  // integer rounds, still answers all four ways.
+  is("58 control: integer round 1 undated still answers clean", counts(publishedTable, r1), "0/0/0/0");
+  is("58 control: integer round 1 dated is still forbidden", counts(publishedTable, r1Dated), "0/1/0/0");
+  is("58 control: integer round 2 undated is still missing", counts(publishedTable, r2), "1/0/0/0");
+  is("58 control: integer round 2 dated is still clean", counts(publishedTable, r2Dated), "0/0/0/0");
+
+  // A refusal is a TABLE fact and a type mismatch is a MARKER fact, and they
+  // must not be confused: the table above is perfectly readable, and stays
+  // readable on a ref carrying no markers at all.
+  is("58: a string round refuses no member of the table", splitTable(publishedTable).refused.length, 0);
+
+  // The message is the whole deliverable of a withheld line, so it is asserted
+  // rather than assumed. It must name the direction — this is a refusal of a
+  // CONFORMING marker at the gate — and the party, which is nobody.
+  {
+    const w = read(publishedTable, strRound("1")).withheld[0] ?? { message: "", who: "" };
+    is("58: the message names both spellings", w.message.includes('`round` as "1" (string)'), true);
+    is("58: the message names the missing coercion", w.message.includes("does not coerce"), true);
+    is(
+      "58: the message names the failure direction",
+      w.message.includes("refuse a marker no published document refuses"),
+      true,
+    );
+    is("58: who names the absent schema", w.who.includes("schema/migration-notice-v1.json"), true);
+    is("58: who names the register entry", w.who.includes("entry 58"), true);
+  }
+
+  // The typing question itself, on its own.
+  is("58: an integer round against an integer list is a real comparison",
+    predicateTypeMismatch({ round: { not: [1] } }, { round: 1 }), null);
+  is("58: a string round against an integer list is not",
+    predicateTypeMismatch({ round: { not: [1] } }, { round: "1" })?.carriedType, "string");
+  is("58: and the same for a value list rather than a complement",
+    predicateTypeMismatch({ round: [2] }, { round: "2" })?.carriedType, "string");
+  // Presence has no type, so `absent` is never a mismatch — including when the
+  // sibling is carried as something odd.
+  is("58: `absent` asks about presence and presence has no type",
+    predicateTypeMismatch({ wait: "absent" }, { wait: 7 }), null);
+  // A member that is not carried has no value to type. `predicateHolds` already
+  // publishes what happens there, and it must keep happening.
+  is("58: an absent sibling is not a type mismatch",
+    predicateTypeMismatch({ round: { not: [1] } }, {}), null);
+  is("58: and it still does not hold", predicateHolds({ round: { not: [1] } }, {}), false);
+  // null is carried, and it is not a number.
+  is("58: a member carried as null is a mismatch, not a quiet `false`",
+    predicateTypeMismatch({ round: [2] }, { round: null })?.carriedType, "null");
+
+  // The clock reader, which needs an integer for three separate reasons and
+  // used to say UNMET — a no about a marker, at the gate, in its author's name.
+  {
+    const m = marker(2, "2026-08-01T00:00:00Z", "2026-09-20T00:00:00Z");
+    m.doc.round = "2";
+    const v = evalRound2([m], T("2026-09-21T00:00:00Z"));
+    is("58: a string round is a clock this tool did not read", v.verdict, NOT_ASKED);
+    is("58: and the clock's unasked line names the party",
+      (v.lines.at(-1) ?? "").includes("no document does"), true);
+  }
+
   // The three predicate shapes, and the refusal.
   is("`absent` holds when the sibling is not carried", predicateHolds({ wait: "absent" }, { state: "x" }), true);
   is("`absent` fails when it is", predicateHolds({ wait: "absent" }, { wait: {} }), false);
@@ -1538,6 +1933,8 @@ function selftest() {
     predicateHolds({ round: { not: [1] } }, {}),
     false,
   );
+
+  importIsInert(is);
 
   if (fails.length) {
     for (const f of fails) console.error(`selftest: ${f}`);
@@ -1553,7 +1950,9 @@ function selftest() {
 // tool exists to produce. The output is the deliverable; the code is a summary
 // of it.
 //
-// And only when this file IS the program. It exports ten readers, and until
+// And only when this file IS the program. Its evaluators are exported — the
+// count is not written here, because it was "ten" for one day and the edit
+// that made it eleven is the one that found the sentence — and until
 // contract 0.30.0 nothing imported them, so running the whole gate at module
 // scope cost nothing and was invisible. `bot/tests/service.test.mjs` now
 // imports `splitTable` and `markerProblems` to prove that the condition this
@@ -1562,6 +1961,12 @@ function selftest() {
 // repositories would make that proof unaffordable. Watched: the first attempt
 // printed the entire cutover gate into the test output before the first
 // assertion.
+//
+// DO NOT REMOVE THESE TWO LINES TO "SIMPLIFY" THE FILE. `service.test.mjs`
+// still passes without them — slowly, over the network — so the thing that
+// says otherwise is `importIsInert` above, run by `--selftest`, which imports
+// this module in a child whose `git` and `gh` are recording shims and asserts
+// that neither ran and that nothing was printed. dev/couplings.md entry 60.
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   process.exitCode = main(process.argv.slice(2));
 }
