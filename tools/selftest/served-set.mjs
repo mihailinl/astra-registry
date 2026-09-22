@@ -786,6 +786,13 @@ export async function run() {
       ["no expires_at", trustExpiring(undefined)],
       ["a date that is not an instant", trustExpiring("soon")],
       ["no signed member", { signatures: [] }],
+      // The fourth expiry this rule reads, and until 2026-09-22 the only one no
+      // fixture carried: an index key's own `not_after`. The sibling check above
+      // asks only a READABLE one. Measured that day, dropping the unreadable
+      // branch from runway.mjs left all 317 checks green — a key whose lapse
+      // date nobody can parse went unwatched while the envelope said 400 days.
+      ["an index key's not_after that is not an instant",
+        trustExpiring(plusDays(400), [{ key_id: "astra-index-2026a", not_after: "soon" }])],
     ]) {
       const v = runwayVerdict({ documents: [{ where: "main", doc }], now: RUNWAY_NOW });
       assertEqual(v.status, "red", `${what} was read as a healthy runway`);
