@@ -103,6 +103,77 @@ export async function run() {
     const leaky = staged.filter((e) => e.download_url !== "" || Object.keys(e.platform_downloads).length !== 0);
     assert(leaky.length === 0,
       `unverifiable entries are reachable through the compatibility fields: ${leaky.map((e) => e.id).join(", ")}`);
+
+    // ── and the sentence in the name, asked where it can be answered ────────
+    //
+    // Everything above judges the catalogue AS COMMITTED, and `staged` is an
+    // empty array on this tree: 16 entries, none with `staging === true`. So
+    // `leaky` was a filter over nothing and the assertion under it could not
+    // fail. Measured 2026-09-22 against a4f81e0: replacing the whole refusal in
+    // tools/build-index.mjs's flatDownloads with `const installable = true` —
+    // the generator's refusal to hand a digest-blind client a URL it cannot
+    // verify, which is precisely what this check's name states — left the suite
+    // at `INCOMPLETE 317 passed, 0 failed, 1 not asked`, exit 0, with nothing
+    // red anywhere, and left the regenerated catalogue byte-identical, because
+    // with no staging entry the deleted clause changes no output.
+    //
+    // The check was armed and correct and the rule it is named for was enforced
+    // by nobody. A check whose subject the catalogue is free to run out of is a
+    // name that outlives its own measurement — the same shape as the `>= 1`
+    // floor removed above, arriving from the other side.
+    //
+    // So the refusal is also put to a tree built to make it fire. Both ways an
+    // entry can be digest-blind are covered, because `installable` is a
+    // conjunction and either half could be deleted on its own: a staging newest
+    // version, and a newest version with an artifact carrying no digest. The
+    // fixture is built out of a committed listing and synthesised rather than
+    // found, so this leg cannot go vacuous the way the one above did.
+    const source = loadSources(REPO_ROOT).plugins.find(
+      (p) => p.doc?.unlisted !== true && (p.versions ?? []).some((v) => v.doc && v.doc.yanked !== true));
+    assert(source !== undefined, "no listed plugin has a live version, so there is nothing to project");
+
+    const projected = (name, mutateNewest) => {
+      const dir = path.join(tmp, `digest-blind-${name}`);
+      const plugin = path.join(dir, "plugins", source.dir);
+      fs.mkdirSync(path.join(dir, "plugins"), { recursive: true });
+      fs.cpSync(path.join(REPO_ROOT, "plugins", source.dir), plugin, { recursive: true });
+      const versions = path.join(plugin, "versions");
+      const live = fs.readdirSync(versions)
+        .map((f) => ({ f, doc: JSON.parse(fs.readFileSync(path.join(versions, f), "utf8")) }))
+        .filter((v) => v.doc.yanked !== true)
+        .sort((a, b) => compareSemver(a.doc.version, b.doc.version));
+      const newest = live.at(-1);
+      if (mutateNewest) {
+        mutateNewest(newest.doc);
+        fs.writeFileSync(path.join(versions, newest.f), `${JSON.stringify(newest.doc, null, 2)}\n`);
+      }
+      const entry = buildIndex({ root: dir, serial: 1 }).signed.plugins.find((e) => e.id === source.doc.id);
+      assert(entry !== undefined, `${name}: ${source.doc.id} did not reach the generated catalogue at all`);
+      return entry;
+    };
+
+    // The control, and the reason the two refusals below mean anything: a
+    // projection that emitted nothing for everybody would satisfy them both.
+    const sound = projected("sound", null);
+    assert(Object.keys(sound.platform_downloads).length > 0,
+      `${source.doc.id} is soundly released and the projection still offers no download, so the two ` +
+      "refusals below are satisfied by a generator that has simply stopped working");
+
+    for (const [name, mutate] of [
+      ["staging", (d) => {
+        d.staging = true;
+        d.staging_reason = "a synthesised staging entry: the release this version names does not exist";
+        for (const a of Object.values(d.artifacts)) { delete a.sha256; delete a.size; }
+      }],
+      ["no-digest", (d) => { delete Object.values(d.artifacts)[0].sha256; }],
+    ]) {
+      const entry = projected(name, mutate);
+      assertEqual(entry.download_url, "",
+        `a ${name} entry is handed a download_url a digest-blind client cannot verify`);
+      assertEqual(Object.keys(entry.platform_downloads).join(","), "",
+        `a ${name} entry is reachable through platform_downloads, which is what a client that cannot read ` +
+        "releases[] follows");
+    }
   });
 
   // ID-66's panel names, as two lists something checks rather than as prose.
