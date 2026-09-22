@@ -951,7 +951,7 @@ const FLOORS = new Map(Object.entries({
   "catalogue.mjs": 9,
   "publishers.mjs": 10,
   "validation.mjs": 16,
-  "couplings.mjs": 9,
+  "couplings.mjs": 12,
   "listings.mjs": 5,
   "origins.mjs": 5,
   // 8, NOT the 41 this module reports, and it is the one number here that is

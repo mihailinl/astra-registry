@@ -69,6 +69,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { ACTIONS } from "../bot/lib/moderation.mjs";
 import { stagingListingId as reservedStagingListingId } from "./lib/reserved.mjs";
+import { SOURCE_DIR as ADVISORY_DIR, pathUnder } from "./lib/revocations.mjs";
 import { report } from "./coverage/rules.mjs";
 import {
   changedPaths, commitMeta, commitsAfter, firstParent, historyCount,
@@ -105,7 +106,10 @@ export const UNLISTED_FLOOR = 6;
 // somebody should be told about anyway.
 export const HISTORY_FLOOR = 228;
 
-const ADVISORY_RE = /^tools\/revocations\/ASTRA-\d{4}-\d{4}\.json$/;
+// The directory is `SOURCE_DIR`'s, not a second spelling of it (gap 72): had
+// advisories moved, a literal here would have stopped seeing every one of them
+// and this canary would have gone green about commits it could not read.
+const ADVISORY_RE = pathUnder(ADVISORY_DIR, String.raw`ASTRA-\d{4}-\d{4}\.json`);
 const LOG_ENTRY_RE = /^bot\/moderation\/[^/]+\.json$/;
 const LOG_TREE_RE = /^log\//;
 
