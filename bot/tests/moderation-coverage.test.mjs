@@ -38,6 +38,7 @@ import {
   DOCUMENT_MEMBERS, HISTORY_FLOOR as PRIV_HISTORY_FLOOR, run as privScan, withoutAuthorship,
 } from "../../tools/priv-scan.mjs";
 import { ADVISORY_BASE, DOC as DOCS_DOC, run as docsRule } from "../../tools/coverage/docs-advisory-url.mjs";
+import { KEEPALIVE, run as keepaliveRule } from "../../tools/coverage/keepalive-age.mjs";
 import {
   AP7_LANDED, ASTRAPLUGINS_URL, astraPluginsRemote, loadPolicyReserved,
   parseReservedIdsYaml, repoSlug, run as mirrorRule,
@@ -1283,6 +1284,100 @@ test("nothing in a signing or publishing workflow runs these rules (MOD-46)", ()
   }
   assert.equal(offenders.join("\n"), "",
     "a moderation or privacy check inside a signing or publishing job is a check that can delay a takedown");
+});
+
+// ── keepalive-age: two questions, and a clock for each ─────────────────────
+//
+// Gap 68's shape under another spelling (ops register, entry 93). The rule
+// dated the file with `git log -1 --format=%aI -- state/keepalive.json`, which
+// simplifies through a merge TREESAME to its branch parent and dates the BRANCH
+// commit, at the time it was first written. This estate merges every pull
+// request with a merge commit, and `state/README.md` invites a hand keepalive.
+
+const keepaliveDoc = (month, by = "hand") => ({ $comment: "fixture", month, at: `${month}-15T00:00:00Z`, by, run: null });
+
+/** `git` with both clocks set: `when` is one instant, or [author, committer]. */
+function dated(f, when, ...args) {
+  const [author, committer] = Array.isArray(when) ? when : [when, when];
+  execFileSync("git", ["-C", f.dir, ...args], {
+    stdio: "pipe", env: { ...process.env, GIT_AUTHOR_DATE: author, GIT_COMMITTER_DATE: committer },
+  });
+  return f.head();
+}
+const keepaliveAt = (f, month, when, by) => {
+  f.write(KEEPALIVE, keepaliveDoc(month, by)).git("add", "-A");
+  return dated(f, when, "commit", "-q", "-m", `the keepalive for ${month}`);
+};
+const touchAt = (f, rel, when) => {
+  f.write(rel, `${when}\n`).git("add", "-A");
+  return dated(f, when, "commit", "-q", "-m", `${rel} at ${when}`);
+};
+const mergeAt = (f, ref, when) => dated(f, when, "merge", "-q", "--no-ff", "-m", `merge ${ref}`, ref);
+
+test("keepalive-age: the age is main's, from the first-parent commit that brought the file, at its committer time", () => {
+  // Measured before the repair, `now` 2026-09-28: each of the first two read
+  // 38.6 days and ROLL_62_KEEPALIVE_STALE about a file main had acquired 7.5
+  // days before. A false red, and on the one rule that watches every
+  // schedule here that is how the rule gets switched off.
+  const NOW = new Date("2026-09-28T00:00:00Z");
+
+  // An agent's keepalive, written on a branch and merged with a merge commit.
+  // Needs `--first-parent`: without it the walk dates the branch commit.
+  const merged = fixture("keepalive-merged");
+  keepaliveAt(merged, "2026-07", "2026-07-01T00:00:00Z");
+  merged.branch("hand");
+  keepaliveAt(merged, "2026-08", "2026-08-20T10:00:00Z");
+  merged.checkout("main");
+  touchAt(merged, "README.md", "2026-09-01T00:00:00Z");
+  const merge = mergeAt(merged, "hand", "2026-09-20T12:00:00Z");
+  const m = keepaliveRule(merged.dir, { now: NOW });
+  assert.equal(m.status, "green", `a keepalive main acquired at ${merge.slice(0, 8)} 7.5 days ago read as stale: ${m.detail.join(" / ")}`);
+  assert.match(m.detail[0], /last changed 2026-09-20T12:00:00Z \(7\.5 day/);
+
+  // A keepalive rebased onto main: one parent, authored 08-20, committed 09-20.
+  // Needs the COMMITTER time: the author time is when it was first written.
+  const rebased = fixture("keepalive-rebased");
+  keepaliveAt(rebased, "2026-07", "2026-07-01T00:00:00Z");
+  keepaliveAt(rebased, "2026-08", ["2026-08-20T10:00:00Z", "2026-09-20T12:00:00Z"]);
+  const r = keepaliveRule(rebased.dir, { now: NOW });
+  assert.equal(r.status, "green", `a keepalive committed to main 7.5 days ago read by its author date: ${r.detail.join(" / ")}`);
+
+  // And a first-parent walk is not "any recent merge": a keepalive main
+  // acquired 58 days ago is stale however recently main merged something else.
+  const stale = fixture("keepalive-stale");
+  keepaliveAt(stale, "2026-08", "2026-08-01T00:00:00Z");
+  stale.branch("other");
+  touchAt(stale, "README.md", "2026-09-19T00:00:00Z");
+  stale.checkout("main");
+  touchAt(stale, "NOTES.md", "2026-09-19T06:00:00Z");
+  mergeAt(stale, "other", "2026-09-20T12:00:00Z");
+  assert.deepEqual(keepaliveRule(stale.dir, { now: NOW }).codes, ["ROLL_62_KEEPALIVE_STALE"],
+    "a keepalive 58 days old was dated by an unrelated merge");
+});
+
+test("keepalive-age: the month is the writer's, read from the commit that wrote the file", () => {
+  // The workflow and `state/README.md` ask whoever writes the file to put in
+  // it the month of the commit they are making, in their own clock. Dated at
+  // a merge in a later month, a correct keepalive would read as MONTH_STALE —
+  // which says somebody automated the commit and not the file, and sends a
+  // reader after the wrong thing.
+  const writer = fixture("keepalive-writer");
+  keepaliveAt(writer, "2026-08", "2026-08-02T00:00:00Z");
+  writer.branch("hand");
+  keepaliveAt(writer, "2026-09", "2026-09-01T10:00:00Z");
+  writer.checkout("main");
+  touchAt(writer, "README.md", "2026-09-05T00:00:00Z");
+  mergeAt(writer, "hand", "2026-10-02T12:00:00Z");
+  const w = keepaliveRule(writer.dir, { now: new Date("2026-10-05T00:00:00Z") });
+  assert.deepEqual(w.codes, [], `a September keepalive merged on 2 October was judged by the merge's month: ${w.detail.join(" / ")}`);
+  assert.match(w.detail[0], /in a commit written 2026-09-01T10:00:00Z/, "the transcript does not say when the file was written");
+
+  // The check still fires on what it is for: a commit that did not rewrite the month.
+  const unchanged = fixture("keepalive-month-unchanged");
+  keepaliveAt(unchanged, "2026-08", "2026-08-02T00:00:00Z");
+  keepaliveAt(unchanged, "2026-08", "2026-09-20T10:00:00Z", "workflow");
+  assert.deepEqual(keepaliveRule(unchanged.dir, { now: new Date("2026-09-28T00:00:00Z") }).codes,
+    ["ROLL_62_KEEPALIVE_MONTH_STALE"], "a September commit over a file still saying August was accepted");
 });
 
 // ── the owner's act ─────────────────────────────────────────────────────────

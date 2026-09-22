@@ -1146,7 +1146,7 @@ const FLOORS = new Map(Object.entries({
   // whose vectors they are, with a message about vectors.
   "bundles.mjs": 14,
   "index-signature.mjs": 20,
-  "signer.mjs": 23,
+  "signer.mjs": 24,
   "signer-run.mjs": 6,
   "rehearsal-r2.mjs": 14,
   "served-set.mjs": 33,
