@@ -220,9 +220,10 @@ export async function run() {
     // main's HEAD commit, the window is reset by every unrelated commit — a
     // publication, a listing edit, a README fix — so on a `main` that takes a
     // commit every twenty minutes the dropped advisory is inside the window
-    // continuously and this check never fires. Measured from the commit that
-    // raised the serial, which is by construction the last thing that could
-    // have changed it, an unrelated commit moves nothing.
+    // continuously and this check never fires. Measured from the oldest commit
+    // under `tools/revocations/` that `signed` does not carry, an unrelated
+    // commit moves nothing — and neither does a later advisory, which is the
+    // test after the next.
     //
     // **Three commits and three clocks, because two could not tell the
     // pathspec apart.** This fixture used to hold exactly two — the advisory
@@ -324,6 +325,158 @@ export async function run() {
     const late = serve85({ ...facts, head, now: "2026-09-19T12:31:00Z" });
     assertEqual(codesOf(late), "SERVE_85_SERIAL_DRIFT",
       "31 minutes after the merge a withdrawal the signer never published went unreported");
+  });
+
+  await test("a busy main does not reset the clock: the 30 minutes run from the oldest list commit `signed` does not carry", () => {
+    // Until 2026-09-22 the serial's clock was the NEWEST commit under
+    // tools/revocations/, which is main's head one pathspec down: every
+    // advisory restarted the window. Measured on this fixture before the
+    // repair, with no signer run at all: two advisories, green at 00:41; a
+    // third, green at 01:20 with the first 70 minutes unpublished. One
+    // advisory alone was red at 00:41. A signer that died on a `main` taking
+    // an advisory at least every half hour would never have been reported,
+    // and SERVE-44's dropped advisory is the one most likely to have another
+    // behind it.
+    const t = makeTree("busy-list");
+    t.write("tools/revocations/README.md", "fixtures\n");
+    const lastSigned = t.commit("the list `signed` last published", { at: "2026-09-19T00:00:00Z" });
+    t.write("tools/revocations/ASTRA-2026-0001.json", advisory("ASTRA-2026-0001"));
+    const first = t.commit("an advisory at 00:10", { at: "2026-09-19T00:10:00Z" });
+    t.write("tools/revocations/ASTRA-2026-0002.json", advisory("ASTRA-2026-0002", "other-plugin"));
+    const second = t.commit("another at 00:30", { at: "2026-09-19T00:30:00Z" });
+    const two = gather({ root: t.dir });
+
+    const signedAt = (sha) => headFrom({
+      revocations: {
+        signatures: [],
+        signed: { schema: REVOCATIONS_SCHEMA, serial: serialsAt({ root: t.dir, sha }).revocations, revocations: [] },
+      },
+    });
+    const dead = signedAt(lastSigned);
+
+    // The fixture guard: at 00:41 the NEWEST list commit is 11 minutes old, so
+    // this tree separates the two clocks, and a check dating the newest would
+    // be green here for a reason other than the signer being on time.
+    assertEqual(minutesSince(two.listClock, "2026-09-19T00:41:00Z"), 11,
+      `the newest list commit is dated ${two.listClock}; the fixture needs it inside the grace at 00:41`);
+
+    assertEqual(serve85({ ...two, head: dead, now: "2026-09-19T00:39:00Z" }).status, "green",
+      "29 minutes after the first advisory the signer is still inside its window");
+    const late = serve85({ ...two, head: dead, now: "2026-09-19T00:41:00Z" });
+    assertEqual(codesOf(late), "SERVE_85_SERIAL_DRIFT",
+      "the first advisory has waited 31 minutes and SERVE-85 dated the wait from the second");
+    assert(late.findings[0].message.includes(first.slice(0, 12)),
+      `the finding has to name the oldest commit \`signed\` does not carry, ${first.slice(0, 12)}: ${late.findings[0].message}`);
+
+    t.write("tools/revocations/ASTRA-2026-0003.json", advisory("ASTRA-2026-0003", "third-plugin"));
+    t.commit("a third at 00:55", { at: "2026-09-19T00:55:00Z" });
+    const three = gather({ root: t.dir });
+    assertEqual(codesOf(serve85({ ...three, head: dead, now: "2026-09-19T01:20:00Z" })), "SERVE_85_SERIAL_DRIFT",
+      "the first advisory has waited 70 minutes and a third one, 25 minutes old, excused it");
+
+    // The other direction, so "oldest" cannot become "oldest ever": what
+    // `signed` carries is read from its serial, and once it carries the first
+    // advisory the window is the second's.
+    const caughtUp = signedAt(first);
+    assertEqual(serve85({ ...two, head: caughtUp, now: "2026-09-19T00:59:00Z" }).status, "green",
+      "`signed` carries the first advisory and the second has waited 29 minutes, and SERVE-85 still dated the first");
+    const behindSecond = serve85({ ...two, head: caughtUp, now: "2026-09-19T01:01:00Z" });
+    assertEqual(codesOf(behindSecond), "SERVE_85_SERIAL_DRIFT", "the second advisory has waited 31 minutes, unreported");
+    assert(behindSecond.findings[0].message.includes(second.slice(0, 12)),
+      `the finding names a commit other than the one \`signed\` does not carry: ${behindSecond.findings[0].message}`);
+  });
+
+  await test("the window opens at the commit that moved the serial, a README commit included", () => {
+    // SERVE-85 compares SERIALS, and a README commit under tools/revocations/
+    // moves the serial (gap 70: every serial this registry has published came
+    // from one). So the walk that finds the oldest unsigned commit reads the
+    // serial's pathspec, not the advisories' `*.json` that detector A7's list
+    // half reads. Walking the advisories alone skips the README commit here
+    // and dates the wait from the advisory 20 minutes later.
+    const t = makeTree("readme-moves-serial");
+    t.write("tools/revocations/ASTRA-2026-0001.json", advisory());
+    const lastSigned = t.commit("the list `signed` last published", { at: "2026-09-19T00:00:00Z" });
+    t.write("tools/revocations/README.md", "How to write an advisory.\n");
+    const readme = t.commit("docs: how to write an advisory", { at: "2026-09-19T00:10:00Z" });
+    t.write("tools/revocations/ASTRA-2026-0002.json", advisory("ASTRA-2026-0002", "other-plugin"));
+    t.commit("an advisory", { at: "2026-09-19T00:30:00Z" });
+    assertEqual(serialsAt({ root: t.dir, sha: readme }).revocations, serialsAt({ root: t.dir, sha: lastSigned }).revocations + 1,
+      "the fixture's README commit has to move the serial, or it cannot tell the two pathspecs apart");
+    const facts = gather({ root: t.dir });
+    const head = headFrom({
+      revocations: {
+        signatures: [],
+        signed: { schema: REVOCATIONS_SCHEMA, serial: serialsAt({ root: t.dir, sha: lastSigned }).revocations, revocations: [] },
+      },
+    });
+    const v = serve85({ ...facts, head, now: "2026-09-19T00:41:00Z" });
+    assertEqual(codesOf(v), "SERVE_85_SERIAL_DRIFT", "the serial moved 31 minutes ago and SERVE-85 dated the wait from a later commit");
+    assert(v.findings[0].message.includes(readme.slice(0, 12)),
+      `the finding names a commit other than the README commit that moved the serial: ${v.findings[0].message}`);
+  });
+
+  await test("a future-dated list commit is overdue, not early", () => {
+    // A negative wait is inside any window, so `withinGrace` alone excused an
+    // advisory until the date its committer's clock wrote. Measured before the
+    // repair: an advisory dated 2026-06-01, green at 2026-01-01 — five months
+    // of a withdrawal nobody was told had not been published. Past the grace's
+    // own width the wait cannot be read, and an unreadable clock excuses
+    // nothing; skew inside it is a runner and a committer disagreeing by
+    // minutes, and must not page.
+    const t = makeTree("future-list");
+    t.write("tools/revocations/README.md", "fixtures\n");
+    const lastSigned = t.commit("the list `signed` last published", { at: "2025-12-31T23:00:00Z" });
+    t.write("tools/revocations/ASTRA-2026-0001.json", advisory());
+    t.commit("an advisory from a committer whose clock is five months fast", { at: "2026-06-01T00:00:00Z" });
+    const facts = gather({ root: t.dir });
+    const head = headFrom({
+      revocations: {
+        signatures: [],
+        signed: { schema: REVOCATIONS_SCHEMA, serial: serialsAt({ root: t.dir, sha: lastSigned }).revocations, revocations: [] },
+      },
+    });
+
+    const v = serve85({ ...facts, head, now: "2026-01-01T00:00:00Z" });
+    assertEqual(codesOf(v), "SERVE_85_SERIAL_DRIFT", "an advisory dated five months after the run's clock was excused until its date");
+    assert(v.findings[0].message.includes("cannot be read"), `the finding has to say the wait is unreadable: ${v.findings[0].message}`);
+    assertEqual(serve85({ ...facts, head, now: minutesAgo("2026-06-01T00:00:00Z", -29) }).status, "green",
+      "an advisory dated 29 minutes after the run's clock paged; that is skew inside the grace");
+    assertEqual(codesOf(serve85({ ...facts, head, now: minutesAgo("2026-06-01T00:00:00Z", -31) })), "SERVE_85_SERIAL_DRIFT",
+      "an advisory dated 31 minutes after the run's clock was excused");
+  });
+
+  await test("a serial difference no first-parent commit explains is overdue, not undated", () => {
+    // `signed` behind a serial that no commit on main's first-parent line
+    // raised is a formula disagreement, not a signer still inside its window,
+    // so there is no clock to excuse it by. Until 2026-09-22 this fell back to
+    // main's head, which a busy `main` resets.
+    const t = makeTree("unexplained-serial");
+    t.write("tools/revocations/ASTRA-2026-0001.json", advisory());
+    t.commit("an advisory", { at: "2026-09-19T11:59:00Z" });
+    const facts = gather({ root: t.dir });
+    const head = headFrom({
+      revocations: { signatures: [], signed: { schema: REVOCATIONS_SCHEMA, serial: facts.generated.serial - 1, revocations: [] } },
+    });
+    assertEqual(serve85({ ...facts, head, now: "2026-09-19T12:00:00Z" }).status, "green",
+      "the fixture's control: one minute after the advisory, with its commit in listCommits, the signer is on time");
+    const v = serve85({ ...facts, listCommits: [], head, now: "2026-09-19T12:00:00Z" });
+    assertEqual(codesOf(v), "SERVE_85_SERIAL_DRIFT", "a serial difference with no commit to date it from was excused");
+    assert(v.findings[0].message.includes("cannot be read"), `the finding has to say why there is no wait: ${v.findings[0].message}`);
+  });
+
+  await test("a future-dated head excuses no entry drift either", () => {
+    // The entry half's clock is main's head, and it had the same `withinGrace`.
+    const t = makeTree("future-entries");
+    t.write("tools/revocations/ASTRA-2026-0001.json", advisory());
+    t.commit("an advisory, dated five months ahead", { at: "2026-06-01T00:00:00Z" });
+    const facts = gather({ root: t.dir });
+    const head = headFrom({
+      revocations: { signatures: [], signed: { schema: REVOCATIONS_SCHEMA, serial: facts.generated.serial, revocations: [] } },
+    });
+    assertEqual(codesOf(serve85({ ...facts, head, now: "2026-01-01T00:00:00Z" })), "SERVE_85_ENTRY_DRIFT",
+      "an emptied list at the same serial was excused until main's head's date");
+    assertEqual(serve85({ ...facts, head, now: minutesAgo("2026-06-01T00:00:00Z", -29) }).status, "green",
+      "a head dated 29 minutes after the run's clock paged; that is skew inside the grace");
   });
 
   await test("a `signed` ahead of the commit this job read is the system working, not drift", () => {
