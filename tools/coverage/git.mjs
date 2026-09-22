@@ -95,10 +95,103 @@ export function introducingCommit(filePath, cwd) {
  * the exclusion is the rule rather than a convenience: a rule that judged its
  * own introducing commit would be a rule whose first act is to fail the commit
  * that added it, and the repair reached for is deleting the rule.
+ *
+ * **Merges are not here, and that is half an answer.** `--no-merges` is right
+ * for "who wrote this change": a merge's diff against its first parent is the
+ * whole branch again, and judging it would report every branch commit twice.
+ * But it also hid the one thing only a merge carries — what its own
+ * resolution wrote — and until gap 93 nothing walked that at all: a delist or
+ * an address typed while resolving a conflict gave zero findings in both
+ * walks. `mergesAfter` and `mergeOwnChanges` below are the other half, and a
+ * rule that walks this list without them is blind to merges again.
  */
 export function commitsAfter(from, cwd) {
   const out = git(["rev-list", "--reverse", "--no-merges", `${from}..HEAD`], { cwd, allowFailure: true });
   return out.split("\n").map((s) => s.trim()).filter(Boolean);
+}
+
+/** Merge commits in `from..HEAD`, oldest first — the complement of `commitsAfter`. */
+export function mergesAfter(from, cwd) {
+  const out = git(["rev-list", "--reverse", "--merges", `${from}..HEAD`], { cwd, allowFailure: true });
+  return out.split("\n").map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * What a merge commit changed ITSELF: the difference between the tree git
+ * would have written for its parents and the tree the merge recorded.
+ *
+ * That is `git show --remerge-diff`'s definition, and this computes the same
+ * temporary tree with `git merge-tree --write-tree` (git ≥ 2.38; CI's
+ * ubuntu-24.04 runner had 2.55.0 on 2026-09-22) rather than parsing
+ * remerge-diff's output, for two reasons: the moderation walk needs the tree
+ * itself, to read what a file held before the resolution touched it, and
+ * `git log`'s manual says remerge output "is subject to change, and so is its
+ * interaction with other options", while merge-tree's is plumbing with a
+ * documented format. The coverage tests hold the two to the same answer.
+ *
+ * **Why not first-parent, and why not `-c`/`--cc`.** First-parent is the whole
+ * branch again (every branch change reported twice). A combined diff lists
+ * only paths that differ from EVERY parent, so it cannot see a resolution that
+ * silently drops one side's change — merging `main` into a branch and
+ * deleting a file `main` added gives `--cc` nothing and remerge `D` — and it
+ * lists every file both sides edited cleanly, which the resolution did not
+ * touch. Measured on eight fixture shapes on 2026-09-22.
+ *
+ * **`conflicted` matters to a reader of the result.** Where git could not
+ * write a file, the temporary tree holds conflict markers, so "what the file
+ * held before the resolution" has no parseable answer there; a rule has to
+ * ask the parents instead (see the callers).
+ *
+ * An octopus merge (three or more parents) has no two-sided remerge and comes
+ * back `judged: false`. None exists in this repository (0 of the 156 merges
+ * reachable at `1d7253c`, 2026-09-22) and GitHub never writes one; a caller
+ * reports it rather than passing it, because a merge this walk could not
+ * judge is not a clean one.
+ *
+ * Measured on the real history the same day: merge-tree plus this diff named
+ * the same paths as `git show --remerge-diff --name-status` for all 156
+ * merges, and 7 of the 142 after the coverage tools landed had changes of
+ * their own — every one a conflict resolved in `tools/selftest.mjs` or
+ * `bot/detectors.mjs`, none in a composed path.
+ *
+ * @returns {{judged: boolean, parents: string[], tree: string|null,
+ *   conflicted: Set<string>, changes: {status: string, path: string, oldPath: null}[]}}
+ */
+export function mergeOwnChanges(sha, cwd) {
+  const parents = git(["show", "-s", "--format=%P", sha], { cwd }).trim().split(/\s+/).filter(Boolean);
+  if (parents.length !== 2) return { judged: false, parents, tree: null, conflicted: new Set(), changes: [] };
+  // merge-tree exits 1 when the merge has conflicts and still writes the tree,
+  // so exit 1 is an answer and not a failure. Anything else is thrown: a git
+  // too old to know `--write-tree` must fail this walk, not empty it.
+  let out;
+  try {
+    out = execFileSync("git", ["-C", cwd, "merge-tree", "--write-tree", "-z", "--name-only", "--no-messages",
+      parents[0], parents[1]], {
+      encoding: "utf8", maxBuffer: MAX_BUFFER,
+      env: { ...process.env, GIT_PAGER: "cat", GIT_OPTIONAL_LOCKS: "0" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (e) {
+    if (e?.status !== 1 || !e.stdout) {
+      const stderr = e && e.stderr ? String(e.stderr).trim() : "";
+      throw new Error(`git merge-tree --write-tree ${parents.join(" ")} failed in ${cwd}` +
+        `${e?.status !== undefined && e?.status !== null ? ` (exit ${e.status})` : ""}${stderr ? `: ${stderr}` : ""}`);
+    }
+    out = String(e.stdout);
+  }
+  const [tree, ...conflictedPaths] = out.split("\0").filter((s) => s !== "");
+  if (!/^[0-9a-f]{40,64}$/.test(tree ?? "")) {
+    throw new Error(`git merge-tree --write-tree ${parents.join(" ")} in ${cwd} wrote no tree: ${JSON.stringify(out.slice(0, 80))}`);
+  }
+  const diff = git(["diff", "--name-status", "-z", "--no-renames", tree, sha], { cwd });
+  const fields = diff.split("\0").filter((s) => s !== "");
+  const changes = [];
+  for (let i = 0; i < fields.length; i++) {
+    const p = fields[++i];
+    if (p === undefined) break;
+    changes.push({ status: fields[i - 1][0], path: p, oldPath: null });
+  }
+  return { judged: true, parents, tree, conflicted: new Set(conflictedPaths), changes };
 }
 
 /**
