@@ -1,13 +1,18 @@
 #!/usr/bin/env node
-// MIG-20's migration baseline: one `migration` record per non-staging published
-// version, written once, at R3, and the marker that says it happened.
+// MIG-20's migration baseline is one `migration` record per non-staging
+// published version, MIG-21's historic records, and the marker that says the
+// baseline was taken — `log/baseline.json` — in one commit, once, at R3
+// (BOT-73). This file composes and writes the per-version records. Whatever of
+// the rest a run does not do, `--write` names in the refusal it ends on
+// whenever it leaves no marker on the tree (the marker floor, in `main`).
 //
-// Four things wait on this file and on the marker it writes (registry plan
-// B-T3.7b): B-T3.7's legacy decision writer, detector A1's ignore set
-// (BOT-75), MIG-28's hold for every id with no baseline, and B-T3.6 step 0's
-// work source. It runs ONCE. There is no second dispatch to catch a mistake in
-// — `write` refuses when `log/baseline.json` already exists — so everything
-// here is either computed from bytes already in git, or refused by name.
+// Four things wait on that marker (registry plan B-T3.7b): B-T3.7's legacy
+// decision writer, detector A1's ignore set (BOT-75), MIG-28's hold for every
+// id with no baseline, and B-T3.6 step 0's work source. It is meant to run
+// ONCE: `--write` refuses when `log/baseline.json` is already on the tree,
+// which can stop a second dispatch only after a first one has committed the
+// marker. So everything here is either computed from bytes already in git, or
+// refused by name.
 //
 // ── the split, and why it is not the same split as the export's ────────────
 //
@@ -22,10 +27,13 @@
 //     certificate can say: `repository_id` and `repository_owner_id`, as
 //     base-10 strings or null. It downloads and hashes the assets and runs
 //     `gh attestation verify`. It never unpacks an archive.
-//   * `--write` composes records from those two outputs and from MIG-21's
-//     historic export, and writes the marker. It reads no network and no
-//     stranger bytes (INV-37: the writing job composes from facts it re-reads,
-//     never from a job that parsed submitter bytes).
+//   * `--write` composes one record per version from those two outputs and
+//     writes each through B-T2.2's writer. It also reads MIG-21's historic
+//     export; the historic records, the marker and the commit are the rest of
+//     its job, and the refusal it ends on names whichever of them a run left
+//     undone. It reads no network and no stranger bytes (INV-37: the writing
+//     job composes from facts it re-reads, never from a job that parsed
+//     submitter bytes).
 //
 // ── what is refused by name, and why nothing stands in for it ──────────────
 //
@@ -42,9 +50,10 @@
 // re-measurement of the file list would have missed.** `resolveWriter` in
 // `bot/export-issues.mjs` checks `fs.existsSync` and then asks for
 // `writeDecisionRecord`; `bot/lib/decisions.mjs` exports it. So `--write`
-// resolves a writer today, where the bullet below says it is refused by name.
-// Whether `--write` is otherwise ready is B-T3.7b's question; that it is no
-// longer stopped HERE is this file's.
+// resolves a writer today. (This sentence went on "where the bullet below
+// says it is refused by name" — written by `e64e312` in the same commit that
+// changed the bullet to say LANDED.) Whether `--write` is otherwise ready is
+// B-T3.7b's question; that it is no longer stopped HERE is this file's.
 //
 // `tools/absent-scan.mjs` is the reader that can now disagree with an absence
 // stated in this file: written as `@absent <path> (<task>)` on a comment line
@@ -56,15 +65,18 @@
 //
 // That marker is the one absence here a machine can hold. `--write` refuses
 // when `log/baseline.json` already exists and `log/` is untracked today; the
-// day it is not, the marker goes red — which is the day "it runs ONCE" and
-// "four things wait on the marker it writes" both need re-reading, by whoever
+// day it is not, the marker goes red — which is the day "it is meant to run
+// ONCE" and "four things wait on that marker" both need re-reading, by whoever
 // is running the R3 ceremony rather than by whoever finds this file next.
 //
 // That is not a tidying note. Two sentences a few lines down — "unreachable
 // until B-T1.1 lands" over `verifyOne`, and the refusals that "stand in for
 // the parts that cannot be built yet" — stopped being true at the same moment,
-// and **`--verify` runs end to end now.** It was run: 41 facts, 0 verified,
-// exit 0. Which is how the missing floor below was found.
+// and **`--verify` runs to its end now.** It was run: 41 facts, 0 verified,
+// exit 0. Which is how the missing floor below was found. It had still
+// downloaded nothing: run again on 2026-09-22 at `1ae13d2` it gave 42 facts,
+// 0 verified, exit 1 at that floor, because `--population` emits no
+// `artifact_url` and `verifyOne` fetches nothing without one.
 //
 // The three gates as they were, kept because the reasoning is still the
 // reasoning and only the tense has moved:
@@ -101,6 +113,12 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import { resolveWriter } from "./export-issues.mjs";
+// `verifyOne`'s `catch` has called this since `256aac7` moved the reading into
+// `bot/lib/attestation.mjs`, and nothing imported it: the first `gh` failure a
+// `--verify` run met would have stopped it with `classifyVerifyFailure is not
+// defined`, exit 2 — never reached, because no version carries an
+// `artifact_url` for `verifyOne` to get as far as `gh`.
+import { classifyVerifyFailure } from "./lib/attestation.mjs";
 import { artifactDigests, submissionFingerprint } from "./lib/policy/release.mjs";
 import { safeRepo, safeTag } from "./lib/intake.mjs";
 import { DEFAULT_SIGNER_WORKFLOW } from "./ingest.mjs";
@@ -198,11 +216,18 @@ export function population(root = REPO_ROOT) {
     // the publishing run carried it: `submissionFingerprint` hashes `commit ??
     // ""`, so recomputing with null gives the same string that run produced,
     // which is the only property that makes a baseline fingerprint mean
-    // anything. It is counted and named — the `write` job's message lists it
-    // beside the versions whose certificate was unrecoverable — because a
+    // anything. It is counted and named — `--population` prints it and emits
+    // it as `commitless`, and B-T3.7b has the baseline commit's message list
+    // it beside the versions whose certificate was unrecoverable — because a
     // baseline record with no `commit` is a record ID-22's reads cannot be run
     // against, and that is a fact about this registry a reader should meet in
-    // the commit message rather than in a detector two steps later.
+    // the run's own words rather than in a detector two steps later.
+    //
+    // Carried here is not recorded there. Whether a commitless version can
+    // have a record is `RECORD_MEMBERS.commit`'s answer, below, and measured
+    // 2026-09-22 at `1ae13d2` it cannot: over the real population `--write`
+    // exits 2 on this version with "`commit` does not match its own grammar",
+    // before it writes any record.
     if (commit === null) commitless.push(`${doc.id} ${doc.version} (${where})`);
 
     versions.push({
@@ -805,7 +830,48 @@ async function main(argv) {
   const composed = composeRecords(verified.facts ?? [], publishedAt);
   const write = await resolveWriter({});
   for (const { key, record } of composed) await write({ key, record, root: opts.root });
-  console.error(`composed ${composed.length} baseline record(s) from ${historic.facts?.length ?? 0} historic fact(s) pending`);
+  const historicCount = Array.isArray(historic.facts) ? historic.facts.length : 0;
+  console.error(`wrote ${composed.length} baseline record(s); ${historicCount} MIG-21 historic fact(s) pending, none composed`);
+
+  // ── the marker floor ──
+  //
+  // **Every stop above is a refusal, and this was the one path that exited 0
+  // — having taken no baseline.** Measured 2026-09-22 at `0df08e6`
+  // (astra-registry #205) and again at `1ae13d2`: over a copy of the tree,
+  // with a synthetic all-verified facts file and the commitless version left
+  // out, `--write` wrote 41 records under the copy's `log/decisions/`, wrote
+  // no marker, composed none of the historic facts and exited 0, and the
+  // `write` job has no step that commits. The three stops in front of it
+  // (`baseline.yml`'s header) are each one design decision from removal, and
+  // the dispatch after that would have gone green with nothing on `main` —
+  // which the operator of a ceremony that happens once reads as "baseline
+  // taken".
+  //
+  // So it refuses by name, like every other part here that is not built, and
+  // it is keyed on the one thing a run can check about itself: whether the
+  // marker is on the tree when it ends. It is LAST on purpose. Every refusal
+  // above it — the facts file, the record grammar, B-T2.2's writer — stays
+  // reachable through the CLI, so this one holds no defect out of reach (ops
+  // register entry 29: a refusal can hold a defect out of reach, and removing
+  // it ships the defect). The commit that makes it lift is the commit that has
+  // to run the dispatch's jobs end to end, once.
+  //
+  // What it cannot see: a run that writes the marker here and then commits
+  // nothing. Whether the commit is `baseline.yml`'s step or this file's is
+  // B-T3.7b's choice, and whichever makes it owes the check that the marker
+  // reached `main`.
+  if (!fs.existsSync(path.join(opts.root, BASELINE_FILE))) {
+    throw new Error(
+      `this --write leaves no ${BASELINE_FILE} on the tree, so it has not taken MIG-20's baseline, and it will ` +
+      `not exit 0 as if it had. It wrote ${composed.length} \`migration\` record(s) under ` +
+      `${path.join("log", "decisions")} in ${opts.root} and stops there: it writes no marker (\`marker()\` ` +
+      `builds and checks one, and nothing calls it), it composes none of the ${historicCount} MIG-21 historic ` +
+      "fact(s) (`bot/export-issues.mjs --compose`), and it makes no commit (BOT-73's one commit, holding every " +
+      "record and the marker). Those three are B-T3.7b's to build. Until they are, a green run here would read " +
+      "as \"baseline taken\" over a run that left nothing on `main`, and a second dispatch would not refuse, " +
+      "because the marker it refuses on was never written.",
+    );
+  }
   return 0;
 }
 
@@ -847,11 +913,12 @@ async function verifyOne(v, certificateIds, deps = {}) {
     // `Error: verifying with issuer "sigstore.dev"` and no named check.
     //
     // What that would have cost here and nowhere else: MIG-20's baseline is
-    // written ONCE — `--write` refuses a second run — so two thirds of the
-    // catalogue would have been recorded for ever as `unverified` with null
-    // ids, and detector A1, MIG-28 and TRUST-23 all read that record. The
-    // `catch` below turns the failure into exactly that, silently, which is
-    // why this line and that `catch` have to be read together.
+    // meant to be written ONCE — `--write` refuses once the marker is on the
+    // tree — so two thirds of the catalogue would have been recorded for ever
+    // as `unverified` with null ids, and detector A1, MIG-28 and TRUST-23 all
+    // read that record. The `catch` below turns the failure into exactly
+    // that, silently, which is why this line and that `catch` have to be read
+    // together.
     const { stdout } = await run([
       "attestation", "verify", tmp, "--repo", v.repo,
       "--signer-workflow", DEFAULT_SIGNER_WORKFLOW,

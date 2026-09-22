@@ -2410,9 +2410,10 @@ const INDEX_NOT_HEARD = new Map([
   ],
   [
     "Migration baseline",
-    "writes log/decisions/** and log/baseline.json (MIG-20, BOT-73). `build-index.mjs` reads plugins/** " +
-    "and publishers/**, and `validate.mjs` reads neither log/ nor anything under it, so a baseline commit " +
-    "cannot move the document this file regenerates.",
+    "holds contents: write for BOT-73's one commit of MIG-20's records and marker, log/decisions/** and " +
+    "log/baseline.json. `build-index.mjs` reads plugins/** and publishers/**, so such a commit cannot move " +
+    "the document this file regenerates. `validate.mjs` does read log/baseline.json: the `write` job has a " +
+    "`validate.mjs` step of its own (BOT-71), and this file's hourly run reads the marker after that.",
   ],
   [
     "Keepalive",
