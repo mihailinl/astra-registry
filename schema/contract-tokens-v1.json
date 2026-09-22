@@ -1,6 +1,6 @@
 {
   "contract_version": "0.33.0",
-  "source_commit": "bf0ea5db854d964995b16ab352d36b88130db8ba",
+  "source_commit": "94f58b97180dba523484299eade50ab0557ef891",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -1927,6 +1927,75 @@
       ]
     },
     {
+      "id": "list:report_clocks",
+      "kind": "closed_list",
+      "name": "report_clocks",
+      "values": [
+        "acknowledge",
+        "harm_action",
+        "decide",
+        "appeal_answer"
+      ],
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:served_document_kinds",
+      "kind": "closed_list",
+      "name": "served_document_kinds",
+      "values": [
+        "index",
+        "trust",
+        "revocations",
+        "root"
+      ],
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:log_omissions",
+      "kind": "closed_list",
+      "name": "log_omissions",
+      "values": [
+        "unacted_reports",
+        "reporter_identity",
+        "rater_identity",
+        "per_account_data"
+      ],
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
       "id": "member:shadow",
       "kind": "required_member",
       "name": "shadow",
@@ -2970,8 +3039,8 @@
             {
               "name": "deadline",
               "required": false,
-              "why": "MIG-7 gives the deadline to `grandfathered` alone, and a deadline exists only once MIG-2 commits `policy/binding-deadline.json` before R4b (absent on registry `main` at R@298f34a), so a `grandfathered` listing has none until then. `iff` would require a date that does not exist yet, and §0.8's vocabulary has no *carried only with*, so no condition is published",
-              "source": "MIG-7; MIG-2"
+              "why": "MIG-1 gives `grandfathered` an end and no other state one, and the end is the later of two dates, so it is known only once both records are on `main`: the binding deadline is absent there until MIG-2 commits it (absent at R@f96920c), and the cutover marker until the cutover commit adds it. A `grandfathered` listing therefore has no end to carry until both exist, and §0.8's vocabulary has no *carried only with*, so no condition is published",
+              "source": "MIG-1; MIG-7; the acceptor's decision (Q5)"
             }
           ]
         },
@@ -2981,19 +3050,52 @@
           "source": "MIG-7; B.4; DEC-9"
         },
         {
-          "name": "migration",
+          "name": "moderation",
           "required": true,
-          "source": "MIG-13",
+          "source": "SERVE-106; Table 5-E; the acceptor's decision (Q2)",
           "of": [
             {
-              "name": "announced_cutover_at",
+              "name": "date",
               "required": true,
-              "source": "MIG-13; B.4"
+              "source": "MOD-47; §0.7"
+            },
+            {
+              "name": "action",
+              "required": true,
+              "source": "§7.2; MOD-47"
+            },
+            {
+              "name": "category",
+              "required": false,
+              "why": "Table 5-I's `category` publishes no condition, for the reason its Why gives, and this is the same member of the same entry",
+              "source": "§7.2; MOD-47"
+            },
+            {
+              "name": "log_ref",
+              "required": true,
+              "source": "MOD-38; B.4; the acceptor's decision (Q8)"
+            }
+          ]
+        },
+        {
+          "name": "migration",
+          "required": true,
+          "source": "MIG-13; the acceptor's decision (Q7)",
+          "of": [
+            {
+              "name": "round",
+              "required": true,
+              "source": "MIG-13; B.4; the acceptor's decision (Q3)"
+            },
+            {
+              "name": "cutover_planned_at",
+              "required": true,
+              "source": "MIG-13; B.4; the acceptor's decision (Q4)"
             },
             {
               "name": "deadline",
               "required": true,
-              "source": "MIG-13; MIG-2"
+              "source": "MIG-13; MIG-2; the acceptor's decision (Q5)"
             }
           ]
         }
@@ -3278,11 +3380,26 @@
           "source": "MOD-38",
           "of": [
             {
+              "name": "log_ref",
+              "required": true,
+              "source": "MOD-38; B.4; the acceptor's decision (Q8)"
+            },
+            {
               "name": "record",
               "required": true,
               "source": "MOD-38; DEC-7; B.4"
             }
           ]
+        },
+        {
+          "name": "omits",
+          "required": true,
+          "source": "MOD-38; the acceptor's decision (Q10)"
+        },
+        {
+          "name": "next_cursor",
+          "required": true,
+          "source": "the acceptor's decision (Q9)"
         }
       ],
       "members_recorded": true,
@@ -3290,8 +3407,7 @@
         "service"
       ],
       "acceptor": [
-        "panel",
-        "guest"
+        "panel"
       ],
       "source": "§5.8, Table 5-H",
       "requirements": [
@@ -3319,7 +3435,7 @@
         {
           "name": "oldest_entered_at",
           "required": false,
-          "why": "It is absent exactly when `held` is 0, since there is then no oldest. A predicate names values this contract lists for its member (§0.8), and a count has none, so no condition is published",
+          "why": "It is absent exactly when `held` is 0, since there is then no oldest (confirmed by the acceptor, Q14). A predicate names values this contract lists for its member (§0.8), and a count has none, so no condition is published",
           "source": "FLOW-33; FLOW-31"
         },
         {
@@ -3343,8 +3459,7 @@
         "service"
       ],
       "acceptor": [
-        "panel",
-        "guest"
+        "panel"
       ],
       "source": "§5.8, Table 5-J",
       "requirements": [
@@ -3369,6 +3484,11 @@
           "required": true,
           "source": "MOD-38; MOD-47",
           "of": [
+            {
+              "name": "log_ref",
+              "required": true,
+              "source": "MOD-38; B.4; MOD-47; the acceptor's decision (Q8)"
+            },
             {
               "name": "date",
               "required": true,
@@ -3407,7 +3527,7 @@
                   ]
                 }
               },
-              "why": "§7.2 gives an advisory to `M_DEPRECATE`, `M_REVOKE` and `M_UNREVOKE` and to no other code, and MOD-7 shows a deprecate or revoke in effect on a host only once the list that host serves carries that advisory, and an unrevoke once a higher-serial list lacks it. Relaxed to `if`, a yank or a delist may name one, and a renderer applying MOD-7 shows a catalogue edit pending on a list that will never carry it. Dropped, a revoke reaches the reader with nothing to look up in the served list, and its effect can be asserted but not checked, which is the claim the registry's own log refuses to publish (R@298f34a:bot/lib/moderation.mjs:381-393)",
+              "why": "§7.2 gives an advisory to `M_DEPRECATE`, `M_REVOKE` and `M_UNREVOKE` and to no other code, and MOD-7 shows a deprecate or revoke in effect on a host only once the list that host serves carries that advisory, and an unrevoke once a higher-serial list lacks it; the panel decides that from this member. Relaxed to `if`, a yank or a delist may name one, and the panel shows a catalogue edit pending on a list that will never carry it. Dropped, a revoke reaches the panel with nothing to look up in the served list, and its effect can be asserted but not checked, which is the claim the registry's own log refuses to publish (R@298f34a:bot/lib/moderation.mjs:381-393)",
               "source": "§7.2; MOD-13; MOD-7"
             },
             {
@@ -3467,6 +3587,16 @@
               "source": "MOD-12; MOD-47"
             }
           ]
+        },
+        {
+          "name": "omits",
+          "required": true,
+          "source": "MOD-38; the acceptor's decision (Q10)"
+        },
+        {
+          "name": "next_cursor",
+          "required": true,
+          "source": "the acceptor's decision (Q9)"
         }
       ],
       "members_recorded": true,
@@ -3474,8 +3604,7 @@
         "service"
       ],
       "acceptor": [
-        "panel",
-        "guest"
+        "panel"
       ],
       "source": "§5.8, Table 5-I",
       "requirements": [
@@ -3503,7 +3632,7 @@
             {
               "name": "month",
               "required": true,
-              "source": "MOD-27"
+              "source": "MOD-27; §0.7; the acceptor's decision (Q15)"
             },
             {
               "name": "received",
@@ -3513,7 +3642,7 @@
             {
               "name": "clocks",
               "required": true,
-              "source": "MOD-27",
+              "source": "MOD-27; §0.8",
               "of": [
                 {
                   "name": "<clock>",
@@ -3524,15 +3653,25 @@
                       "name": "met",
                       "required": true,
                       "source": "MOD-27"
+                    },
+                    {
+                      "name": "missed",
+                      "required": true,
+                      "source": "MOD-27; the acceptor's decision (Q17)"
                     }
                   ]
                 }
               ]
             },
             {
+              "name": "ages",
+              "required": true,
+              "source": "MOD-27; the acceptor's decision (Q18)"
+            },
+            {
               "name": "generated_at",
               "required": true,
-              "source": "MOD-27; Table 5-D"
+              "source": "MOD-27; the acceptor's statement (Q19)"
             }
           ]
         }
@@ -3542,8 +3681,7 @@
         "service"
       ],
       "acceptor": [
-        "panel",
-        "guest"
+        "panel"
       ],
       "source": "§5.8, Table 5-K",
       "requirements": [
@@ -3571,13 +3709,22 @@
             {
               "name": "kind",
               "required": true,
-              "source": "SERVE-34; B.6"
+              "source": "SERVE-34; B.6; §0.8"
             },
             {
               "name": "serial",
-              "required": false,
-              "why": "SERVE-34 publishes each entry's serial, and root.json carries none (R@298f34a:registry/v1/root.json), so the condition is *absent exactly for root.json*; a predicate may name only values this contract lists for `kind`, and it lists none yet, so no condition is published",
-              "source": "SERVE-34"
+              "required": "conditional",
+              "when": {
+                "iff": {
+                  "kind": [
+                    "index",
+                    "trust",
+                    "revocations"
+                  ]
+                }
+              },
+              "why": "SERVE-34 publishes each entry's serial and root.json carries none (R@298f34a:registry/v1/root.json); the acceptor's record holds the two together both ways. Relaxed to `if`, a root entry may carry a serial no root.json has, and a reader comparing it with the document compares with nothing. Dropped, an index, trust or list entry arrives without the serial a user compares what they received against (SERVE-34), which is the one number SERVE-19 and a client's floor are kept by",
+              "source": "SERVE-34; the acceptor's statement (Q20)"
             },
             {
               "name": "sha256",
@@ -3595,6 +3742,11 @@
               "source": "SERVE-34"
             }
           ]
+        },
+        {
+          "name": "next_cursor",
+          "required": true,
+          "source": "the acceptor's decision (Q9)"
         }
       ],
       "members_recorded": true,
@@ -3602,8 +3754,7 @@
         "service"
       ],
       "acceptor": [
-        "panel",
-        "guest"
+        "panel"
       ],
       "source": "§5.8, Table 5-L",
       "requirements": [
@@ -4949,6 +5100,91 @@
       "state": "service-only",
       "method": "GET",
       "path": "listings/{plugin_id}",
+      "path_base": "the service API base (DEC-18)",
+      "source": "§0.8's named `service-only` paths",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "service-only:transparency-decisions",
+      "kind": "service_only",
+      "name": "transparency-decisions",
+      "members": [],
+      "emitter": [],
+      "acceptor": [],
+      "state": "service-only",
+      "method": "GET",
+      "path": "transparency/decisions",
+      "path_base": "the service API base (DEC-18)",
+      "source": "§0.8's named `service-only` paths",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "service-only:transparency-moderation",
+      "kind": "service_only",
+      "name": "transparency-moderation",
+      "members": [],
+      "emitter": [],
+      "acceptor": [],
+      "state": "service-only",
+      "method": "GET",
+      "path": "transparency/moderation",
+      "path_base": "the service API base (DEC-18)",
+      "source": "§0.8's named `service-only` paths",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "service-only:transparency-held",
+      "kind": "service_only",
+      "name": "transparency-held",
+      "members": [],
+      "emitter": [],
+      "acceptor": [],
+      "state": "service-only",
+      "method": "GET",
+      "path": "transparency/held",
+      "path_base": "the service API base (DEC-18)",
+      "source": "§0.8's named `service-only` paths",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "service-only:transparency-reports-monthly",
+      "kind": "service_only",
+      "name": "transparency-reports-monthly",
+      "members": [],
+      "emitter": [],
+      "acceptor": [],
+      "state": "service-only",
+      "method": "GET",
+      "path": "transparency/reports-monthly",
+      "path_base": "the service API base (DEC-18)",
+      "source": "§0.8's named `service-only` paths",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "service-only:transparency-served",
+      "kind": "service_only",
+      "name": "transparency-served",
+      "members": [],
+      "emitter": [],
+      "acceptor": [],
+      "state": "service-only",
+      "method": "GET",
+      "path": "transparency/served",
       "path_base": "the service API base (DEC-18)",
       "source": "§0.8's named `service-only` paths",
       "requirements": [

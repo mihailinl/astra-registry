@@ -706,21 +706,24 @@ test("the file's membered entries are four buckets, none of which may empty", ()
   // being made to look is the whole of what this line buys.
   //
   // Moved at contract 0.33.0, from 79 over 24, by exactly the six guest-read
-  // bodies §5.8 publishes (Tables 5-G to 5-L): 19 top-level members over six
+  // bodies §5.8 publishes (Tables 5-G to 5-L): 25 top-level members over six
   // entries, `astra.plugins.{listing-view,transparency-decisions,
   // transparency-moderation,transparency-held,transparency-reports,
-  // transparency-served}/1`. Read on arrival: the plugins service emits them,
-  // the panel and guests read them, and nothing in this repository composes or
-  // reads one, so they belong in this bucket. Their three conditions are
-  // nested in `transparency-moderation/1`'s `entries` — `advisory`,
-  // `appeal_of` and `outcome`, each `iff` on `action` with its why — and every
-  // other member is `true`, or `false` with a why saying why no condition is
-  // published.
+  // transparency-served}/1` (6, 4, 4, 6, 2 and 3). Read on arrival: the
+  // plugins service emits them, the panel's server is their one reader (their
+  // paths are `service-only`), and nothing in this repository composes or
+  // reads one, so they belong in this bucket. Their four conditions are nested
+  // — `transparency-moderation/1`'s `advisory`, `appeal_of` and `outcome`,
+  // each `iff` on `action`, and `transparency-served/1`'s `serial`, `iff` on
+  // `kind` — each with its why, and every other member is `true`, or `false`
+  // with a why saying why no condition is published. (0.33.0's first draft had
+  // 19; its revision on the acceptor's answers added `moderation`, `omits`
+  // twice and `next_cursor` three times.)
   assert.deepEqual(
     { entries: unreadEntries.length, members: countMembers(unreadEntries) },
-    { entries: 30, members: 98 },
+    { entries: 30, members: 104 },
     `${countMembers(unreadEntries)} published members over ${unreadEntries.length} entries are outside every ` +
-    `comparison in this suite; there were 98 over 30 at contract 0.33.0 and this file reads ` +
+    `comparison in this suite; there were 104 over 30 at contract 0.33.0 and this file reads ` +
     `${tokenFile.contract_version}. Nothing in astra-registry composes or reads those bodies, so the number is ` +
     "allowed to move — but it moves by somebody reading the new members and finding them unconditioned, not by " +
     "a filter quietly widening. It was 83 over 25 at 0.29.0, and it moved because " +
