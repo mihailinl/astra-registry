@@ -60,12 +60,12 @@
 //
 //     **a commit dated more than the grace AFTER `now` is overdue**, not
 //     early. Its wait cannot be read, and an unreadable clock excuses nothing
-//     (`minutesSince`); a plain `withinGrace` read the negative wait as inside
+//     (`minutesSince`); `withinGrace` once read the negative wait as inside
 //     the window and excused it until its date — measured, an advisory dated
-//     2026-06-01 was green at 2026-01-01. Skew inside the grace is not that,
-//     and stays green. Only the oldest unsigned commit's date is read: every
-//     later one reached main after it, so no later date can lengthen the wait
-//     and none can shorten it;
+//     2026-06-01 was green at 2026-01-01 — and holds both edges itself now.
+//     Skew inside the grace is not that, and stays green. Only the oldest
+//     unsigned commit's date is read: every later one reached main after it,
+//     so no later date can lengthen the wait and none can shorten it;
 //
 //     `--first-parent` is what dates a merged change at its merge (gap 68). A
 //     plain `git log -- <pathspec>` simplifies history through a merge, which
@@ -125,18 +125,6 @@ export const SIGNER_WORKFLOW = ".github/workflows/sign.yml";
  * `serialsAt` counts over, kept under this name for the readers that know it.
  */
 export const LIST_PATHSPEC = SERIAL_PATHSPEC;
-
-/**
- * Is a difference measured from `from` still the signer's to fix at `now`?
- *
- * `withinGrace`, and not dated more than the grace AFTER `now` either: a
- * negative wait past the window's own width is a clock that cannot be read,
- * and the header's rule for those is that they excuse nothing.
- */
-function onTime(from, now, graceMinutes) {
-  const waited = minutesSince(from, now);
-  return withinGrace(from, now, graceMinutes) && waited >= -graceMinutes;
-}
 
 /**
  * SERVE-85's decision, over facts and nothing else.
@@ -230,7 +218,7 @@ export function serve85({
     const unsigned = listCommits.filter((c) => c.serial > headSerial);
     const oldest = unsigned[0] ?? null;
     const age = oldest === null ? null : minutesSince(oldest.at, now);
-    if (oldest !== null && onTime(oldest.at, now, graceMinutes)) {
+    if (oldest !== null && withinGrace(oldest.at, now, graceMinutes)) {
       notes.push(
         `\`signed\` is at serial ${headSerial} and main implies ${generated.serial}. The oldest of the ` +
         `${unsigned.length} commit(s) under ${LIST_PATHSPEC}/ it does not carry, ${oldest.sha.slice(0, 12)}, ` +
@@ -269,7 +257,7 @@ export function serve85({
   }
 
   const age = minutesSince(treeClock, now);
-  if (onTime(treeClock, now, graceMinutes)) {
+  if (withinGrace(treeClock, now, graceMinutes)) {
     notes.push(
       `the entries differ at the same serial ${generated.serial}, ${age?.toFixed(1)} minutes after main's head ` +
       `commit; a change to the generator publishes within ${graceMinutes} minutes like any other`,

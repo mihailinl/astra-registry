@@ -497,7 +497,7 @@ export function a5({ anchor, records }, findings, skipped, scanned) {
  * the newest inside 2 h for ever — the shape SERVE-85's header refuses for
  * main's head. A change dated more than the bound AFTER `now` is overdue too:
  * its wait cannot be read, and an unreadable clock excuses nothing
- * (`minutesSince`), where a plain `withinGrace` would excuse it until its date.
+ * (`minutesSince`); `withinGrace` holds that edge itself, for every caller.
  *
  * **What A7 does not see, and whose it is: a catalogue the signer CARRIED.**
  * When D4 carries the catalogue forward and the same run commits anyway,
@@ -580,7 +580,7 @@ export function a7({ git, now }, findings, skipped, scanned) {
     const waited = minutesSince(from, nowIso);
     const bound = A7_BOUND_MINUTES[what];
     scanned[`${what}_unsigned_minutes`] = Math.floor(waited);
-    if (withinGrace(from, nowIso, bound) && waited >= -bound) continue;
+    if (withinGrace(from, nowIso, bound)) continue;
     findings.push({
       detector: "A7",
       code: what === "plugins" ? "A7_SIGNED_BEHIND_PLUGINS" : "A7_SIGNED_BEHIND_REVOCATIONS",

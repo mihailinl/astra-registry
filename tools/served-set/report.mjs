@@ -131,8 +131,22 @@ export function minutesSince(from, now) {
   return (b - a) / 60000;
 }
 
-/** Is a difference measured from `from` still inside the window at `now`? */
+/**
+ * Is a difference measured from `from` still inside the window at `now`?
+ *
+ * Both edges. A `from` dated more than the window's own width AFTER `now` is
+ * a clock that cannot be read, and an unreadable clock excuses nothing (above):
+ * a negative wait is not a short one. Skew inside the width — a runner and a
+ * committer disagreeing by minutes — is inside the window, and must not page.
+ *
+ * The bound used to be the callers'. SERVE-85 and A7 each added it by hand
+ * (`waited >= -grace`, 2026-09-22) and SERVE-39 did not, so a `signed` commit
+ * dated 132 days ahead excused Pages drifting from it — both the documents and,
+ * after the latch, the withdrawal list — until that date (measured on a
+ * fixture). One edge here, and none at the callers, is what makes a caller
+ * that forgets it impossible and each caller's test a test of this line.
+ */
 export function withinGrace(from, now, graceMinutes = GRACE_MINUTES) {
   const mins = minutesSince(from, now);
-  return mins !== null && mins <= graceMinutes;
+  return mins !== null && mins <= graceMinutes && mins >= -graceMinutes;
 }
