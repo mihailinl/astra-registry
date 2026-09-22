@@ -398,11 +398,20 @@ test("and nothing else: the two predicates agree on every other tag", () => {
   const backwards = [];
   let disagreements = 0;
 
+  // Direction is decided BEFORE the shapes are consulted, and each bucket holds
+  // one direction only. Written the other way round once, and it cost the
+  // reading: a mutation that made `isUsableTag` looser was caught by the
+  // `unexplained` assertion, whose message says "taken by safeTag and refused
+  // by isUsableTag" — the opposite of what had happened — while the assertion
+  // that exists to say so was never reached.
   for (const tag of new Set(corpus)) {
     const [intakeTakesIt, pollTakesIt] = bothVerdicts(tag);
     if (intakeTakesIt === pollTakesIt) continue;
     disagreements += 1;
-    if (pollTakesIt && !intakeTakesIt) backwards.push(tag);
+    if (pollTakesIt) {
+      backwards.push(tag);
+      continue;
+    }
     const explains = Object.entries(HARDENED_AGAINST).filter(([, p]) => p(tag)).map(([k]) => k);
     if (explains.length === 0) unexplained.push(tag);
     if (explains.length === 1) onlyExplainedBy.set(explains[0], onlyExplainedBy.get(explains[0]) + 1);
@@ -413,16 +422,17 @@ test("and nothing else: the two predicates agree on every other tag", () => {
     "differ on a large share of this corpus; this few means one of them stopped being called, or both now answer " +
     "the same way and dev/couplings.md 26 has been closed by accident rather than by decision");
 
+  assert.deepEqual(backwards, [],
+    `${backwards.length} tag(s) are now ACCEPTED by bot/lib/poll.mjs's isUsableTag and REFUSED by ` +
+    "bot/lib/intake.mjs's safeTag. isUsableTag is supposed to be the stricter of the two in every case — it is " +
+    "safeTag's charset plus four refusals — so this means the charset the two share stopped being shared, and " +
+    `safeTag's docblock now says something false. First few: ${JSON.stringify(backwards.slice(0, 8))}`);
+
   assert.deepEqual(unexplained, [],
     `${unexplained.length} tag(s) are taken by bot/lib/intake.mjs's safeTag and refused by bot/lib/poll.mjs's ` +
-    "isUsableTag for a reason that is none of the four shapes this coupling records. Either isUsableTag grew a " +
-    "fifth rule — write it into safeTag's docblock and into HARDENED_AGAINST above — or the charset the two share " +
-    `stopped being shared. First few: ${JSON.stringify(unexplained.slice(0, 8))}`);
-
-  assert.deepEqual(backwards, [],
-    "bot/lib/poll.mjs's isUsableTag now accepts tag(s) that bot/lib/intake.mjs's safeTag refuses, so it is no " +
-    "longer the stricter of the two and safeTag's docblock says something false: " +
-    JSON.stringify(backwards.slice(0, 8)));
+    "isUsableTag for a reason that is none of the four shapes this coupling records — isUsableTag grew a fifth " +
+    "rule. Write it into safeTag's docblock and into HARDENED_AGAINST above. First few: " +
+    JSON.stringify(unexplained.slice(0, 8)));
 
   for (const [shape, count] of onlyExplainedBy) {
     assert.ok(count > 0,
