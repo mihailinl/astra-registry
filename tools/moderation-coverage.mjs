@@ -27,6 +27,14 @@
 // edited into agreement with the tree. That is what MOD-34 is about and why
 // both modes exist.
 //
+// **"Every commit" includes a merge's own resolution** (gap 93). The walk
+// takes merges out of the commit list, because a merge's first-parent diff is
+// the whole branch again, and until 2026-09-22 that was the end of it: a
+// delist typed while resolving a conflict, or a log entry dropped while
+// merging `main` into a branch, was in no walked commit and gave nothing.
+// The second of those is invisible to state mode too — nothing is left
+// unlisted, a record is simply gone. `mergeView` is the merge half.
+//
 // ── IT GATES NOTHING (MOD-46) ───────────────────────────────────────────────
 //
 // This file runs in `.github/workflows/moderation-coverage.yml` and nowhere
@@ -72,8 +80,8 @@ import { stagingListingId as reservedStagingListingId } from "./lib/reserved.mjs
 import { ADVISORY_FILE } from "./lib/revocations.mjs";
 import { report } from "./coverage/rules.mjs";
 import {
-  changedPaths, commitMeta, commitsAfter, firstParent, historyCount,
-  introducingCommit, isShallow, jsonAt, trailerValues,
+  blobAt, changedPaths, commitMeta, commitsAfter, firstParent, historyCount,
+  introducingCommit, isShallow, jsonAt, mergeOwnChanges, mergesAfter, trailerValues,
 } from "./coverage/git.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -411,6 +419,64 @@ export function stateMode(repo, { unlistedFloor = UNLISTED_FLOOR } = {}) {
 // ── commit mode ─────────────────────────────────────────────────────────────
 
 /**
+ * How `triggersOf` compares a commit: which paths it changed, what each held
+ * before, and — for the two advisory triggers — whether the write or the
+ * deletion is this commit's own. The default is the first parent, which is
+ * what every caller but the merge walk asks for; `bot/lib/takedown-bound.mjs`
+ * walks the first-parent line and MEANS a merge's first-parent diff there
+ * (when did the catalogue lose a plugin), so that default is not the merge
+ * rule and must not become it.
+ */
+export function firstParentView(sha, repo) {
+  const parent = firstParent(sha, repo);
+  return {
+    changes: changedPaths(sha, repo),
+    before: (p) => (parent ? jsonAt(parent, p, repo) : { present: false, value: null }),
+    ownWrite: () => true,
+    ownDeletion: () => true,
+  };
+}
+
+/**
+ * The same questions asked of what a merge's resolution did itself (gap 93).
+ *
+ * `changes` is `mergeOwnChanges`: the tree the merge recorded against the one
+ * git would have written for its two parents. Where git wrote that file
+ * cleanly, "before" is git's version, so a resolution that quietly undoes one
+ * side — re-delisting what `main` relisted, deleting a log entry `main` added
+ * — is judged against what it undid. Where git could not (a conflict), the
+ * remerged file is conflict markers and has no "before" to read, so the
+ * parents answer instead, and a flag or a byte-for-byte copy some parent
+ * already had is that side's act, judged on that side's commit, not the
+ * merge's a second time.
+ *
+ * The log's append-only refusals take no such allowance: a conflicted record
+ * the resolution changed is a record that was edited, whichever side's bytes
+ * it ended up with, because both sides' versions existed.
+ */
+export function mergeView(sha, repo, own = mergeOwnChanges(sha, repo)) {
+  const { tree, parents, conflicted, changes } = own;
+  return {
+    changes,
+    before(p, flag) {
+      if (!conflicted.has(p)) return jsonAt(tree, p, repo);
+      const seen = parents.map((q) => jsonAt(q, p, repo)).filter((x) => x.present);
+      if (!seen.length) return { present: false, value: null };
+      return seen.find((x) => x.value?.[flag] === true) ?? seen[0];
+    },
+    ownWrite(p) {
+      if (!conflicted.has(p)) return true;
+      const now = blobAt(sha, p, repo);
+      return !parents.some((q) => blobAt(q, p, repo) === now);
+    },
+    ownDeletion(p) {
+      if (!conflicted.has(p)) return true;
+      return parents.every((q) => blobAt(q, p, repo) !== null);
+    },
+  };
+}
+
+/**
  * What one commit did that owes a record.
  *
  * "Turns `unlisted` on for an EXISTING listing" is the plan's wording and it
@@ -421,11 +487,10 @@ export function stateMode(repo, { unlistedFloor = UNLISTED_FLOOR } = {}) {
  * not would have made every new unlisted listing look like an unlogged
  * takedown.
  */
-export function triggersOf(sha, repo) {
-  const parent = firstParent(sha, repo);
+export function triggersOf(sha, repo, view = firstParentView(sha, repo)) {
   const triggers = [];
   const refusals = [];
-  for (const { status, path: p } of changedPaths(sha, repo)) {
+  for (const { status, path: p } of view.changes) {
     if (LOG_ENTRY_RE.test(p) && (status === "M" || status === "D")) {
       refusals.push({ kind: "log-entry-edited", path: p, status });
       continue;
@@ -436,6 +501,7 @@ export function triggersOf(sha, repo) {
     }
     if (ADVISORY_RE.test(p)) {
       const advisory = path.basename(p, ".json");
+      if (!(status === "D" ? view.ownDeletion(p) : view.ownWrite(p))) continue;
       triggers.push({ kind: status === "D" ? "advisory-deleted" : "advisory-written", advisory, path: p });
       continue;
     }
@@ -444,7 +510,7 @@ export function triggersOf(sha, repo) {
       const id = mPlugin[1];
       const now = jsonAt(sha, p, repo).value;
       if (now?.unlisted !== true) continue;
-      const before = parent ? jsonAt(parent, p, repo) : { present: false, value: null };
+      const before = view.before(p, "unlisted");
       if (!before.present) continue;            // created unlisted: never listed, never delisted
       if (before.value?.unlisted === true) continue; // already unlisted: this commit changed something else
       triggers.push({ kind: "delist", id, path: p });
@@ -455,7 +521,7 @@ export function triggersOf(sha, repo) {
       const [, id, version] = mVersion;
       const now = jsonAt(sha, p, repo).value;
       if (now?.yanked !== true) continue;
-      const before = parent ? jsonAt(parent, p, repo) : { present: false, value: null };
+      const before = view.before(p, "yanked");
       if (before.present && before.value?.yanked === true) continue;
       triggers.push({ kind: "yank", id, version, path: p });
     }
@@ -477,9 +543,9 @@ export function triggersOf(sha, repo) {
 }
 
 /** The records a commit itself carries, which may cover its own triggers. */
-function coversInCommit(sha, repo) {
+function coversInCommit(sha, repo, changes = changedPaths(sha, repo)) {
   const added = { entries: [], authorActions: [] };
-  for (const { status, path: p } of changedPaths(sha, repo)) {
+  for (const { status, path: p } of changes) {
     if (status !== "A") continue;
     if (LOG_ENTRY_RE.test(p)) {
       const { value } = jsonAt(sha, p, repo);
@@ -578,18 +644,24 @@ export function commitMode(repo, { historyFloor = HISTORY_FLOOR, from } = {}) {
   }
 
   const shas = commitsAfter(start, repo);
+  const merges = mergesAfter(start, repo);
   const uncovered = [];
   const cleared = new Set();
   const refusalsFound = [];
+  let mergesWithOwnChanges = 0;
 
-  for (const sha of shas) {
+  const judge = (sha, view) => {
     const meta = commitMeta(sha, repo);
     const exempts = exemptions(meta.message);
     const selfExempt = exempts.some((e) => e.sha === null);
     for (const e of exempts) if (e.sha) cleared.add(e.sha);
+    if (view === null) {
+      if (!selfExempt) refusalsFound.push({ sha, kind: "merge-not-judged", path: null, status: null });
+      return;
+    }
 
-    const { triggers, refusals } = triggersOf(sha, repo);
-    const added = coversInCommit(sha, repo);
+    const { triggers, refusals } = triggersOf(sha, repo, view);
+    const added = coversInCommit(sha, repo, view.changes);
 
     for (const r of refusals) {
       if (selfExempt) continue;
@@ -600,6 +672,21 @@ export function commitMode(repo, { historyFloor = HISTORY_FLOOR, from } = {}) {
       if (triggerCovered(t, added)) continue;
       uncovered.push({ sha, subject: meta.message.split("\n")[0], trigger: t });
     }
+  };
+
+  for (const sha of shas) judge(sha, firstParentView(sha, repo));
+
+  // Gap 93. `commitsAfter` leaves merges out, which is right for "who wrote
+  // this change" and made a merge's own resolution invisible: a delist typed
+  // while resolving a conflict was 0 triggers across the walk. This mode asks
+  // who did it, and a merge's committer did that — so a merge is judged on
+  // what its resolution changed (`mergeView`), with its own message read for
+  // `Moderation-Exempt:` like any commit's, and never on its first-parent
+  // diff, which would judge every branch commit twice.
+  for (const sha of merges) {
+    const own = mergeOwnChanges(sha, repo);
+    if (own.judged && own.changes.length) mergesWithOwnChanges++;
+    judge(sha, own.judged ? mergeView(sha, repo, own) : null);
   }
 
   // Clearing, after the walk rather than during it: a `Moderation-Exempt:
@@ -625,6 +712,15 @@ export function commitMode(repo, { historyFloor = HISTORY_FLOOR, from } = {}) {
   }
   for (const r of refusalsFound) {
     if (clearedBy(r.sha)) continue;
+    if (r.kind === "merge-not-judged") {
+      codes.push("MOD_MERGE_NOT_JUDGED");
+      hexes.push(r.sha);
+      detail.push(
+        `${r.sha.slice(0, 12)} is a merge of more than two parents, which has no two-sided remerge, so what its ` +
+        "own resolution changed was not judged; a merge this walk could not read is not a clean one",
+      );
+      continue;
+    }
     codes.push(r.kind === "log-entry-edited" ? "MOD_LOG_ENTRY_EDITED" : "MOD_LOG_APPEND_ONLY");
     hexes.push(r.sha);
     detail.push(
@@ -636,6 +732,9 @@ export function commitMode(repo, { historyFloor = HISTORY_FLOOR, from } = {}) {
   detail.push(
     `walk: ${shas.length} commit(s) after ${start.slice(0, 12)} (the commit that added ${SELF_PATH}), ` +
     `${reachable} reachable, ${cleared.size} exemption(s) naming a SHA`,
+  );
+  detail.push(
+    `merges: ${merges.length} merge(s) in range, ${mergesWithOwnChanges} whose own resolution changed a path`,
   );
   return { codes, ids, hexes, detail };
 }
