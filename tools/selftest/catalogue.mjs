@@ -11,10 +11,11 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 import { buildIndex, resolveSerial } from "../build-index.mjs";
+import { isShallow } from "../coverage/git.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
 import { validate as validateSchema } from "../lib/jsonschema.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
-import { test, assert, assertEqual, tmp, validateTree, errorsMatching } from "./harness.mjs";
+import { test, assert, assertEqual, neverAsk, tmp, validateTree, errorsMatching } from "./harness.mjs";
 
 export async function run() {
   await test("the serial counts the commit being made, not the one behind it", () => {
@@ -265,13 +266,49 @@ export async function run() {
         return null;
       }
     };
+    // GAP 81. Both sides of this comparison are history, so a shallow checkout
+    // holds neither, and until 2026-09-22 this printed `ok` there.
+    //
+    // Measured at 97c0b0d, in file:// clones with origin removed. At depth 1
+    // `HEAD^` is not in the checkout, so the check printed "(no parent commit
+    // here — a shallow checkout or the first commit — so nothing to compare)"
+    // and then `ok`, which is how `ingest.yml`'s `selftest` job counted it.
+    // At depth 2 the parent IS there, and that was worse: `resolveSerial`
+    // counted the 1 fetched commit under plugins/ where the whole history
+    // counts 52, so the check printed "(serial 52 → 1: the catalogue's version
+    // rose, so a difference publishes)" and `ok`. That is not a parent
+    // missing. It is a wrong number, read as the serial rising. Neither run
+    // compared a single listing.
+    //
+    // So the question is asked first, of the checkout, the way
+    // `tools/coverage/git.mjs`'s `isShallow` asks it (it throws when git
+    // cannot answer, so an unanswered question never reads as "not shallow").
+    // No red comes before it, unlike the flag check in revocations.mjs,
+    // because nothing here is askable at any depth: a serial counted in a
+    // shallow checkout is not the history's, so neither an equal one nor an
+    // unequal one says anything about the catalogue. The runner finds this
+    // check by reading it (a test() body whose code names `shallow` before a
+    // `neverAsk(`), prints the live lanes that ask it and fails when there are
+    // none. Keep the gate on the line above the call.
+    if (isShallow(REPO_ROOT)) {
+      neverAsk(
+        "this checkout is shallow, so neither side of the comparison is in it: at depth 1 HEAD's parent and the " +
+        "catalogue committed there are not fetched, and at any depth the serial is `git rev-list --count` over " +
+        "plugins/, which counts only the commits this checkout holds (1 against the whole history's 52 at " +
+        "97c0b0d), so an equal serial reads as a risen one and nothing is compared",
+        "a checkout with its whole history asks it: the runner prints the live lanes that reach this suite with " +
+        "it under the totals and goes red when there are none (`node tools/selftest.mjs --lanes`)",
+      );
+    }
     // `HEAD^` is the parent on a push and the BASE on a pull request, because
     // the merge commit `actions/checkout` builds has the base as its first
     // parent. One expression for both, rather than a `GITHUB_BASE_REF` branch
     // that is only exercised in CI.
     const base = git("rev-parse", "--verify", "HEAD^")?.trim();
     if (!base) {
-      console.log("      (no parent commit here — a shallow checkout or the first commit — so nothing to compare)");
+      // With the whole history, only a root commit has no parent: the history
+      // is all here and no earlier catalogue is in it.
+      console.log("      (no parent commit: this is the first commit, so there is no earlier catalogue to compare)");
       return;
     }
     const baseText = git("show", `${base}:registry/v1/index.json`);

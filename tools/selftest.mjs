@@ -943,7 +943,14 @@ function checkAbsenceEnvironment(live) {
 // met, because a check that stops saying NOT ASKED still reports once.
 // A floor and not an equality, for FLOORS' reason: adding one needs no edit
 // here; retiring one on purpose needs this number lowered in the same diff.
-const HISTORY_GATED_FLOOR = 2;
+//
+// 5 since gap 81 (2026-09-22), which found three more by diffing a full clone's
+// transcript against a depth-1 clone's: catalogue.mjs's equal-serial check,
+// contract-tokens.mjs's version check, and the serial half of regenerate.mjs's
+// head-catalogue check, which is now a check of its own. Each printed `ok` at
+// depth 1 about history it had not asked. Each gate is the code line above its
+// `neverAsk(`, and replacing any one of them with `if (false)` turns this red.
+const HISTORY_GATED_FLOOR = 5;
 const HISTORY_GATED_DAY = "2026-09-22";
 
 /**
@@ -1151,9 +1158,9 @@ const FLOORS = new Map(Object.entries({
   "update-signing.mjs": 12,
   "update-notes.mjs": 9,
   "repo-rules.mjs": 17,
-  "claims.mjs": 8,
+  "claims.mjs": 10,
   "contract-tokens.mjs": 5,
-  "regenerate.mjs": 12,
+  "regenerate.mjs": 13,
   "migration-notice.mjs": 6,
   "baseline.mjs": 9,
 }));
