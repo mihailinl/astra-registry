@@ -1,6 +1,6 @@
 {
-  "contract_version": "0.24.1",
-  "source_commit": "39b302b9e160a35c71f91d57746acdf4900107b5",
+  "contract_version": "0.25.0",
+  "source_commit": "073dbec39c82cec852528779aee08ae4bd0a4007",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -1635,6 +1635,12 @@
         "reason_refused",
         "target_changed"
       ],
+      "accepts_unlisted": {
+        "party": "service",
+        "grammar": "^[a-z][a-z0-9_]{0,63}$",
+        "source": "BOT-82",
+        "why": "codes are append-only (SCOPE-3), so the bot can post one the service's pinned file lacks; refusing leaves the decision on BOT-80's list, re-posted by every moderation run"
+      },
       "emitter": [
         "service"
       ],
