@@ -100,8 +100,9 @@ export async function run() {
     // byte-order mark, redden `--verify --receipt binds…`, which is this same
     // verifyFile with a receipt. The artefact and notes rules redden `--renew
     // re-checks every claim…`, over the same contentProblems. A version that is
-    // not SemVer is refused by the filename rule before its own, so deleting its
-    // own changes only the message. The three at the end of the list below
+    // not SemVer is refused by the filename rules as well as by its own — the
+    // filename must carry a SemVer version equal to it — so deleting its own
+    // changes only the message. The three at the end of the list below
     // were asked nowhere at all.
     const dir = updateSandbox();
     const verify = (text) => updateSigner(["--verify", writeUpdateText(text)], dir);
