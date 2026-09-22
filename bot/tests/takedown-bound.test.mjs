@@ -271,8 +271,17 @@ test("a staging deprecate counts 0, by id and not by trailer", () => {
 });
 
 test("with no staging_listing_id committed the exclusion excludes nothing, and says so", () => {
-  // Written against the ABSENCE: the key is not on `main` until M-T2.1 lands
-  // it, and a rule that waited for the value would be a rule that did not run.
+  // Written against the ABSENCE — and **the absence ended on 2026-09-22**, when
+  // M-T2.1 landed `staging_listing_id` in `policy/reserved-ids.json` (`bf51592`).
+  // The sentence here said "the key is not on `main` until M-T2.1 lands it" and
+  // was falsified by M-T2.1 itself.
+  //
+  // THE TEST IS STILL RIGHT AND IS NOT ABOUT THE TREE. It builds a fixture with
+  // no staging id and asserts the exclusion excludes nothing, which is a claim
+  // about the code's behaviour on that input — true before M-T2.1 and true
+  // after. What went stale is the sentence explaining WHY the case was worth
+  // writing, and a stale reason is how a still-correct test gets deleted by
+  // somebody tidying up after the thing it waited for.
   const f = fixture("no-staging").base();
   f.advisory("0005", [{ kind: "id", value: "dice-roller" }]).commit("mod: advise dice-roller");
 
