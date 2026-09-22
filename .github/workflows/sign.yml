@@ -27,6 +27,11 @@
 #     missing from the list below waits an hour for the cron. The condition is
 #     COMPLETION, never success — a run that committed and then failed a later
 #     job must not leave its takedown waiting (D1).
+#     `build-index.yml` gates the OTHER way, on purpose: on `success`, because
+#     a failed ingest committed nothing for it to re-check, at the cost of a
+#     run that commits and then fails a later job waiting for its cron. It
+#     states this rule beside its own trigger; this line is the other half,
+#     so whoever edits either gate finds both arguments (ops register gap 44).
 #   Pages ageing behind a failed publish.  `pages` runs on `!cancelled()`, so a
 #     `publish` that could not commit still redeploys what `signed` holds, and
 #     the site build is non-fatal: a template that cannot render must not be
