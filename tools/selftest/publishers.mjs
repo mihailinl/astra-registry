@@ -27,7 +27,7 @@ import {
   publisherRecords,
 } from "../lib/sources.mjs";
 import { checkPublisherRecords, runValidation } from "../validate.mjs";
-import { proofNamesOwner, recheck } from "../../bot/recheck-publishers.mjs";
+import { NO_LISTING_FILE, proofNamesOwner, recheck } from "../../bot/recheck-publishers.mjs";
 import { test, assert } from "./harness.mjs";
 
 // ── gap 6: a record that reaches no listing ─────────────────────────────────
@@ -54,12 +54,13 @@ import { test, assert } from "./harness.mjs";
 // own no plugin at all is either a mistake or a publisher who has not
 // published, and only the declaration can say which.
 
-/** Where a record that expects no listing says so. */
-const NO_LISTING_FILE = "tools/selftest/publishers-without-listing.json";
-
 /**
  * The declarations in `NO_LISTING_FILE`'s text, and every way that text is
- * wrong. Nothing else reads the file, so its shape is held here.
+ * wrong. The file's shape is held here. One other program reads it: the daily
+ * re-check, `bot/recheck-publishers.mjs`, which owns the path this module
+ * imports and drops a withdrawn record's declaration by `record` and nothing
+ * else — held to this reader by the last test in this module, which runs the
+ * job and then this function over what it wrote.
  */
 function readNoListing(text) {
   const declared = new Map();
@@ -878,6 +879,120 @@ export async function run() {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
       fs.rmSync(shadow, { recursive: true, force: true });
+    }
+  });
+  // Gap 6's open half, run rather than composed. The daily re-check deletes an
+  // expired record and runs no suite before it pushes; the suite refuses a
+  // declaration naming no record. So a withdrawn DECLARED record used to turn
+  // `main` red — the publish path's fifth gate with it — for a withdrawal
+  // nobody did wrong. Impossible on today's tree (the one declared record
+  // cannot expire), so the case is built: the committed publishers and
+  // declarations, plus a declared `verified` record that has expired and a
+  // declared one that has not. Four clauses:
+  //
+  //   (a) the committed declarations file round-trips through the job's
+  //       rewrite byte for byte, so a withdrawal changes the entry it drops
+  //       and nothing else in the file;
+  //   (b) the withdrawal takes its declaration and only its declaration, and
+  //       this module's own reach check is green over what the job wrote —
+  //       while the SAME check over the declarations as they were is red,
+  //       naming the record, which is the failure this closes, watched;
+  //   (c) withdrawing an undeclared record leaves the file's bytes alone, and
+  //       an unreadable file is reported without holding the withdrawal;
+  //   (d) the workflow's commit step stages the file, or (b) writes a change
+  //       nothing commits and `main` goes red exactly as before.
+  await test("a withdrawn record that was declared takes its declaration with it, and the suite stays green", async () => {
+    const committedText = fs.readFileSync(path.join(REPO_ROOT, NO_LISTING_FILE), "utf8");
+    const committed = JSON.parse(committedText);
+
+    // (a)
+    assert(`${JSON.stringify(committed, null, 2)}\n` === committedText,
+      `${NO_LISTING_FILE} is not in the two-space, one-newline JSON bot/recheck-publishers.mjs writes back, so the ` +
+      "first withdrawal of a declared record would reformat the whole file inside a badge-withdrawal commit");
+
+    const now = new Date("2026-06-15T12:00:00Z");
+    const fetcher = async () => ({ ok: false, why: "HTTP 404" });
+    const build = (declarations) => {
+      const tree = fs.mkdtempSync(path.join(os.tmpdir(), "astra-recheck-declared-"));
+      for (const dir of ["plugins", "registry", "policy", "schema", "publishers"]) {
+        fs.cpSync(path.join(REPO_ROOT, dir), path.join(tree, dir), { recursive: true });
+      }
+      const rec = (owner, expires_at) => fs.writeFileSync(path.join(tree, "publishers", `${owner}.json`), JSON.stringify({
+        schema: "astra.registry.publisher/1", owner, display_name: `Fixture ${owner}`, tier: "verified",
+        verified_at: "2019-01-01", expires_at,
+        evidence: { kind: "domain", domain: "example.com", proof: `https://example.com/${owner}` },
+      }, null, 2) + "\n");
+      rec("lapsed-unpublished", "2020-01-01");
+      rec("waiting-unpublished", "2999-01-01");
+      const text = `${JSON.stringify({ ...committed, declarations: [...committed.declarations, ...declarations] }, null, 2)}\n`;
+      fs.mkdirSync(path.dirname(path.join(tree, NO_LISTING_FILE)), { recursive: true });
+      fs.writeFileSync(path.join(tree, NO_LISTING_FILE), text);
+      return { tree, text };
+    };
+    const lapsed = { record: "publishers/lapsed-unpublished.json", reason: "fixture: verified, not published yet" };
+    const waiting = { record: "publishers/waiting-unpublished.json", reason: "fixture: verified, not published yet" };
+
+    // (b)
+    const { tree, text: before } = build([lapsed, waiting]);
+    try {
+      const pre = publisherReach(tree, before);
+      assert(pre.fail.length === 0, `the built tree is red before the job runs, so it proves nothing:\n${pre.fail.join("\n")}`);
+      const r = await recheck({ root: tree, write: true, fetcher, now });
+      assert(JSON.stringify(r.expired.map((e) => e.file)) === JSON.stringify([lapsed.record]),
+        `the job withdrew ${JSON.stringify(r.expired.map((e) => e.file))}; the case needs exactly ${lapsed.record}`);
+      assert(!fs.existsSync(path.join(tree, lapsed.record)), "the expired record is still on disk");
+      assert(JSON.stringify(r.undeclared) === JSON.stringify([lapsed.record]) && r.declarationProblem === null,
+        `the job reports dropping ${JSON.stringify(r.undeclared)} (problem: ${r.declarationProblem}); it should report ${lapsed.record}`);
+      const after = fs.readFileSync(path.join(tree, NO_LISTING_FILE), "utf8");
+      const want = `${JSON.stringify({ ...committed, declarations: [...committed.declarations, waiting] }, null, 2)}\n`;
+      assert(after === want,
+        `after the withdrawal ${NO_LISTING_FILE} is not the file it was minus ${lapsed.record}'s entry:\n${after}`);
+      const post = publisherReach(tree, after);
+      assert(post.fail.length === 0,
+        `the suite is red over the tree the job left, so this withdrawal would turn main red:\n${post.fail.join("\n")}`);
+      const stale = publisherReach(tree, before);
+      assert(stale.fail.some((m) => m.includes(`declares ${lapsed.record}, which is not a publisher record here`)),
+        "over the declarations as they were before the job, the reach check should refuse the withdrawn record's " +
+        `declaration — that is the red this closes, and without it this test is not about it:\n${stale.fail.join("\n")}`);
+    } finally {
+      fs.rmSync(tree, { recursive: true, force: true });
+    }
+
+    // (c)
+    const quiet = build([waiting]);
+    try {
+      const r = await recheck({ root: quiet.tree, write: true, fetcher, now });
+      assert(r.expired.length === 1 && r.undeclared.length === 0, `an undeclared withdrawal reported ${JSON.stringify(r)}`);
+      assert(fs.readFileSync(path.join(quiet.tree, NO_LISTING_FILE), "utf8") === quiet.text,
+        `withdrawing an undeclared record rewrote ${NO_LISTING_FILE}`);
+    } finally {
+      fs.rmSync(quiet.tree, { recursive: true, force: true });
+    }
+    const broken = build([lapsed]);
+    try {
+      fs.writeFileSync(path.join(broken.tree, NO_LISTING_FILE), "{ not json");
+      const r = await recheck({ root: broken.tree, write: true, fetcher, now });
+      assert(!fs.existsSync(path.join(broken.tree, lapsed.record)),
+        "an unreadable declarations file held the withdrawal; a badge must not outlive its evidence because of a neighbouring file");
+      assert(typeof r.declarationProblem === "string" && r.declarationProblem.includes(NO_LISTING_FILE),
+        `an unreadable declarations file was not reported: ${JSON.stringify(r.declarationProblem)}`);
+      assert(fs.readFileSync(path.join(broken.tree, NO_LISTING_FILE), "utf8") === "{ not json",
+        "the job wrote over a declarations file it could not read");
+    } finally {
+      fs.rmSync(broken.tree, { recursive: true, force: true });
+    }
+
+    // (d)
+    const wf = fs.readFileSync(path.join(REPO_ROOT, ".github", "workflows", "publisher-recheck.yml"), "utf8");
+    const lines = wf.split("\n").filter((l) => !/^\s*#/.test(l));
+    const diffs = lines.filter((l) => /\bgit diff --quiet\b/.test(l));
+    const adds = lines.filter((l) => /\bgit add\b/.test(l));
+    assert(diffs.length === 1 && adds.length === 1,
+      `publisher-recheck.yml has ${diffs.length} \`git diff --quiet\` and ${adds.length} \`git add\` line(s); this check reads exactly one of each`);
+    for (const [what, line] of [["decides whether anything moved", diffs[0]], ["stages the commit", adds[0]]]) {
+      assert(line.split(/[\s;]+/).includes(NO_LISTING_FILE),
+        `publisher-recheck.yml's line that ${what} does not name ${NO_LISTING_FILE}, so a dropped declaration is ` +
+        `written and never committed, and main goes red on the withdrawal:\n  ${line.trim()}`);
     }
   });
 }

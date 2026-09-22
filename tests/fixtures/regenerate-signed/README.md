@@ -21,6 +21,18 @@ The three are deliberately not alike:
 | `fixture-beta` | `icon.png` | `1.4.2` | binary bytes inlined as base64; two platform artifacts |
 | `fixture-gamma` | `icon.webp` | `0.9.0`, staging | binary bytes again, and the branch where no flat download URL may be emitted |
 
+**Every record here is one the registry's own judges would accept**, and that
+is asserted rather than hoped. `fixture-owner.json` carried `"tier": "community"`
+from the day this tree was written until 2026-09-22 — a value
+`schema/publisher-v1.json` has never allowed — and the regeneration shipped it
+into `signed.publishers`, where `schema/index-v1.json` refuses it as well, with
+every test in the module green. A proof about the bytes a generator makes from a
+tree no registry could publish is a proof about the wrong tree. So
+`tools/selftest/regenerate.mjs` now judges the publisher records with the
+function `tools/validate.mjs` runs on `publishers/`, and the regenerated
+catalogue with the index schema. The record is `astra_team` because its
+evidence is `first-party`, which is what that tier's evidence is.
+
 Nothing here is a real plugin. Every repository named is under
 `fixture-owner/`, every URL is on `example.invalid`, and every digest is a
 literal nobody can resolve to bytes — a fixture that pointed at a live host

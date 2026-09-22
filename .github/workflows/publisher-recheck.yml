@@ -55,16 +55,22 @@ jobs:
             echo REPORT
           } >> "$GITHUB_OUTPUT"
 
+      # Two paths, and the second is not optional: a withdrawn record that was
+      # declared in tools/selftest/publishers-without-listing.json takes its
+      # declaration with it, because the suite refuses a declaration that names
+      # no record. The job drops it; this commits it with the withdrawal. The
+      # path is bot/recheck-publishers.mjs's NO_LISTING_FILE, and
+      # tools/selftest/publishers.mjs fails if this step stops staging it.
       - name: Commit whatever moved
         run: |
           set -euo pipefail
-          if git diff --quiet -- publishers/; then
+          if git diff --quiet -- publishers/ tools/selftest/publishers-without-listing.json; then
             echo "nothing moved"
             exit 0
           fi
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add publishers/
+          git add -- publishers/ tools/selftest/publishers-without-listing.json
           git commit -m "publishers: re-check $(date -u +%Y-%m-%d)
 
           $(cat /tmp/recheck.log)"
