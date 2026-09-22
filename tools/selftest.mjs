@@ -701,10 +701,14 @@ function historyBefore(job, step) {
 /**
  * The checks in this suite that say NOT ASKED in a shallow checkout, found by
  * reading them — `siblingGatedChecks`'s reason, and a tighter read than its:
- * a `test(...)` body in which CODE (not a comment) names `shallow` above a
- * `neverAsk(` in the same body. The title is the `test(...)` it sits inside,
- * and the title line itself is not read, so a check whose NAME mentions a
- * shallow clone is not counted for that alone.
+ * a `test(...)` body in which CODE (not a comment) names `shallow` before a
+ * `neverAsk(` in the same body. The title is the `test(...)` it sits inside.
+ * Two places are deliberately not read: the title line, so a check whose NAME
+ * mentions a shallow clone is not counted for that alone; and the `neverAsk(`
+ * call's own arguments, so a message that SAYS "shallow" under a condition
+ * that no longer tests it (`if (false) neverAsk("this checkout is shallow…")`)
+ * is not counted either. Watched: without the second, that edit to
+ * update-notes.mjs's record check left it counted, and the floor below green.
  */
 function historyGatedChecks() {
   const out = [];
@@ -719,8 +723,9 @@ function historyGatedChecks() {
       const opened = /\btest\(\s*["'`](.+?)["'`]\s*,/.exec(line);
       if (opened) { title = opened[1]; named = false; continue; }
       if (!title) continue;
-      if (/shallow/i.test(line)) named = true;
-      if (named && /\bneverAsk\(/.test(line)) {
+      const call = line.search(/\bneverAsk\(/);
+      if (/shallow/i.test(call < 0 ? line : line.slice(0, call))) named = true;
+      if (named && call >= 0) {
         out.push(`${title} — tools/selftest/${name}:${i + 1}`);
         named = false;
       }
@@ -920,22 +925,41 @@ function checkAbsenceEnvironment(live) {
   ]);
 }
 
+// A CENSUS FLOOR on the checks `checkHistoryEnvironment` below is about, where
+// `checkAbsenceEnvironment` has only "not empty" — and the difference is
+// measured rather than preferred. That set holds one check, so
+// "not empty" is the census. This one holds two, from two lanes of work —
+// revocations.mjs's flag check and update-notes.mjs's release-record check —
+// and deleting the `if (…shallow…) neverAsk(…)` from EITHER put gap 75 back
+// for it (`ok` in every shallow lane, about history it cannot see) while
+// "not empty" stayed true on the other one, and every FLOORS entry stayed
+// met, because a check that stops saying NOT ASKED still reports once.
+// A floor and not an equality, for FLOORS' reason: adding one needs no edit
+// here; retiring one on purpose needs this number lowered in the same diff.
+const HISTORY_GATED_FLOOR = 2;
+const HISTORY_GATED_DAY = "2026-09-22";
+
 /**
  * GAP 75's half of the lane question, in `checkAbsenceEnvironment`'s shape: not
  * *is this suite run*, but *is it run anywhere that holds the history its
- * history checks are about*. Fails at zero, naming the checks, and with a floor
- * on the scan first, for that function's reason.
+ * history checks are about*. Fails at zero, naming the checks — after the census
+ * floor above, which is this function's version of that one's floor on the scan.
  */
 function checkHistoryEnvironment(live, gated) {
-  if (!gated.length) {
-    fail("this check is about a set that is no longer in tools/selftest/", [
-      "nothing under tools/selftest/ tests for a shallow checkout inside a test() and `neverAsk`s about it, so " +
-      "there is no check left whose askability depends on the history — and `checkHistoryEnvironment` in " +
-      "tools/selftest.mjs exists only to keep a lane where such a check is asked",
-      "If every one was retired deliberately, delete that function and the line that calls it, in the SAME " +
-      "commit. If not, this SCAN is what broke: it reads each test() body for code naming `shallow` above a " +
-      "`neverAsk(` in the same body, and a rename of either is invisible to it",
-    ]);
+  if (gated.length < HISTORY_GATED_FLOOR) {
+    fail(
+      `${gated.length} check(s) under tools/selftest/ say NOT ASKED in a shallow checkout, and there were ` +
+      `${HISTORY_GATED_FLOOR} on ${HISTORY_GATED_DAY}`,
+      [
+        `found: ${gated.join("; ") || "none"}`,
+        "A check that stopped testing for a shallow checkout prints `ok` there again, about history it cannot " +
+        "see — gap 75, back — and nothing else in this suite notices, because it still reports once. If one " +
+        "was retired deliberately, lower HISTORY_GATED_FLOOR in tools/selftest.mjs in the SAME commit; if every " +
+        "one was, delete `checkHistoryEnvironment` and the line that calls it too. If not, this SCAN is what " +
+        "broke: it reads each test() body for code naming `shallow` above a `neverAsk(` in the same body, and " +
+        "a rename of either is invisible to it",
+      ],
+    );
   }
   const whole = live.filter((s) => s.history.full);
   if (whole.length) return whole;
