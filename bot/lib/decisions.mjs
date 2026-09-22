@@ -77,6 +77,7 @@ import { ID_PATTERN } from "../../tools/lib/ids.mjs";
 import { SEMVER_PATTERN } from "../../tools/lib/semver.mjs";
 import { stableStringify } from "../../tools/lib/canonical.mjs";
 import { REPO_ROOT } from "../../tools/lib/sources.mjs";
+import { TIME, isTime } from "../../tools/lib/time.mjs";
 import { DOCUMENT_MEMBERS, scanDocument, shapeFindings } from "../../tools/lib/priv-rules.mjs";
 
 /** `astra.registry.decision/1` (DEC-7). Stamped here and nowhere else. */
@@ -109,8 +110,10 @@ export const DECISION_ID_CHARS = 32;
 
 const ID_RE = new RegExp(ID_PATTERN);
 const SEMVER_RE = new RegExp(SEMVER_PATTERN);
-/** §0.7: RFC 3339 UTC, whole seconds, `Z`. */
-const TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+// §0.7's time is `tools/lib/time.mjs`' `TIME` and `isTime`: RFC 3339 UTC, whole
+// seconds, `Z`, a real instant, and never second 60 (contract 0.34.0). This
+// module spelled the grammar for itself until then, and admitted `…:60Z`, hour
+// 24 and `2026-02-30` in `decided_at`, the record's path and `Decided-At:`.
 /** §0.7: `repository_id` is a canonical base-10 digit string, never coerced. */
 const BASE10_RE = /^[0-9]{1,20}$/;
 /** §0.7: `submission_id` and `service_decision_id` are lowercase UUID v4 or v7. */
@@ -239,7 +242,7 @@ export function recordPath({ decision_id, decided_at }) {
   if (!DECISION_ID_RE.test(String(decision_id ?? ""))) {
     throw new Error(`\`decision_id\` ${JSON.stringify(decision_id)} is not ${DECISION_ID_CHARS} lowercase hex (§0.7)`);
   }
-  if (!TIME_RE.test(String(decided_at ?? ""))) {
+  if (!isTime(decided_at)) {
     throw new Error(
       `\`decided_at\` ${JSON.stringify(decided_at)} is not §0.7's RFC 3339 UTC with whole seconds, and the ` +
       "record's path is derived from it — a record filed under the wrong month is a record the year's walk misses",
@@ -293,7 +296,7 @@ export const AUTHOR_ACTION_FORBIDDEN = Object.freeze(["submission_id", "fingerpr
 const str = (re) => (v) => typeof v === "string" && re.test(v);
 
 const AUTHOR_ACTION_GRAMMAR = {
-  decided_at: str(TIME_RE),
+  decided_at: str(TIME),
   actor: (v) => v === "author",
   trigger: (v) => v === "moderation",
   plugin_id: str(ID_RE),
@@ -471,7 +474,7 @@ const TRAILER_GRAMMAR = {
   "Service-Decision": { re: UUID_V47_RE, uuidOk: true, says: "§0.7's lowercase UUID v4 or v7" },
   // Last, because the plan's order is "a `Decided-At:` beside each
   // `Service-Decision:`" and `TRAILERS` is the order a commit carries them in.
-  "Decided-At": { re: TIME_RE, uuidOk: false, says: "§0.7's RFC 3339 UTC with whole seconds, ending in `Z`" },
+  "Decided-At": { re: TIME, uuidOk: false, says: "§0.7's RFC 3339 UTC with whole seconds, ending in `Z`" },
 };
 
 /** BOT-37's trailer names, in the order a commit carries them. */

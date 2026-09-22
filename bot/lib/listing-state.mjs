@@ -53,6 +53,7 @@ import { execFileSync } from "node:child_process";
 
 import { REPO_ROOT } from "../../tools/lib/sources.mjs";
 import { validate } from "../../tools/lib/jsonschema.mjs";
+import { TIME_RE } from "../../tools/lib/time.mjs";
 
 /** contract B.4's two records: the paths, and the schema strings in them. */
 export const DEADLINE_FILE = path.posix.join("policy", "binding-deadline.json");
@@ -79,8 +80,8 @@ export const deadlineSchema = (root = REPO_ROOT) =>
 export const cutoverSchema = (root = REPO_ROOT) =>
   readJson(path.join(root, "schema", "cutover-v1.json"));
 
-/** §0.7: RFC 3339 UTC, whole seconds, ending in `Z`. The schemas say the same. */
-const TIME_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/;
+// §0.7's grammar is tools/lib/time.mjs' `TIME_RE`, which the schemas carry as
+// `TIME_PATTERN` byte for byte (contract 0.34.0; tools/selftest/times.mjs).
 
 /**
  * A §0.7 time as epoch milliseconds, or a refusal.
