@@ -21,11 +21,17 @@
 // the same export; the reason it is one export, and why it is the whole
 // `tools/revocations` directory, is written there.
 //
-// The signer is the only thing that assigns them. `tools/build-index.mjs` and
-// `tools/lib/revocations.mjs` count at HEAD and add one for a staged change
-// because they run inside the workflow that is about to commit; the signer
-// counts at a commit that already exists, so it adds nothing. `serialsAt` is
-// where that difference lives, once.
+// The signer is the only thing that assigns them. The two regenerations count
+// at HEAD, and they do NOT treat a pending change alike (gap 69; the
+// measurement is in `resolveSerial`'s comment). `tools/build-index.mjs` adds
+// one when `git status` shows anything under `plugins/`, because it runs
+// inside the workflow that is about to commit. `tools/lib/revocations.mjs`'s
+// `resolveSerial` adds one ALWAYS — the same reserved-zero offset as the `+ 1`
+// above — and never looks at the working tree, so with an advisory staged it
+// writes HEAD's serial, one short of what this file assigns at the commit that
+// lands it. The signer counts at a commit that already exists, so it adds
+// nothing for a pending change. `serialsAt` is where the signer's half lives,
+// once.
 //
 // ── what a "change" is ──────────────────────────────────────────────────────
 //

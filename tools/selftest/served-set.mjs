@@ -29,7 +29,8 @@ import { stableStringify } from "../lib/canonical.mjs";
 import { loadTestRoot } from "../testkeys/regenerate.mjs";
 import { signRevocations } from "../sign-revocations.mjs";
 import { armingState } from "../signer/pages.mjs";
-import { SIGNED_FILES } from "../signer/plan.mjs";
+import { SIGNED_FILES, serialsAt } from "../signer/plan.mjs";
+import { SERIAL_PATHSPEC } from "../lib/revocations.mjs";
 import { GRACE_MINUTES, emit, finding, minutesSince, verdict } from "../served-set/report.mjs";
 import { gather, serve85 } from "../served-set/main-vs-signed.mjs";
 import { serve39 } from "../served-set/served-vs-signed.mjs";
@@ -40,6 +41,8 @@ import { serve39 } from "../served-set/served-vs-signed.mjs";
 // module stopped being able to test it.
 import { parseRunUrl, provenance, receiptName, signedCommits, trailersOf } from "../served-set/provenance.mjs";
 import { SILENT_JOB_CODE, UNRENDERABLE_CODE, composeVerdict, jobsFromEnv } from "../served-set/compose.mjs";
+import { compose as composeCoverage } from "../coverage-verdict.mjs";
+import { VERDICT_SCHEMA, verdictProblems } from "../../bot/lib/alert-verdict.mjs";
 import { RUNWAY_DAYS, runwayVerdict } from "../served-set/runway.mjs";
 import { JOBS } from "../served-set/check.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
@@ -260,6 +263,67 @@ export async function run() {
     const v = serve85({ ...facts, head, now: "2026-09-19T12:00:00Z" });
     assertEqual(codesOf(v), "SERVE_85_SERIAL_DRIFT",
       "a publication one minute old excused a withdrawal three hours old; SERVE-85's own clock does that");
+  });
+
+  await test("an advisory merged from a long-lived branch is dated at the merge", () => {
+    // Gap 68. The serial moves when an advisory becomes REACHABLE from main,
+    // and for a pull request merged with a merge commit that is the merge.
+    // `git log -1 -- <pathspec>` does not answer that: it simplifies history
+    // through the merge, which is TREESAME to its branch parent for the path,
+    // and dates the branch commit. Measured 2026-09-22 on this fixture before
+    // the repair: the advisory committed at 09:00, merged at 12:00, listClock
+    // 09:00, and SERVE_85_SERIAL_DRIFT one minute after the merge — "181
+    // minutes after the commit" — for a signer that had had one minute. Every
+    // advisory PR open longer than the grace paged the moment it merged.
+    //
+    // The fixture is the shape GitHub's merge button makes: the branch forks,
+    // main moves on without touching tools/revocations/, and the merge is a
+    // real two-parent commit three hours after the advisory.
+    const t = makeTree("merged-from-branch");
+    t.write("tools/revocations/README.md", "fixtures\n");
+    t.commit("a revocations directory", { at: "2026-09-19T08:00:00Z" });
+    t.git("checkout", "-q", "-b", "advisory");
+    t.write("tools/revocations/ASTRA-2026-0001.json", advisory());
+    t.commit("an advisory, on a branch, at nine", { at: "2026-09-19T09:00:00Z" });
+    t.git("checkout", "-q", "main");
+    t.write("plugins/dice-roller/plugin.json", { schema: "astra.registry.plugin/1", id: "dice-roller" });
+    const before = t.commit("main moves on while the pull request is open", { at: "2026-09-19T09:30:00Z" });
+    execFileSync("git", ["-C", t.dir, "merge", "-q", "--no-ff", "-m", "Merge pull request #1 from advisory", "advisory"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, GIT_AUTHOR_DATE: "2026-09-19T12:00:00Z", GIT_COMMITTER_DATE: "2026-09-19T12:00:00Z" },
+    });
+    const merge = t.head();
+
+    // The fixture guards, before the clock is asked. The merge has to be a
+    // merge; the serial has to move AT it and not before it on main; and the
+    // plain path-limited log has to date the branch commit — otherwise this
+    // fixture cannot tell the two clocks apart and the check below would be
+    // green about a difference it could not see.
+    assertEqual(t.git("rev-list", "--parents", "-n", "1", merge).split(" ").length, 3,
+      "the fixture's merge is not a two-parent commit, so there is no branch to date");
+    const serialBefore = serialsAt({ root: t.dir, sha: before }).revocations;
+    const serialAt = serialsAt({ root: t.dir, sha: merge }).revocations;
+    assertEqual(serialAt, serialBefore + 1,
+      `the serial is ${serialBefore} on main before the merge and ${serialAt} at it; the fixture has to move it at the merge`);
+    assertEqual(t.git("log", "-1", "--format=%cI", merge, "--", SERIAL_PATHSPEC), "2026-09-19T09:00:00Z",
+      "a plain path-limited log no longer dates the branch commit here, so this fixture no longer separates the two clocks");
+
+    const facts = gather({ root: t.dir });
+    assertEqual(facts.listClock, "2026-09-19T12:00:00Z",
+      `SERVE-85's clock dates ${facts.listClock}, and the advisory became reachable from main at the merge, ` +
+      `2026-09-19T12:00:00Z: tools/served-set/main-vs-signed.mjs has stopped reading main's first-parent line`);
+
+    const head = headFrom({
+      revocations: { signatures: [], signed: { schema: REVOCATIONS_SCHEMA, serial: serialBefore, revocations: [] } },
+    });
+    const early = serve85({ ...facts, head, now: "2026-09-19T12:01:00Z" });
+    assertEqual(early.status, "green",
+      `one minute after the merge the signer has had one minute, not ${GRACE_MINUTES}: ${codesOf(early)}`);
+    // The control. A repair that stopped the clock firing at all would pass
+    // the half above; the grace still has to run out, from the merge.
+    const late = serve85({ ...facts, head, now: "2026-09-19T12:31:00Z" });
+    assertEqual(codesOf(late), "SERVE_85_SERIAL_DRIFT",
+      "31 minutes after the merge a withdrawal the signer never published went unreported");
   });
 
   await test("a `signed` ahead of the commit this job read is the system working, not drift", () => {
@@ -545,6 +609,21 @@ export async function run() {
     });
     assertEqual(codesOf(offMain), "SERVE_90_SOURCE_COMMIT_UNREACHABLE",
       "bytes signed over a tree that is not in public history were accepted");
+
+    // And a Source-Commit that is not a commit id at all, which no run could
+    // have read. Every fixture here answers the two ancestry questions with a
+    // constant, so the 40-hex rule is the only thing between this commit and a
+    // pass: measured 2026-09-22, deleting it from provenance.mjs left all 317
+    // checks green. (In production `git merge-base` would refuse the string and
+    // the commit would fail as NOT_DESCENDANT — refused, for the wrong reason.)
+    for (const [what, source] of [["missing", undefined], ["a branch name", "main"], ["an abbreviated sha", "c".repeat(12)]]) {
+      const odd = commitOf({ sha });
+      if (source === undefined) delete odd.trailers["Source-Commit"];
+      else odd.trailers["Source-Commit"] = source;
+      const v = provenance({ commits: [odd], repo: REPO, runs, now: NOW, ...ancestry });
+      assertEqual(codesOf(v), "SERVE_90_SOURCE_COMMIT_UNREACHABLE", `a Source-Commit that is ${what} was accepted`);
+      assert(v.findings[0].message.includes("no 40-hex `Source-Commit`"), `${what}: refused for another reason: ${v.findings[0].message}`);
+    }
   });
 
   await test("the head is checked however old it is, and older commits fall out of the 7-day window", () => {
@@ -687,6 +766,46 @@ export async function run() {
     assertEqual(v.codes, undefined, "a green verdict carried codes");
   });
 
+  await test("every composer caps a list where the channel does: as many as it will send, and not one more", () => {
+    // Three files write `MAX_ELEMENTS = 40` and none imports another:
+    // bot/lib/alert-verdict.mjs, which REFUSES a verdict whose list is longer,
+    // and the two composers that cut their lists to fit it,
+    // tools/served-set/compose.mjs and tools/coverage-verdict.mjs. Measured
+    // 2026-09-22: each composer's 40 moved to 41 and to 39, and all 317 checks
+    // stayed green all four times. Too high and a real alarm is refused by the
+    // channel and replaced by its fallback, every code in it lost; too low and
+    // the fortieth finding is dropped from a message that had room for it.
+    //
+    // The channel's cap is READ from the channel — the longest list
+    // verdictProblems accepts — rather than written here, so this compares the
+    // composers with the file they have to agree with and not with a third copy.
+    const codes = (n) => Array.from({ length: n }, (_, i) => `E_CAP_PROBE_${i}`);
+    const hexes = (n) => Array.from({ length: n }, (_, i) => i.toString(16).padStart(40, "0"));
+    let cap = 0;
+    while (cap < 1000 && verdictProblems({ schema: VERDICT_SCHEMA, check: "served-set", status: "red", codes: codes(cap + 1) }).length === 0) {
+      cap++;
+    }
+    assert(cap > 0 && cap < 1000, `the channel's list cap could not be read: it accepted ${cap}`);
+    const many = cap * 2 + 5;
+
+    const { verdict: served, problems } = composeVerdict({
+      check: "served-set",
+      jobs: [{ name: "main-vs-signed", result: "success", status: "red", codes: codes(many).join(" "), hexes: hexes(many).join(" ") }],
+      run: null,
+    });
+    assertEqual(problems.join("; "), "",
+      "tools/served-set/compose.mjs built a verdict the channel refuses, so what pages is the fallback and every real code is lost");
+    assertEqual(served.codes?.length, cap, `tools/served-set/compose.mjs sends a different number of codes than the channel's ${cap}`);
+    assertEqual(served.hexes?.length, cap, `tools/served-set/compose.mjs sends a different number of hexes than the channel's ${cap}`);
+
+    const { verdict: coverage } = composeCoverage(
+      { lines: [{ rule: "cap-probe", status: "red", codes: codes(many), ids: [], hexes: hexes(many) }], bad: [] },
+      { rules: [{ name: "cap-probe", owner: "selftest", script: "none" }], run: null },
+    );
+    assertEqual(coverage.codes?.length, cap, `tools/coverage-verdict.mjs sends a different number of codes than the channel's ${cap}`);
+    assertEqual(coverage.hexes?.length, cap, `tools/coverage-verdict.mjs sends a different number of hexes than the channel's ${cap}`);
+  });
+
   // ── ROLL-45's runway ───────────────────────────────────────────────────────
   console.log("\nROLL-45: how much runway trust.json has left");
 
@@ -771,6 +890,13 @@ export async function run() {
       ["no expires_at", trustExpiring(undefined)],
       ["a date that is not an instant", trustExpiring("soon")],
       ["no signed member", { signatures: [] }],
+      // The fourth expiry this rule reads, and until 2026-09-22 the only one no
+      // fixture carried: an index key's own `not_after`. The sibling check above
+      // asks only a READABLE one. Measured that day, dropping the unreadable
+      // branch from runway.mjs left all 317 checks green — a key whose lapse
+      // date nobody can parse went unwatched while the envelope said 400 days.
+      ["an index key's not_after that is not an instant",
+        trustExpiring(plusDays(400), [{ key_id: "astra-index-2026a", not_after: "soon" }])],
     ]) {
       const v = runwayVerdict({ documents: [{ where: "main", doc }], now: RUNWAY_NOW });
       assertEqual(v.status, "red", `${what} was read as a healthy runway`);
@@ -803,13 +929,29 @@ export async function run() {
       const m = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(lines[i]);
       if (m) jobNames.push(m[1]);
     }
-    assert(jobNames.length >= 3, `the walk found ${jobNames.length} job(s) in served-set.yml; it is broken, not smaller`);
+    // "Broken, not smaller" is a claim about the workflow's SIZE, and until
+    // 2026-09-22 it was held by the literal 3, against a workflow of four
+    // jobs: three comparisons and the alert. Measured that day: deleting the trust-runway job from served-set.yml consistently
+    // (the job, its `needs` entry, its ASTRA_SERVED_SET_JOBS word and its four
+    // mappings) left three jobs, satisfied `>= 3`, and all 317 checks stayed
+    // green while ROLL-45's alarm stopped running; so did adding a job to
+    // check.mjs's JOBS that no workflow runs. The size the workflow must not
+    // fall below is the set of comparisons tools/served-set/check.mjs can run,
+    // and that is what it is now held to, in both directions, below.
+    const runnable = Object.keys(JOBS).sort();
+    assert(runnable.length >= 1, "tools/served-set/check.mjs's JOBS names no comparison, so there is nothing to hold the workflow to");
+    assert(jobNames.length > runnable.length,
+      `the walk found ${jobNames.length} job(s) in served-set.yml, fewer than check.mjs's ${runnable.length} comparisons and ` +
+      "the alert; it is broken, or the workflow is smaller than what it has to run");
 
     const declared = /ASTRA_SERVED_SET_JOBS:\s*(.+)/.exec(src)?.[1].trim().split(/\s+/) ?? [];
     const comparisons = jobNames.filter((n) => n !== "alert");
     assertEqual(comparisons.slice().sort().join(" "), declared.slice().sort().join(" "),
       "the jobs in served-set.yml and the jobs ASTRA_SERVED_SET_JOBS names are not the same set, so a comparison " +
       "either pages for nothing or reports into nothing");
+    assertEqual(comparisons.slice().sort().join(" "), runnable.join(" "),
+      "the comparisons served-set.yml runs are not the comparisons tools/served-set/check.mjs can run: one that " +
+      "check.mjs knows and no job runs is an alarm that is never raised, and nothing else would say so");
 
     const needs = /^\s+needs:\s*\[(.+)\]\s*$/m.exec(src)?.[1].split(",").map((s) => s.trim()) ?? [];
     for (const name of declared) {

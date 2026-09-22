@@ -118,9 +118,20 @@ export function gitReader(root) {
       const v = git(["log", "-1", "--format=%ct", ref], true);
       return v === null ? null : Number(v);
     },
-    /** The newest commit touching a pathspec, or null when nothing ever has. */
+    /**
+     * The newest commit on `ref`'s FIRST-PARENT line that changed a pathspec —
+     * the moment the change became reachable from `ref` — or null when
+     * nothing ever has. For a pull request merged with a merge commit that is
+     * the merge. A plain `git log -1 -- <pathspec>` simplifies history through
+     * the merge, which is TREESAME to its branch parent for the path, and
+     * returns the branch commit instead: measured 2026-09-22 (gap 68), a change
+     * committed on a branch at 01:00 and merged at 04:00 against a `signed`
+     * made at 01:30 gave A7 a drift of -30 minutes and no finding, where the
+     * true drift was 150. A fast-forward of an old commit is still dated at
+     * its own committer time; git records no time for a ref moving.
+     */
     newestTouching(pathspec, ref = "HEAD") {
-      const v = git(["log", "-1", "--format=%H %ct", ref, "--", pathspec], true);
+      const v = git(["log", "-1", "--first-parent", "--format=%H %ct", ref, "--", pathspec], true);
       if (!v) return null;
       const [sha, at] = v.split(" ");
       return { sha, at: Number(at) };
@@ -449,6 +460,10 @@ export function a7({ git, now }, findings, skipped, scanned) {
   // of documentation alarmed it — `tools/lib/revocations.mjs` carries the run
   // and the reasoning.
   for (const [what, pathspec] of [["plugins", CATALOGUE_PATHSPEC], ["revocations", REVOCATIONS_PATHSPEC]]) {
+    // Dated where main acquired the change, not where a branch wrote it: a
+    // merged change dated at its branch commit reads as older than the
+    // Source-Commit, and A7 said nothing about a `signed` 150 minutes behind
+    // (gap 68; `newestTouching` carries the measurement).
     const newest = git.newestTouching(pathspec);
     if (!newest) continue;
     const driftMinutes = Math.floor((newest.at - at) / 60);
