@@ -30,6 +30,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { REPO_ROOT } from "./lib/sources.mjs";
+import { isShallow } from "./coverage/git.mjs";
 import { cleanupTmp, drain, registeredCount, results, walkRepo } from "./selftest/harness.mjs";
 
 const ARGS = process.argv.slice(2);
@@ -631,27 +632,21 @@ function siblingMentionBefore(lines, from, to) {
  * found by reading them.
  *
  * Derived, because the failure below has to name which half goes unasked and a
- * name written down here is the kind of claim gap 42 was recorded for. A check
- * qualifies when it tests the sibling path and `neverAsk`s about it; the title
- * is the `test(...)` it sits inside.
+ * name written down here is the kind of claim gap 42 was recorded for.
+ *
+ * **Read by the gate's CONDITION since gap 106, not by proximity.** This used
+ * to count any `neverAsk(` within twenty lines of the string `../AstraPlugins`,
+ * and measured on 2026-09-22 that counted signer.mjs's check with its
+ * `neverAsk(` moved into the `else` — where it says NOT ASKED in every lane
+ * that has NO sibling, which is every lane there is — and the suite printed
+ * `INCOMPLETE … 2 not asked` and exited 0, with a NOT ASKED reason claiming a
+ * sibling that did not exist. A check qualifies now when its `neverAsk(` opens
+ * the block of an `if` whose whole condition asks whether the sibling exists
+ * (`asksSibling` below), which is `historyGatedChecks`' rule one environment
+ * over.
  */
-function siblingGatedChecks() {
-  const out = [];
-  for (const name of fs.readdirSync(SUITE_DIR).filter((n) => n.endsWith(".mjs")).sort()) {
-    let lines;
-    try { lines = fs.readFileSync(path.join(SUITE_DIR, name), "utf8").split("\n"); } catch { continue; }
-    for (let i = 0; i < lines.length; i++) {
-      if (!/\.\.\/AstraPlugins/.test(lines[i])) continue;
-      if (!lines.slice(i, i + 20).some((l) => /\bneverAsk\(/.test(l))) continue;
-      let title = "";
-      for (let j = i; j >= 0 && !title; j--) {
-        const m = /\btest\(\s*["'`](.+?)["'`]\s*,/.exec(lines[j]);
-        if (m) title = m[1];
-      }
-      out.push(`${title || "(no test() encloses it)"} — tools/selftest/${name}:${i + 1}`);
-    }
-  }
-  return out;
+function siblingGatedChecks(sites) {
+  return sites.filter((s) => s.env === "sibling").map(siteLabel);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -730,24 +725,25 @@ function historyBefore(job, step) {
  * `else` are not gates on shallowness, and first means first, so nothing is
  * asked about what a block's other statements do. Anything this does not
  * recognise is not counted, which can only lower the count and turn the floor
- * red — the loud direction.
+ * red — the loud direction. And since gap 106 it is not dropped either: a
+ * `neverAsk(` this does not read as an environment has to be declared in
+ * ASKED_NOWHERE, or the suite is red naming the check.
  *
  * Measured 2026-09-22, gap 81's open item: the census this replaced counted a
  * body in which code named `shallow` anywhere above a `neverAsk(`, so
  * `const shallow = isShallow(REPO_ROOT);` over `if (false) {` left every one of
  * the five gates counted and the floor green — and so did the condition
  * negated, `&& false` added, and the call moved into the `else`. It caught only
- * a one-line `if (false)` and the block deleted. `checkHistoryCensus` below
+ * a one-line `if (false)` and the block deleted. `checkGateCensus` below
  * makes all five edits to every gate this finds, on every run.
  */
-function historyGatedChecks() {
-  const out = [];
-  for (const name of fs.readdirSync(SUITE_DIR).filter((n) => n.endsWith(".mjs")).sort()) {
-    let text;
-    try { text = fs.readFileSync(path.join(SUITE_DIR, name), "utf8"); } catch { continue; }
-    for (const g of historyGatesIn(text)) out.push(`${g.title} — tools/selftest/${name}:${g.line}`);
-  }
-  return out;
+function historyGatedChecks(sites) {
+  return sites.filter((s) => s.env === "history").map(siteLabel);
+}
+
+/** `title — tools/selftest/<module>:<line>`, the form every list of checks here prints. */
+function siteLabel(s) {
+  return `${s.title || "(no test() encloses it)"} — tools/selftest/${s.module}:${s.line}`;
 }
 
 /** The two spellings of the question that need no binding to be read. */
@@ -756,6 +752,12 @@ const SHALLOW_QUESTION = [
   /^[\w$]+\(\s*(["'])rev-parse\1\s*,\s*(["'])--is-shallow-repository\2\s*\)\s*===\s*(["'])true\3$/,
 ];
 
+/** What the last `const <name> = …;` in `before` binds, as text, or undefined. */
+function boundIn(before, name) {
+  const re = new RegExp(`\\bconst\\s+${name.replace(/\$/g, "\\$")}\\s*=\\s*([^;]*);`, "g");
+  return [...before.matchAll(re)].pop()?.[1]?.trim();
+}
+
 /**
  * Is `cond` — an `if`'s whole condition — the shallowness question? `before`
  * is the body's code above the `if`, where a name it reads must be bound.
@@ -763,19 +765,79 @@ const SHALLOW_QUESTION = [
 function asksShallow(cond, before, bindings = 0) {
   const c = cond.trim();
   if (SHALLOW_QUESTION.some((re) => re.test(c))) return true;
-  const boundTo = (name) => {
-    const re = new RegExp(`\\bconst\\s+${name.replace(/\$/g, "\\$")}\\s*=\\s*([^;]*);`, "g");
-    return [...before.matchAll(re)].pop()?.[1]?.trim();
-  };
   const member = /^([\w$]+)\.shallow$/.exec(c);
-  if (member) return /^[\w$.]+\(/.test(boundTo(member[1]) ?? "");
+  if (member) return /^[\w$.]+\(/.test(boundIn(before, member[1]) ?? "");
   const bare = /^[\w$]+$/.exec(c);
   if (bare && bindings === 0) {
-    const bound = boundTo(c);
+    const bound = boundIn(before, c);
     return bound !== undefined && asksShallow(bound, before, 1);
   }
   return false;
 }
+
+/**
+ * Is `cond` — an `if`'s whole condition — the sibling question, `does
+ * ../AstraPlugins exist`? Gap 106, and `asksShallow`'s rule one environment
+ * over: `existsSync(<the path>)` or `fs.existsSync(<the path>)`, where the
+ * path is written `path.resolve(REPO_ROOT, "../AstraPlugins")` or is a name
+ * the same body bound to exactly that; or a name bound to one of those. The
+ * path is the one `ENVIRONMENTS.sibling.here` asks of this run, character for
+ * character, so what the scan reads and what the run measures are one question.
+ */
+const SIBLING_PATH = /^path\.resolve\(\s*REPO_ROOT\s*,\s*(["'])\.\.\/AstraPlugins\1\s*\)$/;
+
+function asksSibling(cond, before, bindings = 0) {
+  const c = cond.trim();
+  const call = /^(?:fs\.)?existsSync\(\s*([\s\S]*?)\s*\)$/.exec(c);
+  if (call) {
+    if (SIBLING_PATH.test(call[1])) return true;
+    return /^[\w$]+$/.test(call[1]) && SIBLING_PATH.test(boundIn(before, call[1]) ?? "");
+  }
+  const bare = /^[\w$]+$/.exec(c);
+  if (bare && bindings === 0) {
+    const bound = boundIn(before, c);
+    return bound !== undefined && asksSibling(bound, before, 1);
+  }
+  return false;
+}
+
+/**
+ * GAP 106. The environments a lane is read for, as one table: for each, the
+ * condition a gate asks (`recognise`), whether a lane is one where that
+ * condition HOLDS — so the gated checks are NOT ASKED there (`heldIn`), what
+ * the lane table read to say so (`read`), and the same condition asked of this
+ * run (`here`), which is what lets a run check its own NOT ASKEDs against the
+ * scan. A new environment is a new entry here, and nothing else in this file
+ * names one.
+ */
+const ENVIRONMENTS = {
+  history: {
+    recognise: asksShallow,
+    condition: "the checkout is shallow",
+    heldIn: (lane) => !lane.history.full,
+    read: (lane) => lane.history.why,
+    here: () => isShallow(REPO_ROOT),
+    remedy:
+      "Where it can be asked: a live lane whose checkout of this repository sets `fetch-depth: 0`. Setting it " +
+      "on any one of the lanes above is the whole fix. This reads only that checkout's `fetch-depth`, on " +
+      "purpose — history that arrives some other way reads as SHALLOW, which is the loud direction — so say it " +
+      "in the checkout.",
+  },
+  sibling: {
+    recognise: asksSibling,
+    condition: "an AstraPlugins checkout is beside this one",
+    heldIn: (lane) => Boolean(lane.sibling),
+    read: (lane) => (lane.sibling
+      ? `line ${lane.sibling.line} names a checkout: ${lane.sibling.text}`
+      : "nothing before it in its job names an AstraPlugins checkout"),
+    here: () => fs.existsSync(path.resolve(REPO_ROOT, "../AstraPlugins")),
+    remedy:
+      "Where it can be asked: a live lane that runs `node tools/selftest.mjs` BEFORE it fetches AstraPlugins. " +
+      "Moving the suite above the fetch in any one of the lanes above is the whole fix. If the mention is prose " +
+      "rather than a checkout, this scan cannot tell them apart on purpose — the direction it is wrong in is the " +
+      "loud one — so move the step or the sentence.",
+  },
+};
 
 /**
  * The `if` whose block a call at `at` opens, read backwards over `code` no
@@ -801,49 +863,140 @@ function gateAbove(code, from, at) {
   };
 }
 
+/** The file that defines `neverAsk` and `NeverAsked`, and so the one file whose mentions are not calls. */
+const HARNESS = "harness.mjs";
+
 /**
- * Every history gate in one module's text: `{ title, line, cond, ifAt, condAt,
- * condEnd }`. Comments are blanked to spaces first, so offsets and line
- * numbers are the text's own and a commented-out gate is not one.
+ * A `test(` call's title, as a literal: the quote, the text, the same quote,
+ * a comma. Over the whole text rather than a line, so a title whose string
+ * starts on the line after `test(` is still read, and with escapes taken in
+ * the string's own grammar, so an apostrophe inside a title does not end it.
  */
-function historyGatesIn(text) {
-  const code = text.split("\n").map((l) => {
+const TEST_OPENING = /\btest\(\s*(["'`])((?:\\[\s\S]|(?!\1)[^\\])*)\1\s*,/g;
+
+/** Comments blanked to spaces, so offsets and line numbers are the text's own. */
+function blankComments(text) {
+  return text.split("\n").map((l) => {
     if (/^\s*(\/\/|\/?\*)/.test(l)) return " ".repeat(l.length);
     const c = l.search(/\s\/\/.*$/);
     return c < 0 ? l : l.slice(0, c) + " ".repeat(l.length - c);
   }).join("\n");
-  const out = [];
-  let title = "";
-  let from = 0;
-  let offset = 0;
-  for (const [i, line] of code.split("\n").entries()) {
-    const start = offset;
-    offset += line.length + 1;
-    const opened = /\btest\(\s*["'`](.+?)["'`]\s*,/.exec(line);
-    if (opened) { title = opened[1]; from = offset; continue; }
-    if (!title) continue;
-    for (const m of line.matchAll(/\bneverAsk\(/g)) {
-      const gate = gateAbove(code, from, start + m.index);
-      if (gate && asksShallow(gate.cond, code.slice(from, gate.ifAt))) out.push({ title, line: i + 1, ...gate });
+}
+
+/**
+ * Every `neverAsk(` call in one module's text, and every other mention of it.
+ *
+ * Gap 106: `{ sites, problems }`. A site is `{ module, line, column, title,
+ * cond, when, env, ifAt, condAt, condEnd }`: `title` is the `test(` it sits
+ * under; `cond` is the whole condition of the `if` whose block the call OPENS,
+ * or null when it opens none; `env` is the entry of ENVIRONMENTS that condition
+ * is, or null. `line` and `column` are where V8 reports the call, which is
+ * what `NeverAsked` records at run time, so the runner can hold every NOT
+ * ASKED it sees to exactly one site read here.
+ *
+ * A problem is a mention of `neverAsk` that is not a call — an alias, a rename
+ * on import, a value passed along — or any mention of `NeverAsked`: each is a
+ * way to say NOT ASKED from somewhere this scan does not read, and a NOT ASKED
+ * the scan cannot read is one no lane table can account for.
+ *
+ * Whole condition, first in the block, as `historyGatedChecks` says above:
+ * anything this does not recognise gets `env: null`, and a site with no
+ * environment must be declared in ASKED_NOWHERE or the suite is red naming it.
+ */
+function neverAskSitesIn(module, text) {
+  const code = blankComments(text);
+  const openings = [...code.matchAll(TEST_OPENING)]
+    .map((m) => ({ end: m.index + m[0].length, title: m[2].replace(/\\([\s\S])/g, "$1") }));
+  const position = (at) => ({
+    line: code.slice(0, at).split("\n").length,
+    column: at - code.lastIndexOf("\n", at - 1),
+  });
+  const imports = [...code.matchAll(/\bimport\s*\{([^}]*)\}\s*from\s*(["'])\.\/harness\.mjs\2/g)]
+    .map((m) => ({ start: m.index, end: m.index + m[0].length, names: m[1] }));
+  const sites = [];
+  const problems = [];
+  for (const imp of imports) {
+    for (const spec of imp.names.split(",").map((s) => s.trim()).filter(Boolean)) {
+      if (/^neverAsk\s+as\b/.test(spec)) {
+        problems.push(
+          `tools/selftest/${module}:${position(imp.start).line} imports \`${spec}\`: a NOT ASKED said under another ` +
+          "name is one this scan cannot read, so import `neverAsk` as itself",
+        );
+      }
     }
   }
-  return out;
+  for (const m of code.matchAll(/\b(neverAsk|NeverAsked)\b/g)) {
+    const at = m.index;
+    const { line, column } = position(at);
+    const inImport = imports.some((s) => at >= s.start && at < s.end);
+    if (m[1] === "NeverAsked") {
+      problems.push(
+        `tools/selftest/${module}:${line} names \`NeverAsked\`${inImport ? " in an import" : ""}: only ` +
+        "`neverAsk(` may say NOT ASKED, because a call is what this scan reads and classifies",
+      );
+      continue;
+    }
+    if (inImport) continue;
+    if (!/^neverAsk\s*\(/.test(code.slice(at, at + 40))) {
+      problems.push(
+        `tools/selftest/${module}:${line} mentions \`neverAsk\` other than by calling it — an alias or a value ` +
+        "passed along says NOT ASKED from a place this scan does not read",
+      );
+      continue;
+    }
+    const opening = openings.filter((o) => o.end <= at).pop();
+    const from = opening ? opening.end : 0;
+    const gate = gateAbove(code, from, at);
+    const before = gate ? code.slice(from, gate.ifAt) : "";
+    const env = gate
+      ? Object.keys(ENVIRONMENTS).find((k) => ENVIRONMENTS[k].recognise(gate.cond, before)) ?? null
+      : null;
+    sites.push({
+      module, line, column,
+      title: opening ? opening.title : "",
+      cond: gate ? gate.cond : null,
+      when: gate ? gate.cond.replace(/\s+/g, " ").trim() : null,
+      env,
+      ...(gate ?? {}),
+    });
+  }
+  return { sites, problems };
+}
+
+/** Every `neverAsk(` under tools/selftest/, classified, and every mention that is not a call. */
+function neverAskSites() {
+  const sites = [];
+  const problems = [];
+  for (const name of fs.readdirSync(SUITE_DIR).filter((n) => n.endsWith(".mjs") && n !== HARNESS).sort()) {
+    let text;
+    try { text = fs.readFileSync(path.join(SUITE_DIR, name), "utf8"); } catch { continue; }
+    const read = neverAskSitesIn(name, text);
+    sites.push(...read.sites);
+    problems.push(...read.problems);
+  }
+  return { sites, problems };
 }
 
 /**
  * The census, asked of itself on every run with material from the tree: for
- * each gate it counts, four edits that keep the gate's SHAPE and lose its
- * CONDITION must each lose that gate, and the same condition moved onto a line
- * of its own must keep it. Without the second half a census that counted
- * nothing would pass the first.
+ * each gate it reads as an ENVIRONMENT, four edits that keep the gate's SHAPE
+ * and lose its CONDITION must each lose that gate, and the same condition moved
+ * onto a line of its own must keep it. Without the second half a census that
+ * counted nothing would pass the first.
+ *
+ * Every environment, since gap 106, not only history: the sibling question is
+ * read by `asksSibling` now, and a reader nobody has watched refuse the four
+ * edits is the reader the history census was written to replace.
  */
-function checkHistoryCensus() {
+function checkGateCensus() {
   const problems = [];
-  for (const name of fs.readdirSync(SUITE_DIR).filter((n) => n.endsWith(".mjs")).sort()) {
+  for (const name of fs.readdirSync(SUITE_DIR).filter((n) => n.endsWith(".mjs") && n !== HARNESS).sort()) {
     let text;
     try { text = fs.readFileSync(path.join(SUITE_DIR, name), "utf8"); } catch { continue; }
-    const gates = historyGatesIn(text);
-    for (const g of gates) {
+    const all = neverAskSitesIn(name, text).sites;
+    for (const g of all.filter((s) => s.env)) {
+      const counted = (t) => neverAskSitesIn(name, t).sites.filter((s) => s.env === g.env).length;
+      const n = all.filter((s) => s.env === g.env).length;
       const indent = /[ \t]*$/.exec(text.slice(0, g.ifAt))[0];
       const withCond = (c, line = "") =>
         text.slice(0, g.ifAt) + line + text.slice(g.ifAt, g.condAt) + c + text.slice(g.condEnd);
@@ -856,26 +1009,27 @@ function checkHistoryCensus() {
       };
       for (const [edit, mutated] of Object.entries(lost)) {
         if (mutated === text) throw new Error(`the census's edit ${edit} changed nothing in ${name}`);
-        if (historyGatesIn(mutated).length !== gates.length - 1) {
-          problems.push(`tools/selftest/${name}:${g.line} (${g.title}) is still counted with ${edit}`);
+        if (counted(mutated) !== n - 1) {
+          problems.push(`tools/selftest/${name}:${g.line} (${g.title}) is still read as a ${g.env} gate with ${edit}`);
         }
       }
       // A gate already written over two lines is its own proof of this half,
       // and binding it again would ask for a second binding, which is one
       // more than the census follows.
       if (/^[\w$]+$/.test(g.cond.trim())) continue;
-      const kept = withCond("shallowAsked", `const shallowAsked = ${g.cond};\n${indent}`);
-      if (historyGatesIn(kept).length !== gates.length) {
-        problems.push(`tools/selftest/${name}:${g.line} (${g.title}) is not counted with its condition bound on the line above`);
+      const kept = withCond("askedHere", `const askedHere = ${g.cond};\n${indent}`);
+      if (counted(kept) !== n) {
+        problems.push(`tools/selftest/${name}:${g.line} (${g.title}) is not read as a ${g.env} gate with its condition bound on the line above`);
       }
     }
   }
   if (problems.length) {
-    fail("the history-gate census does not judge a gate by its condition", [
+    fail("the gate census does not judge a gate by its condition", [
       ...problems,
-      "`historyGatedChecks` in tools/selftest.mjs is what broke: a gate it counts must be an `if` whose whole " +
-      "condition is the shallowness question, with the `neverAsk(` first in its block. Gap 81 measured the census " +
-      "counting all five gates under `const shallow = isShallow(REPO_ROOT);` over `if (false) {`, and the floor green",
+      "`neverAskSites` in tools/selftest.mjs is what broke: a gate it reads as an environment must be an `if` " +
+      "whose whole condition is that environment's question (`asksShallow`, `asksSibling`), with the `neverAsk(` " +
+      "first in its block. Gap 81 measured the census counting all five history gates under " +
+      "`const shallow = isShallow(REPO_ROOT);` over `if (false) {`, and the floor green",
     ]);
   }
 }
@@ -955,7 +1109,7 @@ function laneSites() {
   return { files: files.length, indirect, sites };
 }
 
-function laneReport(lanes, historyGated = []) {
+function laneReport(lanes, sites = []) {
   const out = [];
   out.push(`${lanes.sites.length} site(s) run this suite, in ${lanes.files} workflow file(s).`);
   if (lanes.indirect.length) out.push(`  reached indirectly through: ${lanes.indirect.join(", ")}`);
@@ -972,8 +1126,36 @@ function laneReport(lanes, historyGated = []) {
       ? `UNPROVEN — line ${s.sibling.line} names one: ${s.sibling.text}`
       : "nothing before this step in this job names an AstraPlugins checkout"}`);
     out.push(`        history: ${s.history.full ? "WHOLE" : "SHALLOW"} — ${s.history.why}`);
-    // Per lane, what that costs: the checks that cannot say clean here.
-    if (!s.history.full) for (const g of historyGated) out.push(`          NOT ASKED here: ${g}`);
+    // Per lane, what that costs: the checks that are NOT ASKED here, and why —
+    // every environment gate whose environment holds in this lane, and every
+    // check declared asked nowhere (gap 106).
+    for (const g of sites) {
+      if (g.env && ENVIRONMENTS[g.env].heldIn(s)) out.push(`          NOT ASKED here (${g.env}): ${siteLabel(g)}`);
+      else if (!g.env && g.declared?.length) out.push(`          NOT ASKED here (declared in ASKED_NOWHERE): ${siteLabel(g)}`);
+    }
+  }
+  // GAP 106: the same, the other way round — per check, which live lanes ask
+  // it. Every check not listed has no `neverAsk(` and is asked wherever this
+  // suite runs.
+  const live = lanes.sites.filter((l) => !l.dead && !l.dispatchOnly);
+  const at = (ls) => ls.map((l) => `${l.workflow.replace(".github/workflows/", "")}:${l.line}`).join(", ");
+  out.push("");
+  out.push(`checks that can say NOT ASKED, and the live lanes that ask each (${sites.length} of them; every other check ` +
+    `has no \`neverAsk(\` and is asked in all ${live.length} live lane(s)):`);
+  for (const g of sites) {
+    const how = g.env ? g.env : g.declared?.length ? "declared" : "UNACCOUNTED";
+    out.push(`  [${how}]  ${siteLabel(g)}`);
+    out.push(`        gate: ${g.cond === null ? "no `if` opens with this call" : `if (${g.when})`}`);
+    if (g.env) {
+      const asking = live.filter((l) => !ENVIRONMENTS[g.env].heldIn(l));
+      const not = live.filter((l) => ENVIRONMENTS[g.env].heldIn(l));
+      out.push(`        asked in ${asking.length} of ${live.length}: ${at(asking) || "none"}` +
+        `${not.length ? `; NOT ASKED in: ${at(not)}` : ""}`);
+    } else if (g.declared?.length) {
+      out.push(`        asked in none of ${live.length}, declared: ${ASKED_NOWHERE[g.declared[0]].arms}`);
+    } else {
+      out.push(`        asked in none that this file can prove, and not declared — red`);
+    }
   }
   return out;
 }
@@ -1033,7 +1215,7 @@ function checkLanes(lanes) {
  * One run cannot be two environments. What one run CAN do is say whether the
  * estate still contains the environment the other half is asked in.
  */
-function checkAbsenceEnvironment(live) {
+function checkAbsenceEnvironment(live, gated) {
   // The floor on the walk, before the comparison, for the reason
   // `checkModuleSet` and `checkLanes` both have one: a scan that finds nothing
   // agrees with every claim made about it. If nothing under tools/selftest/ is
@@ -1045,30 +1227,22 @@ function checkAbsenceEnvironment(live) {
   // the difference between a floor and a footnote. Retiring the pair is a
   // legitimate act; what this makes impossible is retiring it and leaving this
   // check behind, green, describing something that is not there.
-  const gated = siblingGatedChecks();
   if (!gated.length) {
     fail("this check is about a pair that is no longer in tools/selftest/", [
-      "nothing under tools/selftest/ names `../AstraPlugins` and `neverAsk`s about it, so there is no check " +
+      "nothing under tools/selftest/ says NOT ASKED because `../AstraPlugins` exists, so there is no check " +
       "left whose askability depends on there being no sibling — and `checkAbsenceEnvironment` in " +
       "tools/selftest.mjs exists only to keep a lane in the environment that asks one",
       "If gap 41's pair was retired deliberately, delete that function and the line that calls it, in the SAME " +
-      "commit. If it was not, this SCAN is what broke: it reads each file for the sibling path with a " +
-      "`neverAsk` within twenty lines of it, and a rename of either is invisible to it",
+      "commit. If it was not, this SCAN is what broke: it reads a `neverAsk(` that opens the block of an `if` " +
+      "whose whole condition is `existsSync(path.resolve(REPO_ROOT, \"../AstraPlugins\"))`, or a `const` bound " +
+      "to it (`asksSibling`), so a rename of the path, of the call or of `neverAsk` is invisible to it",
     ]);
   }
-  const free = live.filter((s) => !s.sibling);
-  if (free.length) return free;
-  fail("no lane runs this suite where the checks that need NO AstraPlugins checkout can be asked", [
-    "these check(s) are askable only where `../AstraPlugins` does not exist, and every live lane now names " +
-    "one before it reaches this suite, so from this commit they are NOT ASKED in CI as well as on a " +
-    "developer's machine — which is every environment there is:",
-    ...gated.map((g) => `  ${g}`),
-    ...live.map((s) => `  lane ${s.workflow}:${s.line} — line ${s.sibling.line} names a checkout: ${s.sibling.text}`),
-    "Where it can be asked: a live lane that runs `node tools/selftest.mjs` BEFORE it fetches AstraPlugins. " +
-    "Moving the suite above the fetch in any one of the lanes above is the whole fix. If the mention is prose " +
-    "rather than a checkout, this scan cannot tell them apart on purpose — the direction it is wrong in is the " +
-    "loud one — so move the step or the sentence. `node tools/selftest.mjs --lanes` prints what was read.",
-  ]);
+  // The lanes that ask them. Zero is not a failure HERE any more: since gap
+  // 106, `checkAskedSomewhere` fails per check, naming each one and what each
+  // lane read, and lets a check declared in ASKED_NOWHERE through — which one
+  // failure for the whole set could not do.
+  return live.filter((s) => !ENVIRONMENTS.sibling.heldIn(s));
 }
 
 // A CENSUS FLOOR on the checks `checkHistoryEnvironment` below is about, where
@@ -1089,7 +1263,7 @@ function checkAbsenceEnvironment(live) {
 // head-catalogue check, which is now a check of its own. Each printed `ok` at
 // depth 1 about history it had not asked. Each gate is an `if` whose whole
 // condition is the shallowness question, with its `neverAsk(` first in the
-// block; `historyGatedChecks` says what counts, and `checkHistoryCensus` makes
+// block; `historyGatedChecks` says what counts, and `checkGateCensus` makes
 // five edits to every gate that lose its condition and keep its shape, and
 // fails unless each one loses the gate. Deleting a gate's block turns this red.
 const HISTORY_GATED_FLOOR = 5;
@@ -1098,8 +1272,9 @@ const HISTORY_GATED_DAY = "2026-09-22";
 /**
  * GAP 75's half of the lane question, in `checkAbsenceEnvironment`'s shape: not
  * *is this suite run*, but *is it run anywhere that holds the history its
- * history checks are about*. Fails at zero, naming the checks — after the census
- * floor above, which is this function's version of that one's floor on the scan.
+ * history checks are about*. The census floor above is this function's version
+ * of that one's floor on the scan; zero lanes fails per check, by name, in
+ * `checkAskedSomewhere` (gap 106).
  */
 function checkHistoryEnvironment(live, gated) {
   if (gated.length < HISTORY_GATED_FLOOR) {
@@ -1118,19 +1293,277 @@ function checkHistoryEnvironment(live, gated) {
       ],
     );
   }
-  const whole = live.filter((s) => s.history.full);
-  if (whole.length) return whole;
-  fail("no lane runs this suite with the whole history, so the checks about HISTORY are asked nowhere", [
-    "these check(s) cannot say clean about history the checkout does not hold, and every live lane now reaches " +
-    "this suite through a shallow checkout, so from this commit they are NOT ASKED in every environment that " +
-    "runs without a human:",
-    ...gated.map((g) => `  ${g}`),
-    ...live.map((s) => `  lane ${s.workflow}:${s.line} — ${s.history.why}`),
-    "Where they can be asked: a live lane whose checkout of this repository sets `fetch-depth: 0`. Setting it " +
-    "on any one of the lanes above is the whole fix. This reads only that checkout's `fetch-depth`, on " +
-    "purpose — history that arrives some other way reads as SHALLOW, which is the loud direction — so say it " +
-    "in the checkout. `node tools/selftest.mjs --lanes` prints what was read.",
-  ]);
+  // The lanes that ask them. Zero fails in `checkAskedSomewhere`, per check,
+  // for `checkAbsenceEnvironment`'s reason.
+  return live.filter((s) => !ENVIRONMENTS.history.heldIn(s));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GAP 106. EVERY CHECK IS ASKED IN AT LEAST ONE LIVE LANE, OR SAYS WHY NOT.
+//
+// Measured 2026-09-22: `node tools/selftest.mjs` prints `INCOMPLETE … N not
+// asked` and exits 0, and a check whose `neverAsk(` was moved into an `else`
+// gave exit 0 with one more not-asked. The two functions above caught that
+// shape for their own two classes — and for signer.mjs's sibling check the
+// scan above them read the `neverAsk(` by its distance from a path, so even
+// that one stayed green (measured: `INCOMPLETE 357 passed, 0 failed, 2 not
+// asked`, exit 0). For any other reason a check was NOT ASKED in every lane,
+// nothing was red anywhere, and the only trace was a count nobody reads.
+//
+// One run cannot see another lane's results, so the requirement is computed
+// from what this file already derives without running anything:
+//
+//   * every `neverAsk(` under tools/selftest/ is READ (`neverAskSites`), and
+//     classified by the condition of the `if` whose block it opens: an
+//     ENVIRONMENT (the checkout is shallow; AstraPlugins is beside it), or
+//     nothing this file can evaluate;
+//   * the lane table says, per live lane, whether each environment holds there;
+//   * so a check gated on an environment is asked in exactly the live lanes
+//     where it does not hold, and **zero such lanes is red, naming the check**;
+//   * a check gated on anything else is asked in no lane this file can prove,
+//     so it must be DECLARED in ASKED_NOWHERE below — its module, its name,
+//     the gate's condition as written, why nothing asks it, and the event that
+//     arms it — and **an undeclared one is red, naming the check**.
+//
+// That covers every check, not only the gated ones, for one reason: a check
+// with no `neverAsk(` in it cannot say NOT ASKED, because `checkNotAskedAccounting`
+// below holds every NOT ASKED a run actually says to a site read here — an
+// alias, a helper outside the suite or a bare `throw new NeverAsked` is red.
+//
+// WHAT IT DOES NOT SEE, said here so it is not found later. A check that skips
+// its assertion WITHOUT `neverAsk` — `if (…) return;` and `ok` — is not NOT
+// ASKED, it is VACUOUS, and it prints `ok`; nothing in this file can tell that
+// from a pass. And a declared gate is pinned by its condition's TEXT, not by
+// what its operands mean: `const here = undefined;` above `if (!here)` keeps
+// the declaration matched and the check unasked. The first is a different
+// class, and the second is the price of a declaration being data.
+
+/**
+ * Checks that no live lane asks, each with the reason and the event that ends
+ * it. A declaration is itself checked, the way SCHEMA_ABSENCES and the privacy
+ * scan's exemptions are: an unknown key, a `why` or `arms` that is not a
+ * sentence, a declaration that matches no `neverAsk(`, and one that covers a
+ * check some live lane already asks are all red.
+ *
+ * `when` is the whole condition of the `if` whose block the `neverAsk(` opens,
+ * as written (whitespace aside). It is what makes a declaration a declaration
+ * of THIS gate rather than of the check's name: move the call into the `else`,
+ * or add `|| true`, and the declaration stops matching — so the site is red as
+ * undeclared AND the declaration is red as matching nothing, both by name.
+ *
+ * A declared check that IS asked in a run is a note under the totals and not a
+ * red, and that is decided rather than defaulted. The one entry below arms
+ * itself on M-T2.2's publish commit, and `bot/publish-apply.mjs` runs this
+ * suite over that commit's tree before it pushes — so a red for "declared and
+ * asked" would refuse the very publication that arms the check, in the lane
+ * where a red costs a publication, and the check would never arm. The note
+ * says which entry to delete; its gate stays pinned by `when` meanwhile.
+ */
+const ASKED_NOWHERE = [
+  {
+    module: "validation.mjs",
+    check: "(b) the committed tree's staging listing, if it has one, is unlisted",
+    when: "!here",
+    why:
+      "its subject is the committed staging listing, and no committed tree holds one yet: " +
+      "policy/reserved-ids.json reserves `staging_listing_id` and nothing has published it. The rule itself " +
+      "is asked in every lane by `(b) a committed staging listing that is not unlisted is refused, and an " +
+      "unlisted one is not`, over fixtures",
+    arms:
+      "M-T2.2 — the bot's first-listing publish commit that adds the staging listing with `unlisted: true`. " +
+      "bot/publish-apply.mjs runs this suite over that tree before it pushes, so the check is asked there first " +
+      "and in every lane after it, with no edit to the check; then delete this entry",
+  },
+];
+
+const DECLARATION_KEYS = ["module", "check", "when", "why", "arms"];
+
+/** Words in a string; a floor on a sentence, not a judge of one, as SCHEMA_ABSENCES uses it. */
+const words = (s) => (typeof s === "string" ? s.trim().split(/\s+/).filter(Boolean).length : 0);
+
+/**
+ * Each site's declarations in ASKED_NOWHERE, as `site.declared` (an array of
+ * indexes), and the problems with the declarations themselves.
+ */
+function matchDeclarations(sites) {
+  const problems = [];
+  for (const s of sites) s.declared = [];
+  ASKED_NOWHERE.forEach((d, i) => {
+    const label = `ASKED_NOWHERE[${i}]${typeof d?.check === "string" ? ` (${d.check})` : ""}`;
+    if (!d || typeof d !== "object" || Array.isArray(d)) {
+      problems.push(`${label} is not a declaration: it must be { ${DECLARATION_KEYS.join(", ")} }`);
+      return;
+    }
+    const unknown = Object.keys(d).filter((k) => !DECLARATION_KEYS.includes(k));
+    if (unknown.length) problems.push(`${label} has key(s) no declaration has: ${unknown.join(", ")}`);
+    for (const k of ["module", "check", "when"]) {
+      if (typeof d[k] !== "string" || !d[k].trim()) problems.push(`${label} names no \`${k}\`, so it cannot be matched to a gate`);
+    }
+    for (const k of ["why", "arms"]) {
+      if (words(d[k]) < 8) {
+        problems.push(
+          `${label}'s \`${k}\` is ${JSON.stringify(d[k] ?? null)}, and a declaration needs a sentence there — ` +
+          `${k === "why" ? "why no lane asks it" : "the event that arms it"}. Below eight words it is a label, and ` +
+          "a label is a skip that reads like a reason",
+        );
+      }
+    }
+    const when = typeof d.when === "string" ? d.when.replace(/\s+/g, " ").trim() : null;
+    const hits = sites.filter((s) => s.module === d.module && s.title === d.check && s.when === when);
+    if (!hits.length) {
+      const near = sites.filter((s) => s.module === d.module && s.title === d.check);
+      problems.push(
+        `${label} matches no \`neverAsk(\` under tools/selftest/ — a declaration about nothing. It names ` +
+        `tools/selftest/${d.module}, the check ${JSON.stringify(d.check)} and the gate \`if (${d.when})\`` +
+        (near.length
+          ? `; that check's \`neverAsk(\` is at ${near.map((s) => `line ${s.line}, under ${s.cond === null ? "no `if`" : `\`if (${s.when})\``}`).join(" and ")}. ` +
+            "A gate that moved is a gate that changed: if the move is right, the declaration has to be re-read and re-written, not re-pointed"
+          : ". If the check was retired or armed, delete the declaration in the same commit"),
+      );
+    }
+    for (const s of hits) s.declared.push(i);
+  });
+  return problems;
+}
+
+/**
+ * The requirement: every check that can say NOT ASKED is asked in at least one
+ * live lane, or is declared. Fails once, listing every check that is neither,
+ * by name, with what each lane read.
+ */
+function checkAskedSomewhere(live, sites, scanProblems, declarationProblems) {
+  const problems = [...scanProblems, ...declarationProblems];
+  const lanesAt = (ls) => ls.map((l) => `${l.workflow.replace(".github/workflows/", "")}:${l.line}`).join(", ");
+  for (const s of sites) {
+    if (!s.title) {
+      problems.push(
+        `tools/selftest/${s.module}:${s.line} calls \`neverAsk(\` with no \`test(\` above it, so the scan cannot ` +
+        "say which check it would leave unasked; call it inside the check it belongs to",
+      );
+      continue;
+    }
+    if (s.declared.length > 1) {
+      problems.push(`${siteLabel(s)} is declared ${s.declared.length} times in ASKED_NOWHERE (entries ${s.declared.join(", ")})`);
+    }
+    if (s.env) {
+      const env = ENVIRONMENTS[s.env];
+      const asking = live.filter((l) => !env.heldIn(l));
+      if (asking.length && s.declared.length) {
+        problems.push(
+          `${siteLabel(s)} is declared in ASKED_NOWHERE and ${asking.length} live lane(s) ask it: ${lanesAt(asking)}. ` +
+          "A declaration that outlived its reason is the shelter the next check inherits — delete it in this commit",
+        );
+      }
+      if (!asking.length && !s.declared.length) {
+        problems.push([
+          `${siteLabel(s)} is NOT ASKED in every live lane: it says NOT ASKED where ${env.condition}, and that ` +
+          "holds in each of them —",
+          ...live.map((l) => `    ${l.workflow}:${l.line} — ${env.read(l)}`),
+          `  ${env.remedy} Or declare it in ASKED_NOWHERE with why and the event that arms it.`,
+        ].join("\n      "));
+      }
+      continue;
+    }
+    if (s.declared.length) continue;
+    problems.push(
+      `${siteLabel(s)} says NOT ASKED ` +
+      `${s.cond === null ? "with its `neverAsk(` opening no `if`'s block (it opens an `else`, or something comes before it)" : `under \`if (${s.when})\``}, which is no ` +
+      `environment a lane is read for (${Object.keys(ENVIRONMENTS).join(", ")}) and is not declared in ASKED_NOWHERE ` +
+      "— so no live lane can be shown to ask it, and a check NOT ASKED everywhere is green everywhere. Gate it on " +
+      "the environment's own question, first in the block — `if (isShallow(REPO_ROOT))`, " +
+      "`if (fs.existsSync(path.resolve(REPO_ROOT, \"../AstraPlugins\")))` — or declare it in ASKED_NOWHERE in " +
+      "tools/selftest.mjs with that condition, why no lane asks it, and the event that arms it",
+    );
+  }
+  if (problems.length) {
+    fail("a check can be NOT ASKED in every lane that runs this suite, and nothing accounts for it", [
+      ...problems,
+      "Gap 106. `node tools/selftest.mjs --lanes` prints the check × lane table this was derived from.",
+    ]);
+  }
+}
+
+/**
+ * The run's half: every NOT ASKED this run actually said is held to a site the
+ * scan read, and every gate whose environment holds in this run is held to
+ * having said so. Returns `{ problems, notes }`; a problem is a failure.
+ *
+ *   - a NOT ASKED from a place the scan did not read — an alias, a helper
+ *     outside tools/selftest/, a bare `throw new NeverAsked` — is one no lane
+ *     table accounts for;
+ *   - every site's check must have reported in this run under the name the
+ *     scan read for it, or the table names a check that does not exist — a
+ *     `neverAsk(` in a helper below some other test, or a title the scan
+ *     cannot read literally;
+ *   - an environment gate that said NOT ASKED where its environment does NOT
+ *     hold is a gate asking something other than what the scan reads it as
+ *     asking (a helper's `shallow` field that lies, say) — and one that said
+ *     `ok` where it DOES hold said clean about what it cannot see, gap 75;
+ *   - a declared check that was asked is a note: see ASKED_NOWHERE.
+ */
+function checkNotAskedAccounting(sites, byModule) {
+  const problems = [];
+  const notes = [];
+  const here = new Map(Object.entries(ENVIRONMENTS).map(([k, e]) => [k, e.here()]));
+  const siteAt = new Map(sites.map((s) => [`tools/selftest/${s.module}:${s.line}:${s.column}`, s]));
+  for (const [module, outs] of byModule) {
+    for (const o of outs.filter((x) => x.verdict === "notAsked")) {
+      const at = o.site ? `${o.site.file}:${o.site.line}:${o.site.column}` : null;
+      const s = at ? siteAt.get(at) : undefined;
+      if (!s) {
+        problems.push(
+          `${o.name} (${module}) said NOT ASKED from ${at ?? "a place its stack does not show"}, which is not a ` +
+          "`neverAsk(` call the runner read under tools/selftest/ — so no lane table accounts for it, and it could " +
+          "be NOT ASKED in every lane with nothing red. Call `neverAsk(` itself, in the check's own body",
+        );
+        continue;
+      }
+      if (s.module !== module || s.title !== o.name) {
+        problems.push(
+          `${o.name} (${module}) said NOT ASKED from ${at}, which the scan reads as belonging to ` +
+          `${JSON.stringify(s.title)} in ${s.module}, so the lane table names the wrong check for it`,
+        );
+        continue;
+      }
+      if (s.env && !here.get(s.env)) {
+        problems.push(
+          `${siteLabel(s)} said NOT ASKED, and its gate is read as \`${ENVIRONMENTS[s.env].condition}\` — which does ` +
+          "not hold in this run. The gate is asking something other than that, so the lanes where the table says it " +
+          "is asked may not ask it",
+        );
+      }
+    }
+  }
+  for (const s of sites) {
+    const outs = (byModule.get(`${s.module}`) ?? []).filter((o) => o.name === s.title);
+    if (!outs.length) {
+      problems.push(
+        `the scan reads the \`neverAsk(\` at tools/selftest/${s.module}:${s.line} as belonging to ` +
+        `${JSON.stringify(s.title)}, and no check by that name reported from ${s.module} in this run — so the ` +
+        "check × lane table names a check that is not there. Call `neverAsk(` in the body of the check it belongs " +
+        "to, whose name is a plain string literal",
+      );
+      continue;
+    }
+    if (s.env && here.get(s.env) && outs.some((o) => o.verdict === "ok")) {
+      problems.push(
+        `${siteLabel(s)} printed \`ok\` in a run where ${ENVIRONMENTS[s.env].condition}, which its gate says it ` +
+        "cannot answer — so it said clean about what this checkout cannot show it (gap 75's shape)",
+      );
+    }
+    // Only a gate on something no lane is read for. A declared ENVIRONMENT
+    // gate asked here says only that this machine is not the lanes, and
+    // whether a lane asks it is `checkAskedSomewhere`'s question, answered
+    // from the workflows before anything ran.
+    if (!s.env && s.declared.length && outs.some((o) => o.verdict !== "notAsked")) {
+      notes.push(
+        `${siteLabel(s)} is declared in ASKED_NOWHERE and was ASKED in this run — the event it waits for ` +
+        `(${ASKED_NOWHERE[s.declared[0]].arms.split(" — ")[0]}) has happened here. Delete its entry once it is ` +
+        "on main; until then its gate stays pinned by `when`",
+      );
+    }
+  }
+  return { problems, notes };
 }
 
 // The way the suite gets smaller that checkModuleSet cannot see: the directory
@@ -1340,15 +1773,24 @@ function checkFloors() {
 await checkModuleSet();
 
 const LANES = laneSites();
-const HISTORY_GATED = historyGatedChecks();
+// Gap 106: every `neverAsk(` in the suite, read and classified before anything
+// runs, so the table below and the requirement after it are about the same set.
+const { sites: SITES, problems: SCAN_PROBLEMS } = neverAskSites();
+const DECLARATION_PROBLEMS = matchDeclarations(SITES);
+const HISTORY_GATED = historyGatedChecks(SITES);
 if (WANT_LANES) {
   console.log("\nlanes that reach this suite (derived from .github/workflows/ at this commit)");
-  for (const line of laneReport(LANES, HISTORY_GATED)) console.log(line);
+  for (const line of laneReport(LANES, SITES)) console.log(line);
   console.log("");
 }
 const LIVE_LANES = checkLanes(LANES);
-const ABSENCE_LANES = checkAbsenceEnvironment(LIVE_LANES);
-checkHistoryCensus();
+// The census first: it proves the reader judges a gate by its condition, and
+// everything after it believes the reader's answers.
+checkGateCensus();
+// Then per check, by name — before the floors below, so a gate that moved is
+// named as the check it was rather than counted as one fewer.
+checkAskedSomewhere(LIVE_LANES, SITES, SCAN_PROBLEMS, DECLARATION_PROBLEMS);
+const ABSENCE_LANES = checkAbsenceEnvironment(LIVE_LANES, siblingGatedChecks(SITES));
 const HISTORY_LANES = checkHistoryEnvironment(LIVE_LANES, HISTORY_GATED);
 
 // `--census` is the one run that is allowed past this, because it is the run
@@ -1383,8 +1825,11 @@ if (!WANT_CENSUS) checkFloors();
 
 const shortfalls = [];
 const census = new Map();
+// Gap 106: each module's verdicts, for `checkNotAskedAccounting` after the last.
+const OUTCOMES = new Map();
 for (const name of MODULES) {
   const before = reported();
+  const outcomesFrom = results().outcomes.length;
   const mod = await load(name);
   try {
     await mod.run();
@@ -1416,6 +1861,7 @@ for (const name of MODULES) {
   }
   const ran = reported() - before;
   census.set(name, ran);
+  OUTCOMES.set(name, results().outcomes.slice(outcomesFrom));
   if (ran < 1) {
     shortfalls.push(
       `a module ran and reported nothing: ${name} is in the list, was imported and its run() returned, and it ` +
@@ -1459,6 +1905,9 @@ if (WANT_CENSUS) {
 }
 
 const { passed, failures, notAsked } = results();
+// Gap 106, the run's half: every NOT ASKED said here held to a site the scan
+// read, and every gate whose environment holds here held to having said it.
+const ACCOUNTING = checkNotAskedAccounting(SITES, OUTCOMES);
 // Three figures, all counted, and two of them now compared to something: every
 // module's share is held to the floor pinned above, and the module count is held
 // to the pinned list in repo-rules.mjs.
@@ -1469,17 +1918,30 @@ const { passed, failures, notAsked } = results();
 // `PASS`, because `PASS` is what everybody had been quoting about a suite that
 // contained two checks nobody had run.
 //
-// EXIT CODES. 1 on a failure or a shortfall, 0 otherwise — including when
-// something was not asked. `tools/cutover-preflight.mjs` exits 2 in that case
-// and is right to: it is read by an operator before a cutover. This suite is a
-// step in every lane the line below reports as LIVE — which is the reason the
-// flip is not free, and the count is printed rather than described so that the
-// reason is re-measured whenever somebody reads it. Today's unasked checks are
-// legitimate states of the tree, so exiting non-zero would turn `main` red on a
-// correct tree and the word would be switched off within a day. **To make NOT
-// ASKED fatal, change the line marked `EXIT-2` below.** That is the operator's
-// decision and it needs the checks it names resolved first.
-const headline = failures.length || shortfalls.length ? "FAIL"
+// EXIT CODES. 1 on a failure, a shortfall, or a NOT ASKED nothing accounts
+// for; 0 otherwise — including when something was not asked.
+// `tools/cutover-preflight.mjs` exits 2 in that case and is right to: it is
+// read by an operator before a cutover. This suite is a step in every lane the
+// line below reports as LIVE — which is the reason the flip is not free, and
+// the count is printed rather than described so that the reason is re-measured
+// whenever somebody reads it.
+//
+// SINCE GAP 106, INCOMPLETE WITH EXIT 0 MEANS ONE THING, and that is the
+// argument for keeping it. A NOT ASKED reaches this line only if the run
+// before the modules proved some live lane asks that check — its gate is an
+// environment the lane table reads, and a live lane lacks it — or ASKED_NOWHERE
+// declares it with its gate, why, and the event that arms it; and only if the
+// run after them held it to that very gate (`checkNotAskedAccounting`). A NOT
+// ASKED that is neither is already exit 1, by name. So exit 0 with a NOT ASKED
+// is "not asked HERE, and asked there" or "asked nowhere, on the record" —
+// never the count nobody reads. Exit 2 would add nothing a reader can act on
+// and would take two things away: `ingest.yml`'s `selftest` job is shallow on
+// purpose (gap 75's decision) and would be red on every submission, and every
+// lane would be red on a correct tree until M-T2.2 arms the declared check. A
+// red that is expected makes every red look expected (gap 73). **To make NOT
+// ASKED fatal anyway, change the line marked `EXIT-2` below**; that is the
+// operator's decision, not this file's.
+const headline = failures.length || shortfalls.length || ACCOUNTING.problems.length ? "FAIL"
   : notAsked.length ? "INCOMPLETE"
   : "PASS";
 console.log(
@@ -1515,7 +1977,23 @@ console.log(
     `${shallowLive.length ? `; through a shallow checkout, so NOT ASKED there: ${at(shallowLive)}` : ""}`,
   );
 }
+// Gap 106, printed for gap 41's reason: that every NOT ASKED above is asked in
+// another lane or declared is a claim about lanes, measured where the count is
+// read.
+{
+  const declared = SITES.filter((s) => s.declared.length).length;
+  const gated = SITES.filter((s) => s.env && !s.declared.length).length;
+  console.log(
+    `      ${SITES.length} check(s) can say NOT ASKED: ${gated} gated on an environment some live lane does not ` +
+    `have, and asked there; ${declared} declared in ASKED_NOWHERE with the event that arms it — ` +
+    `${ACCOUNTING.problems.length
+      ? `and ${ACCOUNTING.problems.length} thing(s) in this run's NOT ASKEDs that none of that accounts for, below`
+      : "every NOT ASKED in this run is one of them, and every other check is asked in every live lane"}`,
+  );
+}
 for (const f of failures) console.log(`      - ${f}`);
+for (const p of ACCOUNTING.problems) console.log(`      - NOT ASKED, unaccounted: ${p}`);
+for (const n of ACCOUNTING.notes) console.log(`      - note: ${n}`);
 // The shortfall carries its own lead sentence: there are two of them now — a
 // module that reported nothing, and a module that reported fewer than its floor
 // — and one prefix for both was a line that said the wrong thing about the
@@ -1523,5 +2001,5 @@ for (const f of failures) console.log(`      - ${f}`);
 // reported nothing".
 for (const s of shortfalls) console.log(`      - ${s}`);
 for (const n of notAsked) console.log(`      - not asked: ${n}`);
-if (failures.length || shortfalls.length) process.exit(1);
+if (failures.length || shortfalls.length || ACCOUNTING.problems.length) process.exit(1);
 // EXIT-2: `if (notAsked.length) process.exit(2);` — see the note above.
