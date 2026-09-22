@@ -53,6 +53,84 @@
 // the gate is read from the pair. This output is one half of that record and
 // never the whole of it.
 //
+// ── WHAT A `conditional` MEMBER IS WORTH TO A VERDICT ───────────────────────
+//
+// `schema/contract-tokens-v1.json` states a member's requiredness in THREE
+// values — `true`, `false` and `"conditional"` — and this file used to read it
+// with two:
+//
+//     (entry.members || []).filter((m) => m.required)
+//
+// `"conditional"` is a truthy string, so a member the contract carries only
+// under a stated condition was counted as carried by every marker, and printed
+// into this record as required outright. It was silent because no member of
+// `astra.registry.migration-notice/1` is conditional yet; it would stop being
+// silent the day one is, which is what SCOPE-8's N11 is scheduled to do.
+// dev/couplings.md entry 46, and entry 38 for the same read one file over.
+//
+// A conditional member is not one question. It is two, and WHICH of the two a
+// gate is looking at is decided by the marker in front of it, not by the
+// member:
+//
+//   condition HOLDS, member absent            UNMET. Asked on this ref, of
+//                                             this marker, answer no.
+//   condition DOES NOT HOLD, member absent    nothing at all. The contract
+//                                             does not ask this marker for it,
+//                                             and a gate that reports it anyway
+//                                             fails a CONFORMING marker, which
+//                                             reads downstream as a defect in
+//                                             whoever wrote the marker.
+//   condition does not hold, member CARRIED,  UNMET. `iff` forbids it there,
+//   under `iff`                               and a reader that checks only the
+//                                             requiring half gets the looser
+//                                             reading of the half it skipped.
+//   condition CANNOT BE EVALUATED             NOT ASKED.
+//
+// That last line is the one worth arguing about, so here is the argument. A
+// `when` this reader cannot evaluate — a `conditional` that states none, an
+// `if` and an `iff` together, a predicate shape the readme does not publish —
+// makes the file malformed, and the readme says what a reader must then do:
+// refuse, and "MUST NOT read the member as unconditioned … the looser
+// direction is the one this field exists to close". MET is that looser
+// direction. UNMET is not available either: it would say this tool asked a
+// question of the marker and the marker answered no, when what happened is
+// that the tool could not read what the contract asks — a no printed beside a
+// marker that may be perfectly conforming. NOT ASKED is the only one of the
+// three that is true, and it is not a shrug: it still fails, it still exits 2,
+// and it names the party who can answer, which for a member table is whoever
+// publishes the token file and never the marker's author.
+//
+// Within one check the three words compose as a conjunction: an answered no
+// stands whatever else was unasked, because a conjunction with a false conjunct
+// is false; a yes beside an unasked question is NOT ASKED. That is the same
+// rule the summary at the bottom applies across the eleven.
+//
+// ── AND THE ONE QUESTION THIS FILE USED TO ANSWER WITH A BELIEF ─────────────
+//
+// B.4 states the marker as an exact member list — `schema`, `round`, `sent_at`,
+// "and `cutover_planned_at` FROM ROUND 2". The token file states that member
+// `required: true`, flat. SCOPE-8's N11 is that disagreement, and it is open.
+// This file used to settle it privately:
+//
+//     const required = m.doc?.round === 1
+//       ? members.filter((k) => k !== "cutover_planned_at") : members;
+//
+// A local reading of one published document over another, made silently,
+// printed nowhere, in the one tool in the cutover whose charter is to record
+// measurements and not beliefs. It is the same shape as the `EITHER_MEMBERS`
+// list entry 38 deleted from bot/lib/service.mjs, and it has the same end: a
+// private workaround does not announce itself when the public repair lands, it
+// just stops being right.
+//
+// So it is gone. Where two published documents state a member's requiredness
+// differently, and for the markers they differ about, this tool DOES NOT ASK —
+// it says so, names N11, and names who discharges it. Withholding is the
+// direction the readme calls safe, and an unasked question in this tool is a
+// person to go and find, which is exactly what an unowned escalation needs.
+// The day the token file publishes a `when` for that member there is no
+// disagreement left to withhold over and the condition is simply read; nothing
+// here has to be edited for that to happen, and the selftest pins both states.
+//
 // ── IT PRINTS FAIL ON THE TREE IT LANDS ON, AND THAT IS THE DESIGN ──────────
 //
 // reg.93's row says so: "must print FAIL on the tree it lands on". At R0/R1
@@ -93,6 +171,39 @@ const THIRTY_DAYS = 30 * DAY;
 const MARKER_DIR = "log";
 const MARKER_RE = /^log\/migration-notice-(\d+)\.json$/;
 const MARKER_SCHEMA = "astra.registry.migration-notice/1";
+
+/** SCOPE-7's token file: where this tool takes the marker's members from. */
+const TOKEN_FILE = "schema/contract-tokens-v1.json";
+
+/**
+ * The members whose requiredness two published documents state differently,
+ * and which markers they differ about. See the header. There is exactly one
+ * today, SCOPE-8's N11, and it is here rather than inline so that a second one
+ * has to be written down beside it with the finding that owns it.
+ *
+ * `disagreesAbout` decides only whether the question may be ASKED — never what
+ * the answer is. That is the whole difference between this and the local
+ * exemption it replaced: the old one answered (silently, "not required, so not
+ * missing"), this one withholds, and withholding is the direction the token
+ * file's readme names as the safe one.
+ *
+ * An entry applies only while the file states the member `required: true`. A
+ * published `when` is the disagreement discharged: the condition is read, this
+ * entry stops matching on its own, and nobody has to notice.
+ */
+const DISPUTED_MEMBERS = Object.freeze([
+  Object.freeze({
+    member: "cutover_planned_at",
+    finding: "SCOPE-8's N11",
+    prose:
+      "B.4 states the marker as an exact member list of `schema`, `round`, `sent_at`, " +
+      "and `cutover_planned_at` FROM ROUND 2",
+    disagreesAbout: (doc) => doc?.round === 1,
+    who:
+      "the contract lane that discharges SCOPE-8's N11 — a `when` on this member in " +
+      `${TOKEN_FILE} ends the disagreement, and this tool reads it with no edit here`,
+  }),
+]);
 
 /** The workflow that carries BOT-87's poll and sweep, and the three jobs
  *  B-T5.0 turns on. Until they are on, no shadow poll has run or could have. */
@@ -439,39 +550,287 @@ function checkRound2(ctx) {
   // literal here, so a member added or retired by a contract release reaches
   // this check without an edit — and a token file that stops naming the record
   // is loud instead of silently checking nothing.
-  const members = markerMembers(ctx);
-  if (!members) {
-    return unmet("schema/contract-tokens-v1.json no longer names " + MARKER_SCHEMA, [
-      "this preflight takes the marker's required members from the token file.",
+  const raw = showFile(ctx.repo, ctx.ref, TOKEN_FILE);
+  let table = null;
+  if (raw !== null) {
+    try {
+      table = memberTable(JSON.parse(raw));
+    } catch {
+      table = null;
+    }
+  }
+  if (!table) {
+    return unmet(`${TOKEN_FILE} no longer names ${MARKER_SCHEMA}`, [
+      ...r.lines,
+      "this preflight takes the marker's members from the token file.",
       "if the contract retired the record, this check is checking nothing until somebody says what replaced it.",
     ]);
   }
-  r.lines.push(`required members, from schema/contract-tokens-v1.json: ${members.join(", ")}`);
-  for (const m of markers) {
-    // B.4 (contract §2, "On `main`") reads: exactly `schema`, `round`, `sent_at`,
-    // "and `cutover_planned_at` FROM ROUND 2". The token file's member list has
-    // nowhere to put that condition and records the member as required outright,
-    // so a round-1 marker that conforms to B.4 fails a plain member check. The
-    // condition is applied here, and the mismatch is noted rather than enforced.
-    const required = m.doc?.round === 1 ? members.filter((k) => k !== "cutover_planned_at") : members;
-    const missing = required.filter((k) => !(k in (m.doc || {})));
-    if (missing.length) r.lines.push(`  ${m.file} is missing ${missing.join(", ")}`);
+
+  // Requiredness is read as the three-valued field it is, and a condition is
+  // evaluated rather than excepted. The header says what each of the three
+  // answers is worth here, and why an unevaluable condition is NOT ASKED.
+  const lines = [...r.lines, ...describeTable(table)];
+  const { readable, refused } = splitTable(table);
+  const no = [];
+  const unasked = [];
+  for (const m of refused) {
+    unasked.push({
+      message: `  ${TOKEN_FILE}: \`${m.name}\` ${m.why}`,
+      who:
+        `whoever publishes ${TOKEN_FILE} — the readme makes such a member a file to refuse, ` +
+        "never a member to read as unconditioned",
+    });
   }
-  return r;
+  for (const m of markers) {
+    const p = markerProblems(readable, m.doc);
+    for (const x of [...p.missing, ...p.forbidden]) no.push(`  ${m.file}: ${x}`);
+    for (const w of p.withheld) unasked.push({ message: `  ${m.file}: ${w.message}`, who: w.who });
+  }
+  if (no.length) {
+    lines.push(
+      `${no.length} member${no.length === 1 ? "" : "s"} of a marker on this ref disagree with the contract:`,
+      ...no,
+    );
+  }
+  if (unasked.length) {
+    lines.push(
+      `${unasked.length} member question${unasked.length === 1 ? "" : "s"} this tool did not ask:`,
+      ...unasked.map((u) => u.message),
+    );
+  }
+
+  // An answered no about the clock stands whatever else went unasked: a
+  // conjunction with a false conjunct is false. Only where the clock is MET do
+  // the member readings decide the word.
+  if (r.verdict === UNMET) return { ...r, lines };
+  if (no.length) {
+    return unmet("the clock is met, and a marker does not carry the members the contract states", [
+      `the clock: ${r.headline}`,
+      ...lines,
+    ]);
+  }
+  if (unasked.length) {
+    return notAsked(
+      "the clock is met, and this tool cannot say what a conforming marker is",
+      [...new Set(unasked.map((u) => u.who))].join("; and "),
+      [`the clock: ${r.headline}`, ...lines],
+    );
+  }
+  return { ...r, lines };
 }
 
-function markerMembers(ctx) {
-  const raw = showFile(ctx.repo, ctx.ref, "schema/contract-tokens-v1.json");
-  if (!raw) return null;
-  let doc;
-  try {
-    doc = JSON.parse(raw);
-  } catch {
-    return null;
+/**
+ * The marker schema's members, exactly as the token file records them — the
+ * three-valued `required` and the `when` object itself, copied and never
+ * summarised, because the condition a reader must evaluate lives in it.
+ *
+ * null when the file no longer names the schema, which the caller reports.
+ */
+export function memberTable(doc) {
+  const entry = (doc?.entries || []).find((e) => e.name === MARKER_SCHEMA);
+  if (!entry || !Array.isArray(entry.members)) return null;
+  return entry.members;
+}
+
+/**
+ * The members this reader can evaluate, and the ones it must refuse.
+ *
+ * Refusal is a table fact and not a marker fact, and it is found here, once, so
+ * that an unevaluable condition is loud on a ref carrying NO markers at all —
+ * which is every ref before round 1 is sent, and is the state this tool spends
+ * its life in. A refusal discovered only while walking markers would be a check
+ * that goes quiet exactly when there is nothing to check it against.
+ */
+export function splitTable(table) {
+  const readable = [];
+  const refused = [];
+  for (const m of table) {
+    if (m === null || typeof m !== "object" || Array.isArray(m) || typeof m.name !== "string") {
+      refused.push({ name: JSON.stringify(m), why: "is not a member record this reader can read" });
+      continue;
+    }
+    if (m.required === true || m.required === false) {
+      readable.push(m);
+      continue;
+    }
+    if (m.required !== "conditional") {
+      refused.push({
+        name: m.name,
+        why:
+          `states requiredness ${JSON.stringify(m.required)}, and the token file's readme states three ` +
+          "values — `true`, `false`, `conditional` — and no fourth",
+      });
+      continue;
+    }
+    try {
+      // Provoked on an empty body, which no predicate shape can depend on: this
+      // asks whether the CONDITION is readable, never whether it holds.
+      predicateHolds(readWhen(m).predicate, {});
+      readable.push(m);
+    } catch (e) {
+      refused.push({ name: m.name, why: String(e.message || e) });
+    }
   }
-  const entry = (doc.entries || []).find((e) => e.name === MARKER_SCHEMA);
-  if (!entry) return null;
-  return (entry.members || []).filter((m) => m.required).map((m) => m.name);
+  return { readable, refused };
+}
+
+/**
+ * A member's `when`, as `{kind, predicate}`.
+ *
+ * `if` or `iff`, never both and never neither, and which of the two applies is
+ * decided per condition and never defaulted. Throws, because every caller is
+ * one that must refuse rather than guess: defaulting to `if` would drop the
+ * forbidding half, and defaulting to `iff` would forbid what the contract
+ * permits.
+ */
+export function readWhen(member) {
+  const when = member.when;
+  if (when === null || typeof when !== "object" || Array.isArray(when)) {
+    throw new Error(
+      "is `conditional` and states no `when`, which the token file's readme makes a malformed file this " +
+      "reader must refuse rather than read as unconditioned",
+    );
+  }
+  const kinds = ["if", "iff"].filter((k) => k in when);
+  if (kinds.length !== 1) {
+    throw new Error(
+      `states \`when\` ${JSON.stringify(when)}; a \`when\` is \`if\` or \`iff\`, never both and never neither`,
+    );
+  }
+  return { kind: kinds[0], predicate: when[kinds[0]] };
+}
+
+/**
+ * Does a `when`'s predicate hold of this marker?
+ *
+ * The three shapes the token file's readme publishes, and only those:
+ * `{"member": "absent"}`, which holds exactly when that sibling is not carried;
+ * `{"member": [values]}`, which holds when it is carried with one of them; and
+ * `{"member": {"not": [values]}}`, their complement — which an ABSENT sibling
+ * does not satisfy, because `not` is over the values the member may take and a
+ * member that is not carried has none.
+ *
+ * Anything else throws, and `splitTable` turns that into a refusal.
+ */
+export function predicateHolds(predicate, doc) {
+  const unreadable = () =>
+    new Error(`carries a \`when\` predicate this reader cannot evaluate: ${JSON.stringify(predicate ?? null)}`);
+  if (predicate === null || typeof predicate !== "object" || Array.isArray(predicate)) throw unreadable();
+  const names = Object.keys(predicate);
+  if (names.length !== 1) throw unreadable();
+  const [name] = names;
+  const rule = predicate[name];
+  const carried = doc !== null && typeof doc === "object" && name in doc;
+  if (rule === "absent") return !carried;
+  if (Array.isArray(rule)) return carried && rule.includes(doc[name]);
+  if (rule !== null && typeof rule === "object" && Array.isArray(rule.not) && Object.keys(rule).length === 1) {
+    return carried && !rule.not.includes(doc[name]);
+  }
+  throw unreadable();
+}
+
+/** A predicate, in words, for the one line a reader of the record meets. */
+export function describePredicate(predicate) {
+  const [name] = Object.keys(predicate);
+  const rule = predicate[name];
+  if (rule === "absent") return `\`${name}\` is absent`;
+  const values = Array.isArray(rule) ? rule : rule.not;
+  return `\`${name}\` is ${Array.isArray(rule) ? "" : "not "}one of ${values.map((v) => `\`${v}\``).join(", ")}`;
+}
+
+/**
+ * The member table as this record should carry it: three values, not two, and
+ * every condition spelled out. The line this replaced read "required members:
+ * schema, round, sent_at, cutover_planned_at" whatever the file stated, which
+ * is a false sentence about the contract on the day one of them is conditional.
+ */
+export function describeTable(table) {
+  const flat = [];
+  const optional = [];
+  const conditional = [];
+  const unreadable = [];
+  for (const m of table) {
+    if (m === null || typeof m !== "object" || typeof m.name !== "string") unreadable.push(JSON.stringify(m));
+    else if (m.required === true) flat.push(m.name);
+    else if (m.required === false) optional.push(m.name);
+    else if (m.required === "conditional") conditional.push(m);
+    else unreadable.push(`\`${m.name}\` (required: ${JSON.stringify(m.required)})`);
+  }
+  const lines = [
+    `members of ${MARKER_SCHEMA}, from ${TOKEN_FILE}:`,
+    `  required of every marker: ${flat.length ? flat.join(", ") : "none"}`,
+  ];
+  for (const m of conditional) {
+    let where;
+    try {
+      const { kind, predicate } = readWhen(m);
+      where =
+        kind === "iff"
+          ? `carried exactly where ${describePredicate(predicate)}, and forbidden where it is not`
+          : `carried where ${describePredicate(predicate)}; the contract says nothing where it is not`;
+    } catch {
+      where = "a condition this tool cannot evaluate — see below";
+    }
+    lines.push(`  conditional: \`${m.name}\` — ${where}`);
+  }
+  if (optional.length) lines.push(`  permitted, no condition published: ${optional.join(", ")}`);
+  if (unreadable.length) lines.push(`  unreadable: ${unreadable.join(", ")}`);
+  return lines;
+}
+
+/**
+ * What this marker gets wrong about a readable member table, and what this tool
+ * must not ask of it.
+ *
+ * Never throws: `splitTable` has already taken the unreadable members out, and
+ * a refusal is a return value rather than an exception because the caller is
+ * the one that owns the three words.
+ *
+ * Unknown members are not problems and are never looked at — there is no loop
+ * over the marker's own keys here, which is the shape that cannot regress into
+ * a closed world by somebody adding an `else`.
+ *
+ * @returns {{missing: string[], forbidden: string[], withheld: {message: string, who: string}[]}}
+ */
+export function markerProblems(readable, doc) {
+  const body = doc !== null && typeof doc === "object" ? doc : {};
+  const missing = [];
+  const forbidden = [];
+  const withheld = [];
+  for (const m of readable) {
+    if (m.required === "conditional") {
+      const { kind, predicate } = readWhen(m);
+      const holds = predicateHolds(predicate, body);
+      const carried = m.name in body;
+      // Both halves of a biconditional, and only the requiring half of an `if`:
+      // a reader who implements one and not the other gets the looser reading
+      // of the half it skipped, which is what this vocabulary exists to end.
+      if (holds && !carried) {
+        missing.push(`\`${m.name}\` is required where ${describePredicate(predicate)}, and is absent`);
+      } else if (!holds && carried && kind === "iff") {
+        forbidden.push(
+          `\`${m.name}\` is carried, and its \`iff\` permits it only where ${describePredicate(predicate)}`,
+        );
+      }
+      continue;
+    }
+    // `false` publishes no condition and asks nothing of any marker.
+    if (m.required !== true) continue;
+    const dispute = DISPUTED_MEMBERS.find((d) => d.member === m.name && d.disagreesAbout(body));
+    if (dispute) {
+      withheld.push({
+        message:
+          `\`${m.name}\`: the token file states it \`required: true\`, flat, and ${dispute.prose}. ` +
+          `${dispute.finding} is that disagreement and it is open; this tool does not decide which of two ` +
+          "published documents is wrong, so it did not ask whether this marker carries it",
+        who: dispute.who,
+      });
+      continue;
+    }
+    if (!(m.name in body)) missing.push(`\`${m.name}\` is required of every marker, and is absent`);
+  }
+  return { missing, forbidden, withheld };
 }
 
 function checkDeadline(ctx) {
@@ -1046,6 +1405,114 @@ function selftest() {
     UNMET,
   );
   is("an unparseable entry", evalQueue([{ file: "state/queue/a@1.0.0.json", doc: null }]).verdict, UNMET);
+
+  // ── the member table, and the three-valued `required` ─────────────────────
+  //
+  // Entry 46. The line these fixtures replaced was
+  //
+  //     (entry.members || []).filter((m) => m.required)
+  //
+  // and `"conditional"` is a truthy string, so every fixture below is one
+  // where that read gives a different answer from the file it is reading.
+
+  const MEMBER = "cutover_planned_at";
+  const iffWhen = { iff: { round: { not: [1] } } };
+  const ifWhen = { if: { round: { not: [1] } } };
+  const flatTable = [
+    { name: "schema", required: true },
+    { name: "round", required: true },
+    { name: "sent_at", required: true },
+    { name: MEMBER, required: true },
+  ];
+  const publishedTable = [...flatTable.slice(0, 3), { name: MEMBER, required: "conditional", when: iffWhen }];
+  const r1 = { schema: MARKER_SCHEMA, round: 1, sent_at: "2026-07-01T00:00:00Z" };
+  const r1Dated = { ...r1, cutover_planned_at: "2026-09-15T00:00:00Z" };
+  const r2 = { schema: MARKER_SCHEMA, round: 2, sent_at: "2026-08-01T00:00:00Z" };
+  const r2Dated = { ...r2, cutover_planned_at: "2026-09-15T00:00:00Z" };
+
+  const read = (table, doc) => {
+    const { readable, refused } = splitTable(table);
+    return { ...markerProblems(readable, doc), refused };
+  };
+  const counts = (table, doc) => {
+    const p = read(table, doc);
+    return `${p.missing.length}/${p.forbidden.length}/${p.withheld.length}/${p.refused.length}`;
+  };
+
+  is("the table is the file's entry", memberTable({ entries: [{ name: MARKER_SCHEMA, members: flatTable }] }).length, 4);
+  is("a retired schema is null", memberTable({ entries: [] }), null);
+
+  // The list itself. A conditional member is not required of every marker, and
+  // the truthiness read put it in exactly that sentence.
+  is(
+    "a conditional member is not in the required-of-every-marker list",
+    describeTable(publishedTable)[1],
+    "  required of every marker: schema, round, sent_at",
+  );
+  is(
+    "and it is printed as the condition it is",
+    describeTable(publishedTable)[2],
+    "  conditional: `cutover_planned_at` — carried exactly where `round` is not one of `1`, and forbidden where it is not",
+  );
+
+  // ── a published condition, which is what N11 will publish ────────────────
+  // The requiring half, where the condition holds.
+  is("published: round 2 without the date is missing it", counts(publishedTable, r2), "1/0/0/0");
+  is("published: round 2 with the date is clean", counts(publishedTable, r2Dated), "0/0/0/0");
+  // The half the old read could not have: a CONFORMING round-1 marker. The
+  // truthiness read counted this member required of every marker.
+  is("published: round 1 without the date is clean", counts(publishedTable, r1), "0/0/0/0");
+  // The forbidding half of an `iff`, which nothing here used to check at all.
+  is("published: round 1 carrying the date is forbidden", counts(publishedTable, r1Dated), "0/1/0/0");
+  // `if` requires where its predicate holds and says NOTHING where it does not.
+  // Reading it as `iff` would forbid what the contract permits.
+  const ifTable = [...flatTable.slice(0, 3), { name: MEMBER, required: "conditional", when: ifWhen }];
+  is("`if` is not read as `iff`", counts(ifTable, r1Dated), "0/0/0/0");
+  is("`if` still requires where it holds", counts(ifTable, r2), "1/0/0/0");
+
+  // ── a condition this reader cannot evaluate: refused, never relaxed ───────
+  const unreadable = [
+    ["no `when` at all", { name: MEMBER, required: "conditional" }],
+    ["`if` and `iff` together", { name: MEMBER, required: "conditional", when: { if: ifWhen.if, iff: iffWhen.iff } }],
+    ["a predicate shape the readme does not publish", { name: MEMBER, required: "conditional", when: { iff: { round: 2 } } }],
+    ["a predicate naming two siblings", { name: MEMBER, required: "conditional", when: { iff: { round: [2], sent_at: [""] } } }],
+    ["a fourth requiredness", { name: MEMBER, required: "maybe" }],
+  ];
+  for (const [what, member] of unreadable) {
+    is(`refused: ${what}`, counts([...flatTable.slice(0, 3), member], r2), "0/0/0/1");
+  }
+  is(
+    "a refused member is refused on a ref with no markers at all",
+    splitTable([...flatTable.slice(0, 3), unreadable[0][1]]).refused.length,
+    1,
+  );
+
+  // ── SCOPE-8's N11, while it is open ───────────────────────────────────────
+  // Two published documents state this member's requiredness differently, and
+  // the tool withholds on the round they differ about rather than answering.
+  // The line this replaced answered it, silently, in the marker's favour.
+  is("N11 open: round 1 is withheld, not answered", counts(flatTable, r1), "0/0/1/0");
+  is("N11 open: round 2 without the date is asked, and the answer is no", counts(flatTable, r2), "1/0/0/0");
+  is("N11 open: round 2 with the date is clean", counts(flatTable, r2Dated), "0/0/0/0");
+  // And the withholding retires itself the day the file states the condition.
+  is("N11 discharged: nothing is withheld any more", counts(publishedTable, r1), "0/0/0/0");
+  is(
+    "the withheld line names the finding",
+    (read(flatTable, r1).withheld[0]?.message ?? "").includes("SCOPE-8's N11"),
+    true,
+  );
+
+  // The three predicate shapes, and the refusal.
+  is("`absent` holds when the sibling is not carried", predicateHolds({ wait: "absent" }, { state: "x" }), true);
+  is("`absent` fails when it is", predicateHolds({ wait: "absent" }, { wait: {} }), false);
+  is("a value list holds on a listed value", predicateHolds({ round: [2] }, { round: 2 }), true);
+  is("a value list fails when the sibling is absent", predicateHolds({ round: [2] }, {}), false);
+  is("a complement holds on an unlisted value", predicateHolds({ round: { not: [1] } }, { round: 2 }), true);
+  is(
+    "a complement fails when the sibling is absent — a member not carried has no value",
+    predicateHolds({ round: { not: [1] } }, {}),
+    false,
+  );
 
   if (fails.length) {
     for (const f of fails) console.error(`selftest: ${f}`);
