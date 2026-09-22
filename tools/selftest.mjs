@@ -120,6 +120,26 @@ const MODULES = [
   // section header, and so does update-signing.mjs below it, so inserting
   // here moves no existing name under a header it does not belong to.
   "roots.mjs",
+  // Gap 48, and the third module in the same line of thought. root-delegation
+  // asks whether the ceremony refuses a key that is not a published root;
+  // roots.mjs asks whether the published roots are still the compiled set;
+  // this one asks the question neither of them does — whether the DOCUMENT
+  // those keys exist to sign still verifies under them. Nothing in the suite
+  // asked it: a bit flipped in the root signature of registry/v1/trust.json
+  // left this file printing `300 passed, 0 failed`, exit 0, with a transcript
+  // byte-identical to the sound tree's.
+  //
+  // It prints its own section header, and update-signing.mjs below it prints
+  // its own, so inserting here moves no existing name under a header it does
+  // not belong to.
+  //
+  // **This line and tools/selftest/trust-anchor.mjs are ONE change and cannot
+  // be split across two commits**, for the reason written out at
+  // rehearsal-r2.mjs above: `checkModuleSet` compares this list and the
+  // directory as SETS and fails in both directions, and FLOORS below is
+  // compared with this list the same way. Any one of the three alone is a red
+  // `node tools/selftest.mjs` in every lane `laneSites()` reports as LIVE.
+  "trust-anchor.mjs",
   "update-signing.mjs",
   "update-notes.mjs",
   "repo-rules.mjs",
@@ -769,6 +789,7 @@ const FLOORS = new Map(Object.entries({
   "cli.mjs": 5,
   "root-delegation.mjs": 6,
   "roots.mjs": 3,
+  "trust-anchor.mjs": 4,
   "update-signing.mjs": 12,
   "update-notes.mjs": 8,
   "repo-rules.mjs": 17,

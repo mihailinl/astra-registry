@@ -684,6 +684,17 @@ export async function run() {
     // suite that stopped running it would leave forty-four signed documents
     // with nothing checking that they still verify.
     "rehearsal-r2.mjs",
+    // `trust-anchor.mjs` was added on 2026-09-22 with couplings gap 48 — the
+    // root of the estate's trust, verified at HEAD with the estate's own
+    // verifier. Watched both ways: deleted from disk together with its runner
+    // entry, which is the loss `checkModuleSet` cannot see because the two
+    // sides it compares agree that the module is gone; and left out of this
+    // list, which is the silent half, since omitting a name here costs nothing
+    // and fails nothing. It matters for this module more than for most,
+    // because the state it ends is the state where the anchor is unchecked and
+    // the suite prints `300 passed, 0 failed` — a suite that stopped running
+    // it would return to that state and look exactly like one that had not.
+    "trust-anchor.mjs",
   ];
   // A literal control character in a tracked source file is invisible, and that
   // is the whole of the defect. `bot/lib/moderation.mjs` carried three NUL
