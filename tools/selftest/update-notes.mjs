@@ -89,6 +89,19 @@ export async function run() {
   });
 
   await test("--verify says ok only for a document a client would accept now", () => {
+    // Not every refusal is asked HERE, and the rest are not unasked. Each was
+    // measured on 2026-09-22 by breaking the rule in tools/sign-update-manifest.mjs
+    // and reading which check went red. A signature that does not verify —
+    // a key root.json does not publish, bytes altered after signing — reddens
+    // `--verify --receipt binds…` and `--renew refuses a previous document…`,
+    // which reach the same envelopeProblems. A v2 body under the v1 domain
+    // reddens `--renew refuses…`. A byte only a lenient decoder reads, and a
+    // byte-order mark, redden `--verify --receipt binds…`, which is this same
+    // verifyFile with a receipt. The artefact and notes rules redden `--renew
+    // re-checks every claim…`, over the same contentProblems. A version that is
+    // not SemVer is refused by the filename rule before its own, so deleting its
+    // own changes only the message. The three at the end of the list below
+    // were asked nowhere at all.
     const dir = updateSandbox();
     const verify = (text) => updateSigner(["--verify", writeUpdateText(text)], dir);
     let r = verify(pretty(updateDoc()));
@@ -108,6 +121,17 @@ export async function run() {
         d.signed.latest.artifacts[0].sizeBytes = 1.5;
         return pretty(d);
       })(), "cannot be canonicalised"],
+      // The three below are the repair. Each was deleted from
+      // tools/sign-update-manifest.mjs on 2026-09-22 with all 317 checks green,
+      // and each time `--verify` printed `ok` and "a client … would accept it"
+      // over a document the client refuses — for the first, with `NaN days
+      // left` in the reading an operator is told to trust.
+      ["an expires that is not an instant", pretty(updateDoc({ expires: "2027-03-10" })),
+        'expires "2027-03-10" is not an RFC 3339 instant'],
+      ["a signedAt that is not an instant", pretty(updateDoc({ signedAt: "2026-09-21" })),
+        'signedAt "2026-09-21" is not an RFC 3339 instant'],
+      ["an artefact list that offers nothing", pretty(updateDoc({ mutate: (s) => { s.latest.artifacts = []; } })),
+        "latest.artifacts offers nothing"],
     ];
     for (const [name, text, expect] of cases) assertRefused(verify(text), expect, undefined, name);
   });
