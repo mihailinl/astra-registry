@@ -2,7 +2,9 @@
 // drift: the bot's locale list against both schema enums, the vocabulary against
 // spec/locales.yaml with a parse floor, the caps AstraPlugins mirrors from here
 // in both directions, every cap declaring its author side, and the locale corpus
-// in both directions including the exemption that outlives its rule.
+// in both directions including the exemption that outlives its rule — and one
+// fact that is not about locales: the pathspec the withdrawal list's serial is
+// counted over, which the signer, the regeneration and SERVE-85's clock all read.
 //
 // `withFakeCheckout` below is seventeen lines from `withFakeAstraPlugins` in the
 // old file and reads almost the same, but only this module uses it, so it stays
@@ -10,6 +12,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 import {
   astraPluginsCandidates,
@@ -23,6 +26,9 @@ import {
 import { CORPUS_NO_RULE_ID, deriveLocaleText, localeEnumProblems } from "../../bot/lib/locales.mjs";
 import { summarise } from "../../bot/lib/derive.mjs";
 import { REPO_ROOT, loadPolicy, loadSchemas } from "../lib/sources.mjs";
+import { SERIAL_PATHSPEC, SOURCE_PATHSPEC, resolveSerial } from "../lib/revocations.mjs";
+import { serialsAt } from "../signer/plan.mjs";
+import { LIST_PATHSPEC, gather } from "../served-set/main-vs-signed.mjs";
 import { test, assert, assertEqual, tmp } from "./harness.mjs";
 
 export async function run() {
@@ -696,5 +702,116 @@ export async function run() {
       `the reader named the wrong absence, which sends the reader of the log to the wrong file: ${said.message}`);
     assertEqual(absent.filter((f) => f.level === "error").length, 0,
       "a missing checkout is a check that did not run, not a check that failed; the workflow is what makes it fatal");
+  });
+
+  // ── the withdrawal list's serial, and the clock that is measured from it ────
+  //
+  // Gap 64. The serial is `git rev-list --count <commit> -- <pathspec>` + 1,
+  // and three readers compute or depend on it: the signer's `serialsAt`, the
+  // regeneration's `resolveSerial`, and SERVE-85, whose serial window runs from
+  // the newest commit under that same pathspec because that commit is the last
+  // thing that could have moved the serial. Two of the three typed the string
+  // for themselves and nothing compared them; widening the clock's copy was
+  // measured on 2026-09-22 to move the clock and leave the serial.
+  //
+  // They import one export now, and this does not trust that: an import is a
+  // promise about the next edit, and the next edit is the thing that drifts.
+  // It counts a fixture history each reader sees and asks what each one
+  // counted, so a reader that goes back to a string of its own, or reads the
+  // export and then counts something else with it, is red here by name.
+
+  await test("gap 64 — the list's serial and SERVE-85's clock count one pathspec: the signer's, the regeneration's and the clock's", () => {
+    const dir = path.join(tmp, "couplings-serial-pathspec");
+    fs.mkdirSync(dir, { recursive: true });
+    const git = (...a) =>
+      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "couplings-fixture@example.invalid");
+    git("config", "user.name", "couplings fixture");
+    git("config", "commit.gpgsign", "false");
+    const commit = (rel, body, at) => {
+      fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+      fs.writeFileSync(path.join(dir, rel), body);
+      git("add", "-A");
+      execFileSync("git", ["-C", dir, "commit", "-qm", rel], {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at },
+      });
+    };
+    const advisory = JSON.stringify({
+      id: "ASTRA-2026-0001",
+      published: "2026-09-10",
+      severity: "high",
+      action: "block_install",
+      reason: "A fixture advisory, long enough to be a sentence a user can act on.",
+      entries: [{ kind: "id", value: "dice-roller" }],
+    });
+
+    // Five commits, each one hour apart, so every pathspec a reader could
+    // plausibly drift to counts a different number or dates a different
+    // commit. The directory's newest commit is a README edit ON PURPOSE: that
+    // is the one the list's sources do not see and the serial does.
+    commit("tools/revocations/README.md", "advisories\n", "2026-09-19T08:00:00Z");
+    commit("tools/revocations/ASTRA-2026-0001.json", advisory, "2026-09-19T09:00:00Z");
+    commit("tools/revocations/README.md", "advisories, and how to write one\n", "2026-09-19T10:00:00Z");
+    commit("tools/README-fixture.md", "under tools/, outside the list's directory\n", "2026-09-19T11:00:00Z");
+    commit("plugins/dice-roller/plugin.json", "{}\n", "2026-09-19T12:00:00Z");
+    const head = git("rev-parse", "HEAD");
+    const count = (spec) => Number(git("rev-list", "--count", head, "--", spec));
+    const newest = (spec) => git("log", "-1", "--format=%cI", head, "--", spec) || null;
+    const expect = { count: count(SERIAL_PATHSPEC), newest: newest(SERIAL_PATHSPEC) };
+
+    // The fixture guard, before any reader is asked. If a neighbour counted
+    // the same number AND dated the same commit, a reader drifting to it would
+    // be invisible here — so say which neighbour the fixture cannot separate,
+    // rather than let a check go green about a difference it could not see.
+    // A README-only pathspec dates the same commit by construction; its count
+    // is what tells it apart.
+    const neighbours = [SOURCE_PATHSPEC, "tools", ".", "plugins", `${SERIAL_PATHSPEC}/README.md`];
+    for (const spec of neighbours) {
+      assert(spec !== SERIAL_PATHSPEC, `the neighbour ${spec} is the serial's own pathspec; the fixture has nothing to separate`);
+      assert(count(spec) !== expect.count,
+        `the fixture cannot tell ${spec} from ${SERIAL_PATHSPEC}: both count ${expect.count} commit(s)`);
+    }
+    for (const spec of [SOURCE_PATHSPEC, "tools", "."]) {
+      assert(newest(spec) !== expect.newest,
+        `the fixture cannot tell ${spec} from ${SERIAL_PATHSPEC} by date: both newest at ${expect.newest}`);
+    }
+    const which = (n) => [SERIAL_PATHSPEC, ...neighbours].filter((s) => count(s) === n).join(" or ") || "no pathspec this fixture knows";
+    const dated = (at) => [SERIAL_PATHSPEC, ...neighbours].filter((s) => newest(s) === at).join(" or ") || "no pathspec this fixture knows";
+
+    // (a) the signer. `serialsAt` is what `planRun` signs and what SERVE-85's
+    // `gather` generates the list at, so it is asked directly.
+    const signer = serialsAt({ root: dir, sha: head }).revocations;
+    assertEqual(signer, expect.count + 1,
+      `the signer's serial counts over ${which(signer - 1)}, and the serial's pathspec is ${SERIAL_PATHSPEC}: ` +
+        `tools/signer/plan.mjs's serialsAt has stopped counting over SERIAL_PATHSPEC`);
+
+    // (b) the regeneration. `build-revocations.mjs` writes main's unsigned
+    // copy at this serial; an operator's environment override would answer
+    // for it, so the override is taken out of the way for the one call.
+    const override = process.env.ASTRA_REVOCATIONS_SERIAL;
+    delete process.env.ASTRA_REVOCATIONS_SERIAL;
+    let regenerated;
+    try {
+      regenerated = resolveSerial({ root: dir });
+    } finally {
+      if (override !== undefined) process.env.ASTRA_REVOCATIONS_SERIAL = override;
+    }
+    assertEqual(regenerated, expect.count + 1,
+      `the regeneration's serial counts over ${which(regenerated - 1)}, and the serial's pathspec is ${SERIAL_PATHSPEC}: ` +
+        `tools/lib/revocations.mjs's resolveSerial has stopped counting over SERIAL_PATHSPEC`);
+
+    // (c) SERVE-85's clock, both as the constant it names and as the commit it
+    // actually dates. The name alone is not enough: `gather` could read the
+    // export and log something else, and the constant would still agree.
+    assertEqual(LIST_PATHSPEC, SERIAL_PATHSPEC,
+      "tools/served-set/main-vs-signed.mjs's LIST_PATHSPEC is a different string from the pathspec the serial is counted over");
+    const facts = gather({ root: dir });
+    assertEqual(facts.listClock, expect.newest,
+      `SERVE-85's clock dates the newest commit under ${dated(facts.listClock)}, and the serial moves on commits under ` +
+        `${SERIAL_PATHSPEC}: its window now opens on a commit that did not move the serial`);
+    assertEqual(facts.generated?.serial, signer,
+      "SERVE-85 generates the list at a serial other than the one the signer assigns at the same commit");
   });
 }
