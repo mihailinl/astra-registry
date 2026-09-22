@@ -4,7 +4,7 @@
   "owner": "fixture-owner",
   "display_name": "Fixture Owner",
   "description_text": "The account every listing in this fixture tree but one is published from",
-  "tier": "community",
+  "tier": "astra_team",
   "verified_at": "2026-01-02",
   "last_confirmed_at": "2026-06-01",
   "evidence": {
