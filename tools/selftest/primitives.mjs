@@ -19,8 +19,23 @@ import { test, assert, assertEqual, tmp } from "./harness.mjs";
 export async function run() {
   console.log("\ncanonical json");
   await test("keys are sorted by code unit, output ends in a newline", () => {
-    const s = stableStringify({ b: 1, a: { d: 2, c: 3 }, $z: 4 });
-    assert(s === '{\n  "$z": 4,\n  "a": {\n    "c": 3,\n    "d": 2\n  },\n  "b": 1\n}\n', `got ${JSON.stringify(s)}`);
+    // **`Z` is the repair.** Every key here used to be lowercase ASCII or `$`,
+    // and over such keys a code-unit sort and a case-folding one agree.
+    // Measured 2026-09-22: `sortedEntries` in tools/lib/canonical.mjs made
+    // case-insensitive (lowercased keys compared first) and ALL 317 checks
+    // stayed green — this one, the RFC 8785 vector below (none of its nine keys
+    // carries an ASCII capital), and every `--check` that regenerates a committed
+    // document, since no committed document's key order moves under folding. By code unit
+    // every capital sorts before every lowercase letter — `Z` is 0x5A, `a` is
+    // 0x61 — and folded, `Z` sorts after `b`.
+    //
+    // Code-point precision is deliberately NOT asked here, because it is asked
+    // below: over ASCII the two orders are one order, and the RFC vector is the
+    // fixture where UTF-16 and code-point order differ. A code-point sort and a
+    // locale-aware sort were both measured on the same day: this check stayed
+    // green and `RFC 8785 §3.2.3` went red for each, which is where they belong.
+    const s = stableStringify({ b: 1, a: { d: 2, c: 3 }, $z: 4, Z: 5 });
+    assert(s === '{\n  "$z": 4,\n  "Z": 5,\n  "a": {\n    "c": 3,\n    "d": 2\n  },\n  "b": 1\n}\n', `got ${JSON.stringify(s)}`);
   });
   await test("jcs is the same document with the whitespace removed", () => {
     const doc = { b: [1, 2], a: "x" };
