@@ -2,10 +2,15 @@
 // vectors, domain separation, the manifest read from byte zero versus a
 // repointed central directory, MANIFEST.files catching a same-length swap, an
 // extra file / symlink / shell entry, an id mismatch, every bundle-structure
-// rule pinned by its own finding set — and then the 33 vendored shared vectors,
+// rule pinned by its own finding set — and then the vendored shared vectors,
 // which must stay at the END of run(), after everything this repository writes
 // for itself and before the first catalogue-signature test. Anything new goes
 // ABOVE that block and never after it.
+//
+// How many vendored vectors there are is AstraPlugins' number, not this file's:
+// it changes on an ordinary re-vendor, in a file whose author never opened this
+// one. It used to be written here as 33, and a count in a comment is a sentence
+// the next re-vendor falsifies with nothing to catch it.
 //
 // This is the only module that reads LIMITS.
 
@@ -191,6 +196,28 @@ export async function run() {
   // Plugins are not sandboxed and will not be. That is settled, and it is
   // exactly why this reader's path rules are asserted on their own terms: it is
   // one of the few things between a published archive and somebody's filesystem.
+  //
+  // ── and why E_MANIFEST_NOT_FIRST appears twice below ───────────────────────
+  //
+  // It reads the CENTRAL-DIRECTORY INDEX (`manifestEntry.index !== 0`).
+  // `E_MANIFEST_LOCAL_HEADER` reads BYTE ZERO. Those are two properties of an
+  // archive, not one, and nothing in the ZIP format ties them together — the
+  // central directory is appended last and lists the local records in whatever
+  // order it likes. `manifest-not-first` violates BOTH at once, which is why
+  // its row has to carry the other rule in `rest`, and why neither rule was
+  // ever the sole reason that bundle was refused.
+  //
+  // Upstream added the pair that separates them (AstraPlugins gap 52):
+  //
+  //   manifest-first-by-offset-only   MANIFEST.json at byte zero, central index 1
+  //   manifest-first-by-index-only    central index 0, byte zero is plugin.toml
+  //
+  // Each comes back with exactly ONE code, so each rule now has a bundle where
+  // it is the only thing between that archive and an approved listing. Delete
+  // either `err()` and exactly one of those two vectors is ACCEPTED — which the
+  // vendored verdict test sees as well, so the loss is red in two places rather
+  // than silent in one. `manifest-not-first` alone could never give that,
+  // because whichever rule you deleted, the other still fired.
   console.log("\neach bundle-structure rule, on its own terms");
   const RULE_PINS = [
     {
@@ -207,6 +234,20 @@ export async function run() {
       rule: "E_MANIFEST_HEADER_DISAGREE", vector: "header-disagree",
       rest: ["E_MANIFEST_INVALID"],
       otherwise: "the decoy manifest failing to parse, which is a property of that decoy and not of the comparison",
+    },
+    {
+      rule: "E_MANIFEST_NOT_FIRST", vector: "manifest-first-by-offset-only",
+      rest: [],
+      otherwise:
+        "nothing else in this bundle — the manifest IS at byte zero here, so the byte-zero reader " +
+        "passes it and this rule is the only objection left",
+    },
+    {
+      rule: "E_MANIFEST_LOCAL_HEADER", vector: "manifest-first-by-index-only",
+      rest: [],
+      otherwise:
+        "nothing else in this bundle — the manifest IS the central directory's entry 0 here, so " +
+        "E_MANIFEST_NOT_FIRST cannot fire and this rule is the only objection left",
     },
     {
       rule: "E_BUNDLE_TRAVERSAL", vector: "path-traversal",
@@ -232,11 +273,23 @@ export async function run() {
         fs.readFileSync(path.join(VECTOR_DIR, v.file)),
         { id: v.plugin_id, version: v.version, platformKey: v.platform_key },
       );
+      // Two messages, because the two failures are different facts and the
+      // wrong one sends a reader to the wrong place. Where another rule still
+      // fires, the verdict test stays green and this is the ONLY thing that
+      // noticed. Where nothing fires, the vector is accepted and the verdict
+      // test is red beside this one — which is what a vector that isolates a
+      // rule buys, and saying "still green" there would be false.
       assert(codes.includes(pin.rule),
-        `${pin.rule} is not raised for the ${pin.vector} vector any more.\n` +
-        `        The vector is STILL REJECTED — by ${codes.join(", ") || "nothing at all"} — so ` +
-        `\`${pin.vector} — rejects (bundle-structure)\` is still green and NOTHING in this suite asserts ` +
-        `${pin.rule}.\n        What rejects it instead: ${pin.otherwise}.`);
+        codes.length === 0
+          ? `${pin.rule} is not raised for the ${pin.vector} vector any more, and NOTHING ELSE ` +
+            `rejects it either.\n        That bundle is now ACCEPTED, so ` +
+            `\`${pin.vector} — rejects (bundle-structure)\` is red beside this ` +
+            "check rather than passing behind it. This vector exists to isolate one rule: it is the " +
+            `only bundle in the corpus where ${pin.rule} is the sole objection, and ${pin.otherwise}.`
+          : `${pin.rule} is not raised for the ${pin.vector} vector any more.\n` +
+            `        The vector is STILL REJECTED — by ${codes.join(", ")} — so ` +
+            `\`${pin.vector} — rejects (bundle-structure)\` is still green and NOTHING in this suite asserts ` +
+            `${pin.rule}.\n        What rejects it instead: ${pin.otherwise}.`);
       assertEqual(codes.join(", "), [pin.rule, ...pin.rest].sort().join(", "),
         `the finding set for ${pin.vector} moved. tests/vectors/ is a VENDORED copy refreshed from ` +
         "AstraPlugins/testdata/bundles — if the bytes changed there, read them and correct this table; " +
