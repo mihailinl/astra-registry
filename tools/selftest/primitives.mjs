@@ -246,14 +246,63 @@ export async function run() {
 
   console.log("\nids");
   await test("safe path components", () => {
-    assert(unsafePathComponent("dice-roller") === null);
-    assert(unsafePathComponent("..") !== null);
-    assert(unsafePathComponent("a/b") !== null);
-    assert(unsafePathComponent("con") !== null, "CON is a Windows device name");
-    assert(unsafePathComponent("x​") !== null, "a zero-width space passed");
-    assert(invalidId("Dice-Roller") !== null, "uppercase passed");
-    assert(invalidId("-lead") !== null);
-    assert(invalidId("a") !== null, "one character passed");
+    // Every rule `unsafePathComponent` and `invalidId` carry, each asked by an
+    // input that trips THAT rule and no other, and each refusal asked for its
+    // REASON. Both functions return at the first rule that fires, so an input
+    // that trips two proves only the earlier one, and a bare `!== null` cannot
+    // tell which rule said no.
+    //
+    // Measured 2026-09-22 against the eight assertions this list replaces: the
+    // NFKC rule, the control-character rule, the trailing dot, the length cap,
+    // the NUL rule, the ':' rule, the backslash, the single dot, the empty
+    // string, a device name with an extension or in capitals, the double
+    // hyphen, and a charset widened to `_` and `.` or to a trailing hyphen
+    // were each broken in tools/lib/ids.mjs in turn, and each time ALL 317
+    // checks stayed green —
+    // `validation.mjs`'s `an id that is not a safe path component is rejected`
+    // included, because `../../etc/passwd` trips a separator and a relative
+    // component first. These are the rules that stand between a listed id and
+    // `remove_dir_all(<plugins_dir>/<id>)` on a stranger's disk.
+    const refused = (fn, s, why) => {
+      const got = fn(s);
+      assert(got !== null && got.includes(why),
+        `${fn.name}(${JSON.stringify(s)}) should refuse because it ${why}; it said ${JSON.stringify(got)}`);
+    };
+    const U = unsafePathComponent;
+    assertEqual(U("dice-roller"), null, "an ordinary id was refused");
+    refused(U, "", "empty");
+    // Over NAME_MAX (255 bytes) on every common filesystem, so this is over the
+    // cap whatever the cap is; WHICH number the cap is, and that the two guards
+    // and the schemas state one number, is `the id cap is one number…` below.
+    refused(U, "a".repeat(256), "longer than");
+    refused(U, ".", "relative path component");
+    refused(U, "..", "relative path component");
+    refused(U, "a/b", "path separator");
+    refused(U, "a\\b", "path separator");
+    refused(U, "a\0b", "NUL");
+    refused(U, "a:b", "alternate-data-stream");
+    refused(U, "a\u0001b", "control character");
+    refused(U, "x​", "zero-width");
+    // U+FB01 LATIN SMALL LIGATURE FI: no control, no zero-width, and NFKC
+    // rewrites it to "fi" — so a directory named with it and one named `file`
+    // are two names for what a user reads as one.
+    refused(U, "ﬁle", "NFKC");
+    refused(U, "dice.", "ends in a dot");
+    refused(U, "dice ", "ends in a dot or space");
+    refused(U, "con", "Windows device name");
+    refused(U, "con.txt", "Windows device name");
+    refused(U, "Con", "Windows device name");
+
+    const I = invalidId;
+    assertEqual(I("dice-roller"), null, "an ordinary id was refused");
+    assertEqual(I("a1"), null, "a two-character id was refused");
+    for (const [id, what] of [
+      ["Dice-Roller", "a capital"], ["-lead", "a leading hyphen"], ["dice-", "a trailing hyphen"],
+      ["a", "one character"], ["a_b", "an underscore"], ["a.b", "an interior dot"],
+    ]) {
+      assert((I(id) ?? "").includes("does not match"), `${what} passed the charset: invalidId(${JSON.stringify(id)}) = ${JSON.stringify(I(id))}`);
+    }
+    refused(I, "dice--roller", "double hyphen");
   });
   await test("confusable folding collapses 0/o and hyphens", () => {
     assert(foldId("dice-roller") === foldId("dicer0ller"), `${foldId("dice-roller")} vs ${foldId("dicer0ller")}`);
