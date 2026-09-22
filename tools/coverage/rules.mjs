@@ -90,6 +90,16 @@ export const RULES = [
     network: false,
   },
   {
+    name: "drain-age",
+    owner: "M-T1.5 for the alarm, PRODUCTION_PLAN 3.4/3.5 (BOT-33, BOT-38) for the schedule it watches",
+    script: "tools/coverage/drain-age.mjs",
+    what:
+      "ingest.yml still routes a live cron to `bot/watch.mjs --drain`, state/releases-seen.json is under 72 h " +
+      "old, and no queue entry is more than 24 h past its own publish_after — a stopped drain and a drain that " +
+      "runs and publishes nothing are different faults and only the second has any other symptom",
+    network: false,
+  },
+  {
     name: "docs-advisory-url",
     owner: "M-T1.3 (MOD-13, precondition)",
     script: "tools/coverage/docs-advisory-url.mjs",
@@ -153,6 +163,24 @@ export const PENDING_OWNER_ACTS = [
       "that a real token push put on a real branch — which is the only part of it that GITHUB_TOKEN's " +
       "no-recursion rule can break without any fixture noticing. Record it in " +
       "`state/coverage-live-run.json` (`{run, at, fixture_repo, alarm_delivered_at}`) and under ROLL-1.",
+  },
+  {
+    id: "ingest-schedule-receiver",
+    task: "M-T1.5 for the rule, BOT-85 for the receiver",
+    record: "state/ingest-schedule-watch.json",
+    act:
+      "OWNER: `drain-age` turns this canary red when ingest.yml's schedule stops, which is a red X in the " +
+      "Actions tab and an alarm on whatever environment `alerts` carries. It does NOT page, and the reason is " +
+      "structural rather than unfinished: the rule runs inside moderation-coverage.yml, which is itself a " +
+      "schedule in this repository, so the one case it cannot report is the case where Actions is disabled and " +
+      "BOTH schedules stop together — a liveness check that dies with what it watches has the ambiguity it was " +
+      "built to remove. The half that closes it is BOT-85's `coverage-canary` receiver, which pages on this " +
+      "workflow's silence from OFF this box; `bot/lib/alert-checks.mjs` declares it at 900 s and nothing in " +
+      "this repository can prove the receiver exists. Stand it up, post one heartbeat, watch it page after " +
+      "3 x 900 s of silence, and record it in `state/ingest-schedule-watch.json` " +
+      "(`{at, receiver, check, silence_paged_at}`). Until then the inner guard is the whole guard, and it is " +
+      "deliberately not waiting: `ingest.yml` carried a written claim that the plugins service's BOT-47 " +
+      "watched this schedule, and a claim of coverage is what stops anybody looking.",
   },
 ];
 

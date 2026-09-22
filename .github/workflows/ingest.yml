@@ -278,12 +278,36 @@ jobs:
   # nothing else) or give it no credential at all and be red for ever.
   #
   # **It posts no BOT-85 heartbeat, and says so in a sentence rather than by
-  # leaving an input empty.** `ingest.yml` runs on BOT-51's schedule, which is
-  # deliberately outside BOT-85's dead-man list because the plugins service's
-  # BOT-47 watches it; a heartbeat from here would be a POST to a receiver
-  # check nobody created, which 404s and reads like a typo. `no-heartbeat-because`
-  # is the input for that, and naming neither it nor a `check:` is a red
-  # workflow test.
+  # leaving an input empty.** A heartbeat from here would be a POST to a
+  # receiver check nobody created, which 404s and reads like a typo.
+  # `no-heartbeat-because` is the input for that, and naming neither it nor a
+  # `check:` is a red workflow test.
+  #
+  # **Until 2026-09-21 that sentence said something else, and it was false.**
+  # It read: "`ingest.yml` runs on BOT-51's schedule, which is deliberately
+  # outside BOT-85's dead-man list because the plugins service's BOT-47 watches
+  # it." Every clause of that is about a different file. BOT-51's 600-second
+  # schedule is `plugins-ingest.yml`'s, and its cron is still COMMENTED OUT
+  # pending R3. This workflow runs on `17 * * * *` and `41 5 * * *` — an hourly
+  # queue drain and a daily release backstop — and BOT-47, which is R3 and
+  # later, has never watched either. So the workflow that publishes every
+  # delayed release carried, in the very input whose purpose is to say who is
+  # watching instead, the name of a watcher that was not watching it. A claim
+  # of coverage is worse than no claim, because it is what stops anybody
+  # looking, and for eight weeks nobody did.
+  #
+  # What watches it now is the `drain-age` rule of `moderation-coverage.yml`:
+  # it bounds the age of `state/releases-seen.json`, which the `41 5 * * *`
+  # half of this one `schedule:` block commits on every run, and it fails if no
+  # live cron here is still routed to `bot/watch.mjs --drain`. That is a red X
+  # in the Actions tab. It is not a page, and the owner act that would make it
+  # one is printed on every canary run as `ingest-schedule-receiver`.
+  #
+  # The rule is named and its script path is NOT written here, deliberately:
+  # `bot/tests/moderation-coverage.test.mjs`'s MOD-46 test refuses any workflow
+  # but the canary that so much as contains a rule's script path, because a
+  # moderation or privacy check inside a publishing job is a check that can
+  # delay a takedown. It is a substring match, and it caught this comment.
   #
   # **The `env:` block is not optional and is not ambient.** An environment
   # secret reaches a job only where the job names it. Without these three
@@ -350,11 +374,16 @@ jobs:
         with:
           verdict: verdict.json
           no-heartbeat-because: >-
-            ingest.yml runs on BOT-51's 600-second schedule, which is
-            deliberately outside BOT-85's dead-man list: the plugins service's
-            BOT-47 watches that schedule, so a receiver check for it would be
-            one the owner created and this estate is not the party that
-            notices its silence.
+            ingest.yml is on no BOT-85 receiver check, so a heartbeat from here
+            would 404 against a check nobody created. Its schedule's silence is
+            watched instead by moderation-coverage.yml's drain-age rule, which
+            bounds the age of state/releases-seen.json and fails when no live
+            cron here is routed to bot/watch.mjs --drain. That is red in the
+            Actions tab and pages
+            nobody; the receiver half is the owner act
+            ingest-schedule-receiver. This input previously named BOT-51's
+            600-second schedule and the plugins service's BOT-47 as its
+            watcher, which was plugins-ingest.yml's schedule and not this one.
 
   # Does this event ask for an ingest at all, and of what? Runs no submitter
   # code and touches no network beyond the public reads it was already given.
