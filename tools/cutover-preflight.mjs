@@ -64,8 +64,8 @@
 // `"conditional"` is a truthy string, so a member the contract carries only
 // under a stated condition was counted as carried by every marker, and printed
 // into this record as required outright. It was silent because no member of
-// `astra.registry.migration-notice/1` is conditional yet; it would stop being
-// silent the day one is, which is what SCOPE-8's N11 is scheduled to do.
+// `astra.registry.migration-notice/1` was conditional; it stopped being silent
+// when contract 0.30.0 made one so, which is what SCOPE-8's N11 did.
 // dev/couplings.md entry 46, and entry 38 for the same read one file over.
 //
 // A conditional member is not one question. It is two, and WHICH of the two a
@@ -108,9 +108,11 @@
 // ── AND THE ONE QUESTION THIS FILE USED TO ANSWER WITH A BELIEF ─────────────
 //
 // B.4 states the marker as an exact member list — `schema`, `round`, `sent_at`,
-// "and `cutover_planned_at` FROM ROUND 2". The token file states that member
-// `required: true`, flat. SCOPE-8's N11 is that disagreement, and it is open.
-// This file used to settle it privately:
+// "and `cutover_planned_at` FROM ROUND 2". The token file used to state that
+// member `required: true`, flat. SCOPE-8's N11 was that disagreement, and it is
+// DISCHARGED: contract 0.30.0 published a `when` for it, and
+// dev/scope8-qualification-sweep.md records the finding closed there. This file
+// used to settle it privately:
 //
 //     const required = m.doc?.round === 1
 //       ? members.filter((k) => k !== "cutover_planned_at") : members;
@@ -124,12 +126,22 @@
 //
 // So it is gone. Where two published documents state a member's requiredness
 // differently, and for the markers they differ about, this tool DOES NOT ASK —
-// it says so, names N11, and names who discharges it. Withholding is the
-// direction the readme calls safe, and an unasked question in this tool is a
-// person to go and find, which is exactly what an unowned escalation needs.
-// The day the token file publishes a `when` for that member there is no
-// disagreement left to withhold over and the condition is simply read; nothing
-// here has to be edited for that to happen, and the selftest pins both states.
+// it says so, names the finding, and names who discharges it. Withholding is
+// the direction the readme calls safe, and an unasked question in this tool is
+// a person to go and find, which is exactly what an unowned escalation needs.
+//
+// **It has since retired itself, exactly as designed, and nothing here was
+// edited for that.** Contract 0.30.0 published a `when` for
+// `cutover_planned_at`, so the `required === "conditional"` branch returns
+// before the dispute lookup is ever reached: measured against the published
+// table, `withheld` is 0 on all five marker shapes. dev/couplings.md entry 63.
+//
+// **The mechanism stays, and the list is not emptied.** It is generic, it
+// RE-ARMS the moment any member of a marker record goes back to a flat
+// `required: true` while the prose qualifies it, the selftest below pins both
+// states through a synthetic flat table — and those two cases are the record of
+// what this is for — and `withheld` is part of `markerProblems`'s return shape,
+// consumed in the unasked summary. What is stale is prose, and only prose.
 //
 // ── IT PRINTS FAIL ON THE TREE IT LANDS ON, AND THAT IS THE DESIGN ──────────
 //
@@ -178,9 +190,17 @@ const TOKEN_FILE = "schema/contract-tokens-v1.json";
 
 /**
  * The members whose requiredness two published documents state differently,
- * and which markers they differ about. See the header. There is exactly one
- * today, SCOPE-8's N11, and it is here rather than inline so that a second one
- * has to be written down beside it with the finding that owns it.
+ * and which markers they differ about. See the header. The one entry here,
+ * SCOPE-8's N11, is DISCHARGED — contract 0.30.0 published a `when` for it —
+ * and it is kept rather than deleted, for three reasons:
+ *
+ *   1. it is the only worked example of the shape, and a second dispute has to
+ *      be written down beside it with the finding that owns it;
+ *   2. it RE-ARMS by itself if that member, or any other, ever goes back to a
+ *      flat `required: true` while the prose qualifies it — deleting the array
+ *      is deleting that;
+ *   3. the selftest drives this branch through a synthetic flat table, and
+ *      those cases are the record of what the mechanism is for.
  *
  * `disagreesAbout` decides only whether the question may be ASKED — never what
  * the answer is. That is the whole difference between this and the local
@@ -188,9 +208,10 @@ const TOKEN_FILE = "schema/contract-tokens-v1.json";
  * missing"), this one withholds, and withholding is the direction the token
  * file's readme names as the safe one.
  *
- * An entry applies only while the file states the member `required: true`. A
- * published `when` is the disagreement discharged: the condition is read, this
- * entry stops matching on its own, and nobody has to notice.
+ * An entry applies only while the file states the member `required: true`, so
+ * a published `when` is the disagreement discharged: the condition is read,
+ * the entry stops matching on its own, and nobody has to notice. That is what
+ * happened at 0.30.0, with no edit here.
  */
 const DISPUTED_MEMBERS = Object.freeze([
   Object.freeze({
@@ -201,8 +222,9 @@ const DISPUTED_MEMBERS = Object.freeze([
       "and `cutover_planned_at` FROM ROUND 2",
     disagreesAbout: (doc) => doc?.round === 1,
     who:
-      "the contract lane that discharges SCOPE-8's N11 — a `when` on this member in " +
-      `${TOKEN_FILE} ends the disagreement, and this tool reads it with no edit here`,
+      "whoever moved this member in " +
+      `${TOKEN_FILE} back to a flat \`required: true\` — contract 0.30.0's \`when\` ended this ` +
+      "disagreement, and the file carrying it flat again is what re-armed the withholding",
   }),
 ]);
 
@@ -823,7 +845,9 @@ export function markerProblems(readable, doc) {
       withheld.push({
         message:
           `\`${m.name}\`: the token file states it \`required: true\`, flat, and ${dispute.prose}. ` +
-          `${dispute.finding} is that disagreement and it is open; this tool does not decide which of two ` +
+          `${dispute.finding} was that disagreement, and contract 0.30.0 discharged it by publishing a ` +
+          "`when` for this member — so the file stating it flat again means the disagreement is BACK, " +
+          "and the first thing to read is what moved that member. This tool does not decide which of two " +
           "published documents is wrong, so it did not ask whether this marker carries it",
         who: dispute.who,
       });
