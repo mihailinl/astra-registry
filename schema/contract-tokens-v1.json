@@ -1,6 +1,6 @@
 {
-  "contract_version": "0.31.0",
-  "source_commit": "4c64c75a65bbd8a2c19a0616c5b00c8c0380c759",
+  "contract_version": "0.32.0",
+  "source_commit": "60eac6d0d42cd66ea6a23ef700c70c5779b144da",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -3560,7 +3560,7 @@
         },
         {
           "name": "unlisted",
-          "required": true
+          "required": false
         }
       ],
       "members_recorded": true,
@@ -3589,7 +3589,7 @@
         },
         {
           "name": "covers",
-          "required": true
+          "required": false
         },
         {
           "name": "tier",
@@ -3702,7 +3702,7 @@
       "members": [
         {
           "name": "yanked",
-          "required": true
+          "required": false
         },
         {
           "name": "release.repo",
