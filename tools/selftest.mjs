@@ -1,6 +1,10 @@
 #!/usr/bin/env node
-// The registry's own test suite. `node tools/selftest.mjs`, no arguments, no
-// network, no dependencies.
+// The registry's own test suite. `node tools/selftest.mjs`, no network, no
+// dependencies.
+//
+// Two flags, neither of which changes what is asserted:
+//   --lanes    print the derived table of every place that runs this suite
+//   --census   print the per-module floors below, ready to paste
 //
 // Half of these tests assert that something is ACCEPTED. The other half assert
 // that something is REJECTED, and those are the ones that matter: a validator
@@ -25,7 +29,24 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { cleanupTmp, drain, registeredCount, results } from "./selftest/harness.mjs";
+import { REPO_ROOT } from "./lib/sources.mjs";
+import { cleanupTmp, drain, registeredCount, results, walkRepo } from "./selftest/harness.mjs";
+
+const ARGS = process.argv.slice(2);
+const WANT_LANES = ARGS.includes("--lanes");
+const WANT_CENSUS = ARGS.includes("--census");
+{
+  const unknown = ARGS.filter((a) => a !== "--lanes" && a !== "--census");
+  if (unknown.length) {
+    // Exit 1, not 2. Two is reserved for the `EXIT-2` flip at the bottom of this
+    // file — the day NOT ASKED becomes fatal — and a typo'd flag must not be
+    // able to spell that.
+    cleanupTmp();
+    console.error(`tools/selftest.mjs: unknown argument(s): ${unknown.join(", ")}`);
+    console.error("usage: node tools/selftest.mjs [--lanes] [--census]");
+    process.exit(1);
+  }
+}
 
 // The order is load-bearing: it is the order every name prints in, and two of
 // the boundaries are not where the section headers are. The serial test opens
@@ -127,9 +148,11 @@ const MODULES = [
   // and is not in the runner's list"; a commit that adds this line without
   // the module fails with "listed by the runner and not in tools/selftest/".
   // Either half alone is a red `node tools/selftest.mjs`, which is a step in
-  // `build-index.yml`, `ingest.yml`, `plugins-moderation.yml` and
-  // `baseline.yml` — so splitting the change does not stage it, it schedules
-  // an outage and only chooses which side of the merge gets it. The two-way
+  // every lane `laneSites()` below reports as LIVE — so splitting the change
+  // does not stage it, it schedules an outage and only chooses which side of
+  // the merge gets it. (This sentence used to name four workflows. Three of
+  // them could not run the suite on the day it was written, and nothing
+  // re-asked; `node tools/selftest.mjs --lanes` is the list now.) The two-way
   // check is right and is not the thing to relax; what it means is that
   // whoever owns this list and whoever writes a module have to arrive in the
   // same commit. Written here because the instruction to leave the line to
@@ -270,6 +293,318 @@ async function checkModuleSet() {
   if (problems.length) fail("the suite does not run what tools/selftest/ holds", problems);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// WHICH LANES REACH THIS SUITE. Derived, because the sentence was wrong.
+//
+// This block replaces four words. The comment above used to name
+// *build-index.yml, ingest.yml, plugins-moderation.yml and baseline.yml* as the
+// lanes that run this file, and on 2026-09-22 that was true of the YAML and
+// false of the runner: two of the four sat behind steps that exit 1 before the
+// suite is reached, one runs only on `workflow_dispatch`, and the line number
+// quoted for the fourth had already moved. It was gap 28's shape one level up —
+// a claim in a comment that nothing re-asks — so correcting the sentence would
+// only have bought until the next workflow edit.
+//
+// Nothing is written down here now. `laneSites()` reads `.github/workflows/`
+// through the same tracked-file walk every other repository rule uses, and
+// reports every place that runs this suite and what gates it.
+// `node tools/selftest.mjs --lanes` prints the table; every ordinary run prints
+// the one-line count beside the totals, so the claim is a measurement taken at
+// the moment somebody reads it.
+//
+// WHAT IS DERIVED, AND WHAT IS DELIBERATELY NOT.
+//
+//   SITES are exact: a step whose `run:` invokes this file, plus a step that
+//     invokes a script that invokes this file. The indirection is VERIFIED by
+//     reading that script rather than assumed, so `bot/publish-apply.mjs`'s two
+//     lanes stop being counted on the day it stops running the suite — which is
+//     the whole difference between this and a list.
+//   DEAD is exact and syntactic: an earlier step in the same job whose script
+//     always exits non-zero, with the later step either ungated (GitHub skips
+//     it) or gated on that step having succeeded (GitHub runs it and the
+//     condition is false). Both stubbed lanes in this repository are that shape.
+//   DISPATCH-ONLY is exact: a workflow with no trigger but a dispatch, or a job
+//     pinned to `github.event_name == 'workflow_dispatch'`.
+//
+//   The word "unconditional" is NOT derived, and that is the honest part. A
+//     job's `if:` is a GitHub expression over an event this scan does not have,
+//     so the gates are PRINTED rather than collapsed into a word somebody chose.
+//     A reader who needs to know whether a lane fires on a given event reads the
+//     condition, which is the thing that decides.
+//
+// THE ASSERTION is the one that needs no expression evaluated: at least one site
+// is neither dead nor dispatch-only. Zero is the outage this file cannot see
+// from the inside — the suite goes on passing and stops being run — and it is
+// exactly the direction the four-name sentence was drifting in, one lane at a
+// time. Plus a floor on the walk, for the reason `checkModuleSet` has one: a
+// scan that finds no workflows agrees with every claim made about them.
+const SUITE_REL = path.relative(REPO_ROOT, fileURLToPath(import.meta.url)).split(path.sep).join("/");
+
+/** Tracked path, forward slashes, for a file the walk returned. */
+const relOf = (abs) => path.relative(REPO_ROOT, abs).split(path.sep).join("/");
+
+/**
+ * The value of a `key:` line, including a block scalar's continuation.
+ *
+ * Not a YAML parser and not pretending to be one: it reads the subset GitHub
+ * workflow files are written in — two-space indentation, `key: value`, `key: |`
+ * and `key: >-`. Anything it cannot read comes out as an empty string, which
+ * makes a gate INVISIBLE rather than false, so the failure direction is a lane
+ * reported as live when it is gated — loud — rather than a gated lane reported
+ * as absent.
+ */
+const indentOf = (line) => line.length - line.replace(/^ */, "").length;
+const isKeyLine = (line) => /^\s*[\w-]+:/.test(line) && !line.trim().startsWith("#");
+
+function scalarAt(lines, i, indent) {
+  const m = /^\s*[\w-]+:\s*(.*)$/.exec(lines[i]);
+  if (!m) return "";
+  const head = m[1].trim();
+  if (head && head !== "|" && head !== ">" && head !== ">-" && head !== "|-") return head;
+  const out = [];
+  for (let j = i + 1; j < lines.length; j++) {
+    const line = lines[j];
+    if (!line.trim()) { out.push(""); continue; }
+    if (indentOf(line) <= indent) break;
+    out.push(line.slice(indent + 2));
+  }
+  return out.join("\n").trim();
+}
+
+/** `{ triggers, jobs: [{ name, if, steps: [{ name, id, if, run, line }] }] }` */
+function parseWorkflow(text) {
+  const lines = text.split("\n");
+  const triggers = [];
+  const jobs = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (indentOf(line) !== 0 || !isKeyLine(line)) continue;
+    const key = /^([\w-]+):/.exec(line.trim())?.[1];
+    if (key === "on") {
+      const inline = /^on:\s*\[(.*)\]\s*$/.exec(line.trim());
+      if (inline) { triggers.push(...inline[1].split(",").map((s) => s.trim()).filter(Boolean)); continue; }
+      for (let j = i + 1; j < lines.length && (indentOf(lines[j]) > 0 || !lines[j].trim()); j++) {
+        if (indentOf(lines[j]) === 2 && isKeyLine(lines[j])) triggers.push(/^([\w-]+):/.exec(lines[j].trim())[1]);
+      }
+    } else if (key === "jobs") {
+      for (let j = i + 1; j < lines.length && (indentOf(lines[j]) > 0 || !lines[j].trim()); j++) {
+        if (indentOf(lines[j]) !== 2 || !isKeyLine(lines[j])) continue;
+        jobs.push({ name: /^([\w-]+):/.exec(lines[j].trim())[1], start: j, if: "", steps: [] });
+      }
+    }
+  }
+  for (let k = 0; k < jobs.length; k++) {
+    const job = jobs[k];
+    const end = k + 1 < jobs.length ? jobs[k + 1].start : lines.length;
+    for (let j = job.start + 1; j < end; j++) {
+      const line = lines[j];
+      if (indentOf(line) !== 4 || !isKeyLine(line)) continue;
+      const key = /^([\w-]+):/.exec(line.trim())[1];
+      if (key === "if") job.if = scalarAt(lines, j, 4).replace(/\s+/g, " ");
+      if (key !== "steps") continue;
+      // Step items, at whatever indent this file writes a `- ` at.
+      let itemIndent = -1;
+      for (let s = j + 1; s < end; s++) {
+        const sl = lines[s];
+        if (!sl.trim()) continue;
+        if (itemIndent < 0 && /^\s*- /.test(sl)) itemIndent = indentOf(sl);
+        if (itemIndent < 0) continue;
+        if (indentOf(sl) < itemIndent && sl.trim()) break;
+        if (indentOf(sl) !== itemIndent || !/^\s*- /.test(sl)) continue;
+        job.steps.push({ start: s, name: "", id: "", if: "", run: "", line: s + 1 });
+      }
+      const keyIndent = itemIndent + 2;
+      for (let t = 0; t < job.steps.length; t++) {
+        const step = job.steps[t];
+        const stepEnd = t + 1 < job.steps.length ? job.steps[t + 1].start : end;
+        // The first key rides on the `- ` line; normalise it into place.
+        const body = [lines[step.start].replace(/^(\s*)- /, "$1  "), ...lines.slice(step.start + 1, stepEnd)];
+        for (let b = 0; b < body.length; b++) {
+          if (indentOf(body[b]) !== keyIndent || !isKeyLine(body[b])) continue;
+          const key2 = /^([\w-]+):/.exec(body[b].trim())[1];
+          if (key2 === "name" || key2 === "id" || key2 === "if" || key2 === "run") {
+            step[key2] = scalarAt(body, b, keyIndent);
+            if (key2 === "if") step.if = step.if.replace(/\s+/g, " ");
+          }
+        }
+      }
+    }
+  }
+  return { triggers, jobs };
+}
+
+/**
+ * A script that cannot succeed. `set -euo pipefail`, an `::error::` line and
+ * `exit 1` is how this repository writes a step that is not built yet, and it is
+ * the shape that made two of the four named lanes unable to reach this suite.
+ *
+ * Conservative in the direction that matters: any branching keyword at all
+ * (`fi`, `else`, `esac`, `done`) and the answer is no, because then the exit is
+ * reachable-but-not-certain and calling the lane dead would understate it.
+ */
+function alwaysFails(run) {
+  const body = run.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+  if (!body.length) return false;
+  if (body.some((l) => /^(fi|else|elif\b|esac|done)/.test(l))) return false;
+  return /^exit\s+[1-9]\d*$/.test(body[body.length - 1]);
+}
+
+const DISPATCH_TRIGGERS = new Set(["workflow_dispatch", "repository_dispatch"]);
+
+/**
+ * A shell script that actually runs this path, rather than a script that names
+ * it. `node <path>`, with flags allowed between.
+ *
+ * Written because the first version of this scan matched a substring and found
+ * `plugins-ingest.yml`'s stub step, whose `::error::` text explains that
+ * `bot/publish-apply.mjs` will apply the commit — a sentence, reported as a
+ * lane.
+ */
+const invokes = (script, run) =>
+  new RegExp(`(?:^|[\\n;&|(]\\s*|\\s)node\\s+(?:--[\\w=-]+\\s+)*${script.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[\\s\\\\;&|)])`)
+    .test(shellCode(run));
+
+/**
+ * A step's script with its prose taken out: shell comments, and the inside of
+ * every quoted string.
+ *
+ * This repository writes `echo "::error::…"` in the steps that are not built
+ * yet, and those sentences quote the commands the step will one day run.
+ * Watched, on this tree: a step whose whole body was `echo "::error::not built:
+ * one day this runs node tools/selftest.mjs before it commits"` and `exit 1`
+ * was reported as a fourth LIVE lane. A phantom lane is the dangerous
+ * direction — it is a lane the assertion below counts, so it would hold the
+ * count above zero on the day the real ones died.
+ *
+ * Nothing real is lost: a command this repository actually runs is never inside
+ * quotes.
+ */
+const shellCode = (run) => run
+  .split("\n")
+  .map((l) => l.replace(/\s#.*$/, ""))
+  .join("\n")
+  .replace(/'[^']*'/g, "''")
+  .replace(/"[^"]*"/g, '""');
+
+/**
+ * A module's code with its comments taken out, well enough for a path literal.
+ *
+ * The same finding `bot/tests/code-paths.test.mjs` records about its own scan,
+ * arrived at the same way: without this, `bot/tests/code-paths.test.mjs` was
+ * itself reported as a script that runs this suite, on the strength of a
+ * COMMENT quoting the call `bot/publish-apply.mjs` makes. It ran nothing, and it
+ * put a phantom LIVE lane into the table the assertion below counts.
+ */
+const stripComments = (text) => text
+  .split("\n")
+  .filter((l) => !/^\s*(\/\/|\/\*|\*)/.test(l))
+  .map((l) => l.replace(/\s\/\/.*$/, ""))
+  .join("\n");
+
+/** YAML's quotes are not part of the name a reader sees in the run log. */
+const unquote = (s) => s.replace(/^"(.*)"$/s, "$1").replace(/^'(.*)'$/s, "$1");
+
+/** Every place in this repository that runs this suite, and what gates it. */
+function laneSites() {
+  const files = walkRepo().filter((f) => /^\.github\/workflows\/.+\.ya?ml$/.test(relOf(f))).sort();
+  // The scripts that run this suite as a subprocess, found by reading them. A
+  // name written down here would be the same kind of claim this block exists to
+  // delete.
+  const needle = new RegExp(`\\[\\s*"${SUITE_REL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`);
+  const indirect = [];
+  for (const abs of walkRepo()) {
+    const rel = relOf(abs);
+    if (!rel.endsWith(".mjs") || rel === SUITE_REL || rel.startsWith("tools/selftest/")) continue;
+    let text;
+    try { text = stripComments(fs.readFileSync(abs, "utf8")); } catch { continue; }
+    if (/execFileSync\(\s*process\.execPath/.test(text) && needle.test(text)) indirect.push(rel);
+  }
+  const sites = [];
+  for (const abs of files) {
+    const rel = relOf(abs);
+    let parsed;
+    try { parsed = parseWorkflow(fs.readFileSync(abs, "utf8")); } catch { continue; }
+    const dispatchOnlyWorkflow = parsed.triggers.length > 0
+      && parsed.triggers.every((t) => DISPATCH_TRIGGERS.has(t));
+    for (const job of parsed.jobs) {
+      const stubsBefore = [];
+      for (const step of job.steps) {
+        const how = invokes(SUITE_REL, step.run) ? "direct"
+          : indirect.find((s) => invokes(s, step.run));
+        if (how) {
+          // Dead if a stub already failed and this step either has no `if:` —
+          // GitHub skips it — or has one that asks whether the stub succeeded.
+          const dead = stubsBefore.find((stub) => !step.if
+            || (stub.id && new RegExp(`steps\\.${stub.id}\\.(conclusion|outcome)\\s*==\\s*'success'`).test(step.if)));
+          sites.push({
+            workflow: rel,
+            job: job.name,
+            step: unquote(step.name) || step.run.split("\n")[0].slice(0, 40),
+            line: step.line,
+            how: how === "direct" ? "direct" : `via ${how}`,
+            jobIf: job.if,
+            stepIf: step.if,
+            dead: dead ? (unquote(dead.name) || `the step at line ${dead.line}`) : "",
+            dispatchOnly: dispatchOnlyWorkflow
+              || /event_name\s*==\s*'workflow_dispatch'/.test(job.if)
+              || /event_name\s*==\s*'workflow_dispatch'/.test(step.if),
+            triggers: parsed.triggers,
+          });
+        }
+        if (alwaysFails(step.run)) stubsBefore.push(step);
+      }
+    }
+  }
+  return { files: files.length, indirect, sites };
+}
+
+function laneReport(lanes) {
+  const out = [];
+  out.push(`${lanes.sites.length} site(s) run this suite, in ${lanes.files} workflow file(s).`);
+  if (lanes.indirect.length) out.push(`  reached indirectly through: ${lanes.indirect.join(", ")}`);
+  for (const s of lanes.sites) {
+    const state = s.dead ? `DEAD — "${s.dead}" above it always exits non-zero`
+      : s.dispatchOnly ? "DISPATCH-ONLY"
+      : "LIVE";
+    out.push(`  ${state}  ${s.workflow}:${s.line}  job \`${s.job}\`  (${s.how})`);
+    out.push(`        step: ${s.step}`);
+    out.push(`        on: ${s.triggers.join(", ") || "(none parsed)"}`);
+    out.push(`        job if: ${s.jobIf || "—"}`);
+    out.push(`        step if: ${s.stepIf || "—"}`);
+  }
+  return out;
+}
+
+// Not a test(), for `checkModuleSet`'s reason: this runs before the first
+// module, and a name here would print above the first section header and belong
+// to no module.
+function checkLanes(lanes) {
+  const problems = [];
+  // The floor on the walk. 15 workflow files on 2026-09-22 and the floor is 5,
+  // for the reason the module walk's floor is 10 rather than 19: deleting a
+  // workflow is legitimate, a walk that has stopped working is not, and a number
+  // that reddens on an honest deletion is the first number somebody zeroes.
+  if (lanes.files < 5) {
+    problems.push(
+      `the walk of .github/workflows/ found ${lanes.files} file(s) and there were 15 on 2026-09-22; this is a ` +
+      `broken walk, not a smaller estate, and every claim below it would have been made about nothing`,
+    );
+  }
+  const live = lanes.sites.filter((s) => !s.dead && !s.dispatchOnly);
+  if (!live.length) {
+    const stubbed = lanes.sites.filter((s) => s.dead).length;
+    const manual = lanes.sites.filter((s) => s.dispatchOnly && !s.dead).length;
+    problems.push(
+      `no workflow runs this suite any more without a human: of ${lanes.sites.length} site(s) that invoke it, ` +
+      `${stubbed} ${stubbed === 1 ? "sits" : "sit"} behind a step that always exits non-zero and ` +
+      `${manual} ${manual === 1 ? "runs" : "run"} only on a dispatch. A suite nothing runs goes on passing — ` +
+      `run \`node tools/selftest.mjs --lanes\` for the table this was derived from`,
+    );
+  }
+  if (problems.length) fail("nothing reaches this suite on its own any more", problems);
+  return live;
+}
+
 // The way the suite gets smaller that checkModuleSet cannot see: the directory
 // and the list above still agree with each other, and there is simply less in
 // the modules than there was. An emptied `run()`, an early `return`, a `for`
@@ -346,7 +681,145 @@ const reported = () => {
   return r.passed + r.failures.length + r.notAsked.length;
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE FLOOR OF ONE IS NOT A FLOOR. It is a liveness check wearing a floor's
+// clothes, and everything above admits it: "it says nothing about a module that
+// kept fourteen tests of eighteen". Measured 2026-09-22 on this tree: delete one
+// `await test(...)` from any module and the suite prints `PASS`, one lower, and
+// exits 0. The number on the last line is an OUTPUT. Nothing compares it to
+// anything, and the direction it moves in is the silent one — nobody opens an
+// investigation because a suite reported fewer failures.
+//
+// So: a pinned floor PER MODULE, at census, asserted as `reported >= floor`.
+//
+// WHY NOT ONE NUMBER FOR THE SUITE, which is the cheaper repair and the one the
+// register recommends. Three reasons, in the order they bite:
+//
+//   * a suite-wide total is a single number in a single file, so the commit that
+//     deletes the check is the commit that edits it down — one line, one diff
+//     hunk, no module named. A reviewer sees `301` become `300` beside a diff
+//     that removed a test and reads it as bookkeeping, because that is what it
+//     looks like. Per module, the same edit says `catalogue.mjs: 31 → 30` and
+//     the reviewer is told WHICH subject lost a check, which is the only form of
+//     the question anybody can answer;
+//   * one number for twenty-four modules is a number every task touches. The
+//     comment above records what that cost the last time: two tasks making the
+//     IDENTICAL `18` → `19` edit, git auto-merging it as one change, and a
+//     merged tree red on a line neither author could have written correctly.
+//     That failure is specific to EQUALITY, which forces an edit on growth;
+//     a floor forces none. Per module it also gives two deletions in two
+//     modules two different lines, so they do not merge into each other at all;
+//   * a suite-wide floor cannot survive the one thing this suite does
+//     constantly, which is grow. It would have to be re-pinned, by hand, on a
+//     shared line, by whoever happened to be last — and the comment above is the
+//     record of what happened when it was.
+//
+// WHY A FLOOR AND NOT AN EQUALITY, since the third attempt above was equality
+// per module and it is gone. Equality fires on GROWTH, and growth is the common
+// case: ten tasks write into this suite and all of them add. A guard that
+// reddens every legitimate addition is deleted within a week, and it would be
+// right to delete it. A floor fires only downward. Adding a check needs no edit
+// here at all; removing one needs exactly one, in the same diff, naming the
+// module.
+//
+// WHAT THIS BUYS AND WHAT IT DOES NOT. It does not stop anybody deleting a check
+// — nothing can, and the register is right that the real control is a reviewer
+// seeing the diff. What it does is make the deletion IMPOSSIBLE TO MAKE
+// SILENTLY: the number is no longer only an output, so the same commit has to
+// say so, in a file whose diff a reviewer is already reading, about a named
+// module. And it decays honestly: a floor left at last month's census still
+// catches a module losing half its checks, it just stops catching the loss of
+// one. `node tools/selftest.mjs --census` prints the block to re-pin it.
+//
+// NOT ASKED counts as REPORTED here, for the reason it does in the floor of one
+// — and it is what makes these numbers the same on a developer's machine and in
+// CI. `signer.mjs`'s sibling-checkout check `neverAsk`s where AstraPlugins is
+// beside this repository and runs where it is not; either way it reports once.
+// A floor on `passed` alone would be 300 here and 299 there, red on one of them,
+// and the first fix anybody reached for would be deleting the third word.
+const CENSUS_DAY = "2026-09-22";
+const FLOORS = new Map(Object.entries({
+  // `node tools/selftest.mjs --census` prints this block. MODULES order, so the
+  // diff of a re-census is readable and a module's line sits where its entry in
+  // the list above does.
+  "primitives.mjs": 14,
+  "catalogue.mjs": 9,
+  "publishers.mjs": 10,
+  "validation.mjs": 15,
+  "couplings.mjs": 8,
+  "listings.mjs": 5,
+  "origins.mjs": 5,
+  // 8, NOT the 41 this module reports, and it is the one number here that is
+  // not its census. 33 of the 41 come from `registerSharedVectorTests` over the
+  // VENDORED `tests/vectors/`, one test per vector, refreshed from AstraPlugins
+  // by a script in THAT repository. Pinned at 41 the ordinary re-vendor would go
+  // red here — naming a file the author never opened, about a number another
+  // repository owns — which is precisely the false alarm that killed the
+  // per-module EQUALITY guard, reintroduced by the back door. Eight is what this
+  // repository writes and can lose. The vendored half is floored where it is
+  // owned: `tests/shared-vectors.mjs` asserts `>= 20` three times, in the module
+  // whose vectors they are, with a message about vectors.
+  "bundles.mjs": 8,
+  "index-signature.mjs": 20,
+  "signer.mjs": 23,
+  "signer-run.mjs": 6,
+  "rehearsal-r2.mjs": 14,
+  "served-set.mjs": 26,
+  "revocations.mjs": 21,
+  "cli.mjs": 5,
+  "root-delegation.mjs": 6,
+  "roots.mjs": 3,
+  "update-signing.mjs": 12,
+  "update-notes.mjs": 8,
+  "repo-rules.mjs": 17,
+  "claims.mjs": 7,
+  "contract-tokens.mjs": 5,
+  "regenerate.mjs": 12,
+  "baseline.mjs": 9,
+}));
+
+// A floor computed from nothing passes every assertion below it — the finding
+// `checkModuleSet`'s walk floor is built on, one level down. An empty or partial
+// FLOORS would silently restore the floor of one for every module it forgot, so
+// there is no `?? 1` anywhere above: the map is compared with MODULES as SETS,
+// in both directions, before any of it is used.
+function checkFloors() {
+  const problems = [];
+  const listed = [...FLOORS.keys()];
+  const missing = MODULES.filter((n) => !FLOORS.has(n));
+  const phantom = listed.filter((n) => !MODULES.includes(n));
+  if (missing.length) {
+    problems.push(
+      `in the runner's MODULES and carries no floor, so nothing stands under its count: ${missing.join(", ")} ` +
+      `— run \`node tools/selftest.mjs --census\` and paste the block`,
+    );
+  }
+  if (phantom.length) {
+    problems.push(`carries a floor and is not a module the runner runs: ${phantom.join(", ")}`);
+  }
+  const unusable = listed.filter((n) => !Number.isInteger(FLOORS.get(n)) || FLOORS.get(n) < 1);
+  if (unusable.length) {
+    problems.push(
+      `has a floor that asserts nothing — it must be a whole number of checks, at least one: ` +
+      `${unusable.map((n) => `${n} = ${JSON.stringify(FLOORS.get(n))}`).join(", ")}`,
+    );
+  }
+  if (problems.length) fail("the per-module floors do not describe this suite", problems);
+}
+
 await checkModuleSet();
+
+const LANES = laneSites();
+if (WANT_LANES) {
+  console.log("\nlanes that reach this suite (derived from .github/workflows/ at this commit)");
+  for (const line of laneReport(LANES)) console.log(line);
+  console.log("");
+}
+const LIVE_LANES = checkLanes(LANES);
+
+// `--census` is the one run that is allowed past this, because it is the run
+// that produces the block. It asserts no floor and prints no PASS.
+if (!WANT_CENSUS) checkFloors();
 
 // Nothing may have run yet.
 //
@@ -375,6 +848,7 @@ await checkModuleSet();
 }
 
 const shortfalls = [];
+const census = new Map();
 for (const name of MODULES) {
   const before = reported();
   const mod = await load(name);
@@ -407,10 +881,24 @@ for (const name of MODULES) {
     ]);
   }
   const ran = reported() - before;
+  census.set(name, ran);
   if (ran < 1) {
     shortfalls.push(
-      `${name} is in the list, was imported and its run() returned, and it reported no test at all — an emptied ` +
-      `run(), an early return, or a loop over a list that is now empty`,
+      `a module ran and reported nothing: ${name} is in the list, was imported and its run() returned, and it ` +
+      `reported no test at all — an emptied run(), an early return, or a loop over a list that is now empty`,
+    );
+    continue;
+  }
+  // The floor, below. `checkFloors()` has already refused a missing one, so
+  // there is deliberately no default to fall back to.
+  const floor = WANT_CENSUS ? 1 : FLOORS.get(name);
+  if (ran < floor) {
+    shortfalls.push(
+      `a module lost ${floor - ran} check(s): ` +
+      `${name} reported ${ran} and its floor is ${floor} — ${floor - ran} fewer than the census of ` +
+      `${CENSUS_DAY}. A check was deleted, an early \`return\` was added, or a loop over it is now shorter. ` +
+      `If the removal is deliberate, lower ${name}'s number in FLOORS in tools/selftest.mjs to ${ran} in the ` +
+      `SAME commit; \`node tools/selftest.mjs --census\` prints the block`,
     );
   }
 }
@@ -429,11 +917,17 @@ if (stragglers.length) {
 
 cleanupTmp();
 
+if (WANT_CENSUS) {
+  console.log("\nper-module floors, as measured by this run. Paste into FLOORS in tools/selftest.mjs,");
+  console.log(`and move CENSUS_DAY to today. Was pinned on ${CENSUS_DAY}.\n`);
+  for (const name of MODULES) console.log(`  ${JSON.stringify(name)}: ${census.get(name)},`);
+  console.log("");
+}
+
 const { passed, failures, notAsked } = results();
-// Three figures, all counted, none compared to anything written down. The module
-// count is here because a module count going down by one is the one shrinkage
-// a reader can see at a glance, and the pinned list in repo-rules.mjs is what
-// actually asserts it.
+// Three figures, all counted, and two of them now compared to something: every
+// module's share is held to the floor pinned above, and the module count is held
+// to the pinned list in repo-rules.mjs.
 //
 // THE HEADLINE WORD IS THE POINT. `passed` no longer absorbs the checks that
 // could not be asked, so the number a reader quotes is the number of checks
@@ -444,11 +938,13 @@ const { passed, failures, notAsked } = results();
 // EXIT CODES. 1 on a failure or a shortfall, 0 otherwise — including when
 // something was not asked. `tools/cutover-preflight.mjs` exits 2 in that case
 // and is right to: it is read by an operator before a cutover. This suite is a
-// step in build-index.yml, ingest.yml and baseline.yml, and both of today's
-// unasked checks are legitimate states of the tree, so exiting non-zero would
-// turn `main` red on a correct tree and the word would be switched off within a
-// day. **To make NOT ASKED fatal, change the line marked `EXIT-2` below.** That
-// is the operator's decision and it needs the two checks below resolved first.
+// step in every lane the line below reports as LIVE — which is the reason the
+// flip is not free, and the count is printed rather than described so that the
+// reason is re-measured whenever somebody reads it. Today's unasked checks are
+// legitimate states of the tree, so exiting non-zero would turn `main` red on a
+// correct tree and the word would be switched off within a day. **To make NOT
+// ASKED fatal, change the line marked `EXIT-2` below.** That is the operator's
+// decision and it needs the checks it names resolved first.
 const headline = failures.length || shortfalls.length ? "FAIL"
   : notAsked.length ? "INCOMPLETE"
   : "PASS";
@@ -456,8 +952,20 @@ console.log(
   `\n${headline}  ${passed} passed, ${failures.length} failed, ${notAsked.length} not asked ` +
   `(${MODULES.length} modules)`,
 );
+// Derived on every run, printed where the numbers are read. The sentence this
+// replaced named four workflows and three of them could not run this suite.
+console.log(
+  `      ${LIVE_LANES.length} of ${LANES.sites.length} lane(s) that run this suite reach it without a human: ` +
+  `${LIVE_LANES.map((l) => `${l.workflow.replace(".github/workflows/", "")}:${l.line}`).join(", ") || "none"} ` +
+  `— \`node tools/selftest.mjs --lanes\` for the table`,
+);
 for (const f of failures) console.log(`      - ${f}`);
-for (const s of shortfalls) console.log(`      - a module ran and reported nothing: ${s}`);
+// The shortfall carries its own lead sentence: there are two of them now — a
+// module that reported nothing, and a module that reported fewer than its floor
+// — and one prefix for both was a line that said the wrong thing about the
+// second. Watched: `cli.mjs reported 4 check(s)` printed under "a module ran and
+// reported nothing".
+for (const s of shortfalls) console.log(`      - ${s}`);
 for (const n of notAsked) console.log(`      - not asked: ${n}`);
 if (failures.length || shortfalls.length) process.exit(1);
 // EXIT-2: `if (notAsked.length) process.exit(2);` — see the note above.

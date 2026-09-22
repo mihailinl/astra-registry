@@ -76,12 +76,19 @@ const registered = [];
  * knows the answer records it beside the run, not in it.
  *
  * What is deliberately NOT copied is that tool's exit code 2. This suite is a
- * step in `build-index.yml`, `ingest.yml` and `baseline.yml`; exiting non-zero
- * on a tree where both of these states are legitimate would turn `main` red
+ * step in lanes that run without anybody asking — the runner prints how many on
+ * its last line and `node tools/selftest.mjs --lanes` names them — so exiting
+ * non-zero on a tree where these states are legitimate would turn `main` red
  * today and teach everybody to ignore the word. So the exit code still reflects
  * failures only, and the honesty is carried by the headline word and by the
  * count being taken OUT of `passed`. Flipping it to 2 is the one-line change
  * marked in the runner, and it is the operator's call, not this file's.
+ *
+ * This paragraph used to name `build-index.yml`, `ingest.yml` and
+ * `baseline.yml`. Measured on 2026-09-22: `baseline.yml` runs this suite only
+ * on `workflow_dispatch`, so a third of the reason given for not flipping the
+ * exit code was a lane that a flip could not have reddened. The runner derives
+ * the list now rather than any file restating it.
  */
 export class NeverAsked extends Error {}
 
