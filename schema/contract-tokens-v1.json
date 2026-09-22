@@ -1,6 +1,6 @@
 {
-  "contract_version": "0.27.0",
-  "source_commit": "76e8a49d3b42de12e27e8a9b182ef4284fe67f55",
+  "contract_version": "0.28.0",
+  "source_commit": "08030f3bfa615a996f56a47f94c1e1541d606c25",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -10,7 +10,8 @@
     "A `service-only` entry is listed with no members and for no party: it is outside SCOPE-8's two-way test, and neither the registry's scan nor the client's expects or forbids one.",
     "A `service-only` entry says this path is **routed by the plugins service and outside SCOPE-8's two-way test**. It does not say a handler answers it.",
     "A member's requiredness is `true`, `false` or `conditional`. `true` is carried by every entry of its kind; `false` is permitted, and **says only that this contract publishes no condition on it, never that none exists**; `conditional` is carried exactly under the condition the member's `when` states, and **a member that is `conditional` and states no `when`, or states a `when` a reader cannot evaluate, makes the file malformed: a reader MUST refuse it, or refuse every entry of that schema, and MUST NOT read the member as unconditioned** — reading it as unconditioned is the looser direction, and the looser direction is the one this field exists to close.",
-    "A `when` is `{\"iff\": <predicate>}` or `{\"if\": <predicate>}`, **never both and never neither, and which of the two applies is decided per condition and never defaulted**: `if` requires the member where the predicate holds and says nothing where it does not; `iff` also forbids it where the predicate does not hold. A field that can only say *when* reproduces the defect it is fixing, because *if this code then this member* leaves the member unconstrained for every other code, which is the looser reading of any condition whose reverse the contract states. A predicate names one sibling member and the values it may take — `{\"code\": [\"M_APPEAL\"]}`, or `{\"code\": {\"not\": [\"M_APPEAL\"]}}` for their complement — and every value it names is one this contract already lists for that member. A `conditional` member also carries `why`, the sentence a reader meets first on the day the condition is inconvenient, because **a condition whose reason is not written down is relaxed rather than investigated**; a `false` member may carry one to say why no condition is published for it.",
+    "A `when` is `{\"iff\": <predicate>}` or `{\"if\": <predicate>}`, **never both and never neither, and which of the two applies is decided per condition and never defaulted**: `if` requires the member where the predicate holds and says nothing where it does not; `iff` also forbids it where the predicate does not hold. A field that can only say *when* reproduces the defect it is fixing, because *if this code then this member* leaves the member unconstrained for every other code, which is the looser reading of any condition whose reverse the contract states. A predicate names one sibling member and the values it may take — `{\"code\": [\"M_APPEAL\"]}`, or `{\"code\": {\"not\": [\"M_APPEAL\"]}}` for their complement — and every value it names is one this contract already lists for that member; where the contract names no member that decides, the predicate is `{\"wait\": \"absent\"}`, which holds exactly when that sibling is not carried, and `absent` is the only word with that meaning. A `conditional` member also carries `why`, the sentence a reader meets first on the day the condition is inconvenient, because **a condition whose reason is not written down is relaxed rather than investigated**; a `false` member may carry one to say why no condition is published for it.",
+    "A disjunction is published as two biconditionals and never as a group: each member of the pair is `conditional`, and **a reader that requires both refuses every conforming body of that schema**. Where this contract names a member that decides between them, each condition names that member and the values it may take; where it names none, each names the other's absence, and the two together say *exactly one* — both absent fails the first, both present fails the second. A group field was refused rather than added, because it would be a second thing for a reader to evaluate, and a reader who implemented one of the two and not the other would get the looser reading of the member they skipped, which is what this vocabulary exists to end.",
     "`pending` is what SCOPE-7 says this file carries and the contract does not yet record. Each record names what is missing, who owes it, the version that lands it and what the floor asserts until then. The generator refuses to run once the contract records one of them and no extractor has been written."
   ],
   "parties": [
@@ -2494,17 +2495,31 @@
         },
         {
           "name": "state",
-          "required": true
+          "required": "conditional",
+          "when": {
+            "iff": {
+              "wait": "absent"
+            }
+          },
+          "why": "§4.4's When column for this row is `always`, so a result carries this or `wait`, never both and never neither. Relaxed to `if`, a result may carry a state and a wait at once: §4.4 says a wait writes no record, and BOT-23 makes a state's members equal the decision record at the commit the result names, so one body tells the acceptor both that a record exists and that none does, and it has to pick a half to believe on every result. Dropped, a result may carry neither, and a run that reports no state and no wait cannot be told from a run the service never heard from — which is the one thing a result exists to rule out.",
+          "source": "§4.4"
         },
         {
           "name": "wait",
-          "required": true,
+          "required": "conditional",
           "of": [
             "code",
             "started_at",
             "cause",
             "earliest_retry_at"
-          ]
+          ],
+          "when": {
+            "iff": {
+              "state": "absent"
+            }
+          },
+          "why": "Relaxed to `if`, a wait may accompany a state. DEC-11 makes a wait the shape in which the bot reports something it could not do, and FLOW-72 routes five codes through it — a GitHub rate limit among them — precisely so that a registry-side failure writes no permanent public record; a body carrying both records a decision and says the run was blocked, and the service's claim and wait bounds (BOT-47; BOT-76) then count against a submission that moved. Dropped, neither member is required of anything, so a blocked run may post a result naming no wait and no state and FLOW-72's five codes reach the service as nothing at all.",
+          "source": "§4.4"
         },
         {
           "name": "reasons",
@@ -2635,11 +2650,31 @@
         },
         {
           "name": "commit",
-          "required": true
+          "required": "conditional",
+          "when": {
+            "iff": {
+              "outcome": [
+                "applied",
+                "held",
+                "cancelled"
+              ]
+            }
+          },
+          "why": "BOT-81 gives `applied`, `held` and `cancelled` a commit each and says a `refused` result carries none. Relaxed to `if`, a refusal may name one, and BOT-82 keys a moderation result's idempotency on (`service_decision_id`, `outcome`, `commit`): two refusals of one decision carrying different commits are then two keys, and the re-post that follows a lost acknowledgement is accepted as a second refusal instead of recognised as the repeat it is. Dropped, an `applied` result lands with no commit, the acceptor has nothing to settle against `main` as BOT-82 requires, and the decision stays on BOT-80's list, re-posted by every moderation run.",
+          "source": "§4.2, the request and success bodies"
         },
         {
           "name": "refusal_code",
-          "required": true
+          "required": "conditional",
+          "when": {
+            "iff": {
+              "outcome": [
+                "refused"
+              ]
+            }
+          },
+          "why": "BOT-81 gives this to `refused` alone. Relaxed to `if`, an `applied`, `held` or `cancelled` result may carry a refusal code, and BOT-82 requires a well-formed code the service does not know to be accepted, recorded verbatim, shown to moderators as unrecognised and alarmed — so a decision that landed raises an unrecognised-refusal alarm and is shown to a moderator beside a code no party chose. Dropped, a `refused` result arrives with no code: §0.8's refusal-code list is the only statement of why a moderator's decision was not carried out, and a refusal is final.",
+          "source": "§4.2, the request and success bodies"
         }
       ],
       "members_recorded": true,
