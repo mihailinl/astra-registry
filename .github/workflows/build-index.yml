@@ -78,9 +78,41 @@ on:
   # re-checking after one is pure noise. **The signer's rule is the opposite,
   # and deliberately so** (D1): a run that committed and THEN failed a later
   # job must not leave its takedown waiting for the cron, so `sign.yml` gates
-  # on completion alone.
+  # on completion alone. The cost of the rule here is real and bounded: a run
+  # that commits and then fails a LATER job — `Plugins ingest`'s `report`, say —
+  # is not re-checked until the cron below. That is the schedule's job.
+  #
+  # ── every workflow that commits to `main`, by the name in its own file ──
+  #
+  # BOT-50's build-index conjunct. The list is matched against another file's
+  # `name:` by string at dispatch time, so a rename breaks it in silence: no
+  # error, no warning, no run. `bot/tests/policy.test.mjs` reads these names out
+  # of the workflow files and compares, and refuses a `contents: write` workflow
+  # that appears in neither this list nor its exception map.
+  #
+  #   Ingest              commits plugins/** from `bot/publish-apply.mjs`.
+  #   Plugins ingest      the service path, same committer, and it also commits
+  #                       state/** and registry/v1/index.json (B-T3.1).
+  #   Plugins moderation  regenerates the index and the withdrawal list and
+  #                       commits both to main (M-T3.4).
+  #   publisher re-check  commits publishers/** and regenerates NOTHING — and
+  #                       `build-index.mjs` embeds `last_confirmed_at` and
+  #                       `tier` per publisher. Its commit is therefore the one
+  #                       that can leave the committed index disagreeing with a
+  #                       fresh generation, which is the single assertion this
+  #                       file exists to make.
+  #
+  # **Three of the four commit nothing today, and are listed anyway**, exactly
+  # as `sign.yml`'s list was and for the reason its header gives: a trigger
+  # naming a workflow that never runs costs nothing, and a checker that goes
+  # deaf on the day one of them lands costs an hour of `main` being wrong with
+  # nothing red anywhere. `plugins-ingest.yml`'s schedule is commented out until
+  # R3 (plan row reg.52) and its publish job exits 1 on B-T3.4;
+  # `plugins-moderation.yml`'s commit job exits 1 on M-T3.2; `publisher
+  # re-check` runs daily but writes only for a publisher whose tier is
+  # `verified`, and both records here are `astra_team`.
   workflow_run:
-    workflows: ["Ingest"]
+    workflows: ["Ingest", "Plugins ingest", "Plugins moderation", "publisher re-check"]
     types: [completed]
   # Hourly. THE BOT'S PUBLISH COMMIT DOES NOT TRIGGER THIS FILE by `push`:
   # `ingest.yml`'s publish job commits with the repository's own

@@ -2317,22 +2317,238 @@ await test("a publication signs and deploys promptly, not at the top of the next
     "the cron must survive the prompt trigger — the catalogue expires whether or not anybody publishes");
 });
 
-await test("the workflow it waits on is the one that is actually called that", async () => {
-  // The coupling this pair has that nothing else would: `workflows: ["Ingest"]`
-  // is matched against another file's `name:`, by string, at dispatch time.
-  // Rename the ingest workflow and NOTHING fails — no error, no warning, no run.
-  // The trigger simply stops firing and the catalogue silently goes back to
-  // being up to an hour stale, which is the state this trigger was added to end.
+// ── which workflows `build-index.yml` must hear (BOT-50) ─────────────────────
+//
+// The shape here is LIFTED from `bot/tests/workflows.test.mjs`'s "the signer
+// hears every workflow that commits, by the name in the file": the same
+// `contents: write` predicate, the same exception map carrying a reason per
+// entry, the same assertion that refuses an exception which has gone stale.
+// One rule — *a workflow that commits to `main` must be heard by the file that
+// acts on what it committed* — asked of two hearers.
+//
+// **Do not give this one a second mechanism.** A path glob over the YAML is the
+// obvious alternative and it is wrong for a reason already paid for: `Ingest`
+// commits `plugins/**` from inside `bot/publish-apply.mjs`, not from a line of
+// YAML, so a scan of the workflow files finds nothing and passes over the one
+// committer that exists.
+//
+// What this hearer wants is NOT what the signer wants, which is why the two
+// exception maps differ rather than being one list. The signer asks *does this
+// commit reach a document I sign*; this file asks *does this commit reach
+// anything my `check` job asserts* — the regenerated index, the listings, the
+// index size ceiling, the site's page set, and the cross-repository couplings,
+// which run here or nowhere: `sign.yml`'s header states that its publish job
+// has no AstraPlugins checkout and must never grow one (seam 4), and that
+// `build-index.yml` has it and is right to turn a `NOT verified` into exit 1.
+// That is the answer to "the signer already hears it, so this file need not":
+// they hear it for different things, and only one of them can do this one.
+
+const WORKFLOW_DIR = path.join(REPO_ROOT, ".github", "workflows");
+const workflowFiles = fs.readdirSync(WORKFLOW_DIR).filter((n) => /\.ya?ml$/.test(n));
+const readWorkflow = (n) => fs.readFileSync(path.join(WORKFLOW_DIR, n), "utf8");
+
+/**
+ * Every job in every workflow, as `{file, job, body}`.
+ *
+ * The STARTS are collected in a first pass rather than in one scan, because a
+ * comment indented two spaces between two jobs ends the earlier job's body in
+ * the scanning version and matches no job name either — so the rest of that job
+ * vanishes from the check, silently, in a test whose whole subject is silence.
+ */
+function allWorkflowJobs() {
+  const out = [];
+  for (const file of workflowFiles) {
+    const lines = readWorkflow(file).split("\n");
+    const at = lines.findIndex((l) => /^jobs:\s*$/.test(l));
+    if (at < 0) continue;
+    const starts = [];
+    for (let i = at + 1; i < lines.length; i++) {
+      if (/^\S/.test(lines[i])) break;
+      const m = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(lines[i]);
+      if (m) starts.push([i, m[1]]);
+    }
+    for (let k = 0; k < starts.length; k++) {
+      const [i, job] = starts[k];
+      let end = k + 1 < starts.length ? starts[k + 1][0] : lines.length;
+      for (let j = i + 1; j < end; j++) if (/^\S/.test(lines[j])) { end = j; break; }
+      out.push({ file, job, body: lines.slice(i, end) });
+    }
+  }
+  return out;
+}
+
+const workflowJobs = allWorkflowJobs();
+const jobCode = (job) => job.body.filter((l) => !l.trim().startsWith("#"));
+
+/**
+ * Does any JOB in this workflow declare `contents: write`?
+ *
+ * Job-scoped, not file-scoped: a top-level `permissions:` block would otherwise
+ * answer for a file whose jobs each narrow it. The trailing-comment form is not
+ * decoration — `publisher-recheck.yml` says `contents: write   # commit a
+ * renewed window, or a withdrawal`, and a `$`-anchored needle walks straight
+ * past the one job whose own comment says out loud that it commits.
+ */
+const commitsAnything = (file) =>
+  workflowJobs.some((j) => j.file === file
+    && jobCode(j).some((l) => /^\s+contents:\s*write\s*(#.*)?$/.test(l)));
+
+/** A workflow's own `name:`, read from the file. Never inferred from the path. */
+function workflowName(file) {
+  const line = readWorkflow(file).split("\n").find((l) => /^name:\s*\S/.test(l));
+  return line ? line.replace(/^name:\s*/, "").trim().replace(/^["']|["']$/g, "") : null;
+}
+
+// The committing workflows `build-index.yml` deliberately does NOT hear, each
+// with what it writes and why that reaches nothing this file asserts.
+const INDEX_NOT_HEARD = new Map([
+  [
+    "Signer",
+    "commits to the `signed` branch, never to `main` (D1). This file regenerates and checks what is on " +
+    "`main`, so a signer run changes nothing it reads — and hearing the hourly signer would start an " +
+    "index build every hour over a tree no signer run touched.",
+  ],
+  [
+    "Migration baseline",
+    "writes log/decisions/** and log/baseline.json (MIG-20, BOT-73). `build-index.mjs` reads plugins/** " +
+    "and publishers/**, and `validate.mjs` reads neither log/ nor anything under it, so a baseline commit " +
+    "cannot move the document this file regenerates.",
+  ],
+  [
+    "Keepalive",
+    "commits state/keepalive.json alone, and that commit exists in order to BE a commit: ROLL-62's monthly " +
+    "keepalive (RC-R1-9(b)) is what keeps GitHub from disabling every schedule in this repository after 60 " +
+    "days of quiet. No generator this file runs reads state/.",
+  ],
+]);
+
+// Heard, and unable to commit anything today. Each entry carries its reason AND
+// a predicate that reads that reason back out of the workflow file, so a
+// dormancy which outlives its cause fails here instead of sitting in a comment:
+// "it cannot go red yet" is one edit away from "it never goes red", and that
+// edit is invisible. When R3 lands these go red and the entries come out.
+const INDEX_DORMANT = new Map([
+  [
+    "Plugins ingest",
+    {
+      file: "plugins-ingest.yml",
+      why: "its BOT-51 schedule is commented out until R3 (plan row reg.52, \"R2 exit, dark\") and its " +
+        "publish job's first step exits 1 on B-T3.4",
+      dormant: (src) => !/^\s{2}schedule:\s*$/m.test(topLevelBlock(src, "on") ?? ""),
+    },
+  ],
+  [
+    "Plugins moderation",
+    {
+      file: "plugins-moderation.yml",
+      why: "its commit job's compile step exits 1 on M-T3.2 — ASTRA_OVER_BOUND, TRUST-26's count for the " +
+        "run, is supplied by nothing — and every later step in that job is gated on its success",
+      dormant: (src) => /ASTRA_OVER_BOUND/.test(src) && /^\s+exit 1\s*$/m.test(src),
+    },
+  ],
+]);
+
+await test("build-index.yml hears every workflow that commits, by the name in the file", async () => {
+  // The coupling this has that nothing else would: `workflows: [...]` is matched
+  // against another file's `name:`, by string, at dispatch time. Rename a
+  // workflow and NOTHING fails — no error, no warning, no run. The trigger
+  // simply stops firing and what it committed is checked at the top of the next
+  // hour, or never.
   const on = topLevelBlock(indexWorkflow, "on");
-  const named = /workflows:\s*\[([^\]]*)\]/.exec(on);
+  const named = /workflows:\s*\[([^\]]*)\]/.exec(on ?? "");
   assert(named, `no \`workflows:\` list under workflow_run:\n${on}`);
-  const wanted = named[1].split(",").map((w) => w.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
-  const actual = /^name:\s*(.+)$/m.exec(ingestWorkflow);
-  assert(actual, "ingest.yml has no top-level `name:`");
-  const ingestName = actual[1].trim().replace(/^["']|["']$/g, "");
-  assert(wanted.includes(ingestName),
-    `build-index.yml waits on ${JSON.stringify(wanted)} and ingest.yml is called ` +
+  const heard = [...named[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+
+  // The assertion this test grew out of, kept by name: `ingest.yml` is the one
+  // committer that is live today, and it is the one whose rename would cost
+  // something the same afternoon.
+  const ingestName = /^name:\s*(.+)$/m.exec(ingestWorkflow)?.[1]?.trim().replace(/^["']|["']$/g, "");
+  assert(ingestName, "ingest.yml has no top-level `name:`");
+  assert(heard.includes(ingestName),
+    `build-index.yml waits on ${JSON.stringify(heard)} and ingest.yml is called ` +
     `"${ingestName}" — the trigger will never fire`);
+
+  const committers = workflowFiles.filter((f) => f !== "build-index.yml" && commitsAnything(f));
+  const problems = [];
+  const heardCommitters = [];
+  for (const file of committers) {
+    const name = workflowName(file);
+    if (name === null) {
+      problems.push(`${file} has a contents: write job and no name: line, so nothing can put it in build-index.yml's list`);
+      continue;
+    }
+    if (heard.includes(name)) { heardCommitters.push(name); continue; }
+    if (INDEX_NOT_HEARD.has(name)) continue;
+    problems.push(
+      `${file} is named ${JSON.stringify(name)}, holds a contents: write job, and build-index.yml does not ` +
+      `hear it (BOT-50). GITHUB_TOKEN pushes start no push runs, so whatever it commits is checked at the top ` +
+      `of the next hour or not at all — and an index left disagreeing with its own generator is a red build ` +
+      `attributed to whoever pushes next. Add the name to build-index.yml's workflow_run list, or add it to ` +
+      `INDEX_NOT_HEARD here with what it writes and why no check in that file reads it.`,
+    );
+  }
+
+  // An exception that no longer names a workflow is an exception nobody will
+  // notice has stopped applying.
+  for (const [name, why] of INDEX_NOT_HEARD) {
+    const file = workflowFiles.find((f) => workflowName(f) === name);
+    assert(file, `INDEX_NOT_HEARD names ${JSON.stringify(name)} and no workflow is called that any more (${why})`);
+    assert(commitsAnything(file),
+      `INDEX_NOT_HEARD excuses ${JSON.stringify(name)} and ${file} no longer has a contents: write job; delete the entry`);
+  }
+
+  // The floor, and it is the whole defence against passing because there was
+  // nothing to ask. Seven committing workflows on 2026-09-22, four of them
+  // heard. A scan that finds fewer is a broken read of the YAML — losing one
+  // job to an indented comment would empty the loop above and report a
+  // build-index that hears everything because it hears nothing.
+  assert(committers.length >= 5,
+    `the contents: write scan found ${committers.length} committing workflows and found 7 on 2026-09-22; ` +
+    `this is a broken read of the workflow YAML, not a smaller repository`);
+  assert(heardCommitters.length >= 3,
+    `build-index.yml hears ${heardCommitters.length} of this repository's committing workflows and heard 4 on ` +
+    `2026-09-22; a name was dropped from the list, or a workflow was renamed out from under it`);
+
+  // DORMANT gets its own word in the output rather than being folded into the
+  // pass, the way `tools/cutover-preflight.mjs` gives "never asked" its own
+  // count and its own exit code. The distinction is real and is the thing most
+  // likely to be misread here: the assertions ABOVE are over workflow files
+  // that exist and run today, in full. What is inert until R3 is what the
+  // trigger buys at RUN time for two of the four names.
+  // Every finding goes into `problems` rather than throwing where it is found,
+  // so one failure carries the whole picture. Asserting here would mask the
+  // committer loop's message above, which is the one that says what to do.
+  const stillDormant = [];
+  for (const [name, d] of INDEX_DORMANT) {
+    if (!heard.includes(name)) {
+      problems.push(
+        `INDEX_DORMANT names ${JSON.stringify(name)} and build-index.yml does not hear it — a workflow that ` +
+        `commits nothing yet is exactly the one whose name gets dropped with nothing going red`);
+    }
+    const file = workflowFiles.find((f) => workflowName(f) === name);
+    if (!file) {
+      problems.push(
+        `INDEX_DORMANT names ${JSON.stringify(name)} and no workflow is called that any more; it was ${d.file}`);
+      continue;
+    }
+    if (file !== d.file) {
+      problems.push(`INDEX_DORMANT says ${JSON.stringify(name)} is ${d.file}; it is now ${file}`);
+    }
+    if (d.dormant(readWorkflow(file))) { stillDormant.push(name); continue; }
+    problems.push(
+      `INDEX_DORMANT says ${JSON.stringify(name)} cannot commit — ${d.why} — and ${file} no longer reads that ` +
+      `way, so it can commit now and the entry is stale. Delete it: the note below has been telling readers ` +
+      `to expect nothing from a trigger that is live.`,
+    );
+  }
+
+  assert(problems.length === 0, `a workflow commits and build-index.yml will not hear it:\n${problems.join("\n")}`);
+
+  if (stillDormant.length) {
+    console.log(`        note  DORMANT: ${stillDormant.join(", ")} — heard, and committing nothing until R3. ` +
+      `The assertions above are over the workflow files and ran in full; it is the trigger's run-time effect ` +
+      `that is inert, until reg.52 uncomments the schedule and M-T3.2 lands the takedown bound.`);
+  }
 });
 
 await test("no event can cancel an ingest that is already running", async () => {
