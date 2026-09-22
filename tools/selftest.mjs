@@ -1303,7 +1303,7 @@ const FLOORS = new Map(Object.entries({
   "repo-rules.mjs": 18,
   "claims.mjs": 10,
   "contract-tokens.mjs": 8,
-  "regenerate.mjs": 13,
+  "regenerate.mjs": 15,
   "migration-notice.mjs": 6,
   "baseline.mjs": 9,
 }));
