@@ -42,6 +42,11 @@
 //
 // ── WHAT A WITHDRAWAL LOOKS LIKE IN THE TREE ────────────────────────────────
 //
+// Each is read at a commit on HEAD's first-parent line against that commit's
+// first parent — so a pull request merged with a merge commit is read at the
+// merge, which is when `main` lost the plugin (`countWindow` says why, and
+// what it measured when this read every non-merge commit instead).
+//
 //   delist        `plugins/<id>/plugin.json` turns `unlisted: true` for a
 //                 listing that was listed at the parent commit.
 //   yank          `plugins/<id>/versions/<v>.json` turns `yanked: true`.
@@ -149,7 +154,11 @@ import { stagingListingId, triggersOf } from "../../tools/moderation-coverage.mj
 
 import { TAKEDOWN_BOUND } from "./moderation.mjs";
 
-/** TRUST-26's window. Trailing, from `now`, on committer date — see `countWindow`. */
+/**
+ * TRUST-26's window. Trailing, from `now`, over HEAD's first-parent line, on
+ * the committer date of the first-parent commit that brought a withdrawal onto
+ * `main` — see `countWindow`.
+ */
 export const WINDOW_HOURS = 24;
 
 /** `plugins/<id>/plugin.json`, out of a `git ls-tree` listing. */
@@ -325,11 +334,64 @@ function unknownWindow(since, why) {
 /**
  * The listed plugin ids the estate withdrew in the trailing window.
  *
- * `--since` filters on COMMITTER date, which is what "the estate withdrew it"
- * means: a commit authored last week and pushed to `main` an hour ago took the
- * plugin away an hour ago, and the bound is about what reached installed
- * copies. `--no-merges` matches `tools/moderation-coverage.mjs`'s walk, and
- * every commit that reaches `main` here arrives as a squash.
+ * **A withdrawal is dated where `main` acquired it: at the commit on HEAD's
+ * first-parent line that brought it, read against that commit's first
+ * parent, on that commit's committer date.** TRUST-26 counts "the listed
+ * plugin ids delisted, yanked or newly advised in the trailing 24 h", and
+ * scopes "listed" to a plugin with a `plugins/` directory on `main`. A plugin
+ * delisted on a branch is still listed on `main`, and still served, until the
+ * branch lands; for a pull request merged with a merge commit that moment is
+ * the merge, and the branch commit that wrote the change is not it. A bot
+ * direct push, a squash merge and a rebase merge each land as single-parent
+ * commits on the first-parent line, committed when they landed, and were
+ * counted rightly before this and are counted the same after it.
+ *
+ * This walk was `rev-list --no-merges --since=…`, which dates the commit that
+ * WROTE a change and never reads a merge. Measured 2026-09-22 at `aa0d08e`,
+ * on fixtures, before the repair: a delist committed on a branch 37 h before
+ * `now` and merged `--no-ff` 2 h before it counted **0**; so did the same
+ * through a branch that had merged `main` in, and a delist a merge commit
+ * carried itself (a conflict resolution). Beside a direct delist an hour old,
+ * the first case counted 1 where 2 plugins had left the catalogue inside the
+ * window. The error only ever ran one way — too permissive, a takedown
+ * applied that MOD-9 would have held — and on the shape this repository's pull
+ * requests merge with: HEAD's first-parent line held 86 merges in 303 commits
+ * at `aa0d08e`, against this comment's old claim that "every commit that
+ * reaches `main` here arrives as a squash". The other direction is real too
+ * and is the correct one: a branch that delisted and relisted before merging
+ * took nothing out of the catalogue, and costs 0 now where it cost 1.
+ *
+ * **The window is applied here, per commit, and not with `--since`.** Git
+ * stops a `--since` walk at the first commit older than the cut, so one
+ * first-parent commit dated before its parent — clock skew, or a
+ * `rebase --committer-date-is-author-date` pushed as a fast-forward — would
+ * hide every withdrawal behind it. Measured on a fixture: first-parent commits
+ * dated −60 h, −7 h, −48 h and −1 h from `now`, and `--since` returned the
+ * −1 h commit alone. Every first-parent commit dated before its parent at
+ * `aa0d08e`: 0 of 303, so this has not happened here; the whole line is one
+ * `rev-list` either way.
+ *
+ * **What this cannot date: a fast-forward of an old commit.** Git records no
+ * time for a ref moving, so a commit written 37 h ago and fast-forwarded onto
+ * `main` 2 h ago is dated 37 h ago and falls outside the window, before this
+ * repair and after it. `main`'s ruleset forbids deletion and non-fast-forward
+ * only, and direct pushes are allowed. It is gap 68's open limit, and
+ * `tools/served-set/main-vs-signed.mjs` carries the same one.
+ *
+ * `tools/moderation-coverage.mjs` still walks `--no-merges`, and the two walks
+ * now differ on purpose: coverage asks whether the author of each change left
+ * a record, which is a question about the commit that wrote it; this asks
+ * when the catalogue lost a plugin, which is a question about `main`. Both
+ * read a commit's withdrawals through the one `triggersOf`, which is the part
+ * that must not have two implementations.
+ *
+ * **A history git cannot walk is an unknown count and not a zero.** The walk
+ * used to run with `allowFailure`, under which a `rev-list` that fails — a
+ * missing object, a spawn refused — is an empty list: a count of 0 with no
+ * reason, and the takedown out unheld. Reading the whole first-parent line
+ * reaches objects a `--since` walk stopped short of, so the repair would have
+ * widened that hole had it kept the flag; it throws instead, and the throw
+ * is an unknown.
  *
  * A zero is never bare. `head` and `examined` come back with it, so "nothing
  * was withdrawn today" can be told apart from "the walk looked at nothing",
@@ -368,10 +430,23 @@ export function countWindow(repo = REPO_ROOT, { now = new Date(), windowHours = 
     return unknownWindow(since, `HEAD is not readable here, so no window can be walked: ${err.message}`);
   }
 
-  const shas = git(["rev-list", "--no-merges", `--since=${since}`, "HEAD"], { cwd: repo, allowFailure: true })
+  // `--timestamp` is the committer date, which `--since` compared; `rev-list`
+  // is plumbing, so no `log.*` setting can add a line to what is parsed here.
+  const sinceSeconds = Date.parse(since) / 1000;
+  let line;
+  try {
+    line = git(["rev-list", "--first-parent", "--timestamp", "HEAD"], { cwd: repo });
+  } catch (err) {
+    return unknownWindow(
+      since,
+      `HEAD's first-parent line cannot be walked here, so the window is not a count: ${err.message}`,
+    );
+  }
+  const shas = line
     .split("\n")
-    .map((s) => s.trim())
-    .filter(Boolean)
+    .map((s) => s.trim().split(" "))
+    .filter(([at, sha]) => sha && Number(at) >= sinceSeconds)
+    .map(([, sha]) => sha)
     .reverse();
 
   const cache = { listed: new Map(), digests: new Map() };
@@ -426,7 +501,8 @@ export function countWindow(repo = REPO_ROOT, { now = new Date(), windowHours = 
   }
 
   detail.push(
-    `examined ${shas.length} commit(s) since ${since}; HEAD is ${head.sha.slice(0, 8)} dated ${head.at}`,
+    `examined ${shas.length} commit(s) on HEAD's first-parent line since ${since}; ` +
+    `HEAD is ${head.sha.slice(0, 8)} dated ${head.at}`,
   );
   if (staging) detail.push(`the staging listing ${staging} is excluded by id (MOD-16)`);
   else detail.push("policy/reserved-ids.json carries no staging_listing_id, so nothing is excluded by id yet (M-T2.1)");
