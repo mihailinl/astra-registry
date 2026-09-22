@@ -29,6 +29,23 @@
 // means the bound cannot be computed yet, `boundMinutes` says so, and the task
 // named in `source` is the one that fills it in.
 
+// §0.7's time grammar, spelled HERE and not imported from tools/lib/time.mjs,
+// which is where every other reader in this repository takes it (contract
+// 0.34.0). Every alert job's sparse checkout carries this file and not that one
+// — the alert action's own step names the five files it needs, and nine
+// workflows copy that list — so an import would fail each of them at the first
+// alert. The copy is not trusted to stay a copy: tools/selftest/times.mjs holds
+// this pattern to `TIME_PATTERN` byte for byte and drives `isArmedAt` with
+// second 60, hour 24 and `2026-02-30`. Until 0.34.0 this admitted all three.
+const ARMED_AT_RE = /^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$/;
+
+/** `armed_at`: a §0.7 time — the grammar, and a day its month has. */
+export function isArmedAt(value) {
+  if (typeof value !== "string" || !ARMED_AT_RE.test(value)) return false;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) && new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z") === value;
+}
+
 /** The `<CHECK>` grammar: what may appear in a check name and in a secret's suffix. */
 export const CHECK_NAME_PATTERN = "^[a-z][a-z0-9-]{1,30}[a-z0-9]$";
 const CHECK_NAME_RE = new RegExp(CHECK_NAME_PATTERN);
@@ -401,7 +418,7 @@ export function tableProblems(checks = CHECKS) {
     // with no date is the state RC-R1-12's exit note cannot report, and
     // "switch it off" is the repair the night it fires. Arming is recorded or
     // it did not happen.
-    if (check.armed_at !== null && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(check.armed_at)) {
+    if (check.armed_at !== null && !isArmedAt(check.armed_at)) {
       problems.push(`${where}: armed_at is not an RFC 3339 UTC time in whole seconds`);
     }
     if (check.armed_at !== null && !check.created_disarmed) {

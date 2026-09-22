@@ -124,6 +124,7 @@ import { safeRepo, safeTag } from "./lib/intake.mjs";
 import { DEFAULT_SIGNER_WORKFLOW } from "./ingest.mjs";
 import { ID_PATTERN } from "../tools/lib/ids.mjs";
 import { SEMVER_PATTERN } from "../tools/lib/semver.mjs";
+import { isTime } from "../tools/lib/time.mjs";
 import {
   BASELINE_FILE,
   BASELINE_SCHEMA,
@@ -136,7 +137,6 @@ const execFileAsync = promisify(execFile);
 
 const ID_RE = new RegExp(ID_PATTERN);
 const SEMVER_RE = new RegExp(SEMVER_PATTERN);
-const DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 const SHA1_RE = /^[0-9a-f]{40}$/;
 const SHA256_RE = /^[0-9a-f]{64}$/;
 const FINGERPRINT_RE = /^[0-9a-f]{16}$/;
@@ -371,7 +371,7 @@ export async function verificationFacts(versions, verify) {
  * first and derives the second.
  */
 const RECORD_MEMBERS = {
-  decided_at: (v) => DATE_RE.test(v),
+  decided_at: (v) => isTime(v),
   actor: (v) => v === "system",
   trigger: (v) => v === "migration",
   plugin_id: (v) => ID_RE.test(v),
@@ -454,7 +454,7 @@ export function composeRecords(facts, publishedAt) {
   }
   return facts.map((fact) => {
     const at = publishedAt.get(`${fact.plugin_id}@${fact.version}`);
-    if (!at || !DATE_RE.test(at)) {
+    if (!at || !isTime(at)) {
       throw new Error(
         `${fact.plugin_id} ${fact.version}: no §0.7 \`published_at\` in its version file, so this record would ` +
         "be dated by the run's clock and would say the publication happened today",
@@ -517,7 +517,7 @@ export function marker({ writtenAt, sourceCommit, versionCount, recordCount }) {
 export function markerProblems(doc) {
   const problems = [];
   if (doc?.schema !== BASELINE_SCHEMA) problems.push(`schema is ${JSON.stringify(doc?.schema)}`);
-  if (!DATE_RE.test(String(doc?.written_at))) problems.push("written_at is not a §0.7 time");
+  if (!isTime(doc?.written_at)) problems.push("written_at is not a §0.7 time");
   if (!SHA1_RE.test(String(doc?.source_commit))) problems.push("source_commit is not a 40-hex commit");
   if (!Number.isInteger(doc?.version_count) || doc.version_count < 1) {
     problems.push("version_count is not a positive integer; a baseline over nothing is a run that stopped working");

@@ -21,7 +21,7 @@
     "decided_at": {
       "$comment": "§0.7: RFC 3339 UTC, whole seconds, `Z`. The pattern cannot say the date is real (`2026-02-31T00:00:00Z` matches it); tools/validate.mjs round-trips it through Date, which is the other half.",
       "type": "string",
-      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$"
     },
     "actor": {
       "$comment": "DEC-7's closed list, as schema/contract-tokens-v1.json publishes it under `decision-record actors`. PRIV-10 makes every historic approver `system`.",
@@ -120,7 +120,7 @@
     "publish_after": {
       "$comment": "§0.7: RFC 3339 UTC, whole seconds, `Z`. The same moment the queue entry carries (BOT-33; B.4).",
       "type": "string",
-      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$"
     },
     "run": {
       "$comment": "§0.7's `run_id`, or `run_id/run_attempt` — the same grammar BOT-37's `Run:` trailer takes, and for the same reason: correlation must outlive a 14-day artifact, and a bare id is the only form of it that cannot carry a login. NOT the run URL, whose owner segment is one.",

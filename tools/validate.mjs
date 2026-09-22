@@ -90,6 +90,7 @@ import {
 } from "../bot/lib/locales.mjs";
 import { buildIndex, indexContent } from "./build-index.mjs";
 import { RESERVED_KEYS, SUPPORTED_KEYS } from "./lib/platform.mjs";
+import { isTime } from "./lib/time.mjs";
 
 // `tools/lib/platform.mjs`'s table, not a copy of it. Until 2026-09-22 these
 // were two literals of this file's own, and platform.mjs's RESERVED_KEYS was
@@ -1907,7 +1908,7 @@ function readFixtureManifest(file) {
  */
 const BASELINE_MEMBERS = {
   schema: (v) => v === BASELINE_SCHEMA,
-  written_at: (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(v),
+  written_at: (v) => isTime(v),
   source_commit: (v) => typeof v === "string" && /^[0-9a-f]{40}$/.test(v),
   version_count: (v) => Number.isInteger(v) && v >= 0,
   record_count: (v) => Number.isInteger(v) && v >= 0,

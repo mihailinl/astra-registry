@@ -76,10 +76,10 @@ import { CODES } from "./lib/codes.mjs";
 import { LISTING_LABEL, looksLikeReleasePing, safeRepo, safeTag } from "./lib/intake.mjs";
 import { ID_PATTERN } from "../tools/lib/ids.mjs";
 import { SEMVER_PATTERN } from "../tools/lib/semver.mjs";
+import { isTime } from "../tools/lib/time.mjs";
 
 const ID_RE = new RegExp(ID_PATTERN);
 const SEMVER_RE = new RegExp(SEMVER_PATTERN);
-const DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 
 /**
  * The accounts whose comments are decisions.
@@ -384,7 +384,7 @@ export function keyCollisions(facts) {
  * disagree about one.
  */
 const RECORD_MEMBERS = {
-  decided_at: (v) => DATE_RE.test(v),
+  decided_at: (v) => isTime(v),
   actor: (v) => v === "system",
   trigger: (v) => v === "migration",
   plugin_id: (v) => ID_RE.test(v),

@@ -106,6 +106,7 @@ import {
   suffixOf,
 } from "./moderation.mjs";
 import { git } from "../../tools/coverage/git.mjs";
+import { isTimeWithFraction } from "../../tools/lib/time.mjs";
 import { ID_PATTERN } from "../../tools/lib/ids.mjs";
 import {
   ACTIONS as ADVISORY_ACTIONS,
@@ -487,11 +488,13 @@ export function tokenAdvisoryBase({ root = REPO_ROOT } = {}) {
  * last second of December files the record under the next year, where the
  * year's walk does not look for it and BOT-36's dedupe does not find it.
  */
-function wholeSeconds(at) {
+export function wholeSeconds(at) {
   const text = String(at ?? "");
-  const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d+)?Z$/.exec(text);
-  if (!m) throw new Error(`\`decided_at\` ${JSON.stringify(at)} is not §0.7's RFC 3339 UTC`);
-  return `${m[1]}Z`;
+  // The grammar and the real-instant test are §0.7's, from tools/lib/time.mjs:
+  // until contract 0.34.0 this admitted second 60, hour 24 and `2026-02-30`,
+  // and filed the record under whatever month the string's digits said.
+  if (!isTimeWithFraction(text)) throw new Error(`\`decided_at\` ${JSON.stringify(at)} is not §0.7's RFC 3339 UTC`);
+  return `${text.slice(0, 19)}Z`;
 }
 
 /**
