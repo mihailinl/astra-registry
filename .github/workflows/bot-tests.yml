@@ -271,10 +271,13 @@ jobs:
       # exact shape RC-R1-0 calls the repair this estate must never reach for.
       #
       # The shipped detector is not untested by the world: A7 fired in
-      # production on 2026-09-20, run 35502265394, and the finding was real
-      # enough to be worth a fix. But a rule watched red by an incident is not
-      # the same as its unit tests running, and the four A7 cases here include
-      # both bounds and the no-trailer case, which no incident has exercised.
+      # production on 2026-09-20, run 35502265394 — and that finding was a race
+      # with the same push's signer, not a signer behind (ops register 76; the
+      # repair is #204). A rule watched red by an incident is not the same as
+      # its unit tests running, and the A7 cases here hold what no incident has
+      # exercised: both bounds, the race, first-parent dating, and a head
+      # missing either trailer. No count here: this line said four while the
+      # file held twenty-two.
       - name: Detector A, and the skips that have to be derived
         if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/detectors.test.mjs
