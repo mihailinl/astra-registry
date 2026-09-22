@@ -593,6 +593,21 @@ test("A7: a change dated after the run's clock is overdue, not excused until its
   assert.deepEqual(a7Codes(detect({ root: dir, now: NOW("2026-05-31T23:55:00Z") })), []);
 });
 
+test("A7: a README commit after a signed advisory is not a change `signed` has missed", () => {
+  // The walk that decides reads the list's SOURCE_PATHSPEC as the dating
+  // does. With an advisory already signed, only the question "what has not
+  // been signed" can see this README, and it must not count it.
+  const dir = estate();
+  write(dir, `${REVOCATIONS_SOURCE_DIR}/ASTRA-2026-0001.json`, { schema: "astra.registry.revocation/1" });
+  const advisory = commit(dir, "registry: an advisory", "2026-01-01T01:00:00Z");
+  signedAt(dir, advisory, "2026-01-01T01:01:00Z");
+  write(dir, `${REVOCATIONS_SOURCE_DIR}/README.md`, "# advisories\n\nHow to write one.\n");
+  commit(dir, "docs: how to write an advisory", "2026-01-01T03:00:00Z");
+  const r = detect({ root: dir, now: NOW("2026-01-01T06:00:00Z") });
+  assert.deepEqual(a7Codes(r), [], `a documentation commit after the signed advisory alarmed: ${JSON.stringify(r.scanned)}`);
+  assert.equal(r.scanned.revocations_unsigned_commits, 0);
+});
+
 test("A7: the signer's time on a merged change starts at the merge", () => {
   // Gap 68's shape, asked of the clock `now` is compared with: the advisory
   // was committed on a branch at 01:00 and reached main at 04:00. Ten minutes
