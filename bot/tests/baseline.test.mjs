@@ -1,12 +1,16 @@
-// MIG-20's baseline, and the four refusals that stand in for the parts of it
-// that cannot be built yet.
+// MIG-20's baseline, and the refusals that stand between it and a run that
+// goes green over the wrong thing.
 //
 // This suite is unusual in what it spends its assertions on. The baseline run
-// itself is one dispatch that has not happened and cannot happen — three of its
-// gates are not on `main` — so most of what is here asserts the REFUSALS: that
-// each of the three missing modules is named rather than worked around, that
-// the population is exactly MIG-20's population, and that a record which would
-// silently lose a version cannot be composed.
+// itself is one dispatch that has not happened. Its three module gates are on
+// `main` — B-T1.1 and B-T1.3 since `edab81a`, B-T2.2 since `407b2ae` — and the
+// tests that named them now hold the refusal MECHANISM over a fixture root
+// where the module is absent. (This header said "three of its gates are not on
+// `main`" for two days after the last one landed.) So most of what is here
+// asserts the REFUSALS: that a missing module is named rather than worked
+// around, that the population is exactly MIG-20's population, that a record
+// which would silently lose a version cannot be composed, and that a write
+// which leaves no marker cannot exit 0.
 //
 // That is not a weaker thing to test than the run. The run happens once, and
 // every one of those refusals is a place where a later author, under time
@@ -16,7 +20,7 @@
 // Registry plan B-T3.7b.
 
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -29,6 +33,7 @@ import {
   markerProblems,
   nameDrift,
   population,
+  readDecisionRecords,
   refuseUncomposable,
   resolveCertificateReader,
   resolveNameReader,
@@ -388,10 +393,12 @@ test("--write refuses a wholly unverified baseline unless the operator says the 
   // Until 2026-09-20 this line read `assert.match(past, /decisions\.mjs/)` and
   // its comment said "with the right number it gets past this gate and refuses
   // at the next one, which is B-T2.2's writer". B-T2.2 landed, so the next one
-  // is not a refusal any more: the run succeeds. The tripwire did exactly what
-  // it was for — it went red on the day its premise stopped holding, in the
-  // commit that changed it, which is more than the four module headers that
-  // stated an absence and could not.
+  // is not a refusal any more: the run went on to succeed. The tripwire did
+  // exactly what it was for — it went red on the day its premise stopped
+  // holding, in the commit that changed it, which is more than the four module
+  // headers that stated an absence and could not. Since 2026-09-22 the run goes
+  // on through the writer and ends on the marker floor's refusal instead; that
+  // refusal has its own test, below.
   const past = run(["--expect-unverified", "2"]);
   assert.doesNotMatch(past, /not one of 2 fact\(s\)/);
   assert.doesNotMatch(past, /decisions\.mjs is not in this checkout/,
@@ -403,7 +410,8 @@ test("a second dispatch with the marker present writes nothing, and the refusal 
   // the MESSAGE rather than on the exit code: the refusal has to fire BEFORE
   // `resolveWriter`, or the only thing between a second dispatch and a second
   // `migration` record for every version is the accident that B-T2.2 has not
-  // landed. Today both refuse; the day B-T2.2 lands only one of them does.
+  // landed. Until `407b2ae` both refused; since B-T2.2 landed only this one
+  // does.
   const dir = tree();
   write(dir, "log/baseline.json", { schema: "astra.registry.baseline/1" });
   write(dir, "facts.json", { facts: [] });
@@ -421,7 +429,83 @@ test("a second dispatch with the marker present writes nothing, and the refusal 
   }
   assert.match(message, /log\/baseline\.json is already on this tree/);
   assert.doesNotMatch(message, /decisions\.mjs is not in this checkout/,
-    "the marker guard did not fire first; today B-T2.2's absence hides that, and the day it lands nothing will");
+    "the marker guard did not fire first; B-T2.2's absence used to hide that, and since it landed nothing does");
+});
+
+test("a baseline write that writes no marker refuses by name", () => {
+  // The path every other `--write` test stops short of: every gate passes, the
+  // writer writes, and the run ends. Until 2026-09-22 it ended with exit 0 and
+  // no `log/baseline.json` — a green dispatch over a baseline nobody took, with
+  // nothing committed, nothing for A1, B-T3.7 or MIG-28 to key on, and no
+  // marker for a second dispatch to refuse on.
+  //
+  // Two things are asserted besides the words, each for a mutation the words
+  // alone would miss. The exit status: a refusal softened into a warning
+  // prints the same sentence and exits 0. And the records ARE on the tree:
+  // the refusal is reached at the end, after the writer, and not by an
+  // earlier stop that happens to exit non-zero. That is also why this fixture
+  // has no commitless version — over the real catalogue, dice-roller 0.1.2's
+  // `commit: null` stops `--write` at the record grammar first.
+  const dir = tree();
+  listed(dir, "alpha", "1.0.0");
+  listed(dir, "beta", "1.0.0");
+  const verified = (v, n) => ({
+    plugin_id: v.plugin_id, version: v.version, repo: v.repo, tag: v.tag, commit: v.commit,
+    fingerprint: v.fingerprint, outcome: "verified", repository_id: String(n), repository_owner_id: String(n + 1),
+  });
+  const [a, b] = population(dir).versions;
+  write(dir, "facts.json", { facts: [verified(a, 111), verified(b, 333)], unrecoverable: [], unchecked: [] });
+  write(dir, "historic.json", { facts: [{ repo: "example/alpha", tag: "v0.9.0", state: "refused" }] });
+  const r = spawnSync(process.execPath, [
+    path.join(REPO_ROOT, "bot", "baseline.mjs"), "--write",
+    "--facts-file", path.join(dir, "facts.json"),
+    "--historic-file", path.join(dir, "historic.json"),
+    "--source-commit", "a".repeat(40),
+    "--registry-dir", dir,
+  ], { encoding: "utf8" });
+  const said = `${r.stdout}${r.stderr}`;
+  assert.notEqual(r.status, 0, `--write exited 0 and left no marker on the tree:\n${said}`);
+  assert.match(said, /leaves no log\/baseline\.json on the tree, so it has not taken MIG-20's baseline/);
+  assert.match(said, /it writes no marker/);
+  assert.match(said, /composes none of the 1 MIG-21 historic fact\(s\)/);
+  assert.match(said, /it makes no commit/);
+  assert.equal(fs.existsSync(path.join(dir, "log", "baseline.json")), false);
+  const records = readDecisionRecords(dir);
+  assert.equal(records.length, 2,
+    `the refusal was not reached at the end of the run — ${records.length} record(s) were written:\n${said}`);
+});
+
+test("a verifier that cannot run inside --verify is NOT CHECKED, not a crash", () => {
+  // `verifyOne`'s `catch` classified the failure with a function this file did
+  // not import, from `256aac7` until 2026-09-22. Nothing reached it: the test
+  // of the `unchecked` outcome above stubs `verifyOne` out, and the real
+  // population carries no `artifact_url`, so the `catch` sat one `fetch` and
+  // one `gh` beyond anything that ran. So this goes through the CLI, with a
+  // `data:` URL for the asset and a `gh` on PATH that answers the way `gh`
+  // does when Sigstore's trust root cannot be reached. No network either way.
+  const dir = tree();
+  const bin = path.join(dir, "bin");
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, "gh"),
+    "#!/bin/sh\necho 'Error: public good verifier is not available (initialization failed)' >&2\nexit 1\n");
+  fs.chmodSync(path.join(bin, "gh"), 0o755);
+  write(dir, "population.json", {
+    versions: [{
+      plugin_id: "alpha", version: "1.0.0", repo: "example/alpha", tag: "v1.0.0", commit: "a".repeat(40),
+      fingerprint: "0123456789abcdef", artifact_url: "data:application/octet-stream;base64,eA==",
+    }],
+  });
+  const r = spawnSync(process.execPath, [
+    path.join(REPO_ROOT, "bot", "baseline.mjs"), "--verify",
+    "--population-file", path.join(dir, "population.json"),
+    "--out", path.join(dir, "facts.json"),
+  ], { encoding: "utf8", env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, RUNNER_TEMP: dir } });
+  const said = `${r.stdout}${r.stderr}`;
+  assert.doesNotMatch(said, /is not defined/, `verifyOne's catch threw instead of classifying:\n${said}`);
+  assert.match(said, /NOT CHECKED: alpha 1\.0\.0 \(example\/alpha@v1\.0\.0\): .*verifier is not available/);
+  assert.equal(r.status, 1, said);
+  const facts = JSON.parse(fs.readFileSync(path.join(dir, "facts.json"), "utf8"));
+  assert.equal(facts.unchecked.length, 1);
 });
 
 // ── the marker ──────────────────────────────────────────────────────────────

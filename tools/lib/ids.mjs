@@ -56,6 +56,39 @@ export function invalidId(id) {
   return null;
 }
 
+// ── advisory ids ────────────────────────────────────────────────────────────
+//
+// `ASTRA-`, a four-digit year, `-`, and a serial of FOUR OR MORE digits. The
+// documents write the shape as `ASTRA-YYYY-NNNN`; the machine statement is
+// `schema/decision-v1.json`'s `advisory` pattern, which is ADVISORY_ID_PATTERN
+// byte for byte. Four is a minimum and not a width because of the writer:
+// MOD-13's next id is one more than the highest ever added, zero-padded to
+// four and never reset by the year (`nextAdvisoryId`,
+// `bot/lib/compile-decision.mjs`), so advisory 10000 has five digits and every
+// reader has to take what the writer writes.
+//
+// Gap 72's tails. Until 2026-09-22 this grammar was typed in five modules —
+// `tools/lib/revocations.mjs` and `bot/lib/moderation.mjs` (each a constant
+// named ADVISORY_ID), `site/build.mjs`'s page guard, and the file-name tails of
+// `nextAdvisoryId` and `tools/moderation-coverage.mjs`'s `ADVISORY_RE` — and
+// the last took EXACTLY four: with `ASTRA-2026-10000.json` committed, the
+// coverage canary saw no advisory while the next id went on to 10001. All five
+// read it from here now; `tools/selftest/couplings.mjs` asks each of them, and
+// the schema, what they accept.
+//
+// It lives beside the plugin-id grammar and not in `tools/lib/revocations.mjs`,
+// which owns the advisory format, because both validators of an advisory id
+// already import this file, and `revocations.mjs` imports `moderation.mjs` for
+// MOD-41's reason rules — so `moderation.mjs` importing `revocations.mjs` back
+// would be the first import cycle in this repository (measured 2026-09-22: none
+// among 173 modules).
+
+/** An advisory id, UNANCHORED: a RegExp source, for a pattern that embeds one. */
+export const ADVISORY_ID_GRAMMAR = "ASTRA-[0-9]{4}-[0-9]{4,}";
+
+/** An advisory id, anchored: the whole string is one id. */
+export const ADVISORY_ID_PATTERN = `^${ADVISORY_ID_GRAMMAR}$`;
+
 // Squatting: fold the ways two ids look identical to a human but differ to a
 // byte comparison. This is a heuristic that catches accidents and lazy
 // impersonation, not a determined attacker — POLICY.md says so in those words.

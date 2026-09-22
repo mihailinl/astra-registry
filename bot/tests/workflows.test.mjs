@@ -740,8 +740,9 @@ const commitsAnything = (file) =>
 const NOT_HEARD = new Map([
   [
     "Migration baseline",
-    "writes log/decisions/** and log/baseline.json (MIG-20, BOT-73). None of them reaches a signed document: " +
-    "D3 counts the catalogue's serial over plugins/ and the list's over tools/revocations/.",
+    "holds contents: write for BOT-73's one commit of MIG-20's records and marker, log/decisions/** and " +
+    "log/baseline.json. Neither path reaches a signed document: D3 counts the catalogue's serial over " +
+    "plugins/ and the list's over tools/revocations/.",
   ],
   [
     "Keepalive",
