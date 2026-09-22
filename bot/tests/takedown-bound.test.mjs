@@ -21,6 +21,18 @@
 //   a staging deprecate counts 0, BY ID                 drop the staging check
 //   a MOD-52 revert counts 0                            count advisory-deleted
 //
+// And the window, which is `main`'s (gap 68's shape, found in this file by
+// lane M on 2026-09-22):
+//
+//   a withdrawal merged from a long-lived branch        `--no-merges` for
+//     counts at the merge; so does one through a        `--first-parent`, the
+//     branch that merged main in, and one a merge       walk before the repair
+//     commit carries itself
+//   a first-parent commit dated before its parent       `--since` in place of
+//     does not hide the withdrawals behind it           the per-commit filter
+//   a first-parent line git cannot walk is unknown      `allowFailure: true`
+//                                                       on the walk
+//
 // The last two are the contract's two exclusions and only two (TRUST-26), and
 // the fifth is the whole of attack M-2: the counter that filtered on
 // `Service-Decision:` returned 0 on the one day the registry was withdrawing
@@ -101,11 +113,38 @@ function fixture(name) {
       return api.write("policy/reserved-ids.json", { reserved: [], reserved_prefixes: [], ...extra });
     },
 
-    commit(message, { at = hoursAgo(1) } = {}) {
+    commit(message, { at = hoursAgo(1), authorAt = at } = {}) {
       g("add", "-A");
       execFileSync("git", ["-C", dir, "commit", "-q", "--allow-empty", "-m", message], {
         encoding: "utf8",
+        env: { ...process.env, GIT_AUTHOR_DATE: authorAt, GIT_COMMITTER_DATE: at },
+      });
+      return api;
+    },
+
+    checkout(...args) { g("checkout", "-q", ...args); return api; },
+
+    /**
+     * `git merge` at a fixed date — a pull request merged with a merge commit.
+     * `noCommit` stops before committing, so a case can change the tree the
+     * merge commit records (a conflict resolution) and then `commit()` it.
+     */
+    merge(branch, { at = hoursAgo(1), noCommit = false } = {}) {
+      const how = noCommit ? ["--no-commit"] : ["-m", `Merge ${branch}`];
+      execFileSync("git", ["-C", dir, "merge", "-q", "--no-ff", ...how, branch], {
+        encoding: "utf8",
         env: { ...process.env, GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      return api;
+    },
+
+    /** GitHub's rebase merge: the branch's commit re-created on `main`, committed at `at`. */
+    rebaseMerge(branch, { at = hoursAgo(1) } = {}) {
+      execFileSync("git", ["-C", dir, "cherry-pick", branch], {
+        encoding: "utf8",
+        env: { ...process.env, GIT_COMMITTER_DATE: at },
+        stdio: ["ignore", "pipe", "pipe"],
       });
       return api;
     },
@@ -113,16 +152,18 @@ function fixture(name) {
     /**
      * Two listed plugins, two listed siblings of one monorepo, and a staging
      * listing created unlisted — committed 30 hours ago, so the base is
-     * OUTSIDE every window and no case counts its own setup.
+     * OUTSIDE every window and no case counts its own setup. The history
+     * shapes pass an older `at`, so a branch can be cut from it 37 hours ago
+     * without a commit dated before its own parent.
      */
-    base() {
+    base({ at = hoursAgo(30) } = {}) {
       api.reserved();
       api.listing("dice-roller").version("dice-roller", "0.1.1", { sha256: "a".repeat(64) });
       api.listing("text-utils").version("text-utils", "0.2.0");
       api.listing("web-chat", { repo: "mihailinl/AstraPlugins" });
       api.listing("echo-stt", { repo: "mihailinl/AstraPlugins" });
       api.listing("staging-probe", { unlisted: true });
-      api.commit("base: five listings", { at: hoursAgo(30) });
+      api.commit("base: five listings", { at });
       return api;
     },
   };
@@ -345,6 +386,163 @@ test("the window is trailing and on committer date, so a withdrawal 25 hours ago
   assert.deepEqual(got.ids.map((i) => i.id), ["text-utils"], got.detail.join("\n"));
   assert.equal(got.since, "2026-09-19T12:00:00Z");
   assert.equal(WINDOW_HOURS, 24);
+});
+
+// ── the window is `main`'s: a withdrawal is dated where main acquired it ─────
+//
+// TRUST-26 counts listed plugin ids delisted, yanked or newly advised in the
+// trailing 24 h, and "listed" is `main`'s tree. A plugin delisted on a branch
+// is still listed, and still served, until the branch lands — so the moment
+// is the commit on HEAD's first-parent line that brought the change, and for
+// a pull request merged with a merge commit that is the merge. Measured
+// 2026-09-22 before the repair (`rev-list --no-merges --since`): the first
+// three cases below counted 1 (of 2), 0 and 0.
+
+/** A fixture whose base is 60 h old, so a branch can be cut from it 37 h ago. */
+const oldBase = (name) => fixture(name).base({ at: hoursAgo(60) });
+
+/** A delist of `id` written on branch `topic` 37 h ago, with `main` moving on meanwhile. */
+function delistOnBranch(f, id) {
+  f.checkout("-b", "topic");
+  f.listing(id, { unlisted: true }).commit(`mod: delist ${id}, on a branch`, { at: hoursAgo(37) });
+  f.checkout("main");
+  f.write("docs/elsewhere.md", "main moves on while the pull request is open\n")
+    .commit("docs: main moves on", { at: hoursAgo(30) });
+  return f;
+}
+
+const parentsOf = (f, rev) => f.git("show", "-s", "--format=%P", rev).trim().split(" ").filter(Boolean).length;
+
+test("a withdrawal merged from a long-lived branch counts at the merge", () => {
+  // Lane M's measurement, 2026-09-22: a delist committed on a branch 37 h
+  // before `now`, merged `--no-ff` 2 h before it, beside a direct delist an
+  // hour old. Two plugins left the catalogue inside the window and the old
+  // walk counted one — too permissive, on the shape every pull request here
+  // merges with.
+  const f = delistOnBranch(oldBase("merged-branch"), "text-utils");
+  f.merge("topic", { at: hoursAgo(2) });
+  f.listing("dice-roller", { unlisted: true }).commit("bot: delist dice-roller", { at: hoursAgo(1) });
+
+  const merge = f.git("rev-parse", "HEAD^").trim();
+  assert.equal(parentsOf(f, merge), 2, "text-utils did not arrive through a merge commit, so this is not the case");
+
+  const got = count(f.dir);
+  assert.deepEqual(got.ids.map((i) => i.id), ["dice-roller", "text-utils"], got.detail.join("\n"));
+  assert.equal(got.count, 2);
+  const why = got.ids.find((i) => i.id === "text-utils").why.join("; ");
+  assert.ok(why.startsWith(merge.slice(0, 8)), `text-utils is not dated at the merge ${merge.slice(0, 8)}: ${why}`);
+
+  // And it fills a bound the old count left room under.
+  const over = overBound(got, { bound: 2 });
+  assert.equal(over.over, true, over.reason);
+  assert.equal(holdKindFor(blockInstall, { overBound: over.over }), "bound");
+});
+
+test("a withdrawal merged through a branch that had merged main in counts at the outer merge", () => {
+  // Merging `origin/main` into a branch is this repository's rule on conflict,
+  // so a branch reaching `main` can be a merge whose second parent is itself a
+  // merge. The old walk skipped both merges, and the branch commit was outside
+  // the window: 0.
+  const f = delistOnBranch(oldBase("merged-main-in"), "dice-roller");
+  f.checkout("topic").merge("main", { at: hoursAgo(20) }).checkout("main");
+  f.merge("topic", { at: hoursAgo(2) });
+  assert.equal(parentsOf(f, "HEAD^2"), 2, "the branch did not merge main in, so this is not the case");
+
+  const got = count(f.dir);
+  assert.deepEqual(got.ids.map((i) => i.id), ["dice-roller"], got.detail.join("\n"));
+});
+
+test("a withdrawal a merge commit carries itself counts at the merge", () => {
+  // A conflict resolved in the merge, or any merge committed with its tree
+  // changed: the delist is in no single-parent commit at all, so a
+  // `--no-merges` walk cannot see it however it dates things. Measured before
+  // the repair: 0.
+  const f = oldBase("evil-merge");
+  f.checkout("-b", "topic");
+  f.write("docs/branch.md", "branch work\n").commit("docs: branch work", { at: hoursAgo(5) });
+  f.checkout("main");
+  f.merge("topic", { at: hoursAgo(2), noCommit: true });
+  f.listing("dice-roller", { unlisted: true }).commit("Merge topic, delisting dice-roller in the resolution", { at: hoursAgo(2) });
+  assert.equal(parentsOf(f, "HEAD"), 2, "the fixture made no merge commit, so this is not the case");
+
+  const got = count(f.dir);
+  assert.deepEqual(got.ids.map((i) => i.id), ["dice-roller"], got.detail.join("\n"));
+});
+
+test("a squash merge, a rebase merge and a bot direct push count at the commit that landed", () => {
+  // The three shapes that were right before the repair and must stay right:
+  // each lands as one single-parent commit on the first-parent line, committed
+  // when it landed, whatever date the branch commit behind it carries.
+  const squash = oldBase("squash");
+  squash.checkout("-b", "topic");
+  squash.listing("dice-roller", { unlisted: true }).commit("delist, on a branch", { at: hoursAgo(37) });
+  squash.checkout("main");
+  squash.git("merge", "-q", "--squash", "topic");
+  squash.commit("mod: delist dice-roller (#1)", { at: hoursAgo(2), authorAt: hoursAgo(37) });
+
+  const rebase = delistOnBranch(oldBase("rebase"), "dice-roller");
+  rebase.rebaseMerge("topic", { at: hoursAgo(2) });
+
+  const direct = oldBase("direct");
+  direct.listing("dice-roller", { unlisted: true }).commit("bot: delist dice-roller", { at: hoursAgo(2) });
+
+  for (const [shape, f] of [["squash", squash], ["rebase", rebase], ["direct", direct]]) {
+    assert.equal(parentsOf(f, "HEAD"), 1, `${shape}: the fixture landed a merge commit, so this is not the case`);
+    const got = count(f.dir);
+    assert.deepEqual(got.ids.map((i) => i.id), ["dice-roller"], `${shape}:\n${got.detail.join("\n")}`);
+  }
+});
+
+test("a branch that withdrew and restored a plugin before merging took nothing from main, and costs 0", () => {
+  // The direction the repair makes more lenient, and the right one: the
+  // listing never left `main`, and no installed copy ever lost it. The old
+  // walk read the branch's delist commit, which was inside the window, and
+  // counted 1.
+  const f = oldBase("undone-on-branch");
+  f.checkout("-b", "topic");
+  f.listing("dice-roller", { unlisted: true }).commit("delist, on a branch", { at: hoursAgo(5) });
+  f.listing("dice-roller").commit("relist, on the same branch", { at: hoursAgo(4) });
+  f.checkout("main");
+  f.write("docs/elsewhere.md", "main moves on\n").commit("docs: main moves on", { at: hoursAgo(3) });
+  f.merge("topic", { at: hoursAgo(2) });
+
+  const got = count(f.dir);
+  assert.equal(got.count, 0, got.detail.join("\n"));
+  assert.equal(got.examined, 2, `the walk did not read main's two commits in the window:\n${got.detail.join("\n")}`);
+});
+
+test("a first-parent commit dated before its parent does not hide the withdrawals behind it", () => {
+  // Git stops a `--since` walk at the first commit older than the cut, so one
+  // commit dated before its parent — clock skew, or `rebase
+  // --committer-date-is-author-date` pushed as a fast-forward — would hide
+  // every withdrawal under it. The window is applied per commit instead.
+  const f = fixture("skew").base();
+  f.listing("dice-roller", { unlisted: true }).commit("mod: delist dice-roller", { at: hoursAgo(7) });
+  f.write("docs/skewed.md", "committed with an old date\n").commit("docs: an old committer date", { at: hoursAgo(48) });
+  f.listing("text-utils", { unlisted: true }).commit("mod: delist text-utils", { at: hoursAgo(1) });
+
+  const got = count(f.dir);
+  assert.deepEqual(got.ids.map((i) => i.id), ["dice-roller", "text-utils"], got.detail.join("\n"));
+});
+
+test("a first-parent line git cannot walk is an unknown count, not a count of 0", () => {
+  // The walk reads the whole first-parent line, so it reaches objects the old
+  // `--since` walk stopped short of. A walk that fails must not become an
+  // empty list: that is a count of 0 with no reason beside it, and a takedown
+  // applied unheld. HEAD stays readable, so it is the walk that fails here.
+  const f = fixture("unwalkable").base();
+  f.write("docs/middle.md", "x\n").commit("docs: a middle commit", { at: hoursAgo(26) });
+  f.listing("dice-roller", { unlisted: true }).commit("mod: delist dice-roller", { at: hoursAgo(2) });
+  const oldest = f.git("rev-parse", "HEAD~2").trim();
+  const object = path.join(f.dir, ".git", "objects", oldest.slice(0, 2), oldest.slice(2));
+  assert.ok(fs.existsSync(object), `${oldest} is not a loose object here, so removing it would remove nothing`);
+  fs.rmSync(object);
+  f.git("show", "-s", "HEAD");
+
+  const got = count(f.dir);
+  assert.equal(got.count, null, got.detail.join("\n"));
+  assert.match(got.unknown ?? "", /first-parent line cannot be walked/);
+  assert.equal(overBound(got).over, true);
 });
 
 // ── what an unknown count does, which is the M-2 failure by another route ───
