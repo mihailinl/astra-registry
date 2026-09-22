@@ -178,6 +178,13 @@ const MODULES = [
   // same commit. Written here because the instruction to leave the line to
   // its owner assumed it was separable, and for this file it is not.
   "regenerate.mjs",
+  // Contract 0.31.0 — MIG-13's marker and the schema B.4's types let this
+  // repository write for it, held to the token file's condition. It prints its
+  // own section header, so inserting it after `regenerate.mjs`, which prints
+  // one too, moves no existing name under a header it does not belong to, and
+  // `baseline.mjs` stays last. **This line, its FLOORS entry and the file are
+  // one change**, for the reason written out at `regenerate.mjs` above.
+  "migration-notice.mjs",
   // Last, and with a section header of its own. The boundary to protect is
   // `update-notes.mjs` → `repo-rules.mjs`: `repo-rules.mjs` prints no header,
   // so its names come out under `update-notes.mjs`'s, and anything inserted
@@ -1147,6 +1154,7 @@ const FLOORS = new Map(Object.entries({
   "claims.mjs": 8,
   "contract-tokens.mjs": 5,
   "regenerate.mjs": 12,
+  "migration-notice.mjs": 6,
   "baseline.mjs": 9,
 }));
 
