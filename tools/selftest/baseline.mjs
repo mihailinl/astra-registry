@@ -24,7 +24,7 @@ import path from "node:path";
 
 import { population } from "../../bot/baseline.mjs";
 import { BASELINE_FILE, REPO_ROOT, loadSources, nonStagingVersions } from "../lib/sources.mjs";
-import { test, assert, tmp, validateTree, errorsMatching } from "./harness.mjs";
+import { test, assert, assertEqual, tmp, validateTree, errorsMatching } from "./harness.mjs";
 
 const SOUND = {
   schema: "astra.registry.baseline/1",
@@ -149,7 +149,23 @@ export async function run() {
     const dir = treeWith(SOUND);
     fs.writeFileSync(path.join(dir, "log", "baseline.json"), "{ not json\n");
     const { report } = await validateTree(dir);
-    assert(errorsMatching(report, "not readable JSON").length === 1, "an unreadable marker was a soft failure");
+
+    // Two clauses, and until 2026-09-22 only the second was held. The first was
+    // written as `errorsMatching(report, "not readable JSON").length === 1`, and
+    // `errorsMatching` looks in `${e.where} ${e.message}` — the needle lives
+    // wholly in the message, so the `where` could be any string at all.
+    // Measured: `report.error("somewhere", …)` in tools/validate.mjs left this
+    // check green and the whole suite at 317 passed, 0 failed. So the assertion
+    // is split, and the path is compared on its own.
+    //
+    // It is the half that does the work. Four mechanisms read this file and the
+    // finding is the only thing that says WHICH file stopped them; `log/` is
+    // about to hold more than one record, and "is not readable JSON" with no
+    // path in front of it sends a reader to look at `plugins/**` like everything
+    // else this validator prints.
+    const unreadable = report.errors.filter((e) => e.message.includes("not readable JSON"));
+    assertEqual(unreadable.length, 1, "an unreadable marker was a soft failure");
+    assertEqual(unreadable[0].where, BASELINE_FILE, "the finding does not name the file it is about");
   });
 
   await test("the validator and the baseline writer count the same population", async () => {

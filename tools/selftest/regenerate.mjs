@@ -204,15 +204,52 @@ export async function run() {
     fs.mkdirSync(dir, { recursive: true });
     execFileSync("git", ["clone", "-q", "--no-hardlinks", "--shared", REPO_ROOT, dir],
       { stdio: ["ignore", "pipe", "pipe"] });
-    const listing = path.join(dir, "plugins", fs.readdirSync(path.join(dir, "plugins")).sort()[0], "plugin.json");
-    const doc = JSON.parse(fs.readFileSync(listing, "utf8"));
-    doc.summary = "PERTURBED — an uncommitted edit that must not reach a regenerated document";
-    fs.writeFileSync(listing, `${JSON.stringify(doc, null, 2)}\n`);
+
+    // WHICH listing is perturbed decides whether this check can fail at all,
+    // and until 2026-09-22 it was `readdirSync(plugins).sort()[0]` — which on
+    // this tree is `plugins/astra-chess/`, a listing carrying `"unlisted": true`
+    // since 2026-09-12. Nothing about an unlisted listing can appear in a
+    // generated catalogue, so the perturbation dirtied the clone (satisfying
+    // the guard below) and then changed no byte of the document whether the
+    // tool read the commit or the disk.
+    //
+    // Measured: with assemble() made to copy the live checkout over the
+    // archived inputs — exactly the defect this name is about — the suite stayed
+    // at `317 passed, 0 failed`, exit 0, and this check printed `ok`.
+    //
+    // So the subject is chosen from the document rather than from the
+    // directory listing, and the choice is ARMED: the committed value of the
+    // field about to be perturbed must be found in the unperturbed output
+    // first. A field that does not reach the document cannot be a test of
+    // whether an edit to it reaches the document.
+    const beforeDoc = JSON.parse(before.stdout);
+    const listed = new Set(beforeDoc.plugins.map((e) => e.id));
+    let chosen = null;
+    for (const name of fs.readdirSync(path.join(dir, "plugins")).sort()) {
+      const file = path.join(dir, "plugins", name, "plugin.json");
+      if (!fs.existsSync(file)) continue;
+      const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+      if (listed.has(doc.id)) { chosen = { file, doc }; break; }
+    }
+    assert(chosen !== null,
+      `no listing under plugins/ reaches the regenerated catalogue (${listed.size} entry/entries in it), so ` +
+      "there is no edit this check could make that the document could carry");
+    const entry = beforeDoc.plugins.find((e) => e.id === chosen.doc.id);
+    assertEqual(entry.description, chosen.doc.summary,
+      `${chosen.doc.id}'s summary is not what the catalogue carries as its description, so perturbing it ` +
+      "would be invisible in the output for a reason that has nothing to do with commits");
+
+    const PERTURBED = "PERTURBED — an uncommitted edit that must not reach a regenerated document";
+    chosen.doc.summary = PERTURBED;
+    fs.writeFileSync(chosen.file, `${JSON.stringify(chosen.doc, null, 2)}\n`);
     assert(gitIn(dir)("status", "--porcelain", "--", "plugins") !== "",
       "the perturbation did not dirty the clone, so the assertion below proves nothing");
 
     const after = regen(["--generator", head, "--source", head, "--quiet", "--repo", dir], { cwd: dir });
     assertEqual(after.status, 0, after.stderr);
+    assert(!after.stdout.includes(PERTURBED),
+      `an uncommitted edit to plugins/${path.basename(path.dirname(chosen.file))}/plugin.json is in the ` +
+      "regenerated document, so the output is a function of somebody's disk rather than of two commit ids");
     assertSameDocument(after.stdout, before.stdout,
       "an uncommitted edit under plugins/ changed the regenerated document, so the output is a function of " +
       "somebody's disk rather than of two commit ids");

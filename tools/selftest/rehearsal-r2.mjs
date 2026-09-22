@@ -347,6 +347,26 @@ export async function run() {
     assertEqual(change.trust.signed.serial, before.trust.signed.serial, "the root change moved trust.json's serial");
     assertEqual(stableStringify(change.trust.signed), stableStringify(before.trust.signed),
       "trust.json's `signed` payload changed at an unchanged serial (SERVE-20)");
+    // SERVE-92's clause, and until 2026-09-22 it was an inequality alone.
+    // `verifyEnvelope` returns `key_id: undefined` on a document it refused, and
+    // `undefined !== "…root-a"` is true — so a trust.json signed by NOBODY
+    // satisfied "signed by a different root".
+    //
+    // Measured: overwriting rotation/04-root-change's trust.json with the parent
+    // step's, which is the exact state of a root ceremony that published
+    // root.json and never re-signed the document beside it, left this check
+    // printing `ok`. Two other checks went red for it — `every step verifies
+    // whole` and the regeneration `--check` — and neither is named for this
+    // clause, so the register read the coverage off a name nothing held.
+    //
+    // The verdict is therefore asserted on BOTH sides before the key_ids are
+    // compared: an inequality where either side may be `undefined` is an
+    // inequality that passes for the failure it is watching for.
+    for (const v of [before, change]) {
+      assert(v.trustVerdict.ok,
+        `${v.id}'s trust.json does not verify under the root.json committed beside it (${v.trustVerdict.reason}), ` +
+        "so the root comparison below would be between a key and nothing");
+    }
     assert(change.trustVerdict.key_id !== before.trustVerdict.key_id,
       "the trust.json after the root change is signed by the same root as before it");
 
