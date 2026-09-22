@@ -1256,6 +1256,87 @@ test("every suite under bot/tests/ is named by a workflow, and the list has a fl
   assert.ok(files.length >= 10, `only ${files.length} workflow file(s) read; there were 13 on 2026-09-20`);
 
 });
+
+// ── gap 28: an absence a later reader can disagree with ─────────────────────
+//
+// `tools/absent-scan.mjs` reads `@absent <path> (<task>)` markers out of the
+// tracked tree and fails when git tracks the path. It lives beside
+// `tools/priv-scan.mjs` and is wired HERE, in this suite, rather than left to
+// `node tools/absent-scan.mjs` on somebody's laptop — a scan nothing runs is
+// the same shape of nothing as the comment it was written to replace.
+//
+// **Why this suite and not `bot/tests/policy.test.mjs`.** Three reasons, and
+// the third is the one that decided it. (1) Subject: this file's whole job is
+// claims that only a person re-reading the tree could otherwise catch — the
+// §2.0 check above is the same shape, a scan of tracked paths against what a
+// text file says, with its own floors. `policy.test.mjs` is the publication
+// policy's suite, end to end from a bundle to the catalogue, and a tree-wide
+// docblock scan is not policy. (2) `policy.test.mjs` is deliberately RED on
+// `main` — M-T3.2's takedown bound exits at R3 — so a new guard added there
+// has no legible verdict of its own until R3; this suite is green, so this
+// guard's red is its own. (3) §2.0, above: a NEW file under `bot/tests/` is
+// run by nothing until `.github/workflows/bot-tests.yml` names it, and that
+// file is the coordinator's. Both candidate suites are already named there
+// (`bot-tests.yml:127` and `:135`), so the case goes in one of them and not
+// in a file of its own.
+//
+// Watched red on the real tree before any mutation: markers placed on the two
+// live headers found on 2026-09-22 — `bot/baseline.mjs`'s `MEASURED ABSENT`
+// paragraph and `plugins-ingest.yml`'s B-T3.4 step — both named
+// `bot/lib/decisions.mjs`, which landed `407b2ae` two days earlier, and the
+// scan failed on both. Then: a marker on a path that really is absent
+// (`log/baseline.json`) passed; a marker on `tools/priv-scan.mjs` failed and
+// named it; `@absent bot/lib/nothing.mjs — B-T9.9 lands it` failed as
+// malformed; `@absent AstraPlugins/proto/plugin.proto` failed as out of
+// reach; no markers at all, and an empty repository, each fired a floor.
+test("no `@absent` marker names a path this repository tracks", async () => {
+  const { scanAbsent, absentProblems, CORPUS_FLOOR, MARKER_FLOOR } =
+    await import("../../tools/absent-scan.mjs");
+
+  const scan = scanAbsent(REPO);
+
+  // This suite's own floor, over and above the scan's two: a scan whose
+  // corpus collapsed reports green about every claim in the tree, and the one
+  // number that cannot be faked by a broken walk is how many files it read.
+  assert.ok(
+    scan.read >= CORPUS_FLOOR,
+    `absent-scan read ${scan.read} tracked file(s); 471 of 514 were readable on 2026-09-22 and the floor is ` +
+    `${CORPUS_FLOOR}. The 43 it skips carry a NUL and have no comment lines — they are counted and reported ` +
+    `(${scan.binary} here) rather than dropped, because the estate's grep wrapper is \`ugrep -I\` and drops ` +
+    `them silently with a clean exit`,
+  );
+  assert.ok(
+    scan.markers.length >= MARKER_FLOOR,
+    `${scan.markers.length} \`@absent\` marker(s) in the tree, floor ${MARKER_FLOOR}. A tree with no markers ` +
+    `passes this test by asserting nothing about anything`,
+  );
+
+  assert.equal(
+    absentProblems(scan).join("\n"),
+    "",
+    "an @absent marker names a path that is on `main`, or is written in a form nothing can check",
+  );
+});
+
+// What this check does NOT reach, recorded here as well as in the scan's own
+// header, because the register entry scopes the closure and a reader of this
+// suite is the one most likely to assume otherwise:
+//
+//   * A claim about ANOTHER REPOSITORY. `git ls-files` here cannot answer for
+//     `AstraPlugins` or `Astra`, so such a marker is refused as malformed
+//     rather than passed — a marker that can never go red is worse than none.
+//   * A claim about a SYMBOL rather than a path: "`fixed_reasons` is not on
+//     `main`" (`bot/tests/moderation-run.test.mjs`), "the allow-list is not
+//     widened" (`plugins-ingest.yml`'s B-T3.4 step). The file exists in every
+//     such case; the claim is about a field, a caller or a behaviour inside
+//     it, and that needs a test — `bot/tests/code-paths.test.mjs` is where
+//     that kind lives.
+//   * PROSE. All four of gap 28's original instances were sentences, as were
+//     all four found live since. A marker only covers an absence somebody
+//     chose to mark, and a retrofit over the prose would be forty guesses
+//     about what forty sentences meant, made by the person least able to
+//     check.
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The bot workflows' job graph (registry plan B-T3.1; BOT-1, BOT-2, BOT-4,
 // BOT-5, BOT-6, BOT-51, BOT-55, BOT-56, BOT-89, ID-38, INV-7).

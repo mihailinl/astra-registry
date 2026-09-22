@@ -29,12 +29,36 @@
 //
 // ── what is refused by name, and why nothing stands in for it ──────────────
 //
-// **One of this task's three gates is still absent. Re-measured 2026-09-20,
-// because the paragraph below said three and had been wrong for a day.**
-// `edab81a` landed both `certificateIds` (`bot/lib/certificate.mjs:368`) and
-// `fetchRepositoryIds` (`bot/lib/github.mjs:297`); `f1a9d49` then edited this
-// file and left the header saying they were missing. Only B-T2.2's
-// `bot/lib/decisions.mjs` is `MEASURED ABSENT` today.
+// **All three of this task's gates have landed, and this paragraph went on
+// naming one of them as absent for two days after the last one did.**
+// `edab81a` landed both `certificateIds` (`bot/lib/certificate.mjs`) and
+// `fetchRepositoryIds` (`bot/lib/github.mjs`); `f1a9d49` then edited this file
+// and left the header saying they were missing; `407b2ae` landed B-T2.2's
+// `bot/lib/decisions.mjs` on 2026-09-20 and the sentence here that called it
+// `MEASURED ABSENT` was still being read as true on 2026-09-22. Nothing
+// executes a comment, so there was no run in which it could go red.
+//
+// **The refusal stopped refusing with the module, and that is the half a
+// re-measurement of the file list would have missed.** `resolveWriter` in
+// `bot/export-issues.mjs` checks `fs.existsSync` and then asks for
+// `writeDecisionRecord`; `bot/lib/decisions.mjs` exports it. So `--write`
+// resolves a writer today, where the bullet below says it is refused by name.
+// Whether `--write` is otherwise ready is B-T3.7b's question; that it is no
+// longer stopped HERE is this file's.
+//
+// `tools/absent-scan.mjs` is the reader that can now disagree with an absence
+// stated in this file: written as `@absent <path> (<task>)` on a comment line
+// of its own, it goes red the day git tracks the path. Every claim in the
+// paragraph above is prose and stays out of its reach — which is exactly why
+// they lasted.
+//
+// @absent log/baseline.json (MIG-20)
+//
+// That marker is the one absence here a machine can hold. `--write` refuses
+// when `log/baseline.json` already exists and `log/` is untracked today; the
+// day it is not, the marker goes red — which is the day "it runs ONCE" and
+// "four things wait on the marker it writes" both need re-reading, by whoever
+// is running the R3 ceremony rather than by whoever finds this file next.
 //
 // That is not a tidying note. Two sentences a few lines down — "unreachable
 // until B-T1.1 lands" over `verifyOne`, and the refusals that "stand in for
@@ -60,11 +84,12 @@
 //   * **B-T1.3** — `fetchRepositoryIds` in `bot/lib/github.mjs`. LANDED
 //     `edab81a`. `--names` needs it, and refuses by name once there is a
 //     baseline to compare.
-//   * **B-T2.2** — STILL ABSENT. `bot/lib/decisions.mjs`, which derives BOT-35's
-//     `decision_id` and places the record. `--write` refuses through
-//     `resolveWriter`, which is imported from `bot/export-issues.mjs` rather
-//     than re-written here, so that the two composers cannot come to disagree
-//     about which module owns an id.
+//   * **B-T2.2** — `bot/lib/decisions.mjs`, which derives BOT-35's
+//     `decision_id` and places the record. LANDED `407b2ae`, and with it the
+//     refusal: `--write` asks through `resolveWriter`, which is imported from
+//     `bot/export-issues.mjs` rather than re-written here so that the two
+//     composers cannot come to disagree about which module owns an id — and
+//     `resolveWriter` now returns `writeDecisionRecord` instead of throwing.
 //
 // Each refusal names the module, the task and the one function it wants. That
 // is the whole of what this file can honestly do about them.
