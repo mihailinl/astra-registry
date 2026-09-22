@@ -30,12 +30,15 @@ import { loadTestRoot } from "../testkeys/regenerate.mjs";
 import { signRevocations } from "../sign-revocations.mjs";
 import { armingState } from "../signer/pages.mjs";
 import { SIGNED_FILES } from "../signer/plan.mjs";
-import { GRACE_MINUTES, emit, finding, verdict } from "../served-set/report.mjs";
+import { GRACE_MINUTES, emit, finding, minutesSince, verdict } from "../served-set/report.mjs";
 import { gather, serve85 } from "../served-set/main-vs-signed.mjs";
 import { serve39 } from "../served-set/served-vs-signed.mjs";
-import {
-  PROVENANCE_WINDOW_DAYS, parseRunUrl, provenance, receiptName, signedCommits, trailersOf,
-} from "../served-set/provenance.mjs";
+// PROVENANCE_WINDOW_DAYS is deliberately NOT imported. Both fixtures that used
+// to compute an age from it could not see it move (2026-09-22: 7 → 1, nothing
+// red anywhere in the suite), and they now write the window's two edges as
+// literal hours either side of seven days. Importing it again is how this
+// module stopped being able to test it.
+import { parseRunUrl, provenance, receiptName, signedCommits, trailersOf } from "../served-set/provenance.mjs";
 import { SILENT_JOB_CODE, UNRENDERABLE_CODE, composeVerdict, jobsFromEnv } from "../served-set/compose.mjs";
 import { RUNWAY_DAYS, runwayVerdict } from "../served-set/runway.mjs";
 import { JOBS } from "../served-set/check.mjs";
@@ -217,13 +220,40 @@ export async function run() {
     // continuously and this check never fires. Measured from the commit that
     // raised the serial, which is by construction the last thing that could
     // have changed it, an unrelated commit moves nothing.
+    //
+    // **Three commits and three clocks, because two could not tell the
+    // pathspec apart.** This fixture used to hold exactly two — the advisory
+    // under `tools/revocations/` and the publication under `plugins/` — and
+    // measured 2026-09-22 that was not enough to aim it: LIST_PATHSPEC widened
+    // from "tools/revocations" to "tools" still selected the advisory commit,
+    // because no other commit in the tree was under `tools/` at all, and this
+    // check stayed green at the full suite. A check that cannot tell the
+    // pathspec in its own name from a strictly wider one is a check about
+    // `git log -1` and not about SERVE-85's clock.
+    //
+    // The middle commit closes that: it touches `tools/` OUTSIDE
+    // `tools/revocations/` and is two minutes old, so the three candidate
+    // clocks below are 180, 2 and 1 minutes old, and ONLY the narrow pathspec
+    // leaves the difference outside the 30-minute grace. Widen the pathspec and
+    // the fixture guard fires first, by name; read main's head instead and the
+    // verdict assertion fires.
     const t = makeTree("busy-main");
     t.write("tools/revocations/ASTRA-2026-0001.json", advisory());
     t.commit("an advisory, three hours ago", { at: "2026-09-19T09:00:00Z" });
+    t.write("tools/README-fixture.md", "a commit under tools/ that is not an advisory\n");
+    t.commit("a tools/ change two minutes ago", { at: "2026-09-19T11:58:00Z" });
     t.write("plugins/dice-roller/plugin.json", { schema: "astra.registry.plugin/1", id: "dice-roller" });
     t.commit("a publication, one minute ago", { at: "2026-09-19T11:59:00Z" });
 
     const facts = gather({ root: t.dir });
+    // The fixture guard, stated separately from the verdict so a widened
+    // pathspec is reported as what it is rather than as a missing finding.
+    const listAge = minutesSince(facts.listClock, "2026-09-19T12:00:00Z");
+    assert(listAge !== null && listAge > 170 && listAge < 190,
+      `the list's own clock is ${facts.listClock}, ${listAge} minute(s) old. It has to be the advisory commit's, ` +
+      `three hours back. A pathspec wider than tools/revocations reaches the tools/ commit two minutes old, and ` +
+      `main's head is the publication one minute old; either excuses a withdrawal that was dropped three hours ago`);
+
     const head = headFrom({
       revocations: { signatures: [], signed: { schema: REVOCATIONS_SCHEMA, serial: 1, revocations: [] } },
     });
@@ -407,6 +437,30 @@ export async function run() {
     // trailers are a working run's, the documents can be lifted from the
     // branch's own history — and the one thing the forger cannot produce is an
     // artifact named after a commit they made after the run finished.
+    //
+    // ── what this check does NOT hold, stated because it looks as if it does ──
+    //
+    // The artifact lists below are built by calling `receiptName`, the same
+    // function `provenance` calls, so the SPELLING of the receipt is not under
+    // test here and cannot be: measured 2026-09-22, `signed-commit-${sha}` was
+    // renamed to `signed_commit_${sha}` in tools/served-set/provenance.mjs and
+    // every check in this module stayed green, because both sides moved
+    // together. What IS under test is the relationship the name states — a
+    // receipt that names the OTHER commit is refused — and that is real: the
+    // honest commit passes and the forged one fails on the same run's
+    // artifacts.
+    //
+    // The spelling is a coupling to `.github/workflows/sign.yml`, which is what
+    // uploads the receipt, and it IS enforced — by `the receipt sign.yml
+    // uploads is the artifact SERVE-90 looks for` in bot/tests/workflows.test.mjs,
+    // run by bot-tests.yml and ingest.yml. Re-measured under the same rename on
+    // 2026-09-22: that suite goes red with "sign.yml uploads the receipt under a
+    // name provenance.mjs does not look for". So this is a BOUNDARY of
+    // tools/selftest.mjs and not an unenforced coupling, and the honest repair
+    // is this pointer rather than a second copy of the assertion here: a
+    // spelling pinned in this file would be pinned to a literal in this file,
+    // not to the workflow that has to agree with it, which is the shape of the
+    // problem and not a fix for it.
     const real = "1".repeat(40);
     const forged = "2".repeat(40);
     const runs = new Map([["77", signerRun({ artifacts: [receiptName(real)] })]]);
@@ -423,12 +477,33 @@ export async function run() {
     // window, and that difference is the check: a forged commit's cheapest
     // disguise is a run URL copied off a commit old enough that nothing
     // re-examines it.
-    const old = commitOf({ sha: "3".repeat(40), minutesOld: (PROVENANCE_WINDOW_DAYS + 3) * 1440, run: "99" });
+    //
+    // **`7 * 1440 + 60` is a literal, and the +60 is the whole point.** This
+    // age used to read `(PROVENANCE_WINDOW_DAYS + 3) * 1440`, so the old commit
+    // followed the constant and stayed outside whatever the window happened to
+    // be. Measured 2026-09-22: PROVENANCE_WINDOW_DAYS moved 7 → 1 and this
+    // check stayed green at the full suite, because a fixture computed from the
+    // constant under test cannot test the constant — it proved the duplicate
+    // index is wider than the window and said nothing about the window being
+    // seven days.
+    //
+    // An hour PAST seven days pins the window's upper edge here: widen it and
+    // the old commit comes into scope, `hexes` grows to two and the assertion
+    // below fails by name. The lower edge is pinned in `the head is checked
+    // however old it is…` further down, whose fixture puts a commit an hour
+    // INSIDE seven days and requires it to be examined. It has to be pinned
+    // there and not here, and the pointer is the reason: the fresh commit below
+    // is `commits[0]`, and the head is in scope whatever the window says, so
+    // narrowing is a thing THIS fixture is structurally unable to see.
+    const old = commitOf({ sha: "3".repeat(40), minutesOld: 7 * 1440 + 60, run: "99" });
     const fresh = commitOf({ sha: "4".repeat(40), minutesOld: 5, run: "99" });
     const runs = new Map([["99", signerRun({ artifacts: [receiptName(fresh.sha), receiptName(old.sha)] })]]);
     const v = provenance({ commits: [fresh, old], repo: REPO, runs, now: NOW, ...ancestry });
     assert(codesOf(v).includes("SERVE_90_RUN_CITED_TWICE"),
       `one run made two commits and nothing said so: ${codesOf(v)}`);
+    assertEqual(v.hexes.join(","), fresh.sha,
+      "the older commit was EXAMINED, so the duplicate above was found inside the window and this check no longer " +
+      "says anything about the case it is named for: a run URL copied off a commit nothing re-examines");
   });
 
   await test("a run of another workflow, another branch or an event the signer never runs on is refused", () => {
@@ -472,16 +547,46 @@ export async function run() {
       "bytes signed over a tree that is not in public history were accepted");
   });
 
-  await test("the head is checked however old it is, and older commits fall out of the window", () => {
+  await test("the head is checked however old it is, and older commits fall out of the 7-day window", () => {
     // Artifacts expire, so a receipt for last year's commit is gone and a
     // check demanding one would be permanently red about history nobody can
     // re-attest. The head is the exception because the head is what is served.
+    //
+    // **The two ages an hour either side of seven days are the check.** This
+    // fixture used to be a 400-day head and a 500-day second commit, which is
+    // outside every window from one day to three hundred and ninety-nine, so it
+    // told the two apart at no particular value. Measured 2026-09-22:
+    // PROVENANCE_WINDOW_DAYS moved 7 → 1 and NOTHING in the whole 25-module
+    // suite went red. The window was pinned only from above — widening it to
+    // 600 did red this check, because the 500-day commit came into scope — and
+    // narrowing was silent. Narrowing is the direction that costs coverage:
+    // SERVE-90 would quietly stop examining every `signed` commit between one
+    // and seven days old while this transcript stayed green.
+    //
+    // Now an hour INSIDE seven days must be examined and an hour OUTSIDE must
+    // not, so the window cannot move a day in either direction without this
+    // failing. This is the lower edge that `two signed commits citing one run…`
+    // above points at; that check holds the upper edge and cannot hold this one,
+    // because its fresh commit is the head and a head is never out of scope.
     const head = commitOf({ sha: "7".repeat(40), minutesOld: 400 * 1440, run: "70" });
-    const older = commitOf({ sha: "8".repeat(40), minutesOld: 500 * 1440, run: "71" });
-    const runs = new Map([["70", signerRun({ artifacts: [] })], ["71", signerRun({ artifacts: [] })]]);
-    const v = provenance({ commits: [head, older], repo: REPO, runs, now: NOW, ...ancestry });
-    assertEqual(codesOf(v), "SERVE_90_NO_RECEIPT", "the head's receipt was not required, or an old commit's was");
-    assert(v.hexes.length === 1 && v.hexes[0] === head.sha, "the window let a commit outside it be examined");
+    const justInside = commitOf({ sha: "8".repeat(40), minutesOld: 7 * 1440 - 60, run: "71" });
+    const justOutside = commitOf({ sha: "e".repeat(40), minutesOld: 7 * 1440 + 60, run: "72" });
+    const runs = new Map([
+      // No receipt: the head is checked however old it is, so this is the one
+      // finding the verdict may carry.
+      ["70", signerRun({ artifacts: [] })],
+      // In scope and in order, so all this commit contributes is its presence.
+      ["71", signerRun({ artifacts: [receiptName(justInside.sha)] })],
+      // Out of scope and broken, so a window wide enough to reach it says so
+      // with a second SERVE_90_NO_RECEIPT rather than passing quietly.
+      ["72", signerRun({ artifacts: [] })],
+    ]);
+    const v = provenance({ commits: [head, justInside, justOutside], repo: REPO, runs, now: NOW, ...ancestry });
+    assertEqual(codesOf(v), "SERVE_90_NO_RECEIPT",
+      "the head's receipt was not required, or a commit outside the window was asked for one");
+    assertEqual(v.hexes.join(","), [head.sha, justInside.sha].join(","),
+      "the window examined the wrong set. It is the head whatever its age, plus every commit younger than seven " +
+      "days: an hour inside is in, an hour outside is out, and a window that is not seven days gets one of those wrong");
   });
 
   await test("a run URL in another repository proves nothing, and a missing one is not a pass", () => {
@@ -602,12 +707,33 @@ export async function run() {
     // is an alarm about an outage. Both sides of the boundary, because a
     // threshold asserted from one side is satisfied by a check that fires
     // always or never.
-    const near = runwayVerdict({ documents: [{ where: "main", doc: trustExpiring(plusDays(RUNWAY_DAYS - 1)) }], now: RUNWAY_NOW });
-    assertEqual(near.status, "red", `${RUNWAY_DAYS - 1} days of runway did not alarm`);
+    //
+    // **89 and 91 are literals, and that is the repair.** They used to read
+    // `plusDays(RUNWAY_DAYS - 1)` and `plusDays(RUNWAY_DAYS + 1)`, so both
+    // fixtures followed the constant wherever it went and the two numbers in
+    // this check's own name were decorative. Measured 2026-09-22: RUNWAY_DAYS
+    // moved 90 → 30 in tools/served-set/runway.mjs and this check stayed green.
+    // The only thing that went red was the sibling below, whose `plusDays(30)`
+    // happened to collide with the new value — so the threshold in ROLL-45's
+    // name was pinned, in the whole suite, by an accident in another check's
+    // fixture.
+    //
+    // Written as literals the two assertions bracket the threshold: 89 must
+    // alarm, so RUNWAY_DAYS > 89, and 91 must not, so RUNWAY_DAYS <= 91. The
+    // assertEqual closes the one day of slack a two-sided bracket leaves — not
+    // as a restatement of the constant but because ROLL-45's runbook table
+    // quotes 90 to an operator scheduling a root ceremony, and a reader of that
+    // table is entitled to have the code agree with it to the day.
+    assertEqual(RUNWAY_DAYS, 90,
+      "ROLL-45's runway is 90 days and this check's name says 89 and 91 about it; the runbook quotes 90 too, so " +
+      "moving the constant is moving a date somebody has already put in a calendar");
+
+    const near = runwayVerdict({ documents: [{ where: "main", doc: trustExpiring(plusDays(89)) }], now: RUNWAY_NOW });
+    assertEqual(near.status, "red", "89 days of runway did not alarm");
     assertEqual(codesOf(near), "ROLL_45_TRUST_EXPIRES_SOON", "the wrong code reached the channel");
 
-    const far = runwayVerdict({ documents: [{ where: "main", doc: trustExpiring(plusDays(RUNWAY_DAYS + 1)) }], now: RUNWAY_NOW });
-    assertEqual(far.status, "green", `${RUNWAY_DAYS + 1} days of runway alarmed, which is the shape of an alarm nobody reads`);
+    const far = runwayVerdict({ documents: [{ where: "main", doc: trustExpiring(plusDays(91)) }], now: RUNWAY_NOW });
+    assertEqual(far.status, "green", "91 days of runway alarmed, which is the shape of an alarm nobody reads");
     assert(far.notes.join(" ").includes("days out"), "a green runway says nothing about how long is left");
 
     // And the document this repository actually carries, at the same clock the
@@ -624,6 +750,15 @@ export async function run() {
     // would silently narrow what is watched: the envelope would still say
     // 2027-08-19 while the key signing every catalogue under it went dead
     // months earlier, and nothing would have said so.
+    //
+    // The `plusDays(30)` below is a key comfortably inside a 90-day runway and
+    // nothing more. Until 2026-09-22 it was also, by accident, the only thing
+    // in the whole suite that pinned RUNWAY_DAYS — the check above computed
+    // both its fixtures from the constant, so moving 90 to 30 reddened this
+    // row and not the one named for the number. That is fixed above, where it
+    // belongs; do not read 30 here as a threshold, and do not rewrite it as
+    // an expression of RUNWAY_DAYS, which is how the check above came to be
+    // unable to see its own constant move.
     const doc = trustExpiring(plusDays(400), [{ key_id: "astra-index-2026a", not_after: plusDays(30) }]);
     const v = runwayVerdict({ documents: [{ where: "main", doc }], now: RUNWAY_NOW });
     assertEqual(v.status, "red", "a key that lapses in 30 days passed because the envelope was far from expiry");
