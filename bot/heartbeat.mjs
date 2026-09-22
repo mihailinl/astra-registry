@@ -55,14 +55,15 @@ const POST_TIMEOUT_MS = 10_000;
  * `bot/tests/alert.test.mjs` holds the committed table to — asked here, in the
  * run, and not only there (`dev/couplings.md` gap 23).
  *
- * The suite proves the table on `main` is sound. It does not prove that the
- * table a job is HOLDING when it posts is that table: nothing requires the
- * suite to be green before a commit reaches `main`, and every alert job checks
- * out its own commit and runs whatever `bot/lib/alert-checks.mjs` says there.
- * So the three questions are asked by the one process that turns the table
- * into a request, and a table that fails any of them posts nothing: the step
- * is red, the receiver hears nothing and pages on silence, and the two paths
- * to a person agree — which is this file's rule for every other failure too.
+ * The suite proves the table it was run on is sound. It does not prove that
+ * the table a job is HOLDING when it posts is that table: an alert job checks
+ * out its own commit and runs whatever `bot/lib/alert-checks.mjs` says there,
+ * and a red suite on that commit is a different run, which stops nothing in
+ * this one. So the three questions are asked by the one process that turns
+ * the table into a request, and a table that fails any of them posts nothing:
+ * the step is red, the receiver hears nothing and pages on silence, and the
+ * two paths to a person agree — which is this file's rule for every other
+ * failure too.
  *
  * Each sentence names the guard that produced it, so a red step says which
  * rule the table broke rather than only that it broke one. Nothing here
