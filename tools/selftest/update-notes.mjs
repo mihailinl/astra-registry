@@ -24,7 +24,7 @@ import { ROOT_B_KEY_ID, TRUST_ROOT_A } from "./fixtures.mjs";
 import {
   PRODUCTION_ROOTS, TRUST_ROOT_B, UPDATE_NOTES_EN, UPDATE_SIGNER, UPDATE_SIGNER_PUB,
   assertRefused, freshArgs, hoursFromNow, nextSeq, pretty, readText,
-  updateDoc, updateSandbox, updateSigner, updateTmp,
+  updateDoc, updateSandbox, updateSigner, updateSignerAt, updateTmp,
   withDuplicateVersion, withUnpaddedSignature, writeUpdateDoc, writeUpdateText,
 } from "./update-fixtures.mjs";
 
@@ -165,6 +165,46 @@ export async function run() {
     out = updateTmp("x");
     assertRefused(updateSigner([...freshArgs("0.2.6"), "--out", out], ahead),
       "not strictly later than releases/0.2.5/manifest.json", out, "a record dated tomorrow");
+
+    // ── the repair: three cases the four above could not tell apart ──────────
+    //
+    // Measured 2026-09-22, each with all 317 checks green: the signedAt rule
+    // in signFresh weakened from "strictly later" to "not earlier"; the
+    // signedAt rule pointed at the record with the highest VERSION instead of
+    // the one signed last; and the version rule pointed at the record signed
+    // last instead of the highest version. The fixtures above hold one record
+    // at a time, where the last-signed and the highest-versioned are the same
+    // record, and dated a day ahead, where "earlier" and "equal" answer alike.
+
+    // Equal at the seconds signedAt is published in, which no running clock
+    // reaches on purpose. `updateSignerAt` stops the child's clock half a second
+    // into the record's own second; a second later is the other side of the rule.
+    const at = hoursFromNow(-1);
+    const same = updateSandbox([updateDoc({ signedAt: at })]);
+    out = updateTmp("x");
+    assertRefused(updateSignerAt(Date.parse(at) + 500, [...freshArgs("0.2.6"), "--out", out], same),
+      "not strictly later than releases/0.2.5/manifest.json", out, "signed in the record's own second");
+    out = updateTmp("next-second");
+    const next = updateSignerAt(Date.parse(at) + 1000, [...freshArgs("0.2.6"), "--out", out], same);
+    assertEqual(next.status, 0, `one second after the record: ${next.stderr}`);
+
+    // After a withdrawal the record signed LAST is not the one offering the
+    // highest version, and each rule has its own: signedAt against the last
+    // signed, the version against the highest offered.
+    const withdrawnAhead = updateSandbox([
+      updateDoc({ version: "0.2.5", signedAt: hoursFromNow(-48) }),
+      updateDoc({ version: "0.2.4", signedAt: hoursFromNow(24) }),
+    ]);
+    out = updateTmp("x");
+    assertRefused(updateSigner([...freshArgs("0.2.6"), "--out", out], withdrawnAhead),
+      "not strictly later than releases/0.2.4/manifest.json", out, "a withdrawal signed after the highest version");
+    const withdrawn = updateSandbox([
+      updateDoc({ version: "0.2.5", signedAt: hoursFromNow(-48) }),
+      updateDoc({ version: "0.2.4", signedAt: hoursFromNow(-24) }),
+    ]);
+    out = updateTmp("x");
+    assertRefused(updateSigner([...freshArgs("0.2.4"), "--out", out], withdrawn),
+      "is older than the 0.2.5 that releases/0.2.5/manifest.json offers", out, "the withdrawn-to version, signed afresh");
   });
 
   await test("--verify --receipt binds the verdict to the exact bytes it read, written only after every check passes", () => {
