@@ -37,10 +37,75 @@
 
 import { pathToFileURL } from "node:url";
 
-import { CHECKS, findCheck, secretName } from "./lib/alert-checks.mjs";
+import {
+  CHECKS,
+  MIN_BOUND_MINUTES,
+  alertsEnvironmentSecrets,
+  boundMinutes,
+  findCheck,
+  secretName,
+  tableProblems,
+} from "./lib/alert-checks.mjs";
 import { runUrl } from "./lib/alert-verdict.mjs";
 
 const POST_TIMEOUT_MS = 10_000;
+
+/**
+ * The table this process is about to dial from, held to the three guards
+ * `bot/tests/alert.test.mjs` holds the committed table to — asked here, in the
+ * run, and not only there (`dev/couplings.md` gap 23).
+ *
+ * The suite proves the table on `main` is sound. It does not prove that the
+ * table a job is HOLDING when it posts is that table: nothing requires the
+ * suite to be green before a commit reaches `main`, and every alert job checks
+ * out its own commit and runs whatever `bot/lib/alert-checks.mjs` says there.
+ * So the three questions are asked by the one process that turns the table
+ * into a request, and a table that fails any of them posts nothing: the step
+ * is red, the receiver hears nothing and pages on silence, and the two paths
+ * to a person agree — which is this file's rule for every other failure too.
+ *
+ * Each sentence names the guard that produced it, so a red step says which
+ * rule the table broke rather than only that it broke one. Nothing here
+ * decides anything the three guards do not already decide:
+ *
+ *   * `tableProblems` — its whole answer, unchanged;
+ *   * `boundMinutes` — BOT-85's floor, `MIN_BOUND_MINUTES`, for every check
+ *     whose interval is fixed. A null interval has no bound yet and says so,
+ *     and that is not a refusal;
+ *   * `alertsEnvironmentSecrets` — the list environment `alerts` is built from
+ *     names no secret that is another party's check's ping URL (attack M-5).
+ *     The one way the table can say that without `tableProblems` noticing is
+ *     two spellings meeting: a service check called `alarm-ack-start` and the
+ *     registry's `alarm-ack` start signal are the same secret name.
+ *
+ * @returns {string[]} one sentence per problem; empty means the table is one a job may dial from
+ */
+export function tableRefusals() {
+  const refusals = tableProblems().map((p) => `tableProblems: ${p}`);
+  for (const check of CHECKS) {
+    const bound = boundMinutes(check);
+    if (bound === null) continue;
+    if (!(bound >= MIN_BOUND_MINUTES)) {
+      refusals.push(
+        `boundMinutes: ${check.name ?? check.name_pending}: interval_seconds ${JSON.stringify(check.interval_seconds)} ` +
+        `gives a silence bound of ${bound} minutes, and BOT-85's floor is ${MIN_BOUND_MINUTES}`,
+      );
+    }
+  }
+  const secrets = new Set(alertsEnvironmentSecrets());
+  for (const check of CHECKS) {
+    if (check.party === "registry" || check.name === null) continue;
+    const name = secretName(check.name);
+    if (secrets.has(name)) {
+      refusals.push(
+        `alertsEnvironmentSecrets: ${name} is in the list environment \`alerts\` is built from, and it is the ` +
+        `whole ping URL of ${check.name}, which ${check.party} posts to. No credential the registry holds may ` +
+        `resolve another party's check (attack M-5).`,
+      );
+    }
+  }
+  return refusals;
+}
 
 /**
  * @returns {Promise<{code: number, url: string|null, problems: string[]}>}
@@ -56,6 +121,17 @@ export async function postHeartbeat({
     for (const p of problems) log.error(`FAIL  ${p}`);
     return { code: 1, url: null, problems };
   };
+
+  // The table first, because every line below reads it: a name looked up in
+  // an unsound table is an answer from a table nobody has checked.
+  const unsound = tableRefusals();
+  if (unsound.length) {
+    return fail([
+      `bot/lib/alert-checks.mjs, as this job checked it out, fails the guards the suite holds it to, so nothing ` +
+      `was posted for receiver check ${JSON.stringify(check)} (dev/couplings.md gap 23):`,
+      ...unsound,
+    ]);
+  }
 
   // A name that is not in the table is a typo, or a check nobody created. Both
   // end the same way — the receiver never hears from this job and pages on
