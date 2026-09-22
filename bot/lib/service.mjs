@@ -264,7 +264,13 @@ export const BODIES = Object.freeze({
   "astra.plugins.bot-notice-status/1": Object.freeze({
     role: "success",
     members: Object.freeze([
-      ["shadow", true], ["status", true], ["accepted_at", false], ["ended_at", false],
+      ["shadow", true], ["status", true],
+      ["accepted_at", "conditional", Object.freeze({
+        iff: Object.freeze({ status: Object.freeze(["sent", "previous_sent"]) }),
+      })],
+      ["ended_at", "conditional", Object.freeze({
+        iff: Object.freeze({ status: Object.freeze(["previous_ended"]) }),
+      })],
     ]),
   }),
   "astra.plugins.bot-result/1": Object.freeze({
