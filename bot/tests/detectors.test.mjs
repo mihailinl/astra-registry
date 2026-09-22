@@ -28,6 +28,7 @@ import test from "node:test";
 
 import { A7_BOUND_MINUTES, DETECTORS, detect, verdict } from "../detectors.mjs";
 import { verdictProblems } from "../lib/alert-verdict.mjs";
+import { GRACE_MINUTES } from "../../tools/served-set/report.mjs";
 import {
   SOURCE_DIR as REVOCATIONS_SOURCE_DIR,
   SOURCE_PATHSPEC as REVOCATIONS_SOURCE_PATHSPEC,
@@ -337,13 +338,19 @@ function signedAt(dir, sourceCommit, when) {
   return main;
 }
 
+// Every A7 test names its `now`. A7 measures against the run's clock (gap 76),
+// and these fixtures are dated 2026-01-01, so a test that left `now` to the
+// wall clock would find every change months overdue: it would pass, and it
+// would stop being able to see its own bound.
+const NOW = (iso) => Date.parse(iso);
+
 test("A7: `signed` three hours behind the newest plugins commit", () => {
   const dir = estate();
   const source = git(dir, ["rev-parse", "HEAD"]);
   version_(dir, "alpha", "1.1.0");
   commit(dir, "registry: publish", "2026-01-01T03:30:00Z");
   signedAt(dir, source, "2026-01-01T03:31:00Z");
-  const r = detect({ root: dir });
+  const r = detect({ root: dir, now: NOW("2026-01-01T06:30:00Z") });
   assert.ok(codes(r).includes("A7_SIGNED_BEHIND_PLUGINS"), JSON.stringify(codes(r)));
   assert.ok(!r.skipped.some((s) => s.detector === "A7"), "A7 skipped with `signed` present");
 });
@@ -354,21 +361,24 @@ test("A7: inside the two-hour bound, nothing", () => {
   version_(dir, "alpha", "1.1.0");
   commit(dir, "registry: publish", "2026-01-01T01:30:00Z");
   signedAt(dir, source, "2026-01-01T01:31:00Z");
-  assert.ok(!codes(detect({ root: dir })).includes("A7_SIGNED_BEHIND_PLUGINS"));
+  assert.ok(!codes(detect({ root: dir, now: NOW("2026-01-01T03:00:00Z") })).includes("A7_SIGNED_BEHIND_PLUGINS"));
   assert.equal(A7_BOUND_MINUTES.plugins, 120);
 });
 
 test("A7: the revocations bound is thirty minutes, not two hours", () => {
-  // Watched failing by giving both paths the same bound: this tree is 40
-  // minutes behind, which is inside the plugins bound and outside this one.
+  // Watched failing by giving both paths the same bound: this advisory has
+  // waited 40 minutes, which is inside the plugins bound and outside this one.
   const dir = estate();
   const source = git(dir, ["rev-parse", "HEAD"]);
   write(dir, "tools/revocations/one.json", { schema: "astra.registry.revocation/1" });
   commit(dir, "registry: a revocation", "2026-01-01T00:40:00Z");
   signedAt(dir, source, "2026-01-01T00:41:00Z");
-  const found = codes(detect({ root: dir }));
+  const found = codes(detect({ root: dir, now: NOW("2026-01-01T01:20:00Z") }));
   assert.ok(found.includes("A7_SIGNED_BEHIND_REVOCATIONS"), JSON.stringify(found));
   assert.ok(!found.includes("A7_SIGNED_BEHIND_PLUGINS"), "the plugins bound fired at 40 minutes");
+  assert.equal(A7_BOUND_MINUTES.revocations, 30);
+  assert.equal(A7_BOUND_MINUTES.revocations, GRACE_MINUTES,
+    "A7's withdrawal-list bound and SERVE-85's window are one requirement and have parted");
 });
 
 test("A7: the withdrawal list's README is not the withdrawal list", () => {
@@ -388,7 +398,7 @@ test("A7: the withdrawal list's README is not the withdrawal list", () => {
   write(dir, "tools/revocations/README.md", "# advisories\n\nHow to write one.\n");
   commit(dir, "docs: how to write an advisory", "2026-01-01T03:00:00Z");
   signedAt(dir, source, "2026-01-01T03:01:00Z");
-  const found = codes(detect({ root: dir }));
+  const found = codes(detect({ root: dir, now: NOW("2026-01-01T06:00:00Z") }));
   assert.ok(
     !found.includes("A7_SIGNED_BEHIND_REVOCATIONS"),
     `a documentation commit alarmed the withdrawal-list detector: ${JSON.stringify(found)}`,
@@ -406,7 +416,7 @@ test("A7: an advisory beside that README still alarms", () => {
   write(dir, "tools/revocations/ASTRA-2026-0001.json", { schema: "astra.registry.revocation/1" });
   commit(dir, "registry: an advisory, and a line about advisories", "2026-01-01T03:00:00Z");
   signedAt(dir, source, "2026-01-01T03:01:00Z");
-  const found = codes(detect({ root: dir }));
+  const found = codes(detect({ root: dir, now: NOW("2026-01-01T06:00:00Z") }));
   assert.ok(found.includes("A7_SIGNED_BEHIND_REVOCATIONS"), JSON.stringify(found));
 });
 
@@ -444,7 +454,7 @@ function mergedFromBranch(file, body) {
 
 test("A7: an advisory merged from a long-lived branch is dated at the merge", () => {
   const { dir, merge } = mergedFromBranch(`${REVOCATIONS_SOURCE_DIR}/ASTRA-2026-0001.json`, { schema: "astra.registry.revocation/1" });
-  const r = detect({ root: dir });
+  const r = detect({ root: dir, now: NOW("2026-01-01T06:30:00Z") });
   assert.equal(r.scanned.revocations_drift_minutes, 150,
     `A7 measured ${r.scanned.revocations_drift_minutes} minutes; the advisory became reachable from main at the merge, 150 minutes after the Source-Commit`);
   const found = r.findings.find((f) => f.code === "A7_SIGNED_BEHIND_REVOCATIONS");
@@ -454,12 +464,161 @@ test("A7: an advisory merged from a long-lived branch is dated at the merge", ()
 
 test("A7: a publication merged from a long-lived branch is dated at the merge", () => {
   const { dir, merge } = mergedFromBranch("plugins/alpha/versions/1.1.0.json", { schema: "astra.registry.version/1" });
-  const r = detect({ root: dir });
+  const r = detect({ root: dir, now: NOW("2026-01-01T06:30:00Z") });
   assert.equal(r.scanned.plugins_drift_minutes, 150,
     `A7 measured ${r.scanned.plugins_drift_minutes} minutes; the version became reachable from main at the merge, 150 minutes after the Source-Commit`);
   const found = r.findings.find((f) => f.code === "A7_SIGNED_BEHIND_PLUGINS");
   assert.ok(found, `a publication merged 150 minutes after \`signed\`'s Source-Commit went unreported: ${JSON.stringify(codes(r))}`);
   assert.equal(found.hex, merge, "the finding names a commit other than the merge that brought the version onto main");
+});
+
+// ── A7 and the run's clock (gap 76) ─────────────────────────────────────────
+//
+// `detectors.yml` and `sign.yml` start on the same push. The detector reads
+// `signed` a few seconds in, the signer commits a few seconds later, and in
+// every such pair measured on 2026-09-22 the detector read first. A7 used to
+// subtract the Source-Commit's time from the newest change's and never read
+// `now`, so a Source-Commit older than the bound made the push's own run alarm
+// — run 35502265394, the only A7 red there has been, fetched `signed` at
+// 09:25:28Z and the signer committed at 09:25:31Z — and a Source-Commit within
+// the bound made A7 blind to a signer that never ran again.
+
+/**
+ * `signed` made at 00:01 from the seed (00:00), then one push at 03:00 that
+ * moves both documents' inputs. The previous Source-Commit is 180 minutes
+ * older than the push, past both bounds, which is the shape that raced.
+ */
+function pushAfterQuiet() {
+  const dir = estate();
+  const source = git(dir, ["rev-parse", "HEAD"]);
+  signedAt(dir, source, "2026-01-01T00:01:00Z");
+  version_(dir, "alpha", "1.1.0");
+  write(dir, `${REVOCATIONS_SOURCE_DIR}/ASTRA-2026-0001.json`, { schema: "astra.registry.revocation/1" });
+  const push = commit(dir, "Merge pull request #2: an advisory, and a publication", "2026-01-01T03:00:00Z");
+  // The fixture guard, from git and not from A7: the drift the old arithmetic
+  // read is past both bounds, so this tree is the race's shape and not a
+  // quieter one that would pass either way.
+  const quiet = (Date.parse(git(dir, ["log", "-1", "--format=%cI", push])) - Date.parse(git(dir, ["log", "-1", "--format=%cI", source]))) / 60000;
+  assert.ok(quiet > A7_BOUND_MINUTES.plugins && quiet > A7_BOUND_MINUTES.revocations,
+    `the fixture's previous Source-Commit is only ${quiet} minutes older than the push`);
+  return { dir, push };
+}
+
+const a7Codes = (r) => r.findings.filter((f) => f.detector === "A7").map((f) => f.code).sort();
+
+test("A7 does not alarm on a push its signer has not had time to sign", () => {
+  const { dir } = pushAfterQuiet();
+  const r = detect({ root: dir, now: NOW("2026-01-01T03:00:03Z") });
+  assert.deepEqual(a7Codes(r), [],
+    "A7 alarmed three seconds after the push, reading `signed` before the same push's signer could commit");
+  // Not vacuous: `signed` IS behind on both halves, by one commit, for seconds.
+  assert.equal(r.scanned.plugins_unsigned_commits, 1);
+  assert.equal(r.scanned.revocations_unsigned_commits, 1);
+  assert.equal(r.scanned.revocations_unsigned_minutes, 0);
+});
+
+test("A7 still alarms when the signer has not caught up after the grace", () => {
+  const { dir, push } = pushAfterQuiet();
+  const at = (iso) => a7Codes(detect({ root: dir, now: NOW(iso) }));
+  // The list's grace is its bound, 30 minutes, inclusive as SERVE-85's is.
+  assert.deepEqual(at("2026-01-01T03:30:00Z"), [], "the list alarmed with the signer still inside its 30 minutes");
+  assert.deepEqual(at("2026-01-01T03:30:01Z"), ["A7_SIGNED_BEHIND_REVOCATIONS"],
+    "no signer run in 30 minutes, and the withdrawal list's half said nothing");
+  // The catalogue has two hours; the list is still overdue beside it.
+  assert.deepEqual(at("2026-01-01T05:00:00Z"), ["A7_SIGNED_BEHIND_REVOCATIONS"]);
+  assert.deepEqual(at("2026-01-01T05:00:01Z"), ["A7_SIGNED_BEHIND_PLUGINS", "A7_SIGNED_BEHIND_REVOCATIONS"],
+    "no signer run in two hours, and the catalogue's half said nothing");
+  const found = detect({ root: dir, now: NOW("2026-01-01T13:00:00Z") }).findings.filter((f) => f.detector === "A7");
+  assert.deepEqual(found.map((f) => f.hex), [push, push], "the finding names a commit other than the unsigned push");
+});
+
+test("A7 alarms on a change the signer never signed, however soon after the last Source-Commit it landed", () => {
+  // The other half of the same defect. Measured before the repair: an
+  // advisory 20 minutes after the Source-Commit gave a drift of 20, inside
+  // the bound, at every hour after — a signer that stopped was invisible.
+  const dir = estate();
+  const source = git(dir, ["rev-parse", "HEAD"]);
+  signedAt(dir, source, "2026-01-01T00:01:00Z");
+  version_(dir, "alpha", "1.1.0");
+  write(dir, `${REVOCATIONS_SOURCE_DIR}/ASTRA-2026-0001.json`, { schema: "astra.registry.revocation/1" });
+  commit(dir, "registry: an advisory and a publication, soon after the last signing", "2026-01-01T00:20:00Z");
+  const r = detect({ root: dir, now: NOW("2026-01-01T10:20:00Z") });
+  assert.deepEqual(a7Codes(r), ["A7_SIGNED_BEHIND_PLUGINS", "A7_SIGNED_BEHIND_REVOCATIONS"],
+    "ten hours with no signer run, and A7 said nothing because the change came 20 minutes after the last one");
+});
+
+test("A7 is silent at any hour once `signed` carries the change", () => {
+  // What keeps "compare with now" from becoming "alarm on anything old": the
+  // question is what `signed` does NOT carry, and here it carries everything.
+  const dir = estate();
+  version_(dir, "alpha", "1.1.0");
+  write(dir, `${REVOCATIONS_SOURCE_DIR}/ASTRA-2026-0001.json`, { schema: "astra.registry.revocation/1" });
+  const push = commit(dir, "registry: an advisory and a publication", "2026-01-01T03:00:00Z");
+  signedAt(dir, push, "2026-01-01T03:01:00Z");
+  const r = detect({ root: dir, now: NOW("2026-01-11T03:00:00Z") });
+  assert.deepEqual(a7Codes(r), [], "A7 alarmed ten days on about changes `signed` already carries");
+  assert.equal(r.scanned.revocations_unsigned_commits, 0);
+});
+
+test("A7 measures from the oldest change `signed` does not carry, so a later one cannot reset it", () => {
+  // A dead signer on a `main` that keeps taking advisories: dated at the
+  // newest, the wait would restart with every one and never pass the bound.
+  const dir = estate();
+  const source = git(dir, ["rev-parse", "HEAD"]);
+  signedAt(dir, source, "2026-01-01T00:01:00Z");
+  write(dir, `${REVOCATIONS_SOURCE_DIR}/ASTRA-2026-0001.json`, { schema: "astra.registry.revocation/1" });
+  const first = commit(dir, "registry: an advisory", "2026-01-01T00:10:00Z");
+  write(dir, `${REVOCATIONS_SOURCE_DIR}/ASTRA-2026-0002.json`, { schema: "astra.registry.revocation/1" });
+  commit(dir, "registry: another", "2026-01-01T00:30:00Z");
+  const r = detect({ root: dir, now: NOW("2026-01-01T00:41:00Z") });
+  const found = r.findings.find((f) => f.code === "A7_SIGNED_BEHIND_REVOCATIONS");
+  assert.ok(found, `the first advisory has waited 31 minutes and A7 dated the wait from the second: ${JSON.stringify(r.scanned)}`);
+  assert.equal(found.hex, first);
+  assert.equal(r.scanned.revocations_unsigned_minutes, 31);
+});
+
+test("A7: a change dated after the run's clock is overdue, not excused until its date", () => {
+  // The one shape `now` could have hidden and the old arithmetic did not: a
+  // committer date in the future makes the wait negative, and a negative wait
+  // is inside any bound. Past the bound's own width it is a clock that cannot
+  // be read, and SERVE-85's rule for those is that they excuse nothing.
+  const dir = estate();
+  const source = git(dir, ["rev-parse", "HEAD"]);
+  signedAt(dir, source, "2026-01-01T00:01:00Z");
+  write(dir, `${REVOCATIONS_SOURCE_DIR}/ASTRA-2026-0001.json`, { schema: "astra.registry.revocation/1" });
+  commit(dir, "registry: an advisory from a committer whose clock is wrong", "2026-06-01T00:00:00Z");
+  assert.deepEqual(a7Codes(detect({ root: dir, now: NOW("2026-01-01T03:00:00Z") })), ["A7_SIGNED_BEHIND_REVOCATIONS"]);
+  // A few minutes of skew between the runner and whoever dated the merge is
+  // not that, and must not page.
+  assert.deepEqual(a7Codes(detect({ root: dir, now: NOW("2026-05-31T23:55:00Z") })), []);
+});
+
+test("A7: a README commit after a signed advisory is not a change `signed` has missed", () => {
+  // The walk that decides reads the list's SOURCE_PATHSPEC as the dating
+  // does. With an advisory already signed, only the question "what has not
+  // been signed" can see this README, and it must not count it.
+  const dir = estate();
+  write(dir, `${REVOCATIONS_SOURCE_DIR}/ASTRA-2026-0001.json`, { schema: "astra.registry.revocation/1" });
+  const advisory = commit(dir, "registry: an advisory", "2026-01-01T01:00:00Z");
+  signedAt(dir, advisory, "2026-01-01T01:01:00Z");
+  write(dir, `${REVOCATIONS_SOURCE_DIR}/README.md`, "# advisories\n\nHow to write one.\n");
+  commit(dir, "docs: how to write an advisory", "2026-01-01T03:00:00Z");
+  const r = detect({ root: dir, now: NOW("2026-01-01T06:00:00Z") });
+  assert.deepEqual(a7Codes(r), [], `a documentation commit after the signed advisory alarmed: ${JSON.stringify(r.scanned)}`);
+  assert.equal(r.scanned.revocations_unsigned_commits, 0);
+});
+
+test("A7: the signer's time on a merged change starts at the merge", () => {
+  // Gap 68's shape, asked of the clock `now` is compared with: the advisory
+  // was committed on a branch at 01:00 and reached main at 04:00. Ten minutes
+  // after the merge the signer has had ten minutes, not 190.
+  const { dir, merge } = mergedFromBranch(`${REVOCATIONS_SOURCE_DIR}/ASTRA-2026-0001.json`, { schema: "astra.registry.revocation/1" });
+  const early = detect({ root: dir, now: NOW("2026-01-01T04:10:00Z") });
+  assert.equal(early.scanned.revocations_unsigned_minutes, 10,
+    `A7 dated the advisory's wait from somewhere other than the merge: ${JSON.stringify(early.scanned)}`);
+  assert.deepEqual(a7Codes(early), []);
+  const late = detect({ root: dir, now: NOW("2026-01-01T04:31:00Z") });
+  assert.deepEqual(late.findings.filter((f) => f.detector === "A7").map((f) => f.hex), [merge]);
 });
 
 test("A7 asks the revocations module which files the list is built from", () => {
