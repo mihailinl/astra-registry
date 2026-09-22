@@ -63,6 +63,43 @@ const WORKFLOW_HALF = "bot/tests/workflows.test.mjs";
 const BOT_TESTS_WORKFLOW = ".github/workflows/bot-tests.yml";
 
 /**
+ * The word that makes a schema's prose a claim about the token file's register.
+ *
+ * `pending` is the estate's own vocabulary: the token file carries a `pending[]`
+ * array whose records name what is missing, who owes it, the version that lands
+ * it and what the floor asserts until then, and the ops-side generator REFUSES
+ * TO RUN once the contract records one of them and no extractor has been
+ * written. That machinery watches the records. It has never watched a schema
+ * saying, in prose, that it is waiting for one — which is how
+ * `schema/queue-v1.json` went on saying `submission_id` "is silent here because
+ * the fact is pending" for two days and ten releases after 0.20.0 landed the
+ * fact (astra-registry `8e03da6`, 2026-09-20, `"required": false`), while the
+ * register two files away had never carried a record for it at all.
+ *
+ * So the word is reserved here: a record schema may use it, and when it does it
+ * must NAME the record that carries the fact, so that the claim dies with the
+ * record instead of outliving it.
+ */
+const PENDING_WORD = /\bpending\b/i;
+
+/**
+ * The floor on the scan, and it is on what was READ rather than on what was
+ * found. Zero claims is a legitimate and desirable state — it is the state this
+ * tree is in after the queue note was repaired — so a floor on findings would
+ * be red on a healthy tree. A floor on the corpus is the one that matters: a
+ * walk that resolves no schemas, or schemas with no prose in them, passes every
+ * assertion below it while comparing nothing, which is the shape this whole
+ * module exists to refuse.
+ *
+ * 12 record schemas holding 845 strings on 2026-09-22, at `dabbfbd`. The floors
+ * are set well under both: eight is TRUST-31's schema enumeration as 0.20.0
+ * published it, before 0.21.0's three and 0.23.0's one, and below it the walk
+ * has stopped seeing `schema/` rather than `schema/` having shrunk.
+ */
+const RECORD_SCHEMA_FLOOR = 8;
+const SCANNED_STRING_FLOOR = 200;
+
+/**
  * Schedule ids whose cron-versus-file comparison lives somewhere else, with the
  * file that owns each. Every entry here is also asserted to still exist; an id
  * that is NOT here is compared by this module.
@@ -104,6 +141,31 @@ function showOrNull(rev, file) {
 }
 
 const tokenPath = path.join(REPO_ROOT, TOKEN_FILE);
+
+/**
+ * The tracked record schemas: everything under `schema/` except the register
+ * itself.
+ *
+ * Tracked via `git ls-files` for the reason the fixture copy below gives, and
+ * the token file is excluded BY CONSTRUCTION rather than by an exclusion list:
+ * it is the file the claims are compared against, and it says `pending` six
+ * more times as a `notice_status` VALUE (`$.entries[76]`, `$.entries[92]`) that
+ * has nothing to do with the register. Including it turns a population of one
+ * into a population of seven, six of which are right.
+ */
+function recordSchemas() {
+  return git(["ls-files", "--", "schema/"]).split("\n")
+    .filter((rel) => rel.endsWith(".json") && rel !== TOKEN_FILE);
+}
+
+/** Every string value in a parsed document, with its JSON path. */
+function* stringsOf(node, at = "$") {
+  if (typeof node === "string") yield [at, node];
+  else if (Array.isArray(node)) for (const [i, v] of node.entries()) yield* stringsOf(v, `${at}[${i}]`);
+  else if (node && typeof node === "object") for (const [k, v] of Object.entries(node)) yield* stringsOf(v, `${at}.${k}`);
+}
+
+const namesWord = (text, word) => new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(text);
 
 /**
  * Every `- cron: '…'` in a workflow, live or commented out, with its line.
@@ -412,7 +474,129 @@ export async function run() {
       `token file's recorded interval or the ${wrong} s that was planted. A canary that accepts any red accepts ` +
       `the wrong one. Output:\n${tailOf(doctored.out)}`);
   });
+
+  // ── a prose claim about the register, against the register ────────────────
+  //
+  // The token file's `pending[]` is machine-readable and watched at WRITE time:
+  // the ops generator refuses a run where the contract records a pending fact
+  // and no extractor was written. Nothing read the other end. A schema that
+  // says in prose *the fact is pending* is making the same claim in the one
+  // place where no record has to exist for it — and it goes on making it after
+  // the record is discharged, which is exactly what happened to
+  // `schema/queue-v1.json` between 0.20.0 and 0.29.0 (couplings 53).
+  //
+  // The join is the record's `id`, and it runs both ways:
+  //
+  //   - a claim naming no live record is a claim whose fact has landed, or one
+  //     nobody ever registered — and neither is a thing a schema may assert;
+  //   - a record that names a `schema/…json` path is a fact the register says
+  //     that file is waiting on, so that file must still say so.
+  //
+  // Both halves are one test because a tree where one is vacuous usually makes
+  // the other vacuous too, and a reader has to see the counts together.
+  await test("a schema's `pending` prose names a record the token file still carries, and vice versa", () => {
+    const doc = JSON.parse(fs.readFileSync(tokenPath, "utf8"));
+    const records = Array.isArray(doc.pending) ? doc.pending : [];
+    const ids = records.map((p) => p.id).filter((id) => typeof id === "string");
+
+    const files = recordSchemas();
+    let scanned = 0;
+    const claims = [];
+    for (const rel of files) {
+      const parsed = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, rel), "utf8"));
+      for (const [at, text] of stringsOf(parsed)) {
+        scanned++;
+        if (PENDING_WORD.test(text)) claims.push({ rel, at, text });
+      }
+    }
+
+    assert(files.length >= RECORD_SCHEMA_FLOOR,
+      `the walk of tracked \`schema/\` found ${files.length} record schema(s) besides ${TOKEN_FILE} and the floor ` +
+      `is ${RECORD_SCHEMA_FLOOR} (12 on 2026-09-22). Below it this scan is not finding a clean tree, it is not ` +
+      `reading the directory`);
+    assert(scanned >= SCANNED_STRING_FLOOR,
+      `the walk read ${scanned} string(s) out of ${files.length} record schema(s) and the floor is ` +
+      `${SCANNED_STRING_FLOOR} (845 on 2026-09-22). A scan over no schema descriptions passes every assertion ` +
+      `below it`);
+
+    const stale = claims.filter((c) => !ids.some((id) => namesWord(c.text, id)));
+    assertEqual(stale.map((c) =>
+      `${c.rel} ${c.at} says \`pending\` and names none of ${TOKEN_FILE}'s ${ids.length} record(s) ` +
+      `(${ids.join(", ") || "none"}). Either the fact LANDED and this prose outlived it — which is what the ` +
+      `register is for and what it would have said — or the fact is owed and nobody registered it, in which ` +
+      `case the generator that refuses a run over an unextracted pending fact has nothing to refuse. Name the ` +
+      `record id in the sentence, or stop making the claim: ${JSON.stringify(c.text.slice(0, 160))}…`,
+    ).join("\n        "), "", "a schema's `pending` prose has outlived the record it was waiting on");
+
+    // The reverse. A record's own `what`/`why`/`floor` is where it says which
+    // file is waiting on it, so the register is DERIVED from the record rather
+    // than hand-kept here — a new record naming a schema is picked up on the
+    // day it is generated, which is the same reason `OWNED_ELSEWHERE` above is
+    // a list of ids and not a count.
+    const tracked = new Set(files);
+    const orphaned = [];
+    let watched = 0;
+    for (const record of records) {
+      const body = JSON.stringify(record);
+      for (const rel of new Set([...body.matchAll(/schema\/[A-Za-z0-9._-]+\.json/g)].map((m) => m[0]))) {
+        if (!tracked.has(rel)) continue;
+        watched++;
+        const says = claims.some((c) => c.rel === rel && namesWord(c.text, record.id));
+        if (!says) {
+          orphaned.push(
+            `${TOKEN_FILE}'s pending record \`${record.id}\` names ${rel} and that file says nothing about ` +
+            `\`${record.id}\` being pending. The register says that file is waiting on a fact; the file does not. ` +
+            `One of the two is wrong, and the silent one is the file`);
+        }
+      }
+    }
+    assertEqual(orphaned.join("\n        "), "", "a register record names a schema that has stopped saying it is waiting");
+
+    console.log(
+      `  note  ${claims.length} \`pending\` claim(s) in ${files.length} record schema(s) (${scanned} strings), ` +
+      `against ${records.length} register record(s); ${watched} record-to-schema pointer(s) followed.`);
+    if (records.length && !watched) {
+      console.log(
+        `  note  dormant, and armed: no pending record names a schema/ path, so the reverse leg compared nothing ` +
+        `this run. It arms itself on the first record that does, with no edit here.`);
+    }
+  });
+
+  // ── and the sentence this lane put in queue-v1.json's place ───────────────
+  //
+  // The repair above replaced a claim about a pending fact with a claim about
+  // THIS TREE: that `submission_id` is absent from the schema and that
+  // B-T3.10's registry half — the `properties` entry and the legacy conditional
+  // in `tools/validate.mjs` — is still owed. That claim can go stale in the
+  // other direction the moment somebody writes the entry, and a note saying a
+  // member is missing, in a file the member is now in, is the same defect one
+  // turn later. It is a biconditional over one file, hand-kept on purpose and
+  // cheap: the general scan above cannot read "is owed", and inventing prose it
+  // could read would be a convention nobody knows.
+  await test("queue-v1.json's note about the member it lacks is a fact about this tree", () => {
+    const rel = "schema/queue-v1.json";
+    const at = path.join(REPO_ROOT, rel);
+    assert(fs.existsSync(at), `${rel} is gone, and it is one of TRUST-31's twelve record schemas`);
+    const queue = JSON.parse(fs.readFileSync(at, "utf8"));
+    const present = Object.hasOwn(queue.properties || {}, "submission_id");
+    const says = String(queue.description || "").includes(MISSING_MEMBER_SENTENCE);
+    assertEqual(present ? "the member is in `properties`" : "the member is not in `properties`",
+      says ? "the member is not in `properties`" : "the member is in `properties`",
+      `${rel} and its own description disagree about \`submission_id\`. The description ` +
+      `${says ? "carries" : "does not carry"} ${JSON.stringify(MISSING_MEMBER_SENTENCE)} and \`properties\` ` +
+      `${present ? "has" : "does not have"} the member. If B-T3.10's registry half has been written — a \`properties\` ` +
+      `entry with §0.7's UUID grammar, NOT required, and the legacy \`trigger\` conditional in ` +
+      `tools/validate.mjs — then that paragraph is the stale one and goes; if it has not, the paragraph is the ` +
+      `only record that it is owed and must stay`);
+  });
 }
+
+/**
+ * The fragment of `schema/queue-v1.json`'s description that asserts the member
+ * is absent. Kept here rather than in that file's own prose-about-prose, so
+ * that a reword of the paragraph is a deliberate act with a red test beside it.
+ */
+const MISSING_MEMBER_SENTENCE = "`submission_id` IS NOT IN THIS FILE";
 
 /**
  * A copy of the tracked files under `dirs`, in the suite's temp directory.
