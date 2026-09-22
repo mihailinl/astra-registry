@@ -561,6 +561,40 @@ export async function run() {
     assertEqual(codesOf(over), "SERVE_39_DOCUMENT_DRIFT", "a split view between `signed` and the deployment");
   });
 
+  await test("a `signed` head dated after the run's clock excuses no drift on Pages, before the latch or after it", () => {
+    // A negative wait is inside any window, so SERVE-39's plain `withinGrace`
+    // excused a split view until the date the head's committer clock wrote.
+    // Measured before the repair, with the head's time read the way check.mjs
+    // reads it (`git log -1 --format=%cI` of a real commit): a head dated
+    // 2027-02-01 was green at 2026-09-22 with Pages serving another index, and
+    // green again with the latch closed and another withdrawal list — both
+    // until 29 minutes after its date. SERVE-85 and A7 had each added the
+    // bound by hand; it is `withinGrace`'s own now, so this is its test too.
+    const FUTURE = "2027-02-01T00:00:00Z";
+    const head = headFrom({
+      revocations: { signatures: [], signed: { schema: REVOCATIONS_SCHEMA, serial: 2, revocations: [] } },
+    });
+    const staleIndex = servedFrom(head, {
+      index: { ok: true, url: "https://example.invalid/index", status: 200, body: "{\"old\":true}\n", error: null },
+    });
+    const args = { head, headClock: FUTURE, served: staleIndex, arming: { armed: false }, signerWorkflowPresent: true };
+    assertEqual(codesOf(serve39({ ...args, now: "2026-09-22T00:00:00Z" })), "SERVE_39_DOCUMENT_DRIFT",
+      "a `signed` head dated 132 days after the run's clock excused Pages serving another index");
+    assertEqual(serve39({ ...args, now: minutesAgo(FUTURE, -29) }).status, "green",
+      "a head dated 29 minutes after the run's clock paged; that is skew inside the grace");
+    assertEqual(codesOf(serve39({ ...args, now: minutesAgo(FUTURE, -31) })), "SERVE_39_DOCUMENT_DRIFT",
+      "a head dated 31 minutes after the run's clock excused a split view");
+
+    const otherList = servedFrom(head, {
+      revocations: { ok: true, url: "https://example.invalid/revocations", status: 200, body: "{\"unsigned\":true}\n", error: null },
+    });
+    const armed = { ...args, served: otherList, arming: { armed: true, latch_commit: "c".repeat(40) } };
+    assertEqual(codesOf(serve39({ ...armed, now: "2026-09-22T00:00:00Z" })), "SERVE_39_DISARMING",
+      "after the latch, a head dated 132 days ahead excused Pages serving armed clients another list");
+    assertEqual(serve39({ ...armed, now: minutesAgo(FUTURE, -29) }).status, "green",
+      "after the latch, skew inside the grace paged");
+  });
+
   await test("a withdrawal list that VERIFIES on Pages before the flag is early arming, with no grace at all", () => {
     // Every shipped 0.2.x daemon arms itself on the first list it can verify
     // and blocks installs seven days after its last accepted one. Arming is
