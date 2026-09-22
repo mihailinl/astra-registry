@@ -243,9 +243,12 @@ test("a relayed verdict passes through, and an absent one becomes the alarm", ()
 });
 
 test("the verdict names a subject and not a receiver check", async () => {
-  // `ingest.yml`'s alert job posts no BOT-85 heartbeat — BOT-51's schedule is
-  // outside BOT-85's list because the plugins service's BOT-47 watches it — so
-  // there is no receiver check behind this name, and creating one would make a
+  // `ingest.yml`'s alert job posts no BOT-85 heartbeat. **The reason this
+  // comment used to give was false** — it said BOT-51's schedule is outside
+  // BOT-85's list because the service's BOT-47 watches it, and BOT-51 is a
+  // different workflow (`plugins-ingest.yml`); measured 2026-09-22 with PR #160.
+  // **The assertion below is unaffected and was always right**: there is no
+  // receiver check behind this name, and creating one would make a
   // check nothing posts to.
   const { CHECKS } = await import("../lib/alert-checks.mjs");
   assert.ok(

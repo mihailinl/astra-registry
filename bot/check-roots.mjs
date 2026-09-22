@@ -34,10 +34,21 @@
 // direction is REPORTED, and everything else is an ALARM. See
 // `rootFileProblems()` for why a key whose value changed is never a rotation.
 //
-// **This posts no BOT-85 heartbeat and the job that calls it says why.**
-// `ingest.yml` runs on BOT-51's schedule, which is deliberately outside
-// BOT-85's dead-man list because the plugins service's BOT-47 watches it; a
-// heartbeat from here would be posting to a receiver check nobody created.
+// **This posts no BOT-85 heartbeat, and the reason the job used to give was
+// false in every clause.** It said `ingest.yml` runs on BOT-51's schedule,
+// outside BOT-85's list because the service's BOT-47 watches it. Measured
+// 2026-09-22: **BOT-51 is `plugins-ingest.yml`** (`workflows.test.mjs`'s own
+// `INGEST` constant); `ingest.yml` runs `17 * * * *` and `41 5 * * *`; and of
+// the fourteen cron expressions in this repository's fifteen workflow files,
+// **the only two 600-second ones are commented out**. `alert-checks.mjs`
+// already said BOT-47 watches BOT-51's schedule *"and nothing else"* — the
+// contradiction sat one file away and nothing compared the two.
+//
+// **What is true**: no receiver check behind this name exists — `CHECKS` has
+// seventeen entries and none names `ingest.yml` — and `roots.test.mjs` pins
+// that absence deliberately. The silence is now watched instead of excused,
+// by `tools/coverage/drain-age.mjs` (PR #160), which is red in the Actions
+// tab and pages nobody until the `ingest-schedule-receiver` owner act.
 // The verdict's `check` member is therefore `ingest-roots`, which is the
 // subject of the alarm and NOT a receiver check name — `bot/lib/alert-checks.mjs`
 // does not list it, and nothing should create it there.

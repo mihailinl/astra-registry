@@ -488,9 +488,23 @@ test("every job that calls the alert action is in `alerts` and names checks that
     // Exactly one of a check and a reason there is none. An alert job that
     // posts no heartbeat is invisible — the receiver has nothing to be silent
     // about — so the omission is a sentence somebody wrote, not an empty
-    // input. `ingest.yml` is the case that exists: BOT-51's schedule is
-    // deliberately outside BOT-85's list because the service's BOT-47 watches
-    // it.
+    // input.
+    //
+    // **AND A SENTENCE SOMEBODY WROTE IS THE WHOLE TEST, WHICH IS THE DEFECT.**
+    // The regex below checks that the field is NON-EMPTY. `ingest.yml` carried
+    // a sentence in it for eight weeks in which every clause named a different
+    // file — BOT-51 is `plugins-ingest.yml`, not this workflow — and because
+    // the sentence existed, **this guard went green on it**. The false claim
+    // was not merely unhelpful: it was the thing that turned the check green,
+    // and so the thing that stopped anybody looking, on the workflow that
+    // publishes every delayed release.
+    //
+    // The general form, which is why this comment is long: **a free-text field
+    // that satisfies a structural check is a place where a claim of coverage
+    // buys silence.** Measured and displaced 2026-09-22 by
+    // `tools/coverage/drain-age.mjs` (PR #160). The facts a real check would
+    // need are all in this tree: compare each `no-heartbeat-because` against
+    // `CHECKS`'s sources and against the workflow's own cron.
     const excused = /^\s+no-heartbeat-because:\s*\S/m.test(body);
     if (main.length === 0 && !excused) {
       problems.push(`${where(job)} calls the alert action and names neither a receiver check nor a reason it posts none`);
