@@ -29,13 +29,20 @@
 // first, which also means the `::add-mask::` line under test is the one the
 // shipped code writes and not one the test arranged.
 //
-// ── the two floors ─────────────────────────────────────────────────────────
+// ── the floors ─────────────────────────────────────────────────────────────
 //
 // The token-file comparison asserts what it FOUND before it asserts anything
 // about what it found there (dev/couplings.md, "Adding a coupling", step 4): a
 // filter that matched nothing would compare an empty compiled table with an
 // empty expected one and pass. Nine operations and sixteen bodies, and both
 // numbers are derived from the file rather than typed beside it.
+//
+// A third floor sits under the population itself. Comparing every member of
+// sixteen bodies says nothing about the 85 published members that were in no
+// body this client compiles, and the only reverse check was over the NAMES of
+// bot bodies. "The population that comparison runs over" below states
+// the boundary as a number, pairs the entries the file itself says render one
+// fact twice, and refuses a condition published where nothing reads it.
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -310,6 +317,247 @@ test("every body's members and required flags are the token file's", () => {
   const botBodies = [...recorded.keys()].filter((n) => /^astra\.plugins\.bot-[a-z-]+\/1$/.test(n));
   assert.ok(botBodies.length >= 14, `only ${botBodies.length} bot bodies in the token file; broken read`);
   assert.deepEqual(botBodies.filter((n) => !BODIES[n]), [], "a §4.2 bot body the client does not compile");
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// The population that comparison runs over, and the members outside it
+// ───────────────────────────────────────────────────────────────────────────
+//
+// The comparison above reaches a member IFF its entry is a `schema` AND its
+// name is a key of `BODIES`. Measured on contract 0.29.0: the file holds 42
+// entries that carry members and 150 members between them; sixteen entries are
+// compiled and 63 of their members are compared; 85 published members sat
+// outside every comparison in this suite. Its own reverse check is name-level
+// and scoped to a bot-body pattern — it catches a §4.2 body nobody compiled,
+// and says nothing about a MEMBER of anything (dev/couplings.md, entry 50).
+//
+// ── the repair that was measured and refused ───────────────────────────────
+//
+// Compiling the other 25 bodies into `bot/lib/service.mjs` would close the
+// arithmetic and nothing else. This module compiles the bodies the bot
+// COMPOSES AND READS; a table for `astra.registry.publisher/1` would be a
+// second, unused statement of that schema, kept by hand, reached by no call,
+// and free to go wrong in exactly the silence this entry is about.
+//
+// Comparing the strays' full member LISTS against `schema/*.json` was measured
+// and refused too, because `members_recorded: true` says the contract RECORDS
+// a list, never that the list is the body. Four of the nine registry bodies
+// that have a JSON Schema match its properties exactly and five do not, on
+// purpose: each entry's `source` says which — "B.4, an exact member list"
+// against "B.4, the members other parties read" — `queue-v1.json` spells the
+// difference out in its own description ("B.4's sentence for the queue entry
+// fixes what OTHER PARTIES READ, not the whole member set"), and
+// `astra.registry.version/1` publishes `artifacts.<platform>.sha256`, which is
+// a path into a member and not a property name at all. That comparison would
+// be red on `main` today over five entries that are right, which is the worst
+// kind of canary: one whose red a reader learns to discount.
+//
+// ── what is asserted instead ───────────────────────────────────────────────
+//
+// Three assertions, over the three things that can go wrong here in silence.
+//
+// **The boundary is a number.** 83 members over 25 entries are outside every
+// comparison this suite makes, and that is stated as an equality rather than a
+// floor, so the next member published into this file with no reader has to be
+// looked at by somebody rather than joining a total nobody watches.
+//
+// **Where the file itself says one fact is rendered twice, the two renderings
+// are compared.** That is the `carried_by` pointer, and it is the whole of
+// what makes the third assertion true of `list:notice_status` rather than
+// merely loud about it.
+//
+// **A member outside the comparison may carry no condition.** `true` and
+// `false` are claims a reader of this repository never has to evaluate;
+// `conditional` is a rule somebody must RUN, and a rule published where
+// nothing runs it is gap 38 one axis over — a condition that can go stale, or
+// contradict the schema side once the generator stops being the only writer,
+// inside a green run.
+//
+// The live case is `list:notice_status`, whose `accepted_at` and `ended_at`
+// are §0.8's rendering of the same §4.2 states `astra.plugins.bot-notice-
+// status/1` carries — two of the eight machine-readable conditions in the
+// file, and the two the suite could not see. The token file's readme: "The two
+// statements MUST agree, and something MUST compare them … two hand-kept
+// spellings of one fact in one document is the coupling that has gone wrong
+// here twice." The generator refuses a run in which they disagree, so the
+// coupling was enforced at WRITE time, in another repository, by a tool this
+// one does not run — and by nothing at READ time. It is compared below through
+// the entry's own `carried_by`, which is the pointer the file publishes for
+// exactly this; the list side then reaches the compiled table in two compared
+// hops, list → body here and body → `BODIES` above, instead of none.
+//
+// Deriving the pair from `carried_by` rather than naming `notice_status` here
+// is the difference between closing this case and closing this shape: the
+// second value binding the contract publishes joins this test on the day it is
+// generated, and does not wait for somebody to remember a list.
+
+/** Every entry that publishes a member table, whatever kind it is. */
+const membered = tokenFile.entries.filter((e) => Array.isArray(e.members));
+
+/** Compiled here, so the test above compares every member of it. */
+const isCompiled = (e) => e.kind === "schema" && Boolean(BODIES[e.name]);
+
+/**
+ * The `{if|iff: <predicate>}` shape — a rule a reader must evaluate — as
+ * against the prose sentence a `false` member may carry to say why no
+ * condition is published for it. Both live in `when`, and only one of them is
+ * a thing that can be wrong at runtime.
+ */
+const machineReadable = (when) => when !== null && typeof when === "object";
+
+const compiledEntries = membered.filter(isCompiled);
+const pairedEntries = membered.filter((e) => !isCompiled(e) && Boolean(e.carried_by));
+const unreadEntries = membered.filter((e) => !isCompiled(e) && !e.carried_by);
+const countMembers = (entries) => entries.reduce((n, e) => n + e.members.length, 0);
+
+test("the file's membered entries are three buckets, none of which may empty", () => {
+  assert.ok(membered.length >= 42, `only ${membered.length} entries carry members; this is a broken read`);
+  assert.ok(
+    countMembers(membered) >= 150,
+    `only ${countMembers(membered)} published members over those entries; this is a broken read`,
+  );
+
+  // Exhaustive and disjoint, asserted rather than assumed: an entry that fell
+  // out of all three, or into two, would quietly shrink what the census below
+  // quantifies over, and a census over less than the file is the defect this
+  // section exists to end rather than to reproduce.
+  assert.equal(
+    compiledEntries.length + pairedEntries.length + unreadEntries.length, membered.length,
+    `${compiledEntries.length} compiled + ${pairedEntries.length} paired + ${unreadEntries.length} unread is ` +
+    `not ${membered.length} membered entries, so an entry is in two buckets or in none`,
+  );
+
+  // Each bucket floored on its own, because each is the population of an
+  // assertion further down and every one of those passes over nothing.
+  assert.equal(
+    compiledEntries.length, Object.keys(BODIES).length,
+    "a body this client compiles resolved to no `schema` entry, so the comparison above skipped it",
+  );
+  assert.ok(compiledEntries.length >= 16, `only ${compiledEntries.length} bodies compiled; the client compiles 16`);
+  assert.ok(
+    pairedEntries.length >= 1,
+    "no entry in the token file names a `carried_by`, so the two-rendering comparison below runs over nothing " +
+    "and passes. `list:notice_status` carried one at contract 0.29.0, and deleting it is one of the mutations " +
+    "the generator's own selftest watches go red",
+  );
+
+  // The boundary, as a number. An equality and not a floor: a `>=` here says
+  // only that the file has not shrunk, and would let the next fifty unread
+  // members in without a word. Moving it is the right answer once somebody has
+  // looked at what arrived — the census below says what to look for — and
+  // being made to look is the whole of what this line buys.
+  assert.deepEqual(
+    { entries: unreadEntries.length, members: countMembers(unreadEntries) },
+    { entries: 25, members: 83 },
+    `${countMembers(unreadEntries)} published members over ${unreadEntries.length} entries are outside every ` +
+    `comparison in this suite; there were 83 over 25 at contract 0.29.0 and this file reads ` +
+    `${tokenFile.contract_version}. Nothing in astra-registry composes or reads those bodies, so the number is ` +
+    "allowed to move — but it moves by somebody reading the new members and finding them unconditioned, not by " +
+    "a filter quietly widening",
+  );
+});
+
+test("a value binding rendered in two entries is compared here, and not only by the generator", () => {
+  let bound = 0;
+  for (const list of pairedEntries) {
+    const body = tokenFile.entries.find((e) => e.kind === "schema" && e.name === list.carried_by.schema);
+    assert.ok(
+      body,
+      `\`${list.id}\` names ${JSON.stringify(list.carried_by)} as what carries its values and the file records ` +
+      "no such schema",
+    );
+    assert.ok(
+      BODIES[body.name],
+      `\`${list.id}\` is rendered twice and ${body.name} is not a body this client compiles, so agreeing with it ` +
+      "reaches no reader. The comparison above is what turns this one into a chain; without it both entries can " +
+      "be right about each other and wrong about the client",
+    );
+
+    // The predicate's sibling has to be carried by every entry of that body,
+    // or the condition is one no reader can evaluate on a conforming answer.
+    const decider = body.members.find((m) => m.name === list.carried_by.member);
+    assert.equal(
+      decider?.required, true,
+      `\`${list.carried_by.member}\` is ${decider ? JSON.stringify(decider.required) : "not a member"} of ` +
+      `${body.name}, and a condition keyed on a member that may be absent is one no reader can evaluate`,
+    );
+
+    for (const lm of list.members) {
+      const bm = body.members.find((m) => m.name === lm.name);
+      assert.ok(bm, `${list.id} binds \`${lm.name}\` and ${body.name} does not list it`);
+
+      // Against EACH OTHER and not each against a constant: the failure this
+      // closes is two renderings of one fact drifting apart, and a test that
+      // pins each to its own expected value passes happily while they do.
+      assert.deepEqual(
+        { required: lm.required, when: lm.when },
+        { required: bm.required, when: bm.when },
+        `\`${lm.name}\` is ${JSON.stringify(lm.required)} on ${JSON.stringify(lm.when)} in ${list.id} and ` +
+        `${JSON.stringify(bm.required)} on ${JSON.stringify(bm.when)} in ${body.name}. One fact, two renderings, ` +
+        "and they have parted",
+      );
+      assert.equal(
+        lm.required, "conditional",
+        `${list.id}: \`${lm.name}\` is published ${JSON.stringify(lm.required)}. §0.8 binds it to some of this ` +
+        "list's values and not others, and anything but `conditional` is a body that passes carrying nothing",
+      );
+      assert.ok(
+        machineReadable(lm.when) && Object.keys(lm.when)[0] === "iff",
+        `${list.id}: \`${lm.name}\` states ${JSON.stringify(lm.when)}. A value binding is absent where it does ` +
+        "not apply, which is the reverse half and is `iff`; `if` leaves the member permitted for every other " +
+        "value of the list, which is the looser reading this vocabulary exists to close",
+      );
+      assert.doesNotThrow(
+        () => conditionalProblems(list.name, {}, [[lm.name, lm.required, lm.when]]),
+        `${list.id}: \`${lm.name}\`'s published \`when\` is one this reader cannot evaluate. The list entry exists ` +
+        "so that a reader holding it need not go looking two entries away, and one it cannot read is worse than " +
+        "the trip",
+      );
+      assert.ok(
+        typeof lm.why === "string" && lm.why.length > 0,
+        `${list.id}: \`${lm.name}\` states a condition and carries no \`why\`, and a condition whose reason is ` +
+        "not written down is relaxed rather than investigated",
+      );
+      bound += 1;
+    }
+  }
+  assert.ok(
+    bound >= 2,
+    `${bound} bound members were compared across ${pairedEntries.length} paired entries. §0.8's notice-status ` +
+    "clause carries two; a pairing that resolves to nothing compares nothing and passes",
+  );
+});
+
+test("a member outside that comparison carries no condition, or the failure names it", () => {
+  const conditions = [];
+  for (const e of membered) {
+    for (const m of e.members) {
+      if (m.required !== "conditional" && !machineReadable(m.when)) continue;
+      const bucket = isCompiled(e) ? "compiled" : e.carried_by ? "paired" : "unread";
+      conditions.push({ where: `${e.id} \`${m.name}\``, bucket });
+    }
+  }
+
+  // The floor, before anything is said about what was found: a census over no
+  // conditions reports no stray ones.
+  assert.ok(
+    conditions.length >= 8,
+    `the file publishes ${conditions.length} conditions and there were 8 at contract 0.29.0. A census that finds ` +
+    "none proves nothing about the ones it was written for",
+  );
+  assert.ok(
+    conditions.some((c) => c.bucket === "compiled") && conditions.some((c) => c.bucket === "paired"),
+    `conditions by bucket: ${JSON.stringify(conditions)}. Six were compiled and two paired at contract 0.29.0; ` +
+    "a bucket that has emptied is a comparison that has stopped happening, not a file that has got simpler",
+  );
+
+  assert.deepEqual(
+    conditions.filter((c) => c.bucket === "unread").map((c) => c.where), [],
+    "a condition is published on an entry nothing in astra-registry reads: not a body this client compiles, and " +
+    "not an entry whose `carried_by` points at one. Either give it a reader — compile the body, or publish the " +
+    "`carried_by` that pairs it with a compiled one — or the contract has stated a rule that only its generator " +
+    "will ever run, which is where `list:notice_status` spent contract 0.29.0",
+  );
 });
 
 test("the bot audience is the token file's, and shadow's exemption is the token file's", () => {
