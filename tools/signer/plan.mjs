@@ -15,7 +15,11 @@
 // ── the serials are D3's, at the Source-Commit ──────────────────────────────
 //
 //   catalogue: git rev-list --count <sha> -- plugins
-//   list:      git rev-list --count <sha> -- tools/revocations   + 1
+//   list:      git rev-list --count <sha> -- SERIAL_PATHSPEC     + 1
+//
+// `SERIAL_PATHSPEC` is `tools/lib/revocations.mjs`'s, and SERVE-85's clock reads
+// the same export; the reason it is one export, and why it is the whole
+// `tools/revocations` directory, is written there.
 //
 // The signer is the only thing that assigns them. `tools/build-index.mjs` and
 // `tools/lib/revocations.mjs` count at HEAD and add one for a staged change
@@ -35,7 +39,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { buildIndex } from "../build-index.mjs";
-import { buildRevocations } from "../lib/revocations.mjs";
+import { SERIAL_PATHSPEC, buildRevocations } from "../lib/revocations.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { runValidation } from "../validate.mjs";
@@ -182,7 +186,7 @@ export function fetchSignedHead({
 export function serialsAt({ root, sha }) {
   return {
     index: revCount({ root, sha, pathspec: "plugins" }),
-    revocations: revCount({ root, sha, pathspec: "tools/revocations" }) + 1,
+    revocations: revCount({ root, sha, pathspec: SERIAL_PATHSPEC }) + 1,
   };
 }
 
