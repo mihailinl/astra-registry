@@ -51,7 +51,7 @@ import { REVOCATIONS_SCHEMA } from "../../bot/lib/sign.mjs";
 // `tests/moderation-reasons.json` is the corpus both are run against.
 import { reasonProblems } from "../../bot/lib/moderation.mjs";
 import { REPO_ROOT } from "./sources.mjs";
-import { ID_PATTERN } from "./ids.mjs";
+import { ADVISORY_ID_GRAMMAR, ADVISORY_ID_PATTERN, ID_PATTERN } from "./ids.mjs";
 import { parseSemver } from "./semver.mjs";
 
 /** Where advisories are written, one JSON file per advisory. */
@@ -80,6 +80,17 @@ export function pathUnder(dir, basename) {
   const escaped = dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`^${escaped}/(?:${basename})$`);
 }
+
+/**
+ * An advisory's file, as git prints its path: `SOURCE_DIR/<id>.json`, with the
+ * id as group 1. The id is `tools/lib/ids.mjs`'s ADVISORY_ID_GRAMMAR — four or
+ * more serial digits — and both readers of history that look for advisories
+ * match with this one pattern: `nextAdvisoryId` and the coverage canary's
+ * `triggersOf`. Until 2026-09-22 each kept its own tail, and the canary's took
+ * exactly four digits, so from advisory 10000 on it would have seen none
+ * (gap 72's tails).
+ */
+export const ADVISORY_FILE = pathUnder(SOURCE_DIR, `(${ADVISORY_ID_GRAMMAR})\\.json`);
 
 /**
  * The same directory as a **git pathspec**, narrowed to the files the document
@@ -213,7 +224,12 @@ export const ACTIONS = ["block_install", "disable", "warn"];
 /** Advisory only — no daemon behaviour hangs on it. See RevocationSeverity. */
 export const SEVERITIES = ["critical", "high", "moderate", "low"];
 
-const ADVISORY_ID = /^ASTRA-\d{4}-\d{4,}$/;
+/**
+ * An advisory id, whole: `tools/lib/ids.mjs`'s grammar, which
+ * `schema/decision-v1.json`'s `advisory` pattern names as this constant's. The
+ * moderation log and the site's page guard read the same grammar.
+ */
+export const ADVISORY_ID = new RegExp(ADVISORY_ID_PATTERN);
 const SHA256 = /^[0-9a-f]{64}$/;
 const IDENTITY = /^(github:[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+|origin:[a-z0-9.-]+)$/;
 const KEY_ID = /^[A-Za-z0-9._-]{1,120}$/;
