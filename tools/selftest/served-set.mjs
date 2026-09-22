@@ -40,6 +40,8 @@ import { serve39 } from "../served-set/served-vs-signed.mjs";
 // module stopped being able to test it.
 import { parseRunUrl, provenance, receiptName, signedCommits, trailersOf } from "../served-set/provenance.mjs";
 import { SILENT_JOB_CODE, UNRENDERABLE_CODE, composeVerdict, jobsFromEnv } from "../served-set/compose.mjs";
+import { compose as composeCoverage } from "../coverage-verdict.mjs";
+import { VERDICT_SCHEMA, verdictProblems } from "../../bot/lib/alert-verdict.mjs";
 import { RUNWAY_DAYS, runwayVerdict } from "../served-set/runway.mjs";
 import { JOBS } from "../served-set/check.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
@@ -700,6 +702,46 @@ export async function run() {
     assertEqual(problems.join("; "), "", "the channel refused a verdict this file built");
     assertEqual(v.status, "green", "two green comparisons paged");
     assertEqual(v.codes, undefined, "a green verdict carried codes");
+  });
+
+  await test("every composer caps a list where the channel does: as many as it will send, and not one more", () => {
+    // Three files write `MAX_ELEMENTS = 40` and none imports another:
+    // bot/lib/alert-verdict.mjs, which REFUSES a verdict whose list is longer,
+    // and the two composers that cut their lists to fit it,
+    // tools/served-set/compose.mjs and tools/coverage-verdict.mjs. Measured
+    // 2026-09-22: each composer's 40 moved to 41 and to 39, and all 317 checks
+    // stayed green all four times. Too high and a real alarm is refused by the
+    // channel and replaced by its fallback, every code in it lost; too low and
+    // the fortieth finding is dropped from a message that had room for it.
+    //
+    // The channel's cap is READ from the channel — the longest list
+    // verdictProblems accepts — rather than written here, so this compares the
+    // composers with the file they have to agree with and not with a third copy.
+    const codes = (n) => Array.from({ length: n }, (_, i) => `E_CAP_PROBE_${i}`);
+    const hexes = (n) => Array.from({ length: n }, (_, i) => i.toString(16).padStart(40, "0"));
+    let cap = 0;
+    while (cap < 1000 && verdictProblems({ schema: VERDICT_SCHEMA, check: "served-set", status: "red", codes: codes(cap + 1) }).length === 0) {
+      cap++;
+    }
+    assert(cap > 0 && cap < 1000, `the channel's list cap could not be read: it accepted ${cap}`);
+    const many = cap * 2 + 5;
+
+    const { verdict: served, problems } = composeVerdict({
+      check: "served-set",
+      jobs: [{ name: "main-vs-signed", result: "success", status: "red", codes: codes(many).join(" "), hexes: hexes(many).join(" ") }],
+      run: null,
+    });
+    assertEqual(problems.join("; "), "",
+      "tools/served-set/compose.mjs built a verdict the channel refuses, so what pages is the fallback and every real code is lost");
+    assertEqual(served.codes?.length, cap, `tools/served-set/compose.mjs sends a different number of codes than the channel's ${cap}`);
+    assertEqual(served.hexes?.length, cap, `tools/served-set/compose.mjs sends a different number of hexes than the channel's ${cap}`);
+
+    const { verdict: coverage } = composeCoverage(
+      { lines: [{ rule: "cap-probe", status: "red", codes: codes(many), ids: [], hexes: hexes(many) }], bad: [] },
+      { rules: [{ name: "cap-probe", owner: "selftest", script: "none" }], run: null },
+    );
+    assertEqual(coverage.codes?.length, cap, `tools/coverage-verdict.mjs sends a different number of codes than the channel's ${cap}`);
+    assertEqual(coverage.hexes?.length, cap, `tools/coverage-verdict.mjs sends a different number of hexes than the channel's ${cap}`);
   });
 
   // ── ROLL-45's runway ───────────────────────────────────────────────────────
