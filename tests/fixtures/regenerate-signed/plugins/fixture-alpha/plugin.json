@@ -1,0 +1,35 @@
+{
+  "$comment": "A fixture listing. Not a real plugin; see tests/fixtures/regenerate-signed/README.md.",
+  "schema": "astra.registry.plugin/1",
+  "id": "fixture-alpha",
+  "name": "Fixture Alpha",
+  "summary": "A listing whose picture is text and whose prose is inlined",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "fixture-owner/fixture-alpha"
+  },
+  "added_at": "2026-01-02",
+  "description": "A listing whose picture is text and whose prose is inlined",
+  "author": {
+    "name": "Fixture Owner",
+    "url": "https://example.invalid/fixture-owner"
+  },
+  "icon": "icon.svg",
+  "readme": "README.md",
+  "i18n": {
+    "de": {
+      "name": "Fixture Alpha",
+      "summary": "Ein Eintrag, dessen Bild Text ist"
+    }
+  },
+  "categories": [
+    "utilities",
+    "developer-tools"
+  ],
+  "keywords": [
+    "fixture",
+    "alpha"
+  ],
+  "homepage": "https://example.invalid/fixture-owner/fixture-alpha"
+}

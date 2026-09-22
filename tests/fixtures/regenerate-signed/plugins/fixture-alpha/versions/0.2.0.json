@@ -1,0 +1,31 @@
+{
+  "schema": "astra.registry.version/1",
+  "id": "fixture-alpha",
+  "version": "0.2.0",
+  "published_at": "2026-02-11T14:20:00Z",
+  "release": {
+    "kind": "github_release",
+    "repo": "fixture-owner/fixture-alpha",
+    "tag": "fixture-alpha-v0.2.0",
+    "commit": "2222222222222222222222222222222222222222"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://example.invalid/fixture-owner/fixture-alpha/releases/download/fixture-alpha-v0.2.0/fixture-alpha-0.2.0-noarch.astraplugin",
+      "filename": "fixture-alpha-0.2.0-noarch.astraplugin",
+      "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "size": 2048
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "tools",
+    "actions"
+  ],
+  "permissions": {
+    "read_clipboard": {
+      "reason": "Fixture only. Nothing reads a clipboard here."
+    }
+  },
+  "changelog_url": "https://example.invalid/fixture-owner/fixture-alpha/blob/main/CHANGELOG.md"
+}

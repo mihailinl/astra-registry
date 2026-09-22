@@ -1,0 +1,23 @@
+{
+  "schema": "astra.registry.version/1",
+  "id": "fixture-gamma",
+  "version": "0.9.0",
+  "published_at": "2026-04-19T17:45:00Z",
+  "release": {
+    "kind": "github_release",
+    "repo": "someone-else/fixture-gamma",
+    "tag": "v0.9.0"
+  },
+  "staging": true,
+  "staging_reason": "fixture: there is no release to pin, so nothing may be offered for download",
+  "artifacts": {
+    "noarch": {
+      "url": "https://example.invalid/someone-else/fixture-gamma/releases/download/v0.9.0/fixture-gamma-0.9.0-noarch.astraplugin",
+      "filename": "fixture-gamma-0.9.0-noarch.astraplugin"
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "triggers"
+  ]
+}

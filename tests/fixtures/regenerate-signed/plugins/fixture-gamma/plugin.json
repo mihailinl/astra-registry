@@ -1,0 +1,23 @@
+{
+  "$comment": "A fixture listing. Not a real plugin; see tests/fixtures/regenerate-signed/README.md.",
+  "schema": "astra.registry.plugin/1",
+  "id": "fixture-gamma",
+  "name": "Fixture Gamma",
+  "summary": "A staging listing, which may carry no flat download URL at all",
+  "license": "MPL-2.0",
+  "source": {
+    "kind": "github",
+    "repo": "someone-else/fixture-gamma"
+  },
+  "added_at": "2026-04-19",
+  "description": "A staging listing, which may carry no flat download URL at all",
+  "author": {
+    "name": "Someone Else"
+  },
+  "icon": "icon.webp",
+  "readme": "README.md",
+  "keywords": [
+    "gamma",
+    "staging"
+  ]
+}

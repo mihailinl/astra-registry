@@ -1,0 +1,26 @@
+{
+  "$comment": "Yanked on purpose: a regeneration that emitted this release would be emitting a version no store may offer.",
+  "schema": "astra.registry.version/1",
+  "id": "fixture-alpha",
+  "version": "0.1.0",
+  "published_at": "2026-01-02T09:00:00Z",
+  "yanked": true,
+  "release": {
+    "kind": "github_release",
+    "repo": "fixture-owner/fixture-alpha",
+    "tag": "fixture-alpha-v0.1.0",
+    "commit": "1111111111111111111111111111111111111111"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://example.invalid/fixture-owner/fixture-alpha/releases/download/fixture-alpha-v0.1.0/fixture-alpha-0.1.0-noarch.astraplugin",
+      "filename": "fixture-alpha-0.1.0-noarch.astraplugin",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "size": 1024
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "tools"
+  ]
+}

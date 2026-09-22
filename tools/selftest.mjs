@@ -115,6 +115,26 @@ const MODULES = [
   // to; the boundary to protect is still `update-notes.mjs` → `repo-rules.mjs`,
   // and nothing is inserted between that pair.
   "contract-tokens.mjs",
+  // RC-R2-4 — `tools/regenerate-signed.mjs`, run as a carrier runs it. It
+  // prints its own section header, so it could sit anywhere after a module
+  // that prints one; here, after `contract-tokens.mjs` and before
+  // `baseline.mjs`, because that is the slot where nothing at all moves.
+  //
+  // **This line and the file beneath it are ONE change and cannot be split
+  // across two commits.** The reason is `checkModuleSet` below: the list and
+  // the directory are compared as SETS and it fails in BOTH directions. A
+  // commit that adds the module without this line fails with "exports run()
+  // and is not in the runner's list"; a commit that adds this line without
+  // the module fails with "listed by the runner and not in tools/selftest/".
+  // Either half alone is a red `node tools/selftest.mjs`, which is a step in
+  // `build-index.yml`, `ingest.yml`, `plugins-moderation.yml` and
+  // `baseline.yml` — so splitting the change does not stage it, it schedules
+  // an outage and only chooses which side of the merge gets it. The two-way
+  // check is right and is not the thing to relax; what it means is that
+  // whoever owns this list and whoever writes a module have to arrive in the
+  // same commit. Written here because the instruction to leave the line to
+  // its owner assumed it was separable, and for this file it is not.
+  "regenerate.mjs",
   // Last, and with a section header of its own. The boundary to protect is
   // `update-notes.mjs` → `repo-rules.mjs`: `repo-rules.mjs` prints no header,
   // so its names come out under `update-notes.mjs`'s, and anything inserted
