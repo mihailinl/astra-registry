@@ -1,6 +1,6 @@
 {
-  "contract_version": "0.24.1",
-  "source_commit": "39b302b9e160a35c71f91d57746acdf4900107b5",
+  "contract_version": "0.26.0",
+  "source_commit": "09331d9b58c55d4d7a5574f01f8e4dbb4ce46adc",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -9,6 +9,8 @@
     "`emitter` and `acceptor` are arrays of party strings from `parties`; §0.8's Callers letters map onto them as C client, P panel, B bot, G guest. `registry` covers the bot and the signer where an entry is not the bot's alone.",
     "A `service-only` entry is listed with no members and for no party: it is outside SCOPE-8's two-way test, and neither the registry's scan nor the client's expects or forbids one.",
     "A `service-only` entry says this path is **routed by the plugins service and outside SCOPE-8's two-way test**. It does not say a handler answers it.",
+    "A member's requiredness is `true`, `false` or `conditional`. `true` is carried by every entry of its kind; `false` is permitted, and **says only that this contract publishes no condition on it, never that none exists**; `conditional` is carried exactly under the condition the member's `when` states, and **a member that is `conditional` and states no `when`, or states a `when` a reader cannot evaluate, makes the file malformed: a reader MUST refuse it, or refuse every entry of that schema, and MUST NOT read the member as unconditioned** — reading it as unconditioned is the looser direction, and the looser direction is the one this field exists to close.",
+    "A `when` is `{\"iff\": <predicate>}` or `{\"if\": <predicate>}`, **never both and never neither, and which of the two applies is decided per condition and never defaulted**: `if` requires the member where the predicate holds and says nothing where it does not; `iff` also forbids it where the predicate does not hold. A field that can only say *when* reproduces the defect it is fixing, because *if this code then this member* leaves the member unconstrained for every other code, which is the looser reading of any condition whose reverse the contract states. A predicate names one sibling member and the values it may take — `{\"code\": [\"M_APPEAL\"]}`, or `{\"code\": {\"not\": [\"M_APPEAL\"]}}` for their complement — and every value it names is one this contract already lists for that member. A `conditional` member also carries `why`, the sentence a reader meets first on the day the condition is inconvenient, because **a condition whose reason is not written down is relaxed rather than investigated**; a `false` member may carry one to say why no condition is published for it.",
     "`pending` is what SCOPE-7 says this file carries and the contract does not yet record. Each record names what is missing, who owes it, the version that lands it and what the floor asserts until then. The generator refuses to run once the contract records one of them and no extractor has been written."
   ],
   "parties": [
@@ -2115,11 +2117,208 @@
         },
         {
           "name": "submissions",
-          "required": true
+          "required": true,
+          "of": [
+            {
+              "name": "submission_id",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "repo",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "tag",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "trigger",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "service_repository_id",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "stop_status",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "fingerprints",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "code",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "category",
+              "required": false,
+              "why": "BOT-80 requires this of an `M_REJECT` entry and of no other. 0.26.0 publishes no condition for it, deliberately: the plugins service makes all four of these non-null on the decision row such an entry is built from, so its emitter satisfies the clause unconditionally. It is a decline and not an omission, and §0.6's 0.26.0 row records what the acceptor was measured to do with each of the four.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "moderator",
+              "required": false,
+              "why": "BOT-80 requires this of an `M_REJECT` entry and of no other. 0.26.0 publishes no condition for it, deliberately: the plugins service makes all four of these non-null on the decision row such an entry is built from, so its emitter satisfies the clause unconditionally. It is a decline and not an omission, and §0.6's 0.26.0 row records what the acceptor was measured to do with each of the four.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "decided_at",
+              "required": false,
+              "why": "BOT-80 requires this of an `M_REJECT` entry and of no other. 0.26.0 publishes no condition for it, deliberately: the plugins service makes all four of these non-null on the decision row such an entry is built from, so its emitter satisfies the clause unconditionally. It is a decline and not an omission, and §0.6's 0.26.0 row records what the acceptor was measured to do with each of the four.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "declared_interest",
+              "required": false,
+              "why": "BOT-80 requires this of an `M_REJECT` entry and of no other. 0.26.0 publishes no condition for it, deliberately: the plugins service makes all four of these non-null on the decision row such an entry is built from, so its emitter satisfies the clause unconditionally. It is a decline and not an omission, and §0.6's 0.26.0 row records what the acceptor was measured to do with each of the four.",
+              "source": "BOT-80"
+            }
+          ]
         },
         {
           "name": "service_decisions",
-          "required": true
+          "required": true,
+          "of": [
+            {
+              "name": "service_decision_id",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "code",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "category",
+              "required": "conditional",
+              "when": {
+                "iff": {
+                  "code": {
+                    "not": [
+                      "M_APPEAL"
+                    ]
+                  }
+                }
+              },
+              "why": "An appeal decides a decision that already has a category; it has none of its own, and §7.2 allows an appeal no category at all, so any value here would be one no code permits. Relaxed to `if`, an `M_APPEAL` entry may carry one and the bot writes it into the public decision record, where it reads as the category the appeal was decided under rather than as the category of the decision appealed. Dropped, a takedown reaches git with no category and the moderation log cannot say what the listing went for.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "plugin_id",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "versions",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "decided_at",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "reason",
+              "required": true,
+              "source": "BOT-80"
+            },
+            {
+              "name": "reverses",
+              "required": false,
+              "why": "BOT-80 qualifies this as where they apply and names no code, so no condition is published: the file states what the contract states and no more. A condition read out of another requirement would be a rule in BOT-80's entry list that BOT-80 does not state.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "appeal_of",
+              "required": false,
+              "why": "BOT-80 qualifies this as where they apply and names no code, so no condition is published. MOD-33 does bind it to a decided appeal, and that is a condition a later version may publish from MOD-33; taking it from there in this one would put a rule in BOT-80's entry list that BOT-80 does not state.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "outcome",
+              "required": "conditional",
+              "when": {
+                "iff": {
+                  "code": [
+                    "M_APPEAL"
+                  ]
+                }
+              },
+              "why": "`outcome` is the appeal's verdict, `stands` or `reversed` (MOD-33), and nothing but an appeal has one. Relaxed to `if`, a delisting may carry `outcome` `reversed`; the acceptor copies the member into the decision record for every `M_*` code, so a decision nobody appealed is published carrying an appeal's verdict, and `reversed` is the one value that makes a new artefact. Dropped, an appeal arrives with no verdict and there is nothing to write into the `appeal` log entry MOD-33 requires.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "severity",
+              "required": "conditional",
+              "when": {
+                "if": {
+                  "code": [
+                    "M_DEPRECATE",
+                    "M_REVOKE"
+                  ]
+                }
+              },
+              "why": "§0.8 calls this advisory `severity`: it grades an advisory, and a deprecation or a revocation is where one is minted, so it must be there for those two or the signed withdrawal list has nothing to grade. It is `if` and not `iff` because the codes that lift an advisory act on one too, and BOT-80 does not say a relist or an un-revoke may not restate its grade. A biconditional would refuse a conforming reversal, and a refusal is final (BOT-81): the decision would settle unapplied, leave the moderation list, page nobody, and leave suppressed a listing a moderator decided to restore. Dropped, a revocation reaches the withdrawal list ungraded and every client that renders a severity has nothing to render.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "action",
+              "required": "conditional",
+              "when": {
+                "iff": {
+                  "code": [
+                    "M_REVOKE"
+                  ]
+                }
+              },
+              "why": "§0.8 calls this revoke `action`, and the noun is the whole difference from `severity` beside it in the same clause: `severity` grades the advisory, which several codes touch, and `action` is what a client must do about a revoked version — `block_install` or `disable` (MOD-10) — which only a revocation decides. So the reverse direction is real. Relaxed to `if`, a deprecation may carry `block_install`, the acceptor copies it into the decision record, and a deprecation — which compiles to a warning and nothing else — is published carrying an enforcement no moderator chose. Dropped, a revocation lands with no enforcement and the withdrawal list cannot say whether an installed copy stops.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "moderator",
+              "required": "conditional",
+              "when": {
+                "iff": {
+                  "code": {
+                    "not": [
+                      "A_REMOVAL_REQUEST",
+                      "A_YANK"
+                    ]
+                  }
+                }
+              },
+              "why": "BOT-80 states this twice and in opposite directions — for an `M_*` code only, and then an `A_*` entry carries no moderator — because the two failures are not the same one. Relaxed to `if`, an author's own yank may carry a handle, and DEC-14 and MOD-41 forbid exactly that: the act is the author's, and a handle on it publishes a person as having decided something they took no part in, in a record ID-48 makes permanent and never reassigns. Dropped, an `M_*` takedown reaches the moderation log unattributed and MOD-47 has nobody to name.",
+              "source": "BOT-80"
+            },
+            {
+              "name": "declared_interest",
+              "required": "conditional",
+              "when": {
+                "iff": {
+                  "code": {
+                    "not": [
+                      "A_REMOVAL_REQUEST",
+                      "A_YANK"
+                    ]
+                  }
+                }
+              },
+              "why": "MOD-12 records that a moderator declared an interest and acted because no other active moderator existed, and shows it to the owner and to every moderator. Relaxed to `if`, an author action carries a conflict declaration about a moderator who took no part in it. Dropped, the one fact MOD-12 exists to surface becomes optional on every takedown, and a decision taken under a declared conflict is indistinguishable in the public record from one taken without — which is not a missing field but the failure MOD-12 was written for.",
+              "source": "BOT-80"
+            }
+          ]
         }
       ],
       "members_recorded": true,

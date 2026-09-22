@@ -227,6 +227,111 @@ test("a member added to the token file, or removed from the schema, is caught", 
     "a schema with one member removed compares equal to the token file");
 });
 
+test("BOT-80's entry members reach both files, and neither requires what the contract conditions", () => {
+  // **Contract 0.26.0 is what makes this test possible, and its absence is
+  // what made it necessary.** Until then the token file held `submissions` and
+  // `service_decisions` as two bare required members with no entries at all:
+  // `of` was a flat list of names and could carry neither requiredness nor a
+  // condition, so the comparison one gate up — which is two-way and correct —
+  // compared three names and stopped. Everything BOT-80 says about what is
+  // INSIDE an entry was, from this repository's side, unpublished. That is the
+  // silent direction: an entry short of a member the contract requires passed
+  // every file-driven check anybody could write, on every fetch.
+  const tokens = JSON.parse(read("schema/contract-tokens-v1.json"));
+  const record = (tokens.entries ?? []).find((e) => e?.id === `schema:${WORK_SCHEMA}`);
+  assert.ok(record, `the token file carries no \`schema:${WORK_SCHEMA}\` record`);
+
+  const kinds = { submissions: "submission", service_decisions: "serviceDecision" };
+  const entryOf = (member) => {
+    const slot = (record.members ?? []).find((m) => m.name === member);
+    assert.ok(slot, `the token file's \`${WORK_SCHEMA}\` has no \`${member}\` member`);
+    assert.ok(Array.isArray(slot.of) && slot.of.length > 0,
+      `the token file publishes \`${member}\` with no entry members. Contract 0.26.0 landed them; a file ` +
+      "without them is a file this comparison cannot make, which is the state that let a malformed entry " +
+      "through on every fetch");
+    for (const m of slot.of) {
+      assert.equal(typeof m, "object",
+        `\`${member}\` carries the bare name ${JSON.stringify(m)}, which cannot hold a condition`);
+    }
+    return slot.of;
+  };
+
+  for (const [member, def] of Object.entries(kinds)) {
+    const of = entryOf(member);
+    // Membership, both ways, which is the half that could not be written
+    // before. A member minice-be adds in a MINOR lands in the contract and
+    // this file, and turns THIS red rather than being ignored on the read
+    // side and dropped on the write side.
+    assert.deepEqual(of.map((m) => m.name).sort(), schemaMembers(def, REPO),
+      `${SCHEMA_FILE}'s \`${def}\` members and the token file's \`${member}\` entry members differ`);
+
+    // Requiredness, ONE way and deliberately. This schema's `required` is
+    // short on purpose — its own description says why: requiring a member the
+    // service may legally omit turns a lawful answer into a `kind_refused`,
+    // which BOT-81 makes final. So the schema may require fewer, never more.
+    // A member the contract makes conditional or optional appearing in
+    // `required` here is the one direction that is always wrong, and it is
+    // what this asserts.
+    const unconditional = new Set(of.filter((m) => m.required === true).map((m) => m.name));
+    const doc = workSchema(REPO);
+    const node = def === "submission" ? doc.$defs.submission : doc.$defs.serviceDecision;
+    for (const name of node.required ?? []) {
+      assert.ok(unconditional.has(name),
+        `${SCHEMA_FILE} requires \`${name}\` of every \`${def}\` and the contract does not. A refusal here ` +
+        "is final (BOT-81): the entry leaves BOT-80's list, pages nobody, and the takedown does not land");
+    }
+  }
+
+  // The one condition this repository already enforces, now compared with the
+  // published statement of it. `moderation-work-v1.json`'s `not` clause is a
+  // denylist by name — `moderator` and `declared_interest` on an `A_*` entry —
+  // and it is exactly the reverse half of two of the contract's conditions.
+  // That half is the reason those two are published `iff` and not `if`: an
+  // `if` would say nothing about an author action carrying a moderator, which
+  // is the case DEC-14 and MOD-41 exist for and the case this file refuses.
+  const sd = entryOf("service_decisions");
+  const denied = workSchema(REPO).$defs.serviceDecision.not;
+  const deniedCodes = [...denied.allOf[0].properties.code.enum].sort();
+  for (const name of AUTHOR_DENIED_MEMBERS) {
+    const m = sd.find((x) => x.name === name);
+    assert.ok(m, `the token file publishes no \`${name}\` entry member`);
+    assert.equal(m.required, "conditional", `\`${name}\` is ${JSON.stringify(m.required)} and this file refuses it by name for two codes`);
+    assert.ok(m.when?.iff,
+      `\`${name}\` is published \`if\` and this file enforces its reverse. An \`if\` says nothing about an ` +
+      "author action carrying a moderator, which is the only thing the denylist below is for");
+    assert.deepEqual([...(m.when.iff.code?.not ?? [])].sort(), deniedCodes,
+      `\`${name}\`'s condition and ${SCHEMA_FILE}'s denylist name different codes`);
+  }
+  assert.ok(deniedCodes.length >= 2, `${deniedCodes.length} author codes, so this compared against almost nothing`);
+});
+
+test("an entry member added to the token file, or removed from the schema, is caught", () => {
+  // Watched both ways on copies, like the top-level comparison above, and for
+  // the same reason: a mutation of a real file leaves the repository broken if
+  // the process dies between the edit and the restore.
+  const tokens = JSON.parse(read("schema/contract-tokens-v1.json"));
+  const record = (tokens.entries ?? []).find((e) => e?.id === `schema:${WORK_SCHEMA}`);
+  const of = record.members.find((m) => m.name === "service_decisions").of ?? [];
+  assert.ok(of.length > 0, "no entry members published, so the comparison above asserts nothing");
+
+  const widened = [...of.map((m) => m.name), "withheld_since"].sort();
+  assert.notDeepEqual(widened, schemaMembers("serviceDecision", REPO),
+    "a token file with one more entry member than the schema compares EQUAL, so that is not a comparison");
+
+  const narrowed = schemaMembers("serviceDecision", REPO).filter((m) => m !== "severity");
+  assert.notDeepEqual(narrowed, of.map((m) => m.name).sort(),
+    "a schema with one entry member removed compares equal to the token file");
+
+  // And the direction, which membership alone cannot see. `severity` is the
+  // one condition BOT-80 leaves one-directional; a file that published it
+  // `iff` would be a stricter statement than the contract makes, and the
+  // comparison above would not notice because the member name is the same.
+  const severity = of.find((m) => m.name === "severity");
+  assert.equal(severity?.when?.if ? "if" : Object.keys(severity?.when ?? {})[0], "if",
+    "`severity` is published biconditional; BOT-80 does not close its reverse, and the codes that lift an " +
+    "advisory act on one too");
+});
+
 test("the vocabularies this schema copies are the ones their modules hold", () => {
   // A schema cannot import, so four of its enums are copies. Each is compared
   // with its single source here, because a copy nobody compares is a second
