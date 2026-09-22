@@ -1050,11 +1050,21 @@ export async function run() {
   //     changed catalogue's `Index-Source-Commit`, and keeps the head's for an
   //     unchanged or carried one.
   //
+  // The three do not fail alike, and the messages below say which is which.
   // Narrow the pathspec so it skips `identity.json`, or judge `unchanged` on a
-  // subset that leaves the serial out, and a hand-committed identity record is
-  // served under an `Index-Source-Commit` from BEFORE it — a commit TRUST-43
-  // lets switch unacknowledged, until the next catalogue change. So this runs
-  // the three end to end, as the signer does, on each commit detector 9 flags.
+  // subset that leaves the serial out, and the run after a hand-committed
+  // identity record keeps the head's catalogue and its `Index-Source-Commit`
+  // from BEFORE the record: every `signed` commit after it switches
+  // unacknowledged until the next catalogue change or re-sign (a `resign`
+  // also writes the run's own Source-Commit, at `RESIGN_AFTER_HOURS`). What is
+  // served meanwhile carries none of the change — measured, the run an hour
+  // after is `unchanged` with the old trailer and the one 21 h after is
+  // `resign` with the new — so what breaks is the Why's *"held at once"* and
+  // its *"the only case the anchor changes"*, and the hold comes late. Break
+  // the third and it is worse: a catalogue GENERATED from the flagged commit,
+  // carrying a changed `source`, is served under the head's trailer, and the
+  // change itself switches unacknowledged. So this runs the three end to end,
+  // as the signer does, on each commit detector 9 flags.
   //
   // **Detector 9's class is read from detector 9, not copied here.** A9 in
   // `bot/detectors.mjs` is the registry's one statement of it (the contract's
@@ -1219,10 +1229,17 @@ export async function run() {
       "held at once\". That rests on CATALOGUE_PATHSPEC (tools/build-index.mjs) counting every path A9 flags, on " +
       "decideDocument (tools/signer/plan.mjs) calling a catalogue unchanged only when everything but issued_at and " +
       "expires_at matches, and on signRun (tools/signer/run.mjs) writing a changed catalogue's Index-Source-Commit as " +
-      "the run's own. With this red, a hand-committed identity record or source is served under an " +
-      "Index-Source-Commit from before it, and TRUST-43 lets that commit switch unacknowledged. This is the " +
-      "contract's argument breaking, not a test: repair the file, or reopen TRUST-43's Why (ops dev/couplings.md " +
-      "entry 111) — do not edit this check to match";
+      "the run's own. This is the contract's argument breaking, not a test: repair the file, or reopen TRUST-43's " +
+      "Why (ops dev/couplings.md entry 111) — do not edit this check to match";
+    // What each break does, because they differ (the header above has the measurement).
+    const LATE =
+      "So the run after the flag keeps the head's catalogue and its Index-Source-Commit from before the flag: the " +
+      "anchors differ with no failed gate, every `signed` commit after the flag switches unacknowledged until the next " +
+      "catalogue change or re-sign, and the Why's \"held at once\" and \"the only case the anchor changes\" are false. " +
+      "What is served meanwhile carries none of the change; the hold comes late, not never";
+    const SERVED =
+      "So a catalogue generated from the flagged commit (carrying the change itself, where the commit changed `source`) " +
+      "is served under a trailer from before it, and TRUST-43 lets it switch unacknowledged";
 
     const covered = new Set();
     const coveredSpecs = new Set();
@@ -1251,18 +1268,18 @@ export async function run() {
       const is = serialsAt({ root: dir, sha }).index;
       assert(is > was,
         `${sha.slice(0, 12)} changes only ${file} (${status}), which detector 9 flags, and the catalogue's serial did ` +
-          `not move (${was} → ${is}): CATALOGUE_PATHSPEC is ${JSON.stringify(CATALOGUE_PATHSPEC)} and does not count it. ${TRUST43}`);
+          `not move (${was} → ${is}): CATALOGUE_PATHSPEC is ${JSON.stringify(CATALOGUE_PATHSPEC)} and does not count it. ${LATE}. ${TRUST43}`);
 
       const run = await signRun({ root: dir, sourceCommit: sha, head, now: RUN_AT, available, delegatedAt });
       assertEqual(run.documents.index?.decision, "changed",
         `${sha.slice(0, 12)} changes only ${file} (${status}), which detector 9 flags, and moved the serial ${was} → ${is}, ` +
           `and the signer did not call the catalogue changed${run.alerts.length ? ` (${run.alerts.join(" | ")})` : ""}: ` +
-          `decideDocument no longer treats a moved serial as a change. ${TRUST43}`);
+          `decideDocument no longer treats a moved serial as a change. ${LATE}. ${TRUST43}`);
       const trailer = trailersOf(commitMessage(run, RUN_URL))["Index-Source-Commit"];
       assertEqual(trailer, sha,
         `the signer published a changed catalogue generated at ${sha.slice(0, 12)}, which changes only ${file}, under ` +
           `Index-Source-Commit ${String(trailer).slice(0, 12)}${trailer === parent ? " (the head's, from before the flag)" : ""}: ` +
-          `signRun no longer writes its own Source-Commit for a changed catalogue. ${TRUST43}`);
+          `signRun no longer writes its own Source-Commit for a changed catalogue. ${SERVED}. ${TRUST43}`);
       assertEqual(`${run.commit} ${run.refusals.join(" | ")}`, "true ",
         `the run at ${sha.slice(0, 12)} would not commit, so no \`signed\` commit carries that trailer`);
 
