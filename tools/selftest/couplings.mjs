@@ -37,10 +37,18 @@ export async function run() {
    * A fake AstraPlugins checkout with exactly the files a case needs, and one
    * check run against it.
    *
-   * `$ASTRA_PLUGINS_DIR` is tried before the sibling working copy, so a fake that
-   * carries the file under test wins in both places these tests run: a
-   * developer's machine with AstraPlugins beside this repository, and CI, where
-   * the only checkout is the one the workflow fetched.
+   * `$ASTRA_PLUGINS_DIR` is an OVERRIDE in `validate.mjs`, not a first guess:
+   * while it is set, the fake is the only checkout the reader can see. That is
+   * what lets a fake HIDE a file as well as supply one, and the hiding half is
+   * the half these tests need — it is how the `NOT verified` branch is reached
+   * on a developer's machine, which has AstraPlugins sitting beside this
+   * repository, as well as in CI, which has no sibling at all.
+   *
+   * It read "tried before the sibling working copy" until the absent case below
+   * was watched passing for the wrong reason. Tried-in-order means a fake that
+   * omits a file falls through to the real one, so every case here that asserts
+   * an ABSENCE asserted it only where no sibling existed. Say it as an override
+   * or the next fake that leaves a file out will be answered by this machine.
    */
   function withFakeCheckout(dirName, files, fn) {
     const root = path.join(tmp, dirName);
@@ -520,8 +528,31 @@ export async function run() {
     assertEqual(cleanErrors.length, 0,
       "englishDigest disagrees with coreutils on a table this repository ships in its own test:\n" +
       cleanErrors.map((f) => `  ${f.message}`).join("\n"));
-    assert(clean.some((f) => f.level === "note" && /22 lock digest vector/.test(f.message)),
-      `the check said nothing about what it read: ${JSON.stringify(clean)}`);
+    // ── the floor under the PRESENT direction ──
+    //
+    // `no errors` is also what a reader that compared NOTHING returns, so the
+    // count is read back out of the note and held to a number rather than
+    // eyeballed. This was `some(/22 lock digest vector/)`, which is a true
+    // sentence about today's fixture and says nothing at all about a resolver
+    // that starts finding an empty table — and the fix that brought the absent
+    // case below back to life is exactly a change of which file this reader
+    // resolves to, so the direction that must NOT change needs a floor of its
+    // own. A fix that makes the absent case pass by never finding anything is
+    // worse than the bug it replaced.
+    const COMPARED_FLOOR = 20;
+    assert(TABLE.length >= COMPARED_FLOOR,
+      `the fixture is ${TABLE.length} vectors, under the floor of ${COMPARED_FLOOR} it exists to prove`);
+    const verified = clean.find((f) => f.level === "note" && /lock digest vector\(s\) verified/.test(f.message));
+    assert(verified, `the check said nothing about what it read: ${JSON.stringify(clean)}`);
+    const compared = Number(/^(\d+) lock digest vector/.exec(verified.message)?.[1] ?? NaN);
+    assertEqual(compared, TABLE.length,
+      `the check compared ${compared} vector(s) against a ${TABLE.length}-vector table: ${verified.message}`);
+
+    // And the pairs, counted for the same reason. Two of the five are pinned by
+    // cases below, which name them; emptying DIGEST_PAIRS leaves the other three
+    // asserting nothing while this note goes on being printed.
+    const pairs = Number(/; (\d+) non-collision pair\(s\) hold/.exec(verified.message)?.[1] ?? NaN);
+    assert(pairs >= 5, `only ${pairs} non-collision pair(s) were asserted: ${verified.message}`);
 
     // ── the mutation, watched: one number moved ──
     const oneWrong = TABLE.map(([n, e, d]) => (n === "f3" ? [n, e, "074439fb0ccf"] : [n, e, d]));
@@ -563,16 +594,35 @@ export async function run() {
     assert(halfGone.some((f) => f.level === "error" && /nfc-short-i \/ nfd-short-i/.test(f.message)),
       `a pair with a deleted half asserted nothing and looked exactly like one that passed: ${JSON.stringify(halfGone.map((f) => f.message))}`);
 
-    // ── no checkout: a NOTE, never silence, and never a pass ──
+    // ── no table: a NOTE, never silence, and never a pass ──
     //
     // `build-index.yml` turns every `NOT verified` line into an `::error::` and
     // `exit 1`, so the honest answer stops the catalogue instead of reading as
     // a green tick in a wall of them. That only works if the answer is printed.
+    //
+    // **This case spent its whole life being answered by another repository.**
+    // `validate.mjs` resolved a file by trying $ASTRA_PLUGINS_DIR and then the
+    // sibling working copy until one of them EXISTED, so a fake that omits the
+    // table fell through to the real `../AstraPlugins` and this assertion was
+    // handed "32 lock digest vector(s) verified" — which is not `NOT verified`,
+    // and is the only reason anybody looked. It passed in CI throughout, where
+    // the selftest step runs before `_astra-plugins` is checked out and there is
+    // nothing to fall through to; so the branch that stops the catalogue was
+    // proven only in the one environment where it could not be got wrong.
     const absent = withFakeCheckout("fake-ap-digest-absent",
       { "testdata/locales/pass/only/plugin.toml": "[plugin]\nname = \"x\"\ndescription = \"x\"\n" },
       (ctx) => checkLocaleDigestVectors(ctx));
-    assert(absent.some((f) => f.level === "note" && f.message.includes("NOT verified")),
-      `an absent digest table was passed over in silence: ${JSON.stringify(absent)}`);
+    const said = absent.find((f) => f.level === "note" && f.message.includes("NOT verified"));
+    assert(said, `an absent digest table was passed over in silence: ${JSON.stringify(absent)}`);
+
+    // WHICH absence, and not merely that some absence was named. This fake has
+    // a `testdata/locales` and no table in it, which is a PIN older than the
+    // table — a different repair from a checkout that never arrived, and the
+    // reader is supposed to tell them apart. It is also the assertion that
+    // holds the override to being one: "no checkout found" here would mean the
+    // reader could not see the fake's own corpus directory either.
+    assert(/has testdata\/locales but no digest-vectors\.json/.test(said.message),
+      `the reader named the wrong absence, which sends the reader of the log to the wrong file: ${said.message}`);
     assertEqual(absent.filter((f) => f.level === "error").length, 0,
       "a missing checkout is a check that did not run, not a check that failed; the workflow is what makes it fatal");
   });
