@@ -357,13 +357,15 @@ ${noLink}`;
  *
  * So rendering `i18n` here is not a template edit. It needs a reader-language
  * signal the site has no source for, and every way of supplying one moves
- * something structural: a locale segment multiplies the URL space and
- * `site/redirects.json` with it, and breaks the one-page-per-entry property
- * `site/selftest.mjs` asserts in both directions (`pagesUnder(out)` deep-equals
- * the ids); a client-side switch over the index the page already ships leaves
- * `<title>` and the meta description needing one canonical locale anyway.
- * Until somebody settles that, this page is English because it has no way to
- * be anything else — which is a reason, not a ruling.
+ * something structural. A locale segment multiplies the URL space and every
+ * mapping in `site/redirects.json` with it, and breaks the one-page-per-entry
+ * property `site/selftest.mjs` asserts in both directions (`pagesUnder(out)`
+ * deep-equals the ids). A client-side switch means this page fetching the
+ * catalogue it was generated from, which is the "no live fetch" the header of
+ * this file spends a paragraph on. Either way `<title>` and the meta
+ * description still need one canonical locale. Until somebody settles that,
+ * this page is English because it has no way to be anything else — which is a
+ * reason, not a ruling.
  */
 export function pluginPage(entry, { revocations = [], meta, highRisk = [] }) {
   const releases = entry.releases ?? [];

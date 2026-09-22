@@ -84,9 +84,11 @@
   // is findable, and the disagreement is live rather than hypothetical. In
   // `registry/v1/index.json` at serial 52, 5 of 16 listings carry `i18n` (six
   // records, `ru` and `uk`), and `voice-text-input` publishes a Russian name
-  // sharing no character with `Voice Text Input`. Every haystack this function
-  // builds is ASCII but for one em dash. That listing is findable in Astra by
-  // its own name and findable here only in English (counted 2026-09-22).
+  // that shares no letter with `Voice Text Input`. No haystack this function
+  // builds holds a non-Latin character at all — across all sixteen the only
+  // non-ASCII byte is one em dash. So that listing is findable in Astra by the
+  // name its author gave it, and findable here only in English (counted
+  // 2026-09-22).
   //
   // Two things would have to be true before `i18n` joins the list, and neither
   // is this file's to settle:
@@ -98,8 +100,8 @@
   //   * a result card that can say why it matched. `browse` can: it takes a
   //     `language` and renders that locale's card beside the hit. This page has
   //     no reader-language signal at all — the shell in `site/lib/html.mjs`
-  //     writes `<html lang="en">` for every page — so a match found in Russian
-  //     would draw an English card containing none of the query.
+  //     hardcodes `<html lang="en">` — so a match found in Russian would draw
+  //     an English card containing none of the query.
   function haystack(e) {
     return [e.id, e.name, e.description, (e.keywords || []).join(" "), (e.categories || []).join(" "), (e.capabilities || []).join(" "), e.author]
       .filter(Boolean)
