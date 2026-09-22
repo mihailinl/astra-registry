@@ -1,7 +1,8 @@
 // Who may claim what: publisher records against their schema, every badge
 // resolving and no record shipped unused, the no-publishers/ fail-closed case,
 // expiry firing, homoglyph display-name collisions, `covers` in both orderings,
-// reserved prefixes, whole-line proof, and the four re-check outcomes.
+// reserved prefixes, whole-line proof, the four re-check outcomes, and the
+// daily job's expiry being the library's rule rather than a copy of it.
 //
 // Two tests below declare their own `const tmp` inside the test body, shadowing
 // the harness one. Those are per-test trees and the shadows are deliberate,
@@ -10,11 +11,12 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { buildIndex } from "../build-index.mjs";
 import { validate as validateSchema } from "../lib/jsonschema.mjs";
 import { reservedPrefixViolation } from "../lib/reserved.mjs";
-import { REPO_ROOT, expiredPublishers, loadPublishers, publisherNameCollisions } from "../lib/sources.mjs";
+import { REPO_ROOT, expiredPublishers, loadPublishers, publisherNameCollisions, publisherRecords } from "../lib/sources.mjs";
 import { proofNamesOwner, recheck } from "../../bot/recheck-publishers.mjs";
 import { test, assert } from "./harness.mjs";
 
@@ -392,5 +394,139 @@ export async function run() {
     assert(r.expired.length === 1, "an expired record is withdrawn");
     assert(!fs.existsSync(path.join(root, "publishers", "someone.json")), "the record is gone, so the badge is");
     fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  // The job that takes a badge off, on the record shape that broke it. The
+  // map `loadPublishers` returns is keyed by LOGIN, so a record with `covers`
+  // is in it once per login; `bot/recheck-publishers.mjs` walked its values,
+  // fetched the proof once per login, deleted the file on the first pass and
+  // threw ENOENT on the second — so the workflow step failed, the commit never
+  // ran, and the badge stayed on for as long as the record did. Measured on
+  // this fixture before the repair: 2 fetches, then the throw. The committed
+  // tree has no `verified` record, so nothing else here ever held this case.
+  await test("an expired record covering two logins is fetched once, withdrawn once, and the write finishes", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "astra-recheck-covers-"));
+    try {
+      fs.mkdirSync(path.join(root, "publishers"));
+      const file = path.join(root, "publishers", "someone.json");
+      fs.writeFileSync(file, JSON.stringify({
+        schema: "astra.registry.publisher/1", owner: "someone", covers: ["SOMEONE-TECH"], display_name: "Someone",
+        tier: "verified", verified_at: "2019-01-01", expires_at: "2020-01-01",
+        evidence: { kind: "domain", domain: "example.com", proof: "https://example.com/p" },
+      }, null, 2) + "\n");
+      const { publishers } = loadPublishers(root);
+      assert(publishers.size === 2 && publisherRecords(publishers).length === 1,
+        `the fixture must be ONE record under TWO keys or it proves nothing about covers; it loaded ${publishers.size} key(s)`);
+
+      let fetches = 0;
+      const fetcher = async () => { fetches += 1; return { ok: false, why: "HTTP 404" }; };
+      let r;
+      try {
+        r = await recheck({ root, write: true, fetcher });
+      } catch (e) {
+        assert(false, `recheck --write threw on an expired record with covers (${e.code ?? e.message}); the workflow step fails, ` +
+          "the commit that withdraws the badge never runs, and it stays on");
+      }
+      assert(fetches === 1, `one record's proof was fetched ${fetches} times; the job is walking logins, not records`);
+      assert(r.errors.length === 0, `the run reported load errors, and the CLI exits 1 on any: ${JSON.stringify(r.errors)}`);
+      assert(r.expired.length === 1, `one expired record was reported ${r.expired.length} times`);
+      assert(!fs.existsSync(file), "the expired record is still on disk, so the badge is still on");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // One rule, asked two ways. The first half is agreement over a fixture set
+  // that has every shape the rule distinguishes — past, today, future, no
+  // date, one login, three logins, both tiers — so an agreement cannot be the
+  // agreement of two empty lists. The second half is what agreement cannot
+  // show: a COPY of the library agrees with it perfectly until the day one of
+  // them is edited. So the library is changed under the job, in a copy of both
+  // files outside this tree, and the job has to change with it.
+  await test("the daily job's expiry is the library's rule, and follows the library when it changes", async () => {
+    const now = new Date("2026-06-15T12:00:00Z");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "astra-recheck-agree-"));
+    const shadow = fs.mkdtempSync(path.join(os.tmpdir(), "astra-recheck-lib-"));
+    try {
+      fs.mkdirSync(path.join(root, "publishers"));
+      const rec = (owner, over) => fs.writeFileSync(path.join(root, "publishers", `${owner}.json`), JSON.stringify({
+        schema: "astra.registry.publisher/1", owner, display_name: `Publisher ${owner}`,
+        tier: "verified", verified_at: "2019-01-01",
+        evidence: { kind: "domain", domain: "example.com", proof: `https://example.com/${owner}` },
+        ...over,
+      }, null, 2) + "\n");
+      rec("past", { expires_at: "2020-01-01" });
+      rec("pastmany", { expires_at: "2026-06-14", covers: ["PASTMANY-ORG", "PASTMANY-TWO"] });
+      rec("today", { expires_at: "2026-06-15" });
+      rec("future", { expires_at: "2999-01-01", covers: ["FUTURE-ORG"] });
+      // An `astra_team` record is held to an `expires_at` if it carries one:
+      // the library does not ask the tier, and neither does the build's check
+      // of the committed tree above. Neither committed record carries one.
+      rec("teamdated", { tier: "astra_team", expires_at: "2020-01-01", evidence: { kind: "first-party", note: "fixture" } });
+      rec("team", { tier: "astra_team", evidence: { kind: "first-party", note: "fixture" } });
+
+      const { errors, publishers } = loadPublishers(root);
+      assert(errors.length === 0, `the fixture set did not load cleanly: ${JSON.stringify(errors)}`);
+      const library = expiredPublishers(publishers, now);
+      const files = library.map((e) => e.file);
+      assert(new Set(files).size === files.length, `the library reported a record twice: ${files.join(", ")}`);
+      assert(library.length >= 2 && library.length < publisherRecords(publishers).length,
+        `the library called ${library.length} of ${publisherRecords(publishers).length} records expired; an agreement ` +
+        "over all or none of them would prove nothing");
+      assert(files.includes("publishers/pastmany.json"), "the multi-login record is not in the library's answer, so the covers case is unasked");
+
+      const fetcher = async () => ({ ok: false, why: "HTTP 404" });
+      const job = await recheck({ root, write: false, fetcher, now });
+      assert(JSON.stringify(job.expired) === JSON.stringify(library),
+        `the job and the library disagree on which records are expired:\n  job     ${JSON.stringify(job.expired)}\n  library ${JSON.stringify(library)}`);
+
+      // Change the library, not the job. The job's own import is redirected to
+      // a patched copy of `tools/lib/sources.mjs`; every other relative import
+      // in both copies is pointed back at the real file, so nothing but that
+      // one function differs. Each anchor must match exactly once.
+      const here = path.dirname(fileURLToPath(import.meta.url));
+      const realLib = path.join(here, "..", "lib", "sources.mjs");
+      const realJob = path.join(here, "..", "..", "bot", "recheck-publishers.mjs");
+      const absolutise = (src, from) => src.replace(/(\bfrom\s+|\bimport\s*\(\s*)(["'])(\.{1,2}\/[^"']+)\2/g,
+        (_m, lead, q, spec) => `${lead}${q}${new URL(spec, pathToFileURL(from)).href}${q}`);
+      const once = (src, re, what) => {
+        const hits = src.match(new RegExp(re.source, "g")) ?? [];
+        if (hits.length !== 1) throw new Error(`${what} matched ${hits.length} times, not once; this test's anchor needs rewriting`);
+        return re;
+      };
+      let lib = fs.readFileSync(realLib, "utf8");
+      const decl = once(lib, /export function expiredPublishers\([^{]*\)\s*\{/, "expiredPublishers' declaration in tools/lib/sources.mjs");
+      lib = lib.replace(decl, (m) => `${m}\n  return publisherRecords(publishers).filter(({ doc }) => doc.owner === "future")` +
+        `.map(({ file, doc }) => ({ file, owner: doc.owner, expires_at: "changed-library" }));\n`);
+      fs.writeFileSync(path.join(shadow, "sources.mjs"), absolutise(lib, realLib));
+
+      let jobSrc = fs.readFileSync(realJob, "utf8");
+      const imp = /(["'])\.\.\/tools\/lib\/sources\.mjs\1/;
+      const hits = jobSrc.match(new RegExp(imp.source, "g")) ?? [];
+      assert(hits.length === 1,
+        `bot/recheck-publishers.mjs imports tools/lib/sources.mjs ${hits.length} times, not once; a job that no longer ` +
+        "imports the library cannot be running its rule");
+      jobSrc = jobSrc.replace(imp, JSON.stringify(pathToFileURL(path.join(shadow, "sources.mjs")).href));
+      fs.writeFileSync(path.join(shadow, "recheck-publishers.mjs"), absolutise(jobSrc, realJob));
+
+      const patched = await import(pathToFileURL(path.join(shadow, "recheck-publishers.mjs")).href);
+      const moved = await patched.recheck({ root, write: false, fetcher, now });
+      const want = [{ file: "publishers/future.json", owner: "future", expires_at: "changed-library" }];
+      assert(JSON.stringify(moved.expired) === JSON.stringify(want),
+        "the library's rule was changed and the job's answer did not follow it, so the job is running its own copy:\n" +
+        `  job   ${JSON.stringify(moved.expired)}\n  want  ${JSON.stringify(want)}`);
+
+      // And what the job removes is exactly what it selected: under --write,
+      // the real library's expired set is gone and nothing else is.
+      const removed = await recheck({ root, write: true, fetcher, now });
+      assert(JSON.stringify(removed.expired) === JSON.stringify(library), "the write run selected differently from the report run");
+      const left = fs.readdirSync(path.join(root, "publishers")).sort();
+      const wantLeft = ["future.json", "team.json", "today.json"];
+      assert(JSON.stringify(left) === JSON.stringify(wantLeft),
+        `after --write the tree holds ${left.join(", ")}; it should hold ${wantLeft.join(", ")} — the library's selection removed, and nothing else`);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(shadow, { recursive: true, force: true });
+    }
   });
 }
