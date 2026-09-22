@@ -56,7 +56,9 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 
 import { isShallow } from "../coverage/git.mjs";
-import { REPO_ROOT } from "../lib/sources.mjs";
+import { REPO_ROOT, loadPublishers, loadRecords, loadSources, publisherRecords } from "../lib/sources.mjs";
+import { NOTICE_DIR, NOTICE_NAME } from "../validate.mjs";
+import { CUTOVER_FILE, DEADLINE_FILE } from "../../bot/lib/listing-state.mjs";
 import { test, assert, assertEqual, neverAsk, tmp } from "./harness.mjs";
 
 const TOKEN_FILE = "schema/contract-tokens-v1.json";
@@ -612,6 +614,122 @@ export async function run() {
       `tools/validate.mjs — then that paragraph is the stale one and goes; if it has not, the paragraph is the ` +
       `only record that it is owed and must stay`);
   });
+
+  // ── what the file calls required, against the records it describes ──────
+  //
+  // Found 2026-09-22 answering the plugins service's question about which of
+  // its two readings of "listed" decides (ops `dev/couplings.md` entry 86).
+  // Contract 0.31.0's file published `astra.registry.plugin/1` `unlisted`,
+  // `astra.registry.version/1` `yanked` and `astra.registry.publisher/1`
+  // `covers` as `required: true`, and this tree's records omitted them:
+  // `unlisted` in 16 of 22 listing records, `yanked` in 52 of 52 version
+  // records, `covers` in 1 of 2 publisher records. A reader that takes
+  // requiredness from the file — which is what the file is for — would have
+  // refused most of the catalogue. The generator had rendered B.4's "others
+  // READ `source.repo` and `unlisted`" as "both are required", because B.4
+  // named no member of those three records optional; contract 0.32.0 says
+  // which are.
+  //
+  // Nothing compared the file's `required: true` with the records it describes.
+  // SCOPE-8's two-way test compares the file with an IMPLEMENTATION, entry 38
+  // and entry 50 were about CONDITIONAL members, and the record schemas here
+  // make all three optional — so the file, the prose and the schemas each
+  // agreed with somebody, and the records agreed with none of them.
+  //
+  // So: every member the file publishes `required: true` for a B.4 record
+  // kind is present in every record of that kind this tree commits, found the
+  // way `tools/lib/sources.mjs` loads them.
+  await test("every B.4 member the token file calls required is in every committed record of its kind", () => {
+    const doc = JSON.parse(fs.readFileSync(tokenPath, "utf8"));
+    const kinds = (doc.entries || []).filter((e) => e.kind === "schema" && /^astra\.registry\./.test(e.name));
+    assert(kinds.length >= REGISTRY_KIND_FLOOR,
+      `${TOKEN_FILE} carries ${kinds.length} \`astra.registry.*\` schema entries and the floor is ` +
+      `${REGISTRY_KIND_FLOOR} (14 on 2026-09-22). Below it this is a loop over a broken read`);
+
+    // A kind the file makes something required of, with no way here to find
+    // its records, is a kind this check silently stops asking about. And a
+    // loader for a kind the file no longer carries is a map gone stale.
+    const demanding = kinds.filter((e) => (e.members || []).some((m) => m.required === true));
+    const unloaded = demanding.map((e) => e.name).filter((n) => !RECORD_LOADERS[n]);
+    assert(unloaded.length === 0,
+      `${TOKEN_FILE} publishes a \`required: true\` member for ${unloaded.join(", ")}, and this check has no ` +
+      `loader for that kind's committed records. Add one to RECORD_LOADERS, found the way tools/lib/sources.mjs ` +
+      `(or the kind's own reader) finds them — never an empty list, which would pass`);
+    const stale = Object.keys(RECORD_LOADERS).filter((n) => !kinds.some((e) => e.name === n));
+    assert(stale.length === 0,
+      `RECORD_LOADERS names ${stale.join(", ")}, which ${TOKEN_FILE} does not carry as a schema entry`);
+
+    const sources = loadSources(REPO_ROOT);
+    assert(sources.errors.length === 0,
+      `plugins/ does not load, so no record of it can be said to carry anything: ` +
+      sources.errors.slice(0, 3).map((e) => `${e.file}: ${e.message}`).join("; "));
+
+    const problems = [];
+    const read = [];
+    const exceptionsSeen = new Set();
+    let membersAsked = 0;
+    for (const entry of demanding) {
+      const records = RECORD_LOADERS[entry.name](REPO_ROOT, sources);
+      read.push(`${entry.name.replace(/^astra\.registry\./, "")} ${records.length}`);
+      for (const member of entry.members.filter((m) => m.required === true)) {
+        if (records.length === 0) continue;
+        membersAsked += 1;
+        const missing = records.filter((r) => !memberPresent(r.doc, member.name));
+        const exception = KNOWN_FALSE.find((k) => k.schema === entry.name && k.member === member.name);
+        if (exception) {
+          exceptionsSeen.add(`${exception.schema} ${exception.member}`);
+          const outside = missing.filter((r) => !exception.onlyWhere(r.doc));
+          if (outside.length) {
+            problems.push(
+              `${entry.name} \`${member.name}\` is absent from ${outside.length} record(s) the recorded exception ` +
+              `does not cover (${exception.where}), first ${outside[0].file}`);
+          }
+          if (missing.length === 0) {
+            problems.push(
+              `${entry.name} \`${member.name}\` is recorded here as published \`required: true\` and absent ` +
+              `${exception.where}, and every committed record now carries it. The exception is stale: remove it ` +
+              `from KNOWN_FALSE, and ops \`dev/server-registry-contract-pending.md\` ${exception.pending} with it`);
+          }
+          continue;
+        }
+        if (missing.length) {
+          problems.push(
+            `${entry.name} publishes \`${member.name}\` \`required: true\`, and ${missing.length} of ` +
+            `${records.length} committed record(s) do not carry it — first ${missing[0].file}` +
+            (missing.length > 1 ? `, then ${missing.slice(1, 3).map((r) => r.file).join(", ")}` : ""));
+        }
+      }
+    }
+    for (const k of KNOWN_FALSE) {
+      if (!exceptionsSeen.has(`${k.schema} ${k.member}`)) {
+        problems.push(
+          `KNOWN_FALSE records ${k.schema} \`${k.member}\` as published \`required: true\`, and ${TOKEN_FILE} no ` +
+          `longer publishes it so. The exception is stale: remove it, and ops ` +
+          `\`dev/server-registry-contract-pending.md\` ${k.pending} with it`);
+      }
+    }
+
+    // The floor is on what was READ, so a loader that quietly returns nothing
+    // for the three kinds this tree does commit is a failure and not a pass.
+    const counts = Object.fromEntries(
+      Object.keys(RECORD_FLOORS).map((n) => [n, RECORD_LOADERS[n](REPO_ROOT, sources).length]));
+    for (const [n, floor] of Object.entries(RECORD_FLOORS)) {
+      if (counts[n] < floor) {
+        problems.push(`read ${counts[n]} committed ${n} record(s) and the floor is ${floor}; a loader stopped finding them`);
+      }
+    }
+    if (membersAsked < REQUIRED_MEMBER_FLOOR) {
+      problems.push(`asked ${membersAsked} \`required: true\` member(s) and the floor is ${REQUIRED_MEMBER_FLOOR}`);
+    }
+    const empty = demanding.filter((e) => RECORD_LOADERS[e.name](REPO_ROOT, sources).length === 0).map((e) => e.name);
+    console.log(
+      `  note  ${membersAsked} \`required: true\` member(s) asked against a committed record, over ${demanding.length} ` +
+      `record kind(s) that publish one; records read: ` +
+      `${read.join(", ")}. No committed record, so nothing asked there: ${empty.length ? empty.join(", ") : "none"}.`);
+    assert(problems.length === 0,
+      `the token file calls a member required that a committed record omits. A reader taking requiredness ` +
+      `from the file refuses that record (ops dev/couplings.md entry 86):\n` + problems.map((p) => `- ${p}`).join("\n"));
+  });
 }
 
 /**
@@ -620,6 +738,101 @@ export async function run() {
  * that a reword of the paragraph is a deliberate act with a red test beside it.
  */
 const MISSING_MEMBER_SENTENCE = "`submission_id` IS NOT IN THIS FILE";
+
+/** 14 `astra.registry.*` schema entries on 2026-09-22 (contract 0.31.0). */
+const REGISTRY_KIND_FLOOR = 10;
+/**
+ * `required: true` members asked against at least one committed record: 10 at
+ * contract 0.31.0 (plugin 2, version 5, publisher 3), 7 once 0.32.0 lands.
+ */
+const REQUIRED_MEMBER_FLOOR = 5;
+/** 22 listing, 52 version and 2 publisher records on 2026-09-22. */
+const RECORD_FLOORS = { "astra.registry.plugin/1": 10, "astra.registry.version/1": 20, "astra.registry.publisher/1": 1 };
+
+/**
+ * Each B.4 record kind's committed records, as `{file, doc}`, found where the
+ * registry's own readers find them — `tools/lib/sources.mjs` for the four it
+ * loads, and for the three it does not, the constant the kind's reader uses.
+ * A new kind the token file makes a member required of has to be added here,
+ * or the test above is red naming it.
+ */
+const RECORD_LOADERS = {
+  "astra.registry.plugin/1": (_root, sources) => sources.plugins.map((p) => ({ file: p.file, doc: p.doc })),
+  "astra.registry.version/1": (_root, sources) => sources.plugins.flatMap((p) => p.versions),
+  "astra.registry.publisher/1": (root) => {
+    const { errors, publishers } = loadPublishers(root);
+    if (errors.length) throw new Error(`publishers/ does not load: ${errors[0].file}: ${errors[0].message}`);
+    return publisherRecords(publishers);
+  },
+  "astra.registry.identity/1": (root, sources) => recordsOf(root, sources).identities,
+  "astra.registry.decision/1": (root, sources) => recordsOf(root, sources).decisions,
+  "astra.registry.queue/1": (root, sources) => recordsOf(root, sources).queue,
+  "astra.registry.deadline/1": (root) => oneFile(root, DEADLINE_FILE),
+  "astra.registry.cutover/1": (root) => oneFile(root, CUTOVER_FILE),
+  "astra.registry.migration-notice/1": (root) => {
+    const dir = path.join(root, NOTICE_DIR);
+    if (!fs.existsSync(dir)) return [];
+    return fs.readdirSync(dir).filter((f) => NOTICE_NAME.test(f)).sort()
+      .map((f) => ({ file: `${NOTICE_DIR}/${f}`, doc: JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")) }));
+  },
+};
+
+function recordsOf(root, sources) {
+  const r = loadRecords(root, sources);
+  if (r.errors.length) throw new Error(`a B.4 record does not load: ${r.errors[0].file}: ${r.errors[0].message}`);
+  return r;
+}
+
+function oneFile(root, rel) {
+  const at = path.join(root, rel);
+  return fs.existsSync(at) ? [{ file: rel, doc: JSON.parse(fs.readFileSync(at, "utf8")) }] : [];
+}
+
+/**
+ * Whether a record carries a member the token file names by path. `a.b` is a
+ * member of a member; `<platform>` is every key of the object at that point
+ * (`artifacts.<platform>.sha256`), and an object with no key carries none.
+ */
+function memberPresent(doc, name) {
+  const walk = (node, parts) => {
+    if (parts.length === 0) return true;
+    if (node === null || typeof node !== "object" || Array.isArray(node)) return false;
+    const [head, ...rest] = parts;
+    if (/^<[a-z_]+>$/.test(head)) {
+      const keys = Object.keys(node);
+      return keys.length > 0 && keys.every((k) => walk(node[k], rest));
+    }
+    return Object.hasOwn(node, head) && walk(node[head], rest);
+  };
+  return walk(doc, name.split("."));
+}
+
+/**
+ * A `required: true` the file publishes that the records are KNOWN to
+ * contradict, with where the absence is permitted and where it is owed. Each
+ * one is held both ways: absent outside `onlyWhere` is red, and an exception
+ * that no longer fails — every record carries the member, or the file stopped
+ * publishing it required — is red too, so it cannot outlive its reason.
+ *
+ * `artifacts.<platform>.sha256`: found by this check's first run. Ten of the 52
+ * version records on 2026-09-22 are the bootstrap entries `staging: true`
+ * exists for, and carry no digest; `schema/version-v1.json` makes `sha256`
+ * optional "only so a staging entry can be expressed at all", and
+ * `tools/validate.mjs` refuses a staging entry without `--allow-staging`. B.4
+ * lists the member among those others read and says nothing of staging, so
+ * the file publishes it required. Whether the contract says so is the
+ * acceptor's to answer — it is PATCH only if their reader does not require it
+ * — and it is not decided here.
+ */
+const KNOWN_FALSE = [
+  {
+    schema: "astra.registry.version/1",
+    member: "artifacts.<platform>.sha256",
+    onlyWhere: (doc) => doc?.staging === true,
+    where: "from a `staging: true` version record",
+    pending: "item 14",
+  },
+];
 
 /**
  * A copy of the tracked files under `dirs`, in the suite's temp directory.
