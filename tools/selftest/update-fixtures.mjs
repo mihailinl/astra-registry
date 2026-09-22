@@ -10,6 +10,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { loadTestRoot } from "../testkeys/regenerate.mjs";
@@ -80,11 +81,45 @@ export function updateSandbox(records = []) {
  * from the line it prints.
  */
 export function updateSigner(args, cwd) {
-  const r = spawnSync("node", ["tools/sign-update-manifest.mjs", ...args], { cwd, encoding: "utf8" });
+  return spawnSigner(["tools/sign-update-manifest.mjs", ...args], cwd, process.env);
+}
+
+function spawnSigner(argv, cwd, env) {
+  const r = spawnSync("node", argv, { cwd, encoding: "utf8", env });
   if (r.status === null) {
     throw new Error(`the signer did not run: ${r.error ? `${r.error.code ?? r.error.name}: ${r.error.message}` : `killed by ${r.signal}`}`);
   }
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+}
+
+/**
+ * The signer with its clock stopped at `atMs`, for the one boundary a running
+ * clock cannot reach on purpose: a signing instant EQUAL, at the seconds
+ * precision it is published with, to a record's.
+ *
+ * The signer deliberately has no clock flag — "a way to choose signedAt from
+ * the command line is a way to date a document next year" — and this adds
+ * none. It is a module Node loads before the tool (`--import`) that replaces
+ * `Date` for that one process, which is a thing anybody holding the key could
+ * already do to their own process, and which never reaches the tool's
+ * arguments. Without it the equal-second case could only be hit by racing the
+ * wall clock across a spawn, and a check that is right when the machine is
+ * idle is a check that is flaky in CI.
+ */
+const FROZEN_CLOCK = path.join(tmp, "update-frozen-clock.mjs");
+fs.writeFileSync(FROZEN_CLOCK, [
+  "const T = Number(process.env.ASTRA_SELFTEST_FROZEN_MS);",
+  "if (!Number.isFinite(T)) throw new Error(`ASTRA_SELFTEST_FROZEN_MS is ${process.env.ASTRA_SELFTEST_FROZEN_MS}, not a number`);",
+  "const Real = Date;",
+  "globalThis.Date = class extends Real {",
+  "  constructor(...a) { super(...(a.length ? a : [T])); }",
+  "  static now() { return T; }",
+  "};",
+  "",
+].join("\n"));
+export function updateSignerAt(atMs, args, cwd) {
+  return spawnSigner(["--import", pathToFileURL(FROZEN_CLOCK).href, "tools/sign-update-manifest.mjs", ...args], cwd,
+    { ...process.env, ASTRA_SELFTEST_FROZEN_MS: String(atMs) });
 }
 
 /** A refusal: exit 1, `expect` in what it said, and `out` (when given) never written. */
