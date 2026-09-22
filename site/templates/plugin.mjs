@@ -336,7 +336,37 @@ asking for before it starts.</p>
 ${noLink}`;
 }
 
-/** The full page. */
+/**
+ * The full page — and every word of it is the listing's English.
+ *
+ * `entry.name`, `entry.description`, the `<title>` and the `<meta
+ * name="description">` all come off the flat fields, which ARE the English:
+ * `en` is not a key in `i18n` (see that member's `$comment` in
+ * `schema/index-v1.json`). The record's nine other locales were handed to this
+ * generator with the rest of the signed bytes and are read by no template
+ * here. That is the state; no decision has been minuted either way, and a
+ * reader of this file cannot currently tell an omission from a choice.
+ *
+ * The daemon draws the other card. `RegistryClient::browse` in
+ * `astra-rs/astra-daemon/src/plugins/registry_client.rs` takes a `language`,
+ * looks up `p.i18n.get(language)` and falls back field by field, so a listing
+ * that translated its name and not its summary does not render half a card. It
+ * can do that because the app knows who is reading. This generator does not:
+ * `site/build.mjs` writes one `p/<id>/index.html` per entry at build time,
+ * inside a shell that hardcodes `<html lang="en">` (`site/lib/html.mjs`).
+ *
+ * So rendering `i18n` here is not a template edit. It needs a reader-language
+ * signal the site has no source for, and every way of supplying one moves
+ * something structural. A locale segment multiplies the URL space and every
+ * mapping in `site/redirects.json` with it, and breaks the one-page-per-entry
+ * property `site/selftest.mjs` asserts in both directions (`pagesUnder(out)`
+ * deep-equals the ids). A client-side switch means this page fetching the
+ * catalogue it was generated from, which is the "no live fetch" the header of
+ * this file spends a paragraph on. Either way `<title>` and the meta
+ * description still need one canonical locale. Until somebody settles that,
+ * this page is English because it has no way to be anything else — which is a
+ * reason, not a ruling.
+ */
 export function pluginPage(entry, { revocations = [], meta, highRisk = [] }) {
   const releases = entry.releases ?? [];
   const latest = releases[0] ?? {};
