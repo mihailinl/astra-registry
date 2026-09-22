@@ -892,7 +892,9 @@ function checkIndex(ctx) {
  * silence, because "the check did not run" and "the check passed" are the two
  * things a mirror check must never confuse.
  *
- * Located by `$ASTRA_PLUGINS_DIR`, else the usual sibling checkout.
+ * Located by [`astraPluginsCandidates`]: `$ASTRA_PLUGINS_DIR` when it is set,
+ * else the usual sibling checkout — and when it is set it is the ONLY place
+ * looked at. See that function for why the difference is the whole check.
  */
 /**
  * The icon formats this registry accepts, against the ones AstraPlugins packs.
@@ -910,17 +912,15 @@ function checkIndex(ctx) {
  */
 export function checkMirroredIconFormats(ctx) {
   const where = "bot/lib/assets.mjs";
-  const candidates = [
-    process.env.ASTRA_PLUGINS_DIR,
-    path.resolve(REPO_ROOT, "../AstraPlugins"),
-  ].filter(Boolean);
-  const specFile = candidates
-    .map((d) => path.join(d, "spec/icon-formats.yaml"))
-    .find((f) => fs.existsSync(f));
+  // Its own copy of the candidate list once, which meant its own copy of the
+  // fall-through. One resolver, so one set of semantics: see
+  // [`astraPluginsCandidates`].
+  const specFile = astraPluginsFile("spec/icon-formats.yaml");
 
   if (!specFile) {
     ctx.report.note(where, "icon formats NOT verified against AstraPlugins: no checkout found",
-      `Looked in ${candidates.join(", ")}. Set ASTRA_PLUGINS_DIR to check them.`);
+      `Looked in ${astraPluginsCandidates().map((d) => path.join(d, "spec/icon-formats.yaml")).join(", ")}. ` +
+      astraPluginsHowTo());
     return;
   }
 
@@ -944,17 +944,12 @@ export function checkMirroredLimits(ctx) {
     .map(([k, v]) => [k.slice(0, -"_mirrors".length), String(v)]);
   if (mirrors.length === 0) return;
 
-  const candidates = [
-    process.env.ASTRA_PLUGINS_DIR,
-    path.resolve(REPO_ROOT, "../AstraPlugins"),
-  ].filter(Boolean);
-  const specFile = candidates
-    .map((d) => path.join(d, "spec/limits.yaml"))
-    .find((f) => fs.existsSync(f));
+  const specFile = astraPluginsFile("spec/limits.yaml");
 
   if (!specFile) {
     ctx.report.note(where, `${mirrors.length} mirrored limit(s) NOT verified: no AstraPlugins checkout found`,
-      `Looked in ${candidates.join(", ")}. Set ASTRA_PLUGINS_DIR to check them. ` +
+      `Looked in ${astraPluginsCandidates().map((d) => path.join(d, "spec/limits.yaml")).join(", ")}. ` +
+      `${astraPluginsHowTo()} ` +
       "These numbers must equal the constants named in their `_mirrors` fields.");
     return;
   }
@@ -988,9 +983,44 @@ export function checkMirroredLimits(ctx) {
 
 // ── the locale couplings ────────────────────────────────────────────────────
 
-/** Where an AstraPlugins checkout might be, best first. */
+/**
+ * Where an AstraPlugins checkout might be.
+ *
+ * **`$ASTRA_PLUGINS_DIR` is an OVERRIDE, not a first guess.** When it is set it
+ * is the only directory looked at, and a file missing from it is MISSING — not
+ * a reason to go and read the sibling working copy instead.
+ *
+ * This was a list of two tried in order until one of the *files* existed, and
+ * the difference is not academic. Every one of these checks reports a missing
+ * checkout as `NOT verified`, which `build-index.yml` turns into an `::error::`
+ * and `exit 1`; that branch is the only thing standing between "the comparison
+ * could not run" and a green tick. A list tried file-by-file means the branch
+ * cannot be provoked on any machine that has AstraPlugins beside this
+ * repository — point the reader at an empty directory and it quietly answers
+ * from the real one. `tools/selftest/couplings.mjs`'s absent case did exactly
+ * that from the day C19 landed: it asserted `NOT verified` and was handed "32
+ * vectors verified" off the sibling checkout, and it only ever passed in CI,
+ * where the fall-through had nothing to fall through to.
+ *
+ * So: set means set. A caller that wants the sibling unsets the variable —
+ * `tools/signer/plan.mjs` already does precisely that.
+ */
 function astraPluginsCandidates() {
-  return [process.env.ASTRA_PLUGINS_DIR, path.resolve(REPO_ROOT, "../AstraPlugins")].filter(Boolean);
+  const override = process.env.ASTRA_PLUGINS_DIR;
+  if (override) return [override];
+  return [path.resolve(REPO_ROOT, "../AstraPlugins")];
+}
+
+/**
+ * What to tell a reader who was told `no checkout found`, which is a different
+ * sentence depending on whether they already pointed us somewhere.
+ */
+function astraPluginsHowTo() {
+  return process.env.ASTRA_PLUGINS_DIR
+    ? `$ASTRA_PLUGINS_DIR is set to ${process.env.ASTRA_PLUGINS_DIR} and is the ONLY place looked at, so that ` +
+      "is the checkout missing the file — widen the sparse-checkout that fetches it, or unset the variable to " +
+      "fall back to a sibling ../AstraPlugins."
+    : "Set ASTRA_PLUGINS_DIR to an AstraPlugins checkout, or put one beside this repository.";
 }
 
 function astraPluginsFile(rel) {
@@ -1033,7 +1063,8 @@ export function checkLocaleVocabulary(ctx) {
   const specFile = astraPluginsFile("spec/locales.yaml");
   if (!specFile) {
     ctx.report.note(where, "the locale vocabulary is NOT verified against AstraPlugins: no checkout found",
-      `Looked in ${astraPluginsCandidates().join(", ")}. Set ASTRA_PLUGINS_DIR to check it. ` +
+      `Looked in ${astraPluginsCandidates().map((d) => path.join(d, "spec/locales.yaml")).join(", ")}. ` +
+      `${astraPluginsHowTo()} ` +
       "LOCALE_CODES must equal spec/locales.yaml, which mirrors Astra's SUPPORTED_LANGUAGES.");
     return;
   }
@@ -1216,7 +1247,7 @@ export function checkMirroredListingLimits(ctx) {
   if (!specFile) {
     ctx.report.note("policy/limits.json", "the listing caps AstraPlugins mirrors are NOT verified: no checkout found",
       `Looked in ${astraPluginsCandidates().map((d) => path.join(d, "spec/listing-limits.yaml")).join(", ")}. ` +
-      "Set ASTRA_PLUGINS_DIR to check them.");
+      astraPluginsHowTo());
     return;
   }
 
@@ -1413,7 +1444,7 @@ export function checkLocaleCorpus(ctx) {
   if (!dir) {
     ctx.report.note(where, "the shared locale corpus is NOT verified: no checkout found",
       `Looked in ${astraPluginsCandidates().map((d) => path.join(d, "testdata/locales")).join(", ")}. ` +
-      "Set ASTRA_PLUGINS_DIR, or add testdata/locales to the sparse-checkout that fetches it. " +
+      `${astraPluginsHowTo()} Or add testdata/locales to the sparse-checkout that fetches it. ` +
       "An absent corpus reads exactly like a clean one, which is why this is printed rather than passed over.");
     return;
   }
@@ -1638,7 +1669,7 @@ export function checkLocaleDigestVectors(ctx) {
     }
     ctx.report.note(where, "the lock digest is NOT verified against AstraPlugins: no checkout found",
       `Looked in ${astraPluginsCandidates().map((d) => path.join(d, rel)).join(", ")}. ` +
-      "Set ASTRA_PLUGINS_DIR, or add testdata/locales to the sparse-checkout that fetches it. " +
+      `${astraPluginsHowTo()} Or add testdata/locales to the sparse-checkout that fetches it. ` +
       "This is the only thing that compares englishDigest with the `digest` that writes the values it reads.");
     return;
   }
