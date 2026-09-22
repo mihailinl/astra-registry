@@ -953,18 +953,30 @@ export async function run() {
         "a carrier would regenerate every signed catalogue at a serial it was not signed at");
 
     // (e) A7's plugins half, asked through the detector itself: `signed` made
-    // from the first commit, so the drift A7 reports names the commit it dated.
+    // from the first commit — both trailers naming it, as a signer run whose
+    // catalogue and list came from one commit writes them — so the drift A7
+    // reports names the commit it dated.
     git("checkout", "-q", "--orphan", "signed");
     git("rm", "-rq", "--cached", ".");
     put("SIGNED", "signed\n");
     git("add", "SIGNED");
-    execFileSync("git", ["-C", dir, "commit", "-qm", `signed\n\nSource-Commit: ${first}\n`], {
+    execFileSync("git", ["-C", dir, "commit", "-qm", `signed\n\nSource-Commit: ${first}\nIndex-Source-Commit: ${first}\n`], {
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, GIT_AUTHOR_DATE: "2026-09-19T12:30:00Z", GIT_COMMITTER_DATE: "2026-09-19T12:30:00Z" },
     });
     git("checkout", "-q", "-f", "main");
     const findings = [], skipped = [], scanned = {};
     a7({ git: gitReader(dir), now: Date.parse("2026-09-19T12:30:00Z") }, findings, skipped, scanned);
+    // The fixture's `signed` commit has to be one A7 accepts, or the half
+    // below is asked of a commit no signer writes: contract 0.32.0's B.4 has
+    // every `signed` commit name both trailers, and since astra-registry #227
+    // A7 reports a missing `Index-Source-Commit` and does not run the
+    // catalogue half's decision. The drift read below is written either way,
+    // which is how a one-trailer fixture stayed green here after #227.
+    const malformed = findings.filter((f) => /^A7_(NO_SOURCE_COMMIT|SOURCE_COMMIT_UNKNOWN|NO_INDEX_SOURCE_COMMIT|INDEX_SOURCE_COMMIT_UNKNOWN)$/.test(f.code));
+    assertEqual(malformed.map((f) => f.code).join(","), "",
+      "the fixture's `signed` commit is not one a signer writes, so A7 was asked about a commit it refuses");
+    assertEqual(scanned.signed_index_source_commit, first, "A7 did not read the fixture's Index-Source-Commit");
     const drift = Math.floor((at(expect.newest) - at(first)) / 60);
     const datedBy = (m) => [CATALOGUE_PATHSPEC, ...neighbours]
       .filter((s) => newest(s) && Math.floor((at(newest(s)) - at(first)) / 60) === m).join(" or ") || "no pathspec this fixture knows";
