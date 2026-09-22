@@ -1,6 +1,6 @@
 {
-  "contract_version": "0.29.0",
-  "source_commit": "4d71c2f6aff471beafb60096866f1eabfef21824",
+  "contract_version": "0.30.0",
+  "source_commit": "95a84654e77f5f9625d4d06df79dfb099abaabec",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -3503,7 +3503,18 @@
         },
         {
           "name": "cutover_planned_at",
-          "required": true
+          "required": "conditional",
+          "when": {
+            "iff": {
+              "round": {
+                "not": [
+                  1
+                ]
+              }
+            }
+          },
+          "why": "MIG-14 gives the announced cutover date to round 2 and later — \"with the cutover date once fixed (always in round 2)\" — and ROLL-32's 30 days count from round 2's marker, so round 1's \"once fixed\" is a timing gate on when round 1 may fire and not a value its marker carries. Relaxed to `if`, a round-1 marker may carry a date and nothing then checks it: MIG-13 re-commits only the rounds LATER than the one re-sent, the registry's own cutover preflight compares markers for an agreed date only from round 2 up, and the plugins service's listing banner shows a date exactly when a B.4 record carries one — so a cutover moved later leaves round 1's marker announcing the superseded date, on the page, to the accounts that have had one notice and no more. Dropped, the member is required of every marker and the first one anybody writes — round 1, at R4b — either invents a cutover date before one is fixed or sends null; a date announced and then moved is the harm MIG-14 exists to prevent, and it would be published by the record the banner reads.",
+          "source": "B.4's round qualifier, with MIG-13's rounds"
         }
       ],
       "members_recorded": true,
