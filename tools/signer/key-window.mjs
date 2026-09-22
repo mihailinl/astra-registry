@@ -127,10 +127,24 @@ export function delegationTimes(commits) {
  * branch gets a commit an hour, so walking every commit would read thousands of
  * identical blobs to learn one date.
  *
+ * **`--first-parent`, so a key is dated where `signed` acquired it** (gap 68's
+ * shape; astra-registry #197). The window is the time clients have had the
+ * delegating trust.json, and Pages serves `signed`'s head, so the clock starts
+ * at the first commit on `signed`'s own line that carries it. A plain walk
+ * simplifies through a merge that is TREESAME to its side parent and dates the
+ * SIDE commit: measured 2026-09-22 on a fixture, a key delegated on a side
+ * branch at 09:00 and merged into `signed` at 12:00 read as delegated at 09:00,
+ * so at 16:30 the seven hours read as served where clients had had four and a
+ * half — the incoming key would have signed the catalogue early, which is the
+ * failure the window exists to prevent. The signer writes `signed` one parent
+ * at a time (`buildSignedCommit`), so a merge there is somebody else's push;
+ * the real branch has none (8 commits, 0 merges at 5966ccf), and this walk
+ * lists the same commits either way there.
+ *
  * @param {{root: string, ref?: string, trustPath?: string}} opts
  */
 export function readDelegationTimes({ root, ref = "FETCH_HEAD", trustPath = "registry/v1/trust.json" }) {
-  const listed = gitMaybe(["log", "--reverse", "--format=%H %cI", ref, "--", trustPath], { root });
+  const listed = gitMaybe(["log", "--first-parent", "--reverse", "--format=%H %cI", ref, "--", trustPath], { root });
   if (!listed.ok) return new Map();
   const commits = [];
   for (const line of listed.out.split("\n").filter(Boolean)) {

@@ -378,12 +378,18 @@ function unknownWindow(since, why) {
  * only, and direct pushes are allowed. It is gap 68's open limit, and
  * `tools/served-set/main-vs-signed.mjs` carries the same one.
  *
- * `tools/moderation-coverage.mjs` still walks `--no-merges`, and the two walks
- * now differ on purpose: coverage asks whether the author of each change left
- * a record, which is a question about the commit that wrote it; this asks
- * when the catalogue lost a plugin, which is a question about `main`. Both
- * read a commit's withdrawals through the one `triggersOf`, which is the part
- * that must not have two implementations.
+ * `tools/moderation-coverage.mjs` walks every commit that is not a merge
+ * (`commitsAfter`, `--no-merges`) and, since gap 93 (astra-registry #221),
+ * every merge on what its own resolution changed (`mergesAfter`,
+ * `mergeOwnChanges`, `mergeView`) — never on a merge's first-parent diff,
+ * which would judge each branch commit a second time. The two walks differ on
+ * purpose: coverage asks who made each change and whether they left a record,
+ * which is a question about the commit that made it; this asks when the
+ * catalogue lost a plugin, which is a question about `main`, so a branch's
+ * withdrawal counts here once, at the first-parent commit that brought it.
+ * Both read a commit's withdrawals through the one `triggersOf` — this walk
+ * with its first-parent view, coverage with the view of the change it is
+ * judging — which is the part that must not have two implementations.
  *
  * **A history git cannot walk is an unknown count and not a zero.** The walk
  * used to run with `allowFailure`, under which a `rev-list` that fails — a

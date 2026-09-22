@@ -121,7 +121,7 @@ jobs:
     steps:
       # Full history, for the rebase below and for whoever opens this checkout
       # to find out why a month is missing. `keepalive-age` dates the file with
-      # `git log -1 -- state/keepalive.json`, and in a `fetch-depth: 1` checkout
+      # `git log -1 --first-parent -- state/keepalive.json`, and in a `fetch-depth: 1` checkout
       # HEAD has no parent — so git reports HEAD as the commit that ADDED every
       # file in the tree, this one included. Measured in a depth-1 clone: the
       # rule answered "last changed <HEAD's date> (0.0 day(s) ago)" about a

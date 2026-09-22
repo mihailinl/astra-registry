@@ -30,7 +30,7 @@ import {
 } from "../../bot/lib/sign.mjs";
 import {
   DOCUMENT_DOMAINS, INDEX_KEY_WINDOW_HOURS, WINDOW_EXEMPT_KEY_IDS, delegationTimes, keyPlan,
-  refusesDroppedKey,
+  readDelegationTimes, refusesDroppedKey,
 } from "../signer/key-window.mjs";
 import {
   RESIGN_AFTER_HOURS, SIGNED_FILES, catalogueGate, contentOf, decideDocument, fetchSignedHead,
@@ -239,6 +239,50 @@ export async function run() {
     });
     assertEqual(keyIdsOf(after.index.signers), `${KEY_A},${KEY_B}`, "the window elapsed and the catalogue is still single-signed");
     assertEqual(INDEX_KEY_WINDOW_HOURS, 7, "SERVE-30's window");
+  });
+
+  await test("a key delegated on a branch merged into `signed` starts its seven hours at the merge", () => {
+    // Gap 68's shape in the window's clock (ops register, entry 93). The seven
+    // hours are the time clients have had the delegating trust.json, and Pages
+    // serves `signed`'s head, so they start where `signed`'s own line first
+    // carries it. A plain `git log -- trust.json` simplifies through a merge
+    // that is TREESAME to its side parent and dates the SIDE commit: measured
+    // before the repair, delegated 09:00 on a side branch and merged 12:00
+    // read as 09:00, and at 16:30 the incoming key signed the catalogue with
+    // four and a half hours served. The signer never writes a merge to
+    // `signed`; somebody else's push is the only way one gets there, and the
+    // window must not open early on the day it does.
+    const t = makeTree("key-window-merged");
+    const at = (when, ...a) => execFileSync("git", ["-C", t.dir, ...a], {
+      stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when },
+    });
+    t.git("checkout", "-q", "-b", "signed");
+    t.write("registry/v1/trust.json", trustDelegating([KEY_A]));
+    t.git("add", "-A");
+    at("2026-09-01T00:00:00Z", "commit", "-qm", "a trust.json delegating A");
+    t.git("checkout", "-q", "-b", "side");
+    t.write("registry/v1/trust.json", trustDelegating([KEY_A, KEY_B]));
+    t.git("add", "-A");
+    at("2026-09-10T09:00:00Z", "commit", "-qm", "B delegated, on a side branch");
+    t.git("checkout", "-q", "signed");
+    t.write("registry/v1/index.json", { signed: {} });
+    t.git("add", "-A");
+    at("2026-09-10T10:00:00Z", "commit", "-qm", "a signer run meanwhile");
+    at("2026-09-10T12:00:00Z", "merge", "-q", "--no-ff", "-m", "the side branch, merged into signed", "side");
+
+    const delegatedAt = readDelegationTimes({ root: t.dir, ref: "signed" });
+    assertEqual(delegatedAt.get(KEY_B), "2026-09-10T12:00:00Z",
+      "the incoming key is dated at the side commit that delegated it, not where `signed` first carried the delegation");
+    assertEqual(delegatedAt.get(KEY_A), "2026-09-01T00:00:00Z", "the outgoing key's first delegation moved");
+
+    const candidateTrust = trustDelegating([KEY_A, KEY_B]);
+    const plan = (now) => keyPlan({
+      candidateTrust, headTrust: candidateTrust, delegatedAt, available: [signerFor(KEY_A), signerFor(KEY_B)], now,
+    });
+    assertEqual(keyIdsOf(plan("2026-09-10T16:30:00Z").index.signers), KEY_A,
+      "the incoming key signed the catalogue four and a half hours after `signed` first carried its delegation");
+    assertEqual(keyIdsOf(plan("2026-09-10T19:00:00Z").index.signers), `${KEY_A},${KEY_B}`,
+      "seven hours after the merge the window is served, and the catalogue is still single-signed");
   });
 
   await test("the bootstrap key is exempt, and nothing else is", () => {
