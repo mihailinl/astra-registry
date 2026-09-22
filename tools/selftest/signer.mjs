@@ -809,8 +809,10 @@ export async function run() {
   // `checkAbsenceEnvironment` in tools/selftest.mjs derives, from
   // `.github/workflows/`, which live lanes reach this suite with nothing before
   // them naming an AstraPlugins checkout, prints the count beside the totals on
-  // every run, and FAILS when it reaches zero — naming this check by reading it
-  // out of this file. A lane acquiring a sibling, or the last sibling-free lane
+  // every run, and `checkAskedSomewhere` FAILS when it reaches zero — naming
+  // this check, which it finds by its gate: a `neverAsk(` first in the block of
+  // an `if` whose whole condition asks whether that path exists (gap 106). Keep
+  // the gate written that way. A lane acquiring a sibling, or the last sibling-free lane
   // dropping the suite, is now a red build rather than this line quietly
   // becoming false.
   await test("with no sibling checkout the catalogue gate RECORDS the checks it could not run", async () => {
