@@ -462,7 +462,29 @@ const DISPATCH_TRIGGERS = new Set(["workflow_dispatch", "repository_dispatch"]);
  */
 const invokes = (script, run) =>
   new RegExp(`(?:^|[\\n;&|(]\\s*|\\s)node\\s+(?:--[\\w=-]+\\s+)*${script.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[\\s\\\\;&|)])`)
-    .test(run);
+    .test(shellCode(run));
+
+/**
+ * A step's script with its prose taken out: shell comments, and the inside of
+ * every quoted string.
+ *
+ * This repository writes `echo "::error::…"` in the steps that are not built
+ * yet, and those sentences quote the commands the step will one day run.
+ * Watched, on this tree: a step whose whole body was `echo "::error::not built:
+ * one day this runs node tools/selftest.mjs before it commits"` and `exit 1`
+ * was reported as a fourth LIVE lane. A phantom lane is the dangerous
+ * direction — it is a lane the assertion below counts, so it would hold the
+ * count above zero on the day the real ones died.
+ *
+ * Nothing real is lost: a command this repository actually runs is never inside
+ * quotes.
+ */
+const shellCode = (run) => run
+  .split("\n")
+  .map((l) => l.replace(/\s#.*$/, ""))
+  .join("\n")
+  .replace(/'[^']*'/g, "''")
+  .replace(/"[^"]*"/g, '""');
 
 /**
  * A module's code with its comments taken out, well enough for a path literal.
