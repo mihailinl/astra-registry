@@ -1,10 +1,12 @@
 // Holds: the decisions the bot has been told to make and has decided not to
 // make yet, and the four ways one of them ends.
 //
-// Registry plan M-T3.3. Pure, offline, and — at R2 exit — DARK: nothing imports
-// it yet. `bot/moderation-run.mjs` (M-T3.4) is the first caller, and its `commit`
-// job walks every hold here even when `list` failed, because a hold's release is
-// driven by a record in git and not by anything the service answers.
+// Registry plan M-T3.3. Pure and offline. `bot/moderation-run.mjs` (M-T3.4)
+// imports it: its `commit` job enters a hold with `holdEntry`, walks every hold
+// here even when `list` failed — a hold's release is driven by a record in git
+// and not by anything the service answers — and reads each commit that deleted
+// an entry with `classifyHoldCommit`. That job is itself dark: its step exits 1
+// until M-T3.2 supplies TRUST-26's bound, so none of this has run in a workflow.
 //
 // ── WHY A HOLD IS A FILE ────────────────────────────────────────────────────
 //
