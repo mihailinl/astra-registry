@@ -1300,7 +1300,7 @@ test("no `@absent` marker names a path this repository tracks", async () => {
   // number that cannot be faked by a broken walk is how many files it read.
   assert.ok(
     scan.read >= CORPUS_FLOOR,
-    `absent-scan read ${scan.read} tracked file(s); 471 of 514 were readable on 2026-09-22 and the floor is ` +
+    `absent-scan read ${scan.read} tracked file(s); 472 of 515 were readable on 2026-09-22 and the floor is ` +
     `${CORPUS_FLOOR}. The 43 it skips carry a NUL and have no comment lines — they are counted and reported ` +
     `(${scan.binary} here) rather than dropped, because the estate's grep wrapper is \`ugrep -I\` and drops ` +
     `them silently with a clean exit`,

@@ -65,7 +65,7 @@
 // A check cannot infer a referent. An author can state one. So the claim is
 // written as a marker and the marker is verified exactly:
 //
-//     @absent <path> (<task>)
+//     `@absent <path> (<task>)`
 //
 // on a comment line of its own — `path` is repo-relative, `task` is whoever
 // lands it. The scan fails when `path` is TRACKED. There is no guessing left
@@ -73,6 +73,15 @@
 // mark. A retrofit over the four instances above would be forty guesses about
 // what forty sentences meant, made by the person least able to check, and is
 // not attempted here.
+//
+// **The backticks on the line above are load-bearing, and CI is what said so.**
+// This scan reads TRACKED files, so while it was a new untracked file it never
+// read itself, and every local run was green. Its first run on the tracked
+// tree — `35719026264`, the first push of this branch — went red on line 68 of
+// this header, which illustrated the convention without them and parsed as a
+// marker claiming a path called `<path>`. A guard whose first red is its own
+// documentation is one nobody keeps, and the only reason it was caught at all
+// is that the end-to-end run happened before the merge rather than after.
 //
 // ── WHAT THIS SCAN CANNOT REACH, stated here rather than only in a report ───
 //
@@ -105,7 +114,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const DEFAULT_REPO = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 
-/** Measured 2026-09-22: 514 tracked, 43 of them NUL-bearing (all images). */
+/** Measured 2026-09-22 with this file tracked: 515 tracked, 43 NUL-bearing (all images). */
 export const CORPUS_FLOOR = 450;
 
 /** Measured 2026-09-22: 1. See "the floors" above before lowering this. */
@@ -160,7 +169,7 @@ function trackedPaths(repo) {
  * Reads every tracked file with `fs.readFileSync` rather than through the
  * `grep` wrapper, which is `ugrep -I`: a NUL-bearing file is invisible to it
  * and it exits 1 cleanly while saying so to nobody. 43 of this repository's
- * 514 tracked files carry a NUL (every one an icon or a binary fixture), and a
+ * 515 tracked files carry a NUL (every one an icon or a binary fixture), and a
  * marker scan that silently skipped 8% of the tree would be an instrument with
  * the same disease as its subject. They are skipped here too — a NUL-bearing
  * file has no comment lines — but the number is REPORTED, so the skip is a
@@ -260,7 +269,7 @@ export function absentProblems(scan) {
 
   if (scan.read < CORPUS_FLOOR) {
     problems.push(
-      `only ${scan.read} tracked file(s) were read and there were 471 readable of 514 tracked on ` +
+      `only ${scan.read} tracked file(s) were read and there were 472 readable of 515 tracked on ` +
       `2026-09-22. A walk that loses the tree finds no markers and reports green about every claim in it`,
     );
   }
