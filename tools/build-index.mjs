@@ -63,6 +63,7 @@ import { compareSemver } from "./lib/semver.mjs";
 import { loadPublishers, loadSources, REPO_ROOT } from "./lib/sources.mjs";
 import { INDEX_SCHEMA } from "../bot/lib/sign.mjs";
 import { MAX_README_BYTES, iconDataUri } from "../bot/lib/assets.mjs";
+import { SUPPORTED_KEYS } from "./lib/platform.mjs";
 
 const BANNER =
   "GENERATED FILE — DO NOT EDIT. Source of truth: plugins/<id>/plugin.json and " +
@@ -72,7 +73,13 @@ const BANNER =
   "Only the `signed` member is covered by the signatures below; nothing outside it is " +
   "authenticated and nothing may be read out of it.";
 
-const PLATFORM_KEYS_FOR_NOARCH = ["linux-x64", "windows-x64"];
+// Every supported key but `noarch` itself: `flatDownloads` writes a `noarch`
+// artifact under each of them "so no client has to learn the word", and
+// `schema/index-v1.json` describes `platform_downloads` the same way. Derived
+// rather than typed, so a key `tools/lib/platform.mjs` starts supporting is a
+// key a noarch plugin is downloadable under; `tools/selftest/validation.mjs`
+// asks the built index which keys it wrote.
+const PLATFORM_KEYS_FOR_NOARCH = SUPPORTED_KEYS.filter((k) => k !== "noarch");
 
 /**
  * The pathspec the catalogue's serial is counted over — `git rev-list --count

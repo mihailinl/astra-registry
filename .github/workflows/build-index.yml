@@ -134,8 +134,17 @@ on:
 # serial and each upload an artifact, and whichever finished second would win —
 # which is not necessarily the newer one. `cancel-in-progress: false` because
 # the run already in flight is doing real work; queue behind it, do not kill it.
+#
+# A PULL REQUEST gets a group of its own. It publishes nothing, so it has no
+# race to lose — and in the shared group it did harm: GitHub keeps one PENDING
+# run per group, so a PR's run queued behind a main run was cancelled when the
+# next run queued, and `gh pr checks` then listed no Registry index check at all
+# for that head. A PR could be merged with its selftest never having run on it
+# (measured 2026-09-22: run 35768780051, cancelled 7 s after it was queued).
+# Per PR, a newer push still replaces an older pending run of the same PR,
+# which is the run nobody needs.
 concurrency:
-  group: registry-index
+  group: ${{ github.event_name == 'pull_request' && format('registry-index-pr-{0}', github.event.pull_request.number) || 'registry-index' }}
   cancel-in-progress: false
 
 permissions:

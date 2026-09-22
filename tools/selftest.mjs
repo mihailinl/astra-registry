@@ -1127,11 +1127,11 @@ const FLOORS = new Map(Object.entries({
   // `node tools/selftest.mjs --census` prints this block. MODULES order, so the
   // diff of a re-census is readable and a module's line sits where its entry in
   // the list above does.
-  "primitives.mjs": 15,
+  "primitives.mjs": 16,
   "catalogue.mjs": 9,
   "publishers.mjs": 12,
-  "validation.mjs": 16,
-  "couplings.mjs": 12,
+  "validation.mjs": 17,
+  "couplings.mjs": 13,
   "listings.mjs": 5,
   "origins.mjs": 5,
   // 8, NOT the 41 this module reports, and it is the one number here that is
@@ -1157,8 +1157,8 @@ const FLOORS = new Map(Object.entries({
   "trust-anchor.mjs": 4,
   "update-signing.mjs": 12,
   "update-notes.mjs": 9,
-  "repo-rules.mjs": 17,
-  "claims.mjs": 8,
+  "repo-rules.mjs": 18,
+  "claims.mjs": 10,
   "contract-tokens.mjs": 5,
   "regenerate.mjs": 13,
   "migration-notice.mjs": 6,
