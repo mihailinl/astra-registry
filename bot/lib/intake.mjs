@@ -63,7 +63,49 @@ export const LISTING_TEMPLATE = "plugin-listing.yml";
  */
 const safe = (value, re) => (typeof value === "string" && re.test(value) ? value : null);
 export const safeRepo = (v) => safe(v, REPO_RE);
+
+/**
+ * The tag, or null — charset only, and **deliberately looser than the other
+ * tag predicate in this bot.**
+ *
+ * `bot/lib/poll.mjs`'s `isUsableTag` shares this exact charset
+ * (`tools/lib/tags.mjs`'s `TAG_PATTERN`) and then refuses four more shapes on
+ * top of it. Measured against both functions rather than read off either:
+ * over 501,571 strings the two disagree on **exactly** the tags that
+ *
+ *   * contain `..`     (`../../evil`, `a..b`)
+ *   * begin with `/`   (`/a`)
+ *   * end with `/`     (`a/`)
+ *   * begin with `-`   (`-rf`)
+ *
+ * and on nothing else. Each of the four is load-bearing on its own — none is
+ * implied by the other three — and in that direction only: no tag this
+ * function refuses is one `isUsableTag` accepts.
+ *
+ * **The difference is intended, and it is not that one of them is wrong.**
+ * `isUsableTag` guards a notification path, where a tag arrives unasked from a
+ * stranger's feed and the cheapest refusal is at the door. This function parses
+ * a line a maintainer with `admin` or `maintain` typed — `/approve
+ * owner/repo@tag` — where refusing a legal-but-ugly git tag would refuse a real
+ * release, and what stands behind it is `bot/ingest.mjs` URL-encoding the tag
+ * and git refusing a traversal. So `../../evil` is dropped by the feed and
+ * accepted by the approval grammar, on purpose.
+ *
+ * Tightening this function is therefore a change to what a maintainer's command
+ * accepts, which is an owner's call and not a tidy-up.
+ *
+ * One asymmetry is NOT a strictness difference and is worth knowing before
+ * copying either into a new call site: on a non-string this returns `null`,
+ * while `isUsableTag` throws a `TypeError` (its charset test coerces, its
+ * `.includes` does not). Neither call site can reach it today — both pass a
+ * string — and making `isUsableTag` return `false` there would be an
+ * improvement, not a regression.
+ *
+ * `bot/tests/poll.test.mjs` imports both and pins all of the above, so that
+ * whichever one somebody moves, the test names the other.
+ */
 export const safeTag = (v) => safe(v, TAG_RE);
+
 export const safeLogin = (v) => safe(v, LOGIN_RE);
 
 // ── the maintainer's two commands ───────────────────────────────────────────

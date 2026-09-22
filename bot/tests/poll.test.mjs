@@ -51,6 +51,9 @@ import * as poll from "../lib/poll.mjs";
 import * as notify from "../lib/notify.mjs";
 import * as watch from "../watch.mjs";
 import { parseReleasesAtom, pollFeed } from "../lib/poll.mjs";
+// The OTHER tag predicate. Imported here so that the two are compared in one
+// place rather than each pinned alone; see the last test in this file.
+import { safeTag } from "../lib/intake.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 
@@ -302,6 +305,163 @@ test("a tag that is a path traversal is refused at the door", () => {
   assert.equal(poll.isUsableTag("../../evil"), false);
   assert.equal(poll.isUsableTag("-rf"), false, "a tag that would be read as a flag");
   assert.equal(poll.isUsableTag("release/2026-08"), true, "and a slash on its own is a legitimate tag");
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// The two tag predicates, compared (dev/couplings.md 26)
+// ───────────────────────────────────────────────────────────────────────────
+//
+// This bot validates a tag in two places with two answers. `isUsableTag`
+// (above) guards the feed; `safeTag` (`bot/lib/intake.mjs`) parses the
+// `/approve owner/repo@tag` a maintainer types. They share one charset —
+// `tools/lib/tags.mjs`'s `TAG_PATTERN`, which both import — and `isUsableTag`
+// refuses four shapes on top of it. That is deliberate and `safeTag`'s docblock
+// says why; what neither file could say before this test is that the difference
+// is *these four and no others*, because nothing had ever run the two against
+// each other.
+//
+// The test is written to fail from either side. Loosen `isUsableTag` and a
+// shape stops disagreeing; tighten `safeTag` — the owner-gated change this
+// register entry deliberately declined — and the same shape stops disagreeing
+// from the other end. Either way the failure names the function that did NOT
+// move, which is the thing a reader arriving at one file needs and cannot get
+// from it.
+
+/** True for exactly the four shapes `isUsableTag` refuses over the charset. */
+const HARDENED_AGAINST = {
+  "contains `..`": (s) => s.includes(".."),
+  "a leading `/`": (s) => s.startsWith("/"),
+  "a trailing `/`": (s) => s.endsWith("/"),
+  "a leading `-`": (s) => s.startsWith("-"),
+};
+
+/** `safeTag` returns the tag or null; `isUsableTag` returns a boolean. */
+const bothVerdicts = (s) => [safeTag(s) !== null, poll.isUsableTag(s) === true];
+
+test("the four shapes `isUsableTag` refuses and `safeTag` accepts, one at a time", () => {
+  // One witness per shape, chosen so that NO other shape explains it: each of
+  // the four has to be carrying its own weight, or three of them are decoration
+  // and a reader who deletes one learns nothing.
+  const witnesses = {
+    "contains `..`": "a..b",
+    "a leading `/`": "/a",
+    "a trailing `/`": "a/",
+    "a leading `-`": "-a",
+  };
+
+  for (const [shape, tag] of Object.entries(witnesses)) {
+    const explains = Object.entries(HARDENED_AGAINST).filter(([, p]) => p(tag)).map(([k]) => k);
+    assert.deepEqual(explains, [shape],
+      `${JSON.stringify(tag)} was chosen as the witness for ${shape} alone, and now ${explains.length} ` +
+      "shapes match it — it can no longer show that this shape is load-bearing");
+
+    const [intakeTakesIt, pollTakesIt] = bothVerdicts(tag);
+    assert.equal(intakeTakesIt, true,
+      `bot/lib/intake.mjs's safeTag now REFUSES ${JSON.stringify(tag)} (${shape}). If that was deliberate, it is a ` +
+      "change to what `/approve owner/repo@tag` accepts from a maintainer — an owner's call, per dev/couplings.md " +
+      "26 — and bot/lib/poll.mjs's isUsableTag no longer has a difference to be the stricter half of");
+    assert.equal(pollTakesIt, false,
+      `bot/lib/poll.mjs's isUsableTag now ACCEPTS ${JSON.stringify(tag)} (${shape}). It is the hardened predicate ` +
+      "on the feed path; bot/lib/intake.mjs's safeTag is charset-only and did not change, so this shape now " +
+      "reaches the ingest from a stranger's releases feed with nothing refusing it");
+  }
+
+  // The control. A legitimate tag with a slash in the middle, and a plain one,
+  // are accepted by BOTH — without these the test above would still pass if
+  // isUsableTag simply refused everything.
+  for (const good of ["release/2026-08", "v1.0.0", "a"]) {
+    assert.deepEqual(bothVerdicts(good), [true, true],
+      `${JSON.stringify(good)} is an ordinary tag and both predicates must take it`);
+  }
+});
+
+test("and nothing else: the two predicates agree on every other tag", () => {
+  // Exhaustive over the characters that can matter — one letter, one digit, and
+  // every structural character in the charset — to length four. That is small
+  // enough to run in milliseconds and large enough to contain every arrangement
+  // of leading, trailing, doubled and interior structure.
+  const alphabet = ["a", "0", ".", "/", "-", "_"];
+  const corpus = [];
+  (function grow(prefix, depth) {
+    if (prefix) corpus.push(prefix);
+    if (depth === 0) return;
+    for (const c of alphabet) grow(prefix + c, depth - 1);
+  })("", 4);
+  corpus.push("", "release/2026-08", "v1.0.0", "../../evil", "-rf", "a".repeat(128), "a".repeat(129),
+    "v1@0", "релиз-1.2.0", "a b");
+
+  assert.ok(corpus.length > 1500,
+    `the corpus generator produced ${corpus.length} tags; a sweep over nothing passes every assertion below`);
+
+  const unexplained = [];
+  const onlyExplainedBy = new Map(Object.keys(HARDENED_AGAINST).map((k) => [k, 0]));
+  const backwards = [];
+  let disagreements = 0;
+
+  // Direction is decided BEFORE the shapes are consulted, and each bucket holds
+  // one direction only. Written the other way round once, and it cost the
+  // reading: a mutation that made `isUsableTag` looser was caught by the
+  // `unexplained` assertion, whose message says "taken by safeTag and refused
+  // by isUsableTag" — the opposite of what had happened — while the assertion
+  // that exists to say so was never reached.
+  for (const tag of new Set(corpus)) {
+    const [intakeTakesIt, pollTakesIt] = bothVerdicts(tag);
+    if (intakeTakesIt === pollTakesIt) continue;
+    disagreements += 1;
+    if (pollTakesIt) {
+      backwards.push(tag);
+      continue;
+    }
+    const explains = Object.entries(HARDENED_AGAINST).filter(([, p]) => p(tag)).map(([k]) => k);
+    if (explains.length === 0) unexplained.push(tag);
+    if (explains.length === 1) onlyExplainedBy.set(explains[0], onlyExplainedBy.get(explains[0]) + 1);
+  }
+
+  assert.ok(disagreements > 500,
+    `only ${disagreements} of ${new Set(corpus).size} tags told the two predicates apart. They are supposed to ` +
+    "differ on a large share of this corpus; this few means one of them stopped being called, or both now answer " +
+    "the same way and dev/couplings.md 26 has been closed by accident rather than by decision");
+
+  assert.deepEqual(backwards, [],
+    `${backwards.length} tag(s) are now ACCEPTED by bot/lib/poll.mjs's isUsableTag and REFUSED by ` +
+    "bot/lib/intake.mjs's safeTag. isUsableTag is supposed to be the stricter of the two in every case — it is " +
+    "safeTag's charset plus four refusals — so this means the charset the two share stopped being shared, and " +
+    `safeTag's docblock now says something false. First few: ${JSON.stringify(backwards.slice(0, 8))}`);
+
+  assert.deepEqual(unexplained, [],
+    `${unexplained.length} tag(s) are taken by bot/lib/intake.mjs's safeTag and refused by bot/lib/poll.mjs's ` +
+    "isUsableTag for a reason that is none of the four shapes this coupling records — isUsableTag grew a fifth " +
+    "rule. Write it into safeTag's docblock and into HARDENED_AGAINST above. First few: " +
+    JSON.stringify(unexplained.slice(0, 8)));
+
+  for (const [shape, count] of onlyExplainedBy) {
+    assert.ok(count > 0,
+      `no tag in the corpus is told apart by ${shape} alone. That rule is either gone from bot/lib/poll.mjs's ` +
+      "isUsableTag or now implied by the other three, and either way this coupling records a difference that is " +
+      "no longer there");
+  }
+});
+
+test("the one difference that is not about strictness: a non-string", () => {
+  // Not a shape and not a hardening. `safeTag` type-checks first; `isUsableTag`
+  // lets the regex coerce and then calls `.includes` on the original, which a
+  // number or null does not have.
+  //
+  // Neither call site can reach this — `bot/lib/poll.mjs` slices a decoded URL
+  // and `bot/lib/notify.mjs` wraps in `String(…)` — so this is pinned to keep
+  // the claim in `safeTag`'s docblock honest, not because a crash is wanted. If
+  // somebody makes `isUsableTag` answer `false` here, that is an improvement:
+  // delete this test and the paragraph in the docblock that sends a reader to
+  // it, rather than putting the throw back.
+  for (const notAString of [null, undefined, 123, ["v1.0.0"]]) {
+    assert.equal(safeTag(notAString), null,
+      `bot/lib/intake.mjs's safeTag must refuse ${JSON.stringify(notAString) ?? String(notAString)} rather than ` +
+      "return it — it is the value echoed back into a public comment");
+    assert.throws(() => poll.isUsableTag(notAString), TypeError,
+      `bot/lib/poll.mjs's isUsableTag no longer throws on ${JSON.stringify(notAString) ?? String(notAString)}. ` +
+      "If it now returns false, that is the fix — remove this assertion and the non-string paragraph of safeTag's " +
+      "docblock in bot/lib/intake.mjs, which currently tells readers the two differ here");
+  }
 });
 
 test("an entry with no usable tag at all, and a feed with no entries, come back empty", () => {
