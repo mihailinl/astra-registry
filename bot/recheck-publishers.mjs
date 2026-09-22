@@ -28,6 +28,21 @@
 // the withdrawal is the absence of confirmations rather than the presence of
 // one failure.
 //
+// ── why this file has no expiry rule of its own ─────────────────────────────
+//
+// It had one, and it was the only copy anything ran. `tools/lib/sources.mjs`
+// `expiredPublishers` is the rule the build asks of the committed tree; this
+// job, which is the thing that actually takes a badge off, walked
+// `publishers.values()` instead — a map keyed by LOGIN, which yields a record
+// with `covers` once per login it speaks for. On the first expired
+// multi-login `verified` record it would have fetched the proof twice,
+// deleted the file, and thrown ENOENT on the second delete: the step red, the
+// commit never made, the badge never withdrawn, that day or any day after.
+// Dormant only because no `verified` record existed yet. So the records are
+// `publisherRecords` and the selection is `expiredPublishers`, imported, and
+// `tools/selftest/publishers.mjs` proves the job follows the library by
+// changing the library under it.
+//
 // ── why the clock lives here and nowhere downstream ────────────────────────
 //
 // `tools/build-index.mjs` reads no clock, by contract: same sources, same
@@ -38,14 +53,14 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { REPO_ROOT, loadPublishers } from "../tools/lib/sources.mjs";
+import { REPO_ROOT, expiredPublishers, loadPublishers, publisherRecords } from "../tools/lib/sources.mjs";
 
 const CONFIRM_WINDOW_DAYS = 180;
 const FETCH_TIMEOUT_MS = 15_000;
 const UA = "astra-registry publisher re-check (github.com/mihailinl/astra-registry)";
 
-const today = () => new Date().toISOString().slice(0, 10);
-const plusDays = (days) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+const today = (now) => now.toISOString().slice(0, 10);
+const plusDays = (now, days) => new Date(now.getTime() + days * 86_400_000).toISOString().slice(0, 10);
 
 /**
  * Does this document still name this owner?
@@ -78,10 +93,12 @@ async function fetchProof(url) {
   }
 }
 
-export async function recheck({ root = REPO_ROOT, write = false, fetcher = fetchProof } = {}) {
+export async function recheck({ root = REPO_ROOT, write = false, fetcher = fetchProof, now = new Date() } = {}) {
   const { errors, publishers } = loadPublishers(root);
   const results = [];
-  for (const { file, doc } of publishers.values()) {
+  // Each RECORD once. `publishers` is keyed by login, so its values repeat a
+  // record once per login in `covers`, and each repeat was a second fetch.
+  for (const { file, doc } of publisherRecords(publishers)) {
     if (doc.tier !== "verified") continue;
     if (doc.evidence?.kind !== "domain") {
       results.push({ file, owner: doc.owner, state: "unsupported", why: `evidence.kind is ${JSON.stringify(doc.evidence?.kind)}` });
@@ -100,23 +117,27 @@ export async function recheck({ root = REPO_ROOT, write = false, fetcher = fetch
     if (write) {
       const p = path.join(root, file);
       const next = JSON.parse(fs.readFileSync(p, "utf8"));
-      next.last_confirmed_at = today();
-      next.expires_at = plusDays(CONFIRM_WINDOW_DAYS);
+      next.last_confirmed_at = today(now);
+      next.expires_at = plusDays(now, CONFIRM_WINDOW_DAYS);
       fs.writeFileSync(p, `${JSON.stringify(next, null, 2)}\n`);
     }
   }
 
   // Expired: the confirmations stopped long enough ago that the claim has run
   // out. This is where the badge actually comes off, and it comes off by
-  // deleting the tier rather than the record — the file stays, so the history
-  // of the claim stays with it.
-  const expired = [];
-  for (const { file, doc } of publishers.values()) {
-    if (doc.tier !== "verified") continue;
-    if (typeof doc.expires_at !== "string" || doc.expires_at >= today()) continue;
-    expired.push({ file, owner: doc.owner, expires_at: doc.expires_at });
-    if (write) fs.rmSync(path.join(root, file));
-  }
+  // DELETING THE RECORD, once — docs/POLICY.md §7 ("the window runs out, the
+  // record is deleted in a commit anyone can read"), schema/publisher-v1.json's
+  // `expires_at` ("a record past this date is dropped"), and the workflow's own
+  // header all say so. The history of the claim is the commit that removed it,
+  // and the way back is a reviewed re-add after the document is restored.
+  //
+  // The selection is the library's, judged on the tree this run STARTED from,
+  // and for every tier: a record that carries an `expires_at` is held to it,
+  // which is also what the build's own check of the committed tree does. A
+  // record whose proof answered on this same run is still removed if its window
+  // had already closed — its renewal above is written to a file this deletes.
+  const expired = expiredPublishers(publishers, now);
+  if (write) for (const { file } of expired) fs.rmSync(path.join(root, file));
 
   return { errors, results, expired };
 }
