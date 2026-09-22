@@ -159,11 +159,18 @@ export async function run() {
       `${source.doc.id} is soundly released and the projection still offers no download, so the two ` +
       "refusals below are satisfied by a generator that has simply stopped working");
 
+    // One fixture per CONJUNCT, and the staging one deliberately keeps its
+    // digests. Written the other way first — a staging entry with its digests
+    // stripped, which is what the registry actually commits — and watched
+    // saying the wrong thing: with `latest.staging !== true &&` deleted from
+    // the generator and the digest clause left in place, that fixture is still
+    // refused for the other reason and the check stays green. A conjunction
+    // needs an input that only one half refuses, or the halves cover for each
+    // other and one of them can be deleted in silence.
     for (const [name, mutate] of [
       ["staging", (d) => {
         d.staging = true;
-        d.staging_reason = "a synthesised staging entry: the release this version names does not exist";
-        for (const a of Object.values(d.artifacts)) { delete a.sha256; delete a.size; }
+        d.staging_reason = "a synthesised staging entry, digests intact so only the staging clause refuses it";
       }],
       ["no-digest", (d) => { delete Object.values(d.artifacts)[0].sha256; }],
     ]) {
