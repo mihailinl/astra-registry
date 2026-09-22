@@ -43,6 +43,13 @@
 // bot bodies. "The population that comparison runs over" below states
 // the boundary as a number, pairs the entries the file itself says render one
 // fact twice, and refuses a condition published where nothing reads it.
+//
+// A fourth floor sits under the list of readers. An entry proven by one tool
+// said nothing about a SECOND tool that started reading the same members, so
+// the set of files that could is derived from the tree — and every one of them
+// is either proven or excluded by name with a reason. Its floors are on the
+// files the scan READ, because zero unproven readers is the healthy answer and
+// a floor on what was found would fire on success.
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -471,6 +478,156 @@ const TOOL_READERS = [
 const isToolRead = (e) => TOOL_READERS.some((r) => r.schema === e.name);
 
 /**
+ * **Every candidate the scan below turns up that is NOT a member reader**, each
+ * with the reason it is not (dev/couplings.md, entry 59).
+ *
+ * `TOOL_READERS` proves that a bucketed entry HAS a reader. It said nothing
+ * about a SECOND one: a tool that starts reading the same entry's members got
+ * no bucket, nothing noticed, and the entry stayed proven by one reader while
+ * another read it unchecked. The candidate set is derived from the tree now, so
+ * the list cannot grow in silence — but a derived set over-counts, and this is
+ * where an over-count is written down rather than filtered away.
+ *
+ * A file here is a claim by a person that it does not read a member table. It
+ * is held to that claim from the other side: each one must still be a candidate
+ * (below), so an exclusion whose file has gone, or has stopped matching any
+ * signal, is a red rather than a line nobody rereads.
+ */
+const NOT_MEMBER_READERS = [
+  {
+    file: "bot/tests/service.test.mjs",
+    why:
+      "this census itself. It imports the tool's reader in order to PROVE the bucket above, and names the " +
+      "bucketed schema in doing so; the prover is not a reader under proof",
+  },
+  {
+    file: "tools/gen-codes-table.mjs",
+    why:
+      "names the token file to say, in its own header, that it does NOT write it — FLOW-13's table is merged " +
+      "into the token file by astra-plugins-ops `tools/contract-tokens.mjs`, and this program writes the " +
+      "intermediate `tools/codes-table.json`. It parses no entry and reads no member",
+  },
+  {
+    file: "tools/selftest/contract-tokens.mjs",
+    why:
+      "reads the token file's own discipline — the contract version it names, its `pending[]` records, the " +
+      "cron it publishes — and never an `entries[].members` table. A member's requiredness is not a thing this " +
+      "module has an opinion about",
+  },
+  {
+    file: "tools/validate.mjs",
+    why:
+      "names the token file in one report note, to say why an `author_request` yank is being counted by action " +
+      "and category while `fixed_reasons` is null. It opens no entry",
+  },
+];
+
+/**
+ * **The candidate set, derived from the tree rather than typed beside the
+ * list** (dev/couplings.md, entry 59).
+ *
+ * ── why not "derive the readers" outright ──────────────────────────────────
+ *
+ * Because nothing available here can decide READS from MENTIONS. A tool reads a
+ * member table inside a function, at call time, against a ref — importing every
+ * candidate and watching for the read would observe nothing, and `tools/cutover-
+ * preflight.mjs` acquired a main guard this week precisely so that importing it
+ * runs nothing. What is left is a text scan, and this estate has been bitten by
+ * two: a comment quoting a call counted as a caller, and a workflow step whose
+ * body only `echo`ed a command came out as a live lane. **It is measurable here
+ * too** — five files in this repository name `tools/cutover-preflight.mjs` and
+ * four of those five are comments.
+ *
+ * So the scan is not asked to decide. It is asked to ENUMERATE, deliberately
+ * too widely, and every candidate it turns up is either proven in
+ * `TOOL_READERS` or written into `NOT_MEMBER_READERS` with a reason. Over-
+ * counting costs a sentence; under-counting is the gap.
+ *
+ * ── the three signals, and why each is in ──────────────────────────────────
+ *
+ * A second reader of a bucketed entry's members has to get that table from
+ * somewhere, and there are three places:
+ *
+ *   * **opens the file itself** — then it names the token file's path. Scoped
+ *     to `tools/`, because that is what this bucket is: "a tool in this
+ *     repository that reads one entry's member table directly". Repo-wide the
+ *     same signal turns up eleven files, seven of them under `bot/` whose
+ *     entries are COMPILED and compared member by member a few tests above —
+ *     seven exclusions bought against a bucket that is already proven, which is
+ *     the discountable red entry 50 refused.
+ *   * **imports a proven reader** — a static import specifier that resolves to
+ *     a `TOOL_READERS` tool. Repo-wide, and an import and not a mention: the
+ *     four comment mentions above do not match, and `bot/tests/service.test.mjs`
+ *     (which does import it, across three lines) does.
+ *   * **names a bucketed entry** — to find an entry you match `e.name` or
+ *     `e.id`, and both carry the schema id. Repo-wide. Today this signal has
+ *     zero false positives: two files in the repository contain the string, and
+ *     they are the tool and this file.
+ *
+ * The last two are derived FROM `TOOL_READERS`, so a second (schema, tool) pair
+ * added to it widens the scan on the same commit rather than needing a second
+ * edit somebody has to remember.
+ *
+ * ── what it cannot see, stated rather than implied ─────────────────────────
+ *
+ * A reader handed an already-parsed member table by a caller, naming neither
+ * the path nor the schema nor the tool. Nothing short of running the estate
+ * would find that, and the honest boundary is: this catches a reader that
+ * LOOKS ONE UP, which is every reader in the tree today.
+ *
+ * A `.sh`, a workflow step's inline script, or another language: the walk reads
+ * `.mjs`, `.js` and `.cjs`. It also reads bytes and decodes them, rather than
+ * asking `grep`, which is `-I` here and blind to a NUL-bearing file — of the
+ * 518 files on this tree 45 carry a NUL and every one of them is a binary
+ * fixture, an icon or a `.astraplugin`, so no source file is hidden from it.
+ *
+ * The walk starts at the repository root and skips only `.git` and
+ * `node_modules`. An allowlist of directories would be shorter and would read
+ * the same 174 files today — all the source on this tree is under `bot/`,
+ * `site/`, `tests/` and `tools/` — but it fails in the one direction this check
+ * may not fail in: a new top-level directory holding a reader would be missed,
+ * silently, by a scan whose empty answer is the healthy one.
+ */
+const SCAN_SKIP = new Set([".git", "node_modules"]);
+const SCANNED_EXT = /\.(mjs|js|cjs)$/;
+
+/** Every static import specifier, including the multi-line form. */
+const IMPORT_SPECIFIERS = /\bfrom\s*["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']/g;
+
+function scanForMemberReaders(root = REPO) {
+  const files = [];
+  const walk = (dir) => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (SCAN_SKIP.has(ent.name)) continue;
+      const abs = path.join(dir, ent.name);
+      if (ent.isDirectory()) walk(abs);
+      else if (SCANNED_EXT.test(ent.name)) files.push(abs);
+    }
+  };
+  walk(root);
+
+  const toolPaths = TOOL_READERS.map((r) => r.tool);
+  const schemaIds = TOOL_READERS.map((r) => r.schema);
+  const candidates = [];
+  for (const abs of files) {
+    const rel = path.relative(REPO, abs).split(path.sep).join("/");
+    const text = fs.readFileSync(abs).toString("utf8");
+    const specifiers = [...text.matchAll(IMPORT_SPECIFIERS)].map((m) => m[1] ?? m[2]);
+    const imported = specifiers
+      .filter((s) => s.startsWith("."))
+      .map((s) => path.relative(REPO, path.resolve(path.dirname(abs), s)).split(path.sep).join("/"));
+    const signals = [];
+    if (rel.startsWith("tools/") && text.includes("schema/contract-tokens-v1.json")) signals.push("opens-the-file");
+    if (imported.some((i) => toolPaths.includes(i))) signals.push("imports-a-proven-reader");
+    if (schemaIds.some((id) => text.includes(id))) signals.push("names-a-bucketed-entry");
+    if (signals.length > 0) candidates.push({ file: rel, signals });
+  }
+
+  const read = files.map((abs) => path.relative(REPO, abs).split(path.sep).join("/"));
+  return { read, candidates };
+}
+
+/**
  * The `{if|iff: <predicate>}` shape — a rule a reader must evaluate — as
  * against the prose sentence a `false` member may carry to say why no
  * condition is published for it. Both live in `when`, and only one of them is
@@ -593,6 +750,92 @@ test("a tool-read entry's condition is one that tool evaluates, and it discrimin
       );
     }
   }
+});
+
+// Contract 0.30.1, dev/couplings.md entry 59. The test above proves the tool
+// named in `TOOL_READERS` runs the rule. This one is about the LIST: it was
+// hand-kept pairs of (schema, tool), and a second tool that started reading the
+// same entry's members got no bucket and nothing noticed — the entry proven by
+// one reader while another read it unchecked.
+//
+// The floors are on what the scan READ and never on what it found. Zero
+// unclassified candidates is the healthy state here, so a floor on findings
+// would fire on success; a floor on the files walked is what fails when the
+// walk stops walking. Watched by handing `scanForMemberReaders` a root with no
+// source under it — `policy/` — which leaves every classification below
+// trivially true and reddens the floor instead. That the scan takes its root as
+// an argument is what makes watching it possible without editing it.
+test("every file that could read a bucketed entry's members is proven or excluded by name", () => {
+  const { read, candidates } = scanForMemberReaders();
+
+  // ── the floors, all on what was read ──────────────────────────────────────
+  //
+  // A walk that descended nowhere classifies nothing and passes everything
+  // below it.
+  assert.ok(
+    read.length >= 120,
+    `the reader scan read ${read.length} source files from the repository root; there were 174 on this tree at ` +
+    "contract 0.30.1 (173 `.mjs` and one `.js`). A scan that has stopped descending finds no second reader and " +
+    "says so in the same words as a tree that has none",
+  );
+  const toolsRead = read.filter((f) => f.startsWith("tools/"));
+  assert.ok(
+    toolsRead.length >= 50,
+    `${toolsRead.length} source files under tools/; there were 78 at contract 0.30.1. The first signal is scoped ` +
+    "to tools/, so a walk that reaches the repository but not that directory would report every tool clean",
+  );
+
+  // Every path a person typed into either list was actually read. This is the
+  // exact half of the floor: a renamed or deleted file leaves a list naming
+  // something the scan cannot see, and a claim about a file nobody read is not
+  // a claim about this tree.
+  const named = [...TOOL_READERS.map((r) => r.tool), ...NOT_MEMBER_READERS.map((x) => x.file)];
+  assert.deepEqual(
+    named.filter((f) => !read.includes(f)), [],
+    "a file named in `TOOL_READERS` or `NOT_MEMBER_READERS` was not read by the scan. Either it has been " +
+    "renamed or deleted — in which case the entry naming it is stale and says nothing about this tree — or the " +
+    "walk no longer reaches it",
+  );
+
+  // The positive control: the reader this bucket is built on must be found BY
+  // THE SIGNALS. If it falls out, the signals have stopped matching — a schema
+  // id respelt, an import rewritten — and every second reader falls out with
+  // it, silently, because the healthy answer to this test is an empty list.
+  const found = new Set(candidates.map((c) => c.file));
+  assert.deepEqual(
+    TOOL_READERS.map((r) => r.tool).filter((t) => !found.has(t)), [],
+    `the scan turned up ${candidates.length} candidate(s) — ${JSON.stringify(candidates)} — and a tool the ` +
+    "bucket above PROVES reads a member table is not among them. The signals are not matching what they were " +
+    "written to match, and an empty finding below would mean nothing",
+  );
+
+  // No stale exclusions: a file excused from being a reader has to still be a
+  // candidate, or the excuse has outlived the thing it excused.
+  assert.deepEqual(
+    NOT_MEMBER_READERS.map((x) => x.file).filter((f) => !found.has(f)), [],
+    "a file in `NOT_MEMBER_READERS` matches no signal any more. It stopped naming the token file, stopped " +
+    "importing the reader, stopped naming the bucketed schema — or it was never a candidate and the entry was " +
+    "written against a scan that did not run",
+  );
+  for (const x of NOT_MEMBER_READERS) {
+    assert.ok(
+      typeof x.why === "string" && x.why.length > 0,
+      `${x.file} is excused from being a member reader and carries no reason, and an exclusion whose reason is ` +
+      "not written down is a filter rather than a judgement",
+    );
+  }
+
+  // ── and the finding, whose healthy value is empty ─────────────────────────
+  const classified = new Set(named);
+  assert.deepEqual(
+    candidates.filter((c) => !classified.has(c.file)),
+    [],
+    "a file in this repository can reach a bucketed entry's member table and is in neither list. Either import " +
+    "its reader and exercise it over the published table — one record per branch of the condition, the way " +
+    "`TOOL_READERS` does — or add it to `NOT_MEMBER_READERS` with the reason it is not a reader. The bucket " +
+    "above proves ONE reader runs the rule; a second one that nobody proved is the entry still trusting a " +
+    "census that cannot see it",
+  );
 });
 
 test("a value binding rendered in two entries is compared here, and not only by the generator", () => {
