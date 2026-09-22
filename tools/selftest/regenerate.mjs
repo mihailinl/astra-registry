@@ -4,9 +4,10 @@
 // produces PLAUSIBLE output — the right shape, the right listings, a serial
 // that looks like a serial — passes every eye and proves nothing, because the
 // question it exists to answer is byte equality with a document somebody signed.
-// So the first test here is not a shape assertion: it regenerates this
-// repository's own head catalogue and compares it, byte for byte, with the one
-// in the tree at that commit.
+// So the first tests here are not shape assertions: they regenerate this
+// repository's own head catalogue and compare it, byte for byte, with the one
+// in the tree at that commit. There are two because the serial's value needs
+// the whole history and nothing else does (gap 81).
 //
 // Everything is run as a SUBPROCESS, through the real command line. The tool's
 // no-network legs install throwing globals into the process they run in, and an
@@ -21,9 +22,10 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 
 import { buildIndex, indexContent } from "../build-index.mjs";
+import { isShallow } from "../coverage/git.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
-import { test, assert, assertEqual, tmp } from "./harness.mjs";
+import { test, assert, assertEqual, neverAsk, tmp } from "./harness.mjs";
 
 const TOOL = path.join(REPO_ROOT, "tools", "regenerate-signed.mjs");
 const FIXTURE = path.join(REPO_ROOT, "tests", "fixtures", "regenerate-signed");
@@ -114,46 +116,80 @@ export async function run() {
 
   // ── the real catalogue ────────────────────────────────────────────────────
 
-  await test("this repository's head catalogue regenerates from its own commit, byte for byte", () => {
+  // The head catalogue, regenerated once and compared by the two checks below.
+  // One run, because the two are one claim — this document regenerates from its
+  // own commit, byte for byte — split where a checkout decides what can be
+  // asked of it.
+  //
+  // From the COMMIT, not from `registry/v1/index.json` on disk. This suite runs
+  // in workspaces that are not clean checkouts — `ingest.yml`'s publish job
+  // holds a stranger's downloaded bundle, and on a developer's machine a
+  // neighbouring branch's edits are one `git checkout` away. A comparison whose
+  // right-hand side came off the disk would pass on bytes nobody can ever
+  // regenerate, which is exactly the failure this whole tool is against.
+  let headRun = null;
+  const headRegeneration = () => {
+    if (headRun) return headRun;
     const git = gitIn(REPO_ROOT);
     const head = git("rev-parse", "HEAD");
     const committed = JSON.parse(git("show", `${head}:registry/v1/index.json`));
-    // From the COMMIT, not from `registry/v1/index.json` on disk. This suite
-    // runs in workspaces that are not clean checkouts — `ingest.yml`'s publish
-    // job holds a stranger's downloaded bundle, and on a developer's machine a
-    // neighbouring branch's edits are one `git checkout` away. A comparison
-    // whose right-hand side came off the disk would pass on bytes nobody can
-    // ever regenerate, which is exactly the failure this whole tool is against.
-
     const r = regen(["--generator", head, "--source", head, "--quiet"]);
     assertEqual(r.status, 0, `the regeneration failed:\n${r.stderr}`);
-
     const want = stableStringify(indexContent(committed));
     assert(want.length > 1000,
       `the committed catalogue's content is ${want.length} bytes; this comparison has nothing in it`);
     assert(committed.signed.plugins.length >= 5,
       `${committed.signed.plugins.length} listing(s) in the committed catalogue — an empty read passes anything`);
+    headRun = { committed, r, regenerated: JSON.parse(r.stdout) };
+    return headRun;
+  };
 
-    // The serial is the one member that needs history rather than content, so
-    // it is compared separately and only where the history is there to count.
-    // `ingest.yml`'s `selftest` job and `baseline.yml`'s `write` job check out
-    // at the default depth, where `git rev-list --count` answers 1 for every
-    // commit ever made.
-    const shallow = git("rev-parse", "--is-shallow-repository") === "true";
-    const zeroed = (text) => stableStringify({ ...JSON.parse(text), serial: 0 });
-    if (shallow) {
-      console.log(
-        "      (shallow checkout: the serial is a commit count and cannot be taken here, so the comparison " +
-        "below is of every other member. `build-index.yml` and `plugins-moderation.yml` check out at depth 0 " +
-        "and do compare it.)",
+  // GAP 81. The serial is the one member that needs history rather than
+  // content. A shallow checkout counts only the commits it holds: at 97c0b0d
+  // `git rev-list --count HEAD -- plugins` answered 1 at depth 1 and 52 with
+  // the whole history. Until 2026-09-22 this was one check that zeroed the
+  // serial on both sides when the checkout was shallow, printed a note, and
+  // then `ok` under the name "byte for byte", so `ingest.yml`'s `selftest` job
+  // counted a clause that nothing had compared.
+  //
+  // Now the clauses are two checks. This one is every byte but the serial's
+  // value, asked at any depth. The committed content with the REGENERATED
+  // serial put in its place is compared byte for byte with what the command
+  // printed, so key order, formatting and every other member still count. The
+  // check below it is the serial, and it says NOT ASKED where it cannot be
+  // taken. Together they are the old claim, with nothing zeroed away.
+  await test("this repository's head catalogue regenerates from its own commit, byte for byte but for the serial's value", () => {
+    const { committed, r, regenerated } = headRegeneration();
+    // Its VALUE is the check below. That it is there, and is a count, is shape,
+    // and substituting a missing one would compare equal by leaving it out.
+    assert(Number.isSafeInteger(regenerated.serial) && regenerated.serial >= 0,
+      `the regeneration's serial is ${JSON.stringify(regenerated.serial)}, which is not a commit count`);
+    assertSameDocument(r.stdout, stableStringify({ ...indexContent(committed), serial: regenerated.serial }),
+      "the regeneration of HEAD differs from the catalogue committed at HEAD in something other than the serial. " +
+      "This is the tool's whole claim: if it is false, every downstream comparison a carrier makes is a " +
+      "comparison with a plausible document");
+  });
+
+  // Found by the runner by reading it (a test() body whose code names
+  // `shallow` before a `neverAsk(`), so keep the gate on the line above the
+  // call. No red comes before it: a count taken in a shallow checkout is
+  // wrong, so a mismatch there says nothing about the catalogue.
+  await test("this repository's head catalogue carries the serial its own commit's history counts, asked of its whole history", () => {
+    if (isShallow(REPO_ROOT)) {
+      neverAsk(
+        "this checkout is shallow, and the serial is `git rev-list --count <commit> -- plugins`, which counts " +
+        "only the commits this checkout holds (1 at depth 1, against 52 with the whole history at 97c0b0d), so " +
+        "the serial the regeneration writes here is not the history's",
+        "a checkout with its whole history asks it: the runner prints the live lanes that reach this suite with " +
+        "it under the totals and goes red when there are none (`node tools/selftest.mjs --lanes`)",
       );
-      assertSameDocument(zeroed(r.stdout), zeroed(want),
-        "the regeneration differs from the catalogue committed at HEAD");
-      return;
     }
-    assertSameDocument(r.stdout, want,
-      "the regeneration of HEAD is not the catalogue committed at HEAD. This is the tool's whole claim: if it " +
-      "is false, every downstream comparison a carrier makes is a comparison with a plausible document");
+    const { committed, regenerated } = headRegeneration();
+    // Only the value. Every other byte is the check above, so a member that
+    // differs reds that one and not this, and each name says what broke.
+    assertEqual(regenerated.serial, committed.signed.serial,
+      "the regeneration of HEAD counts a different serial from the one the catalogue committed at HEAD carries, " +
+      "so the signed document claims a place in the listings' history that the history does not give it");
   });
 
   await test("the whole document reaches a pipe, not the part that fitted", () => {

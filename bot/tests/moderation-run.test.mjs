@@ -29,7 +29,7 @@
 // asserts the other direction against the real repository.
 
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -53,7 +53,10 @@ import {
   composeCommit,
   composeTrailers,
   composeVerdict,
+  holdDeletions,
+  holdEntryPath,
   listSummary,
+  main,
   readShadow,
   resultsFor,
   schemaMembers,
@@ -70,6 +73,7 @@ import {
   allowlisted,
   allowlistedSubmission,
 } from "../lib/compile-decision.mjs";
+import { holdEntry, readHolds } from "../lib/holds.mjs";
 import { CATEGORIES } from "../lib/moderation.mjs";
 import { BODIES } from "../lib/service.mjs";
 import { ID_PATTERN } from "../../tools/lib/ids.mjs";
@@ -866,10 +870,12 @@ test("a held decision carries only BOT-80's members, so an ignored one cannot ri
   // `bot/lib/compile-decision.mjs` also builds its object member by member, so
   // an ignored member reaches no log entry and no advisory even when the
   // allowlist is bypassed. The hold is the one artefact that carries the
-  // decision OBJECT: `held()` puts it straight into `state/holds/<id>.json`,
-  // where `schema/hold-v1.json`'s `additionalProperties: false` would refuse
-  // it — on the NEXT run, reading back a file this one already committed,
-  // which that schema's own description says is too late to be the defence.
+  // decision OBJECT: `held()` returns it, and the commit job's
+  // `writeHoldEntries` puts it into `state/holds/<id>.json` through
+  // `holdEntry`, where `schema/hold-v1.json`'s `additionalProperties: false`
+  // would refuse it — on the NEXT run, reading back a file this one already
+  // committed, which that schema's own description says is too late to be the
+  // defence.
   const root = estate();
   const held = compileAll(
     [decision({ code: "M_RELIST", category: "error", moderator: "amoderator", reverses: SDI2, x: "leaked" })],
@@ -1191,6 +1197,168 @@ test("with `list` down a confirmed reversal still releases, and posts next run",
   assert.equal(livePost.post.length, 1);
   assert.equal(livePost.post[0].outcome, "applied");
   assert.equal(livePost.post[0].commit, "c".repeat(40));
+});
+
+// The commit job, end to end through `main`, on the path the workflow runs.
+// Until this test, no test passed a held decision to `composeCommit`, and the
+// one sentence about the file (above, at the held-decision allowlist test) said
+// `held()` wrote it. Nothing did: `paths.txt` named `state/holds/<id>.json`,
+// the tree had no such file, and `git add --pathspec-from-file` — the next
+// command the workflow runs — exits 128 on a path that does not exist. Measured
+// before the repair on this same shape: `main` returned 0, and the add died.
+async function commitJob(root, { entries, shadow = false, now = new Date("2026-09-20T12:30:00Z") }) {
+  const out = path.join(root, "moderation");
+  const logs = [];
+  const saved = globalThis.fetch;
+  const offline = () => {
+    throw new Error("the commit job reached the network; it holds contents: write and therefore no bot token (BOT-2)");
+  };
+  globalThis.fetch = offline;
+  try {
+    const code = await main(["--job", "commit", "--registry-dir", root, "--out", out], {
+      env: {
+        ASTRA_ENTRIES: JSON.stringify(entries),
+        ASTRA_SUBMISSIONS: "[]",
+        ASTRA_SHADOW: shadow ? "true" : "false",
+        ASTRA_OVER_BOUND: "false",
+        GITHUB_RUN_ID: "35502265394",
+      },
+      log: { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) },
+      fetchImpl: offline,
+      now,
+    });
+    const paths = fs.readFileSync(path.join(out, "paths.txt"), "utf8").split("\n").filter(Boolean);
+    const results = JSON.parse(fs.readFileSync(path.join(out, "results.json"), "utf8"));
+    return { code, logs, paths, results };
+  } finally {
+    globalThis.fetch = saved;
+  }
+}
+
+test("a batch with one held decision leaves a tree in which every `paths.txt` entry exists", async () => {
+  for (const shadow of [false, true]) {
+    const root = estate();
+    const relist = decision({ code: "M_RELIST", category: "error", moderator: "amoderator", reverses: SDI2, x: "leaked" });
+    const delist = decision({ service_decision_id: SDI2, code: "M_DELIST", category: "broken", moderator: "amoderator" });
+    const { code, logs, paths, results } = await commitJob(root, { entries: [relist, delist], shadow });
+    assert.equal(code, 0, logs.join("\n"));
+    assert.equal(results.held.length, 1, "MOD-9 holds every M_RELIST, so this batch holds one or it proves nothing");
+    assert.ok(paths.includes(holdEntryPath(SDI)), `paths.txt does not list the hold entry: ${paths.join(", ")}`);
+
+    for (const p of paths) {
+      assert.ok(fs.existsSync(path.join(root, p)),
+        `paths.txt names ${p} and the commit job left no such file (shadow: ${shadow}). The workflow's next command is ` +
+        "git add --pathspec-from-file, which exits 128 on it — the run commits nothing, and the held result it posts " +
+        "names a hold no file records");
+    }
+    // The workflow's own command, over the tree the job left.
+    const add = spawnSync("git", ["add", "--pathspec-from-file=moderation/paths.txt"], { cwd: root, encoding: "utf8" });
+    assert.equal(add.status, 0, `git add --pathspec-from-file exited ${add.status}: ${add.stderr}`);
+
+    // The entry is one the next run can read, released on the rule MOD-9 states.
+    const holds = readHolds(root);
+    assert.equal(holds.length, 1);
+    assert.deepEqual(holds[0].problems, [], holds[0].problems.join("; "));
+    assert.equal(holds[0].entry.held_for, "reversal");
+    assert.equal(holds[0].entry.held_at, "2026-09-20T12:30:00Z");
+    assert.equal(holds[0].entry.release_after, "2026-09-21T12:30:00Z");
+    assert.ok(!fs.readFileSync(path.join(root, holdEntryPath(SDI)), "utf8").includes("leaked"),
+      "a member the schema ignored on read reached the committed hold entry");
+
+    // Listed again because the `held` result never landed: the entry stays
+    // byte for byte, so `held_at` does not move and the 24 hours do not restart,
+    // and it is not listed for a commit that would then carry no change.
+    const before = fs.readFileSync(path.join(root, holdEntryPath(SDI)));
+    const again = await commitJob(root, { entries: [relist], shadow, now: new Date("2026-09-20T12:40:00Z") });
+    assert.equal(again.code, 0, again.logs.join("\n"));
+    assert.ok(before.equals(fs.readFileSync(path.join(root, holdEntryPath(SDI)))), "a re-listed hold rewrote its entry");
+    assert.ok(!again.paths.includes(holdEntryPath(SDI)), "an unchanged hold entry was listed for the commit");
+    assert.deepEqual(again.results.holds_kept, [holdEntryPath(SDI)]);
+  }
+});
+
+// BOT-70: deleting the file is how a person with no tooling ends a hold, and
+// the commit that deleted it is the record. `readHolds` sees only entries still
+// on the tree, so until `holdDeletions` a deleted hold was never classified, the
+// service kept it `held` for ever, and `classifyHoldCommit` — BOT-70's reading —
+// was called by nothing but its own unit test. Every shape the classifier
+// distinguishes is committed here, plus the two a BOT-73 batch commit makes
+// possible: a trailer for ANOTHER decision, and an entry that came back.
+test("a deleted hold is classified and reported, against the commit that deleted it", async () => {
+  const id = (n) => `0192f3a4-5b6c-7d8e-9f01-23456789100${n}`;
+  const [HAND, UNCLEAR, CANCEL, RELEASE, OTHER, BACK] = [1, 2, 3, 4, 5, 6].map(id);
+  const entryFor = (sdi) => holdEntry({
+    service_decision_id: sdi, code: "M_RELIST", category: "error", plugin_id: "widgets",
+    decided_at: "2026-09-18T11:00:00Z", reason: MODERATOR_REASON, moderator: "amoderator", reverses: SDI2,
+  }, { held_for: "reversal", held_at: "2026-09-18T12:00:00Z" });
+  const extra = {};
+  for (const sdi of [HAND, UNCLEAR, CANCEL, RELEASE, OTHER, BACK]) extra[holdEntryPath(sdi)] = entryFor(sdi);
+  const root = estate({ extra });
+  const logEntry = (sdi, n) => ({ [`bot/moderation/2026-09-21-widgets-relist${n ? `-${n}` : ""}.json`]:
+    { date: "2026-09-21", action: "relist", plugin: "widgets", reason: MODERATOR_REASON, ...(sdi ? { service_decision_id: sdi } : {}) } });
+  const commit = (message, { rm = [], add = {} } = {}) => {
+    for (const r of rm) sh(["rm", "-q", r], root);
+    writeAll(root, add);
+    sh(["add", "-A"], root);
+    sh(["commit", "-q", ...message.flatMap((m) => ["-m", m])], root);
+    return sh(["rev-parse", "HEAD"], root).trim();
+  };
+  const sha = {};
+  sha.hand = commit(["tidy the holds directory"], { rm: [holdEntryPath(HAND)] });
+  sha.unclear = commit(["relist widgets by hand"], { rm: [holdEntryPath(UNCLEAR)], add: logEntry(null, 0) });
+  sha.cancel = commit(["registry: cancel a hold", `Service-Decision: ${CANCEL}`], { rm: [holdEntryPath(CANCEL)] });
+  sha.release = commit(["registry: release a hold", `Run: 1\nService-Decision: ${RELEASE}`], { rm: [holdEntryPath(RELEASE)], add: logEntry(RELEASE, 2) });
+  sha.other = commit(["registry: moderation (2 decision(s))", `Run: 2\nService-Decision: ${SDI}`], { rm: [holdEntryPath(OTHER)], add: logEntry(SDI, 3) });
+  commit(["tidy again"], { rm: [holdEntryPath(BACK)] });
+  commit(["held again"], { add: { [holdEntryPath(BACK)]: entryFor(BACK) } });
+
+  const gone = new Map(holdDeletions(root, { present: new Set([BACK]) }).map((g) => [g.id, g]));
+  assert.deepEqual([...gone.keys()].sort(), [HAND, UNCLEAR, CANCEL, RELEASE, OTHER].sort(),
+    "the reader must return every entry that left the tree and none that came back");
+  assert.deepEqual(gone.get(OTHER).trailers, {}, "a trailer naming another decision was read as this one's");
+  assert.equal(gone.get(OTHER).writesLogEntry, false, "a log entry naming another decision was read as this one's");
+  assert.equal(gone.get(UNCLEAR).writesLogEntry, true, "a log entry naming no decision must count, or a hand application reads as a cancel");
+
+  const holds = walkHolds({ root, now: new Date("2026-09-18T13:00:00Z"), shadow: false });
+  const row = (list, sdi) => holds[list].find((r) => r.service_decision_id === sdi);
+  assert.ok(row("cancelled", HAND)?.hand, `a hand deletion was not reported as a hand cancellation: ${JSON.stringify(holds)}`);
+  assert.equal(row("cancelled", HAND).commit, sha.hand, "a hand cancellation must name the commit that made it (BOT-70)");
+  assert.equal(row("cancelled", CANCEL)?.hand, false, "a trailered cancel commit was reported as a hand cancellation");
+  assert.equal(row("released", RELEASE)?.outcome, "applied", "a release commit was not recognised");
+  assert.ok(row("cancelled", OTHER)?.hand, "a deletion under another decision's trailer is a hand cancellation of this one");
+  assert.ok(row("unclear", UNCLEAR), "a deletion with a log entry and no trailer was not reported as unclear");
+  assert.ok(!holds.pending.some((p) => p.service_decision_id === UNCLEAR), "an unclear deletion was given a result to post");
+  assert.ok(row("waiting", BACK), "an entry that is on the tree again is a live hold, not a cancelled one");
+  assert.ok(!holds.cancelled.some((r) => r.service_decision_id === BACK), "an entry that came back was reported from its old deletion");
+  assert.deepEqual(holds.alerts.map((a) => `${a.kind} ${a.service_decision_id}`).sort(),
+    [`hold_hand_cancelled ${HAND}`, `hold_hand_cancelled ${OTHER}`, `hold_unclear ${UNCLEAR}`].sort(),
+    "a hand cancellation and an unclear deletion each alert, and nothing else does");
+
+  // Posted against the commit that ended it, in a live run, and only there.
+  const live = resultsFor({ holds, shadow: false, commit: "f".repeat(40) });
+  const posted = new Map(live.post.map((r) => [r.service_decision_id, r]));
+  assert.deepEqual([...posted.keys()].sort(), [HAND, CANCEL, RELEASE, OTHER].sort());
+  for (const [sdi, key] of [[HAND, "hand"], [CANCEL, "cancel"], [RELEASE, "release"], [OTHER, "other"]]) {
+    assert.equal(posted.get(sdi).commit, sha[key],
+      "a result for a hold ended in history must carry that commit, or every re-post is a new BOT-82 key");
+  }
+  const shadowRun = resultsFor({ holds, shadow: true });
+  assert.deepEqual(shadowRun.post, [], "an applied or cancelled result settles a decision, which BOT-92 withholds in shadow");
+  assert.equal(shadowRun.withheld.length, 4);
+
+  // And the job reports it: results.json carries the rows, and the log says so.
+  const job = await commitJob(root, { entries: [] });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.equal(job.results.holds.unclear.length, 1);
+  assert.equal(job.results.holds.cancelled.length, 3);
+  assert.ok(job.logs.some((l) => l.startsWith("::error::hold_unclear") && l.includes(sha.unclear)),
+    `the commit job did not say that ${sha.unclear} left a hold unclear: ${job.logs.join(" | ")}`);
+
+  // A depth-1 clone cannot see the deletions, and says so rather than seeing none.
+  const shallow = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-shallow-"));
+  tmpRoots.push(shallow);
+  sh(["clone", "-q", "--depth", "1", `file://${root}`, shallow], os.tmpdir());
+  assert.throws(() => holdDeletions(shallow), /shallow clone/);
 });
 
 test("under a shadow answer nothing at all is posted for the work the answer names", () => {
