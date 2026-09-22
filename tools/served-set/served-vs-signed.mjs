@@ -31,7 +31,10 @@
 // SERVE-39's window is measured from the `signed` commit, which is exactly the
 // right clock here and needs none of SERVE-85's care: the thing being compared
 // IS that commit's bytes, so the commit that created the difference is the
-// commit the window starts at.
+// commit the window starts at. A `signed` commit dated more than the window
+// AFTER `now` excuses nothing: `withinGrace` reads that as a clock it cannot
+// read. Until 2026-09-22 it read it as a short wait, and a head dated 132 days
+// ahead held both drift findings below off until its date.
 //
 // ── the Pages address is a constant ────────────────────────────────────────
 //

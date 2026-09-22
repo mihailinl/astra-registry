@@ -1292,7 +1292,7 @@ const FLOORS = new Map(Object.entries({
   "signer.mjs": 23,
   "signer-run.mjs": 6,
   "rehearsal-r2.mjs": 14,
-  "served-set.mjs": 33,
+  "served-set.mjs": 34,
   "revocations.mjs": 23,
   "cli.mjs": 9,
   "root-delegation.mjs": 6,
