@@ -82,9 +82,18 @@
 // **The staging listing, by id.** `policy/reserved-ids.json`'s
 // `staging_listing_id` (M-T2.1, MOD-16), read through
 // `tools/moderation-coverage.mjs`'s `stagingListingId` so there is one reader
-// of that key. The key is not on `main` today, so the exclusion currently
-// excludes nothing and is live the moment M-T2.1 lands it — written against
-// the absence rather than waiting for the value.
+// of that key. It was written against the ABSENCE of that key rather than
+// waiting for a value, and the value arrived: M-T2.1 committed
+// `staging_listing_id: "astra-withdrawal-canary"`, so the exclusion is live
+// and excludes that id. What is still absent is the LISTING — M-T2.2
+// publishes it — so nothing is excluded in practice yet, and the run's own
+// detail line says which of the two states it is in rather than leaving a
+// reader to infer it from here.
+//
+// (This paragraph said "the key is not on `main` today" until the day the key
+// landed, which is the whole of the lesson: a comment that dates itself has to
+// be read by the commit that makes it false, and this one was only because
+// M-T2.1 went looking for every reader of the member.)
 //
 // **A MOD-52 revert.** M-T3.2 calls this "the one place a trailer test is
 // kept". There is no trailer to test, and the exclusion does not need one:
