@@ -84,15 +84,61 @@ const registered = [];
  * count being taken OUT of `passed`. Flipping it to 2 is the one-line change
  * marked in the runner, and it is the operator's call, not this file's.
  *
+ * Gap 106 made one kind of NOT ASKED a failure, and it is not this word's
+ * kind: a NOT ASKED that no live lane can be shown to ask and nothing
+ * declares. The runner proves the rest are asked in some other lane or
+ * declared with the event that arms them, and exits 1, naming the check, on
+ * any that is neither. That is why exit 0 on INCOMPLETE is an answer rather
+ * than a count: see the note at `EXIT-2` in the runner.
+ *
  * This paragraph used to name `build-index.yml`, `ingest.yml` and
  * `baseline.yml`. Measured on 2026-09-22: `baseline.yml` runs this suite only
  * on `workflow_dispatch`, so a third of the reason given for not flipping the
  * exit code was a lane that a flip could not have reddened. The runner derives
  * the list now rather than any file restating it.
  */
-export class NeverAsked extends Error {}
+export class NeverAsked extends Error {
+  constructor(message) {
+    super(message);
+    // WHERE it was said, read off the stack at the moment it was said: the
+    // first frame outside this file, as a repository path, a line and a column.
+    // Gap 106. The runner holds every NOT ASKED to a `neverAsk(` call it has
+    // READ in tools/selftest/ and classified by the condition that gates it
+    // (`neverAskSites` in tools/selftest.mjs), because a lane table can only
+    // account for a NOT ASKED whose cause it can see without running the other
+    // lanes. A site it did not read — an alias, a helper outside the suite, a
+    // bare `throw new NeverAsked` — is a NOT ASKED no lane table accounts for,
+    // and the site is how the runner tells. `null` when no frame outside this
+    // file is found, which the runner treats as a site it did not read.
+    this.site = callerSite(this.stack);
+  }
+}
+
+const HARNESS_FILE = fileURLToPath(import.meta.url);
+
+/** `{ file, line, column }` of the first stack frame outside this file, or null. */
+function callerSite(stack) {
+  for (const frame of String(stack || "").split("\n").slice(1)) {
+    const m = /\(?(file:\/\/[^\s()]+?|\/[^\s()]+?):(\d+):(\d+)\)?\s*$/.exec(frame);
+    if (!m) continue;
+    let file;
+    try { file = m[1].startsWith("file://") ? fileURLToPath(m[1]) : m[1]; } catch { continue; }
+    if (file === HARNESS_FILE) continue;
+    return { file: path.relative(REPO_ROOT, file).split(path.sep).join("/"), line: Number(m[2]), column: Number(m[3]) };
+  }
+  return null;
+}
 
 const notAsked = [];
+
+/**
+ * Every check's verdict, in the order it settled: `{ name, verdict, site }`,
+ * where `verdict` is `ok`, `fail` or `notAsked`, and `site` is where a NOT
+ * ASKED was said. The runner reads it per module, to hold each NOT ASKED to
+ * the `neverAsk(` it was read from, and each environment-gated check to
+ * having said NOT ASKED wherever its environment really holds (gap 106).
+ */
+const outcomes = [];
 
 /**
  * Say that this check could not be asked, and say who can answer it.
@@ -114,6 +160,7 @@ export function test(name, fn) {
       await fn();
       console.log(`  ok    ${name}`);
       passed++;
+      outcomes.push({ name, verdict: "ok", site: null });
     } catch (e) {
       if (e instanceof NeverAsked) {
         // A marker a reader cannot mistake for `ok`, and the reason on the line
@@ -122,11 +169,13 @@ export function test(name, fn) {
         console.log(`  ----  ${name}`);
         console.log(`        NOT ASKED: ${e.message.split("\n").join("\n        ")}`);
         notAsked.push(`${name} — ${e.message}`);
+        outcomes.push({ name, verdict: "notAsked", site: e.site });
         return;
       }
       console.log(`  FAIL  ${name}`);
       console.log(`        ${e.message.split("\n").join("\n        ")}`);
       failures.push(name);
+      outcomes.push({ name, verdict: "fail", site: null });
     }
   })();
   registered.push({ name, done });
@@ -135,7 +184,7 @@ export function test(name, fn) {
 
 /** What the runner prints on the last line. Read once, after the last module. */
 export function results() {
-  return { passed, failures, notAsked };
+  return { passed, failures, notAsked, outcomes };
 }
 
 /**
