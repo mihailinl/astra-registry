@@ -1,9 +1,21 @@
 # The website
 
 Static HTML, generated from the **signed catalogue**, in the job that publishes
-it. 1,920 lines of Node ESM across five files, plus a 766-line test (counted
-2026-09-19), no framework, and — like everything else in this repository —
-**no dependencies**.
+it. Node ESM, no framework, and — like everything else in this repository —
+**no dependencies**. Small enough to read end to end rather than take on trust:
+
+`wc -l site/build.mjs site/lib/*.mjs site/templates/*.mjs site/selftest.mjs`
+
+says how small, and says it today. Everything but the last name is the
+generator; `selftest.mjs` is its test.
+
+The total used to be written here instead. It was exact on 2026-09-19 and the
+next three commits to touch this directory each falsified it without noticing —
+1,920 → 1,947 → 1,975 → 1,977 — while the same sentence's other number, the
+test's 766, stayed true throughout. **Half a true sentence is the worst case for
+a reader**, and a count of a directory under active work is a moving quantity,
+so this states the check instead of the number. A restructured directory makes
+that command print nothing, which is visible; a stale total reads as a fact.
 
 ```
 node site/build.mjs \
