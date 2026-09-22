@@ -55,8 +55,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 
+import { isShallow } from "../coverage/git.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
-import { test, assert, assertEqual, tmp } from "./harness.mjs";
+import { test, assert, assertEqual, neverAsk, tmp } from "./harness.mjs";
 
 const TOKEN_FILE = "schema/contract-tokens-v1.json";
 const WORKFLOW_HALF = "bot/tests/workflows.test.mjs";
@@ -250,10 +251,34 @@ export async function run() {
       `${TOKEN_FILE} is not committed at HEAD. This rule reads git, not the working tree, because SCOPE-1 is ` +
       `about what was PUBLISHED`);
 
-    // A shallow checkout has no parent, and that is a question this rule could
-    // not ask rather than a rule it passed. `build-index.yml` checks out with
-    // `fetch-depth: 0` and is where this suite's answer counts; `baseline.yml`
-    // takes the default depth of 1 and will land here.
+    // GAP 81. A shallow checkout has no parent, and that is a question this
+    // rule could not ask rather than a rule it passed — which is what the
+    // comment here said, while the code printed a note saying "COULD NOT BE
+    // ASKED" and then returned, so the check printed `ok` and was counted in
+    // `passed`. Measured at 97c0b0d in a depth-1 file:// clone: `ok`, and
+    // `ingest.yml`'s `selftest` job (depth 1) counted it every run.
+    //
+    // It now says NOT ASKED, and it asks the CHECKOUT, not whether a parent
+    // happened to resolve. Deeper than 1 a parent does resolve, and it is not
+    // always the commit this rule needs: the merge base with origin/main is
+    // fetched only when the branch is close enough to main, and when it is
+    // not it reads as absent and the rule falls back to HEAD~1. That is the
+    // comparison the paragraph below says masked a real red on 2026-09-21. So
+    // no red comes before the gate either. On a branch, HEAD~1 can also show a
+    // change that the whole branch's delta has already versioned. The runner
+    // finds this check by reading it (a test() body whose code names `shallow`
+    // before a `neverAsk(`), prints the live lanes that ask it and fails when
+    // there are none. Keep the gate on the line above the call.
+    if (isShallow(REPO_ROOT)) {
+      neverAsk(
+        "this checkout is shallow, so the commit the token file is compared against is not established: at depth " +
+        "1 neither HEAD's parent nor the merge base with origin/main was fetched, and deeper a merge base " +
+        "outside the fetched commits reads as absent and the rule falls back to HEAD~1, the comparison that " +
+        "masked an unversioned change on 2026-09-21",
+        "a checkout with its whole history asks it: the runner prints the live lanes that reach this suite with " +
+        "it under the totals and goes red when there are none (`node tools/selftest.mjs --lanes`)",
+      );
+    }
     // WHAT THIS RULE IS ABOUT IS THE BRANCH'S DELTA, NOT THE LAST COMMIT'S, and
     // the two differ the moment a branch has more than one commit. Its first
     // version compared HEAD with HEAD~1, and on 2026-09-21 that was watched
@@ -269,8 +294,8 @@ export async function run() {
     // to be asked about the whole change that will be published, and on a
     // branch that is the merge base.
     //
-    // The fallbacks are the shape this file already uses for the shallow clone:
-    // say which ref was measured against rather than quietly choosing one.
+    // The fallbacks say which ref was measured against rather than quietly
+    // choosing one.
     const { parent, against } = (() => {
       const verify = (rev) => {
         try { return git(["rev-parse", "--verify", rev]).trim(); } catch { return null; }
@@ -286,11 +311,9 @@ export async function run() {
       return { parent: prev, against: prev ? `HEAD~1 (${prev.slice(0, 7)})` : null };
     })();
     if (!parent) {
-      console.log(
-        `  note  HEAD has no reachable parent in this checkout (a shallow clone, or the first commit), so ` +
-        `"did the tokens move without the version" COULD NOT BE ASKED this run. It is asked wherever the ` +
-        `suite runs on a full history — build-index.yml checks out with fetch-depth: 0.`,
-      );
+      // The checkout holds the whole history (the gate above), so this is the
+      // first commit, and the token file in it is not a change from anything.
+      console.log(`  note  HEAD has no parent: this is the first commit, so there is no previous version to have risen above.`);
       return;
     }
 
