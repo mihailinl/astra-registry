@@ -66,6 +66,40 @@
   // languages, while the human who approved the listing read a clean English
   // card. What is searched here is the card: the id, the name, the one-line
   // summary, and the keywords a curator wrote.
+  //
+  // Those seven fields are all flat English, and the flat fields ARE the
+  // English — `en` is not a key in `i18n`, see that member's `$comment` in
+  // `schema/index-v1.json`. The other nine locales are already in the document
+  // this file fetches, two short strings each, and nothing here reads them:
+  // not this filter, not `card()` above. That is the state. It is not a
+  // decision — nobody has been asked.
+  //
+  // The daemon was asked, and answered the other way in writing.
+  // `RegistryClient::browse` in
+  // `astra-rs/astra-daemon/src/plugins/registry_client.rs` ORs
+  // `p.i18n.values()` — name and description, and explicitly not `details` —
+  // into the same filter, under a doc comment headed "Selecting one language
+  // and SEARCHING all of them is deliberate": the card shows what the user
+  // reads, the filter must not. So the app and this page disagree about what
+  // is findable, and the disagreement is live rather than hypothetical. In
+  // `registry/v1/index.json` at serial 52, 5 of 16 listings carry `i18n` (six
+  // records, `ru` and `uk`), and `voice-text-input` publishes a Russian name
+  // sharing no character with `Voice Text Input`. Every haystack this function
+  // builds is ASCII but for one em dash. That listing is findable in Astra by
+  // its own name and findable here only in English (counted 2026-09-22).
+  //
+  // Two things would have to be true before `i18n` joins the list, and neither
+  // is this file's to settle:
+  //
+  //   * the `details` argument above, re-run against a bounded field. It was
+  //     about unbounded author-operated text; these are 64 and 200 characters
+  //     per locale by schema, nine locales, each record checked at ingest by
+  //     `bot/lib/locales.mjs`. Bounded is not the same as answered.
+  //   * a result card that can say why it matched. `browse` can: it takes a
+  //     `language` and renders that locale's card beside the hit. This page has
+  //     no reader-language signal at all — the shell in `site/lib/html.mjs`
+  //     writes `<html lang="en">` for every page — so a match found in Russian
+  //     would draw an English card containing none of the query.
   function haystack(e) {
     return [e.id, e.name, e.description, (e.keywords || []).join(" "), (e.categories || []).join(" "), (e.capabilities || []).join(" "), e.author]
       .filter(Boolean)
