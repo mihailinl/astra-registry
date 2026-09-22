@@ -52,6 +52,32 @@
 // in shadow because we were told to be" and "we are in shadow because we could
 // not tell" are never the same log line.
 //
+// **Under `shadow: true` the work that answer names leaves NO trace in git and
+// NO result at the service** (BOT-92: "commit nothing for the work that answer
+// names … and post no state-setting result"; its Check: "a run with no commit
+// for that work and no posted result"). That is four things, and until
+// 2026-09-22 this file withheld only the last of them:
+//
+//   * no compiled artefact — listing edit, log entry, advisory, decision
+//     record. The job wrote and listed all of them in shadow and then printed
+//     "nothing new is committed", and the workflow's own `git add`/`git commit`
+//     lines committed the takedown (measured on a fixture M_DELIST);
+//   * no hold entry. Entering one is a commit for the decision the answer
+//     names, and BOT-81 has the `held` result name that commit, so there is
+//     no hold in shadow that is not a commit in shadow;
+//   * no terminal record for a stop or an `M_REJECT` (BOT-30);
+//   * no result of any kind, `held` included. A `held` result takes the
+//     decision off BOT-80's list (BOT-81's Why), which is a state move; the
+//     plan's M-T3.4 says `report` posts "nothing at all" for listed work in
+//     shadow, and B-T3.5 watches its own suite by posting a `held` under a
+//     shadow lease. So the decision stays listed — ID-71 has the service change
+//     no state in shadow anyway — and the first live run holds it for real,
+//     with `held_at` from that run and not from a shadow run days earlier.
+//
+// The entries are still COMPILED, for timing (OPEN-OPS-13), and what the run
+// would have done goes to `results.json` as `shadow_withheld`: ids and kinds,
+// never a result `report` could post.
+//
 // A confirmed hold is the one thing a `shadow: true` answer does not govern.
 // It is not work that answer names — a settled `held` result took it off
 // BOT-80's list — and its release is driven by the MOD-52 record in git
@@ -59,6 +85,13 @@
 // `applied` or `cancelled` result, though, SETTLES a decision, which BOT-92
 // calls state-setting, so `report` posts it only in a run whose list answer is
 // `shadow: false` — the next such run, not this one (`resultsToPost`).
+//
+// **The release commit itself is not built** (M-T3.3: "a release commit
+// applies the held decision from the hold entry, writes the log entry, deletes
+// the entry and its confirm record"). Nothing here applies a held decision or
+// deletes an entry, so a hold that is DUE is refused by name (`walkHolds`'s
+// `due`, alert `hold_end_not_built`) rather than reported `applied` or
+// `cancelled` against a commit that did neither.
 //
 // ── WHAT THIS FILE DOES NOT DO ─────────────────────────────────────────────
 //
@@ -692,11 +725,15 @@ export const holdEntryPath = (id) => `${HOLDS_PREFIX}/${id}.json`;
  * this repository's (`schemaRoot`), for `readHolds`'s reason: the tree being
  * written may be a fixture, and the rule is what THIS checkout says.
  *
- * **Written in a shadow run too, deliberately.** A `held` result is not
- * state-setting and `resultsFor` posts it under `shadow: true` (BOT-92), and
- * that post takes the decision off the service's list; the entry is what makes
- * the post true. Committing nothing while posting `held` would lose the
- * decision outright.
+ * **Never called in a shadow run.** Until 2026-09-22 it was, on the reading
+ * that a `held` result is not state-setting and is posted under `shadow: true`,
+ * so the entry had to exist to make that post true. The consequence was right
+ * — committing nothing while posting `held` would lose the decision — and the
+ * premise was not: a `held` result takes the decision off BOT-80's list, BOT-81
+ * has it name the entry's commit, and BOT-92's Check is "no commit for that
+ * work and no posted result". So shadow does neither, together, and the pair
+ * stays consistent: no entry and no `held`, the decision still listed, held by
+ * the first live run.
  *
  * **An entry already on the tree is left as it is**, byte for byte, and is not
  * listed for the commit. That is the decision being listed again because an
@@ -839,9 +876,23 @@ export function holdDeletions(root = REPO_ROOT, { present = new Set() } = {}) {
  * the entry deleted and a log entry written under no trailer — is reported and
  * alerted and posts nothing; a hand cancellation posts `cancelled` and alerts
  * as well, since nobody announced it.
+ *
+ * **A hold still on the tree whose release or cancel is DUE goes to `due`,
+ * not to `released` or `cancelled`, and gets no result.** M-T3.3's release
+ * commit — apply the held decision from the entry, write its log entry,
+ * delete the entry and its record, under `Service-Decision:` — and its cancel
+ * commit are not built: nothing in this job applies a held decision or deletes
+ * an entry. Until 2026-09-22 such a hold was reported `applied` (or
+ * `cancelled`) with `commit: null`, which `resultsFor` filled with the run's
+ * own commit — so the service would have been told a relist landed in a
+ * commit that left `unlisted: true` and the entry where they were. BOT-81 has
+ * `applied` name the commit that applies and `cancelled` the commit that
+ * removes the entry, and there is no such commit. So it is refused by name: an
+ * `::error::` (`hold_end_not_built`) every run, the entry left for the run
+ * that can build the commit, and nothing posted.
  */
 export function walkHolds({ root = REPO_ROOT, now = new Date(), shadow = true, delistedPlugins = [], coverageRed = false } = {}) {
-  const out = { released: [], cancelled: [], waiting: [], unclear: [], alerts: [], pending: [] };
+  const out = { released: [], cancelled: [], waiting: [], due: [], unclear: [], alerts: [], pending: [] };
   const onTree = readHolds(root);
   for (const hold of onTree) {
     const verdict = resolveHold(hold, { now, shadow, delistedPlugins, coverageRed });
@@ -850,9 +901,23 @@ export function walkHolds({ root = REPO_ROOT, now = new Date(), shadow = true, d
       out.waiting.push({ service_decision_id: id, reason: verdict.reason });
       continue;
     }
-    const row = { service_decision_id: id, act: verdict.act, outcome: verdict.result, reason: verdict.reason };
-    (verdict.act === "cancel" ? out.cancelled : out.released).push(row);
-    out.pending.push({ service_decision_id: id, outcome: verdict.result, commit: null });
+    if (verdict.act !== "release" && verdict.act !== "cancel") {
+      throw new Error(`resolveHold answered ${verdict.act} for the hold entry of ${id}`);
+    }
+    out.due.push({ service_decision_id: id, act: verdict.act, would_post: verdict.result, reason: verdict.reason });
+    out.alerts.push({
+      kind: "hold_end_not_built",
+      service_decision_id: id,
+      commit: null,
+      why:
+        `the hold is due to ${verdict.act} (${verdict.reason}), and this job does not build the ${verdict.act} ` +
+        `commit M-T3.3 describes: ${verdict.act === "release"
+          ? "nothing here applies the held decision, writes its log entry, or deletes the entry and its confirm record"
+          : "nothing here deletes the entry and its cancel record under a Service-Decision: trailer"}. ` +
+        `So \`${verdict.result}\` is NOT reported — BOT-81 has it name the commit that ` +
+        `${verdict.act === "release" ? "applies the decision" : "removes the hold entry"}, and no commit does. The entry ` +
+        "stays on the tree for the run that can build that commit",
+    });
   }
 
   for (const gone of holdDeletions(root, { present: new Set(onTree.map((h) => h.id)) })) {
@@ -937,10 +1002,15 @@ export function resultsFor({ compiled = [], refused = [], held = [], holds = { p
     }
   }
 
-  // BOT-92. A `held` result is not state-setting — it says the registry has
-  // not decided — so it is posted in shadow; `applied`, `cancelled` and
-  // `refused` are, and `resultsToPost` withholds them until a `shadow: false`
-  // answer.
+  // BOT-92. Under anything but `shadow === false`, NOTHING is posted — a
+  // `held` result included. This used to post `held` in shadow on the reading
+  // that it "says the registry has not decided" and so is not state-setting.
+  // It is: a settled `held` takes the decision off BOT-80's list (BOT-81's
+  // Why), BOT-81 has it name the hold entry's commit — and a shadow run commits
+  // no entry — and the plan's M-T3.4 says `report` posts "nothing at all" for
+  // listed work in shadow, as B-T3.5 says for a `wait`. `applied`, `cancelled`
+  // and `refused` settle outright, and `resultsToPost` withholds them until a
+  // `shadow: false` answer.
   //
   // `withheld` is computed from the LIVE call and not from the shadow one, and
   // that is the difference between a report that says what it is holding back
@@ -952,7 +1022,7 @@ export function resultsFor({ compiled = [], refused = [], held = [], holds = { p
   const sendable = resultsToPost(settling, { shadow: false });
   return shadow === false
     ? { post: [...holdResults, ...sendable], withheld: [] }
-    : { post: holdResults, withheld: sendable };
+    : { post: [], withheld: [...holdResults, ...sendable] };
 }
 
 // ── the settled job ─────────────────────────────────────────────────────────
@@ -1083,38 +1153,62 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
       return 1;
     }
 
+    // Compiled in both modes: in shadow for timing (OPEN-OPS-13), and so that a
+    // compile that throws is red in shadow too rather than first at R3's exit.
     const compiledAll = compileAll(recheck.entries, { root, overBound });
-    const written = applyCompiled(compiledAll.compiled, { root });
+
+    // BOT-92: from here to `composeCommit`, the work the list answer names is
+    // written ONLY under `shadow === false` — and "written" is every one of
+    // the three writers, because each is a commit for that work. `live` is the
+    // one switch; a writer outside it is a shadow commit.
+    const live = shadow === false;
+    const written = live ? applyCompiled(compiledAll.compiled, { root }) : [];
     // Between the compile and the compose, so that every path `composeCommit`
     // lists for a hold is a file on this tree when `git add` reads it.
-    const holdsEntered = writeHoldEntries(compiledAll.held, {
-      root,
-      heldAt: `${now.toISOString().slice(0, 19)}Z`,
-      run: runUrl(env),
-    });
+    const holdsEntered = live
+      ? writeHoldEntries(compiledAll.held, {
+        root,
+        heldAt: `${now.toISOString().slice(0, 19)}Z`,
+        run: runUrl(env),
+      })
+      : { written: [], entered: [], kept: [] };
     written.push(...holdsEntered.written);
     const terminal = [];
-    const existing = recordsOnMain(root);
-    for (const s of recheck.submissions) terminal.push(terminalSubmissionRecord(s, { root, existing }));
+    if (live) {
+      const existing = recordsOnMain(root);
+      for (const s of recheck.submissions) terminal.push(terminalSubmissionRecord(s, { root, existing }));
+    }
 
     const holds = walkHolds({ root, now, shadow });
     const commit = composeCommit({
-      compiled: compiledAll.compiled,
+      compiled: live ? compiledAll.compiled : [],
       held: holdsEntered.entered,
       submissions: terminal,
       run: env.GITHUB_RUN_ID ?? "0",
     });
 
-    fs.mkdirSync(out, { recursive: true });
-    fs.writeFileSync(path.join(out, "results.json"), `${JSON.stringify({
-      shadow,
+    // In shadow, what the run WOULD have done is recorded apart, as ids and
+    // kinds, and the members `report` reads are empty: a result `report`
+    // could post for work this run did not do is exactly what BOT-92 forbids,
+    // and keeping it out of those members is what makes that structural.
+    const shadowWithheld = live ? null : {
       compiled: compiledAll.compiled.map((r) => r.service_decision_id),
       refused: compiledAll.refused.map((r) => ({ service_decision_id: r.service_decision_id, refusal: r.refusal })),
       held: compiledAll.held.map((r) => ({ service_decision_id: r.service_decision_id, held_for: r.held_for })),
+      submissions: recheck.submissions.map((s) => s.submission_id),
+    };
+
+    fs.mkdirSync(out, { recursive: true });
+    fs.writeFileSync(path.join(out, "results.json"), `${JSON.stringify({
+      shadow,
+      compiled: live ? compiledAll.compiled.map((r) => r.service_decision_id) : [],
+      refused: live ? compiledAll.refused.map((r) => ({ service_decision_id: r.service_decision_id, refusal: r.refusal })) : [],
+      held: live ? compiledAll.held.map((r) => ({ service_decision_id: r.service_decision_id, held_for: r.held_for })) : [],
       holds_kept: holdsEntered.kept,
       holds,
       written,
       terminal,
+      ...(shadowWithheld ? { shadow_withheld: shadowWithheld } : {}),
     }, null, 2)}\n`);
     if (commit.message) fs.writeFileSync(path.join(out, "commit-message.txt"), commit.message);
     fs.writeFileSync(path.join(out, "paths.txt"), `${commit.paths.join("\n")}\n`);
@@ -1125,14 +1219,19 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     // the commit is in history: nothing on this side records that a result was
     // accepted, which is also why BOT-82 answers the repeat post `duplicate`.
     for (const a of holds.alerts) {
-      const level = a.kind === "hold_unclear" ? "error" : "warning";
-      log.error(`::${level}::${a.kind} ${a.service_decision_id} in ${a.commit}: ${a.why}`);
+      const level = a.kind === "hold_hand_cancelled" ? "warning" : "error";
+      log.error(`::${level}::${a.kind} ${a.service_decision_id}${a.commit ? ` in ${a.commit}` : ""}: ${a.why}`);
     }
     log.log(`ok    ${compiledAll.compiled.length} compiled, ${compiledAll.refused.length} refused, ` +
       `${compiledAll.held.length} held (${holdsEntered.written.length} entered, ${holdsEntered.kept.length} already on the tree), ` +
-      `${holds.released.length} released, ${holds.cancelled.length} cancelled, ${holds.unclear.length} unclear`);
-    if (shadow) {
-      log.log("note  shadow: nothing new is committed for the work this answer names, and nothing is posted for it");
+      `${holds.released.length} released, ${holds.cancelled.length} cancelled, ${holds.due.length} due and not built, ` +
+      `${holds.unclear.length} unclear`);
+    if (!live) {
+      // The sentence is now true because the code above makes it true, and the
+      // suite checks the pair: this line, and a `paths.txt` naming none of it.
+      log.log(`note  shadow: ${compiledAll.compiled.length} compiled, ${compiledAll.held.length} held, ` +
+        `${compiledAll.refused.length} refused and ${recheck.submissions.length} terminal record(s) are withheld — none ` +
+        "is written, listed for the commit, or posted (BOT-92)");
     }
     return 0;
   }
@@ -1152,7 +1251,7 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
         "run answered shadow: false posts it once, and BOT-82's key settles a repeat as duplicate");
     }
     if (state.shadow !== false) {
-      log.log(`note  shadow: ${post.length} held result(s) posted, ${withheld.length} settling result(s) withheld`);
+      log.log(`note  shadow: ${post.length} result(s) posted, ${withheld.length} withheld (BOT-92)`);
     }
     const client = createClient({ workflow: "moderation", env, log, fetchImpl });
     for (const r of post) {
