@@ -570,11 +570,13 @@ function checkLanes(lanes) {
   }
   const live = lanes.sites.filter((s) => !s.dead && !s.dispatchOnly);
   if (!live.length) {
+    const stubbed = lanes.sites.filter((s) => s.dead).length;
+    const manual = lanes.sites.filter((s) => s.dispatchOnly && !s.dead).length;
     problems.push(
       `no workflow runs this suite any more without a human: of ${lanes.sites.length} site(s) that invoke it, ` +
-      `${lanes.sites.filter((s) => s.dead).length} sit behind a step that always exits non-zero and ` +
-      `${lanes.sites.filter((s) => s.dispatchOnly && !s.dead).length} run only on a dispatch. A suite nothing runs ` +
-      `goes on passing — run \`node tools/selftest.mjs --lanes\` for the table this was derived from`,
+      `${stubbed} ${stubbed === 1 ? "sits" : "sit"} behind a step that always exits non-zero and ` +
+      `${manual} ${manual === 1 ? "runs" : "run"} only on a dispatch. A suite nothing runs goes on passing — ` +
+      `run \`node tools/selftest.mjs --lanes\` for the table this was derived from`,
     );
   }
   if (problems.length) fail("nothing reaches this suite on its own any more", problems);
@@ -860,8 +862,8 @@ for (const name of MODULES) {
   census.set(name, ran);
   if (ran < 1) {
     shortfalls.push(
-      `${name} is in the list, was imported and its run() returned, and it reported no test at all — an emptied ` +
-      `run(), an early return, or a loop over a list that is now empty`,
+      `a module ran and reported nothing: ${name} is in the list, was imported and its run() returned, and it ` +
+      `reported no test at all — an emptied run(), an early return, or a loop over a list that is now empty`,
     );
     continue;
   }
@@ -870,7 +872,8 @@ for (const name of MODULES) {
   const floor = WANT_CENSUS ? 1 : FLOORS.get(name);
   if (ran < floor) {
     shortfalls.push(
-      `${name} reported ${ran} check(s) and its floor is ${floor} — ${floor - ran} fewer than the census of ` +
+      `a module lost ${floor - ran} check(s): ` +
+      `${name} reported ${ran} and its floor is ${floor} — ${floor - ran} fewer than the census of ` +
       `${CENSUS_DAY}. A check was deleted, an early \`return\` was added, or a loop over it is now shorter. ` +
       `If the removal is deliberate, lower ${name}'s number in FLOORS in tools/selftest.mjs to ${ran} in the ` +
       `SAME commit; \`node tools/selftest.mjs --census\` prints the block`,
@@ -935,7 +938,12 @@ console.log(
   `— \`node tools/selftest.mjs --lanes\` for the table`,
 );
 for (const f of failures) console.log(`      - ${f}`);
-for (const s of shortfalls) console.log(`      - a module ran and reported nothing: ${s}`);
+// The shortfall carries its own lead sentence: there are two of them now — a
+// module that reported nothing, and a module that reported fewer than its floor
+// — and one prefix for both was a line that said the wrong thing about the
+// second. Watched: `cli.mjs reported 4 check(s)` printed under "a module ran and
+// reported nothing".
+for (const s of shortfalls) console.log(`      - ${s}`);
 for (const n of notAsked) console.log(`      - not asked: ${n}`);
 if (failures.length || shortfalls.length) process.exit(1);
 // EXIT-2: `if (notAsked.length) process.exit(2);` — see the note above.
