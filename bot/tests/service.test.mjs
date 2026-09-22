@@ -532,6 +532,13 @@ const NOT_MEMBER_READERS = [
       "above proves — and this module deliberately does not import it, because tools/selftest/ is in TRUST-31's " +
       "set and the publish path runs it",
   },
+  {
+    file: "tools/selftest/primitives.mjs",
+    why:
+      "names the token file as a KEY of `SCHEMA_ABSENCES`, the declaration of which populations called \"the " +
+      "schemas\" it is absent from (dev/couplings.md entry 67), and opens it only to ask whether it carries " +
+      "`$schema`, as it opens every file under `schema/`. It parses no entry and reads no member",
+  },
 ];
 
 /**
