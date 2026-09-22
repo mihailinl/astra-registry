@@ -48,10 +48,12 @@ import {
   QUEUE_SCHEMA,
   loadBaseline,
   loadPolicy,
+  loadPublishers,
   loadRecords,
   loadSchemas,
   loadSources,
   nonStagingVersions,
+  publisherRecords,
   readJson,
   REPO_ROOT,
 } from "./lib/sources.mjs";
@@ -2507,6 +2509,58 @@ export function checkAuthorActionRecords(ctx, sources, records = loadRecords(ctx
   }
 }
 
+// ── publisher records (gap 91) ──────────────────────────────────────────────
+
+/**
+ * Every `publishers/*.json` against `schema/publisher-v1.json`, at the first
+ * gate.
+ *
+ * Until this function, `loadSchemas().publisher` was loaded by the bot's own
+ * loader, sat in TRUST-31's hashed set, and was read by nothing that judged a
+ * record: this file never mentioned publishers, and the one judge was
+ * `tools/selftest/publishers.mjs`, which opened the schema file itself and
+ * runs as the FIFTH of the five checks `bot/publish-apply.mjs` makes.
+ *
+ * What that left, measured on 2026-09-22 at `95a6e5a`: `checkIndex` holds the
+ * five members the index CARRIES to `schema/index-v1.json`, and only for a
+ * record some listing reaches, only in index mode, and naming
+ * `registry/v1/index.json` rather than the record. So `publishers/KnlCE.json`
+ * with `display_name: 42` and domain evidence missing `domain` and `proof`
+ * passed this file with 0 errors in both modes — it reaches no listing, so it
+ * is in no index — and `publishers/mihailinl.json` with `tier: "community"`
+ * passed under `--no-index`, which is how the publish path's first check runs.
+ * `owner`, `covers`, `evidence` and `expires_at` are in no index at all.
+ *
+ * The schema is `ctx.schemas.publisher`: `runValidation` takes it from
+ * `loadSchemas(REPO_ROOT)`, THIS repository's copy and never the tree under
+ * test's, for the reason every other record schema here is taken that way.
+ * A second read of the file would be a second answer to "which schema judges
+ * a publisher", and the selftest holds this function to the one it is handed.
+ *
+ * The loader's own refusals are reported first, as `checkRecords` reports
+ * `loadRecords`'. `loadPublishers` drops a record whose `owner` is not its file
+ * name, or whose `owner` or `covers` claims a login another record already
+ * holds, and a dropped record is one no schema check below can see — so
+ * without these lines it would be invisible here rather than refused.
+ * `build-index.mjs` throws on the same list; in `--no-index` mode, which is how
+ * the publish path's first check runs, nothing else would say it.
+ *
+ * Each record is judged once, not once per login it covers: `publisherRecords`
+ * and not the map's values, which yield a `covers` record under every key.
+ */
+export function checkPublisherRecords(ctx, loaded = loadPublishers(ctx.root)) {
+  const { report, schemas } = ctx;
+  for (const e of loaded.errors) report.error(e.file, e.message);
+  for (const { file, doc } of publisherRecords(loaded.publishers)) {
+    for (const p of validateSchema(schemas.publisher, doc, "$")) {
+      report.error(file, `${p.path} ${p.message}`,
+        "schema/publisher-v1.json. A publisher record is joined into `signed.publishers`, inside the signature a " +
+        "client verifies, and a client renders the badge on exact membership of `tier`; a member of the wrong " +
+        "shape is a claim the registry signs without having checked (docs/POLICY.md §7).");
+    }
+  }
+}
+
 // ── driver ──────────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
@@ -2582,6 +2636,7 @@ export async function runValidation(opts) {
   const records = loadRecords(opts.root, { plugins: usable });
   checkRecords(ctx, { plugins: usable }, records);
   checkAuthorActionRecords(ctx, { plugins: usable }, records);
+  checkPublisherRecords(ctx);
 
   let hashed = 0;
   if (opts.artifactsDir) hashed += checkLocalArtifacts(usable, ctx);
