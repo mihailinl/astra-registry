@@ -6,6 +6,14 @@
 //   --lanes    print the derived table of every place that runs this suite
 //   --census   print the per-module floors below, ready to paste
 //
+// And one that changes what can be ASKED, and nothing a check decides:
+//   --loads    relaunch this runner under tools/selftest/loads/hook.mjs, which
+//              records every module each node process of the run loads, so the
+//              last module, tools/selftest/loads.mjs, can hold the ones outside
+//              TRUST-31's set to its declared residual (ops couplings entry
+//              116). Without it those checks say NOT ASKED. The bot's gates run
+//              this file without it; `--lanes` shows which lanes ask them.
+//
 // Half of these tests assert that something is ACCEPTED. The other half assert
 // that something is REJECTED, and those are the ones that matter: a validator
 // nobody has watched say no is a validator nobody knows works. Each negative
@@ -32,21 +40,33 @@ import { fileURLToPath } from "node:url";
 import { REPO_ROOT } from "./lib/sources.mjs";
 import { isShallow } from "./coverage/git.mjs";
 import { cleanupTmp, drain, registeredCount, results, walkRepo } from "./selftest/harness.mjs";
+import { NODE_FLOOR, RELAUNCHED, loadsState, loadsUnrecorded, relaunchUnderHook } from "./selftest/loads/record.mjs";
 
 const ARGS = process.argv.slice(2);
 const WANT_LANES = ARGS.includes("--lanes");
 const WANT_CENSUS = ARGS.includes("--census");
 {
-  const unknown = ARGS.filter((a) => a !== "--lanes" && a !== "--census");
+  const unknown = ARGS.filter((a) => a !== "--lanes" && a !== "--census" && a !== "--loads");
   if (unknown.length) {
     // Exit 1, not 2. Two is reserved for the `EXIT-2` flip at the bottom of this
     // file — the day NOT ASKED becomes fatal — and a typo'd flag must not be
     // able to spell that.
     cleanupTmp();
     console.error(`tools/selftest.mjs: unknown argument(s): ${unknown.join(", ")}`);
-    console.error("usage: node tools/selftest.mjs [--lanes] [--census]");
+    console.error("usage: node tools/selftest.mjs [--lanes] [--census] [--loads]");
     process.exit(1);
   }
+}
+
+// `--loads`: the whole run again, in a child preloaded with the recorder, with
+// this process's exit status. Here, before anything is asked, because a module
+// loaded before the recorder is a module the record cannot hold — which is
+// also why the relaunch and not this process is the run. Once: the child
+// carries the recorder's state (or RELAUNCHED, if the recorder never ran in
+// it), and a child that cannot record says NOT ASKED rather than relaunching.
+if (ARGS.includes("--loads") && !loadsState() && !process.env[RELAUNCHED]) {
+  cleanupTmp();
+  process.exit(relaunchUnderHook(fileURLToPath(import.meta.url), ARGS));
 }
 
 // The order is load-bearing: it is the order every name prints in, and two of
@@ -148,7 +168,7 @@ const MODULES = [
   // of its own. `repo-rules.mjs` has no header, so its names print under
   // `update-notes.mjs`'s — inserting ABOVE it would move them under this
   // module's header instead. Inserting below moves nothing, and `baseline.mjs`
-  // stays last.
+  // stays after it.
   "claims.mjs",
   // RC-R2-2 — the token file's own version discipline, and the register of
   // which half of the cron-versus-file comparison runs here and which runs in
@@ -183,7 +203,7 @@ const MODULES = [
   // repository write for it, held to the token file's condition. It prints its
   // own section header, so inserting it after `regenerate.mjs`, which prints
   // one too, moves no existing name under a header it does not belong to, and
-  // `baseline.mjs` stays last. **This line, its FLOORS entry and the file are
+  // `baseline.mjs` stays after it. **This line, its FLOORS entry and the file are
   // one change**, for the reason written out at `regenerate.mjs` above.
   "migration-notice.mjs",
   // Contract 0.34.0 — §0.7's time, one statement in every reader: the grammar
@@ -191,15 +211,24 @@ const MODULES = [
   // code reader driven with second 60, and no private spelling. It prints its
   // own section header and sits between two modules that print theirs, so it
   // moves no existing name under a header it does not belong to, and
-  // `baseline.mjs` stays last. **This line, its FLOORS entry and the file are
+  // `baseline.mjs` stays after it. **This line, its FLOORS entry and the file are
   // one change**, for the reason written out at `regenerate.mjs` above.
   "times.mjs",
-  // Last, and with a section header of its own. The boundary to protect is
-  // `update-notes.mjs` → `repo-rules.mjs`: `repo-rules.mjs` prints no header,
-  // so its names come out under `update-notes.mjs`'s, and anything inserted
-  // between that pair would take them. Appending after a module that prints
-  // its own header moves nothing at all.
+  // Last until `loads.mjs` below, and with a section header of its own. The
+  // boundary to protect is `update-notes.mjs` → `repo-rules.mjs`:
+  // `repo-rules.mjs` prints no header, so its names come out under
+  // `update-notes.mjs`'s, and anything inserted between that pair would take
+  // them. Appending after a module that prints its own header moves nothing at
+  // all.
   "baseline.mjs",
+  // Ops couplings entry 116 — the modules this run loaded, held to TRUST-31's
+  // set and to the residual declared beside the checks. LAST, and it has to
+  // be: it reads what the whole run loaded, children included, so every module
+  // before it has run and none after it could be seen. It prints its own
+  // section header after `baseline.mjs`, which prints one, so it moves no
+  // existing name. **This line, its FLOORS entry and the file are one
+  // change**, for the reason written out at `regenerate.mjs` above.
+  "loads.mjs",
 ];
 
 const SUITE_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "selftest");
@@ -810,6 +839,85 @@ function asksSibling(cond, before, bindings = 0) {
 }
 
 /**
+ * Is `cond` — an `if`'s whole condition — the load question, `is this run NOT
+ * recording the modules it loads`? Ops couplings entry 116, and `asksShallow`'s
+ * rule a third time: `loadsUnrecorded()` (tools/selftest/loads/record.mjs),
+ * or a name the same body bound to exactly that. The function is the one
+ * `ENVIRONMENTS.loads.here` asks of this run.
+ */
+function asksLoads(cond, before, bindings = 0) {
+  const c = cond.trim();
+  if (/^loadsUnrecorded\(\s*\)$/.test(c)) return true;
+  const bare = /^[\w$]+$/.exec(c);
+  if (bare && bindings === 0) {
+    const bound = boundIn(before, c);
+    return bound !== undefined && asksLoads(bound, before, 1);
+  }
+  return false;
+}
+
+/**
+ * Whether a lane's run of this suite records its loads, read the way
+ * `historyBefore` reads a checkout: `--loads` on the step's own command line,
+ * and a Node that has `module.registerHooks` — the last `actions/setup-node`
+ * before the step, its `node-version` read by `nodeHasHooks`. A suite reached
+ * through a script reads as not recording: this reads flags only where a step
+ * writes them. Anything it cannot read reads as NOT recording, which can only
+ * make a lane stop asking and the per-check requirement go red — the loud
+ * direction, gap 41's choice.
+ *
+ * @returns {{recorded: boolean, why: string}}
+ */
+function loadsBefore(job, step, how) {
+  if (how !== "direct") {
+    return {
+      recorded: false,
+      why: `the suite is reached ${how}, and this scan reads \`--loads\` only on a step's own command line`,
+    };
+  }
+  const flagged = new RegExp(
+    `(?:^|[\\n;&|(]\\s*|\\s)node\\s+(?:--[\\w=-]+\\s+)*${SUITE_REL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}` +
+    "(?:[ \\t]+[^\\s;&|]+)*?[ \\t]+--loads(?=$|[\\s\\\\;&|)])",
+  );
+  if (!flagged.test(shellCode(step.run))) return { recorded: false, why: "the step runs the suite without `--loads`" };
+  let setup = null;
+  for (const st of job.steps) {
+    if (st === step) break;
+    if (/^actions\/setup-node@/.test(st.uses)) setup = st;
+  }
+  if (!setup) {
+    return { recorded: false, why: "`--loads`, and no actions/setup-node before it in its job, so a Node whose version this scan cannot read" };
+  }
+  const v = setup.with["node-version"];
+  if (!nodeHasHooks(v)) {
+    return {
+      recorded: false,
+      why: `\`--loads\`, on the node-version ${JSON.stringify(v ?? null)} the setup-node at line ${setup.line} pins, ` +
+        `and module.registerHooks needs ${NODE_FLOOR}`,
+    };
+  }
+  return { recorded: true, why: `\`--loads\`, on the node-version ${v} the setup-node at line ${setup.line} pins` };
+}
+
+/**
+ * Does a `node-version` input name a Node with `module.registerHooks`? A bare
+ * major is the newest release of that line, which `actions/setup-node`
+ * resolves it to (`'22'` ran as v22.23.2 in `Registry index` run 35797299924),
+ * and every 22 from 22.15.0 has it. Anything this cannot read — `lts/*`, an
+ * expression, a file — is no.
+ */
+function nodeHasHooks(spec) {
+  const m = /^v?(\d+)(?:\.(\d+|x))?(?:\.(\d+|x))?$/.exec(String(spec ?? "").trim());
+  if (!m) return false;
+  const major = Number(m[1]);
+  const minor = m[2] === undefined || m[2] === "x" ? Infinity : Number(m[2]);
+  if (major >= 24) return true;
+  if (major === 23) return minor >= 5;
+  if (major === 22) return minor >= 15;
+  return false;
+}
+
+/**
  * GAP 106. The environments a lane is read for, as one table: for each, the
  * condition a gate asks (`recognise`), whether a lane is one where that
  * condition HOLDS — so the gated checks are NOT ASKED there (`heldIn`), what
@@ -844,6 +952,23 @@ const ENVIRONMENTS = {
       "Moving the suite above the fetch in any one of the lanes above is the whole fix. If the mention is prose " +
       "rather than a checkout, this scan cannot tell them apart on purpose — the direction it is wrong in is the " +
       "loud one — so move the step or the sentence.",
+  },
+  // Ops couplings entry 116: the checks that read what a run LOADED, which
+  // only a run started with `--loads`, on a Node with `module.registerHooks`,
+  // has a record of. The bot's gates run the suite without the flag on
+  // purpose — what a gate runs is the owner's decision (pending item 19) — so
+  // the lane that asks them is one that is not a gate.
+  loads: {
+    recognise: asksLoads,
+    condition: "the run does not record the modules it loads",
+    heldIn: (lane) => !lane.loads.recorded,
+    read: (lane) => lane.loads.why,
+    here: () => loadsUnrecorded(),
+    remedy:
+      "Where it can be asked: a live lane that is not one of the bot's gates, whose step runs " +
+      "`node tools/selftest.mjs --loads` on a setup-node `node-version` of " + NODE_FLOOR + " or newer — " +
+      "build-index.yml's `check` job is the one that did. Putting `--loads` on a gate's run is the owner's " +
+      "decision (contract pending item 19), not this file's.",
   },
 };
 
@@ -1107,6 +1232,8 @@ function laneSites() {
             sibling: siblingMentionBefore(lines, job.start, step.start) || topEnv,
             // Gap 75: the history the suite can see at this step.
             history: historyBefore(job, step),
+            // Entry 116: whether this step's run records the modules it loads.
+            loads: loadsBefore(job, step, how === "direct" ? "direct" : `via ${how}`),
             triggers: parsed.triggers,
           });
         }
@@ -1134,6 +1261,7 @@ function laneReport(lanes, sites = []) {
       ? `UNPROVEN — line ${s.sibling.line} names one: ${s.sibling.text}`
       : "nothing before this step in this job names an AstraPlugins checkout"}`);
     out.push(`        history: ${s.history.full ? "WHOLE" : "SHALLOW"} — ${s.history.why}`);
+    out.push(`        loads: ${s.loads.recorded ? "RECORDED" : "NOT RECORDED"} — ${s.loads.why}`);
     // Per lane, what that costs: the checks that are NOT ASKED here, and why —
     // every environment gate whose environment holds in this lane, and every
     // check declared asked nowhere (gap 106).
@@ -1748,6 +1876,7 @@ const FLOORS = new Map(Object.entries({
   "migration-notice.mjs": 6,
   "times.mjs": 4,
   "baseline.mjs": 9,
+  "loads.mjs": 2,
 }));
 
 // A floor computed from nothing passes every assertion below it — the finding
@@ -1984,6 +2113,19 @@ console.log(
     `      ${HISTORY_LANES.length} of the ${LIVE_LANES.length} live lane(s) reach it with the whole history, which is where the ` +
     `${HISTORY_GATED.length} check(s) about HISTORY are asked: ${at(HISTORY_LANES) || "none"}` +
     `${shallowLive.length ? `; through a shallow checkout, so NOT ASKED there: ${at(shallowLive)}` : ""}`,
+  );
+}
+// Entry 116, printed for gap 41's reason: "build-index.yml asks the load
+// checks" is a claim about lanes, measured here where the count is read. The
+// lanes that do not are named, because a gate is among them on purpose.
+{
+  const recording = LIVE_LANES.filter((l) => l.loads.recorded);
+  const unrecorded = LIVE_LANES.filter((l) => !l.loads.recorded);
+  const at = (ls) => ls.map((l) => `${l.workflow.replace(".github/workflows/", "")}:${l.line}`).join(", ");
+  console.log(
+    `      ${recording.length} of the ${LIVE_LANES.length} live lane(s) record the modules the suite loads ` +
+    `(\`--loads\`), which is where the ${SITES.filter((s) => s.env === "loads").length} check(s) about LOADS are ` +
+    `asked: ${at(recording) || "none"}${unrecorded.length ? `; without it, so NOT ASKED there: ${at(unrecorded)}` : ""}`,
   );
 }
 // Gap 106, printed for gap 41's reason: that every NOT ASKED above is asked in
