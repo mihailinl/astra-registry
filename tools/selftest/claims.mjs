@@ -1,3 +1,28 @@
+// ── WHAT THIS READS OUTSIDE THIS CHECKOUT, AND ONLY WHAT ───────────────────
+//
+// Three other checkouts, and only when one is on the machine running it (never
+// in registry CI, which has none of them): Astra (`$ASTRA_DIR`, else
+// `../Astra`), minice-be (`$ASTRA_SERVICE_DIR`, else `../minice`) and
+// astra-plugins-ops (`$ASTRA_OPS_DIR`, else `../astra-plugins-ops`).
+//
+// **In Astra it reads the files its rows list, and nothing else.** No walk from
+// a root and no `git ls-files` of the whole tree: git is asked for exactly the
+// listed paths, a listed directory is read one level deep, and a row that gives
+// a prefix instead of a list is refused before anything is opened. Why: parts of
+// that tree are off limits to the people and agents who run this suite, and a
+// walk from a root reads them on the runner's behalf — which it did, until
+// 2026-09-22, whenever the suite ran from a checkout with `../Astra` beside
+// it. The fence is an allow-list rather than a deny-list because a list of what
+// may not be read would publish private paths in a public repository. The
+// check "a tree read only through a list" below is what holds it.
+//
+// In minice-be it reads the tracked files with each row's source extensions,
+// because its rows are absences claimed about the whole service; in
+// astra-plugins-ops, the one file its row names. Every row prints what it
+// walks, and a listed row prints what it read.
+//
+// ── what this is ───────────────────────────────────────────────────────────
+//
 // Every claim this repository makes about a reader in ANOTHER repository,
 // carrying the literal search that finds it.
 //
@@ -100,7 +125,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { REPO_ROOT } from "../lib/sources.mjs";
-import { test, assert, assertEqual } from "./harness.mjs";
+import { test, assert, assertEqual, tmp } from "./harness.mjs";
 
 export const FOUND = "FOUND";
 export const MEASURED_ABSENT = "MEASURED ABSENT";
@@ -169,6 +194,15 @@ export const RESOLVED_FLOOR = 3;
  * directory to count as that tree — a directory that happens to have the right
  * NAME is not a checkout, and pointing at one would produce a walk of nothing
  * and a confident absence.
+ *
+ * `onlyListedPaths` marks a tree that is read through an explicit list and
+ * never walked — see the header for why Astra is one. A row about such a tree
+ * gives `paths`, not `under` and `exts`; `listedFiles` asks git for those paths
+ * and nothing else, and `resolve` refuses any other shape before it locates the
+ * tree. Until 2026-09-22 four rows walked `astra-rs` or
+ * `astra-rs/astra-daemon/src` whole (300 and 50 files were their floors), and
+ * what each one's claim is about is one to three files that its own sentence,
+ * the README it anchors in, or the client plan names.
  */
 export const TREES = {
   here: {
@@ -182,6 +216,7 @@ export const TREES = {
     env: "ASTRA_DIR",
     siblings: ["../Astra"],
     probe: "astra-rs/Cargo.toml",
+    onlyListedPaths: true,
   },
   service: {
     label: "minice-be (the plugins service; private)",
@@ -245,6 +280,117 @@ export function trackedFiles(dir, { under = [], exts = [] } = {}) {
     .filter((rel) => exts.length === 0 || exts.some((x) => rel.endsWith(x)));
 }
 
+/** A path that can be written into a pathspec and mean only itself: no glob character, no `.`/`..`, no root. */
+const LISTED_PATH = /^[A-Za-z0-9_@-][A-Za-z0-9_.@-]*(?:\/[A-Za-z0-9_@-][A-Za-z0-9_.@-]*)*\/?$/;
+
+/**
+ * The tracked files an explicit list names, asked of git by those paths alone.
+ *
+ * An entry is a FILE, or a DIRECTORY written with a trailing `/`, which is read
+ * one level deep: a subdirectory is read only if it is listed itself. Each
+ * entry is its own `git ls-files` with a pathspec that cannot mean more:
+ *
+ *   file  `:(literal)<f>` and `:(exclude,glob)<f>/**` — a bare pathspec also
+ *         matches as a LEADING DIRECTORY, so without the exclusion a file entry
+ *         that is really a directory would list its whole subtree. With it, such
+ *         an entry lists nothing, and `resolve` reports the file as missing.
+ *   dir   `:(glob)<d>*` — under `glob` magic `*` does not cross a `/`.
+ *
+ * So git never prints a name the list does not give, and what it does print is
+ * checked against the entry anyway: a path that is neither the file nor a
+ * direct child of the directory throws rather than being read. Measured with
+ * git 2.55.0 on a scratch repository before this was written: `:(literal)a/b`
+ * listed `a/b/c/y.rs`; `:(glob)a/b/*` did not; `:(literal)a/b` with
+ * `:(exclude,glob)a/b/**` listed nothing.
+ *
+ * Throws, like `trackedFiles`, rather than returning `[]` on a failed `git`.
+ */
+export function listedFiles(dir, paths) {
+  const out = [];
+  for (const entry of paths) {
+    if (typeof entry !== "string" || !LISTED_PATH.test(entry)) {
+      throw new Error(`${JSON.stringify(entry)} is not a plain repository-relative path, so no pathspec means only it`);
+    }
+    const isDir = entry.endsWith("/");
+    const spec = isDir ? [`:(glob)${entry}*`] : [`:(literal)${entry}`, `:(exclude,glob)${entry}/**`];
+    let listed;
+    try {
+      listed = execFileSync("git", ["-C", dir, "ls-files", "-z", "--", ...spec], {
+        encoding: "utf8", maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (e) {
+      throw new Error(`\`git -C ${dir} ls-files -- ${spec.join(" ")}\` failed: ${String(e.stderr || e.message).trim()}`);
+    }
+    for (const rel of listed.split("\0").filter(Boolean)) {
+      const inside = isDir ? path.posix.dirname(rel) === entry.slice(0, -1) : rel === entry;
+      if (!inside) {
+        throw new Error(`git answered ${rel} for the listed ${entry}, which is not that path; nothing was read`);
+      }
+      if (!out.includes(rel)) out.push(rel);
+    }
+  }
+  return out;
+}
+
+/**
+ * Why a row may not be walked on a tree read only through a list — every
+ * reason, or `[]`.
+ *
+ * One rule, applied twice: `resolve` refuses a row this returns anything for,
+ * before it so much as locates the tree, and the check "a tree read only through
+ * a list" reds the table on it, so a widened row is red in registry CI and not
+ * only on the machine that has the tree.
+ *
+ *   - `paths` is a non-empty list, and there is no `under` or `exts` — a prefix
+ *     and an extension filter are how a walk of a root is written;
+ *   - every entry is a plain path, and none is the tree's root or a directory
+ *     above its probe file (for Astra, `astra-rs` itself);
+ *   - no entry is repeated;
+ *   - a DIRECTORY entry is one the row's own claim names, backticked, with or
+ *     without its first segment (this repository's sentences drop `astra-rs/`).
+ *     A directory reads files nobody chose, so it has to be the thing the claim
+ *     is about — the vendored corpus's directory is, `src/` never is.
+ */
+export function listProblems(claim, tree) {
+  const s = claim.subject;
+  const problems = [];
+  if (s.under !== undefined) problems.push(`gives \`under\` (${JSON.stringify(s.under)}), which is a walk from a prefix`);
+  if (s.exts !== undefined) problems.push("gives `exts`, which filters a walk; an explicit list is its own filter");
+  if (!Array.isArray(s.paths) || s.paths.length === 0) {
+    problems.push("gives no `paths`, or an empty list");
+    return problems;
+  }
+  const probeAncestors = new Set([""]);
+  const probeParts = tree.probe.split("/").slice(0, -1);
+  for (let i = 1; i <= probeParts.length; i++) probeAncestors.add(probeParts.slice(0, i).join("/"));
+  const bare = (p) => (typeof p === "string" && p.endsWith("/") ? p.slice(0, -1) : p);
+  s.paths.forEach((p, i) => {
+    if (typeof p !== "string" || !LISTED_PATH.test(p)) {
+      problems.push(`${JSON.stringify(p)} is not a plain repository-relative path`);
+      return;
+    }
+    if (probeAncestors.has(bare(p))) problems.push(`${p} is the tree's root or a directory above ${tree.probe}`);
+    if (s.paths.indexOf(p) !== i) problems.push(`${p} is listed twice`);
+    if (p.endsWith("/")) {
+      const short = p.split("/").slice(1).join("/");
+      if (!claim.claim.includes(`\`${p}\``) && !(short && claim.claim.includes(`\`${short}\``))) {
+        problems.push(`${p} is a directory, and the row's own claim does not name it`);
+      }
+    }
+  });
+  return problems;
+}
+
+/** What a row walks, in one line, for the transcript — so every run says what it would open. */
+export function describeWalk(subject) {
+  if (subject.paths) {
+    return `only ${subject.paths.map((p) => (p.endsWith("/") ? `${p} (one level)` : p)).join(", ")}`;
+  }
+  const under = subject.under?.length ? `under [${subject.under.join(", ")}]` : "the whole tracked tree";
+  const exts = subject.exts?.length ? ` with [${subject.exts.join(", ")}]` : "";
+  return `${under}${exts}`;
+}
+
 /**
  * One claim, resolved to one of the four verdicts.
  *
@@ -259,6 +405,21 @@ export function resolve(claim, trees = TREES) {
 
   const tree = trees[claim.subject.tree];
   if (!tree) return { verdict: COULD_NOT_ASK, tree: claim.subject.tree, detail: "no such tree is declared in TREES" };
+  // Before `locate`, so that a widened row opens nothing — not the probe file,
+  // not git — and says so identically on a machine with the tree and without.
+  if (tree.onlyListedPaths) {
+    const problems = listProblems(claim, tree);
+    if (problems.length) {
+      return {
+        verdict: COULD_NOT_ASK,
+        tree: tree.label,
+        dir: null,
+        read: [],
+        detail: `not walked, and nothing was opened: this tree is read only through an explicit list of paths, ` +
+          `and this row ${problems.join("; ")}`,
+      };
+    }
+  }
   const { dir, tried } = locate(tree);
   if (!dir) {
     return {
@@ -269,10 +430,10 @@ export function resolve(claim, trees = TREES) {
     };
   }
 
-  const { under = [], exts = [], floorFiles = 1, needle } = claim.subject;
+  const { under = [], exts = [], paths = null, floorFiles = 1, needle } = claim.subject;
   let files;
   try {
-    files = trackedFiles(dir, { under, exts });
+    files = paths ? listedFiles(dir, paths) : trackedFiles(dir, { under, exts });
   } catch (e) {
     return { verdict: COULD_NOT_ASK, tree: tree.label, dir, detail: `${dir}: ${e.message}` };
   }
@@ -290,6 +451,7 @@ export function resolve(claim, trees = TREES) {
   // not read is not part of the denominator.
   const hits = [];
   const unread = [];
+  const opened = [];
   let read = 0;
   for (const rel of files) {
     let text;
@@ -300,6 +462,7 @@ export function resolve(claim, trees = TREES) {
       continue;
     }
     read++;
+    opened.push(rel);
     text.split("\n").forEach((line, i) => {
       if (needle.test(line)) hits.push(`${rel}:${i + 1}`);
     });
@@ -307,6 +470,24 @@ export function resolve(claim, trees = TREES) {
   const skipped = unread.length
     ? `; ${unread.length} tracked file(s) could not be read and are not counted: ${unread.slice(0, 4).join(", ")}`
     : "";
+
+  // A list's floor is the list: every FILE it names must have been read. A
+  // file that moved leaves the row searching what is left of the list, and an
+  // absence over the remainder is the confident absence the floor below
+  // exists to refuse — one level finer.
+  if (paths) {
+    const missing = paths.filter((p) => !p.endsWith("/") && !opened.includes(p));
+    if (missing.length) {
+      return {
+        verdict: COULD_NOT_ASK,
+        tree: tree.label,
+        dir,
+        read: opened,
+        detail: `the list names ${missing.join(", ")}, which ${dir} does not track as a file or could not be read; ` +
+          `a list that has lost a file is a stale list, not an absent reader${skipped}`,
+      };
+    }
+  }
 
   // The floor, before any conclusion. "I searched and found nothing" and "I
   // searched the wrong tree" are one observation until a minimum is asserted,
@@ -319,8 +500,9 @@ export function resolve(claim, trees = TREES) {
       verdict: COULD_NOT_ASK,
       tree: tree.label,
       dir,
-      detail: `the walk of ${dir} read ${read} of ${files.length} tracked file(s) under ` +
-        `[${under.join(", ") || "the whole tree"}] with [${exts.join(", ") || "any extension"}] and the floor is ` +
+      read: opened,
+      detail: `the walk of ${dir} read ${read} of ${files.length} tracked file(s), walking ` +
+        `${describeWalk(claim.subject)}, and the floor is ` +
         `${floorFiles}; this is a broken walk, not an absent reader, and every conclusion below it would have ` +
         `been a confident absence${skipped}`,
     };
@@ -336,6 +518,7 @@ export function resolve(claim, trees = TREES) {
         verdict: MEASURED_ABSENT,
         tree: tree.label,
         dir,
+        read: opened,
         detail: `the design item itself is not in that tree — ${seen}`,
       };
     }
@@ -346,20 +529,21 @@ export function resolve(claim, trees = TREES) {
       .filter((line) => claim.subject.needle.test(line))
       .join("\n");
     for (const [state, re] of Object.entries(claim.subject.states)) {
-      if (re.test(text)) return { verdict: FOUND, tree: tree.label, dir, state, detail: `${seen}; state: ${state}` };
+      if (re.test(text)) return { verdict: FOUND, tree: tree.label, dir, read: opened, state, detail: `${seen}; state: ${state}` };
     }
     return {
       verdict: COULD_NOT_ASK,
       tree: tree.label,
       dir,
+      read: opened,
       detail: `${seen}, and none of the state markers [${Object.keys(claim.subject.states).join(", ")}] matched ` +
         `any of them; the item's state cannot be read, which is not the same as the item being open`,
     };
   }
 
   return hits.length
-    ? { verdict: FOUND, tree: tree.label, dir, detail: `${seen} — ${hits.slice(0, 4).join(", ")}` }
-    : { verdict: MEASURED_ABSENT, tree: tree.label, dir, detail: seen };
+    ? { verdict: FOUND, tree: tree.label, dir, read: opened, detail: `${seen} — ${hits.slice(0, 4).join(", ")}` }
+    : { verdict: MEASURED_ABSENT, tree: tree.label, dir, read: opened, detail: seen };
 }
 
 // ── the claims ──────────────────────────────────────────────────────────────
@@ -470,10 +654,22 @@ export const CLAIMS = [
     subject: {
       kind: "code",
       tree: "astra",
-      under: ["astra-rs"],
-      exts: [".rs", ".toml", ".md", ".json", ".txt", ".yml", ".yaml"],
-      floorFiles: 300,
-      needle: /signed-set-vectors|signed_set_vectors/,
+      // Every file the client plan's C1.8 says vendoring the corpus touches,
+      // and no other: the directory it creates (named in this row's own claim,
+      // one level — the file, `SHA256SUMS`, `SOURCE`), the test in
+      // `plugins/trust.rs` that iterates every vector, and the two tests in
+      // `consistency.rs` that hold the copy to its sums and to this repository.
+      // It walked all of `astra-rs` with a floor of 300 until 2026-09-22.
+      paths: [
+        "astra-rs/astra-daemon/testdata/signed-set-vectors/",
+        "astra-rs/astra-daemon/src/plugins/trust.rs",
+        "astra-rs/astra-daemon/src/consistency.rs",
+      ],
+      // The artifact's name as well as the directory's, as the two rows above
+      // have it: files INSIDE the vendored directory name the file they sum,
+      // not the directory they are in, so a needle of the directory alone would
+      // read a vendored `SHA256SUMS` and come back absent.
+      needle: /signed-set-v1\.json|signed-set-vectors|signed_set_vectors/,
     },
     expect: "absent",
     why: "client plan C1.8. This is the instance gap 21 was written about: the file said `vendored`, in the " +
@@ -490,9 +686,10 @@ export const CLAIMS = [
     subject: {
       kind: "code",
       tree: "astra",
-      under: ["astra-rs/astra-daemon/src"],
-      exts: [".rs"],
-      floorFiles: 50,
+      // The file this row's claim names. tools/revocations/README.md records
+      // the enum at `astra-daemon/src/plugins/trust.rs:2818`, measured at Astra
+      // `2d68bd6f`. It walked all of `astra-daemon/src` until 2026-09-22.
+      paths: ["astra-rs/astra-daemon/src/plugins/trust.rs"],
       needle: /pub enum RevocationKind/,
     },
     expect: "found",
@@ -518,9 +715,9 @@ export const CLAIMS = [
     subject: {
       kind: "code",
       tree: "astra",
-      under: ["astra-rs/astra-daemon/src/consistency.rs"],
-      exts: [".rs"],
-      floorFiles: 1,
+      // The file this row's claim names, and the one the client plan's C1.4
+      // puts the comparison in. Already one file; now a list of one.
+      paths: ["astra-rs/astra-daemon/src/consistency.rs"],
       needle: /RevocationKind/,
     },
     expect: "absent",
@@ -589,9 +786,18 @@ export const CLAIMS = [
     subject: {
       kind: "code",
       tree: "astra",
-      under: ["astra-rs/astra-daemon/src"],
-      exts: [".rs"],
-      floorFiles: 50,
+      // The two files the withdrawal list is enforced in, as the contract and
+      // the client plan cite them: `plugins/trust.rs` holds the list, its
+      // freshness rule and the subject an entry is matched against (a
+      // sideload's among them), and `plugins/manager.rs` the call sites — the
+      // stale-list block on install and update, `refresh_revocations`, the
+      // sideload path. The README this row anchors in says only "five times
+      // under `astra-daemon/src/plugins/`", which is a directory of files
+      // nobody chose. It walked all of `astra-daemon/src` until 2026-09-22.
+      paths: [
+        "astra-rs/astra-daemon/src/plugins/trust.rs",
+        "astra-rs/astra-daemon/src/plugins/manager.rs",
+      ],
       needle: /five enforcement points/,
     },
     expect: "found",
@@ -737,6 +943,15 @@ export async function run() {
       for (const r of resolved) {
         console.log(`        ${r.verdict.padEnd(15)} ${r.claim.id}`);
         console.log(`                        tree: ${r.tree}`);
+        // What the row walks, on every run and whatever the verdict, so a
+        // transcript says what a machine WITH the tree would have opened; and,
+        // for a listed row, what this one did open.
+        if (r.claim.subject.kind !== "bound") {
+          console.log(`                        walk: ${describeWalk(r.claim.subject)}`);
+        }
+        if (r.claim.subject.paths) {
+          console.log(`                        read: ${r.read?.length ? r.read.join(", ") : "nothing"}`);
+        }
         console.log(`                        ${r.detail}`);
       }
       // One line with the four numbers a shrunken run changes: how many rows
@@ -1063,5 +1278,117 @@ export async function run() {
       subject: { ...subject({ open: /x/ }), needle: /no-such-decision-id-anywhere/ },
     });
     assertEqual(gone.verdict, MEASURED_ABSENT, "a cited design item that is not in the tree must be an absence");
+  });
+
+  await test("a tree read only through a list is read through a list: non-empty, no root, no prefix walk, and a directory only where its claim names it", () => {
+    // Entry 84 of `O:dev/couplings.md`. Four rows walked `astra-rs` or
+    // `astra-rs/astra-daemon/src` whole whenever `../Astra` resolved, which it
+    // does in any checkout that has the daemon beside it, and those roots hold
+    // paths the people running this suite may not read. Nothing said so: the
+    // rows were COULD NOT ASK in CI, and on a laptop they were green.
+    //
+    // Asked of the TABLE, so a widened row is red here in registry CI, which
+    // has no Astra — not only on the machine where widening it does the harm.
+    const listedTrees = Object.entries(TREES).filter(([, t]) => t.onlyListedPaths).map(([k]) => k);
+    assert(listedTrees.includes("astra"),
+      "TREES.astra no longer declares `onlyListedPaths`, so its rows may walk it from a prefix again and nothing " +
+      "below applies to them. The daemon tree is read through a list; see this module's header for why");
+    const rows = CLAIMS.filter((c) => listedTrees.includes(c.subject.tree));
+    // Not vacuous: four rows on 2026-09-22. One is enough to be a question;
+    // retiring them all is an ordinary act and leaves this with nothing to ask,
+    // which it says rather than passing.
+    assert(rows.length >= 1,
+      `no row of the claims table is about a tree read only through a list (${listedTrees.join(", ")}), so this ` +
+      `check has nothing to hold — retire it with the last such row rather than leave it green over nothing`);
+    const bad = rows.flatMap((c) => listProblems(c, TREES[c.subject.tree]).map((p) => `${c.id} ${p}`));
+    assertEqual(bad.join("; "), "",
+      "a row about a tree that is read only through a list would walk more than its claim is about. Give it the " +
+      "files its claim names in `paths`, and a directory only where the claim names that directory; never a " +
+      "prefix, and never the tree's root");
+  });
+
+  await test("the list is all git is asked for: a file is itself, a directory is one level, a stale list is not an answer, and a prefix row opens nothing", () => {
+    // The check above holds the TABLE; this holds the WALKER, on a tree built
+    // for it, because the table only ever exercises the shapes it happens to
+    // hold. Every file that must not be read carries the needle, so a walker
+    // that read one says FOUND where the answer is MEASURED ABSENT.
+    const root = path.join(tmp, "claims-listed-tree");
+    fs.rmSync(root, { recursive: true, force: true });
+    const put = (rel, text) => {
+      fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
+      fs.writeFileSync(path.join(root, rel), text);
+    };
+    put("ws/Cargo.toml", "[workspace]\n");
+    put("ws/crate/src/listed.rs", "nothing here\n");
+    put("ws/crate/src/beside.rs", "NEEDLE in a file beside the listed one\n");
+    put("ws/crate/src/nested/deeper.rs", "NEEDLE one level below the directory\n");
+    put("ws/crate/data/named/top.txt", "nothing here either\n");
+    put("ws/crate/data/named/sub/under.txt", "NEEDLE in a subdirectory nobody listed\n");
+    execFileSync("git", ["-C", root, "init", "-q"], { stdio: "ignore" });
+    execFileSync("git", ["-C", root, "add", "-A"], { stdio: "ignore" });
+
+    const trees = {
+      fixture: { label: "a listed fixture", env: null, siblings: [root], probe: "ws/Cargo.toml", onlyListedPaths: true },
+    };
+    // The claim names the ROOT too, so that the root case at the end is
+    // refused by the root rule alone and not also by "the claim does not name
+    // it".
+    const row = (subject) => ({
+      id: "synthetic-listed",
+      claim: "x `ws/`, `crate/data/named/` and `crate/data/named/sub/`",
+      why: "x",
+      expect: "absent",
+      source: { file: "tools/selftest.mjs", line: /MODULES/, hedge: /./ },
+      subject: { kind: "code", tree: "fixture", needle: /NEEDLE/, ...subject },
+    });
+    const asked = (subject) => resolve(row(subject), trees);
+
+    // A file is itself — not the file beside it, which shares its directory
+    // and carries the needle.
+    const file = asked({ paths: ["ws/crate/src/listed.rs"] });
+    assertEqual(`${file.verdict} ${JSON.stringify(file.read)}`, `${MEASURED_ABSENT} ["ws/crate/src/listed.rs"]`,
+      `a listed file read something besides itself: ${file.detail}`);
+
+    // A directory is one level: its own files, and not a subdirectory's.
+    const dir = asked({ paths: ["ws/crate/data/named/"] });
+    assertEqual(`${dir.verdict} ${JSON.stringify(dir.read)}`, `${MEASURED_ABSENT} ["ws/crate/data/named/top.txt"]`,
+      `a listed directory was read below its own level: ${dir.detail}`);
+    // ...unless the subdirectory is listed by name, which is how a row reads
+    // one — and the answer changes, which is what shows the level was real.
+    const named = asked({ paths: ["ws/crate/data/named/", "ws/crate/data/named/sub/"] });
+    assertEqual(named.verdict, FOUND, `a subdirectory listed by name was not read: ${named.detail}`);
+
+    // A file entry that is really a directory lists NOTHING. A bare pathspec
+    // matches as a leading directory, so without the exclusion git would
+    // print the subtree's names; the message must name the entry and none of
+    // them.
+    const dirAsFile = asked({ paths: ["ws/crate/src"] });
+    assertEqual(dirAsFile.verdict, COULD_NOT_ASK, `a file entry that is a directory was walked: ${dirAsFile.detail}`);
+    assert(dirAsFile.detail.includes("does not track as a file") && !/beside|listed\.rs|deeper/.test(dirAsFile.detail),
+      `a file entry that is a directory must list nothing and be reported as missing, and this said: ${dirAsFile.detail}`);
+
+    // A stale list — one file of two gone — is not an absence over the other.
+    // The floor of one file would be met, so only the list's own floor says so.
+    const stale = asked({ paths: ["ws/crate/src/listed.rs", "ws/crate/src/moved-away.rs"] });
+    assertEqual(stale.verdict, COULD_NOT_ASK, `a list that lost a file answered from the rest of it: ${stale.detail}`);
+    assert(stale.detail.includes("ws/crate/src/moved-away.rs") && stale.detail.includes("stale list"),
+      `the refusal must name the file the list lost: ${stale.detail}`);
+
+    // A prefix row is refused before the tree is located: no `dir`, nothing
+    // read, and the tree IS there with the needle in it, so a walk would have
+    // said FOUND.
+    const prefix = asked({ under: ["ws"], exts: [".rs"] });
+    assertEqual(`${prefix.verdict} ${prefix.dir ?? null} ${JSON.stringify(prefix.read ?? null)}`, `${COULD_NOT_ASK} null []`,
+      `a prefix row on a tree read only through a list was walked: ${prefix.detail}`);
+    assert(prefix.detail.includes("nothing was opened"), `the refusal must say nothing was opened: ${prefix.detail}`);
+
+    // And the directory above the probe, written as a directory and named by
+    // the claim, is refused the same way: a claim cannot name its way to the
+    // whole tree.
+    const whole = asked({ paths: ["ws/"] });
+    assertEqual(`${whole.verdict} ${whole.dir ?? null}`, `${COULD_NOT_ASK} null`,
+      `the directory above the tree's probe was accepted as a listed directory: ${whole.detail}`);
+    assert(whole.detail.includes("a directory above ws/Cargo.toml"),
+      `the refusal must say it is the tree's root or above its probe: ${whole.detail}`);
   });
 }
