@@ -4,7 +4,7 @@
 //
 // The file is written by `astra-plugins-ops`' generator out of the contract and
 // committed here. That makes this repository the one that holds it and the one
-// that can be asked, on every push and every pull request, two questions the
+// that can be asked, on every push and every pull request, three questions the
 // generator cannot ask about itself:
 //
 //   1. **Did its tokens move without `contract_version` moving?** SCOPE-1 makes
@@ -20,6 +20,12 @@
 //      a MUST, and SCOPE-1 makes a change to one a contract MINOR published
 //      BEFORE the cron edit. So a cron line is one end of a three-way agreement
 //      between a workflow, this file and a published contract version.
+//
+//   3. **Is its staging listing id the one this repository reserves?** MOD-16's
+//      id is spelled in `policy/reserved-ids.json`, which the registry's three
+//      rules read, and will be spelled again here when the contract records
+//      it. The generator never reads the policy file, so the comparison can
+//      only be made here (ops `dev/couplings.md` entry 33).
 //
 // ── One comparison, one owner, and a canary over the seam ───────────────────
 //
@@ -57,11 +63,14 @@ import { execFileSync, spawnSync } from "node:child_process";
 
 import { isShallow } from "../coverage/git.mjs";
 import { REPO_ROOT, loadPublishers, loadRecords, loadSources, publisherRecords } from "../lib/sources.mjs";
+import { stagingListingId } from "../lib/reserved.mjs";
 import { NOTICE_DIR, NOTICE_NAME } from "../validate.mjs";
 import { CUTOVER_FILE, DEADLINE_FILE } from "../../bot/lib/listing-state.mjs";
 import { test, assert, assertEqual, neverAsk, tmp } from "./harness.mjs";
 
 const TOKEN_FILE = "schema/contract-tokens-v1.json";
+const POLICY_FILE = "policy/reserved-ids.json";
+const STAGING_MEMBER = "staging_listing_id";
 const WORKFLOW_HALF = "bot/tests/workflows.test.mjs";
 const BOT_TESTS_WORKFLOW = ".github/workflows/bot-tests.yml";
 
@@ -616,6 +625,122 @@ export async function run() {
       `only record that it is owed and must stay`);
   });
 
+  // ── MOD-16's staging listing id, spelled in two files ─────────────────────
+  //
+  // Found 2026-09-22 by the lane landing M-T2.1 (ops `dev/couplings.md` entry
+  // 33). `policy/reserved-ids.json` has carried `staging_listing_id` since
+  // `bf51592`, and the three rules that make the reservation mean something
+  // read it there, through `tools/lib/reserved.mjs`. This file carries the same
+  // member as `null` under a pending record owed by ops.15, and the day ops.15
+  // lands, the generator writes the id a second time. The generator reads the
+  // contract and never this repository's policy, so from that commit the
+  // estate has two spellings of one id and nothing comparing them. MOD-10
+  // refuses `path_test` on any id but this one, so a disagreement is the panel
+  // offering a path test the registry will not honour.
+  //
+  // The pending record also said its floor, "until ops.15 lands the member is
+  // null and this record is present", as if something asserted it. Nothing
+  // did: this module never read the member, and the ops generator's own
+  // selftest floors `fixed_reasons`, `templates`, the FLOW-13 table and the
+  // outcome codes one by one and has no floor for this member. A record could
+  // be dropped with the member still null and every suite stayed green.
+  //
+  // So the join is held in both states, by one predicate:
+  //
+  //   - `null`: the pending record is present, once, and names who owes the
+  //     value and what it lands with;
+  //   - an id: it equals the one the policy file reserves (read through
+  //     `stagingListingId`, like every other reader, so `""` means the same
+  //     thing here as there), and no pending record is left behind.
+  //
+  // The second state has never been on any tree. So the second test builds it
+  // from the committed files and requires each red, so its clauses are shown
+  // working on every run and not only on the day ops.15 lands.
+  await test("the token file's staging_listing_id is null under its pending record, or policy/reserved-ids.json's id with none", () => {
+    const doc = JSON.parse(fs.readFileSync(tokenPath, "utf8"));
+    const policyAt = path.join(REPO_ROOT, POLICY_FILE);
+    assert(fs.existsSync(policyAt),
+      `${POLICY_FILE} is not in this checkout, and it is the file every registry rule reads MOD-16's staging ` +
+      `listing id from`);
+    const reserved = JSON.parse(fs.readFileSync(policyAt, "utf8"));
+    const { state, problems } = stagingIdJoin(doc, reserved);
+    assert(problems.length === 0,
+      `${TOKEN_FILE} and ${POLICY_FILE} disagree about MOD-16's staging listing id (ops dev/couplings.md ` +
+      `entry 33):\n` + problems.map((p) => `- ${p}`).join("\n"));
+    console.log(state === "pending"
+      ? `  note  ${TOKEN_FILE}'s ${STAGING_MEMBER} is null and its pending record is present; ${POLICY_FILE} ` +
+        `reserves ${JSON.stringify(stagingListingId(reserved))}. The equality leg arms on the regeneration that ` +
+        `records the id, with no edit here.`
+      : `  note  ${TOKEN_FILE}'s ${STAGING_MEMBER} is recorded and equals ${POLICY_FILE}'s.`);
+  });
+
+  await test("the staging-id join goes red in each state the tree has not held, built from its committed files", () => {
+    const tokenText = showOrNull("HEAD", TOKEN_FILE);
+    const policyText = showOrNull("HEAD", POLICY_FILE);
+    assert(tokenText !== null && policyText !== null,
+      `${tokenText === null ? TOKEN_FILE : POLICY_FILE} is not committed at HEAD, so there is nothing to build ` +
+      `the states from`);
+    const committed = JSON.parse(tokenText);
+    const reserved = JSON.parse(policyText);
+    const policyId = stagingListingId(reserved);
+    assert(policyId !== null,
+      `${POLICY_FILE} at HEAD reserves no staging listing id, so the recorded state cannot be built. ` +
+      `tools/selftest/validation.mjs is red for the same reason`);
+    // Another listing's id, from the committed tree: the value a mistaken
+    // regeneration would most plausibly write.
+    const other = git(["ls-tree", "-d", "--name-only", "HEAD", "plugins/"]).split("\n")
+      .map((l) => l.replace(/^plugins\//, "")).filter((id) => id && id !== policyId).sort()[0];
+    assert(other, `no committed listing under plugins/ besides ${policyId}, so the mismatch leg has no id to use`);
+
+    // The committed record if the file still carries one, otherwise one built
+    // here, so this test survives the regeneration that discharges the record.
+    const committedRecord = (committed.pending || []).find((p) => p && p.id === STAGING_MEMBER);
+    const record = committedRecord ?? {
+      id: STAGING_MEMBER, what: "the staging listing id", owed_by: "(built by this test)",
+      lands_with: "(built by this test)", floor: "the member is null and this record is present.",
+    };
+    const variant = (value, records) => {
+      const doc = structuredClone(committed);
+      doc[STAGING_MEMBER] = value;
+      doc.pending = [...(committed.pending || []).filter((p) => p && p.id !== STAGING_MEMBER), ...records];
+      return doc;
+    };
+    const without = (key) => { const r = { ...record }; delete r[key]; return r; };
+
+    const legs = [
+      { name: "null under its pending record", doc: variant(null, [record]), red: [] },
+      { name: "the policy's id and no record", doc: variant(policyId, []), red: [] },
+      { name: "null with no record", doc: variant(null, []), red: [TOKEN_FILE, "no pending record"] },
+      { name: "null under a record with no lands_with", doc: variant(null, [without("lands_with")]), red: [TOKEN_FILE, "lands_with"] },
+      { name: "null under a record with no owed_by", doc: variant(null, [without("owed_by")]), red: [TOKEN_FILE, "owed_by"] },
+      { name: "null under the record twice", doc: variant(null, [record, record]), red: [TOKEN_FILE, "2 pending records"] },
+      { name: "another listing's id", doc: variant(other, []), red: [TOKEN_FILE, POLICY_FILE, other, policyId] },
+      { name: "the policy's id with the record left behind", doc: variant(policyId, [record]), red: [TOKEN_FILE, POLICY_FILE, "still carries"] },
+      { name: "an empty string", doc: variant("", []), red: [TOKEN_FILE, "neither null nor an id"] },
+      { name: "no member at all", doc: (() => { const d = variant(null, [record]); delete d[STAGING_MEMBER]; return d; })(), red: [TOKEN_FILE, "no `staging_listing_id` member"] },
+    ];
+    const wrong = [];
+    for (const leg of legs) {
+      const { problems } = stagingIdJoin(leg.doc, reserved);
+      const said = problems.join("\n");
+      if (leg.red.length === 0) {
+        if (problems.length) wrong.push(`${leg.name}: expected green, was red: ${said}`);
+      } else if (!problems.length) {
+        wrong.push(`${leg.name}: expected red, was green`);
+      } else {
+        const unnamed = leg.red.filter((s) => !said.includes(s));
+        if (unnamed.length) wrong.push(`${leg.name}: red, but not naming ${unnamed.join(", ")}: ${said}`);
+      }
+    }
+    assert(wrong.length === 0,
+      `the join between ${TOKEN_FILE}'s ${STAGING_MEMBER} and ${POLICY_FILE} does not hold on a copy of the ` +
+      `committed files, so the live check above is not asking what its name says:\n` +
+      wrong.map((w) => `- ${w}`).join("\n"));
+    console.log(`  note  ${legs.length} states built from HEAD's ${TOKEN_FILE} and ${POLICY_FILE}` +
+      `${committedRecord ? "" : " (the pending record built here, the file no longer carries one)"}; ` +
+      `${legs.filter((l) => l.red.length).length} red as named, ${legs.filter((l) => !l.red.length).length} green.`);
+  });
+
   // ── what the file calls required, against the records it describes ──────
   //
   // Found 2026-09-22 answering the plugins service's question about which of
@@ -808,6 +933,72 @@ function memberPresent(doc, name) {
     return Object.hasOwn(node, head) && walk(node[head], rest);
   };
   return walk(doc, name.split("."));
+}
+
+/**
+ * Whether the token file's `staging_listing_id` and the policy file's agree,
+ * as `{state, problems}`. `state` is "pending" while the member is null,
+ * "recorded" once it holds anything else, and "absent" when the file has no
+ * such member. An empty `problems` is agreement.
+ *
+ * @param {object} doc the parsed token file
+ * @param {object} reserved the parsed policy/reserved-ids.json
+ */
+function stagingIdJoin(doc, reserved) {
+  const problems = [];
+  const records = (Array.isArray(doc.pending) ? doc.pending : []).filter((p) => p && p.id === STAGING_MEMBER);
+  const policyId = stagingListingId(reserved);
+  if (!Object.hasOwn(doc, STAGING_MEMBER)) {
+    problems.push(
+      `${TOKEN_FILE} has no \`${STAGING_MEMBER}\` member at all. SCOPE-7 makes the file carry it, null until ` +
+      `ops.15 and ${POLICY_FILE}'s id after, and a reader cannot tell a dropped member from one nobody owes`);
+    return { state: "absent", problems };
+  }
+  const value = doc[STAGING_MEMBER];
+  if (value === null) {
+    if (records.length === 0) {
+      problems.push(
+        `${TOKEN_FILE}'s \`${STAGING_MEMBER}\` is null and the file carries no pending record for it, so nothing ` +
+        `says the id is owed, by whom, or when. The record's floor is "until ops.15 lands the member is null and ` +
+        `this record is present"; a regeneration that drops the record has to record the id`);
+    } else if (records.length > 1) {
+      problems.push(
+        `${TOKEN_FILE} carries ${records.length} pending records with id \`${STAGING_MEMBER}\`, and a reader ` +
+        `finding the first one cannot know the others say something different`);
+    }
+    for (const r of records) {
+      for (const key of ["owed_by", "lands_with"]) {
+        if (!(typeof r[key] === "string" && r[key].trim() !== "")) {
+          problems.push(
+            `${TOKEN_FILE}'s pending record \`${STAGING_MEMBER}\` has no \`${key}\`, so it does not say ` +
+            `${key === "owed_by" ? "who owes the id" : "which version lands it"}: a record that names nothing to ` +
+            `wait on is a null nobody is waiting to fill`);
+        }
+      }
+    }
+    return { state: "pending", problems };
+  }
+  if (typeof value !== "string" || value === "") {
+    problems.push(
+      `${TOKEN_FILE}'s \`${STAGING_MEMBER}\` is ${JSON.stringify(value)}, which is neither null nor an id. ` +
+      `${POLICY_FILE}'s readers take anything but a non-empty string as "none reserved" (tools/lib/reserved.mjs)`);
+    return { state: "recorded", problems };
+  }
+  if (value !== policyId) {
+    problems.push(
+      `${TOKEN_FILE} records \`${STAGING_MEMBER}\` ${JSON.stringify(value)} and ${POLICY_FILE} reserves ` +
+      `${policyId === null ? "no staging listing id" : JSON.stringify(policyId)}. The registry derives, validates ` +
+      `and excludes by the policy file's id and the panel reads this file's, so MOD-10's path test would be ` +
+      `offered on an id the registry does not treat as its staging listing. One of the two is wrong, and the ` +
+      `policy file's is the one three rules enforce`);
+  }
+  if (records.length) {
+    problems.push(
+      `${TOKEN_FILE} records \`${STAGING_MEMBER}\` ${JSON.stringify(value)} and still carries its pending record ` +
+      `saying the id is owed. Once the value is recorded, and held to ${POLICY_FILE}'s, the record has outlived ` +
+      `its reason; the ops generator drops a pending record when it writes the value, and this one was not dropped`);
+  }
+  return { state: "recorded", problems };
 }
 
 /**
