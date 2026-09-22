@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
+  astraPluginsCandidates,
   checkEveryCapDeclaresItsAuthorSide,
   checkLocaleCorpus,
   checkLocaleCorpusCoverage,
@@ -468,6 +469,66 @@ export async function run() {
       "an exemption outliving its rule is a reason nobody can check, and it makes the debt look serviced");
   });
 
+  await test("C19 — `$ASTRA_PLUGINS_DIR` is an override, and this is asked with or without a sibling", () => {
+    // **Gap 41.** The case below ends with an absent one: point the reader at a
+    // fake that omits the table and require it to say `NOT verified`. That is
+    // the branch `build-index.yml` turns into `exit 1`, and it is the only
+    // thing between "the comparison could not run" and a green tick.
+    //
+    // A passing condition that is an ABSENCE has an environment, and until this
+    // test the environment was the whole check. Measured on 2026-09-22 by
+    // putting the pre-fix two-candidate resolver back:
+    //
+    //   with no ../AstraPlugins   INCOMPLETE  312 passed, 0 failed  — green
+    //   with one                  FAIL        310 passed, 1 failed  — red
+    //
+    // Every lane `node tools/selftest.mjs --lanes` reports as LIVE is the first
+    // kind. So the fall-through could be reinstated and no run that happens
+    // without a human would have said anything, and the developer run that
+    // would have is the one nothing schedules.
+    //
+    // **The fix is not a second environment; it is asking the resolver instead
+    // of the resolver's surroundings.** "A file missing from the override is
+    // missing" is an absence and needs a sibling to be observable. "The
+    // override is the ONLY candidate" is a length, and a length is the same
+    // number on both machines. One assertion, red in both.
+    //
+    // This does not retire the absent case below: that one is end-to-end
+    // through `checkLocaleDigestVectors`, and it still catches a reader that
+    // resolves a path without going through this list at all. What it does is
+    // stop that case being the ONLY place C19's fix is held, which is what made
+    // the fix's survival a property of whose machine the suite ran on.
+    const prev = process.env.ASTRA_PLUGINS_DIR;
+    try {
+      // A directory that does not exist, deliberately. The pre-fix resolver
+      // appended the sibling to the list and `astraPluginsFile` took the first
+      // candidate whose FILE existed, so an override naming nothing at all is
+      // precisely the state in which it answered from somewhere else.
+      const nowhere = path.join(tmp, "override-that-names-nothing");
+      process.env.ASTRA_PLUGINS_DIR = nowhere;
+      const overridden = astraPluginsCandidates();
+      assertEqual(overridden.length, 1,
+        "`$ASTRA_PLUGINS_DIR` is a first guess again, not an override: a file absent from it is answered from " +
+        `${overridden.slice(1).join(", ")}. Every NOT verified branch in tools/validate.mjs is then unprovable ` +
+        "on any machine that has AstraPlugins beside this repository, which is every machine a person uses");
+      assertEqual(overridden[0], nowhere,
+        "the override is set and is not the directory looked at");
+
+      delete process.env.ASTRA_PLUGINS_DIR;
+      const fallback = astraPluginsCandidates();
+      assertEqual(fallback.length, 1,
+        `with no override there is exactly one place to look and this reader has ${fallback.length}`);
+      assertEqual(fallback[0], path.resolve(REPO_ROOT, "../AstraPlugins"),
+        "the sibling this reader falls back to is not the sibling the rest of the estate means by the word. " +
+        "`tools/selftest/signer.mjs` recomputes this literal to decide whether its own half of gap 41's pair " +
+        "can be asked at all, and `tools/selftest.mjs` reports which lanes are free of it; a rename here and " +
+        "those two would be answering about a directory nothing reads");
+    } finally {
+      if (prev === undefined) delete process.env.ASTRA_PLUGINS_DIR;
+      else process.env.ASTRA_PLUGINS_DIR = prev;
+    }
+  });
+
   await test("C19 — the lock digest is held to a table neither implementation wrote", () => {
     // **The gap this closes.** `astra-plugin locale sync` WRITES the digests in
     // a bundle's `locales.lock.json`; `englishDigest` READS them. One hash, one
@@ -609,6 +670,16 @@ export async function run() {
     // the selftest step runs before `_astra-plugins` is checked out and there is
     // nothing to fall through to; so the branch that stops the catalogue was
     // proven only in the one environment where it could not be got wrong.
+    //
+    // **And after the fix it inverted** (gap 41). This case could then only
+    // PROVOKE the regression where a sibling exists, so putting the
+    // fall-through back was green in every lane and red only on a machine
+    // nothing schedules. It is no longer the sole holder of that rule: the test
+    // above asks `astraPluginsCandidates()` for the LENGTH of its list, and a
+    // length is the same number in both environments. What is left here that a
+    // length cannot see is a reader that resolves a path without going through
+    // that list at all — and that one still needs a sibling to be observable,
+    // which is why this case keeps its place rather than being retired into it.
     const absent = withFakeCheckout("fake-ap-digest-absent",
       { "testdata/locales/pass/only/plugin.toml": "[plugin]\nname = \"x\"\ndescription = \"x\"\n" },
       (ctx) => checkLocaleDigestVectors(ctx));

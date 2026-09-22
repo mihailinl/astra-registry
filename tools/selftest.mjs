@@ -524,6 +524,106 @@ const stripComments = (text) => text
 /** YAML's quotes are not part of the name a reader sees in the run log. */
 const unquote = (s) => s.replace(/^"(.*)"$/s, "$1").replace(/^'(.*)'$/s, "$1");
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GAP 41. A LANE HAS AN ENVIRONMENT, AND FOR ONE CHECK THE ENVIRONMENT IS THE
+// CHECK.
+//
+// `tools/selftest/signer.mjs`'s ``with no sibling checkout the catalogue gate
+// RECORDS the checks it could not run`` can only be asked where
+// `../AstraPlugins` does not exist. It is not a check that could be written
+// hermetically and was not: `validateForSigning` DELETES `$ASTRA_PLUGINS_DIR`
+// on purpose — the signer must read the real environment, because a signer that
+// can be pointed at a checkout is a signer that can be pointed at the wrong one
+// — so the only way the gate sees a `NOT verified` note is for there to be no
+// checkout. With a sibling present the check's premise is environmentally
+// false, and it says `NOT ASKED` rather than `ok`.
+//
+// It is asked today only because every LIVE lane happens to run before any
+// AstraPlugins checkout exists. **Nothing said so, and it is one step-reorder
+// away from being true nowhere.** Move `build-index.yml`'s sibling fetch above
+// its selftest step — a reasonable thing to want, and for a year the obvious
+// way to give C19's absent case teeth in CI — and that half goes `NOT ASKED` in
+// every environment that runs without a human, with the suite still green and
+// the count still printed. That is the same shape as gap 42: a property of the
+// lanes that only a sentence held.
+//
+// WHAT IS DERIVED. Whether anything in a job, BEFORE the step that runs this
+// suite, so much as names an AstraPlugins checkout. Not whether it creates one:
+// that would be a claim about shell semantics this scan cannot evaluate, and
+// the word `unconditional` is left underived above for exactly that reason.
+//
+// THE DIRECTION OF THE UNCERTAINTY IS THE DESIGN. A mention that turns out to
+// be harmless makes a lane UNPROVEN and can turn this red — loud, and fixed by
+// moving one step. A creation this scan failed to recognise would make a lane
+// look sibling-free when it is not, which is silent, and is the failure the
+// whole entry is about. So the needle is the widest one that separates them:
+// the directory name, and the override. Quoted strings are NOT stripped here,
+// unlike `shellCode()` above — there the risk was a phantom lane and prose had
+// to go; here the risk is a missed checkout, and `ln -s "$X" "$Y/../AstraPlugins"`
+// is a real step written entirely inside quotes.
+//
+// Comment lines and `name:` values are the two places this repository puts
+// prose systematically, and they are the two things taken out.
+//
+// WHAT IT DOES NOT READ, said rather than left to be discovered: the SCRIPTS an
+// earlier step runs. `laneSites()` above follows one indirection because it had
+// to — `bot/publish-apply.mjs` is where two of the six sites live — and this
+// deliberately does not follow any. Measured before choosing: following them
+// turns `ingest.yml:745` UNPROVEN today, because `bot/manifest-probe/link-deps.sh`
+// names AstraPlugins on eight lines. It does not create a sibling — it clones
+// into `bot/manifest-probe/_deps/AstraPlugins`, inside the checkout, and its one
+// mention of `$here/../../../AstraPlugins` READS a developer's existing one — so
+// that red would be false, on a correct tree, in the lane that runs on every
+// submission. A guard that is red on a correct tree is a guard somebody deletes.
+//
+// So the uncovered case is a step that runs a script that creates
+// `../AstraPlugins`. Nothing in this repository does, and if something ever
+// should, it would be written in the workflow, because putting a checkout
+// beside the workspace is a `path:` or an `ln -s` and this estate writes those
+// in the YAML. That is a judgement about how the failure arrives rather than a
+// proof that it cannot, and it is here so that the next reader can disagree with
+// it in one place.
+const SIBLING_MENTION = /AstraPlugins|ASTRA_PLUGINS_DIR/;
+
+function siblingMentionBefore(lines, from, to) {
+  for (let i = from; i < to; i++) {
+    const line = lines[i];
+    if (/^\s*#/.test(line)) continue;
+    const bare = line.replace(/\s#.*$/, "");
+    if (/^\s*(- )?name:/.test(bare)) continue;
+    if (SIBLING_MENTION.test(bare)) return { line: i + 1, text: line.trim().slice(0, 90) };
+  }
+  return null;
+}
+
+/**
+ * The checks in this suite whose askability is gated on the sibling's ABSENCE,
+ * found by reading them.
+ *
+ * Derived, because the failure below has to name which half goes unasked and a
+ * name written down here is the kind of claim gap 42 was recorded for. A check
+ * qualifies when it tests the sibling path and `neverAsk`s about it; the title
+ * is the `test(...)` it sits inside.
+ */
+function siblingGatedChecks() {
+  const out = [];
+  for (const name of fs.readdirSync(SUITE_DIR).filter((n) => n.endsWith(".mjs")).sort()) {
+    let lines;
+    try { lines = fs.readFileSync(path.join(SUITE_DIR, name), "utf8").split("\n"); } catch { continue; }
+    for (let i = 0; i < lines.length; i++) {
+      if (!/\.\.\/AstraPlugins/.test(lines[i])) continue;
+      if (!lines.slice(i, i + 20).some((l) => /\bneverAsk\(/.test(l))) continue;
+      let title = "";
+      for (let j = i; j >= 0 && !title; j--) {
+        const m = /\btest\(\s*["'`](.+?)["'`]\s*,/.exec(lines[j]);
+        if (m) title = m[1];
+      }
+      out.push(`${title || "(no test() encloses it)"} — tools/selftest/${name}:${i + 1}`);
+    }
+  }
+  return out;
+}
+
 /** Every place in this repository that runs this suite, and what gates it. */
 function laneSites() {
   const files = walkRepo().filter((f) => /^\.github\/workflows\/.+\.ya?ml$/.test(relOf(f))).sort();
@@ -543,9 +643,22 @@ function laneSites() {
   for (const abs of files) {
     const rel = relOf(abs);
     let parsed;
-    try { parsed = parseWorkflow(fs.readFileSync(abs, "utf8")); } catch { continue; }
+    let lines;
+    try {
+      const text = fs.readFileSync(abs, "utf8");
+      lines = text.split("\n");
+      parsed = parseWorkflow(text);
+    } catch { continue; }
     const dispatchOnlyWorkflow = parsed.triggers.length > 0
       && parsed.triggers.every((t) => DISPATCH_TRIGGERS.has(t));
+    // The workflow's own `env:`, which every job below it inherits.
+    let topEnv = null;
+    for (let i = 0; i < lines.length && !topEnv; i++) {
+      if (indentOf(lines[i]) !== 0 || !isKeyLine(lines[i]) || !/^env:/.test(lines[i].trim())) continue;
+      let j = i + 1;
+      while (j < lines.length && (!lines[j].trim() || indentOf(lines[j]) > 0)) j++;
+      topEnv = siblingMentionBefore(lines, i, j);
+    }
     for (const job of parsed.jobs) {
       const stubsBefore = [];
       for (const step of job.steps) {
@@ -568,6 +681,12 @@ function laneSites() {
             dispatchOnly: dispatchOnlyWorkflow
               || /event_name\s*==\s*'workflow_dispatch'/.test(job.if)
               || /event_name\s*==\s*'workflow_dispatch'/.test(step.if),
+            // Gap 41. This job up to this step, plus the workflow's top-level
+            // `env:` — a variable set there is in scope for every step under
+            // it. Not the whole file from line 0: `ingest.yml` runs this suite
+            // in two jobs, and one job's pin step is not in the other job's
+            // environment.
+            sibling: siblingMentionBefore(lines, job.start, step.start) || topEnv,
             triggers: parsed.triggers,
           });
         }
@@ -591,6 +710,9 @@ function laneReport(lanes) {
     out.push(`        on: ${s.triggers.join(", ") || "(none parsed)"}`);
     out.push(`        job if: ${s.jobIf || "—"}`);
     out.push(`        step if: ${s.stepIf || "—"}`);
+    out.push(`        sibling: ${s.sibling
+      ? `UNPROVEN — line ${s.sibling.line} names one: ${s.sibling.text}`
+      : "nothing before this step in this job names an AstraPlugins checkout"}`);
   }
   return out;
 }
@@ -623,6 +745,69 @@ function checkLanes(lanes) {
   }
   if (problems.length) fail("nothing reaches this suite on its own any more", problems);
   return live;
+}
+
+/**
+ * GAP 41's half of the lane question: not *is this suite run*, but *is it run
+ * anywhere it can ask the checks whose passing condition is an absence*.
+ *
+ * `checkLanes` above asserts that at least one site is neither dead nor
+ * dispatch-only. That is the outage where the suite goes on passing and stops
+ * being run. This is the quieter one a level in: every live lane keeps running
+ * it, and one of its checks silently stops being asked anywhere, because the
+ * environment it needed went away.
+ *
+ * Only the ABSENT direction is asserted, and the asymmetry is the point rather
+ * than an omission. Its opposite — the half that needed a sibling to be
+ * observable at all — was C19's absent case, and it no longer needs one: gap
+ * 41's other repair asks `astraPluginsCandidates()` for the LENGTH of its list
+ * instead of inferring it from what a fake checkout resolves to, and a length
+ * is the same number on both machines. So there is nothing left to assert about
+ * a sibling-BEARING lane, and asserting one would mean adding a lane whose only
+ * job is a question that no longer has an environment.
+ *
+ * What is left genuinely does. `validateForSigning` deletes
+ * `$ASTRA_PLUGINS_DIR` by design, so the signer reads the real environment and
+ * the gate sees a `NOT verified` note only where there is really no checkout.
+ * One run cannot be two environments. What one run CAN do is say whether the
+ * estate still contains the environment the other half is asked in.
+ */
+function checkAbsenceEnvironment(live) {
+  // The floor on the walk, before the comparison, for the reason
+  // `checkModuleSet` and `checkLanes` both have one: a scan that finds nothing
+  // agrees with every claim made about it. If nothing under tools/selftest/ is
+  // gated on the sibling's absence, then either the pair was retired — and this
+  // check is asserting a property of the lanes for nobody — or the scan broke
+  // and the sentence below would be being made about an empty set.
+  //
+  // It is asserted UNCONDITIONALLY and not only on the failure path, which is
+  // the difference between a floor and a footnote. Retiring the pair is a
+  // legitimate act; what this makes impossible is retiring it and leaving this
+  // check behind, green, describing something that is not there.
+  const gated = siblingGatedChecks();
+  if (!gated.length) {
+    fail("this check is about a pair that is no longer in tools/selftest/", [
+      "nothing under tools/selftest/ names `../AstraPlugins` and `neverAsk`s about it, so there is no check " +
+      "left whose askability depends on there being no sibling — and `checkAbsenceEnvironment` in " +
+      "tools/selftest.mjs exists only to keep a lane in the environment that asks one",
+      "If gap 41's pair was retired deliberately, delete that function and the line that calls it, in the SAME " +
+      "commit. If it was not, this SCAN is what broke: it reads each file for the sibling path with a " +
+      "`neverAsk` within twenty lines of it, and a rename of either is invisible to it",
+    ]);
+  }
+  const free = live.filter((s) => !s.sibling);
+  if (free.length) return free;
+  fail("no lane runs this suite where the checks that need NO AstraPlugins checkout can be asked", [
+    "these check(s) are askable only where `../AstraPlugins` does not exist, and every live lane now names " +
+    "one before it reaches this suite, so from this commit they are NOT ASKED in CI as well as on a " +
+    "developer's machine — which is every environment there is:",
+    ...gated.map((g) => `  ${g}`),
+    ...live.map((s) => `  lane ${s.workflow}:${s.line} — line ${s.sibling.line} names a checkout: ${s.sibling.text}`),
+    "Where it can be asked: a live lane that runs `node tools/selftest.mjs` BEFORE it fetches AstraPlugins. " +
+    "Moving the suite above the fetch in any one of the lanes above is the whole fix. If the mention is prose " +
+    "rather than a checkout, this scan cannot tell them apart on purpose — the direction it is wrong in is the " +
+    "loud one — so move the step or the sentence. `node tools/selftest.mjs --lanes` prints what was read.",
+  ]);
 }
 
 // The way the suite gets smaller that checkModuleSet cannot see: the directory
@@ -837,6 +1022,7 @@ if (WANT_LANES) {
   console.log("");
 }
 const LIVE_LANES = checkLanes(LANES);
+const ABSENCE_LANES = checkAbsenceEnvironment(LIVE_LANES);
 
 // `--census` is the one run that is allowed past this, because it is the run
 // that produces the block. It asserts no floor and prints no PASS.
@@ -979,6 +1165,15 @@ console.log(
   `      ${LIVE_LANES.length} of ${LANES.sites.length} lane(s) that run this suite reach it without a human: ` +
   `${LIVE_LANES.map((l) => `${l.workflow.replace(".github/workflows/", "")}:${l.line}`).join(", ") || "none"} ` +
   `— \`node tools/selftest.mjs --lanes\` for the table`,
+);
+// Gap 41, and printed for the reason the line above is: a NOT ASKED that reads
+// "CI asks it" is a claim about lanes, and a claim about lanes is what gap 42
+// was recorded for. This is the measurement behind that sentence, taken where
+// somebody reads the count.
+console.log(
+  `      ${ABSENCE_LANES.length} of those reach it with nothing before it naming an AstraPlugins checkout, ` +
+  `which is where the checks whose passing condition is an ABSENCE are asked: ` +
+  `${ABSENCE_LANES.map((l) => `${l.workflow.replace(".github/workflows/", "")}:${l.line}`).join(", ") || "none"}`,
 );
 for (const f of failures) console.log(`      - ${f}`);
 // The shortfall carries its own lead sentence: there are two of them now — a

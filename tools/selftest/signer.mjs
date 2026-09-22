@@ -743,20 +743,41 @@ export async function run() {
   // diff of the suite run with and against a sibling checkout differs in
   // exactly one span, and it is this one.
   //
-  // It is the MIRROR of C19. That case can only be provoked WITH a sibling
-  // present; this one can only be asked WITHOUT one. No environment asks both,
-  // so neither a developer's green run nor a green CI run is a run in which
-  // both of this repository's cross-repository absence rules were measured.
-  // Saying `NOT ASKED` out loud is what makes that visible in the place people
-  // read, which is the last line.
+  // It was described here as the MIRROR of C19 — that case provokable only WITH
+  // a sibling, this one askable only WITHOUT one, and no environment asking
+  // both. **Half of that is no longer true, and it was the half that could be
+  // repaired** (gap 41). C19's fix is now asked of the resolver rather than
+  // inferred from the resolver's surroundings: `astraPluginsCandidates()`
+  // returns ONE directory when the override is set, and a length is the same
+  // number on a developer's machine and in CI. See
+  // `tools/selftest/couplings.mjs`'s ``C19 — `$ASTRA_PLUGINS_DIR` is an
+  // override``. So the run you are reading asks both halves' subject matter;
+  // what it cannot do is ask THIS one, here, with a checkout beside it.
+  //
+  // That part is irreducible and is not an oversight. `validateForSigning`
+  // DELETES `$ASTRA_PLUGINS_DIR` on purpose — a signer that can be pointed at a
+  // checkout is a signer that can be pointed at the wrong one — so the only way
+  // the gate sees a `NOT verified` note is for there really to be no checkout.
+  // With one present the premise is environmentally false, and `neverAsk` is
+  // the honest word for that.
+  //
+  // What stands behind the second sentence below is no longer the sentence.
+  // `checkAbsenceEnvironment` in tools/selftest.mjs derives, from
+  // `.github/workflows/`, which live lanes reach this suite with nothing before
+  // them naming an AstraPlugins checkout, prints the count beside the totals on
+  // every run, and FAILS when it reaches zero — naming this check by reading it
+  // out of this file. A lane acquiring a sibling, or the last sibling-free lane
+  // dropping the suite, is now a red build rather than this line quietly
+  // becoming false.
   await test("with no sibling checkout the catalogue gate RECORDS the checks it could not run", async () => {
     const sibling = path.resolve(REPO_ROOT, "../AstraPlugins");
     if (fs.existsSync(sibling)) {
       neverAsk(
         `${sibling} exists, so tools/validate.mjs finds the checkout and emits no \`NOT verified\` note ` +
         "for this check to read",
-        "CI asks it: every lane that runs this suite does so before any AstraPlugins checkout exists. To ask " +
-        "it here, move or rename the sibling checkout for one run",
+        "a lane with no AstraPlugins beside the checkout asks it, and the runner prints how many of those " +
+        "there are on the line under the totals — `node tools/selftest.mjs --lanes` names them, and the suite " +
+        "goes red when that count reaches zero. To ask it here, move or rename the sibling checkout for one run",
       );
     }
     const gate = await gateOnAValidTree("gate-no-sibling");
