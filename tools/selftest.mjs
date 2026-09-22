@@ -779,7 +779,7 @@ const FLOORS = new Map(Object.entries({
   // repository writes and can lose. The vendored half is floored where it is
   // owned: `tests/shared-vectors.mjs` asserts `>= 20` three times, in the module
   // whose vectors they are, with a message about vectors.
-  "bundles.mjs": 8,
+  "bundles.mjs": 14,
   "index-signature.mjs": 20,
   "signer.mjs": 23,
   "signer-run.mjs": 6,
