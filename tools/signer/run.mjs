@@ -5,6 +5,11 @@
 //     node tools/signer/run.mjs --step commit --record record.json --tree dist/signed
 //     node tools/signer/run.mjs --step pages  --out dist/pages --site dist/site --record pages.json
 //
+// `--step sign` also takes `--test-key <[published_id=]test_key_id>`, repeatable,
+// which signs with the throwaway keys in tools/testkeys/ instead of the
+// environment's. It is how RC-R2-5's ROLL-60 rehearsal fixtures are produced —
+// see `testKeySigners` below for the three guards on it.
+//
 // `tools/signer/{plan,key-window,pages,git}.mjs` decide; this file is the only
 // thing under `tools/signer/` that DOES anything — it holds the key for the
 // length of one function, writes files, makes a commit and pushes it. The split
@@ -43,6 +48,7 @@ import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
 import { indexSignersFromEnv } from "../../bot/lib/sign.mjs";
+import { loadTestRoot } from "../testkeys/regenerate.mjs";
 import { signIndex } from "../../bot/sign-index.mjs";
 import { signRevocations } from "../sign-revocations.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
@@ -423,7 +429,10 @@ export function pushSigned({ root, sha, parent, remote = "origin", branch = SIGN
 // ── the three steps, as a command line ──────────────────────────────────────
 
 function parseArgs(argv) {
-  const args = { step: "sign", root: REPO_ROOT, out: null, record: null, tree: null, site: null, sourceCommit: null, now: null };
+  const args = {
+    step: "sign", root: REPO_ROOT, out: null, record: null, tree: null, site: null,
+    sourceCommit: null, now: null, testKeys: [],
+  };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (flag === "--step") args.step = argv[++i];
@@ -434,9 +443,78 @@ function parseArgs(argv) {
     else if (flag === "--site") args.site = argv[++i];
     else if (flag === "--source-commit") args.sourceCommit = argv[++i];
     else if (flag === "--now") args.now = argv[++i];
+    else if (flag === "--test-key") args.testKeys.push(argv[++i]);
     else throw new Error(`unknown argument: ${flag}`);
   }
   return args;
+}
+
+/**
+ * `--test-key`, repeatable, for the one job no other tool in this repository can do.
+ *
+ * `bot/sign-index.mjs` and `tools/sign-revocations.mjs` each take a single
+ * `--test-key` and sign one document with one key. **Neither can produce
+ * SERVE-30's dual-signed withdrawal list**, and neither can produce D10's
+ * compromise commit, because the rotation and the compromise are not properties
+ * of a document — they are decisions this file's `signRun` makes about four
+ * documents at once, from `signed`'s own history. A fixture for them assembled
+ * out of two single-key invocations would prove something about the fixture and
+ * nothing about the signer, which is the whole reason RC-R2-5 exists.
+ *
+ * So the same affordance those two already have arrives here, with the same
+ * guards and one more. The spelling is `--test-key <test_key_id>` or
+ * `--test-key <published_key_id>=<test_key_id>`: the second form publishes a
+ * `key_id` the trust.json delegates while signing with a throwaway key's bytes,
+ * which `tools/selftest/signer-run.mjs`'s BOOTSTRAP does for the one run that
+ * cannot otherwise exist — the first, whose catalogue may only be signed
+ * because `WINDOW_EXEMPT_KEY_IDS` names `astra-index-2026a` by id.
+ *
+ * Three guards, and the third is the one worth stating:
+ *
+ *   1. every key is one of `tools/testkeys/`'s, whose private halves are
+ *      committed on purpose and which `tools/sign-trust.mjs` refuses to
+ *      delegate in production;
+ *   2. the output may not land inside `registry/` — a test signature there is a
+ *      document that looks signed and is not;
+ *   3. **it refuses to run at all when `ASTRA_INDEX_SIGNING_KEY` is in the
+ *      environment.** The failure that guard is for is not a fixture author's;
+ *      it is `--test-key` reaching `sign.yml`, where the run would hold the
+ *      real key, ignore it, and publish a `signed` commit every daemon refuses
+ *      — green, with a WARNING in a log nobody reads. Fail closed instead.
+ */
+function testKeySigners(specs, { out, env = process.env } = {}) {
+  if (env.ASTRA_INDEX_SIGNING_KEY || env.ASTRA_INDEX_SIGNING_KEY_NEXT) {
+    throw new Error(
+      "--test-key was passed to a run that also holds ASTRA_INDEX_SIGNING_KEY. One of the two is a mistake and " +
+      "this job cannot tell which, so it makes neither: a test-key run in the publishing job would commit a " +
+      "`signed` commit every daemon refuses.",
+    );
+  }
+  const signers = [];
+  const seen = new Map();
+  for (const spec of specs) {
+    const [left, right] = String(spec).split("=");
+    const keyId = right === undefined ? left : left;
+    const testKeyId = right === undefined ? left : right;
+    const key = loadTestRoot(testKeyId);
+    if (seen.has(key.publicKeyB64)) {
+      throw new Error(
+        `--test-key ${spec} signs with the same Ed25519 key as ${seen.get(key.publicKeyB64)}. Two signatures by ` +
+        "one key are not a rotation (bot/lib/sign.mjs says the same about ASTRA_INDEX_SIGNING_KEY_NEXT).",
+      );
+    }
+    seen.set(key.publicKeyB64, spec);
+    signers.push({ key_id: keyId, privateKey: key.privateKey, public_key: key.publicKeyB64 });
+  }
+  const target = path.resolve(out ?? "dist/signed");
+  if (target === path.join(REPO_ROOT, "registry") || target.startsWith(`${path.join(REPO_ROOT, "registry")}${path.sep}`)) {
+    throw new Error(`refusing to write TEST-key signatures into ${path.relative(REPO_ROOT, target)}`);
+  }
+  console.error(
+    `WARNING: signing with ${signers.map((s) => s.key_id).join(", ")}, TEST keys whose private halves are ` +
+    "committed to this repository. Nothing a user installs may be signed with them.",
+  );
+  return signers;
 }
 
 /** A step output, when there is a `$GITHUB_OUTPUT` to write to. */
@@ -456,7 +534,18 @@ async function stepSign(args) {
   const now = args.now ?? rfc3339(Date.now());
   const head = fetchSignedHead({ root });
   const delegatedAt = head.present ? readDelegationTimes({ root, ref: head.ref }) : new Map();
-  const available = indexSignersFromEnv();
+  let available;
+  try {
+    available = args.testKeys.length
+      ? testKeySigners(args.testKeys, { out: args.out })
+      : indexSignersFromEnv();
+  } catch (e) {
+    // A named refusal, not a stack. A guard that reports itself as an uncaught
+    // throw is a guard a reader scrolls past — `tools/selftest.mjs`'s own
+    // header records the same finding about its module loader.
+    console.error(`FAIL  ${e.message}`);
+    return 2;
+  }
   if (available.length === 0) {
     console.error(
       "FAIL  no ASTRA_INDEX_SIGNING_KEY in this job. The signer is the one publisher of the catalogue and the " +

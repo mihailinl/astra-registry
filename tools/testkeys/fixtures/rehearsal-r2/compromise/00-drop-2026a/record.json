@@ -1,0 +1,63 @@
+{
+  "schema": "astra.registry.signer-run/1",
+  "step": "sign",
+  "now": "2026-09-22T05:00:00Z",
+  "source_commit": "4713121f38161d1ede940df186d927438297d023",
+  "index_source_commit": "4713121f38161d1ede940df186d927438297d023",
+  "parent": "c01c44e5466784729f9a1efdf2f7d987ffc8d8ce",
+  "branch": "signed",
+  "serials": {
+    "index": 4,
+    "revocations": 5
+  },
+  "key_mode": "compromise",
+  "dropped_keys": [
+    "astra-index-2026a"
+  ],
+  "documents": {
+    "index": {
+      "decision": "changed",
+      "serial": 4,
+      "signed_by": [
+        "TEST-ONLY-DO-NOT-TRUST-index-2026b"
+      ]
+    },
+    "revocations": {
+      "decision": "changed",
+      "serial": 5,
+      "signed_by": [
+        "TEST-ONLY-DO-NOT-TRUST-index-2026b"
+      ]
+    },
+    "trust": {
+      "decision": "copied",
+      "serial": null,
+      "signed_by": null
+    },
+    "root": {
+      "decision": "copied",
+      "serial": null,
+      "signed_by": null
+    }
+  },
+  "files": [
+    "registry/v1/index.json",
+    "registry/v1/revocations.json",
+    "registry/v1/root.json",
+    "registry/v1/trust.json"
+  ],
+  "alerts": [],
+  "refusals": [],
+  "notes": [
+    "compromise mode (D10): the Source-Commit's trust.json drops astra-index-2026a, which signed the head. The seven-hour window is waived and the catalogue may not be carried."
+  ],
+  "codes": [],
+  "hexes": [
+    "4713121f38161d1ede940df186d927438297d023"
+  ],
+  "status": "green",
+  "commit": true,
+  "$command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 4713121f38161d1ede940df186d927438297d023 --now 2026-09-22T05:00:00Z --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-compromise-00-drop-2026a.json",
+  "$signed_sha": "cc93648126f7f1e329af695f1df3a32ed3d89f1e",
+  "$commit_message": "signed: catalogue 4, withdrawal list 5 at 4713121f3816\n\nregistry/v1/index.json: changed at serial 4\nregistry/v1/revocations.json: changed at serial 5\n\nSource-Commit: 4713121f38161d1ede940df186d927438297d023\nRun: https://github.com/mihailinl/astra-registry/actions/runs/0\nSigner: sign.yml\nIndex-Source-Commit: 4713121f38161d1ede940df186d927438297d023"
+}

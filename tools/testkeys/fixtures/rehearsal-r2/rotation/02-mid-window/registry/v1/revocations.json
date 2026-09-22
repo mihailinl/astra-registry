@@ -1,0 +1,45 @@
+{
+  "$comment": "GENERATED FILE — DO NOT EDIT. Source of truth: tools/revocations/<ADVISORY-ID>.json. Regenerate with `node tools/build-revocations.mjs`. Only the `signed` member is covered by the signatures below; nothing outside it is authenticated and nothing may be read out of it.",
+  "signatures": [
+    {
+      "key_id": "astra-index-2026a",
+      "sig": "JVl2R8UELUrJ6M0+ENFz2l7e3tKmgMlDWu5npW5kgLo1+Yhnl8fXJ65PrvE98jWkAA9CIaoH3Jx5TxDpzStEAA=="
+    },
+    {
+      "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026b",
+      "sig": "kPrnC7cv2qPqrDa4Vms2AEusxew5B7uCvx7NlHwwL+AFw9GphTt7/klmbYvE1a9FR0PhStX/vgIWClQWdyBLCw=="
+    }
+  ],
+  "signed": {
+    "expires_at": "2026-09-29T04:00:00Z",
+    "issued_at": "2026-09-22T04:00:00Z",
+    "revocations": [
+      {
+        "action": "block_install",
+        "id": "ASTRA-2026-0001",
+        "kind": "id",
+        "reason": "A fixture advisory, long enough to be a sentence a user could act on.",
+        "severity": "high",
+        "value": "dice-roller"
+      },
+      {
+        "action": "block_install",
+        "id": "ASTRA-2026-0003",
+        "kind": "id",
+        "reason": "A second advisory, three hours in.",
+        "severity": "high",
+        "value": "dice-roller"
+      },
+      {
+        "action": "block_install",
+        "id": "ASTRA-2026-0002",
+        "kind": "id",
+        "reason": "An advisory in the delegating commit, so the list this run publishes is a signed one.",
+        "severity": "high",
+        "value": "note-taker"
+      }
+    ],
+    "schema": "astra.registry.revocations/1",
+    "serial": 4
+  }
+}
