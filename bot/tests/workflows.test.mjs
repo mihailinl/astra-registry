@@ -1274,7 +1274,12 @@ test("every suite under bot/tests/ is named by a workflow, and the list has a fl
 // docblock scan is not policy. (2) `policy.test.mjs` is deliberately RED on
 // `main` — M-T3.2's takedown bound exits at R3 — so a new guard added there
 // has no legible verdict of its own until R3; this suite is green, so this
-// guard's red is its own. (3) §2.0, above: a NEW file under `bot/tests/` is
+// guard's red is its own. **That suite's red is exactly ONE failure in CI
+// (`160 passed, 1 failed`, run 35718722709 on `main` and 35719323357 here,
+// identical). It is 41 failures on a laptop, and the 40 extra are the local
+// environment — no pinned `AstraPlugins` checkout, so the manifest probe and
+// the fixture corpus fall over. A count taken outside CI is a count of the
+// machine.** (3) §2.0, above: a NEW file under `bot/tests/` is
 // run by nothing until `.github/workflows/bot-tests.yml` names it, and that
 // file is the coordinator's. Both candidate suites are already named there
 // (`bot-tests.yml:127` and `:135`), so the case goes in one of them and not
