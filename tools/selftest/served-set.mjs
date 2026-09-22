@@ -545,6 +545,21 @@ export async function run() {
     });
     assertEqual(codesOf(offMain), "SERVE_90_SOURCE_COMMIT_UNREACHABLE",
       "bytes signed over a tree that is not in public history were accepted");
+
+    // And a Source-Commit that is not a commit id at all, which no run could
+    // have read. Every fixture here answers the two ancestry questions with a
+    // constant, so the 40-hex rule is the only thing between this commit and a
+    // pass: measured 2026-09-22, deleting it from provenance.mjs left all 317
+    // checks green. (In production `git merge-base` would refuse the string and
+    // the commit would fail as NOT_DESCENDANT — refused, for the wrong reason.)
+    for (const [what, source] of [["missing", undefined], ["a branch name", "main"], ["an abbreviated sha", "c".repeat(12)]]) {
+      const odd = commitOf({ sha });
+      if (source === undefined) delete odd.trailers["Source-Commit"];
+      else odd.trailers["Source-Commit"] = source;
+      const v = provenance({ commits: [odd], repo: REPO, runs, now: NOW, ...ancestry });
+      assertEqual(codesOf(v), "SERVE_90_SOURCE_COMMIT_UNREACHABLE", `a Source-Commit that is ${what} was accepted`);
+      assert(v.findings[0].message.includes("no 40-hex `Source-Commit`"), `${what}: refused for another reason: ${v.findings[0].message}`);
+    }
   });
 
   await test("the head is checked however old it is, and older commits fall out of the 7-day window", () => {
