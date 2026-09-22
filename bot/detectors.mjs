@@ -75,9 +75,15 @@ export const DETECTORS = ["A1", "A3", "A5", "A7", "A9"];
  */
 export const A7_BOUND_MINUTES = { plugins: 120, revocations: GRACE_MINUTES };
 
-/** The branch the signer publishes, and the trailer that says what it was made from. */
+/**
+ * The branch the signer publishes, and the two trailers that say what it was
+ * made from (B.4): `Source-Commit`, the run's `main` commit, and
+ * `Index-Source-Commit`, the `main` commit the catalogue in it was generated
+ * from. Each is anchored at a line start, so neither matches the other's line.
+ */
 export const SIGNED_REF = "signed";
 export const SOURCE_COMMIT_TRAILER = /^Source-Commit:\s*([0-9a-f]{40})\s*$/m;
+export const INDEX_SOURCE_COMMIT_TRAILER = /^Index-Source-Commit:\s*([0-9a-f]{40})\s*$/m;
 
 const VERSION_GLOB = "plugins/*/versions/*.json";
 const QUEUE_GLOB = "state/queue/*.json";
@@ -499,38 +505,48 @@ export function a5({ anchor, records }, findings, skipped, scanned) {
  * its wait cannot be read, and an unreadable clock excuses nothing
  * (`minutesSince`), where a plain `withinGrace` would excuse it until its date.
  *
- * **What A7 does not see, and whose it is: a catalogue the signer CARRIED.**
- * When D4 carries the catalogue forward and the same run commits anyway,
- * because the list changed or reached its 20-hour re-sign, the new `signed`
- * commit's `Source-Commit` is main's head. The catalogue in it was generated
- * from the commit its `Index-Source-Commit:` names. Both halves here read
- * `Source-Commit`, so that catalogue is invisible to A7. Measured 2026-09-22 on
- * a fixture: a publication at 01:00 and a carry that committed the list at
- * 01:05 gave no A7 finding at 03:06 or at 09:05. A carry that commits nothing
- * leaves `Source-Commit` behind, and A7 fires at the bound as it does for a
- * stopped signer (red at 03:01 on the same fixture). It stays red only until
- * the next list commit moves `Source-Commit` past the publication, while the
- * catalogue is still the carried one.
+ * **Which trailer each half reads: row 7 at contract 0.32.0.** The catalogue
+ * half asks what the served catalogue's `Index-Source-Commit:` does not
+ * contain; the list half asks what `signed`'s `Source-Commit:` does not. B.4
+ * records the second trailer from 0.32.0: the `main` commit whose `plugins/**`
+ * the catalogue was generated from, equal to `Source-Commit` except where the
+ * signer committed the catalogue's bytes unchanged from `signed`'s head — a
+ * carry past a failed gate (D4), or an unchanged catalogue not yet due its
+ * re-sign (SERVE-41). Row 7's B column says "the same", so detector B asks
+ * the catalogue's question of the same trailer.
  *
- * That is deliberate, for three reasons. It is to be revisited when the first
- * one stops being true:
+ * Until 0.32.0 both halves read `Source-Commit`, by decision (astra-registry
+ * PR #219; ops register entry 95), and a carry that also committed the list —
+ * it changed, or reached its 20-hour re-sign — moved `Source-Commit` to main's
+ * head while the catalogue stayed the carried one. Measured 2026-09-22 on a
+ * fixture, a publication at 01:00, an advisory at 01:02 and a carry that
+ * committed the list at 01:05: reading `Source-Commit`, A7 said nothing at
+ * 03:00:00, at 03:00:01 or at 09:00; reading `Index-Source-Commit`, it is
+ * silent at 03:00:00 and alarms at 03:00:01 and at 09:00, naming the
+ * publication — the bound, counted to now from the oldest `plugins/` commit
+ * the served catalogue does not contain. The signer's own
+ * `SIGNER_CARRIED_INDEX` still alerts on every run while a carry lasts; that
+ * alert stops when the signer does, and this one does not.
  *
- *   * `Index-Source-Commit` is a proposed name (G8). Registry plan D2 says
- *     "readers ignore it until a contract version records it", and no contract
- *     version records it yet (ops register entry 85, proposal P1);
- *   * detector B shares row 7 and answers it "the same" from the served
- *     `Source-Commit`. If A7 read another trailer, A and B would disagree about
- *     the one row both are there to answer;
- *   * D4 gives the carry its own alarm. Every carry alerts: each signer run
- *     re-plans from main's head, and while the carry lasts each one goes red
- *     with `SIGNER_CARRIED_INDEX` (`tools/selftest/signer-run.mjs`). A carried
- *     catalogue expires in 30 days, "which leaves the alert time to act". If
- *     the signer stops running, its alert stops too, and so does
- *     `Source-Commit`, which is the shape above that A7 does see.
+ * **Two trailers that differ are not a carry** (ops register entry 96). The
+ * two real `signed` commits whose trailers differ, `ae80bc7` and `f2afd04`,
+ * each hold an UNCHANGED catalogue, and neither has a commit under `plugins/`
+ * on main's first-parent line between its two trailers. Nor can one: the
+ * catalogue's serial counts the commits under `plugins/`, and the signer's
+ * comparison keeps the serial (`contentOf` in `tools/signer/plan.mjs`), so any
+ * such commit makes the catalogue `changed`. An unchanged catalogue is silent
+ * here because the walk from its `Index-Source-Commit` finds nothing, not
+ * because A7 was told it was unchanged.
  *
- * The list has the same blind spot here. SERVE-85 covers it independently,
- * because it reads the list's serial and no trailer, so a carried list stays
- * behind the serial main implies until someone acts.
+ * **The list half stays on `Source-Commit`,** because row 7 says so and the
+ * list has no trailer of its own. A carried list is SERVE-85's to see, by the
+ * list's serial (registry plan; contract pending item 15), not A7's.
+ *
+ * **A `signed` head with no `Index-Source-Commit:` is a finding, not a
+ * fallback.** B.4 has every `signed` commit name both trailers, and falling
+ * back to `Source-Commit` is exactly the reading that was blind above. The
+ * list half still runs. All eight commits on the real `signed` carry both
+ * trailers (`git log origin/signed`, 2026-09-22).
  */
 export function a7({ git, now }, findings, skipped, scanned) {
   if (!git.hasRef(SIGNED_REF)) {
@@ -550,6 +566,22 @@ export function a7({ git, now }, findings, skipped, scanned) {
     return;
   }
   scanned.signed_source_commit = sourceCommit;
+  // The catalogue half's commit. Null when `signed` cannot name one, and then
+  // that half is a finding and does not run; the list half still does.
+  let indexSourceCommit = null;
+  const im = INDEX_SOURCE_COMMIT_TRAILER.exec(message);
+  if (!im) {
+    findings.push({
+      detector: "A7",
+      code: "A7_NO_INDEX_SOURCE_COMMIT",
+      message: "`signed`'s head carries no `Index-Source-Commit:` trailer, so nothing can say which commit its catalogue was generated from",
+    });
+  } else if (git.committedAt(im[1]) === null) {
+    findings.push({ detector: "A7", code: "A7_INDEX_SOURCE_COMMIT_UNKNOWN", message: `\`signed\` names Index-Source-Commit ${im[1].slice(0, 12)}, which is not in this checkout`, hex: im[1] });
+  } else {
+    indexSourceCommit = im[1];
+    scanned.signed_index_source_commit = indexSourceCommit;
+  }
   // Throws on a clock that is not one, so the run fails rather than reports.
   const nowIso = new Date(now).toISOString();
   // Each half's pathspec is *what that document is built from*, and neither is
@@ -559,20 +591,31 @@ export function a7({ git, now }, findings, skipped, scanned) {
   // nothing. A7 used the directory for both until 2026-09-20, when ten lines
   // of documentation alarmed it — `tools/lib/revocations.mjs` carries the run
   // and the reasoning.
-  for (const [what, pathspec] of [["plugins", CATALOGUE_PATHSPEC], ["revocations", REVOCATIONS_PATHSPEC]]) {
+  //
+  // And each half's commit is the one row 7 names for it: the catalogue's
+  // `Index-Source-Commit`, the list's `Source-Commit` (the comment above says
+  // why the two differ, and why a difference is not a carry).
+  const halves = [
+    ["plugins", CATALOGUE_PATHSPEC, "Index-Source-Commit", indexSourceCommit],
+    ["revocations", REVOCATIONS_PATHSPEC, "Source-Commit", sourceCommit],
+  ];
+  for (const [what, pathspec, trailer, since] of halves) {
     // Dated where main acquired the change, not where a branch wrote it: a
     // merged change dated at its branch commit reads as older than the
     // Source-Commit, and A7 said nothing about a `signed` 150 minutes behind
     // (gap 68; `newestTouching` carries the measurement).
     const newest = git.newestTouching(pathspec);
     if (!newest) continue;
-    // How far the Source-Commit trails the newest change by commit time. It
-    // decided A7 until gap 76 and decides nothing now; it stays in the
-    // transcript, and `tools/selftest/couplings.mjs` reads it to ask which
-    // pathspec this half dates (gap 71).
+    // How far the Source-Commit trails the newest change by commit time, for
+    // both halves. It decided A7 until gap 76 and decides nothing now; it
+    // stays in the transcript, and `tools/selftest/couplings.mjs` reads it to
+    // ask which pathspec this half dates (gap 71) — so it stays on
+    // `Source-Commit` whichever trailer the half's decision reads, and is
+    // written even when that trailer is missing.
     scanned[`${what}_drift_minutes`] = Math.floor((newest.at - at) / 60);
+    if (since === null) continue;
 
-    const unsigned = git.unsignedTouching(sourceCommit, pathspec);
+    const unsigned = git.unsignedTouching(since, pathspec);
     scanned[`${what}_unsigned_commits`] = unsigned.length;
     if (unsigned.length === 0) continue;
     const oldest = unsigned[0];
@@ -585,7 +628,7 @@ export function a7({ git, now }, findings, skipped, scanned) {
       detector: "A7",
       code: what === "plugins" ? "A7_SIGNED_BEHIND_PLUGINS" : "A7_SIGNED_BEHIND_REVOCATIONS",
       message:
-        `\`signed\`'s Source-Commit ${sourceCommit.slice(0, 12)} does not carry ${unsigned.length} commit(s) ` +
+        `\`signed\`'s ${trailer} ${since.slice(0, 12)} does not carry ${unsigned.length} commit(s) ` +
         `under ${pathspec}; the oldest, ${oldest.sha.slice(0, 12)}, ` +
         (waited >= 0
           ? `has been on main ${Math.floor(waited)} minutes`
