@@ -46,6 +46,7 @@ import {
   EXAMPLE_RE, pluginId, run as examplesRule,
 } from "../../tools/coverage/examples-staging-id.mjs";
 import { stagingListingId } from "../../tools/lib/reserved.mjs";
+import { mergeOwnChanges } from "../../tools/coverage/git.mjs";
 import { RULES, outstandingActs, ruleNames } from "../../tools/coverage/rules.mjs";
 import { compose } from "../../tools/coverage-verdict.mjs";
 import { CHECKS } from "../lib/alert-checks.mjs";
@@ -78,6 +79,21 @@ function fixture(name) {
     },
     remove(rel) { fs.rmSync(path.join(dir, rel), { force: true }); return api; },
     commit(message) { g("add", "-A"); g("commit", "-q", "--allow-empty", "-m", message); return api; },
+    branch(name) { g("checkout", "-q", "-b", name); return api; },
+    checkout(ref) { g("checkout", "-q", ref); return api; },
+    /**
+     * `git merge --no-ff --no-commit`, conflicts and all: the caller writes
+     * the resolution and `commit()`s it, which is how a merge gets changes of
+     * its own. Exit 1 is a conflict, which is the point; anything else throws.
+     */
+    startMerge(ref) {
+      try {
+        execFileSync("git", ["-C", dir, "merge", "--no-ff", "--no-commit", ref], { stdio: "pipe" });
+      } catch (e) {
+        if (e.status !== 1) throw e;
+      }
+      return api;
+    },
     head: () => g("rev-parse", "HEAD").trim(),
     /** The commit that introduces both tools, so both walks have a start. */
     landTools() {
@@ -514,6 +530,219 @@ test("every declared document kind lists members, a source and its exempt sets",
     assert.ok(Array.isArray(t.handleOk), `${name} has no handleOk set`);
     assert.ok(t.source && t.source.length > 10, `${name} names no requirement that fixes its members`);
   }
+});
+
+// ── gap 93: what a merge's own resolution wrote ────────────────────────────
+//
+// Both walks took `rev-list --no-merges`, which is right for "who wrote this
+// change" and cannot see a change made inside a merge's resolution: before
+// this block, every red case below was green. The pairs are the point — each
+// "the merge's own change is judged" has a "and the branch's change is judged
+// ONCE", because the obvious repair (walk the merges' first-parent diffs)
+// reports every branch commit a second time under the merge's SHA, where the
+// exemption or trailer that cleared the branch commit does not reach.
+
+const FAKE_ADDRESS = "someone.real@gmail.com";
+const count = (r, code) => r.codes.filter((c) => c === code).length;
+const D1 = "log/decisions/2026/09/d1.json";
+
+test("gap 93: an address a merge's resolution writes into a document neither side touched is red, at the merge", () => {
+  const f = fixture("merge-evil-clean").write(D1, decision()).commit("seed").landTools();
+  f.branch("side").write("README", "side\n").commit("side work");
+  f.checkout("main").write("OTHER", "main\n").commit("main work");
+  f.startMerge("side").write(D1, decision({ moderator: FAKE_ADDRESS })).commit("Merge branch 'side'");
+  const merge = f.head();
+  const r = priv(f.dir);
+  assert.equal(r.status, "red");
+  assert.equal(count(r, "E_PRIV_EMAIL"), 1);
+  assert.deepEqual(r.hexes, [merge], "the finding is the merge's, because no side commit wrote it");
+});
+
+test("gap 93: an address typed while resolving a conflict, merging main into a branch, is red at that merge", () => {
+  const f = fixture("merge-evil-conflict").write(D1, decision()).commit("seed").landTools();
+  f.branch("side").write(D1, decision({ run: "side" })).commit("side edits d1");
+  f.checkout("main").write(D1, decision({ run: "main" })).commit("main edits d1");
+  f.checkout("side").startMerge("main").write(D1, decision({ run: "both", moderator: FAKE_ADDRESS }))
+    .commit("Merge branch 'main' into side");
+  const merge = f.head();
+  // And the pull request's merge back into main, which carries the branch
+  // tree as it is: no change of its own, so nothing a second time.
+  f.checkout("main").startMerge("side").commit("Merge pull request #1 from someone/side");
+  const r = priv(f.dir);
+  assert.equal(r.status, "red");
+  assert.equal(count(r, "E_PRIV_EMAIL"), 1);
+  assert.deepEqual(r.hexes, [merge]);
+});
+
+test("gap 93: a merge's own message is scanned like any commit's", () => {
+  const f = fixture("merge-message").commit("seed").landTools();
+  f.branch("side").write("README", "side\n").commit("side work");
+  f.checkout("main").write("OTHER", "main\n").commit("main work");
+  f.startMerge("side").commit(`Merge branch 'side'\n\nAsk ${FAKE_ADDRESS} about the conflict.`);
+  const r = priv(f.dir);
+  assert.equal(r.status, "red");
+  assert.deepEqual(r.hexes, [f.head()]);
+  assert.match(r.detail.join("\n"), /commit-message/);
+});
+
+test("gap 93: a branch's address merged cleanly, or through a conflict kept whole, is one finding at the branch commit", () => {
+  // Clean: the merge has no change of its own.
+  const f = fixture("merge-dup-clean").write(D1, decision()).commit("seed").landTools();
+  f.branch("side").write("log/decisions/2026/09/d2.json", decision({ decision_id: "d2", moderator: FAKE_ADDRESS }))
+    .commit("side adds d2");
+  const side = f.head();
+  f.checkout("main").write("OTHER", "main\n").commit("main work");
+  f.startMerge("side").commit("Merge branch 'side'");
+  const clean = priv(f.dir);
+  assert.equal(count(clean, "E_PRIV_EMAIL"), 1, "a clean merge adds no finding");
+  assert.deepEqual(clean.hexes, [side]);
+
+  // Conflicted, and resolved by keeping both sides: the document is among the
+  // merge's own changes (it differs from the conflicted remerge), and the
+  // address in it is the side's, so it is not reported again under the merge.
+  const g = fixture("merge-dup-conflict").write(D1, decision()).commit("seed").landTools();
+  g.branch("side").write(D1, decision({ run: "side", moderator: FAKE_ADDRESS })).commit("side edits d1");
+  const side2 = g.head();
+  g.checkout("main").write(D1, decision({ run: "main" })).commit("main edits d1");
+  g.startMerge("side").write(D1, decision({ run: "main and side", moderator: FAKE_ADDRESS })).commit("Merge branch 'side'");
+  const merge = g.head();
+  assert.ok(mergeOwnChanges(merge, g.dir).changes.some((c) => c.path === D1),
+    "the fixture has not built what it says: the resolution must be a change of the merge's own");
+  const conflicted = priv(g.dir);
+  assert.equal(count(conflicted, "E_PRIV_EMAIL"), 1);
+  assert.deepEqual(conflicted.hexes, [side2]);
+
+  // And the side's exemption still clears it: nothing new appeared at the
+  // merge for the entry to fail to reach.
+  g.write("tools/coverage/priv-scan-exempt.json", {
+    exemptions: [{ commit: side2, where: D1, code: "E_PRIV_EMAIL", reason: "a fixture address" }],
+  }).commit("clear it");
+  assert.equal(priv(g.dir).status, "green");
+});
+
+test("gap 93: a merge's own changes are remerge-diff's, and a resolution that drops one side's file is one of them", () => {
+  // The claim tools/coverage/git.mjs makes for merge-tree, held to git's own
+  // remerge-diff on the shapes that tell the mechanisms apart. `--cc` gives
+  // nothing for the last one: its whole content is a deletion.
+  const nameStatus = (dir, sha) => {
+    const f = execFileSync("git", ["-C", dir, "show", "--remerge-diff", "--format=", "--name-status", "-z", "--no-renames", sha],
+      { encoding: "utf8" }).split("\0").filter(Boolean);
+    const out = [];
+    for (let i = 0; i < f.length; i += 2) out.push(`${f[i][0]} ${f[i + 1]}`);
+    return out.sort();
+  };
+  const mine = (dir, sha) => mergeOwnChanges(sha, dir).changes.map((c) => `${c.status} ${c.path}`).sort();
+  const lines = (sub = {}) => `${Array.from({ length: 20 }, (_, i) => sub[i] ?? `line ${i}`).join("\n")}\n`;
+  const seen = {};
+
+  const a = fixture("mech-auto").write("a", lines()).commit("seed");
+  a.branch("s").write("a", lines({ 1: "S" })).commit("s");
+  a.checkout("main").write("a", lines({ 15: "M" })).commit("m");
+  a.startMerge("s").commit("merge");
+  seen.auto = [mine(a.dir, a.head()), nameStatus(a.dir, a.head())];
+
+  const b = fixture("mech-union").write("a", lines()).commit("seed");
+  b.branch("s").write("a", lines({ 5: "S" })).commit("s");
+  b.checkout("main").write("a", lines({ 5: "M" })).commit("m");
+  b.startMerge("s").write("a", lines({ 5: "M\nS" })).commit("merge");
+  seen.union = [mine(b.dir, b.head()), nameStatus(b.dir, b.head())];
+
+  const c = fixture("mech-drop").write("a", lines()).commit("seed");
+  c.branch("s").write("x", "s\n").commit("s");
+  c.checkout("main").write("z", "added on main\n").commit("m");
+  c.checkout("s").startMerge("main").remove("z").commit("merge main into s");
+  seen.drop = [mine(c.dir, c.head()), nameStatus(c.dir, c.head())];
+
+  for (const [shape, [ours, git]] of Object.entries(seen)) assert.deepEqual(ours, git, `${shape}: merge-tree and remerge-diff disagree`);
+  assert.deepEqual(seen.auto[0], [], "a clean auto-merge of one file both sides edited is no change of the merge's own");
+  assert.deepEqual(seen.union[0], ["M a"]);
+  assert.deepEqual(seen.drop[0], ["D z"]);
+});
+
+test("gap 93: an octopus merge is reported as not judged by both walks, never passed", () => {
+  const f = fixture("merge-octopus").commit("seed").landTools();
+  for (const n of ["x", "y"]) f.checkout("main").branch(n).write(n, `${n}\n`).commit(n);
+  f.checkout("main");
+  f.git("merge", "-q", "--no-ff", "-m", "octopus", "x", "y");
+  assert.match(codesOf(priv(f.dir)), /E_PRIV_MERGE_NOT_JUDGED/);
+  assert.match(codesOf(mod(f.dir, { mode: "commits" })), /MOD_MERGE_NOT_JUDGED/);
+});
+
+test("gap 93: a delist a merge's resolution makes is uncovered at the merge, and its own trailer clears it", () => {
+  const build = (name, message) => {
+    const f = fixture(name).write("plugins/a/plugin.json", listing("a")).commit("list a").landTools();
+    f.branch("side").write("README", "side\n").commit("side work");
+    f.checkout("main").write("OTHER", "main\n").commit("main work");
+    f.startMerge("side").write("plugins/a/plugin.json", listing("a", { unlisted: true })).commit(message);
+    return f;
+  };
+  const f = build("merge-delist", "Merge branch 'side'");
+  const r = mod(f.dir, { mode: "commits" });
+  assert.equal(count(r, "MOD_COMMIT_UNCOVERED"), 1);
+  assert.deepEqual(r.hexes, [f.head()]);
+
+  const g = build("merge-delist-exempt",
+    "Merge branch 'side'\n\nModeration-Exempt: operator: taken down by hand while resolving, logged in the runbook");
+  assert.equal(mod(g.dir, { mode: "commits" }).status, "green");
+});
+
+test("gap 93: a resolution that undoes main's relist is a delist, judged against what git would have written", () => {
+  // Neither parent's bytes answer this one: the branch still has the listing
+  // unlisted from before the relist, so "some parent was unlisted" would call
+  // it inherited. What git would have written is main's relist.
+  const f = fixture("merge-undo-relist").write("plugins/a/plugin.json", listing("a", { unlisted: true }))
+    .commit("seed").landTools();
+  f.branch("side").write("README", "side\n").commit("side work");
+  f.checkout("main").write("plugins/a/plugin.json", listing("a"))
+    .write("bot/moderation/2026-09-03-a-relist.json", entry("2026-09-03", "a", "relist")).commit("relist a");
+  f.checkout("side").startMerge("main").write("plugins/a/plugin.json", listing("a", { unlisted: true }))
+    .commit("Merge branch 'main' into side");
+  const r = mod(f.dir, { mode: "commits" });
+  assert.equal(count(r, "MOD_COMMIT_UNCOVERED"), 1);
+  assert.deepEqual(r.hexes, [f.head()]);
+});
+
+test("gap 93: a branch's delist merged cleanly, or through a conflict kept whole, is one finding at the branch commit", () => {
+  const f = fixture("merge-delist-dup").write("plugins/a/plugin.json", listing("a")).commit("list a").landTools();
+  f.branch("side").write("plugins/a/plugin.json", listing("a", { unlisted: true })).commit("side delists a");
+  const side = f.head();
+  f.checkout("main").write("OTHER", "main\n").commit("main work");
+  f.startMerge("side").commit("Merge branch 'side'");
+  const clean = mod(f.dir, { mode: "commits" });
+  assert.equal(count(clean, "MOD_COMMIT_UNCOVERED"), 1);
+  assert.deepEqual(clean.hexes, [side]);
+
+  // Conflicted: main rewrote the summary on the same line region, and the
+  // resolution keeps both. The remerged file is conflict markers, so the
+  // parents answer, and the branch's flag is the branch's act.
+  const g = fixture("merge-delist-dup-conflict").write("plugins/a/plugin.json", listing("a")).commit("list a").landTools();
+  g.branch("side").write("plugins/a/plugin.json", listing("a", { summary: "side's summary", unlisted: true }))
+    .commit("side delists a");
+  const side2 = g.head();
+  g.checkout("main").write("plugins/a/plugin.json", listing("a", { summary: "main's summary" })).commit("main edits a");
+  g.startMerge("side").write("plugins/a/plugin.json", listing("a", { summary: "main's summary", unlisted: true }))
+    .commit("Merge branch 'side'");
+  assert.ok(mergeOwnChanges(g.head(), g.dir).conflicted.has("plugins/a/plugin.json"),
+    "the fixture has not built a conflict, so it is not testing the parents' answer");
+  const conflicted = mod(g.dir, { mode: "commits" });
+  assert.equal(count(conflicted, "MOD_COMMIT_UNCOVERED"), 1);
+  assert.deepEqual(conflicted.hexes, [side2]);
+});
+
+test("gap 93: merging main into a branch and dropping a log entry main added is an edited log, at that merge only", () => {
+  // Invisible to state mode as well: nothing is unlisted without a record,
+  // the record is simply gone from main once the pull request merges.
+  const e = "bot/moderation/2026-09-02-b-delist.json";
+  const f = fixture("merge-drop-entry").write("plugins/a/plugin.json", listing("a")).commit("seed").landTools();
+  f.branch("side").write("README", "side\n").commit("side work");
+  f.checkout("main").write(e, entry("2026-09-02", "b", "delist")).commit("log an entry");
+  f.checkout("side").startMerge("main").remove(e).commit("Merge branch 'main' into side");
+  const merge = f.head();
+  f.checkout("main").startMerge("side").commit("Merge pull request #1 from someone/side");
+  assert.equal(fs.existsSync(path.join(f.dir, e)), false, "the fixture has not built what it says");
+  const r = mod(f.dir, { mode: "commits" });
+  assert.equal(count(r, "MOD_LOG_ENTRY_EDITED"), 1);
+  assert.deepEqual(r.hexes, [merge]);
 });
 
 // ── M-T1.3: the advisory URL the withdrawal docs teach ──────────────────────
