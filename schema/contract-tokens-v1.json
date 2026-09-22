@@ -1,6 +1,6 @@
 {
-  "contract_version": "0.32.0",
-  "source_commit": "e35c63e4d4832d7c96f36a07faf614858b0fbb6e",
+  "contract_version": "0.33.0",
+  "source_commit": "bf0ea5db854d964995b16ab352d36b88130db8ba",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -2942,6 +2942,77 @@
       ]
     },
     {
+      "id": "schema:astra.plugins.listing-view/1",
+      "kind": "schema",
+      "name": "astra.plugins.listing-view/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true,
+          "source": "SCOPE-3"
+        },
+        {
+          "name": "plugin_id",
+          "required": true,
+          "source": "MIG-7; §0.7"
+        },
+        {
+          "name": "listing_state",
+          "required": true,
+          "source": "MIG-7; SERVE-75",
+          "of": [
+            {
+              "name": "state",
+              "required": true,
+              "source": "MIG-7; B.3"
+            },
+            {
+              "name": "deadline",
+              "required": false,
+              "why": "MIG-7 gives the deadline to `grandfathered` alone, and a deadline exists only once MIG-2 commits `policy/binding-deadline.json` before R4b (absent on registry `main` at R@298f34a), so a `grandfathered` listing has none until then. `iff` would require a date that does not exist yet, and §0.8's vocabulary has no *carried only with*, so no condition is published",
+              "source": "MIG-7; MIG-2"
+            }
+          ]
+        },
+        {
+          "name": "catalogue_serial",
+          "required": true,
+          "source": "MIG-7; B.4; DEC-9"
+        },
+        {
+          "name": "migration",
+          "required": true,
+          "source": "MIG-13",
+          "of": [
+            {
+              "name": "announced_cutover_at",
+              "required": true,
+              "source": "MIG-13; B.4"
+            },
+            {
+              "name": "deadline",
+              "required": true,
+              "source": "MIG-13; MIG-2"
+            }
+          ]
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "source": "§5.8, Table 5-G",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
       "id": "schema:astra.plugins.rating-state/1",
       "kind": "schema",
       "name": "astra.plugins.rating-state/1",
@@ -3184,6 +3255,357 @@
         "guest"
       ],
       "source": "Table 5-D",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.transparency-decisions/1",
+      "kind": "schema",
+      "name": "astra.plugins.transparency-decisions/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true,
+          "source": "SCOPE-3"
+        },
+        {
+          "name": "entries",
+          "required": true,
+          "source": "MOD-38",
+          "of": [
+            {
+              "name": "record",
+              "required": true,
+              "source": "MOD-38; DEC-7; B.4"
+            }
+          ]
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel",
+        "guest"
+      ],
+      "source": "§5.8, Table 5-H",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.transparency-held/1",
+      "kind": "schema",
+      "name": "astra.plugins.transparency-held/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true,
+          "source": "SCOPE-3"
+        },
+        {
+          "name": "held",
+          "required": true,
+          "source": "FLOW-33; B.3"
+        },
+        {
+          "name": "oldest_entered_at",
+          "required": false,
+          "why": "It is absent exactly when `held` is 0, since there is then no oldest. A predicate names values this contract lists for its member (§0.8), and a count has none, so no condition is published",
+          "source": "FLOW-33; FLOW-31"
+        },
+        {
+          "name": "past_48h",
+          "required": true,
+          "source": "FLOW-33; FLOW-31"
+        },
+        {
+          "name": "past_96h",
+          "required": true,
+          "source": "FLOW-33"
+        },
+        {
+          "name": "generated_at",
+          "required": true,
+          "source": "FLOW-33; Table 5-D"
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel",
+        "guest"
+      ],
+      "source": "§5.8, Table 5-J",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.transparency-moderation/1",
+      "kind": "schema",
+      "name": "astra.plugins.transparency-moderation/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true,
+          "source": "SCOPE-3"
+        },
+        {
+          "name": "entries",
+          "required": true,
+          "source": "MOD-38; MOD-47",
+          "of": [
+            {
+              "name": "date",
+              "required": true,
+              "source": "MOD-47; §0.7"
+            },
+            {
+              "name": "action",
+              "required": true,
+              "source": "§7.2; MOD-47"
+            },
+            {
+              "name": "plugin",
+              "required": true,
+              "source": "MOD-47"
+            },
+            {
+              "name": "reason",
+              "required": true,
+              "source": "MOD-41; MOD-48; BOT-80"
+            },
+            {
+              "name": "versions",
+              "required": false,
+              "why": "The log carries it where an entry names versions (R@298f34a:bot/lib/moderation.mjs:371-379), and no clause says which actions must, so no condition is published",
+              "source": "§7.2; BOT-80"
+            },
+            {
+              "name": "advisory",
+              "required": "conditional",
+              "when": {
+                "iff": {
+                  "action": [
+                    "deprecate",
+                    "revoke",
+                    "unrevoke"
+                  ]
+                }
+              },
+              "why": "§7.2 gives an advisory to `M_DEPRECATE`, `M_REVOKE` and `M_UNREVOKE` and to no other code, and MOD-7 shows a deprecate or revoke in effect on a host only once the list that host serves carries that advisory, and an unrevoke once a higher-serial list lacks it. Relaxed to `if`, a yank or a delist may name one, and a renderer applying MOD-7 shows a catalogue edit pending on a list that will never carry it. Dropped, a revoke reaches the reader with nothing to look up in the served list, and its effect can be asserted but not checked, which is the claim the registry's own log refuses to publish (R@298f34a:bot/lib/moderation.mjs:381-393)",
+              "source": "§7.2; MOD-13; MOD-7"
+            },
+            {
+              "name": "appeal",
+              "required": false,
+              "why": "The log carries it only on entries dated before cutover, while the issue channel existed (DEC-12; R@298f34a:bot/lib/moderation.mjs:404-411), and no member of an entry says whether cutover had passed, so no condition is published",
+              "source": "DEC-12"
+            },
+            {
+              "name": "category",
+              "required": false,
+              "why": "§7.2 gives one to every `M_*` decision except `M_APPEAL`, and the entries written before MOD-47 carry none (all six files in `bot/moderation/` at R@298f34a), so no condition keyed on `action` is exact",
+              "source": "§7.2; MOD-47"
+            },
+            {
+              "name": "reverses",
+              "required": false,
+              "why": "MOD-52 requires it on a revert's `relist` or `unrevoke`, and no member of an entry says which relist is a revert; the log admits it on those two actions and refuses it on the rest (R@298f34a:bot/lib/moderation.mjs:428-446), which §0.8's vocabulary cannot say without also requiring it",
+              "source": "MOD-52; MOD-47"
+            },
+            {
+              "name": "appeal_of",
+              "required": "conditional",
+              "when": {
+                "iff": {
+                  "action": [
+                    "appeal"
+                  ]
+                }
+              },
+              "why": "MOD-33 writes a decided appeal as log `appeal` with `appeal_of`, and no other action names a decision it decided. Relaxed to `if`, a delist may carry one and read as an appeal's result rather than a decision of its own. Dropped, an appeal entry says that an appeal was decided and not which decision, and the account ID-59 names cannot find the entry about its listing",
+              "source": "MOD-33; MOD-47"
+            },
+            {
+              "name": "outcome",
+              "required": "conditional",
+              "when": {
+                "iff": {
+                  "action": [
+                    "appeal"
+                  ]
+                }
+              },
+              "why": "MOD-32 records an appeal decision only as `stands` or `reversed`, and MOD-33 writes it into the appeal's entry; no other action has an outcome. Relaxed to `if`, a yank may carry `reversed` and read as undone while it is in force. Dropped, an appeal entry does not say which way it went, which is the one thing it is written to say",
+              "source": "MOD-32; MOD-33"
+            },
+            {
+              "name": "service_decision_id",
+              "required": false,
+              "why": "BOT-81 puts it on the entry of every service decision, and an entry with none behind it carries none — the six hand-written delists of 2026-08-19 to 2026-09-12 in `bot/moderation/` at R@298f34a, or an advisory committed under `Moderation-Exempt:` — while no member of an entry says which kind it is",
+              "source": "BOT-81; MOD-47"
+            },
+            {
+              "name": "declared_interest",
+              "required": false,
+              "why": "MOD-12 records it only where that conflict arose",
+              "source": "MOD-12; MOD-47"
+            }
+          ]
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel",
+        "guest"
+      ],
+      "source": "§5.8, Table 5-I",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.transparency-reports/1",
+      "kind": "schema",
+      "name": "astra.plugins.transparency-reports/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true,
+          "source": "SCOPE-3"
+        },
+        {
+          "name": "months",
+          "required": true,
+          "source": "MOD-27",
+          "of": [
+            {
+              "name": "month",
+              "required": true,
+              "source": "MOD-27"
+            },
+            {
+              "name": "received",
+              "required": true,
+              "source": "MOD-27"
+            },
+            {
+              "name": "clocks",
+              "required": true,
+              "source": "MOD-27",
+              "of": [
+                {
+                  "name": "<clock>",
+                  "required": true,
+                  "source": "MOD-27",
+                  "of": [
+                    {
+                      "name": "met",
+                      "required": true,
+                      "source": "MOD-27"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "generated_at",
+              "required": true,
+              "source": "MOD-27; Table 5-D"
+            }
+          ]
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel",
+        "guest"
+      ],
+      "source": "§5.8, Table 5-K",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.transparency-served/1",
+      "kind": "schema",
+      "name": "astra.plugins.transparency-served/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true,
+          "source": "SCOPE-3"
+        },
+        {
+          "name": "entries",
+          "required": true,
+          "source": "SERVE-34",
+          "of": [
+            {
+              "name": "kind",
+              "required": true,
+              "source": "SERVE-34; B.6"
+            },
+            {
+              "name": "serial",
+              "required": false,
+              "why": "SERVE-34 publishes each entry's serial, and root.json carries none (R@298f34a:registry/v1/root.json), so the condition is *absent exactly for root.json*; a predicate may name only values this contract lists for `kind`, and it lists none yet, so no condition is published",
+              "source": "SERVE-34"
+            },
+            {
+              "name": "sha256",
+              "required": true,
+              "source": "SERVE-34; §0.7"
+            },
+            {
+              "name": "commit",
+              "required": true,
+              "source": "SERVE-34; registry plan: SERVE-39"
+            },
+            {
+              "name": "first_served_at",
+              "required": true,
+              "source": "SERVE-34"
+            }
+          ]
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel",
+        "guest"
+      ],
+      "source": "§5.8, Table 5-L",
       "requirements": [
         "SCOPE-3",
         "SCOPE-7",
@@ -3714,7 +4136,7 @@
         },
         {
           "name": "artifacts.<platform>.sha256",
-          "required": true
+          "required": false
         },
         {
           "name": "artifacts",

@@ -704,16 +704,28 @@ test("the file's membered entries are four buckets, none of which may empty", ()
   // members in without a word. Moving it is the right answer once somebody has
   // looked at what arrived — the census below says what to look for — and
   // being made to look is the whole of what this line buys.
+  //
+  // Moved at contract 0.33.0, from 79 over 24, by exactly the six guest-read
+  // bodies §5.8 publishes (Tables 5-G to 5-L): 19 top-level members over six
+  // entries, `astra.plugins.{listing-view,transparency-decisions,
+  // transparency-moderation,transparency-held,transparency-reports,
+  // transparency-served}/1`. Read on arrival: the plugins service emits them,
+  // the panel and guests read them, and nothing in this repository composes or
+  // reads one, so they belong in this bucket. Their three conditions are
+  // nested in `transparency-moderation/1`'s `entries` — `advisory`,
+  // `appeal_of` and `outcome`, each `iff` on `action` with its why — and every
+  // other member is `true`, or `false` with a why saying why no condition is
+  // published.
   assert.deepEqual(
     { entries: unreadEntries.length, members: countMembers(unreadEntries) },
-    { entries: 24, members: 79 },
+    { entries: 30, members: 98 },
     `${countMembers(unreadEntries)} published members over ${unreadEntries.length} entries are outside every ` +
-    `comparison in this suite; there were 79 over 24 at contract 0.30.0 and this file reads ` +
+    `comparison in this suite; there were 98 over 30 at contract 0.33.0 and this file reads ` +
     `${tokenFile.contract_version}. Nothing in astra-registry composes or reads those bodies, so the number is ` +
     "allowed to move — but it moves by somebody reading the new members and finding them unconditioned, not by " +
     "a filter quietly widening. It was 83 over 25 at 0.29.0, and it moved because " +
     "`astra.registry.migration-notice/1` turned out to HAVE a reader that this census could not see, not " +
-    "because a filter widened",
+    "because a filter widened; and 79 over 24 from 0.30.0 until 0.33.0 added the six guest-read bodies",
   );
 });
 
