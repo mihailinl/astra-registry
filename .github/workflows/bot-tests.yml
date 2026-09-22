@@ -320,6 +320,31 @@ jobs:
         if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/service.test.mjs
 
+      # Immediately after the step above, because it is that step's other half.
+      # `service.test.mjs` imports `splitTable` and `markerProblems` out of the
+      # cutover preflight, to prove that the condition contract 0.30.1 publishes
+      # on `astra.registry.migration-notice/1` is one something in this
+      # repository actually runs. That import is only affordable because of the
+      # main guard at the bottom of that file — without it the import runs an
+      # eleven-check gate, a live `gh` query and a walk of four repositories
+      # before the first assertion, and the step above goes from 134 ms to
+      # 710 ms with 201 lines of cutover gate in its transcript.
+      #
+      # NOTHING SAID SO UNTIL THIS LINE. dev/couplings.md entry 60: removing
+      # that guard leaves the step above failing as `'test failed'` with no
+      # assertion and no file to open, and passing outright the day the gate
+      # goes green — with a network call inside a test whose name is about a
+      # bot token. `--selftest` is what makes it loud: it imports this module
+      # in a child whose `git` and `gh` are recording shims and asserts that
+      # neither ran and that nothing was printed, with the same file run as a
+      # program as the positive control. It also drives that tool's ten
+      # exported readers over hand-built member tables, including entry 58's —
+      # a published `when` naming the integer `1` meeting a marker that spells
+      # its round `"1"`. No network, no git of its own, ~150 ms.
+      - name: The cutover preflight's readers, and the guard that keeps its gate out of a test
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
+        run: node tools/cutover-preflight.mjs --selftest
+
       - name: The moderation records, against their own schema
         if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node bot/moderation.mjs --check
