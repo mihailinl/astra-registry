@@ -111,8 +111,8 @@
             },
             "proof": {
               "type": "string",
-              "format": "uri",
-              "description": "A URL on that domain serving the owner login. Re-fetched on a schedule; when it stops naming the owner, the tier is withdrawn."
+              "pattern": "^https://",
+              "description": "A URL on that domain serving the owner login. Re-fetched on a schedule; when it stops naming the owner, the tier is withdrawn. `^https://` rather than `format: \"uri\"`: `format` is an annotation in 2020-12 and asserts nothing even where it is understood, and tools/lib/jsonschema.mjs does not implement it at all — so it sat here enforcing nothing until a domain-verified publisher arrived, at which point the validator would have THROWN rather than reported. `^https://` is the spelling every other URL field in schema/ uses, and the reason is version-v1.json's: the daemon refuses plaintext before a byte leaves."
             },
             "note": {
               "type": "string",

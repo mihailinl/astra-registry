@@ -172,10 +172,30 @@ export async function run() {
       assert(listed.includes(k), `TRUST-26's ${k} is not in KINDS, so the compiler emits what the registry refuses`);
     }
   });
+  // WHY THE FIXTURE CARRIES AN `id` AND THE ASSERTION READS THE MESSAGE.
+  // Until 2026-09-22 this check built a digest-ONLY advisory and asserted
+  // `errs.length > 0`. A digest-only advisory is refused by the sideload rule
+  // above whatever the digest says, so the count was never zero and the digest
+  // grammar in this check's name was asserted by nothing: loosening `SHA256` in
+  // tools/lib/revocations.mjs to `/^[0-9a-fA-F]{1,64}$/` — which accepts
+  // `A`×64, `abc` and `a`×63 — left the whole suite at 317 passed, 0 failed,
+  // and this check printing `ok`. So the entry is PAIRED with an `id`, which
+  // satisfies the sideload rule and leaves the digest as the only thing that
+  // can be wrong, and the assertion names the rule instead of counting errors.
   await test("an uppercase or truncated digest is refused", () => {
+    // The control first. If the paired shape were refused for some other
+    // reason, every assertion below would pass on that reason and this check
+    // would be back where it started.
+    const paired = (value) => [{ kind: "digest", value }, { kind: "id", value: "dice-roller" }];
+    assertEqual(checkAdvisory({ ...GOOD_ADVISORY, entries: paired("a".repeat(64)) }).join("; "), "",
+      "a well-formed lowercase digest paired with an id was refused, so nothing below separates the digest " +
+      "grammar from whatever refused this");
+
     for (const value of ["A".repeat(64), "abc", "a".repeat(63)]) {
-      const errs = checkAdvisory({ ...GOOD_ADVISORY, entries: [{ kind: "digest", value }] });
-      assert(errs.length > 0, `${value} was accepted as a digest`);
+      const errs = checkAdvisory({ ...GOOD_ADVISORY, entries: paired(value) });
+      assert(errs.some((e) => e.includes("64 lowercase hex characters")),
+        `${JSON.stringify(value)} was accepted as a digest, or was refused for something other than its ` +
+        `grammar: ${errs.join("; ") || "no error at all"}`);
     }
   });
   await test("an action the daemon does not know is refused at the source", () => {
@@ -209,19 +229,38 @@ export async function run() {
     const errs = checkAdvisory({ ...GOOD_ADVISORY, reason: "Safe‮elbadaolnwod si" });
     assert(errs.some((e) => e.includes("bidirectional")), errs.join("; "));
   });
+  // THE SAME REPAIR AS THE DIGEST CHECK ABOVE, for the same reason and measured
+  // the same way. The negative fixture used to be an identity-ONLY advisory and
+  // the assertion was `bad.length > 0` — so the sideload rule refused it
+  // whatever the identity grammar said. Extending `IDENTITY` in
+  // tools/lib/revocations.mjs with `|https:\/\/.+`, which accepts exactly the
+  // URL this check exists to refuse, left the suite at 317 passed, 0 failed and
+  // this check printing `ok`. Only the POSITIVE half was load-bearing. So the
+  // negative is paired with an `id` too, and it asserts the identity rule by
+  // the symbol the daemon side is named after rather than by a count.
   await test("an identity value must be the spelling the daemon pins", () => {
-    const ok = checkAdvisory({
-      ...GOOD_ADVISORY,
-      // Paired with an id, because an identity-only advisory is refused for a
-      // different reason — see the sideload test above.
-      entries: [{ kind: "identity", value: "github:owner/repo" }, { kind: "id", value: "dice-roller" }],
-    });
-    assert(ok.length === 0, ok.join("; "));
-    const bad = checkAdvisory({
-      ...GOOD_ADVISORY,
-      entries: [{ kind: "identity", value: "https://github.com/owner/repo" }],
-    });
-    assert(bad.length > 0, "a URL was accepted where AuthorIdentity::revocation_key was required");
+    // Both spellings `AuthorIdentity::revocation_key` produces, not one. A
+    // check that only ever passed `github:` would stay green on an IDENTITY
+    // that had lost its `origin:` alternative, and `origin:host` is the
+    // spelling every non-GitHub author gets.
+    for (const value of ["github:owner/repo", "origin:plugins.example.test"]) {
+      const ok = checkAdvisory({
+        ...GOOD_ADVISORY,
+        // Paired with an id, because an identity-only advisory is refused for a
+        // different reason — see the sideload test above.
+        entries: [{ kind: "identity", value }, { kind: "id", value: "dice-roller" }],
+      });
+      assertEqual(ok.join("; "), "", `${value} is what the daemon pins and it was refused`);
+    }
+    for (const value of ["https://github.com/owner/repo", "github.com/owner/repo", "github:owner", "GitHub:owner/repo"]) {
+      const bad = checkAdvisory({
+        ...GOOD_ADVISORY,
+        entries: [{ kind: "identity", value }, { kind: "id", value: "dice-roller" }],
+      });
+      assert(bad.some((e) => e.includes("AuthorIdentity::revocation_key")),
+        `${JSON.stringify(value)} was accepted where AuthorIdentity::revocation_key is required, or was refused ` +
+        `for something else: ${bad.join("; ") || "no error at all"}`);
+    }
   });
   await test("an advisory_url on GitHub is refused, because a signed link outlives the page (ROLL-50)", () => {
     // The field is optional, and that is exactly why refusing these two hosts
