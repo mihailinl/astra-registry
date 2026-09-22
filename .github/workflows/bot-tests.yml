@@ -337,8 +337,9 @@ jobs:
       # bot token. `--selftest` is what makes it loud: it imports this module
       # in a child whose `git` and `gh` are recording shims and asserts that
       # neither ran and that nothing was printed, with the same file run as a
-      # program as the positive control. It also drives that tool's ten
-      # exported readers over hand-built member tables, including entry 58's —
+      # program as the positive control. It also drives that tool's exported
+      # readers over hand-built member tables — no count here, because this line
+      # said ten while main exported eleven functions — including entry 58's —
       # a published `when` naming the integer `1` meeting a marker that spells
       # its round `"1"`. No network, no git of its own, ~150 ms.
       - name: The cutover preflight's readers, and the guard that keeps its gate out of a test
