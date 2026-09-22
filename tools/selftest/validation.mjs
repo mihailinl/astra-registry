@@ -128,9 +128,24 @@ export async function run() {
     // version, and a newest version with an artifact carrying no digest. The
     // fixture is built out of a committed listing and synthesised rather than
     // found, so this leg cannot go vacuous the way the one above did.
-    const source = loadSources(REPO_ROOT).plugins.find(
-      (p) => p.doc?.unlisted !== true && (p.versions ?? []).some((v) => v.doc && v.doc.yanked !== true));
-    assert(source !== undefined, "no listed plugin has a live version, so there is nothing to project");
+    //
+    // The listing it is built from is chosen by the PROPERTY the fixture needs
+    // — a newest live version that is soundly released — and not by position.
+    // Taking the first listed plugin would make the control below go red the day
+    // that listing's newest version happened to be a staging one, which is a
+    // legitimate tree turning a self-test red: the shape the `>= 1` floor above
+    // was removed for.
+    const source = loadSources(REPO_ROOT).plugins.find((p) => {
+      if (p.doc?.unlisted === true) return false;
+      const live = (p.versions ?? []).map((v) => v.doc).filter((d) => d && d.yanked !== true);
+      if (!live.length) return false;
+      const newest = live.slice().sort((a, b) => compareSemver(a.version, b.version)).at(-1);
+      return newest.staging !== true &&
+        Object.values(newest.artifacts ?? {}).every((a) => typeof a.sha256 === "string" && typeof a.size === "number");
+    });
+    assert(source !== undefined,
+      "no listed plugin's newest live version is soundly released, so there is nothing to project and the " +
+      "control below would have nothing to control for");
 
     const projected = (name, mutateNewest) => {
       const dir = path.join(tmp, `digest-blind-${name}`);
