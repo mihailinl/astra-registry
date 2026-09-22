@@ -1835,7 +1835,9 @@ test("a step marked `not built` cannot let its job report success", () => {
 // This is the workflow half. RC-R2-2 runs the same comparison from
 // `tools/selftest/` once `schema/contract-tokens-v1.json` exists, and the
 // interval is asserted here as a literal as well, so that the check says
-// something on the day the token file does not exist yet — which is today.
+// something on the day the token file does not exist yet. It did not, when this
+// was written; it does now (RC-R2-1 landed it), and the literal is kept because
+// the point was never the absence — it is that this half asserts on its own.
 //
 // **The cron line is read whether it is commented out or not.** The file lands
 // dark at R2 exit with the schedule commented and the R3-open commit
