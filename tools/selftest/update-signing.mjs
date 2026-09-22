@@ -168,23 +168,58 @@ export async function run() {
   });
 
   await test("the desk clock is printed beside the signature it is compared with, and a renewal a year late is refused", () => {
+    // `desk clock` occurs TWICE in what printClock emits: once as the
+    // operator's own reading — `desk clock  <UTC now>  (UTC, this machine's
+    // clock)` — and once inside the parenthetical `(desk clock is +400d after
+    // it)` on the line under it. Until 2026-09-22 both halves of this check
+    // asked only `stdout.includes("desk clock")`, and the parenthetical
+    // satisfied them: deleting the reading line outright from
+    // tools/sign-update-manifest.mjs left this check printing `ok` and the
+    // suite at `317 passed, 0 failed`, exit 0.
+    //
+    // The reading is the half that does the work. The refusal below tells an
+    // operator that the gap is too wide; only the reading tells them which of
+    // the two numbers is the wrong one, and a box whose clock is a year out is
+    // the case this whole paragraph of the signer exists for.
+    //
+    // So it is located as a LINE, its instant is compared with this process's
+    // own clock — the one value no constant in a fixture can supply — and
+    // "beside" is asserted as adjacency rather than as co-occurrence anywhere
+    // in a 25-line transcript.
+    const clockReading = (stdout, what) => {
+      const lines = stdout.split("\n");
+      const i = lines.findIndex((l) => /^ {2}desk clock {2,}/.test(l));
+      assert(i !== -1, `${what}: no desk-clock reading was printed:\n${stdout}`);
+      const m = /^ {2}desk clock {2,}(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z) {2}\(UTC, this machine's clock\)$/
+        .exec(lines[i]);
+      assert(m, `${what}: the desk-clock line is not an operator-readable UTC reading: ${JSON.stringify(lines[i])}`);
+      const minutesOut = Math.abs(Date.parse(m[1]) - Date.now()) / 60_000;
+      assert(minutesOut < 10,
+        `${what}: the printed desk clock is ${minutesOut.toFixed(1)} min from this process's own clock, so it ` +
+        "is not a reading of this machine");
+      assert(lines[i + 1] !== undefined, `${what}: the desk clock is printed with nothing beside it:\n${stdout}`);
+      return lines[i + 1];
+    };
+
     const ancient = updateDoc({ signedAt: rfc3339(new Date(Date.now() - 400 * DAY_MS)) });
     let dir = updateSandbox([ancient]);
     let out = updateTmp("x");
     const r = updateSigner(["--renew", "releases/0.2.5/manifest.json", "--root-key", TRUST_ROOT_A.file, "--out", out], dir);
     assertRefused(r, "more than 365 days after the newest signature", out, "a record 400 days old");
-    assert(r.stdout.includes("desk clock") && r.stdout.includes(ancient.signed.signedAt), r.stdout);
-    assert(/desk clock is \+400d /.test(r.stdout), r.stdout);
+    const compared = clockReading(r.stdout, "a record 400 days old");
+    assert(compared.includes(ancient.signed.signedAt),
+      `the signature the clock is compared with is not the line beside it: ${JSON.stringify(compared)}`);
+    assert(/desk clock is \+400d /.test(compared), compared);
     // 364 days is inside the bound.
     dir = updateSandbox([updateDoc({ signedAt: rfc3339(new Date(Date.now() - 364 * DAY_MS)) })]);
     out = updateTmp("renewed");
     const ok = updateSigner(["--renew", "releases/0.2.5/manifest.json", "--root-key", TRUST_ROOT_A.file, "--out", out], dir);
     assertEqual(ok.status, 0, `364 days: ${ok.stderr}`);
-    // Signing afresh prints the same line against the newest record.
+    // Signing afresh prints the same pair against the newest record.
     out = updateTmp("fresh");
     const fresh = updateSigner([...freshArgs(), "--out", out], dir);
     assertEqual(fresh.status, 0, fresh.stderr);
-    assert(fresh.stdout.includes("desk clock") && fresh.stdout.includes("in releases/0.2.5/manifest.json"), fresh.stdout);
+    assert(clockReading(fresh.stdout, "signing afresh").includes("in releases/0.2.5/manifest.json"), fresh.stdout);
   });
 
   await test("--renew and --withdraw-to refuse every flag that would describe a different release", () => {
