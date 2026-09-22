@@ -498,6 +498,39 @@ export function a5({ anchor, records }, findings, skipped, scanned) {
  * main's head. A change dated more than the bound AFTER `now` is overdue too:
  * its wait cannot be read, and an unreadable clock excuses nothing
  * (`minutesSince`), where a plain `withinGrace` would excuse it until its date.
+ *
+ * **What A7 does not see, and whose it is: a catalogue the signer CARRIED.**
+ * When D4 carries the catalogue forward and the same run commits anyway,
+ * because the list changed or reached its 20-hour re-sign, the new `signed`
+ * commit's `Source-Commit` is main's head. The catalogue in it was generated
+ * from the commit its `Index-Source-Commit:` names. Both halves here read
+ * `Source-Commit`, so that catalogue is invisible to A7. Measured 2026-09-22 on
+ * a fixture: a publication at 01:00 and a carry that committed the list at
+ * 01:05 gave no A7 finding at 03:06 or at 09:05. A carry that commits nothing
+ * leaves `Source-Commit` behind, and A7 fires at the bound as it does for a
+ * stopped signer (red at 03:01 on the same fixture). It stays red only until
+ * the next list commit moves `Source-Commit` past the publication, while the
+ * catalogue is still the carried one.
+ *
+ * That is deliberate, for three reasons. It is to be revisited when the first
+ * one stops being true:
+ *
+ *   * `Index-Source-Commit` is a proposed name (G8). Registry plan D2 says
+ *     "readers ignore it until a contract version records it", and no contract
+ *     version records it yet (ops register entry 85, proposal P1);
+ *   * detector B shares row 7 and answers it "the same" from the served
+ *     `Source-Commit`. If A7 read another trailer, A and B would disagree about
+ *     the one row both are there to answer;
+ *   * D4 gives the carry its own alarm. Every carry alerts: each signer run
+ *     re-plans from main's head, and while the carry lasts each one goes red
+ *     with `SIGNER_CARRIED_INDEX` (`tools/selftest/signer-run.mjs`). A carried
+ *     catalogue expires in 30 days, "which leaves the alert time to act". If
+ *     the signer stops running, its alert stops too, and so does
+ *     `Source-Commit`, which is the shape above that A7 does see.
+ *
+ * The list has the same blind spot here. SERVE-85 covers it independently,
+ * because it reads the list's serial and no trailer, so a carried list stays
+ * behind the serial main implies until someone acts.
  */
 export function a7({ git, now }, findings, skipped, scanned) {
   if (!git.hasRef(SIGNED_REF)) {
