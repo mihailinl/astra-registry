@@ -43,7 +43,7 @@
 // `tools/selftest/publishers.mjs` proves the job follows the library by
 // changing the library under it.
 //
-// ── why a withdrawal edits a file under tools/selftest/ ────────────────────
+// ── why a withdrawal edits the declarations file ───────────────────────────
 //
 // A record that expects no listing says so in `NO_LISTING_FILE`, and the suite
 // refuses a declaration that names no record (gap 6). This job deletes records
@@ -63,13 +63,20 @@
 // already red on such a file, and a badge that outlives its evidence because a
 // neighbouring file is broken is the failure entry 80 recorded.
 //
-// **The cost, stated rather than discovered:** `tools/selftest/` is a directory
-// entry of contract TRUST-31's hashed set, so after R3 a withdrawal that drops a
-// declaration is a hashed-path commit made by an unattended job (registry plan:
-// ROLL-64). It is rare — only a `verified` record that reaches no listing can
-// both expire and be declared — and it is loud: the bot returns to shadow and
-// alarms. Leaving the declaration would be quieter and worse: `main` red on
-// every publication until a person noticed.
+// **Why the file is under `state/`.** It lived under `tools/selftest/`, a
+// directory entry of contract TRUST-31's hashed set, so after R3 a withdrawal
+// that dropped a declaration would have been a hashed-path commit made by an
+// unattended job (registry plan: ROLL-64): the bot back in shadow, and an
+// alarm, for a badge withdrawal nobody did wrong. Leaving the declaration
+// behind instead would have been quieter and worse: `main` red on every
+// publication until a person noticed. The file is a record a run writes, not a
+// rule a run judges by — it vouches only for `publishers/**`, which the set
+// keeps outside, and a writer who could edit a declaration could as easily
+// delete the record it excuses — so it lives with the other records a run
+// writes as it works. Not under `publishers/`: `loadPublishers` reads every
+// `*.json` there as a publisher record. `tools/selftest/publishers.mjs` holds
+// every path the workflow's commit step stages outside the set, so the day
+// this file moves back inside it, the suite is red.
 //
 // ── why the clock lives here and nowhere downstream ────────────────────────
 //
@@ -89,7 +96,7 @@ import { REPO_ROOT, expiredPublishers, loadPublishers, publisherRecords } from "
  * imports this name rather than spelling the path a second time; this job
  * reads it for one purpose, to drop the declaration of a record it withdraws.
  */
-export const NO_LISTING_FILE = "tools/selftest/publishers-without-listing.json";
+export const NO_LISTING_FILE = "state/publishers-without-listing.json";
 
 /**
  * `text` — the declarations file — without every declaration naming one of

@@ -9,18 +9,41 @@ a maintainer can change it with an editor.
 | `queue/<id>@<version>.json` | A release waiting out the publication delay (PRODUCTION_PLAN §3.5, `docs/POLICY.md` §4). | The release never publishes itself. Delete a file to **cancel** a publication; edit `publish_after` to bring one forward. |
 | `releases-seen.json` | The release backstop's memory: one `etag` and last-seen tag per listed repository (task 3.4, layer 2). | Nothing but bandwidth — one full poll of every listing, once. It is a cache. |
 | `keepalive.json` | ROLL-62's keepalive (RC-R1-9(b)): the month of the last commit made so that this repository is never 60 days quiet. | Every `schedule:` in this repository, 60 days later, disabled by GitHub with nothing going red. `tools/coverage/keepalive-age.mjs` is red 35 days after the last change to it. |
+| `publishers-without-listing.json` | The publisher records that reach no listing, each with the reason none is expected (gap 6). Written by hand in a reviewed commit, and by `publisher-recheck.yml`, which drops a withdrawn record's declaration in the same commit as the withdrawal. | `tools/selftest/publishers.mjs` refuses every undeclared record that reaches no listing — today `publishers/KnlCE.json` — so `main`, and every bot commit the suite gates, is red until it is back. |
 
-**Nothing in here is trusted.** A queue entry records what a release was queued
-for, and when the delay ends the *entire* ingest runs again from scratch against
-the release as it is at that moment — the assets are re-downloaded, the
-attestation re-verified, ownership re-proved. The entry's recorded digests exist
-so that a swapped asset **restarts** the clock rather than inheriting the time
-already served.
+**Nothing in here is trusted**, with one exception, below, that is trusted no
+further than the records it names. A queue entry records what a release was
+queued for, and when the delay ends the *entire* ingest runs again from scratch
+against the release as it is at that moment — the assets are re-downloaded,
+the attestation re-verified, ownership re-proved. The entry's recorded digests
+exist so that a swapped asset **restarts** the clock rather than inheriting the
+time already served.
 
 The queue and `releases-seen.json` are written by
 `.github/workflows/ingest.yml`'s `publish` job, which runs no submitter code: it
 copies JSON out of an artifact, checks every path against the shape it is
 allowed to have, revalidates the tree with `tools/validate.mjs`, and commits.
+
+## `publishers-without-listing.json`, and why it is here
+
+`tools/selftest/publishers.mjs` fails on a publisher record that reaches no
+listing unless this file declares it, so unlike the rest of this directory it
+is read as an excuse. The excuse reaches no further than the records it names,
+and those are under `publishers/`, as editable as this file is: a writer who
+can add a declaration can as easily delete the record it excuses or add the
+listing it waits for.
+
+It lived under `tools/selftest/` until 2026-09-22, inside contract TRUST-31's
+hashed set — and the daily re-check, which runs unattended, drops a withdrawn
+record's declaration in the same commit as the withdrawal, so after R3 that
+commit would have put the bot into shadow and raised an alarm for a withdrawal
+nobody did wrong. It is a record a run writes, not a rule a run judges by, and
+this directory is where the records a run writes as it works live. It is not
+under `publishers/` because every `*.json` there is loaded as a publisher
+record. Its path is `bot/recheck-publishers.mjs`'s `NO_LISTING_FILE`, which
+the suite imports, and only the workflow's commit step spells it again; its
+shape is `tools/selftest/publishers.mjs`'s to judge, and that module is red if
+the workflow ever commits a path inside the set.
 
 ## `keepalive.json`, and the one thing it must never become
 
