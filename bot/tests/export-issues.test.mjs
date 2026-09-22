@@ -315,9 +315,16 @@ await test("nothing a stranger typed reaches the facts or the records", () => {
  * DEC-7's member list, as contract 0.13.0 §2 writes it.
  *
  * Copied deliberately rather than imported: `schema/decision-v1.json` is
- * B-T2.1's and is not on `main`, and the point of this assertion is that this
- * export composes nothing the contract did not name. When the schema lands,
- * RC-R3-2 compares the two directions and this list is the thing it checks.
+ * B-T2.1's — and **it IS on `main`**: all three of B-T2.1's schemas are tracked,
+ * and this sentence said "is not on `main`" until 2026-09-22. The point of the
+ * assertion is unchanged: this export composes nothing the contract did not
+ * name.
+ *
+ * WHAT THE STALENESS COSTS HERE IS SPECIFIC: the old sentence ended "when the
+ * schema lands, RC-R3-2 compares the two directions" — a future tense over a
+ * thing that has happened. **RC-R3-2's comparison is therefore owed now, and
+ * nothing is tracking that it is owed**, because the only note saying so
+ * described it as waiting for a landing that already occurred.
  */
 const DEC7_MEMBERS = new Set([
   "schema", "decision_id", "submission_id", "decided_at", "actor", "moderator", "trigger", "plugin_id",

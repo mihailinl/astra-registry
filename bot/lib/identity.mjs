@@ -341,7 +341,11 @@ export function compareFactsFile({ claimed, factsFile }) {
  * The canary this exists for is "a planted `listing-*` is refused": the
  * `verify` job's output travels between jobs, and an entry planted into it
  * would make `publish` write a listing nothing verified. The NAMES of those
- * entries belong to B-T3.1's job graph, which is not on `main`; the predicate
+ * entries belong to B-T3.1's job graph — **which IS on `main`** since `e6520be`
+ * (`plugins-ingest.yml`, twelve jobs); this sentence said "is not on `main`"
+ * until 2026-09-22 and was falsified by the commit that landed the graph. The
+ * predicate stays here rather than in the YAML for the reason below: it lands
+ * once rather than being invented again inside a step. The predicate
  * is here, with its caller, so the rule lands once rather than being invented
  * again inside a YAML step.
  *
