@@ -24,7 +24,9 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { buildIndex, indexContent } from "../build-index.mjs";
 import { isShallow } from "../coverage/git.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
-import { REPO_ROOT } from "../lib/sources.mjs";
+import { validate as validateSchema } from "../lib/jsonschema.mjs";
+import { REPO_ROOT, loadPublishers, loadSchemas, publisherRecords } from "../lib/sources.mjs";
+import { checkPublisherRecords } from "../validate.mjs";
 import { test, assert, assertEqual, neverAsk, tmp } from "./harness.mjs";
 
 const TOOL = path.join(REPO_ROOT, "tools", "regenerate-signed.mjs");
@@ -408,6 +410,52 @@ export async function run() {
         "the candidate's serial reached the regenerated document. The serial is a property of the history; a " +
         "document that could assert its own would be a monotonic counter anybody can set");
     }
+  });
+
+  // ── the fixture is a tree the registry would accept ───────────────────────
+  //
+  // Every test below proves something about what the generator does to THIS
+  // tree, and that proof is worth exactly as much as the tree is a real one. It
+  // was not: `publishers/fixture-owner.json` carried `"tier": "community"`, a
+  // value `schema/publisher-v1.json` has never allowed, and the regeneration
+  // shipped it into `signed.publishers`, where `schema/index-v1.json` refuses
+  // it too. Measured on the tree before the repair: one refusal from each
+  // schema, and every test in this module green — nothing validated the fixture,
+  // so the byte-equality and no-network proofs were being run over a catalogue
+  // no registry could publish. Found by gap 91's lane, which made
+  // `tools/validate.mjs` judge publisher records and noticed this tree was the
+  // one place its judge never looked.
+  //
+  // Two tests, because they fail for different reasons and a reader needs to
+  // know which: the first is the INPUT, judged by the same function the publish
+  // path's first gate runs, with the loader's schema, so a record here is held
+  // to exactly what a record in `publishers/` is; the second is the OUTPUT, the
+  // catalogue the generator builds from the fixture, held to the index schema a
+  // client verifies against. A listing field the index schema refuses reds the
+  // second alone.
+  await test("the fixture tree's publisher records are ones tools/validate.mjs accepts", () => {
+    const report = { items: [] };
+    for (const level of ["error", "warn", "note"]) report[level] = (where, message) => report.items.push({ level, where, message });
+    const loaded = loadPublishers(FIXTURE);
+    const files = publisherRecords(loaded.publishers).map((r) => r.file);
+    assert(files.length >= 1,
+      "the fixture tree has no publisher record the loader returns, so this judges nothing and the badge path " +
+      "the README promises for fixture-alpha is never entered");
+    checkPublisherRecords({ report, schemas: loadSchemas(REPO_ROOT) }, loaded);
+    assertEqual(report.items.map((i) => `${i.where}: ${i.message}`).join("\n"), "",
+      "a publisher record in tests/fixtures/regenerate-signed/ is refused by the judge tools/validate.mjs runs " +
+      "on publishers/, so the regeneration below proves its bytes over a record no registry could ship");
+  });
+
+  await test("the catalogue the fixture tree regenerates is one the index schema accepts", () => {
+    const built = buildIndex({ root: FIXTURE, serial: 1 });
+    const shipped = Object.keys(built.signed?.publishers ?? {});
+    assert(shipped.length >= 1,
+      "the fixture's catalogue ships no publisher, so the badge half of the index schema is judged over nothing");
+    const problems = validateSchema(loadSchemas(REPO_ROOT).index, built, "$");
+    assertEqual(problems.map((p) => `${p.path} ${p.message}`).join("\n"), "",
+      "the catalogue built from tests/fixtures/regenerate-signed/ is refused by schema/index-v1.json, so the " +
+      "byte-for-byte and no-network proofs in this module are about a document a client would reject");
   });
 
   // ── the no-network proof ──────────────────────────────────────────────────

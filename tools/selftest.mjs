@@ -1705,7 +1705,7 @@ const FLOORS = new Map(Object.entries({
   // the list above does.
   "primitives.mjs": 16,
   "catalogue.mjs": 9,
-  "publishers.mjs": 15,
+  "publishers.mjs": 16,
   "validation.mjs": 17,
   "couplings.mjs": 13,
   "listings.mjs": 5,
@@ -1736,7 +1736,7 @@ const FLOORS = new Map(Object.entries({
   "repo-rules.mjs": 18,
   "claims.mjs": 10,
   "contract-tokens.mjs": 8,
-  "regenerate.mjs": 13,
+  "regenerate.mjs": 15,
   "migration-notice.mjs": 6,
   "baseline.mjs": 9,
 }));
