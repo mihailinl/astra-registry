@@ -1120,7 +1120,7 @@ const FLOORS = new Map(Object.entries({
   // `node tools/selftest.mjs --census` prints this block. MODULES order, so the
   // diff of a re-census is readable and a module's line sits where its entry in
   // the list above does.
-  "primitives.mjs": 15,
+  "primitives.mjs": 16,
   "catalogue.mjs": 9,
   "publishers.mjs": 10,
   "validation.mjs": 16,
