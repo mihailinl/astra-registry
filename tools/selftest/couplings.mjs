@@ -1209,6 +1209,9 @@ export async function run() {
     git("add", "-A");
     git("commit", "-qm", "root");
     const root = git("rev-parse", "HEAD");
+    // What the next id is when it saw no advisory: the answer that means
+    // "refused", whatever its spelling.
+    const none = nextAdvisoryId({ root: dir, year: 2026 });
     const asked = new Map();
     for (const id of ids) {
       const rel = `${SOURCE_DIR}/${id}.json`;
@@ -1221,12 +1224,13 @@ export async function run() {
       asked.set(id, { next, seen });
       git("reset", "-q", "--hard", root);
     }
-    const pad = (n) => String(n).padStart(4, "0");
+    const serial = (id) => Number(id.slice(id.lastIndexOf("-") + 1));
     hold("bot/lib/compile-decision.mjs's nextAdvisoryId", (id) => {
       const { next } = asked.get(id);
-      if (next === "ASTRA-2026-0001") return false;
-      assertEqual(next, `ASTRA-2026-${pad(Number(id.slice(id.lastIndexOf("-") + 1)) + 1)}`,
-        `nextAdvisoryId, with ${JSON.stringify(id)} the only advisory ever added, answered neither its successor nor 0001`);
+      if (next === none) return false;
+      assertEqual(serial(next), serial(id) + 1,
+        `nextAdvisoryId, with ${JSON.stringify(id)} the only advisory ever added, answered ${JSON.stringify(next)}: ` +
+          `neither its successor nor what it answers having seen none, ${JSON.stringify(none)}`);
       return true;
     });
     hold("tools/moderation-coverage.mjs's triggersOf", (id) => {
@@ -1236,8 +1240,8 @@ export async function run() {
       return seen.length === 1;
     });
     assertEqual(asked.get("ASTRA-2026-9999").next, "ASTRA-2026-10000", "the successor of advisory 9999 is not advisory 10000");
-    for (const [id, { next }] of asked) {
-      if (!grammar.test(next)) disagreements.push(`nextAdvisoryId writes ${JSON.stringify(next)} after ${JSON.stringify(id)}, and the grammar refuses it`);
+    for (const [after, next] of [["no advisory", none], ...[...asked].map(([id, a]) => [JSON.stringify(id), a.next])]) {
+      if (!grammar.test(next)) disagreements.push(`nextAdvisoryId writes ${JSON.stringify(next)} after ${after}, and the grammar refuses it`);
     }
 
     // (h) the docs detector, whose relation is a SUPERSET: it flags a URL that
