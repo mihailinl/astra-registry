@@ -190,6 +190,13 @@ export function loadSchemas(root = REPO_ROOT) {
     decision: readJson(path.join(root, "schema", "decision-v1.json")),
     identity: readJson(path.join(root, "schema", "identity-v1.json")),
     queue: readJson(path.join(root, "schema", "queue-v1.json")),
+    // Contract 0.31.0's. MIG-13's markers are committed by hand with each
+    // round's sends (registry plan M-T5.3), and this schema is here for the
+    // reason the three above are — tools/validate.mjs
+    // judges the marker against a rule taken from THIS repository, never from
+    // the tree under test — and that reading is what makes the file a gate
+    // input rather than a document, which is TRUST-31's test for its set.
+    migrationNotice: readJson(path.join(root, "schema", "migration-notice-v1.json")),
   };
 }
 
