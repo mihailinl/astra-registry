@@ -2,9 +2,11 @@
 // drift: the bot's locale list against both schema enums, the vocabulary against
 // spec/locales.yaml with a parse floor, the caps AstraPlugins mirrors from here
 // in both directions, every cap declaring its author side, and the locale corpus
-// in both directions including the exemption that outlives its rule — and one
-// fact that is not about locales: the pathspec the withdrawal list's serial is
-// counted over, which the signer, the regeneration and SERVE-85's clock all read.
+// in both directions including the exemption that outlives its rule — and the
+// facts that are not about locales: the pathspecs both serials are counted over,
+// the advisory directory and id grammar, and (gap 111) the three files TRUST-43's
+// anchor rests on — detector 9's class, the catalogue's serial and the signer's
+// `unchanged` — asked end to end.
 //
 // `withFakeCheckout` below is seventeen lines from `withFakeAstraPlugins` in the
 // old file and reads almost the same, but only this module uses it, so it stays
@@ -34,11 +36,16 @@ import { validate as validateSchema } from "../lib/jsonschema.mjs";
 import { looksLikeAdvisory } from "../coverage/docs-advisory-url.mjs";
 import { checkEntry } from "../../bot/lib/moderation.mjs";
 import { build as buildSite } from "../../site/build.mjs";
-import { serialsAt } from "../signer/plan.mjs";
+import { RESIGN_AFTER_HOURS, SIGNED_FILES, fetchSignedHead, serialsAt } from "../signer/plan.mjs";
+import { buildSignedCommit, commitMessage, signRun } from "../signer/run.mjs";
+import { trailersOf } from "../served-set/provenance.mjs";
+import { stableStringify } from "../lib/canonical.mjs";
+import { loadTestRoot } from "../testkeys/regenerate.mjs";
+import { TRUST_SCHEMA } from "../../bot/lib/sign.mjs";
 import { LIST_PATHSPEC, gather } from "../served-set/main-vs-signed.mjs";
 import { CATALOGUE_PATHSPEC, resolveSerial as resolveCatalogueSerial } from "../build-index.mjs";
 import { serialFor } from "../regenerate-signed.mjs";
-import { a7, gitReader } from "../../bot/detectors.mjs";
+import { a7, a9, gitReader } from "../../bot/detectors.mjs";
 import { nextAdvisoryId } from "../../bot/lib/compile-decision.mjs";
 import { triggersOf } from "../moderation-coverage.mjs";
 import { test, assert, assertEqual, tmp } from "./harness.mjs";
@@ -1022,6 +1029,265 @@ export async function run() {
       `build-index.yml's serial step counts origin/main over ${which(primary)}, and the signer over ${CATALOGUE_PATHSPEC}`);
     assertEqual(fallback, expect.count,
       `build-index.yml's serial step, without origin/main, counts HEAD over ${which(fallback)}, and the signer over ${CATALOGUE_PATHSPEC}`);
+  });
+
+  // ── TRUST-43's anchor, and the three files that make it narrow ─────────────
+  //
+  // Gap 111. Contract 0.33.0 moved TRUST-43's hold from a `signed` commit's
+  // `Source-Commit` to its catalogue's `Index-Source-Commit`, and its Why argues
+  // the move is narrow: *"every commit under `plugins/` moves the catalogue's
+  // serial (DEC-9), so a flagged commit makes the next catalogue a changed one,
+  // generated from it and held at once, unless that run's catalogue gate
+  // fails"*. That sentence is true because of three facts in three files, and
+  // none of the three names TRUST-43:
+  //
+  //   * `CATALOGUE_PATHSPEC` (tools/build-index.mjs) counts every path detector
+  //     9 flags, so a commit touching only one of them moves the serial;
+  //   * `decideDocument` (tools/signer/plan.mjs) calls a catalogue unchanged
+  //     only when everything in `signed` but `issued_at` and `expires_at`
+  //     matches, so a moved serial is a `changed` catalogue;
+  //   * `signRun` (tools/signer/run.mjs) writes this run's Source-Commit as a
+  //     changed catalogue's `Index-Source-Commit`, and keeps the head's for an
+  //     unchanged or carried one.
+  //
+  // Narrow the pathspec so it skips `identity.json`, or judge `unchanged` on a
+  // subset that leaves the serial out, and a hand-committed identity record is
+  // served under an `Index-Source-Commit` from BEFORE it — a commit TRUST-43
+  // lets switch unacknowledged, until the next catalogue change. So this runs
+  // the three end to end, as the signer does, on each commit detector 9 flags.
+  //
+  // **Detector 9's class is read from detector 9, not copied here.** A9 in
+  // `bot/detectors.mjs` is the registry's one statement of it (the contract's
+  // BOT-44 row 9 is the prose it implements). A9 runs over the fixture and says
+  // which commits it flags; a spy on its git reader records every pathspec it
+  // scans history for and every status letter it filters a commit's paths by.
+  // So a path or a status A9 starts flagging that this fixture has no commit
+  // for is red here by name, rather than a class member nobody asked about. The
+  // anchor is built by hand — a real `log/baseline.json` would be validated
+  // inside the signer's gate, which is not this check's subject — and
+  // everything A9 does after it is its own.
+  //
+  // What this does NOT ask: the gate-failure half of the Why. A commit
+  // changing only `source.repo` fails the gate (its releases name the old
+  // repo), and the signer carries the head's catalogue and its
+  // `Index-Source-Commit` — correctly, since that catalogue carries none of it.
+  // Every flagged commit here passes the gate, so the only arm reached is the
+  // one TRUST-43 relies on.
+
+  await test("gap 111 — a commit detector 9 flags moves the catalogue's Index-Source-Commit to itself: A9's class, the catalogue's serial, the signer's `unchanged` and its trailer agree, which is what TRUST-43's anchor rests on", async () => {
+    const dir = path.join(tmp, "couplings-trust43-anchor");
+    fs.mkdirSync(dir, { recursive: true });
+    const git = (...a) =>
+      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "couplings-fixture@example.invalid");
+    git("config", "user.name", "couplings fixture");
+    git("config", "commit.gpgsign", "false");
+    const put = (rel, value) => {
+      fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+      fs.writeFileSync(path.join(dir, rel), typeof value === "string" ? value : stableStringify(value));
+    };
+    const read = (rel) => JSON.parse(fs.readFileSync(path.join(dir, rel), "utf8"));
+    const commit = (message) => {
+      git("add", "-A");
+      git("commit", "-qm", message);
+      return git("rev-parse", "HEAD");
+    };
+
+    // The committed TEST key, delegated long past SERVE-30's seven hours so it
+    // may sign the catalogue on every run below.
+    const KEY = "TEST-ONLY-DO-NOT-TRUST-index-2026a";
+    const key = loadTestRoot(KEY);
+    const available = [{ key_id: KEY, privateKey: key.privateKey, public_key: key.publicKeyB64 }];
+    const delegatedAt = new Map([[KEY, "2026-09-01T00:00:00Z"]]);
+    // One hour between the head and the run: inside D4's cadence, so a
+    // catalogue the signer thinks unchanged is `unchanged` and keeps the head's
+    // trailer. Past it the run would `resign`, which also writes this run's
+    // Source-Commit — and would pass for the wrong reason.
+    const HEAD_AT = "2026-09-19T00:00:00Z";
+    const RUN_AT = "2026-09-19T01:00:00Z";
+    assert(RESIGN_AFTER_HOURS > 1,
+      `RESIGN_AFTER_HOURS is ${RESIGN_AFTER_HOURS}, so a run an hour after the head re-signs and says nothing about \`unchanged\``);
+    const RUN_URL = "https://github.com/mihailinl/astra-registry/actions/runs/111";
+
+    const listing = (id) => ({
+      schema: "astra.registry.plugin/1",
+      id,
+      name: id,
+      summary: "A listing that exists so the catalogue is not empty.",
+      license: "MIT",
+      source: { kind: "github", repo: `someone/${id}` },
+      added_at: "2026-08-10",
+    });
+    const release = (id) => ({
+      schema: "astra.registry.version/1",
+      id,
+      version: "1.0.0",
+      published_at: "2026-08-10T00:00:00Z",
+      release: { kind: "github_release", repo: `someone/${id}`, tag: "v1.0.0" },
+      protocol: 1,
+      capabilities: ["tools"],
+      artifacts: {
+        "linux-x64": {
+          url: `https://github.com/someone/${id}/releases/download/v1.0.0/${id}-1.0.0-linux-x64.astraplugin`,
+          filename: `${id}-1.0.0-linux-x64.astraplugin`,
+          sha256: "a".repeat(64),
+          size: 1234,
+        },
+      },
+    });
+    // B.4's six members, valid, so the signer's gate passes and the only thing
+    // a run can say about the record is what the serial says.
+    const identity = (id, n) => ({
+      schema: "astra.registry.identity/1",
+      plugin_id: id,
+      repository_id: String(1000 + n),
+      repository_owner_id: String(2000 + n),
+      repo: `someone/${id}`,
+      token_hash: String(n).repeat(16),
+    });
+
+    put(SIGNED_FILES.trust, {
+      signatures: [],
+      signed: {
+        schema: TRUST_SCHEMA,
+        serial: 1,
+        issued_at: "2026-09-01T00:00:00Z",
+        expires_at: "2027-09-01T00:00:00Z",
+        index_keys: [{ key_id: KEY, public_key: key.publicKeyB64 }],
+      },
+    });
+    put(SIGNED_FILES.root, { schema: "astra.registry.root/1", roots: [] });
+    for (const id of ["alpha", "beta"]) {
+      put(`plugins/${id}/plugin.json`, listing(id));
+      put(`plugins/${id}/versions/1.0.0.json`, release(id));
+    }
+    put("plugins/alpha/identity.json", identity("alpha", 1));
+    const base = commit("two listings, one of them bound");
+
+    // Row 10's hand commits, one path each: an identity record rewritten, one
+    // added to a listing that had none, and `source` changed and nothing else.
+    // The committed tree has never held an identity record (`git log --all --
+    // 'plugins/*/identity.json'` is empty), so the case is synthesised.
+    put("plugins/alpha/identity.json", identity("alpha", 2));
+    commit("alpha's identity record, rewritten by hand");
+    put("plugins/beta/identity.json", identity("beta", 3));
+    commit("an identity record for beta, added by hand");
+    const beta = read("plugins/beta/plugin.json");
+    beta.source.subdirectory = "plugin";
+    put("plugins/beta/plugin.json", beta);
+    commit("beta's source, changed by hand");
+    const tip = git("rev-parse", "HEAD");
+
+    // Detector 9, asked, through a reader that records what it asks.
+    const reader = gitReader(dir);
+    const scannedSpecs = new Set();
+    const filters = [];
+    const spy = {
+      ...reader,
+      commitsTouching(from, to, specs) {
+        for (const s of specs) scannedSpecs.add(s);
+        return reader.commitsTouching(from, to, specs);
+      },
+      changedIn(sha, filter, specs = []) {
+        filters.push({ filter, specs });
+        return reader.changedIn(sha, filter, specs);
+      },
+    };
+    const findings = [], skipped = [], scanned = {};
+    a9({ anchor: { present: true, addedBy: base }, git: spy }, findings, skipped, scanned);
+    assertEqual(skipped.map((s) => s.why).join("; "), "", "A9 skipped the fixture, so nothing below asks detector 9 anything");
+    assert(scannedSpecs.size > 0, "A9 scanned history for no pathspec, so there is no class here to read");
+    // The class as A9 filters it: a status letter and a pathspec, for each
+    // filter A9 applies over the pathspecs it scanned for. `log/decisions` is
+    // where it looks for the record that excuses a change, not a member.
+    const members = new Set();
+    for (const { filter, specs } of filters) {
+      if (!specs.length || !specs.every((s) => scannedSpecs.has(s))) continue;
+      for (const letter of filter) for (const s of specs) members.add(`${letter} ${s}`);
+    }
+    assert(members.size > 0,
+      "A9 filtered no commit's paths by a pathspec it scanned for, so this spy no longer sees how A9 reads its class");
+    const flaggedSet = new Set(findings.map((f) => f.hex));
+    const flagged = git("rev-list", "--reverse", `${base}..${tip}`).split("\n").filter((sha) => flaggedSet.has(sha));
+    assert(flagged.length > 0, "A9 flagged nothing in a history of hand-committed identity and source changes");
+
+    const TRUST43 =
+      "TRUST-43 (contract 0.33.0) holds a `signed` commit whose catalogue's Index-Source-Commit descends from a commit " +
+      "detector 9 flags, and its Why argues that anchor is narrow because \"every commit under plugins/ moves the " +
+      "catalogue's serial (DEC-9), so a flagged commit makes the next catalogue a changed one, generated from it and " +
+      "held at once\". That rests on CATALOGUE_PATHSPEC (tools/build-index.mjs) counting every path A9 flags, on " +
+      "decideDocument (tools/signer/plan.mjs) calling a catalogue unchanged only when everything but issued_at and " +
+      "expires_at matches, and on signRun (tools/signer/run.mjs) writing a changed catalogue's Index-Source-Commit as " +
+      "the run's own. With this red, a hand-committed identity record or source is served under an " +
+      "Index-Source-Commit from before it, and TRUST-43 lets that commit switch unacknowledged. This is the " +
+      "contract's argument breaking, not a test: repair the file, or reopen TRUST-43's Why (ops dev/couplings.md " +
+      "entry 111) — do not edit this check to match";
+
+    const covered = new Set();
+    const coveredSpecs = new Set();
+    for (const [i, sha] of flagged.entries()) {
+      const parent = git("rev-parse", `${sha}^`);
+      const changed = git("diff-tree", "--no-commit-id", "-r", "--name-status", sha).split("\n").filter(Boolean);
+      assertEqual(changed.length, 1,
+        `the fixture commit ${sha.slice(0, 12)} changes ${changed.length} paths, and "a commit touching only that path" needs one`);
+      const [status, file] = changed[0].split("\t");
+
+      // `signed`'s head: a run at the parent, committed with D2's trailers and
+      // read back the way the signer reads its head.
+      git("checkout", "-q", "--detach", parent);
+      const prior = await signRun({ root: dir, sourceCommit: parent, head: { present: false }, now: HEAD_AT, available, delegatedAt });
+      assertEqual(`${prior.documents.index?.decision} ${prior.commit}`, "changed true",
+        `the fixture's head could not be signed at ${parent.slice(0, 12)}: ${[...prior.refusals, ...prior.alerts].join(" | ")}`);
+      const signedSha = buildSignedCommit({ root: dir, files: prior.files, parent: null, message: commitMessage(prior, RUN_URL) });
+      const ref = `refs/astra-signer/trust43-${i}`;
+      git("update-ref", ref, signedSha);
+      const head = fetchSignedHead({ root: dir, fetch: false, ref });
+      assertEqual(trailersOf(git("log", "-1", "--format=%B", signedSha))["Index-Source-Commit"], parent,
+        "the fixture's head does not name its parent as Index-Source-Commit, so moving off it proves nothing");
+
+      git("checkout", "-q", "--detach", sha);
+      const was = serialsAt({ root: dir, sha: parent }).index;
+      const is = serialsAt({ root: dir, sha }).index;
+      assert(is > was,
+        `${sha.slice(0, 12)} changes only ${file} (${status}), which detector 9 flags, and the catalogue's serial did ` +
+          `not move (${was} → ${is}): CATALOGUE_PATHSPEC is ${JSON.stringify(CATALOGUE_PATHSPEC)} and does not count it. ${TRUST43}`);
+
+      const run = await signRun({ root: dir, sourceCommit: sha, head, now: RUN_AT, available, delegatedAt });
+      assertEqual(run.documents.index?.decision, "changed",
+        `${sha.slice(0, 12)} changes only ${file} (${status}), which detector 9 flags, and moved the serial ${was} → ${is}, ` +
+          `and the signer did not call the catalogue changed${run.alerts.length ? ` (${run.alerts.join(" | ")})` : ""}: ` +
+          `decideDocument no longer treats a moved serial as a change. ${TRUST43}`);
+      const trailer = trailersOf(commitMessage(run, RUN_URL))["Index-Source-Commit"];
+      assertEqual(trailer, sha,
+        `the signer published a changed catalogue generated at ${sha.slice(0, 12)}, which changes only ${file}, under ` +
+          `Index-Source-Commit ${String(trailer).slice(0, 12)}${trailer === parent ? " (the head's, from before the flag)" : ""}: ` +
+          `signRun no longer writes its own Source-Commit for a changed catalogue. ${TRUST43}`);
+      assertEqual(`${run.commit} ${run.refusals.join(" | ")}`, "true ",
+        `the run at ${sha.slice(0, 12)} would not commit, so no \`signed\` commit carries that trailer`);
+
+      for (const s of scannedSpecs) {
+        if (git("diff-tree", "--no-commit-id", "-r", "--name-only", sha, "--", s) !== "") coveredSpecs.add(s);
+      }
+      for (const m of members) {
+        const [letter, spec] = m.split(" ");
+        if (letter === status && git("diff-tree", "--no-commit-id", "-r", "--name-only", sha, "--", spec) !== "") covered.add(m);
+      }
+    }
+    git("checkout", "-q", "main");
+
+    // The census, both ways from A9: every pathspec it scans and every status
+    // it filters by has a flagged commit above that ran the whole chain. A
+    // member A9 grows is a member this fixture must grow a commit for — and
+    // if it lies outside plugins/, TRUST-43's "Detector 9's class lies under
+    // plugins/**" is the sentence that stops being true.
+    const unscanned = [...scannedSpecs].filter((s) => !coveredSpecs.has(s));
+    assertEqual(unscanned.join(", "), "",
+      `A9 scans history for these and no flagged commit here touches them, so nothing asked whether they move the ` +
+        `catalogue's Index-Source-Commit — add a commit for each. ${TRUST43}`);
+    const uncovered = [...members].filter((m) => !covered.has(m));
+    assertEqual(uncovered.join(", "), "",
+      `A9 flags these (status pathspec) and no commit here exercised them — add one for each. ${TRUST43}`);
   });
 
   // ── the advisory directory, which two readers of history parse ─────────────
