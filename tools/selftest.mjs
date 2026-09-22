@@ -976,7 +976,7 @@ const FLOORS = new Map(Object.entries({
   "roots.mjs": 3,
   "trust-anchor.mjs": 4,
   "update-signing.mjs": 12,
-  "update-notes.mjs": 8,
+  "update-notes.mjs": 9,
   "repo-rules.mjs": 17,
   "claims.mjs": 7,
   "contract-tokens.mjs": 5,

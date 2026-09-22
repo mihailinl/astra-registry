@@ -14,12 +14,13 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { contentProblems, envelopeProblems } from "../sign-update-manifest.mjs";
 import { loadTestRoot } from "../testkeys/regenerate.mjs";
 import { UPDATE_SCHEMA, signEnvelope, verifyEnvelope } from "../../bot/lib/sign.mjs";
-import { test, assert, assertEqual, tmp } from "./harness.mjs";
+import { test, assert, assertEqual, neverAsk, tmp } from "./harness.mjs";
 import { ROOT_B_KEY_ID, TRUST_ROOT_A } from "./fixtures.mjs";
 import {
   PRODUCTION_ROOTS, TRUST_ROOT_B, UPDATE_NOTES_EN, UPDATE_SIGNER, UPDATE_SIGNER_PUB,
@@ -329,5 +330,33 @@ export async function run() {
       }
     }
     assert(seen >= 2, `only ${seen} release manifests found; 0.2.4 and 0.2.5 are committed`);
+  });
+
+  await test("no release record ever committed has left the tree", () => {
+    // The floor above is `seen >= 2`, and 2 is a hand-copy of today's count.
+    // Measured 2026-09-22: deleting releases/0.2.4/manifest.json does redden
+    // it — because the floor IS today's count, exactly. releases/0.2.6/ already
+    // holds its notes; on the day its manifest lands, deleting any one of three
+    // records leaves `seen` at 2 and that floor silent. (That is a prediction,
+    // not a measurement: a third record that verifies needs a production root,
+    // and this repository never holds one.)
+    //
+    // Deleting a record is not tidying. It is how an older release gets signed
+    // afresh without `--withdraw-to`: the signer compares a new document with
+    // the newest record it can find, and a record that is not there cannot be
+    // newer. A record is history, so the second source for which records must
+    // exist is the history, read here rather than copied into a number.
+    const git = (...a) => execFileSync("git", ["-C", REPO_ROOT, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    if (git("rev-parse", "--is-shallow-repository") === "true") {
+      neverAsk("this checkout is shallow, so the history that says which release records were ever committed is not in it",
+        "a checkout with `fetch-depth: 0` asks it, as build-index.yml's does");
+    }
+    const ever = [...new Set(git("log", "--format=", "--name-only", "--diff-filter=A", "HEAD", "--", "releases/*/manifest.json")
+      .split("\n").filter(Boolean))].sort();
+    assert(ever.length >= 1, "git log finds no release record ever added under releases/, so the pathspec or the walk is broken");
+    const gone = ever.filter((f) => !fs.existsSync(path.join(REPO_ROOT, f)));
+    assertEqual(gone.join(", "), "",
+      "a release record committed earlier is no longer in the tree; a record is what went live, and the signer's " +
+      "newest-record comparison cannot see one that is gone");
   });
 }
