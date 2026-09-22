@@ -37,7 +37,7 @@ import {
   gateVerdict, indexSizeVerdict, listGate, maxIndexBytes, planRun, serialsAt,
 } from "../signer/plan.mjs";
 import { armingState, pagesRegistryFiles, pagesTree } from "../signer/pages.mjs";
-import { test, assert, assertEqual, tmp } from "./harness.mjs";
+import { test, assert, assertEqual, neverAsk, tmp } from "./harness.mjs";
 
 const KEY_A = "TEST-ONLY-DO-NOT-TRUST-index-2026a";
 const KEY_B = "TEST-ONLY-DO-NOT-TRUST-index-2026b";
@@ -693,6 +693,21 @@ export async function run() {
     assertEqual(contentOf(doc).serial, 7, "the serial is content");
   });
 
+  // One valid tree, built the same way for both halves of seam 4, so the two
+  // tests below cannot drift into asking about different trees.
+  //
+  // The name is a parameter because `makeTree` is a directory under `tmp` keyed
+  // by it: two calls with one name reuse the tree, and the second `commit()`
+  // has nothing to commit and throws. Watched — the split below went red with
+  // "nothing to commit" in the one environment where both tests actually run
+  // their bodies, which is the environment CI is.
+  const gateOnAValidTree = async (name) => {
+    const t = makeTree(name);
+    t.addListing("dice-roller");
+    t.commit("a listing");
+    return catalogueGate({ root: t.dir, serial: 1, head: { present: false }, limit: 1048576 });
+  };
+
   await test("a `NOT verified` note never decides anything, and the catalogue gate passes without a checkout", async () => {
     // Seam 4. `tools/validate.mjs` emits one note per cross-repository check it
     // could not run, and `build-index.yml` turns those into exit 1 — correctly,
@@ -714,16 +729,39 @@ export async function run() {
     assertEqual(gateVerdict({ errors: [{ where: "x", message: "y" }], notes: [] }).ok, false,
       "an error did not fail the gate, so the gate decides nothing at all");
 
-    const t = makeTree("no-sibling");
-    t.addListing("dice-roller");
-    t.commit("a listing");
-    const gate = await catalogueGate({ root: t.dir, serial: 1, head: { present: false }, limit: 1048576 });
+    const gate = await gateOnAValidTree("gate-hermetic");
     assertEqual(gate.ok, true, `a valid tree failed the catalogue gate: ${gate.failures.join("; ")}`);
+  });
 
-    if (!fs.existsSync(path.resolve(REPO_ROOT, "../AstraPlugins"))) {
-      assert(gate.notes.some((n) => n.includes("NOT verified")),
-        `with no AstraPlugins checkout the gate has to RECORD the checks it could not run: ${JSON.stringify(gate.notes)}`);
+  // Split out of the test above, where it was an `if (!existsSync(…))` around
+  // the only assertion that reads the real environment.
+  //
+  // Inside that `if`, this check ran in CI and NEVER on a developer's machine,
+  // and the test printed `ok` either way — so on every machine that has
+  // AstraPlugins beside this repository, one of this suite's checks was a
+  // silent no-op counted inside `300 passed`. Measured, not argued: a coverage
+  // diff of the suite run with and against a sibling checkout differs in
+  // exactly one span, and it is this one.
+  //
+  // It is the MIRROR of C19. That case can only be provoked WITH a sibling
+  // present; this one can only be asked WITHOUT one. No environment asks both,
+  // so neither a developer's green run nor a green CI run is a run in which
+  // both of this repository's cross-repository absence rules were measured.
+  // Saying `NOT ASKED` out loud is what makes that visible in the place people
+  // read, which is the last line.
+  await test("with no sibling checkout the catalogue gate RECORDS the checks it could not run", async () => {
+    const sibling = path.resolve(REPO_ROOT, "../AstraPlugins");
+    if (fs.existsSync(sibling)) {
+      neverAsk(
+        `${sibling} exists, so tools/validate.mjs finds the checkout and emits no \`NOT verified\` note ` +
+        "for this check to read",
+        "CI asks it: every lane that runs this suite does so before any AstraPlugins checkout exists. To ask " +
+        "it here, move or rename the sibling checkout for one run",
+      );
     }
+    const gate = await gateOnAValidTree("gate-no-sibling");
+    assert(gate.notes.some((n) => n.includes("NOT verified")),
+      `with no AstraPlugins checkout the gate has to RECORD the checks it could not run: ${JSON.stringify(gate.notes)}`);
   });
 
   // ── D5: Pages, the arming flag and the latch ───────────────────────────────

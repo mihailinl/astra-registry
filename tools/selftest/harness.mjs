@@ -51,6 +51,56 @@ const failures = [];
  */
 const registered = [];
 
+/**
+ * The third word, and the reason there has to be one.
+ *
+ * Two checks in this suite reach a state where the thing they examine is not
+ * there to be examined, and until now both printed `ok` and were counted in the
+ * number on the last line. `(b) the committed tree's staging listing` returns
+ * early because no staging listing is published yet; the sibling half of
+ * ``a `NOT verified` note never decides anything`` is inside an
+ * `if (!existsSync(../AstraPlugins))`, so it runs in CI and never on a
+ * developer's machine. Both were honest in the transcript — each printed a
+ * parenthetical saying it had not run — and both were absorbed into
+ * `300 passed`, which is the number people quote.
+ *
+ * **A skipped check and a passing check are the same colour in every summary.**
+ * That was true of this suite until this commit, and it is the same class as
+ * C19 and Gap 17: a sentence that is true about today's tree standing in for a
+ * measurement nobody took.
+ *
+ * The shape is `tools/cutover-preflight.mjs`'s, settled at R12: three words that
+ * are never merged, and **no way to convert NOT ASKED into a pass**. There is no
+ * `--attested` flag there and there is no equivalent here — `neverAsk` throws, so
+ * it reads like a `return` and nothing after it can be counted. An operator who
+ * knows the answer records it beside the run, not in it.
+ *
+ * What is deliberately NOT copied is that tool's exit code 2. This suite is a
+ * step in `build-index.yml`, `ingest.yml` and `baseline.yml`; exiting non-zero
+ * on a tree where both of these states are legitimate would turn `main` red
+ * today and teach everybody to ignore the word. So the exit code still reflects
+ * failures only, and the honesty is carried by the headline word and by the
+ * count being taken OUT of `passed`. Flipping it to 2 is the one-line change
+ * marked in the runner, and it is the operator's call, not this file's.
+ */
+export class NeverAsked extends Error {}
+
+const notAsked = [];
+
+/**
+ * Say that this check could not be asked, and say who can answer it.
+ *
+ * Throws rather than returns, for the reason `cutover-preflight.mjs` has no
+ * `--attested`: a helper that returned would let the rest of the test body run
+ * and be counted, which is the behaviour being removed.
+ *
+ * @param {string} why what was not there, in the present tense
+ * @param {string} [whoCanAnswer] what would have to change for this to be asked
+ */
+export function neverAsk(why, whoCanAnswer) {
+  throw new NeverAsked(whoCanAnswer ? `${why} — ${whoCanAnswer}` : why);
+}
+
 export function test(name, fn) {
   const done = (async () => {
     try {
@@ -58,6 +108,15 @@ export function test(name, fn) {
       console.log(`  ok    ${name}`);
       passed++;
     } catch (e) {
+      if (e instanceof NeverAsked) {
+        // A marker a reader cannot mistake for `ok`, and the reason on the line
+        // under it, because "which check did not run" is the question somebody
+        // reading a green log is trying to answer.
+        console.log(`  ----  ${name}`);
+        console.log(`        NOT ASKED: ${e.message.split("\n").join("\n        ")}`);
+        notAsked.push(`${name} — ${e.message}`);
+        return;
+      }
       console.log(`  FAIL  ${name}`);
       console.log(`        ${e.message.split("\n").join("\n        ")}`);
       failures.push(name);
@@ -69,7 +128,7 @@ export function test(name, fn) {
 
 /** What the runner prints on the last line. Read once, after the last module. */
 export function results() {
-  return { passed, failures };
+  return { passed, failures, notAsked };
 }
 
 /**

@@ -334,9 +334,16 @@ async function checkModuleSet() {
 // TEST_FLOOR from below, and the interlock that counted textual occurrences of
 // the guards' names in this file. See the note on `no module has left the
 // runner's list` in repo-rules.mjs for what took their place and what did not.
+//
+// NOT ASKED counts as REPORTED here, and only here. The floor below asks
+// "did this module say anything at all", and a module whose every check was
+// honestly unaskable has said something — it has said so. Leaving it out would
+// make the third word trip the emptied-run() guard, which is a different
+// failure with a different fix, and the first thing anybody would do about it
+// is delete the third word.
 const reported = () => {
   const r = results();
-  return r.passed + r.failures.length;
+  return r.passed + r.failures.length + r.notAsked.length;
 };
 
 await checkModuleSet();
@@ -422,15 +429,35 @@ if (stragglers.length) {
 
 cleanupTmp();
 
-const { passed, failures } = results();
-// Both figures are counted, not compared to anything written down. The module
+const { passed, failures, notAsked } = results();
+// Three figures, all counted, none compared to anything written down. The module
 // count is here because a module count going down by one is the one shrinkage
 // a reader can see at a glance, and the pinned list in repo-rules.mjs is what
 // actually asserts it.
+//
+// THE HEADLINE WORD IS THE POINT. `passed` no longer absorbs the checks that
+// could not be asked, so the number a reader quotes is the number of checks
+// that actually measured something. A run with anything unasked cannot print
+// `PASS`, because `PASS` is what everybody had been quoting about a suite that
+// contained two checks nobody had run.
+//
+// EXIT CODES. 1 on a failure or a shortfall, 0 otherwise — including when
+// something was not asked. `tools/cutover-preflight.mjs` exits 2 in that case
+// and is right to: it is read by an operator before a cutover. This suite is a
+// step in build-index.yml, ingest.yml and baseline.yml, and both of today's
+// unasked checks are legitimate states of the tree, so exiting non-zero would
+// turn `main` red on a correct tree and the word would be switched off within a
+// day. **To make NOT ASKED fatal, change the line marked `EXIT-2` below.** That
+// is the operator's decision and it needs the two checks below resolved first.
+const headline = failures.length || shortfalls.length ? "FAIL"
+  : notAsked.length ? "INCOMPLETE"
+  : "PASS";
 console.log(
-  `\n${failures.length === 0 && shortfalls.length === 0 ? "PASS" : "FAIL"}  ${passed} passed, ${failures.length} failed ` +
+  `\n${headline}  ${passed} passed, ${failures.length} failed, ${notAsked.length} not asked ` +
   `(${MODULES.length} modules)`,
 );
 for (const f of failures) console.log(`      - ${f}`);
 for (const s of shortfalls) console.log(`      - a module ran and reported nothing: ${s}`);
+for (const n of notAsked) console.log(`      - not asked: ${n}`);
 if (failures.length || shortfalls.length) process.exit(1);
+// EXIT-2: `if (notAsked.length) process.exit(2);` — see the note above.
