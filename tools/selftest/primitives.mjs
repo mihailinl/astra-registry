@@ -9,7 +9,7 @@ import path from "node:path";
 
 import { stableStringify, jcs } from "../lib/canonical.mjs";
 import { KNOWN, validate as validateSchema } from "../lib/jsonschema.mjs";
-import { invalidId, unsafePathComponent, foldId, unsafeDisplayText } from "../lib/ids.mjs";
+import { ID_PATTERN, invalidId, unsafePathComponent, foldId, unsafeDisplayText } from "../lib/ids.mjs";
 import { compareSemver } from "../lib/semver.mjs";
 import { readZip, readEntry } from "../lib/zip.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
@@ -19,8 +19,23 @@ import { test, assert, assertEqual, tmp } from "./harness.mjs";
 export async function run() {
   console.log("\ncanonical json");
   await test("keys are sorted by code unit, output ends in a newline", () => {
-    const s = stableStringify({ b: 1, a: { d: 2, c: 3 }, $z: 4 });
-    assert(s === '{\n  "$z": 4,\n  "a": {\n    "c": 3,\n    "d": 2\n  },\n  "b": 1\n}\n', `got ${JSON.stringify(s)}`);
+    // **`Z` is the repair.** Every key here used to be lowercase ASCII or `$`,
+    // and over such keys a code-unit sort and a case-folding one agree.
+    // Measured 2026-09-22: `sortedEntries` in tools/lib/canonical.mjs made
+    // case-insensitive (lowercased keys compared first) and ALL 317 checks
+    // stayed green — this one, the RFC 8785 vector below (none of its nine keys
+    // carries an ASCII capital), and every `--check` that regenerates a committed
+    // document, since no committed document's key order moves under folding. By code unit
+    // every capital sorts before every lowercase letter — `Z` is 0x5A, `a` is
+    // 0x61 — and folded, `Z` sorts after `b`.
+    //
+    // Code-point precision is deliberately NOT asked here, because it is asked
+    // below: over ASCII the two orders are one order, and the RFC vector is the
+    // fixture where UTF-16 and code-point order differ. A code-point sort and a
+    // locale-aware sort were both measured on the same day: this check stayed
+    // green and `RFC 8785 §3.2.3` went red for each, which is where they belong.
+    const s = stableStringify({ b: 1, a: { d: 2, c: 3 }, $z: 4, Z: 5 });
+    assert(s === '{\n  "$z": 4,\n  "Z": 5,\n  "a": {\n    "c": 3,\n    "d": 2\n  },\n  "b": 1\n}\n', `got ${JSON.stringify(s)}`);
   });
   await test("jcs is the same document with the whitespace removed", () => {
     const doc = { b: [1, 2], a: "x" };
@@ -231,14 +246,115 @@ export async function run() {
 
   console.log("\nids");
   await test("safe path components", () => {
-    assert(unsafePathComponent("dice-roller") === null);
-    assert(unsafePathComponent("..") !== null);
-    assert(unsafePathComponent("a/b") !== null);
-    assert(unsafePathComponent("con") !== null, "CON is a Windows device name");
-    assert(unsafePathComponent("x​") !== null, "a zero-width space passed");
-    assert(invalidId("Dice-Roller") !== null, "uppercase passed");
-    assert(invalidId("-lead") !== null);
-    assert(invalidId("a") !== null, "one character passed");
+    // Every rule `unsafePathComponent` and `invalidId` carry, each asked by an
+    // input that trips THAT rule and no other, and each refusal asked for its
+    // REASON. Both functions return at the first rule that fires, so an input
+    // that trips two proves only the earlier one, and a bare `!== null` cannot
+    // tell which rule said no.
+    //
+    // Measured 2026-09-22 against the eight assertions this list replaces: the
+    // NFKC rule, the control-character rule, the trailing dot, the length cap,
+    // the NUL rule, the ':' rule, the backslash, the single dot, the empty
+    // string, a device name with an extension or in capitals, the double
+    // hyphen, and a charset widened to `_` and `.` or to a trailing hyphen
+    // were each broken in tools/lib/ids.mjs in turn, and each time ALL 317
+    // checks stayed green —
+    // `validation.mjs`'s `an id that is not a safe path component is rejected`
+    // included, because `../../etc/passwd` trips a separator and a relative
+    // component first. These are the rules that stand between a listed id and
+    // `remove_dir_all(<plugins_dir>/<id>)` on a stranger's disk.
+    const refused = (fn, s, why) => {
+      const got = fn(s);
+      assert(got !== null && got.includes(why),
+        `${fn.name}(${JSON.stringify(s)}) should refuse because it ${why}; it said ${JSON.stringify(got)}`);
+    };
+    const U = unsafePathComponent;
+    assertEqual(U("dice-roller"), null, "an ordinary id was refused");
+    refused(U, "", "empty");
+    // Over NAME_MAX (255 bytes) on every common filesystem, so this is over the
+    // cap whatever the cap is; WHICH number the cap is, and that the two guards
+    // and the schemas state one number, is `the id cap is one number…` below.
+    refused(U, "a".repeat(256), "longer than");
+    refused(U, ".", "relative path component");
+    refused(U, "..", "relative path component");
+    refused(U, "a/b", "path separator");
+    refused(U, "a\\b", "path separator");
+    refused(U, "a\0b", "NUL");
+    refused(U, "a:b", "alternate-data-stream");
+    refused(U, "a\u0001b", "control character");
+    refused(U, "x​", "zero-width");
+    // U+FB01 LATIN SMALL LIGATURE FI: no control, no zero-width, and NFKC
+    // rewrites it to "fi" — so a directory named with it and one named `file`
+    // are two names for what a user reads as one.
+    refused(U, "ﬁle", "NFKC");
+    refused(U, "dice.", "ends in a dot");
+    refused(U, "dice ", "ends in a dot or space");
+    refused(U, "con", "Windows device name");
+    refused(U, "con.txt", "Windows device name");
+    refused(U, "Con", "Windows device name");
+
+    const I = invalidId;
+    assertEqual(I("dice-roller"), null, "an ordinary id was refused");
+    assertEqual(I("a1"), null, "a two-character id was refused");
+    for (const [id, what] of [
+      ["Dice-Roller", "a capital"], ["-lead", "a leading hyphen"], ["dice-", "a trailing hyphen"],
+      ["a", "one character"], ["a_b", "an underscore"], ["a.b", "an interior dot"],
+    ]) {
+      assert((I(id) ?? "").includes("does not match"), `${what} passed the charset: invalidId(${JSON.stringify(id)}) = ${JSON.stringify(I(id))}`);
+    }
+    refused(I, "dice--roller", "double hyphen");
+  });
+  await test("an id is one grammar: every schema publishes ids.mjs's ID_PATTERN, and unsafePathComponent caps where it does", () => {
+    // The 64-character cap is written three ways in this repository and none
+    // of them imports another: `{0,62}` inside ID_PATTERN, `id.length > 64` in
+    // unsafePathComponent (independent ON PURPOSE — "one of the two will one
+    // day be relaxed and the other has to still be standing"), and the same
+    // pattern copied into six schemas that publish it to other parties.
+    // Measured 2026-09-22, before this check: each of `{0,62}` -> `{0,63}` and
+    // `{0,61}` in tools/lib/ids.mjs, `> 64` -> `> 65` and `> 63`, and `{0,62}`
+    // -> `{0,63}` and `{0,61}` in schema/plugin-v1.json left all 317 checks
+    // green; so did widening ID_PATTERN's charset to `_` and `.`. Independent
+    // guards are only worth having while they agree, and nothing said when
+    // they stopped.
+    //
+    // The schemas are FOUND, not listed: every `pattern` anywhere under schema/
+    // that has the id's shape, whatever number sits in the braces, so a copy
+    // that drifted is caught and a new copy is held without anybody adding it
+    // here. The floor is today's count, because a walk that finds nothing
+    // passes every assertion after it.
+    const ID_SHAPED = /^\^\[a-z0-9[^\]]*\]\(\?:\[a-z0-9[^\]]*\]\{0,\d+\}\[a-z0-9[^\]]*\]\)\$$/;
+    const copies = [];
+    const walk = (node, where) => {
+      if (Array.isArray(node)) node.forEach((v, i) => walk(v, `${where}/${i}`));
+      else if (node && typeof node === "object") {
+        for (const [k, v] of Object.entries(node)) {
+          if (k === "pattern" && typeof v === "string" && ID_SHAPED.test(v)) copies.push([where, v]);
+          walk(v, `${where}/${k}`);
+        }
+      }
+    };
+    const schemaDir = path.join(REPO_ROOT, "schema");
+    for (const f of fs.readdirSync(schemaDir).filter((n) => n.endsWith(".json")).sort()) {
+      walk(JSON.parse(fs.readFileSync(path.join(schemaDir, f), "utf8")), `schema/${f}#`);
+    }
+    assert(copies.length >= 6, `found ${copies.length} id patterns under schema/; plugin, version, index, identity, decision and moderation-work each publish one`);
+    const drifted = copies.filter(([, v]) => v !== ID_PATTERN).map(([w, v]) => `${w}: ${v}`);
+    assertEqual(drifted.join("\n  "), "", `a schema publishes an id grammar that is not tools/lib/ids.mjs's ${ID_PATTERN}`);
+
+    // The length unsafePathComponent stops at, against the length the pattern
+    // stops at, both read by asking rather than by parsing either.
+    const longestAccepted = (accepts) => {
+      let longest = 0;
+      for (let n = 1; n <= 1000; n++) if (accepts("a".repeat(n))) longest = n;
+      return longest;
+    };
+    const ID_RE = new RegExp(ID_PATTERN);
+    const patternCap = longestAccepted((s) => ID_RE.test(s));
+    const guardCap = longestAccepted((s) => unsafePathComponent(s) === null);
+    assert(patternCap > 1 && patternCap < 1000, `ID_PATTERN accepts ids up to ${patternCap} characters, which is not a cap`);
+    assertEqual(guardCap, patternCap,
+      "unsafePathComponent's length cap and ID_PATTERN's are different numbers, so one of the two independent guards " +
+      "has already been relaxed or tightened without the other");
   });
   await test("confusable folding collapses 0/o and hyphens", () => {
     assert(foldId("dice-roller") === foldId("dicer0ller"), `${foldId("dice-roller")} vs ${foldId("dicer0ller")}`);
@@ -261,6 +377,23 @@ export async function run() {
     assert(compareSemver("0.10.0", "0.9.0") === 1, "0.10.0 must be newer than 0.9.0");
     assert(compareSemver("1.0.0-alpha", "1.0.0") === -1);
     assert(compareSemver("1.0.0+a", "1.0.0+b") === 0, "build metadata must be ignored");
+    // semver.org 2.0.0 §11.4's own example, in order, every adjacent pair both
+    // ways. "Prerelease included" used to mean one pair, 1.0.0-alpha < 1.0.0, and
+    // measured 2026-09-22 each of the three rules INSIDE a prerelease could be
+    // broken in tools/lib/semver.mjs with all 317 checks green: numeric
+    // identifiers compared as strings (beta.11 before beta.2), numeric ranked
+    // above alphanumeric (alpha.beta before alpha.1), and a longer identifier
+    // set ranked below a shorter one (alpha.1 before alpha). Each of those
+    // orders two real releases the wrong way round, and the newest release is
+    // chosen by this function.
+    const chain = [
+      "1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta",
+      "1.0.0-beta.2", "1.0.0-beta.11", "1.0.0-rc.1", "1.0.0",
+    ];
+    for (let i = 0; i + 1 < chain.length; i++) {
+      assertEqual(compareSemver(chain[i], chain[i + 1]), -1, `${chain[i]} must precede ${chain[i + 1]} (semver.org §11.4)`);
+      assertEqual(compareSemver(chain[i + 1], chain[i]), 1, `${chain[i + 1]} must follow ${chain[i]} (semver.org §11.4)`);
+    }
   });
 
   console.log("\nzip reader/writer");

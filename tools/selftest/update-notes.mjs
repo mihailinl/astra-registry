@@ -14,17 +14,18 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { contentProblems, envelopeProblems } from "../sign-update-manifest.mjs";
 import { loadTestRoot } from "../testkeys/regenerate.mjs";
 import { UPDATE_SCHEMA, signEnvelope, verifyEnvelope } from "../../bot/lib/sign.mjs";
-import { test, assert, assertEqual, tmp } from "./harness.mjs";
+import { test, assert, assertEqual, neverAsk, tmp } from "./harness.mjs";
 import { ROOT_B_KEY_ID, TRUST_ROOT_A } from "./fixtures.mjs";
 import {
   PRODUCTION_ROOTS, TRUST_ROOT_B, UPDATE_NOTES_EN, UPDATE_SIGNER, UPDATE_SIGNER_PUB,
   assertRefused, freshArgs, hoursFromNow, nextSeq, pretty, readText,
-  updateDoc, updateSandbox, updateSigner, updateTmp,
+  updateDoc, updateSandbox, updateSigner, updateSignerAt, updateTmp,
   withDuplicateVersion, withUnpaddedSignature, writeUpdateDoc, writeUpdateText,
 } from "./update-fixtures.mjs";
 
@@ -89,6 +90,20 @@ export async function run() {
   });
 
   await test("--verify says ok only for a document a client would accept now", () => {
+    // Not every refusal is asked HERE, and the rest are not unasked. Each was
+    // measured on 2026-09-22 by breaking the rule in tools/sign-update-manifest.mjs
+    // and reading which check went red. A signature that does not verify —
+    // a key root.json does not publish, bytes altered after signing — reddens
+    // `--verify --receipt binds…` and `--renew refuses a previous document…`,
+    // which reach the same envelopeProblems. A v2 body under the v1 domain
+    // reddens `--renew refuses…`. A byte only a lenient decoder reads, and a
+    // byte-order mark, redden `--verify --receipt binds…`, which is this same
+    // verifyFile with a receipt. The artefact and notes rules redden `--renew
+    // re-checks every claim…`, over the same contentProblems. A version that is
+    // not SemVer is refused by the filename rules as well as by its own — the
+    // filename must carry a SemVer version equal to it — so deleting its own
+    // changes only the message. The three at the end of the list below
+    // were asked nowhere at all.
     const dir = updateSandbox();
     const verify = (text) => updateSigner(["--verify", writeUpdateText(text)], dir);
     let r = verify(pretty(updateDoc()));
@@ -108,6 +123,17 @@ export async function run() {
         d.signed.latest.artifacts[0].sizeBytes = 1.5;
         return pretty(d);
       })(), "cannot be canonicalised"],
+      // The three below are the repair. Each was deleted from
+      // tools/sign-update-manifest.mjs on 2026-09-22 with all 317 checks green,
+      // and each time `--verify` printed `ok` and "a client … would accept it"
+      // over a document the client refuses — for the first, with `NaN days
+      // left` in the reading an operator is told to trust.
+      ["an expires that is not an instant", pretty(updateDoc({ expires: "2027-03-10" })),
+        'expires "2027-03-10" is not an RFC 3339 instant'],
+      ["a signedAt that is not an instant", pretty(updateDoc({ signedAt: "2026-09-21" })),
+        'signedAt "2026-09-21" is not an RFC 3339 instant'],
+      ["an artefact list that offers nothing", pretty(updateDoc({ mutate: (s) => { s.latest.artifacts = []; } })),
+        "latest.artifacts offers nothing"],
     ];
     for (const [name, text, expect] of cases) assertRefused(verify(text), expect, undefined, name);
   });
@@ -141,6 +167,46 @@ export async function run() {
     out = updateTmp("x");
     assertRefused(updateSigner([...freshArgs("0.2.6"), "--out", out], ahead),
       "not strictly later than releases/0.2.5/manifest.json", out, "a record dated tomorrow");
+
+    // ── the repair: three cases the four above could not tell apart ──────────
+    //
+    // Measured 2026-09-22, each with all 317 checks green: the signedAt rule
+    // in signFresh weakened from "strictly later" to "not earlier"; the
+    // signedAt rule pointed at the record with the highest VERSION instead of
+    // the one signed last; and the version rule pointed at the record signed
+    // last instead of the highest version. The fixtures above hold one record
+    // at a time, where the last-signed and the highest-versioned are the same
+    // record, and dated a day ahead, where "earlier" and "equal" answer alike.
+
+    // Equal at the seconds signedAt is published in, which no running clock
+    // reaches on purpose. `updateSignerAt` stops the child's clock half a second
+    // into the record's own second; a second later is the other side of the rule.
+    const at = hoursFromNow(-1);
+    const same = updateSandbox([updateDoc({ signedAt: at })]);
+    out = updateTmp("x");
+    assertRefused(updateSignerAt(Date.parse(at) + 500, [...freshArgs("0.2.6"), "--out", out], same),
+      "not strictly later than releases/0.2.5/manifest.json", out, "signed in the record's own second");
+    out = updateTmp("next-second");
+    const next = updateSignerAt(Date.parse(at) + 1000, [...freshArgs("0.2.6"), "--out", out], same);
+    assertEqual(next.status, 0, `one second after the record: ${next.stderr}`);
+
+    // After a withdrawal the record signed LAST is not the one offering the
+    // highest version, and each rule has its own: signedAt against the last
+    // signed, the version against the highest offered.
+    const withdrawnAhead = updateSandbox([
+      updateDoc({ version: "0.2.5", signedAt: hoursFromNow(-48) }),
+      updateDoc({ version: "0.2.4", signedAt: hoursFromNow(24) }),
+    ]);
+    out = updateTmp("x");
+    assertRefused(updateSigner([...freshArgs("0.2.6"), "--out", out], withdrawnAhead),
+      "not strictly later than releases/0.2.4/manifest.json", out, "a withdrawal signed after the highest version");
+    const withdrawn = updateSandbox([
+      updateDoc({ version: "0.2.5", signedAt: hoursFromNow(-48) }),
+      updateDoc({ version: "0.2.4", signedAt: hoursFromNow(-24) }),
+    ]);
+    out = updateTmp("x");
+    assertRefused(updateSigner([...freshArgs("0.2.4"), "--out", out], withdrawn),
+      "is older than the 0.2.5 that releases/0.2.5/manifest.json offers", out, "the withdrawn-to version, signed afresh");
   });
 
   await test("--verify --receipt binds the verdict to the exact bytes it read, written only after every check passes", () => {
@@ -265,5 +331,33 @@ export async function run() {
       }
     }
     assert(seen >= 2, `only ${seen} release manifests found; 0.2.4 and 0.2.5 are committed`);
+  });
+
+  await test("no release record ever committed has left the tree", () => {
+    // The floor above is `seen >= 2`, and 2 is a hand-copy of today's count.
+    // Measured 2026-09-22: deleting releases/0.2.4/manifest.json does redden
+    // it — because the floor IS today's count, exactly. releases/0.2.6/ already
+    // holds its notes; on the day its manifest lands, deleting any one of three
+    // records leaves `seen` at 2 and that floor silent. (That is a prediction,
+    // not a measurement: a third record that verifies needs a production root,
+    // and this repository never holds one.)
+    //
+    // Deleting a record is not tidying. It is how an older release gets signed
+    // afresh without `--withdraw-to`: the signer compares a new document with
+    // the newest record it can find, and a record that is not there cannot be
+    // newer. A record is history, so the second source for which records must
+    // exist is the history, read here rather than copied into a number.
+    const git = (...a) => execFileSync("git", ["-C", REPO_ROOT, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    if (git("rev-parse", "--is-shallow-repository") === "true") {
+      neverAsk("this checkout is shallow, so the history that says which release records were ever committed is not in it",
+        "a checkout with `fetch-depth: 0` asks it, as build-index.yml's does");
+    }
+    const ever = [...new Set(git("log", "--format=", "--name-only", "--diff-filter=A", "HEAD", "--", "releases/*/manifest.json")
+      .split("\n").filter(Boolean))].sort();
+    assert(ever.length >= 1, "git log finds no release record ever added under releases/, so the pathspec or the walk is broken");
+    const gone = ever.filter((f) => !fs.existsSync(path.join(REPO_ROOT, f)));
+    assertEqual(gone.join(", "), "",
+      "a release record committed earlier is no longer in the tree; a record is what went live, and the signer's " +
+      "newest-record comparison cannot see one that is gone");
   });
 }
