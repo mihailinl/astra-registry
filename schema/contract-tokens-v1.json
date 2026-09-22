@@ -1,6 +1,6 @@
 {
-  "contract_version": "0.23.0",
-  "source_commit": "98cee4bc54ade3b4b425bb0bc9c3ce490c078a1e",
+  "contract_version": "0.24.0",
+  "source_commit": "14bfda17a8d913977a30428ac4cf1720dfa36a76",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -4191,9 +4191,10 @@
       "emitter": [],
       "acceptor": [],
       "state": "service-only",
-      "path": null,
-      "path_pending": "the contract names this category and no path for it",
-      "source": "SCOPE-8",
+      "method": "GET",
+      "path": "health",
+      "path_base": "the service API base (DEC-18)",
+      "source": "SCOPE-8; §0.8's named `service-only` paths",
       "requirements": [
         "SCOPE-7",
         "SCOPE-8"
@@ -4210,6 +4211,23 @@
       "path": null,
       "path_pending": "the contract names this category and no path for it",
       "source": "SCOPE-8",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "service-only:listings-view",
+      "kind": "service_only",
+      "name": "listings-view",
+      "members": [],
+      "emitter": [],
+      "acceptor": [],
+      "state": "service-only",
+      "method": "GET",
+      "path": "listings/{plugin_id}",
+      "path_base": "the service API base (DEC-18)",
+      "source": "§0.8's named `service-only` paths",
       "requirements": [
         "SCOPE-7",
         "SCOPE-8"
@@ -5358,14 +5376,6 @@
       "owed_by": "astra-plugins-ops or minice-be, in the version that records it (§1.3 row 7)",
       "lands_with": "the version that records MOD-54's path",
       "floor": "until that version lands the entry is absent and this record is present."
-    },
-    {
-      "id": "service_only_named_paths",
-      "what": "the two `service-only` entries `GET plugins/v1/listings/{plugin_id}` and `GET plugins/v1/health`, published with no members",
-      "why": "B-T3.11 compiles its `plugin_not_listed` expectation and its closing ordinary read from these two and from nothing else: every CLIENT-80 operation that can answer `plugin_not_listed` sits behind a bearer that job does not hold, and `GET cards/{plugin_id}` is not routed until a MINOR records OPEN-MBE-32 (attack M-8).",
-      "owed_by": "minice-be (§1.3 row 8.6, accepted as its W-6)",
-      "lands_with": "the version that publishes them; ops.22 at the latest, before R3",
-      "floor": "until that version lands, `service_only` carries the four categories SCOPE-8 names and this record says the two paths are absent; from then the selftest asserts both paths are present, with no members and no party, which is what B-T3.11 compiles against."
     },
     {
       "id": "report_outcome_codes",
