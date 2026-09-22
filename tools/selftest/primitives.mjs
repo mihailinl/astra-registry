@@ -9,7 +9,7 @@ import path from "node:path";
 
 import { stableStringify, jcs } from "../lib/canonical.mjs";
 import { KNOWN, validate as validateSchema } from "../lib/jsonschema.mjs";
-import { invalidId, unsafePathComponent, foldId, unsafeDisplayText } from "../lib/ids.mjs";
+import { ID_PATTERN, invalidId, unsafePathComponent, foldId, unsafeDisplayText } from "../lib/ids.mjs";
 import { compareSemver } from "../lib/semver.mjs";
 import { readZip, readEntry } from "../lib/zip.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
@@ -303,6 +303,58 @@ export async function run() {
       assert((I(id) ?? "").includes("does not match"), `${what} passed the charset: invalidId(${JSON.stringify(id)}) = ${JSON.stringify(I(id))}`);
     }
     refused(I, "dice--roller", "double hyphen");
+  });
+  await test("an id is one grammar: every schema publishes ids.mjs's ID_PATTERN, and unsafePathComponent caps where it does", () => {
+    // The 64-character cap is written three ways in this repository and none
+    // of them imports another: `{0,62}` inside ID_PATTERN, `id.length > 64` in
+    // unsafePathComponent (independent ON PURPOSE — "one of the two will one
+    // day be relaxed and the other has to still be standing"), and the same
+    // pattern copied into six schemas that publish it to other parties.
+    // Measured 2026-09-22, before this check: each of `{0,62}` -> `{0,63}` and
+    // `{0,61}` in tools/lib/ids.mjs, `> 64` -> `> 65` and `> 63`, and `{0,62}`
+    // -> `{0,63}` and `{0,61}` in schema/plugin-v1.json left all 317 checks
+    // green; so did widening ID_PATTERN's charset to `_` and `.`. Independent
+    // guards are only worth having while they agree, and nothing said when
+    // they stopped.
+    //
+    // The schemas are FOUND, not listed: every `pattern` anywhere under schema/
+    // that has the id's shape, whatever number sits in the braces, so a copy
+    // that drifted is caught and a new copy is held without anybody adding it
+    // here. The floor is today's count, because a walk that finds nothing
+    // passes every assertion after it.
+    const ID_SHAPED = /^\^\[a-z0-9[^\]]*\]\(\?:\[a-z0-9[^\]]*\]\{0,\d+\}\[a-z0-9[^\]]*\]\)\$$/;
+    const copies = [];
+    const walk = (node, where) => {
+      if (Array.isArray(node)) node.forEach((v, i) => walk(v, `${where}/${i}`));
+      else if (node && typeof node === "object") {
+        for (const [k, v] of Object.entries(node)) {
+          if (k === "pattern" && typeof v === "string" && ID_SHAPED.test(v)) copies.push([where, v]);
+          walk(v, `${where}/${k}`);
+        }
+      }
+    };
+    const schemaDir = path.join(REPO_ROOT, "schema");
+    for (const f of fs.readdirSync(schemaDir).filter((n) => n.endsWith(".json")).sort()) {
+      walk(JSON.parse(fs.readFileSync(path.join(schemaDir, f), "utf8")), `schema/${f}#`);
+    }
+    assert(copies.length >= 6, `found ${copies.length} id patterns under schema/; plugin, version, index, identity, decision and moderation-work each publish one`);
+    const drifted = copies.filter(([, v]) => v !== ID_PATTERN).map(([w, v]) => `${w}: ${v}`);
+    assertEqual(drifted.join("\n  "), "", `a schema publishes an id grammar that is not tools/lib/ids.mjs's ${ID_PATTERN}`);
+
+    // The length unsafePathComponent stops at, against the length the pattern
+    // stops at, both read by asking rather than by parsing either.
+    const longestAccepted = (accepts) => {
+      let longest = 0;
+      for (let n = 1; n <= 1000; n++) if (accepts("a".repeat(n))) longest = n;
+      return longest;
+    };
+    const ID_RE = new RegExp(ID_PATTERN);
+    const patternCap = longestAccepted((s) => ID_RE.test(s));
+    const guardCap = longestAccepted((s) => unsafePathComponent(s) === null);
+    assert(patternCap > 1 && patternCap < 1000, `ID_PATTERN accepts ids up to ${patternCap} characters, which is not a cap`);
+    assertEqual(guardCap, patternCap,
+      "unsafePathComponent's length cap and ID_PATTERN's are different numbers, so one of the two independent guards " +
+      "has already been relaxed or tightened without the other");
   });
   await test("confusable folding collapses 0/o and hyphens", () => {
     assert(foldId("dice-roller") === foldId("dicer0ller"), `${foldId("dice-roller")} vs ${foldId("dicer0ller")}`);
