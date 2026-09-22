@@ -15,8 +15,9 @@
 # each of the four pushes the signer has committed for since `signed` existed,
 # by 2 to 36 seconds. So A7 measures what `signed` does not carry against the
 # run's clock and gives the signer row 7's bound (gap 76); the run that alarms
-# on a signer that never caught up is a LATER one, the cron below or the next
-# push. That makes the cron A7's latency, and GitHub drops scheduled events:
+# on a signer that never caught up is a LATER one, the cron below, the next
+# push or the next committer's completion. That makes the cron A7's latency on
+# a quiet `main`, and GitHub drops scheduled events:
 # 14 of the 64 hourly slots between this file landing and 2026-09-22 18:12Z
 # were delivered, and the longest gap between two runs of this workflow was
 # 311 minutes (`gh api repos/{owner}/{repo}/actions/workflows/detectors.yml/runs`,
@@ -55,8 +56,36 @@
 name: Detectors
 
 on:
+  # main moved. Human pushes and PR merges reach this; the bot's own commits do
+  # not, which is what the `workflow_run` list below is for.
   push:
     branches: [main]
+
+  # Every workflow that commits to `main`, heard on COMPLETION whatever its
+  # conclusion — `sign.yml`'s mechanism, for BOT-43's "on every push to
+  # `main`". GITHUB_TOKEN pushes start no push runs, so until this list existed
+  # no bot commit ever had a detectors run at its head: `6659a61`, `7843cab` and
+  # `de2e91e`, the three bot commits `signed` has published, have 0 detectors
+  # runs between them, and the next run after each came from a human push 1,
+  # 16 and 3 minutes later — luck, not a schedule. The cron below does not stand
+  # in for this, for the delivery the header measures.
+  #
+  # Completion, not success, for the signer's reason: a run that committed and
+  # then failed a later job still committed. A committer's run that committed
+  # nothing costs one detectors run over an unchanged `main`.
+  #
+  # The names are each file's `name:` line, and `bot/tests/workflows.test.mjs`
+  # holds this list to every workflow with a `contents: write` job and to every
+  # name `sign.yml` hears (so `Operator`, which has no file yet, is here for the
+  # reason `sign.yml` lists it). ONE committer is not heard, and the test names
+  # it: `Signer`, which commits to `signed` and never to `main`. The list is
+  # wider than `sign.yml`'s on purpose: BOT-43 asks for every push to `main`,
+  # and `Migration baseline`'s commit of `log/baseline.json` is the one that
+  # arms four of the five detectors.
+  workflow_run:
+    workflows: ["Ingest", "Plugins ingest", "Plugins moderation", "Operator", "Migration baseline", "publisher re-check", "Keepalive"]
+    types: [completed]
+
   schedule:
     - cron: '41 * * * *'
   workflow_dispatch:
@@ -88,8 +117,14 @@ jobs:
       # is a statement about history — what was added after a commit, what a
       # commit added alongside what, how far one branch has fallen behind —
       # and a shallow checkout would make four of them silently find nothing.
+      #
+      # On `workflow_run`, `main` as it is when this job starts, the ref
+      # `sign.yml` checks out for the same event: the commit the triggering run
+      # just made is what this run is for. Every other event keeps the
+      # checkout's own default.
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event_name == 'workflow_run' && 'main' || '' }}
           fetch-depth: 0
       - name: The `signed` branch, which A7 is about
         run: git fetch --quiet origin '+refs/heads/signed:refs/heads/signed' || echo "ok    there is no `signed` branch yet; A7 will say so"
