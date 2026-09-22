@@ -1,6 +1,6 @@
 {
-  "contract_version": "0.24.0",
-  "source_commit": "14bfda17a8d913977a30428ac4cf1720dfa36a76",
+  "contract_version": "0.24.1",
+  "source_commit": "39b302b9e160a35c71f91d57746acdf4900107b5",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -8,6 +8,7 @@
     "People read the contract, tests read this file: the plugins service, the registry (SCOPE-9) and a new client (SCOPE-10) each fail their tests on a value this file does not list for them, and on one it lists for them that they do not handle and that is neither `reserved` nor `retired` (SCOPE-8).",
     "`emitter` and `acceptor` are arrays of party strings from `parties`; §0.8's Callers letters map onto them as C client, P panel, B bot, G guest. `registry` covers the bot and the signer where an entry is not the bot's alone.",
     "A `service-only` entry is listed with no members and for no party: it is outside SCOPE-8's two-way test, and neither the registry's scan nor the client's expects or forbids one.",
+    "A `service-only` entry says this path is **routed by the plugins service and outside SCOPE-8's two-way test**. It does not say a handler answers it.",
     "`pending` is what SCOPE-7 says this file carries and the contract does not yet record. Each record names what is missing, who owes it, the version that lands it and what the floor asserts until then. The generator refuses to run once the contract records one of them and no extractor has been written."
   ],
   "parties": [
