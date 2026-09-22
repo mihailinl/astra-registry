@@ -951,7 +951,7 @@ const FLOORS = new Map(Object.entries({
   "catalogue.mjs": 9,
   "publishers.mjs": 10,
   "validation.mjs": 16,
-  "couplings.mjs": 12,
+  "couplings.mjs": 13,
   "listings.mjs": 5,
   "origins.mjs": 5,
   // 8, NOT the 41 this module reports, and it is the one number here that is
@@ -977,7 +977,7 @@ const FLOORS = new Map(Object.entries({
   "trust-anchor.mjs": 4,
   "update-signing.mjs": 12,
   "update-notes.mjs": 9,
-  "repo-rules.mjs": 17,
+  "repo-rules.mjs": 18,
   "claims.mjs": 7,
   "contract-tokens.mjs": 5,
   "regenerate.mjs": 12,

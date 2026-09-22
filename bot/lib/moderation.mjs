@@ -73,7 +73,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { REPO_ROOT } from "../../tools/lib/sources.mjs";
-import { ID_PATTERN, unsafeDisplayText } from "../../tools/lib/ids.mjs";
+import { ADVISORY_ID_PATTERN, ID_PATTERN, unsafeDisplayText } from "../../tools/lib/ids.mjs";
 import { parseSemver } from "../../tools/lib/semver.mjs";
 
 export const SCHEMA = "astra.registry.moderation-log/1";
@@ -321,7 +321,10 @@ export function reasonProblems(reason) {
 }
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
-const ADVISORY_ID = /^ASTRA-\d{4}-\d{4,}$/;
+// `tools/lib/ids.mjs`'s grammar, the one `tools/lib/revocations.mjs` validates
+// an advisory's own id with. Not imported from there: that module imports this
+// one, and the other direction would be an import cycle (ids.mjs says so).
+const ADVISORY_ID = new RegExp(ADVISORY_ID_PATTERN);
 const ID_RE = new RegExp(ID_PATTERN);
 // §0.7: `service_decision_id` is a lowercase canonical UUID v4 or v7 (RFC 9562).
 const SERVICE_DECISION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[47][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;

@@ -57,7 +57,7 @@ import { fileURLToPath } from "node:url";
 import { REPO_ROOT } from "../tools/lib/sources.mjs";
 import { CONSENT_HIGH_RISK } from "../bot/lib/policy.mjs";
 import { buildModerationLog, loadEntries, BACKING, SCHEMA } from "../bot/lib/moderation.mjs";
-import { loadAdvisories } from "../tools/lib/revocations.mjs";
+import { ADVISORY_ID, loadAdvisories } from "../tools/lib/revocations.mjs";
 import { invalidId, unsafePathComponent } from "../tools/lib/ids.mjs";
 
 import { markdown } from "./lib/html.mjs";
@@ -217,7 +217,11 @@ export function build(opts) {
   const sources = new Map(sourceAdvisories.map((a) => [a.id, a]));
   const advisories = groupAdvisories(revocations, sources);
   for (const advisory of advisories) {
-    if (!/^ASTRA-\d{4}-\d{4,}$/.test(advisory.id)) {
+    // The id becomes a directory name on the next line. Asked of the grammar
+    // `tools/lib/revocations.mjs` validates advisories with, rather than typed
+    // here: the plugin-id guard above was de-duplicated for the same reason,
+    // and this line was the third copy of the advisory's (gap 72's tails).
+    if (!ADVISORY_ID.test(advisory.id)) {
       throw new Error(`refusing to write a page for advisory ${JSON.stringify(advisory.id)}`);
     }
     w(`advisory/${advisory.id}/index.html`, advisoryPage(advisory, { plugins }));

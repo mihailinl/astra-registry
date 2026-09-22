@@ -26,7 +26,14 @@ import {
 import { CORPUS_NO_RULE_ID, deriveLocaleText, localeEnumProblems } from "../../bot/lib/locales.mjs";
 import { summarise } from "../../bot/lib/derive.mjs";
 import { REPO_ROOT, loadPolicy, loadSchemas } from "../lib/sources.mjs";
-import { SERIAL_PATHSPEC, SOURCE_DIR, SOURCE_PATHSPEC, pathUnder, resolveSerial } from "../lib/revocations.mjs";
+import {
+  SERIAL_PATHSPEC, SOURCE_DIR, SOURCE_PATHSPEC, checkAdvisory, pathUnder, resolveSerial,
+} from "../lib/revocations.mjs";
+import { ADVISORY_ID_GRAMMAR, ADVISORY_ID_PATTERN } from "../lib/ids.mjs";
+import { validate as validateSchema } from "../lib/jsonschema.mjs";
+import { looksLikeAdvisory } from "../coverage/docs-advisory-url.mjs";
+import { checkEntry } from "../../bot/lib/moderation.mjs";
+import { build as buildSite } from "../../site/build.mjs";
 import { serialsAt } from "../signer/plan.mjs";
 import { LIST_PATHSPEC, gather } from "../served-set/main-vs-signed.mjs";
 import { CATALOGUE_PATHSPEC, resolveSerial as resolveCatalogueSerial } from "../build-index.mjs";
@@ -1061,5 +1068,181 @@ export async function run() {
       assertEqual(JSON.stringify(advisoryTriggers(sha)), "[]",
         `tools/moderation-coverage.mjs's triggersOf took a decoy at ${sha.slice(0, 12)} for an advisory: its ADVISORY_RE is not anchored to ${SOURCE_DIR}/`);
     }
+  });
+
+  // ── the advisory id's grammar, which seven readers and one writer share ─────
+  //
+  // Gap 72's tails. The id is `ASTRA-`, a four-digit year, `-`, and four OR
+  // MORE serial digits: `schema/decision-v1.json` publishes that, and the
+  // writer needs it, because `nextAdvisoryId` pads to four and never resets.
+  // It was typed in five modules, and the coverage canary's copy took exactly
+  // four — measured 2026-09-22: with `ASTRA-2026-10000.json` committed,
+  // `triggersOf` returned [] while `nextAdvisoryId` went on to 10001, so from
+  // the ten-thousandth advisory on the canary would have been green about
+  // withdrawals it could not see. They all read `tools/lib/ids.mjs` now.
+  //
+  // This does not trust the imports. Every reader is ASKED about one set of
+  // ids, through its own entry point, and must answer what the grammar
+  // answers; a guard first proves the set separates the grammar from each
+  // neighbour a copy could drift to. The docs detector is held to a different
+  // relation, and says so: it is a heuristic that must SEE every id, not a
+  // validator, so it may take more.
+
+  await test("gap 72's tails — an advisory id is one grammar, tools/lib/ids.mjs's: the validator, the moderation log's advisory and reverses, the site's page guard, every schema that spells one, the next id and the coverage canary take the same ids; the next id writes one; the docs detector sees every one", () => {
+    const grammar = new RegExp(ADVISORY_ID_PATTERN);
+    // Four- and five-digit serials, a six, a zero-padded five, the last
+    // four-digit one — and refusals, each of which some neighbour takes.
+    const ids = [
+      "ASTRA-2026-0001", "ASTRA-2026-9999", "ASTRA-2026-10000", "ASTRA-2027-123456", "ASTRA-2026-00042",
+      "ASTRA-2026-001", "ASTRA-26-0001", "ASTRA-20266-0001", "astra-2026-0001", "ASTRA-2026-0001x",
+      "XASTRA-2026-0001", "ASTRA-2026-0001\n", "ASTRA-2026-0001 ", "ASTRA-2026-\u0661\u0662\u0663\u0664",
+    ];
+    const serialDigits = (id) => (grammar.test(id) ? id.slice(id.lastIndexOf("-") + 1).length : 0);
+    assert(ids.some((id) => serialDigits(id) === 4) && ids.some((id) => serialDigits(id) === 5),
+      `the fixture holds no four-digit and five-digit id the grammar accepts, so it cannot see gap 72's tails: ${ADVISORY_ID_PATTERN}`);
+
+    // The fixture guard. A reader that drifted to one of these would be
+    // invisible if no id here told it from the grammar.
+    const neighbours = [
+      ["exactly four serial digits", /^ASTRA-[0-9]{4}-[0-9]{4}$/],
+      ["three or more serial digits", /^ASTRA-[0-9]{4}-[0-9]{3,}$/],
+      ["five or more serial digits", /^ASTRA-[0-9]{4}-[0-9]{5,}$/],
+      ["a year of any width", /^ASTRA-[0-9]+-[0-9]{4,}$/],
+      ["no anchors", new RegExp(ADVISORY_ID_GRAMMAR)],
+      ["no end anchor", new RegExp(`^${ADVISORY_ID_GRAMMAR}`)],
+      ["no start anchor", new RegExp(`${ADVISORY_ID_GRAMMAR}$`)],
+      ["the i flag", new RegExp(ADVISORY_ID_PATTERN, "i")],
+      ["the m flag", new RegExp(ADVISORY_ID_PATTERN, "m")],
+      ["any decimal digit", /^ASTRA-\p{Nd}{4}-\p{Nd}{4,}$/u],
+    ];
+    for (const [what, re] of neighbours) {
+      assert(ids.some((id) => re.test(id) !== grammar.test(id)),
+        `no fixture id tells the grammar ${ADVISORY_ID_PATTERN} from ${what} (${re}); a reader drifted to it would pass`);
+    }
+    const said = (yes) => (yes ? "takes" : "refuses");
+    const disagreements = [];
+    const hold = (reader, answer) => {
+      for (const id of ids) {
+        const got = answer(id);
+        if (got !== grammar.test(id)) {
+          disagreements.push(`${reader} ${said(got)} ${JSON.stringify(id)}, which the grammar ${said(!got)}`);
+        }
+      }
+    };
+
+    // (a) the advisory validator. Every other field valid, which the guard says.
+    const advisory = (id) => ({
+      id, published: "2026-09-10", severity: "high", action: "block_install",
+      reason: "A fixture advisory, long enough to be a sentence a user can act on.",
+      entries: [{ kind: "id", value: "dice-roller" }],
+    });
+    assertEqual(checkAdvisory(advisory("ASTRA-2026-0001")).join("; "), "", "the fixture advisory is refused for something other than its id");
+    hold("tools/lib/revocations.mjs's checkAdvisory", (id) => checkAdvisory(advisory(id)).length === 0);
+
+    // (b) and (c) the moderation log: a revoke's `advisory`, and an unrevoke's
+    // `reverses`, which is the only other clause that reads an advisory id.
+    const REASON = "A reason long enough to be a reason and short enough for a person to read.";
+    const revoke = (id) => ({ date: "2026-09-20", action: "revoke", plugin: "alpha", reason: REASON, advisory: id });
+    const unrevoke = (id) => ({ date: "2026-09-21", action: "unrevoke", plugin: "alpha", reason: REASON, advisory: "ASTRA-2026-0001", reverses: id });
+    assertEqual([...checkEntry(revoke("ASTRA-2026-0001")), ...checkEntry(unrevoke("ASTRA-2026-0002"))].join("; "), "",
+      "the fixture log entries are refused for something other than the advisory id they name");
+    hold("bot/lib/moderation.mjs's checkEntry (a revoke's advisory)", (id) => checkEntry(revoke(id)).length === 0);
+    hold("bot/lib/moderation.mjs's checkEntry (an unrevoke's reverses)", (id) => checkEntry(unrevoke(id)).length === 0);
+
+    // (d) the site, which turns the id into a directory: built for real, one
+    // signed list per id, against an empty catalogue.
+    const siteDir = path.join(tmp, "couplings-advisory-site");
+    fs.mkdirSync(siteDir, { recursive: true });
+    const index = path.join(siteDir, "index.json");
+    fs.writeFileSync(index, JSON.stringify({ signatures: [], signed: { schema: "astra.registry.index/1", serial: 1, plugins: [] } }));
+    hold("site/build.mjs's advisory page guard", (id) => {
+      const list = path.join(siteDir, "revocations.json");
+      fs.writeFileSync(list, JSON.stringify({ signatures: [], signed: { schema: "astra.registry.revocations/1", serial: 2, revocations: [
+        { kind: "id", value: "alpha", id, severity: "high", action: "warn", reason: advisory(id).reason },
+      ] } }));
+      try {
+        return buildSite({ index, revocations: list, out: path.join(siteDir, "out") }).advisories.includes(id);
+      } catch (e) {
+        if (/refusing to write a page for advisory/.test(e.message)) return false;
+        throw e;
+      }
+    });
+
+    // (e) the schemas: every `pattern` under schema/ that spells an advisory
+    // id, FOUND by walking, each asked through this repository's validator.
+    const spelled = [];
+    const walk = (node, where) => {
+      if (Array.isArray(node)) node.forEach((v, i) => walk(v, `${where}/${i}`));
+      else if (node && typeof node === "object") {
+        if (typeof node.pattern === "string" && node.pattern.includes("ASTRA-")) spelled.push([where, node]);
+        for (const [k, v] of Object.entries(node)) walk(v, `${where}/${k}`);
+      }
+    };
+    const schemaDir = path.join(REPO_ROOT, "schema");
+    for (const f of fs.readdirSync(schemaDir).filter((n) => n.endsWith(".json")).sort()) {
+      walk(JSON.parse(fs.readFileSync(path.join(schemaDir, f), "utf8")), `schema/${f}#`);
+    }
+    assert(spelled.length >= 1, "no schema under schema/ spells an advisory id; schema/decision-v1.json's `advisory` did");
+    for (const [where, sub] of spelled) hold(where, (id) => validateSchema(sub, id).length === 0);
+
+    // (f) and (g) the next id and the coverage canary, asked on a history: one
+    // advisory file per id, committed, asked about, and reset away. And the
+    // writer's own clause: whatever the next id is, the grammar takes it —
+    // 9999's successor is the five-digit id the old canary could not see.
+    const dir = path.join(tmp, "couplings-advisory-grammar");
+    fs.mkdirSync(dir, { recursive: true });
+    const git = (...a) =>
+      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "couplings-fixture@example.invalid");
+    git("config", "user.name", "couplings fixture");
+    git("config", "commit.gpgsign", "false");
+    fs.mkdirSync(path.join(dir, SOURCE_DIR), { recursive: true });
+    fs.writeFileSync(path.join(dir, SOURCE_DIR, "README.md"), "advisories\n");
+    git("add", "-A");
+    git("commit", "-qm", "root");
+    const root = git("rev-parse", "HEAD");
+    const asked = new Map();
+    for (const id of ids) {
+      const rel = `${SOURCE_DIR}/${id}.json`;
+      fs.writeFileSync(path.join(dir, rel), "{}\n");
+      git("add", "-A");
+      git("commit", "-qm", "an advisory");
+      const sha = git("rev-parse", "HEAD");
+      const next = nextAdvisoryId({ root: dir, year: 2026 });
+      const seen = triggersOf(sha, dir).triggers.filter((t) => t.kind === "advisory-written").map((t) => t.advisory);
+      asked.set(id, { next, seen });
+      git("reset", "-q", "--hard", root);
+    }
+    const pad = (n) => String(n).padStart(4, "0");
+    hold("bot/lib/compile-decision.mjs's nextAdvisoryId", (id) => {
+      const { next } = asked.get(id);
+      if (next === "ASTRA-2026-0001") return false;
+      assertEqual(next, `ASTRA-2026-${pad(Number(id.slice(id.lastIndexOf("-") + 1)) + 1)}`,
+        `nextAdvisoryId, with ${JSON.stringify(id)} the only advisory ever added, answered neither its successor nor 0001`);
+      return true;
+    });
+    hold("tools/moderation-coverage.mjs's triggersOf", (id) => {
+      const { seen } = asked.get(id);
+      assert(seen.length <= 1 && (seen.length === 0 || seen[0] === id),
+        `triggersOf saw ${JSON.stringify(seen)} in a commit that wrote ${JSON.stringify(id)} and nothing else`);
+      return seen.length === 1;
+    });
+    assertEqual(asked.get("ASTRA-2026-9999").next, "ASTRA-2026-10000", "the successor of advisory 9999 is not advisory 10000");
+    for (const [id, { next }] of asked) {
+      if (!grammar.test(next)) disagreements.push(`nextAdvisoryId writes ${JSON.stringify(next)} after ${JSON.stringify(id)}, and the grammar refuses it`);
+    }
+
+    // (h) the docs detector, whose relation is a SUPERSET: it flags a URL that
+    // reads as an advisory page, and it must read every id as one. The path
+    // carries no `advisory` segment, so only the id can make it say yes.
+    for (const id of ids.filter((i) => grammar.test(i))) {
+      if (!looksLikeAdvisory(`https://example.invalid/withdrawn/${id}`)) {
+        disagreements.push(`tools/coverage/docs-advisory-url.mjs's looksLikeAdvisory does not see ${JSON.stringify(id)}, which the grammar takes`);
+      }
+    }
+
+    assertEqual(disagreements.join("\n  "), "",
+      `a reader of the advisory id does not take tools/lib/ids.mjs's ${ADVISORY_ID_PATTERN}`);
   });
 }
