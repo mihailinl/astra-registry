@@ -1530,6 +1530,125 @@ test("a crash between the commit and the result posts nothing twice", () => {
   assert.deepEqual(second.post, first.post, "a re-post is byte-identical or BOT-82's key does not match it");
 });
 
+// ── the commit step, run as the workflow runs it ────────────────────────────
+
+/**
+ * The `run:` block of `plugins-moderation.yml`'s step `id: apply`, verbatim —
+ * the lines that `git add`, `git commit` and `git push` what the commit job
+ * listed. Read from the file rather than restated here, so that the step this
+ * suite runs is the step the workflow runs; it throws unless the anchor and
+ * its `run: |` are each found exactly once.
+ */
+function applyStep() {
+  const lines = read(".github/workflows/plugins-moderation.yml").split("\n");
+  const at = lines.flatMap((l, i) => (/^\s+id: apply\s*$/.test(l) ? [i] : []));
+  assert.equal(at.length, 1, `plugins-moderation.yml has ${at.length} steps with \`id: apply\`; this suite runs exactly one`);
+  const indent = lines[at[0]].search(/\S/);
+  const runs = [];
+  for (let j = at[0] + 1; j < lines.length; j++) {
+    if (lines[j].trim() === "") continue;
+    if (lines[j].search(/\S/) < indent) break;
+    if (lines[j].search(/\S/) === indent && /^\s+run: \|\s*$/.test(lines[j])) runs.push(j);
+  }
+  assert.equal(runs.length, 1, `the \`apply\` step has ${runs.length} \`run: |\` blocks`);
+  const body = [];
+  for (let j = runs[0] + 1; j < lines.length; j++) {
+    if (lines[j].trim() !== "" && lines[j].search(/\S/) <= indent) break;
+    body.push(lines[j].slice(indent + 2));
+  }
+  const script = `${body.join("\n").trimEnd()}\n`;
+  assert.match(script, /^git push origin HEAD:main$/m, "the extracted step does not push; the anchor found something else");
+  return script;
+}
+
+/** A bare `origin` the fixture pushes to, so the step's `git push` runs for real. */
+function withRemote(root) {
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-origin-"));
+  tmpRoots.push(bare);
+  sh(["init", "-q", "--bare", "-b", "main"], bare);
+  sh(["remote", "add", "origin", bare], root);
+  sh(["push", "-q", "origin", "main"], root);
+  return bare;
+}
+const headOf = (repo) => sh(["rev-parse", "refs/heads/main"], repo).trim();
+
+/** The step, under `bash -e` as a runner starts a `run:` block, in the checkout. */
+function runApply(root) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-step-"));
+  tmpRoots.push(dir);
+  const file = path.join(dir, "apply.sh");
+  fs.writeFileSync(file, applyStep());
+  return spawnSync("bash", ["-e", file], { cwd: root, encoding: "utf8" });
+}
+
+// Until 2026-09-22 a run with nothing to commit — no work listed and no hold
+// due, which is most runs — failed the commit step. The job wrote `paths.txt`
+// as a single newline and no `commit-message.txt`; `git add
+// --pathspec-from-file` exited 128 on the empty line ("empty string is not a
+// valid pathspec") and `git commit --file=` exited 128 on the missing file.
+// Nothing caught it because the step has never run and no test ran the
+// workflow's lines over what the job leaves behind. This one does, with a real
+// `origin` to push to, in both directions: nothing is a clean no-op, and
+// something is still committed and pushed. It also covers the two states that
+// must NOT read as nothing.
+test("a run with nothing to commit leaves the commit step nothing to fail on", async () => {
+  for (const shadow of [false, true]) {
+    const root = estate();
+    const origin = withRemote(root);
+    const before = headOf(origin);
+    const job = await commitJob(root, { entries: [], shadow });
+    assert.equal(job.code, 0, job.logs.join("\n"));
+    assert.equal(fs.readFileSync(path.join(root, "moderation", "paths.txt"), "utf8"), "",
+      "with nothing to commit, paths.txt is the empty marker: zero bytes, no empty pathspec in it");
+    assert.ok(!fs.existsSync(path.join(root, "moderation", "commit-message.txt")));
+    const step = runApply(root);
+    assert.equal(step.status, 0, `the commit step failed a run with nothing to commit (shadow: ${shadow}): ${step.stderr}`);
+    assert.match(step.stdout, /^nothing to commit/m);
+    assert.equal(headOf(origin), before, "a run with nothing to commit pushed");
+    assert.equal(sh(["rev-parse", "HEAD"], root).trim(), before, "a run with nothing to commit made a commit");
+  }
+
+  // The satisfiable direction, by the same lines: a takedown is committed,
+  // with exactly the listed paths and its trailer, and pushed.
+  const root = estate();
+  const origin = withRemote(root);
+  const before = headOf(origin);
+  const job = await commitJob(root, { entries: [decision({ code: "M_DELIST", category: "broken", moderator: "amoderator" })] });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.ok(job.paths.length >= 2, `the takedown listed ${job.paths.length} path(s)`);
+  const step = runApply(root);
+  assert.equal(step.status, 0, `the commit step failed a run with a takedown to commit: ${step.stderr}`);
+  const after = headOf(origin);
+  assert.notEqual(after, before, "the commit step pushed nothing for a run with a takedown to commit");
+  assert.deepEqual(sh(["diff-tree", "--no-commit-id", "--name-only", "-r", after], origin).trim().split("\n").sort(), job.paths);
+  assert.match(sh(["log", "-1", "--format=%B", after], origin), new RegExp(`^Service-Decision: ${SDI}$`, "m"));
+
+  // Then a quiet run in the SAME output directory: the last run's message
+  // must not survive into it, and the step is a no-op again.
+  const quiet = await commitJob(root, { entries: [] });
+  assert.equal(quiet.code, 0, quiet.logs.join("\n"));
+  assert.ok(!fs.existsSync(path.join(root, "moderation", "commit-message.txt")),
+    "a stale commit-message.txt survived into a run with nothing to commit");
+  const again = runApply(root);
+  assert.equal(again.status, 0, `the commit step failed the quiet run after a commit: ${again.stderr}`);
+  assert.equal(headOf(origin), after);
+
+  // What "nothing" must not be mistaken for. A job that never wrote paths.txt
+  // did not say it had nothing; and an empty list beside a message is a job
+  // whose two outputs disagree. Both fail the step, and neither pushes.
+  const lost = estate();
+  const lostOrigin = withRemote(lost);
+  const missing = runApply(lost);
+  assert.notEqual(missing.status, 0, "a missing paths.txt was read as a run with nothing to commit");
+  assert.match(missing.stdout, /^::error::the commit job left no moderation\/paths\.txt/m);
+  fs.mkdirSync(path.join(lost, "moderation"));
+  fs.writeFileSync(path.join(lost, "moderation", "paths.txt"), "");
+  fs.writeFileSync(path.join(lost, "moderation", "commit-message.txt"), "registry: moderation (1 decision(s))\n");
+  const odd = runApply(lost);
+  assert.notEqual(odd.status, 0, "an empty path list beside a commit message was read as nothing to commit");
+  assert.equal(headOf(lostOrigin), sh(["rev-parse", "HEAD"], lost).trim(), "a refused step pushed");
+});
+
 // ── the settled job ─────────────────────────────────────────────────────────
 
 test("a listed id with no result fails the run, and a failed `list` does too", () => {
