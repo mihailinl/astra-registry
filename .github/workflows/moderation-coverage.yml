@@ -141,6 +141,15 @@ jobs:
         if: always()
         run: node tools/coverage/keepalive-age.mjs --report "$ASTRA_COVERAGE_FINDINGS"
 
+      # A stopped schedule has no symptom: every queued release simply never
+      # publishes, which is what a quiet week looks like. This rule is the only
+      # thing in the estate that can tell the two apart, and it is red in the
+      # Actions tab rather than a page — the receiver half is an owner act,
+      # printed on every run as `ingest-schedule-receiver`.
+      - name: ingest.yml's schedule is still firing, and the queue is emptying  # gap 17
+        if: always()
+        run: node tools/coverage/drain-age.mjs --report "$ASTRA_COVERAGE_FINDINGS"
+
       # ── NEW RULES GO BELOW THIS LINE ─────────────────────────────────────
       #
       # and in `tools/coverage/rules.mjs`, in the same commit. The register is
