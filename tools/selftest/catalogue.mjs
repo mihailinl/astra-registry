@@ -287,9 +287,9 @@ export async function run() {
     // because nothing here is askable at any depth: a serial counted in a
     // shallow checkout is not the history's, so neither an equal one nor an
     // unequal one says anything about the catalogue. The runner finds this
-    // check by reading it (a test() body whose code names `shallow` before a
-    // `neverAsk(`), prints the live lanes that ask it and fails when there are
-    // none. Keep the gate on the line above the call.
+    // check by reading it (a `neverAsk(` first in the block of an `if` whose
+    // whole condition is the shallowness question), prints the live lanes that
+    // ask it and fails when there are none. Keep the gate written that way.
     if (isShallow(REPO_ROOT)) {
       neverAsk(
         "this checkout is shallow, so neither side of the comparison is in it: at depth 1 HEAD's parent and the " +

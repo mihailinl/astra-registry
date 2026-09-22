@@ -170,9 +170,9 @@ export async function run() {
       "comparison with a plausible document");
   });
 
-  // Found by the runner by reading it (a test() body whose code names
-  // `shallow` before a `neverAsk(`), so keep the gate on the line above the
-  // call. No red comes before it: a count taken in a shallow checkout is
+  // Found by the runner by reading it (a `neverAsk(` first in the block of an
+  // `if` whose whole condition is the shallowness question), so keep the gate
+  // written that way. No red comes before it: a count taken in a shallow checkout is
   // wrong, so a mismatch there says nothing about the catalogue.
   await test("this repository's head catalogue carries the serial its own commit's history counts, asked of its whole history", () => {
     if (isShallow(REPO_ROOT)) {
