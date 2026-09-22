@@ -1,11 +1,13 @@
-# MIG-20's migration baseline: the run that happens once, and the daily job
-# that outlives it.
+# MIG-20's migration baseline: the run that is meant to happen once, and the
+# daily job that outlives it.
 #
-# One `migration` record per non-staging published version, plus MIG-21's
-# historic export, plus `log/baseline.json` — the marker four other mechanisms
-# wait on (registry plan B-T3.7b). `write` refuses when the marker is already
-# there, so this is a workflow whose main path executes exactly one time in the
-# life of the repository.
+# What the dispatch is FOR: one `migration` record per non-staging published
+# version, plus MIG-21's historic records, plus `log/baseline.json` — the marker
+# four other mechanisms wait on (registry plan B-T3.7b) — in one commit
+# (BOT-73). `--write` refuses when the marker is already on the tree, and that
+# refusal is what is meant to make the main path run once in the life of the
+# repository. It can do that only after a run has committed the marker, and no
+# run does yet (below).
 #
 # **The daily half is not the same job and does not end.** `names` asks GitHub,
 # for every baseline `repository_id`, what that repository is called today, and
@@ -17,28 +19,53 @@
 # there is one it says so and exits green, which is how the schedule proves it is
 # alive for the weeks between this file landing and the dispatch.
 #
-# ── what this workflow cannot do today, and will not pretend to ────────────
+# ── what this workflow does today, and will not pretend to ─────────────────
 #
-# Three gates are not on `main` (measured 2026-09-19), and each job refuses by
-# name rather than working around them:
+# **This section said three gates were not on `main` and that a dispatch would
+# go red at `verify` with the missing module's name in the log.** All three
+# have landed — `bot/baseline.mjs`'s header names the commits — and the
+# prediction outlived them, because nothing executes a comment.
 #
-#   * `verify` needs B-T1.1's `bot/lib/certificate.mjs` for OIDs .15 and .17.
-#     There is no second place those live: ID-28 forbids a predicate fallback
-#     and forbids a name lookup. A run that wrote null ids because the READER
-#     was missing would record a registry-wide attestation failure that did not
-#     happen, in a file written once.
-#   * `write` needs B-T2.2's `bot/lib/decisions.mjs` to derive BOT-35's
-#     `decision_id` and place the record.
-#   * `write` also needs MIG-21's composition, and `bot/export-issues.mjs
-#     --compose` refuses: 24 of BOT-35's `migration:<owner/name>@<tag>` keys are
-#     shared by two to eight decisions on the live archive. That domain
-#     separates versions, which is right for THIS workflow's own records and
-#     wrong for MIG-21's. Widening it is an amendment to BOT-35 (ops.22, §1.3
-#     row 6).
+# What a dispatch does instead, measured on 2026-09-22 at `0df08e6` by running
+# each job's commands locally in the order this file runs them:
 #
-# So a dispatch today goes red at `verify`, with the module's name in the log.
-# That is the intended state: the alternative is a green dispatch that writes
-# the marker, and the marker cannot be written twice.
+#   * `verify` goes red at `--verify`'s all-unverified floor ("not one of …
+#     version(s) verified"), having downloaded nothing. `verifyOne` downloads
+#     from a version's `artifact_url`, `--population` emits no such member, and
+#     a version without one is recorded `unverified` without being tried.
+#     Behind that is a second stop: the `verify` job sets no `GH_TOKEN`, and
+#     `gh attestation verify` will not run without one (gh 2.100.0 with no
+#     token and `GITHUB_ACTIONS=true`: exit 4, "set the GH_TOKEN environment
+#     variable") — a message `classifyVerifyFailure` reads as neither `missing`
+#     nor `unavailable`, so it too would land as `unverified`.
+#   * `export`'s `--facts` exits 0 over the live archive (read here through
+#     `--from`): it counts the shared BOT-35 keys below and does not refuse them.
+#   * past `verify`, `--write` refuses a version with no release commit:
+#     `--population` carries such a version with `commit: null`, and the record
+#     grammar (`RECORD_MEMBERS`) accepts only 40 hex. With such versions left out of a
+#     synthetic, all-verified facts file, `--write` over a copy of the tree
+#     wrote one record per version under that copy's `log/decisions/`, wrote no
+#     marker, reported the historic facts as "pending", and exited 0.
+#
+# **Nothing writes the marker, and nothing commits.** `marker()` in
+# `bot/baseline.mjs` builds and checks one, and no version of `--write` has
+# called it; the `write` job has no step that commits. So with every stop above
+# removed, a dispatch would end green with nothing on `main` — and a second
+# dispatch would not refuse, because what it refuses on was never written.
+#
+# The plan writes the marker in the same one commit as MIG-21's historic
+# records (BOT-73), and those wait on an amendment: `bot/export-issues.mjs
+# --compose` refuses the live archive, because BOT-35's
+# `migration:<owner/name>@<tag>` keys are shared there by more than one
+# decision. That domain separates versions, which is right for THIS workflow's
+# own records and wrong for MIG-21's. Widening it is an amendment to BOT-35
+# (ops.22, §1.3 row 6).
+#
+# Why `verify` stays first and refuses rather than degrades: there is no second
+# place OIDs .15 and .17 live — ID-28 forbids a predicate fallback and forbids a
+# name lookup — and a run that wrote null ids because the tool could not look
+# would record a registry-wide attestation failure that did not happen, in a
+# file written once.
 
 name: Migration baseline
 
@@ -57,9 +84,10 @@ permissions: {}
 
 concurrency:
   # Workflow-level, and never cancelling. Two baseline runs in flight would each
-  # see no marker and each try to write one; the second losing its work to a
-  # cancellation mid-commit is worse than the second waiting and then refusing,
-  # which is what it does.
+  # see no marker and each go on to write; the second losing its work to a
+  # cancellation mid-commit is worse than the second waiting and then refusing —
+  # which is what it will do once a run commits the marker. Until one does, the
+  # second finds no marker either and repeats the first (header).
   group: migration-baseline
   cancel-in-progress: false
 
@@ -85,9 +113,12 @@ jobs:
       - name: MIG-20's population, from the committed version files
         run: node bot/baseline.mjs --population --out population.json
 
-      # Downloads and hashes each asset, runs `gh attestation verify`, reads
-      # the certificate ids. It NEVER unpacks an archive: a baseline run must
-      # not be the thing that opens forty strangers' archives.
+      # For each version that carries an `artifact_url`: downloads and hashes
+      # the asset, runs `gh attestation verify`, reads the certificate ids.
+      # `--population` gives no version that member, and this job sets no
+      # `GH_TOKEN` for `gh`, so today it downloads nothing and verifies nothing
+      # (header). It NEVER unpacks an archive: a baseline run must not be the
+      # thing that opens every stranger's archive in the catalogue.
       - name: The certificate ids, from the verified certificate only
         run: node bot/baseline.mjs --verify --population-file population.json --out facts.json
 
@@ -115,8 +146,10 @@ jobs:
       # MIG-21's historic export (M-T3.8). It is the only job in this workflow
       # that reads a stranger's bytes, which is why it is a job of its own with
       # no write permission anywhere near it: what leaves here is a fixed, tiny
-      # grammar, and `--compose` in `write` can quote nothing this job did not
-      # emit.
+      # grammar, and `write` can compose nothing this job did not emit. Today
+      # it composes nothing from it at all: `--write` counts these facts and
+      # reports them "pending", and `bot/export-issues.mjs --compose`, which
+      # would turn them into records, refuses them (header).
       - name: The decisions that exist only on an issue thread
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -147,9 +180,16 @@ jobs:
 
       # INV-37: the writing job composes from facts it re-reads, never from a
       # job that parsed submitter bytes. The two artifacts above are that
-      # grammar and nothing else, and `bot/baseline.mjs` refuses any member it
-      # was not told to expect.
-      - name: One `migration` record per version, and the marker
+      # grammar and nothing else. `composeRecords` in `bot/baseline.mjs` copies
+      # named members out of each fact and nothing more, so a member nobody
+      # listed never reaches a record — it is dropped, not refused (a facts
+      # file with a `login` added went through `--write` with exit 0 and no
+      # record carried it). `refuseUncomposable` is the refusal, and it is
+      # asked of each composed record, not of the files.
+      #
+      # It writes into this runner's checkout and nowhere else: it writes no
+      # marker, and no step of this job commits (header).
+      - name: One `migration` record per version, left on the runner — no marker, no commit
         run: |
           node bot/baseline.mjs --write \
             --facts-file facts.json \
@@ -157,7 +197,9 @@ jobs:
             --source-commit ${{ github.sha }}
 
       # BOT-71: regenerate both unsigned documents and pass the selftest before
-      # committing. BOT-73: one commit, holding every record.
+      # committing. BOT-73's one commit, holding every record and the marker,
+      # is not a step of this job yet, so these checks run over records that
+      # nothing keeps (header).
       - name: The catalogue the records were composed beside
         run: |
           node tools/build-index.mjs
@@ -242,10 +284,11 @@ jobs:
           cat verdict.json
 
       # `check: baseline-names`, because what the receiver's silence is about
-      # is the DAILY job, not the one-time dispatch. The dispatch posts the
-      # same heartbeat once, which is harmless: it happens a single time, and
-      # a check that is fed one extra ping is a check that is quiet for one
-      # extra bound, not a check that is wrong.
+      # is the DAILY job, not the one-time dispatch. A dispatch posts the same
+      # heartbeat, which is harmless: a check that is fed one extra ping is a
+      # check that is quiet for one extra bound, not a check that is wrong.
+      # That holds however many dispatches there are, and nothing limits them
+      # to one until a run commits the marker (header).
       - uses: ./.github/actions/alert
         with:
           verdict: verdict.json
