@@ -286,11 +286,31 @@ jobs:
           node tools/selftest.mjs
           node bot/moderation.mjs --check
 
+      # A run with NOTHING to commit is the common case — no work listed, no
+      # hold due — and it must be a clean no-op, not a red step every ten
+      # minutes. The commit job always writes moderation/paths.txt, zero bytes
+      # when there is nothing, and then writes no commit-message.txt. Until
+      # 2026-09-22 it wrote a single newline instead, `git add` exited 128 on
+      # the empty pathspec and `git commit` exited 128 on the missing message.
+      # A MISSING paths.txt is not "nothing": it is a job that never got that
+      # far, and it fails here rather than reading as a quiet run.
       - name: "Commit once, with a Service-Decision: trailer per decision, and push (not built: M-T3.2)"
         id: apply
         if: ${{ !cancelled() && steps.compile.conclusion == 'success' }}
         run: |
           set -euo pipefail
+          if [ ! -f moderation/paths.txt ]; then
+            echo "::error::the commit job left no moderation/paths.txt, so this step cannot tell a run with nothing to commit from a job that never finished"
+            exit 1
+          fi
+          if [ ! -s moderation/paths.txt ]; then
+            if [ -e moderation/commit-message.txt ]; then
+              echo "::error::moderation/paths.txt is empty and moderation/commit-message.txt exists; the commit job writes a message only with a path to commit"
+              exit 1
+            fi
+            echo "nothing to commit: the commit job listed no path, so nothing is added, committed or pushed"
+            exit 0
+          fi
           git config user.name "astra-registry-bot"
           git config user.email "bot@users.noreply.github.com"
           git add --pathspec-from-file=moderation/paths.txt

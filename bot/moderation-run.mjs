@@ -1116,8 +1116,24 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
       written,
       terminal,
     }, null, 2)}\n`);
-    if (commit.message) fs.writeFileSync(path.join(out, "commit-message.txt"), commit.message);
-    fs.writeFileSync(path.join(out, "paths.txt"), `${commit.paths.join("\n")}\n`);
+    // **The handoff to the workflow's `apply` step, and its one rule: a
+    // zero-byte `paths.txt`, and no `commit-message.txt`, means "nothing to
+    // commit".** Until 2026-09-22 a run with nothing to commit wrote
+    // `paths.txt` as a single newline and no message. `git add
+    // --pathspec-from-file` exits 128 on that line ("empty string is not a
+    // valid pathspec") and `git commit --file=` exits 128 on the missing file,
+    // so the quietest run there is — no work, no due hold — failed the commit
+    // step, and every ten minutes once the schedule is on.
+    //
+    // `paths.txt` is written EVERY run, empty or not, because its absence is
+    // the other thing the step has to tell apart: a job that never got this
+    // far must fail the step, not read as a run with nothing to say. And a
+    // stale message from an earlier run in the same directory is removed, so
+    // the pair is always this run's.
+    const messageFile = path.join(out, "commit-message.txt");
+    fs.rmSync(messageFile, { force: true });
+    if (commit.message) fs.writeFileSync(messageFile, commit.message);
+    fs.writeFileSync(path.join(out, "paths.txt"), commit.paths.length ? `${commit.paths.join("\n")}\n` : "");
     // An unclear deletion is an error: nobody can say what happened, and no
     // result will be posted until a person does. A hand cancellation is the
     // documented way to end a hold, so it is a warning — but it is said,
