@@ -744,7 +744,9 @@ const MISSING_MEMBER_SENTENCE = "`submission_id` IS NOT IN THIS FILE";
 const REGISTRY_KIND_FLOOR = 10;
 /**
  * `required: true` members asked against at least one committed record: 10 at
- * contract 0.31.0 (plugin 2, version 5, publisher 3), 7 once 0.32.0 lands.
+ * contract 0.31.0 (plugin 2, version 5, publisher 3), 7 at 0.32.0, 6 at 0.33.0
+ * (plugin 1, version 3, publisher 2), which made `artifacts.<platform>.sha256`
+ * optional.
  */
 const REQUIRED_MEMBER_FLOOR = 5;
 /** 22 listing, 52 version and 2 publisher records on 2026-09-22. */
@@ -815,25 +817,24 @@ function memberPresent(doc, name) {
  * that no longer fails — every record carries the member, or the file stopped
  * publishing it required — is red too, so it cannot outlive its reason.
  *
- * `artifacts.<platform>.sha256`: found by this check's first run. Ten of the 52
- * version records on 2026-09-22 are the bootstrap entries `staging: true`
- * exists for, and carry no digest; `schema/version-v1.json` makes `sha256`
- * optional "only so a staging entry can be expressed at all", and
- * `tools/validate.mjs` refuses a staging entry without `--allow-staging`. B.4
- * lists the member among those others read and says nothing of staging, so
- * the file publishes it required. Whether the contract says so is the
- * acceptor's to answer — it is PATCH only if their reader does not require it
- * — and it is not decided here.
+ * EMPTY SINCE CONTRACT 0.33.0, and the machinery stays for the next one.
+ *
+ * The one entry it held was `artifacts.<platform>.sha256`, found by this
+ * check's first run: ten of the 52 version records on 2026-09-22 are the
+ * bootstrap entries `staging: true` exists for, and carry no digest, while
+ * 0.32.0's file published the member required. The acceptor answered that its
+ * version parser reads the digest as optional (ops
+ * `dev/server-registry-contract-pending.md` item 14), so 0.33.0's B.4 says the
+ * digest is optional and absent only from a `staging: true` record, and the
+ * file publishes it `required: false`. The entry went red by itself on that
+ * file — "the exception is stale" — which is the prompt it was written to give.
+ *
+ * What the entry also asserted — that no NON-staging record lacks a digest —
+ * does not leave with it: `tools/validate.mjs` refuses a non-staging artifact
+ * with no `sha256` or `size`, and a staging one that carries a digest, over
+ * every committed record.
  */
-const KNOWN_FALSE = [
-  {
-    schema: "astra.registry.version/1",
-    member: "artifacts.<platform>.sha256",
-    onlyWhere: (doc) => doc?.staging === true,
-    where: "from a `staging: true` version record",
-    pending: "item 14",
-  },
-];
+const KNOWN_FALSE = [];
 
 /**
  * A copy of the tracked files under `dirs`, in the suite's temp directory.
