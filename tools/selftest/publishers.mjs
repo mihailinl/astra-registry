@@ -1,4 +1,5 @@
-// Who may claim what: publisher records against their schema, every badge
+// Who may claim what: publisher records against their schema, and
+// tools/validate.mjs judging them at the first gate by the loader's; every badge
 // resolving and no record shipped unused, the no-publishers/ fail-closed case,
 // expiry firing, homoglyph display-name collisions, `covers` in both orderings,
 // reserved prefixes, whole-line proof, the four re-check outcomes, and the
@@ -16,19 +17,122 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildIndex } from "../build-index.mjs";
 import { validate as validateSchema } from "../lib/jsonschema.mjs";
 import { reservedPrefixViolation } from "../lib/reserved.mjs";
-import { REPO_ROOT, expiredPublishers, loadPublishers, publisherNameCollisions, publisherRecords } from "../lib/sources.mjs";
+import {
+  REPO_ROOT,
+  expiredPublishers,
+  loadPublishers,
+  loadSchemas,
+  publisherNameCollisions,
+  publisherRecords,
+} from "../lib/sources.mjs";
+import { checkPublisherRecords, runValidation } from "../validate.mjs";
 import { proofNamesOwner, recheck } from "../../bot/recheck-publishers.mjs";
 import { test, assert } from "./harness.mjs";
 
 export async function run() {
+  // Through the loader's schema, `loadSchemas().publisher`, and not a read of
+  // the file of this test's own. Until gap 91 this opened
+  // `schema/publisher-v1.json` directly while `loadSchemas` loaded the same
+  // file for nobody: two answers to "which schema judges a publisher", one of
+  // them unread. It is one answer now, and `tools/validate.mjs` judges by it
+  // too (the test after this one).
   await test("every publishers/ record validates against schema/publisher-v1.json", () => {
-    const schema = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "schema/publisher-v1.json"), "utf8"));
+    const schema = loadSchemas(REPO_ROOT).publisher;
     const { errors, publishers } = loadPublishers(REPO_ROOT);
     assert(errors.length === 0, errors.map((e) => `${e.file}: ${e.message}`).join("\n"));
-    assert(publishers.size >= 1, "no publisher records, so this test proves nothing");
-    for (const { file, doc } of publishers.values()) {
+    const records = publisherRecords(publishers);
+    assert(records.length >= 1, "no publisher records, so this test proves nothing");
+    for (const { file, doc } of records) {
       const errs = validateSchema(schema, doc);
       assert(errs.length === 0, `${file}: ` + errs.map((e) => `${e.path} ${e.message}`).join("\n"));
+    }
+  });
+
+  // Gap 91. `tools/validate.mjs` is the first of the five checks the publish
+  // path runs and the only one CI names "Validate the listings"; this module
+  // is the fifth. A malformed publisher record used to pass the first — with
+  // 0 errors in both modes, measured, for a record no listing reaches — and be
+  // refused only here. Three clauses, each with its own subject:
+  //
+  //   (a) the committed records are judged and pass: `checkPublisherRecords`
+  //       over the real tree, with the loader's schema, reports nothing;
+  //   (b) it judges by the schema it is HANDED, which is how `runValidation`
+  //       gives it the loader's: a tightened copy of that schema turns every
+  //       committed record red, so a function that read the file itself — a
+  //       second answer — would not follow and this fails;
+  //   (c) `runValidation` calls it: a copy of `publishers/` with one wrong-typed
+  //       member, one enum miss and one record the loader drops is refused
+  //       three times, each by its file and member, and for nothing else.
+  //
+  // The subjects are synthesised from the committed records, because the
+  // committed tree has never contained a malformed one.
+  await test("tools/validate.mjs judges every publisher record at the first gate, by the loader's schema", async () => {
+    const schemas = loadSchemas(REPO_ROOT);
+    const collect = () => {
+      const items = [];
+      const push = (level) => (where, message) => items.push({ level, where, message });
+      return { items, error: push("error"), warn: push("warn"), note: push("note") };
+    };
+
+    // (a)
+    const clean = collect();
+    const committed = loadPublishers(REPO_ROOT);
+    const committedFiles = publisherRecords(committed.publishers).map((r) => r.file);
+    assert(committedFiles.length >= 2, `${committedFiles.length} committed record(s); (b) below needs at least two to mean anything`);
+    checkPublisherRecords({ report: clean, schemas }, committed);
+    assert(clean.items.length === 0,
+      `the committed publisher records are refused by tools/validate.mjs:\n${clean.items.map((i) => `${i.where}: ${i.message}`).join("\n")}`);
+
+    // (b)
+    const tight = collect();
+    const tightened = structuredClone(schemas.publisher);
+    tightened.properties.display_name.maxLength = 1;
+    checkPublisherRecords({ report: tight, schemas: { ...schemas, publisher: tightened } }, committed);
+    const judged = new Set(tight.items.filter((i) => i.message.startsWith("$.display_name")).map((i) => i.where));
+    const unjudged = committedFiles.filter((f) => !judged.has(f));
+    assert(unjudged.length === 0,
+      `a one-character display_name limit, handed to checkPublisherRecords as ctx.schemas.publisher, did not refuse ` +
+      `${unjudged.join(", ")}; the function is judging by some other schema than the loader's`);
+
+    // (c)
+    const tree = fs.mkdtempSync(path.join(os.tmpdir(), "astra-pub-gate-"));
+    try {
+      fs.cpSync(path.join(REPO_ROOT, "publishers"), path.join(tree, "publishers"), { recursive: true });
+      const pick = committedFiles.find((f) => f === "publishers/mihailinl.json") ?? committedFiles[0];
+      const other = committedFiles.find((f) => f !== pick);
+      const edit = (rel, change) => {
+        const full = path.join(tree, rel);
+        const before = fs.readFileSync(full);
+        const doc = JSON.parse(before);
+        change(doc);
+        fs.writeFileSync(full, JSON.stringify(doc, null, 2) + "\n");
+        assert(!fs.readFileSync(full).equals(before), `the edit to ${rel} changed no byte, so (c) would prove nothing`);
+      };
+      edit(pick, (d) => { d.display_name = 42; });
+      edit(other, (d) => { d.tier = "community"; });
+      // A record the loader DROPS — its owner is not its file name — which no
+      // schema check can reach, so it must be the loader's refusal that says so.
+      fs.writeFileSync(path.join(tree, "publishers", "stray.json"),
+        JSON.stringify({ ...JSON.parse(fs.readFileSync(path.join(REPO_ROOT, pick))), owner: "somebody-else" }, null, 2) + "\n");
+
+      const { report } = await runValidation({
+        root: tree, allowStaging: true, allowDirect: false, online: false, artifactsDir: null, index: false,
+      });
+      const mine = report.errors.filter((e) => e.where.startsWith("publishers/"));
+      const at = (file, needle) => mine.filter((e) => e.where === file && e.message.includes(needle));
+      assert(at(pick, "$.display_name").length === 1,
+        `${pick} with display_name 42 is not refused by tools/validate.mjs naming the member:\n` +
+        mine.map((e) => `${e.where}: ${e.message}`).join("\n"));
+      assert(at(other, "$.tier").length === 1,
+        `${other} with tier "community" is not refused by tools/validate.mjs naming the member:\n` +
+        mine.map((e) => `${e.where}: ${e.message}`).join("\n"));
+      assert(at("publishers/stray.json", "does not match the file name").length === 1,
+        "a record the loader drops is not refused by tools/validate.mjs; it would be invisible to every schema check");
+      assert(mine.length === 3,
+        `expected exactly the three planted refusals under publishers/, got ${mine.length}:\n` +
+        mine.map((e) => `${e.where}: ${e.message}`).join("\n"));
+    } finally {
+      fs.rmSync(tree, { recursive: true, force: true });
     }
   });
 
