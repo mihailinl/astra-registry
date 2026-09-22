@@ -59,10 +59,25 @@
 #
 # ── UNTIL THE OWNER PERFORMS §2.12's R1 ACT ─────────────────────────────────
 #
-# Every run's `alert` job is red, saying which secret of environment `alerts`
-# is missing. That is the intended state and not a defect to route around: an
-# estate with no alarm channel must not be indistinguishable from an estate
-# with nothing to report.
+# **This canary's `alert` job sends nothing, and is GREEN while it does.** None
+# of `ASTRA_ALERT_TELEGRAM_TOKEN`, `ASTRA_ALERT_CHAT_ID` or
+# `ASTRA_ALERT_COPY_CHAT_ID` is present, so `.github/actions/alert` logs a
+# `::warning::` saying the channel does not exist, skips the alarm, skips
+# BOT-85's heartbeat, and exits 0 — a repository whose channel has never been
+# created is not a repository with a defect. **So every red finding this job
+# composes today reaches a person only as a red X in the Actions tab.**
+#
+# Until 2026-09-21 these lines said the opposite: "Every run's `alert` job is
+# red, saying which secret of environment `alerts` is missing. That is the
+# intended state." It was true when it was written and stopped being true on
+# 2026-09-19, when the action started reporting an absent channel green. The
+# twelve canary runs before this commit landed were twelve successes. A reader
+# who believed the old paragraph would have concluded that the absence of an
+# alarm channel was already visible here, which is the reason not to look — the
+# same shape as the BOT-47 claim `ingest.yml` carried for eight weeks.
+#
+# The workflow whose whole subject IS this question, and which really is red
+# for it, is `.github/workflows/alarm-drill.yml`, once a week.
 
 name: Moderation coverage
 
