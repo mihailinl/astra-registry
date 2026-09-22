@@ -562,10 +562,13 @@ export function cutoverAt(root = REPO_ROOT) {
     const at = JSON.parse(fs.readFileSync(file, "utf8"))?.cutover_at;
     return typeof at === "string" && at ? at : null;
   } catch {
-    // Unreadable is not "after cutover". `bot/lib/listing-state.mjs` validates
-    // this marker properly and alerts on it; guessing here would make an
-    // appeal link vanish from the log because a comma was misplaced in an
-    // unrelated file.
+    // Unreadable is not "after cutover". What refuses a malformed marker is
+    // `tools/validate.mjs`'s `checkMigrationMarkers`, which reports it as an
+    // error, and `build-index.yml` runs that validator on every pull request
+    // and every push to `main`. `bot/lib/listing-state.mjs`'s `readMarkers`
+    // throws on one too, but nothing the bot runs calls it yet. Guessing here
+    // would make an appeal link vanish from the log because a comma was
+    // misplaced in an unrelated file.
     return null;
   }
 }

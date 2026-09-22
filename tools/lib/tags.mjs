@@ -46,8 +46,3 @@ const TAG_RE = new RegExp(TAG_PATTERN);
 export function isTag(v) {
   return typeof v === "string" && TAG_RE.test(v);
 }
-
-/** The tag, or null — for the callers that echo it back into a comment. */
-export function safeTagValue(v) {
-  return isTag(v) ? v : null;
-}

@@ -19,7 +19,7 @@ import {
   CATALOG_TTL_DAYS, INDEX_SCHEMA, REVOCATIONS_SCHEMA, REVOCATION_TTL_DAYS, TRUST_SCHEMA,
   signEnvelope, verifyEnvelope,
 } from "../../bot/lib/sign.mjs";
-import { test, assert, assertEqual, tmp } from "./harness.mjs";
+import { test, assert, assertEqual, neverAsk, tmp } from "./harness.mjs";
 import { TEST_INDEX_KEY, TEST_STRANGER_KEY, trustedIndexKeys } from "./fixtures.mjs";
 
 export async function run() {
@@ -295,6 +295,34 @@ export async function run() {
     assertEqual(REFUSED_ADVISORY_HOSTS.slice().sort().join(","), "github.com,github.io",
       "the refused-host list changed; ROLL-50 names github.com and github.io");
   });
+  // A fixture repository with its whole history, built by `build`: the flag
+  // rule's subject, at whatever state of breakage a check needs. Shared by the
+  // two checks below, because the second one clones the first one's violation.
+  const gitIn = (dir, ...a) =>
+    execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const flagFixture = (build) => {
+    const dir = path.join(tmp, `flag-${build.name}`);
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(path.join(dir, "policy"), { recursive: true });
+    const git = (...a) => gitIn(dir, ...a);
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "flag-fixture@example.invalid");
+    git("config", "user.name", "flag fixture");
+    git("config", "commit.gpgsign", "false");
+    const write = (value) => fs.writeFileSync(path.join(dir, FLAG_PATH), `${JSON.stringify(value, null, 2)}\n`);
+    const commit = (m) => { git("add", "-A"); git("commit", "-qm", m); };
+    build({ write, commit, remove: () => fs.rmSync(path.join(dir, FLAG_PATH)), dir });
+    return dir;
+  };
+  const armed = { schema: FLAG_SCHEMA, armed_at: "2026-09-20T09:00:00Z" };
+  function editedAfterArming({ write, commit, dir }) {
+    // A commit before the arming one, so that a depth-2 clone below is missing
+    // a real parent rather than stopping at the root.
+    fs.writeFileSync(path.join(dir, "README.md"), "a registry before the latch\n"); commit("before");
+    write(armed); commit("arm");
+    write({ ...armed, armed_at: "2026-10-01T09:00:00Z" }); commit("tidy the date");
+  }
+
   await test("the arming flag, once added, is never changed and never deleted — no R9b exception", () => {
     // D5's latch is HISTORY: `armingState` asks whether any commit reachable
     // from the Source-Commit ADDED `policy/pages-withdrawal-list.json`, and it
@@ -307,32 +335,23 @@ export async function run() {
     // Watched on a fixture repository rather than only on this one, because
     // the flag has not been added here yet: on the real tree every assertion
     // below is about an empty history, which is a rule nobody has seen work.
-    // The fixture is the same rule at the three ways it is broken.
+    // The fixture is the same rule at the three ways it is broken. The real
+    // tree is the check after the next one.
     const problemsFor = (build) => {
-      const dir = path.join(tmp, `flag-${build.name}`);
-      fs.rmSync(dir, { recursive: true, force: true });
-      fs.mkdirSync(path.join(dir, "policy"), { recursive: true });
-      const git = (...a) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-      git("init", "-q", "-b", "main");
-      git("config", "user.email", "flag-fixture@example.invalid");
-      git("config", "user.name", "flag fixture");
-      git("config", "commit.gpgsign", "false");
-      const write = (value) => fs.writeFileSync(path.join(dir, FLAG_PATH), `${JSON.stringify(value, null, 2)}\n`);
-      const commit = (m) => { git("add", "-A"); git("commit", "-qm", m); };
-      build({ write, commit, remove: () => fs.rmSync(path.join(dir, FLAG_PATH)), dir });
-      return flagPermanenceProblems({ root: dir }).problems;
+      const r = flagPermanenceProblems({ root: flagFixture(build) });
+      // A fixture `git init`ed here holds its whole history, so everything
+      // was asked; if it ever reads as shallow, a clean answer below means
+      // nothing.
+      assertEqual(r.notAsked, null, `the ${build.name} fixture has its whole history and the guard said it did not`);
+      return r.problems;
     };
-    const armed = { schema: FLAG_SCHEMA, armed_at: "2026-09-20T09:00:00Z" };
 
     const honest = problemsFor(function honest({ write, commit }) {
       write(armed); commit("arm Pages' withdrawal list");
     });
     assertEqual(honest.join("\n"), "", "an arming commit that does nothing else was refused");
 
-    const edited = problemsFor(function edited({ write, commit }) {
-      write(armed); commit("arm");
-      write({ ...armed, armed_at: "2026-10-01T09:00:00Z" }); commit("tidy the date");
-    });
+    const edited = problemsFor(editedAfterArming);
     assert(edited.some((p) => p.includes("modified, renamed or deleted")),
       `an edit of the flag after the arming commit produced no problem: ${edited.join("\n") || "none at all"}`);
 
@@ -356,14 +375,109 @@ export async function run() {
     });
     assert(extra.some((p) => p.includes("must hold exactly")),
       `a third field in the flag produced no problem: ${extra.join("\n") || "none at all"}`);
+  });
 
-    // And this repository, which is the subject the rule exists for. Today it
-    // says nothing because the flag is not here; the day it is added this
-    // assertion starts checking it with nobody having to remember.
+  // GAP 75. The guard's own precondition, watched on the checkout
+  // `actions/checkout` makes when nobody sets `fetch-depth`.
+  //
+  // Measured on 2026-09-22, at dac28bc and again at b661b09: this repository
+  // with the flag added and then edited, cloned at depth 1, printed `ok` for
+  // the check above and exited 0 (`INCOMPLETE 322 passed, 0 failed, 1 not
+  // asked` at dac28bc) — while a full clone of the same history failed it,
+  // naming the editing commit. The commit at a shallow
+  // boundary has no parent, so git reports the edit as the ADD, and a guard
+  // whose passing condition is an absence of later changes finds none.
+  //
+  // Three clauses, and each has its own fixture, because each is a different
+  // way to get this wrong: a guard that never asks whether it is shallow
+  // (depth 1 reads clean), a guard that gives up entirely when it is (depth 1
+  // loses the shape half, which needs no history), and a guard that stops
+  // reading history when it is (depth 2 holds the edit AND its parent, so the
+  // change is in front of it and must still be reported).
+  await test("through a shallow clone the flag guard says NOT ASKED about the history it cannot see, and still reports what it can", () => {
+    const clone = (origin, depth) => {
+      const dir = `${origin}-depth${depth}`;
+      fs.rmSync(dir, { recursive: true, force: true });
+      execFileSync("git", ["clone", "-q", "--depth", String(depth), `file://${origin}`, dir],
+        { stdio: ["ignore", "pipe", "pipe"] });
+      // The control. `git clone --depth` of a plain path is silently a FULL
+      // clone ("--depth is ignored in local clones"), which is why the origin
+      // is a file:// URL — and why this is asserted rather than assumed.
+      assertEqual(gitIn(dir, "rev-parse", "--is-shallow-repository"), "true",
+        `the depth-${depth} clone is not shallow, so nothing below is about a shallow clone`);
+      assertEqual(gitIn(dir, "rev-list", "--count", "HEAD"), String(depth),
+        `the depth-${depth} clone does not hold ${depth} commit(s)`);
+      return dir;
+    };
+
+    const violated = flagFixture(editedAfterArming);
+    const whole = flagPermanenceProblems({ root: violated });
+    assert(whole.problems.some((p) => p.includes("modified, renamed or deleted")) && whole.notAsked === null,
+      `the fixture's own history is not a visible violation, so its clones prove nothing: ${JSON.stringify(whole)}`);
+
+    // (1) Depth 1: the edit IS the one fetched commit, and reads as the add.
+    const one = flagPermanenceProblems({ root: clone(violated, 1) });
+    assert(one.shallow === true && typeof one.notAsked === "string" && one.notAsked.includes("shallow checkout"),
+      `through a depth-1 clone the guard answered as if it had asked a history that edits the flag — clean, ` +
+      `to a caller that reads only \`problems\`: ${JSON.stringify(one)}`);
+
+    // (2) Depth 2: the edit and its parent are both here, so the change is in
+    // front of the clone — shallow or not, it is a real change.
+    const two = flagPermanenceProblems({ root: clone(violated, 2) });
+    assert(two.problems.some((p) => p.includes("modified, renamed or deleted")),
+      `a depth-2 clone holds the editing commit and its parent, and the guard did not report the edit: ` +
+      `${JSON.stringify(two)}`);
+    assert(two.notAsked !== null, "a depth-2 clone is still shallow, and the guard said it had asked everything");
+
+    // (3) The shape half needs no history, so a shallow clone still asks it.
+    const noted = flagFixture(function notedFlag({ write, commit }) {
+      write({ ...armed, note: "temporary, remove after R9b" }); commit("arm, with a note");
+    });
+    const shape = flagPermanenceProblems({ root: clone(noted, 1) });
+    assert(shape.problems.some((p) => p.includes("must hold exactly")),
+      `through a depth-1 clone a third field in the flag was not reported: ${JSON.stringify(shape)}`);
+  });
+
+  // And this repository, which is the subject the rule exists for. Today it
+  // says nothing because the flag is not here; the day it is added this starts
+  // checking it with nobody having to remember.
+  //
+  // WHERE IT IS ASKED, and the one live lane where it deliberately is not.
+  // A red comes first and at any depth: a change among the fetched commits is
+  // a real change. What a shallow checkout cannot do is say "clean", so there
+  // it is NOT ASKED. The runner derives which live lanes reach this suite with
+  // the whole history, prints them under the totals, and fails when there are
+  // none — this check is found by that derivation because its body tests
+  // `shallow` and calls `neverAsk`, so do not split the two apart.
+  //
+  // `ingest.yml`'s `selftest` job checks out at depth 1 and is LEFT there, on
+  // purpose. Measured 2026-09-22, not argued: (a) it adds no detection. The
+  // commit it asks about is `github.sha`, which its own run's `publish` job
+  // checks out at `fetch-depth: 0` and asks again, through
+  // `bot/publish-apply.mjs`, before anything commits; and which
+  // `build-index.yml` (`fetch-depth: 0`) asks of the whole history on every
+  // push to main, every pull request and every hour. (b) It would add an
+  // outage. `main` is append-only, so a breach is red for good (gap 74), and
+  // `selftest` is the job every submission's `check` waits on: asking it there
+  // too turns a record-keeping breach from "nothing publishes" into "nothing
+  // is judged", permanently. (c) Cost is not the reason, and was measured so
+  // that nobody thinks it is: three full clones of this repository from
+  // GitHub took 0.57-0.63 s against 0.69-0.81 s at depth 1 (5.6 MB of .git
+  // against 2.8 MB), and in ingest run 35504547656 the publish job's full
+  // fetch took 0.49 s against the selftest job's shallow one at 0.74 s.
+  await test("this repository's arming flag has not changed since it was added, asked of its whole history", () => {
     const real = flagPermanenceProblems({ root: REPO_ROOT });
     assertEqual(real.problems.join("\n"), "", "the arming flag in this repository is not permanent");
     assertEqual(real.present, fs.existsSync(path.join(REPO_ROOT, FLAG_PATH)),
       "the rule disagrees with the filesystem about whether the flag is here");
+    if (real.shallow) {
+      neverAsk(real.notAsked,
+        "a checkout with its whole history asks it: the runner prints the live lanes that reach this suite " +
+        "with it under the totals and goes red when there are none (`node tools/selftest.mjs --lanes`). " +
+        "ingest.yml's `selftest` job is left at depth 1 on purpose — its run's `publish` job asks the same " +
+        "commit with the whole history before anything commits, and a breach is permanent, so asking it " +
+        "there too would add an outage and no detection; the comment above this check has the measurement");
+    }
   });
   await test("the generator flattens an advisory into one entry per key, carrying the advisory", () => {
     const dir = path.join(tmp, "revsrc");

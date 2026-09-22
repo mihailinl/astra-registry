@@ -27,7 +27,8 @@
 // ── where the roots come from, and why not from a file ─────────────────────
 //
 // The roots are COMPILED IN, in `bot/lib/roots.mjs` (registry plan B-T1.5,
-// BOT-7), and `loadWorkflowAllowlist` verifies against those and nothing else.
+// BOT-7), and `loadWorkflowAllowlist` verifies against those unless a caller
+// hands it another set — which nothing the bot runs does.
 // They used to be read out of `registry/v1/root.json` — a file in this
 // repository, in the same tree as this code, rewritten by the bot's own
 // `publish` job — which put the anchor inside the thing it anchors: a commit
@@ -36,12 +37,17 @@
 // whole argument, and `bot/check-roots.mjs` alarms when the published file and
 // the compiled set stop agreeing.
 //
-// The file is still read, by `loadRootKeys` below: by `check-roots.mjs`, which
-// is comparing the two on purpose, and by the tests, which build a roots
-// document out of the clearly-labelled TEST keys in `tools/testkeys/` and hand
-// it in through the injection seam — exactly as the daemon's tests do behind
-// `insecure-test-trust-roots`. Production names no file and has no flag that
-// would let it.
+// The file is still read, on purpose, and only the suites read it through
+// `loadRootKeys` below. `check-roots.mjs` parses it itself and hands the
+// document to `rootFileProblems` in `bot/lib/roots.mjs`, which compares it with
+// the compiled set; it never builds a key set out of it. `loadRootKeys` is
+// called by `tools/selftest/trust-anchor.mjs`, which loads the published set to
+// ask whether the committed anchor also verifies under it, and by the bot's
+// tests, which build a roots document out of the clearly-labelled TEST keys in
+// `tools/testkeys/` and hand it in through the injection seam — exactly as the
+// daemon's tests do behind `insecure-test-trust-roots`. Nothing the bot runs
+// hands `loadWorkflowAllowlist` a set, and the bot has no flag that would let
+// it.
 //
 // ── failing closed ─────────────────────────────────────────────────────────
 //
@@ -68,10 +74,13 @@ const execFileAsync = promisify(execFile);
 /**
  * Load a root key set out of a `root.json`-shaped document.
  *
- * Not the production path. `bot/check-roots.mjs` uses it to compare the
- * published file with the compiled set, and the tests use it to build a set
- * from `tools/testkeys`; `loadWorkflowAllowlist` defaults to the compiled set
- * and no caller in the bot names a file.
+ * Not the bot's path: nothing the bot runs calls it. Its callers are the
+ * suites' — `tools/selftest/trust-anchor.mjs` loads the published
+ * `registry/v1/root.json` with it, and the bot's tests build a set from
+ * `tools/testkeys` with it. `bot/check-roots.mjs` compares the published file
+ * with the compiled set without it, through `rootFileProblems` in
+ * `bot/lib/roots.mjs`. `loadWorkflowAllowlist` defaults to the compiled set and
+ * no caller in the bot names a file.
  *
  * @param {string} file `registry/v1/root.json`, or a test roots file
  * @returns {{keys: {key_id: string, publicKey: import("node:crypto").KeyObject}[], status: string}}
