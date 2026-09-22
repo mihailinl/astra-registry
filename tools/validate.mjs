@@ -1004,8 +1004,23 @@ export function checkMirroredLimits(ctx) {
  *
  * So: set means set. A caller that wants the sibling unsets the variable —
  * `tools/signer/plan.mjs` already does precisely that.
+ *
+ * **Exported so that the rule can be asked of the resolver instead of inferred
+ * from the resolver's surroundings** (gap 41). For a year the only thing that
+ * held this was `tools/selftest/couplings.mjs`'s absent case, which provokes the
+ * fall-through by pointing the reader at a fake that omits a file and looking at
+ * what comes back — and that case can only tell an honoured override from an
+ * empty fall-through on a machine that HAS a sibling to fall through to.
+ * Measured on 2026-09-22: put the two-candidate list back and the suite is
+ * `INCOMPLETE 312 passed, 0 failed` with no sibling beside this repository and
+ * `FAIL 310 passed, 1 failed` with one. Every lane that runs the suite is the
+ * first kind, so the regression was undetectable in every environment that runs
+ * automatically.
+ *
+ * The length of this list is not an absence and needs no environment. Asked
+ * directly it is one assertion that is red in both.
  */
-function astraPluginsCandidates() {
+export function astraPluginsCandidates() {
   const override = process.env.ASTRA_PLUGINS_DIR;
   if (override) return [override];
   return [path.resolve(REPO_ROOT, "../AstraPlugins")];
