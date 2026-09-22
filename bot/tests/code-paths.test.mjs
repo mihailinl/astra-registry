@@ -145,6 +145,18 @@ export const ENTRIES = [
   // `tools/priv-scan.mjs` imports `tools/coverage/rules.mjs`, and
   // `tools/coverage/git.mjs` comes with it.
   //
+  // **That import is gone** (dev/couplings.md entry 104). The decision writer
+  // takes the rules from `tools/lib/priv-rules.mjs`, under the `tools/lib/`
+  // entry, because `tools/priv-scan.mjs` also held `roleAddresses`, which reads
+  // `bot/security-contact.json` — outside this set — and exempted whatever
+  // address that file held from the bot's own PRIV-2 refusal. So no bot run
+  // reaches `tools/priv-scan.mjs` or `tools/coverage/rules.mjs` now (leg (b)'s
+  // closure went from 52 modules to 51), and `tools/coverage/git.mjs` is still
+  // reached, through `bot/lib/takedown-bound.mjs` and `bot/moderation-run.mjs`.
+  // The first two stay in the set, because the set is the contract's and a
+  // change to it is a MINOR: an entry no run reaches costs a shadow transition
+  // when somebody edits it, which is loud, and never a hole, which is not.
+  //
   // `tools/coverage/` is ENUMERATED and not taken whole: `docs-advisory-url`,
   // `keepalive-age` and `reserved-id-mirror` are rule reporters only the desk
   // tools run, and `priv-scan-exempt.json` is read by `loadExemptions`, the
@@ -641,6 +653,34 @@ function spawnedScripts(modules) {
   return out;
 }
 
+/** The closure of `entries`, spawned scripts followed to a fixpoint. Leg (b)'s walk, and leg (c)'s. */
+function closureOf(entries) {
+  let modules = [];
+  let missing = [];
+  const roots = new Set(entries);
+  for (let pass = 0; pass < 8; pass += 1) {
+    ({ modules, missing } = importClosure([...roots]));
+    const before = roots.size;
+    for (const s of spawnedScripts(modules)) roots.add(s);
+    if (roots.size === before) break;
+  }
+  return { modules, roots, missing };
+}
+
+/** Every `node` entry point the two workflows and their local actions run. */
+function workflowEntries() {
+  const entries = new Set();
+  for (const w of liveWorkflows()) {
+    const yaml = read(w);
+    for (const e of nodeEntryPoints(yaml)) entries.add(e);
+    for (const u of localUses(yaml)) {
+      const af = path.posix.join(u, "action.yml");
+      if (present(af)) for (const e of nodeEntryPoints(read(af))) entries.add(e);
+    }
+  }
+  return entries;
+}
+
 /** The workflow files of the two that are on the tree, derived, never declared. */
 function liveWorkflows() {
   return WORKFLOWS.filter(present);
@@ -705,16 +745,8 @@ test("(b) every reachable code path of the two bot workflows is inside the set",
   // the run, so its own imports are reachable too. Without the second pass the
   // five checks `bot/publish-apply.mjs` runs would be judged and their
   // libraries would not.
-  let modules = [];
-  const roots = new Set(entries);
-  for (let pass = 0; pass < 8; pass += 1) {
-    const { modules: m, missing } = importClosure([...roots]);
-    assert.deepEqual(missing, [], "a module is imported and is not on the tree");
-    modules = m;
-    const before = roots.size;
-    for (const s of spawnedScripts(m)) roots.add(s);
-    if (roots.size === before) break;
-  }
+  const { modules, roots, missing } = closureOf(entries);
+  assert.deepEqual(missing, [], "a module is imported and is not on the tree");
 
   const outside = modules.filter((m) => !inSet(m));
   assert.deepEqual(
@@ -759,6 +791,226 @@ test("(b) every reachable code path of the two bot workflows is inside the set",
         `${stubs.size ? `; stub steps still name ${[...stubs].sort().join(", ")}` : ""}.`,
     );
   }
+});
+
+// ── (c) the data files a reachable module names ─────────────────────────────
+//
+// Leg (b) follows imports and spawned scripts. A module also READS files that
+// are not modules — a policy, a schema, an allow-list — and a data file that
+// decides what a run does is as much a gate input as the code that reads it
+// (registry plan ROLL-64: "a bot run's outcome depends on it" is the test).
+// Before this leg, a new `policy/*.json` read by `tools/validate.mjs` sat
+// outside the set with nothing red (dev/couplings.md entry 104).
+//
+// **Its first run found one, and it was not excused: it was moved.**
+// `bot/security-contact.json`, read by `tools/priv-scan.mjs`'s
+// `roleAddresses`, which the decision writer imported: every address in that
+// file was exempt from the bot's own PRIV-2 refusal, so a registry writer could
+// widen what a bot run writes into a public decision record without the bot
+// going back to shadow. The rules moved to `tools/lib/priv-rules.mjs`, which
+// reads no file; the read stays in the canary, which no bot run imports; and
+// `bot/tests/decisions.test.mjs` asserts the property from the outside. The
+// file is not in `DATA_OUTSIDE` below, and the test refuses a declaration of
+// it — declaring it would have been the one-line way to make this leg green
+// and leave the hole open.
+//
+// So every path a module in leg (b)'s closure NAMES — a whole string literal
+// that is a repository path, the literal and constant arguments of a
+// `path.join`/`path.resolve`, a `new URL("../x", import.meta.url)`, the static
+// head of a template like `plugins/${id}` — must be inside the set or declared
+// outside it below, with a reason. Code files are leg (b)'s subject and are
+// skipped here.
+//
+// **What this scan cannot see, stated so a green run is not read as more:**
+// a path built from a value no module spells (a CLI argument, a run artifact);
+// a walk of the whole tree (`tools/selftest.mjs` and its harness read every
+// tracked file — they are the check, and the tree is its subject); files in
+// the AstraPlugins checkout (outside this repository, selected by
+// `bot/manifest-probe/astra-plugins.pin`, which is in the set); the selftest
+// cases under `tools/selftest/`, which the directory entry covers as code and
+// no static closure reaches; a path under a top-level directory that is
+// neither on the tree nor named by the set or a declaration; and a path whose
+// segments are separate literals put together by anything other than
+// `path.join`/`path.resolve` — `["bot", "x.json"].join("/")`, a `+` — which
+// no single string spells. That last one was watched: a read of the contact
+// file written that way is green here, and red only in
+// `bot/tests/decisions.test.mjs`, which judges what the writer DOES rather
+// than what it names.
+
+/**
+ * Declared outside the set. `path` is exact, or a directory with a trailing
+ * `/` that covers everything beneath it — and a directory declaration may not
+ * be a prefix of a set entry, because it would shelter a new file next to a
+ * hashed one (`policy/` would have sheltered exactly the file this leg exists
+ * to catch). Every declaration must match something the scan found.
+ */
+export const DATA_OUTSIDE = [
+  // Records a run writes or reads as its subject — TRUST-31's own outside
+  // paragraph: hashing them would put the bot into shadow for doing its job.
+  { path: "plugins/", why: "the catalogue's sources, which every run judges and a publication writes" },
+  { path: "publishers/", why: "publisher records, hand-reviewed and withdrawn by the daily re-check; TRUST-31 lists them outside" },
+  { path: "log/", why: "decision records, the baseline marker, the cutover marker and migration notices: records, not rules" },
+  { path: "state/", why: "queue, holds, alerts and watch state a run writes as it works" },
+  { path: "bot/moderation/", why: "MOD-47 moderation log entries, the moderation run's subject" },
+  { path: "tools/revocations/", why: "advisories, compiled into the served list" },
+  { path: "registry/v1/", why: "the served index and revocation list (outputs), and root.json, which bot/check-roots.mjs holds to the roots compiled into the code — the file is the subject of that comparison, not its rule" },
+  { path: "policy/binding-deadline.json", why: "committed by the owner by hand (MIG-2); TRUST-31 lists it outside" },
+  // Deliberate, and each is TRUST-31's own words.
+  { path: "schema/contract-tokens-v1.json", why: "generated from the contract, so hashing it would make every contract version a shadow transition (TRUST-31). It IS read at run time: fixedReason decides a moderation compile's reason_refused" },
+  { path: ".github/workflows", why: "tools/selftest.mjs's lane census reads every workflow file; the two bot workflows are set entries and the rest are outside by TRUST-31. Exact, so a named new workflow is still judged" },
+  // Not files at all: operation paths relative to the plugins service's API
+  // base (contract §4.2), in bot/lib/service.mjs's OPERATIONS.
+  ...["gates", "leases", "moderation-work", "notice-status", "results", "service-decision-results", "submissions", "verdicts"]
+    .map((op) => ({ path: `bot/${op}`, why: "not a file: an operation path relative to the plugins service's API base (§4.2)" })),
+];
+
+const lex = (src) => {
+  let code = ""; const strs = []; let i = 0; const n = src.length;
+  while (i < n) {
+    const c = src[i], d = src[i + 1];
+    if (c === "/" && d === "/") { while (i < n && src[i] !== "\n") i += 1; continue; }
+    if (c === "/" && d === "*") { i += 2; while (i < n && !(src[i] === "*" && src[i + 1] === "/")) { if (src[i] === "\n") code += "\n"; i += 1; } i += 2; continue; }
+    if (c === '"' || c === "'" || c === "`") {
+      const at = code.length; let body = ""; let depth = 0; let interp = false; code += c; i += 1;
+      while (i < n && !(src[i] === c && depth === 0)) {
+        if (src[i] === "\\") { body += src[i] + src[i + 1]; code += src[i] + src[i + 1]; i += 2; continue; }
+        if (c === "`" && src[i] === "$" && src[i + 1] === "{") { interp = true; depth += 1; } else if (c === "`" && depth && src[i] === "}") depth -= 1;
+        body += src[i]; code += src[i]; i += 1;
+      }
+      code += c; i += 1; strs.push({ at, body, interp });
+      if (interp) for (const m of body.matchAll(/\$\{/g)) {
+        let j = m.index + 2; let dd = 1; for (; j < body.length && dd; j += 1) { if (body[j] === "{") dd += 1; else if (body[j] === "}") dd -= 1; }
+        for (const s of lex(body.slice(m.index + 2, j - 1)).strs) strs.push({ ...s, at: at + m.index + 2 + s.at });
+      }
+      continue;
+    }
+    if (c === "/" && /[=(,:;!&|?{}[\n]\s*$/.test(code.slice(-3))) {
+      code += c; i += 1; let cls = false;
+      while (i < n && (src[i] !== "/" || cls) && src[i] !== "\n") { if (src[i] === "\\") { code += src[i] + src[i + 1]; i += 2; continue; } if (src[i] === "[") cls = true; if (src[i] === "]") cls = false; code += src[i]; i += 1; }
+      code += "/"; i += 1; continue;
+    }
+    code += c; i += 1;
+  }
+  return { code, strs };
+};
+
+/** Every repository path the given modules name, as `path -> ["module:line", …]`. */
+export function namedDataPaths(modules, roots) {
+  const norm = (p) => { const r = path.posix.normalize(p).replace(/\/+$/, ""); return r === "." ? "" : r; };
+  const isCode = (p) => /\.(?:m?js|cjs)$/.test(p);
+  const pathLike = (s) => /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*\/?$/.test(s) && roots.has(s.split("/")[0]);
+  const splitArgs = (s) => { const out = []; let depth = 0; let cur = ""; let q = null; for (const ch of s) { if (q) { cur += ch; if (ch === q) q = null; continue; } if (ch === '"' || ch === "'" || ch === "`") { q = ch; cur += ch; continue; } if ("([{".includes(ch)) depth += 1; if (")]}".includes(ch)) depth -= 1; if (ch === "," && depth === 0) { out.push(cur.trim()); cur = ""; continue; } cur += ch; } if (cur.trim()) out.push(cur.trim()); return out; };
+  const lexed = new Map(modules.filter(present).map((m) => [m, lex(read(m))]));
+  const consts = new Map();
+  const evalExpr = (m, expr, local) => {
+    expr = expr.trim();
+    let mm = /^(["'])([^"'\\]*)\1$|^`([^`$\\]*)`$/.exec(expr); if (mm) return { kind: "str", p: mm[2] ?? mm[3] };
+    mm = /^(?:path\.resolve\()?\s*fileURLToPath\(\s*new URL\(\s*["']([^"']+)["']\s*,\s*import\.meta\.url\s*\)\s*\)\s*\)?$/.exec(expr);
+    if (mm) return { kind: "dir", p: norm(path.posix.join(path.posix.dirname(m), mm[1])) };
+    if (/^path\.dirname\(\s*fileURLToPath\(\s*import\.meta\.url\s*\)\s*\)$|^import\.meta\.dirname$/.test(expr)) return { kind: "dir", p: path.posix.dirname(m) };
+    mm = /^path(?:\.posix)?\.(?:join|resolve)\(([\s\S]*)\)$/.exec(expr);
+    if (mm) { const a = splitArgs(mm[1]).map((x) => evalExpr(m, x, local)); if (a.length && a.every(Boolean) && a.slice(1).every((r) => r.kind === "str")) return { kind: a[0].kind, p: norm(a.map((r) => r.p).filter(Boolean).join("/")) }; return null; }
+    if (/^[A-Za-z_$][\w$]*$/.test(expr)) return local.get(expr) ?? null;
+    return null;
+  };
+  const exprAfter = (src, i) => { let depth = 0; let q = null; const st = i; for (; i < src.length; i += 1) { const ch = src[i]; if (q) { if (ch === "\\") { i += 1; continue; } if (ch === q) q = null; continue; } if (ch === '"' || ch === "'" || ch === "`") q = ch; else if ("([{".includes(ch)) depth += 1; else if (")]}".includes(ch)) { if (depth === 0) break; depth -= 1; } else if ((ch === ";" || ch === "\n" || ch === ",") && depth === 0) break; } return src.slice(st, i); };
+  const rel = (m, spec) => norm(path.posix.join(path.posix.dirname(m), spec));
+  for (let pass = 0; pass < 4; pass += 1) {
+    for (const [m, { code }] of lexed) {
+      const local = consts.get(m) ?? new Map();
+      for (const x of code.matchAll(/(import|export)\s*\{([^}]*)\}\s*from\s*["'](\.[^"']+)["']/g)) {
+        for (const spec of x[2].split(",")) { const s = spec.trim(); if (!s) continue; const [a, b] = s.split(/\s+as\s+/); const v = consts.get(rel(m, x[3]))?.get(a.trim()); if (v) local.set((b ?? a).trim(), v); }
+      }
+      for (const x of code.matchAll(/export\s*\*\s*from\s*["'](\.[^"']+)["']/g)) for (const [k, v] of consts.get(rel(m, x[1])) ?? []) if (!k.startsWith("param:")) local.set(k, v);
+      for (const x of code.matchAll(/^(?:export\s+)?const\s+([A-Z_][A-Z0-9_]*)\s*=\s*/gm)) { const v = evalExpr(m, exprAfter(code, x.index + x[0].length), local); if (v) local.set(x[1], v); }
+      for (const x of code.matchAll(/[(,]\s*([A-Za-z_$][\w$]*)\s*=\s*([A-Z_][A-Z0-9_]*)\s*[,)]/g)) { const v = local.get(x[2]); if (v?.kind === "dir") local.set(`param:${x[1]}`, v); }
+      consts.set(m, local);
+    }
+  }
+  const out = new Map();
+  for (const [m, { code, strs }] of lexed) {
+    const local = consts.get(m);
+    const lineOf = (i) => code.slice(0, i).split("\n").length;
+    const add = (p, i) => { p = norm(p); if (!p || isCode(p) || !roots.has(p.split("/")[0])) return; if (!out.has(p)) out.set(p, []); out.get(p).push(`${m}:${lineOf(i)}`); };
+    for (const s of strs) {
+      if (!s.interp) {
+        if (s.body.includes("/") && pathLike(s.body)) add(s.body, s.at);
+        if (/^\.{1,2}\//.test(s.body) && !isCode(s.body)) add(path.posix.join(path.posix.dirname(m), s.body), s.at);
+      } else {
+        const head = s.body.slice(0, s.body.indexOf("${"));
+        if (head.endsWith("/") && pathLike(head)) add(head, s.at);
+      }
+    }
+    for (const x of code.matchAll(/path(?:\.posix)?\.(?:join|resolve)\(/g)) {
+      let i = x.index + x[0].length; let depth = 1; let q = null; const start = i;
+      for (; i < code.length && depth; i += 1) { const ch = code[i]; if (q) { if (ch === "\\") { i += 1; continue; } if (ch === q) q = null; continue; } if (ch === '"' || ch === "'" || ch === "`") q = ch; else if (ch === "(") depth += 1; else if (ch === ")") depth -= 1; }
+      const args = splitArgs(code.slice(start, i - 1));
+      const vals = args.map((a) => evalExpr(m, a, local) ?? local.get(`param:${a}`) ?? null);
+      let k = vals.length; while (k > 0 && vals[k - 1]?.kind === "str") k -= 1;
+      const tail = vals.slice(k).map((v) => v.p).join("/");
+      if (!tail) continue;
+      const base = k === 0 ? { kind: "dir", p: "" } : vals[k - 1];
+      if (base?.kind === "dir") add([base.p, tail].filter(Boolean).join("/"), x.index);
+      else add(tail, x.index); // a root identifier, or a base this scan cannot resolve: judged as repository-relative
+    }
+  }
+  return out;
+}
+
+/** Is `p` covered by the declaration `d`? */
+const declares = (d, p) => (d.endsWith("/") ? (p + "/").startsWith(d) : p === d);
+
+test("(c) every data file a reachable module names is in the set, or declared outside it with a reason", () => {
+  const { modules } = closureOf(workflowEntries());
+  const tracked_ = tracked();
+  const roots = new Set([
+    ...tracked_.map((f) => f.split("/")[0]),
+    ...ENTRIES.map((e) => e.split("/")[0]),
+    ...DATA_OUTSIDE.map((d) => d.path.split("/")[0]),
+  ]);
+  const named = namedDataPaths(modules, roots);
+
+  // The declarations themselves: a grammar, a reason, no shelter over the set.
+  const bad = [];
+  for (const d of DATA_OUTSIDE) {
+    const why = entryProblem(d.path);
+    if (why) bad.push(`${d.path} — ${why}`);
+    if (typeof d.why !== "string" || d.why.trim().length < 10) bad.push(`${d.path} — declared outside with no reason`);
+    if (inSet(d.path) || inSet(d.path + "/")) bad.push(`${d.path} — is inside the set, so declaring it outside says two things`);
+    if (d.path.endsWith("/") && ENTRIES.some((e) => e.startsWith(d.path))) {
+      bad.push(`${d.path} — a directory declaration over a set entry would shelter a new file beside a hashed one`);
+    }
+  }
+  assert.deepEqual(bad, [], "a declaration in DATA_OUTSIDE is itself malformed");
+  assert.deepEqual(
+    DATA_OUTSIDE.filter((d) => declares(d.path, "bot/security-contact.json")).map((d) => d.path), [],
+    "bot/security-contact.json is declared outside the set. Entry 104 took it off the bot's path instead: a " +
+    "decision record's PRIV-2 refusal must not depend on it. If a bot run reads it again, move the read, or put " +
+    "the file in the set by a contract MINOR — do not excuse it here",
+  );
+
+  const outside = [];
+  const matched = new Set();
+  let inside = 0;
+  for (const [p, at] of named) {
+    if (inSet(p) || inSet(p + "/")) { inside += 1; continue; }
+    const d = DATA_OUTSIDE.find((x) => declares(x.path, p));
+    if (d) { matched.add(d.path); continue; }
+    outside.push(`${p} — named by ${at.slice(0, 4).join(", ")}${at.length > 4 ? ` and ${at.length - 4} more` : ""}`);
+  }
+  assert.deepEqual(outside, [],
+    "a module a bot run reaches names a data file that is neither in TRUST-31's set nor declared outside it. " +
+    "If the run's outcome depends on it, adding it to the set is a contract MINOR (TRUST-31) published before " +
+    "this lands; if it is a record, an output or not a file, declare it in DATA_OUTSIDE with the reason");
+  const stale = DATA_OUTSIDE.filter((d) => !matched.has(d.path)).map((d) => d.path);
+  assert.deepEqual(stale, [],
+    "a DATA_OUTSIDE declaration matches nothing any reachable module names, so it excuses nothing today and " +
+    "would shelter the next path that happens to match it");
+
+  // The floor: the gate inputs this leg is for are found, so an empty scan is red.
+  assert.ok(inside >= 15, `only ${inside} named data path(s) are inside the set; the scan has stopped finding the policy and schema reads`);
+  console.log(`note  (c) ${named.size} data path(s) named by ${modules.length} modules: ${inside} inside the set, ` +
+    `${named.size - inside} declared outside by ${DATA_OUTSIDE.length} declaration(s).`);
 });
 
 // ── the value an acknowledgement names ──────────────────────────────────────

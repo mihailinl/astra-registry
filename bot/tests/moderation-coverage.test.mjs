@@ -483,6 +483,30 @@ test("PRIV-2: git's authorship trailers and reserved TLDs are exempt, and a real
   assert.match(codesOf(priv(g.dir)), /E_PRIV_EMAIL/);
 });
 
+test("PRIV-2: the canary exempts the address the contact file publishes, and needs the file to", () => {
+  // MOD-45's "read rather than typed", which this walk keeps and the decision
+  // writer gave up (dev/couplings.md entry 104; `bot/tests/decisions.test.mjs`
+  // holds the writer to it). No test here exercised it until then — every
+  // role address in this file is a role LOCAL PART, which needs no file — so
+  // the address below has a local part that is not one and a domain that is
+  // not reserved: only the file can exempt it.
+  const published = "disclosures@astra-registry-fixture.net";
+  const f = fixture("priv-contact-file").commit("seed").landTools();
+  f.write("bot/security-contact.json", { email: published }).commit("publish the contact");
+  f.write("log/decisions/2026/09/d1.json", decision({ reasons: [`E_X, write to ${published}`] }))
+    .commit("a decision naming the published contact");
+  const green = priv(f.dir);
+  assert.equal(green.status, "green", green.detail.join("\n"));
+  assert.match(green.detail.join("\n"), /, 1 exempt role address\(es\),/);
+
+  // The file is read from the working tree the walk runs in. Without it the
+  // same history is red, which is what makes the green above the file's doing.
+  f.remove("bot/security-contact.json");
+  const red = priv(f.dir);
+  assert.match(codesOf(red), /E_PRIV_EMAIL/);
+  assert.match(red.detail.join("\n"), /, 0 exempt role address\(es\),/);
+});
+
 test("PRIV-2: this repository's own queue filenames are not addresses", () => {
   // The one finding the naive pattern produced over all 228 commits, and it
   // was `state/queue/dice-roller@0.1.2.json`.
