@@ -10,6 +10,18 @@
 # detector MUST fail its run, which is why `detect` exits non-zero and the
 # alert job runs anyway.
 #
+# **A push's own run cannot page about that push's signer.** `sign.yml` starts
+# on the same push, and this job reads `signed` before the signer commits — on
+# each of the four pushes the signer has committed for since `signed` existed,
+# by 2 to 36 seconds. So A7 measures what `signed` does not carry against the
+# run's clock and gives the signer row 7's bound (gap 76); the run that alarms
+# on a signer that never caught up is a LATER one, the cron below or the next
+# push. That makes the cron A7's latency, and GitHub drops scheduled events:
+# 14 of the 64 hourly slots between this file landing and 2026-09-22 18:12Z
+# were delivered, and the longest gap between two runs of this workflow was
+# 311 minutes (`gh api repos/{owner}/{repo}/actions/workflows/detectors.yml/runs`,
+# `event` and `run_started_at`).
+#
 # **No token, no write, and nothing a stranger chose reaches the message.** The
 # detectors read `plugins/**`, `state/queue/**`, `log/**` and the `signed`
 # branch out of a full checkout; what they produce is fixed codes, plugin ids
