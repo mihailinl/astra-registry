@@ -10,7 +10,21 @@
 // keyword the schema author was relying on is worse than no validator, because
 // it reports success. If you need a keyword that is not here, implement it.
 
-const KNOWN = new Set([
+/**
+ * The keywords this validator implements, and therefore the whole of the
+ * language a schema in this repository may be written in.
+ *
+ * Exported so that `tools/selftest/primitives.mjs` can hold `schema/`'s own
+ * documents to it by a static walk. It has to be THIS set and not a copy: a
+ * second list would agree on the day it was typed and then drift, and the check
+ * that is supposed to notice a schema leaving the subset would be comparing two
+ * things that left it together.
+ *
+ * `examples`, `default`, `title`, `description`, `$comment` and `deprecated` are
+ * in here as ANNOTATIONS — accepted and then ignored, per 2020-12. Everything
+ * else in the set is enforced below.
+ */
+export const KNOWN = new Set([
   "$schema", "$id", "$ref", "$defs", "$comment",
   "title", "description", "examples", "default", "deprecated",
   "type", "enum", "const",

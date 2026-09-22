@@ -631,16 +631,44 @@ export async function run() {
   // never a pass and never a red and a printed line is the only place they can
   // live. A run that says nothing about what it could not ask is a run whose
   // silence reads as coverage.
-  for (const r of resolved) {
-    console.log(`        ${r.verdict.padEnd(15)} ${r.claim.id}`);
-    console.log(`                        tree: ${r.tree}`);
-    console.log(`                        ${r.detail}`);
-  }
+  //
+  // ── and it is CAPTURED, because nothing used to read it ────────────────────
+  //
+  // The check below is named "OUT OF SCOPE is printed, is never a pass, and is
+  // never counted as checked", and until 2026-09-22 its first clause was
+  // asserted by nothing: the printing happens here, before any `test()` runs,
+  // and the body only inspected the in-memory `resolved` array. Measured — a
+  // `continue` on OUT_OF_SCOPE in this loop plus the deletion of the summary's
+  // out-of-scope clause made the permanent bound completely invisible in the
+  // run, and the suite came back 317 passed, 0 failed, exit 0, with the check
+  // still printing `ok`. The paragraph above says a printed line is the only
+  // place these verdicts can live; it was the one thing nobody checked.
+  //
+  // `console.log` is wrapped rather than a second array being built beside the
+  // printing, and that distinction is the whole repair. An array appended to
+  // next to each `console.log` is two statements that can be separated, and the
+  // check would then be asserting that the ARRAY was built — which is what it
+  // was already doing wrong, one level down. What is asserted has to be what
+  // reached stdout.
+  const printed = [];
   const counted = (v) => resolved.filter((r) => r.verdict === v).length;
-  console.log(
-    `        — ${counted(FOUND)} found, ${counted(MEASURED_ABSENT)} measured absent, ` +
-    `${counted(COULD_NOT_ASK)} could not ask, ${counted(OUT_OF_SCOPE)} out of scope (never checked, never fixed)`,
-  );
+  {
+    const realLog = console.log;
+    console.log = (...args) => { printed.push(args.map(String).join(" ")); realLog(...args); };
+    try {
+      for (const r of resolved) {
+        console.log(`        ${r.verdict.padEnd(15)} ${r.claim.id}`);
+        console.log(`                        tree: ${r.tree}`);
+        console.log(`                        ${r.detail}`);
+      }
+      console.log(
+        `        — ${counted(FOUND)} found, ${counted(MEASURED_ABSENT)} measured absent, ` +
+        `${counted(COULD_NOT_ASK)} could not ask, ${counted(OUT_OF_SCOPE)} out of scope (never checked, never fixed)`,
+      );
+    } finally {
+      console.log = realLog;
+    }
+  }
 
   await test("the claims table has a floor, unique ids, and a well-formed row for each", () => {
     // The floor on the TABLE, for the reason every enumerating check in this
@@ -833,7 +861,26 @@ export async function run() {
       assertEqual(b.claim.expect, "out-of-scope", `${b.claim.id} resolved OUT OF SCOPE without declaring it`);
       assert(b.detail && b.detail.length > 40,
         `${b.claim.id}: a bound with no statement is a silence, which is the thing it is here to prevent`);
+      // `is printed`, the first clause of this name, asserted against what this
+      // run actually wrote to stdout. Not against `resolved`, which is what it
+      // used to do and which is true whether or not a single line was emitted.
+      assert(printed.some((l) => l.includes(OUT_OF_SCOPE) && l.includes(b.claim.id)),
+        `${b.claim.id} resolved OUT OF SCOPE and no line of this run's transcript says so. A bound that is not ` +
+        `printed is a bound nobody can read, and a run whose silence about it reads as coverage is the failure ` +
+        `this verdict exists to prevent`);
+      assert(printed.some((l) => l.includes(b.detail)),
+        `${b.claim.id}: the bound's STATEMENT never reached stdout, so the transcript names a bound and does not ` +
+        `say what it bounds — which is the collapse into COULD NOT ASK wearing the right label`);
     }
+    // And the summary line carries the count with the words that keep it out of
+    // both collapses. Deleting the clause is the cheapest way to make a
+    // permanent bound invisible while every row below still prints `ok`.
+    assert(
+      printed.some((l) => l.includes(`${counted(OUT_OF_SCOPE)} out of scope (never checked, never fixed)`)),
+      `the summary line does not state ${counted(OUT_OF_SCOPE)} out of scope (never checked, never fixed); a ` +
+      `count printed without those words is read as a to-do on one side and as coverage on the other, and the ` +
+      `transcript this run wrote was: ${JSON.stringify(printed.filter((l) => l.includes("found,"))[0] ?? "(no summary line at all)")}`,
+    );
     // And it is excluded from the counts the line above prints, so "3 found"
     // never quietly includes a row that checks nothing.
     const checkable = resolved.filter((r) => r.verdict === FOUND || r.verdict === MEASURED_ABSENT);

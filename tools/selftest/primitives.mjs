@@ -8,13 +8,13 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { stableStringify, jcs } from "../lib/canonical.mjs";
-import { validate as validateSchema } from "../lib/jsonschema.mjs";
+import { KNOWN, validate as validateSchema } from "../lib/jsonschema.mjs";
 import { invalidId, unsafePathComponent, foldId, unsafeDisplayText } from "../lib/ids.mjs";
 import { compareSemver } from "../lib/semver.mjs";
 import { readZip, readEntry } from "../lib/zip.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { makeFixtures } from "../make-fixtures.mjs";
-import { test, assert, tmp } from "./harness.mjs";
+import { test, assert, assertEqual, tmp } from "./harness.mjs";
 
 export async function run() {
   console.log("\ncanonical json");
@@ -100,12 +100,133 @@ export async function run() {
     try { validateSchema({ type: "string", contentEncoding: "base64" }, "x"); } catch { threw = true; }
     assert(threw, "an unimplemented keyword validated successfully, which is worse than no validator");
   });
-  await test("the three schemas load and accept their own examples", () => {
-    const schemas = ["index-v1", "plugin-v1", "version-v1"];
-    for (const s of schemas) {
-      JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "schema", `${s}.json`), "utf8"));
+  // ── the name this check used to carry, and why it is gone ──────────────────
+  //
+  // It read "the three schemas load and accept their own examples", and its
+  // entire body was three `JSON.parse` calls followed by `assert(true)`. It
+  // never called the validator. Measured on 2026-09-22 by a recursive walk of
+  // every node of `schema/index-v1.json`, `schema/plugin-v1.json` and
+  // `schema/version-v1.json`: **zero** `examples`, `example` and `default`
+  // members in any of them. The second clause described something that could
+  // not happen — there was no example anywhere that could be made
+  // unacceptable, so the property could not be falsified, only shown absent.
+  // Only deleting a file or corrupting its JSON reddened it.
+  //
+  // Two ways out, and the first was refused. GIVING THE SCHEMAS EXAMPLES would
+  // have been inventing a subject so that a name could stay: these are
+  // published contract documents, and the fixtures that matter are the
+  // committed registry — `catalogue.mjs` validates `registry/v1/index.json`
+  // against `index-v1.json`, `tools/validate.mjs` judges every listing against
+  // `plugin-v1`/`version-v1`, and `publishers.mjs` every record against
+  // `publisher-v1`. All three are REAL documents. A second, weaker corpus
+  // inside the schema files would drift from them, and `validate()` ignores
+  // `examples` anyway, so it would have to be walked and fed in by hand.
+  //
+  // So the name says what is checked, and the check was pointed at the
+  // property this module's header is about that nobody was asserting.
+  //
+  // WHY THE CHECK ABOVE DOES NOT ALREADY HOLD IT. `validate()` throws on an
+  // unknown keyword only when it VISITS the subschema carrying it, and it
+  // visits one only when a document reaches that position. A keyword in a
+  // branch no committed record exercises is a schema rule that is silently
+  // unenforced for ever — which is `jsonschema.mjs`'s own header verbatim:
+  // "worse than no validator, because it reports success". Measured rather
+  // than supposed: on 2026-09-22 `schema/publisher-v1.json` carried
+  // `"format": "uri"` on the domain-evidence `proof`, no publisher record uses
+  // domain evidence, and the full 25-module suite was green at 317 passed / 0
+  // failed. Only a static walk can see that; the run-time throw cannot, and
+  // when it finally does see it it will THROW rather than report, taking
+  // `tools/validate.mjs` down with it on the first domain-verified publisher.
+  await test("every schema parses, and every keyword in it is one the validator implements", () => {
+    // `schema/` holds one document that is not a JSON Schema. Named here with
+    // its reason rather than skipped by a heuristic: a silent skip is how a
+    // walk quietly stops covering things, and "has no $schema" is a property a
+    // real schema can acquire by accident.
+    const NOT_A_SCHEMA = {
+      "contract-tokens-v1.json":
+        "the compiled contract token table itself — a DATA document that lives beside the schemas because it " +
+        "is versioned with them. It carries no $schema and nothing is validated against it",
+    };
+
+    // The same recursion `check()` performs in tools/lib/jsonschema.mjs, and
+    // only the same positions. A key of `properties` is a PROPERTY NAME, and an
+    // entry of `enum`, `const`, `required`, `examples` or `default` is a VALUE:
+    // a walk that descended into either would report this registry's own
+    // vocabulary — `source_commit`, `staging_listing_id`, `readme` — as
+    // unimplemented keywords, which is the false alarm that would get this
+    // check deleted within a week.
+    const SUBSCHEMA_MAP = ["$defs", "properties", "patternProperties"];
+    const SUBSCHEMA_ONE = ["additionalProperties", "propertyNames", "items", "not"];
+    const SUBSCHEMA_LIST = ["prefixItems", "allOf", "anyOf", "oneOf"];
+
+    const offences = [];
+    const walk = (node, where) => {
+      // `true`/`false` are legal schemas and carry no keywords.
+      if (typeof node === "boolean") return;
+      if (node === null || typeof node !== "object" || Array.isArray(node)) {
+        offences.push(`${where}: a schema position holds ${Array.isArray(node) ? "an array" : typeof node}`);
+        return;
+      }
+      for (const key of Object.keys(node)) {
+        if (!KNOWN.has(key)) {
+          offences.push(
+            `${where}.${key} — tools/lib/jsonschema.mjs does not implement "${key}", so this rule is enforced ` +
+            `by nothing until a document reaches it, and then validate() THROWS instead of reporting`,
+          );
+        }
+      }
+      for (const k of SUBSCHEMA_MAP) {
+        if (node[k] && typeof node[k] === "object" && !Array.isArray(node[k])) {
+          for (const name of Object.keys(node[k])) walk(node[k][name], `${where}.${k}.${name}`);
+        }
+      }
+      for (const k of SUBSCHEMA_ONE) if (Object.hasOwn(node, k)) walk(node[k], `${where}.${k}`);
+      for (const k of SUBSCHEMA_LIST) {
+        if (Array.isArray(node[k])) node[k].forEach((sub, i) => walk(sub, `${where}.${k}[${i}]`));
+      }
+    };
+
+    const files = fs.readdirSync(path.join(REPO_ROOT, "schema")).filter((f) => f.endsWith(".json")).sort();
+    // The floor, for the reason every enumerating check here states one: an
+    // empty directory agrees with everything, and `readdirSync` of a moved
+    // `schema/` would be the quietest possible way to lose this.
+    assert(files.length >= 10,
+      `schema/ holds ${files.length} document(s) and held 13 on 2026-09-22; this is a directory that moved, not a ` +
+      `repository with fewer schemas`);
+
+    let walked = 0;
+    for (const file of files) {
+      const rel = `schema/${file}`;
+      let doc;
+      try {
+        // The `load` half of the old name, kept — and now over every document
+        // here rather than three of thirteen.
+        doc = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, rel), "utf8"));
+      } catch (e) {
+        offences.push(`${rel}: is not readable JSON — ${e.message}`);
+        continue;
+      }
+      if (doc?.$schema === undefined) {
+        if (!NOT_A_SCHEMA[file]) {
+          offences.push(
+            `${rel}: no $schema, and it is not one of the documents declared in NOT_A_SCHEMA above. Either it is a ` +
+            `schema missing its dialect, or it is a data file that has to say so here with its reason`,
+          );
+        }
+        continue;
+      }
+      walked += 1;
+      walk(doc, rel);
     }
-    assert(true);
+    assert(walked >= 10,
+      `only ${walked} of ${files.length} document(s) in schema/ were walked as schemas; the rest declared no ` +
+      `$schema, which turns this check into a walk of nothing`);
+
+    assertEqual(offences.join("\n  "), "",
+      "a schema in this repository is outside the subset tools/lib/jsonschema.mjs implements. That file's own rule " +
+      "is the remedy: \"If you need a keyword that is not here, implement it\" — or say the same thing with a " +
+      "keyword that is here. Leaving it costs twice: the rule is enforced by nobody meanwhile, and the first " +
+      "document that reaches it makes the validator throw rather than report");
   });
 
   console.log("\nids");
