@@ -37,7 +37,12 @@
 #     `gh attestation verify` will not run without one (gh 2.100.0 with no
 #     token and `GITHUB_ACTIONS=true`: exit 4, "set the GH_TOKEN environment
 #     variable") — a message `classifyVerifyFailure` reads as neither `missing`
-#     nor `unavailable`, so it too would land as `unverified`.
+#     nor `unavailable`, so it too would land as `unverified`. (At `0df08e6`
+#     it would not have landed at all: `verifyOne` called that function
+#     without importing it, so the first `gh` failure stopped `--verify` with
+#     "classifyVerifyFailure is not defined", exit 2 — measured again at
+#     `1ae13d2` with one `data:` URL and no token. `bot/baseline.mjs` imports
+#     it since, and `bot/tests/baseline.test.mjs` walks that `catch`.)
 #   * `export`'s `--facts` exits 0 over the live archive (read here through
 #     `--from`): it counts the shared BOT-35 keys below and does not refuse them.
 #   * past `verify`, `--write` refuses a version with no release commit:
@@ -45,13 +50,18 @@
 #     grammar (`RECORD_MEMBERS`) accepts only 40 hex. With such versions left out of a
 #     synthetic, all-verified facts file, `--write` over a copy of the tree
 #     wrote one record per version under that copy's `log/decisions/`, wrote no
-#     marker, reported the historic facts as "pending", and exited 0.
+#     marker, reported the historic facts as "pending", and exited 0 (again at
+#     `1ae13d2`: 41 records, no marker, exit 0).
 #
 # **Nothing writes the marker, and nothing commits.** `marker()` in
-# `bot/baseline.mjs` builds and checks one, and no version of `--write` has
-# called it; the `write` job has no step that commits. So with every stop above
-# removed, a dispatch would end green with nothing on `main` — and a second
-# dispatch would not refuse, because what it refuses on was never written.
+# `bot/baseline.mjs` builds and checks one, and no version of `--write` up to
+# `1ae13d2` called it; the `write` job has no step that commits. So with every
+# stop above removed, a dispatch would have ended green with nothing on `main`.
+# That path is closed by name now: `--write` ends on a refusal whenever a run
+# leaves no `log/baseline.json` on the tree, and the refusal says what the run
+# did not do — the marker, MIG-21's records, the commit. A dispatch past the
+# stops above goes red at `write`, not green. A second dispatch still would not
+# refuse on the marker, because the marker was never written.
 #
 # The plan writes the marker in the same one commit as MIG-21's historic
 # records (BOT-73), and those wait on an amendment: `bot/export-issues.mjs
@@ -187,8 +197,9 @@ jobs:
       # record carried it). `refuseUncomposable` is the refusal, and it is
       # asked of each composed record, not of the files.
       #
-      # It writes into this runner's checkout and nowhere else: it writes no
-      # marker, and no step of this job commits (header).
+      # It writes into this runner's checkout and nowhere else, and no step of
+      # this job commits. A run that leaves no marker on the tree ends on a
+      # refusal naming what it did not do, not on green (header).
       - name: One `migration` record per version, left on the runner — no marker, no commit
         run: |
           node bot/baseline.mjs --write \
@@ -197,9 +208,10 @@ jobs:
             --source-commit ${{ github.sha }}
 
       # BOT-71: regenerate both unsigned documents and pass the selftest before
-      # committing. BOT-73's one commit, holding every record and the marker,
-      # is not a step of this job yet, so these checks run over records that
-      # nothing keeps (header).
+      # committing. This step is reached only after a `--write` that left
+      # `log/baseline.json` on the tree — the step above refuses otherwise —
+      # and BOT-73's one commit, holding every record and the marker, is to
+      # follow it (header).
       - name: The catalogue the records were composed beside
         run: |
           node tools/build-index.mjs
