@@ -621,6 +621,53 @@ test("A7: the signer's time on a merged change starts at the merge", () => {
   assert.deepEqual(late.findings.filter((f) => f.detector === "A7").map((f) => f.hex), [merge]);
 });
 
+/**
+ * One more commit on `signed`, with D2's trailers as `tools/signer/run.mjs`
+ * writes them: `Source-Commit` is the run's, `Index-Source-Commit` the tree
+ * the catalogue was generated from. They differ when the catalogue was carried
+ * and also when it was `unchanged` (run.mjs keeps the head's for both). On the
+ * real `signed`, 2 of its 8 commits differ, `ae80bc7` and `f2afd04`, and both
+ * were `unchanged`, not carried.
+ */
+function signedAgain(dir, sourceCommit, indexSourceCommit, when) {
+  git(dir, ["checkout", "--quiet", "signed"]);
+  write(dir, "registry/v1/revocations.json", { schema: "astra.registry.revocations/1", at: when });
+  git(dir, ["add", "-A"]);
+  git(dir, ["commit", "--quiet", "-m",
+    `signed: the list re-signed, the catalogue carried\n\n` +
+    `Source-Commit: ${sourceCommit}\nRun: https://example.invalid/runs/1\nSigner: sign.yml\n` +
+    `Index-Source-Commit: ${indexSourceCommit}\n`], AT(when));
+  git(dir, ["checkout", "--quiet", "main"]);
+}
+
+test("A7 reads `Source-Commit`: a carried catalogue is the signer's alarm (D4) until a contract version records `Index-Source-Commit` (G8)", () => {
+  // A decision, pinned so that it is revisited on purpose rather than drift.
+  // The signer carried the catalogue and committed anyway (the list changed),
+  // so `signed`'s Source-Commit is main's head and its Index-Source-Commit is
+  // the seed. A7 reads Source-Commit and sees nothing. The reasons are at `a7`
+  // in `bot/detectors.mjs`: registry plan D2 says readers ignore the
+  // Index-Source-Commit name until a contract version records it, detector B
+  // answers row 7 from the served Source-Commit, and D4's carry alert
+  // (SIGNER_CARRIED_INDEX, every run while the carry lasts) owns this shape.
+  // When G8 lands, this test is the one to change.
+  const dir = estate();
+  const seed = git(dir, ["rev-parse", "HEAD"]);
+  signedAt(dir, seed, "2026-01-01T00:01:00Z");
+  version_(dir, "alpha", "1.1.0");
+  commit(dir, "registry: publish", "2026-01-01T01:00:00Z");
+  write(dir, `${REVOCATIONS_SOURCE_DIR}/ASTRA-2026-0001.json`, { schema: "astra.registry.revocation/1" });
+  const advisory = commit(dir, "registry: an advisory", "2026-01-01T01:02:00Z");
+  signedAgain(dir, advisory, seed, "2026-01-01T01:05:00Z");
+  const r = detect({ root: dir, now: NOW("2026-01-01T09:05:00Z") });
+  assert.equal(r.scanned.signed_source_commit, advisory,
+    "A7 took `signed`'s Source-Commit from somewhere other than the Source-Commit trailer");
+  assert.deepEqual(a7Codes(r), [],
+    "A7 alarmed on a carried catalogue: it now reads Index-Source-Commit, which registry plan D2 says readers " +
+    "ignore until a contract version records it (G8). If a contract version now does, update `a7`'s comment, " +
+    "detector B's row 7 and this test together");
+  assert.equal(r.scanned.plugins_unsigned_commits, 0);
+});
+
 test("A7 asks the revocations module which files the list is built from", () => {
   // The pathspec is not typed in `detectors.mjs`, and this is what notices if
   // somebody types it back. A detector carrying its own copy of another
