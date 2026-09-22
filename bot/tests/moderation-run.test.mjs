@@ -64,6 +64,7 @@ import {
 } from "../moderation-run.mjs";
 import {
   ADVISORY_URL_BASE,
+  AUTHOR_CODES,
   ENTRY_ALLOWLIST,
   SUBMISSION_ALLOWLIST,
   allowlisted,
@@ -225,6 +226,525 @@ test("a member added to the token file, or removed from the schema, is caught", 
   const narrowed = schemaMembers(null, REPO).filter((m) => m !== "service_decisions");
   assert.notDeepEqual(narrowed, record.members.map((m) => m.name).sort(),
     "a schema with one member removed compares equal to the token file");
+});
+
+// ── and one level down: the conditions, stated structurally here and with ───
+//    `when` there
+//
+// The comparison above stops at the answer's three TOP-LEVEL members. One level
+// below it, `$defs/serviceDecision` states part of BOT-80's conditions on a
+// `service_decisions[]` entry STRUCTURALLY — `not/allOf[1]/anyOf[*]/required` —
+// and `schema/contract-tokens-v1.json` states conditions on that same body with
+// `when`, under `entries[].members[].of[]`. Two hand-kept statements of one
+// rule, in two notations, and nothing between them: a reader that walks members
+// and forgets `of[]` has the whole class of blind spot silently.
+//
+// ── WHAT "AGREE" MEANS BETWEEN A `not/allOf/anyOf/required` AND A `when` ────
+//
+// They are not the same language and cannot be compared by string, so both are
+// reduced to one normal form and the reduction is PROVED rather than assumed:
+//
+//   * a `when` is already in that form. The token file's readme publishes a
+//     predicate over ONE sibling's value, so `(member, code) -> required |
+//     forbidden | optional` loses nothing;
+//   * the structural side is MEASURED into it, by probing the real schema
+//     through `tools/lib/jsonschema.mjs` — the validator the moderation run
+//     itself uses, bound the way `checkServiceDecision` binds it — one member
+//     at a time;
+//   * and the reduction is REPLAYED against every body in an exhaustively
+//     enumerated corpus. A `not` may in general say things no per-member table
+//     can hold; today's does not, and the replay mispredicts nothing. The day
+//     somebody writes a clause with a combination effect, that number moves and
+//     this refuses to compare rather than comparing the wrong thing quietly.
+//
+// ── AGREEMENT IS NOT EQUIVALENCE, AND THAT IS THE JUDGEMENT ─────────────────
+//
+// The schema is DELIBERATELY the looser of the two and must stay that way. This
+// file's own description says why: BOT-81 makes `refused` one of three FINAL
+// results, so a schema stricter than the contract does not report a
+// disagreement — it settles a LAWFUL entry as `kind_refused`, takes it off
+// BOT-80's list, pages nobody (BOT-84 pages only for a decision with no settled
+// result), and the first person to notice is a moderator wondering why the
+// takedown did not land. So the rule is directional, in three clauses:
+//
+//   * the schema may NEVER be stricter than the contract, on any cell;
+//   * where the schema says anything at all, it must say EXACTLY what the
+//     contract says there;
+//   * and the cells where it says anything must be exactly the rule production
+//     enforces a step earlier — `AUTHOR_CODES` × `AUTHOR_DENIED_MEMBERS`, which
+//     is the third statement of this one rule and the only one that runs.
+//
+// The third clause is what makes this two-sided. Without it, loosening the
+// structure while the `when` stands is merely the schema getting looser, which
+// the first two clauses permit; with it, a structure that drops a member the
+// contract and the compiler both still name is red.
+//
+// NEITHER PUBLISHED FILE IS THE SOURCE AND NEITHER IS THE COPY. Where the two
+// disagree this reports the disagreement; it does not pick a winner, and it
+// derives nothing in one from the other.
+
+/**
+ * One schema-valid value per member of `$defs/serviceDecision` EXCEPT `code`,
+ * which is the axis every condition on this body is decided by and therefore
+ * takes each of the schema's published values in turn rather than one fixture.
+ *
+ * So that the probe below measures the CONDITIONS and never a malformed value:
+ * a member whose value fails its own `pattern` reads as `forbidden` on every
+ * code, and the comparison would then agree with a rule nobody wrote. Floored
+ * against the schema in the first test of this section.
+ */
+const SD_VALUES = Object.freeze({
+  service_decision_id: SDI,
+  category: "malicious",
+  plugin_id: "widgets",
+  versions: ["1.0.0"],
+  decided_at: "2026-01-01T00:00:00Z",
+  reason: MODERATOR_REASON,
+  reverses: "2026/0001-widgets-delist",
+  appeal_of: SDI2,
+  outcome: "stands",
+  severity: "high",
+  action: "block_install",
+  moderator: "amoderator",
+  declared_interest: false,
+});
+
+/** The token file's member table for `service_decisions[]`, which is `of[]`. */
+function serviceDecisionOf(tokens = JSON.parse(read("schema/contract-tokens-v1.json"))) {
+  const record = (tokens.entries ?? []).find((e) => e?.id === `schema:${WORK_SCHEMA}`);
+  const member = (record?.members ?? []).find((m) => m?.name === "service_decisions");
+  if (!Array.isArray(member?.of) || member.of.length === 0) {
+    throw new Error(
+      "the token file records no `of[]` for `service_decisions`, so every comparison below would run over an " +
+      "empty member set — and a comparison over nothing passes every assertion under it",
+    );
+  }
+  return member.of;
+}
+
+/** The readme publishes three requirednesses; a fourth is a file to refuse. */
+function fourthValue(member) {
+  return new Error(
+    `\`${member.name}\` states requiredness ${JSON.stringify(member.required)}, and the token file's readme ` +
+    "publishes `true`, `false` and `conditional` and no fourth",
+  );
+}
+
+/**
+ * A member's `when`, as `{kind, predicate}` — `if` or `iff`, never both and
+ * never neither, which is the token file's readme verbatim.
+ *
+ * Throws rather than defaults, for the reason the readme gives: defaulting to
+ * `if` drops the forbidding half and defaulting to `iff` forbids what the
+ * contract permits, and either reading makes this comparison agree with a
+ * statement nobody published.
+ */
+function readWhen(member) {
+  const when = member.when;
+  if (when === null || typeof when !== "object" || Array.isArray(when)) {
+    throw new Error(`\`${member.name}\` is \`conditional\` and states no \`when\`, which makes the token file malformed`);
+  }
+  const kinds = ["if", "iff"].filter((k) => k in when);
+  if (kinds.length !== 1) {
+    throw new Error(`\`${member.name}\` states \`when\` ${JSON.stringify(when)}; a \`when\` is \`if\` or \`iff\``);
+  }
+  return { kind: kinds[0], predicate: when[kinds[0]] };
+}
+
+/**
+ * The readme's three predicate shapes and no fourth: `{m: [values]}`,
+ * `{m: {not: [values]}}` — which an ABSENT sibling does not satisfy, because
+ * `not` is over the values the member may take and a member that is not carried
+ * has none — and `{m: "absent"}`.
+ */
+function predicateHolds(predicate, body) {
+  const unreadable = () => new Error(`a \`when\` predicate this test cannot evaluate: ${JSON.stringify(predicate ?? null)}`);
+  if (predicate === null || typeof predicate !== "object" || Array.isArray(predicate)) throw unreadable();
+  const names = Object.keys(predicate);
+  if (names.length !== 1) throw unreadable();
+  const [name] = names;
+  const rule = predicate[name];
+  const carried = Object.hasOwn(body, name);
+  if (rule === "absent") return !carried;
+  if (Array.isArray(rule)) return carried && rule.includes(body[name]);
+  if (rule !== null && typeof rule === "object" && Array.isArray(rule.not) && Object.keys(rule).length === 1) {
+    return carried && !rule.not.includes(body[name]);
+  }
+  throw unreadable();
+}
+
+/**
+ * What the CONTRACT asks of this member of an entry whose `code` is `code`.
+ *
+ * A projection onto the `code` axis, and it is only sound because every
+ * predicate on this body names `code` — which the test below asserts before it
+ * reads a single cell, because a condition decided by a different sibling is
+ * not a cell in this table at all.
+ */
+function tokenVerdict(member, code) {
+  if (member.required === true) return "required";
+  if (member.required === false) return "optional";
+  if (member.required !== "conditional") throw fourthValue(member);
+  const { kind, predicate } = readWhen(member);
+  const holds = predicateHolds(predicate, code === null ? {} : { code });
+  if (holds) return "required";
+  return kind === "iff" ? "forbidden" : "optional";
+}
+
+/**
+ * The member table with every `when` read once, because the corpus reads the
+ * table ninety thousand times and a malformed one must be refused before the
+ * first body rather than on whichever body happens to reach it.
+ */
+function compileMembers(entryMembers) {
+  return entryMembers.map((member) => {
+    if (member.required === true || member.required === false) return { name: member.name, required: member.required };
+    if (member.required !== "conditional") throw fourthValue(member);
+    return { name: member.name, required: "conditional", ...readWhen(member) };
+  });
+}
+
+/**
+ * Every problem the CONTRACT has with one whole `service_decisions[]` entry.
+ *
+ * Evaluated against the WHOLE body and not through the `code` projection above,
+ * so the corpus sweep is a reading of the token file rather than a reading of
+ * this test's idea of it: both halves of a biconditional, and only the
+ * requiring half of an `if`, which is what the readme states.
+ */
+function tokenProblems(compiled, body) {
+  const out = [];
+  for (const member of compiled) {
+    const carried = Object.hasOwn(body, member.name);
+    if (member.required !== "conditional") {
+      if (member.required && !carried) out.push(`missing ${member.name}`);
+      continue;
+    }
+    const holds = predicateHolds(member.predicate, body);
+    if (holds && !carried) out.push(`missing ${member.name}`);
+    else if (!holds && carried && member.kind === "iff") out.push(`forbidden ${member.name}`);
+  }
+  return out;
+}
+
+/** `$defs/serviceDecision`, bound to its `$defs` exactly as the run binds it. */
+function boundServiceDecision(doc) {
+  return { ...doc.$defs.serviceDecision, $defs: doc.$defs };
+}
+
+/**
+ * What the SCHEMA asks of each member on each code, measured by probing.
+ *
+ * One member at a time, against a base carrying the schema's own unconditional
+ * `required` and nothing else. The result is a claim about a per-member table,
+ * and `sweepServiceDecision` proves the claim by replaying it.
+ */
+function structTable(doc, members, codes) {
+  const bound = boundServiceDecision(doc);
+  const required = doc.$defs.serviceDecision.required ?? [];
+  const table = new Map();
+  for (const name of members.filter((m) => m !== "code")) {
+    for (const code of codes) {
+      const base = { code };
+      for (const r of required) if (r !== "code" && r !== name) base[r] = SD_VALUES[r];
+      const without = validate(bound, base, "$").length === 0;
+      const present = validate(bound, { ...base, [name]: SD_VALUES[name] }, "$").length === 0;
+      table.set(`${name}|${code}`,
+        present && without ? "optional" : present ? "required" : without ? "forbidden" : "contradiction");
+    }
+  }
+  return table;
+}
+
+/**
+ * The cells the structural statement makes CONDITIONALLY — everything it says
+ * that its own flat `required` array does not already say.
+ *
+ * Derived from the schema and not listed here, so that a member moving into or
+ * out of `required` cannot quietly move a cell out of this set.
+ */
+function conditionalCells(table, doc) {
+  const unconditional = new Set(doc.$defs.serviceDecision.required ?? []);
+  return [...table]
+    .filter(([cell, verdict]) => verdict !== "optional" && !unconditional.has(cell.split("|")[0]))
+    .map(([cell]) => cell)
+    .sort();
+}
+
+/**
+ * Both statements, over every body in the enumerated corpus.
+ *
+ * ENUMERATED and not sampled: the value space is one code out of a published
+ * list (or none) crossed with the presence of every other member, which is
+ * small enough to walk whole. Values are held at one schema-valid value each,
+ * because a `when` conditions PRESENCE and says nothing about formats, and a
+ * second value per member would multiply the corpus to say the same thing.
+ */
+function sweepServiceDecision(doc, entryMembers, members, codes) {
+  const bound = boundServiceDecision(doc);
+  const required = doc.$defs.serviceDecision.required ?? [];
+  const table = structTable(doc, members, codes);
+  const compiled = compileMembers(entryMembers);
+  const vary = members.filter((m) => m !== "code");
+  const out = {
+    corpus: 0, conforming: 0, schemaAccepts: 0, schemaRefuses: 0,
+    strictCount: 0, stricter: [], mispredictCount: 0, mispredicts: [], table, vary,
+  };
+  for (const code of [...codes, null]) {
+    for (let mask = 0; mask < 2 ** vary.length; mask++) {
+      const body = {};
+      if (code !== null) body.code = code;
+      vary.forEach((m, i) => { if (mask & (1 << i)) body[m] = SD_VALUES[m]; });
+      const errors = validate(bound, body, "$");
+      const accepted = errors.length === 0;
+      const conforms = tokenProblems(compiled, body).length === 0;
+      // Is the per-member table a complete account of what the schema just did?
+      const predicted =
+        required.every((r) => Object.hasOwn(body, r)) &&
+        Object.keys(body).every((m) => m === "code" || code === null || table.get(`${m}|${code}`) !== "forbidden");
+      if (predicted !== accepted) {
+        out.mispredictCount++;
+        if (out.mispredicts.length < 4) out.mispredicts.push({ body, accepted, predicted });
+      }
+      // The fatal direction: a body the CONTRACT calls conforming and the
+      // schema refuses is a lawful answer settled `kind_refused`, for ever.
+      if (conforms && !accepted) {
+        out.strictCount++;
+        if (out.stricter.length < 4) out.stricter.push({ body, why: errors.map((e) => `${e.path} ${e.message}`).join("; ") });
+      }
+      out.corpus++;
+      if (conforms) out.conforming++;
+      if (accepted) out.schemaAccepts++; else out.schemaRefuses++;
+    }
+  }
+  return out;
+}
+
+/**
+ * The two statements, cell by cell.
+ *
+ * `compared` is the floor: a loop over an `of[]` that went empty compares
+ * nothing, and reports every cell as agreeing.
+ */
+function compareCells(table, entryMembers, codes) {
+  const out = { compared: 0, stated: [], disagreements: [], unmeasured: [] };
+  for (const member of entryMembers) {
+    if (member.name === "code") continue; // the axis, not a cell
+    for (const code of codes) {
+      const cell = `${member.name}|${code}`;
+      const str = table.get(cell);
+      const tok = tokenVerdict(member, code);
+      out.compared++;
+      if (str === "contradiction" || str === undefined) { out.unmeasured.push(cell); continue; }
+      if (str === "optional") continue; // the schema states nothing here
+      out.stated.push(cell);
+      if (str !== tok) out.disagreements.push(`${cell}: the schema says \`${str}\` and the token file says \`${tok}\``);
+    }
+  }
+  return out;
+}
+
+test("the entry's members are the same set in the schema and in the token file's `of[]`", () => {
+  // The level the comparison above stops one short of, and the precondition for
+  // everything below it: two statements about different member sets are not a
+  // disagreement about a condition, they are a disagreement about a subject.
+  const of = serviceDecisionOf();
+  const published = of.map((m) => m.name).sort();
+  const schemaSide = schemaMembers("serviceDecision", REPO);
+  assert.ok(schemaSide.length >= 10, `only ${schemaSide.length} members read out of $defs/serviceDecision; this is a broken read`);
+  assert.deepEqual(schemaSide, published,
+    `${SCHEMA_FILE}'s \`$defs/serviceDecision\` members and the token file's \`service_decisions[].of[]\` differ. ` +
+    "The comparison above is over the answer's three top-level members and would stay green through this");
+
+  // And the floor under the probe: every member has a schema-valid value, so a
+  // `forbidden` verdict below is a condition and never a bad fixture.
+  const doc = workSchema(REPO);
+  const bound = boundServiceDecision(doc);
+  for (const name of schemaSide.filter((m) => m !== "code")) {
+    assert.ok(Object.hasOwn(SD_VALUES, name),
+      `SD_VALUES has no value for \`${name}\`, so the probe would read it as forbidden on every code`);
+  }
+  const maximal = Object.fromEntries(schemaSide.filter((m) => m !== "code").map((m) => [m, SD_VALUES[m]]));
+  assert.deepEqual(validate(bound, { ...maximal, code: "M_REVOKE" }, "$"), [],
+    "the body carrying every member at its fixture value does not validate, so the probe's verdicts are about the values");
+  assert.deepEqual(
+    validate(bound, { ...maximal, code: "A_YANK" }, "$").map((e) => e.message),
+    ["matches a forbidden shape (not)"],
+    "the same body on an author code fails for something other than the `not` clause this section is about",
+  );
+});
+
+test("the structural clause and the token file's `when`s state one condition, and it is the same one", () => {
+  const doc = workSchema(REPO);
+  const of = serviceDecisionOf();
+  const members = schemaMembers("serviceDecision", REPO);
+  const codes = [...doc.$defs.serviceDecision.properties.code.enum];
+
+  // ── floors, before anything is compared ──
+  assert.ok(codes.length >= 5, `the schema publishes ${codes.length} codes; the corpus has no axis to walk`);
+  const conditional = of.filter((m) => m.required === "conditional");
+  assert.ok(conditional.length >= 1, "the token file conditions nothing on this body, so there is no second statement to compare");
+  // Every predicate names `code`, or the per-code table is the wrong normal form.
+  for (const m of conditional) {
+    const { predicate } = readWhen(m);
+    assert.deepEqual(Object.keys(predicate), ["code"],
+      `\`${m.name}\`'s \`when\` is decided by a sibling other than \`code\`, and the table below is indexed by \`code\` alone`);
+  }
+  // Every code a `when` names must be one the schema publishes, or the schema
+  // refuses every entry carrying it on the enum, before any condition is read.
+  for (const m of conditional) {
+    const rule = readWhen(m).predicate.code;
+    for (const v of Array.isArray(rule) ? rule : rule.not ?? []) {
+      assert.ok(codes.includes(v),
+        `the token file conditions \`${m.name}\` on code \`${v}\`, which ${SCHEMA_FILE}'s enum does not publish — ` +
+        "so the schema refuses every entry carrying it before any condition is read");
+    }
+  }
+
+  const swept = sweepServiceDecision(doc, of, members, codes);
+  assert.equal(swept.corpus, 2 ** swept.vary.length * (codes.length + 1));
+  assert.ok(swept.corpus > 0, "the corpus is empty, and a comparison over nothing passes every assertion under it");
+  assert.ok(swept.conforming > 0,
+    "no body in the corpus conforms to the token file, so `conforming implies accepted` is vacuously true below");
+  assert.ok(swept.schemaRefuses > 0, "the schema refuses no body in the corpus, so it is not constraining this entry at all");
+
+  // 1 — the reduction is lossless, so the table is a complete account of the
+  //     structural statement and the comparison is between two like things.
+  assert.equal(swept.mispredictCount, 0,
+    `${SCHEMA_FILE}'s structural statement is no longer expressible as a per-(member, code) table — some clause now ` +
+    "depends on a COMBINATION of members. Comparing it with a `when`, which cannot say that, would compare the " +
+    `wrong thing quietly; teach this reduction the new shape first. ${JSON.stringify(swept.mispredicts)}`);
+
+  // 2 — the schema may never be stricter than the contract.
+  assert.equal(swept.strictCount, 0,
+    `${SCHEMA_FILE} refuses ${swept.strictCount} bodies the token file calls conforming. BOT-81 makes that refusal ` +
+    "FINAL: the entry is settled `kind_refused`, leaves BOT-80's list, pages nobody, and the takedown never lands. " +
+    `${JSON.stringify(swept.stricter)}`);
+
+  // 3 — and where it says anything, it says exactly what the contract says,
+  //     on exactly the cells production enforces a step earlier.
+  //
+  // `code` is the axis and is not a cell: it is what every condition on this
+  // body is decided by, and both files must ask for it of every entry, or
+  // nothing here is indexed by anything.
+  assert.equal(tokenVerdict(of.find((m) => m.name === "code"), null), "required");
+  assert.ok((doc.$defs.serviceDecision.required ?? []).includes("code"),
+    `${SCHEMA_FILE} no longer requires \`code\`, and every condition compared here is decided by it`);
+
+  const cells = compareCells(swept.table, of, codes);
+  assert.deepEqual(cells.unmeasured, [], "the probe's base body was itself refused on these cells, so they were not measured");
+  assert.equal(cells.compared, of.filter((m) => m.name !== "code").length * codes.length);
+  assert.ok(cells.compared > 0, "no cell was compared, and a comparison over nothing agrees with everything");
+  assert.deepEqual(cells.disagreements, [],
+    "two published statements of one condition disagree. Which of them is right is not this test's call, and " +
+    "neither file was edited to make this pass — the disagreement is the finding");
+
+  const enforced = [...new Set(AUTHOR_DENIED_MEMBERS.flatMap((m) => AUTHOR_CODES.map((c) => `${m}|${c}`)))].sort();
+  assert.ok(enforced.length > 0, "the compiler's author denylist is empty, so this clause has no cells and asserts nothing");
+  assert.deepEqual(conditionalCells(swept.table, doc), enforced,
+    "the cells the schema states CONDITIONALLY and the rule `bot/lib/compile-decision.mjs` enforces a step earlier " +
+    "are no longer the same set. Either the structural clause lost a member the compiler still denies, or it gained " +
+    "one the compiler does not");
+  assert.ok(cells.stated.length > enforced.length,
+    `only ${cells.stated.length} of ${cells.compared} cells are stated at all, and the schema's unconditional ` +
+    "`required` should put more than the conditional ones there; this is a broken read of the table");
+});
+
+test("both statements of the condition are watched, in both directions, over a corpus that cannot go empty", () => {
+  // Mutated copies, never the files: a mutation of a real file would leave the
+  // repository broken if this process died between the edit and the restore.
+  const doc = workSchema(REPO);
+  const of = serviceDecisionOf();
+  const members = schemaMembers("serviceDecision", REPO);
+  const codes = [...doc.$defs.serviceDecision.properties.code.enum];
+  const enforced = [...new Set(AUTHOR_DENIED_MEMBERS.flatMap((m) => AUTHOR_CODES.map((c) => `${m}|${c}`)))].sort();
+  const table = structTable(doc, members, codes);
+
+  // ── red 1: the structure loosened while the `when` stands ──
+  //
+  // One `{required: [...]}` out of the `not`'s `anyOf`. The schema now accepts
+  // an author's own yank carrying a moderator's conflict declaration, which
+  // DEC-14 and MOD-41 forbid reaching the public log — and nothing in the
+  // clauses above is STRICTER, because the schema only got looser. This is the
+  // direction a one-way soundness check cannot see, and why the cells the
+  // schema states are tied to the rule the compiler enforces.
+  const loosened = JSON.parse(JSON.stringify(doc));
+  loosened.$defs.serviceDecision.not.allOf[1].anyOf =
+    loosened.$defs.serviceDecision.not.allOf[1].anyOf.filter((a) => !a.required.includes("declared_interest"));
+  const afterStruct = structTable(loosened, members, codes);
+  assert.deepEqual(conditionalCells(table, doc), enforced, "the unmutated schema does not state the enforced cells");
+  assert.notDeepEqual(conditionalCells(afterStruct, loosened), enforced,
+    "the `not` clause dropped `declared_interest` and the cells it states still match the compiler's denylist, " +
+    "so the section above would stay green while an author yank carrying a conflict declaration is accepted");
+  for (const code of AUTHOR_CODES) {
+    assert.equal(afterStruct.get(`declared_interest|${code}`), "optional");
+    assert.equal(tokenVerdict(of.find((m) => m.name === "declared_interest"), code), "forbidden",
+      "the token file stopped forbidding it too, so this mutation is no longer a disagreement between two files");
+  }
+  // And the corpus is blind to it, which is the whole reason for the third
+  // clause: a looser schema refuses no conforming body.
+  assert.equal(sweepServiceDecision(loosened, of, members, codes).strictCount, 0);
+
+  // ── red 2: the `when` loosened while the structure stands ──
+  //
+  // `iff` to `if` drops the forbidding half, which is the looser reading the
+  // vocabulary exists to close. The contract now permits a moderator on an
+  // author yank; the schema still refuses one; and a lawful answer would be
+  // settled `kind_refused`, finally, in production.
+  const relaxed = JSON.parse(JSON.stringify(of));
+  const moderator = relaxed.find((m) => m.name === "moderator");
+  moderator.when = { if: moderator.when.iff };
+  assert.equal(tokenVerdict(moderator, "A_YANK"), "optional");
+  const afterWhen = sweepServiceDecision(doc, relaxed, members, codes);
+  assert.ok(afterWhen.strictCount > 0,
+    "`moderator`'s `iff` became an `if` and the corpus found no body on which the two statements now differ");
+  assert.ok(compareCells(table, relaxed, codes).disagreements.some((d) => d.startsWith("moderator|A_YANK")),
+    "the cell comparison agrees after the forbidding half was dropped");
+
+  // The other way a `when` loosens: a code leaves the condition's `not` list,
+  // so the contract REQUIRES on `A_YANK` what the schema forbids there.
+  const narrowed = JSON.parse(JSON.stringify(of));
+  const di = narrowed.find((m) => m.name === "declared_interest");
+  di.when.iff.code.not = di.when.iff.code.not.filter((c) => c !== "A_YANK");
+  assert.equal(tokenVerdict(di, "A_YANK"), "required");
+  assert.ok(sweepServiceDecision(doc, narrowed, members, codes).strictCount > 0,
+    "`A_YANK` left the condition's `not` list and no corpus body separates the two statements");
+  assert.ok(compareCells(table, narrowed, codes).disagreements.some((d) => d.startsWith("declared_interest|A_YANK")));
+
+  // ── the floor: a comparison over nothing agrees with everything ────────────
+  //
+  // Shown rather than argued, and one half of it is better than expected. An
+  // `of[]` that went empty does NOT slip past the corpus sweep: with no members
+  // the contract asks nothing, every body conforms, and the schema's own
+  // refusals become counterexamples in their thousands.
+  const empty = sweepServiceDecision(doc, [], members, codes);
+  assert.equal(empty.conforming, empty.corpus, "with no members the contract asks nothing and every body conforms");
+  assert.ok(empty.strictCount > 1000,
+    "an empty member table is expected to make the corpus sweep loudly red, and it did not");
+
+  // The cell comparison is the half that WOULD go quiet, so it counts.
+  assert.equal(compareCells(table, [], codes).compared, 0,
+    "an empty member table compares no cells, and every assertion over that list is true of nothing");
+  assert.deepEqual(compareCells(table, [], codes).disagreements, [],
+    "a comparison over no cells reports no disagreement, which is the point of the floor above it");
+
+  // So the reader refuses an empty `of[]` outright rather than comparing over
+  // it, and refuses a record that lost its `service_decisions` member too.
+  const record = { id: `schema:${WORK_SCHEMA}`, members: [{ name: "service_decisions", of: [] }] };
+  assert.throws(() => serviceDecisionOf({ entries: [record] }), /passes every assertion under it/,
+    "an empty `of[]` is read as a member table rather than refused");
+  assert.throws(() => serviceDecisionOf({ entries: [{ id: record.id, members: [{ name: "shadow" }] }] }),
+    /passes every assertion under it/, "a record with no `service_decisions` member is read as one with no conditions");
+  assert.throws(() => serviceDecisionOf({ entries: [] }), /passes every assertion under it/,
+    "a token file with no record for this schema at all is read as one that conditions nothing");
+
+  // And the corpus cannot shrink to nothing unnoticed: it is the product of the
+  // members varied and the codes walked, and both are derived from the files.
+  const axisOnly = sweepServiceDecision(doc, of, ["code"], codes);
+  assert.equal(axisOnly.corpus, codes.length + 1);
+  assert.equal(axisOnly.conforming, 0,
+    "with every member but the axis gone no body conforms, so `conforming implies accepted` has nothing to check — " +
+    "which is why the section above floors `conforming > 0` before trusting it");
 });
 
 test("the vocabularies this schema copies are the ones their modules hold", () => {
