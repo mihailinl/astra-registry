@@ -1,4 +1,5 @@
-// Who may claim what: publisher records against their schema, every badge
+// Who may claim what: publisher records against their schema, and
+// tools/validate.mjs judging them at the first gate by the loader's; every badge
 // resolving and no record shipped unused, the no-publishers/ fail-closed case,
 // expiry firing, homoglyph display-name collisions, `covers` in both orderings,
 // reserved prefixes, whole-line proof, the four re-check outcomes, and the
@@ -16,19 +17,281 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildIndex } from "../build-index.mjs";
 import { validate as validateSchema } from "../lib/jsonschema.mjs";
 import { reservedPrefixViolation } from "../lib/reserved.mjs";
-import { REPO_ROOT, expiredPublishers, loadPublishers, publisherNameCollisions, publisherRecords } from "../lib/sources.mjs";
+import {
+  REPO_ROOT,
+  expiredPublishers,
+  loadPublishers,
+  loadSchemas,
+  loadSources,
+  publisherNameCollisions,
+  publisherRecords,
+} from "../lib/sources.mjs";
+import { checkPublisherRecords, runValidation } from "../validate.mjs";
 import { proofNamesOwner, recheck } from "../../bot/recheck-publishers.mjs";
 import { test, assert } from "./harness.mjs";
 
+// ── gap 6: a record that reaches no listing ─────────────────────────────────
+//
+// Three tests guard the badge and all three point FROM a listing outward:
+// every listing's publisher resolves, no record ships unused, no two records
+// render as one word. Nothing asked the opposite question — is there a
+// reviewed record here that reaches no listing at all? — and on 2026-08-19
+// `publishers/KnlCE.json` was written, reviewed, correct, and reached nothing
+// for three days, because every plugin of his was published from an
+// organisation. On 2026-09-12 it went back into that state, deliberately:
+// `covers` moved to MINICE-AI when the organisation was renamed, and the one
+// listing, under the freed login KNICE-TECH, was frozen unlisted. Nothing
+// said so either time.
+//
+// The entry that records this said the fix had to be a declaration, because a
+// record for someone who has not published yet and one whose only plugin was
+// withdrawn "are identical in the files". **They are not, and that is what
+// lets the second need no declaration**: nothing in this repository deletes a
+// listing to withdraw it. A takedown compiles to `"unlisted": true` on
+// `plugin.json` (bot/lib/compile-decision.mjs, `delist`), POLICY.md §6 retires
+// a plugin the same way, and the directory stays. So a record whose logins own
+// only unlisted plugins is a withdrawal, and is REPORTED; a record whose logins
+// own no plugin at all is either a mistake or a publisher who has not
+// published, and only the declaration can say which.
+
+/** Where a record that expects no listing says so. */
+const NO_LISTING_FILE = "tools/selftest/publishers-without-listing.json";
+
+/**
+ * The declarations in `NO_LISTING_FILE`'s text, and every way that text is
+ * wrong. Nothing else reads the file, so its shape is held here.
+ */
+function readNoListing(text) {
+  const declared = new Map();
+  const problems = [];
+  let doc;
+  try {
+    doc = JSON.parse(text);
+  } catch (e) {
+    return { declared, problems: [`${NO_LISTING_FILE} is not JSON: ${e.message}`] };
+  }
+  if (doc === null || typeof doc !== "object" || Array.isArray(doc) || !Array.isArray(doc.declarations)) {
+    return { declared, problems: [`${NO_LISTING_FILE} carries no \`declarations\` array`] };
+  }
+  for (const [i, d] of doc.declarations.entries()) {
+    const at = `${NO_LISTING_FILE} declarations[${i}]`;
+    if (d === null || typeof d !== "object" || Array.isArray(d)) {
+      problems.push(`${at} is not an object`);
+      continue;
+    }
+    // A faulty entry declares nothing: it is refused, and the record it names
+    // is judged as though it were absent, so a malformed excuse cannot quiet
+    // the finding it was written to quiet.
+    const before = problems.length;
+    const extra = Object.keys(d).filter((k) => k !== "record" && k !== "reason");
+    if (extra.length) problems.push(`${at} carries ${extra.join(", ")}; a declaration is {record, reason} and nothing else`);
+    if (typeof d.record !== "string" || !/^publishers\/[^/]+\.json$/.test(d.record)) {
+      problems.push(`${at}.record is ${JSON.stringify(d.record)}, not a path of the form publishers/<owner>.json`);
+      continue;
+    }
+    if (typeof d.reason !== "string" || d.reason.trim() === "") {
+      problems.push(`${at} declares ${d.record} and gives no reason; the reason is the declaration, a bare entry is an excuse`);
+    }
+    if (declared.has(d.record)) problems.push(`${at} declares ${d.record} a second time`);
+    if (problems.length === before) declared.set(d.record, d.reason);
+  }
+  return { declared, problems };
+}
+
+/**
+ * Which listings every publisher record reaches, and what that means.
+ *
+ * `fail` is what may refuse a gate; `note` is what is reported and never
+ * refused. The split is the whole design, because this suite runs as the
+ * publish path's fifth check and in the moderation commit job, so anything in
+ * `fail` that a bot commit can produce is a bot commit this refuses:
+ *
+ *   - no plugin at all under the record's logins, undeclared → fail. No bot
+ *     write produces it: a publication only adds listings, and a takedown only
+ *     sets `unlisted` or `yanked` and deletes nothing.
+ *   - only unlisted plugins, undeclared → note. A takedown produces exactly it.
+ *   - declared, and now reaching a listed plugin → note. The first publication
+ *     of a declared publisher produces exactly it.
+ *   - a declaration naming no record → fail. Only a person writes one — or the
+ *     daily re-check, deleting an expired record, which runs no suite before it
+ *     pushes; its declaration goes in the same change, and this is what says so.
+ *
+ * WHICH listings a record reaches is the generator's answer, not this
+ * function's: a record is reached when `buildIndex` ships it in
+ * `signed.publishers`. The owner-half lookup below exists only to find the
+ * UNLISTED plugins a record owns, which the generator skips — and it is held
+ * to the generator on every listed plugin, so the day `build-index.mjs` keys
+ * the badge on something else this is red rather than a second rule.
+ */
+function publisherReach(root, noListingText) {
+  const fail = [];
+  const note = [];
+  const { declared, problems } = readNoListing(noListingText);
+  fail.push(...problems);
+
+  const { plugins } = loadSources(root);
+  const { publishers } = loadPublishers(root);
+  const index = buildIndex({ root, serial: 1 });
+  const shipped = new Set(Object.keys(index.signed.publishers ?? {}));
+  const generated = new Map(index.signed.plugins.map((e) => [e.id, e.publisher]));
+  const recordOf = (p) => publishers.get(String(p.doc?.source?.repo ?? "").split("/")[0].toLowerCase());
+
+  for (const p of plugins) {
+    if (p.doc?.unlisted === true) continue;
+    const mine = recordOf(p)?.doc.owner;
+    if (generated.get(p.doc?.id) !== mine) {
+      fail.push(`${p.file}: this check's lookup finds publisher ${JSON.stringify(mine)} and build-index.mjs emits ` +
+        `${JSON.stringify(generated.get(p.doc?.id))}; the badge's rule has moved and the unlisted half of this check has not followed it`);
+    }
+  }
+
+  const records = publisherRecords(publishers);
+  const files = new Set(records.map((r) => r.file));
+  for (const rec of records) {
+    const listed = [];
+    const unlisted = [];
+    for (const p of plugins) {
+      if (recordOf(p) === rec) (p.doc.unlisted === true ? unlisted : listed).push(`plugins/${p.dir}`);
+    }
+    if (shipped.has(rec.doc.owner) !== listed.length > 0) {
+      fail.push(`${rec.file}: build-index.mjs ${shipped.has(rec.doc.owner) ? "ships" : "does not ship"} it and this ` +
+        `check counts ${listed.length} listed plugin(s) under its logins; the two answers to "does it reach a listing" disagree`);
+      continue;
+    }
+    const why = declared.get(rec.file);
+    if (listed.length) {
+      if (why !== undefined) {
+        note.push(`${rec.file} is declared in ${NO_LISTING_FILE} as expecting no listing and now reaches ` +
+          `${listed.join(", ")}; delete the declaration. Not refused: the publication that did this ran this suite.`);
+      }
+      continue;
+    }
+    if (why !== undefined) continue;
+    const logins = [rec.doc.owner, ...(Array.isArray(rec.doc.covers) ? rec.doc.covers : [])].join(", ");
+    if (unlisted.length) {
+      note.push(`${rec.file} reaches no listed plugin: everything under ${logins} is unlisted (${unlisted.join(", ")}), ` +
+        "so no badge ships. Reported and never refused — a takedown sets `unlisted`, and the moderation commit job runs this suite.");
+      continue;
+    }
+    fail.push(`${rec.file} reaches no listing: none of its logins (${logins}) owns the source.repo of any plugin here, ` +
+      `listed or unlisted, and ${NO_LISTING_FILE} does not declare it. The badge is keyed on the owner half of ` +
+      "source.repo, lowercased — so either `owner`/`covers` names the wrong account, which is how publishers/KnlCE.json " +
+      `reached nothing for three days in August 2026, or the publisher has not published yet and ${NO_LISTING_FILE} ` +
+      "should say so, with a reason.");
+  }
+  for (const record of declared.keys()) {
+    if (!files.has(record)) {
+      fail.push(`${NO_LISTING_FILE} declares ${record}, which is not a publisher record here (${[...files].join(", ")}). ` +
+        "A declaration that matches nothing is refused; if the daily re-check withdrew the record, its declaration goes too.");
+    }
+  }
+  return { fail, note, records: records.length, plugins: plugins.length };
+}
+
 export async function run() {
+  // Through the loader's schema, `loadSchemas().publisher`, and not a read of
+  // the file of this test's own. Until gap 91 this opened
+  // `schema/publisher-v1.json` directly while `loadSchemas` loaded the same
+  // file for nobody: two answers to "which schema judges a publisher", one of
+  // them unread. It is one answer now, and `tools/validate.mjs` judges by it
+  // too (the test after this one).
   await test("every publishers/ record validates against schema/publisher-v1.json", () => {
-    const schema = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "schema/publisher-v1.json"), "utf8"));
+    const schema = loadSchemas(REPO_ROOT).publisher;
     const { errors, publishers } = loadPublishers(REPO_ROOT);
     assert(errors.length === 0, errors.map((e) => `${e.file}: ${e.message}`).join("\n"));
-    assert(publishers.size >= 1, "no publisher records, so this test proves nothing");
-    for (const { file, doc } of publishers.values()) {
+    const records = publisherRecords(publishers);
+    assert(records.length >= 1, "no publisher records, so this test proves nothing");
+    for (const { file, doc } of records) {
       const errs = validateSchema(schema, doc);
       assert(errs.length === 0, `${file}: ` + errs.map((e) => `${e.path} ${e.message}`).join("\n"));
+    }
+  });
+
+  // Gap 91. `tools/validate.mjs` is the first of the five checks the publish
+  // path runs and the only one CI names "Validate the listings"; this module
+  // is the fifth. A malformed publisher record used to pass the first — with
+  // 0 errors in both modes, measured, for a record no listing reaches — and be
+  // refused only here. Three clauses, each with its own subject:
+  //
+  //   (a) the committed records are judged and pass: `checkPublisherRecords`
+  //       over the real tree, with the loader's schema, reports nothing;
+  //   (b) it judges by the schema it is HANDED, which is how `runValidation`
+  //       gives it the loader's: a tightened copy of that schema turns every
+  //       committed record red, so a function that read the file itself — a
+  //       second answer — would not follow and this fails;
+  //   (c) `runValidation` calls it: a copy of `publishers/` with one wrong-typed
+  //       member, one enum miss and one record the loader drops is refused
+  //       three times, each by its file and member, and for nothing else.
+  //
+  // The subjects are synthesised from the committed records, because the
+  // committed tree has never contained a malformed one.
+  await test("tools/validate.mjs judges every publisher record at the first gate, by the loader's schema", async () => {
+    const schemas = loadSchemas(REPO_ROOT);
+    const collect = () => {
+      const items = [];
+      const push = (level) => (where, message) => items.push({ level, where, message });
+      return { items, error: push("error"), warn: push("warn"), note: push("note") };
+    };
+
+    // (a)
+    const clean = collect();
+    const committed = loadPublishers(REPO_ROOT);
+    const committedFiles = publisherRecords(committed.publishers).map((r) => r.file);
+    assert(committedFiles.length >= 2, `${committedFiles.length} committed record(s); (b) below needs at least two to mean anything`);
+    checkPublisherRecords({ report: clean, schemas }, committed);
+    assert(clean.items.length === 0,
+      `the committed publisher records are refused by tools/validate.mjs:\n${clean.items.map((i) => `${i.where}: ${i.message}`).join("\n")}`);
+
+    // (b)
+    const tight = collect();
+    const tightened = structuredClone(schemas.publisher);
+    tightened.properties.display_name.maxLength = 1;
+    checkPublisherRecords({ report: tight, schemas: { ...schemas, publisher: tightened } }, committed);
+    const judged = new Set(tight.items.filter((i) => i.message.startsWith("$.display_name")).map((i) => i.where));
+    const unjudged = committedFiles.filter((f) => !judged.has(f));
+    assert(unjudged.length === 0,
+      `a one-character display_name limit, handed to checkPublisherRecords as ctx.schemas.publisher, did not refuse ` +
+      `${unjudged.join(", ")}; the function is judging by some other schema than the loader's`);
+
+    // (c)
+    const tree = fs.mkdtempSync(path.join(os.tmpdir(), "astra-pub-gate-"));
+    try {
+      fs.cpSync(path.join(REPO_ROOT, "publishers"), path.join(tree, "publishers"), { recursive: true });
+      const pick = committedFiles.find((f) => f === "publishers/mihailinl.json") ?? committedFiles[0];
+      const other = committedFiles.find((f) => f !== pick);
+      const edit = (rel, change) => {
+        const full = path.join(tree, rel);
+        const before = fs.readFileSync(full);
+        const doc = JSON.parse(before);
+        change(doc);
+        fs.writeFileSync(full, JSON.stringify(doc, null, 2) + "\n");
+        assert(!fs.readFileSync(full).equals(before), `the edit to ${rel} changed no byte, so (c) would prove nothing`);
+      };
+      edit(pick, (d) => { d.display_name = 42; });
+      edit(other, (d) => { d.tier = "community"; });
+      // A record the loader DROPS — its owner is not its file name — which no
+      // schema check can reach, so it must be the loader's refusal that says so.
+      fs.writeFileSync(path.join(tree, "publishers", "stray.json"),
+        JSON.stringify({ ...JSON.parse(fs.readFileSync(path.join(REPO_ROOT, pick))), owner: "somebody-else" }, null, 2) + "\n");
+
+      const { report } = await runValidation({
+        root: tree, allowStaging: true, allowDirect: false, online: false, artifactsDir: null, index: false,
+      });
+      const mine = report.errors.filter((e) => e.where.startsWith("publishers/"));
+      const at = (file, needle) => mine.filter((e) => e.where === file && e.message.includes(needle));
+      assert(at(pick, "$.display_name").length === 1,
+        `${pick} with display_name 42 is not refused by tools/validate.mjs naming the member:\n` +
+        mine.map((e) => `${e.where}: ${e.message}`).join("\n"));
+      assert(at(other, "$.tier").length === 1,
+        `${other} with tier "community" is not refused by tools/validate.mjs naming the member:\n` +
+        mine.map((e) => `${e.where}: ${e.message}`).join("\n"));
+      assert(at("publishers/stray.json", "does not match the file name").length === 1,
+        "a record the loader drops is not refused by tools/validate.mjs; it would be invisible to every schema check");
+      assert(mine.length === 3,
+        `expected exactly the three planted refusals under publishers/, got ${mine.length}:\n` +
+        mine.map((e) => `${e.where}: ${e.message}`).join("\n"));
+    } finally {
+      fs.rmSync(tree, { recursive: true, force: true });
     }
   });
 
@@ -46,6 +309,94 @@ export async function run() {
     }
     for (const key of Object.keys(map)) {
       assert(named.has(key), `${key} ships a record no listing points at`);
+    }
+  });
+
+  // Gap 6, the fourth direction, on the committed tree. Today one record needs
+  // its declaration: publishers/KnlCE.json covers MINICE-AI and the one plugin
+  // of his is frozen unlisted under KNICE-TECH, so its logins own no plugin at
+  // all — delete the entry and this is red, naming it.
+  await test("every publisher record reaches a listing, or says why it expects none", () => {
+    const { fail, note, records, plugins } = publisherReach(REPO_ROOT, fs.readFileSync(path.join(REPO_ROOT, NO_LISTING_FILE), "utf8"));
+    assert(records >= 1 && plugins >= 1, `${records} record(s) over ${plugins} plugin(s); an empty walk proves nothing`);
+    for (const n of note) console.log(`  note  ${n}`);
+    assert(fail.length === 0, fail.join("\n"));
+  });
+
+  // The same function over a copy of the tree built so that every branch it
+  // distinguishes has a subject, because the committed tree holds two records
+  // and exercises two of them. Made from committed material — the real
+  // plugins, three of them pointed at synthesised owners — and with a
+  // publishers/ of its own, so a record added to or changed on the real tree
+  // moves nothing here:
+  //
+  //   listed-owner      owns text-utils, listed              nothing
+  //   covered-person    reaches json-tools ONLY via covers   nothing — a covered login is a login
+  //   withdrawn-owner   owns only echo-stt, unlisted         a note, never a failure
+  //   not-yet-published owns no plugin at all                FAIL undeclared; nothing declared
+  //
+  // then a declaration set carrying one of every mistake the file can hold.
+  await test("a record with no listing fails unless declared; a withdrawn one and a stale declaration are reported, not refused", () => {
+    const tree = fs.mkdtempSync(path.join(os.tmpdir(), "astra-pub-reach-"));
+    try {
+      for (const dir of ["plugins", "registry", "policy", "schema"]) {
+        fs.cpSync(path.join(REPO_ROOT, dir), path.join(tree, dir), { recursive: true });
+      }
+      fs.mkdirSync(path.join(tree, "publishers"));
+      const repoOf = (id, repo) => {
+        const file = path.join(tree, "plugins", id, "plugin.json");
+        const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+        assert(doc.source.repo !== repo, `plugins/${id} already names ${repo}, so the fixture would prove nothing`);
+        doc.source.repo = repo;
+        fs.writeFileSync(file, JSON.stringify(doc, null, 2) + "\n");
+        return doc.unlisted === true;
+      };
+      assert(repoOf("text-utils", "listed-owner/text-utils") === false, "plugins/text-utils must be LISTED for the owner case");
+      assert(repoOf("json-tools", "covered-org/json-tools") === false, "plugins/json-tools must be LISTED for the covers case");
+      assert(repoOf("echo-stt", "withdrawn-owner/echo-stt") === true, "plugins/echo-stt must be UNLISTED for the withdrawal case");
+      const record = (owner, over = {}) => fs.writeFileSync(path.join(tree, "publishers", `${owner}.json`), JSON.stringify({
+        schema: "astra.registry.publisher/1", owner, display_name: `Fixture ${owner}`, tier: "astra_team",
+        verified_at: "2026-01-01", evidence: { kind: "first-party", note: "fixture" }, ...over,
+      }, null, 2) + "\n");
+      record("listed-owner");
+      record("covered-person", { covers: ["covered-org"] });
+      record("withdrawn-owner");
+      record("not-yet-published");
+
+      const none = publisherReach(tree, JSON.stringify({ declarations: [] }));
+      assert(none.records === 4, `the fixture loaded ${none.records} record(s), not 4`);
+      assert(none.fail.length === 1 && none.fail[0].startsWith("publishers/not-yet-published.json reaches no listing"),
+        `with nothing declared, exactly not-yet-published.json should fail:\n${none.fail.join("\n")}`);
+      assert(none.note.length === 1 && none.note[0].startsWith("publishers/withdrawn-owner.json reaches no listed plugin"),
+        `with nothing declared, exactly the withdrawn owner should be reported, and not refused:\n${none.note.join("\n")}`);
+
+      const ok = publisherReach(tree, JSON.stringify({ declarations: [{ record: "publishers/not-yet-published.json", reason: "fixture: not published yet" }] }));
+      assert(ok.fail.length === 0, `a declared record with no listing still failed:\n${ok.fail.join("\n")}`);
+
+      const wrong = publisherReach(tree, JSON.stringify({ declarations: [
+        { record: "publishers/not-yet-published.json", reason: "fixture" },
+        { record: "publishers/listed-owner.json", reason: "fixture: stale, it reaches text-utils" },
+        { record: "publishers/ghost.json", reason: "fixture: names no record" },
+        { record: "publishers/not-yet-published.json", reason: "fixture: twice" },
+        { record: "publishers/withdrawn-owner.json", reason: "  " },
+        { record: "not-yet-published.json", reason: "fixture: not a path" },
+        { record: "publishers/covered-person.json", reason: "fixture", until: "someday" },
+      ] }));
+      const has = (list, needle) => list.filter((m) => m.includes(needle)).length;
+      assert(has(wrong.fail, "declares publishers/ghost.json, which is not a publisher record here") === 1, `a declaration matching nothing was not refused:\n${wrong.fail.join("\n")}`);
+      assert(has(wrong.fail, "declares publishers/not-yet-published.json a second time") === 1, `a duplicate declaration was not refused:\n${wrong.fail.join("\n")}`);
+      assert(has(wrong.fail, "declares publishers/withdrawn-owner.json and gives no reason") === 1, `a blank reason was not refused:\n${wrong.fail.join("\n")}`);
+      assert(has(wrong.fail, "not a path of the form publishers/<owner>.json") === 1, `a malformed record path was not refused:\n${wrong.fail.join("\n")}`);
+      assert(has(wrong.fail, "carries until") === 1, `an unknown member was not refused:\n${wrong.fail.join("\n")}`);
+      assert(wrong.fail.length === 5, `expected exactly the five planted declaration faults, got ${wrong.fail.length}:\n${wrong.fail.join("\n")}`);
+      assert(has(wrong.note, "publishers/listed-owner.json is declared") === 1,
+        `a stale declaration should be reported, and not refused:\n${wrong.note.join("\n")}`);
+      // The blank-reason entry declared nothing, so the withdrawal it named is
+      // reported exactly as though it were not there.
+      assert(has(wrong.note, "publishers/withdrawn-owner.json reaches no listed plugin") === 1 && wrong.note.length === 2,
+        `a faulty declaration quieted the finding it named, or something else was reported:\n${wrong.note.join("\n")}`);
+    } finally {
+      fs.rmSync(tree, { recursive: true, force: true });
     }
   });
 
