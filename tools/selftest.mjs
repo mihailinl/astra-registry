@@ -391,7 +391,26 @@ function scalarAt(lines, i, indent) {
   return out.join("\n").trim();
 }
 
-/** `{ triggers, jobs: [{ name, if, steps: [{ name, id, if, run, line }] }] }` */
+/**
+ * A `with:` block's inputs, one level down: `key: value`, the trailing comment
+ * and the quotes taken off. A value this cannot read comes out as whatever text
+ * is there, so `fetch-depth: ${{ inputs.depth }}` is not `0` — the direction
+ * gap 75's reader needs, where anything unproven reads as shallow.
+ */
+function mappingAt(lines, i, indent) {
+  const out = {};
+  for (let j = i + 1; j < lines.length; j++) {
+    const line = lines[j];
+    if (!line.trim() || /^\s*#/.test(line)) continue;
+    if (indentOf(line) <= indent) break;
+    if (indentOf(line) !== indent + 2 || !isKeyLine(line)) continue;
+    const m = /^\s*([\w-]+):\s*(.*)$/.exec(line);
+    out[m[1]] = unquote(m[2].replace(/\s+#.*$/, "").trim());
+  }
+  return out;
+}
+
+/** `{ triggers, jobs: [{ name, if, steps: [{ name, id, if, run, uses, with, line }] }] }` */
 function parseWorkflow(text) {
   const lines = text.split("\n");
   const triggers = [];
@@ -431,7 +450,7 @@ function parseWorkflow(text) {
         if (itemIndent < 0) continue;
         if (indentOf(sl) < itemIndent && sl.trim()) break;
         if (indentOf(sl) !== itemIndent || !/^\s*- /.test(sl)) continue;
-        job.steps.push({ start: s, name: "", id: "", if: "", run: "", line: s + 1 });
+        job.steps.push({ start: s, name: "", id: "", if: "", run: "", uses: "", with: {}, line: s + 1 });
       }
       const keyIndent = itemIndent + 2;
       for (let t = 0; t < job.steps.length; t++) {
@@ -446,6 +465,9 @@ function parseWorkflow(text) {
             step[key2] = scalarAt(body, b, keyIndent);
             if (key2 === "if") step.if = step.if.replace(/\s+/g, " ");
           }
+          // Gap 75 reads a checkout's `fetch-depth`, so the action and its inputs.
+          if (key2 === "uses") step.uses = unquote(scalarAt(body, b, keyIndent).replace(/\s+#.*$/, ""));
+          if (key2 === "with") step.with = mappingAt(body, b, keyIndent);
         }
       }
     }
@@ -569,7 +591,8 @@ const unquote = (s) => s.replace(/^"(.*)"$/s, "$1").replace(/^'(.*)'$/s, "$1");
 // earlier step runs. `laneSites()` above follows one indirection because it had
 // to — `bot/publish-apply.mjs` is where two of the six sites live — and this
 // deliberately does not follow any. Measured before choosing: following them
-// turns `ingest.yml:745` UNPROVEN today, because `bot/manifest-probe/link-deps.sh`
+// turns `ingest.yml`'s `selftest` lane UNPROVEN today (it was line 745 when this was
+// measured), because `bot/manifest-probe/link-deps.sh`
 // names AstraPlugins on eight lines. It does not create a sibling — it clones
 // into `bot/manifest-probe/_deps/AstraPlugins`, inside the checkout, and its one
 // mention of `$here/../../../AstraPlugins` READS a developer's existing one — so
@@ -619,6 +642,93 @@ function siblingGatedChecks() {
         if (m) title = m[1];
       }
       out.push(`${title || "(no test() encloses it)"} — tools/selftest/${name}:${i + 1}`);
+    }
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GAP 75. THE SAME SHAPE AS GAP 41, ONE ENVIRONMENT OVER: A CHECK WHOSE PASSING
+// CONDITION IS AN ABSENCE IN THE HISTORY HAS A CHECKOUT, AND A SHALLOW CHECKOUT
+// HOLDS NO HISTORY TO BE ABSENT FROM.
+//
+// Measured on 2026-09-22: `tools/selftest/revocations.mjs` asks
+// `flagPermanenceProblems` whether the arming flag was ever changed after it
+// was added, and in a depth-1 clone of a history that adds it and then edits it
+// the suite printed `ok` and exited 0, while a full clone of the same history
+// failed naming the edit. `actions/checkout` fetches depth 1 unless told
+// otherwise, and `ingest.yml`'s `selftest` job does not tell it — so one of the
+// three live lanes was answering "clean" about history it did not hold, and
+// the lane table said nothing about checkouts at all.
+//
+// The guard now reports `notAsked` in a shallow checkout and its check says
+// NOT ASKED there — as `update-notes.mjs`'s record-history check already did —
+// and what that leaves is gap 41's second sentence again: "a lane with the
+// whole history asks it" is a claim about lanes. So it is derived. For every
+// site, the last `actions/checkout` of THIS repository before the step (no
+// `repository:`, no `path:`) is read for `fetch-depth`, and only a literal
+// `0` reads as the whole history.
+//
+// THE DIRECTION OF THE UNCERTAINTY is the one gap 41 chose. Anything this does
+// not recognise — a `fetch-depth` written as an expression, a later `git fetch
+// --unshallow`, a checkout inside a composite action — reads as SHALLOW, which
+// can only make the count below smaller and the failure louder. A lane read as
+// WHOLE when it is shallow is the silent direction, and the only way to get it
+// is a literal `fetch-depth: 0` on a checkout of this repository that some
+// later step undoes — which is a thing somebody would have to write on purpose.
+/**
+ * What history a step's checkout holds: the whole of it, or not.
+ *
+ * @returns {{full: boolean, why: string}}
+ */
+function historyBefore(job, step) {
+  let checkout = null;
+  for (const st of job.steps) {
+    if (st === step) break;
+    if (/^actions\/checkout@/.test(st.uses) && !st.with.repository && !st.with.path) checkout = st;
+  }
+  if (!checkout) return { full: false, why: "no checkout of this repository before it in this job" };
+  const depth = checkout.with["fetch-depth"];
+  if (depth === "0") return { full: true, why: `the checkout at line ${checkout.line} sets fetch-depth: 0` };
+  return {
+    full: false,
+    why: depth === undefined
+      ? `the checkout at line ${checkout.line} sets no fetch-depth, and actions/checkout fetches 1 commit by default`
+      : `the checkout at line ${checkout.line} sets fetch-depth: ${depth}`,
+  };
+}
+
+/**
+ * The checks in this suite that say NOT ASKED in a shallow checkout, found by
+ * reading them — `siblingGatedChecks`'s reason, and a tighter read than its:
+ * a `test(...)` body in which CODE (not a comment) names `shallow` before a
+ * `neverAsk(` in the same body. The title is the `test(...)` it sits inside.
+ * Two places are deliberately not read: the title line, so a check whose NAME
+ * mentions a shallow clone is not counted for that alone; and the `neverAsk(`
+ * call's own arguments, so a message that SAYS "shallow" under a condition
+ * that no longer tests it (`if (false) neverAsk("this checkout is shallow…")`)
+ * is not counted either. Watched: without the second, that edit to
+ * update-notes.mjs's record check left it counted, and the floor below green.
+ */
+function historyGatedChecks() {
+  const out = [];
+  for (const name of fs.readdirSync(SUITE_DIR).filter((n) => n.endsWith(".mjs")).sort()) {
+    let lines;
+    try { lines = fs.readFileSync(path.join(SUITE_DIR, name), "utf8").split("\n"); } catch { continue; }
+    let title = "";
+    let named = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (/^\s*(\/\/|\/?\*)/.test(line)) continue;
+      const opened = /\btest\(\s*["'`](.+?)["'`]\s*,/.exec(line);
+      if (opened) { title = opened[1]; named = false; continue; }
+      if (!title) continue;
+      const call = line.search(/\bneverAsk\(/);
+      if (/shallow/i.test(call < 0 ? line : line.slice(0, call))) named = true;
+      if (named && call >= 0) {
+        out.push(`${title} — tools/selftest/${name}:${i + 1}`);
+        named = false;
+      }
     }
   }
   return out;
@@ -687,6 +797,8 @@ function laneSites() {
             // in two jobs, and one job's pin step is not in the other job's
             // environment.
             sibling: siblingMentionBefore(lines, job.start, step.start) || topEnv,
+            // Gap 75: the history the suite can see at this step.
+            history: historyBefore(job, step),
             triggers: parsed.triggers,
           });
         }
@@ -697,7 +809,7 @@ function laneSites() {
   return { files: files.length, indirect, sites };
 }
 
-function laneReport(lanes) {
+function laneReport(lanes, historyGated = []) {
   const out = [];
   out.push(`${lanes.sites.length} site(s) run this suite, in ${lanes.files} workflow file(s).`);
   if (lanes.indirect.length) out.push(`  reached indirectly through: ${lanes.indirect.join(", ")}`);
@@ -713,6 +825,9 @@ function laneReport(lanes) {
     out.push(`        sibling: ${s.sibling
       ? `UNPROVEN — line ${s.sibling.line} names one: ${s.sibling.text}`
       : "nothing before this step in this job names an AstraPlugins checkout"}`);
+    out.push(`        history: ${s.history.full ? "WHOLE" : "SHALLOW"} — ${s.history.why}`);
+    // Per lane, what that costs: the checks that cannot say clean here.
+    if (!s.history.full) for (const g of historyGated) out.push(`          NOT ASKED here: ${g}`);
   }
   return out;
 }
@@ -807,6 +922,57 @@ function checkAbsenceEnvironment(live) {
     "Moving the suite above the fetch in any one of the lanes above is the whole fix. If the mention is prose " +
     "rather than a checkout, this scan cannot tell them apart on purpose — the direction it is wrong in is the " +
     "loud one — so move the step or the sentence. `node tools/selftest.mjs --lanes` prints what was read.",
+  ]);
+}
+
+// A CENSUS FLOOR on the checks `checkHistoryEnvironment` below is about, where
+// `checkAbsenceEnvironment` has only "not empty" — and the difference is
+// measured rather than preferred. That set holds one check, so
+// "not empty" is the census. This one holds two, from two lanes of work —
+// revocations.mjs's flag check and update-notes.mjs's release-record check —
+// and deleting the `if (…shallow…) neverAsk(…)` from EITHER put gap 75 back
+// for it (`ok` in every shallow lane, about history it cannot see) while
+// "not empty" stayed true on the other one, and every FLOORS entry stayed
+// met, because a check that stops saying NOT ASKED still reports once.
+// A floor and not an equality, for FLOORS' reason: adding one needs no edit
+// here; retiring one on purpose needs this number lowered in the same diff.
+const HISTORY_GATED_FLOOR = 2;
+const HISTORY_GATED_DAY = "2026-09-22";
+
+/**
+ * GAP 75's half of the lane question, in `checkAbsenceEnvironment`'s shape: not
+ * *is this suite run*, but *is it run anywhere that holds the history its
+ * history checks are about*. Fails at zero, naming the checks — after the census
+ * floor above, which is this function's version of that one's floor on the scan.
+ */
+function checkHistoryEnvironment(live, gated) {
+  if (gated.length < HISTORY_GATED_FLOOR) {
+    fail(
+      `${gated.length} check(s) under tools/selftest/ say NOT ASKED in a shallow checkout, and there were ` +
+      `${HISTORY_GATED_FLOOR} on ${HISTORY_GATED_DAY}`,
+      [
+        `found: ${gated.join("; ") || "none"}`,
+        "A check that stopped testing for a shallow checkout prints `ok` there again, about history it cannot " +
+        "see — gap 75, back — and nothing else in this suite notices, because it still reports once. If one " +
+        "was retired deliberately, lower HISTORY_GATED_FLOOR in tools/selftest.mjs in the SAME commit; if every " +
+        "one was, delete `checkHistoryEnvironment` and the line that calls it too. If not, this SCAN is what " +
+        "broke: it reads each test() body for code naming `shallow` above a `neverAsk(` in the same body, and " +
+        "a rename of either is invisible to it",
+      ],
+    );
+  }
+  const whole = live.filter((s) => s.history.full);
+  if (whole.length) return whole;
+  fail("no lane runs this suite with the whole history, so the checks about HISTORY are asked nowhere", [
+    "these check(s) cannot say clean about history the checkout does not hold, and every live lane now reaches " +
+    "this suite through a shallow checkout, so from this commit they are NOT ASKED in every environment that " +
+    "runs without a human:",
+    ...gated.map((g) => `  ${g}`),
+    ...live.map((s) => `  lane ${s.workflow}:${s.line} — ${s.history.why}`),
+    "Where they can be asked: a live lane whose checkout of this repository sets `fetch-depth: 0`. Setting it " +
+    "on any one of the lanes above is the whole fix. This reads only that checkout's `fetch-depth`, on " +
+    "purpose — history that arrives some other way reads as SHALLOW, which is the loud direction — so say it " +
+    "in the checkout. `node tools/selftest.mjs --lanes` prints what was read.",
   ]);
 }
 
@@ -970,7 +1136,7 @@ const FLOORS = new Map(Object.entries({
   "signer-run.mjs": 6,
   "rehearsal-r2.mjs": 14,
   "served-set.mjs": 28,
-  "revocations.mjs": 21,
+  "revocations.mjs": 23,
   "cli.mjs": 9,
   "root-delegation.mjs": 6,
   "roots.mjs": 3,
@@ -1016,13 +1182,15 @@ function checkFloors() {
 await checkModuleSet();
 
 const LANES = laneSites();
+const HISTORY_GATED = historyGatedChecks();
 if (WANT_LANES) {
   console.log("\nlanes that reach this suite (derived from .github/workflows/ at this commit)");
-  for (const line of laneReport(LANES)) console.log(line);
+  for (const line of laneReport(LANES, HISTORY_GATED)) console.log(line);
   console.log("");
 }
 const LIVE_LANES = checkLanes(LANES);
 const ABSENCE_LANES = checkAbsenceEnvironment(LIVE_LANES);
+const HISTORY_LANES = checkHistoryEnvironment(LIVE_LANES, HISTORY_GATED);
 
 // `--census` is the one run that is allowed past this, because it is the run
 // that produces the block. It asserts no floor and prints no PASS.
@@ -1175,6 +1343,19 @@ console.log(
   `which is where the checks whose passing condition is an ABSENCE are asked: ` +
   `${ABSENCE_LANES.map((l) => `${l.workflow.replace(".github/workflows/", "")}:${l.line}`).join(", ") || "none"}`,
 );
+// Gap 75, printed for gap 41's reason: "a checkout with the whole history asks
+// it" is a claim about lanes, measured here where the count is read. The
+// shallow ones are named too, because they are where those checks said NOT
+// ASKED, and a reader of that lane's log is the one asking why.
+{
+  const shallowLive = LIVE_LANES.filter((l) => !l.history.full);
+  const at = (ls) => ls.map((l) => `${l.workflow.replace(".github/workflows/", "")}:${l.line}`).join(", ");
+  console.log(
+    `      ${HISTORY_LANES.length} of the ${LIVE_LANES.length} live lane(s) reach it with the whole history, which is where the ` +
+    `${HISTORY_GATED.length} check(s) about HISTORY are asked: ${at(HISTORY_LANES) || "none"}` +
+    `${shallowLive.length ? `; through a shallow checkout, so NOT ASKED there: ${at(shallowLive)}` : ""}`,
+  );
+}
 for (const f of failures) console.log(`      - ${f}`);
 // The shortfall carries its own lead sentence: there are two of them now — a
 // module that reported nothing, and a module that reported fewer than its floor
