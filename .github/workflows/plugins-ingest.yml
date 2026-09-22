@@ -74,9 +74,18 @@ name: Plugins ingest
 # estate has spent its worst two bugs on. `bot/tests/workflows.test.mjs`
 # refuses a placeholder step that cannot fail its job.
 #
-# So a `workflow_dispatch` of this file today is RED at `claim`, because
-# `bot/lib/service.mjs` (B-T2.5) is not on `main`. That is the correct answer
-# to dispatching a workflow whose service client does not exist.
+# So a `workflow_dispatch` of this file today is RED at `claim`, because the
+# claim step is one of those placeholders (B-T2.5, B-T5.1). That is the correct
+# answer to dispatching a workflow whose claim is unwritten.
+#
+# This sentence used to give a different reason — that `bot/lib/service.mjs`
+# (B-T2.5) "is not on `main`". It landed `68f9dde` on 2026-09-20, four hours
+# and forty-eight minutes after this file's last commit, and the sentence went
+# on being read as true for two days. Same class as the step name below that
+# asserted a task was unbuilt forty-six minutes after it merged. Neither is
+# reachable by `tools/absent-scan.mjs`, which reads `@absent <path> (<task>)`
+# markers and not prose — the marker is for absences an author chooses to
+# state in a form a machine can re-ask.
 
 on:
   # ── BOT-51's schedule, off until R3 opens ─────────────────────────────────
@@ -840,16 +849,32 @@ jobs:
 
       # `bot/publish-apply.mjs` is on `main` and carries the allow-list, the
       # re-validation and the race handling. What it does NOT yet carry is
-      # B-T3.4's record commit: `bot/lib/decisions.mjs` is not written, so
-      # `recordCommitRefusal()` refuses by name rather than widening the
-      # allow-list to a directory nothing writes. This step is the other half
-      # of that refusal, and it names the same task.
+      # B-T3.4's record commit: the allow-list is not widened to `log/`, and
+      # `recordCommitRefusal()` refuses by name — not because a file is
+      # missing, but because it checks the `available` argument its CALLER
+      # passes rather than which files exist, so it stops refusing when a
+      # caller can supply both and not when one of the two lands. This step is
+      # that caller, and it is unbuilt.
+      #
+      # This comment said `bot/lib/decisions.mjs` "is not written" until
+      # 2026-09-22; it landed `407b2ae` on 2026-09-20. That is the SECOND
+      # absence in this file that stopped being true and went on being read —
+      # after the step name fixed forty-six minutes late, above, and after the
+      # header's own `bot/lib/service.mjs` line.
+      #
+      # **What is still missing for B-T3.4 is not path-shaped**, and that is
+      # the boundary `tools/absent-scan.mjs` cannot cross: a widened allow-list
+      # and a caller are behaviours inside files that already exist, so there
+      # is no `@absent <path> (<task>)` marker that could hold this step
+      # honest. A comment is what holds it, and a comment is what failed here
+      # twice — which is the argument for building the step, not for inventing
+      # a marker that would be green about the wrong thing.
       - name: "Compose every record this run produced, into one commit (not built: B-T3.4)"
         env:
           ASTRA_DELIVERED_AT: ${{ needs.alert.outputs.delivered_at }}
         run: |
           set -euo pipefail
-          echo "::error::B-T3.4 builds this step: one decision record per state entry, the identity and sibling records, queue entries carrying decision_id and publish_after, and the state/alerts/ records with this run's delivered_at — composed into the single commit bot/publish-apply.mjs then applies. bot/lib/decisions.mjs (B-T2.2) is the writer it needs and is not on main; publish-apply's recordCommitRefusal() refuses by name for the same reason."
+          echo "::error::B-T3.4 builds this step: one decision record per state entry, the identity and sibling records, queue entries carrying decision_id and publish_after, and the state/alerts/ records with this run's delivered_at — composed into the single commit bot/publish-apply.mjs then applies. bot/lib/decisions.mjs (B-T2.2) landed 407b2ae and exports writeDecisionRecord, so the writer is here; what is missing is this caller and the widened allow-list, and publish-apply's recordCommitRefusal() refuses on the available argument its caller passes rather than on which files exist."
           exit 1
 
       - name: Apply the decisions, hold them to the rules, and push

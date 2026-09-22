@@ -518,11 +518,19 @@ function parseArgs(argv) {
  * B-T2.2's writer, or a refusal that names it.
  *
  * `--compose` does not write a record file and does not derive a decision id.
- * Both belong to `bot/lib/decisions.mjs`, which B-T2.2 builds and which is not
- * on `main` yet. Writing a second composer here to fill the gap would be two
+ * Both belong to `bot/lib/decisions.mjs`, which B-T2.2 built and landed at
+ * `407b2ae`. Writing a second composer here to fill the gap would be two
  * writers for one record shape — and the second one would be the one nobody
- * remembers to change. So this refuses, by name, and the refusal is the thing
- * that gets fixed when the writer lands.
+ * remembers to change. So this asks, by name, rather than composing.
+ *
+ * This sentence said the module "is not on `main` yet" until 2026-09-22, two
+ * days after it landed, and the refusal below stopped refusing on the day it
+ * did — the body is `fs.existsSync`, which is a claim that re-asks itself
+ * every run, while the sentence above it was not. That is gap 28 in one
+ * docblock: the check moved and the prose did not, and only the prose is what
+ * a reader acts on. The line-oriented prototype could not see this one either
+ * — "is not" ended one line and "on `main` yet" began the next — which is a
+ * fourth reason `tools/absent-scan.mjs` reads a marker and not a phrase.
  */
 export async function resolveWriter({ root, load = (s) => import(s) } = {}) {
   const here = path.dirname(fileURLToPath(import.meta.url));
