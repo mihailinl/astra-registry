@@ -58,6 +58,30 @@ import { parseSemver } from "./semver.mjs";
 export const SOURCE_DIR = "tools/revocations";
 
 /**
+ * A regular expression over a repository-relative path, as git prints one:
+ * `dir`, escaped, then `/`, then `basename` — a RegExp SOURCE for the part
+ * after the slash — anchored at both ends, so a file in a subdirectory, in a
+ * sibling that shares the prefix, or under another tree does not match.
+ *
+ * Gap 72. Two readers parse history for advisories: `nextAdvisoryId` in
+ * `bot/lib/compile-decision.mjs`, whose `git log` pathspec already followed
+ * `SOURCE_DIR`, and `tools/moderation-coverage.mjs`'s `ADVISORY_RE`. Both
+ * spelled the directory into a regex literal. Had the directory moved, the log
+ * would have listed the new paths and the id regex matched none of them:
+ * `nextAdvisoryId` finds no advisory and hands out `ASTRA-YYYY-0001` again,
+ * and the coverage canary stops seeing advisories at all. Both build their
+ * pattern with this now, and `tools/selftest/couplings.mjs` asks each of them
+ * what it saw on a fixture history written under `SOURCE_DIR`.
+ *
+ * @param {string} dir       a literal directory, escaped here
+ * @param {string} basename  a RegExp source; its capture groups keep their numbers
+ */
+export function pathUnder(dir, basename) {
+  const escaped = dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^${escaped}/(?:${basename})$`);
+}
+
+/**
  * The same directory as a **git pathspec**, narrowed to the files the document
  * is actually built from.
  *
@@ -73,13 +97,23 @@ export const SOURCE_DIR = "tools/revocations";
  *     minutes older than the newest tools/revocations/ commit a6a4c552cb3a;
  *     the bound is 30
  *
- * Every number in that sentence is correct. The subject is wrong: nothing about
- * the signed withdrawal list changed, and `signed` was not behind anything. The
- * run went red, `detectors.yml` went red with it, and it stayed red until the
- * next push to `main` happened to re-run the signer — because `sign.yml`'s cron
- * is hourly and the bound is thirty minutes. **A documentation edit made an
- * alarm channel fire for up to an hour**, which is the specific failure this
- * repository spent 2026-09-19 removing from `served-set.yml` and `ingest.yml`.
+ * Every number in that sentence is correct, and its subject — *the withdrawal
+ * list changed and `signed` has not caught up* — was false about the list and
+ * true about the number. The list's ENTRIES did not change: `[]` before and
+ * after. Its SERIAL did, because the serial counts the whole directory
+ * (`SERIAL_PATHSPEC` below): `git rev-list --count` gives 2 at `a6a4c55^` and
+ * 3 at `a6a4c55`, and the signer's commit `ae80bc7` reads "withdrawal list 4
+ * at a6a4c552cb3a" and "revocations.json: changed at serial 4". So `signed`
+ * WAS one serial behind main, from the merge (09:25:22Z) until that commit
+ * (09:25:31Z, signer run 35502265393 on the same push), and A7's run on that
+ * push (35502265394) fetched `signed` at 09:25:28Z, inside the gap. The run
+ * went red, and `detectors.yml` stayed red until its next run, a push at
+ * 09:32:57Z, which was green. Nothing was sent, because the alarm channel did
+ * not exist yet; with one, **a documentation edit would have paged**, which is
+ * the specific failure this repository spent 2026-09-19 removing from
+ * `served-set.yml` and `ingest.yml`. (Measured 2026-09-22 from `signed`'s
+ * history and both runs' logs; this paragraph said until then that nothing
+ * about the list had changed and that `signed` was behind nothing.)
  *
  * The rule it is an instance of is in ops `dev/couplings.md`: *an instrument
  * can be right about the number and wrong about the subject.* Every earlier
@@ -438,6 +472,19 @@ export function loadAdvisories({ root = REPO_ROOT } = {}) {
  * daemon may only ADD on an equal serial, so a scheduled re-sign at the same
  * serial is the *safe* republication, and bumping it on every run would make
  * every re-sign a full replacement.
+ *
+ * **It does not count a pending change** (gap 69), and there it is NOT the
+ * construction `tools/build-index.mjs` uses: that one adds one when `git
+ * status` shows anything under `plugins/`. The `+ 1` below is the reserved
+ * zero, the same one the signer's `serialsAt` adds, not a pending commit.
+ * Measured 2026-09-22 on a clone of `24073a4`, where 3 commits touch the
+ * directory: 4 on a clean tree, 4 with an advisory untracked, 4 with it
+ * staged — and `serialsAt` gives 5 at the commit that lands it. So a
+ * regeneration run BEFORE that commit writes the new entries at the serial
+ * `signed` already serves. `plugins-moderation.yml` regenerates before it
+ * commits, behind a commit step that is not built yet; and
+ * `build-revocations.mjs --check` compares at the committed file's own
+ * serial, so it cannot see the difference.
  */
 export function resolveSerial({ explicit, root = REPO_ROOT } = {}) {
   if (explicit !== undefined && explicit !== null) return explicit;

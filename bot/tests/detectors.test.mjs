@@ -375,9 +375,11 @@ test("A7: the withdrawal list's README is not the withdrawal list", () => {
   // The live failure, 2026-09-20 09:25. `a6a4c55` added ten lines to
   // `tools/revocations/README.md`; A7 read the directory, computed 223 minutes
   // against a thirty-minute bound and alarmed. Every number was right and the
-  // subject was wrong: nothing that gets signed had changed. `detectors.yml`
-  // went red and stayed red until an unrelated push happened to re-run the
-  // signer, because `sign.yml`'s cron is hourly and the bound is half that.
+  // subject was wrong: the list's entries had not changed, only its serial,
+  // which counts the README too. `detectors.yml` went red; it had read
+  // `signed` three seconds before the same push's signer run committed serial
+  // 4, and its next run, seven minutes later, was green. `tools/lib/revocations.mjs`
+  // carries the timeline.
   //
   // Three hours here rather than forty minutes, so this stays red for the
   // original defect however the bound is later tuned.
@@ -406,6 +408,58 @@ test("A7: an advisory beside that README still alarms", () => {
   signedAt(dir, source, "2026-01-01T03:01:00Z");
   const found = codes(detect({ root: dir }));
   assert.ok(found.includes("A7_SIGNED_BEHIND_REVOCATIONS"), JSON.stringify(found));
+});
+
+/**
+ * Gap 68's shape: a change committed on a branch at 01:00, main moving on at
+ * 01:30 without it — the commit `signed` then signs — and the pull request
+ * merged with a real merge commit at 04:00. The change became reachable from
+ * main at 04:00, so `signed` is 150 minutes behind it: outside both bounds.
+ *
+ * A plain `git log -1 -- <pathspec>` simplifies history through the merge,
+ * which is TREESAME to its branch parent for the path, and dates the branch
+ * commit — 30 minutes BEFORE the Source-Commit, a negative drift, and A7 says
+ * nothing. Measured 2026-09-22 before the repair: drift -30 on both halves,
+ * no finding on either, against a true drift of 150.
+ */
+function mergedFromBranch(file, body) {
+  const dir = estate();
+  git(dir, ["checkout", "--quiet", "-b", "topic"]);
+  write(dir, file, body);
+  commit(dir, `a change to ${file}, on a branch`, "2026-01-01T01:00:00Z");
+  git(dir, ["checkout", "--quiet", "main"]);
+  write(dir, "docs/elsewhere.md", "main moves on while the pull request is open\n");
+  const source = commit(dir, "docs: elsewhere", "2026-01-01T01:30:00Z");
+  git(dir, ["merge", "--quiet", "--no-ff", "-m", "Merge pull request #1 from topic", "topic"], AT("2026-01-01T04:00:00Z"));
+  const merge = git(dir, ["rev-parse", "HEAD"]);
+  // The fixture guards. The merge is a merge, and the plain path-limited log
+  // dates the branch commit here — otherwise this tree cannot tell the two
+  // clocks apart and the assertions below are about nothing.
+  assert.equal(git(dir, ["rev-list", "--parents", "-n", "1", merge]).split(" ").length, 3, "the fixture's merge is not a two-parent commit");
+  assert.equal(git(dir, ["log", "-1", "--format=%cI", merge, "--", file]), "2026-01-01T01:00:00Z",
+    "a plain path-limited log no longer dates the branch commit, so this fixture no longer separates the two clocks");
+  signedAt(dir, source, "2026-01-01T04:01:00Z");
+  return { dir, merge };
+}
+
+test("A7: an advisory merged from a long-lived branch is dated at the merge", () => {
+  const { dir, merge } = mergedFromBranch(`${REVOCATIONS_SOURCE_DIR}/ASTRA-2026-0001.json`, { schema: "astra.registry.revocation/1" });
+  const r = detect({ root: dir });
+  assert.equal(r.scanned.revocations_drift_minutes, 150,
+    `A7 measured ${r.scanned.revocations_drift_minutes} minutes; the advisory became reachable from main at the merge, 150 minutes after the Source-Commit`);
+  const found = r.findings.find((f) => f.code === "A7_SIGNED_BEHIND_REVOCATIONS");
+  assert.ok(found, `a withdrawal merged 150 minutes after \`signed\`'s Source-Commit went unreported: ${JSON.stringify(codes(r))}`);
+  assert.equal(found.hex, merge, "the finding names a commit other than the merge that brought the advisory onto main");
+});
+
+test("A7: a publication merged from a long-lived branch is dated at the merge", () => {
+  const { dir, merge } = mergedFromBranch("plugins/alpha/versions/1.1.0.json", { schema: "astra.registry.version/1" });
+  const r = detect({ root: dir });
+  assert.equal(r.scanned.plugins_drift_minutes, 150,
+    `A7 measured ${r.scanned.plugins_drift_minutes} minutes; the version became reachable from main at the merge, 150 minutes after the Source-Commit`);
+  const found = r.findings.find((f) => f.code === "A7_SIGNED_BEHIND_PLUGINS");
+  assert.ok(found, `a publication merged 150 minutes after \`signed\`'s Source-Commit went unreported: ${JSON.stringify(codes(r))}`);
+  assert.equal(found.hex, merge, "the finding names a commit other than the merge that brought the version onto main");
 });
 
 test("A7 asks the revocations module which files the list is built from", () => {

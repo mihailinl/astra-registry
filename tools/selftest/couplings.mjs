@@ -26,9 +26,14 @@ import {
 import { CORPUS_NO_RULE_ID, deriveLocaleText, localeEnumProblems } from "../../bot/lib/locales.mjs";
 import { summarise } from "../../bot/lib/derive.mjs";
 import { REPO_ROOT, loadPolicy, loadSchemas } from "../lib/sources.mjs";
-import { SERIAL_PATHSPEC, SOURCE_PATHSPEC, resolveSerial } from "../lib/revocations.mjs";
+import { SERIAL_PATHSPEC, SOURCE_DIR, SOURCE_PATHSPEC, pathUnder, resolveSerial } from "../lib/revocations.mjs";
 import { serialsAt } from "../signer/plan.mjs";
 import { LIST_PATHSPEC, gather } from "../served-set/main-vs-signed.mjs";
+import { CATALOGUE_PATHSPEC, resolveSerial as resolveCatalogueSerial } from "../build-index.mjs";
+import { serialFor } from "../regenerate-signed.mjs";
+import { a7, gitReader } from "../../bot/detectors.mjs";
+import { nextAdvisoryId } from "../../bot/lib/compile-decision.mjs";
+import { triggersOf } from "../moderation-coverage.mjs";
 import { test, assert, assertEqual, tmp } from "./harness.mjs";
 
 export async function run() {
@@ -813,5 +818,248 @@ export async function run() {
         `${SERIAL_PATHSPEC}: its window now opens on a commit that did not move the serial`);
     assertEqual(facts.generated?.serial, signer,
       "SERVE-85 generates the list at a serial other than the one the signer assigns at the same commit");
+  });
+
+  // ── the catalogue's pathspec, which six readers count over ──────────────────
+  //
+  // Gap 71, the same class as gap 64 for the other document. The catalogue's
+  // serial is `git rev-list --count <commit> -- plugins`, and that one
+  // question is asked in six places: `tools/build-index.mjs`'s `resolveSerial`
+  // (twice — the count, and whether a change is pending), the signer's
+  // `serialsAt`, the carrier's `serialFor` in `tools/regenerate-signed.mjs`,
+  // detector A7's plugins half, and the "Compute the serial" step of
+  // `build-index.yml`. The first three import `CATALOGUE_PATHSPEC` now; the
+  // carrier deliberately loads nothing of the working tree and the step is
+  // shell, so those two keep their spelling. None of that is trusted here:
+  // each reader is asked what it counted on one fixture history in which every
+  // plausible neighbour counts differently.
+
+  await test("gap 71 — the catalogue's serial, its pending commit and A7's clock count one pathspec: build-index's, the signer's, the carrier's, A7's and build-index.yml's", () => {
+    const dir = path.join(tmp, "couplings-catalogue-pathspec");
+    fs.mkdirSync(dir, { recursive: true });
+    const git = (...a) =>
+      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "couplings-fixture@example.invalid");
+    git("config", "user.name", "couplings fixture");
+    git("config", "commit.gpgsign", "false");
+    const put = (rel, body) => {
+      fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+      fs.writeFileSync(path.join(dir, rel), body);
+    };
+    const commit = (rel, body, at) => {
+      put(rel, body);
+      git("add", "-A");
+      execFileSync("git", ["-C", dir, "commit", "-qm", rel], {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at },
+      });
+      return git("rev-parse", "HEAD");
+    };
+
+    // Five commits an hour apart. Two are under the catalogue's directory —
+    // `plugin.json` and a README, because a README reaches the catalogue — and
+    // the other three sit where a drifting reader would land: `publishers/`,
+    // which the index also reads but the serial does not count; `tools/`; and
+    // the generated `registry/v1/index.json` itself, which is main's newest.
+    const first = commit(`${CATALOGUE_PATHSPEC}/alpha/plugin.json`, "{}\n", "2026-09-19T08:00:00Z");
+    commit("publishers/alpha.json", "{}\n", "2026-09-19T09:00:00Z");
+    commit(`${CATALOGUE_PATHSPEC}/alpha/README.md`, "alpha\n", "2026-09-19T10:00:00Z");
+    commit("tools/README-fixture.md", "under tools/\n", "2026-09-19T11:00:00Z");
+    commit("registry/v1/index.json", "{}\n", "2026-09-19T12:00:00Z");
+    const head = git("rev-parse", "HEAD");
+    const count = (spec, ref = head) => Number(git("rev-list", "--count", ref, "--", spec));
+    const newest = (spec) => git("log", "-1", "--format=%H", head, "--", spec) || null;
+    const at = (sha) => Number(git("log", "-1", "--format=%ct", sha));
+    const expect = { count: count(CATALOGUE_PATHSPEC), newest: newest(CATALOGUE_PATHSPEC) };
+
+    // The fixture guard, before any reader is asked (gap 64's shape): every
+    // neighbour must count a different number, and the ones that reach a
+    // commit at all must date a different one, or a reader drifting to it
+    // would be invisible here.
+    const narrow = `${CATALOGUE_PATHSPEC}/*/plugin.json`;
+    const neighbours = [".", "publishers", "registry", "tools", narrow, `${CATALOGUE_PATHSPEC}/*/versions`];
+    for (const spec of neighbours) {
+      assert(spec !== CATALOGUE_PATHSPEC, `the neighbour ${spec} is the catalogue's own pathspec; the fixture has nothing to separate`);
+      assert(count(spec) !== expect.count,
+        `the fixture cannot tell ${spec} from ${CATALOGUE_PATHSPEC}: both count ${expect.count} commit(s)`);
+    }
+    for (const spec of [".", "publishers", "registry", narrow]) {
+      assert(newest(spec) !== expect.newest,
+        `the fixture cannot tell ${spec} from ${CATALOGUE_PATHSPEC} by date: both newest at ${expect.newest}`);
+    }
+    const which = (n) => [CATALOGUE_PATHSPEC, ...neighbours].filter((s) => count(s) === n).join(" or ") || "no pathspec this fixture knows";
+
+    // (a) and (b): build-index's regeneration, whose environment override is
+    // taken out of the way for the calls, as gap 64's check does for the list.
+    const override = process.env.ASTRA_REGISTRY_SERIAL;
+    delete process.env.ASTRA_REGISTRY_SERIAL;
+    let clean, pendingInside, pendingOutside;
+    try {
+      clean = resolveCatalogueSerial({ root: dir });
+      // A pending change INSIDE the directory but outside the narrow neighbour,
+      // and one OUTSIDE the directory but inside the wide neighbour. The guard
+      // says each actually separates the two, so the verdicts below mean what
+      // they say.
+      const inside = `${CATALOGUE_PATHSPEC}/alpha/icon.txt`;
+      const outside = "publishers/beta.json";
+      put(inside, "pending\n");
+      assert(git("status", "--porcelain", "--", narrow) === "",
+        `the fixture's pending file ${inside} is visible to ${narrow}, so it cannot tell the narrow pathspec apart`);
+      pendingInside = resolveCatalogueSerial({ root: dir });
+      fs.rmSync(path.join(dir, inside));
+      put(outside, "pending\n");
+      assert(git("status", "--porcelain", "--", ".") !== "",
+        `the fixture's pending file ${outside} is invisible to ".", so it cannot tell the wide pathspec apart`);
+      pendingOutside = resolveCatalogueSerial({ root: dir });
+      fs.rmSync(path.join(dir, outside));
+    } finally {
+      if (override !== undefined) process.env.ASTRA_REGISTRY_SERIAL = override;
+    }
+    assertEqual(git("status", "--porcelain"), "", "the fixture was left with a pending change");
+    assertEqual(clean, expect.count,
+      `build-index's serial counts over ${which(clean)}, and the catalogue's pathspec is ${CATALOGUE_PATHSPEC}: ` +
+        "tools/build-index.mjs's resolveSerial has stopped counting over CATALOGUE_PATHSPEC");
+    assertEqual(pendingInside, expect.count + 1,
+      `a pending change under ${CATALOGUE_PATHSPEC}/ is the commit about to be made, and build-index did not count it: ` +
+        "resolveSerial's pending-commit test has stopped reading CATALOGUE_PATHSPEC");
+    assertEqual(pendingOutside, expect.count,
+      `a pending change outside ${CATALOGUE_PATHSPEC}/ moved build-index's serial: ` +
+        "resolveSerial's pending-commit test has stopped reading CATALOGUE_PATHSPEC");
+
+    // (c) the signer, which assigns the serial that is published.
+    const signer = serialsAt({ root: dir, sha: head }).index;
+    assertEqual(signer, expect.count,
+      `the signer's catalogue serial counts over ${which(signer)}: tools/signer/plan.mjs's serialsAt has stopped counting over CATALOGUE_PATHSPEC`);
+
+    // (d) the carrier, which regenerates a signed catalogue from history.
+    const carrier = serialFor(dir, head);
+    assertEqual(carrier, expect.count,
+      `tools/regenerate-signed.mjs's serialFor counts over ${which(carrier)}, and the signer over ${CATALOGUE_PATHSPEC}: ` +
+        "a carrier would regenerate every signed catalogue at a serial it was not signed at");
+
+    // (e) A7's plugins half, asked through the detector itself: `signed` made
+    // from the first commit, so the drift A7 reports names the commit it dated.
+    git("checkout", "-q", "--orphan", "signed");
+    git("rm", "-rq", "--cached", ".");
+    put("SIGNED", "signed\n");
+    git("add", "SIGNED");
+    execFileSync("git", ["-C", dir, "commit", "-qm", `signed\n\nSource-Commit: ${first}\n`], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, GIT_AUTHOR_DATE: "2026-09-19T12:30:00Z", GIT_COMMITTER_DATE: "2026-09-19T12:30:00Z" },
+    });
+    git("checkout", "-q", "-f", "main");
+    const findings = [], skipped = [], scanned = {};
+    a7({ git: gitReader(dir), now: Date.parse("2026-09-19T12:30:00Z") }, findings, skipped, scanned);
+    const drift = Math.floor((at(expect.newest) - at(first)) / 60);
+    const datedBy = (m) => [CATALOGUE_PATHSPEC, ...neighbours]
+      .filter((s) => newest(s) && Math.floor((at(newest(s)) - at(first)) / 60) === m).join(" or ") || "no pathspec this fixture knows";
+    assertEqual(scanned.plugins_drift_minutes, drift,
+      `A7's plugins half dates the newest commit under ${datedBy(scanned.plugins_drift_minutes)}, and the catalogue ` +
+        `changes on commits under ${CATALOGUE_PATHSPEC}: bot/detectors.mjs has stopped reading CATALOGUE_PATHSPEC`);
+
+    // (f) build-index.yml's own step, run as the workflow runs it: its `run:`
+    // block, with the one expression it uses substituted, under bash, writing
+    // to a GITHUB_OUTPUT of our own. Twice — with `origin/main` present, which
+    // is the branch CI takes, and without it, which is the fallback.
+    const yml = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/build-index.yml"), "utf8").split("\n");
+    const named = yml.map((l, i) => [l, i]).filter(([l]) => /^\s+- name: Compute the serial from the commit count on the default branch\s*$/.test(l));
+    assertEqual(named.length, 1, "build-index.yml has no single step named \"Compute the serial from the commit count on the default branch\"");
+    const stepIndent = named[0][0].indexOf("-");
+    let i = named[0][1] + 1;
+    while (i < yml.length && !/^\s+run: \|\s*$/.test(yml[i])) {
+      if (yml[i].trim() && yml[i].indexOf(yml[i].trim()) <= stepIndent) throw new Error("the serial step in build-index.yml has no `run: |` block");
+      i++;
+    }
+    const runIndent = yml[i].indexOf("run:");
+    const body = [];
+    for (i += 1; i < yml.length && (!yml[i].trim() || yml[i].search(/\S/) > runIndent); i++) body.push(yml[i]);
+    const pad = Math.min(...body.filter((l) => l.trim()).map((l) => l.search(/\S/)));
+    const expr = "${{ github.event.repository.default_branch }}";
+    let script = body.map((l) => l.slice(pad)).join("\n");
+    assertEqual(script.split(expr).length - 1, 1, "the serial step no longer reads the default branch from exactly one expression");
+    script = script.replace(expr, "main");
+    assert(!script.includes("${{"), "the serial step uses an expression this check does not substitute");
+    const step = () => {
+      const out = path.join(tmp, "couplings-catalogue-github-output");
+      fs.writeFileSync(out, "");
+      execFileSync("bash", ["-c", script], { cwd: dir, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GITHUB_OUTPUT: out } });
+      const m = /^serial=(\d+)$/m.exec(fs.readFileSync(out, "utf8"));
+      assert(m, "build-index.yml's serial step wrote no serial= line");
+      return Number(m[1]);
+    };
+    git("update-ref", "refs/remotes/origin/main", head);
+    const primary = step();
+    git("update-ref", "-d", "refs/remotes/origin/main");
+    const fallback = step();
+    assertEqual(primary, expect.count,
+      `build-index.yml's serial step counts origin/main over ${which(primary)}, and the signer over ${CATALOGUE_PATHSPEC}`);
+    assertEqual(fallback, expect.count,
+      `build-index.yml's serial step, without origin/main, counts HEAD over ${which(fallback)}, and the signer over ${CATALOGUE_PATHSPEC}`);
+  });
+
+  // ── the advisory directory, which two readers of history parse ─────────────
+  //
+  // Gap 72. `nextAdvisoryId` logs `SOURCE_DIR/` and parsed the output with a
+  // regex that spelled the directory for itself; the moderation-coverage
+  // canary's `ADVISORY_RE` did the same. Moved, the log would list the new
+  // paths and neither regex would match one: the next id would be 0001 again
+  // and the canary would see no advisory ever written. Both build their
+  // pattern from `SOURCE_DIR` now. This asks both, on a history written under
+  // `SOURCE_DIR` — so a mutation of the constant moves the fixture, and a
+  // reader that did not follow it is red — with decoys a loose pattern takes.
+
+  await test("gap 72 — the advisory directory history is parsed under is the one advisories are written to: the next id's and the coverage canary's", () => {
+    const dir = path.join(tmp, "couplings-advisory-dir");
+    fs.mkdirSync(dir, { recursive: true });
+    const git = (...a) =>
+      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "couplings-fixture@example.invalid");
+    git("config", "user.name", "couplings fixture");
+    git("config", "commit.gpgsign", "false");
+    const commit = (rel) => {
+      fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+      fs.writeFileSync(path.join(dir, rel), "{}\n");
+      git("add", "-A");
+      git("commit", "-qm", rel);
+      return git("rev-parse", "HEAD");
+    };
+    commit(`${SOURCE_DIR}/README.md`);
+    const real = [commit(`${SOURCE_DIR}/ASTRA-2026-0001.json`), commit(`${SOURCE_DIR}/ASTRA-2026-0002.json`)];
+    // Decoys, each an id higher than the real ones, so a reader that took one
+    // hands out the wrong next id rather than the right one by luck: a sibling
+    // sharing the prefix, the same path under another tree, and a subdirectory.
+    const decoys = [
+      commit(`${SOURCE_DIR}-archive/ASTRA-2026-0009.json`),
+      commit(`docs/${SOURCE_DIR}/ASTRA-2026-0008.json`),
+      commit(`${SOURCE_DIR}/drafts/ASTRA-2026-0007.json`),
+    ];
+    // The fixture guard: the subdirectory decoy is inside the log's own
+    // pathspec, so only the pattern can refuse it, and the two real advisories
+    // are what the log lists under the directory.
+    const logged = git("log", "--diff-filter=A", "--name-only", "--format=", "--", `${SOURCE_DIR}/`).split("\n").filter(Boolean);
+    assert(logged.includes(`${SOURCE_DIR}/drafts/ASTRA-2026-0007.json`),
+      "the subdirectory decoy is outside nextAdvisoryId's log pathspec, so this fixture cannot hold its pattern's anchor");
+    assertEqual(pathUnder(SOURCE_DIR, "x").test(`${SOURCE_DIR}/x`), true, "pathUnder does not match its own directory");
+    // The escape, which the committed directory has no character to exercise:
+    // a directory name is a literal, and a `.` or a `+` in one is not a pattern.
+    assertEqual([pathUnder("a.b+c", "x").test("a.b+c/x"), pathUnder("a.b+c", "x").test("aXbbc/x")].join(","), "true,false",
+      "tools/lib/revocations.mjs's pathUnder does not escape the directory it is given");
+
+    // (a) the next id.
+    assertEqual(nextAdvisoryId({ root: dir, year: 2026 }), "ASTRA-2026-0003",
+      `bot/lib/compile-decision.mjs's nextAdvisoryId did not count exactly the two advisories under ${SOURCE_DIR}/ ` +
+        "(0001 means it saw none — its pattern names another directory; 0008 to 0010 means it took a decoy)");
+
+    // (b) the coverage canary, one commit at a time.
+    const advisoryTriggers = (sha) => triggersOf(sha, dir).triggers.filter((t) => t.kind === "advisory-written").map((t) => t.advisory);
+    real.forEach((sha, n) => assertEqual(JSON.stringify(advisoryTriggers(sha)), JSON.stringify([`ASTRA-2026-000${n + 1}`]),
+      `tools/moderation-coverage.mjs's triggersOf did not see the advisory written under ${SOURCE_DIR}/ at ${sha.slice(0, 12)}: ` +
+        "its ADVISORY_RE names another directory"));
+    for (const sha of decoys) {
+      assertEqual(JSON.stringify(advisoryTriggers(sha)), "[]",
+        `tools/moderation-coverage.mjs's triggersOf took a decoy at ${sha.slice(0, 12)} for an advisory: its ADVISORY_RE is not anchored to ${SOURCE_DIR}/`);
+    }
   });
 }

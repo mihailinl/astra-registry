@@ -14,18 +14,24 @@
 //
 // ── the serials are D3's, at the Source-Commit ──────────────────────────────
 //
-//   catalogue: git rev-list --count <sha> -- plugins
+//   catalogue: git rev-list --count <sha> -- CATALOGUE_PATHSPEC
 //   list:      git rev-list --count <sha> -- SERIAL_PATHSPEC     + 1
 //
 // `SERIAL_PATHSPEC` is `tools/lib/revocations.mjs`'s, and SERVE-85's clock reads
 // the same export; the reason it is one export, and why it is the whole
 // `tools/revocations` directory, is written there.
 //
-// The signer is the only thing that assigns them. `tools/build-index.mjs` and
-// `tools/lib/revocations.mjs` count at HEAD and add one for a staged change
-// because they run inside the workflow that is about to commit; the signer
-// counts at a commit that already exists, so it adds nothing. `serialsAt` is
-// where that difference lives, once.
+// The signer is the only thing that assigns them. The two regenerations count
+// at HEAD, and they do NOT treat a pending change alike (gap 69; the
+// measurement is in `resolveSerial`'s comment). `tools/build-index.mjs` adds
+// one when `git status` shows anything under `plugins/`, because it runs
+// inside the workflow that is about to commit. `tools/lib/revocations.mjs`'s
+// `resolveSerial` adds one ALWAYS — the same reserved-zero offset as the `+ 1`
+// above — and never looks at the working tree, so with an advisory staged it
+// writes HEAD's serial, one short of what this file assigns at the commit that
+// lands it. The signer counts at a commit that already exists, so it adds
+// nothing for a pending change. `serialsAt` is where the signer's half lives,
+// once.
 //
 // ── what a "change" is ──────────────────────────────────────────────────────
 //
@@ -38,7 +44,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { buildIndex } from "../build-index.mjs";
+import { CATALOGUE_PATHSPEC, buildIndex } from "../build-index.mjs";
 import { SERIAL_PATHSPEC, buildRevocations } from "../lib/revocations.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
@@ -185,7 +191,7 @@ export function fetchSignedHead({
  */
 export function serialsAt({ root, sha }) {
   return {
-    index: revCount({ root, sha, pathspec: "plugins" }),
+    index: revCount({ root, sha, pathspec: CATALOGUE_PATHSPEC }),
     revocations: revCount({ root, sha, pathspec: SERIAL_PATHSPEC }) + 1,
   };
 }

@@ -29,7 +29,8 @@ import { stableStringify } from "../lib/canonical.mjs";
 import { loadTestRoot } from "../testkeys/regenerate.mjs";
 import { signRevocations } from "../sign-revocations.mjs";
 import { armingState } from "../signer/pages.mjs";
-import { SIGNED_FILES } from "../signer/plan.mjs";
+import { SIGNED_FILES, serialsAt } from "../signer/plan.mjs";
+import { SERIAL_PATHSPEC } from "../lib/revocations.mjs";
 import { GRACE_MINUTES, emit, finding, minutesSince, verdict } from "../served-set/report.mjs";
 import { gather, serve85 } from "../served-set/main-vs-signed.mjs";
 import { serve39 } from "../served-set/served-vs-signed.mjs";
@@ -262,6 +263,67 @@ export async function run() {
     const v = serve85({ ...facts, head, now: "2026-09-19T12:00:00Z" });
     assertEqual(codesOf(v), "SERVE_85_SERIAL_DRIFT",
       "a publication one minute old excused a withdrawal three hours old; SERVE-85's own clock does that");
+  });
+
+  await test("an advisory merged from a long-lived branch is dated at the merge", () => {
+    // Gap 68. The serial moves when an advisory becomes REACHABLE from main,
+    // and for a pull request merged with a merge commit that is the merge.
+    // `git log -1 -- <pathspec>` does not answer that: it simplifies history
+    // through the merge, which is TREESAME to its branch parent for the path,
+    // and dates the branch commit. Measured 2026-09-22 on this fixture before
+    // the repair: the advisory committed at 09:00, merged at 12:00, listClock
+    // 09:00, and SERVE_85_SERIAL_DRIFT one minute after the merge — "181
+    // minutes after the commit" — for a signer that had had one minute. Every
+    // advisory PR open longer than the grace paged the moment it merged.
+    //
+    // The fixture is the shape GitHub's merge button makes: the branch forks,
+    // main moves on without touching tools/revocations/, and the merge is a
+    // real two-parent commit three hours after the advisory.
+    const t = makeTree("merged-from-branch");
+    t.write("tools/revocations/README.md", "fixtures\n");
+    t.commit("a revocations directory", { at: "2026-09-19T08:00:00Z" });
+    t.git("checkout", "-q", "-b", "advisory");
+    t.write("tools/revocations/ASTRA-2026-0001.json", advisory());
+    t.commit("an advisory, on a branch, at nine", { at: "2026-09-19T09:00:00Z" });
+    t.git("checkout", "-q", "main");
+    t.write("plugins/dice-roller/plugin.json", { schema: "astra.registry.plugin/1", id: "dice-roller" });
+    const before = t.commit("main moves on while the pull request is open", { at: "2026-09-19T09:30:00Z" });
+    execFileSync("git", ["-C", t.dir, "merge", "-q", "--no-ff", "-m", "Merge pull request #1 from advisory", "advisory"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, GIT_AUTHOR_DATE: "2026-09-19T12:00:00Z", GIT_COMMITTER_DATE: "2026-09-19T12:00:00Z" },
+    });
+    const merge = t.head();
+
+    // The fixture guards, before the clock is asked. The merge has to be a
+    // merge; the serial has to move AT it and not before it on main; and the
+    // plain path-limited log has to date the branch commit — otherwise this
+    // fixture cannot tell the two clocks apart and the check below would be
+    // green about a difference it could not see.
+    assertEqual(t.git("rev-list", "--parents", "-n", "1", merge).split(" ").length, 3,
+      "the fixture's merge is not a two-parent commit, so there is no branch to date");
+    const serialBefore = serialsAt({ root: t.dir, sha: before }).revocations;
+    const serialAt = serialsAt({ root: t.dir, sha: merge }).revocations;
+    assertEqual(serialAt, serialBefore + 1,
+      `the serial is ${serialBefore} on main before the merge and ${serialAt} at it; the fixture has to move it at the merge`);
+    assertEqual(t.git("log", "-1", "--format=%cI", merge, "--", SERIAL_PATHSPEC), "2026-09-19T09:00:00Z",
+      "a plain path-limited log no longer dates the branch commit here, so this fixture no longer separates the two clocks");
+
+    const facts = gather({ root: t.dir });
+    assertEqual(facts.listClock, "2026-09-19T12:00:00Z",
+      `SERVE-85's clock dates ${facts.listClock}, and the advisory became reachable from main at the merge, ` +
+      `2026-09-19T12:00:00Z: tools/served-set/main-vs-signed.mjs has stopped reading main's first-parent line`);
+
+    const head = headFrom({
+      revocations: { signatures: [], signed: { schema: REVOCATIONS_SCHEMA, serial: serialBefore, revocations: [] } },
+    });
+    const early = serve85({ ...facts, head, now: "2026-09-19T12:01:00Z" });
+    assertEqual(early.status, "green",
+      `one minute after the merge the signer has had one minute, not ${GRACE_MINUTES}: ${codesOf(early)}`);
+    // The control. A repair that stopped the clock firing at all would pass
+    // the half above; the grace still has to run out, from the merge.
+    const late = serve85({ ...facts, head, now: "2026-09-19T12:31:00Z" });
+    assertEqual(codesOf(late), "SERVE_85_SERIAL_DRIFT",
+      "31 minutes after the merge a withdrawal the signer never published went unreported");
   });
 
   await test("a `signed` ahead of the commit this job read is the system working, not drift", () => {
