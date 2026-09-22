@@ -763,9 +763,16 @@ export async function run() {
     // plausibly drift to counts a different number or dates a different
     // commit. The directory's newest commit is a README edit ON PURPOSE: that
     // is the one the list's sources do not see and the serial does.
-    commit("tools/revocations/README.md", "advisories\n", "2026-09-19T08:00:00Z");
-    commit("tools/revocations/ASTRA-2026-0001.json", advisory, "2026-09-19T09:00:00Z");
-    commit("tools/revocations/README.md", "advisories, and how to write one\n", "2026-09-19T10:00:00Z");
+    //
+    // Written under `SOURCE_DIR`, not under a literal `tools/revocations/`:
+    // with the literal, a legitimate move of the directory — every reader
+    // following the constant — left this fixture in the old place and the
+    // check red about a drift that had not happened (measured 2026-09-22 with
+    // `SOURCE_DIR = "tools/advisories"`). Gap 72's fixture below was already
+    // written this way.
+    commit(`${SOURCE_DIR}/README.md`, "advisories\n", "2026-09-19T08:00:00Z");
+    commit(`${SOURCE_DIR}/ASTRA-2026-0001.json`, advisory, "2026-09-19T09:00:00Z");
+    commit(`${SOURCE_DIR}/README.md`, "advisories, and how to write one\n", "2026-09-19T10:00:00Z");
     commit("tools/README-fixture.md", "under tools/, outside the list's directory\n", "2026-09-19T11:00:00Z");
     commit("plugins/dice-roller/plugin.json", "{}\n", "2026-09-19T12:00:00Z");
     const head = git("rev-parse", "HEAD");
