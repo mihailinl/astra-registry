@@ -993,9 +993,11 @@ test("an excuse whose file reads what it was excused from is red, and one that i
     `${quiet.file}'s excuse, as written, is not true of its bytes, so the red cases below prove nothing`);
 
   // Entry 124 as it happened: a file that reads `members`, excused as one that
-  // does not. The red must name the file and quote the excuse.
+  // does not — and as true as its excuse about everything else, so that the one
+  // red is the member read. The red must name the file and quote the excuse.
   const claim = "never an `entries[].members` table (the claim entry 124 found false)";
-  const stale = excuseDrift([{ file: reader.file, reads: [], why: claim }], text);
+  const denied = reader.reads.filter((k) => k !== "member-table");
+  const stale = excuseDrift([{ file: reader.file, reads: denied, why: claim }], text);
   assert.equal(stale.length, 1, `the stale excuse gave ${stale.length} finding(s): ${JSON.stringify(stale)}`);
   for (const needle of [reader.file, JSON.stringify(claim), "does not read an entry's `members` table"]) {
     assert.ok(stale[0].includes(needle), `the stale excuse's red does not name ${needle}: ${stale[0]}`);
