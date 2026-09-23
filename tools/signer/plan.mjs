@@ -25,16 +25,17 @@
 // written there.
 //
 // The signer is the only thing that assigns them. The two regenerations count
-// at HEAD, and they do NOT treat a pending change alike (gap 69; the
-// measurement is in `resolveSerial`'s comment). `tools/build-index.mjs` adds
-// one when `git status` shows anything under `plugins/`, because it runs
-// inside the workflow that is about to commit. `tools/lib/revocations.mjs`'s
-// `resolveSerial` adds one ALWAYS — the same reserved-zero offset as the `+ 1`
-// above — and never looks at the working tree, so with an advisory staged it
-// writes HEAD's serial, one short of what this file assigns at the commit that
-// lands it. The signer counts at a commit that already exists, so it adds
-// nothing for a pending change. `serialsAt` is where the signer's half lives,
-// once.
+// at HEAD, and both add one when `git status` shows anything under their
+// pathspec, because a regeneration runs before the commit it is written for:
+// `tools/build-index.mjs` since `a85c198`, and `tools/lib/revocations.mjs`'s
+// `resolveSerial` since ops register entry 69 (until then it wrote HEAD's
+// serial with an advisory staged, one short of what this file assigns at the
+// commit that lands it; the measurement is in its comment). The list's
+// `resolveSerial` also adds the reserved zero, the `+ 1` above. The signer
+// counts at a commit that already exists, so it adds nothing for a pending
+// change. `serialsAt` is where the signer's half lives, once, and
+// `tools/selftest/revocations.mjs` holds a regeneration before a commit to it
+// at the commit that lands it.
 //
 // ── what a "change" is ──────────────────────────────────────────────────────
 //
