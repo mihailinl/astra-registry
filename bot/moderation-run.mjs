@@ -822,8 +822,9 @@ export const holdEntryPath = (id) => `${HOLDS_PREFIX}/${id}.json`;
  * **An entry already on the tree is left as it is**, byte for byte, and is not
  * listed for the commit. That is the decision being listed again because an
  * earlier run's `held` result never reached the service; rewriting it would
- * move `held_at` and restart a reversal's 24 hours every time, and listing an
- * unchanged file would compose a commit with nothing in it.
+ * move `held_at` and `release_after`, which a reversal waits for as well as
+ * for 24 hours from its commit, and so restart the period every time; and
+ * listing an unchanged file would compose a commit with nothing in it.
  *
  * **And its `held` result names the commit that entered it** (`results`'s
  * `commit`), read here because this is where the entry is found to be there
@@ -861,15 +862,62 @@ export function writeHoldEntries(held, { root = REPO_ROOT, schemaRoot = REPO_ROO
   return out;
 }
 
-/** The commit that last ADDED this path — the hold entry's commit, for one on the tree — or null. */
-export function entryCommit(root, rel) {
-  const sha = execFileSync("git", ["-C", root, "log", "-1", "--format=%H", "--diff-filter=A", "--", rel], {
+/**
+ * Where a hold entry landed on `main`: the commit that added it, and when. The
+ * one reader of that commit — BOT-81's `held` result names it
+ * (`entryCommit`), and MOD-9's 24 hours run from it (`reversalDue` in
+ * `bot/lib/holds.mjs`, ops entry 101) — so the two can never name different
+ * commits.
+ *
+ * **The commit on HEAD's first-parent line that brought the file, read against
+ * its first parent, at its committer time** — how TRUST-26's window dates a
+ * withdrawal and SERVE-85's readers date a change (ops entries 92 and 93). The
+ * commit job pushes its own commit as a fast-forward, so for every hold it
+ * enters this is that commit. A hold that reached `main` through a merge is
+ * dated at the merge: without `--first-parent` git follows the side the file
+ * came from and names the branch commit, which may be days older than the
+ * moment `main` held the entry — the early direction. The commit that ADDED
+ * it, not the last that touched it: an edit to the entry is not a new hold.
+ *
+ * Three shapes, and `reversalDue` reads each:
+ *
+ *   - `{sha, at}` — landed;
+ *   - `{sha: null, at: null, uncommitted: true, why}` — the file is in no
+ *     commit on HEAD: the entry this run has just written. Its period has not
+ *     started. Asked of HEAD's tree and not of the log, because a path that
+ *     was added, deleted and written again would otherwise be dated at its
+ *     first life;
+ *   - `{sha: null, at: null, why}` — the history cannot be read. **A shallow
+ *     checkout is this, whatever the log says:** its boundary commit has no
+ *     parent here, so git reports it as adding every file in the tree, and the
+ *     newest commit would be named as the hold's. The commit job checks out
+ *     with `fetch-depth: 0`, so this is not the live path there.
+ */
+export function entryLanding(root, rel) {
+  const git = (args) => execFileSync("git", ["-C", root, ...args], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, GIT_PAGER: "cat", GIT_OPTIONAL_LOCKS: "0" },
-  }).trim();
-  return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+  });
+  const unknown = (why) => ({ sha: null, at: null, why });
+  try {
+    if (git(["rev-parse", "--is-shallow-repository"]).trim() !== "false") {
+      return unknown(`${root} is a shallow clone, whose boundary commit git reports as adding every file, so the commit that added ${rel} cannot be told from it`);
+    }
+    if (git(["ls-tree", "--name-only", "HEAD", "--", rel]).trim() !== rel) {
+      return { sha: null, at: null, uncommitted: true, why: `${rel} is in no commit on HEAD` };
+    }
+    const line = git(["log", "-1", "--first-parent", "--diff-filter=A", "--format=%H %ct", "HEAD", "--", rel]).trim();
+    const m = /^([0-9a-f]{40}) (\d+)$/.exec(line);
+    if (!m) return unknown(`${rel} is on HEAD and git names no commit on its first-parent line that added it`);
+    return { sha: m[1], at: new Date(Number(m[2]) * 1000).toISOString().replace(/\.\d{3}Z$/, "Z") };
+  } catch (err) {
+    return unknown(`git could not read the history of ${rel} here: ${String(err.message).split("\n")[0]}`);
+  }
 }
+
+/** The commit that brought this hold entry onto `main` (`entryLanding`), or null. */
+export const entryCommit = (root, rel) => entryLanding(root, rel).sha;
 
 // ── holds: the ones that have left the tree ─────────────────────────────────
 
@@ -984,6 +1032,11 @@ export function holdDeletions(root = REPO_ROOT, { present = new Set() } = {}) {
  * alerted and posts nothing; a hand cancellation posts `cancelled` and alerts
  * as well, since nobody announced it.
  *
+ * **Each entry on the tree is dated by the commit that brought it onto
+ * `main`** (`entryLanding`), and a reversal's 24 hours run from that commit,
+ * as MOD-9 says, and not from its `held_at` (ops entry 101). An entry this
+ * run has just written is in no commit yet, so its period has not started.
+ *
  * **A hold still on the tree whose release or cancel is DUE goes to `due`,
  * not to `released` or `cancelled`, and gets no result.** M-T3.3's release
  * commit — apply the held decision from the entry, write its log entry,
@@ -1002,7 +1055,10 @@ export function walkHolds({ root = REPO_ROOT, now = new Date(), shadow = true, d
   const out = { released: [], cancelled: [], waiting: [], due: [], unclear: [], alerts: [], pending: [] };
   const onTree = readHolds(root);
   for (const hold of onTree) {
-    const verdict = resolveHold(hold, { now, shadow, delistedPlugins, coverageRed });
+    // Where the entry landed: a reversal's 24 hours run from that commit, not
+    // from `held_at` (MOD-9; ops entry 101).
+    const landed = entryLanding(root, holdEntryPath(hold.id));
+    const verdict = resolveHold(hold, { now, shadow, delistedPlugins, coverageRed, landed });
     const id = hold.entry?.service_decision_id ?? null;
     if (verdict.act === "wait" || !id) {
       out.waiting.push({ service_decision_id: id, reason: verdict.reason });

@@ -20,12 +20,12 @@
       "maxLength": 200
     },
     "held_at": {
-      "$comment": "When the hold commit landed. `reversal`'s 24 hours are counted from here, not from `decision.decided_at`: the period is the operator's window to object to what the registry is about to do, and it cannot start before the registry knew.",
+      "$comment": "The commit job's clock when it compiled the hold, to the second — NOT when the commit that adds this file landed, which is made after the job's gates and push, up to the job's timeout later. `reversal`'s 24 hours run from that commit (MOD-9: \"from that commit\"): bot/lib/holds.mjs `reversalDue` counts them from the commit on main's first-parent line that added this file, at its committer time, and never ends them before `release_after`; when that history cannot be read, from here plus 24 h plus the commit job's timeout and a minute (ops entry 101). Never from `decision.decided_at`: the period is the operator's window to object to what the registry is about to do, and it cannot start before the registry knew.",
       "type": "string",
       "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z$"
     },
     "release_after": {
-      "$comment": "Written for `reversal` only, and written out rather than recomputed so that the directory answers `when?` to a person with no tooling. bot/lib/holds.mjs recomputes it from `held_at` anyway and refuses an entry whose two disagree — a hand-edited `release_after` must not be able to shorten a hold.",
+      "$comment": "Written for `reversal` only, as `held_at` + 24 h, and written out rather than recomputed so that the directory answers `not before when?` to a person with no tooling. A floor and not the release time: the 24 hours run from the commit that added the entry, which lands after `held_at`, so the release is at this instant or later (ops entry 101). bot/lib/holds.mjs recomputes it from `held_at` anyway and refuses an entry whose two disagree — a hand-edited `release_after` must not be able to shorten a hold.",
       "type": "string",
       "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?Z$"
     },
