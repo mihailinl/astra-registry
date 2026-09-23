@@ -1,6 +1,6 @@
 {
   "contract_version": "0.37.0",
-  "source_commit": "20b5ba18efd2304531434f0ea3eaf2b276257a97",
+  "source_commit": "1851171e61d0b8ffa0df0a598aaab3f4226e82e3",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -2955,7 +2955,7 @@
         {
           "name": "no_stop_at",
           "required": false,
-          "when": "with `too_late`, exactly when the service had answered a lease holder \"no stop\" for the fingerprint the stop came too late for: the §0.7 time of the latest such answer, never carried otherwise"
+          "when": "with `too_late`, exactly when the service had answered the holder of the submission's open lease \"no stop\" before the submission's pending stop was first recorded: the §0.7 time of the latest such answer at that moment; a later stop on the same submission answers from that pending stop, with the same time; never carried otherwise."
         }
       ],
       "members_recorded": true,
