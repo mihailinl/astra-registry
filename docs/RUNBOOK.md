@@ -222,9 +222,10 @@ the same reason: it says yes without saying to what.
 
 The trust chain is provisioned, so this really does run: `registry/v1/root.json`
 carries `astra-root-2026a` and its reserve, and `registry/v1/trust.json` is
-signed by the active root at serial 1, delegating to `astra-index-2026a` and
-allowlisting one reusable-workflow commit. An attestation from any other
-workflow is refused, which is the point of the allowlist.
+signed by a root. `node tools/sign-trust.mjs --verify registry/v1/trust.json`
+prints which one, the index key it delegates to and the reusable-workflow
+commits it allows. An attestation from any other workflow is refused, which is
+the point of the allowlist.
 
 ### The one switch that is not flipped yet
 
@@ -650,7 +651,8 @@ the withdrawal itself.
 
 Target: committed, signed and reachable at the edge within **ten minutes**.
 
-1. **Write the advisory.** One file, `tools/revocations/ASTRA-<year>-<nnnn>.json`.
+1. **Write the advisory, then regenerate the list.** One file,
+   `tools/revocations/ASTRA-<year>-<nnnn>.json`.
    `tools/revocations/README.md` is the format and — more importantly — the
    `kind` table, which is where this goes wrong: a wrong `kind` or a mistyped
    digest matches nothing, silently, and the plugin stays installed.
@@ -659,10 +661,24 @@ Target: committed, signed and reachable at the edge within **ten minutes**.
    an `id_version` or a `version_range` entry beside it.
 
    ```sh
-   node tools/build-revocations.mjs --check   # refuses anything the daemon would not read
+   node tools/build-revocations.mjs           # refuses anything the daemon would not read; else writes the list
+   node tools/build-revocations.mjs --check   # the list is exactly what the advisories produce
    ```
 
-2. **Commit it, with the trailer**, and push to `main`:
+   Both, in that order, before you commit. `--check` on its own fails on a new
+   advisory until the list is regenerated; the first command is the fix its
+   message names. The regeneration counts the commit you are about to make, so
+   the list carries the serial the signer will give that commit, as long as
+   that commit is the one that lands on `main` (step 2).
+
+2. **Commit the advisory and the list together, with the trailer, and push
+   that commit to the tip of `main`:**
+
+   ```sh
+   git add tools/revocations/ registry/v1/revocations.json
+   git commit
+   git push origin HEAD:main
+   ```
 
    ```
    revocations: ASTRA-2026-0007, clipboard exfiltration in example-plugin 1.2.0
@@ -672,6 +688,18 @@ Target: committed, signed and reachable at the edge within **ten minutes**.
    ```
 
    §7.3 says what the trailer is for and when it may be left off.
+
+   If the push is refused because `main` moved, run
+   `git pull --rebase origin main`, then step 1's two commands again, then
+   `git add registry/v1/revocations.json && git commit --amend --no-edit`, and
+   push. If the rebase stops on a conflict in the list, the same two commands
+   resolve it; then `git add registry/v1/revocations.json` and
+   `git rebase --continue` instead of the amend.
+
+   Merged through a pull request with a merge commit instead, the merge counts
+   as one more change under `tools/revocations/`: the signer regenerates at its
+   own count and is unaffected, but `main`'s unsigned copy stays one serial
+   behind, where `--check` cannot see it.
 
 3. **The signer runs.** A human push to `main` starts `Signer` at once; it
    plans against main's head, signs the list, commits it to `signed` and
@@ -725,13 +753,15 @@ arrived — the store, `ImportPluginFile`, or a copy from a friend.
 
 ### 7.2 Lifting one
 
-Delete the advisory file and commit, **with the same trailer on the deleting
-commit**. The list's serial is a commit count over `tools/revocations/`, so it
-rises on a deletion exactly as it rose on the addition — which is why the
-serial is not the number of advisories, and why an un-withdrawal cannot make it
-go backwards. It counts with `--full-history` (contract DEC-9, from 0.35.0):
-git's default count can fall at a merge that follows an un-withdrawal on
-`main`, and the signer then refuses the next list as a serial going backwards.
+Delete the advisory file, run §7.1 step 1's two commands, and commit the
+deletion and the list together as in step 2, **with the same trailer on the
+deleting commit**. The list's serial is a commit count over
+`tools/revocations/`, so it rises on a deletion exactly as it rose on the
+addition — which is why the serial is not the number of advisories, and why an
+un-withdrawal cannot make it go backwards. It counts with `--full-history`
+(contract DEC-9, from 0.35.0): git's default count can fall at a merge that
+follows an un-withdrawal on `main`, and the signer then refuses the next list
+as a serial going backwards.
 
 Then §7.1 step 4 again. A lift is the case where verifying at the edge matters
 most: the plugin is working for you the moment you delete the file, and it is
@@ -810,7 +840,8 @@ Before the flag is armed, once, end to end, on a bundle nobody depends on:
 
 1. publish a test bundle from the test repository and install it on a machine
    running a released 0.2.x daemon pointed at this registry;
-2. write and commit a `digest` advisory for that bundle, with the §7.3 trailer;
+2. write and commit a `digest` advisory for that bundle as in §7.1 steps 1
+   and 2, with the §7.3 trailer;
 3. watch the signer run, and verify at every host as in §7.1 step 4;
 4. record what the installed copy does, and when — the build tag, the digest the
    advisory matched, both serials, and the client's state;

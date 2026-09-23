@@ -23,14 +23,23 @@ node bot/ingest.mjs --repo you/dice-roller --tag v0.2.0 --submitter you
 The trust chain is provisioned, and runs no longer stop at
 `E_TRUST_UNPROVISIONED`: the ceremony in `SECURITY.md` was run,
 `registry/v1/root.json` carries `astra-root-2026a` and its reserve, and
-`registry/v1/trust.json` is signed by the active root at serial 1 — delegating
-`astra-index-2026a` and allowlisting one reusable-workflow commit. An
-attestation from any other workflow is still refused, which is the whole point
-of the allowlist.
+`registry/v1/trust.json` is signed by a root. It delegates the index key and
+allowlists the reusable-workflow commits a build may be attested by, and
+`bot/lib/attestation.mjs` reads that allowlist only after checking the
+signature. An attestation from any other workflow is refused, which is the
+whole point of the allowlist. Which root signed it, which key and commits it
+names, its serial and its expiry are not restated here, because each re-sign
+moves them; this prints them from the file:
 
-What is still unsigned is one step further down: `registry/v1/index.json`
-carries `"signatures": []`, so a daemon reads the catalogue as `UNSIGNED` and
-the artifact digest is doing all the work. That is a publish run away, not code.
+```bash
+node tools/sign-trust.mjs --verify registry/v1/trust.json
+```
+
+The committed `registry/v1/index.json` carries `"signatures": []` on purpose:
+this repository holds no production signing key. `sign.yml` signs the
+catalogue and the withdrawal list and commits the signed copies to the
+`signed` branch. The top-level `README.md`, under *Where the signatures are*,
+has the commands that verify those copies.
 
 ## The language decision, and why it is not the one the plan wrote down
 

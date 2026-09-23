@@ -14,10 +14,11 @@
 // key that signs the catalogue. That indirection is the whole trust model: the
 // root private key can stay on a machine that has never been online, while the
 // key doing daily work lives in CI and can be replaced by re-signing one small
-// file. Until a signed `trust.json` exists, nothing is delegated, there is no
-// key to check a catalogue signature against, and every daemon classifies every
-// catalogue `UNSIGNED` — which is the correct fail-closed state, and also why
-// the catalogue does not work yet.
+// file. Without a signed `trust.json` nothing is delegated, and there is no key
+// to check a catalogue or withdrawal-list signature against. This repository
+// has committed a signed one since `50c40c3` (2026-08-11). `--verify` above
+// prints the one committed now, with its root, index keys, workflow commits,
+// serial and expiry, so this comment does not restate them.
 //
 //     sig = Ed25519(root_priv, SHA-256( "astra.registry.trust/1" ‖ 0x00 ‖ JCS(signed) ))
 //

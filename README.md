@@ -386,16 +386,12 @@ thing: Node.
 
 Named, so nobody assumes otherwise:
 
-- **The catalogue itself is still unsigned, though the chain above it is not.**
-  The root ceremony ran, so `registry/v1/root.json` is `status: provisioned` with
-  `astra-root-2026a` and its reserve, and the daemon compiles in the same two
-  keys. `registry/v1/trust.json` is signed by that root at serial 1, delegating
-  `astra-index-2026a` and allowlisting one reusable-workflow commit. What is
-  still missing is one step further down: the committed
-  `registry/v1/index.json` carries `"signatures": []`, so a daemon reads the
-  catalogue as `UNSIGNED` and the artifact digest is doing all the work. The
-  signing key and its id are in the `publish` environment; what remains is a
-  publish run that uses them, not more code.
+- **No production signing key, so no signed catalogue on `main`.** The
+  committed `registry/v1/index.json` and `registry/v1/revocations.json` carry
+  `"signatures": []`. The index signing key and its id are secrets of the
+  `publish` environment, where `sign.yml` signs both documents and commits the
+  signed copies to the `signed` branch. *Where the signatures are*, above, has
+  the commands that verify them and `trust.json`.
 - **Nothing intersects a candidate with `revocations.json`.** The document
   exists, the daemon enforces it at five points, and `tools/build-revocations.mjs`
   / `tools/sign-revocations.mjs` produce it — but neither bot path checks a
