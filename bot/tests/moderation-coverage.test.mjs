@@ -1263,9 +1263,10 @@ test("the canary is scheduled, because a GITHUB_TOKEN push starts no run", () =>
   const cron = /^\s+- cron: '(.+)'$/m.exec(src)?.[1];
   assert.equal(cron, "*/15 * * * *");
 
-  // The cron and the receiver's bound are one decision in two files. The
-  // receiver pages after 3 × the interval or 90 minutes, whichever is longer;
-  // a cron slower than `interval_seconds` pages every night.
+  // The cron and the receiver's bound are one decision in two files: the
+  // bound is computed from `interval_seconds` (`boundMinutes`, a day for a
+  // poster GitHub schedules), so an interval that is not this cron's is a
+  // bound nobody chose.
   const check = CHECKS.find((c) => c.name === "coverage-canary");
   assert.ok(check, "bot/lib/alert-checks.mjs lists no `coverage-canary` check for this workflow to post to");
   assert.equal(check.interval_seconds, 900,

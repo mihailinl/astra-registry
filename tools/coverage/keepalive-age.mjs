@@ -17,7 +17,7 @@
 // estate whose alarms have all been switched off by the forge looks exactly
 // like an estate with nothing to report. BOT-85's heartbeats are the outer
 // guard — the receiver pages on silence — and this rule is the inner one,
-// which says the month before the silence rather than 90 minutes after it.
+// which says the month before the silence rather than a day after it.
 //
 // 35 days, not 30: a month is 31 days and a keepalive committed on the 1st and
 // then on the 31st of the next month is 61 days apart at worst. 35 gives the

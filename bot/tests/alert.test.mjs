@@ -37,7 +37,10 @@ import { postHeartbeat } from "../heartbeat.mjs";
 import { renderVerdict, verdictProblems, runUrl, VERDICT_SCHEMA } from "../lib/alert-verdict.mjs";
 import {
   CHECKS,
+  GITHUB_SCHEDULED_PARTIES,
+  GITHUB_SCHEDULE_FLOOR_MINUTES,
   MIN_BOUND_MINUTES,
+  PARTIES,
   alertsEnvironmentSecrets,
   boundMinutes,
   optionalAlertsSecrets,
@@ -560,21 +563,100 @@ await test("the table is sound", () => {
   assert.ok(CHECKS.length >= 10, `only ${CHECKS.length} checks; the list the receiver is built from has shrunk`);
 });
 
-await test("every bound is the longer of 3 × the interval and 90 minutes", () => {
+// ── the silence bounds ───────────────────────────────────────────────────────
+//
+// BOT-85's rule, the longer of 3 × the interval and 90 minutes, trusted
+// GitHub's cron, and GitHub does not keep it (ops `dev/couplings.md` entry
+// 87). Since 2026-09-23 a check whose poster runs on GitHub Actions' schedule
+// is also given a day — the measurement and the argument are at
+// `boundMinutes` in bot/lib/alert-checks.mjs. The numbers below are spelled
+// out rather than read from that module, so that the module moving is red
+// here rather than agreed with.
+
+/** The longest gap between two scheduled runs measured in this repository (2026-08-28 05:27Z, Registry index). */
+const WORST_MEASURED_SCHEDULE_GAP_MINUTES = 800;
+
+await test("the parties GitHub's scheduler feeds are `registry` and `test-repository`, and every party is placed", () => {
+  // The floor is decided by party because the party is where the poster runs:
+  // a workflow in this repository, or B-T1.6's canary-tag.yml in the test
+  // repository, against the probe host's and minice-be's own clocks. A new
+  // party is red here until somebody says which kind of clock its poster has.
+  const notGitHub = ["probe-host", "plugins-service"];
+  assert.deepEqual([...GITHUB_SCHEDULED_PARTIES].sort(), ["registry", "test-repository"]);
+  assert.deepEqual([...PARTIES].sort(), [...GITHUB_SCHEDULED_PARTIES, ...notGitHub].sort(),
+    "a party in PARTIES is on neither side: put it in GITHUB_SCHEDULED_PARTIES (bot/lib/alert-checks.mjs) " +
+    "if its poster runs on a GitHub Actions schedule, or in this test's `notGitHub` if it keeps its own time");
+});
+
+await test("no check GitHub's scheduler feeds has a silence bound under a day", () => {
+  assert.equal(GITHUB_SCHEDULE_FLOOR_MINUTES, 1440, "the floor decided on 2026-09-23 is 24 hours");
+  assert.ok(GITHUB_SCHEDULE_FLOOR_MINUTES > WORST_MEASURED_SCHEDULE_GAP_MINUTES,
+    `a floor of ${GITHUB_SCHEDULE_FLOOR_MINUTES} minutes is not over the ${WORST_MEASURED_SCHEDULE_GAP_MINUTES}-minute ` +
+    "gap GitHub left between two scheduled runs here on 2026-08-28, so it would have paged about GitHub's scheduler");
+  const fed = CHECKS.filter((c) => GITHUB_SCHEDULED_PARTIES.includes(c.party) && c.interval_seconds !== null);
+  // A guard is proven only by a table that holds its case: checks whose three
+  // intervals are under a day, which BOT-85's rule alone left at 90 or 180
+  // minutes. Five are in the committed table.
+  const wouldBeUnder = fed.filter((c) => (c.interval_seconds / 60) * 3 < 1440).map((c) => c.name);
+  assert.ok(wouldBeUnder.length >= 5,
+    `only ${wouldBeUnder.length} GitHub-scheduled check(s) have three intervals under a day (${wouldBeUnder.join(", ")}); ` +
+    "this test has lost the case it guards");
+  const under = fed
+    .filter((c) => !(boundMinutes(c) >= 1440))
+    .map((c) => `${c.name} (${c.party}, every ${c.interval_seconds} s): ${boundMinutes(c)} minutes`);
+  assert.deepEqual(under, [],
+    "a check whose poster runs on a GitHub Actions schedule has a silence bound under a day. GitHub left " +
+    `${WORST_MEASURED_SCHEDULE_GAP_MINUTES} minutes between two scheduled runs here on 2026-08-28, so this check ` +
+    "would page about GitHub's scheduler rather than about a poster that stopped");
+});
+
+await test("each check's bound, by name: five GitHub-scheduled checks moved to a day, and no other bound moved", () => {
+  const D = 1440;
+  const want = {
+    // moved on 2026-09-23; BOT-85's rule alone gave the number in the comment
+    detectors: D, //         was 180
+    "moderation-run": D, //  was 90
+    signer: D, //            was 180
+    "served-set": D, //      was 90
+    "coverage-canary": D, // was 90
+    // unchanged: three intervals are already over a day
+    keepalive: 90 * D,
+    "alarm-drill": 21 * D,
+    "canary-tag": 21 * D,
+    "release-canary": 21 * D,
+    "deadline-watch": 3 * D,
+    "baseline-names": 3 * D,
+    // unchanged: not posted from GitHub, so BOT-85's rule as it was
+    probe: 90,
+    // unchanged: no interval, so no bound
+    "alarm-ack": null,
+    conformance: null,
+    "poll-and-sweep": null,
+  };
+  const named = CHECKS.filter((c) => c.name !== null);
+  assert.deepEqual(named.map((c) => c.name).sort(), Object.keys(want).sort(),
+    "the table's checks and this list differ: give a new check its bound here, which is where a reader sees it");
+  const got = Object.fromEntries(named.map((c) => [c.name, boundMinutes(c)]));
+  assert.deepEqual(got, want);
+  // The service's two, whose names are still minice-be's to supply: the relay
+  // heartbeat has no interval yet, and the evaluator's 15 minutes keeps 90.
+  const service = CHECKS.filter((c) => c.party === "plugins-service")
+    .map((c) => [c.interval_seconds, boundMinutes(c)])
+    .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+  assert.deepEqual(service, [[900, 90], [null, null]]);
+});
+
+await test("every bound is the longest of 3 × the interval, 90 minutes, and a day for a GitHub-scheduled poster", () => {
   for (const check of CHECKS) {
     const bound = boundMinutes(check);
     if (check.interval_seconds === null) {
       assert.equal(bound, null, `${check.name ?? check.name_pending} has no interval, so it can have no bound yet`);
       continue;
     }
-    assert.equal(bound, Math.max(MIN_BOUND_MINUTES, (check.interval_seconds / 60) * 3));
+    const floor = ["registry", "test-repository"].includes(check.party) ? 1440 : 90;
+    assert.equal(bound, Math.max(90, floor, (check.interval_seconds / 60) * 3), check.name ?? check.name_pending);
     assert.ok(bound >= MIN_BOUND_MINUTES);
   }
-  // The measured case BOT-85's Why names: 3 × 600 s is 30 minutes, and
-  // ordinary cron lateness crosses it, so the moderation run's bound is the
-  // floor rather than three intervals.
-  assert.equal(boundMinutes(CHECKS.find((c) => c.name === "moderation-run")), 90);
-  assert.equal(boundMinutes(CHECKS.find((c) => c.name === "detectors")), 180);
 });
 
 await test("the two service-posted checks are created disarmed and not yet armed", () => {
