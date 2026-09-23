@@ -1,6 +1,6 @@
 {
-  "contract_version": "0.36.0",
-  "source_commit": "c7975d17b754c0391f62bd5d131bed23057c0a33",
+  "contract_version": "0.37.0",
+  "source_commit": "f80b0c4e45db6e05a0e135ff6908432dd90da0ea",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -13,6 +13,8 @@
     "A `when` is `{\"iff\": <predicate>}` or `{\"if\": <predicate>}`, **never both and never neither, and which of the two applies is decided per condition and never defaulted**: `if` requires the member where the predicate holds and says nothing where it does not; `iff` also forbids it where the predicate does not hold. A field that can only say *when* reproduces the defect it is fixing, because *if this code then this member* leaves the member unconstrained for every other code, which is the looser reading of any condition whose reverse the contract states. A predicate names one sibling member and the values it may take — `{\"code\": [\"M_APPEAL\"]}`, or `{\"code\": {\"not\": [\"M_APPEAL\"]}}` for their complement — and every value it names is one this contract already lists for that member; where the contract names no member that decides, the predicate is `{\"wait\": \"absent\"}`, which holds exactly when that sibling is not carried, and `absent` is the only word with that meaning. A `conditional` member also carries `why`, the sentence a reader meets first on the day the condition is inconvenient, because **a condition whose reason is not written down is relaxed rather than investigated**; a `false` member may carry one to say why no condition is published for it.",
     "A disjunction is published as two biconditionals and never as a group: each member of the pair is `conditional`, and **a reader that requires both refuses every conforming body of that schema**. Where this contract names a member that decides between them, each condition names that member and the values it may take; where it names none, each names the other's absence, and the two together say *exactly one* — both absent fails the first, both present fails the second. A group field was refused rather than added, because it would be a second thing for a reader to evaluate, and a reader who implemented one of the two and not the other would get the looser reading of the member they skipped, which is what this vocabulary exists to end.",
     "The list's own entry carries the same members in the same shape and names the schema and member that carries its values, so that a reader holding the list entry can evaluate the condition without knowing to go looking two entries away. **The two statements MUST agree, and something MUST compare them**: two hand-kept spellings of one fact in one document is the coupling that has gone wrong here twice, and the generator refuses a run in which §0.8 and §4.2 bind a member to different values, or in which either statement is gone while the other stands.",
+    "A `schema_path` carries types and nothing else: which members an entry publishes, and whether each is required, optional or conditional, is the entry's, and where B.4 names only the members other parties read — the listing, version, publisher and queue records — the schema also types members that are the registry's alone and outside SCOPE-8's test.",
+    "`presence_paths` lists each registry-only git path a party other than the registry reads for whether a file is there, and for nothing else; each record's `rule` is B.4's own sentence saying so. A path's one `<identifier>` placeholder takes §0.7's format for that identifier.",
     "`pending` is what SCOPE-7 says this file carries and the contract does not yet record. Each record names what is missing, who owes it, the version that lands it and what the floor asserts until then. The generator refuses to run once the contract records one of them and no extractor has been written."
   ],
   "parties": [
@@ -83,6 +85,30 @@
         "BOT-47",
         "BOT-76",
         "BOT-84"
+      ]
+    }
+  ],
+  "presence_paths": [
+    {
+      "id": "presence:hold-entry",
+      "kind": "presence_path",
+      "name": "moderation hold entry",
+      "path": "state/holds/<service_decision_id>.json",
+      "reads": "presence",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "rule": "The plugins service reads whether that file exists at the head of `main` as its mirror holds it, for §4.8 row 10, and reads nothing else of it: not its content, not its schema, and no other file under `state/holds/`.",
+      "source": "B.4's hold-entry paragraph; BOT-81; §4.8 row 10",
+      "requirements": [
+        "BOT-44",
+        "BOT-81",
+        "SCOPE-7",
+        "SCOPE-8"
       ]
     }
   ],
@@ -2925,6 +2951,11 @@
           "name": "retry_after",
           "required": false,
           "when": "with `rate_limited` and `too_early`"
+        },
+        {
+          "name": "no_stop_at",
+          "required": false,
+          "when": "with `too_late`, exactly when the service had answered a lease holder \"no stop\" for the fingerprint the stop came too late for: the §0.7 time of the latest such answer, never carried otherwise"
         }
       ],
       "members_recorded": true,
@@ -3804,6 +3835,7 @@
         }
       ],
       "members_recorded": true,
+      "schema_path": "schema/cutover-v1.json",
       "emitter": [
         "registry"
       ],
@@ -3833,6 +3865,7 @@
         }
       ],
       "members_recorded": true,
+      "schema_path": "schema/deadline-v1.json",
       "emitter": [
         "registry"
       ],
@@ -3979,6 +4012,7 @@
         }
       ],
       "members_recorded": true,
+      "schema_path": "schema/decision-v1.json",
       "emitter": [
         "registry"
       ],
@@ -4026,6 +4060,7 @@
         }
       ],
       "members_recorded": true,
+      "schema_path": "schema/identity-v1.json",
       "emitter": [
         "registry"
       ],
@@ -4047,6 +4082,7 @@
       "members": [],
       "members_recorded": false,
       "members_pending": "the contract names this schema and records no member list for it",
+      "schema_path": "schema/index-v1.json",
       "emitter": [],
       "acceptor": [],
       "source": "§0.8, the schema clause",
@@ -4091,6 +4127,7 @@
         }
       ],
       "members_recorded": true,
+      "schema_path": "schema/migration-notice-v1.json",
       "emitter": [
         "registry"
       ],
@@ -4137,6 +4174,7 @@
         }
       ],
       "members_recorded": true,
+      "schema_path": "schema/plugin-v1.json",
       "emitter": [
         "registry"
       ],
@@ -4170,6 +4208,7 @@
         }
       ],
       "members_recorded": true,
+      "schema_path": "schema/publisher-v1.json",
       "emitter": [
         "registry"
       ],
@@ -4203,6 +4242,7 @@
         }
       ],
       "members_recorded": true,
+      "schema_path": "schema/queue-v1.json",
       "emitter": [
         "registry"
       ],
@@ -4295,6 +4335,7 @@
         }
       ],
       "members_recorded": true,
+      "schema_path": "schema/version-v1.json",
       "emitter": [
         "registry"
       ],
