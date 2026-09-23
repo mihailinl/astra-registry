@@ -1367,8 +1367,10 @@ export async function run() {
     assert(r.problems.length === 0,
       `${r.problems.join("; ")}. For the list this cannot happen under DEC-9's --full-history count (SERIAL_FLAGS), so ` +
         "a reader or the flags have changed. For the catalogue it is the hazard contract 0.35.0 did not carry: its " +
-        "serial counts by git's default, which a merge can hold or lower, and the signer's SERVE-36 gate will refuse " +
-        "the catalogue and carry the old one. Ops register entry 117; DEC-9's catalogue formula is the decision it waits on");
+        "serial counts by git's default, which a merge can hold or lower, and the signer refuses the catalogue — " +
+        "SERVE-36 for a serial that fell, its equal-serial gate (TRUST-28) for one that held across a change — and " +
+        "carries the old one. Ops register entry 117, and item 24 of ops dev/server-registry-contract-pending.md: DEC-9's catalogue formula is the " +
+        "decision it waits on");
   });
 
   // ── TRUST-43's anchor, and the three files that make it narrow ─────────────
