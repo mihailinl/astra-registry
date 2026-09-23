@@ -941,6 +941,669 @@ id = "sink-panel"
         }
     }
 
+    // ── the two registers of host-RPC gating, held to each other ────────────
+    //
+    // Two files say, for each `PluginHostService` method, which `[permissions]`
+    // key and which `[capabilities]` key go with it:
+    //
+    //   * `RPC_RULES` and `ALWAYS_ALLOWED` in `bot/lib/rpcscan.mjs` — the pair
+    //     the scan DECIDES with. `isDeclared` accepts a row's permission or its
+    //     capability, either one;
+    //   * the `PluginHostService` rows of `AstraPlugins/spec/hooks.yaml` — the
+    //     register the three SDKs, the generated docs, and parity's R6 (which
+    //     holds its `permission` column to the daemon's `HOST_RPC_PERMISSIONS`)
+    //     are held to.
+    //
+    // Nothing compared them. Row by row they agreed on `permission` six of six
+    // and on `capability` five of six, and the one that differs was found by a
+    // person reading both for another reason: `SetVariable` carries the legacy
+    // `capability: "actions"` here, and hooks.yaml files it under `core`, which
+    // is that file's word for "no capability gates this", not a capability
+    // name. The next row to disagree would have been found the same way, by
+    // accident, because a disagreement has no symptom in either repository. A
+    // declaration this scan accepts and the daemon does not honour is a clean
+    // scan, a green listing and a permission denial on the user's machine; one
+    // it demands and hooks.yaml does not is an author told to declare the wrong
+    // key. Both files stay green on their own the whole time.
+    //
+    // hooks.yaml is read AT the pin, out of git objects, never off the
+    // checkout's working tree — `bot/tests/risk-tiers.test.mjs` made the same
+    // choice for the same reason. In CI `link-deps.sh --clone` leaves
+    // `_deps/AstraPlugins` at the pin, but on a workstation it is a sibling
+    // working copy on whatever branch somebody was last on, and a comparison
+    // that answers differently on every machine is a comparison with a
+    // floating branch.
+    //
+    // It is parsed by a port of `tools/parity/spec.py`, the dependency-free
+    // reader AstraPlugins itself parses this file with. hooks.yaml declares
+    // that subset in its own header — flat rows, no nesting, no multi-line
+    // scalars — so that no reader needs a YAML library, and adding one to a
+    // crate the ingest gate builds would buy a dependency to read a format
+    // written so that nobody needs one. Anything outside the subset is
+    // refused, not skipped, so a reshaped file is COULD NOT ASK rather than a
+    // shorter list.
+
+    /// Where the pin is written, and the only place (B-T1.4).
+    const PIN_FILE: &str = include_str!("../astra-plugins.pin");
+
+    /// The file, relative to the AstraPlugins root.
+    const HOOKS_YAML: &str = "spec/hooks.yaml";
+
+    /// Floors, measured at AstraPlugins `5291f29` on 2026-09-22 before any
+    /// mutation: hooks.yaml has ten `PluginHostService` rows, six of them gated
+    /// on a permission that is not `none`, and rpcscan.mjs governs ten rpcs —
+    /// four in `ALWAYS_ALLOWED`, six in `RPC_RULES`. Floors, not equalities, so
+    /// an eleventh host rpc is an ordinary upstream act; what they stop is a
+    /// reader that parsed nothing on both sides and compared two empty maps.
+    const FLOOR_HOST_ROWS: usize = 10;
+    const FLOOR_GATED_HOST_ROWS: usize = 6;
+    const FLOOR_RPCSCAN_ALWAYS: usize = 4;
+    const FLOOR_RPCSCAN_RULES: usize = 6;
+
+    /// A row on which the two registers are ALLOWED to disagree, and why.
+    ///
+    /// Not a tolerance: a decision somebody owes, pinned to the exact two
+    /// values it excuses. When either side moves — including the day the
+    /// decision is made and the two agree — the entry stops matching a
+    /// difference and `every_named_exception_is_still_a_difference` goes red
+    /// until the entry is deleted. So resolving it forces its removal, and the
+    /// list cannot outlive its reason. It excuses one column of one row; a
+    /// difference in any other column or row is red.
+    struct Exception {
+        rpc: &'static str,
+        field: &'static str,
+        rpcscan: &'static str,
+        hooks_yaml: &'static str,
+        why: &'static str,
+    }
+
+    const EXCEPTIONS: &[Exception] = &[Exception {
+        rpc: "SetVariable",
+        field: "capability",
+        rpcscan: "actions",
+        hooks_yaml: "core",
+        why: "a policy call about legacy manifests, open and the owner's to make \
+              (astra-plugins-ops couplings entry 32). `capability: \"actions\"` is the \
+              arm for manifests written before `[permissions]` existed: a plugin that \
+              declares `[capabilities] actions = true` — which every action plugin does \
+              — and calls SetVariable passes this scan without `[permissions] \
+              set_variable`. hooks.yaml gates SetVariable on `set_variable` and on no \
+              capability, and the manifest crate's `[permissions]` is default-deny — its \
+              own header: an absent section means no host rpc beyond Register, PluginLog \
+              and GetPluginSelfConfig, and `[capabilities]` says what a plugin implements, \
+              not what it may call out to — so by the crate's \
+              account that plugin gets a clean scan here and a denial at run time. \
+              Dropping the arm ends that, and starts failing legacy manifests the scan \
+              has been passing. Neither cost is this file's to choose.",
+    }];
+
+    /// The comparison was not made. A failure, never a pass and never a skip:
+    /// a cross-repository comparison that stepped aside quietly would close
+    /// this gap on paper and nowhere else.
+    fn could_not_ask(why: impl std::fmt::Display) -> ! {
+        panic!(
+            "COULD NOT ASK — bot/lib/rpcscan.mjs's host-RPC gates and AstraPlugins' \
+             spec/hooks.yaml were NOT compared by this run. {why}"
+        )
+    }
+
+    /// `ASTRA_PLUGINS_REF` from `astra-plugins.pin`: exactly one line, 40 hex.
+    fn pinned_ref() -> String {
+        let hits: Vec<&str> = PIN_FILE
+            .lines()
+            .filter_map(|l| l.strip_prefix("ASTRA_PLUGINS_REF="))
+            .map(str::trim)
+            .collect();
+        match hits.as_slice() {
+            [one] if one.len() == 40 && one.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')) => {
+                one.to_string()
+            }
+            [one] => could_not_ask(format!(
+                "ASTRA_PLUGINS_REF in astra-plugins.pin is {one:?}, which is not a 40-hex commit"
+            )),
+            [] => could_not_ask(
+                "astra-plugins.pin has no ASTRA_PLUGINS_REF line, and this reads hooks.yaml at the \
+                 pin or not at all — master is a different question with a different answer",
+            ),
+            many => could_not_ask(format!(
+                "astra-plugins.pin has {} ASTRA_PLUGINS_REF lines ({many:?}); the pin has to be one answer",
+                many.len()
+            )),
+        }
+    }
+
+    fn git(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .map_err(|e| format!("could not run git: {e}"))?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        String::from_utf8(out.stdout).map_err(|e| format!("git printed non-UTF-8: {e}"))
+    }
+
+    /// `spec/hooks.yaml` at the pinned commit, and that commit.
+    fn pinned_hooks_yaml() -> (String, String) {
+        let pin = pinned_ref();
+        let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let deps = here.join("_deps/AstraPlugins");
+        let top = git(&deps, &["rev-parse", "--show-toplevel"]).unwrap_or_else(|e| {
+            could_not_ask(format!(
+                "{} is not an AstraPlugins checkout ({e}). Run `bot/manifest-probe/link-deps.sh` \
+                 (with `--clone` and ASTRA_PLUGINS_REF set, as CI does).",
+                deps.display()
+            ))
+        });
+        // A `_deps/AstraPlugins` with no `.git` of its own resolves to THIS
+        // repository, where the pinned commit does not exist. Said plainly,
+        // because "unknown revision" would send the reader to AstraPlugins to
+        // look for a commit that is sitting in front of them.
+        if let Ok(ours) = git(here, &["rev-parse", "--show-toplevel"]) {
+            if ours.trim() == top.trim() {
+                could_not_ask(format!(
+                    "{} resolves to this repository ({}), not to an AstraPlugins checkout",
+                    deps.display(),
+                    top.trim()
+                ));
+            }
+        }
+        if let Err(e) = git(&deps, &["cat-file", "-e", &format!("{pin}^{{commit}}")]) {
+            could_not_ask(format!(
+                "{} has no commit {pin} ({e}) — fetch it (`git -C {} fetch origin`), or the pin \
+                 names a commit on no reachable ref",
+                top.trim(),
+                top.trim()
+            ));
+        }
+        let text = git(&deps, &["cat-file", "-p", &format!("{pin}:{HOOKS_YAML}")]).unwrap_or_else(|e| {
+            could_not_ask(format!(
+                "{pin} has no {HOOKS_YAML} ({e}) — the file moved upstream, and this reader's path \
+                 has to move with the pin"
+            ))
+        });
+        (pin, text)
+    }
+
+    /// One flat row of `hooks:`.
+    type Row = std::collections::BTreeMap<String, String>;
+
+    /// One scalar of the subset, as `tools/parity/spec.py`'s `_scalar` reads it.
+    /// Everything is kept as text; the columns compared here are all strings.
+    fn hooks_scalar(raw: &str, n: usize) -> Result<String, String> {
+        let raw = raw.trim();
+        let b = raw.as_bytes();
+        if b.len() >= 2 && (b[0] == b'"' || b[0] == b'\'') && b[b.len() - 1] == b[0] {
+            let body = &raw[1..raw.len() - 1];
+            if body.contains(b[0] as char) {
+                return Err(format!("line {n}: a nested quote inside a quoted scalar"));
+            }
+            return Ok(body.to_string());
+        }
+        if raw.contains('#') {
+            return Err(format!("line {n}: `#` in a bare scalar is ambiguous — the subset says quote it"));
+        }
+        Ok(raw.to_string())
+    }
+
+    /// The `hooks:` rows of `spec/hooks.yaml`, by the file's declared subset.
+    ///
+    /// A line-for-line port of `parse` in AstraPlugins' `tools/parity/spec.py`,
+    /// with the same refusals: an indented line outside `hooks:`, an item not
+    /// indented two, a field not indented four, a field before the first `- `,
+    /// a line with no `:`, a duplicate field in a row.
+    fn parse_hooks_yaml(text: &str) -> Result<Vec<Row>, String> {
+        let mut rows: Vec<Row> = Vec::new();
+        let mut in_hooks = false;
+        let mut current: Option<usize> = None;
+        for (i, line) in text.lines().enumerate() {
+            let n = i + 1;
+            let stripped = line.trim();
+            if stripped.is_empty() || stripped.starts_with('#') {
+                continue;
+            }
+            let indent = line.len() - line.trim_start_matches(' ').len();
+            if indent == 0 {
+                current = None;
+                in_hooks = stripped == "hooks:";
+                if !in_hooks {
+                    let (_, value) = stripped
+                        .split_once(':')
+                        .ok_or_else(|| format!("line {n}: expected `key: value`"))?;
+                    hooks_scalar(value, n)?;
+                }
+                continue;
+            }
+            if !in_hooks {
+                return Err(format!("line {n}: an indented line outside `hooks:`"));
+            }
+            let mut field = stripped;
+            if let Some(rest) = stripped.strip_prefix("- ") {
+                if indent != 2 {
+                    return Err(format!("line {n}: a sequence item must be indented 2"));
+                }
+                rows.push(Row::new());
+                current = Some(rows.len() - 1);
+                field = rest.trim();
+            } else if indent != 4 {
+                return Err(format!("line {n}: a hook field must be indented 4"));
+            }
+            let at = current.ok_or_else(|| format!("line {n}: a field before the first `- `"))?;
+            let (key, value) = field
+                .split_once(':')
+                .ok_or_else(|| format!("line {n}: expected `key: value`"))?;
+            let key = key.trim().to_string();
+            let value = hooks_scalar(value, n)?;
+            if rows[at].insert(key.clone(), value).is_some() {
+                return Err(format!("line {n}: duplicate field `{key}`"));
+            }
+        }
+        Ok(rows)
+    }
+
+    /// What one register says gates one rpc. `none` is no permission and `core`
+    /// no capability — hooks.yaml's two words, which rpcscan.mjs is read into.
+    #[derive(Clone, Debug, PartialEq)]
+    struct Gate {
+        permission: String,
+        capability: String,
+    }
+
+    type Gates = std::collections::BTreeMap<String, Gate>;
+
+    /// Every `PluginHostService` row of hooks.yaml, as `rpc` → gate.
+    ///
+    /// `permission` and `capability` are required on a host row (spec.py
+    /// enforces the first); a row without either is refused here rather than
+    /// read as `none`, because reading an absent column as "ungated" is the
+    /// permissive direction.
+    fn hooks_yaml_host_gates(rows: &[Row]) -> Result<Gates, String> {
+        let mut out = Gates::new();
+        for row in rows.iter().filter(|r| r.get("service").map(String::as_str) == Some("PluginHostService")) {
+            let rpc = row.get("rpc").ok_or("a PluginHostService row with no `rpc`")?;
+            let column = |c: &str| {
+                row.get(c)
+                    .cloned()
+                    .ok_or_else(|| format!("the PluginHostService row `{rpc}` has no `{c}`"))
+            };
+            let gate = Gate { permission: column("permission")?, capability: column("capability")? };
+            if out.insert(rpc.clone(), gate).is_some() {
+                return Err(format!("`{rpc}` has two PluginHostService rows"));
+            }
+        }
+        Ok(out)
+    }
+
+    /// A double-quoted JS string literal's contents.
+    fn js_quoted(v: &str) -> Option<String> {
+        let v = v.trim();
+        let body = v.strip_prefix('"')?.strip_suffix('"')?;
+        (!body.contains('"')).then(|| body.to_string())
+    }
+
+    /// Every rpc rpcscan.mjs governs, as `rpc` → gate, and how many came from
+    /// each literal.
+    ///
+    /// `ALWAYS_ALLOWED` reads as `none` / `core`. An `RPC_RULES` row with no
+    /// `capability` — or `capability: null` — reads as `core`: `isDeclared`
+    /// then has no capability arm for it, which is what hooks.yaml's `core`
+    /// means, and what the scan's own hint text already handles. A row with no
+    /// `permission` reads as a sentinel no hooks.yaml value can equal, because
+    /// such a row is gated on a capability alone and hooks.yaml has no way to
+    /// say that. Rows must be `Name: { key: value, … },` on one line, as all of
+    /// them are; any other shape is refused rather than skipped, because a row
+    /// this reader missed is a row nobody compared.
+    fn rpcscan_gates(js: &str) -> Result<(Gates, usize, usize), String> {
+        let mut out = Gates::new();
+        let always = js_string_list(js, "const ALWAYS_ALLOWED = new Set([");
+        for rpc in &always {
+            let gate = Gate { permission: "none".into(), capability: "core".into() };
+            if out.insert(rpc.clone(), gate).is_some() {
+                return Err(format!("ALWAYS_ALLOWED lists `{rpc}` twice"));
+            }
+        }
+        let body = js
+            .split("export const RPC_RULES = {")
+            .nth(1)
+            .ok_or("`export const RPC_RULES = {` is not in bot/lib/rpcscan.mjs")?
+            .split("\n};")
+            .next()
+            .ok_or("the RPC_RULES literal does not close with `};`")?;
+        let mut rules = 0;
+        for line in body.lines() {
+            let t = line.trim();
+            if t.is_empty() || t.starts_with("//") {
+                continue;
+            }
+            let shape = || {
+                format!(
+                    "RPC_RULES line {t:?} is not `Name: {{ key: value, … }},` on one line. The literal \
+                     changed shape; teach this reader the new one rather than letting it skip the row"
+                )
+            };
+            let (name, rest) = t.split_once(": {").ok_or_else(shape)?;
+            if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric()) {
+                return Err(shape());
+            }
+            let inner = rest.strip_suffix(',').unwrap_or(rest).trim_end().strip_suffix('}').ok_or_else(shape)?;
+            let mut fields = std::collections::BTreeMap::new();
+            for pair in inner.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+                let (k, v) = pair.split_once(':').ok_or_else(shape)?;
+                fields.insert(k.trim().to_string(), v.trim().to_string());
+            }
+            let quoted = |k: &str, v: &str| {
+                js_quoted(v).ok_or_else(|| format!("RPC_RULES.{name}.{k} is {v}, not a double-quoted string"))
+            };
+            let permission = match fields.get("permission") {
+                None => "<no permission arm>".to_string(),
+                Some(v) => quoted("permission", v)?,
+            };
+            let capability = match fields.get("capability").map(String::as_str) {
+                None | Some("null") | Some("undefined") => "core".to_string(),
+                Some(v) => quoted("capability", v)?,
+            };
+            if out.insert(name.to_string(), Gate { permission, capability }).is_some() {
+                return Err(format!("`{name}` is governed twice — ALWAYS_ALLOWED and RPC_RULES, or two rows"));
+            }
+            rules += 1;
+        }
+        Ok((out, always.len(), rules))
+    }
+
+    /// One column of one rpc on which the registers disagree.
+    #[derive(Debug, PartialEq)]
+    struct Difference {
+        rpc: String,
+        field: &'static str,
+        rpcscan: String,
+        hooks_yaml: String,
+    }
+
+    impl std::fmt::Display for Difference {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "{}: {} is {:?} in bot/lib/rpcscan.mjs and {:?} in spec/hooks.yaml",
+                self.rpc, self.field, self.rpcscan, self.hooks_yaml
+            )
+        }
+    }
+
+    struct Comparison {
+        only_rpcscan: Vec<String>,
+        only_hooks_yaml: Vec<String>,
+        compared: usize,
+        differences: Vec<Difference>,
+    }
+
+    fn compare(ours: &Gates, theirs: &Gates) -> Comparison {
+        let mut c = Comparison {
+            only_rpcscan: ours.keys().filter(|k| !theirs.contains_key(*k)).cloned().collect(),
+            only_hooks_yaml: theirs.keys().filter(|k| !ours.contains_key(*k)).cloned().collect(),
+            compared: 0,
+            differences: Vec::new(),
+        };
+        for (rpc, a) in ours {
+            let Some(b) = theirs.get(rpc) else { continue };
+            c.compared += 1;
+            for (field, x, y) in [
+                ("permission", &a.permission, &b.permission),
+                ("capability", &a.capability, &b.capability),
+            ] {
+                if x != y {
+                    c.differences.push(Difference {
+                        rpc: rpc.clone(),
+                        field,
+                        rpcscan: x.clone(),
+                        hooks_yaml: y.clone(),
+                    });
+                }
+            }
+        }
+        c
+    }
+
+    fn excused(d: &Difference) -> bool {
+        EXCEPTIONS.iter().any(|e| {
+            e.rpc == d.rpc && e.field == d.field && e.rpcscan == d.rpcscan && e.hooks_yaml == d.hooks_yaml
+        })
+    }
+
+    /// Both registers, parsed, with every floor asserted before anything is
+    /// compared — so the tests below cannot pass over two empty maps.
+    fn both_registers() -> (String, Gates, Gates) {
+        let (pin, yaml) = pinned_hooks_yaml();
+        let rows = parse_hooks_yaml(&yaml).unwrap_or_else(|e| {
+            could_not_ask(format!("{HOOKS_YAML} at {pin} is outside the subset it declares: {e}"))
+        });
+        let theirs = hooks_yaml_host_gates(&rows)
+            .unwrap_or_else(|e| could_not_ask(format!("{HOOKS_YAML} at {pin}: {e}")));
+        let (ours, always, rules) =
+            rpcscan_gates(RPCSCAN_MJS).unwrap_or_else(|e| could_not_ask(format!("bot/lib/rpcscan.mjs: {e}")));
+
+        let gated = theirs.values().filter(|g| g.permission != "none").count();
+        assert!(
+            theirs.len() >= FLOOR_HOST_ROWS && gated >= FLOOR_GATED_HOST_ROWS,
+            "BROKEN SCAN — {HOOKS_YAML} at {pin} parsed as {} PluginHostService row(s), {gated} gated on a \
+             permission; there were {FLOOR_HOST_ROWS} and {FLOOR_GATED_HOST_ROWS} at 5291f29. Either host rpcs \
+             were removed upstream or this reader has stopped finding rows.",
+            theirs.len()
+        );
+        assert!(
+            always >= FLOOR_RPCSCAN_ALWAYS && rules >= FLOOR_RPCSCAN_RULES,
+            "BROKEN SCAN — bot/lib/rpcscan.mjs parsed as {always} ALWAYS_ALLOWED and {rules} RPC_RULES \
+             row(s); there were {FLOOR_RPCSCAN_ALWAYS} and {FLOOR_RPCSCAN_RULES} on 2026-09-22"
+        );
+        (pin, ours, theirs)
+    }
+
+    /// An rpc one register governs and the other has never heard of is the
+    /// same silence one level up: whichever side is missing it, nothing
+    /// compares its gate with anything.
+    #[test]
+    fn the_two_gating_registers_name_the_same_host_rpcs() {
+        let (pin, ours, theirs) = both_registers();
+        let c = compare(&ours, &theirs);
+        assert!(
+            c.only_rpcscan.is_empty(),
+            "bot/lib/rpcscan.mjs governs {:?}, which has no PluginHostService row in {HOOKS_YAML} at {pin}. \
+             The scan is deciding a gate for an rpc the register the SDKs and the daemon's table are held to \
+             does not describe — a row there, or a name out of ALWAYS_ALLOWED / RPC_RULES here.",
+            c.only_rpcscan
+        );
+        assert!(
+            c.only_hooks_yaml.is_empty(),
+            "{HOOKS_YAML} at {pin} has PluginHostService row(s) for {:?}, which bot/lib/rpcscan.mjs neither \
+             lists in ALWAYS_ALLOWED nor gives an RPC_RULES row. `isDeclared` treats an rpc with no rule as \
+             declared by everybody, so the scan asks nothing about it. Give it the row hooks.yaml gives it.",
+            c.only_hooks_yaml
+        );
+    }
+
+    /// Every rpc both registers govern, compared on both columns, and nothing
+    /// excused but the rows `EXCEPTIONS` names with their reasons.
+    #[test]
+    fn the_two_gating_registers_agree_on_every_row_but_the_named_exceptions() {
+        let (pin, ours, theirs) = both_registers();
+        let c = compare(&ours, &theirs);
+        assert!(
+            c.compared >= FLOOR_HOST_ROWS,
+            "only {} rpc(s) are in both registers, and there were {FLOOR_HOST_ROWS} — the membership test \
+             says which",
+            c.compared
+        );
+        let unexplained: Vec<String> =
+            c.differences.iter().filter(|d| !excused(d)).map(|d| format!("    {d}")).collect();
+        assert!(
+            unexplained.is_empty(),
+            "REGISTERS DIFFER — bot/lib/rpcscan.mjs and {HOOKS_YAML} at {pin} disagree about what gates:\n{}\n  \
+             `core` is hooks.yaml's word for no capability, and `none` for no permission. Decide which \
+             register is right — hooks.yaml's `permission` column is the one parity R6 holds to the daemon's \
+             HOST_RPC_PERMISSIONS — and change that side; if it is hooks.yaml, the pin moves in its own \
+             commit first. Adding an EXCEPTIONS entry to silence this is a policy decision about what the scan \
+             passes, and needs a reason somebody with that authority wrote.",
+            unexplained.join("\n")
+        );
+    }
+
+    /// An exception that no longer excuses anything is a decision that was
+    /// made, or a disagreement that changed shape — and either way the entry
+    /// now reads as a reason for something that is not happening.
+    #[test]
+    fn every_named_exception_is_still_a_difference() {
+        let (pin, ours, theirs) = both_registers();
+        let stale = stale_exceptions(&compare(&ours, &theirs), &pin);
+        assert!(stale.is_empty(), "{}", stale.join("\n"));
+    }
+
+    /// Every `EXCEPTIONS` entry that no longer excuses exactly the difference
+    /// it names, as the sentence that says so. Empty is the only pass.
+    fn stale_exceptions(c: &Comparison, pin: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        for e in EXCEPTIONS {
+            if !matches!(e.field, "permission" | "capability") || e.why.trim().is_empty() {
+                out.push(format!(
+                    "the EXCEPTIONS entry for {} names column {:?} or gives no reason; an exception is one \
+                     column of one row, with its reason written down",
+                    e.rpc, e.field
+                ));
+                continue;
+            }
+            match c.differences.iter().find(|d| d.rpc == e.rpc && d.field == e.field) {
+                None => out.push(format!(
+                    "STALE EXCEPTION — {rpc}'s {field} no longer differs between bot/lib/rpcscan.mjs and \
+                     {HOOKS_YAML} at {pin}; EXCEPTIONS still excuses {a:?} against {b:?}. Whatever was being \
+                     waited on has been decided. In the same commit, delete the entry, the sentence in \
+                     rpcscan.mjs's RPC_RULES comment that points at it, and the rows of \
+                     the_comparison_goes_red_on_the_committed_registers_mutated that edit that exception's \
+                     literal (their anchor no longer exists, so that test is red too) — an exception that \
+                     outlives its difference will excuse the next one that happens to take its place.",
+                    rpc = e.rpc,
+                    field = e.field,
+                    a = e.rpcscan,
+                    b = e.hooks_yaml,
+                )),
+                Some(d) if !excused(d) => out.push(format!(
+                    "STALE EXCEPTION — EXCEPTIONS excuses {rpc}'s {field} as {a:?} against {b:?}, and the \
+                     difference is now {d}. That is a different disagreement, and the reason written for the \
+                     first does not cover it.",
+                    rpc = e.rpc,
+                    field = e.field,
+                    a = e.rpcscan,
+                    b = e.hooks_yaml,
+                )),
+                Some(_) => {}
+            }
+        }
+        out
+    }
+
+    /// The three comparisons above, watched going red on the committed
+    /// material itself, so the proof is re-run on every `cargo test` rather
+    /// than recorded once in a commit message. Each edit is anchored and must
+    /// match exactly once, or this test fails before it proves anything.
+    #[test]
+    fn the_comparison_goes_red_on_the_committed_registers_mutated() {
+        let (_, yaml) = pinned_hooks_yaml();
+        let once = |text: &str, from: &str, to: &str| -> String {
+            assert_eq!(text.matches(from).count(), 1, "mutation anchor {from:?} must occur exactly once");
+            let out = text.replacen(from, to, 1);
+            assert_ne!(out, text, "mutation {from:?} changed nothing");
+            out
+        };
+        let run = |js: &str, yaml: &str| {
+            let rows = parse_hooks_yaml(yaml).expect("a mutated hooks.yaml still parses");
+            let theirs = hooks_yaml_host_gates(&rows).expect("host rows");
+            let (ours, _, _) = rpcscan_gates(js).expect("rpcscan.mjs");
+            compare(&ours, &theirs)
+        };
+        let unexplained = |c: &Comparison| -> Vec<String> {
+            c.differences.iter().filter(|d| !excused(d)).map(|d| d.rpc.clone()).collect()
+        };
+
+        // The committed pair: nothing unexplained, nothing missing, the one
+        // exception live. Without this the rows below prove nothing.
+        let base = run(RPCSCAN_MJS, &yaml);
+        const BASE: &str = "the committed registers are not the committed pair this proof starts from; the \
+                            three tests above say how — fix that first, then this";
+        assert!(base.only_rpcscan.is_empty() && base.only_hooks_yaml.is_empty(), "{BASE}");
+        assert_eq!(unexplained(&base), Vec::<String>::new(), "{BASE}");
+        assert!(base.differences.iter().any(excused), "{BASE}");
+
+        // Another row's permission, flipped on each side in turn.
+        let js = once(RPCSCAN_MJS, "permission: \"fire_trigger\"", "permission: \"push_to_ui\"");
+        assert_eq!(unexplained(&run(&js, &yaml)), vec!["FireTrigger"]);
+        let y = once(&yaml, "    permission: fire_trigger\n", "    permission: push_to_ui\n");
+        assert_eq!(unexplained(&run(RPCSCAN_MJS, &y)), vec!["FireTrigger"]);
+
+        // Another row's capability, on the other column.
+        let js = once(RPCSCAN_MJS, "capability: \"event_handlers\"", "capability: \"client\"");
+        assert_eq!(unexplained(&run(&js, &yaml)), vec!["SubscribeEvents"]);
+
+        // An rpc on one side only, each side in turn.
+        let js = once(
+            RPCSCAN_MJS,
+            "export const RPC_RULES = {\n",
+            "export const RPC_RULES = {\n  GetWidget: { permission: \"push_to_ui\", blocking: false },\n",
+        );
+        assert_eq!(run(&js, &yaml).only_rpcscan, vec!["GetWidget"]);
+        let y = once(
+            &yaml,
+            "\nhooks:\n",
+            "\nhooks:\n  - rpc: GetWidget\n    service: PluginHostService\n    capability: core\n    permission: none\n",
+        );
+        assert_eq!(run(RPCSCAN_MJS, &y).only_hooks_yaml, vec!["GetWidget"]);
+
+        // The owner decides, and SetVariable agrees: the exception now
+        // excuses nothing. Both spellings of "no capability arm" count.
+        // These rows and the next edit the exception's own literal, so they
+        // are deleted with it; `every_named_exception_is_still_a_difference`
+        // says so when that day comes.
+        const SET_VARIABLE_ROW: &str = "SetVariable: { permission: \"set_variable\", capability: \"actions\",";
+        assert!(stale_exceptions(&base, "test").is_empty());
+        for to in ["", " capability: null,"] {
+            let js = once(
+                RPCSCAN_MJS,
+                SET_VARIABLE_ROW,
+                &format!("SetVariable: {{ permission: \"set_variable\",{to}"),
+            );
+            let c = run(&js, &yaml);
+            assert_eq!(unexplained(&c), Vec::<String>::new());
+            let stale = stale_exceptions(&c, "test");
+            assert!(
+                stale.len() == 1 && stale[0].starts_with("STALE EXCEPTION — SetVariable's capability"),
+                "{stale:?}"
+            );
+        }
+        // The same decision taken on the other side: hooks.yaml files it
+        // under `actions`. Anchored on the row, since `capability: core` is
+        // five rows' value.
+        let y = once(
+            &yaml,
+            "  - rpc: SetVariable\n    service: PluginHostService\n    direction: \"plugin->daemon\"\n    capability: core\n",
+            "  - rpc: SetVariable\n    service: PluginHostService\n    direction: \"plugin->daemon\"\n    capability: actions\n",
+        );
+        assert_eq!(stale_exceptions(&run(RPCSCAN_MJS, &y), "test").len(), 1);
+
+        // And the exception is exact: SetVariable's capability moving to
+        // another wrong value is a new difference the old reason does not cover.
+        let js = once(
+            RPCSCAN_MJS,
+            SET_VARIABLE_ROW,
+            "SetVariable: { permission: \"set_variable\", capability: \"triggers\",",
+        );
+        let c = run(&js, &yaml);
+        assert_eq!(unexplained(&c), vec!["SetVariable"]);
+        assert_eq!(stale_exceptions(&c, "test").len(), 1);
+
+        // The subset parser refuses rather than skips.
+        assert!(parse_hooks_yaml("hooks:\n  - rpc: A\n      service: B\n").is_err());
+        assert!(parse_hooks_yaml("hooks:\n  - rpc: A # comment\n").is_err());
+        assert!(parse_hooks_yaml("hooks:\n  - rpc: A\n    rpc: B\n").is_err());
+    }
+
     /// The response is the bot's whole view of the manifest. If it stops being
     /// serializable the bot sees nothing at all, so the shape is asserted rather
     /// than trusted.

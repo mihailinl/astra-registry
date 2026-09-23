@@ -65,12 +65,12 @@ crate's test run red rather than silently degrading every diagnosis to
 `E_MANIFEST_INVALID`.
 
 ```bash
-cargo test    # 15 tests, including the `ui_panels` drift and the id-as-path-component rules
+cargo test    # 19 tests, including the `ui_panels` drift and the id-as-path-component rules
 ```
 
 ## Why it also reads the JS half, and the proto
 
-Four of those tests assert nothing about a manifest. They are here because this
+Eight of those tests assert nothing about a manifest. They are here because this
 is the only part of the bot that has both halves in one process: the crate the
 daemon judges by, and — through `_deps/AstraPlugins`, at the commit
 `astra-plugins.pin` names — `proto/plugin.proto`. The JS half has neither, so
@@ -83,6 +83,7 @@ not check:
 | `HOST_RPCS`'s method names | `service PluginHostService` in `proto/plugin.proto` |
 | `HOST_RPCS` vs `ALWAYS_ALLOWED` + `RPC_RULES` | each other — every method governed exactly once |
 | the header's `ten` / `four` / `six` | the three literals they count |
+| `RPC_RULES`' and `ALWAYS_ALLOWED`'s gates, per rpc | the `PluginHostService` rows of `spec/hooks.yaml`, read out of git at the pin — both columns, with one named exception |
 
 Only the first existed. The second is the one that cost something: the scan
 searches a bundle only for names that are in `HOST_RPCS`, so an eleventh host
@@ -91,3 +92,15 @@ the proto grew one. The third is subtler and is why fixing the array alone is
 not the fix — `isDeclared` returns `true` for an rpc it has no rule for, so a
 name added to `HOST_RPCS` and nowhere else is in the list and still exempt from
 the check.
+
+The fifth compares two registers of the same fact: which `[permissions]` key
+and which `[capabilities]` key go with each host rpc. `RPC_RULES` is the one
+the scan decides with, and hooks.yaml is the one the SDKs, the generated docs
+and parity's R6 are held to. They agree on every row but one cell —
+`SetVariable`'s legacy `capability: "actions"`, which hooks.yaml files under
+`core` — and that cell is an `EXCEPTIONS` entry with its reason, pinned to
+those two exact values. Another row differing is red; a row on one side only
+is red; and the day the two agree on `SetVariable`, the exception is red as
+stale, so deciding the question forces the entry out. The fourth test in that
+group re-runs those mutations on the committed files every time, so the proof
+that the comparison can fail is not a one-off in a commit message.
