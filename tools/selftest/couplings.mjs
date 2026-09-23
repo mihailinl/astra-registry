@@ -45,11 +45,11 @@ import { REVOCATIONS_SCHEMA, TRUST_SCHEMA } from "../../bot/lib/sign.mjs";
 import { LIST_PATHSPEC, gather, serve85 } from "../served-set/main-vs-signed.mjs";
 import { CATALOGUE_PATHSPEC, resolveSerial as resolveCatalogueSerial } from "../build-index.mjs";
 import { serialFor } from "../regenerate-signed.mjs";
-import { a7, a9, gitReader } from "../../bot/detectors.mjs";
+import { A7_BOUND_MINUTES, a7, a9, gitReader } from "../../bot/detectors.mjs";
 import { nextAdvisoryId } from "../../bot/lib/compile-decision.mjs";
 import { triggersOf } from "../moderation-coverage.mjs";
 import { isShallow } from "../coverage/git.mjs";
-import { test, assert, assertEqual, neverAsk, tmp } from "./harness.mjs";
+import { test, assert, assertEqual, isSuiteFile, neverAsk, tmp, walkRepo } from "./harness.mjs";
 
 export async function run() {
   // ── the locale couplings ────────────────────────────────────────────────────
@@ -857,6 +857,58 @@ export async function run() {
   // each reader is asked what it counted on one fixture history in which every
   // plausible neighbour counts differently.
 
+  /** The name of build-index.yml's step that counts the catalogue's serial in shell. */
+  const SERIAL_STEP = "Compute the serial from the commit count on the default branch";
+
+  /**
+   * build-index.yml's own serial step, run as the workflow runs it: its `run:`
+   * block, with the one expression it uses substituted, under bash, writing to
+   * a GITHUB_OUTPUT of our own, in the repository `dir`. Twice — with
+   * `origin/main` at `dir`'s HEAD, which is the branch CI takes, and without
+   * it, which is the fallback. Read from the workflow file on every call and
+   * never paraphrased: gap 71 asks it on a line, and entry 117's head check at
+   * a merge (ops register entry 128).
+   */
+  function runCatalogueSerialStep(dir) {
+    const git = (...a) =>
+      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+    const yml = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/build-index.yml"), "utf8").split("\n");
+    // No metacharacter in the name, so it is its own pattern.
+    const named = yml.map((l, i) => [l, i]).filter(([l]) => new RegExp(`^\\s+- name: ${SERIAL_STEP}\\s*$`).test(l));
+    assertEqual(named.length, 1, `build-index.yml has no single step named "${SERIAL_STEP}"`);
+    const stepIndent = named[0][0].indexOf("-");
+    let i = named[0][1] + 1;
+    while (i < yml.length && !/^\s+run: \|\s*$/.test(yml[i])) {
+      if (yml[i].trim() && yml[i].indexOf(yml[i].trim()) <= stepIndent) throw new Error("the serial step in build-index.yml has no `run: |` block");
+      i++;
+    }
+    const runIndent = yml[i].indexOf("run:");
+    const body = [];
+    for (i += 1; i < yml.length && (!yml[i].trim() || yml[i].search(/\S/) > runIndent); i++) body.push(yml[i]);
+    const pad = Math.min(...body.filter((l) => l.trim()).map((l) => l.search(/\S/)));
+    const expr = "${{ github.event.repository.default_branch }}";
+    let script = body.map((l) => l.slice(pad)).join("\n");
+    assertEqual(script.split(expr).length - 1, 1, "the serial step no longer reads the default branch from exactly one expression");
+    script = script.replace(expr, "main");
+    assert(!script.includes("${{"), "the serial step uses an expression this check does not substitute");
+    const step = () => {
+      const out = path.join(tmp, "couplings-catalogue-github-output");
+      fs.writeFileSync(out, "");
+      execFileSync("bash", ["-c", script], { cwd: dir, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GITHUB_OUTPUT: out } });
+      const m = /^serial=(\d+)$/m.exec(fs.readFileSync(out, "utf8"));
+      assert(m, "build-index.yml's serial step wrote no serial= line");
+      return Number(m[1]);
+    };
+    git("update-ref", "refs/remotes/origin/main", git("rev-parse", "HEAD"));
+    let primary;
+    try {
+      primary = step();
+    } finally {
+      git("update-ref", "-d", "refs/remotes/origin/main");
+    }
+    return { primary, fallback: step() };
+  }
+
   await test("gap 71 — the catalogue's serial, its pending commit and A7's clock count one pathspec: build-index's, the signer's, the carrier's, A7's and build-index.yml's", () => {
     const dir = path.join(tmp, "couplings-catalogue-pathspec");
     fs.mkdirSync(dir, { recursive: true });
@@ -993,40 +1045,11 @@ export async function run() {
       `A7's plugins half dates the newest commit under ${datedBy(scanned.plugins_drift_minutes)}, and the catalogue ` +
         `changes on commits under ${CATALOGUE_PATHSPEC}: bot/detectors.mjs has stopped reading CATALOGUE_PATHSPEC`);
 
-    // (f) build-index.yml's own step, run as the workflow runs it: its `run:`
-    // block, with the one expression it uses substituted, under bash, writing
-    // to a GITHUB_OUTPUT of our own. Twice — with `origin/main` present, which
-    // is the branch CI takes, and without it, which is the fallback.
-    const yml = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/build-index.yml"), "utf8").split("\n");
-    const named = yml.map((l, i) => [l, i]).filter(([l]) => /^\s+- name: Compute the serial from the commit count on the default branch\s*$/.test(l));
-    assertEqual(named.length, 1, "build-index.yml has no single step named \"Compute the serial from the commit count on the default branch\"");
-    const stepIndent = named[0][0].indexOf("-");
-    let i = named[0][1] + 1;
-    while (i < yml.length && !/^\s+run: \|\s*$/.test(yml[i])) {
-      if (yml[i].trim() && yml[i].indexOf(yml[i].trim()) <= stepIndent) throw new Error("the serial step in build-index.yml has no `run: |` block");
-      i++;
-    }
-    const runIndent = yml[i].indexOf("run:");
-    const body = [];
-    for (i += 1; i < yml.length && (!yml[i].trim() || yml[i].search(/\S/) > runIndent); i++) body.push(yml[i]);
-    const pad = Math.min(...body.filter((l) => l.trim()).map((l) => l.search(/\S/)));
-    const expr = "${{ github.event.repository.default_branch }}";
-    let script = body.map((l) => l.slice(pad)).join("\n");
-    assertEqual(script.split(expr).length - 1, 1, "the serial step no longer reads the default branch from exactly one expression");
-    script = script.replace(expr, "main");
-    assert(!script.includes("${{"), "the serial step uses an expression this check does not substitute");
-    const step = () => {
-      const out = path.join(tmp, "couplings-catalogue-github-output");
-      fs.writeFileSync(out, "");
-      execFileSync("bash", ["-c", script], { cwd: dir, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GITHUB_OUTPUT: out } });
-      const m = /^serial=(\d+)$/m.exec(fs.readFileSync(out, "utf8"));
-      assert(m, "build-index.yml's serial step wrote no serial= line");
-      return Number(m[1]);
-    };
-    git("update-ref", "refs/remotes/origin/main", head);
-    const primary = step();
-    git("update-ref", "-d", "refs/remotes/origin/main");
-    const fallback = step();
+    // (f) build-index.yml's own step, run as the workflow runs it (the helper
+    // above), with the fixture's main checked out: `-f main` in (e) left HEAD
+    // at `head`.
+    assertEqual(git("rev-parse", "HEAD"), head, "the fixture's HEAD is not main's head, so the step would count another commit");
+    const { primary, fallback } = runCatalogueSerialStep(dir);
     assertEqual(primary, expect.count,
       `build-index.yml's serial step counts origin/main over ${which(primary)}, and the signer over ${CATALOGUE_PATHSPEC}`);
     assertEqual(fallback, expect.count,
@@ -1304,7 +1327,57 @@ export async function run() {
         `reported ${late.status} (${late.notes.slice(1).join(" | ")}) — the silence ops register entry 117 measured`);
   });
 
-  await test("entry 117 — the head check sees a serial that falls or holds at a merge: red for the catalogue, which counts by git's default, on both shapes, and green for the list", () => {
+  // ── entry 128: every reader of the catalogue's serial, at a merge ───────────
+  //
+  // Gap 71 holds the catalogue's readers to one pathspec on a line, where every
+  // counting mode agrees, so a reader that counted `--full-history` or
+  // `--first-parent` there stayed green. When pending item 24 moves DEC-9's
+  // catalogue formula, every reader has to move with the signer, and one left
+  // behind publishes, regenerates or deploys a catalogue at a serial the signer
+  // never assigned. So the head check below asks each of them on its two
+  // merges — shapes where git's default count, `--full-history` and
+  // `--first-parent` give three different numbers — and holds each to the
+  // signer's `serialsAt` index term there.
+  //
+  // This table is the one list of the catalogue's serial computations: the
+  // head check asks every entry, and the check after it walks tools/, bot/ and
+  // .github/ for every `rev-list` and fails on one that is neither here nor
+  // declared there as counting something else, so a new reader cannot join
+  // silently. `site` is where its `rev-list` is: the file, and the function or
+  // workflow step that holds it. The signer is the reference and is asked only
+  // as that.
+  //
+  // Detector A7 is not in it, and is asked below by its own relation: its
+  // catalogue half computes no serial. It counts the commits on main's
+  // first-parent line that the served catalogue's `Index-Source-Commit` does
+  // not contain (row 7's containment, dated where main acquired each — gap 68),
+  // which is a `--first-parent` count, and DEC-9 says the catalogue's is not
+  // that one. On shape (5) it counts 1 unsigned commit after `before` while
+  // the signer's term goes 2 → 1, and 2 → 4 under `--full-history`, so "equal
+  // to the signer's term" is not a property it has under either formula.
+  const CATALOGUE_SERIAL_READERS = [
+    { site: "tools/signer/git.mjs › revCount", name: "the signer's serialsAt", reference: true },
+    {
+      site: "tools/build-index.mjs › resolveSerial",
+      name: "build-index's resolveSerial",
+      ask: (shape) => ({ "": resolveCatalogueSerial({ root: shape.repo.dir }) }),
+    },
+    {
+      site: "tools/regenerate-signed.mjs › serialFor",
+      name: "the carrier's serialFor",
+      ask: (shape) => ({ "": serialFor(shape.repo.dir, shape.merge) }),
+    },
+    {
+      site: `.github/workflows/build-index.yml › ${SERIAL_STEP}`,
+      name: "build-index.yml's serial step",
+      ask: (shape) => {
+        const { primary, fallback } = runCatalogueSerialStep(shape.repo.dir);
+        return { ", counting origin/main": primary, ", without origin/main, counting HEAD": fallback };
+      },
+    },
+  ];
+
+  await test("entry 117 — the head check sees a serial that falls or holds at a merge: red for the catalogue, which counts by git's default, on both shapes, and green for the list; and there every reader of the catalogue's serial counts as the signer does — build-index's, the carrier's and build-index.yml's step — and A7 counts the merge the serial missed and pages it (entry 128)", () => {
     // Proved on the shapes, because main's real history has never held either
     // (both serials rise at all 337 first-parent commits at 3653dc5): a check
     // whose case the corpus never contained is proved on a corpus that does.
@@ -1312,6 +1385,9 @@ export async function run() {
     const list = entry117Shapes("head-list", SOURCE_DIR, listEntry, listReadme);
     const override = process.env.ASTRA_REGISTRY_SERIAL;
     delete process.env.ASTRA_REGISTRY_SERIAL;
+    // Every reader's disagreement, on both shapes, before anything is thrown:
+    // a reader left behind is named alongside any other left behind with it.
+    const behind = [];
     try {
       for (const shape of catalogue) {
         const r = headSerialProblems(shape.repo.dir);
@@ -1321,14 +1397,103 @@ export async function run() {
             "catalogue's serial counts by git's default, which holds or lowers here, and the canary on main is only " +
             "as good as its answer on this merge");
         assert(r.problems[0].startsWith("the catalogue's serial"), `${shape.name}: ${r.problems[0]}`);
+
+        // The fixture guard: at this merge the three counting modes a reader
+        // could drift to give three numbers, so equality with the signer's
+        // below says which one each reader counts.
+        const modes = { "git's default count": [], "--full-history": ["--full-history"], "--first-parent": ["--first-parent"] };
+        const byMode = Object.fromEntries(Object.entries(modes).map(([m, flags]) =>
+          [m, Number(shape.repo.git("rev-list", "--count", ...flags, shape.merge, "--", CATALOGUE_PATHSPEC))]));
+        assertEqual(new Set(Object.values(byMode)).size, 3,
+          `${shape.name}: the counting modes do not separate at the merge (${JSON.stringify(byMode)}), so a reader ` +
+            "that changed mode could be invisible here");
+        assertEqual(byMode["git's default count"], r.at.index,
+          `${shape.name}: the signer's serialsAt counts ${r.at.index} at the merge, and DEC-9's catalogue count is ` +
+            `git's default (${byMode["git's default count"]}) — the head check's own premise has moved`);
+        const which = (n) => Object.keys(byMode).filter((m) => byMode[m] === n).join(" or ") || "no counting mode this fixture knows";
+
         // The catalogue's other readers count as the signer does at this
         // merge: gap 71 holds their pathspec on a line, and a line cannot
         // tell one counting mode from another.
-        assertEqual(resolveCatalogueSerial({ root: shape.repo.dir }), r.at.index,
-          `${shape.name}: build-index's resolveSerial and the signer count the catalogue differently at a merge`);
-        assertEqual(serialFor(shape.repo.dir, shape.merge), r.at.index,
-          `${shape.name}: the carrier's serialFor and the signer count the catalogue differently at a merge`);
+        for (const reader of CATALOGUE_SERIAL_READERS.filter((x) => !x.reference)) {
+          for (const [how, got] of Object.entries(reader.ask(shape))) {
+            if (got !== r.at.index) {
+              behind.push(`${shape.name}: ${reader.name}${how} gives the catalogue serial ${got} at the merge, which is ` +
+                `${which(got)}, and the signer's serialsAt gives ${r.at.index}, ${which(r.at.index)} — ${reader.site} ` +
+                "counts the catalogue differently from the signer at a merge");
+            }
+          }
+        }
+
+        // A7, by the relation it has. `signed` as the signer's carry leaves
+        // it at this merge — the catalogue refused because the serial fell or
+        // held (SERVE-36, TRUST-28), so D4 keeps `before` as its
+        // Index-Source-Commit while Source-Commit moves to the merge —
+        // written by the signer's own `commitMessage`. A7's catalogue half
+        // must count exactly the commits after `before` on main's first-parent
+        // line that change plugins/ against their first parent, which are the
+        // commits the head check holds the signer's term to rise at; here that
+        // is the merge, the one where it did not. Then past its bound A7 pages
+        // naming it: the backstop pending item 24 names ("a catalogue stalled
+        // behind a serial that fell still pages after 2 h").
+        const { repo, before, merge } = shape;
+        const firstParent = (c) => {
+          try {
+            return repo.git("rev-parse", "-q", "--verify", `${c}^1`);
+          } catch {
+            return null;
+          }
+        };
+        const expected = [];
+        for (let c = merge; c !== before; c = firstParent(c)) {
+          assert(c !== null, `${shape.name}: \`before\` is not on the merge's first-parent line`);
+          if (treeAt(repo.git, c, CATALOGUE_PATHSPEC) !== treeAt(repo.git, firstParent(c), CATALOGUE_PATHSPEC)) expected.unshift(c);
+        }
+        assertEqual(expected.join(","), merge,
+          `${shape.name}: the commits after \`before\` on the first-parent line that change ${CATALOGUE_PATHSPEC}/ are not ` +
+            "the merge alone, so this fixture cannot say which one A7 names");
+        const record = {
+          serials: r.at,
+          source_commit: merge,
+          index_source_commit: before,
+          alerts: [],
+          documents: {
+            index: { decision: "carry", serial: r.before.index },
+            revocations: { decision: "unchanged", serial: r.at.revocations },
+          },
+        };
+        const emptyTree = repo.git("mktree");
+        const signedSha = execFileSync("git", ["-C", repo.dir, "commit-tree", emptyTree, "-F", "-"], {
+          input: commitMessage(record, "https://github.com/mihailinl/astra-registry/actions/runs/128"),
+          encoding: "utf8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: { ...process.env, GIT_AUTHOR_DATE: "2026-09-19T09:00:00Z", GIT_COMMITTER_DATE: "2026-09-19T09:00:00Z" },
+        }).trim();
+        repo.git("update-ref", "refs/heads/signed", signedSha);
+        const mergedAt = Number(repo.git("log", "-1", "--format=%ct", merge));
+        const findings = [], skipped = [], scanned = {};
+        a7({ git: gitReader(repo.dir), now: (mergedAt + 60 * (A7_BOUND_MINUTES.plugins + 1)) * 1000 }, findings, skipped, scanned);
+        repo.git("update-ref", "-d", "refs/heads/signed");
+        const malformed = findings.filter((f) => /^A7_(NO_SOURCE_COMMIT|SOURCE_COMMIT_UNKNOWN|NO_INDEX_SOURCE_COMMIT|INDEX_SOURCE_COMMIT_UNKNOWN)$/.test(f.code));
+        assertEqual(malformed.map((f) => f.code).join(","), "",
+          `${shape.name}: the fixture's \`signed\` commit is not one a signer writes, so A7 was asked about a commit it refuses`);
+        assertEqual(scanned.signed_index_source_commit, before, `${shape.name}: A7 did not read the carried Index-Source-Commit`);
+        const name = (c) => (c === merge ? "the merge" : c ? `${c.slice(0, 12)}, not the merge` : "nothing");
+        if (scanned.plugins_unsigned_commits !== expected.length) {
+          behind.push(`${shape.name}: A7's catalogue half counts ${scanned.plugins_unsigned_commits} commit(s) the carried ` +
+            `Index-Source-Commit does not contain, and main's first-parent line holds ${expected.length} that change ` +
+            `${CATALOGUE_PATHSPEC}/ after it — bot/detectors.mjs's unsignedTouching has stopped walking main's first-parent line`);
+        }
+        const paged = findings.filter((f) => f.code === "A7_SIGNED_BEHIND_PLUGINS");
+        if (paged.length !== 1 || paged[0].hex !== merge) {
+          behind.push(`${shape.name}: ${A7_BOUND_MINUTES.plugins + 1} minutes after a merge whose catalogue serial the ` +
+            `signer's count held or lowered, A7 raised ${JSON.stringify(findings.map((f) => f.code))} naming ` +
+            `${name(paged[0]?.hex)} — the page pending item 24 relies on names the merge, where main acquired the change`);
+        }
       }
+      assert(behind.length === 0,
+        `${behind.join("; ")}. Ops register entry 128: every reader of the catalogue's serial moves with DEC-9's formula ` +
+          "and the signer, and pending item 24 of ops dev/server-registry-contract-pending.md is the decision that moves it");
       for (const shape of list) {
         const r = headSerialProblems(shape.repo.dir);
         assertEqual(r.head, shape.merge, `${shape.name}: the head check read ${r.head}, not the merge`);
@@ -1341,6 +1506,115 @@ export async function run() {
     } finally {
       if (override !== undefined) process.env.ASTRA_REGISTRY_SERIAL = override;
     }
+  });
+
+  /**
+   * Every `rev-list` in tracked files under tools/, bot/ and .github/ that is
+   * code and not commentary — what `git grep -n rev-list -- tools bot .github`
+   * finds, less the lines that say it rather than run it — each with the unit
+   * that holds it: the top-level function or declaration in a module, the
+   * named step in a workflow or script. The suite itself and bot/tests/ are
+   * left out by name: they are checks, and nothing they count is published.
+   *
+   * Commentary is read by line, and only a line that is nothing else: `//`,
+   * `/*` or `*` first in a module, `#` first in a workflow. Anything else that
+   * says `rev-list` is code here, a message included, so the scan errs towards
+   * asking about a line and never towards skipping one. A file of any other
+   * kind that says `rev-list` is a site this scan cannot read, and so never a
+   * declared one.
+   */
+  function revListSites() {
+    const sites = [];
+    for (const abs of walkRepo()) {
+      const rel = path.relative(REPO_ROOT, abs).split(path.sep).join("/");
+      if (!/^(tools|bot|\.github)\//.test(rel) || isSuiteFile(rel) || rel.startsWith("bot/tests/")) continue;
+      const text = fs.readFileSync(abs, "latin1");
+      if (!text.includes("rev-list")) continue;
+      const lines = text.split("\n");
+      const kind = /\.(mjs|cjs|js)$/.test(rel) ? "module" : /\.(ya?ml|sh)$/.test(rel) ? "shell" : "other";
+      lines.forEach((line, i) => {
+        if (!line.includes("rev-list")) return;
+        const t = line.trim();
+        if (kind === "module" && /^(\/\/|\/\*|\*)/.test(t)) return;
+        if (kind === "shell" && t.startsWith("#")) return;
+        let unit = "(a file this scan cannot read)";
+        if (kind === "module") {
+          unit = "(top level)";
+          for (let j = i; j >= 0; j--) {
+            const m = /^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)|^(?:export\s+)?(?:const|let|var|class)\s+([A-Za-z_$][\w$]*)/.exec(lines[j]);
+            if (m) {
+              unit = m[1] ?? m[2];
+              break;
+            }
+          }
+        } else if (kind === "shell") {
+          unit = "(no step)";
+          for (let j = i; j >= 0; j--) {
+            const item = /^(\s*)- \S/.exec(lines[j]);
+            if (!item) continue;
+            let stepName = null;
+            for (let k = j; k <= i && stepName === null; k++) {
+              const n = (k === j ? /^\s*- name:\s*(.+?)\s*$/ : new RegExp(`^\\s{${item[1].length + 2}}name:\\s*(.+?)\\s*$`)).exec(lines[k]);
+              if (n) stepName = n[1];
+            }
+            unit = stepName ?? `(the unnamed step at line ${j + 1})`;
+            break;
+          }
+        }
+        sites.push({ rel, line: i + 1, unit, key: `${rel} › ${unit}`, text: t });
+      });
+    }
+    return sites;
+  }
+
+  // Every other unit that holds a `rev-list`, with how many lines of it and
+  // why none of them is the catalogue's serial. The number is part of the
+  // declaration: a second `rev-list` inside one of these is a new line nobody
+  // has read yet, and a reader added there with its pathspec in a variable
+  // would pass the pathspec test below.
+  const NOT_THE_CATALOGUE = new Map(Object.entries({
+    "bot/lib/takedown-bound.mjs › countWindow": [1, "main's first-parent line with timestamps and no pathspec, the takedown bound's window"],
+    "tools/coverage/git.mjs › historyCount": [1, "the depth of the whole history, no pathspec"],
+    "tools/coverage/git.mjs › commitsAfter": [1, "the commits after one, no pathspec"],
+    "tools/coverage/git.mjs › mergesAfter": [1, "the merges after one, no pathspec"],
+    "tools/lib/revocations.mjs › resolveSerial": [1, "the withdrawal list's serial, over SERIAL_PATHSPEC with SERIAL_FLAGS — entry 117's list check holds it"],
+    "tools/moderation-coverage.mjs › commitMode": [1, "a message quoting the depth of the whole history"],
+    "tools/priv-scan.mjs › run": [1, "a message quoting the depth of the whole history"],
+  }));
+
+  await test("entry 128 — every catalogue-serial count under tools/, bot/ and .github/ is one the head check above asks at a merge, and every other `rev-list` there is declared as counting something else", () => {
+    const sites = revListSites();
+    const asked = new Map(CATALOGUE_SERIAL_READERS.map((r) => [r.site, r]));
+    const problems = [];
+    const found = new Map();
+    for (const s of sites) {
+      found.set(s.key, (found.get(s.key) ?? 0) + 1);
+      if (asked.has(s.key)) continue;
+      if (NOT_THE_CATALOGUE.has(s.key)) {
+        if (/\bplugins\b|CATALOGUE_PATHSPEC/.test(s.text)) {
+          problems.push(`${s.rel}:${s.line} (${s.unit}) is declared not to count the catalogue, as ` +
+            `"${NOT_THE_CATALOGUE.get(s.key)[1]}", and its \`rev-list\` names the catalogue's pathspec: ${s.text}`);
+        }
+        continue;
+      }
+      problems.push(`${s.rel}:${s.line} (${s.unit}) runs a \`rev-list\` that the head check does not ask and nothing ` +
+        `declares as counting something other than the catalogue: ${s.text}`);
+    }
+    for (const r of CATALOGUE_SERIAL_READERS) {
+      if (!found.has(r.site)) {
+        problems.push(`the head check asks ${r.name} as the catalogue's serial at ${r.site}, and no \`rev-list\` is ` +
+          "there any more — it counts somewhere this table does not name, or through something the scan cannot see");
+      }
+    }
+    for (const [key, [lines, why]] of NOT_THE_CATALOGUE) {
+      if ((found.get(key) ?? 0) !== lines) {
+        problems.push(`${key} is declared with ${lines} line(s) of \`rev-list\` (${why}) and holds ${found.get(key) ?? 0}: ` +
+          "read what changed there and declare it again, or ask it in the head check if it counts the catalogue");
+      }
+    }
+    assert(problems.length === 0,
+      `${problems.join("; ")}. Ops register entry 128: every computation of the catalogue's serial is one the entry-117 ` +
+        "head check asks at a merge (CATALOGUE_SERIAL_READERS), so none can stay behind when DEC-9's catalogue formula moves");
   });
 
   await test("entry 117 — at main's head neither serial falls, or holds across a change under its pathspec: the list's by construction, the catalogue's as the canary", () => {
