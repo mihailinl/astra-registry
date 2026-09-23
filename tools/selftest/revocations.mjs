@@ -1,16 +1,20 @@
 // The withdrawal list, every test a refusal: the advisory shapes checkAdvisory
-// rejects, the generator flattening and refusing, and the signed envelope — a
-// stranger's key, the index/revocation domain swap in both directions, the 7-day
-// TTL against the catalogue's 30, one edited byte, and the committed document's
-// shape.
+// rejects, the generator flattening and refusing, the serial a regeneration
+// writes before its commit against the one the signer assigns at it (entry
+// 69), and the signed envelope — a stranger's key, the index/revocation domain
+// swap in both directions, the 7-day TTL against the catalogue's 30, one
+// edited byte, and the committed document's shape.
 
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 import { stableStringify } from "../lib/canonical.mjs";
-import { KINDS, REFUSED_ADVISORY_HOSTS, buildRevocations, checkAdvisory } from "../lib/revocations.mjs";
+import {
+  KINDS, OUTPUT_FILE, REFUSED_ADVISORY_HOSTS, SERIAL_PATHSPEC, SOURCE_DIR, buildRevocations, checkAdvisory, resolveSerial,
+} from "../lib/revocations.mjs";
 import { FLAG_PATH, FLAG_SCHEMA, flagPermanenceProblems } from "../signer/pages.mjs";
+import { serialsAt } from "../signer/plan.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { signRevocations } from "../sign-revocations.mjs";
 import { loadTestRoot } from "../testkeys/regenerate.mjs";
@@ -523,6 +527,141 @@ export async function run() {
       threw = true;
     }
     assert(threw, "an advisory the daemon could not act on was built into a deployable document");
+  });
+
+  // ── entry 69: the hand path, regenerated before its commit ────────────────
+  //
+  // A maintainer writes an advisory, regenerates the list — the suite's
+  // `build-revocations.mjs --check` refuses a tree whose list does not carry
+  // its advisories — and commits both. Until 2026-09-23 `resolveSerial` stopped
+  // at `HEAD`, so every such commit carried the serial `signed` already
+  // served, while the signer assigned one more at that very commit; and
+  // `--check` compares at the file's own serial, so nothing saw it. Measured
+  // on clones of `5526f1a` with the CLI itself: written 4, `serialsAt` 5.
+  //
+  // So this does the hand path, once per kind of pending change, in a
+  // repository built from committed material — this directory's README, the
+  // committed list, and the advisory above — and compares the committed
+  // file's serial with `serialsAt` at the commit that landed it. The
+  // regeneration is `buildRevocations({ root })`, which is exactly the call
+  // `build-revocations.mjs` makes without `--serial` (its root is this
+  // checkout, so the CLI itself cannot be pointed at a fixture).
+  //
+  // Each step is a clause with a mutation that reds it: the clean steps an
+  // unconditional +1; the pending ones the +1 removed; the README step a
+  // pathspec narrowed to the advisories; two changes at once a count of
+  // status lines; the step outside the directory a pathspec widened to
+  // `tools/` or to the tree. And at every step `pending: false` stops at
+  // `HEAD`, which is what the moderation commit job adds its own commit to.
+  // The landing is a commit on the tip, as RUNBOOK §7.1 pushes one; a merge
+  // commit adds one more that no regeneration can foresee (`resolveSerial`'s
+  // comment has the measurement).
+  await test("entry 69 — a list regenerated before its commit carries the serial the signer assigns at the commit that lands it: untracked, staged, unstaged, a README, two at once, and nothing for a clean tree or a change outside the directory", () => {
+    const dir = path.join(tmp, "entry69-hand-path");
+    fs.mkdirSync(dir, { recursive: true });
+    const git = (...a) =>
+      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "entry69-fixture@example.invalid");
+    git("config", "user.name", "entry 69 fixture");
+    git("config", "commit.gpgsign", "false");
+    const put = (rel, body) => {
+      fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+      fs.writeFileSync(path.join(dir, rel), body);
+    };
+    // `--allow-empty`: the last clean regeneration rewrites nothing, and its
+    // commit is still a landing to compare.
+    const commitAll = (message) => {
+      git("add", "-A");
+      git("commit", "-q", "--allow-empty", "-m", message);
+      return git("rev-parse", "HEAD");
+    };
+    // A hand-written advisory omits `advisory_url` (the directory's README).
+    const { advisory_url: _url, ...handWritten } = GOOD_ADVISORY;
+    const advisory = (n, over = {}) => {
+      const id = `ASTRA-2026-${String(n).padStart(4, "0")}`;
+      const doc = { ...handWritten, id, entries: [{ kind: "id", value: `fixture-${n}` }], ...over };
+      const errs = checkAdvisory(doc, id);
+      assert(errs.length === 0, `the fixture's advisory ${id} is not one: ${errs.join("; ")}`);
+      return [`${SOURCE_DIR}/${id}.json`, `${JSON.stringify(doc, null, 2)}\n`];
+    };
+
+    // Committed material: the directory's README and main's list, then a
+    // commit outside the directory, so a wider pathspec has history to see.
+    put(`${SOURCE_DIR}/README.md`, fs.readFileSync(path.join(REPO_ROOT, SOURCE_DIR, "README.md"), "utf8"));
+    put(OUTPUT_FILE, fs.readFileSync(path.join(REPO_ROOT, OUTPUT_FILE), "utf8"));
+    commitAll("seed: the directory and the list, as main has them");
+    put("tools/README-fixture.md", "under tools/, outside the list's directory\n");
+    put("plugins/fixture/plugin.json", "{}\n");
+    commitAll("seed: outside the directory");
+
+    const steps = [
+      ["a clean tree", false, () => {}],
+      ["an advisory, untracked", true, () => put(...advisory(1))],
+      ["an advisory, staged before the regeneration", true, () => {
+        put(...advisory(2));
+        git("add", "--", SOURCE_DIR);
+      }],
+      ["a committed advisory edited, unstaged", true, () => put(...advisory(1, { severity: "moderate" }))],
+      ["the directory's README alone", true, () =>
+        fs.appendFileSync(path.join(dir, SOURCE_DIR, "README.md"), "\nOne more line.\n")],
+      ["two at once, an advisory added and one withdrawn", true, () => {
+        put(...advisory(3));
+        fs.rmSync(path.join(dir, advisory(2)[0]));
+      }],
+      ["a change outside the directory only", false, () => {
+        put("tools/README-fixture.md", "under tools/, outside the list's directory, edited\n");
+        put("plugins/fixture/plugin.json", "{ }\n");
+      }],
+      ["a clean tree again", false, () => {}],
+    ];
+
+    const override = process.env.ASTRA_REVOCATIONS_SERIAL;
+    delete process.env.ASTRA_REVOCATIONS_SERIAL;
+    const rows = [];
+    const wrong = [];
+    try {
+      for (const [what, inside, prepare] of steps) {
+        const head = git("rev-parse", "HEAD");
+        prepare();
+        // The fixture guard: each step is the case it names, or its verdict
+        // is about a case it did not build.
+        const pending = git("status", "--porcelain", "--", SERIAL_PATHSPEC);
+        assertEqual(pending !== "", inside,
+          `${what}: git status under ${SERIAL_PATHSPEC}/ reads ${JSON.stringify(pending)}, so the fixture is not the case it names`);
+        if (what.startsWith("two at once")) {
+          assertEqual(pending.split("\n").length, 2, `${what}: git status reads ${JSON.stringify(pending)}, not two changes`);
+        }
+        if (what.startsWith("a change outside")) {
+          assert(git("status", "--porcelain", "--", "tools") !== "" && git("status", "--porcelain", "--", ".") !== "",
+            `${what}: neither tools/ nor the tree shows a pending change, so a widened pathspec could not be told apart`);
+        }
+
+        const atHead = serialsAt({ root: dir, sha: head }).revocations;
+        const stopped = resolveSerial({ root: dir, pending: false });
+        if (stopped !== atHead) {
+          wrong.push(`${what}: resolveSerial with pending: false gives ${stopped} and HEAD's serial is ${atHead}; the ` +
+            "moderation commit job adds its own commit to that, so it must stop at HEAD or the job writes one past the signer's serial");
+        }
+
+        // The hand path: regenerate, then commit everything.
+        put(OUTPUT_FILE, stableStringify(buildRevocations({ root: dir })));
+        const landed = commitAll(`entry 69: ${what}`);
+        const written = JSON.parse(git("show", `${landed}:${OUTPUT_FILE}`)).signed.serial;
+        const signer = serialsAt({ root: dir, sha: landed }).revocations;
+        rows.push(`${what}: HEAD ${atHead}, written ${written}, the signer ${signer}`);
+        if (written !== signer) {
+          wrong.push(`${what}: the list regenerated before its commit carries serial ${written}, and the signer ` +
+            `assigns ${signer} at the commit that landed it (HEAD's was ${atHead})`);
+        }
+      }
+      assertEqual(git("status", "--porcelain"), "", "the fixture was left with a pending change");
+    } finally {
+      if (override !== undefined) process.env.ASTRA_REVOCATIONS_SERIAL = override;
+    }
+    assertEqual(rows.length, steps.length, `the hand path ran ${rows.length} of ${steps.length} steps`);
+    assert(wrong.length === 0,
+      `${wrong.join("; ")} — ops register entry 69. Every step: ${rows.join(" | ")}`);
   });
   await test("a signed withdrawal list verifies under the key trust.json delegates to", () => {
     const doc = signedRevocations();

@@ -2293,10 +2293,11 @@ test("every output a moderation job hands on is one a step of that job writes", 
 // ITSELF, lists them in `paths.txt`, and writes the withdrawal list at the
 // serial the signer gives the commit that lands it — one more than the HEAD
 // count when that commit touches the list. A workflow step that ran either
-// generator again after it would rewrite the list at the HEAD count, and the
-// `apply` step would commit that one, because the path is listed: entry 69,
-// back, with every test of the job still green. So in this workflow a
-// generator only ever checks.
+// generator again after it would rewrite the list at a serial of its own —
+// the HEAD count until entry 69 closed, and a guess from `git status` since
+// — and the `apply` step would commit that one, because the path is listed:
+// a second writer of a listed path, with every test of the job still green.
+// So in this workflow a generator only ever checks.
 test("the moderation workflow runs the two generators only as `--check`", () => {
   const MODERATION = "plugins-moderation.yml";
   const offenders = [];

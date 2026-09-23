@@ -1750,11 +1750,13 @@ const FULL_SHA = /^[0-9a-f]{40}$/;
 //
 // And entry 69 rides on the same line: once the list IS committed, it must be
 // committed at the serial the signer assigns to the commit that lands it.
-// `resolveSerial` counts history and never the pending change, so a
-// regeneration run before the commit writes the serial `signed` already
-// serves. Both batches below are needed for that half: the list's serial moves
-// only when the commit touches `tools/revocations/`, and a repair that always
-// added one would pass the first batch and fail the second.
+// Until entry 69 closed, `resolveSerial` counted history and never the
+// pending change, so a regeneration run before the commit wrote the serial
+// `signed` already serves. It counts a pending change now, and this job adds
+// the commit it composes itself, so the first batch is also where counting
+// both would show, one past the signer. Both batches are needed: the list's
+// serial moves only when the commit touches `tools/revocations/`, and a repair
+// that always added one would pass the first batch and fail the second.
 test("a moderation commit carries the documents it regenerates, at the serials the signer gives the commit that lands them", async () => {
   for (const [label, entries, listMoves] of [
     ["a delist and a deprecate", [delistOf(SDI2), deprecateOf(SDI3)], true],

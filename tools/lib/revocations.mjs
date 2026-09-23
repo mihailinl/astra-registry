@@ -531,20 +531,54 @@ export function loadAdvisories({ root = REPO_ROOT } = {}) {
  * serial is the *safe* republication, and bumping it on every run would make
  * every re-sign a full replacement.
  *
- * **It does not count a pending change** (gap 69), and there it is NOT the
- * construction `tools/build-index.mjs` uses: that one adds one when `git
- * status` shows anything under `plugins/`. The `+ 1` below is the reserved
- * zero, the same one the signer's `serialsAt` adds, not a pending commit.
- * Measured 2026-09-22 on a clone of `24073a4`, where 3 commits touch the
- * directory: 4 on a clean tree, 4 with an advisory untracked, 4 with it
- * staged — and `serialsAt` gives 5 at the commit that lands it. So a
- * regeneration run BEFORE that commit writes the new entries at the serial
- * `signed` already serves. `plugins-moderation.yml` regenerates before it
- * commits, behind a commit step that is not built yet; and
- * `build-revocations.mjs --check` compares at the committed file's own
- * serial, so it cannot see the difference.
+ * **Plus the commit that is about to be made** (ops register entry 69), the
+ * construction `tools/build-index.mjs` has used since `a85c198`: one more when
+ * `git status --porcelain -- SERIAL_PATHSPEC` shows anything — staged,
+ * unstaged or untracked. The hand path regenerates BEFORE it commits, because
+ * the suite's `build-revocations.mjs --check` refuses a tree whose list does
+ * not carry its advisories: write the advisory, regenerate, commit. Until
+ * this, the count stopped at `HEAD`, so the new entries were written at the
+ * serial `signed` already serves. Measured 2026-09-23 on clones of `5526f1a`
+ * (3 commits touch the directory), running the CLI as a maintainer does and
+ * then committing: an advisory untracked, the same staged, a README edit, two
+ * advisories — each written at 4, and `serialsAt` gives 5 at the commit that
+ * lands it; a change outside the directory, 4 and 4. `--check` compares at the
+ * committed file's own serial, so it saw none of it. The `+ 1` after the count
+ * is the reserved zero, the signer's own; the pending one is on top of it.
+ *
+ * Whatever git status shows is ONE commit, never one per file: a regeneration
+ * that counted the lines would write two ahead for two advisories, and the
+ * next clean regeneration would take it back down (`a85c198`'s second case).
+ *
+ * **What status shows is what `--full-history` counts, once committed.** Its
+ * predicate is "the tree under the pathspec differs from a parent's", so any
+ * pending change that lands changes that tree: a mode-only change (`100644` →
+ * `100755`) and a type change (a file made a symlink) each move the count by
+ * one, measured on git 2.55. The four ways they disagree are all a status
+ * line whose change the commit does not carry — an untracked file left out
+ * of the commit, an intent-to-add entry committed without `-a`, a staged edit
+ * whose worktree was reverted and then committed with `-a`, and line endings
+ * a `text`/`eol` attribute normalises away (this repository sets none) — and
+ * in each the list is written one ABOVE the signer's serial. That direction is
+ * only main's unsigned copy: the signer regenerates at its own count.
+ *
+ * **It is exact only when the commit it is made for is the one that lands.**
+ * A commit pushed to `main` (RUNBOOK §7.1), or a pull request squashed or
+ * fast-forwarded, is. A pull request merged with a merge commit is not: the
+ * merge differs under the directory from its first parent, so DEC-9's count
+ * takes the merge too, and the signer assigns one more than the branch commit
+ * the regeneration counted (measured: 3 written on the branch, 4 at the
+ * merge; git's default count, which the catalogue keeps, gives 3). Nothing
+ * before the merge can know it, and `--check` compares at the file's own
+ * serial, so main's unsigned copy is one behind after such a merge.
+ *
+ * `pending: false` stops at `HEAD`, for a caller that knows the commit it is
+ * composing and adds it itself: `regenerateDocuments` in
+ * `bot/moderation-run.mjs` adds one exactly when its commit's paths touch the
+ * pathspec, which a working tree can only guess at. Counting both would write
+ * that commit one past the signer's serial.
  */
-export function resolveSerial({ explicit, root = REPO_ROOT } = {}) {
+export function resolveSerial({ explicit, root = REPO_ROOT, pending = true } = {}) {
   if (explicit !== undefined && explicit !== null) return explicit;
   if (process.env.ASTRA_REVOCATIONS_SERIAL) {
     const n = Number(process.env.ASTRA_REVOCATIONS_SERIAL);
@@ -565,7 +599,14 @@ export function resolveSerial({ explicit, root = REPO_ROOT } = {}) {
     // than 0. Serial 0 is reserved: `CatalogueState` uses it for "never seen",
     // and a document that claims it cannot be told apart from the absence of
     // one.
-    return Number(out.trim()) + 1;
+    const atHead = Number(out.trim()) + 1;
+    if (!pending) return atHead;
+    const dirty = execFileSync("git", ["status", "--porcelain", "--", SERIAL_PATHSPEC], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return dirty.trim() ? atHead + 1 : atHead;
   } catch {
     return 1;
   }

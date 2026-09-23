@@ -37,10 +37,11 @@ about the catalogue itself.
 
 **Not the copy in this branch.** `raw.githubusercontent.com/…/main/registry/v1/index.json`
 serves the committed file, which carries `"signatures": []` permanently and by
-design — see below. The signed catalogue exists only in the deployment, so
-fetching the branch copy gets a catalogue the daemon will classify `UNSIGNED`
-and refuse. That URL was the daemon's default until it was measured against this
-one; `astra-daemon`'s `DEFAULT_REGISTRY_URL` now points here.
+design — see below. The signed catalogue exists only on the `signed` branch and
+in the deployment, so fetching `main`'s copy gets a catalogue the daemon will
+classify `UNSIGNED` and refuse. That URL was the daemon's default until it was
+measured against this one; `astra-daemon`'s `DEFAULT_REGISTRY_URL` now points
+here.
 
 Since Phase 3.2 the catalogue is a **signed envelope** —
 `{ "signatures": [...], "signed": { "schema", "serial", "plugins" } }` — and only
@@ -58,22 +59,46 @@ was fetched from. The catalogue can move to another host without a daemon
 change, and an attacker serving their own file from this exact URL gains
 nothing.
 
-Two things are honestly not true yet, and the code says so rather than
-pretending otherwise:
+Where the signatures are, and where they are not:
 
-- The **committed** `registry/v1/index.json` carries `signatures: []`. This
-  repository holds no signing key; CI signs the deploy candidate inside the
-  `publish` environment. An empty array says "unsigned" out loud, where an
-  absent member could not be told from a stripped one.
-- The **root ceremony has been run** — 2026-08-11, offline.
-  [`registry/v1/root.json`](registry/v1/root.json) publishes the two Ed25519
-  public keys, and `astra-daemon`'s `PRODUCTION_ROOT_KEYS` compiles in the same
-  two. **No `trust.json` has been signed yet**, though, so nothing is delegated,
-  there are no index keys to verify a catalogue against, and the daemon still
-  reads every catalogue as `UNSIGNED`. That is the correct fail-closed state for
-  a chain whose anchor exists and has not vouched for anything, and not a gap to
-  be plugged with the clearly-labelled test keys in `tools/testkeys/`. See
-  [`SECURITY.md`](SECURITY.md) and [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
+- The **committed** `registry/v1/index.json` carries `signatures: []`, and so
+  does the committed `registry/v1/revocations.json`. This repository holds no
+  signing key; `sign.yml`'s `publish` job signs both inside the `publish`
+  environment and commits the signed copies to the `signed` branch. An empty
+  array says "unsigned" out loud, where an absent member could not be told from
+  a stripped one.
+- The **root ceremony was run** on 2026-08-11, offline.
+  [`registry/v1/root.json`](registry/v1/root.json) publishes two Ed25519 public
+  keys, `astra-root-2026a` (active) and `astra-root-2026a-reserve`, and
+  `node bot/check-roots.mjs` holds them to the two `bot/lib/roots.mjs` compiles
+  in. **`trust.json` is signed**: at serial 1 by `50c40c3` (2026-08-11), and
+  again at serial 2 by `5283fa7` (2026-08-19). Measured at `62c0f8e`, it
+  carries one signature, by the active root `astra-root-2026a`; it delegates
+  one index key, `astra-index-2026a`, with `not_before` 2026-08-19T11:00:49Z
+  and no `not_after`; it allows two reusable-workflow commits; and the document
+  expires 2027-08-19T11:00:49Z. The catalogue and the withdrawal list at the
+  head of `signed`, `430efba` at that measurement, each carry one signature, by
+  `astra-index-2026a`, and both verify under it. None of that has to be taken
+  from this page — these print it, serials and expiry included:
+
+  ```bash
+  node tools/sign-trust.mjs --verify registry/v1/trust.json   # against root.json's keys
+  git fetch origin signed && d=$(mktemp -d)
+  git show origin/signed:registry/v1/index.json > "$d/index.json"
+  git show origin/signed:registry/v1/revocations.json > "$d/revocations.json"
+  node bot/sign-index.mjs --verify "$d/index.json" --trust registry/v1/trust.json
+  node tools/sign-revocations.mjs --verify "$d/revocations.json" --trust registry/v1/trust.json
+  ```
+
+  Pages serves `signed`'s catalogue, `trust.json` and `root.json`, and `main`'s
+  **unsigned** withdrawal list, on purpose, until the commit that adds
+  `policy/pages-withdrawal-list.json` (`tools/signer/pages.mjs` says why);
+  `served-set.yml` compares what Pages serves with `signed` on a schedule.
+  **What the daemon does with any of this is outside this repository.** Its
+  verifier is in `Astra`, which nothing here reads, so no sentence on this page
+  about how a daemon classifies a catalogue is checked by anything in it. The
+  clearly-labelled test keys in `tools/testkeys/` are never a stand-in for these
+  keys. See [`SECURITY.md`](SECURITY.md) and [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
 
 `bot/lib/phase3.mjs` still lists every check that does not run yet, by its final
 error code, so nobody forgets which of these is which.
@@ -147,47 +172,57 @@ index build is ever in flight.
 
 ## The staging entries — read this before trusting the index
 
-**Every listing here is marked `"staging": true`,** all eleven. None of the
-releases they name exists, so none carries a `sha256` or a `size` — the only
-honest thing they can carry, since a digest for bytes nobody has produced would
-be a fabrication.
+**A version file marked `"staging": true` names a release that does not
+exist,** so it carries no `sha256` and no `size` — the only honest thing it can
+carry, since a digest for bytes nobody has produced would be a fabrication.
+When this catalogue began, every listing was one. Which files still are, and
+which releases AstraPlugins has actually published, both move, so this page
+names neither and gives the commands that do:
 
-The reason is not in this repository, and it is smaller than it used to be.
+```bash
+git grep -l '"staging": true' -- plugins           # the staging entries
+gh api repos/mihailinl/AstraPlugins/releases --paginate --jq '.[].tag_name'
+```
+
+What made every listing staging was upstream and is gone.
 `AstraPlugins/.github/workflows/plugin-release.yml` once asserted that the tag
-equals `v<version>`, which eleven plugins in one repository could not each own;
-it now takes a `tag-prefix` input, so `dice-roller-v0.1.1` is a tag it accepts.
-What is left upstream is mechanical, and none of it has happened yet:
-
-1. tag `plugin-release/v1` in AstraPlugins, so `astra-plugin init-ci` has
-   something to pin the caller to other than a moving default branch;
-2. `astra-plugin init-ci examples/<id>`, which writes that plugin's nine-line
-   caller workflow;
-3. push `<id>-v<version>`, and let the workflow build, attest and upload.
-
-`GET /repos/mihailinl/AstraPlugins/releases` returns `[]` as this is written —
-that is the whole of it. Every `staging_reason` in `plugins/*/versions/*.json`
-says the same thing, per plugin, with its own tag named.
+equals `v<version>`, which many plugins in one repository could not each own;
+it now takes a `tag-prefix` input, `plugin-release/v1` is tagged for
+`astra-plugin init-ci` to pin callers to, and AstraPlugins' plugins are released
+under `<id>-v<version>` tags. What keeps an entry staging now is its own
+release: until that tag is published and the record rewritten with its digests,
+it stays one. Each record's `staging_reason` describes AstraPlugins' releases as
+they stood when it was written; the second command is the current answer.
 
 Everything about how those entries are treated follows from there:
 
 - `tools/validate.mjs` **rejects** them. Accepting a listing whose artifact does
   not exist makes the whole registry worthless, so tolerating one takes an
-  explicit `--allow-staging`. It is passed on one line of `build-index.yml` and
-  one of `bot-checks.yml`, and nowhere else.
-- The generated index marks each plugin `"staging": true` and leaves
-  `download_url` and `platform_downloads` empty. A digest-blind client cannot
-  reach any of them.
+  explicit `--allow-staging` — or `allowStaging: true`, its in-process form.
+  Several workflows and tools pass it, and the set moves; this prints the lines
+  that pass it literally (`bot/run-checks.mjs` forwards its own flag, so
+  `bot-checks.yml`'s line is where that one is decided):
+
+  ```bash
+  git grep -n -E -e 'node [^#]*--allow-staging' -e '\[.*"--allow-staging"' \
+    -e 'allowStaging: true' -- .github bot tools/signer ':!bot/tests' ':!bot/manifest-probe'
+  ```
+- The generated index marks a plugin `"staging": true`, and leaves its
+  `download_url` and `platform_downloads` empty, when its latest version is a
+  staging entry; an older staging version under a released one is marked in its
+  own `releases` record, and no flat field points at it. A digest-blind client
+  cannot reach any of them.
 - `bot/run-checks.mjs` skips their artifact checks and says why, rather than
   reporting a 404 that means "the staging entry is still a staging entry".
 
-`--allow-staging` is load-bearing today, and every listing added moves it further
-from removal rather than closer. That is precisely why it is a flag a human types
-and not a default: the day it can be deleted is the day this section can be too.
+`--allow-staging` is load-bearing for as long as one staging entry remains. That
+is precisely why it is a flag a human types and not a default: the day it can be
+deleted is the day this section can be too.
 
-**To go live,** per plugin: publish the release, replace `staging`/`staging_reason`
+**To go live,** per entry: publish the release, replace `staging`/`staging_reason`
 with the real `sha256`, `size`, `published_at` and `release.commit`, and
-regenerate. Drop `--allow-staging` from `build-index.yml` and `bot-checks.yml`
-only once the **last** staging entry is gone.
+regenerate. Drop `--allow-staging` from every line the command above prints only
+once the **last** staging entry is gone.
 
 ## Where artifacts come from — and how to run your own catalogue
 
@@ -327,8 +362,8 @@ a change of repository, or a report. `docs/POLICY.md` is the detail.
 No dependencies, no lockfile, no `npm install`. Node 20+ and nothing else.
 
 ```bash
-node tools/selftest.mjs                 # 39 checks, offline, ~1s
-node tools/validate.mjs                 # strict: refuses the staging entry
+node tools/selftest.mjs                 # the suite; its summary line counts the checks
+node tools/validate.mjs                 # strict: refuses every staging entry
 node tools/validate.mjs --allow-staging # what CI runs today
 node tools/validate.mjs --allow-direct  # tolerate a non-GitHub artifact origin
 node tools/build-index.mjs              # regenerate registry/v1/index.json

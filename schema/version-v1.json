@@ -108,7 +108,7 @@
     },
     "staging": {
       "type": "boolean",
-      "description": "Bootstrap only: the release does not exist yet, so there is no digest to pin. tools/validate.mjs REJECTS a staging entry unless --allow-staging is passed. See README.md §The bootstrap entry."
+      "description": "Bootstrap only: the release does not exist yet, so there is no digest to pin. tools/validate.mjs REJECTS a staging entry unless --allow-staging is passed. See README.md §The staging entries."
     },
     "staging_reason": { "type": "string", "minLength": 1, "maxLength": 400 },
     "artifacts": {

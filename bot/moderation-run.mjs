@@ -745,15 +745,16 @@ export const movesListSerial = (paths) =>
  * 79's defect in a new place; the writer and the lister are now one function.
  *
  * **The serials are the ones the signer assigns the commit that lands them.**
- * The index's generator already counts a pending change under `plugins/` as
- * the commit about to be made (`a85c198`). The list's does not (ops entry 69):
- * `resolveSerial` counts history at `HEAD` and the reserved zero, so run before
- * the commit it writes the serial `signed` ALREADY serves, and
- * `build-revocations --check` compares at the file's own serial and cannot see
- * it. This job knows exactly which commit it is composing, so it adds that one
- * when — and only when — the commit touches the list's pathspec; the landing
- * commit is a single-parent commit on `HEAD`, which every way of counting the
- * pathspec counts. The formula itself stays `tools/lib/revocations.mjs`'s.
+ * Both generators count a pending change as the commit about to be made — the
+ * index's since `a85c198`, the list's since ops entry 69 — by reading `git
+ * status`, which is a guess at the commit. This job does not guess: it knows
+ * exactly which commit it is composing, so for the list it asks
+ * `resolveSerial` for `HEAD`'s count alone (`pending: false`) and adds that
+ * commit when — and only when — its paths touch the list's pathspec. Letting
+ * both count it would write the list one past the signer's serial, because
+ * the advisory this job wrote is pending when it asks. The landing commit is a single-parent commit
+ * on `HEAD`, which every way of counting the pathspec counts. The formula
+ * itself stays `tools/lib/revocations.mjs`'s.
  *
  * Nothing is regenerated for an empty commit: a document is what a change
  * produces, and a run that commits nothing leaves the tree as it found it
@@ -762,7 +763,7 @@ export const movesListSerial = (paths) =>
 export function regenerateDocuments({ root = REPO_ROOT, paths = [] } = {}) {
   if (!paths.length) return { changed: [], serials: null };
   const index = buildIndex({ root });
-  const list = buildRevocations({ root, serial: listSerialAtHead({ root }) + (movesListSerial(paths) ? 1 : 0) });
+  const list = buildRevocations({ root, serial: listSerialAtHead({ root, pending: false }) + (movesListSerial(paths) ? 1 : 0) });
   const changed = [];
   for (const [rel, doc] of [[INDEX_FILE, index], [REVOCATIONS_FILE, list]]) {
     if (!allowedPath(rel)) {
