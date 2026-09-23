@@ -1426,6 +1426,26 @@ export async function run() {
       `${legs.filter((l) => l.red.length).length + 1} red as named, ${legs.filter((l) => !l.red.length).length} green; ` +
       `${Object.keys(PENDING_MEMBERS).length} rows' checks each a title in ${SELF} once.`);
   });
+
+  // The live half of the rule above: the committed file, as it stands. Every
+  // record names, in `asserted_by`, a check this repository runs by exactly
+  // that name — and for a member with a row, that row's check. Landed with the
+  // token file regenerated from contract 0.36.0, because a file generated
+  // before it carries no `asserted_by` and this is red on it by design.
+  await test("every pending record names, in asserted_by, the check in this repository that asserts its floor", () => {
+    const doc = JSON.parse(fs.readFileSync(tokenPath, "utf8"));
+    const committedModules = new Set(git(["ls-files", "--", "tools/selftest/"]).split("\n").filter(Boolean));
+    const textOf = (rel) => (committedModules.has(rel) ? fs.readFileSync(path.join(REPO_ROOT, rel), "utf8") : null);
+    const records = Array.isArray(doc.pending) ? doc.pending : [];
+    const problems = assertedByProblems(doc, { textOf, committedModules });
+    assert(problems.length === 0,
+      `${TOKEN_FILE}'s pending records do not each name the check that holds their floor (contract 0.36.0, SCOPE-7; ` +
+      `ops pending item 27):\n` + problems.map((p) => `- ${p}`).join("\n"));
+    const unrowed = records.filter((p) => !PENDING_MEMBERS[p.id]).map((p) => p.id);
+    console.log(`  note  ${records.length} pending record(s), each naming one check by its exact title; ` +
+      `${records.length - unrowed.length} of them this module's own row check` +
+      `${unrowed.length ? `, and ${unrowed.join(", ")} a check elsewhere` : ""}.`);
+  });
 }
 
 /**
