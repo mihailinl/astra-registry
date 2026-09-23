@@ -9,9 +9,10 @@ a maintainer can change it with an editor.
 | `queue/<id>@<version>.json` | A release waiting out the publication delay (PRODUCTION_PLAN §3.5, `docs/POLICY.md` §4). | The release never publishes itself. Delete a file to **cancel** a publication; edit `publish_after` to bring one forward. |
 | `releases-seen.json` | The release backstop's memory: one `etag` and last-seen tag per listed repository (task 3.4, layer 2). | Nothing but bandwidth — one full poll of every listing, once. It is a cache. |
 | `keepalive.json` | ROLL-62's keepalive (RC-R1-9(b)): the month of the last commit made so that this repository is never 60 days quiet. | Every `schedule:` in this repository, 60 days later, disabled by GitHub with nothing going red. `tools/coverage/keepalive-age.mjs` is red 35 days after the last change to it. |
+| `moderation-settled.json` | The moderation results a commit in history decided — a hold ended by hand, or by a release or cancel commit — that the plugins service answered `accepted` or `duplicate`: BOT-82's key, the answer, its time and the run (ops entry 100). Written by `plugins-moderation.yml`'s `commit` job. | Nothing but noise: every such result is posted once more on each live run, and answered `duplicate`, until it is recorded again. Absent or invalid, it skips nothing. |
 | `publishers-without-listing.json` | The publisher records that reach no listing, each with the reason none is expected (gap 6). Written by hand in a reviewed commit, and by `publisher-recheck.yml`, which drops a withdrawn record's declaration in the same commit as the withdrawal. | `tools/selftest/publishers.mjs` refuses every undeclared record that reaches no listing — today `publishers/KnlCE.json` — so `main`, and every bot commit the suite gates, is red until it is back. |
 
-**Nothing in here is trusted**, with one exception, below, that is trusted no
+**Nothing in here is trusted**, with two exceptions, below, each trusted no
 further than the records it names. A queue entry records what a release was
 queued for, and when the delay ends the *entire* ingest runs again from scratch
 against the release as it is at that moment — the assets are re-downloaded,
@@ -44,6 +45,26 @@ record. Its path is `bot/recheck-publishers.mjs`'s `NO_LISTING_FILE`, which
 the suite imports, and only the workflow's commit step spells it again; its
 shape is `tools/selftest/publishers.mjs`'s to judge, and that module is red if
 the workflow ever commits a path inside the set.
+
+## `moderation-settled.json`, and what a row buys
+
+The second exception. A row stops the moderation run posting one result — one
+`(service_decision_id, outcome, commit)`, BOT-82's key — that a commit in
+history decided, because the plugins service has already answered it
+`accepted` or `duplicate`. Only the service's answer writes a row, never the
+post: the `list` job posts and hands on the settling answers, and the `commit`
+job, which holds no bot token, re-checks each one against its own walk and
+records it (`bot/lib/settled.mjs`). A row is trusted no further than that one
+post. A forged row withholds a result the service never received: it changes
+nothing in git, but the decision then stays `held` at the service, and nothing
+in this repository notices. That is why each row carries the answer's time and
+the run that saw it, and why a hand edit here is reviewed like any other.
+Everything else degrades to posting again: a missing file, a file that is not
+this schema, a row that is malformed.
+
+It is outside contract TRUST-31's hashed set for the reason the rest of this
+directory is: a record the run writes as it works. The rule that reads it is
+`bot/lib/settled.mjs`, inside the set.
 
 ## `keepalive.json`, and the one thing it must never become
 

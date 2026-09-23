@@ -4,6 +4,8 @@
 // in each of its four jobs (registry plan M-T3.4).
 //
 //   node bot/moderation-run.mjs --job list      GET bot/moderation-work, check it
+//   node bot/moderation-run.mjs --job history   (in `list`) POST the results history
+//                                               decided; hand on what the service settled
 //   node bot/moderation-run.mjs --job commit    compile, walk the holds, write
 //   node bot/moderation-run.mjs --job report    POST the results
 //   node bot/moderation-run.mjs --job settled   every listed id got a result
@@ -87,6 +89,18 @@
 // state-setting, so `report` posts it only in a run whose list answer is
 // `shadow: false` — the next such run, not this one (`resultsToPost`).
 //
+// **And once, not for ever** (ops entry 100). A hold ended by a commit in
+// history — a hand deletion, a release or cancel commit — was re-derived from
+// that commit and re-posted on every live run, because nothing here recorded
+// that the service had accepted it. Now the `list` job posts those results
+// before `commit` (`--job history`: each names a commit already on `main`, so
+// none waits for this run's push), hands on the ones the service ANSWERED
+// `accepted` or `duplicate`, and `commit` records them in
+// `state/moderation-settled.json`; the walk skips a recorded one. Anything
+// else — a 5xx, a timeout, a shadow answer, a missing or unreadable record —
+// leaves it to be posted again. `bot/lib/settled.mjs` carries the argument
+// and what a forged row costs.
+//
 // **The release commit itself is not built** (M-T3.3: "a release commit
 // applies the held decision from the hold entry, writes the log entry, deletes
 // the entry and its confirm record"). Nothing here applies a held decision or
@@ -150,6 +164,15 @@ import {
 } from "./lib/holds.mjs";
 import { VERDICT_SCHEMA, runUrl, verdictProblems } from "./lib/alert-verdict.mjs";
 import { SOURCE_DIR as MODERATION_DIR } from "./lib/moderation.mjs";
+import {
+  SETTLED_FILE,
+  acceptRows,
+  composeSettled,
+  readSettled,
+  settledKey,
+  settledRow,
+  writeSettled,
+} from "./lib/settled.mjs";
 import { POLICY_CODES } from "./lib/policy/constants.mjs";
 import { createClient } from "./lib/service.mjs";
 import { buildIndex } from "../tools/build-index.mjs";
@@ -230,13 +253,21 @@ export const MODERATION_ALLOWLIST = Object.freeze([
   "log/decisions/",
   "state/holds/",
   "registry/v1/",
+  // One file, not a directory: the results the service answered as settled
+  // (`bot/lib/settled.mjs`; ops entry 100).
+  SETTLED_FILE,
 ]);
 
-/** Is this repository-relative path one a moderation commit may write? */
+/**
+ * Is this repository-relative path one a moderation commit may write? An entry
+ * ending in `/` admits everything beneath it; any other entry admits exactly
+ * that file, so `state/moderation-settled.json` does not also admit a sibling
+ * whose name merely begins the same way.
+ */
 export function allowedPath(rel) {
   const p = String(rel ?? "");
   if (p === "" || p.startsWith("/") || p.split("/").some((s) => s === "" || s === "." || s === "..")) return false;
-  return MODERATION_ALLOWLIST.some((prefix) => p.startsWith(prefix));
+  return MODERATION_ALLOWLIST.some((entry) => (entry.endsWith("/") ? p.startsWith(entry) : p === entry));
 }
 
 const readJson = (file) => {
@@ -667,8 +698,15 @@ export function composeTrailers({ run, decisions = [] }) {
  * this commit. They are listed only beside something else — a document is
  * what a change produces, never a change of its own — and only when they
  * changed.
+ *
+ * `settled` are the rows this run added to `state/moderation-settled.json`
+ * (ops entry 100). They are a change of their own: a run whose only news is
+ * that the service accepted a result derived from history commits the record
+ * alone, once, and the next run skips that result rather than posting it again.
+ * No `Service-Decision:` trailer is written for them — a trailer says a commit
+ * applies, holds or cancels a decision (BOT-81), and this one does none of that.
  */
-export function composeCommit({ compiled, held = [], submissions = [], documents = [], run, subject = null }) {
+export function composeCommit({ compiled, held = [], submissions = [], documents = [], settled = [], run, subject = null }) {
   const paths = new Set();
   const decisions = [];
   for (const r of compiled) {
@@ -683,6 +721,7 @@ export function composeCommit({ compiled, held = [], submissions = [], documents
     paths.add(holdEntryPath(h.service_decision_id));
   }
   for (const s of submissions) if (s.path) paths.add(s.path);
+  if (settled.length) paths.add(SETTLED_FILE);
   if (paths.size) for (const d of documents) paths.add(d);
 
   const bad = [...paths].filter((p) => !allowedPath(p));
@@ -700,6 +739,7 @@ export function composeCommit({ compiled, held = [], submissions = [], documents
     compiled.length ? `${compiled.length} decision(s)` : null,
     held.length ? `${held.length} hold(s)` : null,
     submissions.length ? `${submissions.length} terminal record(s)` : null,
+    settled.length ? `${settled.length} settled result(s) recorded` : null,
   ].filter(Boolean).join(", ");
 
   const message = decisionCommitMessage({
@@ -1050,9 +1090,25 @@ export function holdDeletions(root = REPO_ROOT, { present = new Set() } = {}) {
  * removes the entry, and there is no such commit. So it is refused by name: an
  * `::error::` (`hold_end_not_built`) every run, the entry left for the run
  * that can build the commit, and nothing posted.
+ *
+ * **A result from history the service has already settled is skipped** — not
+ * posted, not alerted — when `settled` holds its BOT-82 key (ops entry 100).
+ * `settled` is `readSettled`'s `keys`: the results the service ANSWERED
+ * `accepted` or `duplicate`, never the ones merely posted. It defaults to the
+ * empty set, and an absent or unreadable record is the empty set too, so every
+ * fault here is a result posted again and never one withheld. A skipped row
+ * goes to `settled`, so a run still says how many it passed over. An
+ * `unclear` deletion has no result, so nothing can settle it and it alerts on.
  */
-export function walkHolds({ root = REPO_ROOT, now = new Date(), shadow = true, delistedPlugins = [], coverageRed = false } = {}) {
-  const out = { released: [], cancelled: [], waiting: [], due: [], unclear: [], alerts: [], pending: [] };
+export function walkHolds({
+  root = REPO_ROOT,
+  now = new Date(),
+  shadow = true,
+  delistedPlugins = [],
+  coverageRed = false,
+  settled = new Set(),
+} = {}) {
+  const out = { released: [], cancelled: [], waiting: [], due: [], unclear: [], alerts: [], pending: [], settled: [] };
   const onTree = readHolds(root);
   for (const hold of onTree) {
     // Where the entry landed: a reversal's 24 hours run from that commit, not
@@ -1093,6 +1149,10 @@ export function walkHolds({ root = REPO_ROOT, now = new Date(), shadow = true, d
     }
     if (c.act !== "release" && c.act !== "cancel") {
       throw new Error(`${gone.sha} deleted the hold entry for ${gone.id} and classifyHoldCommit answered ${c.act}`);
+    }
+    if (settled.has(settledKey({ service_decision_id: gone.id, outcome: c.result, commit: gone.sha }))) {
+      out.settled.push(row);
+      continue;
     }
     if (c.hand) out.alerts.push({ kind: "hold_hand_cancelled", service_decision_id: gone.id, commit: gone.sha, why: c.reason });
     (c.act === "cancel" ? out.cancelled : out.released).push(row);
@@ -1358,6 +1418,26 @@ const arg = (argv, name) => {
 /** The commit job's `results` output, or null when nothing was handed on. A value that is not JSON throws. */
 const parseResults = (text) => (typeof text === "string" && text.trim() !== "" ? JSON.parse(text) : null);
 
+/**
+ * `list`'s `settled` output (ops entry 100), or no rows. Empty — `list` failed,
+ * or its step is not built — is no rows. So is a value that is not a JSON
+ * array, said aloud: a row not recorded is a result posted again, and failing
+ * the commit job over it would hold back every takedown in the batch for the
+ * sake of a record.
+ */
+function parseSettled(text, log) {
+  if (typeof text !== "string" || text.trim() === "") return [];
+  try {
+    const rows = JSON.parse(text);
+    if (Array.isArray(rows)) return rows;
+  } catch {
+    // fall through to the warning
+  }
+  log.error("::warning::settled_row_refused: `list`'s `settled` output is not a JSON array, so no row is recorded " +
+    "and every result it named is posted again");
+  return [];
+}
+
 export async function main(argv = [], { env = process.env, log = console, fetchImpl = fetch, now = new Date() } = {}) {
   const job = arg(argv, "--job");
   const root = arg(argv, "--registry-dir") ?? REPO_ROOT;
@@ -1374,6 +1454,57 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     for (const a of checked.alerts) log.error(`::warning::${a.cause}: ${a.detail}`);
     for (const f of checked.fatal) log.error(`::error::${f}`);
     return checked.fatal.length ? 1 : 0;
+  }
+
+  if (job === "history") {
+    // Ops entry 100, in the `list` job, after the list call and BEFORE
+    // `commit`: post the results a commit already on `main` decided — a hold a
+    // person deleted, a release or cancel commit — and write the ones the
+    // service ANSWERED `accepted` or `duplicate` to `settled.json`, which the
+    // step hands to `commit` as the job's `settled` output. `commit` records
+    // them, and the next run skips them. This job may post them because each
+    // names a commit already on `main`: it is not a promise waiting for this
+    // run's push (BOT-6), and BOT-82 settles it against `main` as it would
+    // from `report`. What the service does not settle here, `report` posts
+    // again after the commit, as it always has.
+    //
+    // It is not the list call, and it is not in `--job list`, so that a run
+    // with the list answer in hand can tell "the work list could not be read"
+    // from "a result from history was not settled": the second is not a
+    // failed list, and fails nothing — the result is simply posted again.
+    const out = arg(argv, "--out") ?? "moderation";
+    fs.mkdirSync(out, { recursive: true });
+    const file = path.join(out, "settled.json");
+    const shadow = env.ASTRA_SHADOW === "false" ? false : true;
+    if (shadow !== false) {
+      // BOT-92: an `applied` or `cancelled` result settles a decision, so under
+      // anything but `shadow: false` none is posted, and so none is settled.
+      fs.writeFileSync(file, "[]\n");
+      log.log("note  shadow: no result derived from history is posted, so none is recorded as settled (BOT-92)");
+      return 0;
+    }
+    const record = readSettled(root);
+    for (const p of record.problems) log.error(`::warning::settled_record_unreadable: ${p}`);
+    const holds = walkHolds({ root, now, shadow: false, settled: record.keys });
+    const pending = resultsToPost(holds.pending, { shadow: false });
+    const client = pending.length ? createClient({ workflow: "moderation", env, log, fetchImpl }) : null;
+    const rows = [];
+    const run = runUrl(env);
+    for (const p of pending) {
+      const answer = await client.call("serviceDecisionResult", resultBody(p));
+      const { row, why } = settledRow(p, answer, { now, run });
+      if (row) {
+        rows.push(row);
+        log.log(`settle ${p.service_decision_id} ${p.outcome} ${row.answer}`);
+      } else {
+        log.log(`post   ${p.service_decision_id} ${p.outcome} is not recorded as settled: ${why}. \`report\` posts ` +
+          "it again after the commit, and the next live run again after that");
+      }
+    }
+    fs.writeFileSync(file, `${JSON.stringify(rows)}\n`);
+    log.log(`ok    ${pending.length} result(s) derived from history posted, ${rows.length} settled, ` +
+      `${holds.settled.length} skipped as already settled`);
+    return 0;
   }
 
   if (job === "commit") {
@@ -1428,11 +1559,42 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
       for (const s of recheck.submissions) terminal.push(terminalSubmissionRecord(s, { root, existing }));
     }
 
-    const holds = walkHolds({ root, now, shadow });
+    // Ops entry 100. The results from history that the service has already
+    // settled are skipped by the walk: the ones in the record on this tree,
+    // and — live only — the ones `list` posted before this job and the service
+    // answered `accepted` or `duplicate`, which this job records now. A record
+    // that is absent or unreadable skips nothing, and says so when unreadable.
+    const record = readSettled(root);
+    for (const p of record.problems) log.error(`::warning::settled_record_unreadable: ${p}`);
+    const holds = walkHolds({ root, now, shadow, settled: record.keys });
+    const handed = parseSettled(env.ASTRA_SETTLED, log);
+    let recorded = [];
+    const refusedRows = [];
+    if (live) {
+      // Re-checked, as `entries` is: each row must be sound AND name a result
+      // this walk derived and has not recorded. The answer itself this job
+      // cannot see; that trust, and what a forged row costs, is
+      // `bot/lib/settled.mjs`'s header.
+      const accepted = acceptRows(handed, { derived: new Set(holds.pending.map(settledKey)) });
+      refusedRows.push(...accepted.problems);
+      recorded = accepted.rows;
+      if (recorded.length) {
+        const nowSettled = new Set(recorded.map(settledKey));
+        holds.pending = holds.pending.filter((p) => !nowSettled.has(settledKey(p)));
+        writeSettled(root, composeSettled(record.rows, recorded));
+      }
+    } else if (handed.length) {
+      refusedRows.push(
+        `${handed.length} settled row(s) were handed on under a list answer that is not \`shadow: false\`; a shadow ` +
+        "run posts nothing, so nothing it was handed can have been settled, and none is recorded (BOT-92)",
+      );
+    }
+    for (const p of refusedRows) log.error(`::warning::settled_row_refused: ${p}`);
     const composed = {
       compiled: live ? compiledAll.compiled : [],
       held: holdsEntered.entered,
       submissions: terminal,
+      settled: recorded,
       run: env.GITHUB_RUN_ID ?? "0",
     };
     let commit = composeCommit(composed);
@@ -1467,6 +1629,9 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
       held: live ? holdsEntered.results : [],
       holds_kept: holdsEntered.kept,
       holds,
+      // Ops entry 100: what the record on this tree was, and the rows this
+      // run added to it. `holds.settled` is what the walk passed over.
+      settled: { record: record.state, recorded, problems: [...record.problems, ...refusedRows] },
       written,
       documents: documents.changed,
       serials: documents.serials,
@@ -1494,9 +1659,12 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     // An unclear deletion is an error: nobody can say what happened, and no
     // result will be posted until a person does. A hand cancellation is the
     // documented way to end a hold, so it is a warning — but it is said,
-    // because nothing else announced it. Both repeat on every run for as long as
-    // the commit is in history: nothing on this side records that a result was
-    // accepted, which is also why BOT-82 answers the repeat post `duplicate`.
+    // because nothing else announced it. An unclear deletion repeats on every
+    // run for as long as its commit is in history, because it has no result
+    // and nothing can settle it. A hand cancellation repeats until the service
+    // has answered its `cancelled` `accepted` or `duplicate` and the record on
+    // `main` says so (ops entry 100) — so it is said at least in the run that
+    // records it, and then no more.
     for (const a of holds.alerts) {
       const level = a.kind === "hold_hand_cancelled" ? "warning" : "error";
       log.error(`::${level}::${a.kind} ${a.service_decision_id}${a.commit ? ` in ${a.commit}` : ""}: ${a.why}`);
@@ -1504,7 +1672,7 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     log.log(`ok    ${compiledAll.compiled.length} compiled, ${compiledAll.refused.length} refused, ` +
       `${compiledAll.held.length} held (${holdsEntered.written.length} entered, ${holdsEntered.kept.length} already on the tree), ` +
       `${holds.released.length} released, ${holds.cancelled.length} cancelled, ${holds.due.length} due and not built, ` +
-      `${holds.unclear.length} unclear`);
+      `${holds.unclear.length} unclear, ${holds.settled.length} already settled, ${recorded.length} recorded as settled`);
     if (!live) {
       // The sentence is now true because the code above makes it true, and the
       // suite checks the pair: this line, and a `paths.txt` naming none of it.
@@ -1610,7 +1778,7 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     return 0;
   }
 
-  throw new Error(`\`--job ${JSON.stringify(job)}\` is not one of list, commit, report, settled`);
+  throw new Error(`\`--job ${JSON.stringify(job)}\` is not one of list, history, commit, report, settled, alarms, verdict`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

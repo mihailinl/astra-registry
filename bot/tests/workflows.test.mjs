@@ -2338,6 +2338,58 @@ test("`report` and `settled` read what `commit` hands on, and `settled` only onc
   assert.equal(settled("ASTRA_MAIN_COMMIT"), "${{ needs.commit.outputs.main_commit }}");
 });
 
+// Ops register entry 100. A result a commit in history decided is posted by
+// `list` BEFORE `commit` — `list` holds the token, `commit` may write — and the
+// rows the service answered `accepted` or `duplicate` reach the writer through
+// the one channel it already reads: `list`'s job outputs. Nothing else can
+// carry them there. `report` posts after `commit`, a token job may not upload
+// an artifact (BOT-55) and no credentialled job may touch a cache (BOT-56), and
+// another run's artifact needs `actions: read`, which `commit` does not hold.
+// This holds the wiring; the next test holds `commit` to having no other way.
+test("`list` hands the settled results to `commit` as a job output, from a history step over the full history", () => {
+  const MODERATION = "plugins-moderation.yml";
+  const list = jobOf(MODERATION, "list");
+  const lines = code(list);
+  assert.ok(
+    lines.some((l) => /^\s+settled:\s*\$\{\{\s*steps\.history\.outputs\.settled\s*\}\}\s*$/.test(l)),
+    "`list` hands on no `settled` output from its `history` step, so no answer the service gave ever reaches the " +
+    "job that can record it, and every result from history is posted again on every run (ops entry 100)",
+  );
+  assert.ok(stepsOf(list.body).some((st) => st.body.some((l) => /^\s+id:\s*history\s*$/.test(l))),
+    "`list` has no step with `id: history`");
+  assert.ok(lines.some((l) => /^\s+fetch-depth:\s*0\s*$/.test(l)),
+    "`list` checks out a shallow history, and `holdDeletions` refuses one: the history step would fail every run");
+  const commit = code(jobOf(MODERATION, "commit")).join("\n");
+  assert.match(commit, /^\s+ASTRA_SETTLED:\s*\$\{\{\s*needs\.list\.outputs\.settled\s*\}\}\s*$/m,
+    "`commit` is not handed `list`'s settled rows, so nothing it writes records a result as settled");
+});
+
+// The separation the design above rests on, as a canary rather than a header
+// comment. Measured 2026-09-23 before this test existed: giving `commit`
+// `actions: read`, a named `actions/download-artifact` of another run, or a
+// second job with `contents: write` after `report` each left this whole suite
+// green. BOT-2 stops a job holding a token AND `contents: write`; nothing
+// stopped the writer growing a read of bytes another run chose, or a second
+// writer appearing where the answer is.
+test("the moderation run's `commit` is its only writer, holds nothing else, and takes no artifact or cache", () => {
+  const MODERATION = "plugins-moderation.yml";
+  const jobs = allJobs().filter((j) => j.file === MODERATION);
+  assert.ok(jobs.length >= 5, `${MODERATION} has ${jobs.length} jobs and the graph is 5; this would check nothing`);
+  assert.deepEqual(jobs.filter(writesRepo).map((j) => j.job), ["commit"],
+    "a job other than `commit` writes the repository in the moderation run. The header's table gives exactly one " +
+    "writer, and a second one beside a token job is where a result the service never answered gets recorded");
+  const lines = code(jobOf(MODERATION, "commit"));
+  const at = lines.findIndex((l) => /^\s{4}permissions:\s*$/.test(l));
+  assert.ok(at >= 0, "`commit` declares no job-level permissions block");
+  const granted = [];
+  for (let i = at + 1; i < lines.length && /^\s{6}\S/.test(lines[i]); i++) granted.push(lines[i].trim().replace(/\s*#.*$/, ""));
+  assert.deepEqual(granted.sort(), ["contents: write", "id-token: none"],
+    "`commit` holds a permission beyond `contents: write`. `actions: read` is the one that would let it fetch " +
+    "another run's artifact — bytes a different job chose — into the only job that writes `main`");
+  const taken = lines.filter((l) => /uses:\s*actions\/(download-artifact|upload-artifact|cache)\b/.test(l));
+  assert.deepEqual(taken, [], "`commit` moves bytes through an artifact or a cache; it reads only `needs.list.outputs` and `main` (M-T3.4)");
+});
+
 // ── BOT-51's interval, and the two places it is written ─────────────────────
 //
 // The ingest workflow claims on a schedule whose interval is at most 600 s.

@@ -920,6 +920,17 @@ and carries `Service-Decision:`. A cancel is one commit that deletes the entry
 with a trailer. An entry that disappears with neither is a hand cancellation,
 and the commit that removed it is what records that.
 
+**Its result is posted until the service settles it, and then never again.**
+The moderation run's `list` job posts the `applied` or `cancelled` that such a
+commit decided, and the `commit` job records each one the service answered
+`accepted` or `duplicate` in `state/moderation-settled.json`, with the answer,
+its time and the run. Later runs skip a recorded result and stop warning about
+it. Do not edit the file by hand: deleting a row only makes the result post
+again, which the service answers `duplicate`; adding one withholds a result the
+service may never have received, and the decision then sits `held` at the
+service with nothing on this side to notice. A file that is not valid is read
+as empty, and every run says so until one rewrites it.
+
 **A red coverage canary blocks a `reversal` and nothing else** (§7.11). It never
 blocks a takedown: a withdrawal that waits for a transparency check is a
 withdrawal a transparency check can stop.
