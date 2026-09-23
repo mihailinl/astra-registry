@@ -729,7 +729,9 @@ Delete the advisory file and commit, **with the same trailer on the deleting
 commit**. The list's serial is a commit count over `tools/revocations/`, so it
 rises on a deletion exactly as it rose on the addition — which is why the
 serial is not the number of advisories, and why an un-withdrawal cannot make it
-go backwards.
+go backwards. It counts with `--full-history` (contract DEC-9, from 0.35.0):
+git's default count can fall at a merge that follows an un-withdrawal on
+`main`, and the signer then refuses the next list as a serial going backwards.
 
 Then §7.1 step 4 again. A lift is the case where verifying at the edge matters
 most: the plugin is working for you the moment you delete the file, and it is

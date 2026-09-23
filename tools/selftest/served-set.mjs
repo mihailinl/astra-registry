@@ -32,7 +32,7 @@ import { armingState } from "../signer/pages.mjs";
 import { SIGNED_FILES, serialsAt } from "../signer/plan.mjs";
 import { SERIAL_PATHSPEC } from "../lib/revocations.mjs";
 import { GRACE_MINUTES, emit, finding, minutesSince, verdict } from "../served-set/report.mjs";
-import { gather, serve85 } from "../served-set/main-vs-signed.mjs";
+import { gather, serve85, sourceOf } from "../served-set/main-vs-signed.mjs";
 import { serve39 } from "../served-set/served-vs-signed.mjs";
 // PROVENANCE_WINDOW_DAYS is deliberately NOT imported. Both fixtures that used
 // to compute an age from it could not see it move (2026-09-22: 7 → 1, nothing
@@ -304,7 +304,10 @@ export async function run() {
       "the fixture's merge is not a two-parent commit, so there is no branch to date");
     const serialBefore = serialsAt({ root: t.dir, sha: before }).revocations;
     const serialAt = serialsAt({ root: t.dir, sha: merge }).revocations;
-    assertEqual(serialAt, serialBefore + 1,
+    // By two, not one, from contract 0.35.0: DEC-9's `--full-history` count
+    // takes the branch's advisory commit AND the merge, whose tree under the
+    // directory differs from its first parent's (ops register entry 117).
+    assert(serialAt > serialBefore,
       `the serial is ${serialBefore} on main before the merge and ${serialAt} at it; the fixture has to move it at the merge`);
     assertEqual(t.git("log", "-1", "--format=%cI", merge, "--", SERIAL_PATHSPEC), "2026-09-19T09:00:00Z",
       "a plain path-limited log no longer dates the branch commit here, so this fixture no longer separates the two clocks");
@@ -497,6 +500,87 @@ export async function run() {
     const v = serve85({ ...facts, head, now: "2026-09-19T23:00:00Z" });
     assertEqual(v.status, "green", `a signer ahead of this checkout paged: ${codesOf(v)}`);
     assert(v.notes.some((n) => n.includes("the system working")), "the reason is not in the transcript");
+  });
+
+  await test("a `signed` ahead of a commit that contains its Source-Commit is a broken count, not the system working", () => {
+    // Ops register entry 117. Under git's default count a merge could give the
+    // list a serial below the one `signed` already served; the signer's
+    // SERVE-36 gate then refused the list and carried the old one under the
+    // merge's Source-Commit, and the test above's reading — `signed` ahead is
+    // the race — called that state green for as long as it lasted. From
+    // contract 0.35.0 DEC-9 counts `--full-history`, which cannot fall along
+    // main, so `signed` ahead of a commit that CONTAINS its Source-Commit can
+    // only be a count that is not DEC-9's, or a `signed` not made from main.
+    const t = makeTree("signer-ahead-contained");
+    t.write("tools/revocations/ASTRA-2026-0001.json", advisory());
+    const source = t.commit("an advisory", { at: "2026-09-19T09:00:00Z" });
+    t.write("plugins/dice-roller/plugin.json", { schema: "astra.registry.plugin/1", id: "dice-roller" });
+    const later = t.commit("main moves on", { at: "2026-09-19T09:30:00Z" });
+    // A `signed` commit in the signer's form, one naming a commit main holds,
+    // one naming the future and one naming nothing, each read by `sourceOf`.
+    const signedWith = (trailer) => {
+      const tree = t.git("mktree");
+      const body = `signed: a fixture\n\n${trailer}\nRun: none\n`;
+      return execFileSync("git", ["-C", t.dir, "commit-tree", tree, "-m", body],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    };
+    const contained = sourceOf({ root: t.dir, sha: signedWith(`Source-Commit: ${source}`), mainSha: later });
+    assertEqual(JSON.stringify(contained), JSON.stringify({ sha: source, contained: true }),
+      "a Source-Commit the checked-out commit contains was not read as contained");
+    const newer = sourceOf({ root: t.dir, sha: signedWith(`Source-Commit: ${later}`), mainSha: source });
+    assertEqual(newer.contained, false, "a Source-Commit newer than the checked-out commit was read as contained");
+    const absent = sourceOf({ root: t.dir, sha: signedWith(`Source-Commit: ${"f".repeat(40)}`), mainSha: later });
+    assertEqual(absent.contained, null, "a Source-Commit this checkout does not hold was read as an answer");
+    assertEqual(sourceOf({ root: t.dir, sha: signedWith("Index-Source-Commit: none"), mainSha: later }).sha, null,
+      "a `signed` commit with no Source-Commit was read as naming one");
+
+    const facts = gather({ root: t.dir });
+    const head = headFrom({
+      revocations: {
+        signatures: [],
+        signed: { schema: REVOCATIONS_SCHEMA, serial: facts.generated.serial + 1, revocations: [] },
+      },
+    });
+    const v = serve85({ ...facts, head, signedSource: contained, now: "2026-09-19T09:31:00Z" });
+    assertEqual(codesOf(v), "SERVE_85_SERIAL_AHEAD",
+      `\`signed\` serves a serial main never reached at a commit main contains, one minute on, and SERVE-85 said ` +
+        `${v.status}: ${v.notes.slice(1).join(" | ")}`);
+    assert(v.hexes.includes(source), "the finding does not name the Source-Commit it measured from");
+    // The control: the same serials with a Source-Commit this checkout does
+    // not contain are still the race.
+    for (const other of [newer, absent, null]) {
+      const race = serve85({ ...facts, head, signedSource: other, now: "2026-09-19T09:31:00Z" });
+      assertEqual(race.status, "green", `the race read as a broken count (${JSON.stringify(other)}): ${codesOf(race)}`);
+    }
+
+    // And end to end, the way the job reads it: a real `signed` branch in the
+    // signer's form, fetched by `gather` from a remote, whose Source-Commit
+    // the checked-out commit contains. Without this, `gather` could stop
+    // asking `sourceOf` and every line above would still pass.
+    const signedTree = (() => {
+      const blob = execFileSync("git", ["-C", t.dir, "hash-object", "-w", "--stdin"], {
+        input: stableStringify(head.documents.revocations), encoding: "utf8", stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+      const v1 = execFileSync("git", ["-C", t.dir, "mktree"], {
+        input: `100644 blob ${blob}\trevocations.json\n`, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+      const registry = execFileSync("git", ["-C", t.dir, "mktree"], {
+        input: `040000 tree ${v1}\tv1\n`, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+      return execFileSync("git", ["-C", t.dir, "mktree"], {
+        input: `040000 tree ${registry}\tregistry\n`, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+    })();
+    const signedCommit = execFileSync("git", ["-C", t.dir, "commit-tree", signedTree, "-m",
+      `signed: a fixture\n\nSource-Commit: ${source}\nRun: none\n`], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    t.git("update-ref", "refs/heads/signed", signedCommit);
+    t.git("remote", "add", "origin", t.dir);
+    const fetched = gather({ root: t.dir });
+    assertEqual(fetched.head?.sha, signedCommit, `gather did not fetch the fixture's \`signed\`: ${fetched.head?.reason}`);
+    assertEqual(JSON.stringify(fetched.signedSource), JSON.stringify({ sha: source, contained: true }),
+      "gather does not say which Source-Commit `signed` names, or whether the checked-out commit contains it");
+    assertEqual(codesOf(serve85({ ...fetched, now: "2026-09-19T09:31:00Z" })), "SERVE_85_SERIAL_AHEAD",
+      "read through gather, a `signed` above a commit that contains its Source-Commit was not reported");
   });
 
   await test("entries that differ at one serial are drift, because an equal serial has to mean an equal list", () => {
