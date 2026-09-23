@@ -40,10 +40,11 @@
 // of the register.
 //
 // A rule that needs the network (M-T5.7 and M-T2.1 both fetch an AstraPlugins
-// default branch with no credential) sets `network: true`. Nothing branches on
-// it today; it is there so that the first person who has to say "which of these
-// can fail because GitHub was slow" can read the answer instead of grepping for
-// `fetch`.
+// default branch with no credential; `repo-settings` reads api.github.com, with
+// the workflow's own read-only token for the rate limit and never one that can
+// write) sets `network: true`. Nothing branches on it today; it is there so that
+// the first person who has to say "which of these can fail because GitHub was
+// slow" can read the answer instead of grepping for `fetch`.
 //
 // ── WHAT A RULE MAY PUT IN A VERDICT ────────────────────────────────────────
 //
@@ -118,6 +119,16 @@ export const RULES = [
     owner: "M-T2.1 (MOD-16, TRUST-26)",
     script: "tools/coverage/examples-staging-id.mjs",
     what: "no AstraPlugins examples/*/plugin.toml declares, or is named for, policy/reserved-ids.json's staging_listing_id",
+    network: true,
+  },
+  {
+    name: "repo-settings",
+    owner: "RC-R0-4 (ROLL-7, ROLL-8) for the settings it holds; ops dev/couplings.md gap 22 for the check",
+    script: "tools/coverage/settings.mjs",
+    what:
+      "every environment and ruleset GitHub serves for astra-registry and AstraPlugins is the one " +
+      "policy/settings-expected.json records, in both directions, and every environment a workflow job names is " +
+      "live with a custom branch policy, or pending creation and named only by jobs a literal `if: false` holds",
     network: true,
   },
   // ── the seam. Each line below is one other task's, and lands with it. ─────
