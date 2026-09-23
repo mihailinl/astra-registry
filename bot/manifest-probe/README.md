@@ -75,12 +75,20 @@ is the only part of the bot that has both halves in one process: the crate the
 daemon judges by, and — through `_deps/AstraPlugins`, at the commit
 `astra-plugins.pin` names — `proto/plugin.proto`. The JS half has neither, so
 `bot/lib/rpcscan.mjs` carried three hand-maintained copies of things it could
-not check:
+not check.
+
+Every file of AstraPlugins these tests read, they read through one function,
+`pinned_file`: out of git at the pin, never off `_deps/AstraPlugins`' working
+tree, which on a workstation is a sibling copy on whatever branch somebody was
+last on. A pin the checkout does not hold is `COULD NOT ASK`, a failure. The
+crate itself is the exception: Cargo compiles it off that working tree, so on a
+workstation the manifest rules are the sibling's and only a clone at the pin, as
+CI's is, makes them the pin's.
 
 | | held against |
 |---|---|
 | `RPC_RULES`'s permission ids | `astra_plugin_manifest::PERMISSION_NAMES` |
-| `HOST_RPCS`'s method names | `service PluginHostService` in `proto/plugin.proto` |
+| `HOST_RPCS`'s method names | `service PluginHostService` in `proto/plugin.proto`, read out of git at the pin |
 | `HOST_RPCS` vs `ALWAYS_ALLOWED` + `RPC_RULES` | each other — every method governed exactly once |
 | the header's `ten` / `four` / `six` | the three literals they count |
 | `RPC_RULES`' and `ALWAYS_ALLOWED`'s gates, per rpc | the `PluginHostService` rows of `spec/hooks.yaml`, read out of git at the pin — both columns, with one named exception |
