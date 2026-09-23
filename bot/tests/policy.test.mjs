@@ -582,11 +582,12 @@ await test("and the file the publish job reads carries that recovered number, no
   const later = new Date(NOW.getTime() + (DELAY_HOURS + 1) * 3600000);
   const second = await run({ root, assets: [asset], now: later, issue: null });
 
-  const out = fs.mkdtempSync(path.join(os.tmpdir(), "astra-bot-drain-out-"));
+  // Through `tmp`, which removes it at exit: an `rmSync` after the assertion
+  // ran only when the assertion held, so every failing run left one behind.
+  const out = tmp("astra-bot-drain-out-");
   writeOutputs(out, { repo: REPO, tag: TAG, issue: null }, second);
   const written = JSON.parse(fs.readFileSync(path.join(out, "decision.json"), "utf8"));
   assertEqual(written.issue, 41, "the drain answers the thread that asked for the release");
-  fs.rmSync(out, { recursive: true, force: true });
 });
 
 await test("a queue entry about a different release does not lend this one its issue", async () => {
