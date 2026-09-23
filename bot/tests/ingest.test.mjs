@@ -2350,6 +2350,22 @@ await test("[permissions] satisfies the scan too, so Phase 4 does not break this
   assert(!findings.some((i) => i.level === "error"), JSON.stringify(findings));
 });
 
+await test("[capabilities] actions does not buy SetVariable; only [permissions] set_variable does", () => {
+  // Decided 2026-09-23 (astra-plugins-ops couplings entry 32). Until then
+  // `actions` was accepted in place of the permission, so a plugin declaring
+  // only the capability scanned clean here and — hooks.yaml gating SetVariable
+  // on `set_variable` and no capability, `[permissions]` being default-deny —
+  // was refused the call on the user's machine.
+  const src = [{ name: "handler.py", bytes: Buffer.from("host.SetVariable('k', 'v')") }];
+  const legacy = scanHostRpcs(src, { capabilities: ["actions"], permissions: {} });
+  const e = legacy.find((i) => i.code === "E_HOST_RPC_UNDECLARED" && i.message.includes("`SetVariable`"));
+  assert(e, `an actions-only manifest calling SetVariable must be an error: ${JSON.stringify(legacy)}`);
+  assert(e.message.includes("[permissions] set_variable") && !e.message.includes("[capabilities]"),
+    `the remedy must not offer an arm the daemon does not honour: ${e.message}`);
+  const declared = scanHostRpcs(src, { capabilities: [], permissions: { set_variable: { reason: "…" } } });
+  assert(!declared.some((i) => i.level === "error"), JSON.stringify(declared));
+});
+
 section("ownership, in detail");
 
 // The world every one of these is about, observed in a real Actions run on

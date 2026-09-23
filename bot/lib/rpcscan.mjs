@@ -103,7 +103,8 @@ const ALWAYS_ALLOWED = new Set([
  *
  * `permission` is the `[permissions]` key from §5.6, which Phase 4 landed and
  * the daemon now enforces; `capability` is what a manifest written before that
- * section existed says instead. Both are still accepted, because a plugin
+ * section existed says instead. Both are still accepted on every row that
+ * names a capability (`SetVariable` names none; see below), because a plugin
  * published against the older shape must not start failing this check — the
  * daemon's own `decide_grants` is the thing that decides, and this is a lint
  * over shipped source, not a gate.
@@ -123,17 +124,23 @@ const ALWAYS_ALLOWED = new Set([
  * to the `PluginHostService` rows of AstraPlugins' `spec/hooks.yaml`, read at the
  * commit `bot/manifest-probe/astra-plugins.pin` names — the probe's
  * `the_two_gating_registers_*` tests, where hooks.yaml's `none` is no permission
- * and its `core` is no capability. One cell differs, and is named there with its
- * reason rather than tolerated: `SetVariable`'s `capability: "actions"`, which
- * hooks.yaml files under `core`. Whether that legacy arm stays is an open policy
- * question about manifests written before `[permissions]` existed. The exception
- * is pinned to these exact two values, so changing this row either way turns
- * `cargo test` red until the exception is deleted with it.
+ * and its `core` is no capability. Every cell agrees, and none is excused.
+ *
+ * `SetVariable` has no `capability`, and that is a decision, not an omission
+ * (2026-09-23; astra-plugins-ops couplings entry 32). It carried
+ * `capability: "actions"` until then, which hooks.yaml files under `core`: a
+ * plugin declaring `[capabilities] actions = true` passed this scan without
+ * `[permissions] set_variable`, and by hooks.yaml's account (SetVariable is gated
+ * on `set_variable` and on no capability) and the manifest crate's (an absent
+ * `[permissions]` grants no host rpc beyond Register, PluginLog and
+ * GetPluginSelfConfig) the daemon refuses that call on the user's machine — a
+ * clean scan here for a plugin that cannot do what it was scanned for. Putting
+ * the arm back turns `cargo test` red.
  */
 export const RPC_RULES = {
   FireTrigger: { permission: "fire_trigger", capability: "triggers", blocking: true },
   SendChatMessage: { permission: "send_chat_message", capability: "client", blocking: true },
-  SetVariable: { permission: "set_variable", capability: "actions", blocking: true },
+  SetVariable: { permission: "set_variable", blocking: true },
   SetThemeContribution: { permission: "set_theme_contribution", capability: "ui_contributions", blocking: true },
   PushToUi: { permission: "push_to_ui", capability: "ui_contributions", blocking: false },
   SubscribeEvents: { permission: "subscribe_events", capability: "event_handlers", blocking: false },

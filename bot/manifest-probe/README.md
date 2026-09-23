@@ -104,11 +104,14 @@ the check.
 The fifth compares two registers of the same fact: which `[permissions]` key
 and which `[capabilities]` key go with each host rpc. `RPC_RULES` is the one
 the scan decides with, and hooks.yaml is the one the SDKs, the generated docs
-and parity's R6 are held to. They agree on every row but one cell —
-`SetVariable`'s legacy `capability: "actions"`, which hooks.yaml files under
-`core` — and that cell is an `EXCEPTIONS` entry with its reason, pinned to
-those two exact values. Another row differing is red; a row on one side only
-is red; and the day the two agree on `SetVariable`, the exception is red as
-stale, so deciding the question forces the entry out. The fourth test in that
-group re-runs those mutations on the committed files every time, so the proof
-that the comparison can fail is not a one-off in a commit message.
+and parity's R6 are held to. They agree on every cell, and `EXCEPTIONS` is
+empty. It held one entry until 2026-09-23 — `SetVariable`'s legacy
+`capability: "actions"`, which hooks.yaml files under `core` — and when that
+arm was dropped (astra-plugins-ops couplings entry 32) the entry went red as
+stale and was deleted in the same commit, which is what the mechanism is for.
+Any cell differing is red, that arm put back included; a row on one side only
+is red; and an entry that stops matching its difference is red as stale. The
+fourth test in that group re-runs those mutations on the committed files every
+time — the exception mechanism on a synthesised entry, since the committed
+list no longer exercises it — so the proof that the comparison can fail is not
+a one-off in a commit message.
