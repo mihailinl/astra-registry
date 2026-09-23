@@ -75,10 +75,23 @@ import {
 } from "../lib/compile-decision.mjs";
 import { holdEntry, readHolds } from "../lib/holds.mjs";
 import { CATEGORIES } from "../lib/moderation.mjs";
+import { BOT_AUDIENCE } from "../lib/oidc.mjs";
 import { BODIES } from "../lib/service.mjs";
+import { buildIndex } from "../../tools/build-index.mjs";
+import { stableStringify } from "../../tools/lib/canonical.mjs";
 import { ID_PATTERN } from "../../tools/lib/ids.mjs";
-import { ACTIONS, SEVERITIES } from "../../tools/lib/revocations.mjs";
+import {
+  ACTIONS,
+  OUTPUT_FILE as REVOCATIONS_FILE,
+  SEVERITIES,
+  SOURCE_DIR as REVOCATIONS_DIR,
+  buildRevocations,
+} from "../../tools/lib/revocations.mjs";
 import { validate } from "../../tools/lib/jsonschema.mjs";
+import { serialsAt } from "../../tools/signer/plan.mjs";
+
+/** Where `tools/build-index.mjs` writes the catalogue; its CLI states it as this literal. */
+const INDEX_FILE = "registry/v1/index.json";
 
 const REPO = path.resolve(import.meta.dirname, "..", "..");
 const read = (rel) => fs.readFileSync(path.join(REPO, rel), "utf8");
@@ -1499,8 +1512,11 @@ test("under a shadow answer a `held` result is withheld too, and still reported 
   for (const notFalse of [undefined, null, "false"]) {
     assert.deepEqual(resultsFor({ held, shadow: notFalse }).post, [], `shadow ${JSON.stringify(notFalse)} posted`);
   }
-  // The satisfiable direction: live, it is posted.
-  assert.deepEqual(resultsFor({ held, shadow: false }).post.map((r) => r.outcome), ["held"]);
+  // The satisfiable direction: live, it is posted — naming the commit that
+  // entered the hold, which is the one thing a `held` result exists to say
+  // (BOT-81). This line posted it with `commit: null` until 2026-09-22.
+  assert.deepEqual(resultsFor({ held, shadow: false, commit: "b".repeat(40) }).post.map((r) => `${r.outcome} ${r.commit}`),
+    [`held ${"b".repeat(40)}`]);
 });
 
 test("BOT-81: at most one `held` and exactly one final result per decision", () => {
@@ -1557,7 +1573,7 @@ function applyStep() {
     body.push(lines[j].slice(indent + 2));
   }
   const script = `${body.join("\n").trimEnd()}\n`;
-  assert.match(script, /^git push origin HEAD:main$/m, "the extracted step does not push; the anchor found something else");
+  assert.match(script, /^\s*git push origin HEAD:main$/m, "the extracted step does not push; the anchor found something else");
   return script;
 }
 
@@ -1572,13 +1588,49 @@ function withRemote(root) {
 }
 const headOf = (repo) => sh(["rev-parse", "refs/heads/main"], repo).trim();
 
-/** The step, under `bash -e` as a runner starts a `run:` block, in the checkout. */
+/**
+ * `$GITHUB_OUTPUT` as the runner reads it back: `key=value` lines, and
+ * `key<<DELIMITER` … `DELIMITER` blocks for a value that spans lines. A key
+ * written twice keeps the last value, as the runner does.
+ */
+function readOutputs(file) {
+  const out = {};
+  const lines = fs.existsSync(file) ? fs.readFileSync(file, "utf8").split("\n") : [];
+  for (let i = 0; i < lines.length; i++) {
+    const heredoc = /^([A-Za-z0-9_-]+)<<(.+)$/.exec(lines[i]);
+    if (heredoc) {
+      const body = [];
+      let j = i + 1;
+      while (j < lines.length && lines[j] !== heredoc[2]) body.push(lines[j++]);
+      assert.ok(j < lines.length, `$GITHUB_OUTPUT opens \`${heredoc[1]}<<${heredoc[2]}\` and never closes it`);
+      out[heredoc[1]] = body.join("\n");
+      i = j;
+      continue;
+    }
+    const pair = /^([A-Za-z0-9_-]+)=(.*)$/.exec(lines[i]);
+    if (pair) out[pair[1]] = pair[2];
+  }
+  return out;
+}
+
+/**
+ * The step, under `bash -e` as a runner starts a `run:` block, in the checkout,
+ * with a `$GITHUB_OUTPUT` of its own — which is what the job's `outputs:` block
+ * reads, and so what `report` and `settled` are handed.
+ */
 function runApply(root) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-step-"));
   tmpRoots.push(dir);
   const file = path.join(dir, "apply.sh");
+  const output = path.join(dir, "github-output");
   fs.writeFileSync(file, applyStep());
-  return spawnSync("bash", ["-e", file], { cwd: root, encoding: "utf8" });
+  fs.writeFileSync(output, "");
+  const step = spawnSync("bash", ["-e", file], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, GITHUB_OUTPUT: output },
+  });
+  return { ...step, outputs: readOutputs(output) };
 }
 
 // Until 2026-09-22 a run with nothing to commit — no work listed and no hold
@@ -1647,6 +1699,263 @@ test("a run with nothing to commit leaves the commit step nothing to fail on", a
   const odd = runApply(lost);
   assert.notEqual(odd.status, 0, "an empty path list beside a commit message was read as nothing to commit");
   assert.equal(headOf(lostOrigin), sh(["rev-parse", "HEAD"], lost).trim(), "a refused step pushed");
+});
+
+// ── what the commit lands, and what it hands to `report` and `settled` ──────
+//
+// Ops register entry 102: four defects on this path, each of which the first
+// live run would have hit, none of which any test reached, because every test
+// above stops at the commit job's return value or at `git push`. The three
+// below go one step further each time — the landed TREE, the RESULT a landed
+// commit is reported with, and the OUTPUTS the next two jobs are handed — and
+// each was red on the code before the repair (the commit that adds them says
+// what each printed).
+
+/**
+ * The two generated documents `main` carries, as its own CI would leave them
+ * for this tree, and committed. Without them a fixture is a registry that has
+ * never been built, and "the regenerated document was not committed" cannot
+ * be told from "there was no document".
+ */
+function withDocuments(root) {
+  writeAll(root, {
+    [INDEX_FILE]: stableStringify(buildIndex({ root })),
+    [REVOCATIONS_FILE]: stableStringify(buildRevocations({ root })),
+  });
+  sh(["add", "-A"], root);
+  sh(["commit", "-q", "-m", "catalogue: the generated documents"], root);
+  return root;
+}
+
+const SDI3 = "0192f3a4-5b6c-7d8e-9f01-234567890abe";
+const delistOf = (id) => decision({ service_decision_id: id, code: "M_DELIST", category: "broken", moderator: "amoderator" });
+const deprecateOf = (id) => decision({ service_decision_id: id, code: "M_DEPRECATE", category: "broken", severity: "low", moderator: "amoderator" });
+const relistOf = (id) => decision({ service_decision_id: id, code: "M_RELIST", category: "error", moderator: "amoderator", reverses: SDI2 });
+
+/** What `report` hands `resultsFor`, out of a `results.json` — the shape the job's own CLI reads. */
+const stateArgs = (state) => ({
+  compiled: state.compiled.map((id) => ({ service_decision_id: id })),
+  refused: state.refused,
+  held: state.held,
+  holds: state.holds,
+});
+
+const FULL_SHA = /^[0-9a-f]{40}$/;
+
+// 102 (2). `plugins-moderation.yml` regenerates `registry/v1/index.json` and
+// `registry/v1/revocations.json` between the compile and the commit, and
+// `composeCommit` never listed either — so a delist landed with the index that
+// still lists the plugin, `build-index.yml`'s `--check` went red on the push,
+// and an advisory landed with a withdrawal list that does not carry it.
+//
+// And entry 69 rides on the same line: once the list IS committed, it must be
+// committed at the serial the signer assigns to the commit that lands it.
+// `resolveSerial` counts history and never the pending change, so a
+// regeneration run before the commit writes the serial `signed` already
+// serves. Both batches below are needed for that half: the list's serial moves
+// only when the commit touches `tools/revocations/`, and a repair that always
+// added one would pass the first batch and fail the second.
+test("a moderation commit carries the documents it regenerates, at the serials the signer gives the commit that lands them", async () => {
+  for (const [label, entries, listMoves] of [
+    ["a delist and a deprecate", [delistOf(SDI2), deprecateOf(SDI3)], true],
+    ["a delist alone", [delistOf(SDI2)], false],
+  ]) {
+    const root = withDocuments(estate());
+    const origin = withRemote(root);
+    const job = await commitJob(root, { entries });
+    assert.equal(job.code, 0, job.logs.join("\n"));
+    // The floor: the batch reached each generator's input, or "the document was
+    // listed" is a claim about a document nothing changed.
+    assert.ok(job.paths.some((p) => p.startsWith("plugins/")), `${label}: no listing edit — ${job.paths.join(", ")}`);
+    assert.equal(job.paths.some((p) => p.startsWith(`${REVOCATIONS_DIR}/`)), listMoves,
+      `${label}: the batch ${listMoves ? "entered no" : "entered an"} advisory — ${job.paths.join(", ")}`);
+
+    for (const doc of [INDEX_FILE, ...(listMoves ? [REVOCATIONS_FILE] : [])]) {
+      assert.ok(job.paths.includes(doc),
+        `${label}: paths.txt does not list ${doc}. The workflow regenerates it before the gates and commits only ` +
+        `what paths.txt names, so the commit lands the change and leaves behind the document that describes it ` +
+        `(ops entry 102): ${job.paths.join(", ")}`);
+    }
+
+    const step = runApply(root);
+    assert.equal(step.status, 0, `${label}: the commit step failed: ${step.stderr}`);
+    const landed = headOf(origin);
+    const at = (rel) => JSON.parse(sh(["show", `${landed}:${rel}`], origin));
+    const signer = serialsAt({ root, sha: landed });
+    assert.equal(at(INDEX_FILE).signed.serial, signer.index,
+      `${label}: the committed index carries serial ${at(INDEX_FILE).signed.serial} and the signer assigns ` +
+      `${signer.index} to the commit that landed it`);
+    assert.equal(at(REVOCATIONS_FILE).signed.serial, signer.revocations,
+      `${label}: the committed withdrawal list carries serial ${at(REVOCATIONS_FILE).signed.serial} and the ` +
+      `signer assigns ${signer.revocations} to the commit that landed it (ops entry 69)`);
+
+    // And the landed documents are the generators' own output for the landed
+    // tree, by the two checks `build-index.yml` and the gates run.
+    const check = spawnSync(process.execPath, [path.join(REPO, "tools", "build-index.mjs"), "--check", "--registry-dir", root],
+      { encoding: "utf8" });
+    assert.equal(check.status, 0, `${label}: build-index --check over the landed tree: ${check.stdout}${check.stderr}`);
+    const list = at(REVOCATIONS_FILE);
+    assert.deepEqual(list.signed.revocations, buildRevocations({ root, serial: list.signed.serial }).signed.revocations,
+      `${label}: the landed withdrawal list is not what its sources produce`);
+    if (listMoves) assert.ok(list.signed.revocations.length > 0, `${label}: the advisory reached no entry of the list`);
+  }
+});
+
+// 102 (3). BOT-81: "at most one `held` result, naming the hold entry's
+// commit". `resultsFor` posted every `held` with `commit: null`, and the
+// commit that would have to be named does not exist when the commit job writes
+// `results.json` — the workflow's `apply` step makes it afterwards. So the
+// repair is an ORDERING one and no contract change: `report` runs only after
+// `commit` succeeded and composes the result then, naming the commit the step
+// pushed. A decision listed again because its `held` never arrived has no new
+// commit at all, and names the one that entered its entry, which is also the
+// BOT-82 key of the post that was lost.
+test("a live `held` result names the commit that entered the hold, and a re-listed one names the same commit", async () => {
+  const root = withDocuments(estate());
+  const origin = withRemote(root);
+  const first = await commitJob(root, { entries: [relistOf(SDI)] });
+  assert.equal(first.code, 0, first.logs.join("\n"));
+  assert.ok(first.paths.includes(holdEntryPath(SDI)), "MOD-9 holds every M_RELIST, so this run enters one or proves nothing");
+  const step = runApply(root);
+  assert.equal(step.status, 0, step.stderr);
+  const landed = headOf(origin);
+  assert.equal(sh(["log", "-1", "--format=%H", "--diff-filter=A", "--", holdEntryPath(SDI)], origin).trim(), landed,
+    "the fixture's landed commit is not the one that entered the hold, so what follows names the wrong thing");
+
+  const live = resultsFor({ ...stateArgs(first.results), commit: landed, shadow: false });
+  assert.deepEqual(live.post.filter((r) => r.outcome === "held").map((r) => r.commit), [landed],
+    `BOT-81: the \`held\` result must name the hold entry's commit, ${landed}; it named ` +
+    `${JSON.stringify(live.post.filter((r) => r.outcome === "held").map((r) => r.commit))}`);
+
+  const again = await commitJob(root, { entries: [relistOf(SDI)], now: new Date("2026-09-20T12:40:00Z") });
+  assert.equal(again.code, 0, again.logs.join("\n"));
+  assert.deepEqual(again.paths, [], "a re-listed hold whose entry is on the tree commits nothing");
+  const relisted = resultsFor({ ...stateArgs(again.results), commit: null, shadow: false });
+  assert.deepEqual(relisted.post.filter((r) => r.outcome === "held").map((r) => r.commit), [landed],
+    "a decision listed again because its `held` never arrived must be reported against the commit that entered " +
+    "its entry — this run made none, and BOT-82 would read any other commit as a second, different result");
+
+  // And the guard under both: a live `held`, `applied` or `cancelled` that
+  // names no commit is refused here, not posted and not composed.
+  for (const [what, args] of [
+    ["held", { held: [{ service_decision_id: SDI, held_for: "reversal" }] }],
+    ["applied", { compiled: [{ service_decision_id: SDI }] }],
+    ["cancelled", { holds: { pending: [{ service_decision_id: SDI, outcome: "cancelled", commit: null }] } }],
+  ]) {
+    assert.throws(() => resultsFor({ ...args, commit: null, shadow: false }), /BOT-81/,
+      `a live \`${what}\` with no commit was composed for posting`);
+  }
+});
+
+/** A token shaped like the runner's, with the two claims `mintToken` pins. */
+const fakeToken = () => [
+  Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url"),
+  Buffer.from(JSON.stringify({ aud: BOT_AUDIENCE, environment: "plugins-service", jti: `jti-${Math.random()}` })).toString("base64url"),
+  "not-a-signature",
+].join(".");
+
+/** `--job report`, as the workflow runs it, against a stub service that records every body it is sent. */
+async function reportJob(env, { answer = () => ({ status: 200, body: { schema: "astra.plugins.bot-ack/1", shadow: false, outcome: "recorded" } }) } = {}) {
+  const bodies = [];
+  const logs = [];
+  const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  const fetchImpl = async (url, init = {}) => {
+    if (String(url).startsWith("https://token.invalid/")) return json(200, { value: fakeToken() });
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    const a = answer(body);
+    return json(a.status, a.body);
+  };
+  const code = await main(["--job", "report"], {
+    env: {
+      ACTIONS_ID_TOKEN_REQUEST_URL: "https://token.invalid/token?api-version=2.0",
+      ACTIONS_ID_TOKEN_REQUEST_TOKEN: "the-runner-secret",
+      ...env,
+    },
+    log: { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) },
+    fetchImpl,
+  });
+  return { code, bodies, logs };
+}
+
+/** `--job settled`, as the workflow runs it. */
+async function settledJob(env) {
+  const logs = [];
+  const code = await main(["--job", "settled"], {
+    env,
+    log: { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) },
+  });
+  return { code, logs };
+}
+
+// 102 (4). The `commit` job's `outputs:` map `results` and `main_commit` from
+// `steps.apply.outputs`, and nothing wrote either: `$GITHUB_OUTPUT` appeared
+// nowhere in the workflow or in this file. So `settled` was handed an empty
+// string, parsed it as no results, and would have failed and paged on every
+// run that did its work; and `report` read `moderation/results.json`, a file
+// that exists only in the commit job's workspace.
+test("the commit step hands `report` and `settled` the commit it pushed and the results it recorded", async () => {
+  const root = withDocuments(estate());
+  const origin = withRemote(root);
+  const job = await commitJob(root, { entries: [delistOf(SDI2), relistOf(SDI)] });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  const step = runApply(root);
+  assert.equal(step.status, 0, step.stderr);
+  const landed = headOf(origin);
+  assert.equal(step.outputs.main_commit, landed,
+    `the commit step's \`main_commit\` output is ${JSON.stringify(step.outputs.main_commit)} and it pushed ${landed}. ` +
+    "The job's `outputs:` read it from `steps.apply.outputs`, and `report` names it in every result it posts");
+  assert.ok(step.outputs.results, "the commit step wrote no `results` output, so `settled` is handed nothing and pages");
+  assert.deepEqual(JSON.parse(step.outputs.results), job.results, "the results handed on are not the ones the job recorded");
+
+  // `report`, over exactly what the job's outputs hand it.
+  const posted = await reportJob({ ASTRA_RESULTS: step.outputs.results, ASTRA_MAIN_COMMIT: step.outputs.main_commit });
+  assert.equal(posted.code, 0, posted.logs.join("\n"));
+  assert.deepEqual(
+    posted.bodies.map((b) => `${b.service_decision_id} ${b.outcome} ${b.commit ?? "-"} ${b.refusal_code ?? "-"}`).sort(),
+    [`${SDI} held ${landed} -`, `${SDI2} applied ${landed} -`].sort(),
+    "report posted something other than one `applied` and one `held`, each naming the commit that landed it",
+  );
+  for (const b of posted.bodies) assert.equal(b.schema, "astra.plugins.bot-service-decision-result/1");
+
+  // `settled`, over the same outputs: every listed id has a result.
+  const handed = { ASTRA_RESULTS: step.outputs.results, ASTRA_MAIN_COMMIT: step.outputs.main_commit };
+  const ok = await settledJob({ ...handed, ASTRA_LISTED_IDS: JSON.stringify([SDI, SDI2]) });
+  assert.equal(ok.code, 0, `settled failed a run whose every listed decision landed: ${ok.logs.join(" | ")}`);
+  // The directions that must stay red: an id nobody answered, and nothing handed on.
+  assert.equal((await settledJob({ ...handed, ASTRA_LISTED_IDS: JSON.stringify([SDI, SDI2, SDI3]) })).code, 1);
+  assert.equal((await settledJob({ ASTRA_RESULTS: "", ASTRA_LISTED_IDS: JSON.stringify([SDI]) })).code, 1);
+
+  // A post the service does not accept fails `report`, so `settled` — which
+  // counts results only when `report` succeeded — sees the decision unsettled.
+  const refused = await reportJob(handed, {
+    answer: () => ({ status: 422, body: { schema: "astra.plugins.error/1", error: "invalid", message: "no" } }),
+  });
+  assert.equal(refused.code, 1, `report exited 0 though no result was accepted: ${refused.logs.join(" | ")}`);
+
+  // A run with nothing to commit still hands both on: no commit, and results.
+  const quiet = await commitJob(root, { entries: [] });
+  assert.equal(quiet.code, 0, quiet.logs.join("\n"));
+  const none = runApply(root);
+  assert.equal(none.status, 0, none.stderr);
+  assert.equal(none.outputs.main_commit, "", "a run that pushed nothing named a commit");
+  assert.deepEqual(JSON.parse(none.outputs.results ?? "null"), quiet.results);
+  assert.equal((await settledJob({ ASTRA_RESULTS: none.outputs.results, ASTRA_MAIN_COMMIT: "", ASTRA_LISTED_IDS: "[]" })).code, 0);
+
+  // Shadow: the listed work is withheld, which TRUST-45 pages for and `settled`
+  // must not — a run that did exactly what BOT-92 asks is not a lost decision.
+  const shadowRoot = withDocuments(estate());
+  withRemote(shadowRoot);
+  const shadow = await commitJob(shadowRoot, { entries: [delistOf(SDI2), relistOf(SDI)], shadow: true });
+  assert.equal(shadow.code, 0, shadow.logs.join("\n"));
+  const shadowStep = runApply(shadowRoot);
+  assert.equal(shadowStep.status, 0, shadowStep.stderr);
+  const shadowHanded = { ASTRA_RESULTS: shadowStep.outputs.results ?? "", ASTRA_MAIN_COMMIT: shadowStep.outputs.main_commit ?? "" };
+  const shadowSettled = await settledJob({ ...shadowHanded, ASTRA_LISTED_IDS: JSON.stringify([SDI, SDI2]) });
+  assert.equal(shadowSettled.code, 0, `settled paged for work a shadow answer withheld: ${shadowSettled.logs.join(" | ")}`);
+  const shadowPosted = await reportJob(shadowHanded);
+  assert.equal(shadowPosted.code, 0, shadowPosted.logs.join("\n"));
+  assert.deepEqual(shadowPosted.bodies, [], "report posted under a shadow answer (BOT-92)");
 });
 
 // ── the settled job ─────────────────────────────────────────────────────────
