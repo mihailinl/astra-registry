@@ -249,6 +249,23 @@ export function cleanupTmp() {
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+// And at exit, whatever the exit was. The runner calls `cleanupTmp()` on every
+// path it chooses, and only on those: a script that imports this file or a case
+// without the runner, or a rejection nobody awaited, left this directory in
+// `/tmp`, a tmpfs every session on the machine shares (58 were counted there on
+// 2026-09-23, causes unrecorded). `exit` fires on both, and on process.exit().
+//
+// It does not fire for a signal, and that is left alone on purpose. A JS
+// listener for SIGTERM or SIGINT only runs when the event loop turns, and this
+// suite runs synchronously from its first module to its last: measured, a
+// SIGTERM sent four seconds into a run with such a listener installed was held
+// until the run had finished, and the process exited 0. A suite that cannot be
+// stopped is worse than a directory left behind by one that was.
+//
+// A fixture a case makes UNDER `tmp` goes with it, which is why they are made
+// there and not beside it (repo-rules.mjs holds them to that).
+process.on("exit", cleanupTmp);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The repository walkers the R0 self-scan is built on.
 // ─────────────────────────────────────────────────────────────────────────────

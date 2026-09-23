@@ -9,9 +9,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 
 import { REPO_ROOT } from "../lib/sources.mjs";
-import { test, assert, assertEqual, walkRepo, grepRepo, isSuiteFile } from "./harness.mjs";
+import { test, assert, assertEqual, walkRepo, grepRepo, isSuiteFile, tmp } from "./harness.mjs";
 
 export async function run() {
   // Every rule below that scans the repository asks `walkRepo`, and `walkRepo`
@@ -834,5 +836,79 @@ export async function run() {
     }
     assertEqual(hollow.join(", "), "",
       "a module from the split is on disk and no longer exports run(), so the runner imports it and runs nothing");
+  });
+
+  // The suite's temp directory, and everything the cases build under it, is
+  // removed by the runner on every exit it chooses, and before 2026-09-23 on
+  // no other: a script that imported the harness or a case without the runner,
+  // or a rejection nobody awaited, left it in `/tmp`, a tmpfs every session on
+  // the machine shares and which filled that day (ops `dev/couplings.md` entry
+  // 135). The harness now removes it at `exit` too; a signal is out of reach,
+  // and harness.mjs says why. Asked from outside, because from inside the
+  // process that dies there is nothing left to ask with: a child imports the
+  // harness with a TMPDIR of its own, says where its directory is, and ends —
+  // once normally, as a script that never calls the runner's cleanup does, and
+  // once of an error (a throw after an `await` in a module is a rejection, so
+  // this is also the route of a rejection nobody awaited).
+  await test("the suite's temp directory goes when its process ends without the runner, normally or of an error", () => {
+    const harness = pathToFileURL(path.join(REPO_ROOT, "tools", "selftest", "harness.mjs")).href;
+    const endings = {
+      "a normal end": "",
+      "an error": `throw new Error("a script that imports the harness without the runner, and dies");`,
+    };
+    for (const [how, code] of Object.entries(endings)) {
+      const own = fs.mkdtempSync(path.join(tmp, "exit-"));
+      const r = spawnSync(process.execPath, ["--input-type=module", "-e",
+        `const h = await import(${JSON.stringify(harness)});\n` +
+        `console.log(JSON.stringify({ dir: h.tmp, existed: (await import("node:fs")).existsSync(h.tmp) }));\n` +
+        code,
+      ], { encoding: "utf8", env: { ...process.env, TMPDIR: own, TMP: own, TEMP: own }, timeout: 60_000 });
+      assert(r.error === undefined && r.signal === null, `the child meant to end by ${how} could not run: ${r.error ?? r.signal}`);
+      assert((r.status === 0) === (code === ""), `the child meant to end by ${how} exited ${r.status}: ${r.stderr}`);
+      let seen = null;
+      try { seen = JSON.parse(r.stdout.trim().split("\n")[0]); } catch { /* reported below */ }
+      // The canary: the directory was made, and made where this test looks.
+      // Without it a harness that stopped reading TMPDIR would pass by leaving
+      // its directory somewhere else.
+      assert(seen?.existed === true && path.dirname(seen.dir) === own,
+        `the child's harness did not make its directory under the TMPDIR it was given: ${r.stdout}${r.stderr}`);
+      assertEqual(fs.readdirSync(own).join(", "), "",
+        `the harness's temp directory outlived a process that ended by ${how}; it has to be removed at \`exit\` ` +
+        "too, not only by the runner");
+    }
+  });
+
+  // What the check above removes is the suite's own directory and what is IN
+  // it, so a case that builds its tree beside it rather than under it is back
+  // to removing it by hand — which, until 2026-09-23, catalogue.mjs's serial
+  // test and two tests in publishers.mjs did only after their last assertion,
+  // so every failing run left its tree in `/tmp`. A dynamic check would have to fail every case,
+  // the one path a green run never takes, so it is read instead. Two files may
+  // name the OS temp directory: the harness, which makes the suite's, and the
+  // load recorder, which makes and removes its log directory in one
+  // try/finally around the `--loads` relaunch. What this reading cannot see: a
+  // literal path, or a helper outside tools/selftest/ (the tools/coverage/ ones
+  // each remove theirs in a `finally`).
+  await test("no case builds a temp tree beside the suite's directory instead of under it", () => {
+    const allowed = ["tools/selftest/harness.mjs", "tools/selftest/loads/record.mjs"];
+    const files = ["tools/selftest.mjs"];
+    const walk = (rel) => {
+      for (const e of fs.readdirSync(path.join(REPO_ROOT, rel), { withFileTypes: true })) {
+        if (e.isDirectory()) walk(`${rel}/${e.name}`);
+        else if (e.name.endsWith(".mjs")) files.push(`${rel}/${e.name}`);
+      }
+    };
+    walk("tools/selftest");
+    assert(files.includes("tools/selftest/repo-rules.mjs") && files.length > 20,
+      `the walk found ${files.length} file(s) and not this one; it is not reading tools/selftest/`);
+    const naming = files.filter((f) => /\btmpdir\s*\(/.test(fs.readFileSync(path.join(REPO_ROOT, f), "utf8"))).sort();
+    assertEqual(naming.filter((f) => !allowed.includes(f)).join(", "), "",
+      "a selftest file other than the two allowed ones names the OS temp directory. Build the tree under the " +
+      "harness's `tmp` instead, which is removed on every exit");
+    // Both directions: an allowed file that stopped naming it is a stale
+    // allowance, which would let the next edit there reuse it unseen.
+    assertEqual(allowed.filter((f) => !naming.includes(f)).join(", "), "",
+      "an allowed file no longer names the OS temp directory; take it out of `allowed` in this test, so the " +
+      "allowance is not there to be reused");
   });
 }

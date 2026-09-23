@@ -5,12 +5,14 @@
 // reserved prefixes, whole-line proof, the four re-check outcomes, and the
 // daily job's expiry being the library's rule rather than a copy of it.
 //
-// Two tests below declare their own `const tmp` inside the test body, shadowing
-// the harness one. Those are per-test trees and the shadows are deliberate,
-// which is why this module imports no `tmp` at all.
+// Two tests below declare their own `const tmp` inside the test body. Those
+// are per-test trees and the names are deliberate, which is why the harness's
+// `tmp` comes in as SUITE_TMP. Every tree here is made UNDER it, because two
+// of these tests remove theirs only after their last assertion, and a failing
+// run used to leave those trees in `/tmp`; the harness removes SUITE_TMP on
+// every exit, and repo-rules.mjs holds every case to building there.
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -28,7 +30,7 @@ import {
 } from "../lib/sources.mjs";
 import { checkPublisherRecords, runValidation } from "../validate.mjs";
 import { NO_LISTING_FILE, proofNamesOwner, recheck } from "../../bot/recheck-publishers.mjs";
-import { test, assert } from "./harness.mjs";
+import { test, assert, tmp as SUITE_TMP } from "./harness.mjs";
 import { TRUST31_COPY, trust31Covers, trust31Entries } from "./trust31.mjs";
 
 // ── gap 6: a record that reaches no listing ─────────────────────────────────
@@ -256,7 +258,7 @@ export async function run() {
       `${unjudged.join(", ")}; the function is judging by some other schema than the loader's`);
 
     // (c)
-    const tree = fs.mkdtempSync(path.join(os.tmpdir(), "astra-pub-gate-"));
+    const tree = fs.mkdtempSync(path.join(SUITE_TMP, "astra-pub-gate-"));
     try {
       fs.cpSync(path.join(REPO_ROOT, "publishers"), path.join(tree, "publishers"), { recursive: true });
       const pick = committedFiles.find((f) => f === "publishers/mihailinl.json") ?? committedFiles[0];
@@ -339,7 +341,7 @@ export async function run() {
   //
   // then a declaration set carrying one of every mistake the file can hold.
   await test("a record with no listing fails unless declared; a withdrawn one and a stale declaration are reported, not refused", () => {
-    const tree = fs.mkdtempSync(path.join(os.tmpdir(), "astra-pub-reach-"));
+    const tree = fs.mkdtempSync(path.join(SUITE_TMP, "astra-pub-reach-"));
     try {
       for (const dir of ["plugins", "registry", "policy", "schema"]) {
         fs.cpSync(path.join(REPO_ROOT, dir), path.join(tree, dir), { recursive: true });
@@ -409,7 +411,7 @@ export async function run() {
   // is run against a tree with no publishers/ at all, which is also the state
   // every fork and every first day is in.
   await test("with no publishers/ at all, no listing carries a publisher key", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "astra-nopub-"));
+    const tmp = fs.mkdtempSync(path.join(SUITE_TMP, "astra-nopub-"));
     try {
       for (const dir of ["plugins", "registry", "policy", "schema"]) {
         const from = path.join(REPO_ROOT, dir);
@@ -472,7 +474,7 @@ export async function run() {
   // person's plugins do not all live under their personal one. Three things have
   // to hold, and the second is the one that would have gone unnoticed.
   await test("a covered owner resolves to the same record, and cannot be claimed twice", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "astra-covers-"));
+    const tmp = fs.mkdtempSync(path.join(SUITE_TMP, "astra-covers-"));
     const write = (name, doc) =>
       fs.writeFileSync(path.join(tmp, "publishers", name), JSON.stringify(doc, null, 2));
     const load = () => loadPublishers(tmp);
@@ -709,7 +711,7 @@ export async function run() {
   // prevent.
   await test("a re-check renews on proof, and moves nothing without it", async () => {
     const mk = (over = {}) => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), "astra-recheck-"));
+      const root = fs.mkdtempSync(path.join(SUITE_TMP, "astra-recheck-"));
       fs.mkdirSync(path.join(root, "publishers"));
       fs.writeFileSync(path.join(root, "publishers", "someone.json"), JSON.stringify({
         schema: "astra.registry.publisher/1", owner: "someone", display_name: "Someone",
@@ -758,7 +760,7 @@ export async function run() {
   // this fixture before the repair: 2 fetches, then the throw. The committed
   // tree has no `verified` record, so nothing else here ever held this case.
   await test("an expired record covering two logins is fetched once, withdrawn once, and the write finishes", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "astra-recheck-covers-"));
+    const root = fs.mkdtempSync(path.join(SUITE_TMP, "astra-recheck-covers-"));
     try {
       fs.mkdirSync(path.join(root, "publishers"));
       const file = path.join(root, "publishers", "someone.json");
@@ -798,8 +800,8 @@ export async function run() {
   // files outside this tree, and the job has to change with it.
   await test("the daily job's expiry is the library's rule, and follows the library when it changes", async () => {
     const now = new Date("2026-06-15T12:00:00Z");
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "astra-recheck-agree-"));
-    const shadow = fs.mkdtempSync(path.join(os.tmpdir(), "astra-recheck-lib-"));
+    const root = fs.mkdtempSync(path.join(SUITE_TMP, "astra-recheck-agree-"));
+    const shadow = fs.mkdtempSync(path.join(SUITE_TMP, "astra-recheck-lib-"));
     try {
       fs.mkdirSync(path.join(root, "publishers"));
       const rec = (owner, over) => fs.writeFileSync(path.join(root, "publishers", `${owner}.json`), JSON.stringify({
@@ -914,7 +916,7 @@ export async function run() {
     const now = new Date("2026-06-15T12:00:00Z");
     const fetcher = async () => ({ ok: false, why: "HTTP 404" });
     const build = (declarations) => {
-      const tree = fs.mkdtempSync(path.join(os.tmpdir(), "astra-recheck-declared-"));
+      const tree = fs.mkdtempSync(path.join(SUITE_TMP, "astra-recheck-declared-"));
       for (const dir of ["plugins", "registry", "policy", "schema", "publishers"]) {
         fs.cpSync(path.join(REPO_ROOT, dir), path.join(tree, dir), { recursive: true });
       }
