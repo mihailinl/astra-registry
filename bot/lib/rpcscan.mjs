@@ -118,6 +118,17 @@ const ALWAYS_ALLOWED = new Set([
  * `every_permission_the_js_half_names_is_a_real_one` reads this literal as text
  * and fails `cargo test` on an id the daemon does not have. So a hint this file
  * gives an author is one their daemon will honour.
+ *
+ * Each row's `permission` and `capability`, and `ALWAYS_ALLOWED` above, are held
+ * to the `PluginHostService` rows of AstraPlugins' `spec/hooks.yaml`, read at the
+ * commit `bot/manifest-probe/astra-plugins.pin` names — the probe's
+ * `the_two_gating_registers_*` tests, where hooks.yaml's `none` is no permission
+ * and its `core` is no capability. One cell differs, and is named there with its
+ * reason rather than tolerated: `SetVariable`'s `capability: "actions"`, which
+ * hooks.yaml files under `core`. Whether that legacy arm stays is an open policy
+ * question about manifests written before `[permissions]` existed. The exception
+ * is pinned to these exact two values, so changing this row either way turns
+ * `cargo test` red until the exception is deleted with it.
  */
 export const RPC_RULES = {
   FireTrigger: { permission: "fire_trigger", capability: "triggers", blocking: true },
