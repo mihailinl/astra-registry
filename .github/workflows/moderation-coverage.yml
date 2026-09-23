@@ -181,10 +181,10 @@ jobs:
         if: always()
         run: node tools/coverage/docs-advisory-url.mjs --report "$ASTRA_COVERAGE_FINDINGS"
 
-      # The two steps that leave the runner, and neither carries a credential:
-      # both resolve AstraPlugins' default branch with `git ls-remote --symref`
-      # and then read public bytes from it. A token in a job that runs every
-      # fifteen minutes is a token in fifteen-minute Actions logs.
+      # Two of the three steps that leave the runner, and neither carries a
+      # credential: both resolve AstraPlugins' default branch with `git ls-remote
+      # --symref` and then read public bytes from it. A token in a job that runs
+      # every fifteen minutes is a token in fifteen-minute Actions logs.
       - name: The reserved ids AstraPlugins refuses are the ones we refuse    # M-T5.7, OPEN-OPS-11
         if: always()
         run: node tools/coverage/reserved-id-mirror.mjs --report "$ASTRA_COVERAGE_FINDINGS"
@@ -198,6 +198,21 @@ jobs:
       - name: No AstraPlugins example takes MOD-16's staging listing id       # M-T2.1, MOD-16
         if: always()
         run: node tools/coverage/examples-staging-id.mjs --report "$ASTRA_COVERAGE_FINDINGS"
+
+      # The third, and the one that carries a token: this job's own
+      # GITHUB_TOKEN, which `contents: read` above makes read-only, and only for
+      # the rate limit. Every route it reads answers a caller with NO credential
+      # (both repositories are public), but it reads about eighteen of them a
+      # run, and four runs an hour is past the 60 an hour GitHub gives an
+      # unauthenticated runner address. A read the token is refused is asked
+      # again without it. Which secrets exist where is NOT asked — that needs a
+      # credential this job must never hold — and the step says so on every run
+      # (ops dev/couplings.md gap 22).
+      - name: The settings GitHub serves are the ones policy/settings-expected.json records   # gap 22, RC-R0-4
+        if: always()
+        run: node tools/coverage/settings.mjs --report "$ASTRA_COVERAGE_FINDINGS"
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
 
       # ── the verdict ──────────────────────────────────────────────────────
 
