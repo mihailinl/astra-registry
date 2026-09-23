@@ -1097,6 +1097,15 @@ id = "sink-panel"
     // it demands and hooks.yaml does not is an author told to declare the wrong
     // key. Both files stay green on their own the whole time.
     //
+    // That cell was a case of the first kind, and it was decided on 2026-09-23
+    // (astra-plugins-ops couplings entry 32): the arm was dropped from
+    // rpcscan.mjs, so the two registers now agree on every cell and nothing is
+    // excused. Its cost was measured before it was taken, with the real
+    // inspectBundle, probe and scanHostRpcs over every artifact of every
+    // committed record declaring `actions`: no error and no hold — only
+    // non-blocking `W_HOST_RPC_IN_OPAQUE_FILE` notes, where a compiled binary
+    // or a bundled client carries the method's name.
+    //
     // hooks.yaml is read AT the pin by `pinned_file` above — out of git
     // objects, never off the checkout's working tree — the one reader the
     // proto test uses too.
@@ -1144,25 +1153,14 @@ id = "sink-panel"
         why: &'static str,
     }
 
-    const EXCEPTIONS: &[Exception] = &[Exception {
-        rpc: "SetVariable",
-        field: "capability",
-        rpcscan: "actions",
-        hooks_yaml: "core",
-        why: "a policy call about legacy manifests, open and the owner's to make \
-              (astra-plugins-ops couplings entry 32). `capability: \"actions\"` is the \
-              arm for manifests written before `[permissions]` existed: a plugin that \
-              declares `[capabilities] actions = true` — which every action plugin does \
-              — and calls SetVariable passes this scan without `[permissions] \
-              set_variable`. hooks.yaml gates SetVariable on `set_variable` and on no \
-              capability, and the manifest crate's `[permissions]` is default-deny — its \
-              own header: an absent section means no host rpc beyond Register, PluginLog \
-              and GetPluginSelfConfig, and `[capabilities]` says what a plugin implements, \
-              not what it may call out to — so by the crate's \
-              account that plugin gets a clean scan here and a denial at run time. \
-              Dropping the arm ends that, and starts failing legacy manifests the scan \
-              has been passing. Neither cost is this file's to choose.",
-    }];
+    /// Empty, and that is the state to keep. Its one entry — SetVariable's
+    /// `capability`, `"actions"` against `"core"` — went on 2026-09-23 with the
+    /// arm it excused (couplings entry 32), in the commit that dropped the arm,
+    /// as `every_named_exception_is_still_a_difference` demanded. With nothing
+    /// here that test asks nothing; the machinery it guards is still proven on
+    /// every run, on a synthesised exception, in
+    /// `the_comparison_goes_red_on_the_committed_registers_mutated`.
+    const EXCEPTIONS: &[Exception] = &[];
 
     /// This group's COULD NOT ASK — `could_not_ask_about`, naming this pair.
     fn could_not_ask(why: impl std::fmt::Display) -> ! {
@@ -1412,8 +1410,10 @@ id = "sink-panel"
         c
     }
 
-    fn excused(d: &Difference) -> bool {
-        EXCEPTIONS.iter().any(|e| {
+    /// Whether `exceptions` — `EXCEPTIONS`, or a synthesised list in the
+    /// mutation proof — excuses exactly this difference.
+    fn excused(exceptions: &[Exception], d: &Difference) -> bool {
+        exceptions.iter().any(|e| {
             e.rpc == d.rpc && e.field == d.field && e.rpcscan == d.rpcscan && e.hooks_yaml == d.hooks_yaml
         })
     }
@@ -1482,7 +1482,7 @@ id = "sink-panel"
             c.compared
         );
         let unexplained: Vec<String> =
-            c.differences.iter().filter(|d| !excused(d)).map(|d| format!("    {d}")).collect();
+            c.differences.iter().filter(|d| !excused(EXCEPTIONS, d)).map(|d| format!("    {d}")).collect();
         assert!(
             unexplained.is_empty(),
             "REGISTERS DIFFER — bot/lib/rpcscan.mjs and {HOOKS_YAML} at {pin} disagree about what gates:\n{}\n  \
@@ -1501,15 +1501,15 @@ id = "sink-panel"
     #[test]
     fn every_named_exception_is_still_a_difference() {
         let (pin, ours, theirs) = both_registers();
-        let stale = stale_exceptions(&compare(&ours, &theirs), &pin);
+        let stale = stale_exceptions(EXCEPTIONS, &compare(&ours, &theirs), &pin);
         assert!(stale.is_empty(), "{}", stale.join("\n"));
     }
 
-    /// Every `EXCEPTIONS` entry that no longer excuses exactly the difference
+    /// Every entry of `exceptions` that no longer excuses exactly the difference
     /// it names, as the sentence that says so. Empty is the only pass.
-    fn stale_exceptions(c: &Comparison, pin: &str) -> Vec<String> {
+    fn stale_exceptions(exceptions: &[Exception], c: &Comparison, pin: &str) -> Vec<String> {
         let mut out = Vec::new();
-        for e in EXCEPTIONS {
+        for e in exceptions {
             if !matches!(e.field, "permission" | "capability") || e.why.trim().is_empty() {
                 out.push(format!(
                     "the EXCEPTIONS entry for {} names column {:?} or gives no reason; an exception is one \
@@ -1532,7 +1532,7 @@ id = "sink-panel"
                     a = e.rpcscan,
                     b = e.hooks_yaml,
                 )),
-                Some(d) if !excused(d) => out.push(format!(
+                Some(d) if !excused(exceptions, d) => out.push(format!(
                     "STALE EXCEPTION — EXCEPTIONS excuses {rpc}'s {field} as {a:?} against {b:?}, and the \
                      difference is now {d}. That is a different disagreement, and the reason written for the \
                      first does not cover it.",
@@ -1566,18 +1566,19 @@ id = "sink-panel"
             let (ours, _, _) = rpcscan_gates(js).expect("rpcscan.mjs");
             compare(&ours, &theirs)
         };
-        let unexplained = |c: &Comparison| -> Vec<String> {
-            c.differences.iter().filter(|d| !excused(d)).map(|d| d.rpc.clone()).collect()
+        let unexplained_by = |exceptions: &[Exception], c: &Comparison| -> Vec<String> {
+            c.differences.iter().filter(|d| !excused(exceptions, d)).map(|d| d.rpc.clone()).collect()
         };
+        let unexplained = |c: &Comparison| unexplained_by(EXCEPTIONS, c);
 
-        // The committed pair: nothing unexplained, nothing missing, the one
-        // exception live. Without this the rows below prove nothing.
+        // The committed pair: nothing missing and nothing differing, so no
+        // exception is needed — SetVariable's went with its arm on 2026-09-23
+        // (couplings entry 32). Without this the rows below prove nothing.
         let base = run(RPCSCAN_MJS, &yaml);
         const BASE: &str = "the committed registers are not the committed pair this proof starts from; the \
                             three tests above say how — fix that first, then this";
         assert!(base.only_rpcscan.is_empty() && base.only_hooks_yaml.is_empty(), "{BASE}");
-        assert_eq!(unexplained(&base), Vec::<String>::new(), "{BASE}");
-        assert!(base.differences.iter().any(excused), "{BASE}");
+        assert_eq!(base.differences, Vec::<Difference>::new(), "{BASE}");
 
         // Another row's permission, flipped on each side in turn.
         let js = once(RPCSCAN_MJS, "permission: \"fire_trigger\"", "permission: \"push_to_ui\"");
@@ -1603,47 +1604,64 @@ id = "sink-panel"
         );
         assert_eq!(run(RPCSCAN_MJS, &y).only_hooks_yaml, vec!["GetWidget"]);
 
-        // The owner decides, and SetVariable agrees: the exception now
-        // excuses nothing. Both spellings of "no capability arm" count.
-        // These rows and the next edit the exception's own literal, so they
-        // are deleted with it; `every_named_exception_is_still_a_difference`
-        // says so when that day comes.
-        const SET_VARIABLE_ROW: &str = "SetVariable: { permission: \"set_variable\", capability: \"actions\",";
-        assert!(stale_exceptions(&base, "test").is_empty());
-        for to in ["", " capability: null,"] {
-            let js = once(
+        // Decision 32 undone, on either side, is red: the legacy arm put back
+        // into rpcscan.mjs, or hooks.yaml filing SetVariable under `actions`.
+        // The yaml edit is anchored on the row, since `capability: core` is
+        // several rows' value.
+        const SET_VARIABLE_ROW: &str = "SetVariable: { permission: \"set_variable\", blocking: true },";
+        const SET_VARIABLE_YAML: &str =
+            "  - rpc: SetVariable\n    service: PluginHostService\n    direction: \"plugin->daemon\"\n    capability: core\n";
+        let with_arm = |capability: &str| {
+            once(
                 RPCSCAN_MJS,
                 SET_VARIABLE_ROW,
-                &format!("SetVariable: {{ permission: \"set_variable\",{to}"),
-            );
-            let c = run(&js, &yaml);
-            assert_eq!(unexplained(&c), Vec::<String>::new());
-            let stale = stale_exceptions(&c, "test");
+                &format!("SetVariable: {{ permission: \"set_variable\", capability: {capability}, blocking: true }},"),
+            )
+        };
+        let armed = run(&with_arm("\"actions\""), &yaml);
+        assert_eq!(unexplained(&armed), vec!["SetVariable"]);
+        let y_actions = once(&yaml, SET_VARIABLE_YAML, &SET_VARIABLE_YAML.replace("capability: core", "capability: actions"));
+        let filed = run(RPCSCAN_MJS, &y_actions);
+        assert_eq!(unexplained(&filed), vec!["SetVariable"]);
+
+        // The exception machinery, which an empty EXCEPTIONS no longer
+        // exercises, proven on the entry it last held — synthesised here from
+        // that entry, not committed. It excuses exactly the difference it
+        // names, and is live there.
+        let synthetic = [Exception {
+            rpc: "SetVariable",
+            field: "capability",
+            rpcscan: "actions",
+            hooks_yaml: "core",
+            why: "synthesised by this proof from the entry deleted on 2026-09-23",
+        }];
+        assert_eq!(unexplained_by(&synthetic, &armed), Vec::<String>::new());
+        assert!(stale_exceptions(&synthetic, &armed, "test").is_empty());
+        // The difference gone makes it stale — on the committed pair, and with
+        // the arm spelt `capability: null`, since both spellings of "no
+        // capability arm" count.
+        let nulled = run(&with_arm("null"), &yaml);
+        for c in [&base, &nulled] {
+            let stale = stale_exceptions(&synthetic, c, "test");
             assert!(
-                stale.len() == 1 && stale[0].starts_with("STALE EXCEPTION — SetVariable's capability"),
+                stale.len() == 1 && stale[0].starts_with("STALE EXCEPTION — SetVariable's capability no longer differs"),
                 "{stale:?}"
             );
         }
-        // The same decision taken on the other side: hooks.yaml files it
-        // under `actions`. Anchored on the row, since `capability: core` is
-        // five rows' value.
-        let y = once(
-            &yaml,
-            "  - rpc: SetVariable\n    service: PluginHostService\n    direction: \"plugin->daemon\"\n    capability: core\n",
-            "  - rpc: SetVariable\n    service: PluginHostService\n    direction: \"plugin->daemon\"\n    capability: actions\n",
-        );
-        assert_eq!(stale_exceptions(&run(RPCSCAN_MJS, &y), "test").len(), 1);
-
-        // And the exception is exact: SetVariable's capability moving to
-        // another wrong value is a new difference the old reason does not cover.
-        let js = once(
-            RPCSCAN_MJS,
-            SET_VARIABLE_ROW,
-            "SetVariable: { permission: \"set_variable\", capability: \"triggers\",",
-        );
-        let c = run(&js, &yaml);
-        assert_eq!(unexplained(&c), vec!["SetVariable"]);
-        assert_eq!(stale_exceptions(&c, "test").len(), 1);
+        // The same two values the other way round, and another wrong value,
+        // are each a different disagreement the entry's reason does not cover:
+        // unexplained, and the entry stale.
+        for c in [&filed, &run(&with_arm("\"triggers\""), &yaml)] {
+            assert_eq!(unexplained_by(&synthetic, c), vec!["SetVariable"]);
+            let stale = stale_exceptions(&synthetic, c, "test");
+            assert!(stale.len() == 1 && stale[0].contains("That is a different disagreement"), "{stale:?}");
+        }
+        // An entry with no reason, or naming a column that does not exist, is
+        // refused whatever it would excuse.
+        for bad in [Exception { why: " ", ..synthetic[0] }, Exception { field: "blocking", ..synthetic[0] }] {
+            let stale = stale_exceptions(std::slice::from_ref(&bad), &armed, "test");
+            assert!(stale.len() == 1 && stale[0].starts_with("the EXCEPTIONS entry for SetVariable"), "{stale:?}");
+        }
 
         // The subset parser refuses rather than skips.
         assert!(parse_hooks_yaml("hooks:\n  - rpc: A\n      service: B\n").is_err());

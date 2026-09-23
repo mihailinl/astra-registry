@@ -15,7 +15,7 @@
 name = "astra-manifest-probe"
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
+license = "GPL-3.0-or-later"
 publish = false
 description = "Parses plugin.toml with the daemon's own crate and answers in JSON, for the registry bot"
 

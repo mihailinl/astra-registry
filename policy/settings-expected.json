@@ -70,7 +70,7 @@
           "can_admins_bypass": true
         },
         "publish": {
-          "because": "ROLL-4 and registry plan RC-R0-3(a): the index signing key lives here and sign.yml job `publish` is the one job that reaches it. No required reviewer (LM-1; SECURITY.md, docs/RUNBOOK.md), so its only protection rule is the branch policy.",
+          "because": "ROLL-4 and registry plan RC-R0-3(a): the index signing key lives here and sign.yml job `publish` is the one job that reaches it. No required reviewer (LM-1; SECURITY.md, docs/RUNBOOK.md), so its only protection rule is the branch policy. can_admins_bypass is false since 2026-09-23 (coordinator decision under the owner delegation, ops notes/state.md): the signing key environment gives an administrator no bypass of any protection rule it may gain.",
           "deployment_branch_policy": "custom",
           "branch_policies": [
             {
@@ -81,7 +81,7 @@
           "protection_rules": [
             "branch_policy"
           ],
-          "can_admins_bypass": true
+          "can_admins_bypass": false
         }
       },
       "pending_environments": {
