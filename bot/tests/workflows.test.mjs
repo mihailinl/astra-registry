@@ -317,6 +317,106 @@ test("no workflow lets a caller name the submitter", () => {
   assert.equal(offenders.join(", "), "", "a workflow takes the submitter from its caller");
 });
 
+// Ops register entry 102 (1). Three workflow steps gate a commit on
+// `tools/validate.mjs`, and they are one rule: the tree `main` may hold. Until
+// 2026-09-22 two passed `--allow-staging` and the moderation run's gate passed
+// nothing — and on that day `main` held ten staging records, so the validator
+// exited 1 there on a tree the other two accept, and every moderation commit
+// would have stopped at its gates. Nothing compared the three lines.
+//
+// **The reference is `build-index.yml`'s step**, because it runs on every push
+// to `main` and so decides what `main` holds: a gate stricter than it refuses a
+// tree `main` already carries, and a gate looser than it lets a bot commit what
+// a person's pull request could not land. A step that has a real reason to
+// differ declares it below, with the reason, and the declaration itself goes red
+// when the step it names stops existing or stops differing that way.
+const VALIDATE_REFERENCE = "build-index.yml";
+const VALIDATE_DIFFERENCES = Object.freeze({
+  // "<file>: <step name>": { flags: ["--flag", ...], why: "..." },
+});
+
+/** The flags `tools/validate.mjs` documents, and which of them take a value, out of its own usage line. */
+function validateUsage() {
+  const src = fs.readFileSync(path.join(REPO, "tools", "validate.mjs"), "utf8");
+  const usage = /usage: node tools\/validate\.mjs ((?:\[--[a-z-]+(?: [A-Z]+)?\] ?)+)/.exec(src);
+  assert.ok(usage, "tools/validate.mjs no longer prints a usage line this test can read its flags from");
+  const flags = new Map();
+  for (const m of usage[1].matchAll(/\[(--[a-z-]+)( [A-Z]+)?\]/g)) flags.set(m[1], Boolean(m[2]));
+  assert.ok(flags.has("--allow-staging"), "the usage line lost --allow-staging, so what it is read for has changed");
+  return flags;
+}
+
+/** Every workflow line that runs `tools/validate.mjs`, with the step it is in and the flags it passes. */
+function validateInvocations() {
+  const known = validateUsage();
+  const out = [];
+  for (const file of files) {
+    const lines = read(file).split("\n");
+    lines.forEach((line, i) => {
+      if (line.trim().startsWith("#")) return;
+      const m = /\bnode\s+(?:\.\/)?tools\/validate\.mjs\b(.*)$/.exec(line);
+      if (!m) return;
+      let step = null;
+      for (let k = i; k >= 0; k--) {
+        const named = /^\s+- name:\s*(.+?)\s*$/.exec(lines[k]);
+        if (named) { step = named[1].replace(/^(["'])(.*)\1$/, "$2"); break; }
+      }
+      const tokens = m[1].trim().split(/\s+/).filter(Boolean);
+      const flags = [];
+      const unknown = [];
+      for (let t = 0; t < tokens.length && tokens[t].startsWith("--"); t++) {
+        if (!known.has(tokens[t])) unknown.push(tokens[t]);
+        flags.push(known.get(tokens[t]) && t + 1 < tokens.length ? `${tokens[t]} ${tokens[++t]}` : tokens[t]);
+      }
+      out.push({ file, line: i + 1, step, flags: flags.sort(), unknown, where: `${file}:${i + 1} (step "${step}")` });
+    });
+  }
+  return out;
+}
+
+test("every workflow step that gates on tools/validate.mjs passes the same flags, or declares why not", () => {
+  const calls = validateInvocations();
+  // The floor, counted 2026-09-22: baseline.yml, build-index.yml and
+  // plugins-moderation.yml. A loop over fewer is a rule about fewer gates.
+  assert.ok(calls.length >= 3,
+    `found ${calls.length} workflow line(s) running tools/validate.mjs and there were 3 on 2026-09-22; either a ` +
+    `gate was removed — lower this floor in that commit — or the line changed shape and this stopped seeing it`);
+  const problems = [];
+  for (const c of calls) {
+    if (c.unknown.length) problems.push(`${c.where} passes ${c.unknown.join(", ")}, which tools/validate.mjs's usage line does not name`);
+  }
+  const refs = calls.filter((c) => c.file === VALIDATE_REFERENCE);
+  assert.equal(refs.length, 1, `${VALIDATE_REFERENCE} runs tools/validate.mjs ${refs.length} times; the reference is one gate`);
+  const want = refs[0].flags.join(" ");
+  const used = new Set();
+  for (const c of calls) {
+    if (c === refs[0]) continue;
+    const got = c.flags.join(" ");
+    const declared = VALIDATE_DIFFERENCES[`${c.file}: ${c.step}`];
+    if (declared) {
+      used.add(`${c.file}: ${c.step}`);
+      if ([...declared.flags].sort().join(" ") !== got) {
+        problems.push(`${c.where} declares the flags [${declared.flags.join(", ")}] and passes [${c.flags.join(", ")}]`);
+      }
+      if (!String(declared.why ?? "").trim()) problems.push(`${c.where} declares a difference and gives no reason`);
+      continue;
+    }
+    if (got !== want) {
+      problems.push(
+        `${c.where} runs tools/validate.mjs with [${c.flags.join(", ")}] and ${refs[0].where}, the gate every push ` +
+        `to main passes, runs it with [${refs[0].flags.join(", ")}]. A gate stricter than main's refuses a tree main ` +
+        `already holds — on 2026-09-22 ten staging records, so every moderation commit stopped there (ops entry ` +
+        `102) — and a looser one lands what a pull request could not. Pass the same flags, or declare the ` +
+        `difference in VALIDATE_DIFFERENCES with why`,
+      );
+    }
+  }
+  for (const key of Object.keys(VALIDATE_DIFFERENCES)) {
+    if (!used.has(key)) problems.push(`VALIDATE_DIFFERENCES declares ${key}, and no workflow step by that name runs tools/validate.mjs`);
+  }
+  assert.equal(problems.join("\n"), "", "the gates on tools/validate.mjs do not agree on what main may hold");
+});
+
 // B-T0.3. `bot/publish-apply.mjs` takes `--skip-checks` so its own tests can run
 // against a toy repository with no catalogue in it. That flag turns off
 // `validate.mjs`, `build-index.mjs --check` and `selftest.mjs` — every rule this
@@ -2118,6 +2218,123 @@ test("a step marked `not built` cannot let its job report success", () => {
     `renamed and this rule has stopped applying to anything`,
   );
   assert.equal(problems.join("\n"), "", "a placeholder step can let its job report success");
+});
+
+// Ops register entry 102 (4). `plugins-moderation.yml`'s `commit` job mapped
+// `results` and `main_commit` from `steps.apply.outputs`, and the `apply` step
+// wrote neither — `$GITHUB_OUTPUT` appeared nowhere in the file. An output
+// nobody writes is an empty string, and here the empty string was read by
+// `settled` as "no decision got a result", which pages, and by `report` as a
+// commit to name in every result it posts. Same shape as the ingest check
+// above (`every step output the workflow reads is one publish-apply writes`),
+// one workflow over, and the direction that fails silently.
+//
+// A PLACEHOLDER is excused and counted: a step whose every line is `set -euo
+// pipefail`, an `::error::` echo or `exit 1`. Its outputs are the builder's to
+// write, and it fails its job until they are. The shape is read off the lines
+// and not off the `(not built: …)` marker in the step's name, because the
+// `apply` step carries that marker too — its job cannot run until M-T3.2 — and
+// is built: excusing it by name is exactly how its two outputs went unasked.
+test("every output a moderation job hands on is one a step of that job writes", () => {
+  const MODERATION = "plugins-moderation.yml";
+  const problems = [];
+  let asked = 0;
+  let excused = 0;
+  for (const job of allJobs().filter((j) => j.file === MODERATION)) {
+    const lines = code(job);
+    const at = lines.findIndex((l) => /^\s+outputs:\s*$/.test(l));
+    if (at < 0) continue;
+    const indent = lines[at].search(/\S/);
+    const steps = stepsOf(job.body);
+    for (let i = at + 1; i < lines.length && (lines[i].trim() === "" || lines[i].search(/\S/) > indent); i++) {
+      const m = /^\s+([A-Za-z0-9_-]+):\s*\$\{\{\s*steps\.([A-Za-z0-9_-]+)\.outputs\.([A-Za-z0-9_-]+)\s*\}\}\s*$/.exec(lines[i]);
+      if (!m) continue;
+      const [, key, id, output] = m;
+      const label = `${MODERATION} job \`${job.job}\` output \`${key}\` (steps.${id}.outputs.${output})`;
+      const step = steps.find((s) => s.body.some((l) => new RegExp(`^\\s+id:\\s*${id}\\s*$`).test(l)));
+      if (!step) { problems.push(`${label}: no step of the job has \`id: ${id}\``); continue; }
+      const text = step.body.filter((l) => !l.trim().startsWith("#")).join("\n");
+      const run = step.body.findIndex((l) => /^\s+run:\s*\|\s*$/.test(l));
+      const script = run < 0 ? [] : step.body.slice(run + 1).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+      if (script.length && script.every((l) => l === "set -euo pipefail" || l === "exit 1" || /^echo "::error::/.test(l))) {
+        excused++;
+        continue;
+      }
+      asked++;
+      const uses = /^\s+(?:- )?uses:\s*\.\/(\.github\/actions\/[A-Za-z0-9_-]+)\s*$/m.exec(text);
+      if (uses) {
+        const action = fs.readFileSync(path.join(REPO, uses[1], "action.yml"), "utf8").split("\n");
+        const top = action.findIndex((l) => /^outputs:\s*$/.test(l));
+        const declared = [];
+        for (let k = top + 1; top >= 0 && k < action.length && !/^\S/.test(action[k]); k++) {
+          const d = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(action[k]);
+          if (d) declared.push(d[1]);
+        }
+        if (!declared.includes(output)) problems.push(`${label}: ${uses[1]}/action.yml declares no output \`${output}\``);
+        continue;
+      }
+      if (!/\$GITHUB_OUTPUT|\$\{GITHUB_OUTPUT\}/.test(text) || !new RegExp(`\\b${output}(=|<<)`).test(text)) {
+        problems.push(
+          `${label}: the step writes no \`${output}\` to $GITHUB_OUTPUT, so every job that needs it is handed an ` +
+          `empty string — which \`settled\` reads as "no decision got a result"`,
+        );
+      }
+    }
+  }
+  // The floor, counted after the repair on 2026-09-22: `alert`'s two, which
+  // the action declares, and `commit`'s two. `list`'s five are excused while
+  // its step is `not built`.
+  assert.ok(asked >= 4, `${asked} output(s) were asked about and there were 4 on 2026-09-22 (and ${excused} excused)`);
+  assert.equal(problems.join("\n"), "", "a moderation job hands on an output nothing writes");
+});
+
+// Ops register entries 102 (2) and 69. The moderation run's commit job
+// regenerates `registry/v1/index.json` and `registry/v1/revocations.json`
+// ITSELF, lists them in `paths.txt`, and writes the withdrawal list at the
+// serial the signer gives the commit that lands it — one more than the HEAD
+// count when that commit touches the list. A workflow step that ran either
+// generator again after it would rewrite the list at the HEAD count, and the
+// `apply` step would commit that one, because the path is listed: entry 69,
+// back, with every test of the job still green. So in this workflow a
+// generator only ever checks.
+test("the moderation workflow runs the two generators only as `--check`", () => {
+  const MODERATION = "plugins-moderation.yml";
+  const offenders = [];
+  let seen = 0;
+  read(MODERATION).split("\n").forEach((line, i) => {
+    if (line.trim().startsWith("#")) return;
+    const m = /\bnode\s+(?:\.\/)?tools\/(build-index|build-revocations)\.mjs\b(.*)$/.exec(line);
+    if (!m) return;
+    seen++;
+    if (!/(^|\s)--check(\s|$)/.test(m[2])) offenders.push(`${MODERATION}:${i + 1}: ${line.trim()}`);
+  });
+  assert.ok(seen >= 2, `${MODERATION} runs ${seen} generator line(s) and held both to --check on 2026-09-22`);
+  assert.equal(offenders.join("\n"), "",
+    "a moderation step writes a generated document after the commit job listed it, so the commit carries that " +
+    "step's serial and not the one the signer assigns the landing commit (ops entries 69, 102)");
+});
+
+// And the two readers of what `commit` hands on. `report` composes each result
+// from the commit job's `results` and `main_commit` — it has no other way to
+// see them, since a job starts from a fresh checkout — and `settled` counts a
+// decision as answered only in a run whose `report` succeeded, because a result
+// the commit job recorded and nothing posted is exactly the lost decision it
+// exists to page for.
+test("`report` and `settled` read what `commit` hands on, and `settled` only once `report` succeeded", () => {
+  const MODERATION = "plugins-moderation.yml";
+  const envOf = (jobName) => {
+    const body = jobOf(MODERATION, jobName).body.filter((l) => !l.trim().startsWith("#")).join("\n");
+    return (name) => new RegExp(`^\\s+${name}:\\s*(.+?)\\s*$`, "m").exec(body)?.[1] ?? null;
+  };
+  const report = envOf("report");
+  assert.equal(report("ASTRA_RESULTS"), "${{ needs.commit.outputs.results }}",
+    "`report` is not handed the commit job's results, so it has nothing to compose a result from");
+  assert.equal(report("ASTRA_MAIN_COMMIT"), "${{ needs.commit.outputs.main_commit }}");
+  const settled = envOf("settled");
+  assert.equal(settled("ASTRA_RESULTS"), "${{ needs.report.result == 'success' && needs.commit.outputs.results || '' }}",
+    "`settled` counts the commit job's results whether or not `report` posted them, so a run that posted nothing " +
+    "reads as a run that settled everything");
+  assert.equal(settled("ASTRA_MAIN_COMMIT"), "${{ needs.commit.outputs.main_commit }}");
 });
 
 // ── BOT-51's interval, and the two places it is written ─────────────────────

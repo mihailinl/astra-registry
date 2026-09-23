@@ -450,16 +450,16 @@ await test("a red coverage report does not block a takedown", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-section("shadow: the commit happens, the result waits");
+section("shadow: the hold is due, the result waits");
 // ─────────────────────────────────────────────────────────────────────────────
 
-await test("under shadow a confirmed hold is still released, and nothing is posted for it", () => {
+await test("under shadow a confirmed hold is still due to release, and nothing is posted for it", () => {
   const r = resolveHold(
     heldHold(moderatorDecision(), "reversal", { confirm: record("confirm", "sd-relist-1") }),
     { now: AFTER, shadow: true },
   );
   assertEqual(r.act, "release",
-    "a confirmed hold stopped being released under a shadow answer. It is not work that answer names: the " +
+    "a confirmed hold stopped being due under a shadow answer. It is not work that answer names: the " +
     "settled held result took it off the list and the release is driven by the MOD-52 record in git");
   assertEqual(r.post, false,
     "a run under a shadow answer posted an applied result. An applied or cancelled service-decision result " +
@@ -503,7 +503,7 @@ section("the service is down, and the runner crashed");
 // is no service input to resolveHold, and no way for this module to make a
 // call. Both halves are asserted, because "it happens not to call anything
 // today" is what a later import quietly changes.
-await test("with the service down a confirmed hold still releases, because nothing here asks it", () => {
+await test("with the service down a confirmed hold is still due to release, because nothing here asks it", () => {
   const r = resolveHold(
     heldHold(moderatorDecision(), "reversal", { confirm: record("confirm", "sd-relist-1") }),
     { now: AFTER, shadow: false },

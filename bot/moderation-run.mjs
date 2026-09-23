@@ -81,9 +81,10 @@
 // A confirmed hold is the one thing a `shadow: true` answer does not govern.
 // It is not work that answer names — a settled `held` result took it off
 // BOT-80's list — and its release is driven by the MOD-52 record in git
-// (BOT-81). So `commit` still releases it, in shadow and with `list` down. Its
-// `applied` or `cancelled` result, though, SETTLES a decision, which BOT-92
-// calls state-setting, so `report` posts it only in a run whose list answer is
+// (BOT-81). So `commit` walks the holds in shadow and with `list` down, and
+// M-T3.3's release, once built, is committed there too. Its `applied` or
+// `cancelled` result, though, SETTLES a decision, which BOT-92 calls
+// state-setting, so `report` posts it only in a run whose list answer is
 // `shadow: false` — the next such run, not this one (`resultsToPost`).
 //
 // **The release commit itself is not built** (M-T3.3: "a release commit
@@ -91,7 +92,8 @@
 // the entry and its confirm record"). Nothing here applies a held decision or
 // deletes an entry, so a hold that is DUE is refused by name (`walkHolds`'s
 // `due`, alert `hold_end_not_built`) rather than reported `applied` or
-// `cancelled` against a commit that did neither.
+// `cancelled` against a commit that did neither — and it is not released, in
+// shadow or out of it (ops entry 99).
 //
 // ── WHAT THIS FILE DOES NOT DO ─────────────────────────────────────────────
 //
@@ -106,10 +108,17 @@
 //     as `false` would apply a takedown the bound should have held, which is
 //     the one direction MOD-9 exists to prevent.
 //   * It does not push. The workflow's `commit` job runs the gates — both
-//     regenerated documents, `tools/selftest.mjs`, `tools/validate.mjs` over
-//     the staged tree, MOD-3's backing check — and then commits. This file
-//     writes the files and composes the message, so the gates run over a tree
-//     and not over a promise.
+//     documents held to their generators' `--check`, `tools/validate.mjs`
+//     over the staged tree, `tools/selftest.mjs`, MOD-3's backing check — and
+//     then commits. This file writes the files, REGENERATES the two documents
+//     (`regenerateDocuments`) and composes the message, so the gates run over a
+//     tree and not over a promise, and what `paths.txt` lists is what this
+//     file wrote (ops entries 79 and 102).
+//   * It does not compose a result in the `commit` job. BOT-81 has an
+//     `applied`, and a `held` for a hold this run entered, name the commit the
+//     workflow's `apply` step pushes after this file has exited; `report`
+//     composes them, from this job's `results.json` and that commit, both of
+//     which the step hands on as job outputs.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -143,9 +152,17 @@ import { VERDICT_SCHEMA, runUrl, verdictProblems } from "./lib/alert-verdict.mjs
 import { SOURCE_DIR as MODERATION_DIR } from "./lib/moderation.mjs";
 import { POLICY_CODES } from "./lib/policy/constants.mjs";
 import { createClient } from "./lib/service.mjs";
+import { buildIndex } from "../tools/build-index.mjs";
+import { stableStringify } from "../tools/lib/canonical.mjs";
 import { validate } from "../tools/lib/jsonschema.mjs";
 import { REPO_ROOT } from "../tools/lib/sources.mjs";
-import { SOURCE_DIR as REVOCATIONS_DIR } from "../tools/lib/revocations.mjs";
+import {
+  OUTPUT_FILE as REVOCATIONS_FILE,
+  SERIAL_PATHSPEC as LIST_SERIAL_PATHSPEC,
+  SOURCE_DIR as REVOCATIONS_DIR,
+  buildRevocations,
+  resolveSerial as listSerialAtHead,
+} from "../tools/lib/revocations.mjs";
 
 /** The registry's check of the service's answer, read by literal path. */
 export const SCHEMA_FILE = "schema/moderation-work-v1.json";
@@ -645,8 +662,13 @@ export function composeTrailers({ run, decisions = [] }) {
  * path is checked against BOT-33's moderation allowlist here rather than after
  * the push: a path outside it is a bug in a compiler, and the place to stop it
  * is before `git add`.
+ *
+ * `documents` are the generated documents `regenerateDocuments` rewrote for
+ * this commit. They are listed only beside something else — a document is
+ * what a change produces, never a change of its own — and only when they
+ * changed.
  */
-export function composeCommit({ compiled, held = [], submissions = [], run, subject = null }) {
+export function composeCommit({ compiled, held = [], submissions = [], documents = [], run, subject = null }) {
   const paths = new Set();
   const decisions = [];
   for (const r of compiled) {
@@ -661,6 +683,7 @@ export function composeCommit({ compiled, held = [], submissions = [], run, subj
     paths.add(holdEntryPath(h.service_decision_id));
   }
   for (const s of submissions) if (s.path) paths.add(s.path);
+  if (paths.size) for (const d of documents) paths.add(d);
 
   const bad = [...paths].filter((p) => !allowedPath(p));
   if (bad.length) {
@@ -693,6 +716,66 @@ export function composeCommit({ compiled, held = [], submissions = [], run, subj
     paths: [...paths].sort(),
     decisions,
   };
+}
+
+// ── the two generated documents ─────────────────────────────────────────────
+
+/**
+ * The documents a moderation commit regenerates, where each generator writes
+ * it. The index path is `tools/build-index.mjs`'s CLI default, stated there as
+ * a literal; the suite holds this one to it by running that CLI's `--check`
+ * over a tree this file wrote.
+ */
+export const INDEX_FILE = "registry/v1/index.json";
+
+/** Does a commit of these paths change what the withdrawal list's serial counts? */
+export const movesListSerial = (paths) =>
+  paths.some((p) => p === LIST_SERIAL_PATHSPEC || p.startsWith(`${LIST_SERIAL_PATHSPEC}/`));
+
+/**
+ * Regenerate `registry/v1/index.json` and `registry/v1/revocations.json` for
+ * the commit whose paths are `paths`, and return the ones whose bytes changed.
+ *
+ * **Why here and not in the workflow.** The workflow used to run both
+ * generators in a step of its own, AFTER this job had written `paths.txt` — so
+ * neither document was ever listed, the push carried a delist beside an index
+ * that still listed the plugin (`build-index.yml`'s `--check` red on `main`),
+ * and an advisory beside a withdrawal list that did not carry it (ops entry
+ * 102). A path list written by one step for a file written by another is entry
+ * 79's defect in a new place; the writer and the lister are now one function.
+ *
+ * **The serials are the ones the signer assigns the commit that lands them.**
+ * The index's generator already counts a pending change under `plugins/` as
+ * the commit about to be made (`a85c198`). The list's does not (ops entry 69):
+ * `resolveSerial` counts history at `HEAD` and the reserved zero, so run before
+ * the commit it writes the serial `signed` ALREADY serves, and
+ * `build-revocations --check` compares at the file's own serial and cannot see
+ * it. This job knows exactly which commit it is composing, so it adds that one
+ * when — and only when — the commit touches the list's pathspec; the landing
+ * commit is a single-parent commit on `HEAD`, which every way of counting the
+ * pathspec counts. The formula itself stays `tools/lib/revocations.mjs`'s.
+ *
+ * Nothing is regenerated for an empty commit: a document is what a change
+ * produces, and a run that commits nothing leaves the tree as it found it
+ * (BOT-92's shadow run included, which the suite checks by `git status`).
+ */
+export function regenerateDocuments({ root = REPO_ROOT, paths = [] } = {}) {
+  if (!paths.length) return { changed: [], serials: null };
+  const index = buildIndex({ root });
+  const list = buildRevocations({ root, serial: listSerialAtHead({ root }) + (movesListSerial(paths) ? 1 : 0) });
+  const changed = [];
+  for (const [rel, doc] of [[INDEX_FILE, index], [REVOCATIONS_FILE, list]]) {
+    if (!allowedPath(rel)) {
+      throw new Error(`${rel} is a generated document BOT-33's moderation allowlist does not carry`);
+    }
+    const full = path.join(root, ...rel.split("/"));
+    const text = stableStringify(doc);
+    if (fs.existsSync(full) && fs.readFileSync(full, "utf8") === text) continue;
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, text);
+    changed.push(rel);
+  }
+  return { changed, serials: { index: index.signed.serial, revocations: list.signed.serial } };
 }
 
 // ── holds: entering one ─────────────────────────────────────────────────────
@@ -741,10 +824,19 @@ export const holdEntryPath = (id) => `${HOLDS_PREFIX}/${id}.json`;
  * move `held_at` and restart a reversal's 24 hours every time, and listing an
  * unchanged file would compose a commit with nothing in it.
  *
- * @returns {{written: string[], entered: {service_decision_id: string, file: string}[], kept: string[]}}
+ * **And its `held` result names the commit that entered it** (`results`'s
+ * `commit`), read here because this is where the entry is found to be there
+ * already. BOT-81 has a `held` name the hold entry's commit; this run makes
+ * none for it, and BOT-82 keys the result on the commit, so any other commit
+ * would be a second, different result for the post that was lost. A kept
+ * entry git cannot place — on disk and never committed, which a checkout of
+ * `main` cannot hold — gets `commit: null`, which `resultsFor` refuses to post.
+ *
+ * @returns {{written: string[], entered: {service_decision_id: string, file: string}[], kept: string[],
+ *   results: {service_decision_id: string, held_for: string, commit?: string|null}[]}}
  */
 export function writeHoldEntries(held, { root = REPO_ROOT, schemaRoot = REPO_ROOT, heldAt, run = null } = {}) {
-  const out = { written: [], entered: [], kept: [] };
+  const out = { written: [], entered: [], kept: [], results: [] };
   for (const h of held) {
     const rel = holdEntryPath(h.service_decision_id);
     if (!allowedPath(rel)) {
@@ -753,8 +845,12 @@ export function writeHoldEntries(held, { root = REPO_ROOT, schemaRoot = REPO_ROO
     const full = path.join(root, ...rel.split("/"));
     if (fs.existsSync(full)) {
       out.kept.push(rel);
+      out.results.push({ service_decision_id: h.service_decision_id, held_for: h.held_for, commit: entryCommit(root, rel) });
       continue;
     }
+    // No `commit` member: this entry's commit is the one the workflow's `apply`
+    // step is about to push, and `report` names it from that step's output.
+    out.results.push({ service_decision_id: h.service_decision_id, held_for: h.held_for });
     const entry = holdEntry(h.decision, { held_for: h.held_for, held_at: heldAt, ...(run ? { run } : {}), root: schemaRoot });
     fs.mkdirSync(path.dirname(full), { recursive: true });
     fs.writeFileSync(full, `${JSON.stringify(entry, null, 2)}\n`);
@@ -762,6 +858,16 @@ export function writeHoldEntries(held, { root = REPO_ROOT, schemaRoot = REPO_ROO
     out.entered.push({ service_decision_id: h.service_decision_id, file: rel });
   }
   return out;
+}
+
+/** The commit that last ADDED this path — the hold entry's commit, for one on the tree — or null. */
+export function entryCommit(root, rel) {
+  const sha = execFileSync("git", ["-C", root, "log", "-1", "--format=%H", "--diff-filter=A", "--", rel], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, GIT_PAGER: "cat", GIT_OPTIONAL_LOCKS: "0" },
+  }).trim();
+  return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
 }
 
 // ── holds: the ones that have left the tree ─────────────────────────────────
@@ -947,24 +1053,43 @@ export function walkHolds({ root = REPO_ROOT, now = new Date(), shadow = true, d
  * AND a final result in one run would settle at the service under whichever
  * arrived last, and the two say opposite things about whether a moderator
  * should expect anything more.
+ *
+ * `commit` is the commit the workflow's `apply` step pushed, or null (or the
+ * empty string the step hands on) when it pushed nothing. **It is the only
+ * commit an `applied`, or a `held` for a hold this run ENTERED, can name**
+ * (BOT-81: "at most one `held` result, naming the hold entry's commit"), and
+ * it does not exist until after the commit job has exited — which is why this
+ * runs in `report` and never in `commit`. Until 2026-09-22 every `held` was
+ * composed with `commit: null` (ops entry 102). A hold kept from an earlier
+ * run names its own commit (`writeHoldEntries`), as a hold ended in history
+ * does (`holdDeletions`).
+ *
+ * A live result that must name a commit and names none is REFUSED here, with
+ * the reason, rather than posted: the service settles a result against `main`
+ * (BOT-82), and one with no commit is a result it can only reject — or, worse,
+ * record.
  */
 export function resultsFor({ compiled = [], refused = [], held = [], holds = { pending: [] }, commit = null, shadow = true }) {
+  const pushed = typeof commit === "string" && commit !== "" ? commit : null;
   const results = [];
   for (const r of compiled) {
-    results.push({ service_decision_id: r.service_decision_id, outcome: "applied", commit, refusal_code: null });
+    results.push({ service_decision_id: r.service_decision_id, outcome: "applied", commit: pushed, refusal_code: null });
   }
   for (const r of refused) {
     results.push({ service_decision_id: r.service_decision_id, outcome: "refused", commit: null, refusal_code: r.refusal });
   }
   for (const h of held) {
-    results.push({ service_decision_id: h.service_decision_id, outcome: "held", commit: null, refusal_code: null });
+    // A row carrying `commit` — even null — is a kept entry and names its own;
+    // a row without it is one this run entered, and names what was pushed.
+    const named = Object.hasOwn(h, "commit") ? (h.commit ?? null) : pushed;
+    results.push({ service_decision_id: h.service_decision_id, outcome: "held", commit: named, refusal_code: null });
   }
   // A row that names its own commit keeps it: a hold ended by a commit in
   // history (`holdDeletions`) is reported against THAT commit, and BOT-82's
   // key carries it, so overwriting it with this run's commit would make every
   // re-post a new result rather than a `duplicate` of the last one.
   for (const p of holds.pending ?? []) {
-    results.push({ service_decision_id: p.service_decision_id, outcome: p.outcome, commit: p.commit ?? commit, refusal_code: null });
+    results.push({ service_decision_id: p.service_decision_id, outcome: p.outcome, commit: p.commit ?? pushed, refusal_code: null });
   }
 
   // BOT-82's key first, and BOT-81's count second, in that order. A run that
@@ -1020,9 +1145,52 @@ export function resultsFor({ compiled = [], refused = [], held = [], holds = { p
   const holdResults = results.filter((r) => r.outcome === "held");
   const settling = results.filter((r) => r.outcome !== "held");
   const sendable = resultsToPost(settling, { shadow: false });
-  return shadow === false
-    ? { post: [...holdResults, ...sendable], withheld: [] }
-    : { post: [], withheld: [...holdResults, ...sendable] };
+  if (shadow !== false) return { post: [], withheld: [...holdResults, ...sendable] };
+
+  const post = [...holdResults, ...sendable];
+  const unnamed = post.filter((r) => COMMITTED_OUTCOMES.includes(r.outcome) && !FULL_SHA.test(String(r.commit ?? "")));
+  if (unnamed.length) {
+    throw new Error(
+      `${unnamed.map((r) => `${r.service_decision_id} ${r.outcome}`).join(", ")} would be posted naming no commit ` +
+      `(${unnamed.map((r) => JSON.stringify(r.commit)).join(", ")}). BOT-81 has \`applied\` name the main commit, ` +
+      "`held` the hold entry's commit and `cancelled` the commit that removes the entry, and BOT-82 settles each " +
+      "against main; so this run posts none of them and fails, rather than tell the service something landed " +
+      "nowhere (ops entry 102)",
+    );
+  }
+  return { post, withheld: [] };
+}
+
+/** The outcomes BOT-81 gives a commit, which the token file's `commit` condition names too. */
+export const COMMITTED_OUTCOMES = Object.freeze(["applied", "held", "cancelled"]);
+const FULL_SHA = /^[0-9a-f]{40}$/;
+
+/** `resultsFor` over a commit job's `results.json`, which is what its `results` output hands on. */
+export function resultsFromState(state, { commit = null } = {}) {
+  if (!state || typeof state !== "object" || !Array.isArray(state.compiled) || !Array.isArray(state.held)) {
+    throw new Error(
+      "the commit job's `results` output is not a results.json. It is the only way `report` and `settled` learn " +
+      "what that job did, and a run that read an absent one as \"nothing happened\" would post nothing and page for " +
+      "nothing",
+    );
+  }
+  return resultsFor({
+    compiled: state.compiled.map((id) => ({ service_decision_id: id })),
+    refused: state.refused ?? [],
+    held: state.held,
+    holds: state.holds ?? { pending: [] },
+    commit,
+    shadow: state.shadow === false ? false : true,
+  });
+}
+
+/** The one body BOT-81's result is posted as: `commit` for a committed outcome, `refusal_code` for `refused`, never both. */
+export function resultBody(r) {
+  return {
+    service_decision_id: r.service_decision_id,
+    outcome: r.outcome,
+    ...(COMMITTED_OUTCOMES.includes(r.outcome) ? { commit: r.commit } : { refusal_code: r.refusal_code }),
+  };
 }
 
 // ── the settled job ─────────────────────────────────────────────────────────
@@ -1046,6 +1214,27 @@ export function unsettled({ listed = [], results = [], listFailed = false }) {
       : null,
     ids: missing,
   };
+}
+
+/**
+ * The decisions a commit job's `results.json` answered, for `unsettled`: every
+ * result `report` posted from it, and every one a shadow answer withheld.
+ *
+ * Withheld counts as answered, and that is BOT-84's own split, not leniency:
+ * "for work withheld only by shadow, TRUST-45 pages instead". A `settled` that
+ * paged too would page every ten minutes for as long as shadow lasts, for runs
+ * that did exactly what BOT-92 asks — and an alarm that fires on the correct
+ * state is an alarm nobody reads by the time it fires on a wrong one.
+ */
+export function answeredBy(state, { commit = null } = {}) {
+  const { post, withheld } = resultsFromState(state, { commit });
+  const rows = [...post, ...withheld];
+  const shadowed = state.shadow_withheld ?? {};
+  for (const id of shadowed.compiled ?? []) rows.push({ service_decision_id: id, outcome: "shadow_withheld" });
+  for (const r of [...(shadowed.refused ?? []), ...(shadowed.held ?? [])]) {
+    rows.push({ service_decision_id: r.service_decision_id, outcome: "shadow_withheld" });
+  }
+  return rows;
 }
 
 // ── the two alert jobs ──────────────────────────────────────────────────────
@@ -1109,6 +1298,9 @@ const arg = (argv, name) => {
   return i === -1 ? undefined : argv[i + 1];
 };
 
+/** The commit job's `results` output, or null when nothing was handed on. A value that is not JSON throws. */
+const parseResults = (text) => (typeof text === "string" && text.trim() !== "" ? JSON.parse(text) : null);
+
 export async function main(argv = [], { env = process.env, log = console, fetchImpl = fetch, now = new Date() } = {}) {
   const job = arg(argv, "--job");
   const root = arg(argv, "--registry-dir") ?? REPO_ROOT;
@@ -1171,7 +1363,7 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
         heldAt: `${now.toISOString().slice(0, 19)}Z`,
         run: runUrl(env),
       })
-      : { written: [], entered: [], kept: [] };
+      : { written: [], entered: [], kept: [], results: [] };
     written.push(...holdsEntered.written);
     const terminal = [];
     if (live) {
@@ -1180,12 +1372,22 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     }
 
     const holds = walkHolds({ root, now, shadow });
-    const commit = composeCommit({
+    const composed = {
       compiled: live ? compiledAll.compiled : [],
       held: holdsEntered.entered,
       submissions: terminal,
       run: env.GITHUB_RUN_ID ?? "0",
-    });
+    };
+    let commit = composeCommit(composed);
+    // The two documents, for exactly the commit just composed, and listed with
+    // it. Last among the writers, because each generator reads the tree the
+    // others left: the index reads the listing edits, and the list's serial
+    // reads which paths this commit carries.
+    const documents = regenerateDocuments({ root, paths: commit.paths });
+    if (documents.changed.length) {
+      written.push(...documents.changed);
+      commit = composeCommit({ ...composed, documents: documents.changed });
+    }
 
     // In shadow, what the run WOULD have done is recorded apart, as ids and
     // kinds, and the members `report` reads are empty: a result `report`
@@ -1203,10 +1405,14 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
       shadow,
       compiled: live ? compiledAll.compiled.map((r) => r.service_decision_id) : [],
       refused: live ? compiledAll.refused.map((r) => ({ service_decision_id: r.service_decision_id, refusal: r.refusal })) : [],
-      held: live ? compiledAll.held.map((r) => ({ service_decision_id: r.service_decision_id, held_for: r.held_for })) : [],
+      // A kept entry's row carries the commit that entered it; an entered one's
+      // carries none, and `report` names the commit the `apply` step pushed.
+      held: live ? holdsEntered.results : [],
       holds_kept: holdsEntered.kept,
       holds,
       written,
+      documents: documents.changed,
+      serials: documents.serials,
       terminal,
       ...(shadowWithheld ? { shadow_withheld: shadowWithheld } : {}),
     }, null, 2)}\n`);
@@ -1253,15 +1459,17 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
   }
 
   if (job === "report") {
-    const state = JSON.parse(fs.readFileSync(arg(argv, "--results") ?? "moderation/results.json", "utf8"));
-    const { post, withheld } = resultsFor({
-      compiled: state.compiled.map((id) => ({ service_decision_id: id })),
-      refused: state.refused,
-      held: state.held,
-      holds: state.holds,
-      commit: env.ASTRA_MAIN_COMMIT ?? null,
-      shadow: state.shadow !== false,
-    });
+    // **Read from the `commit` job's outputs, never from a file.** A job starts
+    // from a fresh checkout, so `moderation/results.json` — which this read
+    // until 2026-09-22 — exists only in the job that wrote it; and
+    // `ASTRA_MAIN_COMMIT` is the commit that job's `apply` step pushed, which
+    // every `applied` and every newly entered `held` names (BOT-81).
+    const state = parseResults(env.ASTRA_RESULTS);
+    if (!state) {
+      log.error("::error::report was handed no `results` from the commit job, so it has nothing to post and says so");
+      return 1;
+    }
+    const { post, withheld } = resultsFromState(state, { commit: env.ASTRA_MAIN_COMMIT ?? null });
     for (const w of withheld) {
       log.log(`hold  ${w.service_decision_id} ${w.outcome} is not posted under a shadow answer (BOT-92); the next ` +
         "run answered shadow: false posts it once, and BOT-82's key settles a repeat as duplicate");
@@ -1270,14 +1478,22 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
       log.log(`note  shadow: ${post.length} result(s) posted, ${withheld.length} withheld (BOT-92)`);
     }
     const client = createClient({ workflow: "moderation", env, log, fetchImpl });
+    // The body carries `commit` or `refusal_code` and never a null of either:
+    // the token file makes each member conditional on the outcome, both ways,
+    // and a null is a member carried. Until 2026-09-22 every row passed both,
+    // and `composeBody` refused all three shapes this job posts.
+    const unaccepted = [];
     for (const r of post) {
-      await client.call("serviceDecisionResult", {
-        service_decision_id: r.service_decision_id,
-        outcome: r.outcome,
-        commit: r.commit,
-        refusal_code: r.refusal_code,
-      });
+      const answer = await client.call("serviceDecisionResult", resultBody(r));
+      if (!answer.ok) unaccepted.push(`${r.service_decision_id} ${r.outcome}`);
     }
+    if (unaccepted.length) {
+      // `settled` counts this run's results only when this job succeeded, so a
+      // result that did not arrive is a decision it pages for.
+      log.error(`::error::${unaccepted.length} result(s) were not accepted: ${unaccepted.join(", ")}`);
+      return 1;
+    }
+    log.log(`ok    ${post.length} result(s) posted`);
     return 0;
   }
 
@@ -1323,7 +1539,11 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
 
   if (job === "settled") {
     const listed = JSON.parse(env.ASTRA_LISTED_IDS || "[]");
-    const results = JSON.parse(env.ASTRA_RESULTS || "[]");
+    // The commit job's `results`, handed on only when `report` succeeded (the
+    // workflow's expression), and read as nothing answered when absent — the
+    // direction that pages.
+    const state = parseResults(env.ASTRA_RESULTS);
+    const results = state ? answeredBy(state, { commit: env.ASTRA_MAIN_COMMIT ?? null }) : [];
     const verdict = unsettled({ listed, results, listFailed: env.ASTRA_LIST_FAILED === "true" });
     if (!verdict.ok) {
       log.error(`::error::${verdict.why}`);

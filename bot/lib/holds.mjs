@@ -69,17 +69,32 @@
 // versions for another. The kind is raised for the contract in §1.3 row 6 and
 // is registry-only until then.
 //
-// ── SHADOW ──────────────────────────────────────────────────────────────────
+// ── SHADOW, AND WHAT A DUE HOLD BECOMES TODAY ───────────────────────────────
 //
-// A confirmed hold is released and committed **even under a `shadow: true` list
-// answer, and even with `list` down**: it is not work that answer names, the
-// `held` result already settled it (BOT-81), and the release is driven by the
-// MOD-52 record in git. Its `applied` or `cancelled` result, though, SETTLES a
-// decision, which is what BOT-92 calls state-setting, so it is posted only in a
-// run whose list answer is `shadow: false` — the next such run, not this one,
-// re-posted until accepted. `resultsToPost` is where that split lives, and
-// `resultKey` is BOT-82's idempotency key, which answers a repeat `duplicate`
-// with no time limit (so there is no re-post window to expire).
+// **A due hold is not released and not committed, in shadow or out of it.**
+// M-T3.3's release commit — apply the held decision from the entry, write its
+// log entry, delete the entry and its confirm record under `Service-Decision:`
+// — and its cancel commit are not built, here or in `bot/moderation-run.mjs`.
+// So when `resolveHold` answers `release` or `cancel`, the commit job's
+// `walkHolds` files the hold as `due`, refuses it by name (`hold_end_not_built`,
+// every run), posts nothing for it and leaves the entry on the tree (ops entry
+// 99). This header said until 2026-09-22 that a confirmed hold "is released and
+// committed"; nothing ever did either.
+//
+// What this module decides is WHEN a hold is due, and that answer is the same
+// under a `shadow: true` list answer and with `list` down: a hold is not work
+// that answer names, the `held` result already took it off the list (BOT-81),
+// and the release is driven by the MOD-52 record in git — so the release
+// commit, once built, is meant to be made in shadow too. Its `applied` or
+// `cancelled` result, though, SETTLES a decision, which is what BOT-92 calls
+// state-setting, so it is posted only in a run whose list answer is `shadow:
+// false` — the next such run, not this one, re-posted until accepted.
+// `resultsToPost` is where that split lives, and `resultKey` is BOT-82's
+// idempotency key, which answers a repeat `duplicate` with no time limit (so
+// there is no re-post window to expire). The only `applied` or `cancelled`
+// results posted today are for holds a commit in history already ended — a
+// hand deletion, or a release or cancel commit a person made — which
+// `classifyHoldCommit` reads.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -390,8 +405,10 @@ export function readHolds(root = REPO_ROOT, { schemaRoot = REPO_ROOT } = {}) {
 /**
  * `wait`, `release` or `cancel`, and whether this run may post the result.
  *
- * The commit is NOT conditional on `post`: a release reaches `main` in a shadow
- * run too, because it is driven by a record in git. Only the posting waits.
+ * Whether a hold is due is NOT conditional on `post`: the release is driven by
+ * a record in git, so it is due in a shadow run too, and only the posting
+ * waits. (The release commit that would act on a `release` answer is not built
+ * — the commit job refuses a due hold by name instead; see the header.)
  *
  * `shadow` defaults to TRUE here for the same reason it does in
  * `resultsToPost`, and the two defaults have to be the same one: a caller that
