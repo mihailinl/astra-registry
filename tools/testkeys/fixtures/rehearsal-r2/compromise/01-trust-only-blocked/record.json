@@ -47,7 +47,7 @@
     "BLOCKED: registry/v1/index.json does not verify against the trust.json it would be committed beside (no trusted key signed this document; offered astra-index-2026a; delegated TEST-ONLY-DO-NOT-TRUST-index-2026b) (SERVE-95). SERVE-91 refuses a commit whose documents do not verify against its own trust.json, so committing this would withhold all four and leave the previous bytes served."
   ],
   "notes": [
-    "compromise mode (D10): the Source-Commit's trust.json drops astra-index-2026a, which signed the head. The seven-hour window is waived and the catalogue may not be carried."
+    "compromise mode (D10): the Source-Commit's trust.json drops astra-index-2026a, which signed the head, and policy/index-key-retirements.json records no planned retirement of it from a time already reached. The seven-hour window is waived and the catalogue may not be carried."
   ],
   "codes": [
     "SIGNER_TRUST_REFUSED_DOCUMENT"

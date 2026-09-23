@@ -807,16 +807,20 @@ export const CLAIMS = [
   },
   {
     id: "d10/compromise-half",
-    claim: "OPEN-OWNER-25's compromise half is OPEN, so D10's procedure is a proposal and the rotation section " +
-      "may not write it as the procedure",
+    // DECIDED on 2026-09-23 — D10 as proposed, by the coordinator at the
+    // owner's delegation, published as contract 0.38.0's SERVE-30 — and the
+    // runbook's §5.5 now writes it as the procedure. Until then this row held
+    // the runbook to a hedge (`proposal`, `has not answered`, `awaiting the
+    // owner`) because the item was OPEN; the row now asserts the other
+    // direction: that the plan's status row says DECIDED, so a runbook that
+    // prints D10 as the procedure is reading a decision and not a guess. If
+    // the item is ever reopened the plan's row says so, this row goes red, and
+    // the hedge comes back with the state.
+    claim: "OPEN-OWNER-25's compromise half is DECIDED as D10, so the rotation section may write D10 as the " +
+      "compromise procedure",
     source: {
       file: "docs/RUNBOOK.md",
       line: /OPEN-OWNER-25/,
-      // No bare `open` alternative: the item's own id contains OPEN, so a
-      // pattern that accepted it would be satisfied by the citation and would
-      // assert nothing at all. Measured — `/open/i` passes against the string
-      // `OPEN-OWNER-25` alone.
-      hedge: /\bproposal\b|has not answered|awaiting the owner/i,
     },
     subject: {
       kind: "decision",
@@ -844,11 +848,11 @@ export const CLAIMS = [
       },
     },
     expect: "found",
-    expectState: "open",
-    why: "this is the kind of false claim that never decays, because it was never true. D10 contradicts SERVE-30's " +
-      "rule that the outgoing key keeps signing until R9b, and R1 cannot exit without the owner's answer. A " +
-      "runbook that prints D10 as the compromise procedure is a decision presented as an outcome, and no amount " +
-      "of re-measuring another repository finds it — only reading the decision does",
+    expectState: "answered",
+    why: "this is the kind of false claim that never decays, because it was never true. Until 2026-09-23 D10 was a " +
+      "proposal and a runbook that printed it as the compromise procedure presented a decision as an outcome; from " +
+      "then it is the procedure, and a runbook still hedging it would send an operator mid-incident looking for an " +
+      "answer that exists. Only reading the decision tells the two apart",
   },
   {
     id: "bound/current-bytes",

@@ -37,7 +37,7 @@ import { loadTestRoot } from "../testkeys/regenerate.mjs";
 import { signIndex } from "../../bot/sign-index.mjs";
 import { signRevocations } from "../sign-revocations.mjs";
 import { REVOCATIONS_SCHEMA, TRUST_SCHEMA } from "../../bot/lib/sign.mjs";
-import { WINDOW_EXEMPT_KEY_IDS } from "../signer/key-window.mjs";
+import { RETIREMENTS_PATH, RETIREMENTS_SCHEMA, WINDOW_EXEMPT_KEY_IDS } from "../signer/key-window.mjs";
 import { SIGNED_FILES, planRun } from "../signer/plan.mjs";
 import { trailersOf } from "../served-set/provenance.mjs";
 import { buildSignedCommit, commitMessage, pushSigned, signRun, writeTree } from "../signer/run.mjs";
@@ -315,6 +315,76 @@ export async function run() {
     // with. Here there is no head trailer to read, so it stays this run's — the
     // case that matters is the one below, in the commit message.
     assertEqual(typeof record.index_source_commit, "string", "no Index-Source-Commit at all");
+  });
+
+  await test("R9b's retirement on a red day carries the catalogue and publishes the list, and only the committed record makes it one", async () => {
+    // D10, decided 2026-09-23 (contract 0.38.0): SERVE-30's overlap is for a
+    // planned retirement, and a compromise drops the key and re-signs at once.
+    // The day that turns on it is R9b's: the trust.json that ends the overlap
+    // drops the outgoing key, and the catalogue's gates happen to fail. Read as
+    // a compromise, the catalogue may not be carried, the run is blocked, and
+    // a blocked run commits NOTHING — the withdrawal list included (D2). Read
+    // as the retirement it is, the dual-signed catalogue is carried, it
+    // verifies under the new trust.json (SERVE-95 asks, in this run), and the
+    // list publishes.
+    //
+    // Three runs over one tree, each through `signRun`, which is the only
+    // reader of the record: with no record; with the record in the WORKING
+    // TREE only, which a run must not read; and with it committed.
+    const t = makeTree("retirement-red-day", { trustKeys: [KEY_A, KEY_B] });
+    t.addListing("dice-roller");
+    const first = t.commit("a listing, both keys delegated");
+    const issuedAt = new Date("2026-09-18T00:00:00Z");
+    const both = [signerFor(KEY_A), signerFor(KEY_B)];
+    const catalogue = buildIndex({ root: t.dir, serial: 1 });
+    const headIndex = signIndex(catalogue, { signers: both, issuedAt });
+    const headList = signRevocations(
+      { signed: { schema: REVOCATIONS_SCHEMA, serial: 1, revocations: [] } }, { signers: both, issuedAt },
+    );
+    const head = headFrom({ index: headIndex, revocations: headList, trust: trustDelegating([KEY_A, KEY_B]), sha: first });
+
+    // The root ceremony that ends the overlap, a listing that makes the
+    // catalogue's gate fail, and an advisory so the list has changed.
+    t.write(SIGNED_FILES.trust, trustDelegating([KEY_B], 2));
+    t.write("plugins/broken/plugin.json", "{ this is not JSON");
+    t.write("tools/revocations/ASTRA-2026-0001.json", advisory());
+    const unrecorded = t.commit("R9b: the outgoing key retired, on a day a listing is broken");
+    const run = (sourceCommit) => signRun({
+      root: t.dir, sourceCommit, head, now: "2026-09-19T00:00:00Z",
+      available: [signerFor(KEY_B)],
+      delegatedAt: new Map([[KEY_A, "2026-01-01T00:00:00Z"], [KEY_B, "2026-06-01T00:00:00Z"]]),
+    });
+
+    const record = { schema: RETIREMENTS_SCHEMA, retirements: [{ key_id: KEY_A, retired_from: "2026-09-18T12:00:00Z" }] };
+    t.write(RETIREMENTS_PATH, record);
+    const dirty = await run(unrecorded);
+    assertEqual(dirty.key_mode, "compromise",
+      "the record was read from the working tree; the run reads its inputs at the Source-Commit and nowhere else");
+    assertEqual(dirty.documents.index.decision, "blocked", "a compromise carried a catalogue");
+    assertEqual(dirty.commit, false, "the fixture's red catalogue did not block the compromise run");
+
+    const retired = await run(t.commit("the retirement, recorded"));
+    assertEqual(retired.key_mode, "retirement", "a recorded retirement read as a compromise");
+    assertEqual(retired.documents.index.decision, "carry", "the red catalogue was not carried on the retirement day");
+    assertEqual(retired.files[SIGNED_FILES.index], head.bytes.index, "the carry is not byte-for-byte the head's");
+    assertEqual(retired.documents.revocations.decision, "changed", "the withdrawal list did not publish");
+    assertEqual(retired.refusals.join(" | "), "",
+      "the carried catalogue did not verify beside the trust.json that drops the outgoing key");
+    assertEqual(retired.commit, true, "the retirement day committed nothing");
+
+    // And the record cannot make an unsafe carry: a head catalogue signed by
+    // the retired key ALONE is refused beside the new trust.json, record or not.
+    const soloIndex = signIndex(catalogue, { signer: signerFor(KEY_A), issuedAt });
+    const soloHead = headFrom({ index: soloIndex, revocations: headList, trust: trustDelegating([KEY_A, KEY_B]), sha: first });
+    const solo = await signRun({
+      root: t.dir, sourceCommit: t.head(), head: soloHead, now: "2026-09-19T00:00:00Z",
+      available: [signerFor(KEY_B)],
+      delegatedAt: new Map([[KEY_A, "2026-01-01T00:00:00Z"], [KEY_B, "2026-06-01T00:00:00Z"]]),
+    });
+    assertEqual(solo.key_mode, "retirement", "the solo-signed head changed the mode");
+    assertEqual(solo.commit, false, "a record carried a catalogue the new trust.json cannot verify");
+    assertEqual(solo.codes.includes("SIGNER_TRUST_REFUSED_DOCUMENT"), true,
+      `the refusal is not SERVE-95's: ${solo.codes.join(" ")}`);
   });
 
   await test("the commit message carries D2's four trailers, and a carry keeps its Index-Source-Commit", async () => {

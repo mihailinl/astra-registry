@@ -178,7 +178,11 @@ never.
 - **Nothing here has been served to anything.** These are bytes. ROLL-60 is met
   by a staging service and a debug daemon accepting them, recorded with the
   build tag, profile and run URLs in the ops notes (`astra.2a`; `ops.21`).
-- **The compromise series follows D10 *as proposed*.** OPEN-OWNER-25's
-  compromise half is open, and the answer is published as SERVE-30's amendment
-  G10. `manifest.json`'s `open_questions` records precisely which steps a
-  different answer re-cuts.
+- **The compromise series follows D10, which is now decided.** OPEN-OWNER-25's
+  compromise half was closed as D10 as proposed on 2026-09-23, by the
+  coordinator at the owner's delegation, and published as contract 0.38.0's
+  SERVE-30. `manifest.json`'s `open_questions` records which steps a different
+  answer would have re-cut, and the selftest asserts the answer taken re-cuts
+  none. A planned retirement at R9b is not this series: it is read as one only
+  when `policy/index-key-retirements.json` names the dropped key
+  (`tools/signer/key-window.mjs`).

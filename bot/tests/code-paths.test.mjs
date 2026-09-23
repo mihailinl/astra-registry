@@ -160,22 +160,81 @@ export const ENTRIES = [
   // reached that second way: `tools/selftest/couplings.mjs` imports
   // `tools/coverage/docs-advisory-url.mjs`, which imports it, and the publish
   // path runs the selftest as its fifth gate — so taking it out would be the
-  // direction that opens a hole, and it stays until that path is decided (ops
-  // pending item 19, which measures 28 modules outside this set reached the
-  // same way). `tools/coverage/git.mjs` is reached through
+  // direction that opens a hole, and it stayed until that path was decided (ops
+  // pending item 19). Contract 0.38.0 decided it by bringing
+  // `docs-advisory-url.mjs` in beside it, below. `tools/coverage/git.mjs` is reached through
   // `bot/lib/compile-decision.mjs`, which `bot/moderation-run.mjs` and
   // `tools/validate.mjs` import.
   //
-  // `tools/coverage/` is ENUMERATED and not taken whole: `docs-advisory-url`,
-  // `drain-age`, `examples-staging-id`, `keepalive-age` and
-  // `reserved-id-mirror` are rule reporters the moderation-coverage workflow
-  // runs, and `priv-scan-exempt.json` is read only by the canary's own history
-  // walk. A directory entry is right when everything beneath it belongs; here
-  // six of eight do not. What makes enumerating safe
+  // `tools/coverage/` is ENUMERATED and not taken whole: `drain-age`,
+  // `examples-staging-id`, `keepalive-age` and `reserved-id-mirror` are rule
+  // reporters the moderation-coverage workflow runs, and
+  // `priv-scan-exempt.json` is read only by the canary's own history walk. A
+  // directory entry is right when everything beneath it belongs; here five of
+  // eight do not. (`docs-advisory-url` is the sixth reporter, and 0.38.0 put it
+  // in, below, because a selftest case imports it.) What makes enumerating safe
   // is leg (b): a file under `tools/coverage/` that a bot run starts reaching
   // fails there, by name, the day it does.
   "tools/coverage/rules.mjs",
   "tools/coverage/git.mjs",
+  // ── contract 0.38.0: what the fifth gate LOADS, not only what the bot imports ──
+  //
+  // Ops pending item 19 and couplings entry 116, decided (a) for the owner on
+  // 2026-09-23. `bot/publish-apply.mjs` runs `tools/selftest.mjs` as the last of
+  // its five checks and the moderation commit job runs it too, and the runner
+  // loads its cases by a dynamic `import()` that leg (b) cannot follow. The
+  // cases reach — by import, by a node child, by a temp copy run as a child —
+  // the 31 modules below, measured at runtime by `node tools/selftest.mjs
+  // --loads` (tools/selftest/loads.mjs), whose declared residual they were.
+  // An edit to any of them changes what a bot commit is held to, so it is a
+  // shadow transition and an acknowledgement from R3 (registry plan ROLL-64):
+  // about three a week more, measured on the week before the decision.
+  //
+  // A directory entry where every file beneath it is code the gate reaches —
+  // `tools/served-set/` (all seven), `site/lib/` (one) and `site/templates/`
+  // (all three) — and every other path enumerated, because the directory also
+  // holds what the gate does not load: `tools/signer/verdict.mjs`; `site/`'s
+  // assets, redirects and its own selftest; `tools/testkeys/`' keys, README and
+  // fixtures; `tests/`' vectors; `bot/fixtures/`' catalogues; `bot/tests/`' other
+  // suites. Enumerating is safe for the reason leg (b) makes it safe for
+  // `tools/coverage/`: a new module the gate starts loading is red, by name, in
+  // `loads.mjs`'s check, whose residual is now empty.
+  //
+  // `bot/tests/workflows.test.mjs` is the one test file in the set: the case
+  // `tools/selftest/contract-tokens.mjs` copies it into a temp tree and runs
+  // the copy, so its assertions are part of what the fifth gate decides.
+  "bot/fixtures/index/regenerate.mjs",
+  "bot/tests/workflows.test.mjs",
+  "site/build.mjs",
+  "site/lib/",
+  "site/templates/",
+  "tests/shared-vectors.mjs",
+  "tools/coverage-verdict.mjs",
+  "tools/coverage/docs-advisory-url.mjs",
+  "tools/make-fixtures.mjs",
+  "tools/moderation-coverage.mjs",
+  "tools/regenerate-signed.mjs",
+  "tools/served-set/",
+  "tools/sign-revocations.mjs",
+  "tools/sign-trust.mjs",
+  "tools/sign-update-manifest.mjs",
+  "tools/signer/git.mjs",
+  "tools/signer/key-window.mjs",
+  "tools/signer/pages.mjs",
+  "tools/signer/plan.mjs",
+  "tools/signer/run.mjs",
+  "tools/testkeys/make-rehearsal-r2.mjs",
+  // Ops couplings entry 126: `bot/sign-index.mjs`, a set entry, imports it —
+  // the one import from inside the set to outside it that leg (d) below found
+  // on the tree 0.34.0 left, besides the ones the gate's own cases make.
+  "tools/testkeys/regenerate.mjs",
+  "tools/testkeys/sign-trust.mjs",
+  // Ops couplings entry 132: since contract 0.36.0 the fifth gate holds the
+  // token file's `flow13_table` to this file, rows, order and source
+  // (tools/selftest/contract-tokens.mjs). The registry's own table, written by
+  // a desk tool from `bot/lib/codes.mjs` (in the set) and by no workflow, so
+  // hashing it costs no acknowledgement a change to the codes does not already.
+  "tools/codes-table.json",
   "policy/reserved-ids.json",
   "policy/spdx-allowlist.json",
   "policy/listing-language-exemptions.json",
@@ -538,8 +597,12 @@ const ROUTINE = [
   { p: "state/deny/abc123.json", why: "an operator deny record (TRUST-33)", exists: false, by: "operator.yml's `act: deny`, M-T3.5" },
   { p: "state/alerts/abc123.json", why: "an alert record (TRUST-32); its delivery report is what the operator window counts from", exists: false, by: "the ingest run's alert job" },
   { p: "policy/binding-deadline.json", why: "the binding deadline, which the OWNER commits by hand (MIG-2)", exists: false, by: "the owner, before R4b" },
-  { p: "tools/sign-update-manifest.mjs", why: "a desk tool, deleted at R2 by RC-R3-4(b)", exists: true },
-  { p: "tools/signer/plan.mjs", why: "a ceremony tool the bot never reaches", exists: true },
+  // Until contract 0.38.0 two rows here held `tools/sign-update-manifest.mjs`
+  // and `tools/signer/plan.mjs` OUTSIDE, as desk and ceremony tools the bot
+  // never reaches — true of the bot's closure and false of its fifth gate,
+  // which loads both (ops pending item 19). They are in the set now, and the
+  // row that stays is the one file under `tools/signer/` neither reaches.
+  { p: "tools/signer/verdict.mjs", why: "the signer workflow's verdict step, which neither a bot run nor the fifth gate loads", exists: true },
 ];
 
 test("(a) the files a run writes as it works are outside the hashed set", () => {
@@ -1031,6 +1094,50 @@ test("(c) every data file a reachable module names is in the set, or declared ou
   assert.ok(inside >= 15, `only ${inside} named data path(s) are inside the set; the scan has stopped finding the policy and schema reads`);
   console.log(`note  (c) ${named.size} data path(s) named by ${modules.length} modules: ${inside} inside the set, ` +
     `${named.size - inside} declared outside by ${DATA_OUTSIDE.length} declaration(s).`);
+});
+
+// ── (d) every module a set entry imports is in the set ──────────────────────
+//
+// Ops couplings entry 126. Leg (b) walks out from the two bot workflows, so it
+// asks "is the set closed under import" only for the entries the bot's own
+// closure reaches. An entry nothing in that closure reaches — `bot/sign-index.mjs`,
+// which a signer process and the selftest's cases import — could import a
+// module outside the set and no leg would look, and it did: it imported
+// `tools/testkeys/regenerate.mjs`, outside until contract 0.38.0. An entry is
+// what a reader takes to be closed, so the set now says it is, of every code
+// file it covers, and this is what holds it.
+//
+// One level of static import from every code file the set covers is enough:
+// every target must itself be in the set, so the closure follows by induction.
+// It sees what leg (b)'s pattern sees — relative static imports and re-exports
+// — and nothing a dynamic `import()` computes; that is what `--loads`
+// (tools/selftest/loads.mjs) measures at runtime, for the selftest's cases.
+
+test("(d) every module a set entry statically imports is in the set", () => {
+  const code = tracked().filter((f) => /\.(?:m?js|cjs)$/.test(f) && inSet(f));
+  const re = /(?:^|[\s;{}])(?:import\s[^;]*?from\s*|import\s*|export\s[^;]*?from\s*)["'](\.[^"']+)["']/g;
+  const outside = [];
+  const missing = [];
+  let edges = 0;
+  for (const f of code) {
+    for (const m of read(f).matchAll(re)) {
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(f), m[1]));
+      edges += 1;
+      if (!present(target)) missing.push(`${target} — imported by ${f}`);
+      else if (!inSet(target)) outside.push(`${target} — imported by ${f}`);
+    }
+  }
+  // Floors: 147 code files and 532 static imports among them, measured on
+  // 2026-09-23 at contract 0.38.0's set; half of each, so an honest deletion
+  // is not red and an empty walk is.
+  assert.ok(code.length >= 73, `only ${code.length} code file(s) in the set; this is a broken read`);
+  assert.ok(edges >= 266, `only ${edges} import(s) among them; the pattern has stopped matching`);
+  assert.deepEqual(missing, [], "a set entry imports a module that is not on the tree");
+  assert.deepEqual(outside, [],
+    "a module inside TRUST-31's set imports one outside it, so a change to the outside module changes what the " +
+    "entry does without the bot returning to shadow (ops couplings entry 126). Put the module in the set by a " +
+    "contract MINOR, or take the import out");
+  console.log(`note  (d) ${code.length} code file(s) in the set, ${edges} static import(s) among them, all inside.`);
 });
 
 // ── the value an acknowledgement names ──────────────────────────────────────

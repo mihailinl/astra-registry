@@ -699,14 +699,23 @@ export function buildSeries({ outDir, work }) {
       },
     },
     documents: DOCUMENTS,
-    // What a different answer to the one open question costs, by step, so that
-    // the owner is told a measured number rather than an estimate. Measured on
-    // this series, not reasoned about: the `carry_still_refused` column below
-    // is the answer `verifyEnvelope` gives for each candidate fork point, and
-    // `tools/selftest/rehearsal-r2.mjs` asserts the one this series uses.
+    // What a different answer to the question this series was built around
+    // would have cost, by step, so that the owner was told a measured number
+    // rather than an estimate. Measured on this series, not reasoned about:
+    // the `carry_still_refused` column below is the answer `verifyEnvelope`
+    // gives for each candidate fork point, and `tools/selftest/rehearsal-r2.mjs`
+    // asserts the one this series uses. The question is DECIDED — D10 as
+    // proposed, on 2026-09-23 — and the answer it took re-cuts nothing, which
+    // the selftest also asserts rather than this comment.
     open_questions: {
       "OPEN-OWNER-25, compromise half": {
-        status: "open",
+        status: "decided",
+        decided: {
+          on: "2026-09-23",
+          by: "the coordinator, at the owner's delegation",
+          answer: "D10 as proposed",
+          published_as: "contract 0.38.0's SERVE-30 (ops.12a's G10)",
+        },
         built_to: "D10 as proposed, including step 4's two waivers",
         published_as: "SERVE-30's amendment G10 (ops.12a)",
         untouched_by_any_answer: [

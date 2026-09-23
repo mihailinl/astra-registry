@@ -7,10 +7,11 @@
 // closure; the runner loads its cases by a dynamic `import()`, and the cases
 // reach code no static walk sees — a computed specifier, a temp copy of a bot
 // test executed as a child, a generator run as a child. Lane AQ measured it at
-// runtime on 2026-09-22: 31 repository modules outside the set. Whether they go
-// into the set or out of the gate is the owner's decision (pending item 19);
-// both answers need this first, because a static walk had already certified
-// three cases that run outside code.
+// runtime on 2026-09-22: 31 repository modules outside the set. Whether they
+// went into the set or out of the gate was the owner's decision (pending item
+// 19), decided (a) for him on 2026-09-23 — contract 0.38.0 put them in — and
+// either answer needed this first, because a static walk had already
+// certified three cases that run outside code. It is what keeps (a) true.
 //
 // WHAT IT DOES. A preload: `node --import=<this file's URL>?log=<dir> …`. It
 // registers a synchronous module hook (`module.registerHooks`) whose `load`

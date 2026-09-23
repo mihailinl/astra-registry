@@ -26,13 +26,17 @@
 // catalogue, carries nothing (there is no head to carry from), and `signed` is
 // never created. The bootstrap key is exempt; every key after it waits.
 //
-// ── the exception (D10, and it is a PROPOSAL) ───────────────────────────────
+// ── the exception (D10, DECIDED 2026-09-23) ─────────────────────────────────
 //
-// OPEN-OWNER-25's compromise half is open. What is implemented here is this
-// plan's proposal, and the owner's answer may rewrite it (RC-R1-10(c)).
+// OPEN-OWNER-25's compromise half is closed, as D10: decided by the coordinator
+// at the owner's delegation on 2026-09-23 and published as contract 0.38.0's
+// SERVE-30. A compromised index key is dropped and the catalogue re-signed at
+// once; SERVE-30's overlap — the outgoing key signing every list until R9b —
+// applies to a PLANNED RETIREMENT only.
 //
 // Compromise mode is selected by the trust.json at the Source-Commit DROPPING a
-// key the head's trust.json delegated. In it:
+// key the head's trust.json delegated, when no retirement record (below) names
+// that key. In it:
 //
 //   * the list is signed by the delegated key alone — there is no outgoing key
 //     to go first, because the outgoing key is the compromised one;
@@ -48,28 +52,38 @@
 // waiver is one refused catalogue fetch on a client that has not refreshed
 // trust.json yet; the cost of not waiving it is that the repair does not land.
 //
-// ── what the detector cannot tell apart, said before it matters ─────────────
+// ── a planned retirement is not a compromise, and the record says which ─────
 //
-// **A planned retirement has the same shape as a compromise.** SERVE-30 keeps
-// the outgoing key signing until R9b — now right after R5 (OPEN-OWNER-27) — and
-// the trust.json that ends that overlap also drops a key the head delegated. So
-// this code will call R9b's retirement a compromise. One half of that is
-// harmless: waiving a window for a key delegated months ago changes nothing.
-// The other half is not. On that day a catalogue whose gates fail is BLOCKED
-// rather than carried, and a blocked run publishes no withdrawal list either
-// (D2: a commit holds all four documents).
+// SERVE-30 keeps the outgoing key signing until R9b — now right after R5
+// (OPEN-OWNER-27) — and the trust.json that ends that overlap ALSO drops a key
+// the head delegated. Until 0.38.0 this module could not tell the two apart and
+// called R9b's retirement a compromise: on that day a catalogue whose gates
+// failed was BLOCKED rather than carried, and a blocked run publishes no
+// withdrawal list either (D2: a commit holds all four documents). It was left
+// that way on purpose while D10 was a proposal, because narrowing the detector
+// would have answered the owner's question on his behalf (ops couplings entry
+// 20, the detector half).
 //
-// It is left this way rather than guessed at, for two reasons. D10 is a
-// PROPOSAL and OPEN-OWNER-25's compromise half is the one open item R1 waits
-// on (RC-R1-10(c)) — narrowing the detector now would be answering the owner's
-// question on his behalf. And the precise invariant is already written, below,
-// as `refusesDroppedKey`: a carried catalogue that still verifies against the
-// candidate trust.json is safe, which is exactly the R9b case, because the head
-// is dual-signed by then. Whoever answers OPEN-OWNER-25 can replace "no carry
-// in compromise mode" with "no carry that fails `refusesDroppedKey`" in one
-// line, and the R9b case stops being special. Do not do it before the answer.
+// Now the answer exists, and the shape of the answer decides the shape of the
+// detector: a retirement is PLANNED, so it can be written down before it
+// happens; a compromise cannot. So the operator who performs SERVE-30's
+// retirement commits `policy/index-key-retirements.json` naming the key, and
+// every dropped key that file does not name — no file, a malformed file, a
+// different key, a time not yet reached — is a compromise. The default is the
+// strict mode, because the mistake in that direction is a catalogue blocked on
+// a red day, loudly, and the mistake in the other direction is a compromised
+// key's catalogue carried for another hour.
+//
+// A retirement is then ordinary mode with the drop named: the window applies
+// (to nothing, since the key that remains was delegated long ago), a failing
+// catalogue may be carried, and the carry is still held to `refusesDroppedKey`
+// in the run (SERVE-95) — which at R9b passes, because the head's catalogue is
+// dual-signed by then. The record cannot make a drop happen and cannot make an
+// undelegated key sign: only a root ceremony writes a trust.json that drops a
+// key, and the record only says which kind of drop it is.
 
 import { REVOCATIONS_SCHEMA, INDEX_SCHEMA, verifyEnvelope, publicKeyFromBase64 } from "../../bot/lib/sign.mjs";
+import { isTime } from "../lib/time.mjs";
 import { blobAt, gitMaybe, gitText } from "./git.mjs";
 
 /** SERVE-30's margin over the client's 6-hour trust.json refresh. */
@@ -82,6 +96,87 @@ export const INDEX_KEY_WINDOW_HOURS = 7;
 export const WINDOW_EXEMPT_KEY_IDS = ["astra-index-2026a"];
 
 const HOUR_MS = 3600 * 1000;
+
+/**
+ * The record of planned index-key retirements (D10, decided; SERVE-30), read
+ * at the Source-Commit. Committed by the operator in the retirement's own
+ * commit, beside the trust.json that drops the key:
+ *
+ *     {"schema": "astra.registry.index-key-retirements/1",
+ *      "retirements": [{"key_id": "astra-index-2026a", "retired_from": "2027-06-15T00:00:00Z"}]}
+ *
+ * Exactly those members, a §0.7 time. Nothing else reads it, and it is not a
+ * rule a bot run judges by: TRUST-31's set does not hold it (a record, like
+ * `policy/pages-withdrawal-list.json`), and it decides only which of two modes
+ * a drop the root ceremony has ALREADY made is read in.
+ */
+export const RETIREMENTS_PATH = "policy/index-key-retirements.json";
+export const RETIREMENTS_SCHEMA = "astra.registry.index-key-retirements/1";
+
+/**
+ * Which keys the record calls planned retirements at `now`, and what is wrong
+ * with it. Pure. A record that is not exactly the shape above names NOTHING —
+ * every problem is returned, and every dropped key then reads as a compromise,
+ * which is the strict direction. A row whose `retired_from` is later than `now`
+ * names nothing yet: a key dropped before its planned retirement is dropped for
+ * some other reason.
+ *
+ * @param {{record: unknown, now: string}} opts  `record` is the parsed document, or null when absent
+ * @returns {{retired: Map<string, string>, problems: string[]}}  key_id → retired_from
+ */
+export function plannedRetirements({ record, now }) {
+  const retired = new Map();
+  if (record === null || record === undefined) return { retired, problems: [] };
+  const problems = [];
+  const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+  if (!isObject(record)) {
+    problems.push(`${RETIREMENTS_PATH} is not a JSON object`);
+  } else {
+    const extra = Object.keys(record).filter((k) => k !== "schema" && k !== "retirements");
+    if (record.schema !== RETIREMENTS_SCHEMA) {
+      problems.push(`${RETIREMENTS_PATH}'s schema is ${JSON.stringify(record.schema ?? null)}, not ${RETIREMENTS_SCHEMA}`);
+    }
+    if (extra.length) problems.push(`${RETIREMENTS_PATH} carries member(s) no record has: ${extra.join(", ")}`);
+    if (!Array.isArray(record.retirements)) {
+      problems.push(`${RETIREMENTS_PATH}'s retirements is not an array`);
+    } else {
+      record.retirements.forEach((row, i) => {
+        const at = `${RETIREMENTS_PATH}'s retirements[${i}]`;
+        if (!isObject(row)) { problems.push(`${at} is not an object`); return; }
+        const rowExtra = Object.keys(row).filter((k) => k !== "key_id" && k !== "retired_from");
+        if (rowExtra.length) problems.push(`${at} carries member(s) no row has: ${rowExtra.join(", ")}`);
+        if (typeof row.key_id !== "string" || !row.key_id) problems.push(`${at} names no key_id`);
+        if (!isTime(row.retired_from)) {
+          problems.push(`${at}'s retired_from is ${JSON.stringify(row.retired_from ?? null)}, not a §0.7 time`);
+        }
+        if (typeof row.key_id === "string" && retired.has(row.key_id)) problems.push(`${at} names ${row.key_id} twice`);
+        if (typeof row.key_id === "string" && isTime(row.retired_from)) retired.set(row.key_id, row.retired_from);
+      });
+    }
+  }
+  if (problems.length) return { retired: new Map(), problems };
+  for (const [keyId, from] of [...retired]) {
+    if (Date.parse(from) > Date.parse(now)) retired.delete(keyId);
+  }
+  return { retired, problems: [] };
+}
+
+/**
+ * The retirement record at a commit: the parsed document, null when the commit
+ * has none, or a problem when it does not parse. Read from the Source-Commit and
+ * never from a working tree, like every other input of the run.
+ *
+ * @returns {{record: unknown, problem: string|null}}
+ */
+export function retirementRecordAt({ root, sha, recordPath = RETIREMENTS_PATH }) {
+  const text = blobAt({ root, ref: sha, path: recordPath });
+  if (text === null) return { record: null, problem: null };
+  try {
+    return { record: JSON.parse(text), problem: null };
+  } catch (e) {
+    return { record: undefined, problem: `${recordPath} at ${sha.slice(0, 12)} is not JSON (${e.message})` };
+  }
+}
 
 /** The key ids a trust.json delegates, in the order the document lists them. */
 export function delegatedKeyIds(trustDoc) {
@@ -181,14 +276,20 @@ function hoursSince(since, at) {
 /**
  * Decide, for one run, which keys sign the catalogue and which sign the list.
  *
+ * A key the head's trust.json delegated and the candidate's drops is a planned
+ * retirement when `retirements` — `retirementRecordAt`'s answer — names it from
+ * a time not later than `now`, and a compromise otherwise. One unplanned drop
+ * makes the whole run compromise mode.
+ *
  * @param {object} opts
  * @param {object} opts.candidateTrust  trust.json at the Source-Commit — the one that will be committed
  * @param {object|null} opts.headTrust  trust.json at `signed`'s head, null before the first run
  * @param {Map<string,string>} opts.delegatedAt  key_id → first delegating commit's time
  * @param {string} opts.now  RFC 3339
  * @param {{key_id: string}[]} opts.available  the signers the environment holds, in env order
+ * @param {{record: unknown, problem: string|null}} [opts.retirements]  the record at the Source-Commit
  * @param {number} [opts.windowHours]
- * @returns {{mode: "normal"|"compromise", dropped: string[], carryCatalogueAllowed: boolean,
+ * @returns {{mode: "normal"|"retirement"|"compromise", dropped: string[], retired: string[], carryCatalogueAllowed: boolean,
  *           index: {signers: object[], refused: string|null},
  *           revocations: {signers: object[], refused: string|null},
  *           notes: string[]}}
@@ -199,6 +300,7 @@ export function keyPlan({
   delegatedAt = new Map(),
   now,
   available,
+  retirements = { record: null, problem: null },
   windowHours = INDEX_KEY_WINDOW_HOURS,
 }) {
   const notes = [];
@@ -228,12 +330,22 @@ export function keyPlan({
 
   const headKeys = headTrust ? delegatedKeyIds(headTrust) : [];
   const dropped = headKeys.filter((k) => !delegated.includes(k));
-  const mode = dropped.length > 0 ? "compromise" : "normal";
+  // Read on every run, not only on the day of a drop: a malformed record found
+  // on the day of the retirement turns it into compromise mode, and a note on
+  // every run before that day is how somebody finds out in time.
+  const planned = plannedRetirements({ record: retirements?.record ?? null, now });
+  const problems = [...(retirements?.problem ? [retirements.problem] : []), ...planned.problems];
+  for (const p of problems) notes.push(`the retirement record names nothing, so every dropped key is a compromise: ${p}`);
+  const retired = problems.length ? [] : dropped.filter((k) => planned.retired.has(k));
+  const unplanned = dropped.filter((k) => !retired.includes(k));
+  const mode = unplanned.length > 0 ? "compromise" : dropped.length > 0 ? "retirement" : "normal";
 
   if (mode === "compromise") {
     notes.push(
-      `compromise mode (D10): the Source-Commit's trust.json drops ${dropped.join(", ")}, which ` +
-      `signed the head. The seven-hour window is waived and the catalogue may not be carried.`,
+      `compromise mode (D10): the Source-Commit's trust.json drops ${unplanned.join(", ")}, which ` +
+      `signed the head, and ${RETIREMENTS_PATH} records no planned retirement of ` +
+      `${unplanned.length === 1 ? "it" : "them"} from a time already reached. The seven-hour window is waived and ` +
+      `the catalogue may not be carried.`,
     );
     const refused = ordered.length === 0
       ? "the trust.json that drops the compromised key delegates no key this run holds"
@@ -241,6 +353,7 @@ export function keyPlan({
     return {
       mode,
       dropped,
+      retired,
       carryCatalogueAllowed: false,
       index: { signers: ordered, refused },
       revocations: { signers: ordered, refused },
@@ -266,10 +379,19 @@ export function keyPlan({
     }
   }
   for (const line of withinWindow) notes.push(line);
+  if (mode === "retirement") {
+    notes.push(
+      `planned retirement (SERVE-30; D10): the Source-Commit's trust.json drops ${retired.join(", ")}, which ` +
+      `${RETIREMENTS_PATH} records as retired from ${retired.map((k) => planned.retired.get(k)).join(", ")}. ` +
+      `This is not compromise mode: the window applies and a failing catalogue may be carried, if what is ` +
+      `carried verifies under the trust.json beside it (SERVE-95).`,
+    );
+  }
 
   return {
     mode,
     dropped,
+    retired,
     carryCatalogueAllowed: true,
     index: {
       signers: catalogueSigners,

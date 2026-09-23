@@ -64,7 +64,7 @@ import { receiptName, trailersOf } from "../served-set/provenance.mjs";
 import { PAGES_BASE, fetchServed } from "../served-set/served-vs-signed.mjs";
 import { blobAt, gitMaybe, gitText } from "./git.mjs";
 import {
-  DOCUMENT_DOMAINS, keyPlan, readDelegationTimes, refusesDroppedKey, trustAtCommit,
+  DOCUMENT_DOMAINS, keyPlan, readDelegationTimes, refusesDroppedKey, retirementRecordAt, trustAtCommit,
 } from "./key-window.mjs";
 import { SIGNED_BRANCH, SIGNED_FILES, carryAlert, fetchSignedHead, planRun } from "./plan.mjs";
 import { armingState, pagesRegistryFiles, pagesTree } from "./pages.mjs";
@@ -135,7 +135,11 @@ export async function signRun({
   }
   const headTrust = head?.present ? head.documents.trust : null;
 
-  const keys = keyPlan({ candidateTrust, headTrust, delegatedAt, now, available });
+  // D10, decided: a dropped key is a planned retirement only when the
+  // Source-Commit's own record names it (key-window.mjs); read at the same
+  // commit as the trust.json that drops it, never from a working tree.
+  const retirements = retirementRecordAt({ root, sha: sourceCommit });
+  const keys = keyPlan({ candidateTrust, headTrust, delegatedAt, now, available, retirements });
   const plan = await planRun({
     root,
     sourceCommit,

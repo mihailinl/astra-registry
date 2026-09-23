@@ -4,9 +4,10 @@
 // Two readers and one definition. `primitives.mjs` holds the schemas to the set,
 // and `publishers.mjs` holds the daily re-check's commit outside it (dev/couplings.md
 // entry 109). The reader lived in `primitives.mjs` until the second needed it,
-// and `publishers.mjs` cannot import that module: it imports `tools/make-fixtures.mjs`,
-// which is outside the set, and `publishers.mjs` reaches nothing outside it
-// today (contract pending item 19).
+// and `publishers.mjs` did not import that module, because it imports
+// `tools/make-fixtures.mjs`, which was outside the set until contract 0.38.0
+// put every module the selftest loads inside it (pending item 19); the one
+// reader stays here, because one definition read one way is the point.
 
 import fs from "node:fs";
 import path from "node:path";
