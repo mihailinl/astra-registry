@@ -39,7 +39,17 @@ const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const ROOT_JSON = path.join(REPO_ROOT, "registry", "v1", "root.json");
 const TESTKEYS = path.join(REPO_ROOT, "tools", "testkeys");
 
-const tmp = (stem) => fs.mkdtempSync(path.join(os.tmpdir(), stem));
+// Every directory `tmp` makes is removed when the process exits; before
+// 2026-09-23 none was, and each run left three in `/tmp`.
+const scratch = [];
+process.on("exit", () => {
+  for (const d of scratch) fs.rmSync(d, { recursive: true, force: true });
+});
+const tmp = (stem) => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), stem));
+  scratch.push(d);
+  return d;
+};
 const published = () => JSON.parse(fs.readFileSync(ROOT_JSON, "utf8"));
 
 /** The clearly-labelled TEST roots, as a root.json-shaped document. */

@@ -551,9 +551,17 @@ test("anything that is not a 200 or a 304 throws, naming the status and the URL"
 // The composition, end to end: B-T2.6's first canary
 // ───────────────────────────────────────────────────────────────────────────
 
+// Removed at exit, and not only by the `rmSync` at the end of the test that
+// makes one: that line runs only when every assertion above it held.
+const trees = [];
+process.on("exit", () => {
+  for (const d of trees) fs.rmSync(d, { recursive: true, force: true });
+});
+
 /** The smallest tree `loadSources` will read: one listing, one version. */
 function registryTree({ id = "quiet", repo = REPO, version = "0.2.0", tag = "v0.2.0" } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-poll-reg-"));
+  trees.push(dir);
   const versions = path.join(dir, "plugins", id, "versions");
   fs.mkdirSync(versions, { recursive: true });
   fs.writeFileSync(path.join(dir, "plugins", id, "plugin.json"), `${JSON.stringify({
