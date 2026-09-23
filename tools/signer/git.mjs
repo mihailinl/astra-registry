@@ -74,12 +74,11 @@ export function gitMaybe(args, { root } = {}) {
  * D3's counter, at an explicit commit rather than at `HEAD`.
  *
  * `tools/build-index.mjs` and `tools/lib/revocations.mjs` both count at `HEAD`,
- * and only the first adds one for a pending change: build-index when
- * `git status` shows anything under `plugins/`, because it runs inside the
- * workflow that is about to commit. `resolveSerial` in the second adds one
- * unconditionally — serial 0 is reserved — and never looks at the working
- * tree, so a staged advisory does not move it (gap 69; its own comment has the
- * measurement). The signer is the other case: it counts at the
+ * and both add one for a pending change — when `git status` shows anything
+ * under their pathspec — because each runs before the commit it is written
+ * for (the second since ops register entry 69; its own comment has the
+ * measurement). `resolveSerial` in the second also adds one unconditionally,
+ * because serial 0 is reserved. The signer is the other case: it counts at the
  * Source-Commit, which is already a commit, so there is nothing pending to add.
  * Writing that as `rev-list --count HEAD` here would silently count whatever
  * the signer's own checkout happened to be on.
