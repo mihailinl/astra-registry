@@ -1765,3 +1765,55 @@ test("repo-settings: ROLL-7's R0 file pins each environment's branch policies as
       `file built from policy/settings-expected.json and ${breaks.length} breaks of it, and arms on that commit`);
   }
 });
+
+// ── TRUST-44's reservation, against what ROLL-7 would pin (contract 0.36.0) ─
+//
+// Contract 0.36.0 publishes TRUST-44's read as exact calls — `/rulesets`, one
+// `/rulesets/{id}` per ruleset, `/rules/branches/main`, `/environments`, one
+// `/environments/{name}/deployment-branch-policies` per pinned environment,
+// and `/branches/main` — so a read is 4 + R + E calls, and it reserves 12 of
+// the plugins service's 60 unauthenticated requests an hour for them (ID-12
+// gives the lookups 34 and keeps 14 unspent). The number lives in the contract
+// and the environments live in `policy/settings-expected.json`, and an owner
+// who creates a seventh environment changes the second without anyone opening
+// the first: the service's hourly read would then overrun its share, and its
+// lookups would start answering `rate_limited` for a reason nobody wrote down.
+// So the two are compared here. Environments pending creation count, because
+// each is created to be pinned (RC-R0-3(f)).
+const TRUST44_RESERVATION = 12;
+const trust44Calls = (expected) =>
+  4 + Object.keys(expected.rulesets ?? {}).length +
+  Object.keys(expected.environments ?? {}).length + Object.keys(expected.pending_environments ?? {}).length;
+
+/** Why TRUST-44's read of an expectation overruns its reservation, or null when it fits. */
+function trust44Overrun(expected) {
+  const calls = trust44Calls(expected);
+  if (calls <= TRUST44_RESERVATION) return null;
+  return `TRUST-44's read of astra-registry is 4 + R + E = ${calls} calls for the rulesets and environments ` +
+    "policy/settings-expected.json holds (pending ones counted, since each is created to be pinned), and contract " +
+    `0.36.0 reserves ${TRUST44_RESERVATION} for it (TRUST-44; ID-12). A pin past the reservation waits for a contract ` +
+    "version that raises it, published before the environment or ruleset is created";
+}
+
+test("repo-settings: TRUST-44's read of what ROLL-7 pins fits the 12 calls contract 0.36.0 reserves for it", () => {
+  const doc = settingsDoc();
+  const expected = doc.repositories[checkoutSlug(doc)];
+  const calls = trust44Calls(expected);
+  assert.ok(calls >= 9, `TRUST-44's read counts ${calls} calls from the expectation and counted 11 on 2026-09-23; the count stopped reading`);
+  assert.equal(trust44Overrun(expected), null);
+  // Proven on the committed expectation grown by one environment, which
+  // still fits, and by two, which does not: an owner's next settings acts.
+  const grown = (n) => {
+    const g = structuredClone(expected);
+    const model = Object.values(g.environments)[0];
+    for (let i = 0; i < n; i++) g.environments[`extra-${i}`] = structuredClone(model);
+    return g;
+  };
+  assert.equal(trust44Overrun(grown(1)), null, "one environment more still fits the reservation, and was refused");
+  const over = trust44Overrun(grown(2));
+  assert.ok(over && over.includes("= 13 calls") && over.includes("reserves 12"),
+    `two environments more count ${trust44Calls(grown(2))} calls and the check said ${JSON.stringify(over)}`);
+  console.log(`# TRUST-44's read: 4 + ${Object.keys(expected.rulesets ?? {}).length} ruleset(s) + ` +
+    `${Object.keys(expected.environments).length} live and ${Object.keys(expected.pending_environments ?? {}).length} ` +
+    `pending environment(s) = ${calls} of ${TRUST44_RESERVATION}`);
+});
