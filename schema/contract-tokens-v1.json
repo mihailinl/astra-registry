@@ -1,6 +1,6 @@
 {
-  "contract_version": "0.38.0",
-  "source_commit": "4c3b5c5180b2d6ced558e47ce2229725f3867b70",
+  "contract_version": "1.0.0",
+  "source_commit": "3ad6e0f7c77c6281c1966baf57b14d33d02d818c",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -3697,12 +3697,17 @@
             {
               "name": "ages",
               "required": true,
-              "source": "MOD-27; the acceptor's decision (Q18)"
+              "source": "MOD-27; the acceptor's decision (Q18); item 18, decided 2026-09-23"
+            },
+            {
+              "name": "open_at_end",
+              "required": true,
+              "source": "MOD-27; item 18, decided 2026-09-23; the acceptor's answer (0.38.0's Q1)"
             },
             {
               "name": "generated_at",
               "required": true,
-              "source": "MOD-27; the acceptor's statement (Q19)"
+              "source": "MOD-27; the acceptor's statement (Q19); its answer to 0.38.0's Q2, decided 2026-09-23"
             }
           ]
         }
