@@ -1526,9 +1526,11 @@ id = "sink-panel"
         // The committed pair: nothing unexplained, nothing missing, the one
         // exception live. Without this the rows below prove nothing.
         let base = run(RPCSCAN_MJS, &yaml);
-        assert!(base.only_rpcscan.is_empty() && base.only_hooks_yaml.is_empty());
-        assert_eq!(unexplained(&base), Vec::<String>::new());
-        assert!(base.differences.iter().any(excused));
+        const BASE: &str = "the committed registers are not the committed pair this proof starts from; the \
+                            three tests above say how — fix that first, then this";
+        assert!(base.only_rpcscan.is_empty() && base.only_hooks_yaml.is_empty(), "{BASE}");
+        assert_eq!(unexplained(&base), Vec::<String>::new(), "{BASE}");
+        assert!(base.differences.iter().any(excused), "{BASE}");
 
         // Another row's permission, flipped on each side in turn.
         let js = once(RPCSCAN_MJS, "permission: \"fire_trigger\"", "permission: \"push_to_ui\"");
