@@ -488,20 +488,34 @@ const isToolRead = (e) => TOOL_READERS.some((r) => r.schema === e.name);
  * the list cannot grow in silence — but a derived set over-counts, and this is
  * where an over-count is written down rather than filtered away.
  *
- * A file here is a claim by a person that it does not read a member table. It
- * is held to that claim from the other side: each one must still be a candidate
- * (below), so an exclusion whose file has gone, or has stopped matching any
- * signal, is a red rather than a line nobody rereads.
+ * A file here is a claim by a person that it is not a reader under proof. It is
+ * held to that claim twice. From the scan's side, each one must still be a
+ * candidate (below), so an exclusion whose file has gone, or has stopped
+ * matching any signal, is a red rather than a line nobody rereads. And from the
+ * file's side, through `reads` (dev/couplings.md, entry 124).
+ *
+ * **`reads` is the half of the reason a machine can hold.** It names which of
+ * `READER_PATTERNS` the file's bytes match — what the file reads of the thing
+ * it is excused from — and it is compared with the bytes on every run, both
+ * ways. `why` stays prose, and says why reading exactly that is not being a
+ * reader under proof. The excuse for `tools/selftest/contract-tokens.mjs` said
+ * "never an `entries[].members` table" at 09:31 on 2026-09-22 and was false by
+ * 13:03 (`4b5db5b`, on another branch), and the census stayed green because it
+ * held an excuse only to the file still being a candidate — which a file that
+ * starts reading more remains. A reason held only to its presence is entry
+ * 59's hand-kept bucket one level down.
  */
 const NOT_MEMBER_READERS = [
   {
     file: "bot/tests/service.test.mjs",
+    reads: ["condition", "member-table"],
     why:
       "this census itself. It imports the tool's reader in order to PROVE the bucket above, and names the " +
       "bucketed schema in doing so; the prover is not a reader under proof",
   },
   {
     file: "tools/gen-codes-table.mjs",
+    reads: [],
     why:
       "names the token file to say, in its own header, that it does NOT write it — FLOW-13's table is merged " +
       "into the token file by astra-plugins-ops `tools/contract-tokens.mjs`, and this program writes the " +
@@ -509,13 +523,19 @@ const NOT_MEMBER_READERS = [
   },
   {
     file: "tools/selftest/contract-tokens.mjs",
+    reads: ["member-table"],
     why:
-      "reads the token file's own discipline — the contract version it names, its `pending[]` records, the " +
-      "cron it publishes — and never an `entries[].members` table. A member's requiredness is not a thing this " +
-      "module has an opinion about",
+      "reads `entries[].members` for every `astra.registry.*` schema entry — the bucketed " +
+      "`astra.registry.migration-notice/1` among them — and asks it one question: which members are published " +
+      "`required: true`, each then held against the committed records of its kind (dev/couplings.md entry 86). " +
+      "It evaluates no condition: a `conditional` member is not `required: true` and is never asked, so the rule " +
+      "the bucket above proves still has the one runner it proves. The rest of the module is the token file's " +
+      "own discipline — the contract version, the cron, `pending[]` and the members held under it. Until " +
+      "2026-09-22 this excuse said \"never an `entries[].members` table\", false since `4b5db5b` (entry 124)",
   },
   {
     file: "tools/validate.mjs",
+    reads: [],
     why:
       "names the token file in one report note, to say why an `author_request` yank is being counted by action " +
       "and category while `fixed_reasons` is null. It opens no entry. From contract 0.31.0 it also names " +
@@ -525,6 +545,7 @@ const NOT_MEMBER_READERS = [
   },
   {
     file: "tools/selftest/migration-notice.mjs",
+    reads: ["condition", "member-table"],
     why:
       "contract 0.31.0's canary between two statements of ONE condition: it reads the marker entry's member " +
       "table only to hold `schema/migration-notice-v1.json`'s members and `oneOf` to it, round by round, and " +
@@ -534,6 +555,7 @@ const NOT_MEMBER_READERS = [
   },
   {
     file: "tools/selftest/primitives.mjs",
+    reads: [],
     why:
       "names the token file as a KEY of `SCHEMA_ABSENCES`, the declaration of which populations called \"the " +
       "schemas\" it is absent from (dev/couplings.md entry 67), and opens it only to ask whether it carries " +
@@ -554,8 +576,10 @@ const NOT_MEMBER_READERS = [
  * runs nothing. What is left is a text scan, and this estate has been bitten by
  * two: a comment quoting a call counted as a caller, and a workflow step whose
  * body only `echo`ed a command came out as a live lane. **It is measurable here
- * too** — five files in this repository name `tools/cutover-preflight.mjs` and
- * four of those five are comments.
+ * too** — five files in this repository named `tools/cutover-preflight.mjs` at
+ * contract 0.30.1 and four of those five were comments. (Eleven named it at
+ * `3653dc5` on 2026-09-22, counted over `git ls-tree -r HEAD` by bytes; the
+ * count moves and the argument does not.)
  *
  * So the scan is not asked to decide. It is asked to ENUMERATE, deliberately
  * too widely, and every candidate it turns up is either proven in
@@ -644,6 +668,72 @@ function scanForMemberReaders(root = REPO) {
 
   const read = files.map((abs) => path.relative(REPO, abs).split(path.sep).join("/"));
   return { read, candidates };
+}
+
+/**
+ * **What a file's bytes look like when it reads the thing an excuse says it
+ * does not** (dev/couplings.md, entry 124). The census's reader patterns, as
+ * against its candidate signals above: a signal says a file COULD reach a
+ * member table; a pattern says what it DOES touch once there.
+ *
+ *   * `member-table` — an entry's `members`, as `.members` or `["members"]`.
+ *     The shape of the reads `4b5db5b` added to an excused file, `e.members`
+ *     and `entry.members`, and of every member read on this tree.
+ *   * `condition` — a member's `when`, or the `"conditional"` a reader must
+ *     test for before it evaluates one. What the bucket above PROVES a reader
+ *     does, and so the line between reading a table and running its rule.
+ *
+ * Bytes, comments included, like the scan: a comment quoting `e.members`
+ * matches, and the cost is an excuse that says so in `reads` and in its
+ * reason. Over-counting costs a sentence; under-counting is the gap. What it
+ * cannot see is a table reached under another name — destructured
+ * (`{ members }`), or handed in by a caller — which is the boundary the scan
+ * above already states for itself.
+ */
+const READER_PATTERNS = {
+  "member-table": { re: /\.members\b|\[\s*["'`]members["'`]\s*\]/, what: "an entry's `members` table" },
+  "condition": { re: /\.when\b|\[\s*["'`]when["'`]\s*\]|["'`]conditional["'`]/, what: "a member's condition (`when`, or `required: \"conditional\"`)" },
+};
+
+/**
+ * Every excuse whose `reads` is not what its file's bytes read, as sentences
+ * naming the file and quoting the excuse. Both directions: a file that now
+ * reads what its excuse says it does not (entry 124's case), and a file that
+ * no longer reads what its excuse concedes, whose reason then describes reads
+ * that are gone. `textOf(file)` returns the file's text, or null for a file
+ * the scan did not read — which the census's own floor reports.
+ */
+function excuseDrift(excuses, textOf) {
+  const out = [];
+  const lines = (text, re) => text.split("\n").flatMap((l, i) => (re.test(l) ? [i + 1] : []));
+  for (const x of excuses) {
+    const text = textOf(x.file);
+    if (text === null) continue;
+    const quoted = JSON.stringify(x.why);
+    if (!Array.isArray(x.reads)) {
+      out.push(`${x.file} is excused with no \`reads\`, so nothing holds its reason to its bytes: ${quoted}`);
+    }
+    const declared = Array.isArray(x.reads) ? x.reads : [];
+    for (const k of declared.filter((d) => !Object.hasOwn(READER_PATTERNS, d))) {
+      out.push(`${x.file}'s excuse declares it reads ${JSON.stringify(k)}, which is not one of READER_PATTERNS ` +
+        `(${Object.keys(READER_PATTERNS).join(", ")})`);
+    }
+    for (const [k, { re, what }] of Object.entries(READER_PATTERNS)) {
+      const at = lines(text, re);
+      if (at.length && !declared.includes(k)) {
+        out.push(`${x.file} is excused as a file that does not read ${what}, and its bytes now do, at ` +
+          `${at.slice(0, 5).map((n) => `:${n}`).join(", ")}${at.length > 5 ? ` and ${at.length - 5} more` : ""}. ` +
+          `The excuse was written for a file that did not: ${quoted}. Re-read the file. If it is now a reader of ` +
+          "a bucketed entry, it belongs in `TOOL_READERS` with its reader exercised; if it is not, rewrite the " +
+          "excuse's `reads` AND its reason to what is true — the `reads` alone is a filter, not a judgement");
+      }
+      if (!at.length && declared.includes(k)) {
+        out.push(`${x.file} is excused as a file that reads ${what}, and its bytes no longer do. The reason ` +
+          `describes reads that are gone: ${quoted}. Rewrite it to what the file does now`);
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -859,6 +949,15 @@ test("every file that could read a bucketed entry's members is proven or exclude
     );
   }
 
+  // And no excuse whose reason has stopped being true of its file's bytes
+  // (entry 124). Being a candidate still is the scan's half; this is the
+  // file's: what each excused file reads, against what its excuse says it reads.
+  assert.deepEqual(
+    excuseDrift(NOT_MEMBER_READERS, (rel) => (read.includes(rel) ? fs.readFileSync(path.join(REPO, rel)).toString("utf8") : null)),
+    [],
+    "an excuse in `NOT_MEMBER_READERS` says its file reads something other than what the file's bytes read",
+  );
+
   // ── and the finding, whose healthy value is empty ─────────────────────────
   const classified = new Set(named);
   assert.deepEqual(
@@ -870,6 +969,55 @@ test("every file that could read a bucketed entry's members is proven or exclude
     "above proves ONE reader runs the rule; a second one that nobody proved is the entry still trusting a " +
     "census that cannot see it",
   );
+});
+
+// Entry 124. The drift check above has one committed case — the excuse that
+// went stale four hours after it was written — and that case is not on the
+// tree any more, because the excuse was corrected in the same commit that
+// added the check. A guard proven only by a corpus that has never held its
+// case proves nothing, so the case is rebuilt here from committed material on
+// every run: a real excused file that reads a member table, excused as one
+// that does not; a real excused file that reads nothing, which must stay green
+// as written and go red the moment one member read is appended to its bytes;
+// and the same file excused as a reader, which must be red the other way.
+test("an excuse whose file reads what it was excused from is red, and one that is true stays green", () => {
+  const text = (rel) => fs.readFileSync(path.join(REPO, rel)).toString("utf8");
+  const SELF = "bot/tests/service.test.mjs";
+  const quiet = NOT_MEMBER_READERS.find((x) => Array.isArray(x.reads) && x.reads.length === 0);
+  const reader = NOT_MEMBER_READERS.find((x) => x.file !== SELF && Array.isArray(x.reads) && x.reads.includes("member-table"));
+  assert.ok(quiet && reader,
+    "NOT_MEMBER_READERS no longer holds both an excused file that reads nothing and one, besides this census, " +
+    "that reads a member table, so the two cases below have no committed material to be built from");
+
+  assert.deepEqual(excuseDrift([quiet], text), [],
+    `${quiet.file}'s excuse, as written, is not true of its bytes, so the red cases below prove nothing`);
+
+  // Entry 124 as it happened: a file that reads `members`, excused as one that
+  // does not — and as true as its excuse about everything else, so that the one
+  // red is the member read. The red must name the file and quote the excuse.
+  const claim = "never an `entries[].members` table (the claim entry 124 found false)";
+  const denied = reader.reads.filter((k) => k !== "member-table");
+  const stale = excuseDrift([{ file: reader.file, reads: denied, why: claim }], text);
+  assert.equal(stale.length, 1, `the stale excuse gave ${stale.length} finding(s): ${JSON.stringify(stale)}`);
+  for (const needle of [reader.file, JSON.stringify(claim), "does not read an entry's `members` table"]) {
+    assert.ok(stale[0].includes(needle), `the stale excuse's red does not name ${needle}: ${stale[0]}`);
+  }
+
+  // The same shape, grown on the file that reads nothing: one appended read.
+  const grown = excuseDrift([quiet], (rel) => `${text(rel)}\nconst n = entry.members.length;\n`);
+  assert.equal(grown.length, 1, `one appended member read gave ${grown.length} finding(s): ${JSON.stringify(grown)}`);
+  assert.ok(grown[0].includes(quiet.file) && grown[0].includes(JSON.stringify(quiet.why)),
+    `the red for ${quiet.file} does not name the file and quote its excuse: ${grown[0]}`);
+
+  // The other direction: an excuse conceding reads the file does not make.
+  const shrunk = excuseDrift([{ ...quiet, reads: ["member-table"] }], text);
+  assert.ok(shrunk.length === 1 && shrunk[0].includes("no longer"),
+    `an excuse conceding a member read on ${quiet.file}, which makes none, gave ${JSON.stringify(shrunk)}`);
+
+  // And an excuse that says nothing checkable is red, whatever its file reads.
+  const { reads: _gone, ...unstated } = quiet;
+  assert.ok(excuseDrift([unstated], text).some((f) => f.includes("no `reads`")),
+    "an excuse with no `reads` passed, so a reason can again be held to nothing but its presence");
 });
 
 test("a value binding rendered in two entries is compared here, and not only by the generator", () => {

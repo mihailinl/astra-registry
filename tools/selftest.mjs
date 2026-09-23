@@ -1865,7 +1865,7 @@ const FLOORS = new Map(Object.entries({
   // owned: `tests/shared-vectors.mjs` asserts `>= 20` three times, in the module
   // whose vectors they are, with a message about vectors.
   "bundles.mjs": 14,
-  "index-signature.mjs": 20,
+  "index-signature.mjs": 21,
   "signer.mjs": 24,
   "signer-run.mjs": 6,
   "rehearsal-r2.mjs": 14,
@@ -1879,7 +1879,7 @@ const FLOORS = new Map(Object.entries({
   "update-notes.mjs": 9,
   "repo-rules.mjs": 18,
   "claims.mjs": 10,
-  "contract-tokens.mjs": 10,
+  "contract-tokens.mjs": 14,
   "regenerate.mjs": 15,
   "migration-notice.mjs": 6,
   "times.mjs": 4,
