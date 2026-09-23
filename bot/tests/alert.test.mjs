@@ -465,10 +465,8 @@ await test("a check name nothing in the table knows is refused before any POST",
 await test("the registry refuses to post to a check that is another party's", async () => {
   // The half of attack M-5's rule this repository can enforce from inside:
   // even handed a URL, this script will not address a check whose poster is
-  // somewhere else. `canary-tag` is the reachable case — B-T1.6 names it, and
-  // its poster and its secret both live in the test repository. The two the
-  // plugins service posts to cannot even be named yet, which is the stronger
-  // form of the same refusal.
+  // somewhere else. `canary-tag` is one case — B-T1.6 names it, and its poster
+  // and its secret both live in the test repository.
   const r = recorder();
   const out = await postHeartbeat({
     check: "canary-tag",
@@ -479,8 +477,26 @@ await test("the registry refuses to post to a check that is another party's", as
   assert.equal(out.code, 1);
   assert.equal(r.calls.length, 0);
   assert.match(out.problems.join(""), /posted to by test-repository/);
-  for (const check of CHECKS.filter((c) => c.party === "plugins-service")) {
-    assert.equal(check.name, null, "the two service check names are minice-be's to supply (§1.3 row 8.1)");
+  // The plugins service's checks are the case the rule was written for — one
+  // of them is what pages when the Almaty box is gone — and until 2026-09-23
+  // they had no names, so this asserted only that they had none. minice-e4
+  // named them that day, which makes the refusal itself askable: each is
+  // handed its own whole URL, under the secret name it would have, and still
+  // nothing is posted, because the refusal is the party and not a missing
+  // secret.
+  const service = CHECKS.filter((c) => c.party === "plugins-service");
+  assert.ok(service.length >= 3, `only ${service.length} plugins-service check(s); the table has lost the case this asks`);
+  for (const check of service) {
+    const rs = recorder();
+    const refused = await postHeartbeat({
+      check: check.name,
+      env: { [secretName(check.name)]: `https://receiver.example/ping/${check.name}` },
+      fetchImpl: rs.fetchImpl,
+      log: quiet,
+    });
+    assert.equal(refused.code, 1, `the registry's heartbeat posted to ${check.name}, which plugins-service posts to`);
+    assert.equal(rs.calls.length, 0, `a request went out for ${check.name}`);
+    assert.match(refused.problems.join(""), /posted to by plugins-service/, `${check.name} was refused for another reason`);
   }
 });
 
@@ -628,6 +644,13 @@ await test("each check's bound, by name: five GitHub-scheduled checks moved to a
     "baseline-names": 3 * D,
     // unchanged: not posted from GitHub, so BOT-85's rule as it was
     probe: 90,
+    // the plugins service's three, named by minice-e4 on 2026-09-23. Not
+    // posted from GitHub, so BOT-85's rule: 3 × 15 minutes and 3 × 2 minutes
+    // are both under 90. The evaluator's bound was 90 while it was unnamed;
+    // the relay heartbeat had no interval, and so no bound, until that day
+    "minice-plugins-evaluator": 90,
+    "minice-alarm-relay-almaty": 90,
+    "minice-alarm-relay-macmini": 90,
     // unchanged: no interval, so no bound
     "alarm-ack": null,
     conformance: null,
@@ -638,12 +661,6 @@ await test("each check's bound, by name: five GitHub-scheduled checks moved to a
     "the table's checks and this list differ: give a new check its bound here, which is where a reader sees it");
   const got = Object.fromEntries(named.map((c) => [c.name, boundMinutes(c)]));
   assert.deepEqual(got, want);
-  // The service's two, whose names are still minice-be's to supply: the relay
-  // heartbeat has no interval yet, and the evaluator's 15 minutes keeps 90.
-  const service = CHECKS.filter((c) => c.party === "plugins-service")
-    .map((c) => [c.interval_seconds, boundMinutes(c)])
-    .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
-  assert.deepEqual(service, [[900, 90], [null, null]]);
 });
 
 await test("every bound is the longest of 3 × the interval, 90 minutes, and a day for a GitHub-scheduled poster", () => {
@@ -659,15 +676,60 @@ await test("every bound is the longest of 3 × the interval, 90 minutes, and a d
   }
 });
 
-await test("the two service-posted checks are created disarmed and not yet armed", () => {
+await test("the three service-posted checks are the names minice-e4 sent, created disarmed and not yet armed", () => {
+  // Spelled out rather than read from the table: these are another party's
+  // names (§1.3 row 8.1), and a check created under any other spelling is one
+  // the service never posts to, which the receiver pages about for ever.
+  // Three and not two because the relay's watch runs on two hosts, and one
+  // check fed by both would let a live relay mask a dead one
+  // (bot/lib/alert-checks.mjs, above the rows).
   const service = CHECKS.filter((c) => c.party === "plugins-service");
-  assert.equal(service.length, 2, "the reach assertion's floor is the number of service check names recorded");
+  assert.deepEqual(
+    Object.fromEntries(service.map((c) => [c.name, c.interval_seconds])),
+    {
+      "minice-alarm-relay-almaty": 120,
+      "minice-alarm-relay-macmini": 120,
+      "minice-plugins-evaluator": 900,
+    },
+    "the plugins service's checks are not the three minice-e4 named on 2026-09-23, at the intervals it gave",
+  );
+  assert.equal(service.length, 3, "the reach assertion's floor is the number of service check names recorded");
   for (const check of service) {
     assert.equal(check.created_disarmed, true,
       "armed from their first minute they would page every ninety minutes through the whole of R1, and the " +
       "repair reached for on the third night is the one repair that must never be reached for");
     assert.equal(check.armed_at, null, "nothing has posted to it yet; RC-R1-12's exit note reports this");
+    assert.deepEqual(check.signals, ["success"], `${check.name} is a heartbeat, one success ping per pass`);
   }
+});
+
+await test("a name another party still owes is held as a pending row, and never as a registry check", () => {
+  // Until 2026-09-23 the committed table held two rows like this — `name:
+  // null` and a `name_pending` note saying whose name it is — and that was
+  // the only thing proving `tableProblems` accepts one and refuses the two
+  // wrong shapes of it. Naming the service's checks left the committed table
+  // with no such row, so each case is built here from a committed row. The
+  // next party that owes a name is listed this way rather than under a
+  // guessed one (ops runbook registry-alerts.md, step 4a).
+  const service = CHECKS.find((c) => c.party === "plugins-service");
+  const registry = CHECKS.find((c) => c.party === "registry");
+  assert.ok(service && registry, "the table has no plugins-service or no registry row to build the cases from");
+  const pending = { ...service, name: null, name_pending: "SYNTHETIC: a check name another party still owes" };
+  assert.deepEqual(tableProblems([...CHECKS, pending]), [],
+    "a pending row with a note saying whose name it is was refused; the table could no longer hold a name " +
+    "another party owes, and the next one would be listed under a guess");
+  const unowned = { ...pending, name_pending: undefined };
+  assert.deepEqual(
+    tableProblems([...CHECKS, unowned]),
+    ["(an entry with neither a name nor a pending note): no name and no note saying whose it is"],
+    "a row with no name and no note was not refused by that reason alone",
+  );
+  const registryPending = { ...registry, name: null, name_pending: "SYNTHETIC: a registry check with no name" };
+  assert.deepEqual(
+    tableProblems([...CHECKS, registryPending]),
+    ["SYNTHETIC: a registry check with no name: a registry check with no name cannot be posted to"],
+    "a registry row with no name was not refused by that reason alone",
+  );
 });
 
 await test("a check another party posts to is created disarmed", () => {
@@ -724,12 +786,20 @@ await test("the list environment `alerts` is built from is the required secrets,
 await test("environment `alerts` is given no secret that addresses another party's check", () => {
   const secrets = alertsEnvironmentSecrets();
   assert.ok(secrets.length >= 13, `only ${secrets.length} secrets; the owner's list has lost entries`);
+  // A row with no name has no secret name to compare, so it is skipped — and
+  // until 2026-09-23 that was both of the plugins service's rows, the ones
+  // this rule exists for, so the loop asked it of `probe` and `canary-tag`
+  // alone. The count below is of checks actually compared.
+  const compared = [];
   for (const check of CHECKS) {
     if (check.party === "registry") continue;
     if (check.name === null) continue;
+    compared.push(check.name);
     assert.ok(!secrets.includes(secretName(check.name)),
       `${check.name} is ${check.party}'s, and no credential the registry holds may resolve it`);
   }
+  assert.ok(compared.length >= 5 && CHECKS.some((c) => c.party === "plugins-service" && compared.includes(c.name)),
+    `only ${compared.join(", ") || "nothing"} compared: the plugins service's named checks are the case this rule is for`);
   assert.ok(secrets.includes("ASTRA_DEADMAN_URL_ALARM_ACK_START"), "BOT-86's start signal needs its own whole URL");
   // The rule is "no secret carries a BASE URL" — `ASTRA_DEADMAN_BASE_URL`,
   // attack M-5's project-level ping key. The first spelling was a substring

@@ -316,6 +316,24 @@ export async function run() {
     }
   });
 
+  await test("`heartbeat.mjs` posts from a table holding a row whose name another party still owes", () => {
+    // Until 2026-09-23 the committed table held two rows with `name: null` and
+    // a `name_pending` note — the plugins service's, before minice-e4 named
+    // them — so the control above proved in passing that a job dials from a
+    // table holding one. Naming them removed the case from the committed
+    // tree, and with it the only proof that `tableRefusals` steps over a row
+    // with no name rather than building a secret name out of `null`, which
+    // throws and fails every alert job in the estate. So it is built here,
+    // from a committed row, as the next party owing a name would list it.
+    const tail =
+      "{ const owed = CHECKS.find((c) => c.party === \"plugins-service\"); " +
+      "owed.name = null; owed.name_pending = \"SYNTHETIC: a check name another party still owes\"; }";
+    const ran = heartbeat(alertCheckout("pending-name", tail), ["--check", "signer"],
+      "ASTRA_DEADMAN_URL_SIGNER", "https://ping.example/signer");
+    assertEqual(ran.status, 0, `--check signer failed beside a pending row; stderr: ${ran.stderr}`);
+    assertEqual(ran.posts.join("\n"), "receiver POST https://ping.example/signer", "--check signer beside a pending row");
+  });
+
   await test("`heartbeat.mjs` refuses to post from a table `tableProblems` refuses", () => {
     // A registry check listed twice: one of the two is never created, and the
     // job posting to the other believes it is posting to both.
