@@ -53,6 +53,7 @@ import {
   composeCommit,
   composeTrailers,
   composeVerdict,
+  entryCommit,
   holdDeletions,
   holdEntryPath,
   listSummary,
@@ -73,7 +74,11 @@ import {
   allowlisted,
   allowlistedSubmission,
 } from "../lib/compile-decision.mjs";
-import { holdEntry, readHolds } from "../lib/holds.mjs";
+import { holdEntry, readHolds, resolveHold } from "../lib/holds.mjs";
+// What ops entry 101 added, off the namespaces, so that this suite run against
+// modules without them is red test by test rather than at import.
+import * as holdsModule from "../lib/holds.mjs";
+import * as moderationRun from "../moderation-run.mjs";
 import { CATEGORIES } from "../lib/moderation.mjs";
 import { BOT_AUDIENCE } from "../lib/oidc.mjs";
 import { BODIES } from "../lib/service.mjs";
@@ -101,7 +106,11 @@ process.on("exit", () => {
   for (const dir of tmpRoots) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-const sh = (args, cwd) => execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" });
+const sh = (args, cwd, env = null) => execFileSync("git", args, {
+  cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", ...(env ? { env: { ...process.env, ...env } } : {}),
+});
+/** Both of a commit's clocks at one instant, for a fixture whose history says when. */
+const dated = (iso) => ({ GIT_COMMITTER_DATE: iso, GIT_AUTHOR_DATE: iso });
 
 function writeAll(root, files) {
   for (const [rel, body] of Object.entries(files)) {
@@ -156,7 +165,7 @@ const identity = (id) => ({
 });
 
 /** A repository with one commit per entry, and the schema this run reads. */
-function estate({ versions = ["1.0.0", "1.1.0", "1.2.0"], bound = true, id = "widgets", extra = {} } = {}) {
+function estate({ versions = ["1.0.0", "1.1.0", "1.2.0"], bound = true, id = "widgets", extra = {}, at = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-"));
   tmpRoots.push(root);
   const files = {
@@ -175,7 +184,7 @@ function estate({ versions = ["1.0.0", "1.1.0", "1.2.0"], bound = true, id = "wi
   sh(["config", "user.name", "fixture"], root);
   sh(["config", "commit.gpgsign", "false"], root);
   sh(["add", "-A"], root);
-  sh(["commit", "-q", "-m", "fixture"], root);
+  sh(["commit", "-q", "-m", "fixture"], root, at ? dated(at) : null);
   return root;
 }
 
@@ -1204,12 +1213,16 @@ test("a confirmed, due hold that nothing applies is refused by name, never repor
   // reversal confirmed past its period (release), and a cancel record
   // (cancel). Neither commit is built, and each would have been reported.
   for (const [end, record, wouldPost] of [["release", confirm, "applied"], ["cancel", cancel, "cancelled"]]) {
+    // Committed at `held_at`: a reversal's 24 hours run from the commit that
+    // added its entry (MOD-9, ops entry 101), so a fixture committed at the
+    // wall clock would be a hold entered in the future of `now` below.
     const root = estate({
       extra: {
         ...delisted,
         [`state/holds/${SDI}.json`]: held,
         [`state/holds/${SDI}.${record.act}.json`]: record,
       },
+      at: held.held_at,
     });
 
     for (const shadow of [true, false]) {
@@ -1618,7 +1631,7 @@ function readOutputs(file) {
  * with a `$GITHUB_OUTPUT` of its own — which is what the job's `outputs:` block
  * reads, and so what `report` and `settled` are handed.
  */
-function runApply(root) {
+function runApply(root, env = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-step-"));
   tmpRoots.push(dir);
   const file = path.join(dir, "apply.sh");
@@ -1628,7 +1641,7 @@ function runApply(root) {
   const step = spawnSync("bash", ["-e", file], {
     cwd: root,
     encoding: "utf8",
-    env: { ...process.env, GITHUB_OUTPUT: output },
+    env: { ...process.env, ...env, GITHUB_OUTPUT: output },
   });
   return { ...step, outputs: readOutputs(output) };
 }
@@ -1847,6 +1860,164 @@ test("a live `held` result names the commit that entered the hold, and a re-list
     assert.throws(() => resultsFor({ ...args, commit: null, shadow: false }), /BOT-81/,
       `a live \`${what}\` with no commit was composed for posting`);
   }
+});
+
+// ── ops entry 101: the 24 hours run from the commit that landed the entry ──
+//
+// MOD-9: "A reversal is released only on a MOD-52 confirmation after a 24 h
+// hold period (OPEN-OWNER-4) has run from that commit" — the commit that adds
+// `state/holds/<service_decision_id>.json`. The commit job hands its own `now`
+// to the entry as `held_at`, and the commit that lands the entry is made after
+// the gates, in the `apply` step; the job's `timeout-minutes` is all that
+// bounds the gap. Until entry 101 closed, the period ran from `held_at`, so a
+// hold compiled at T and landed at T + 15 min was due at T + 24 h — fifteen
+// minutes before MOD-9 lets it be. Nothing caught it because the fixtures
+// committed every entry at the wall clock and asked about a `now` two days
+// earlier, and no test ever landed a hold through the workflow's own step at a
+// time of its own.
+
+/** Commit everything in `root` at `iso`, and return the commit. */
+const commitAt = (root, iso, message) => {
+  sh(["add", "-A"], root);
+  sh(["commit", "-q", "-m", message], root, dated(iso));
+  return sh(["rev-parse", "HEAD"], root).trim();
+};
+const confirmOf = (id, at) => ({
+  schema: "astra.registry.hold-record/1", act: "confirm", service_decision_id: id,
+  at, actor: "operator", run: "https://github.com/a/b/actions/runs/1",
+});
+const dueIds = (walked) => walked.due.map((d) => `${d.service_decision_id} ${d.act}`);
+const waitingFor = (walked, id) => walked.waiting.find((w) => w.service_decision_id === id)?.reason ?? "";
+
+test("a reversal compiled at T and landed at T + 15 min is not due at T + 24 h + 1 min, and is at T + 15 min + 24 h", async () => {
+  const T = "2026-09-20T12:30:00Z";
+  const root = withDocuments(estate({ at: "2026-09-20T12:00:00Z" }));
+  const origin = withRemote(root);
+  const job = await commitJob(root, { entries: [relistOf(SDI)], now: new Date(T) });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.ok(job.paths.includes(holdEntryPath(SDI)), "MOD-9 holds every M_RELIST, so this run enters one or proves nothing");
+
+  // The workflow's own commit step, landing the entry fifteen minutes after
+  // the compile: the gates, the self-test, the push.
+  const step = runApply(root, dated("2026-09-20T12:45:00Z"));
+  assert.equal(step.status, 0, step.stderr);
+  const landed = headOf(origin);
+  assert.equal(sh(["log", "-1", "--format=%cI", landed], root).trim(), "2026-09-20T12:45:00Z",
+    "the fixture's landing commit is not dated where this test needs it, so what follows asks the wrong question");
+  const [entry] = readHolds(root).map((h) => h.entry);
+  assert.equal(entry.held_at, T, "held_at is the compile's clock, and this test is about the gap between it and the commit");
+
+  // An operator confirms an hour later, and somebody annotates the entry an
+  // hour after that: neither is the commit that added it.
+  writeAll(root, { [`state/holds/${SDI}.confirm.json`]: confirmOf(SDI, "2026-09-20T13:45:00Z") });
+  commitAt(root, "2026-09-20T13:45:00Z", "operator: confirm");
+  writeAll(root, { [holdEntryPath(SDI)]: { $comment: "the appeal was checked by hand", ...entry } });
+  commitAt(root, "2026-09-20T14:45:00Z", "annotate the hold");
+
+  const early = walkHolds({ root, now: new Date("2026-09-21T12:31:00Z"), shadow: false });
+  assert.deepEqual(dueIds(early), [],
+    "a confirmed reversal was due 24 h and 1 min after it was compiled and 14 minutes before 24 hours had run from " +
+    `${landed}, the commit that added its entry — MOD-9 violated in the early direction: ${JSON.stringify(early)}`);
+  assert.match(waitingFor(early, SDI), /2026-09-21T12:45:00Z/, "the wait does not name the end of the period counted from the commit");
+  assert.ok(waitingFor(early, SDI).includes(landed), `the wait does not name the commit it counts from: ${waitingFor(early, SDI)}`);
+
+  const due = walkHolds({ root, now: new Date("2026-09-21T12:45:00Z"), shadow: false });
+  assert.deepEqual(dueIds(due), [`${SDI} release`],
+    "24 hours after the commit that added the entry, confirmed, the reversal was not due — counted from a later " +
+    `commit that touched the entry or its directory: ${JSON.stringify(due)}`);
+
+  // The entry this run wrote was in no commit when the run walked the holds:
+  // its period had not started, and the walk says so rather than dating it.
+  assert.match(waitingFor(job.results.holds, SDI), /not started/,
+    `a hold entry in no commit yet was given a period: ${waitingFor(job.results.holds, SDI)}`);
+});
+
+test("a hold merged from a branch runs its 24 hours from the merge that brought it onto main", async () => {
+  const root = estate({ at: "2026-09-10T00:00:00Z" });
+  const entry = holdEntry({
+    service_decision_id: SDI, code: "M_RELIST", category: "error", plugin_id: "widgets",
+    decided_at: "2026-09-17T08:00:00Z", reason: MODERATOR_REASON, moderator: "amoderator", reverses: SDI2,
+  }, { held_for: "reversal", held_at: "2026-09-17T09:00:00Z" });
+  sh(["checkout", "-q", "-b", "hand-hold"], root);
+  writeAll(root, { [holdEntryPath(SDI)]: entry });
+  const branch = commitAt(root, "2026-09-17T09:00:00Z", "a hold written on a branch");
+  sh(["checkout", "-q", "main"], root);
+  writeAll(root, { "README.md": "main moves on\n" });
+  commitAt(root, "2026-09-18T00:00:00Z", "main moves on");
+  sh(["merge", "-q", "--no-ff", "-m", "Merge the hold", "hand-hold"], root, dated("2026-09-20T12:00:00Z"));
+  const merge = sh(["rev-parse", "HEAD"], root).trim();
+  writeAll(root, { [`state/holds/${SDI}.confirm.json`]: confirmOf(SDI, "2026-09-20T12:10:00Z") });
+  commitAt(root, "2026-09-20T12:10:00Z", "operator: confirm");
+
+  // BOT-81's `held` names the commit the 24 hours run from, and it is main's.
+  assert.equal(entryCommit(root, holdEntryPath(SDI)), merge,
+    `the hold's commit was read as ${entryCommit(root, holdEntryPath(SDI))}; ${branch} is the branch commit, which ` +
+    `main never held on its own, and ${merge} is the merge that brought the entry onto main`);
+
+  const mid = walkHolds({ root, now: new Date("2026-09-20T13:00:00Z"), shadow: false });
+  assert.deepEqual(dueIds(mid), [],
+    "an hour after the merge that brought it onto main, a confirmed reversal was due — dated at its branch commit " +
+    `or its held_at, three days before main held it: ${JSON.stringify(mid)}`);
+  assert.match(waitingFor(mid, SDI), /2026-09-21T12:00:00Z/);
+  const due = walkHolds({ root, now: new Date("2026-09-21T12:00:00Z"), shadow: false });
+  assert.deepEqual(dueIds(due), [`${SDI} release`], `24 hours after the merge the reversal was not due: ${JSON.stringify(due)}`);
+});
+
+test("a checkout that cannot see the commit names none, and counts from held_at + 24 h + the commit job's timeout", async () => {
+  const root = estate({ at: "2026-09-20T12:00:00Z" });
+  const entry = holdEntry({
+    service_decision_id: SDI, code: "M_RELIST", category: "error", plugin_id: "widgets",
+    decided_at: "2026-09-20T12:00:00Z", reason: MODERATOR_REASON, moderator: "amoderator", reverses: SDI2,
+  }, { held_for: "reversal", held_at: "2026-09-20T12:30:00Z" });
+  writeAll(root, { [holdEntryPath(SDI)]: entry });
+  commitAt(root, "2026-09-20T12:45:00Z", "registry: moderation (1 decision(s))");
+  writeAll(root, { [`state/holds/${SDI}.confirm.json`]: confirmOf(SDI, "2026-09-20T13:45:00Z") });
+  const head = commitAt(root, "2026-09-20T13:45:00Z", "operator: confirm");
+  const shallow = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-shallow-clock-"));
+  tmpRoots.push(shallow);
+  sh(["clone", "-q", "--depth", "1", `file://${root}`, shallow], os.tmpdir());
+  assert.equal(sh(["rev-parse", "--is-shallow-repository"], shallow).trim(), "true");
+
+  // A depth-1 clone's only commit has no parent here, so git reports it as
+  // adding every file: the confirm commit would be named as the hold's.
+  assert.equal(entryCommit(shallow, holdEntryPath(SDI)), null,
+    `a shallow checkout named ${entryCommit(shallow, holdEntryPath(SDI))} as the hold's commit; ${head} is its ` +
+    "boundary, which git reports as adding every file in the tree");
+  const landed = moderationRun.entryLanding(shallow, holdEntryPath(SDI));
+  assert.match(landed.why ?? "", /shallow/, `the reader does not say why it named no commit: ${JSON.stringify(landed)}`);
+
+  const [hold] = readHolds(shallow);
+  const slack = holdsModule.HOLD_COMMIT_SLACK_MINUTES;
+  const at = (iso) => resolveHold(hold, { now: new Date(iso), shadow: false, landed }).act;
+  assert.equal(at("2026-09-21T12:31:00Z"), "wait",
+    "counted from held_at alone, as before entry 101, the reversal was due while its commit's 24 hours had 14 minutes to run");
+  assert.equal(at("2026-09-21T12:45:00Z"), "wait", "the fallback is not later than the commit could have landed");
+  const end = new Date(Date.parse("2026-09-21T12:30:00Z") + slack * 60_000).toISOString();
+  assert.equal(at(new Date(Date.parse(end) - 1000).toISOString()), "wait", `released a second before held_at + 24 h + ${slack} min`);
+  assert.equal(at(end), "release", "the fallback never ends");
+
+  // And the job itself never reaches it there: the walk refuses a shallow clone.
+  assert.throws(() => walkHolds({ root: shallow, now: new Date(end), shadow: false }), /shallow clone/);
+});
+
+// The fallback is sound only while its slack outlasts the commit job: `held_at`
+// is taken in that job's compile step and the commit is made in its `apply`
+// step, and GitHub cancels the job at `timeout-minutes` with nothing pushed.
+test("the fallback's slack outlasts the commit job's timeout, so a hold counted without its commit is never due early", () => {
+  const lines = read(".github/workflows/plugins-moderation.yml").split("\n");
+  const jobs = lines.flatMap((l, i) => (/^ {2}commit:\s*$/.test(l) ? [i] : []));
+  assert.equal(jobs.length, 1, `plugins-moderation.yml has ${jobs.length} \`commit:\` jobs; this reads exactly one`);
+  const timeouts = [];
+  for (let j = jobs[0] + 1; j < lines.length && !/^ {2}\S/.test(lines[j]); j++) {
+    const m = /^ {4}timeout-minutes:\s*(\d+)\s*$/.exec(lines[j]);
+    if (m) timeouts.push(Number(m[1]));
+  }
+  assert.equal(timeouts.length, 1, `the commit job states ${timeouts.length} timeout-minutes; this reads exactly one`);
+  const slack = holdsModule.HOLD_COMMIT_SLACK_MINUTES;
+  assert.ok(Number.isInteger(slack) && slack > timeouts[0],
+    `bot/lib/holds.mjs counts a hold whose commit cannot be read from held_at + 24 h + ${slack} min, and the commit ` +
+    `job can land that commit up to ${timeouts[0]} min after held_at (plus the second both stamps are truncated to): ` +
+    "raise HOLD_COMMIT_SLACK_MINUTES above the job's timeout-minutes");
 });
 
 /** A token shaped like the runner's, with the two claims `mintToken` pins. */

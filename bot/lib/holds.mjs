@@ -95,6 +95,34 @@
 // results posted today are for holds a commit in history already ended — a
 // hand deletion, or a release or cancel commit a person made — which
 // `classifyHoldCommit` reads.
+//
+// ── WHEN A REVERSAL'S 24 HOURS START ────────────────────────────────────────
+//
+// MOD-9: a reversal is released only on a confirmation "after a 24 h hold period
+// (OPEN-OWNER-4) has run from that commit" — the commit that adds
+// `state/holds/<id>.json`. Not from `held_at`. `held_at` is the commit job's
+// clock when it compiled the hold, and the commit that lands it comes after the
+// job's gates and its push, which the job's `timeout-minutes` bounds and
+// nothing else does. Until 2026-09-23 the period was counted from `held_at`, so
+// a hold could be due up to that timeout before 24 hours had run from its
+// commit (ops entry 101) — early, the one direction MOD-9 forbids.
+//
+// So `resolveHold` is handed where the entry LANDED (`bot/moderation-run.mjs`'s
+// `entryLanding`: the commit on HEAD's first-parent line that added the file,
+// at its committer time — a hold merged from a branch is dated at the merge
+// that brought it onto `main`, as TRUST-26's window dates a withdrawal, ops
+// entries 92 and 93), and `reversalDue` counts from that. Three answers:
+//
+//   landed      the later of `release_after` and that commit + 24 h. The
+//               entry's own `release_after` still binds: a release is never
+//               earlier than the directory tells a person it will be.
+//   not started the file is in no commit yet — the entry this run just wrote.
+//               There is no commit for the 24 hours to run from, so it waits.
+//   unknown     the history cannot be read (a shallow checkout, a git that
+//               failed, or a caller that read nothing). Then `held_at` + 24 h
+//               + HOLD_COMMIT_SLACK_MINUTES, which is the commit job's timeout
+//               and a minute more: never earlier than the commit could have
+//               landed, for any hold that job entered.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -114,6 +142,25 @@ export const HOLDS_DIR = path.join("state", "holds");
  * giving them a period would mean a `disable` releasing itself.
  */
 export const HOLD_PERIOD_HOURS = 24;
+
+/**
+ * How long after its `held_at` a hold's commit can land, when the commit itself
+ * cannot be read (see "WHEN A REVERSAL'S 24 HOURS START" above).
+ *
+ * `held_at` is the commit job's `now`, taken in its compile step; the commit
+ * that adds the entry is made in the same job's `apply` step, after the gates,
+ * and a job that has not finished inside `plugins-moderation.yml`'s
+ * `timeout-minutes` for `commit` is cancelled with nothing pushed. So that
+ * timeout bounds the gap — plus one minute, because both stamps are truncated
+ * to the second and a runner's cancellation is not instantaneous.
+ * `bot/tests/moderation-run.test.mjs` holds this above that job's timeout, so
+ * raising the timeout without raising this is red.
+ *
+ * It bounds only a hold that job entered. `held_at` on an entry a person wrote
+ * is that person's claim, which is why the commit, when it can be read, is
+ * what the period is counted from.
+ */
+export const HOLD_COMMIT_SLACK_MINUTES = 21;
 
 /**
  * The five kinds, in the order `holdKindFor` tries them, which is STRICTEST
@@ -265,11 +312,59 @@ export function isTakedown(decision) {
 
 // ── reading the directory ───────────────────────────────────────────────────
 
-const isoPlusHours = (iso, hours) =>
-  new Date(new Date(iso).getTime() + hours * 3600_000).toISOString().replace(/\.\d{3}Z$/, "Z");
+const isoPlusMinutes = (iso, minutes) =>
+  new Date(new Date(iso).getTime() + minutes * 60_000).toISOString().replace(/\.\d{3}Z$/, "Z");
+const isoPlusHours = (iso, hours) => isoPlusMinutes(iso, hours * 60);
 
-/** `held_at` + HOLD_PERIOD_HOURS, to the second, as the entry records it. */
+/**
+ * `held_at` + HOLD_PERIOD_HOURS, to the second, as the entry records it. The
+ * EARLIEST a reversal can be due, and not when it is: MOD-9 counts the 24 hours
+ * from the commit that added the entry, which lands after `held_at`
+ * (`reversalDue`).
+ */
 export const releaseAfter = (heldAt) => isoPlusHours(heldAt, HOLD_PERIOD_HOURS);
+
+const later = (a, b) => (Date.parse(a) >= Date.parse(b) ? a : b);
+
+/**
+ * When a reversal's 24 hours end, and what they were counted from (see "WHEN A
+ * REVERSAL'S 24 HOURS START" in the header, and ops entry 101).
+ *
+ * @param {object} entry   a sound `astra.registry.hold/1` entry.
+ * @param {object} [landed] `bot/moderation-run.mjs`'s `entryLanding` for it:
+ *   `{sha, at}` — the first-parent commit that added it, at its committer time;
+ *   `{sha: null, uncommitted: true, why}` — in no commit yet;
+ *   `{sha: null, why}` or nothing at all — the history could not be read.
+ * @returns {{due: string|null, from: "commit"|"not_started"|"fallback", why: string}}
+ *   `due` null means the period has not started.
+ */
+export function reversalDue(entry, landed) {
+  const floor = entry.release_after ?? releaseAfter(entry.held_at);
+  if (landed?.uncommitted) {
+    return {
+      due: null,
+      from: "not_started",
+      why: `no commit has added the entry yet, so its ${HOLD_PERIOD_HOURS} hours have not started (MOD-9: from that commit)` +
+        (landed.why ? `: ${landed.why}` : ""),
+    };
+  }
+  if (landed?.sha && typeof landed.at === "string" && Number.isFinite(Date.parse(landed.at))) {
+    return {
+      due: later(floor, isoPlusHours(landed.at, HOLD_PERIOD_HOURS)),
+      from: "commit",
+      why: `counted from ${landed.sha}, the commit that added the entry, at ${landed.at} (MOD-9)`,
+    };
+  }
+  // The history could not be read. Counting from `held_at` alone is the
+  // defect this replaced; the commit job's timeout is the most the commit can
+  // trail it by.
+  return {
+    due: later(floor, isoPlusMinutes(entry.held_at, HOLD_PERIOD_HOURS * 60 + HOLD_COMMIT_SLACK_MINUTES)),
+    from: "fallback",
+    why: `the commit that added the entry could not be read (${landed?.why ?? "no commit was read for it"}), so it is ` +
+      `counted from held_at ${entry.held_at} plus the commit job's ${HOLD_COMMIT_SLACK_MINUTES} minutes, the latest that commit can land`,
+  };
+}
 
 /**
  * Everything `schema/hold-v1.json` cannot say, said here with a message that
@@ -428,12 +523,19 @@ export function readHolds(root = REPO_ROOT, { schemaRoot = REPO_ROOT } = {}) {
  *                                       delist on `main` (MOD-9's cancellation
  *                                       for a removal request).
  * @param {boolean} ctx.coverageRed     MOD-46's check is failing.
+ * @param {object}  [ctx.landed]        where the entry landed on `main`
+ *                                       (`entryLanding`), which a reversal's
+ *                                       24 hours run from (`reversalDue`).
+ *                                       Omitted, it is read as a history that
+ *                                       could not be read — the later answer,
+ *                                       for `shadow`'s reason.
  */
 export function resolveHold(hold, {
   now = new Date(),
   shadow = true,
   delistedPlugins = [],
   coverageRed = false,
+  landed = null,
 } = {}) {
   const { entry, confirm, cancel } = hold;
   const stay = (reason) => ({ act: "wait", result: null, post: false, reason });
@@ -484,12 +586,13 @@ export function resolveHold(hold, {
         // back. Blocking a takedown on it would be the opposite mistake.
         return stay("MOD-46's coverage check is failing, and a reversal is the one thing it blocks");
       }
-      const due = entry.release_after ?? releaseAfter(entry.held_at);
+      const { due, why } = reversalDue(entry, landed);
+      if (due === null) return stay(why);
       if (now.getTime() < new Date(due).getTime()) {
-        return stay(`the ${HOLD_PERIOD_HOURS}-hour period ends at ${due}`);
+        return stay(`the ${HOLD_PERIOD_HOURS}-hour period ends at ${due}, ${why}`);
       }
       if (!confirm) return stay(`the ${HOLD_PERIOD_HOURS}-hour period has passed and no operator has confirmed it`);
-      return done("release", "applied", `the period ended at ${due} and an operator confirmed it (MOD-52, OPEN-OWNER-4)`);
+      return done("release", "applied", `the period ended at ${due}, ${why}, and an operator confirmed it (MOD-52, OPEN-OWNER-4)`);
     }
 
     case "disable_confirmation":

@@ -51,6 +51,9 @@ import {
   resultKey,
   resultsToPost,
 } from "../lib/holds.mjs";
+// The members ops entry 101 added, read off the namespace: this suite then runs
+// against a module that lacks them and is red test by test, not at import.
+import * as holdsModule from "../lib/holds.mjs";
 
 const REPO_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 
@@ -301,7 +304,11 @@ section("the 24-hour period, and the record that ends it");
 await test("a reversal waits out the period, and a confirm inside it does not shorten it", () => {
   assertEqual(HOLD_PERIOD_HOURS, 24, "OPEN-OWNER-4 closed at 24 hours on 2026-09-17");
   const confirm = record("confirm", "sd-relist-1");
-  const before = resolveHold(heldHold(moderatorDecision(), "reversal", { confirm }), { now: BEFORE, shadow: false });
+  // Landed in the same second it was held, so the period ends at release_after
+  // and the reason can be asked for that instant. When the commit lands later,
+  // it ends later: the next section.
+  const landed = { sha: "c".repeat(40), at: HELD_AT };
+  const before = resolveHold(heldHold(moderatorDecision(), "reversal", { confirm }), { now: BEFORE, shadow: false, landed });
   assertEqual(before.act, "wait",
     "a confirmed reversal released before its 24 hours were up, so the period an operator has to object " +
     "to it is whatever the operator's own reflexes are");
@@ -361,6 +368,84 @@ await test("a disable never releases without a confirm record, at any time", () 
     assertEqual(r.act, "wait",
       `a disable released at ${now.toISOString()} with no operator's confirmation; it is the one action ` +
       `that stops software already running on somebody's machine (OPEN-OWNER-14)`);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+section("the 24 hours run from the commit that added the entry (MOD-9; ops entry 101)");
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// MOD-9: released only "after a 24 h hold period (OPEN-OWNER-4) has run from
+// that commit" — the commit that adds `state/holds/<id>.json`. `held_at` is
+// the commit job's clock at the compile, and that commit lands after the gates
+// and the push. Until ops entry 101 closed the period ran from `held_at`, so a
+// hold compiled at T and committed at T + 15 min was due at T + 24 h: fifteen
+// minutes before MOD-9 lets it be. `bot/tests/moderation-run.test.mjs` proves
+// the same through the job, the workflow's commit step and real history.
+
+const plusMinutes = (iso, minutes) => new Date(Date.parse(iso) + minutes * 60_000);
+const SHA = "c".repeat(40);
+
+await test("a reversal's 24 hours run from the commit that added the entry, not from held_at", () => {
+  const confirm = record("confirm", "sd-relist-1");
+  const hold = heldHold(moderatorDecision(), "reversal", { confirm });
+  // Compiled at HELD_AT, committed fifteen minutes later.
+  const landed = { sha: SHA, at: plusMinutes(HELD_AT, 15).toISOString().replace(/\.\d{3}Z$/, "Z") };
+
+  const early = resolveHold(hold, { now: plusMinutes(HELD_AT, 24 * 60 + 1), shadow: false, landed });
+  assertEqual(early.act, "wait",
+    "a confirmed reversal released 24 h and 1 min after held_at, 14 minutes before 24 hours had run from the " +
+    "commit that added its entry — the early direction, the one MOD-9 forbids");
+  assert(early.reason.includes("2026-09-19T09:20:00Z") && early.reason.includes(SHA),
+    `the wait does not say when the period ends or what it was counted from: ${early.reason}`);
+
+  const due = resolveHold(hold, { now: plusMinutes(HELD_AT, 24 * 60 + 15), shadow: false, landed });
+  assertEqual(due.act, "release", `24 hours after the commit, with a confirm record, the reversal waited: ${due.reason}`);
+
+  // And the entry's own release_after still binds: a commit dated before
+  // held_at (a hand edit that moved held_at later) cannot bring the release
+  // forward of what the directory tells a person.
+  const before = { sha: SHA, at: "2026-09-18T08:05:00Z" };
+  const notYet = resolveHold(hold, { now: new Date("2026-09-19T08:06:00Z"), shadow: false, landed: before });
+  assertEqual(notYet.act, "wait", "a reversal released before its own release_after because its commit is older than held_at");
+  assertEqual(resolveHold(hold, { now: new Date("2026-09-19T09:05:00Z"), shadow: false, landed: before }).act, "release",
+    "at release_after, with the commit's 24 hours run and a confirm record, the reversal waited");
+});
+
+await test("an entry no commit has added has not started its 24 hours", () => {
+  const hold = heldHold(moderatorDecision(), "reversal", { confirm: record("confirm", "sd-relist-1") });
+  const r = resolveHold(hold, {
+    now: new Date("2030-01-01T00:00:00Z"),
+    shadow: false,
+    landed: { sha: null, at: null, uncommitted: true, why: "state/holds/sd-relist-1.json is in no commit on HEAD" },
+  });
+  assertEqual(r.act, "wait",
+    "a reversal whose entry is in no commit released: MOD-9 counts from that commit, and there is none yet");
+  assert(r.reason.includes("not started"), `the wait does not say the period has not started: ${r.reason}`);
+});
+
+await test("without its commit, a reversal waits out held_at + 24 h + the commit job's timeout, never earlier", () => {
+  const hold = heldHold(moderatorDecision(), "reversal", { confirm: record("confirm", "sd-relist-1") });
+  const unread = [
+    ["no landing handed in", undefined],
+    ["a shallow checkout", { sha: null, at: null, why: "a shallow clone" }],
+    ["a landing with no readable time", { sha: SHA, at: "not a time" }],
+  ];
+  for (const [what, landed] of unread) {
+    const r = resolveHold(hold, { now: plusMinutes(HELD_AT, 24 * 60 + 1), shadow: false, landed });
+    assertEqual(r.act, "wait",
+      `with ${what}, a confirmed reversal released 24 h and 1 min after held_at — counted from the compile, as ` +
+      "before ops entry 101, while its commit may have landed up to the commit job's timeout later");
+  }
+  const slack = holdsModule.HOLD_COMMIT_SLACK_MINUTES;
+  assert(Number.isInteger(slack) && slack > 0, `HOLD_COMMIT_SLACK_MINUTES is ${slack}`);
+  for (const [what, landed] of unread) {
+    const last = new Date(plusMinutes(HELD_AT, 24 * 60 + slack).getTime() - 1000);
+    assertEqual(resolveHold(hold, { now: last, shadow: false, landed }).act, "wait",
+      `with ${what}, the reversal released a second before held_at + 24 h + ${slack} min`);
+    const r = resolveHold(hold, { now: plusMinutes(HELD_AT, 24 * 60 + slack), shadow: false, landed });
+    assertEqual(r.act, "release", `with ${what}, the fallback never ends: ${r.reason}`);
+    assert(r.reason.includes("could not be read"), `the release does not say it was counted without its commit: ${r.reason}`);
   }
 });
 

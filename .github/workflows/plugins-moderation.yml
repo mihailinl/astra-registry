@@ -234,6 +234,11 @@ jobs:
     needs: [list, alert]
     if: always() && !cancelled()
     runs-on: ubuntu-24.04
+    # Also the most a hold's commit can trail its `held_at`: bot/lib/holds.mjs
+    # counts a reversal it cannot date by its commit from `held_at` + 24 h +
+    # HOLD_COMMIT_SLACK_MINUTES, which must stay above this (ops entry 101;
+    # this run's own suite holds the pair, and is not named here by path for
+    # the reason the header gives).
     timeout-minutes: 20
     permissions:
       contents: write

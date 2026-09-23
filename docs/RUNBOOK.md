@@ -891,7 +891,7 @@ What is held:
 
 | Held | Kind | Ends |
 |---|---|---|
-| `M_RELIST`, `M_UNREVOKE` | `reversal` | **24 hours** after it was held, *and* a confirm record. Both |
+| `M_RELIST`, `M_UNREVOKE` | `reversal` | **24 hours** after the commit that added its entry reached `main`, *and* a confirm record. Both |
 | `M_REVOKE` with action `disable` | `disable_confirmation` | A confirm record, at once. No period |
 | Any takedown over the bound (§7.10) | `bound` | A confirm record, at once |
 | `A_REMOVAL_REQUEST` for a listing with no identity record | `unbound_removal` | An applied `author_request` delist, or a cancel |
@@ -899,10 +899,15 @@ What is held:
 
 The 24-hour period on a reversal is a reversal period, not a review queue: it
 is there so that a relist issued in error can be caught before it reaches
-installed copies. A `disable` is held for a **confirmation** and not for a
-period, because a disable is the irreversible direction and the owner chose a
-person over a clock. An `M_REVOKE` with `block_install` is held only if it is
-over the bound.
+installed copies. It runs from the commit that brought the entry onto
+`main` — for a hold merged from a branch, the merge — and not from the
+entry's `held_at`, which is when the bot compiled it, some minutes before
+that commit landed. `release_after` in the entry is therefore the earliest
+the period can end, not the moment it does.
+
+A `disable` is held for a **confirmation** and not for a period, because a
+disable is the irreversible direction and the owner chose a person over a
+clock. An `M_REVOKE` with `block_install` is held only if it is over the bound.
 
 `unbound_yank` is the one that surprises people: it is never applied, not on a
 confirm, not after any period, not by an applied delist of the same plugin. An
