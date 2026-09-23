@@ -6,7 +6,6 @@
 // thing under test.
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
@@ -29,8 +28,9 @@ export async function run() {
     //
     // A temporary git repository, because the real one's cleanliness is not this
     // test's to depend on and a probe file under `plugins/` in the real tree
-    // would be a catalogue entry.
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "serial-"));
+    // would be a catalogue entry. Under the suite's `tmp`, so a failed assertion
+    // below (which skips the `rmSync` at the end) does not leave it in `/tmp`.
+    const dir = fs.mkdtempSync(path.join(tmp, "serial-"));
     const git = (...a) => execFileSync("git", a, { cwd: dir, stdio: ["ignore", "pipe", "ignore"] });
     git("init", "-q");
     git("config", "user.email", "t@example.invalid");

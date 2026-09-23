@@ -1493,9 +1493,17 @@ function servesSettings(doc, { fail = () => null } = {}) {
   };
 }
 
-/** A remote tree that names each of a repository's expected environments from one job. */
-const servesRemoteTree = (doc) => async () => {
-  const [, r] = Object.entries(doc.repositories).find(([, x]) => x.tree === "remote");
+/**
+ * A remote tree that names each of a repository's expected environments from one job — the
+ * repository the rule ASKED for, by the URL it asked with. With one remote repository in the file
+ * that was always AstraPlugins; since BOT-88's test repository is read too, a fixture that answered
+ * every URL with the first remote entry's tree would hand the canary AstraPlugins' environments.
+ */
+const servesRemoteTree = (doc) => async (url) => {
+  const asked = repoSlug(url).toLowerCase();
+  const found = Object.entries(doc.repositories).find(([slug, x]) => x.tree === "remote" && slug.toLowerCase() === asked);
+  if (!found) return { kind: "unreachable", why: `${url}: no remote repository in the file is ${asked}` };
+  const [, r] = found;
   const jobs = Object.keys(r.environments).map((name, i) =>
     `  job${i}:\n    runs-on: ubuntu-24.04\n    environment: ${name}\n    steps:\n      - run: echo\n`).join("");
   return { kind: "files", branch: r.default_branch, files: [{ path: ".github/workflows/release.yml", text: `name: release\non: push\njobs:\n${jobs}` }] };
@@ -1560,6 +1568,31 @@ test("repo-settings: the file against GitHub answering exactly what it says is g
   assert.match(text, /`bot-state` pending creation \(B-T5\.0\)/);
   assert.deepEqual(r.ids, [], "an environment name is not a plugin id");
   assert.equal(RULES.find((x) => x.name === "repo-settings")?.network, true, "the settings rule leaves the runner and does not say so");
+});
+
+test("repo-settings: BOT-88's test repository is read at its own `remote`, and AstraPlugins still at the remote this tree declares", async () => {
+  // Registry plan B-T1.6: mihailinl/astra-registry-canary holds a write deploy key in environment
+  // `canary-tag`, behind a main-only branch policy that is the whole guard. Its tree and its
+  // settings are compared like the other two — and read from ITS default branch, not AstraPlugins'.
+  const doc = settingsDoc();
+  const canary = doc.repositories["mihailinl/astra-registry-canary"];
+  assert.ok(canary, "policy/settings-expected.json no longer lists BOT-88's test repository");
+  assert.equal(canary.tree, "remote");
+  assert.equal(canary.environments["canary-tag"]?.deployment_branch_policy, "custom", "the deploy key's environment admits more than main");
+  assert.deepEqual(canary.environments["canary-tag"].branch_policies, [{ name: "main", type: "branch" }]);
+  const asked = [];
+  const serve = servesRemoteTree(doc);
+  const r = await settingsRule({ readRemote: async (url) => { asked.push(url); return serve(url); } });
+  assert.equal(r.status, "green", r.detail.join("\n"));
+  assert.deepEqual(asked.map((u) => repoSlug(u)).sort(), ["mihailinl/AstraPlugins", "mihailinl/astra-registry-canary"]);
+  assert.match(r.detail.join("\n"), /mihailinl\/astra-registry-canary tree: 1 workflow file\(s\), 1 job\(s\) name an environment \(canary-tag\)/);
+
+  // Watched: the branch policy widened on GitHub is red, naming the repository and the environment.
+  const widened = structuredClone(doc);
+  widened.repositories["mihailinl/astra-registry-canary"].environments["canary-tag"].branch_policies = [{ name: "*", type: "branch" }];
+  const red = await settingsRule({ get: servesSettings(widened), readRemote: serve });
+  assert.deepEqual(red.codes, ["SETTINGS_ENV_DRIFT"], red.detail.join("\n"));
+  assert.match(red.detail.join("\n"), /mihailinl\/astra-registry-canary: environment `canary-tag` branch_policies/);
 });
 
 test("repo-settings: one wrong value in the file is red, naming it", async () => {
