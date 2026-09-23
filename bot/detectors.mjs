@@ -545,7 +545,22 @@ export function a5({ anchor, records }, findings, skipped, scanned) {
  * which is SERVE-85's reading since `9750f2b`, and SERVE-85 is this
  * repository's implementation of that half. This one is narrower: it reads
  * `SOURCE_PATHSPEC` and `Source-Commit`, so it cannot see a carried list or a
- * README commit, and it fires only where row 7's reading does.
+ * README commit.
+ *
+ * **It fires only where row 7's reading does from contract 0.35.0, and not
+ * before.** Every commit it flags is on main's first-parent line after the
+ * Source-Commit and changes the list's tree against its first parent. The
+ * signer signs main's head, which stays on that line while every later head
+ * has it on its own first-parent line — as every merge GitHub's merge button
+ * makes does — so under DEC-9's
+ * `--full-history` count (`SERIAL_FLAGS`) the flagged commit gives the list a
+ * serial above the Source-Commit's, and the served list's serial is at most
+ * that, carried or not. Under git's default count, which DEC-9 published
+ * until 0.35.0, a merge could give the list the serial of the commit before
+ * it or a lower one, and this half then flagged a merge whose serial row 7
+ * read as carried — measured by ops lane AV on two fixture histories where
+ * row 7 flagged nothing (ops register entry 117). This comment said "it fires
+ * only where row 7's reading does" through all of that.
  *
  * **A `signed` head with no `Index-Source-Commit:` is a finding, not a
  * fallback.** B.4 has every `signed` commit name both trailers, and falling

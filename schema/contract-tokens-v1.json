@@ -1,6 +1,6 @@
 {
-  "contract_version": "0.34.1",
-  "source_commit": "9d739401dbf12d32f7ac988170753d908970443d",
+  "contract_version": "0.35.0",
+  "source_commit": "6d397cfc7f7ce8d3ac7c69d5b40b733e198177e1",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -6315,7 +6315,7 @@
     {
       "id": "staging_listing_id",
       "what": "the staging listing id",
-      "why": "MOD-10 refuses `path_test` on any id but MOD-16's staging listing, and MOD-16 names no id. M-T1.6, M-T2.1 and B-T2.4 read it out of this file.",
+      "why": "MOD-10 refuses `path_test` on any id but MOD-16's staging listing, and MOD-16 names no id. The registry reserves it in `policy/reserved-ids.json` (M-T2.1) and reads it only there, through `tools/lib/reserved.mjs`'s `stagingListingId`: the derive rule, the validator, the moderation-coverage walk and the takedown bound's exclusion through it, and the examples rule. No registry code reads this member; the registry's `tools/selftest/contract-tokens.mjs` holds it to that file. It is here for the party that compiles against this file (SCOPE-7), whose half of MOD-10 refuses `path_test` on any other id.",
       "owed_by": "astra-plugins-ops (contract version ops.15, §0.8)",
       "lands_with": "ops.15, before R2",
       "floor": "until ops.15 lands the member is null and this record is present."

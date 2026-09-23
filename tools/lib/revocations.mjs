@@ -146,8 +146,9 @@ export const SOURCE_PATHSPEC = `${SOURCE_DIR}/*.json`;
 
 /**
  * The pathspec D3 counts the withdrawal list's serial over —
- * `git rev-list --count <commit> -- SERIAL_PATHSPEC`, plus one — and therefore
- * the clock SERVE-85 measures a serial difference from.
+ * `git rev-list --count --full-history <commit> -- SERIAL_PATHSPEC`, plus one
+ * (`SERIAL_FLAGS` below) — and therefore the clock SERVE-85 measures a serial
+ * difference from.
  *
  * Three readers ask this one question: `resolveSerial` below, the signer's
  * `serialsAt` in `tools/signer/plan.mjs`, and `LIST_PATHSPEC` in
@@ -169,6 +170,45 @@ export const SOURCE_PATHSPEC = `${SOURCE_DIR}/*.json`;
  * published.
  */
 export const SERIAL_PATHSPEC = SOURCE_DIR;
+
+/**
+ * How the list's serial counts: `--full-history`, and NOT git's default
+ * history simplification. Contract DEC-9 from 0.35.0 (ops register entry 117).
+ *
+ * **The default count can go down at a merge**, and a list serial that goes
+ * down is a withdrawal that never publishes. By default git follows only the
+ * parent of a merge that is TREESAME to it for the pathspec, and counts only
+ * what that parent reaches. Measured on fixtures, counts before the `+ 1`:
+ * main adds an advisory and withdraws it after a branch forked, and the
+ * branch's own advisory then merges — along main the default count reads 0,
+ * 1, 2 and then **1** at the merge, where `--full-history` reads 0, 1, 2, 4.
+ * So the signer computes serial 2 at a merge that adds an advisory while
+ * `signed` serves 3; SERVE-36 refuses the list, D4 carries the old one under
+ * the merge's `Source-Commit`, and from then on SERVE-85, detector A7 and
+ * contract row 7 all read that state as nothing owed. The same README fix
+ * landing on main and inside a pull request that also adds an advisory gives
+ * the merge the default count of the commit before it, which is the same hole
+ * one serial higher.
+ *
+ * `--full-history` counts every commit reachable from the one asked about
+ * whose tree under the pathspec differs from at least one of its parents'.
+ * That predicate belongs to each commit alone, so the count cannot fall along
+ * any ancestry, and it rises at every first-parent commit that changes the
+ * list. `tools/selftest/couplings.mjs` holds each of the three readers to that
+ * on both shapes, and holds main's own head to it on every run.
+ *
+ * **It re-means no serial ever issued.** At `3653dc5` the two counts agree at
+ * every one of the 337 commits on main's first-parent line: no commit that has
+ * touched this directory reached main through a merge the default prunes.
+ *
+ * The catalogue's serial (`CATALOGUE_PATHSPEC`) has the same hazard class and
+ * is NOT moved with this: there the two counts differ at 233 of the same 337
+ * commits (57 against 52 at the head), so switching would raise the served
+ * catalogue serial in one jump. It is watched instead — the same selftest
+ * check goes red on `main` the moment a head commit holds or lowers it across
+ * a change under `plugins/`.
+ */
+export const SERIAL_FLAGS = ["--full-history"];
 
 /** Where the generated, deployable document lands. */
 export const OUTPUT_FILE = "registry/v1/revocations.json";
@@ -481,7 +521,9 @@ export function loadAdvisories({ root = REPO_ROOT } = {}) {
  * The serial. Commit count of the default branch, path-limited to the advisory
  * directory — the same construction `tools/build-index.mjs` uses, for the same
  * reason: two advisories merged in the same minute get distinct values by
- * construction, and a read-and-increment counter file would not.
+ * construction, and a read-and-increment counter file would not. It counts
+ * with `SERIAL_FLAGS` (`--full-history`) where build-index counts by git's
+ * default, and `SERIAL_FLAGS` says why the list cannot.
  *
  * Path-limited so that re-signing the list on a schedule (which is what keeps it
  * inside the seven-day window) does not move the serial. That matters: the
@@ -514,7 +556,7 @@ export function resolveSerial({ explicit, root = REPO_ROOT } = {}) {
     return n;
   }
   try {
-    const out = execFileSync("git", ["rev-list", "--count", "HEAD", "--", SERIAL_PATHSPEC], {
+    const out = execFileSync("git", ["rev-list", "--count", ...SERIAL_FLAGS, "HEAD", "--", SERIAL_PATHSPEC], {
       cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],

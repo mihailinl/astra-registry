@@ -706,9 +706,11 @@ test("A7's catalogue half reads the served catalogue's Index-Source-Commit (row 
   assert.equal(plugins("2026-01-01T09:00:00Z").length, 1, "eight hours after the publication, the carried catalogue is still unreported");
 });
 
-test("A7's list half stays on `Source-Commit` (row 7): an advisory the served list carries is not behind, whatever the catalogue's trailer says", () => {
-  // Row 7 keeps the list on Source-Commit, and the list has no trailer of its
-  // own; a carried list is SERVE-85's, by its serial. Here the list was signed
+test("A7's list half stays on `Source-Commit`, narrower than row 7's serial: an advisory the served list carries is not behind, whatever the catalogue's trailer says", () => {
+  // Row 7's list half reads the list's serial from contract 0.34.0; A7's reads
+  // Source-Commit, which is narrower (bot/detectors.mjs says why, and since
+  // 0.35.0 why it is never wider), and the list has no trailer of its own; a
+  // carried list is SERVE-85's, by its serial. Here the list was signed
   // at the advisory while the catalogue was carried from before it, so a list
   // half that read Index-Source-Commit would report an advisory `signed` holds.
   const { dir, advisory } = carriedCatalogue();
