@@ -1643,3 +1643,125 @@ test("repo-settings: the token is sent, a token GitHub refuses is dropped for th
   assert.match(b.why, /HTTP 403, rate limit exhausted/);
   assert.equal(calls, 1, "a rate limit at zero was asked again, which two seconds cannot refill");
 });
+
+// ── ROLL-7's R0 file, held to the same expectation (contract 0.36.0) ───────
+//
+// Ops `dev/server-registry-contract-pending.md` item 26. Contract 0.36.0 widens
+// TRUST-44 to each pinned environment's deployment-branch policy names, which
+// GitHub answers with no credential, and ROLL-7's file — the pins TRUST-10's
+// acknowledgement records and TRUST-44 compares GitHub with, hourly, from
+// outside this repository — carries them. `policy/settings-expected.json`
+// already records the same facts, reviewed, and the `repo-settings` canary
+// holds it to GitHub every 15 minutes. Two copies of one fact with nothing
+// comparing them is the shape this file exists to refuse, so the choice is
+// one source and one check:
+//
+//   - the EXPECTATION is the source. It exists, it is compared with GitHub, and
+//     it is read by no bot run, so it can change in a commit that says why.
+//     ROLL-7's file is a dated record that the service's pins are acknowledged
+//     from, and it does not exist yet: RC-R0-4 writes `log/rollout/R0-settings.json`
+//     at R0's exit, its schema still G3's (`MBE-PENDING`), and a lane that was
+//     asked to write it on 2026-09-20 correctly wrote nothing because the
+//     baseline was already stale. A canary reading a dated record would be
+//     comparing GitHub with a history;
+//   - ROLL-7's rows are DERIVED from it: each environment's
+//     `deployment_branch_policy` and `branch_policies` in the expectation's
+//     own shape, copied from the checkout repository's entry at the commit the
+//     file is written in — and this test fails, in both directions, when they
+//     disagree: a row that differs from the expectation, a row for an
+//     environment the expectation does not hold live, and a live environment
+//     with no row, which is an environment TRUST-44 would not read.
+//
+// The file is not on this tree, so the predicate is proven on a file BUILT
+// from the committed expectation and broken one value at a time; the committed
+// file, once RC-R0-4 lands it, is compared with no edit here.
+const ROLL7_FILE = "log/rollout/R0-settings.json";
+
+/** Every way ROLL-7's environment rows and the expectation's live environments disagree, as sentences. */
+function roll7Disagreements(roll7, expected) {
+  const out = [];
+  const rows = roll7?.environments;
+  if (!rows || typeof rows !== "object" || Array.isArray(rows)) {
+    return [`${ROLL7_FILE} has no \`environments\` object, so it pins no deployment-branch policy for TRUST-44 to read`];
+  }
+  const policySet = (ps) => (Array.isArray(ps) ? ps.map((p) => `${p?.type}:${p?.name}`).sort() : null);
+  for (const [name, row] of Object.entries(rows)) {
+    const live = expected.environments?.[name];
+    if (!live) {
+      out.push(expected.pending_environments?.[name]
+        ? `${ROLL7_FILE} pins \`${name}\`, which policy/settings-expected.json holds as pending creation, not live`
+        : `${ROLL7_FILE} pins \`${name}\`, which policy/settings-expected.json does not hold at all`);
+      continue;
+    }
+    if (row?.deployment_branch_policy !== live.deployment_branch_policy) {
+      out.push(`${ROLL7_FILE} pins \`${name}\`'s policy kind as ${JSON.stringify(row?.deployment_branch_policy)} and ` +
+        `policy/settings-expected.json as ${JSON.stringify(live.deployment_branch_policy)}`);
+    }
+    const a = policySet(row?.branch_policies);
+    const b = policySet(live.branch_policies);
+    if (a === null) {
+      out.push(`${ROLL7_FILE} pins \`${name}\` with no \`branch_policies\` list, so TRUST-44 has no names to compare`);
+    } else if (JSON.stringify(a) !== JSON.stringify(b)) {
+      out.push(`${ROLL7_FILE} pins \`${name}\`'s branch policies as ${JSON.stringify(a)} and ` +
+        `policy/settings-expected.json as ${JSON.stringify(b)}`);
+    }
+  }
+  for (const name of Object.keys(expected.environments ?? {})) {
+    if (!Object.hasOwn(rows, name)) {
+      out.push(`policy/settings-expected.json holds \`${name}\` live and ${ROLL7_FILE} pins no row for it, so ` +
+        `TRUST-44 would not read its policy`);
+    }
+  }
+  return out;
+}
+
+test("repo-settings: ROLL-7's R0 file pins each environment's branch policies as the expectation does, built from it and broken, and committed when it is", () => {
+  const doc = settingsDoc();
+  const expected = doc.repositories[checkoutSlug(doc)];
+  const live = Object.keys(expected.environments);
+  assert.ok(live.length >= 4, `the expectation holds ${live.length} live environment(s) and held 5 on 2026-09-23; the read stopped reading`);
+  const built = {
+    environments: Object.fromEntries(Object.entries(expected.environments).map(([name, e]) => [name, {
+      deployment_branch_policy: e.deployment_branch_policy,
+      branch_policies: structuredClone(e.branch_policies),
+      trust44_monitors: true,
+    }])),
+  };
+  assert.deepEqual(roll7Disagreements(built, expected), [], "a file derived from the expectation disagrees with it");
+
+  const [first, second] = live;
+  const pending = Object.keys(expected.pending_environments ?? {})[0];
+  const breaks = [
+    ["a policy renamed", (f) => { f.environments[first].branch_policies[0].name += "-renamed"; }, [first, "branch policies"]],
+    ["a policy's type changed", (f) => { const p = f.environments[first].branch_policies[0]; p.type = p.type === "tag" ? "branch" : "tag"; }, [first, "branch policies"]],
+    ["a policy added", (f) => { f.environments[second].branch_policies.push({ name: "release/*", type: "branch" }); }, [second, "release/*"]],
+    ["a policy dropped", (f) => { f.environments[second].branch_policies = []; }, [second, "branch policies"]],
+    ["the list missing", (f) => { delete f.environments[second].branch_policies; }, [second, "no `branch_policies`"]],
+    ["the kind changed", (f) => { f.environments[first].deployment_branch_policy = "all"; }, [first, "policy kind"]],
+    ["a live environment with no row", (f) => { delete f.environments[second]; }, [second, "pins no row"]],
+    ["a row for an environment nobody has", (f) => { f.environments["not-an-environment"] = structuredClone(f.environments[first]); }, ["not-an-environment", "does not hold at all"]],
+    ...(pending ? [["a row for an environment still pending creation", (f) => { f.environments[pending] = structuredClone(f.environments[first]); }, [pending, "pending creation"]]] : []),
+    ["no environments at all", (f) => { delete f.environments; }, ["no `environments` object"]],
+  ];
+  for (const [how, edit, words] of breaks) {
+    const f = structuredClone(built);
+    edit(f);
+    assert.notDeepEqual(f, built, `the break "${how}" changed nothing`);
+    const said = roll7Disagreements(f, expected).join("\n");
+    assert.ok(said, `${how}: ${ROLL7_FILE} and the expectation disagree and the comparison was silent`);
+    for (const w of words) assert.ok(said.includes(w), `${how}: red, but not naming ${JSON.stringify(w)}: ${said}`);
+  }
+
+  // The committed file, once RC-R0-4 lands it. Until then this says so, and
+  // the predicate above is what is proven.
+  const at = path.join(REPO, ROLL7_FILE);
+  if (fs.existsSync(at)) {
+    assert.deepEqual(roll7Disagreements(JSON.parse(fs.readFileSync(at, "utf8")), expected), [],
+      `${ROLL7_FILE} and policy/settings-expected.json disagree about a pinned environment's branch policies. The ` +
+      "expectation is the source (it is compared with GitHub every 15 minutes); re-derive the file's rows from it, " +
+      "as a dated amendment, and the service's acknowledgement with them");
+  } else {
+    console.log(`# ${ROLL7_FILE} is not committed yet (RC-R0-4 writes it at R0's exit); the comparison was proven on a ` +
+      `file built from policy/settings-expected.json and ${breaks.length} breaks of it, and arms on that commit`);
+  }
+});
