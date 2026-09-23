@@ -69,6 +69,7 @@ import { stagingListingId } from "../lib/reserved.mjs";
 import { AUTHOR_CODES } from "../../bot/lib/compile-decision.mjs";
 import { NOTICE_DIR, NOTICE_NAME } from "../validate.mjs";
 import { CUTOVER_FILE, DEADLINE_FILE } from "../../bot/lib/listing-state.mjs";
+import { holdEntryPath } from "../../bot/moderation-run.mjs";
 import { test, assert, assertEqual, neverAsk, tmp } from "./harness.mjs";
 
 const TOKEN_FILE = "schema/contract-tokens-v1.json";
@@ -1446,6 +1447,284 @@ export async function run() {
       `${records.length - unrowed.length} of them this module's own row check` +
       `${unrowed.length ? `, and ${unrowed.join(", ")} a check elsewhere` : ""}.`);
   });
+
+  // ── contract 0.37.0: two things the file now says about THIS tree ─────────
+  //
+  // Both are statements the ops generator cannot check, because it reads the
+  // contract and nothing else: that a schema path the file points a reader at
+  // is a schema this repository commits, for the kind it is named on (ops
+  // pending item 11); and that the one registry-only path the file publishes
+  // for another party to read — a hold entry, for its presence alone (item 29,
+  // §4.8 row 10) — is the path the moderation run really writes. A pointer
+  // that resolves to nothing, or a path the writer moved, is silent in the file
+  // and wrong in every reader of it; so each is held here, over the committed
+  // file and tree, with every state the tree has not held built from them.
+  await test("every schema_path in the token file is a schema committed here for its kind, and every committed registry-kind schema is named", () => {
+    const doc = JSON.parse(fs.readFileSync(tokenPath, "utf8"));
+    const tracked = trackedTree(git(["ls-tree", "-r", "-z", "--name-only", "HEAD"]).split("\0"));
+    const { problems, notes } = schemaPathJoin(doc, { tracked, titleOf: committedTitle });
+    assert(problems.length === 0,
+      `${TOKEN_FILE}'s \`schema_path\` pointers and the schemas committed under schema/ disagree (contract 0.37.0, ` +
+      `B.4 and SCOPE-7; ops pending item 11):\n` + problems.map((p) => `- ${p}`).join("\n"));
+    console.log(`  note  ${notes.join("; ")}.`);
+  });
+
+  await test("the schema_path join goes red in each state the tree has not held, built from its committed files", () => {
+    const tokenText = showOrNull("HEAD", TOKEN_FILE);
+    assert(tokenText !== null, `${TOKEN_FILE} is not committed at HEAD, so there is nothing to build the states from`);
+    const committed = JSON.parse(tokenText);
+    const tracked = trackedTree(git(["ls-tree", "-r", "-z", "--name-only", "HEAD"]).split("\0"));
+    const entryOf = (doc, name) => doc.entries.find((e) => e && e.kind === "schema" && e.name === name);
+    const typed = (committed.entries || []).filter((e) => e && typeof e.schema_path === "string");
+    assert(typed.length >= SCHEMA_PATH_FLOOR,
+      `HEAD's ${TOKEN_FILE} carries ${typed.length} \`schema_path\`(s), under the floor of ${SCHEMA_PATH_FLOOR}, so ` +
+      `the states below would be built from a file that has none`);
+    // One kind named on the file and one the file names none for, both read
+    // from the committed file, so the legs survive a later version.
+    const named = typed.find((e) => e.name === "astra.registry.queue/1") ?? typed[0];
+    const other = typed.find((e) => e !== named);
+    const untyped = (committed.entries || []).find((e) => e && e.kind === "schema" &&
+      /^astra\.registry\./.test(e.name) && !("schema_path" in e));
+    assert(untyped, `every \`astra.registry.*\` entry in HEAD's ${TOKEN_FILE} names a schema, so the leg for a ` +
+      `committed schema the file does not name has no kind to use`);
+    const leaf = untyped.name.replace(/^astra\.registry\./, "").replace(/\/(\d+)$/, "-v$1");
+    const synthesized = `schema/${leaf}.json`;
+    assert(!tracked.files.has(synthesized), `${synthesized} is committed, so it cannot stand for one that is not`);
+    const unwritten = named.schema_path.replace(/-v(\d+)\.json$/, "-v9$1.json");
+    assert(!tracked.files.has(unwritten), `${unwritten} is committed, so it cannot stand for a path that is not`);
+
+    const variant = (edit) => { const d = structuredClone(committed); edit(d); return d; };
+    const set = (name, value) => (d) => {
+      const e = entryOf(d, name);
+      if (value === ABSENT) delete e.schema_path; else e.schema_path = value;
+    };
+    const withSchema = (base, file, title) => ({
+      tracked: { files: new Set([...base.files, file]), dirs: base.dirs },
+      titleOf: (rel) => (rel === file ? title : committedTitle(rel)),
+    });
+    const legs = [
+      { name: "as committed", doc: committed, red: [] },
+      { name: "a path this repository does not commit", doc: variant(set(named.name, unwritten)), red: [unwritten, "not a file committed"] },
+      { name: "a directory", doc: variant(set(named.name, "schema")), red: ["`schema`", "not a file committed"] },
+      { name: "another kind's schema", doc: variant(set(named.name, other.schema_path)),
+        red: [named.name, other.schema_path, `titled ${JSON.stringify(other.name)}`] },
+      { name: "a committed file that is no schema", doc: variant(set(named.name, POLICY_FILE)), red: [POLICY_FILE, "titled null"] },
+      { name: "an absolute path", doc: variant(set(named.name, `/${named.schema_path}`)), red: ["not a repository-relative path", "absolute"] },
+      { name: "a path that climbs out", doc: variant(set(named.name, `schema/../${named.schema_path}`)), red: ["not a repository-relative path", "`..`"] },
+      { name: "not a string", doc: variant(set(named.name, 7)), red: ["not a repository-relative path", "not a string"] },
+      { name: "a kind's pointer dropped", doc: variant(set(named.name, ABSENT)), red: [named.schema_path, named.name, "names no `schema_path`"] },
+      { name: "a pointer on an entry that is no registry record", doc: variant((d) => {
+        d.entries.find((e) => e && e.id === "schema:astra.plugins.error/1").schema_path = named.schema_path; }),
+        red: ["schema:astra.plugins.error/1", "not an `astra.registry.*` schema entry"] },
+      { name: "every pointer dropped", doc: variant((d) => { for (const e of d.entries) delete e.schema_path; }),
+        red: [`floor of ${SCHEMA_PATH_FLOOR}`] },
+      { name: "a schema committed for a kind the file names none for", doc: committed,
+        ctx: withSchema(tracked, synthesized, untyped.name), red: [synthesized, untyped.name, "names no `schema_path`"] },
+    ];
+    const wrong = [];
+    for (const leg of legs) {
+      const ctx = leg.ctx ?? { tracked, titleOf: committedTitle };
+      wrong.push(...legsGoneWrong([leg], (doc) => schemaPathJoin(doc, ctx)));
+    }
+    assert(wrong.length === 0,
+      `the join between ${TOKEN_FILE}'s \`schema_path\` pointers and the committed schemas does not hold on a copy of ` +
+      `the committed files, so the live check above is not asking what its name says:\n` +
+      wrong.map((w) => `- ${w}`).join("\n"));
+    console.log(`  note  ${legs.length} states built from HEAD's ${TOKEN_FILE} and tree, the missing schema synthesized as ` +
+      `${synthesized} for ${untyped.name}; ${legs.filter((l) => l.red.length).length} red as named, ` +
+      `${legs.filter((l) => !l.red.length).length} green.`);
+  });
+
+  await test("the token file's hold-entry presence path is the path the moderation run writes", () => {
+    const doc = JSON.parse(fs.readFileSync(tokenPath, "utf8"));
+    const { problems, notes } = presenceJoin(doc, PRESENCE_WRITERS);
+    assert(problems.length === 0,
+      `${TOKEN_FILE}'s \`presence_paths\` and the paths this repository writes disagree (contract 0.37.0, B.4 and ` +
+      `§4.8 row 10; ops pending item 29):\n` + problems.map((p) => `- ${p}`).join("\n"));
+    console.log(`  note  ${notes.join("; ")}.`);
+  });
+
+  await test("the presence join goes red in each state the tree has not held, built from its committed files", () => {
+    const tokenText = showOrNull("HEAD", TOKEN_FILE);
+    assert(tokenText !== null, `${TOKEN_FILE} is not committed at HEAD, so there is nothing to build the states from`);
+    const committed = JSON.parse(tokenText);
+    const record = (committed.presence_paths || []).find((r) => r && PRESENCE_WRITERS[r.name]);
+    assert(record, `HEAD's ${TOKEN_FILE} carries no \`presence_paths\` record this module has a writer for, so the ` +
+      `states below would be built from a file that has none`);
+    const variant = (edit) => { const d = structuredClone(committed); edit(d); return d; };
+    const rec = (d) => d.presence_paths.find((r) => r.name === record.name);
+    const moved = (fn) => ({ [record.name]: fn });
+    const legs = [
+      { name: "as committed", doc: committed, red: [] },
+      { name: "the path moved in the file", doc: variant((d) => { rec(d).path = record.path.replace("state/holds/", "state/hold/"); }),
+        red: [record.name, "state/hold/", "writes"] },
+      { name: "the placeholder renamed", doc: variant((d) => { rec(d).path = record.path.replace(/<[a-z_]+>/, "<id>"); }),
+        red: [record.name, "<id>", "placeholder"] },
+      { name: "the suffix changed", doc: variant((d) => { rec(d).path = record.path.replace(/\.json$/, ".hold.json"); }),
+        red: [record.name, ".hold.json", "writes"] },
+      { name: "the writer moved", doc: committed, writers: moved((id) => `state/holds/${id}/entry.json`),
+        red: [record.name, "/entry.json", "writes"] },
+      { name: "no group at all", doc: variant((d) => { delete d.presence_paths; }), red: ["no `presence_paths`"] },
+      { name: "the record twice", doc: variant((d) => { d.presence_paths.push(structuredClone(rec(d))); }), red: [record.name, "2 records"] },
+      { name: "a record this module has no writer for", doc: variant((d) => {
+        d.presence_paths.push({ ...structuredClone(rec(d)), name: "some other record", path: "state/other/<service_decision_id>.json" }); }),
+        red: ["some other record", "no writer"] },
+      { name: "read for content", doc: variant((d) => { rec(d).reads = "content"; }), red: [record.name, "`content`"] },
+      { name: "read by the registry", doc: variant((d) => { rec(d).acceptor = ["registry"]; }), red: [record.name, "read by"] },
+      { name: "written by the service", doc: variant((d) => { rec(d).emitter = ["service"]; }), red: [record.name, "written by"] },
+    ];
+    const wrong = [];
+    for (const leg of legs) {
+      const writers = leg.writers ?? PRESENCE_WRITERS;
+      wrong.push(...legsGoneWrong([leg], (doc) => presenceJoin(doc, writers)));
+    }
+    assert(wrong.length === 0,
+      `the join between ${TOKEN_FILE}'s \`presence_paths\` and the moderation run's writer does not hold on a copy ` +
+      `of the committed file, so the live check above is not asking what its name says:\n` +
+      wrong.map((w) => `- ${w}`).join("\n"));
+    console.log(`  note  ${legs.length} states built from HEAD's ${TOKEN_FILE} and bot/moderation-run.mjs's writer; ` +
+      `${legs.filter((l) => l.red.length).length} red as named, ${legs.filter((l) => !l.red.length).length} green.`);
+  });
+}
+
+// ── contract 0.37.0's joins ─────────────────────────────────────────────────
+
+/** Ten `schema_path`s at contract 0.37.0; below this the file has stopped carrying them. */
+const SCHEMA_PATH_FLOOR = 10;
+
+/** A committed file's JSON Schema `title` at HEAD, or null when it is not a JSON object with one. */
+function committedTitle(rel) {
+  const text = showOrNull("HEAD", rel);
+  if (text === null) return null;
+  try {
+    const doc = JSON.parse(text);
+    return doc && typeof doc === "object" && typeof doc.title === "string" ? doc.title : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `schema_path` against the tree. Four clauses, each with its own leg above:
+ * a pointer sits only on an `astra.registry.*` schema entry; it is a
+ * repository-relative file the tree commits; that file's `title` is the entry's
+ * kind, which is how each of this repository's schemas names what it types;
+ * and every committed `schema/*.json` titled with a kind the file carries is
+ * that kind's pointer — so a schema committed for one of the kinds B.4 names as
+ * having none is red here until a contract version names it.
+ */
+function schemaPathJoin(doc, { tracked, titleOf }) {
+  const problems = [];
+  const entries = Array.isArray(doc.entries) ? doc.entries : [];
+  const registry = entries.filter((e) => e && e.kind === "schema" && /^astra\.registry\./.test(e.name));
+  let pointers = 0;
+  for (const e of entries) {
+    if (!e || !("schema_path" in e)) continue;
+    pointers += 1;
+    if (!registry.includes(e)) {
+      problems.push(`${e.id} carries a \`schema_path\` and is not an \`astra.registry.*\` schema entry; B.4 names ` +
+        "schemas for registry records only");
+      continue;
+    }
+    const why = repoPathProblem(e.schema_path);
+    if (why) {
+      problems.push(`${e.name}'s \`schema_path\` ${JSON.stringify(e.schema_path)} is not a repository-relative path: ${why}`);
+      continue;
+    }
+    if (!tracked.files.has(e.schema_path)) {
+      problems.push(`${e.name}'s \`schema_path\` \`${e.schema_path}\` is not a file committed in this tree, so a reader ` +
+        "following it finds nothing");
+      continue;
+    }
+    const title = titleOf(e.schema_path);
+    if (title !== e.name) {
+      problems.push(`${e.name}'s \`schema_path\` \`${e.schema_path}\` is a schema titled ${JSON.stringify(title)}, so ` +
+        "it types some other record, or none");
+    }
+  }
+  if (pointers < SCHEMA_PATH_FLOOR) {
+    problems.push(`${TOKEN_FILE} carries ${pointers} \`schema_path\`(s), under the floor of ${SCHEMA_PATH_FLOOR} ` +
+      "(contract 0.37.0 publishes ten)");
+  }
+  const byKind = new Map(registry.map((e) => [e.name, e]));
+  const committedSchemas = [...tracked.files].filter((f) => /^schema\/[^/]+\.json$/.test(f) && f !== TOKEN_FILE).sort();
+  let titled = 0;
+  for (const file of committedSchemas) {
+    const title = titleOf(file);
+    const e = byKind.get(title);
+    if (!e) continue;
+    titled += 1;
+    if (e.schema_path !== file) {
+      problems.push(`\`${file}\` is committed here, titled ${title}, and ${TOKEN_FILE}'s entry for ${title} names no ` +
+        `\`schema_path\`${"schema_path" in e ? ` for it (it names ${JSON.stringify(e.schema_path)})` : ""}. B.4 names ` +
+        "every committed schema for a registry record; a new one is a contract version (SCOPE-1)");
+    }
+  }
+  const notes = [
+    `${pointers} \`schema_path\`(s) over ${registry.length} \`astra.registry.*\` entries`,
+    `${committedSchemas.length} committed schema file(s) read, ${titled} of them titled with a kind the file carries`,
+  ];
+  return { state: "recorded", problems, notes };
+}
+
+/**
+ * The writer of each registry-only path the token file publishes for a presence
+ * read, by the record's `name`, as the function that composes the path from
+ * the one identifier. A record this map does not name is red, so a path a later
+ * contract version publishes cannot go unchecked here: add its writer.
+ */
+const PRESENCE_WRITERS = {
+  "moderation hold entry": holdEntryPath,
+};
+
+/** A canonical lowercase UUID v4, the §0.7 shape of a `service_decision_id`, to instantiate a path with. */
+const SAMPLE_SERVICE_DECISION_ID = "0192f1d4-7b3a-4c5e-9d2f-3a1b2c3d4e5f";
+
+/**
+ * `presence_paths` against the writers. Each record is read for presence by
+ * the service and written by the registry, and its path — with its one
+ * placeholder, `<service_decision_id>`, filled with a well-formed id — is the
+ * path the writer composes for that id; and exactly one record names each
+ * writer.
+ */
+function presenceJoin(doc, writers) {
+  const problems = [];
+  if (!Array.isArray(doc.presence_paths)) {
+    return { state: "recorded", problems: [`${TOKEN_FILE} carries no \`presence_paths\` group (contract 0.37.0)`], notes: [] };
+  }
+  const seen = new Map();
+  for (const r of doc.presence_paths) {
+    const name = r && r.name;
+    seen.set(name, (seen.get(name) ?? 0) + 1);
+    const write = writers[name];
+    if (!write) {
+      problems.push(`${JSON.stringify(name)} is a \`presence_paths\` record and this module has no writer for it. ` +
+        "Name the function that composes its path in PRESENCE_WRITERS");
+      continue;
+    }
+    if (r.reads !== "presence") problems.push(`${name} is read for \`${r.reads}\`; B.4 publishes \`presence\` alone`);
+    if (JSON.stringify(r.acceptor) !== '["service"]') problems.push(`${name} is read by ${JSON.stringify(r.acceptor)}, not the service`);
+    if (JSON.stringify(r.emitter) !== '["registry"]') problems.push(`${name} is written by ${JSON.stringify(r.emitter)}, not the registry`);
+    const holders = typeof r.path === "string" ? [...r.path.matchAll(/<([a-z_]+)>/g)].map((m) => m[1]) : [];
+    if (holders.length !== 1 || holders[0] !== "service_decision_id") {
+      problems.push(`${name}'s path ${JSON.stringify(r.path)} has placeholder(s) ${JSON.stringify(holders)}, not the one ` +
+        "`<service_decision_id>` its writer takes");
+      continue;
+    }
+    const want = write(SAMPLE_SERVICE_DECISION_ID);
+    const got = r.path.replace("<service_decision_id>", SAMPLE_SERVICE_DECISION_ID);
+    if (got !== want) {
+      problems.push(`${name}: the file says a reader finds it at \`${r.path}\`, which for one id is \`${got}\`, and ` +
+        `this repository writes \`${want}\``);
+    }
+  }
+  for (const [name, n] of seen) {
+    if (n > 1) problems.push(`${name} is in \`presence_paths\` as ${n} records`);
+  }
+  for (const name of Object.keys(writers)) {
+    if (!seen.has(name)) problems.push(`${TOKEN_FILE}'s \`presence_paths\` has no record for ${name}, whose writer is here`);
+  }
+  return { state: "recorded", problems, notes: [`${doc.presence_paths.length} presence record(s), each the path its writer composes`] };
 }
 
 /**

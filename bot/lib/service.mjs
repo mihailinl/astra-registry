@@ -312,10 +312,17 @@ export const BODIES = Object.freeze({
     role: "success",
     members: Object.freeze([["schema", true]]),
   }),
+  // `no_stop_at` is contract 0.37.0's: FLOW-70's "no stop" time, carried with
+  // `too_late` only, and `too_late` is a panel token (§0.8's Callers: P), so no
+  // bot call is ever answered with it. It is compiled anyway, because the
+  // comparison with the token file is per schema and two-way
+  // (`bot/tests/service.test.mjs`): a member the file lists and this table does
+  // not is exactly the drift that comparison exists to catch, and reading an
+  // unknown member is already harmless here (SCOPE-3's read side).
   "astra.plugins.error/1": Object.freeze({
     role: "refusal",
     members: Object.freeze([
-      ["schema", true], ["error", true], ["message", true], ["retry_after", false],
+      ["schema", true], ["error", true], ["message", true], ["retry_after", false], ["no_stop_at", false],
     ]),
   }),
 });
