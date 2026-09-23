@@ -17,8 +17,16 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
-import { REQUIRED_SECRETS } from "../alert.mjs";
-import { CHECKS, alertsEnvironmentSecrets, secretName } from "../lib/alert-checks.mjs";
+import { OPTIONAL_SECRETS, REQUIRED_SECRETS } from "../alert.mjs";
+import { CHECKS, alertsEnvironmentSecrets, optionalAlertsSecrets, secretName } from "../lib/alert-checks.mjs";
+
+/**
+ * Every channel secret `bot/alert.mjs` names: the required two and the
+ * optional copy chat (optional since the owner's one-group decision of
+ * 2026-09-23). An alert job maps all of them, and the alert action counts all
+ * of them when it decides whether a channel exists at all.
+ */
+const CHANNEL_SECRETS = [...REQUIRED_SECRETS, ...OPTIONAL_SECRETS].map(([name]) => name);
 
 const REPO = path.resolve(import.meta.dirname, "..", "..");
 const DIR = path.join(REPO, ".github", "workflows");
@@ -530,11 +538,19 @@ test("an `alerts` job maps the channel's secrets and no ping URL that is not its
   // check it never posts to — which is attack M-5 one level down from the base
   // URL this estate refused, and the reason `ASTRA_DEADMAN_URL_*` is one
   // secret per check rather than one per repository.
-  const known = new Set(alertsEnvironmentSecrets());
+  //
+  // The optional copy chat is mapped like the required two. Optional means the
+  // environment may lack it, not that a job may: an environment secret reaches
+  // only the jobs that name it, so a copy chat the owner sets later would reach
+  // the jobs that map it and silently skip the rest.
+  const known = new Set([...alertsEnvironmentSecrets(), ...optionalAlertsSecrets()]);
+  assert.ok(CHANNEL_SECRETS.length >= 3 && CHANNEL_SECRETS.every((s) => known.has(s)),
+    `bot/alert.mjs names channel secrets (${CHANNEL_SECRETS.join(", ")}) that bot/lib/alert-checks.mjs does not ` +
+    "list as required or optional, so this test would refuse the env: block that maps them");
   const problems = [];
   for (const job of allJobs().filter(inAlerts)) {
     const named = new Set([...code(job).join("\n").matchAll(/secrets\.([A-Z0-9_]+)/g)].map((m) => m[1]));
-    for (const secret of ["ASTRA_ALERT_TELEGRAM_TOKEN", "ASTRA_ALERT_CHAT_ID", "ASTRA_ALERT_COPY_CHAT_ID"]) {
+    for (const secret of CHANNEL_SECRETS) {
       if (!named.has(secret)) {
         // This used to be caught twice — here, and by every run of the job
         // going red. Since 2026-09-19 it is caught only here: an alert job
@@ -819,7 +835,7 @@ test("the alert action itself reaches for nothing an `alerts` job may not hold",
 // ─────────────────────────────────────────────────────────────────────────────
 // "Never configured yet" is not "configured and broken" (2026-09-19).
 //
-// The alert action treats the absence of ALL THREE channel secrets as the
+// The alert action treats the absence of EVERY channel secret as the
 // repository before §2.12's R1 act: it says so once, loudly, sets `configured`
 // to `false`, sends nothing, posts no heartbeat and does not fail. Anything
 // else — one secret present and two gone, a Bot API refusal, a 2xx with no
@@ -828,9 +844,9 @@ test("the alert action itself reaches for nothing an `alerts` job may not hold",
 // Three things have to hold together for that to be an improvement rather than
 // a mute button, and each is a separate mutation:
 //
-//   * the derivation covers every secret `bot/alert.mjs` requires. A fourth
-//     added there and not here means a channel missing only its fourth reads
-//     as "never created" and goes quiet;
+//   * the derivation covers every channel secret `bot/alert.mjs` names,
+//     required and optional. One added there and not here means a channel
+//     holding only that one reads as "never created" and goes quiet;
 //   * the alarm and the heartbeat are actually skipped in that state, and
 //     `--check-credentials` still runs in every other, so the refusals in
 //     `bot/alert.mjs` are reached exactly as before;
@@ -856,7 +872,7 @@ function stepsOf(lines) {
 
 const GUARD = "steps.channel.outputs.configured == 'true'";
 
-test("the unconfigured state is derived from the secrets bot/alert.mjs requires, and from nothing else", () => {
+test("the unconfigured state is derived from every channel secret bot/alert.mjs names, and from nothing else", () => {
   const src = fs.readFileSync(ACTION, "utf8");
   const loop = /\n\s*for name in ([A-Z0-9_ ]+); do\n/.exec(src);
   assert.ok(loop,
@@ -864,9 +880,9 @@ test("the unconfigured state is derived from the secrets bot/alert.mjs requires,
     "an unconfigured channel");
   assert.deepEqual(
     loop[1].trim().split(/\s+/).sort(),
-    REQUIRED_SECRETS.map(([name]) => name).sort(),
-    "the action decides `never configured` over a different set of secrets than bot/alert.mjs requires: a " +
-    "channel missing only the secret this loop has never heard of would read as a repository whose owner has " +
+    [...CHANNEL_SECRETS].sort(),
+    "the action decides `never configured` over a different set of secrets than bot/alert.mjs names: a " +
+    "channel holding only the secret this loop has never heard of would read as a repository whose owner has " +
     "not acted yet, and go quiet",
   );
 
