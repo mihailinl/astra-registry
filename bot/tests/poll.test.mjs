@@ -42,6 +42,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "../../tools/lib/git-env.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -69,6 +70,7 @@ function trackedModules() {
   try {
     listed = execFileSync("git", ["-C", REPO_ROOT, "ls-files", "-z", "*.mjs"], {
       encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
+      env: cleanEnv(),
     });
   } catch (e) {
     throw new Error(

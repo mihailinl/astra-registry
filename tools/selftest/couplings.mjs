@@ -15,6 +15,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { cleanEnv, fixtureEnv } from "../lib/git-env.mjs";
 
 import {
   astraPluginsCandidates,
@@ -745,7 +746,7 @@ export async function run() {
     const dir = path.join(tmp, "couplings-serial-pathspec");
     fs.mkdirSync(dir, { recursive: true });
     const git = (...a) =>
-      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(dir) }).trimEnd();
     git("init", "-q", "-b", "main");
     git("config", "user.email", "couplings-fixture@example.invalid");
     git("config", "user.name", "couplings fixture");
@@ -756,7 +757,7 @@ export async function run() {
       git("add", "-A");
       execFileSync("git", ["-C", dir, "commit", "-qm", rel], {
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at },
+        env: { ...fixtureEnv(dir), GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at },
       });
     };
     const advisory = JSON.stringify({
@@ -871,7 +872,7 @@ export async function run() {
    */
   function runCatalogueSerialStep(dir) {
     const git = (...a) =>
-      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(dir) }).trimEnd();
     const yml = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/build-index.yml"), "utf8").split("\n");
     // No metacharacter in the name, so it is its own pattern.
     const named = yml.map((l, i) => [l, i]).filter(([l]) => new RegExp(`^\\s+- name: ${SERIAL_STEP}\\s*$`).test(l));
@@ -894,7 +895,8 @@ export async function run() {
     const step = () => {
       const out = path.join(tmp, "couplings-catalogue-github-output");
       fs.writeFileSync(out, "");
-      execFileSync("bash", ["-c", script], { cwd: dir, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GITHUB_OUTPUT: out } });
+      // The step runs git in its shell, so the shell gets a fixture's environment.
+      execFileSync("bash", ["-c", script], { cwd: dir, stdio: ["ignore", "pipe", "pipe"], env: { ...fixtureEnv(dir), GITHUB_OUTPUT: out } });
       const m = /^serial=(\d+)$/m.exec(fs.readFileSync(out, "utf8"));
       assert(m, "build-index.yml's serial step wrote no serial= line");
       return Number(m[1]);
@@ -913,7 +915,7 @@ export async function run() {
     const dir = path.join(tmp, "couplings-catalogue-pathspec");
     fs.mkdirSync(dir, { recursive: true });
     const git = (...a) =>
-      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(dir) }).trimEnd();
     git("init", "-q", "-b", "main");
     git("config", "user.email", "couplings-fixture@example.invalid");
     git("config", "user.name", "couplings fixture");
@@ -927,7 +929,7 @@ export async function run() {
       git("add", "-A");
       execFileSync("git", ["-C", dir, "commit", "-qm", rel], {
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at },
+        env: { ...fixtureEnv(dir), GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at },
       });
       return git("rev-parse", "HEAD");
     };
@@ -1023,7 +1025,7 @@ export async function run() {
     git("add", "SIGNED");
     execFileSync("git", ["-C", dir, "commit", "-qm", `signed\n\nSource-Commit: ${first}\nIndex-Source-Commit: ${first}\n`], {
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, GIT_AUTHOR_DATE: "2026-09-19T12:30:00Z", GIT_COMMITTER_DATE: "2026-09-19T12:30:00Z" },
+      env: { ...fixtureEnv(dir), GIT_AUTHOR_DATE: "2026-09-19T12:30:00Z", GIT_COMMITTER_DATE: "2026-09-19T12:30:00Z" },
     });
     git("checkout", "-q", "-f", "main");
     const findings = [], skipped = [], scanned = {};
@@ -1092,7 +1094,7 @@ export async function run() {
     const dir = path.join(tmp, name);
     fs.mkdirSync(dir, { recursive: true });
     const git = (...a) =>
-      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(dir) }).trimEnd();
     git("init", "-q", "-b", "main");
     git("config", "user.email", "couplings-fixture@example.invalid");
     git("config", "user.name", "couplings fixture");
@@ -1102,7 +1104,7 @@ export async function run() {
       const at = new Date(Date.parse("2026-09-19T08:00:00Z") + 60000 * minute++).toISOString().replace(".000Z", "Z");
       execFileSync("git", ["-C", dir, ...args], {
         stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at },
+        env: { ...fixtureEnv(dir), GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at },
       });
       return git("rev-parse", "HEAD");
     };
@@ -1201,7 +1203,7 @@ export async function run() {
    */
   function headSerialProblems(root, sha = "HEAD") {
     const git = (...a) =>
-      execFileSync("git", ["-C", root, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+      execFileSync("git", ["-C", root, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: cleanEnv() }).trimEnd();
     const head = git("rev-parse", "--verify", `${sha}^{commit}`);
     let parent = null;
     try {
@@ -1467,7 +1469,7 @@ export async function run() {
           input: commitMessage(record, "https://github.com/mihailinl/astra-registry/actions/runs/128"),
           encoding: "utf8",
           stdio: ["pipe", "pipe", "pipe"],
-          env: { ...process.env, GIT_AUTHOR_DATE: "2026-09-19T09:00:00Z", GIT_COMMITTER_DATE: "2026-09-19T09:00:00Z" },
+          env: { ...fixtureEnv(repo.dir), GIT_AUTHOR_DATE: "2026-09-19T09:00:00Z", GIT_COMMITTER_DATE: "2026-09-19T09:00:00Z" },
         }).trim();
         repo.git("update-ref", "refs/heads/signed", signedSha);
         const mergedAt = Number(repo.git("log", "-1", "--format=%ct", merge));
@@ -1704,7 +1706,7 @@ export async function run() {
     const dir = path.join(tmp, "couplings-trust43-anchor");
     fs.mkdirSync(dir, { recursive: true });
     const git = (...a) =>
-      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(dir) }).trimEnd();
     git("init", "-q", "-b", "main");
     git("config", "user.email", "couplings-fixture@example.invalid");
     git("config", "user.name", "couplings fixture");
@@ -1938,7 +1940,7 @@ export async function run() {
     const dir = path.join(tmp, "couplings-advisory-dir");
     fs.mkdirSync(dir, { recursive: true });
     const git = (...a) =>
-      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(dir) }).trimEnd();
     git("init", "-q", "-b", "main");
     git("config", "user.email", "couplings-fixture@example.invalid");
     git("config", "user.name", "couplings fixture");
@@ -2110,7 +2112,7 @@ export async function run() {
     const dir = path.join(tmp, "couplings-advisory-grammar");
     fs.mkdirSync(dir, { recursive: true });
     const git = (...a) =>
-      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(dir) }).trimEnd();
     git("init", "-q", "-b", "main");
     git("config", "user.email", "couplings-fixture@example.invalid");
     git("config", "user.name", "couplings fixture");

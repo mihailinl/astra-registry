@@ -50,6 +50,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "../../tools/lib/git-env.mjs";
 
 import { REPO_ROOT } from "../../tools/lib/sources.mjs";
 import { validate } from "../../tools/lib/jsonschema.mjs";
@@ -158,7 +159,7 @@ export function readMarkers(root = REPO_ROOT, { schemaRoot = REPO_ROOT } = {}) {
 export function historyReader(root) {
   const git = (args, allowFail = false) => {
     try {
-      return execFileSync("git", ["-C", root, ...args], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 }).replace(/\n$/, "");
+      return execFileSync("git", ["-C", root, ...args], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, env: cleanEnv() }).replace(/\n$/, "");
     } catch (e) {
       if (allowFail) return null;
       throw new Error(`git ${args.join(" ")}: ${String(e.stderr ?? e.message).trim().split("\n")[0]}`);

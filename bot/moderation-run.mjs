@@ -135,6 +135,7 @@
 //     which the step hands on as job outputs.
 
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "../tools/lib/git-env.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -937,7 +938,7 @@ export function entryLanding(root, rel) {
   const git = (args) => execFileSync("git", ["-C", root, ...args], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, GIT_PAGER: "cat", GIT_OPTIONAL_LOCKS: "0" },
+    env: { ...cleanEnv(), GIT_PAGER: "cat", GIT_OPTIONAL_LOCKS: "0" },
   });
   const unknown = (why) => ({ sha: null, at: null, why });
   try {
@@ -998,7 +999,7 @@ export function holdDeletions(root = REPO_ROOT, { present = new Set() } = {}) {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, GIT_PAGER: "cat", GIT_OPTIONAL_LOCKS: "0" },
+    env: { ...cleanEnv(), GIT_PAGER: "cat", GIT_OPTIONAL_LOCKS: "0" },
   });
   if (git(["rev-parse", "--is-shallow-repository"]).trim() !== "false") {
     throw new Error(

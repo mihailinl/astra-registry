@@ -108,6 +108,7 @@
 // asserts nothing.
 
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "./lib/git-env.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -158,7 +159,7 @@ const REPO_RELATIVE = /^[A-Za-z0-9_.@-]+(?:\/[A-Za-z0-9_.@-]+)*$/;
 
 /** Every tracked path, read through git rather than a readdir. */
 function trackedPaths(repo) {
-  return execFileSync("git", ["-C", repo, "ls-files", "-z"], { encoding: "utf8", maxBuffer: 64 << 20 })
+  return execFileSync("git", ["-C", repo, "ls-files", "-z"], { encoding: "utf8", maxBuffer: 64 << 20, env: cleanEnv() })
     .split("\0")
     .filter(Boolean);
 }

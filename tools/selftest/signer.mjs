@@ -17,6 +17,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { fixtureEnv } from "../lib/git-env.mjs";
 
 import { buildIndex, indexContent } from "../build-index.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
@@ -119,7 +120,7 @@ function makeTree(name) {
   const dir = path.join(tmp, name);
   fs.mkdirSync(dir, { recursive: true });
   const git = (...a) =>
-    execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+    execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(dir) }).trimEnd();
   git("init", "-q", "-b", "main");
   git("config", "user.email", "signer-fixture@example.invalid");
   git("config", "user.name", "signer fixture");
@@ -254,7 +255,7 @@ export async function run() {
     // window must not open early on the day it does.
     const t = makeTree("key-window-merged");
     const at = (when, ...a) => execFileSync("git", ["-C", t.dir, ...a], {
-      stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when },
+      stdio: ["ignore", "pipe", "pipe"], env: { ...fixtureEnv(t.dir), GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when },
     });
     t.git("checkout", "-q", "-b", "signed");
     t.write("registry/v1/trust.json", trustDelegating([KEY_A]));

@@ -53,6 +53,7 @@
 // not how many there are.
 
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "../tools/lib/git-env.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -458,8 +459,13 @@ export function applyAll(root, { reports, watchState, dropWatchState = false }) 
   return state;
 }
 
-const git = (root, args, opts = {}) =>
-  execFileSync("git", ["-C", root, ...args], { encoding: "utf8", ...opts }).trim();
+// `stdio` is the one option a caller passes. The environment is never the
+// caller's: `cleanEnv()` drops any variable that would name another
+// repository over `-C` (tools/lib/git-env.mjs).
+const git = (root, args, { stdio } = {}) =>
+  execFileSync("git", ["-C", root, ...args], {
+    encoding: "utf8", ...(stdio === undefined ? {} : { stdio }), env: cleanEnv(),
+  }).trim();
 
 /** The registry's own rules, in the order that can pass. */
 function registryChecks(root, log) {

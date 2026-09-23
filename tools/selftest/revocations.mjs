@@ -8,6 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { fixtureEnv } from "../lib/git-env.mjs";
 
 import { stableStringify } from "../lib/canonical.mjs";
 import {
@@ -303,7 +304,7 @@ export async function run() {
   // rule's subject, at whatever state of breakage a check needs. Shared by the
   // two checks below, because the second one clones the first one's violation.
   const gitIn = (dir, ...a) =>
-    execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(dir) }).trim();
   const flagFixture = (build) => {
     const dir = path.join(tmp, `flag-${build.name}`);
     fs.rmSync(dir, { recursive: true, force: true });
@@ -403,7 +404,7 @@ export async function run() {
       const dir = `${origin}-depth${depth}`;
       fs.rmSync(dir, { recursive: true, force: true });
       execFileSync("git", ["clone", "-q", "--depth", String(depth), `file://${origin}`, dir],
-        { stdio: ["ignore", "pipe", "pipe"] });
+        { stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(dir) });
       // The control. `git clone --depth` of a plain path is silently a FULL
       // clone ("--depth is ignored in local clones"), which is why the origin
       // is a file:// URL — and why this is asserted rather than assumed.
@@ -560,7 +561,7 @@ export async function run() {
     const dir = path.join(tmp, "entry69-hand-path");
     fs.mkdirSync(dir, { recursive: true });
     const git = (...a) =>
-      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(dir) }).trimEnd();
     git("init", "-q", "-b", "main");
     git("config", "user.email", "entry69-fixture@example.invalid");
     git("config", "user.name", "entry 69 fixture");

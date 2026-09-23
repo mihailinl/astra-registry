@@ -15,6 +15,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "../lib/git-env.mjs";
 
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { contentProblems, envelopeProblems } from "../sign-update-manifest.mjs";
@@ -347,7 +348,7 @@ export async function run() {
     // the newest record it can find, and a record that is not there cannot be
     // newer. A record is history, so the second source for which records must
     // exist is the history, read here rather than copied into a number.
-    const git = (...a) => execFileSync("git", ["-C", REPO_ROOT, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    const git = (...a) => execFileSync("git", ["-C", REPO_ROOT, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: cleanEnv() }).trim();
     if (git("rev-parse", "--is-shallow-repository") === "true") {
       neverAsk("this checkout is shallow, so the history that says which release records were ever committed is not in it",
         "a checkout with `fetch-depth: 0` asks it, as build-index.yml's does");

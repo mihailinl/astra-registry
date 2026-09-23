@@ -9,6 +9,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { fixtureEnv } from "../lib/git-env.mjs";
 
 import { runValidation } from "../validate.mjs";
 import { buildIndex } from "../build-index.mjs";
@@ -741,7 +742,7 @@ const gitIn = (dir, args) =>
   execFileSync("git", ["-C", dir, ...args], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, GIT_PAGER: "cat", GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" },
+    env: { ...fixtureEnv(dir), GIT_PAGER: "cat", GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0" },
   });
 
 const gitMaybe = (dir, args) => {

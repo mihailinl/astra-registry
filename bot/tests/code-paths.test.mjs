@@ -34,6 +34,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "../../tools/lib/git-env.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -41,7 +42,7 @@ import test from "node:test";
 
 const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
 const git = (...args) =>
-  execFileSync("git", args, { cwd: REPO, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  execFileSync("git", args, { cwd: REPO, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, env: cleanEnv() });
 
 // ── the set, exactly as contract 0.21.0's TRUST-31 publishes it ─────────────
 //

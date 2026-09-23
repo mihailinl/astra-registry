@@ -233,6 +233,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
+import { cleanEnv } from "./lib/git-env.mjs";
 
 import { REPO_ROOT, QUEUE_DIR } from "./lib/sources.mjs";
 import { validate } from "./lib/jsonschema.mjs";
@@ -374,6 +375,7 @@ function git(args, cwd) {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
     stdio: ["ignore", "pipe", "pipe"],
+    env: cleanEnv(),
   });
 }
 

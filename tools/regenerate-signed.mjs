@@ -85,6 +85,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "./lib/git-env.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 /** The clone this file lives in, used when `--repo` is not given. */
@@ -122,6 +123,7 @@ function git(repo, args, { buffer = false } = {}) {
     encoding: buffer ? "buffer" : "utf8",
     maxBuffer: MAX_BUFFER,
     stdio: ["ignore", "pipe", "pipe"],
+    env: cleanEnv(),
   });
 }
 
@@ -184,6 +186,7 @@ function extractInto(repo, commit, paths, dest) {
   if (present.length === 0) return;
   const tarball = execFileSync("git", ["-C", repo, "archive", "--format=tar", commit, "--", ...present], {
     encoding: "buffer", maxBuffer: MAX_BUFFER, stdio: ["ignore", "pipe", "pipe"],
+    env: cleanEnv(),
   });
   fs.mkdirSync(dest, { recursive: true });
   execFileSync("tar", ["-x", "-C", dest], { input: tarball, maxBuffer: MAX_BUFFER, stdio: ["pipe", "pipe", "pipe"] });

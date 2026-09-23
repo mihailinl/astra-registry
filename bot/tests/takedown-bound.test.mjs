@@ -40,6 +40,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { fixtureEnv } from "../../tools/lib/git-env.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -63,7 +64,7 @@ const hoursAgo = (h) => new Date(NOW.getTime() - h * 3600_000).toISOString();
 function fixture(name) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `astra-bound-${name}-`));
   tmpRoots.push(dir);
-  const g = (...args) => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+  const g = (...args) => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8", env: fixtureEnv(dir) });
   g("init", "-q", "-b", "main");
   g("config", "user.name", "Fixture");
   g("config", "user.email", "fixture@example.invalid");
@@ -117,7 +118,7 @@ function fixture(name) {
       g("add", "-A");
       execFileSync("git", ["-C", dir, "commit", "-q", "--allow-empty", "-m", message], {
         encoding: "utf8",
-        env: { ...process.env, GIT_AUTHOR_DATE: authorAt, GIT_COMMITTER_DATE: at },
+        env: { ...fixtureEnv(dir), GIT_AUTHOR_DATE: authorAt, GIT_COMMITTER_DATE: at },
       });
       return api;
     },
@@ -133,7 +134,7 @@ function fixture(name) {
       const how = noCommit ? ["--no-commit"] : ["-m", `Merge ${branch}`];
       execFileSync("git", ["-C", dir, "merge", "-q", "--no-ff", ...how, branch], {
         encoding: "utf8",
-        env: { ...process.env, GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at },
+        env: { ...fixtureEnv(dir), GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at },
         stdio: ["ignore", "pipe", "pipe"],
       });
       return api;
@@ -143,7 +144,7 @@ function fixture(name) {
     rebaseMerge(branch, { at = hoursAgo(1) } = {}) {
       execFileSync("git", ["-C", dir, "cherry-pick", branch], {
         encoding: "utf8",
-        env: { ...process.env, GIT_COMMITTER_DATE: at },
+        env: { ...fixtureEnv(dir), GIT_COMMITTER_DATE: at },
         stdio: ["ignore", "pipe", "pipe"],
       });
       return api;
@@ -558,7 +559,7 @@ test("a shallow checkout is an unknown count, not a count of 0", () => {
 
   const shallowDir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-bound-shallow-clone-"));
   tmpRoots.push(shallowDir);
-  execFileSync("git", ["clone", "-q", "--depth", "1", `file://${f.dir}`, shallowDir], { encoding: "utf8" });
+  execFileSync("git", ["clone", "-q", "--depth", "1", `file://${f.dir}`, shallowDir], { encoding: "utf8", env: fixtureEnv(shallowDir) });
 
   const got = count(shallowDir);
   assert.equal(got.count, null);

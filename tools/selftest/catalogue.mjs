@@ -8,6 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { cleanEnv, fixtureEnv } from "../lib/git-env.mjs";
 
 import { buildIndex, resolveSerial } from "../build-index.mjs";
 import { isShallow } from "../coverage/git.mjs";
@@ -31,7 +32,7 @@ export async function run() {
     // would be a catalogue entry. Under the suite's `tmp`, so a failed assertion
     // below (which skips the `rmSync` at the end) does not leave it in `/tmp`.
     const dir = fs.mkdtempSync(path.join(tmp, "serial-"));
-    const git = (...a) => execFileSync("git", a, { cwd: dir, stdio: ["ignore", "pipe", "ignore"] });
+    const git = (...a) => execFileSync("git", a, { cwd: dir, stdio: ["ignore", "pipe", "ignore"], env: fixtureEnv(dir) });
     git("init", "-q");
     git("config", "user.email", "t@example.invalid");
     git("config", "user.name", "t");
@@ -261,7 +262,7 @@ export async function run() {
   await test("an equal serial means an equal catalogue, or the served one stays until the serial rises", () => {
     const git = (...a) => {
       try {
-        return execFileSync("git", ["-C", REPO_ROOT, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+        return execFileSync("git", ["-C", REPO_ROOT, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: cleanEnv() });
       } catch {
         return null;
       }

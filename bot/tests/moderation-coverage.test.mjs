@@ -25,6 +25,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { fixtureEnv } from "../../tools/lib/git-env.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -66,7 +67,7 @@ after(() => {
 function fixture(name) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `astra-coverage-${name}-`));
   tmpRoots.push(dir);
-  const g = (...args) => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+  const g = (...args) => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8", env: fixtureEnv(dir) });
   g("init", "-q", "-b", "main");
   g("config", "user.name", "Fixture");
   g("config", "user.email", "fixture@example.invalid");
@@ -91,7 +92,7 @@ function fixture(name) {
      */
     startMerge(ref) {
       try {
-        execFileSync("git", ["-C", dir, "merge", "--no-ff", "--no-commit", ref], { stdio: "pipe" });
+        execFileSync("git", ["-C", dir, "merge", "--no-ff", "--no-commit", ref], { stdio: "pipe", env: fixtureEnv(dir) });
       } catch (e) {
         if (e.status !== 1) throw e;
       }
@@ -653,7 +654,7 @@ test("gap 93: a merge's own changes are remerge-diff's, and a resolution that dr
   // nothing for the last one: its whole content is a deletion.
   const nameStatus = (dir, sha) => {
     const f = execFileSync("git", ["-C", dir, "show", "--remerge-diff", "--format=", "--name-status", "-z", "--no-renames", sha],
-      { encoding: "utf8" }).split("\0").filter(Boolean);
+      { encoding: "utf8", env: fixtureEnv(dir) }).split("\0").filter(Boolean);
     const out = [];
     for (let i = 0; i < f.length; i += 2) out.push(`${f[i][0]} ${f[i + 1]}`);
     return out.sort();
@@ -1327,7 +1328,7 @@ const keepaliveDoc = (month, by = "hand") => ({ $comment: "fixture", month, at: 
 function dated(f, when, ...args) {
   const [author, committer] = Array.isArray(when) ? when : [when, when];
   execFileSync("git", ["-C", f.dir, ...args], {
-    stdio: "pipe", env: { ...process.env, GIT_AUTHOR_DATE: author, GIT_COMMITTER_DATE: committer },
+    stdio: "pipe", env: { ...fixtureEnv(f.dir), GIT_AUTHOR_DATE: author, GIT_COMMITTER_DATE: committer },
   });
   return f.head();
 }

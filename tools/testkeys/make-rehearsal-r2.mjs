@@ -64,6 +64,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { fixtureEnv } from "../lib/git-env.mjs";
 import { fileURLToPath } from "node:url";
 
 import { stableStringify } from "../lib/canonical.mjs";
@@ -258,7 +259,7 @@ function run(argv, { cwd = REPO, env = {}, allowFailure = false } = {}) {
  */
 function makeRegistry(dir) {
   fs.mkdirSync(dir, { recursive: true });
-  const git = (...a) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+  const git = (...a) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(dir) }).trimEnd();
   git("init", "-q", "-b", "main");
   git("config", "user.email", MAIN_IDENTITY.email);
   git("config", "user.name", MAIN_IDENTITY.name);
@@ -276,7 +277,7 @@ function makeRegistry(dir) {
     git("add", "-A");
     execFileSync("git", ["-C", dir, "commit", "-qm", message], {
       encoding: "utf8",
-      env: { ...process.env, GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when },
+      env: { ...fixtureEnv(dir), GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when },
       stdio: ["ignore", "pipe", "pipe"],
     });
     return git("rev-parse", "HEAD");

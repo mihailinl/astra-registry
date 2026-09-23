@@ -28,6 +28,7 @@
 // newline nobody means.
 
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "../lib/git-env.mjs";
 
 /**
  * Run git in `root` and return its stdout exactly as git wrote it. Throws, with
@@ -42,6 +43,7 @@ export function gitBytes(args, { root, maxBuffer = 64 * 1024 * 1024 } = {}) {
       encoding: "utf8",
       maxBuffer,
       stdio: ["ignore", "pipe", "pipe"],
+      env: cleanEnv(),
     });
   } catch (e) {
     const stderr = String(e?.stderr ?? "").trim();

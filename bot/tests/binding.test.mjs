@@ -32,6 +32,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "../../tools/lib/git-env.mjs";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -258,6 +259,7 @@ test("tests/vectors/ holds no directory, so the vendor sweep cannot reach this c
   // untracked file is a file CI never sees.
   const listed = execFileSync("git", ["-C", REPO_ROOT, "ls-files", "-z", "tests/vectors/"], {
     encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+    env: cleanEnv(),
   }).split("\0").filter(Boolean);
   assert.ok(listed.length >= 27,
     `git ls-files found ${listed.length} files under tests/vectors/ and there were 30 on 2026-09-20; this ` +
@@ -270,6 +272,7 @@ test("tests/vectors/ holds no directory, so the vendor sweep cannot reach this c
 
   const corpus = execFileSync("git", ["-C", REPO_ROOT, "ls-files", "-z", "tests/binding-line/"], {
     encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+    env: cleanEnv(),
   }).split("\0").filter(Boolean).sort();
   assert.deepEqual(corpus, ["tests/binding-line/README.md", "tests/binding-line/SHA256SUMS",
     "tests/binding-line/generate.mjs", "tests/binding-line/vectors.json"].sort(),

@@ -46,6 +46,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "../../tools/lib/git-env.mjs";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
@@ -245,7 +246,7 @@ test("no second derivation of a decision id is on the tree", () => {
   // tree, under this repository's name, and the floor would have been set high
   // enough to hide the day the link went missing. Tracked files are the
   // population this rule is about.
-  const files = execFileSync("git", ["ls-files", "-z", "--", "*.mjs"], { cwd: REPO_ROOT, encoding: "utf8" })
+  const files = execFileSync("git", ["ls-files", "-z", "--", "*.mjs"], { cwd: REPO_ROOT, encoding: "utf8", env: cleanEnv() })
     .split("\0").filter(Boolean).filter((rel) => !rel.includes("/tests/"));
   assert.ok(files.length >= 100,
     `git ls-files reported ${files.length} non-test .mjs files and there were 130 on 2026-09-20; this is a ` +

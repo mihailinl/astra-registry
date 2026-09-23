@@ -23,6 +23,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { fixtureEnv } from "../lib/git-env.mjs";
 
 import { REVOCATIONS_SCHEMA, TRUST_SCHEMA } from "../../bot/lib/sign.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
@@ -77,7 +78,7 @@ function makeTree(name) {
   const dir = path.join(tmp, `served-set-${name}`);
   fs.mkdirSync(dir, { recursive: true });
   const git = (...a) =>
-    execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+    execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(dir) }).trimEnd();
   git("init", "-q", "-b", "main");
   git("config", "user.email", "served-set-fixture@example.invalid");
   git("config", "user.name", "served-set fixture");
@@ -95,7 +96,7 @@ function makeTree(name) {
     execFileSync("git", ["-C", dir, "commit", "-qm", message], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
-      env: at ? { ...process.env, GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at } : process.env,
+      env: at ? { ...fixtureEnv(dir), GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at } : fixtureEnv(dir),
     });
     return git("rev-parse", "HEAD");
   };
@@ -291,7 +292,7 @@ export async function run() {
     const before = t.commit("main moves on while the pull request is open", { at: "2026-09-19T09:30:00Z" });
     execFileSync("git", ["-C", t.dir, "merge", "-q", "--no-ff", "-m", "Merge pull request #1 from advisory", "advisory"], {
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, GIT_AUTHOR_DATE: "2026-09-19T12:00:00Z", GIT_COMMITTER_DATE: "2026-09-19T12:00:00Z" },
+      env: { ...fixtureEnv(t.dir), GIT_AUTHOR_DATE: "2026-09-19T12:00:00Z", GIT_COMMITTER_DATE: "2026-09-19T12:00:00Z" },
     });
     const merge = t.head();
 
@@ -522,7 +523,7 @@ export async function run() {
       const tree = t.git("mktree");
       const body = `signed: a fixture\n\n${trailer}\nRun: none\n`;
       return execFileSync("git", ["-C", t.dir, "commit-tree", tree, "-m", body],
-        { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+        { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(t.dir) }).trim();
     };
     const contained = sourceOf({ root: t.dir, sha: signedWith(`Source-Commit: ${source}`), mainSha: later });
     assertEqual(JSON.stringify(contained), JSON.stringify({ sha: source, contained: true }),
@@ -560,19 +561,23 @@ export async function run() {
     const signedTree = (() => {
       const blob = execFileSync("git", ["-C", t.dir, "hash-object", "-w", "--stdin"], {
         input: stableStringify(head.documents.revocations), encoding: "utf8", stdio: ["pipe", "pipe", "pipe"],
+        env: fixtureEnv(t.dir),
       }).trim();
       const v1 = execFileSync("git", ["-C", t.dir, "mktree"], {
         input: `100644 blob ${blob}\trevocations.json\n`, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"],
+        env: fixtureEnv(t.dir),
       }).trim();
       const registry = execFileSync("git", ["-C", t.dir, "mktree"], {
         input: `040000 tree ${v1}\tv1\n`, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"],
+        env: fixtureEnv(t.dir),
       }).trim();
       return execFileSync("git", ["-C", t.dir, "mktree"], {
         input: `040000 tree ${registry}\tregistry\n`, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"],
+        env: fixtureEnv(t.dir),
       }).trim();
     })();
     const signedCommit = execFileSync("git", ["-C", t.dir, "commit-tree", signedTree, "-m",
-      `signed: a fixture\n\nSource-Commit: ${source}\nRun: none\n`], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+      `signed: a fixture\n\nSource-Commit: ${source}\nRun: none\n`], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(t.dir) }).trim();
     t.git("update-ref", "refs/heads/signed", signedCommit);
     t.git("remote", "add", "origin", t.dir);
     const fetched = gather({ root: t.dir });
@@ -971,12 +976,12 @@ export async function run() {
     // every honest commit and gets switched off.
     const t = makeTree("trailers");
     t.write("registry/v1/revocations.json", { signed: {} });
-    execFileSync("git", ["-C", t.dir, "add", "-A"], { stdio: "ignore" });
+    execFileSync("git", ["-C", t.dir, "add", "-A"], { stdio: "ignore", env: fixtureEnv(t.dir) });
     execFileSync(
       "git",
       ["-C", t.dir, "commit", "-qm", "signed: the withdrawal list\n\nSource-Commit: " + "b".repeat(40) +
         "\nRun: https://github.com/" + REPO + "/actions/runs/4242\nSigner: sign.yml"],
-      { stdio: "ignore", env: { ...process.env, GIT_AUTHOR_DATE: NOW, GIT_COMMITTER_DATE: NOW } },
+      { stdio: "ignore", env: { ...fixtureEnv(t.dir), GIT_AUTHOR_DATE: NOW, GIT_COMMITTER_DATE: NOW } },
     );
     const [commit] = signedCommits({ root: t.dir, ref: "HEAD" });
     assertEqual(commit.trailers["Source-Commit"], "b".repeat(40), "Source-Commit did not survive the parse");

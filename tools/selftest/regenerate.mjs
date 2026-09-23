@@ -20,6 +20,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
+import { fixtureEnv } from "../lib/git-env.mjs";
 
 import { buildIndex, indexContent } from "../build-index.mjs";
 import { isShallow } from "../coverage/git.mjs";
@@ -42,7 +43,7 @@ function regen(args, { cwd = REPO_ROOT, wrapper = [] } = {}) {
 }
 
 function gitIn(dir) {
-  return (...a) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  return (...a) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(dir) }).trim();
 }
 
 /**
@@ -241,7 +242,7 @@ export async function run() {
     const dir = path.join(tmp, "worktree-vs-commit");
     fs.mkdirSync(dir, { recursive: true });
     execFileSync("git", ["clone", "-q", "--no-hardlinks", "--shared", REPO_ROOT, dir],
-      { stdio: ["ignore", "pipe", "pipe"] });
+      { stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(dir) });
 
     // WHICH listing is perturbed decides whether this check can fail at all,
     // and until 2026-09-22 it was `readdirSync(plugins).sort()[0]` — which on

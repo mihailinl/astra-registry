@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "../lib/git-env.mjs";
 
 import { runValidation } from "../validate.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
@@ -314,6 +315,7 @@ export function walkRepo() {
   try {
     listed = execFileSync("git", ["-C", REPO_ROOT, "ls-files", "-z"], {
       encoding: "utf8", maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
+      env: cleanEnv(),
     });
   } catch (e) {
     // Loud rather than empty: an empty walk makes every rule built on it pass.

@@ -30,6 +30,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { fixtureEnv } from "../lib/git-env.mjs";
 
 import { buildIndex } from "../build-index.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
@@ -126,7 +127,7 @@ function makeTree(name, { trustKeys = [KEY_A] } = {}) {
   const dir = path.join(tmp, name);
   fs.mkdirSync(dir, { recursive: true });
   const git = (...a) =>
-    execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+    execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(dir) }).trimEnd();
   git("init", "-q", "-b", "main");
   git("config", "user.email", "signer-run-fixture@example.invalid");
   git("config", "user.name", "signer run fixture");
@@ -391,7 +392,7 @@ export async function run() {
     // compared with, and TRUST-28's equal-serial rule and SERVE-36 are both
     // decided against that parent.
     const bare = path.join(tmp, "push-remote.git");
-    execFileSync("git", ["init", "-q", "--bare", "-b", "main", bare]);
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main", bare], { env: fixtureEnv(bare) });
     const t = makeTree("push");
     t.addListing("dice-roller");
     t.commit("a listing");

@@ -69,6 +69,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "../../tools/lib/git-env.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -147,6 +148,7 @@ function git(dir, args) {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
     stdio: ["ignore", "pipe", "pipe"],
+    env: cleanEnv(),
   });
 }
 

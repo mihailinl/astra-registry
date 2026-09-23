@@ -39,6 +39,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "./git-env.mjs";
 
 import { REVOCATIONS_SCHEMA } from "../../bot/lib/sign.mjs";
 // MOD-41's public-reason rules have ONE implementation in this repository, and
@@ -594,6 +595,7 @@ export function resolveSerial({ explicit, root = REPO_ROOT, pending = true } = {
       cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      env: cleanEnv(),
     });
     // +1 so a repository with no advisories yet still publishes serial 1 rather
     // than 0. Serial 0 is reserved: `CatalogueState` uses it for "never seen",
@@ -605,6 +607,7 @@ export function resolveSerial({ explicit, root = REPO_ROOT, pending = true } = {
       cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      env: cleanEnv(),
     });
     return dirty.trim() ? atHead + 1 : atHead;
   } catch {
