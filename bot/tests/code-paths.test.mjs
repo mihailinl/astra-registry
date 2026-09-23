@@ -188,7 +188,9 @@ export const ENTRIES = [
   // --loads` (tools/selftest/loads.mjs), whose declared residual they were.
   // An edit to any of them changes what a bot commit is held to, so it is a
   // shadow transition and an acknowledgement from R3 (registry plan ROLL-64):
-  // about three a week more, measured on the week before the decision.
+  // about three a week more, measured on the week before the decision, and 11
+  // in the week to 2026-09-23 — 8 of them edits to `bot/tests/workflows.test.mjs`
+  // alone, which is here only because a case runs a copy of it (below).
   //
   // A directory entry where every file beneath it is code the gate reaches —
   // `tools/served-set/` (all seven), `site/lib/` (one) and `site/templates/`
