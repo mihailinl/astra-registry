@@ -147,47 +147,57 @@ index build is ever in flight.
 
 ## The staging entries — read this before trusting the index
 
-**Every listing here is marked `"staging": true`,** all eleven. None of the
-releases they name exists, so none carries a `sha256` or a `size` — the only
-honest thing they can carry, since a digest for bytes nobody has produced would
-be a fabrication.
+**A version file marked `"staging": true` names a release that does not
+exist,** so it carries no `sha256` and no `size` — the only honest thing it can
+carry, since a digest for bytes nobody has produced would be a fabrication.
+When this catalogue began, every listing was one. Which files still are, and
+which releases AstraPlugins has actually published, both move, so this page
+names neither and gives the commands that do:
 
-The reason is not in this repository, and it is smaller than it used to be.
+```bash
+git grep -l '"staging": true' -- plugins           # the staging entries
+gh api repos/mihailinl/AstraPlugins/releases --paginate --jq '.[].tag_name'
+```
+
+What made every listing staging was upstream and is gone.
 `AstraPlugins/.github/workflows/plugin-release.yml` once asserted that the tag
-equals `v<version>`, which eleven plugins in one repository could not each own;
-it now takes a `tag-prefix` input, so `dice-roller-v0.1.1` is a tag it accepts.
-What is left upstream is mechanical, and none of it has happened yet:
-
-1. tag `plugin-release/v1` in AstraPlugins, so `astra-plugin init-ci` has
-   something to pin the caller to other than a moving default branch;
-2. `astra-plugin init-ci examples/<id>`, which writes that plugin's nine-line
-   caller workflow;
-3. push `<id>-v<version>`, and let the workflow build, attest and upload.
-
-`GET /repos/mihailinl/AstraPlugins/releases` returns `[]` as this is written —
-that is the whole of it. Every `staging_reason` in `plugins/*/versions/*.json`
-says the same thing, per plugin, with its own tag named.
+equals `v<version>`, which many plugins in one repository could not each own;
+it now takes a `tag-prefix` input, `plugin-release/v1` is tagged for
+`astra-plugin init-ci` to pin callers to, and AstraPlugins' plugins are released
+under `<id>-v<version>` tags. What keeps an entry staging now is its own
+release: until that tag is published and the record rewritten with its digests,
+it stays one. Each record's `staging_reason` describes AstraPlugins' releases as
+they stood when it was written; the second command is the current answer.
 
 Everything about how those entries are treated follows from there:
 
 - `tools/validate.mjs` **rejects** them. Accepting a listing whose artifact does
   not exist makes the whole registry worthless, so tolerating one takes an
-  explicit `--allow-staging`. It is passed on one line of `build-index.yml` and
-  one of `bot-checks.yml`, and nowhere else.
-- The generated index marks each plugin `"staging": true` and leaves
-  `download_url` and `platform_downloads` empty. A digest-blind client cannot
-  reach any of them.
+  explicit `--allow-staging` — or `allowStaging: true`, its in-process form.
+  Several workflows and tools pass it, and the set moves; this prints the lines
+  that pass it literally (`bot/run-checks.mjs` forwards its own flag, so
+  `bot-checks.yml`'s line is where that one is decided):
+
+  ```bash
+  git grep -n -E -e 'node [^#]*--allow-staging' -e '\[.*"--allow-staging"' \
+    -e 'allowStaging: true' -- .github bot tools/signer ':!bot/tests' ':!bot/manifest-probe'
+  ```
+- The generated index marks a plugin `"staging": true`, and leaves its
+  `download_url` and `platform_downloads` empty, when its latest version is a
+  staging entry; an older staging version under a released one is marked in its
+  own `releases` record, and no flat field points at it. A digest-blind client
+  cannot reach any of them.
 - `bot/run-checks.mjs` skips their artifact checks and says why, rather than
   reporting a 404 that means "the staging entry is still a staging entry".
 
-`--allow-staging` is load-bearing today, and every listing added moves it further
-from removal rather than closer. That is precisely why it is a flag a human types
-and not a default: the day it can be deleted is the day this section can be too.
+`--allow-staging` is load-bearing for as long as one staging entry remains. That
+is precisely why it is a flag a human types and not a default: the day it can be
+deleted is the day this section can be too.
 
-**To go live,** per plugin: publish the release, replace `staging`/`staging_reason`
+**To go live,** per entry: publish the release, replace `staging`/`staging_reason`
 with the real `sha256`, `size`, `published_at` and `release.commit`, and
-regenerate. Drop `--allow-staging` from `build-index.yml` and `bot-checks.yml`
-only once the **last** staging entry is gone.
+regenerate. Drop `--allow-staging` from every line the command above prints only
+once the **last** staging entry is gone.
 
 ## Where artifacts come from — and how to run your own catalogue
 
@@ -327,8 +337,8 @@ a change of repository, or a report. `docs/POLICY.md` is the detail.
 No dependencies, no lockfile, no `npm install`. Node 20+ and nothing else.
 
 ```bash
-node tools/selftest.mjs                 # 39 checks, offline, ~1s
-node tools/validate.mjs                 # strict: refuses the staging entry
+node tools/selftest.mjs                 # the suite; its summary line counts the checks
+node tools/validate.mjs                 # strict: refuses every staging entry
 node tools/validate.mjs --allow-staging # what CI runs today
 node tools/validate.mjs --allow-direct  # tolerate a non-GitHub artifact origin
 node tools/build-index.mjs              # regenerate registry/v1/index.json

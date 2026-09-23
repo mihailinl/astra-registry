@@ -670,34 +670,40 @@ id = "sink-panel"
     // repository or anywhere else, on the day the proto grows a method.
     //
     // These tests are here, in Rust, for the same reason the permission test
-    // is: this is the one part of the bot that already has a checkout of
-    // AstraPlugins at the commit `astra-plugins.pin` names, so `plugin.proto`
-    // can be read rather than re-described. `bot-tests.yml` and `ingest.yml`
-    // already run `cargo test` on this crate, so the check has a workflow
-    // without one being added.
+    // is: this is the one part of the bot that already has a clone of
+    // AstraPlugins holding the commit `astra-plugins.pin` names, so
+    // `plugin.proto` can be read at that commit rather than re-described.
+    // `bot-tests.yml` and `ingest.yml` already run `cargo test` on this crate,
+    // so the check has a workflow without one being added.
 
     /// `bot/lib/rpcscan.mjs`, read as text — the alternative is a fourth copy
     /// of the list, which is the thing being prevented.
     const RPCSCAN_MJS: &str = include_str!("../../lib/rpcscan.mjs");
 
-    /// `proto/plugin.proto` out of the pinned AstraPlugins checkout.
+    /// The file, relative to the AstraPlugins root.
+    const PLUGIN_PROTO: &str = "proto/plugin.proto";
+
+    /// `proto/plugin.proto` at the pin, and the pin — read by `pinned_file`
+    /// below, the one reader hooks.yaml is read with too.
     ///
-    /// A missing file is a FAILURE and never a skip. A test that quietly
-    /// passed because it could not find the thing it compares would be worse
-    /// than no test: it would close this gap on paper.
-    fn pinned_proto() -> String {
-        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("_deps/AstraPlugins/proto/plugin.proto");
-        std::fs::read_to_string(&p).unwrap_or_else(|e| {
-            panic!(
-                "cannot read {}: {e}. That path is the AstraPlugins checkout \
-                 `bot/manifest-probe/astra-plugins.pin` names — the same one this \
-                 crate's path dependency links. Run `bot/manifest-probe/link-deps.sh`. \
-                 This test does not skip when the proto is absent, because a host \
-                 RPC list compared against nothing is what it exists to refuse.",
-                p.display()
-            )
-        })
+    /// Until 2026-09-22 this read `_deps/AstraPlugins/proto/plugin.proto` off
+    /// disk. In CI that is the pinned commit's bytes, because `link-deps.sh
+    /// --clone` checks the clone out at the pin. On a workstation it is usually
+    /// a symlink to a sibling working copy on whatever branch somebody was last
+    /// on, and there this test compared `HOST_RPCS` with that branch while the
+    /// hooks.yaml tests in the same `cargo test` compared the neighbouring
+    /// literals with the pin — and moving the pin changed nothing this test
+    /// said.
+    ///
+    /// A missing pin, checkout, commit or file is COULD NOT ASK: a FAILURE and
+    /// never a skip. A test that quietly passed because it could not find the
+    /// thing it compares would be worse than no test: it would close this gap
+    /// on paper.
+    fn pinned_proto() -> (String, String) {
+        pinned_file(
+            PLUGIN_PROTO,
+            "bot/lib/rpcscan.mjs's HOST_RPCS and AstraPlugins' proto/plugin.proto",
+        )
     }
 
     /// The `rpc` method names inside one `service` block of a `.proto`.
@@ -794,7 +800,7 @@ id = "sink-panel"
     /// `HOST_RPCS` is `PluginHostService`, or the scan has a blind spot.
     #[test]
     fn the_host_rpc_list_is_the_protos_and_not_a_copy_of_it() {
-        let proto = pinned_proto();
+        let (pin, proto) = pinned_proto();
         let in_proto = proto_service_rpcs(&proto, "PluginHostService");
         let in_js = js_string_list(RPCSCAN_MJS, "export const HOST_RPCS = [");
 
@@ -821,7 +827,7 @@ id = "sink-panel"
         let unsearched: Vec<_> = p.difference(&j).cloned().collect();
         assert!(
             unsearched.is_empty(),
-            "PluginHostService in proto/plugin.proto declares {unsearched:?}, which \
+            "PluginHostService in {PLUGIN_PROTO} at {pin} declares {unsearched:?}, which \
              bot/lib/rpcscan.mjs's HOST_RPCS does not list. `scanHostRpcs` only \
              searches a bundle for the names in that array, so this method is \
              never searched for at all: a plugin that calls it without declaring \
@@ -835,7 +841,7 @@ id = "sink-panel"
         assert!(
             stale.is_empty(),
             "bot/lib/rpcscan.mjs's HOST_RPCS lists {stale:?}, which PluginHostService \
-             in proto/plugin.proto does not declare. The scan would refuse a listing, \
+             in {PLUGIN_PROTO} at {pin} does not declare. The scan would refuse a listing, \
              or tell an author to buy a permission, over a string that names no call \
              the daemon serves."
         );
@@ -941,6 +947,131 @@ id = "sink-panel"
         }
     }
 
+    // ── AstraPlugins, read at the pin ───────────────────────────────────────
+    //
+    // Every test here that reads a file of AstraPlugins — the proto above,
+    // hooks.yaml below — reads it through `pinned_file`: at the commit
+    // `astra-plugins.pin` names, out of git objects, never off the checkout's
+    // working tree. `bot/tests/risk-tiers.test.mjs` made the same choice for
+    // the same reason. In CI `link-deps.sh --clone` leaves `_deps/AstraPlugins`
+    // at the pin, but on a workstation it is usually a symlink to a sibling
+    // working copy on whatever branch somebody was last on, and a comparison
+    // that answers differently on every machine is a comparison with a
+    // floating branch. One reader, so two comparisons in one run cannot be
+    // about two different commits — which, on such a workstation, they were
+    // until the proto test moved onto it.
+    //
+    // What this does not reach is the manifest crate itself. Cargo compiles
+    // the path dependency off `_deps/AstraPlugins`' disk, so on a workstation
+    // `PERMISSION_NAMES` and every rule the manifest tests exercise are that
+    // working copy's; only a clone checked out at the pin, as CI's is, makes
+    // them the pin's.
+
+    /// Where the pin is written, and the only place (B-T1.4).
+    const PIN_FILE: &str = include_str!("../astra-plugins.pin");
+
+    /// A comparison with AstraPlugins was not made. A failure, never a pass
+    /// and never a skip: a cross-repository comparison that stepped aside
+    /// quietly would close its gap on paper and nowhere else. `subject` names
+    /// the two things that went uncompared, so the red says whose question
+    /// was not asked.
+    fn could_not_ask_about(subject: &str, why: impl std::fmt::Display) -> ! {
+        panic!("COULD NOT ASK — {subject} were NOT compared by this run. {why}")
+    }
+
+    /// `ASTRA_PLUGINS_REF` from `astra-plugins.pin`: exactly one line, 40 hex.
+    fn pinned_ref() -> Result<String, String> {
+        let hits: Vec<&str> = PIN_FILE
+            .lines()
+            .filter_map(|l| l.strip_prefix("ASTRA_PLUGINS_REF="))
+            .map(str::trim)
+            .collect();
+        match hits.as_slice() {
+            [one] if one.len() == 40 && one.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')) => {
+                Ok(one.to_string())
+            }
+            [one] => Err(format!(
+                "ASTRA_PLUGINS_REF in astra-plugins.pin is {one:?}, which is not a 40-hex commit"
+            )),
+            [] => Err("astra-plugins.pin has no ASTRA_PLUGINS_REF line, and AstraPlugins is read at \
+                       the pin or not at all — master is a different question with a different answer"
+                .to_string()),
+            many => Err(format!(
+                "astra-plugins.pin has {} ASTRA_PLUGINS_REF lines ({many:?}); the pin has to be one answer",
+                many.len()
+            )),
+        }
+    }
+
+    fn git(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .map_err(|e| format!("could not run git: {e}"))?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        String::from_utf8(out.stdout).map_err(|e| format!("git printed non-UTF-8: {e}"))
+    }
+
+    /// `rel`, a path from the AstraPlugins root, as the pinned commit has it —
+    /// and that commit. When the pin, the checkout, the commit or the file is
+    /// not there, COULD NOT ASK about `subject`.
+    fn pinned_file(rel: &str, subject: &str) -> (String, String) {
+        let pin = pinned_ref().unwrap_or_else(|e| could_not_ask_about(subject, e));
+        let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let deps = here.join("_deps/AstraPlugins");
+        let top = git(&deps, &["rev-parse", "--show-toplevel"]).unwrap_or_else(|e| {
+            could_not_ask_about(
+                subject,
+                format!(
+                    "{} is not an AstraPlugins checkout ({e}). Run `bot/manifest-probe/link-deps.sh` \
+                     (with `--clone` and ASTRA_PLUGINS_REF set, as CI does).",
+                    deps.display()
+                ),
+            )
+        });
+        // A `_deps/AstraPlugins` with no `.git` of its own resolves to THIS
+        // repository, where the pinned commit does not exist. Said plainly,
+        // because "unknown revision" would send the reader to AstraPlugins to
+        // look for a commit that is sitting in front of them.
+        if let Ok(ours) = git(here, &["rev-parse", "--show-toplevel"]) {
+            if ours.trim() == top.trim() {
+                could_not_ask_about(
+                    subject,
+                    format!(
+                        "{} resolves to this repository ({}), not to an AstraPlugins checkout",
+                        deps.display(),
+                        top.trim()
+                    ),
+                );
+            }
+        }
+        if let Err(e) = git(&deps, &["cat-file", "-e", &format!("{pin}^{{commit}}")]) {
+            could_not_ask_about(
+                subject,
+                format!(
+                    "{} has no commit {pin} ({e}) — fetch it (`git -C {} fetch origin`), or the pin \
+                     names a commit on no reachable ref",
+                    top.trim(),
+                    top.trim()
+                ),
+            );
+        }
+        let text = git(&deps, &["cat-file", "-p", &format!("{pin}:{rel}")]).unwrap_or_else(|e| {
+            could_not_ask_about(
+                subject,
+                format!(
+                    "{pin} has no {rel} ({e}) — the file moved upstream, and this reader's path \
+                     has to move with the pin"
+                ),
+            )
+        });
+        (pin, text)
+    }
+
     // ── the two registers of host-RPC gating, held to each other ────────────
     //
     // Two files say, for each `PluginHostService` method, which `[permissions]`
@@ -966,13 +1097,9 @@ id = "sink-panel"
     // it demands and hooks.yaml does not is an author told to declare the wrong
     // key. Both files stay green on their own the whole time.
     //
-    // hooks.yaml is read AT the pin, out of git objects, never off the
-    // checkout's working tree — `bot/tests/risk-tiers.test.mjs` made the same
-    // choice for the same reason. In CI `link-deps.sh --clone` leaves
-    // `_deps/AstraPlugins` at the pin, but on a workstation it is a sibling
-    // working copy on whatever branch somebody was last on, and a comparison
-    // that answers differently on every machine is a comparison with a
-    // floating branch.
+    // hooks.yaml is read AT the pin by `pinned_file` above — out of git
+    // objects, never off the checkout's working tree — the one reader the
+    // proto test uses too.
     //
     // It is parsed by a port of `tools/parity/spec.py`, the dependency-free
     // reader AstraPlugins itself parses this file with. hooks.yaml declares
@@ -983,11 +1110,11 @@ id = "sink-panel"
     // refused, not skipped, so a reshaped file is COULD NOT ASK rather than a
     // shorter list.
 
-    /// Where the pin is written, and the only place (B-T1.4).
-    const PIN_FILE: &str = include_str!("../astra-plugins.pin");
-
     /// The file, relative to the AstraPlugins root.
     const HOOKS_YAML: &str = "spec/hooks.yaml";
+
+    /// What goes uncompared when this group cannot ask.
+    const HOOKS_SUBJECT: &str = "bot/lib/rpcscan.mjs's host-RPC gates and AstraPlugins' spec/hooks.yaml";
 
     /// Floors, measured at AstraPlugins `5291f29` on 2026-09-22 before any
     /// mutation: hooks.yaml has ten `PluginHostService` rows, six of them gated
@@ -1037,94 +1164,14 @@ id = "sink-panel"
               has been passing. Neither cost is this file's to choose.",
     }];
 
-    /// The comparison was not made. A failure, never a pass and never a skip:
-    /// a cross-repository comparison that stepped aside quietly would close
-    /// this gap on paper and nowhere else.
+    /// This group's COULD NOT ASK — `could_not_ask_about`, naming this pair.
     fn could_not_ask(why: impl std::fmt::Display) -> ! {
-        panic!(
-            "COULD NOT ASK — bot/lib/rpcscan.mjs's host-RPC gates and AstraPlugins' \
-             spec/hooks.yaml were NOT compared by this run. {why}"
-        )
-    }
-
-    /// `ASTRA_PLUGINS_REF` from `astra-plugins.pin`: exactly one line, 40 hex.
-    fn pinned_ref() -> String {
-        let hits: Vec<&str> = PIN_FILE
-            .lines()
-            .filter_map(|l| l.strip_prefix("ASTRA_PLUGINS_REF="))
-            .map(str::trim)
-            .collect();
-        match hits.as_slice() {
-            [one] if one.len() == 40 && one.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')) => {
-                one.to_string()
-            }
-            [one] => could_not_ask(format!(
-                "ASTRA_PLUGINS_REF in astra-plugins.pin is {one:?}, which is not a 40-hex commit"
-            )),
-            [] => could_not_ask(
-                "astra-plugins.pin has no ASTRA_PLUGINS_REF line, and this reads hooks.yaml at the \
-                 pin or not at all — master is a different question with a different answer",
-            ),
-            many => could_not_ask(format!(
-                "astra-plugins.pin has {} ASTRA_PLUGINS_REF lines ({many:?}); the pin has to be one answer",
-                many.len()
-            )),
-        }
-    }
-
-    fn git(dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
-        let out = std::process::Command::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args(args)
-            .output()
-            .map_err(|e| format!("could not run git: {e}"))?;
-        if !out.status.success() {
-            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-        }
-        String::from_utf8(out.stdout).map_err(|e| format!("git printed non-UTF-8: {e}"))
+        could_not_ask_about(HOOKS_SUBJECT, why)
     }
 
     /// `spec/hooks.yaml` at the pinned commit, and that commit.
     fn pinned_hooks_yaml() -> (String, String) {
-        let pin = pinned_ref();
-        let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let deps = here.join("_deps/AstraPlugins");
-        let top = git(&deps, &["rev-parse", "--show-toplevel"]).unwrap_or_else(|e| {
-            could_not_ask(format!(
-                "{} is not an AstraPlugins checkout ({e}). Run `bot/manifest-probe/link-deps.sh` \
-                 (with `--clone` and ASTRA_PLUGINS_REF set, as CI does).",
-                deps.display()
-            ))
-        });
-        // A `_deps/AstraPlugins` with no `.git` of its own resolves to THIS
-        // repository, where the pinned commit does not exist. Said plainly,
-        // because "unknown revision" would send the reader to AstraPlugins to
-        // look for a commit that is sitting in front of them.
-        if let Ok(ours) = git(here, &["rev-parse", "--show-toplevel"]) {
-            if ours.trim() == top.trim() {
-                could_not_ask(format!(
-                    "{} resolves to this repository ({}), not to an AstraPlugins checkout",
-                    deps.display(),
-                    top.trim()
-                ));
-            }
-        }
-        if let Err(e) = git(&deps, &["cat-file", "-e", &format!("{pin}^{{commit}}")]) {
-            could_not_ask(format!(
-                "{} has no commit {pin} ({e}) — fetch it (`git -C {} fetch origin`), or the pin \
-                 names a commit on no reachable ref",
-                top.trim(),
-                top.trim()
-            ));
-        }
-        let text = git(&deps, &["cat-file", "-p", &format!("{pin}:{HOOKS_YAML}")]).unwrap_or_else(|e| {
-            could_not_ask(format!(
-                "{pin} has no {HOOKS_YAML} ({e}) — the file moved upstream, and this reader's path \
-                 has to move with the pin"
-            ))
-        });
-        (pin, text)
+        pinned_file(HOOKS_YAML, HOOKS_SUBJECT)
     }
 
     /// One flat row of `hooks:`.
