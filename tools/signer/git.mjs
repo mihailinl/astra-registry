@@ -84,13 +84,24 @@ export function gitMaybe(args, { root } = {}) {
  * Writing that as `rev-list --count HEAD` here would silently count whatever
  * the signer's own checkout happened to be on.
  *
- * @param {{root: string, sha: string, pathspec: string}} opts
+ * `flags` is how the count simplifies history, and the two documents differ
+ * there on purpose. The withdrawal list passes `SERIAL_FLAGS`
+ * (`--full-history`, contract DEC-9 from 0.35.0), because git's default count
+ * can go down at a merge and a list whose serial falls is refused by SERVE-36
+ * and carried — `tools/lib/revocations.mjs` has the shapes and the numbers.
+ * The catalogue passes nothing and counts by git's default, exactly as it did
+ * before the list moved: `--full-history` differs from it at 233 of main's 337
+ * first-parent commits, so the catalogue serial cannot switch without a jump
+ * (ops register entry 117). With no flags the argument list is byte for byte
+ * the one this function always ran.
+ *
+ * @param {{root: string, sha: string, pathspec: string, flags?: string[]}} opts
  */
-export function revCount({ root, sha, pathspec }) {
-  const out = gitText(["rev-list", "--count", sha, "--", pathspec], { root });
+export function revCount({ root, sha, pathspec, flags = [] }) {
+  const out = gitText(["rev-list", "--count", ...flags, sha, "--", pathspec], { root });
   const n = Number(out);
   if (!Number.isSafeInteger(n) || n < 0) {
-    throw new Error(`git rev-list --count ${sha} -- ${pathspec} returned ${JSON.stringify(out)}, not a count`);
+    throw new Error(`git rev-list --count ${[...flags, sha].join(" ")} -- ${pathspec} returned ${JSON.stringify(out)}, not a count`);
   }
   return n;
 }

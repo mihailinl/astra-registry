@@ -32,8 +32,8 @@
 //     FIRST-PARENT line that changed what main holds under
 //     `tools/revocations/` and that `signed` does not carry — the moment main
 //     acquired the first change the signer still owes. The serial is
-//     `rev-list --count <sha> -- SERIAL_PATHSPEC` + 1, a count of what is
-//     reachable, so it moves at that moment: for a direct push or a squash
+//     `rev-list --count --full-history <sha> -- SERIAL_PATHSPEC` + 1, a count
+//     of what is reachable, so it moves at that moment: for a direct push or a squash
 //     that is the commit itself, and for a pull request merged with a merge
 //     commit it is the MERGE. Only a commit that changes main's copy of the
 //     directory can open the window. The clock reads the same export as the
@@ -87,14 +87,31 @@
 // `main` used to be able to silence — first through main's head, then through
 // the newest advisory.
 //
-// ── `signed` ahead of the tree we checked out is not drift ──────────────────
+// ── `signed` ahead of the tree we checked out: the race, or a broken count ──
 //
 // This job reads ONE tree: the commit it checked out. The signer reads `main`
 // as it is when it runs. So a run that starts, and a signer that publishes a
 // newer `main` while it is running, leaves this check holding an older list and
-// a newer `signed` — a difference that is the system working. A serial on
-// `signed` GREATER than the one at our commit is therefore green, with a note.
-// A serial LOWER is the failure: `signed` is behind a commit this job can see.
+// a newer `signed` — a difference that is the system working. A serial LOWER
+// on `signed` is the failure: `signed` is behind a commit this job can see.
+//
+// A serial on `signed` GREATER than the one at our commit is the race only
+// when `signed` was made from a commit this job does NOT hold. Since contract
+// 0.35.0 the list's count is `--full-history`'s (`SERIAL_FLAGS`), which cannot
+// fall along main, so when our commit contains `signed`'s `Source-Commit` it
+// gives the list at least the serial the signer gave it there — and a list
+// carried from before that commit carries a serial no higher. `signed` above
+// us then means the formula that assigned its serial is not this one, or
+// `signed` was not made from main: SERVE_85_SERIAL_AHEAD, at once, with no
+// grace, because waiting does not change it. Until 0.35.0 this was read as
+// the race whatever the Source-Commit, and it was exactly the state git's
+// default count left behind when a merge lowered the serial: the signer's
+// SERVE-36 gate refused the list, D4 carried it under the merge's
+// Source-Commit, and this check called main holding an advisory the served
+// list lacked "the system working" for as long as it lasted (ops register
+// entry 117). A `signed` whose Source-Commit this checkout does not hold, or
+// that names none, is still read as the race; provenance (SERVE-90's
+// fallback) is the check that asks where a `signed` commit came from.
 //
 // ── before the signer exists ────────────────────────────────────────────────
 //
@@ -127,6 +144,13 @@ export const SIGNER_WORKFLOW = ".github/workflows/sign.yml";
 export const LIST_PATHSPEC = SERIAL_PATHSPEC;
 
 /**
+ * `signed`'s `Source-Commit:` trailer. Typed here rather than imported:
+ * `provenance.mjs`'s `trailersOf` would close an import cycle with this file,
+ * and `bot/detectors.mjs`'s is the bot's. The shape is B.4's, one 40-hex sha.
+ */
+const SOURCE_COMMIT = /^Source-Commit:[ \t]*([0-9a-f]{40})[ \t]*$/m;
+
+/**
  * SERVE-85's decision, over facts and nothing else.
  *
  * @param {object} o
@@ -139,6 +163,9 @@ export const LIST_PATHSPEC = SERIAL_PATHSPEC;
  * @param {{serial: number, revocations: unknown[]}|null} o.generated  null when the build failed
  * @param {string|null} o.buildError
  * @param {object} o.head                 from fetchSignedHead
+ * @param {{sha: string|null, contained: boolean|null}|null} [o.signedSource]  `signed`'s head
+ *                                        Source-Commit, and whether `mainSha` contains it (null: this
+ *                                        checkout does not hold it, or `signed` names none)
  * @param {boolean} o.signerWorkflowPresent
  * @param {string} o.now
  * @param {number} [o.graceMinutes]
@@ -151,6 +178,7 @@ export function serve85({
   generated,
   buildError = null,
   head,
+  signedSource = null,
   signerWorkflowPresent,
   now,
   graceMinutes = GRACE_MINUTES,
@@ -202,10 +230,27 @@ export function serve85({
   }
 
   if (headSerial > generated.serial) {
+    // The header says why a contained Source-Commit makes this a broken count
+    // rather than the race, and why it waits for nothing.
+    if (signedSource?.contained === true) {
+      hexes.push(signedSource.sha);
+      findings.push(finding(
+        "SERVE_85_SERIAL_AHEAD",
+        `\`signed\`@${head.sha.slice(0, 12)} serves list serial ${headSerial}, and main ${mainSha.slice(0, 12)}, ` +
+        `which contains its Source-Commit ${signedSource.sha.slice(0, 12)}, gives the list ${generated.serial}. ` +
+        `DEC-9's count cannot fall along main, so that serial was assigned by another formula than the one this ` +
+        `job counts, or \`signed\` was not made from main. Until it is explained, the signer's SERVE-36 gate ` +
+        `refuses every list main gives a serial below ${headSerial}, and carries the old one.`,
+      ));
+      return verdict({ findings, waiting, hexes, notes });
+    }
     notes.push(
-      `\`signed\` is at serial ${headSerial} and this commit implies ${generated.serial}: the signer has ` +
-      `published a newer \`main\` than the one this job checked out, which is the system working. The next run ` +
-      `compares at that commit.`,
+      `\`signed\` is at serial ${headSerial} and this commit implies ${generated.serial}, and ` +
+      (signedSource?.sha
+        ? `\`signed\`'s Source-Commit ${signedSource.sha.slice(0, 12)} is not ${signedSource.contained === false ? "contained in the commit this job read" : "in this checkout"}`
+        : "`signed` names no Source-Commit this job can place") +
+      `: the signer has published a newer \`main\` than the one this job checked out, which is the system ` +
+      `working. The next run compares at that commit.`,
     );
     return verdict({ findings, waiting, hexes, notes });
   }
@@ -319,6 +364,7 @@ export function gather({ root, remote = "origin" }) {
     });
 
   const head = fetchSignedHead({ root, remote });
+  const signedSource = head?.present ? sourceOf({ root, sha: head.sha, mainSha }) : null;
 
   const serials = serialsAt({ root, sha: mainSha });
   let generated = null;
@@ -338,6 +384,24 @@ export function gather({ root, remote = "origin" }) {
     generated,
     buildError,
     head,
+    signedSource,
     signerWorkflowPresent: fs.existsSync(path.join(root, SIGNER_WORKFLOW)),
   };
+}
+
+/**
+ * `signed`'s head Source-Commit, and whether `mainSha` contains it: `true`,
+ * `false`, or `null` when this checkout does not hold the commit — which is
+ * what a Source-Commit newer than the commit this job checked out looks like.
+ *
+ * @param {{root: string, sha: string, mainSha: string}} opts
+ */
+export function sourceOf({ root, sha, mainSha }) {
+  const m = SOURCE_COMMIT.exec(gitText(["log", "-1", "--format=%B", sha], { root }));
+  if (!m) return { sha: null, contained: null };
+  const source = m[1];
+  if (!gitMaybe(["cat-file", "-e", `${source}^{commit}`], { root }).ok) return { sha: source, contained: null };
+  // Exit 0 is an ancestor, 1 is not; both commits are known to be here, so a
+  // non-zero exit is the answer and not a fault.
+  return { sha: source, contained: gitMaybe(["merge-base", "--is-ancestor", source, mainSha], { root }).ok };
 }
