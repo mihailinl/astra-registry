@@ -21,11 +21,13 @@
 //      BEFORE the cron edit. So a cron line is one end of a three-way agreement
 //      between a workflow, this file and a published contract version.
 //
-//   3. **Is its staging listing id the one this repository reserves?** MOD-16's
-//      id is spelled in `policy/reserved-ids.json`, which the registry's three
-//      rules read, and will be spelled again here when the contract records
-//      it. The generator never reads the policy file, so the comparison can
-//      only be made here (ops `dev/couplings.md` entry 33).
+//   3. **Does each member it carries under a pending record hold the record's
+//      floor, and, once recorded, agree with what this repository says?**
+//      MOD-16's staging listing id is spelled in `policy/reserved-ids.json`,
+//      the shared-vector paths name files in this tree, and MOD-54's report
+//      page is the page `tools/cutover-preflight.mjs` asks an operator to walk.
+//      The generator never reads any of the three, so the comparison can only
+//      be made here (ops `dev/couplings.md` entries 33 and 123).
 //
 // ── One comparison, one owner, and a canary over the seam ───────────────────
 //
@@ -71,6 +73,18 @@ import { test, assert, assertEqual, neverAsk, tmp } from "./harness.mjs";
 const TOKEN_FILE = "schema/contract-tokens-v1.json";
 const POLICY_FILE = "policy/reserved-ids.json";
 const STAGING_MEMBER = "staging_listing_id";
+const VECTOR_MEMBER = "shared_vector_paths";
+const REPORT_RECORD = "mod54_report_page";
+/**
+ * MOD-54's report page as this repository spells it: `REPORT_PAGE` in the
+ * cutover preflight, the page its `mod-54-report-page` check asks an operator
+ * to walk. READ AS BYTES and never imported, for the reason
+ * `tools/selftest/times.mjs` gives: this directory is in TRUST-31's set and the
+ * publish path runs it, so an import would make a desk tool an input to every
+ * publication.
+ */
+const PREFLIGHT_FILE = "tools/cutover-preflight.mjs";
+const REPORT_PAGE_LINE = /^const REPORT_PAGE = "([^"\\]+)";$/gm;
 const WORKFLOW_HALF = "bot/tests/workflows.test.mjs";
 const BOT_TESTS_WORKFLOW = ".github/workflows/bot-tests.yml";
 
@@ -719,19 +733,7 @@ export async function run() {
       { name: "an empty string", doc: variant("", []), red: [TOKEN_FILE, "neither null nor an id"] },
       { name: "no member at all", doc: (() => { const d = variant(null, [record]); delete d[STAGING_MEMBER]; return d; })(), red: [TOKEN_FILE, "no `staging_listing_id` member"] },
     ];
-    const wrong = [];
-    for (const leg of legs) {
-      const { problems } = stagingIdJoin(leg.doc, reserved);
-      const said = problems.join("\n");
-      if (leg.red.length === 0) {
-        if (problems.length) wrong.push(`${leg.name}: expected green, was red: ${said}`);
-      } else if (!problems.length) {
-        wrong.push(`${leg.name}: expected red, was green`);
-      } else {
-        const unnamed = leg.red.filter((s) => !said.includes(s));
-        if (unnamed.length) wrong.push(`${leg.name}: red, but not naming ${unnamed.join(", ")}: ${said}`);
-      }
-    }
+    const wrong = legsGoneWrong(legs, (doc) => stagingIdJoin(doc, reserved));
     assert(wrong.length === 0,
       `the join between ${TOKEN_FILE}'s ${STAGING_MEMBER} and ${POLICY_FILE} does not hold on a copy of the ` +
       `committed files, so the live check above is not asking what its name says:\n` +
@@ -739,6 +741,197 @@ export async function run() {
     console.log(`  note  ${legs.length} states built from HEAD's ${TOKEN_FILE} and ${POLICY_FILE}` +
       `${committedRecord ? "" : " (the pending record built here, the file no longer carries one)"}; ` +
       `${legs.filter((l) => l.red.length).length} red as named, ${legs.filter((l) => !l.red.length).length} green.`);
+  });
+
+  // ── two more pending members, the same shape twice more ───────────────────
+  //
+  // Found 2026-09-22 by the lane that closed the staging id (ops
+  // `dev/couplings.md` entry 123). The token file's records for
+  // `shared_vector_paths` and `mod54_report_page` state floors — "until ops.15
+  // lands the list is empty and this record is present", "until that version
+  // lands the entry is absent and this record is present" — and nothing
+  // asserted either. The ops generator's selftest never names them, and
+  // nothing here read them. So both are held the way the staging id is, by the
+  // same predicate (`pendingJoin`, one row per member in `PENDING_MEMBERS`),
+  // and each recorded state — which no tree has held — is built from the
+  // committed files and required to go red clause by clause.
+  //
+  // What each is held to once recorded, and it is not the same kind of thing:
+  //
+  //   - the shared-vector paths are corpora a party that is not this one reads
+  //     out of THIS repository at a pinned commit (§1.3 row 8.3). No file here
+  //     lists them, so there is no list to equal; the counterpart is the tree.
+  //     A path naming a file must be one this repository commits, and a path
+  //     naming a directory must not be a file. A directory not committed YET is
+  //     not red, and is printed: `tests/results/` is created at R3 (B-T3.5)
+  //     and ops.15, which records it, lands before R2.
+  //   - MOD-54's page is spelled in `tools/cutover-preflight.mjs` as
+  //     `REPORT_PAGE`, the page its `mod-54-report-page` check sends an operator
+  //     to walk before R6. Compared as "the page and its query parameters" —
+  //     path, parameter names and, when the file names one, origin — because
+  //     the shape the file will record it in is not yet written: a member
+  //     string, or a `page` entry like FLOW-77's `url` + `query`. Both are
+  //     read; a third shape is red until somebody teaches this module it.
+  await test("the token file's shared_vector_paths is empty under its pending record, or paths this repository commits with none", () => {
+    const doc = JSON.parse(fs.readFileSync(tokenPath, "utf8"));
+    const tracked = trackedTree(git(["ls-files", "-z"]).split("\0"));
+    const { state, problems, notes } = pendingJoin(doc, PENDING_MEMBERS[VECTOR_MEMBER], { tracked });
+    assert(problems.length === 0,
+      `${TOKEN_FILE}'s ${VECTOR_MEMBER} does not hold its pending record's floor, or does not name what this ` +
+      `repository commits (ops dev/couplings.md entry 123):\n` + problems.map((p) => `- ${p}`).join("\n"));
+    console.log(state === "pending"
+      ? `  note  ${TOKEN_FILE}'s ${VECTOR_MEMBER} is empty and its pending record is present. The tree leg arms ` +
+        `on the regeneration that records the paths, with no edit here.`
+      : `  note  ${TOKEN_FILE}'s ${VECTOR_MEMBER} is recorded and every file it names is committed` +
+        `${notes.length ? `; ${notes.join("; ")}` : ""}.`);
+  });
+
+  await test("the shared-vector join goes red in each state the tree has not held, built from its committed files", () => {
+    const tokenText = showOrNull("HEAD", TOKEN_FILE);
+    assert(tokenText !== null, `${TOKEN_FILE} is not committed at HEAD, so there is nothing to build the states from`);
+    const committed = JSON.parse(tokenText);
+    const tracked = trackedTree(git(["ls-tree", "-r", "-z", "--name-only", "HEAD"]).split("\0"));
+    const row = PENDING_MEMBERS[VECTOR_MEMBER];
+
+    // The paths ops.15 will record, as the committed record names them, or the
+    // recorded list once the record is discharged: the value this test holds
+    // to the tree is the one the next regeneration writes.
+    const committedRecord = (committed.pending || []).find((p) => p && p.id === VECTOR_MEMBER);
+    const record = committedRecord ?? builtRecord(VECTOR_MEMBER, "the list is empty and this record is present.");
+    const paths = committedRecord
+      ? [...String(committedRecord.what).matchAll(/`([^`\s]+\/[^`\s]*)`/g)].map((m) => m[1])
+      : committed[VECTOR_MEMBER];
+    const file = (Array.isArray(paths) ? paths : []).find((p) => typeof p === "string" && tracked.files.has(p));
+    assert(file,
+      `none of ${JSON.stringify(paths)} is a file committed at HEAD, so the recorded state cannot be built from ` +
+      `the tree. ${committedRecord ? "The pending record names them" : `${TOKEN_FILE} records them`}; if a corpus ` +
+      `moved, the regeneration that records the paths will be red here too`);
+    const dir = file.slice(0, file.lastIndexOf("/"));
+    const unwritten = `${dir}/unwritten-${path.posix.basename(file)}`;
+    assert(!tracked.files.has(unwritten), `${unwritten} is committed, so it cannot stand for a path that is not`);
+    const notYet = `${dir}/not-yet-committed/`;
+    const variant = (value, records) => {
+      const doc = structuredClone(committed);
+      if (value === ABSENT) delete doc[VECTOR_MEMBER];
+      else doc[VECTOR_MEMBER] = value;
+      doc.pending = [...(committed.pending || []).filter((p) => p && p.id !== VECTOR_MEMBER), ...records];
+      return doc;
+    };
+    const without = (key) => { const r = { ...record }; delete r[key]; return r; };
+
+    const legs = [
+      { name: "an empty list under its pending record", doc: variant([], [record]), red: [], state: "pending" },
+      { name: "the paths the record names, and no record", doc: variant(paths, []), red: [], state: "recorded" },
+      { name: "a directory not committed yet", doc: variant([file, notYet], []), red: [], state: "recorded", noted: [notYet] },
+      { name: "an empty list with no record", doc: variant([], []), red: [TOKEN_FILE, "no pending record"] },
+      { name: "an empty list under a record with no lands_with", doc: variant([], [without("lands_with")]), red: [TOKEN_FILE, "lands_with"] },
+      { name: "an empty list under a record with no owed_by", doc: variant([], [without("owed_by")]), red: [TOKEN_FILE, "owed_by"] },
+      { name: "an empty list under the record twice", doc: variant([], [record, record]), red: [TOKEN_FILE, "2 pending records"] },
+      { name: "the paths with the record left behind", doc: variant(paths, [record]), red: [TOKEN_FILE, "still carries"] },
+      { name: "no member at all", doc: variant(ABSENT, [record]), red: [TOKEN_FILE, "no `shared_vector_paths` member"] },
+      { name: "null", doc: variant(null, [record]), red: [TOKEN_FILE, "neither the empty list nor a list of paths"] },
+      { name: "a path this repository does not commit", doc: variant([file, unwritten], []), red: [TOKEN_FILE, unwritten, "does not commit"] },
+      { name: "a file named as a directory", doc: variant([`${file}/`], []), red: [TOKEN_FILE, `${file}/`, "commits a file at"] },
+      { name: "a directory named as a file", doc: variant([dir], []), red: [TOKEN_FILE, dir, "commits a directory there"] },
+      { name: "an absolute path", doc: variant([`/${file}`], []), red: [TOKEN_FILE, "not a repository-relative path", "absolute"] },
+      { name: "a path that climbs out", doc: variant([`${dir}/../${file}`], []), red: [TOKEN_FILE, "not a repository-relative path", "`..`"] },
+      { name: "a path that is not a string", doc: variant([file, 7], []), red: [TOKEN_FILE, "not a repository-relative path", "not a string"] },
+      { name: "a path named twice", doc: variant([file, file], []), red: [TOKEN_FILE, file, "twice"] },
+    ];
+    const wrong = legsGoneWrong(legs, (doc) => pendingJoin(doc, row, { tracked }));
+    assert(wrong.length === 0,
+      `the join between ${TOKEN_FILE}'s ${VECTOR_MEMBER}, its pending record and the committed tree does not ` +
+      `hold on a copy of the committed files, so the live check above is not asking what its name says:\n` +
+      wrong.map((w) => `- ${w}`).join("\n"));
+    console.log(`  note  ${legs.length} states built from HEAD's ${TOKEN_FILE} and tree, the recorded one from ` +
+      `${committedRecord ? "the paths its pending record names" : "the paths it records"} (${paths.join(", ")}); ` +
+      `${legs.filter((l) => l.red.length).length} red as named, ${legs.filter((l) => !l.red.length).length} green.`);
+  });
+
+  await test("the token file's MOD-54 report page is absent under its pending record, or tools/cutover-preflight.mjs's page with none", () => {
+    const doc = JSON.parse(fs.readFileSync(tokenPath, "utf8"));
+    const preflightAt = path.join(REPO_ROOT, PREFLIGHT_FILE);
+    assert(fs.existsSync(preflightAt),
+      `${PREFLIGHT_FILE} is not in this checkout, and its REPORT_PAGE is the one spelling of MOD-54's page in ` +
+      `this repository — the page its mod-54-report-page check asks an operator to walk`);
+    // Read in every state, not only once the page is recorded: a constant
+    // renamed today would otherwise leave the equality leg with nothing to
+    // compare on the day it arms, and nobody would find out until then.
+    const reportPage = reportPageOf(fs.readFileSync(preflightAt, "utf8"));
+    assert(!reportPage.error, `${PREFLIGHT_FILE}: ${reportPage.error}`);
+    const { state, problems } = pendingJoin(doc, PENDING_MEMBERS[REPORT_RECORD], { reportPage });
+    assert(problems.length === 0,
+      `${TOKEN_FILE} does not hold its MOD-54 report page's pending record to its floor, or disagrees with ` +
+      `${PREFLIGHT_FILE} about the page (ops dev/couplings.md entry 123):\n` + problems.map((p) => `- ${p}`).join("\n"));
+    console.log(state === "pending"
+      ? `  note  ${TOKEN_FILE} records no MOD-54 report page and its pending record is present; ${PREFLIGHT_FILE} ` +
+        `walks ${reportPage.url}. The equality leg arms on the version that records the page, with no edit here.`
+      : `  note  ${TOKEN_FILE}'s MOD-54 report page is recorded and is ${PREFLIGHT_FILE}'s.`);
+  });
+
+  await test("the MOD-54 page join goes red in each state the tree has not held, built from its committed files", () => {
+    const tokenText = showOrNull("HEAD", TOKEN_FILE);
+    const preflightText = showOrNull("HEAD", PREFLIGHT_FILE);
+    assert(tokenText !== null && preflightText !== null,
+      `${tokenText === null ? TOKEN_FILE : PREFLIGHT_FILE} is not committed at HEAD, so there is nothing to build ` +
+      `the states from`);
+    const committed = JSON.parse(tokenText);
+    const want = reportPageOf(preflightText);
+    assert(!want.error, `${PREFLIGHT_FILE} at HEAD: ${want.error}`);
+    const row = PENDING_MEMBERS[REPORT_RECORD];
+
+    // The recorded state in each shape the file could take, built from the
+    // committed page entry the contract already writes that way (FLOW-77's,
+    // `url` without a query and `query` as names), and a page a mistaken
+    // regeneration would most plausibly copy: that same entry.
+    const model = (committed.entries || []).find((e) => e && e.kind === "page" && Array.isArray(e.query));
+    assert(model, `${TOKEN_FILE} at HEAD carries no \`page\` entry with a \`query\`, so the entry shape has no model`);
+    const entry = (over = {}) => ({
+      ...structuredClone(model), id: "page:MOD-54", name: "MOD-54", source: "MOD-54",
+      requirements: ["MOD-54", "SCOPE-7"], url: `${want.origin}${want.pathname}`, query: want.params, ...over,
+    });
+    const rootRelative = want.url.slice(want.origin.length);
+    const committedRecord = (committed.pending || []).find((p) => p && p.id === REPORT_RECORD);
+    const record = committedRecord ?? builtRecord(REPORT_RECORD, "the entry is absent and this record is present.");
+    const variant = ({ member = ABSENT, pages = [] }, records) => {
+      const doc = structuredClone(committed);
+      delete doc[REPORT_RECORD];
+      if (member !== ABSENT) doc[REPORT_RECORD] = member;
+      doc.entries = [...(committed.entries || []).filter((e) => !(e && e.kind === "page" && namesMod54(e))), ...pages];
+      doc.pending = [...(committed.pending || []).filter((p) => p && p.id !== REPORT_RECORD), ...records];
+      return doc;
+    };
+    const without = (key) => { const r = { ...record }; delete r[key]; return r; };
+
+    const legs = [
+      { name: "absent under its pending record", doc: variant({}, [record]), red: [], state: "pending" },
+      { name: "the preflight's page as a member, and no record", doc: variant({ member: want.url }, []), red: [], state: "recorded" },
+      { name: "the preflight's page as a root-relative member, and no record", doc: variant({ member: rootRelative }, []), red: [], state: "recorded" },
+      { name: "the preflight's page as a page entry, and no record", doc: variant({ pages: [entry()] }, []), red: [], state: "recorded" },
+      { name: "absent with no record", doc: variant({}, []), red: [TOKEN_FILE, "no pending record"] },
+      { name: "absent under a record with no lands_with", doc: variant({}, [without("lands_with")]), red: [TOKEN_FILE, "lands_with"] },
+      { name: "absent under a record with no owed_by", doc: variant({}, [without("owed_by")]), red: [TOKEN_FILE, "owed_by"] },
+      { name: "absent under the record twice", doc: variant({}, [record, record]), red: [TOKEN_FILE, "2 pending records"] },
+      { name: "the page with the record left behind", doc: variant({ member: want.url }, [record]), red: [TOKEN_FILE, PREFLIGHT_FILE, "still carries"] },
+      { name: "another committed page's entry", doc: variant({ pages: [entry({ url: model.url, query: model.query })] }, []), red: [TOKEN_FILE, PREFLIGHT_FILE, model.url, want.url, "the path is"] },
+      { name: "the page under another parameter", doc: variant({ member: `${want.origin}${want.pathname}?id=<id>` }, []), red: [TOKEN_FILE, PREFLIGHT_FILE, "the parameters are"] },
+      { name: "the page on another origin", doc: variant({ member: `https://elsewhere.invalid${rootRelative}` }, []), red: [TOKEN_FILE, PREFLIGHT_FILE, "the origin is"] },
+      { name: "a page outside /plugins/_/", doc: variant({ member: "/report?plugin=<id>" }, []), red: [TOKEN_FILE, "not under `/plugins/_/`"] },
+      { name: "a relative page", doc: variant({ member: rootRelative.slice(1) }, []), red: [TOKEN_FILE, "neither a URL nor a root-relative path"] },
+      { name: "a null member", doc: variant({ member: null }, []), red: [TOKEN_FILE, "neither a page path nor a page URL"] },
+      { name: "a page entry with no url", doc: variant({ pages: [entry({ url: undefined })] }, []), red: [TOKEN_FILE, "page:MOD-54", "no `url`"] },
+      { name: "a page entry whose query is not a list", doc: variant({ pages: [entry({ query: want.params.join(",") })] }, []), red: [TOKEN_FILE, "page:MOD-54", "not a list of parameter names"] },
+      { name: "a member and a page entry both", doc: variant({ member: want.url, pages: [entry()] }, []), red: [TOKEN_FILE, "twice"] },
+      { name: "two page entries naming MOD-54", doc: variant({ pages: [entry(), entry({ id: "page:MOD-54-again" })] }, []), red: [TOKEN_FILE, "2 page entries"] },
+    ];
+    const wrong = legsGoneWrong(legs, (doc) => pendingJoin(doc, row, { reportPage: want }));
+    assert(wrong.length === 0,
+      `the join between ${TOKEN_FILE}'s MOD-54 report page, its pending record and ${PREFLIGHT_FILE}'s REPORT_PAGE ` +
+      `does not hold on a copy of the committed files, so the live check above is not asking what its name says:\n` +
+      wrong.map((w) => `- ${w}`).join("\n"));
+    console.log(`  note  ${legs.length} states built from HEAD's ${TOKEN_FILE} and ${PREFLIGHT_FILE} ` +
+      `(${want.url}); ${legs.filter((l) => l.red.length).length} red as named, ` +
+      `${legs.filter((l) => !l.red.length).length} green.`);
   });
 
   // ── what the file calls required, against the records it describes ──────
@@ -936,69 +1129,355 @@ function memberPresent(doc, name) {
 }
 
 /**
- * Whether the token file's `staging_listing_id` and the policy file's agree,
- * as `{state, problems}`. `state` is "pending" while the member is null,
- * "recorded" once it holds anything else, and "absent" when the file has no
- * such member. An empty `problems` is agreement.
+ * The token file's members that sit under a pending record, one row each, and
+ * what this module holds each to (ops `dev/couplings.md` entries 33 and 123).
+ *
+ * The clauses every row shares are written once, in `pendingJoin`: in the
+ * pending state exactly one record, naming who owes the value and what lands
+ * it; once recorded, no record left behind. A row says only what differs —
+ * where the member lives, which value is its pending state, what a recorded
+ * value must look like, and what in THIS repository it must agree with. So a
+ * fourth member gets the shared clauses by adding a row, rather than by
+ * somebody re-typing them and forgetting one.
+ *
+ * Row members: `find(doc)` → `{absent}` | `{value, at}` | `{problems}`;
+ * `absent` is the red when the member is missing, or `null` when absence IS
+ * the pending state; `pending(value)` is whether a present value is the
+ * pending one; `judge(value, ctx, found)` → `{malformed}` | `{problems, notes}`
+ * for a recorded value. The rest are words for the messages.
+ */
+const PENDING_MEMBERS = {
+  [STAGING_MEMBER]: {
+    id: STAGING_MEMBER,
+    what: "the id",
+    owes: "who owes the id",
+    floor: "until ops.15 lands the member is null and this record is present",
+    waiting: "a null nobody is waiting to fill",
+    pendingSays: `\`${STAGING_MEMBER}\` is null`,
+    heldTo: `${POLICY_FILE}'s`,
+    find: (doc) => (Object.hasOwn(doc, STAGING_MEMBER) ? { value: doc[STAGING_MEMBER], at: `\`${STAGING_MEMBER}\`` } : { absent: true }),
+    absent:
+      `${TOKEN_FILE} has no \`${STAGING_MEMBER}\` member at all. SCOPE-7 makes the file carry it, null until ` +
+      `ops.15 and ${POLICY_FILE}'s id after, and a reader cannot tell a dropped member from one nobody owes`,
+    pending: (value) => value === null,
+    judge: (value, { reserved }) => {
+      if (typeof value !== "string" || value === "") {
+        return { malformed: [
+          `${TOKEN_FILE}'s \`${STAGING_MEMBER}\` is ${JSON.stringify(value)}, which is neither null nor an id. ` +
+          `${POLICY_FILE}'s readers take anything but a non-empty string as "none reserved" (tools/lib/reserved.mjs)`,
+        ] };
+      }
+      const policyId = stagingListingId(reserved);
+      if (value !== policyId) {
+        return { problems: [
+          `${TOKEN_FILE} records \`${STAGING_MEMBER}\` ${JSON.stringify(value)} and ${POLICY_FILE} reserves ` +
+          `${policyId === null ? "no staging listing id" : JSON.stringify(policyId)}. The registry derives, validates ` +
+          `and excludes by the policy file's id and the panel reads this file's, so MOD-10's path test would be ` +
+          `offered on an id the registry does not treat as its staging listing. One of the two is wrong, and the ` +
+          `policy file's is the one three rules enforce`,
+        ] };
+      }
+      return { problems: [] };
+    },
+  },
+  [VECTOR_MEMBER]: {
+    id: VECTOR_MEMBER,
+    what: "the list of paths",
+    owes: "who owes the paths",
+    floor: "until ops.15 lands the list is empty and this record is present",
+    waiting: "an empty list nobody is waiting to fill",
+    pendingSays: `\`${VECTOR_MEMBER}\` is empty`,
+    heldTo: "what this repository commits",
+    find: (doc) => (Object.hasOwn(doc, VECTOR_MEMBER) ? { value: doc[VECTOR_MEMBER], at: `\`${VECTOR_MEMBER}\`` } : { absent: true }),
+    absent:
+      `${TOKEN_FILE} has no \`${VECTOR_MEMBER}\` member at all. The generator writes it as an empty list until ` +
+      `ops.15 records the paths, and a reader cannot tell a dropped member from one nobody owes`,
+    pending: (value) => Array.isArray(value) && value.length === 0,
+    judge: (value, { tracked }) => vectorPathsAgainstTree(value, tracked),
+  },
+  [REPORT_RECORD]: {
+    id: REPORT_RECORD,
+    what: "the page",
+    owes: "who owes the page",
+    floor: "until that version lands the entry is absent and this record is present",
+    waiting: "an absence nobody is waiting to fill",
+    pendingSays: "MOD-54 report page is absent",
+    heldTo: `${PREFLIGHT_FILE}'s REPORT_PAGE`,
+    find: findReportPage,
+    absent: null,
+    pending: () => false,
+    judge: (value, { reportPage }, found) => reportPageAgainstPreflight(value, reportPage, found),
+  },
+};
+
+/**
+ * Whether one pending member holds its record's floor and, once recorded,
+ * agrees with this repository, as `{state, problems, notes}`. `state` is
+ * "pending", "recorded", or "absent" when a member that must be present is
+ * not. An empty `problems` is agreement; `notes` are said, not judged.
  *
  * @param {object} doc the parsed token file
- * @param {object} reserved the parsed policy/reserved-ids.json
+ * @param {object} row one of PENDING_MEMBERS
+ * @param {object} ctx what the row's `judge` compares with
  */
-function stagingIdJoin(doc, reserved) {
+function pendingJoin(doc, row, ctx) {
   const problems = [];
-  const records = (Array.isArray(doc.pending) ? doc.pending : []).filter((p) => p && p.id === STAGING_MEMBER);
-  const policyId = stagingListingId(reserved);
-  if (!Object.hasOwn(doc, STAGING_MEMBER)) {
-    problems.push(
-      `${TOKEN_FILE} has no \`${STAGING_MEMBER}\` member at all. SCOPE-7 makes the file carry it, null until ` +
-      `ops.15 and ${POLICY_FILE}'s id after, and a reader cannot tell a dropped member from one nobody owes`);
-    return { state: "absent", problems };
+  const records = (Array.isArray(doc.pending) ? doc.pending : []).filter((p) => p && p.id === row.id);
+  const found = row.find(doc);
+  if (found.problems) return { state: "recorded", problems: found.problems, notes: [] };
+  if (found.absent && row.absent !== null) {
+    problems.push(row.absent);
+    return { state: "absent", problems, notes: [] };
   }
-  const value = doc[STAGING_MEMBER];
-  if (value === null) {
+  if (found.absent || row.pending(found.value)) {
     if (records.length === 0) {
       problems.push(
-        `${TOKEN_FILE}'s \`${STAGING_MEMBER}\` is null and the file carries no pending record for it, so nothing ` +
-        `says the id is owed, by whom, or when. The record's floor is "until ops.15 lands the member is null and ` +
-        `this record is present"; a regeneration that drops the record has to record the id`);
+        `${TOKEN_FILE}'s ${row.pendingSays} and the file carries no pending record for it, so nothing ` +
+        `says ${row.what} is owed, by whom, or when. The record's floor is "${row.floor}"; a regeneration that ` +
+        `drops the record has to record ${row.what}`);
     } else if (records.length > 1) {
       problems.push(
-        `${TOKEN_FILE} carries ${records.length} pending records with id \`${STAGING_MEMBER}\`, and a reader ` +
+        `${TOKEN_FILE} carries ${records.length} pending records with id \`${row.id}\`, and a reader ` +
         `finding the first one cannot know the others say something different`);
     }
     for (const r of records) {
       for (const key of ["owed_by", "lands_with"]) {
         if (!(typeof r[key] === "string" && r[key].trim() !== "")) {
           problems.push(
-            `${TOKEN_FILE}'s pending record \`${STAGING_MEMBER}\` has no \`${key}\`, so it does not say ` +
-            `${key === "owed_by" ? "who owes the id" : "which version lands it"}: a record that names nothing to ` +
-            `wait on is a null nobody is waiting to fill`);
+            `${TOKEN_FILE}'s pending record \`${row.id}\` has no \`${key}\`, so it does not say ` +
+            `${key === "owed_by" ? row.owes : "which version lands it"}: a record that names nothing to ` +
+            `wait on is ${row.waiting}`);
         }
       }
     }
-    return { state: "pending", problems };
+    return { state: "pending", problems, notes: [] };
   }
-  if (typeof value !== "string" || value === "") {
-    problems.push(
-      `${TOKEN_FILE}'s \`${STAGING_MEMBER}\` is ${JSON.stringify(value)}, which is neither null nor an id. ` +
-      `${POLICY_FILE}'s readers take anything but a non-empty string as "none reserved" (tools/lib/reserved.mjs)`);
-    return { state: "recorded", problems };
-  }
-  if (value !== policyId) {
-    problems.push(
-      `${TOKEN_FILE} records \`${STAGING_MEMBER}\` ${JSON.stringify(value)} and ${POLICY_FILE} reserves ` +
-      `${policyId === null ? "no staging listing id" : JSON.stringify(policyId)}. The registry derives, validates ` +
-      `and excludes by the policy file's id and the panel reads this file's, so MOD-10's path test would be ` +
-      `offered on an id the registry does not treat as its staging listing. One of the two is wrong, and the ` +
-      `policy file's is the one three rules enforce`);
-  }
+  const judged = row.judge(found.value, ctx, found);
+  if (judged.malformed?.length) return { state: "recorded", problems: judged.malformed, notes: [] };
+  problems.push(...judged.problems);
   if (records.length) {
     problems.push(
-      `${TOKEN_FILE} records \`${STAGING_MEMBER}\` ${JSON.stringify(value)} and still carries its pending record ` +
-      `saying the id is owed. Once the value is recorded, and held to ${POLICY_FILE}'s, the record has outlived ` +
-      `its reason; the ops generator drops a pending record when it writes the value, and this one was not dropped`);
+      `${TOKEN_FILE} records ${found.at} ${JSON.stringify(found.value)} and still carries its pending record ` +
+      `\`${row.id}\` saying ${row.what} is owed. Once the value is recorded, and held to ${row.heldTo}, the record ` +
+      `has outlived its reason; the ops generator drops a pending record when it writes the value, and this one ` +
+      `was not dropped`);
   }
-  return { state: "recorded", problems };
+  return { state: "recorded", problems, notes: judged.notes ?? [] };
+}
+
+/** AT's name for the staging row's join, which its two tests above call. */
+const stagingIdJoin = (doc, reserved) => pendingJoin(doc, PENDING_MEMBERS[STAGING_MEMBER], { reserved });
+
+/** A synthesised leg's "delete this member" value. */
+const ABSENT = Symbol("absent");
+
+/** A pending record for a test to use once the file no longer carries one. */
+const builtRecord = (id, floor) => ({
+  id, what: `the ${id} (built by this test)`, owed_by: "(built by this test)",
+  lands_with: "(built by this test)", floor,
+});
+
+/**
+ * The synthesised legs that did not come out as written, as sentences. A leg
+ * is `{name, doc, red, state?, noted?}`: `red` empty means green, otherwise
+ * every string in it must appear in the problems; `state` and `noted`, when
+ * given, are held too, so a green leg cannot be green for the wrong reason.
+ */
+function legsGoneWrong(legs, join) {
+  const wrong = [];
+  for (const leg of legs) {
+    const { state, problems, notes = [] } = join(leg.doc);
+    const said = problems.join("\n");
+    if (leg.red.length === 0) {
+      if (problems.length) wrong.push(`${leg.name}: expected green, was red: ${said}`);
+      else if (leg.state && state !== leg.state) wrong.push(`${leg.name}: green, but read as ${state}, not ${leg.state}`);
+      const unsaid = (leg.noted || []).filter((s) => !notes.some((n) => n.includes(s)));
+      if (unsaid.length) wrong.push(`${leg.name}: green, but its note does not name ${unsaid.join(", ")}: ${JSON.stringify(notes)}`);
+    } else if (!problems.length) {
+      wrong.push(`${leg.name}: expected red, was green`);
+    } else {
+      const unnamed = leg.red.filter((s) => !said.includes(s));
+      if (unnamed.length) wrong.push(`${leg.name}: red, but not naming ${unnamed.join(", ")}: ${said}`);
+    }
+  }
+  return wrong;
+}
+
+/** Every committed file, and every directory above one, from a NUL-split listing. */
+function trackedTree(listing) {
+  const files = new Set(listing.filter(Boolean));
+  const dirs = new Set();
+  for (const f of files) {
+    for (let i = f.indexOf("/"); i !== -1; i = f.indexOf("/", i + 1)) dirs.add(f.slice(0, i));
+  }
+  return { files, dirs };
+}
+
+/** Why `p` is not a repository-relative path, or null when it is one. */
+function repoPathProblem(p) {
+  if (typeof p !== "string") return "it is not a string";
+  if (p === "") return "it is empty";
+  if (p.startsWith("/")) return "it is absolute";
+  if (p.includes("\\")) return "it carries a backslash";
+  const segments = (p.endsWith("/") ? p.slice(0, -1) : p).split("/");
+  if (segments.some((s) => s === "" || s === "." || s === "..")) return "it has an empty, `.` or `..` segment";
+  const odd = segments.find((s) => !/^[A-Za-z0-9._-]+$/.test(s));
+  if (odd) return `its segment ${JSON.stringify(odd)} carries a character no committed corpus path uses`;
+  return null;
+}
+
+/**
+ * A recorded `shared_vector_paths`, against the tree. There is no list of the
+ * shared corpora anywhere in this repository to equal, so the counterpart is
+ * the tree itself: a file path must be committed, a directory path (trailing
+ * `/`) must not name a file, and a directory not committed yet is said rather
+ * than judged — `tests/results/` is created at R3 and recorded before R2.
+ */
+function vectorPathsAgainstTree(value, tracked) {
+  if (!Array.isArray(value)) {
+    return { malformed: [
+      `${TOKEN_FILE}'s \`${VECTOR_MEMBER}\` is ${JSON.stringify(value)}, which is neither the empty list nor a list ` +
+      `of paths. A party reading the shared corpora at a pinned registry commit takes each element as a path in ` +
+      `this repository (§1.3 row 8.3)`,
+    ] };
+  }
+  const malformed = [];
+  const seen = new Set();
+  value.forEach((p, i) => {
+    const why = repoPathProblem(p);
+    if (why) {
+      malformed.push(`${TOKEN_FILE}'s \`${VECTOR_MEMBER}\`[${i}] is ${JSON.stringify(p)}, which is not a ` +
+        `repository-relative path: ${why}`);
+    } else if (seen.has(p)) {
+      malformed.push(`${TOKEN_FILE}'s \`${VECTOR_MEMBER}\` names ${JSON.stringify(p)} twice, and a reader ` +
+        `counting corpora counts one of them twice`);
+    }
+    seen.add(p);
+  });
+  if (malformed.length) return { malformed };
+  const problems = [];
+  const notes = [];
+  for (const p of value) {
+    if (p.endsWith("/")) {
+      const dir = p.slice(0, -1);
+      if (tracked.files.has(dir)) {
+        problems.push(`${TOKEN_FILE}'s \`${VECTOR_MEMBER}\` names ${JSON.stringify(p)} as a directory and this ` +
+          `repository commits a file at ${dir}`);
+      } else if (!tracked.dirs.has(dir)) {
+        notes.push(`${p} is not committed yet`);
+      }
+    } else if (!tracked.files.has(p)) {
+      problems.push(tracked.dirs.has(p)
+        ? `${TOKEN_FILE}'s \`${VECTOR_MEMBER}\` names ${JSON.stringify(p)} as a file, and this repository commits a ` +
+          `directory there; a directory is written with its trailing \`/\``
+        : `${TOKEN_FILE}'s \`${VECTOR_MEMBER}\` names ${JSON.stringify(p)} and this repository does not commit it. ` +
+          `The corpora are read at a pinned registry commit by a party that is not this one (§1.3 row 8.3), so a ` +
+          `path the file agrees and the tree lacks is a reader that fails there, or skips`);
+    }
+  }
+  return { problems, notes };
+}
+
+/** Whether a token-file entry is MOD-54's: it says so in its id, name or source. */
+function namesMod54(e) {
+  return [e.id, e.name, e.source].some((s) => typeof s === "string" && /\bMOD-54\b/.test(s));
+}
+
+/**
+ * MOD-54's report page in the token file, in either shape a version could
+ * record it in: a `mod54_report_page` member, or a `page` entry naming MOD-54
+ * (FLOW-77's is the model). Both at once, or two entries, is a page spelled
+ * twice. Neither is the pending state — the record's floor says "absent".
+ */
+function findReportPage(doc) {
+  const member = Object.hasOwn(doc, REPORT_RECORD);
+  const pages = (Array.isArray(doc.entries) ? doc.entries : []).filter((e) => e && e.kind === "page" && namesMod54(e));
+  if (member && pages.length) {
+    return { problems: [
+      `${TOKEN_FILE} spells MOD-54's report page twice, as a \`${REPORT_RECORD}\` member and as the page entry ` +
+      `\`${pages[0].id}\`, and a reader of one cannot know the other says something different`,
+    ] };
+  }
+  if (pages.length > 1) {
+    return { problems: [
+      `${TOKEN_FILE} carries ${pages.length} page entries naming MOD-54 (${pages.map((e) => `\`${e.id}\``).join(", ")}), ` +
+      `and MOD-54 is one page`,
+    ] };
+  }
+  if (member) return { value: doc[REPORT_RECORD], at: `\`${REPORT_RECORD}\`` };
+  if (pages.length) return { value: pages[0], at: `the page entry \`${pages[0].id}\``, entry: true };
+  return { absent: true };
+}
+
+/**
+ * A page as "the page and its query parameters": `{origin, pathname, params}`,
+ * `origin` null for a root-relative path, `params` the sorted names from its
+ * own query string and from `query`. Null when it is neither a URL nor a path
+ * from the root.
+ */
+function pageOf(text, query = []) {
+  const absolute = /^[a-z][a-z0-9+.-]*:\/\//i.test(text);
+  if (!absolute && !text.startsWith("/")) return null;
+  let u;
+  try { u = new URL(text, "https://root-relative.invalid"); } catch { return null; }
+  return { origin: absolute ? u.origin : null, pathname: u.pathname, params: [...new Set([...u.searchParams.keys(), ...query])].sort() };
+}
+
+/** `REPORT_PAGE` out of the preflight's bytes, or `{error}`. It must be defined exactly once, absolute. */
+function reportPageOf(text) {
+  const hits = [...text.matchAll(REPORT_PAGE_LINE)];
+  if (hits.length !== 1) {
+    return { error: `\`const REPORT_PAGE = "…";\` is defined ${hits.length} time(s), not once, so MOD-54's page as ` +
+      `this repository spells it cannot be read and the token file's page has nothing to be held to` };
+  }
+  const page = pageOf(hits[0][1]);
+  if (!page || page.origin === null) {
+    return { error: `REPORT_PAGE is ${JSON.stringify(hits[0][1])}, which is not an absolute URL` };
+  }
+  return { url: hits[0][1], ...page };
+}
+
+/** A recorded MOD-54 page, against the preflight's `REPORT_PAGE`. */
+function reportPageAgainstPreflight(value, want, found) {
+  const isEntry = found.entry === true;
+  let page;
+  if (isEntry) {
+    if (typeof value.url !== "string" || value.url === "") {
+      return { malformed: [`${TOKEN_FILE}'s ${found.at} has no \`url\`, so it names no page`] };
+    }
+    if (value.query !== undefined && !(Array.isArray(value.query) && value.query.every((q) => typeof q === "string" && q))) {
+      return { malformed: [`${TOKEN_FILE}'s ${found.at} has \`query\` ${JSON.stringify(value.query)}, which is not a ` +
+        `list of parameter names`] };
+    }
+    page = pageOf(value.url, value.query ?? []);
+  } else {
+    if (typeof value !== "string" || value.trim() === "") {
+      return { malformed: [`${TOKEN_FILE}'s ${found.at} is ${JSON.stringify(value)}, which is neither a page path ` +
+        `nor a page URL`] };
+    }
+    page = pageOf(value);
+  }
+  const shown = JSON.stringify(isEntry ? { url: value.url, query: value.query } : value);
+  if (!page) {
+    return { malformed: [`${TOKEN_FILE}'s ${found.at} is ${shown}, which is neither a URL nor a root-relative path`] };
+  }
+  if (!page.pathname.startsWith("/plugins/_/")) {
+    return { malformed: [`${TOKEN_FILE}'s ${found.at} is ${shown}, whose path ${page.pathname} is not under ` +
+      "`/plugins/_/`, and MOD-54 says the report page is \"under `/plugins/_/`\""] };
+  }
+  const differs = [];
+  if (page.pathname !== want.pathname) differs.push(`the path is ${page.pathname}, not ${want.pathname}`);
+  if (page.params.join(",") !== want.params.join(",")) {
+    differs.push(`the parameters are ${JSON.stringify(page.params)}, not ${JSON.stringify(want.params)}`);
+  }
+  if (page.origin !== null && page.origin !== want.origin) differs.push(`the origin is ${page.origin}, not ${want.origin}`);
+  if (!differs.length) return { problems: [] };
+  return { problems: [
+    `${TOKEN_FILE} records MOD-54's report page as ${found.at} ${shown}, and ${PREFLIGHT_FILE}'s REPORT_PAGE is ` +
+    `${JSON.stringify(want.url)}: ${differs.join("; ")}. The preflight's mod-54-report-page check sends an ` +
+    `operator to walk its page before R6, and the panel serves the one this file names, so a disagreement is a ` +
+    `walk of one page and a gate passed on another. One of the two is wrong`,
+  ] };
 }
 
 /**
