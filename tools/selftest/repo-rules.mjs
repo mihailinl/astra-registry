@@ -737,6 +737,15 @@ export async function run() {
     // the suite prints `300 passed, 0 failed` — a suite that stopped running
     // it would return to that state and look exactly like one that had not.
     "trust-anchor.mjs",
+    // `loads.mjs` was added on 2026-09-22 with ops couplings entry 116 — the
+    // modules a `--loads` run executes, held to TRUST-31's set and to the
+    // residual declared beside the checks. Watched both ways: deleted from disk
+    // together with its runner and FLOORS entries, which only this list turns
+    // red; and left out of this list, which is silent. It matters for
+    // this module because both of its checks say NOT ASKED in every lane but
+    // one, so a suite that stopped running it would print the same count of
+    // NOT ASKED minus two and look like a suite that had less to skip.
+    "loads.mjs",
   ];
   // A literal control character in a tracked source file is invisible, and that
   // is the whole of the defect. `bot/lib/moderation.mjs` carried three NUL
