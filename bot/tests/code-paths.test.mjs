@@ -534,6 +534,7 @@ const ROUTINE = [
   { p: "bot/moderation/2026-08-19-echo-stt-delist.json", why: "a moderation log entry (MOD-47)", exists: true },
   { p: "state/queue/demo@1.0.0.json", why: "a queue entry (BOT-38)", exists: false, by: "written by an ingest run" },
   { p: "state/holds/0192.json", why: "a hold (MOD-9)", exists: false, by: "M-T3.3" },
+  { p: "state/moderation-settled.json", why: "the results history decided that the service settled (ops entry 100)", exists: false, by: "the first live moderation run whose list job settles one, from R3" },
   { p: "state/deny/abc123.json", why: "an operator deny record (TRUST-33)", exists: false, by: "operator.yml's `act: deny`, M-T3.5" },
   { p: "state/alerts/abc123.json", why: "an alert record (TRUST-32); its delivery report is what the operator window counts from", exists: false, by: "the ingest run's alert job" },
   { p: "policy/binding-deadline.json", why: "the binding deadline, which the OWNER commits by hand (MIG-2)", exists: false, by: "the owner, before R4b" },
@@ -858,6 +859,17 @@ export const DATA_OUTSIDE = [
   { path: "plugins/", why: "the catalogue's sources, which every run judges and a publication writes" },
   { path: "publishers/", why: "publisher records, hand-reviewed and withdrawn by the daily re-check; TRUST-31 lists them outside" },
   { path: "log/", why: "decision records, the baseline marker, the cutover marker and migration notices: records, not rules" },
+  // Named before `state/`, which would also cover it, because this record is
+  // READ to decide something — whether a result from history is posted again —
+  // and that trade is stated here rather than inherited (ops entry 100).
+  {
+    path: "state/moderation-settled.json",
+    why: "the moderation run's record of results the service answered accepted or duplicate (ops entry 100). A record " +
+      "the commit job writes as it works, so hashing it would put the bot into shadow for doing its job; the rule that " +
+      "reads it is bot/lib/settled.mjs, inside the set. A forged well-formed row withholds one result a commit in " +
+      "history decided — changing nothing in git, only keeping a hold's end from the service's record — and every " +
+      "other fault in the file degrades to posting again",
+  },
   { path: "state/", why: "queue, holds, alerts and watch state a run writes as it works" },
   { path: "bot/moderation/", why: "MOD-47 moderation log entries, the moderation run's subject" },
   { path: "tools/revocations/", why: "advisories, compiled into the served list" },

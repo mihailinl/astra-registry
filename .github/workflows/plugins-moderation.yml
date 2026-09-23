@@ -32,6 +32,22 @@ name: Plugins moderation
 #
 # Nothing in YAML enforces that table; `bot/tests/workflows.test.mjs` does.
 #
+# ── the results history already decided, and why `list` posts them ─────────
+#
+# A hold ended by a commit already on `main` — a person deleting the entry, a
+# release or cancel commit — has a result that names that commit. Until ops
+# entry 100 closed, `report` re-derived and re-posted every one of them on
+# every live run, for ever, because nothing recorded that the service had
+# accepted it. The answer is seen only by a job with a bot token, and only
+# `commit` may write; `report` runs after `commit`, and neither may carry bytes
+# to the next run's `commit` (an artifact from a token job: BOT-55; a cache:
+# BOT-56; another run's artifact would need `actions: read`, which `commit`
+# does not hold). So `list` posts those results BEFORE `commit` — they wait
+# for no push of this run — and hands on the ones the service ANSWERED
+# `accepted` or `duplicate` as its `settled` output. `commit` re-checks them
+# and records them in `state/moderation-settled.json`, and every later run
+# skips them. No job gained a permission, an environment or a secret.
+#
 # ── why `alert` is a job and not a step, and why `commit` needs it ─────────
 #
 # MOD-8 requires every advisory and every hold to be alerted BEFORE the push,
@@ -132,12 +148,20 @@ jobs:
       submissions: ${{ steps.work.outputs.submissions }}
       refused: ${{ steps.work.outputs.refused }}
       listed: ${{ steps.work.outputs.listed }}
+      # The results history decided that the service ANSWERED `accepted` or
+      # `duplicate` in this run: ids, outcomes, commits, the answer word, when
+      # and in which run — no token and no response body (ops entry 100).
+      settled: ${{ steps.history.outputs.settled }}
     steps:
       - uses: actions/checkout@v4
         with:
           # Every job in this run reads the same tree, which is also the tree
           # whose `job_workflow_sha` the service hashes under TRUST-31.
           ref: ${{ github.sha }}
+          # The `history` step reads every commit that deleted a hold entry,
+          # which a shallow clone hides; `holdDeletions` refuses one rather
+          # than report fewer.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -147,6 +171,19 @@ jobs:
         run: |
           set -euo pipefail
           echo "::error::B-T5.1 turns this call live. The step runs 'node bot/moderation-run.mjs --job list', which mints one bot OIDC token per attempt with the bot audience, masks it before first use, GETs bot/moderation-work at most three times, and checks the answer and every entry against schema/moderation-work-v1.json — writing shadow, entries, submissions, refused and listed to this job's outputs. It stays a placeholder while the file is dark: a step that called the service on a workflow_dispatch would be a live call from a workflow nobody has acknowledged (TRUST-42)."
+          exit 1
+
+      # Ops entry 100. Before `commit`, and in this job because it holds the
+      # token and `commit` may not: post each result a commit already on `main`
+      # decided and the record does not yet hold, and hand on the ones the
+      # service answered `accepted` or `duplicate`. Keyed on the answer — a
+      # 5xx, a timeout or a shadow answer records nothing — and a result not
+      # settled here is posted again by `report` after the commit.
+      - name: "Post the results history decided, and hand on what the service settled (not built: B-T5.1)"
+        id: history
+        run: |
+          set -euo pipefail
+          echo "::error::B-T5.1 turns this step live with the list call. It runs 'node bot/moderation-run.mjs --job history --out moderation' with ASTRA_SHADOW set from the work step's shadow output: under anything but shadow false it posts nothing (BOT-92); otherwise it posts, to bot/service-decision-results, each applied or cancelled result a commit already on main decided that state/moderation-settled.json does not hold, and writes the rows the service answered accepted or duplicate — ids, outcomes, commits, the answer, its time and this run — from moderation/settled.json to this job's settled output. It stays a placeholder while the file is dark, for the work step's reason."
           exit 1
 
   # ── alert: MOD-8's alarms, before anything is pushed ───────────────────────
@@ -265,6 +302,10 @@ jobs:
           ASTRA_SHADOW: ${{ needs.list.outputs.shadow }}
           ASTRA_ENTRIES: ${{ needs.list.outputs.entries }}
           ASTRA_SUBMISSIONS: ${{ needs.list.outputs.submissions }}
+          # Ops entry 100: re-checked like `entries`, and recorded in
+          # state/moderation-settled.json only under `shadow: false` and only
+          # for a result this job's own walk derived.
+          ASTRA_SETTLED: ${{ needs.list.outputs.settled }}
           ASTRA_DELIVERED_AT: ${{ needs.alert.outputs.delivered_at }}
         run: |
           set -euo pipefail
@@ -375,6 +416,12 @@ jobs:
   # `main_commit`, and not in that job: an `applied` and a newly entered `held`
   # name the commit the `apply` step pushed (BOT-81), which does not exist
   # until that step has run.
+  #
+  # A result a commit in history decided is posted first by `list`, and the
+  # ones the service settled there are recorded by `commit` and are not in
+  # `results` at all. What reaches this job is what `list` could not settle —
+  # a 5xx, a timeout, a shadow answer — and it is posted again here, and by
+  # the next live run's `list`, until an answer settles it (ops entry 100).
   report:
     needs: [list, commit]
     if: needs.commit.result == 'success'

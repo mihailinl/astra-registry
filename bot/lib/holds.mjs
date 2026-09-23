@@ -88,7 +88,10 @@
 // commit, once built, is meant to be made in shadow too. Its `applied` or
 // `cancelled` result, though, SETTLES a decision, which is what BOT-92 calls
 // state-setting, so it is posted only in a run whose list answer is `shadow:
-// false` — the next such run, not this one, re-posted until accepted.
+// false` — the next such run, not this one, re-posted until accepted. "Until
+// accepted" is a fact this side records: `bot/lib/settled.mjs` keeps each one
+// the service answered `accepted` or `duplicate`, and the walk skips it (ops
+// entry 100).
 // `resultsToPost` is where that split lives, and `resultKey` is BOT-82's
 // idempotency key, which answers a repeat `duplicate` with no time limit (so
 // there is no re-post window to expire). The only `applied` or `cancelled`

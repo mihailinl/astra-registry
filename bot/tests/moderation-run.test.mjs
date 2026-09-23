@@ -79,6 +79,9 @@ import { holdEntry, readHolds, resolveHold } from "../lib/holds.mjs";
 // modules without them is red test by test rather than at import.
 import * as holdsModule from "../lib/holds.mjs";
 import * as moderationRun from "../moderation-run.mjs";
+// Ops entry 100's module, imported so that this suite, run against a tree
+// without it, is red test by test rather than at import.
+const settledLib = await import("../lib/settled.mjs").catch(() => null);
 import { CATEGORIES } from "../lib/moderation.mjs";
 import { BOT_AUDIENCE } from "../lib/oidc.mjs";
 import { BODIES } from "../lib/service.mjs";
@@ -1259,7 +1262,7 @@ test("a confirmed, due hold that nothing applies is refused by name, never repor
 // the tree had no such file, and `git add --pathspec-from-file` — the next
 // command the workflow runs — exits 128 on a path that does not exist. Measured
 // before the repair on this same shape: `main` returned 0, and the add died.
-async function commitJob(root, { entries, submissions = [], shadow = false, now = new Date("2026-09-20T12:30:00Z") }) {
+async function commitJob(root, { entries, submissions = [], shadow = false, now = new Date("2026-09-20T12:30:00Z"), env = {} }) {
   const out = path.join(root, "moderation");
   const logs = [];
   const saved = globalThis.fetch;
@@ -1275,6 +1278,7 @@ async function commitJob(root, { entries, submissions = [], shadow = false, now 
         ASTRA_SHADOW: shadow ? "true" : "false",
         ASTRA_OVER_BOUND: "false",
         GITHUB_RUN_ID: "35502265394",
+        ...env,
       },
       log: { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) },
       fetchImpl: offline,
@@ -2205,4 +2209,317 @@ test("the moderation cron's interval is the token file's, commented or not", () 
   assert.equal(ingest.length, 1);
   const ingestFrom = Number(ingest[0].split(/\s+/)[0].split("-")[0]);
   assert.equal(from - ingestFrom, 5, "BOT-83 puts the moderation run five minutes from the ingest run's minutes");
+});
+
+// ── ops entry 100: a result history decided is posted until SETTLED, then never ─
+//
+// A hold that left the tree is ended by a commit, and the walk re-read every
+// such commit in the whole history every run: two consecutive live runs over
+// one hand-deleted hold each posted the same `cancelled`, and each warned.
+// Nothing on this side recorded that the service had accepted it. Now the
+// `list` job posts those results before `commit` (`--job history`), hands on
+// the rows the service ANSWERED `accepted` or `duplicate`, and `commit`
+// records them in `state/moderation-settled.json`, which the walk skips.
+//
+// The rule these tests hold, and the three mutations they were written
+// against: a result is recorded on the ANSWER — not because it was posted, and
+// not on a 5xx — and a record that is absent or unreadable skips NOTHING.
+
+const SETTLED_FILE_PATH = "state/moderation-settled.json";
+const RUN_URL = "https://github.com/mihailinl/astra-registry/actions/runs/35502265394";
+const hid = (n) => `0192f3a4-5b6c-7d8e-9f01-2345678920${String(n).padStart(2, "0")}`;
+
+/** A tree with one hold entry per id, each then deleted BY HAND in its own commit (BOT-70): a `cancelled` each. */
+function handCancelled(ids, { documents = false, remote = false } = {}) {
+  const entryFor = (sdi) => holdEntry({
+    service_decision_id: sdi, code: "M_RELIST", category: "error", plugin_id: "widgets",
+    decided_at: "2026-09-18T11:00:00Z", reason: MODERATOR_REASON, moderator: "amoderator", reverses: SDI2,
+  }, { held_for: "reversal", held_at: "2026-09-18T12:00:00Z" });
+  const extra = {};
+  for (const id of ids) extra[holdEntryPath(id)] = entryFor(id);
+  const root = estate({ extra });
+  if (documents) withDocuments(root);
+  const sha = {};
+  for (const id of ids) {
+    sh(["rm", "-q", holdEntryPath(id)], root);
+    sh(["commit", "-q", "-m", "tidy the holds directory"], root);
+    sha[id] = sh(["rev-parse", "HEAD"], root).trim();
+  }
+  const origin = remote ? withRemote(root) : null;
+  return { root, sha, origin };
+}
+
+/** A bot-ack answer, as the stub service sends it. */
+const ack = (outcome, over = {}) => ({ status: 200, body: { schema: "astra.plugins.bot-ack/1", shadow: false, outcome, ...over } });
+
+/** `--job history`, as the `list` job's step runs it, against a stub service that records every body. */
+async function historyJob(root, { shadow = "false", answer = () => ack("accepted"), env = {}, now = new Date("2026-09-21T10:00:00Z") } = {}) {
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-history-"));
+  tmpRoots.push(out);
+  const bodies = [];
+  const logs = [];
+  const json = (status, body) => new Response(typeof body === "string" ? body : JSON.stringify(body), {
+    status, headers: { "content-type": "application/json" },
+  });
+  const fetchImpl = async (url, init = {}) => {
+    if (String(url).startsWith("https://token.invalid/")) return json(200, { value: fakeToken() });
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    const a = answer(body);
+    if (a instanceof Error) throw a;
+    return json(a.status, a.body);
+  };
+  const code = await main(["--job", "history", "--registry-dir", root, "--out", out], {
+    env: {
+      ACTIONS_ID_TOKEN_REQUEST_URL: "https://token.invalid/token?api-version=2.0",
+      ACTIONS_ID_TOKEN_REQUEST_TOKEN: "the-runner-secret",
+      GITHUB_SERVER_URL: "https://github.com",
+      GITHUB_REPOSITORY: "mihailinl/astra-registry",
+      GITHUB_RUN_ID: "35502265394",
+      ASTRA_SHADOW: shadow,
+      ...env,
+    },
+    log: { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) },
+    fetchImpl,
+    now,
+  });
+  const file = path.join(out, "settled.json");
+  const text = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+  return { code, bodies, logs, text, settled: text === null ? null : JSON.parse(text) };
+}
+
+/** A sound row for one of `handCancelled`'s ids, as the record holds it. */
+const rowFor = (id, commit, over = {}) => ({
+  service_decision_id: id, outcome: "cancelled", commit, answer: "accepted",
+  answered_at: "2026-09-21T09:00:00Z", run: RUN_URL, ...over,
+});
+
+const writeRecord = (root, doc) => writeAll(root, { [SETTLED_FILE_PATH]: typeof doc === "string" ? doc : doc });
+const postedIds = (bodies) => [...new Set(bodies.map((b) => b.service_decision_id))].sort();
+const pendingIds = (job) => job.results.holds.pending.map((p) => p.service_decision_id).sort();
+
+test("the acknowledgement words that settle a result are the token file's `result_acknowledgements`, both ways", () => {
+  assert.ok(settledLib, "bot/lib/settled.mjs is not on this tree (ops entry 100)");
+  const tokens = JSON.parse(read("schema/contract-tokens-v1.json"));
+  const list = (tokens.entries ?? []).find((e) => e.id === "list:result_acknowledgements");
+  assert.ok(list, "the token file carries no `list:result_acknowledgements`, so there is nothing to hold the words to");
+  assert.ok(list.acceptor.includes("bot"), "the list is not one the bot accepts, so this comparison is about someone else's list");
+  assert.deepEqual([...settledLib.SETTLING_ANSWERS].sort(), [...list.values].sort(),
+    "the words that record a result as settled are not exactly the words the service answers a result with. One " +
+    "missing here re-posts for ever; one extra records a result the service never said it holds");
+  assert.equal(settledLib.SETTLED_FILE, SETTLED_FILE_PATH);
+});
+
+test("a result from history is recorded as settled on `accepted` or `duplicate`, and on no other answer", async () => {
+  assert.ok(settledLib, "bot/lib/settled.mjs is not on this tree (ops entry 100)");
+  const ids = [1, 2, 3, 4, 5, 6, 7, 8].map(hid);
+  const [ACCEPTED, DUPLICATE, UNAVAILABLE, TIMEOUT, SHADOW, UNKNOWN_WORD, REFUSED, UNREADABLE] = ids;
+  const { root, sha } = handCancelled(ids, { documents: true });
+  const answers = {
+    [ACCEPTED]: () => ack("accepted"),
+    [DUPLICATE]: () => ack("duplicate"),
+    [UNAVAILABLE]: () => ({ status: 503, body: "service unavailable" }),
+    [TIMEOUT]: () => new Error("The operation was aborted due to timeout"),
+    [SHADOW]: () => ack("accepted", { shadow: true }),
+    [UNKNOWN_WORD]: () => ack("recorded"),
+    [REFUSED]: () => ({ status: 422, body: { schema: "astra.plugins.error/1", error: "invalid", message: "no" } }),
+    [UNREADABLE]: () => ({ status: 200, body: { schema: "astra.plugins.bot-ack/1", outcome: "accepted" } }),
+  };
+  const job = await historyJob(root, { answer: (b) => answers[b.service_decision_id]() });
+  assert.equal(job.code, 0, `a result the service did not settle failed the list job: ${job.logs.join(" | ")}`);
+  assert.deepEqual(postedIds(job.bodies), [...ids].sort(), "every result history decided must be posted");
+  for (const b of job.bodies) {
+    assert.deepEqual(Object.keys(b).sort(), ["commit", "outcome", "schema", "service_decision_id"].sort());
+    assert.equal(b.commit, sha[b.service_decision_id], "a result from history names the commit that ended the hold");
+  }
+  assert.deepEqual(job.settled.map((r) => r.service_decision_id).sort(), [ACCEPTED, DUPLICATE].sort(),
+    "a result was recorded as settled on something other than the service answering `accepted` or `duplicate`: " +
+    "a 5xx, a timeout, a shadow answer, a word outside the token file's list, a refusal and an answer that failed " +
+    "its schema each settle nothing");
+  for (const r of job.settled) {
+    assert.deepEqual(r, {
+      service_decision_id: r.service_decision_id, outcome: "cancelled", commit: sha[r.service_decision_id],
+      answer: r.service_decision_id === ACCEPTED ? "accepted" : "duplicate",
+      answered_at: "2026-09-21T10:00:00Z", run: RUN_URL,
+    }, "a row must carry the answer, when it came and the run that received it, so a skip can be traced");
+  }
+  assert.deepEqual(settledLib.rowProblems(job.settled[0]), []);
+
+  // The commit job records exactly those, and the rest stay results to post.
+  const commit = await commitJob(root, { entries: [], env: { ASTRA_SETTLED: job.text } });
+  assert.equal(commit.code, 0, commit.logs.join("\n"));
+  assert.deepEqual(commit.results.settled.recorded.map((r) => r.service_decision_id).sort(), [ACCEPTED, DUPLICATE].sort());
+  assert.deepEqual(commit.paths, [SETTLED_FILE_PATH], "a run whose only news is a settled result commits the record, and only it");
+  const onDisk = JSON.parse(fs.readFileSync(path.join(root, SETTLED_FILE_PATH), "utf8"));
+  assert.equal(onDisk.schema, "astra.registry.moderation-settled/1");
+  assert.deepEqual(onDisk.settled.map((r) => r.service_decision_id).sort(), [ACCEPTED, DUPLICATE].sort());
+  assert.deepEqual(pendingIds(commit), [UNAVAILABLE, TIMEOUT, SHADOW, UNKNOWN_WORD, REFUSED, UNREADABLE].sort(),
+    "a result the service did not settle must stay a result `report` posts");
+  const message = fs.readFileSync(path.join(root, "moderation", "commit-message.txt"), "utf8");
+  assert.match(message, /2 settled result\(s\) recorded/);
+  assert.doesNotMatch(message, /^Service-Decision:/m, "recording a result applies, holds and cancels nothing (BOT-81)");
+});
+
+test("a recorded result is not posted again, and an unrecorded one is, by both jobs that post", async () => {
+  const [DONE, OPEN] = [11, 12].map(hid);
+  const { root, sha } = handCancelled([DONE, OPEN]);
+  writeRecord(root, { schema: "astra.registry.moderation-settled/1", settled: [rowFor(DONE, sha[DONE])] });
+
+  const history = await historyJob(root);
+  assert.deepEqual(postedIds(history.bodies), [OPEN],
+    "the list job posted a result the record says the service already settled, or did not post one it does not");
+  const commit = await commitJob(root, { entries: [] });
+  assert.equal(commit.code, 0, commit.logs.join("\n"));
+  assert.deepEqual(pendingIds(commit), [OPEN], "the commit job handed `report` a result the record says is settled");
+  assert.deepEqual(commit.results.holds.settled.map((r) => r.service_decision_id), [DONE]);
+  assert.ok(!commit.logs.some((l) => l.includes("hold_hand_cancelled") && l.includes(DONE)),
+    `a hand cancellation the service has settled was warned about again: ${commit.logs.join(" | ")}`);
+  assert.ok(commit.logs.some((l) => l.includes("hold_hand_cancelled") && l.includes(OPEN)),
+    "a hand cancellation the service has not settled must still be said");
+  const report = await reportJob({ ASTRA_RESULTS: JSON.stringify(commit.results), ASTRA_MAIN_COMMIT: "" });
+  assert.equal(report.code, 0, report.logs.join("\n"));
+  assert.deepEqual(postedIds(report.bodies), [OPEN], "report re-posted a settled result, or dropped an unsettled one");
+
+  // The skip is BOT-82's whole key: the same decision and outcome under another commit is another result.
+  writeRecord(root, { schema: "astra.registry.moderation-settled/1", settled: [rowFor(DONE, "e".repeat(40)), rowFor(OPEN, sha[OPEN], { outcome: "applied" })] });
+  const other = await historyJob(root);
+  assert.deepEqual(postedIds(other.bodies), [DONE, OPEN].sort(), "a row skipped a result whose commit or outcome it does not name");
+});
+
+test("two live runs over one hand-deleted hold post its `cancelled` once, and the second run is silent about it", async () => {
+  const [ID] = [21].map(hid);
+  const { root, sha, origin } = handCancelled([ID], { documents: true, remote: true });
+
+  // Run 1: `list` posts and the service accepts; `commit` records; `apply` pushes; `report` has nothing left.
+  const first = await historyJob(root);
+  assert.deepEqual(postedIds(first.bodies), [ID]);
+  const commit1 = await commitJob(root, { entries: [], env: { ASTRA_SETTLED: first.text } });
+  assert.equal(commit1.code, 0, commit1.logs.join("\n"));
+  const step = runApply(root);
+  assert.equal(step.status, 0, step.stderr);
+  assert.equal(headOf(origin), step.outputs.main_commit, "the record was not pushed");
+  assert.deepEqual(sh(["show", "--name-only", "--format=", "HEAD"], root).split("\n").filter(Boolean), [SETTLED_FILE_PATH],
+    "the commit that records a settled result touches the record and nothing else");
+  const report1 = await reportJob({ ASTRA_RESULTS: step.outputs.results, ASTRA_MAIN_COMMIT: step.outputs.main_commit });
+  assert.equal(report1.code, 0, report1.logs.join("\n"));
+  assert.deepEqual(report1.bodies, [], "report posted a result `list` had already settled in this run");
+
+  // Run 2, on what run 1 pushed: nothing is posted for it, and nothing is said about it.
+  const second = await historyJob(root);
+  assert.deepEqual(second.bodies, [], `the second live run posted ${ID}'s \`cancelled\` again (ops entry 100)`);
+  const commit2 = await commitJob(root, { entries: [], env: { ASTRA_SETTLED: second.text } });
+  assert.equal(commit2.code, 0, commit2.logs.join("\n"));
+  assert.deepEqual(commit2.paths, [], "a run with nothing new to record committed something");
+  assert.deepEqual(pendingIds(commit2), []);
+  assert.ok(!commit2.logs.some((l) => l.includes("hold_hand_cancelled")), `the second run warned again: ${commit2.logs.join(" | ")}`);
+  assert.equal(commit2.results.holds.settled[0]?.commit, sha[ID]);
+});
+
+test("a result the service did not settle keeps being posted, run after run, until an answer settles it", async () => {
+  const [ID] = [31].map(hid);
+  const { root } = handCancelled([ID], { documents: true, remote: true });
+  let calls = 0;
+  const down = () => { calls++; return { status: 503, body: "down" }; };
+  for (let run = 1; run <= 2; run++) {
+    const history = await historyJob(root, { answer: down });
+    assert.deepEqual(postedIds(history.bodies), [ID], `run ${run}: an unsettled result was not posted again`);
+    assert.deepEqual(history.settled, [], `run ${run}: a 5xx recorded a result as settled`);
+    const commit = await commitJob(root, { entries: [], env: { ASTRA_SETTLED: history.text } });
+    assert.equal(commit.code, 0, commit.logs.join("\n"));
+    assert.deepEqual(commit.paths, [], `run ${run}: the record was written with nothing settled`);
+    assert.deepEqual(pendingIds(commit), [ID], `run ${run}: report was not handed the unsettled result`);
+    assert.equal(fs.existsSync(path.join(root, SETTLED_FILE_PATH)), false);
+  }
+  assert.ok(calls >= 2);
+  // Then the service answers `duplicate` (report's own post had got through), and it is recorded once.
+  const third = await historyJob(root, { answer: () => ack("duplicate") });
+  assert.deepEqual(third.settled.map((r) => r.answer), ["duplicate"]);
+});
+
+test("an absent, unreadable or malformed record skips nothing it cannot vouch for, and says so", async () => {
+  const [A, B, C, D] = [41, 42, 43, 44].map(hid);
+  const { root, sha } = handCancelled([A, B, C, D]);
+  const all = [A, B, C, D].sort();
+  const cases = [
+    { name: "absent", doc: null, posted: all, state: "absent", warned: false },
+    { name: "not JSON", doc: "{ this is not json", posted: all, state: "unreadable", warned: true },
+    { name: "another schema", doc: { schema: "astra.registry.something-else/1", settled: [rowFor(A, sha[A])] }, posted: all, state: "unreadable", warned: true },
+    { name: "an extra top-level member", doc: { schema: "astra.registry.moderation-settled/1", settled: [rowFor(A, sha[A])], note: "x" }, posted: all, state: "unreadable", warned: true },
+    {
+      name: "one sound row among malformed ones",
+      doc: {
+        schema: "astra.registry.moderation-settled/1",
+        settled: [
+          rowFor(A, sha[A]),
+          rowFor(B, sha[B], { answer: "failed" }),
+          rowFor(C, sha[C].slice(0, 12)),
+          { ...rowFor(D, sha[D]), posted_by: "list" },
+        ],
+      },
+      posted: [B, C, D].sort(), state: "read", warned: true,
+    },
+    { name: "a row with no run", doc: { schema: "astra.registry.moderation-settled/1", settled: [rowFor(A, sha[A], { run: null })] }, posted: all, state: "read", warned: true },
+  ];
+  for (const c of cases) {
+    fs.rmSync(path.join(root, SETTLED_FILE_PATH), { force: true });
+    if (c.doc !== null) writeRecord(root, c.doc);
+    const history = await historyJob(root);
+    assert.deepEqual(postedIds(history.bodies), c.posted, `${c.name}: the list job skipped a result the record cannot vouch for`);
+    const commit = await commitJob(root, { entries: [] });
+    assert.equal(commit.code, 0, commit.logs.join("\n"));
+    assert.deepEqual(pendingIds(commit), c.posted, `${c.name}: the commit job skipped a result the record cannot vouch for`);
+    assert.equal(commit.results.settled.record, c.state, `${c.name}: the record was read as ${commit.results.settled.record}`);
+    const warned = commit.logs.some((l) => l.startsWith("::warning::settled_record_unreadable"));
+    assert.equal(warned, c.warned, `${c.name}: ${c.warned ? "a record it could not read was not said" : "an absent record was warned about"}`);
+  }
+});
+
+test("the commit job records only sound rows, for results its own walk derived, and only live", async () => {
+  const [A, B] = [51, 52].map(hid);
+  const { root, sha } = handCancelled([A, B]);
+  const record = () => (fs.existsSync(path.join(root, SETTLED_FILE_PATH))
+    ? JSON.parse(fs.readFileSync(path.join(root, SETTLED_FILE_PATH), "utf8")).settled.map((r) => r.service_decision_id).sort()
+    : []);
+  const run = async (rows, { shadow = false } = {}) => {
+    fs.rmSync(path.join(root, SETTLED_FILE_PATH), { force: true });
+    return commitJob(root, { entries: [], shadow, env: { ASTRA_SETTLED: typeof rows === "string" ? rows : JSON.stringify(rows) } });
+  };
+
+  const good = await run([rowFor(A, sha[A]), rowFor(A, sha[A])]);
+  assert.deepEqual(record(), [A], "a sound row for a derived result was not recorded, or was recorded twice");
+  assert.deepEqual(pendingIds(good), [B]);
+
+  const stranger = await run([rowFor(hid(59), "d".repeat(40))]);
+  assert.deepEqual(record(), [], "a row naming a result this walk never derived was recorded");
+  assert.ok(stranger.logs.some((l) => l.startsWith("::warning::settled_row_refused")));
+
+  await run([rowFor(A, sha[A], { answer: "posted" }), rowFor(B, sha[B], { commit: undefined })]);
+  assert.deepEqual(record(), [], "a malformed row was recorded");
+
+  const shadowed = await run([rowFor(A, sha[A])], { shadow: true });
+  assert.deepEqual(record(), [], "a row was recorded under a shadow answer, when a shadow run posts nothing");
+  assert.deepEqual(pendingIds(shadowed), [A, B].sort());
+
+  const garbage = await run("not json");
+  assert.equal(garbage.code, 0, "a malformed handoff failed the commit job, holding back every takedown for a record");
+  assert.deepEqual(record(), []);
+  assert.ok(garbage.logs.some((l) => l.startsWith("::warning::settled_row_refused")));
+});
+
+test("under a shadow answer, or none, the history step posts nothing and hands on nothing", async () => {
+  const [ID] = [61].map(hid);
+  const { root } = handCancelled([ID]);
+  for (const shadow of ["true", "", "False"]) {
+    const job = await historyJob(root, { shadow });
+    assert.equal(job.code, 0);
+    assert.deepEqual(job.bodies, [], `ASTRA_SHADOW=${JSON.stringify(shadow)}: a result was posted, and BOT-92 withholds every one`);
+    assert.deepEqual(job.settled, [], `ASTRA_SHADOW=${JSON.stringify(shadow)}: settled rows were handed on under shadow`);
+  }
+});
+
+test("a moderation commit may write the settled record, and exactly that one file of it", () => {
+  assert.equal(allowedPath(SETTLED_FILE_PATH), true, "the settled record is not on BOT-33's moderation allowlist");
+  for (const bad of [`${SETTLED_FILE_PATH}.bak`, `${SETTLED_FILE_PATH}x`, "state/moderation-settled/other.json", "state/releases-seen.json"]) {
+    assert.equal(allowedPath(bad), false, `${bad} passes the allowlist because it begins like the record`);
+  }
 });
