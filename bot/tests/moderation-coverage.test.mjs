@@ -1586,6 +1586,14 @@ test("repo-settings: a read that fails is NOT ASKED by route and red, never gree
   assert.deepEqual(r.codes, ["SETTINGS_NOT_ASKED"]);
   assert.match(r.detail.join("\n"), new RegExp(`NOT ASKED \\(this run\\): ${escapeRe(slug)}'s rulesets: repos/${escapeRe(slug)}/rulesets`));
 
+  // One environment's branch policies unread: that is NOT ASKED, and it is not
+  // an environment gone missing — the half-read member is not compared at all.
+  const half = await settingsRule({
+    get: servesSettings(doc, { fail: (route) => (route.includes("/environments/publish/") ? "HTTP 502" : null) }),
+  });
+  assert.deepEqual(half.codes, ["SETTINGS_NOT_ASKED"], half.detail.join("\n"));
+  assert.match(half.detail.join("\n"), /environment `publish`'s branch policies: .*HTTP 502/);
+
   const down = await settingsRule({ readRemote: async () => ({ kind: "unreachable", why: "fatal: unable to access" }) });
   assert.equal(down.status, "red");
   assert.deepEqual(down.codes, ["SETTINGS_NOT_ASKED"]);
