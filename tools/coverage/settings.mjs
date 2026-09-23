@@ -7,8 +7,10 @@
 //
 // ── WHAT IT COMPARES ────────────────────────────────────────────────────────
 //
-// `policy/settings-expected.json` against two things, for astra-registry and
-// AstraPlugins both:
+// `policy/settings-expected.json` against two things, for every repository it
+// lists — astra-registry, AstraPlugins, and BOT-88's test repository
+// `mihailinl/astra-registry-canary`, whose environment `canary-tag` holds a
+// write deploy key behind a main-only branch policy (registry plan B-T1.6):
 //
 //   * what GitHub says NOW — every environment with its deployment-branch
 //     policy (all refs, protected branches, or a custom list, with every
@@ -93,7 +95,7 @@ const TIMEOUT_MS = 20_000;
  * difference between "checked, and fine" and "not checkable from here".
  */
 export const NOT_ASKED = [
-  "which secrets exist where, in either repository — `/actions/secrets` and `/environments/{name}/secrets` answer 401 " +
+  "which secrets exist where, in any repository listed — `/actions/secrets` and `/environments/{name}/secrets` answer 401 " +
     "without a credential, and this rule holds none that can read them. SERVE-9's rule, the R0 runbook's \"zero secrets\" " +
     "in `plugins-service` and `operator`, and `NPM_TOKEN`'s scope are therefore not checked here; the owner's own read " +
     "(ops `tools/read-settings.mjs`) is where they are",
@@ -353,7 +355,12 @@ export async function run(repo, {
         files = readLocal(repo);
       }
     } else {
-      const where = astraPluginsRemote(repo);
+      // A repository that names its own `remote` is read there; one that does
+      // not is AstraPlugins, read at the remote this checkout declares, and a
+      // declaration that moved is red below rather than followed silently.
+      const where = expected.remote
+        ? { url: expected.remote, source: `${EXPECTATION}'s own \`remote\`` }
+        : astraPluginsRemote(repo);
       if (repoSlug(where.url).toLowerCase() !== slug.toLowerCase()) {
         note([{
           code: "SETTINGS_EXPECTATION_REPO",
@@ -439,6 +446,7 @@ export async function printLive(repo, { get = githubGetter(), expectation = path
     out.repositories[slug] = {
       ...("$comment" in expected ? { $comment: expected.$comment } : {}),
       tree: expected.tree,
+      ...("remote" in expected ? { remote: expected.remote } : {}),
       default_branch: live.default_branch ?? expected.default_branch,
       environments,
       ...(expected.pending_environments ? { pending_environments: expected.pending_environments } : {}),

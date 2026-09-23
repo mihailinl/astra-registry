@@ -255,7 +255,7 @@ export function workflowJobs(text, file = "<workflow>") {
 
 // ── the expectation's own shape ─────────────────────────────────────────────
 
-const REPO_KEYS = new Set(["$comment", "tree", "default_branch", "environments", "pending_environments", "rulesets", "rules_on_default_branch"]);
+const REPO_KEYS = new Set(["$comment", "tree", "remote", "default_branch", "environments", "pending_environments", "rulesets", "rules_on_default_branch"]);
 const ENV_KEYS = new Set(["$comment", "because", "named_by_no_workflow", "deployment_branch_policy", "branch_policies", "protection_rules", "can_admins_bypass"]);
 const PENDING_KEYS = new Set(["$comment", "task", "why"]);
 const RULESET_KEYS = new Set(["$comment", "target", "enforcement", "include", "exclude", "rules"]);
@@ -286,6 +286,18 @@ export function expectationProblems(doc) {
     if (!isObject(repo)) { out.push(`${at}: not an object`); continue; }
     for (const k of Object.keys(repo)) if (!REPO_KEYS.has(k)) out.push(`${at}: unknown member ${JSON.stringify(k)}`);
     if (!TREES.includes(repo.tree)) out.push(`${at}.tree is ${JSON.stringify(repo.tree)}, not one of ${TREES.join(", ")}`);
+    // `remote` says where a `tree: "remote"` repository's workflows are read. Absent,
+    // they are read from the AstraPlugins remote this checkout declares, which is
+    // how AstraPlugins has always been read. Present, it must name the SAME
+    // repository as its key, on github.com: a `remote` that pointed somewhere
+    // else would compare one repository's workflows with another's settings,
+    // and every environment would read as named by nobody or by a stranger.
+    if ("remote" in repo) {
+      const m = typeof repo.remote === "string" ? /^https:\/\/github\.com\/([A-Za-z0-9-]+\/[A-Za-z0-9._-]+?)(?:\.git)?$/.exec(repo.remote) : null;
+      if (repo.tree !== "remote") out.push(`${at}.remote is set on a \`tree: ${JSON.stringify(repo.tree)}\` repository, whose workflows are not read over git`);
+      else if (!m) out.push(`${at}.remote is ${JSON.stringify(repo.remote)}, not an https://github.com/<owner>/<name> URL`);
+      else if (m[1].toLowerCase() !== slug.toLowerCase()) out.push(`${at}.remote names ${m[1]}, not ${slug}`);
+    }
     if (typeof repo.default_branch !== "string" || repo.default_branch === "") out.push(`${at}.default_branch is not a branch name`);
     if (!isStringList(repo.rules_on_default_branch)) out.push(`${at}.rules_on_default_branch is not a list of rule types`);
     if (!isObject(repo.environments)) out.push(`${at}.environments is not an object`);
