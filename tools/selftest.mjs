@@ -214,6 +214,14 @@ const MODULES = [
   // `baseline.mjs` stays after it. **This line, its FLOORS entry and the file are
   // one change**, for the reason written out at `regenerate.mjs` above.
   "times.mjs",
+  // Ops gap 22 — the repository settings held to `policy/settings-expected.json`
+  // and to the workflows, with fixtures: the comparison the coverage canary runs
+  // against GitHub every fifteen minutes, watched red here clause by clause with
+  // no network. It prints its own section header and sits between two modules
+  // that print theirs, so it moves no existing name under a header it does not
+  // belong to, and `baseline.mjs` stays after it. **This line, its FLOORS entry and
+  // the file are one change**, for the reason written out at `regenerate.mjs`.
+  "settings.mjs",
   // Last until `loads.mjs` below, and with a section header of its own. The
   // boundary to protect is `update-notes.mjs` → `repo-rules.mjs`:
   // `repo-rules.mjs` prints no header, so its names come out under
@@ -1857,7 +1865,7 @@ const FLOORS = new Map(Object.entries({
   // owned: `tests/shared-vectors.mjs` asserts `>= 20` three times, in the module
   // whose vectors they are, with a message about vectors.
   "bundles.mjs": 14,
-  "index-signature.mjs": 20,
+  "index-signature.mjs": 21,
   "signer.mjs": 24,
   "signer-run.mjs": 6,
   "rehearsal-r2.mjs": 14,
@@ -1875,6 +1883,7 @@ const FLOORS = new Map(Object.entries({
   "regenerate.mjs": 15,
   "migration-notice.mjs": 6,
   "times.mjs": 4,
+  "settings.mjs": 13,
   "baseline.mjs": 9,
   "loads.mjs": 2,
 }));

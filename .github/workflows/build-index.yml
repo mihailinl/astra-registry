@@ -302,11 +302,16 @@ jobs:
 
       - name: Validate the listings
         if: ${{ !cancelled() }}
-        # --allow-staging tolerates plugins/dice-roller/versions/0.1.1.json,
-        # whose release does not exist yet. REMOVE IT the moment Phase 2.13
-        # publishes that release and the entry gains a real digest. A registry
-        # that keeps this flag on is a registry that lists things it cannot
-        # verify, which is the one thing it exists not to do.
+        # --allow-staging tolerates every version file marked `"staging": true`:
+        # a listing with no artifact digest, because its release has not been
+        # cut. That field is the only thing `validate.mjs` identifies a staging
+        # entry by, and without the flag it refuses each one. This comment names
+        # none of them, because the set moves: this step's own output lists
+        # them, one `accepted as staging (--allow-staging)` line each, and
+        # `node tools/validate.mjs` run without the flag prints each as an
+        # ERROR. REMOVE THE FLAG the moment the last of them gains a real
+        # digest. A registry that keeps this flag on is a registry that lists
+        # things it cannot verify, which is the one thing it exists not to do.
         env:
           # The checkout above. Without it both cross-repository couplings
           # degrade to a note, and a note in a green run is invisible.
