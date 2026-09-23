@@ -1684,8 +1684,8 @@ test("repo-settings: the token is sent, a token GitHub refuses is dropped for th
 // ROLL-7's file — the pins TRUST-10's acknowledgement records, and TRUST-44
 // compares GitHub with hourly from outside this repository — carry each pinned
 // environment's deployment-branch policy kind and names, as data. GitHub answers
-// the names with no credential. TRUST-44 does not read them today, and ops
-// pending item 28 proposes that it should. `policy/settings-expected.json`
+// the names with no credential, and from contract 1.0.0 (ops pending item 28)
+// TRUST-44 reads them too, so they are pins it compares. `policy/settings-expected.json`
 // already records the same facts, reviewed, and the `repo-settings` canary
 // holds it to GitHub every 15 minutes. Two copies of one fact with nothing
 // comparing them is the shape this file exists to refuse, so the choice is
@@ -1801,58 +1801,64 @@ test("repo-settings: ROLL-7's R0 file pins each environment's branch policies as
   }
 });
 
-// ── TRUST-44's reservation, against the read it makes (contract 0.36.0) ─────
+// ── TRUST-44's reservation, against the read it makes (contract 1.0.0) ──────
 //
-// TRUST-44 reserves 6 of the plugins service's 60 unauthenticated requests an
-// hour for its read of the settings ROLL-7 pins, and contract 0.36.0's Why
-// gives that read as calls: `/rulesets`, one `/rulesets/{id}` per ruleset,
-// `/rules/branches/main`, `/environments` and `/branches/main` — 4 + R, 5
-// today. The 6 lives in the contract and the rulesets live in
-// `policy/settings-expected.json`, and an owner who adds a ruleset changes the
-// second without anyone opening the first. At 7 calls the service's hourly
-// read would overrun its share, and its mint lookups would start answering
-// `rate_limited` for a reason nothing records. So the two are compared here.
-//
-// The read that also takes each pinned environment's policy names would be
-// 4 + R + E, 11 at R5. Ops pending item 28 proposes it, with a reservation of
-// 12, as the contract's first MAJOR, for the owner. This test counts that read
-// too, and prints it, but holds only the read TRUST-44 makes.
-const TRUST44_RESERVATION = 6;
-const trust44Calls = (expected) => 4 + Object.keys(expected.rulesets ?? {}).length;
-const trust44CallsWithNames = (expected) => trust44Calls(expected) +
+// TRUST-44 reserves 12 of the plugins service's 60 unauthenticated requests an
+// hour for its read of the settings ROLL-7 pins, and gives that read as exact
+// calls: `/rulesets`, one `/rulesets/{id}` per ruleset, `/rules/branches/main`,
+// `/environments`, one `/environments/{name}/deployment-branch-policies` per
+// pinned environment, and `/branches/main` — 4 + R + E, 10 today, 11 once
+// `bot-state` is pinned at R5 (ID-12 gives the lookups 34 and keeps 14
+// unspent). Contract 0.36.0 read without the policy names, 4 + R within 6;
+// 1.0.0 (ops pending item 28, the contract's first MAJOR) reads them, and moved
+// the reservation with them. The 12 lives in the contract and the rulesets and
+// environments live in `policy/settings-expected.json`, and an owner who
+// creates an environment changes the second without anyone opening the first:
+// the service's hourly read would then overrun its share, and its mint lookups
+// would start answering `rate_limited` for a reason nothing records. So the two
+// are compared here. Environments pending creation count, because each is
+// created to be pinned (RC-R0-3(f)).
+const TRUST44_RESERVATION = 12;
+const trust44Calls = (expected) => 4 + Object.keys(expected.rulesets ?? {}).length +
   Object.keys(expected.environments ?? {}).length + Object.keys(expected.pending_environments ?? {}).length;
 
 /** Why TRUST-44's read of an expectation overruns its reservation, or null when it fits. */
 function trust44Overrun(expected) {
   const calls = trust44Calls(expected);
   if (calls <= TRUST44_RESERVATION) return null;
-  return `TRUST-44's read of astra-registry is 4 + R = ${calls} calls for the rulesets ` +
-    `policy/settings-expected.json holds, and the contract reserves ${TRUST44_RESERVATION} for it (TRUST-44; ID-12). A ` +
-    "ruleset past the reservation waits for a contract version that raises it, published before the ruleset is " +
-    `created. (The read ops pending item 28 proposes, with each pinned environment's policy names, would be ` +
-    `4 + R + E = ${trust44CallsWithNames(expected)} within 12.)`;
+  return `TRUST-44's read of astra-registry is 4 + R + E = ${calls} calls for the rulesets and environments ` +
+    "policy/settings-expected.json holds (pending ones counted, since each is created to be pinned), and the " +
+    `contract reserves ${TRUST44_RESERVATION} for it (TRUST-44; ID-12; since contract 1.0.0). A pin past the ` +
+    "reservation waits for a contract version that raises it, published before the environment or ruleset is created";
 }
 
-test("repo-settings: TRUST-44's read of what ROLL-7 pins fits the 6 calls the contract reserves for it", () => {
+test("repo-settings: TRUST-44's read of what ROLL-7 pins fits the 12 calls the contract reserves for it", () => {
   const doc = settingsDoc();
   const expected = doc.repositories[checkoutSlug(doc)];
   const calls = trust44Calls(expected);
-  assert.ok(calls >= 5, `TRUST-44's read counts ${calls} calls from the expectation and counted 5 on 2026-09-23; the count stopped reading`);
+  assert.ok(calls >= 9, `TRUST-44's read counts ${calls} calls from the expectation and counted 11 on 2026-09-23; the count stopped reading`);
   assert.equal(trust44Overrun(expected), null);
-  // Proven on the committed expectation grown by one ruleset, which still
-  // fits, and by two, which do not: an owner's next settings acts.
-  const grown = (n) => {
+  // Proven on the committed expectation grown up to the reservation, which
+  // fits, and one past it, which does not — by environments, live and
+  // pending, and by rulesets: an owner's next settings acts. Grown relative to
+  // today's count, so an owner who spends the room left fails only the fit.
+  const grown = (n, group) => {
     const g = structuredClone(expected);
-    const model = Object.values(g.rulesets)[0];
-    for (let i = 0; i < n; i++) g.rulesets[`extra-${i}`] = structuredClone(model);
+    const model = structuredClone(Object.values(expected[group === "rulesets" ? "rulesets" : "environments"])[0]);
+    g[group] = { ...(g[group] ?? {}) };
+    for (let i = 0; i < n; i++) g[group][`extra-${i}`] = structuredClone(model);
+    assert.equal(trust44Calls(g), calls + n, `growing ${group} by ${n} did not move the count`);
     return g;
   };
-  assert.equal(trust44Overrun(grown(1)), null, "one ruleset more still fits the reservation, and was refused");
-  const over = trust44Overrun(grown(2));
-  assert.ok(over && over.includes("= 7 calls") && over.includes("reserves 6") && over.includes("pending item 28"),
-    `two rulesets more count ${trust44Calls(grown(2))} calls and the check said ${JSON.stringify(over)}`);
-  console.log(`# TRUST-44's read: 4 + ${Object.keys(expected.rulesets ?? {}).length} ruleset(s) = ${calls} of ` +
-    `${TRUST44_RESERVATION}; with the policy names (ops pending item 28), 4 + R + ` +
-    `${Object.keys(expected.environments).length} live and ${Object.keys(expected.pending_environments ?? {}).length} ` +
-    `pending environment(s) = ${trust44CallsWithNames(expected)} of the 12 it proposes`);
+  const room = TRUST44_RESERVATION - calls;
+  for (const group of ["environments", "pending_environments", "rulesets"]) {
+    assert.equal(trust44Overrun(grown(room, group)), null, `${group} grown to exactly ${TRUST44_RESERVATION} calls still fit, and were refused`);
+    const over = trust44Overrun(grown(room + 1, group));
+    assert.ok(over && over.includes(`= ${TRUST44_RESERVATION + 1} calls`) && over.includes(`reserves ${TRUST44_RESERVATION}`) &&
+      over.includes("contract 1.0.0"),
+    `${group} grown to ${TRUST44_RESERVATION + 1} calls and the check said ${JSON.stringify(over)}`);
+  }
+  console.log(`# TRUST-44's read: 4 + ${Object.keys(expected.rulesets ?? {}).length} ruleset(s) + ` +
+    `${Object.keys(expected.environments ?? {}).length} live and ${Object.keys(expected.pending_environments ?? {}).length} ` +
+    `pending environment(s) = ${calls} of ${TRUST44_RESERVATION}`);
 });
