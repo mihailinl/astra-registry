@@ -66,6 +66,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { isShallow } from "../coverage/git.mjs";
 import { REPO_ROOT, loadPublishers, loadRecords, loadSources, publisherRecords } from "../lib/sources.mjs";
 import { stagingListingId } from "../lib/reserved.mjs";
+import { AUTHOR_CODES } from "../../bot/lib/compile-decision.mjs";
 import { NOTICE_DIR, NOTICE_NAME } from "../validate.mjs";
 import { CUTOVER_FILE, DEADLINE_FILE } from "../../bot/lib/listing-state.mjs";
 import { test, assert, assertEqual, neverAsk, tmp } from "./harness.mjs";
@@ -75,6 +76,24 @@ const POLICY_FILE = "policy/reserved-ids.json";
 const STAGING_MEMBER = "staging_listing_id";
 const VECTOR_MEMBER = "shared_vector_paths";
 const REPORT_RECORD = "mod54_report_page";
+// The four members only the ops generator floored until contract 0.36.0 (ops
+// pending item 27), and what two of them are read from.
+const FIXED_MEMBER = "fixed_reasons";
+const TEMPLATES_MEMBER = "templates";
+const FLOW13_MEMBER = "flow13_table";
+const OUTCOME_RECORD = "report_outcome_codes";
+const OUTCOME_LIST = "list:report_outcomes";
+const REPORT_STATES = "list:states:report";
+const CODES_FILE = "tools/codes-table.json";
+/**
+ * `asserted_by`'s grammar (contract 0.36.0, SCOPE-7), the same one the ops
+ * generator refuses to emit outside of: this repository, a module directly
+ * under `tools/selftest/`, and a check name with no newline and no space at
+ * either end. This module is `SELF`; its own records name `ASSERTED_BY_THIS`.
+ */
+const ASSERTED_BY = /^astra-registry:(tools\/selftest\/[a-z0-9][a-z0-9.-]*\.mjs)#(\S(?:[^\n]*\S)?)$/;
+const SELF = "tools/selftest/contract-tokens.mjs";
+const ASSERTED_BY_THIS = `astra-registry:${SELF}#`;
 /**
  * MOD-54's report page as this repository spells it: `REPORT_PAGE` in the
  * cutover preflight, the page its `mod-54-report-page` check asks an operator
@@ -1049,6 +1068,384 @@ export async function run() {
       `the token file calls a member required that a committed record omits. A reader taking requiredness ` +
       `from the file refuses that record (ops dev/couplings.md entry 86):\n` + problems.map((p) => `- ${p}`).join("\n"));
   });
+
+  // ── four more pending members, which only the ops generator floored ───────
+  //
+  // Ops `dev/server-registry-contract-pending.md` item 27, carried by contract
+  // 0.36.0. `fixed_reasons`, `templates`, `flow13_table` and the report-outcome
+  // list were floored by the ops generator's selftest and by nothing else — over
+  // the generator's OWN OUTPUT, never over the file this repository commits. A
+  // hand edit here, a regeneration from another ops commit, or a run whose
+  // selftest nobody ran could publish a member that broke its record's floor,
+  // and no check that reads what is published would say so. So each is a row in
+  // PENDING_MEMBERS, held by `pendingJoin` like the three above, and the record
+  // in the file names this module's check for it in `asserted_by` (below).
+  //
+  // What each is held to once recorded, and in this repository where it can be:
+  //
+  //   - `fixed_reasons` to `AUTHOR_CODES` in `bot/lib/compile-decision.mjs`,
+  //     the codes `fixedReason` is asked for — the file's ONE reader here — and
+  //     to the code entries that repeat the string, so it is spelled once;
+  //   - `templates` to this file's own author-audience and author-notify
+  //     entries: a template must name ones the file lists, and ID-73 forbids
+  //     either being `retired` while a listed template compiles it — and while
+  //     the list is empty, the record's floor says nothing may be `retired` on
+  //     the strength of it;
+  //   - `flow13_table` to `tools/codes-table.json`, which `tools/gen-codes-table.mjs`
+  //     emits from the codes and the ops generator merges. The committed file
+  //     never holds the pending state (the generator refuses to drop a group
+  //     registry main publishes), so the record is proven on built states only;
+  //   - the report-outcome list to nothing here: minice-be supplies it, so it is
+  //     held to its shape, and while it is owed, to B.3's report states being in
+  //     the file, which is the floor the record says the client writes alone.
+  await test("the token file's fixed_reasons is null under its pending record, or a string for each A_* code with none", () => {
+    const doc = JSON.parse(fs.readFileSync(tokenPath, "utf8"));
+    const { state, problems } = pendingJoin(doc, PENDING_MEMBERS[FIXED_MEMBER], {});
+    assert(problems.length === 0,
+      `${TOKEN_FILE}'s ${FIXED_MEMBER} does not hold its pending record's floor, or disagrees with the codes ` +
+      `bot/lib/compile-decision.mjs asks it for (ops pending item 27):\n` + problems.map((p) => `- ${p}`).join("\n"));
+    console.log(state === "pending"
+      ? `  note  ${TOKEN_FILE}'s ${FIXED_MEMBER} is null, its pending record is present, and no code entry carries a ` +
+        `string. The recorded leg arms on the regeneration that records the strings, with no edit here.`
+      : `  note  ${TOKEN_FILE}'s ${FIXED_MEMBER} is recorded for ${AUTHOR_CODES.join(" and ")}, spelled once.`);
+  });
+
+  await test("the fixed_reasons join goes red in each state the tree has not held, built from its committed files", () => {
+    const tokenText = showOrNull("HEAD", TOKEN_FILE);
+    assert(tokenText !== null, `${TOKEN_FILE} is not committed at HEAD, so there is nothing to build the states from`);
+    const committed = JSON.parse(tokenText);
+    const row = PENDING_MEMBERS[FIXED_MEMBER];
+    const committedRecord = (committed.pending || []).find((p) => p && p.id === FIXED_MEMBER);
+    const record = committedRecord ?? builtRecord(FIXED_MEMBER, "`fixed_reasons` is null and this record is present.");
+    const carriers = (committed.entries || []).filter((e) => e && Object.hasOwn(e, "fixed_reason"));
+    assert(carriers.length > 0, `${TOKEN_FILE} at HEAD has no entry carrying \`fixed_reason\`, so the entry legs have no model`);
+    const strings = Object.fromEntries(AUTHOR_CODES.map((c) => [c, `the fixed reason for ${c} (built by this test)`]));
+    // `value` is the member; `entries` says what the carriers hold: "null" as
+    // the pending file writes them, "same" the member's strings, or a function.
+    const variant = (value, records, entries = "null") => {
+      const doc = structuredClone(committed);
+      if (value === ABSENT) delete doc[FIXED_MEMBER];
+      else doc[FIXED_MEMBER] = value;
+      for (const e of doc.entries.filter((x) => x && Object.hasOwn(x, "fixed_reason"))) {
+        if (entries === "null") { e.fixed_reason = null; e.fixed_reason_pending = FIXED_MEMBER; }
+        else if (entries === "same") { e.fixed_reason = value?.[e.name] ?? null; delete e.fixed_reason_pending; }
+        else entries(e);
+      }
+      doc.pending = [...(committed.pending || []).filter((p) => p && p.id !== FIXED_MEMBER), ...records];
+      return doc;
+    };
+    const without = (key) => { const r = { ...record }; delete r[key]; return r; };
+    const [first, second] = AUTHOR_CODES;
+    const legs = [
+      { name: "null under its pending record", doc: variant(null, [record]), red: [], state: "pending" },
+      { name: "a string for each author code, spelled once, and no record", doc: variant(strings, [], "same"), red: [], state: "recorded" },
+      { name: "a string for each author code, and entries that carry none", doc: variant(strings, [], (e) => { delete e.fixed_reason; delete e.fixed_reason_pending; }), red: [], state: "recorded" },
+      { name: "null with no record", doc: variant(null, []), red: [TOKEN_FILE, "no pending record"] },
+      { name: "null under a record with no lands_with", doc: variant(null, [without("lands_with")]), red: [TOKEN_FILE, "lands_with"] },
+      { name: "null under a record with no owed_by", doc: variant(null, [without("owed_by")]), red: [TOKEN_FILE, "owed_by"] },
+      { name: "null under the record twice", doc: variant(null, [record, record]), red: [TOKEN_FILE, "2 pending records"] },
+      { name: "no member at all", doc: variant(ABSENT, [record]), red: [TOKEN_FILE, "no `fixed_reasons` member"] },
+      { name: "null while an entry carries a string", doc: variant(null, [record], (e) => { e.fixed_reason = "invented"; e.fixed_reason_pending = FIXED_MEMBER; }), red: [TOKEN_FILE, carriers[0].id, "while `fixed_reasons` is null"] },
+      { name: "null while an entry points at another record", doc: variant(null, [record], (e) => { e.fixed_reason = null; e.fixed_reason_pending = "templates"; }), red: [TOKEN_FILE, "fixed_reason_pending"] },
+      { name: "the strings with the record left behind", doc: variant(strings, [record], "same"), red: [TOKEN_FILE, "still carries"] },
+      { name: "one author code with no string", doc: variant({ [first]: strings[first] }, [], "same"), red: [TOKEN_FILE, second, "AUTHOR_CODES"] },
+      { name: "a code the registry does not treat as an author's", doc: variant({ ...strings, M_YANK: "x" }, [], "same"), red: [TOKEN_FILE, "M_YANK", "AUTHOR_CODES"] },
+      { name: "an empty string", doc: variant({ ...strings, [first]: " " }, [], "same"), red: [TOKEN_FILE, first, "not a non-empty string"] },
+      { name: "a string instead of an object", doc: variant("a reason", [], "same"), red: [TOKEN_FILE, "neither null nor an object"] },
+      { name: "an entry spelling another string", doc: variant(strings, [], (e) => { e.fixed_reason = `${strings[e.name]} (retyped)`; delete e.fixed_reason_pending; }), red: [TOKEN_FILE, "spelled twice"] },
+      { name: "an entry still null once the member is recorded", doc: variant(strings, [], "null"), red: [TOKEN_FILE, "spelled twice"] },
+    ];
+    const wrong = legsGoneWrong(legs, (doc) => pendingJoin(doc, row, {}));
+    assert(wrong.length === 0,
+      `the join between ${TOKEN_FILE}'s ${FIXED_MEMBER}, its pending record, its code entries and AUTHOR_CODES does ` +
+      `not hold on a copy of the committed file, so the live check above is not asking what its name says:\n` +
+      wrong.map((w) => `- ${w}`).join("\n"));
+    console.log(`  note  ${legs.length} states built from HEAD's ${TOKEN_FILE} and AUTHOR_CODES (${AUTHOR_CODES.join(", ")}); ` +
+      `${legs.filter((l) => l.red.length).length} red as named, ${legs.filter((l) => !l.red.length).length} green.`);
+  });
+
+  await test("the token file's templates list is empty under its pending record, or templates naming this file's entries with none", () => {
+    const doc = JSON.parse(fs.readFileSync(tokenPath, "utf8"));
+    const { state, problems } = pendingJoin(doc, PENDING_MEMBERS[TEMPLATES_MEMBER], {});
+    assert(problems.length === 0,
+      `${TOKEN_FILE}'s ${TEMPLATES_MEMBER} does not hold its pending record's floor, or names what the file does not ` +
+      `list, or has an entry a listed template compiles marked retired (ID-73; ops pending item 27):\n` +
+      problems.map((p) => `- ${p}`).join("\n"));
+    const compiled = authorCompiled(doc);
+    console.log(state === "pending"
+      ? `  note  ${TOKEN_FILE}'s ${TEMPLATES_MEMBER} is empty, its pending record is present, and none of the ` +
+        `${compiled.length} entries author CI compiles (${compiled.map((e) => e.id).join(", ")}) is retired. The ` +
+        `recorded leg arms on the regeneration that records template 1, with no edit here.`
+      : `  note  ${TOKEN_FILE}'s ${doc[TEMPLATES_MEMBER].length} template(s) each name an author audience and ` +
+        `author-notify path the file lists, and neither is retired.`);
+  });
+
+  await test("the templates join goes red in each state the tree has not held, built from its committed files", () => {
+    const tokenText = showOrNull("HEAD", TOKEN_FILE);
+    assert(tokenText !== null, `${TOKEN_FILE} is not committed at HEAD, so there is nothing to build the states from`);
+    const committed = JSON.parse(tokenText);
+    const row = PENDING_MEMBERS[TEMPLATES_MEMBER];
+    const audience = authorCompiled(committed).find((e) => e.kind === "audience");
+    const notify = authorCompiled(committed).find((e) => e.kind === "operation");
+    assert(audience && notify,
+      `${TOKEN_FILE} at HEAD lists no author audience or no author-CI operation, so a template has nothing to name`);
+    const committedRecord = (committed.pending || []).find((p) => p && p.id === TEMPLATES_MEMBER);
+    const record = committedRecord ?? builtRecord(TEMPLATES_MEMBER, "`templates` is an empty array and this record is present.");
+    const template = (over = {}) => ({ version: "1", audience: audience.value, notify_path: notify.path, state: "live", ...over });
+    const variant = (value, records, retire = []) => {
+      const doc = structuredClone(committed);
+      if (value === ABSENT) delete doc[TEMPLATES_MEMBER];
+      else doc[TEMPLATES_MEMBER] = value;
+      for (const e of doc.entries) if (e && retire.includes(e.id)) e.state = "retired";
+      doc.pending = [...(committed.pending || []).filter((p) => p && p.id !== TEMPLATES_MEMBER), ...records];
+      return doc;
+    };
+    const without = (key) => { const r = { ...record }; delete r[key]; return r; };
+    const legs = [
+      { name: "an empty list under its pending record", doc: variant([], [record]), red: [], state: "pending" },
+      { name: "template 1 naming the author audience and notify path, and no record", doc: variant([template()], []), red: [], state: "recorded" },
+      { name: "template 1 naming the audience by name", doc: variant([template({ audience: audience.name })], []), red: [], state: "recorded" },
+      { name: "an empty list with no record", doc: variant([], []), red: [TOKEN_FILE, "no pending record"] },
+      { name: "an empty list under a record with no lands_with", doc: variant([], [without("lands_with")]), red: [TOKEN_FILE, "lands_with"] },
+      { name: "an empty list under a record with no owed_by", doc: variant([], [without("owed_by")]), red: [TOKEN_FILE, "owed_by"] },
+      { name: "an empty list under the record twice", doc: variant([], [record, record]), red: [TOKEN_FILE, "2 pending records"] },
+      { name: "no member at all", doc: variant(ABSENT, [record]), red: [TOKEN_FILE, "no `templates` member"] },
+      { name: "the author audience retired while the list is empty", doc: variant([], [record], [audience.id]), red: [TOKEN_FILE, audience.id, "retired", "ID-73"] },
+      { name: "the notify operation retired while the list is empty", doc: variant([], [record], [notify.id]), red: [TOKEN_FILE, notify.id, "retired", "ID-73"] },
+      { name: "the templates with the record left behind", doc: variant([template()], [record]), red: [TOKEN_FILE, "still carries"] },
+      { name: "null", doc: variant(null, [record]), red: [TOKEN_FILE, "neither the empty list nor a list of templates"] },
+      { name: "a template with no notify path", doc: variant([template({ notify_path: undefined })], []), red: [TOKEN_FILE, "notify_path"] },
+      { name: "a template whose state is not one of SCOPE-7's", doc: variant([template({ state: "current" })], []), red: [TOKEN_FILE, "\"current\"", "state"] },
+      { name: "a template naming an audience the file does not list", doc: variant([template({ audience: "https://elsewhere.invalid/author" })], []), red: [TOKEN_FILE, "elsewhere.invalid", "lists no author audience"] },
+      { name: "a template naming a notify path the file does not list", doc: variant([template({ notify_path: "/elsewhere" })], []), red: [TOKEN_FILE, "/elsewhere", "lists no author-CI operation"] },
+      { name: "a listed template whose audience is retired", doc: variant([template()], [], [audience.id]), red: [TOKEN_FILE, audience.id, "ID-73"] },
+      { name: "a retired template whose notify path is retired, still listed", doc: variant([template({ state: "retired" })], [], [notify.id]), red: [TOKEN_FILE, notify.id, "ID-73"] },
+      { name: "two templates with one version", doc: variant([template(), template()], []), red: [TOKEN_FILE, "version \"1\"", "twice"] },
+    ];
+    const wrong = legsGoneWrong(legs, (doc) => pendingJoin(doc, row, {}));
+    assert(wrong.length === 0,
+      `the join between ${TOKEN_FILE}'s ${TEMPLATES_MEMBER}, its pending record and the entries author CI compiles ` +
+      `does not hold on a copy of the committed file, so the live check above is not asking what its name says:\n` +
+      wrong.map((w) => `- ${w}`).join("\n"));
+    console.log(`  note  ${legs.length} states built from HEAD's ${TOKEN_FILE} (${audience.id}, ${notify.id}); ` +
+      `${legs.filter((l) => l.red.length).length} red as named, ${legs.filter((l) => !l.red.length).length} green.`);
+  });
+
+  await test("the token file's flow13_table is null under its pending record, or tools/codes-table.json's table with none", () => {
+    const doc = JSON.parse(fs.readFileSync(tokenPath, "utf8"));
+    const codesAt = path.join(REPO_ROOT, CODES_FILE);
+    assert(fs.existsSync(codesAt),
+      `${CODES_FILE} is not in this checkout, and it is the table tools/gen-codes-table.mjs emits from the codes and ` +
+      `the ops generator merges into ${TOKEN_FILE}`);
+    const codesTable = JSON.parse(fs.readFileSync(codesAt, "utf8"));
+    const { state, problems } = pendingJoin(doc, PENDING_MEMBERS[FLOW13_MEMBER], { codesTable });
+    assert(problems.length === 0,
+      `${TOKEN_FILE}'s ${FLOW13_MEMBER} does not hold its pending record's floor, or is not the table ${CODES_FILE} ` +
+      `carries (ops pending item 27):\n` + problems.map((p) => `- ${p}`).join("\n"));
+    console.log(state === "pending"
+      ? `  note  ${TOKEN_FILE}'s ${FLOW13_MEMBER} is null and its pending record is present.`
+      : `  note  ${TOKEN_FILE}'s ${FLOW13_MEMBER} is ${CODES_FILE}'s, ${doc[FLOW13_MEMBER].length} rows and their ` +
+        `source, byte for byte as JSON.`);
+  });
+
+  await test("the flow13_table join goes red in each state the tree has not held, built from its committed files", () => {
+    const tokenText = showOrNull("HEAD", TOKEN_FILE);
+    const codesText = showOrNull("HEAD", CODES_FILE);
+    assert(tokenText !== null && codesText !== null,
+      `${tokenText === null ? TOKEN_FILE : CODES_FILE} is not committed at HEAD, so there is nothing to build the states from`);
+    const committed = JSON.parse(tokenText);
+    const codesTable = JSON.parse(codesText);
+    const row = PENDING_MEMBERS[FLOW13_MEMBER];
+    const table = codesTable.flow13_table;
+    assert(Array.isArray(table) && table.length >= 2, `${CODES_FILE} at HEAD carries no table of two rows or more to build from`);
+    const source = { codes_source: codesTable.codes_source, codes: codesTable.codes.length };
+    const record = (committed.pending || []).find((p) => p && p.id === FLOW13_MEMBER)
+      ?? builtRecord(FLOW13_MEMBER, "without --codes the table is null and this record is present.");
+    const variant = (value, src, records) => {
+      const doc = structuredClone(committed);
+      if (value === ABSENT) delete doc[FLOW13_MEMBER];
+      else doc[FLOW13_MEMBER] = value;
+      doc.flow13_source = src;
+      doc.pending = [...(committed.pending || []).filter((p) => p && p.id !== FLOW13_MEMBER), ...records];
+      return doc;
+    };
+    const without = (key) => { const r = { ...record }; delete r[key]; return r; };
+    const retold = structuredClone(table);
+    retold[0].remedy = `${retold[0].remedy} (retold)`;
+    const legs = [
+      { name: "null under its pending record, with no source", doc: variant(null, null, [record]), red: [], state: "pending" },
+      { name: "the codes table's rows and source, and no record", doc: variant(structuredClone(table), source, []), red: [], state: "recorded" },
+      { name: "null with no record", doc: variant(null, null, []), red: [TOKEN_FILE, "no pending record"] },
+      { name: "null under a record with no lands_with", doc: variant(null, null, [without("lands_with")]), red: [TOKEN_FILE, "lands_with"] },
+      { name: "null under a record with no owed_by", doc: variant(null, null, [without("owed_by")]), red: [TOKEN_FILE, "owed_by"] },
+      { name: "null under the record twice", doc: variant(null, null, [record, record]), red: [TOKEN_FILE, "2 pending records"] },
+      { name: "null with a source left behind", doc: variant(null, source, [record]), red: [TOKEN_FILE, "flow13_source"] },
+      { name: "no member at all", doc: variant(ABSENT, null, [record]), red: [TOKEN_FILE, "no `flow13_table` member"] },
+      { name: "the table with the record left behind", doc: variant(structuredClone(table), source, [record]), red: [TOKEN_FILE, "still carries"] },
+      { name: "a row dropped", doc: variant(table.slice(1), { ...source, codes: source.codes - 1 }, []), red: [TOKEN_FILE, CODES_FILE, table[0].code] },
+      { name: "a row's remedy retold", doc: variant(retold, source, []), red: [TOKEN_FILE, CODES_FILE, table[0].code] },
+      { name: "two rows swapped", doc: variant([table[1], table[0], ...table.slice(2)], source, []), red: [TOKEN_FILE, CODES_FILE, "order"] },
+      { name: "the source's count off by one", doc: variant(structuredClone(table), { ...source, codes: source.codes + 1 }, []), red: [TOKEN_FILE, "flow13_source"] },
+      { name: "a list where the table is not rows", doc: variant("the table", source, []), red: [TOKEN_FILE, "neither null nor a list of rows"] },
+    ];
+    const wrong = legsGoneWrong(legs, (doc) => pendingJoin(doc, row, { codesTable }));
+    assert(wrong.length === 0,
+      `the join between ${TOKEN_FILE}'s ${FLOW13_MEMBER}, its pending record and ${CODES_FILE} does not hold on a ` +
+      `copy of the committed files, so the live check above is not asking what its name says:\n` +
+      wrong.map((w) => `- ${w}`).join("\n"));
+    console.log(`  note  ${legs.length} states built from HEAD's ${TOKEN_FILE} and ${CODES_FILE} (${table.length} rows); ` +
+      `${legs.filter((l) => l.red.length).length} red as named, ${legs.filter((l) => !l.red.length).length} green.`);
+  });
+
+  await test("the token file's report-outcome list is absent under its pending record, or a list of codes with none", () => {
+    const doc = JSON.parse(fs.readFileSync(tokenPath, "utf8"));
+    const { state, problems } = pendingJoin(doc, PENDING_MEMBERS[OUTCOME_RECORD], {});
+    assert(problems.length === 0,
+      `${TOKEN_FILE}'s report-outcome list does not hold its pending record's floor (ops pending item 27):\n` +
+      problems.map((p) => `- ${p}`).join("\n"));
+    console.log(state === "pending"
+      ? `  note  ${TOKEN_FILE} lists no report-outcome codes, its pending record is present, and B.3's report ` +
+        `states are listed. The recorded leg arms on the version that records minice-be's list, with no edit here.`
+      : `  note  ${TOKEN_FILE}'s report-outcome list is recorded, ${doc.entries.find((e) => e.id === OUTCOME_LIST).values.length} code(s).`);
+  });
+
+  await test("the report-outcome join goes red in each state the tree has not held, built from its committed files", () => {
+    const tokenText = showOrNull("HEAD", TOKEN_FILE);
+    assert(tokenText !== null, `${TOKEN_FILE} is not committed at HEAD, so there is nothing to build the states from`);
+    const committed = JSON.parse(tokenText);
+    const row = PENDING_MEMBERS[OUTCOME_RECORD];
+    const model = (committed.entries || []).find((e) => e && e.id === REPORT_STATES);
+    assert(model && Array.isArray(model.values), `${TOKEN_FILE} at HEAD has no ${REPORT_STATES}, so the list shape has no model`);
+    const record = (committed.pending || []).find((p) => p && p.id === OUTCOME_RECORD)
+      ?? builtRecord(OUTCOME_RECORD, "the outcome list is not floored and this record says so.");
+    const list = (values) => ({ ...structuredClone(model), id: OUTCOME_LIST, name: "report outcomes", values });
+    const variant = (lists, records, states = true) => {
+      const doc = structuredClone(committed);
+      doc.entries = doc.entries.filter((e) => e && e.id !== OUTCOME_LIST && (states || e.id !== REPORT_STATES));
+      doc.entries.push(...lists);
+      doc.pending = [...(committed.pending || []).filter((p) => p && p.id !== OUTCOME_RECORD), ...records];
+      return doc;
+    };
+    const without = (key) => { const r = { ...record }; delete r[key]; return r; };
+    const legs = [
+      { name: "absent under its pending record", doc: variant([], [record]), red: [], state: "pending" },
+      { name: "a list of codes, and no record", doc: variant([list(["upheld", "not_upheld"])], []), red: [], state: "recorded" },
+      { name: "absent with no record", doc: variant([], []), red: [TOKEN_FILE, "no pending record"] },
+      { name: "absent under a record with no lands_with", doc: variant([], [without("lands_with")]), red: [TOKEN_FILE, "lands_with"] },
+      { name: "absent under a record with no owed_by", doc: variant([], [without("owed_by")]), red: [TOKEN_FILE, "owed_by"] },
+      { name: "absent under the record twice", doc: variant([], [record, record]), red: [TOKEN_FILE, "2 pending records"] },
+      { name: "absent, and B.3's report states gone too", doc: variant([], [record], false), red: [TOKEN_FILE, REPORT_STATES] },
+      { name: "the list with the record left behind", doc: variant([list(["upheld"])], [record]), red: [TOKEN_FILE, "still carries"] },
+      { name: "an empty list", doc: variant([list([])], []), red: [TOKEN_FILE, "no code"] },
+      { name: "a code listed twice", doc: variant([list(["upheld", "upheld"])], []), red: [TOKEN_FILE, "\"upheld\"", "twice"] },
+      { name: "a code that is not a string", doc: variant([list(["upheld", 3])], []), red: [TOKEN_FILE, "not a non-empty string"] },
+      { name: "two lists", doc: variant([list(["upheld"]), list(["upheld"])], []), red: [TOKEN_FILE, "2 entries"] },
+    ];
+    const wrong = legsGoneWrong(legs, (doc) => pendingJoin(doc, row, {}));
+    assert(wrong.length === 0,
+      `the join between ${TOKEN_FILE}'s report-outcome list and its pending record does not hold on a copy of the ` +
+      `committed file, so the live check above is not asking what its name says:\n` + wrong.map((w) => `- ${w}`).join("\n"));
+    console.log(`  note  ${legs.length} states built from HEAD's ${TOKEN_FILE}, the list modelled on ${REPORT_STATES}; ` +
+      `${legs.filter((l) => l.red.length).length} red as named, ${legs.filter((l) => !l.red.length).length} green.`);
+  });
+
+  // ── asserted_by: every record names the check that holds its floor ────────
+  //
+  // Contract 0.36.0, SCOPE-7 (ops pending item 27). The seven joins above are
+  // what a record's floor is held by; `asserted_by` is the record SAYING so, in
+  // the file every party reads, as `astra-registry:<path>#<check name>`. The ops
+  // generator refuses to emit a record without a well-formed one. Whether the
+  // named check EXISTS is this repository's question, because only this tree
+  // has the check, so it is asked here, statically: the name must be, character
+  // for character, the title of exactly one `test(` call in that committed
+  // module, comments blanked. For a record whose member has a row above, the
+  // name must also be THAT row's check — a record pointing at some other real
+  // check would pass an existence test and assert nothing about its floor.
+  //
+  // So a new pending record with no floor anywhere is red here, naming it,
+  // instead of waiting to be found by reading, which is how all three of entry
+  // 123's were found.
+  await test("the asserted_by rule goes red for a record with none, a malformed one, and a check that does not exist, built from the committed file", () => {
+    const tokenText = showOrNull("HEAD", TOKEN_FILE);
+    assert(tokenText !== null, `${TOKEN_FILE} is not committed at HEAD, so there is nothing to build the states from`);
+    const committed = JSON.parse(tokenText);
+    const committedModules = new Set(git(["ls-tree", "-r", "--name-only", "HEAD", "--", "tools/selftest/"]).split("\n").filter(Boolean));
+    const textOf = (rel) => (committedModules.has(rel) ? showOrNull("HEAD", rel) : null);
+    // The committed records, each given its row's check if the file does not
+    // carry one yet: the state the regeneration that lands this rule writes.
+    const records = (committed.pending || []).map((p) => ({ ...p, asserted_by: p.asserted_by ?? `${ASSERTED_BY_THIS}${PENDING_MEMBERS[p.id]?.check}` }));
+    assert(records.length > 0 && records.every((p) => PENDING_MEMBERS[p.id]),
+      `${TOKEN_FILE} at HEAD carries a pending record with no row in PENDING_MEMBERS (${records.filter((p) => !PENDING_MEMBERS[p.id]).map((p) => p.id).join(", ")}), so the legs below cannot be built for it`);
+    const other = "settings.mjs";
+    const otherTitle = testTitlesIn(textOf(`tools/selftest/${other}`) ?? "")[0];
+    assert(otherTitle, `tools/selftest/${other} at HEAD has no check to point at`);
+    const doc = (edit) => { const d = structuredClone(committed); d.pending = structuredClone(records); edit(d.pending, d); return d; };
+    const at = (id) => (list) => list.find((p) => p.id === id);
+    const [a, b] = records.map((p) => p.id);
+    const legs = [
+      { name: "every record naming its row's check", doc: doc(() => {}), red: [] },
+      { name: "a record with no asserted_by", doc: doc((l) => { delete at(a)(l).asserted_by; }), red: [TOKEN_FILE, a, "no `asserted_by`"] },
+      { name: "another repository's check", doc: doc((l) => { at(a)(l).asserted_by = "astra-plugins-ops:tools/contract-tokens.mjs#the template list is floored"; }), red: [TOKEN_FILE, a, "not `astra-registry:"] },
+      { name: "a module outside tools/selftest/", doc: doc((l) => { at(a)(l).asserted_by = "astra-registry:bot/tests/workflows.test.mjs#x"; }), red: [TOKEN_FILE, a, "not `astra-registry:"] },
+      { name: "no check name", doc: doc((l) => { at(a)(l).asserted_by = `${ASSERTED_BY_THIS}`; }), red: [TOKEN_FILE, a, "not `astra-registry:"] },
+      { name: "a trailing space", doc: doc((l) => { at(a)(l).asserted_by += " "; }), red: [TOKEN_FILE, a, "not `astra-registry:"] },
+      { name: "a module this repository does not commit", doc: doc((l) => { at(a)(l).asserted_by = `astra-registry:tools/selftest/unwritten.mjs#${PENDING_MEMBERS[a].check}`; }), red: [TOKEN_FILE, a, "tools/selftest/unwritten.mjs", "does not commit"] },
+      { name: "a check name that matches nothing", doc: doc((l) => { at(a)(l).asserted_by += " (renamed)"; }), red: [TOKEN_FILE, a, "names no check"] },
+      { name: "another record's check", doc: doc((l) => { at(a)(l).asserted_by = at(b)(l).asserted_by; }), red: [TOKEN_FILE, a, "is not the check"] },
+      { name: "a real check in another module", doc: doc((l) => { at(a)(l).asserted_by = `astra-registry:tools/selftest/${other}#${otherTitle}`; }), red: [TOKEN_FILE, a, "is not the check"] },
+      { name: "a record with no row, naming a real check", doc: doc((l) => { l.push({ ...at(a)(l), id: "synthetic_member", asserted_by: `astra-registry:tools/selftest/${other}#${otherTitle}` }); }), red: [] },
+      { name: "a record with no row, naming nothing", doc: doc((l) => { l.push({ ...at(a)(l), id: "synthetic_member", asserted_by: `astra-registry:tools/selftest/${other}#no such check` }); }), red: [TOKEN_FILE, "synthetic_member", "names no check"] },
+    ];
+    // And a module in which the named title appears twice: the name then picks
+    // no one check, which is a name that asserts nothing in particular.
+    const doubled = (rel) => {
+      const t = textOf(rel);
+      return rel === SELF ? `${t}\n test(${JSON.stringify(PENDING_MEMBERS[a].check)}, () => {});\n` : t;
+    };
+    const wrong = [];
+    for (const leg of legs) {
+      const said = assertedByProblems(leg.doc, { textOf, committedModules }).join("\n");
+      if (!leg.red.length && said) wrong.push(`${leg.name}: expected green, was red: ${said}`);
+      if (leg.red.length && !said) wrong.push(`${leg.name}: expected red, was green`);
+      const unnamed = leg.red.filter((s) => !said.includes(s));
+      if (leg.red.length && said && unnamed.length) wrong.push(`${leg.name}: red, but not naming ${unnamed.join(", ")}: ${said}`);
+    }
+    const twice = assertedByProblems(doc(() => {}), { textOf: doubled, committedModules }).join("\n");
+    if (!(twice.includes(a) && twice.includes("2 checks"))) wrong.push(`a title defined twice: expected red naming ${a} and "2 checks", was: ${twice || "green"}`);
+    // Every row's check is a literal title in this module, once: the copy the
+    // generator emits and the title the check runs under cannot drift apart.
+    const selfTitles = testTitlesIn(textOf(SELF) ?? "");
+    for (const row of Object.values(PENDING_MEMBERS)) {
+      const n = selfTitles.filter((t) => t === row.check).length;
+      if (n !== 1) wrong.push(`PENDING_MEMBERS.${row.id}.check is the title of ${n} check(s) in ${SELF} at HEAD, not 1: ${JSON.stringify(row.check)}`);
+    }
+    assert(wrong.length === 0,
+      `the asserted_by rule does not hold on a copy of the committed file, so the live check is not asking what ` +
+      `its name says:\n` + wrong.map((w) => `- ${w}`).join("\n"));
+    console.log(`  note  ${legs.length + 1} states built from HEAD's ${TOKEN_FILE} and tools/selftest/; ` +
+      `${legs.filter((l) => l.red.length).length + 1} red as named, ${legs.filter((l) => !l.red.length).length} green; ` +
+      `${Object.keys(PENDING_MEMBERS).length} rows' checks each a title in ${SELF} once.`);
+  });
+
+  // The live half of the rule above: the committed file, as it stands. Every
+  // record names, in `asserted_by`, a check this repository runs by exactly
+  // that name — and for a member with a row, that row's check. Landed with the
+  // token file regenerated from contract 0.36.0, because a file generated
+  // before it carries no `asserted_by` and this is red on it by design.
+  await test("every pending record names, in asserted_by, the check in this repository that asserts its floor", () => {
+    const doc = JSON.parse(fs.readFileSync(tokenPath, "utf8"));
+    const committedModules = new Set(git(["ls-files", "--", "tools/selftest/"]).split("\n").filter(Boolean));
+    const textOf = (rel) => (committedModules.has(rel) ? fs.readFileSync(path.join(REPO_ROOT, rel), "utf8") : null);
+    const records = Array.isArray(doc.pending) ? doc.pending : [];
+    const problems = assertedByProblems(doc, { textOf, committedModules });
+    assert(problems.length === 0,
+      `${TOKEN_FILE}'s pending records do not each name the check that holds their floor (contract 0.36.0, SCOPE-7; ` +
+      `ops pending item 27):\n` + problems.map((p) => `- ${p}`).join("\n"));
+    const unrowed = records.filter((p) => !PENDING_MEMBERS[p.id]).map((p) => p.id);
+    console.log(`  note  ${records.length} pending record(s), each naming one check by its exact title; ` +
+      `${records.length - unrowed.length} of them this module's own row check` +
+      `${unrowed.length ? `, and ${unrowed.join(", ")} a check elsewhere` : ""}.`);
+  });
 }
 
 /**
@@ -1149,6 +1546,7 @@ function memberPresent(doc, name) {
 const PENDING_MEMBERS = {
   [STAGING_MEMBER]: {
     id: STAGING_MEMBER,
+    check: "the token file's staging_listing_id is null under its pending record, or policy/reserved-ids.json's id with none",
     what: "the id",
     owes: "who owes the id",
     floor: "until ops.15 lands the member is null and this record is present",
@@ -1182,6 +1580,7 @@ const PENDING_MEMBERS = {
   },
   [VECTOR_MEMBER]: {
     id: VECTOR_MEMBER,
+    check: "the token file's shared_vector_paths is empty under its pending record, or paths this repository commits with none",
     what: "the list of paths",
     owes: "who owes the paths",
     floor: "until ops.15 lands the list is empty and this record is present",
@@ -1197,6 +1596,7 @@ const PENDING_MEMBERS = {
   },
   [REPORT_RECORD]: {
     id: REPORT_RECORD,
+    check: "the token file's MOD-54 report page is absent under its pending record, or tools/cutover-preflight.mjs's page with none",
     what: "the page",
     owes: "who owes the page",
     floor: "until that version lands the entry is absent and this record is present",
@@ -1207,6 +1607,97 @@ const PENDING_MEMBERS = {
     absent: null,
     pending: () => false,
     judge: (value, { reportPage }, found) => reportPageAgainstPreflight(value, reportPage, found),
+  },
+  [FIXED_MEMBER]: {
+    id: FIXED_MEMBER,
+    check: "the token file's fixed_reasons is null under its pending record, or a string for each A_* code with none",
+    what: "the fixed reason strings",
+    owes: "who owes the strings",
+    floor: "until ops.15 lands, `fixed_reasons` is null and this record is present",
+    waiting: "a null nobody is waiting to fill",
+    pendingSays: `\`${FIXED_MEMBER}\` is null`,
+    heldTo: "bot/lib/compile-decision.mjs's AUTHOR_CODES",
+    find: (doc) => (Object.hasOwn(doc, FIXED_MEMBER) ? { value: doc[FIXED_MEMBER], at: `\`${FIXED_MEMBER}\`` } : { absent: true }),
+    absent:
+      `${TOKEN_FILE} has no \`${FIXED_MEMBER}\` member at all. SCOPE-7 makes the file carry the one fixed registry ` +
+      `string each A_* code carries, null until ops.15, and bot/lib/compile-decision.mjs's fixedReason reads it there`,
+    pending: (value) => value === null,
+    whilePending: (doc) => fixedCarriersWhilePending(doc),
+    judge: (value, _ctx, found) => fixedReasonsAgainstCodes(value, found.doc),
+  },
+  [TEMPLATES_MEMBER]: {
+    id: TEMPLATES_MEMBER,
+    check: "the token file's templates list is empty under its pending record, or templates naming this file's entries with none",
+    what: "the template list",
+    owes: "who owes the list",
+    floor: "until ops.15 lands, `templates` is an empty array, this record is present, and nothing may be marked `retired` on the strength of it",
+    waiting: "an empty list nobody is waiting to fill",
+    pendingSays: `\`${TEMPLATES_MEMBER}\` is empty`,
+    heldTo: "the author audience and author-notify entries this file lists",
+    find: (doc) => (Object.hasOwn(doc, TEMPLATES_MEMBER) ? { value: doc[TEMPLATES_MEMBER], at: `\`${TEMPLATES_MEMBER}\`` } : { absent: true }),
+    absent:
+      `${TOKEN_FILE} has no \`${TEMPLATES_MEMBER}\` member at all. SCOPE-7 makes the file carry every generated-workflow ` +
+      `template version init-ci has emitted, and ID-73 reads it before anything author CI compiles may be retired`,
+    pending: (value) => Array.isArray(value) && value.length === 0,
+    whilePending: (doc) => {
+      const compiled = authorCompiled(doc);
+      if (compiled.length === 0) {
+        return [`${TOKEN_FILE} lists no author audience and no author-CI operation, so the floor that nothing author CI ` +
+          `compiles is retired while \`${TEMPLATES_MEMBER}\` is empty holds over nothing`];
+      }
+      return compiled.filter((e) => e.state === "retired").map((e) =>
+        `${TOKEN_FILE} marks \`${e.id}\` retired while \`${TEMPLATES_MEMBER}\` is empty, and the record's floor says nothing ` +
+        `may be marked retired on the strength of an empty list: authors' repositories may still compile it (ID-73)`);
+    },
+    judge: (value, _ctx, found) => templatesAgainstEntries(value, found.doc),
+  },
+  [FLOW13_MEMBER]: {
+    id: FLOW13_MEMBER,
+    check: "the token file's flow13_table is null under its pending record, or tools/codes-table.json's table with none",
+    what: "the table",
+    owes: "who emits the table",
+    floor: "without --codes the table is null and this record is present",
+    waiting: "a null nobody is waiting to fill",
+    pendingSays: `\`${FLOW13_MEMBER}\` is null`,
+    heldTo: CODES_FILE,
+    find: (doc) => (Object.hasOwn(doc, FLOW13_MEMBER) ? { value: doc[FLOW13_MEMBER], at: `\`${FLOW13_MEMBER}\`` } : { absent: true }),
+    absent:
+      `${TOKEN_FILE} has no \`${FLOW13_MEMBER}\` member at all. SCOPE-7 makes the file carry FLOW-13's table, one entry ` +
+      `per reason code, which the panel reads from the file (FLOW-13)`,
+    pending: (value) => value === null,
+    whilePending: (doc) => (doc.flow13_source === null || doc.flow13_source === undefined ? [] : [
+      `${TOKEN_FILE} carries flow13_source ${JSON.stringify(doc.flow13_source)} and no \`${FLOW13_MEMBER}\`: a source for ` +
+      `a table that is not there, which the generator writes only when it merged one`,
+    ]),
+    judge: (value, { codesTable }, found) => flow13AgainstCodes(value, codesTable, found.doc),
+  },
+  [OUTCOME_RECORD]: {
+    id: OUTCOME_RECORD,
+    check: "the token file's report-outcome list is absent under its pending record, or a list of codes with none",
+    what: "the outcome list",
+    owes: "who supplies the list",
+    floor: "until that version lands the client-side floor is written for B.3's four report states alone and this record says the outcome list is not floored",
+    waiting: "an absence nobody is waiting to fill",
+    pendingSays: "report-outcome list is absent",
+    heldTo: "its own shape, since minice-be supplies it and nothing in this repository lists it",
+    find: (doc) => {
+      const hits = (Array.isArray(doc.entries) ? doc.entries : []).filter((e) => e && e.id === OUTCOME_LIST);
+      if (hits.length > 1) {
+        return { problems: [`${TOKEN_FILE} carries ${hits.length} entries \`${OUTCOME_LIST}\`, and a reader of the first ` +
+          `cannot know the others say something different`] };
+      }
+      return hits.length ? { value: hits[0], at: `the entry \`${OUTCOME_LIST}\`` } : { absent: true };
+    },
+    absent: null,
+    pending: () => false,
+    whilePending: (doc) => {
+      const states = (Array.isArray(doc.entries) ? doc.entries : []).find((e) => e && e.id === REPORT_STATES);
+      return states && Array.isArray(states.values) && states.values.length >= 4 ? [] : [
+        `${TOKEN_FILE} lists no ${REPORT_STATES} with B.3's four report states, and the report-outcome record's floor ` +
+        `says the client's floor is written for those states alone until the outcome list lands`,
+      ];
+    },
+    judge: (entry) => outcomeListShape(entry),
   },
 };
 
@@ -1250,9 +1741,14 @@ function pendingJoin(doc, row, ctx) {
         }
       }
     }
+    // A row may hold something else while its member is pending, and it is
+    // asked in the pending state only: `fixed_reasons`' code entries carry no
+    // string, nothing author CI compiles is retired on the strength of an empty
+    // template list (contract 0.36.0; ops pending item 27).
+    if (row.whilePending) problems.push(...row.whilePending(doc, ctx));
     return { state: "pending", problems, notes: [] };
   }
-  const judged = row.judge(found.value, ctx, found);
+  const judged = row.judge(found.value, ctx, { ...found, doc });
   if (judged.malformed?.length) return { state: "recorded", problems: judged.malformed, notes: [] };
   problems.push(...judged.problems);
   if (records.length) {
@@ -1505,6 +2001,264 @@ function reportPageAgainstPreflight(value, want, found) {
  * every committed record.
  */
 const KNOWN_FALSE = [];
+
+/** The code entries that carry a `fixed_reason` beside the member. */
+function fixedCarriers(doc) {
+  return (Array.isArray(doc.entries) ? doc.entries : []).filter((e) => e && Object.hasOwn(e, "fixed_reason"));
+}
+
+/** While `fixed_reasons` is null, no code entry may carry a string, and each points at this record. */
+function fixedCarriersWhilePending(doc) {
+  const problems = [];
+  for (const e of fixedCarriers(doc)) {
+    if (e.fixed_reason !== null) {
+      problems.push(
+        `${TOKEN_FILE}'s entry \`${e.id}\` carries fixed_reason ${JSON.stringify(e.fixed_reason)} while ` +
+        `\`${FIXED_MEMBER}\` is null: a string the file's own record says nobody has written, which fixedReason never ` +
+        `reads and a reader of the entry takes as published`);
+    }
+    if (Object.hasOwn(e, "fixed_reason_pending") && e.fixed_reason_pending !== FIXED_MEMBER) {
+      problems.push(
+        `${TOKEN_FILE}'s entry \`${e.id}\` has fixed_reason_pending ${JSON.stringify(e.fixed_reason_pending)}, and the ` +
+        `record that owes its string is \`${FIXED_MEMBER}\``);
+    }
+  }
+  return problems;
+}
+
+/**
+ * A recorded `fixed_reasons`, against the codes this repository asks it for:
+ * `AUTHOR_CODES`, the codes `fixedReason` is called with, and nothing else —
+ * and against the code entries, so the string is spelled once.
+ */
+function fixedReasonsAgainstCodes(value, doc) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return { malformed: [
+      `${TOKEN_FILE}'s \`${FIXED_MEMBER}\` is ${JSON.stringify(value)}, which is neither null nor an object of one ` +
+      `string per author code`,
+    ] };
+  }
+  const malformed = Object.entries(value)
+    .filter(([, s]) => typeof s !== "string" || s.trim() === "")
+    .map(([code, s]) => `${TOKEN_FILE}'s \`${FIXED_MEMBER}\`.${code} is ${JSON.stringify(s)}, not a non-empty string`);
+  if (malformed.length) return { malformed };
+  const problems = [];
+  const have = Object.keys(value).sort();
+  const want = [...AUTHOR_CODES].sort();
+  const missing = want.filter((c) => !have.includes(c));
+  const extra = have.filter((c) => !want.includes(c));
+  if (missing.length || extra.length) {
+    problems.push(
+      `${TOKEN_FILE}'s \`${FIXED_MEMBER}\` records ${have.join(", ") || "no code"}, and bot/lib/compile-decision.mjs's ` +
+      `AUTHOR_CODES, the codes fixedReason is asked for, are ${want.join(", ")}` +
+      (missing.length ? `: no string for ${missing.join(", ")}, so a moderation compile throws on that author action` : "") +
+      (extra.length ? `: ${extra.join(", ")} is a code the registry never asks a fixed reason for` : ""));
+  }
+  for (const e of fixedCarriers(doc)) {
+    const pointing = Object.hasOwn(e, "fixed_reason_pending");
+    if (e.fixed_reason !== value[e.name] || pointing) {
+      problems.push(
+        `${TOKEN_FILE}'s entry \`${e.id}\` carries fixed_reason ${JSON.stringify(e.fixed_reason)}` +
+        `${pointing ? ` and still points at ${JSON.stringify(e.fixed_reason_pending)}` : ""}, and \`${FIXED_MEMBER}\` ` +
+        `records ${JSON.stringify(value[e.name] ?? null)}: the string is spelled twice, and a reader of one cannot know ` +
+        `the other says something different`);
+    }
+  }
+  return { problems };
+}
+
+/** The entries author CI compiles: an audience it emits, and an operation it calls. */
+function authorCompiled(doc) {
+  return (Array.isArray(doc.entries) ? doc.entries : []).filter((e) => e &&
+    (e.kind === "audience" || e.kind === "operation") && Array.isArray(e.emitter) && e.emitter.includes("author-ci"));
+}
+
+/** SCOPE-7's five states, `until <step>` as the generator writes it. */
+const isTokenState = (s) => ["live", "reserved", "service-only", "retired"].includes(s) || /^until R[0-9]+[ab]?$/.test(s);
+
+/**
+ * A recorded template list, against this file's own entries: each template
+ * names an author audience and an author-notify operation the file lists, and
+ * ID-73 forbids marking either `retired` while a listed template compiles it.
+ */
+function templatesAgainstEntries(value, doc) {
+  if (!Array.isArray(value)) {
+    return { malformed: [
+      `${TOKEN_FILE}'s \`${TEMPLATES_MEMBER}\` is ${JSON.stringify(value)}, which is neither the empty list nor a list ` +
+      `of templates`,
+    ] };
+  }
+  const malformed = [];
+  const seen = new Set();
+  value.forEach((t, i) => {
+    for (const k of ["version", "audience", "notify_path", "state"]) {
+      if (!(t && typeof t[k] === "string" && t[k].trim() !== "")) {
+        malformed.push(`${TOKEN_FILE}'s \`${TEMPLATES_MEMBER}\`[${i}] has no \`${k}\`; SCOPE-7 lists each template with ` +
+          `the author audience and author-notify path it compiles, and its state`);
+      }
+    }
+    if (t && typeof t.state === "string" && t.state.trim() !== "" && !isTokenState(t.state)) {
+      malformed.push(`${TOKEN_FILE}'s \`${TEMPLATES_MEMBER}\`[${i}] has state ${JSON.stringify(t.state)}, which is not ` +
+        `one of SCOPE-7's five`);
+    }
+    if (t && typeof t.version === "string") {
+      if (seen.has(t.version)) malformed.push(`${TOKEN_FILE}'s \`${TEMPLATES_MEMBER}\` lists version ${JSON.stringify(t.version)} twice`);
+      seen.add(t.version);
+    }
+  });
+  if (malformed.length) return { malformed };
+  const compiled = authorCompiled(doc);
+  const problems = [];
+  for (const t of value) {
+    const aud = compiled.find((e) => e.kind === "audience" && (e.value === t.audience || e.name === t.audience));
+    const op = compiled.find((e) => e.kind === "operation" && e.path === t.notify_path);
+    if (!aud) {
+      problems.push(`${TOKEN_FILE}'s template ${JSON.stringify(t.version)} compiles audience ${JSON.stringify(t.audience)}, ` +
+        `and the file lists no author audience by that value or name`);
+    }
+    if (!op) {
+      problems.push(`${TOKEN_FILE}'s template ${JSON.stringify(t.version)} calls notify path ${JSON.stringify(t.notify_path)}, ` +
+        `and the file lists no author-CI operation at that path`);
+    }
+    for (const e of [aud, op].filter(Boolean)) {
+      if (e.state === "retired") {
+        problems.push(`${TOKEN_FILE} marks \`${e.id}\` retired while template ${JSON.stringify(t.version)} is listed as ` +
+          `compiling it: ID-73 forbids marking an author audience or the author-notify path retired while any listed ` +
+          `template compiles it`);
+      }
+    }
+  }
+  return { problems };
+}
+
+/** A recorded FLOW-13 table, against `tools/codes-table.json`'s, rows and source. */
+function flow13AgainstCodes(value, codesTable, doc) {
+  if (!Array.isArray(value)) {
+    return { malformed: [
+      `${TOKEN_FILE}'s \`${FLOW13_MEMBER}\` is ${JSON.stringify(value).slice(0, 80)}, which is neither null nor a list of rows`,
+    ] };
+  }
+  const want = codesTable.flow13_table;
+  const problems = [];
+  if (JSON.stringify(value) !== JSON.stringify(want)) {
+    const byCode = (rows) => new Map((Array.isArray(rows) ? rows : []).map((r) => [r?.code, JSON.stringify(r)]));
+    const a = byCode(value);
+    const b = byCode(want);
+    const differ = [...new Set([...a.keys(), ...b.keys()])].filter((c) => a.get(c) !== b.get(c));
+    problems.push(differ.length
+      ? `${TOKEN_FILE}'s \`${FLOW13_MEMBER}\` and ${CODES_FILE}'s differ at ${differ.length} code(s), first ` +
+        `${differ.slice(0, 5).join(", ")}. The ops generator merges ${CODES_FILE} as it stands, so the file was ` +
+        `generated from another table, or edited after it was generated`
+      : `${TOKEN_FILE}'s \`${FLOW13_MEMBER}\` carries ${CODES_FILE}'s rows in another order, and the ops generator ` +
+        `merges them in the order the table gives, so the file was not generated from this table`);
+  }
+  const src = { codes_source: codesTable.codes_source, codes: Array.isArray(codesTable.codes) ? codesTable.codes.length : null };
+  if (JSON.stringify(doc.flow13_source) !== JSON.stringify(src)) {
+    problems.push(`${TOKEN_FILE}'s flow13_source is ${JSON.stringify(doc.flow13_source)}, and ${CODES_FILE} gives ` +
+      `${JSON.stringify(src)}`);
+  }
+  return { problems };
+}
+
+/** A recorded report-outcome list: a list of codes, each a distinct non-empty string. */
+function outcomeListShape(entry) {
+  const values = entry?.values;
+  if (!Array.isArray(values) || values.length === 0) {
+    return { malformed: [`${TOKEN_FILE}'s entry \`${OUTCOME_LIST}\` lists no code, and an empty vocabulary is not the ` +
+      `list minice-be supplies`] };
+  }
+  const malformed = [];
+  const seen = new Set();
+  values.forEach((v, i) => {
+    if (typeof v !== "string" || v.trim() === "") {
+      malformed.push(`${TOKEN_FILE}'s entry \`${OUTCOME_LIST}\` value ${i} is ${JSON.stringify(v)}, not a non-empty string`);
+    } else if (seen.has(v)) {
+      malformed.push(`${TOKEN_FILE}'s entry \`${OUTCOME_LIST}\` lists ${JSON.stringify(v)} twice`);
+    }
+    seen.add(v);
+  });
+  return malformed.length ? { malformed } : { problems: [] };
+}
+
+/**
+ * `test(` titles in a module's text, as literals, comments blanked: the same
+ * reading `tools/selftest.mjs` gives a module (its TEST_OPENING), so a name
+ * this finds is a check that runner prints. A template-literal title with an
+ * interpolation is not a name anything can equal, and is left out.
+ */
+const TEST_OPENING = /\btest\(\s*(["'`])((?:\\[\s\S]|(?!\1)[^\\])*)\1\s*,/g;
+function testTitlesIn(text) {
+  const code = text.split("\n").map((l) => {
+    if (/^\s*(\/\/|\/?\*)/.test(l)) return " ".repeat(l.length);
+    const c = l.search(/\s\/\/.*$/);
+    return c < 0 ? l : l.slice(0, c) + " ".repeat(l.length - c);
+  }).join("\n");
+  return [...code.matchAll(TEST_OPENING)]
+    .filter((m) => !(m[1] === "`" && m[2].includes("${")))
+    .map((m) => m[2].replace(/\\([\s\S])/g, "$1"));
+}
+
+/**
+ * Every problem with the file's `asserted_by` members (contract 0.36.0,
+ * SCOPE-7). `textOf(rel)` gives a committed module's text or null;
+ * `committedModules` is the set of paths committed under `tools/selftest/`.
+ */
+function assertedByProblems(doc, { textOf, committedModules }) {
+  const problems = [];
+  const titles = new Map();
+  const titlesOf = (rel) => {
+    if (!titles.has(rel)) {
+      const t = textOf(rel);
+      titles.set(rel, t === null ? [] : testTitlesIn(t));
+    }
+    return titles.get(rel);
+  };
+  for (const r of Array.isArray(doc.pending) ? doc.pending : []) {
+    const id = r && typeof r.id === "string" ? r.id : JSON.stringify(r?.id);
+    const v = r?.asserted_by;
+    if (v === undefined || v === null || v === "") {
+      problems.push(
+        `${TOKEN_FILE}'s pending record \`${id}\` has no \`asserted_by\`, so nothing in the file says which check holds ` +
+        `its floor (${JSON.stringify(r?.floor ?? null)}). SCOPE-7 requires one from contract 0.36.0 and the ops generator ` +
+        `refuses to emit a record without it, so this file was not written by that generator from 0.36.0 on`);
+      continue;
+    }
+    const m = typeof v === "string" ? ASSERTED_BY.exec(v) : null;
+    if (!m) {
+      problems.push(
+        `${TOKEN_FILE}'s pending record \`${id}\` has \`asserted_by\` ${JSON.stringify(v)}, which is not ` +
+        "`astra-registry:tools/selftest/<module>.mjs#<check name>` (SCOPE-7): the check that holds a floor over the " +
+        "committed file is one this repository's suite runs, named character for character");
+      continue;
+    }
+    const [, rel, name] = m;
+    if (!committedModules.has(rel)) {
+      problems.push(
+        `${TOKEN_FILE}'s pending record \`${id}\` names ${rel}, and this repository does not commit that module, so ` +
+        `no suite runs the check it names`);
+    } else {
+      const n = titlesOf(rel).filter((t) => t === name).length;
+      if (n === 0) {
+        problems.push(
+          `${TOKEN_FILE}'s pending record \`${id}\` names no check that ${rel} runs: ${JSON.stringify(name)} is the title ` +
+          `of none of its ${titlesOf(rel).length} check(s). A check renamed and a floor claimed for a check nobody wrote ` +
+          `read the same from outside`);
+      } else if (n > 1) {
+        problems.push(
+          `${TOKEN_FILE}'s pending record \`${id}\` names ${JSON.stringify(name)}, which is the title of ${n} checks in ` +
+          `${rel}, so it names no one check`);
+      }
+    }
+    const row = PENDING_MEMBERS[r?.id];
+    if (row && v !== `${ASSERTED_BY_THIS}${row.check}`) {
+      problems.push(
+        `${TOKEN_FILE}'s pending record \`${id}\` names ${JSON.stringify(v)}, and that is not the check that holds its ` +
+        `floor here, ${JSON.stringify(`${ASSERTED_BY_THIS}${row.check}`)}: a record pointing at some other check passes ` +
+        `an existence test and asserts nothing about its own floor`);
+    }
+  }
+  return problems;
+}
 
 /**
  * A copy of the tracked files under `dirs`, in the suite's temp directory.

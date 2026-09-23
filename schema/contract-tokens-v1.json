@@ -1,6 +1,6 @@
 {
-  "contract_version": "0.35.0",
-  "source_commit": "6d397cfc7f7ce8d3ac7c69d5b40b733e198177e1",
+  "contract_version": "0.36.0",
+  "source_commit": "c7975d17b754c0391f62bd5d131bed23057c0a33",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -6302,7 +6302,8 @@
       "why": "BOT-80 says an `A_*` entry's `reason` is \"the one fixed registry string SCOPE-7's file lists for that code\", and §0.8 records no string. The service's decision type carries `public_reason`, which is NULL by design for an author action, so the first author yank either fails a body check or carries an invented string that the registry silently substitutes its own copy for.",
       "owed_by": "astra-plugins-ops (contract version ops.15, §0.8); minice-be's half is §1.3 row 8.5",
       "lands_with": "ops.15, before R2",
-      "floor": "until ops.15 lands, `fixed_reasons` is null and the selftest asserts that it is null and that this record is present; from ops.15 it is two non-empty strings and the selftest asserts that."
+      "floor": "until ops.15 lands, `fixed_reasons` is null and the selftest asserts that it is null and that this record is present; from ops.15 it is two non-empty strings and the selftest asserts that.",
+      "asserted_by": "astra-registry:tools/selftest/contract-tokens.mjs#the token file's fixed_reasons is null under its pending record, or a string for each A_* code with none"
     },
     {
       "id": "templates",
@@ -6310,7 +6311,8 @@
       "why": "SCOPE-7 requires the list and the contract names no entry of it. ID-73 forbids marking an audience or the notify path `retired` while a listed template compiles it, so an empty list is not the same claim as a list with template `1` in it: the empty one lets a later regeneration retire a name that authors' repositories still compile.",
       "owed_by": "astra-plugins-ops (contract version ops.15, §0.8)",
       "lands_with": "ops.15, before R2",
-      "floor": "until ops.15 lands, `templates` is an empty array, this record is present, and nothing may be marked `retired` on the strength of it; from ops.15 the selftest asserts at least one template, each with an audience, a notify path and a state."
+      "floor": "until ops.15 lands, `templates` is an empty array, this record is present, and nothing may be marked `retired` on the strength of it; from ops.15 the selftest asserts at least one template, each with an audience, a notify path and a state.",
+      "asserted_by": "astra-registry:tools/selftest/contract-tokens.mjs#the token file's templates list is empty under its pending record, or templates naming this file's entries with none"
     },
     {
       "id": "staging_listing_id",
@@ -6318,7 +6320,8 @@
       "why": "MOD-10 refuses `path_test` on any id but MOD-16's staging listing, and MOD-16 names no id. The registry reserves it in `policy/reserved-ids.json` (M-T2.1) and reads it only there, through `tools/lib/reserved.mjs`'s `stagingListingId`: the derive rule, the validator, the moderation-coverage walk and the takedown bound's exclusion through it, and the examples rule. No registry code reads this member; the registry's `tools/selftest/contract-tokens.mjs` holds it to that file. It is here for the party that compiles against this file (SCOPE-7), whose half of MOD-10 refuses `path_test` on any other id.",
       "owed_by": "astra-plugins-ops (contract version ops.15, §0.8)",
       "lands_with": "ops.15, before R2",
-      "floor": "until ops.15 lands the member is null and this record is present."
+      "floor": "until ops.15 lands the member is null and this record is present.",
+      "asserted_by": "astra-registry:tools/selftest/contract-tokens.mjs#the token file's staging_listing_id is null under its pending record, or policy/reserved-ids.json's id with none"
     },
     {
       "id": "shared_vector_paths",
@@ -6326,7 +6329,8 @@
       "why": "Three corpora are read from a pinned registry commit by a party that is not this one (§1.3 row 8.3). A corpus whose path is agreed in prose and nowhere else is a corpus two readers can disagree about while both suites stay green.",
       "owed_by": "astra-plugins-ops (contract version ops.15, §0.8)",
       "lands_with": "ops.15, before R2",
-      "floor": "until ops.15 lands the list is empty and this record is present."
+      "floor": "until ops.15 lands the list is empty and this record is present.",
+      "asserted_by": "astra-registry:tools/selftest/contract-tokens.mjs#the token file's shared_vector_paths is empty under its pending record, or paths this repository commits with none"
     },
     {
       "id": "mod54_report_page",
@@ -6334,7 +6338,8 @@
       "why": "MOD-54 says the panel serves a report page \"under `/plugins/_/`\" and names no path. minice-be cites `https://astra.minice.ai/plugins/_/report?plugin=<id>` in its own panel document (§1.3 row 7), which is a citation and not a contract entry; the file carries what a contract version records.",
       "owed_by": "astra-plugins-ops or minice-be, in the version that records it (§1.3 row 7)",
       "lands_with": "the version that records MOD-54's path",
-      "floor": "until that version lands the entry is absent and this record is present."
+      "floor": "until that version lands the entry is absent and this record is present.",
+      "asserted_by": "astra-registry:tools/selftest/contract-tokens.mjs#the token file's MOD-54 report page is absent under its pending record, or tools/cutover-preflight.mjs's page with none"
     },
     {
       "id": "report_outcome_codes",
@@ -6342,7 +6347,8 @@
       "why": "CLIENT-80's `reports.mine` returns an `outcome`, \"a public code or null\", and no party has written the list down (attack m-2). The client branches on it to render a reporter's own reports, so a floor that counts the schema and not this list leaves the client's SCOPE-10 scan passing vacuously over a vocabulary a human reporter actually reads.",
       "owed_by": "minice-be supplies the enumeration (accepted as its W-16); either plan publishes it into §0.8",
       "lands_with": "the report-outcome version, before R5",
-      "floor": "until that version lands the client-side floor is written for B.3's four report states alone and this record says the outcome list is not floored; from then it counts both."
+      "floor": "until that version lands the client-side floor is written for B.3's four report states alone and this record says the outcome list is not floored; from then it counts both.",
+      "asserted_by": "astra-registry:tools/selftest/contract-tokens.mjs#the token file's report-outcome list is absent under its pending record, or a list of codes with none"
     }
   ]
 }
