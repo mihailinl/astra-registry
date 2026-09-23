@@ -1480,7 +1480,8 @@ function checkHeartbeats() {
     "an operator at the dead-man receiver, recorded in ops.43",
     [
       "look at: receiver check \"BOT-87's poll and sweep\" (B-T5.0, B-T5.1), within its silence bound",
-      "         — the longer of 3 × the interval and 90 minutes, recalibrated at R3 (OPEN-OPS-13).",
+      "         — the longest of 3 × the interval, 90 minutes, and a day for a poster GitHub schedules",
+      "         (bot/lib/alert-checks.mjs `boundMinutes`), recalibrated at R3 (OPEN-OPS-13).",
       "why this tool cannot, and must not: ROLL-44's row is \"no dead-man credential crosses the party line\".",
       "         A preflight holding a receiver credential would be the leak that row forbids.",
     ],
