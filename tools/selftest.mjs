@@ -1871,7 +1871,7 @@ const FLOORS = new Map(Object.entries({
   "rehearsal-r2.mjs": 14,
   "served-set.mjs": 35,
   "revocations.mjs": 24,
-  "cli.mjs": 9,
+  "cli.mjs": 12,
   "root-delegation.mjs": 6,
   "roots.mjs": 3,
   "trust-anchor.mjs": 4,

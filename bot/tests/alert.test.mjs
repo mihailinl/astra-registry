@@ -2,8 +2,10 @@
 // The alarm channel and the dead-man heartbeat, against a local stub.
 //
 // Two halves, and the second is the one that matters. The first asks that a
-// working channel works: the message goes to the owner, the copy goes to
-// KNICE, `delivered_at` comes back as the API's own time. The second asks what
+// working channel works: the message goes to the alarm chat — once, when that
+// chat is the one group the owner and KNICE share (2026-09-23) — and to a
+// separate copy chat only when one is set, and `delivered_at` comes back as
+// the API's own time. The second asks what
 // happens when it does not — a missing secret, a 500, `ok: false`, a 2xx with
 // no time in it, a receiver that never answers — and every one of those has to
 // end in a non-zero exit with no `delivered_at`, because the failure this
@@ -22,7 +24,15 @@ import http from "node:http";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { runAlert, credentialProblems, rfc3339, TELEGRAM_API } from "../alert.mjs";
+import {
+  OPTIONAL_SECRETS,
+  REQUIRED_SECRETS,
+  TELEGRAM_API,
+  copyChat,
+  credentialProblems,
+  rfc3339,
+  runAlert,
+} from "../alert.mjs";
 import { postHeartbeat } from "../heartbeat.mjs";
 import { renderVerdict, verdictProblems, runUrl, VERDICT_SCHEMA } from "../lib/alert-verdict.mjs";
 import {
@@ -30,6 +40,7 @@ import {
   MIN_BOUND_MINUTES,
   alertsEnvironmentSecrets,
   boundMinutes,
+  optionalAlertsSecrets,
   secretName,
   tableProblems,
 } from "../lib/alert-checks.mjs";
@@ -50,10 +61,17 @@ async function test(name, fn) {
 const quiet = { log: () => {}, error: () => {} };
 
 const TOKEN = "1234567:AAHtesttokenNOBODYSHOULDEVERSEEthis";
+/** A channel with a SEPARATE copy chat: the arrangement before 2026-09-23, still supported. */
 const ENV = {
   ASTRA_ALERT_TELEGRAM_TOKEN: TOKEN,
   ASTRA_ALERT_CHAT_ID: "-1001",
   ASTRA_ALERT_COPY_CHAT_ID: "-1002",
+};
+
+/** The owner's decision of 2026-09-23: one group, him and KNICE, and no copy chat at all. */
+const ONE_GROUP = {
+  ASTRA_ALERT_TELEGRAM_TOKEN: TOKEN,
+  ASTRA_ALERT_CHAT_ID: "-1001",
 };
 
 const VERDICT = {
@@ -162,7 +180,46 @@ await test("a forged GITHUB_SERVER_URL does not become a link in the message", (
 
 console.log("\nbot/alert.mjs — the channel, and every way it can fail to be one\n");
 
-await test("the alarm reaches the owner's chat and the copy reaches KNICE's", async () => {
+await test("one group and no copy chat: the alarm is sent once, to the alarm chat, and delivered_at stands", async () => {
+  // The owner's decision of 2026-09-23. Until then the copy chat was a
+  // required secret, so this environment — the one he is about to create —
+  // was refused as half-configured and sent nothing at all.
+  const api = await stubApi();
+  try {
+    assert.deepEqual(credentialProblems(ONE_GROUP), [],
+      "an environment with the token and the alarm chat and no copy chat is the owner's chosen channel, not a broken one");
+    const out = await runAlert({ verdict: VERDICT, env: ONE_GROUP, apiBase: api.base, log: quiet });
+    assert.equal(out.code, 0, out.problems.join("; "));
+    assert.equal(out.alerted, true);
+    assert.equal(out.delivered_at, rfc3339(1789_000_000));
+    assert.deepEqual(api.calls.map((c) => c.body.chat_id), ["-1001"], "one group is one message");
+    assert.equal(out.copy_delivered, null, "no copy was asked for, so none failed");
+  } finally {
+    await api.close();
+  }
+});
+
+await test("a copy chat that IS the alarm chat is sent once, not twice", async () => {
+  // Two identical messages in one chat are not a copy; they are the noise a
+  // reader learns to scroll past. Compared trimmed: a pasted id with a stray
+  // space is the same chat. A blank copy chat is an absent one.
+  for (const copy of ["-1001", " -1001 ", "-1001\n", "   ", ""]) {
+    const api = await stubApi();
+    try {
+      const env = { ...ONE_GROUP, ASTRA_ALERT_COPY_CHAT_ID: copy };
+      assert.equal(copyChat(env), null, `copy chat ${JSON.stringify(copy)} is not a second chat`);
+      const out = await runAlert({ verdict: VERDICT, env, apiBase: api.base, log: quiet });
+      assert.equal(out.code, 0, `copy chat ${JSON.stringify(copy)}: ${out.problems.join("; ")}`);
+      assert.deepEqual(api.calls.map((c) => c.body.chat_id), ["-1001"],
+        `copy chat ${JSON.stringify(copy)} paged the alarm chat ${api.calls.length} times`);
+      assert.equal(out.copy_delivered, null);
+    } finally {
+      await api.close();
+    }
+  }
+});
+
+await test("a separate copy chat: the alarm reaches the alarm chat, then the copy chat", async () => {
   const api = await stubApi();
   try {
     const out = await runAlert({ verdict: VERDICT, env: ENV, apiBase: api.base, log: quiet });
@@ -170,7 +227,7 @@ await test("the alarm reaches the owner's chat and the copy reaches KNICE's", as
     assert.equal(out.delivered_at, rfc3339(1789_000_000));
     assert.equal(out.copy_delivered, true);
     assert.deepEqual(api.calls.map((c) => c.body.chat_id), ["-1001", "-1002"]);
-    assert.equal(api.calls[0].body.text, api.calls[1].body.text, "KNICE gets the same page, not a summary of it");
+    assert.equal(api.calls[0].body.text, api.calls[1].body.text, "the copy is the same page, not a summary of it");
     // No parse_mode: the API applies no markup, so no value can escape out of
     // an entity it was never put inside.
     assert.equal(api.calls[0].body.parse_mode, undefined);
@@ -239,7 +296,7 @@ await test("no failure message carries the bot token", async () => {
   }
 });
 
-await test("a failed copy to KNICE never withholds delivered_at", async () => {
+await test("a failed copy to a separate copy chat never withholds delivered_at", async () => {
   const api = await stubApi((call, n) =>
     n === 1
       ? { status: 200, body: { ok: true, result: { date: 1789_000_000 } } }
@@ -254,7 +311,16 @@ await test("a failed copy to KNICE never withholds delivered_at", async () => {
   }
 });
 
-for (const [name] of [["ASTRA_ALERT_TELEGRAM_TOKEN"], ["ASTRA_ALERT_CHAT_ID"], ["ASTRA_ALERT_COPY_CHAT_ID"]]) {
+await test("the channel requires the bot token and the alarm chat, and nothing else", () => {
+  // The owner's decision of 2026-09-23 in one line: the copy chat is not
+  // here. The loop below walks this list, so it is only as good as the list.
+  assert.deepEqual(REQUIRED_SECRETS.map(([name]) => name), ["ASTRA_ALERT_TELEGRAM_TOKEN", "ASTRA_ALERT_CHAT_ID"],
+    "the channel's required secrets changed");
+  assert.deepEqual(OPTIONAL_SECRETS.map(([name]) => name), ["ASTRA_ALERT_COPY_CHAT_ID"],
+    "the channel's optional secrets changed");
+});
+
+for (const [name] of REQUIRED_SECRETS) {
   await test(`a missing ${name} sends nothing and exits non-zero`, async () => {
     const api = await stubApi();
     try {
@@ -276,7 +342,8 @@ for (const [name] of [["ASTRA_ALERT_TELEGRAM_TOKEN"], ["ASTRA_ALERT_CHAT_ID"], [
 await test("a blank secret is a missing secret", () => {
   assert.equal(credentialProblems({ ...ENV, ASTRA_ALERT_CHAT_ID: "   " }).length, 1,
     "an unset GitHub secret interpolates to the empty string, so `is it defined` is not the question");
-  assert.equal(credentialProblems(ENV).length, 0, "three good secrets must not read as a problem");
+  assert.equal(credentialProblems(ENV).length, 0, "the required secrets and a copy chat must not read as a problem");
+  assert.equal(credentialProblems(ONE_GROUP).length, 0, "the required secrets alone must not read as a problem");
 });
 
 await test("--if-red checks a green verdict and sends nothing", async () => {
@@ -287,6 +354,7 @@ await test("--if-red checks a green verdict and sends nothing", async () => {
     assert.equal(out.code, 0);
     assert.equal(out.alerted, false);
     assert.equal(api.calls.length, 0);
+    assert.equal(out.copy_delivered, null, "nothing was sent, so no copy failed; `false` means a copy that was tried");
     // …and a green verdict that would not render is still red in CI, on the
     // run that had nothing to say rather than on the night it mattered.
     const bad = await runAlert({
@@ -345,6 +413,16 @@ await test("the entry point itself exits non-zero with no credentials", () => {
     `an alert step that exits 0 on a missing secret is a green job that paged nobody`);
   assert.match(out.stderr, /ASTRA_ALERT_TELEGRAM_TOKEN is not set/);
   assert.match(out.stderr, /No alarm can leave this run until he has/);
+
+  // …and exits 0 on the owner's one-group channel, which has no copy chat.
+  const one = spawnSync(process.execPath, ["bot/alert.mjs", "--check-credentials"], {
+    cwd: REPO,
+    env: { PATH: process.env.PATH, ...ONE_GROUP },
+    encoding: "utf8",
+  });
+  assert.equal(one.status, 0,
+    `node bot/alert.mjs --check-credentials exited ${one.status} on the token and the alarm chat alone; stderr: ${one.stderr}`);
+  assert.match(one.stdout, /no separate copy chat is set/);
 });
 
 console.log("\nbot/heartbeat.mjs — one whole URL per check, and no base anywhere\n");
@@ -537,6 +615,29 @@ await test("a check another party posts to is created disarmed", () => {
 // workflow files, so it lives with them: `bot/tests/workflows.test.mjs`, "a
 // registry check is armed exactly when a workflow here posts to it on a live
 // schedule".
+
+await test("the list environment `alerts` is built from is the required secrets, and the copy chat is not in it", () => {
+  // Two files spell the channel's secrets, because `bot/lib/alert-checks.mjs`
+  // imports nothing: `bot/alert.mjs`'s exports, which decide what a job
+  // refuses to run without, and this list, which the owner creates the
+  // environment from and diffs it against (his runbook's steps 0 and 8). They
+  // are held equal here.
+  const secrets = alertsEnvironmentSecrets();
+  const optional = optionalAlertsSecrets();
+  const channel = secrets.filter((s) => !s.startsWith("ASTRA_DEADMAN_URL_"));
+  assert.deepEqual(channel, REQUIRED_SECRETS.map(([name]) => name),
+    "alertsEnvironmentSecrets() lists channel secrets bot/alert.mjs does not require, or misses one it does");
+  assert.deepEqual(optional, OPTIONAL_SECRETS.map(([name]) => name),
+    "optionalAlertsSecrets() and bot/alert.mjs's OPTIONAL_SECRETS disagree");
+  assert.ok(optional.includes("ASTRA_ALERT_COPY_CHAT_ID"), "the copy chat is optional (the owner's decision of 2026-09-23)");
+  assert.deepEqual(secrets.filter((s) => optional.includes(s)), [],
+    "an optional secret is in the REQUIRED list: the owner's step-8 diff would show it missing on every correct " +
+    "environment that does without it, and a diff that differs when nothing is wrong is a diff nobody reads");
+  const pings = CHECKS.filter((c) => c.party === "registry").reduce((n, c) => n + c.signals.length, 0);
+  assert.equal(secrets.length, REQUIRED_SECRETS.length + pings,
+    `${secrets.length} secrets: the required channel secrets and one ping URL per registry check signal (${pings}) ` +
+    "are the whole list");
+});
 
 await test("environment `alerts` is given no secret that addresses another party's check", () => {
   const secrets = alertsEnvironmentSecrets();

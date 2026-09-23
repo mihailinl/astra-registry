@@ -123,9 +123,15 @@ jobs:
       # `if:` carries an implicit `success()`, so a channel that exists and is
       # broken has already failed the step above and this one is skipped: its
       # message would be wrong about which of the two states the run is in.
+      #
+      # And a channel that exists and works is green here with ONE message
+      # sent, which since 2026-09-23 is the normal case: the owner chose one
+      # alarm group holding him and KNICE, so the alarm chat is the whole
+      # channel and `ASTRA_ALERT_COPY_CHAT_ID` is optional. The step above
+      # fails unless the alarm chat got the message and the Bot API dated it.
       - name: A drill that sent nothing proved nothing
         if: steps.alert.outputs.configured != 'true'
         run: |
           set -euo pipefail
-          echo "::error::BOT-86's weekly drill sent no alarm, because there is no alarm channel yet: none of the three channel secrets is present in this job. This run is red on purpose and it is the ONLY place in this repository that is red about it — every other alert job is green with a notice, so that the day something real goes wrong the red run is a real one. It goes green when the owner performs registry plan RC-R1-0's owner approval, the R1 row of the plan's 2.12: environment alerts, its three channel secrets and one ASTRA_DEADMAN_URL_<CHECK> per receiver check, with the receiver account created beside it. Nothing in this repository can be edited to make it green; that is the point of it."
+          echo "::error::BOT-86's weekly drill sent no alarm, because there is no alarm channel yet: none of the channel secrets is present in this job. This run is red on purpose and it is the ONLY place in this repository that is red about it — every other alert job is green with a notice, so that the day something real goes wrong the red run is a real one. It goes green when the owner performs registry plan RC-R1-0's owner approval, the R1 row of the plan's 2.12: environment alerts, holding the registry's own bot token, the id of the one alarm group the owner and KNICE share and one ASTRA_DEADMAN_URL_<CHECK> per receiver check, with the receiver account created beside it. Nothing in this repository can be edited to make it green; that is the point of it."
           exit 1

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// One alarm, through Telegram's Bot API, to the owner and to KNICE.
+// One alarm, through Telegram's Bot API, to the alarm group the owner and
+// KNICE share — and to a separate copy chat only if one is set.
 //
 //     node bot/alert.mjs --verdict <file>        send, and print delivered_at
 //     node bot/alert.mjs --verdict <file> --ack  … with the acknowledgement link
@@ -23,17 +24,17 @@
 //
 // **One state is decided one level up, and not here** (2026-09-19). Before the
 // owner performs §2.12's R1 act — environment `alerts`, the registry's own
-// Telegram bot, the receiver account — NONE of the three secrets exists, and
+// Telegram bot, the receiver account — NONE of the channel secrets exists, and
 // that is not the same fact as one of them having gone missing. The composite
 // action `.github/actions/alert/action.yml` is where the two are told apart:
-// all three absent is said out loud, once, and is green there; anything else
+// all of them absent is said out loud, once, and is green there; anything else
 // is this script's business and is red. `--check-credentials` still exits
 // non-zero on an empty environment, and `runAlert` still refuses to send with
 // a secret missing — the distinction is which job calls them, never what they
 // answer.
 //
 // **`delivered_at` is TRUST-32's value.** It is the message time the Bot API
-// reports (`result.date`) for the OWNER's chat, in §0.7's format, and it is
+// reports (`result.date`) for the ALARM chat, in §0.7's format, and it is
 // what B-T3.3b writes into `state/alerts/<fingerprint>.json` and what gates
 // publication. It is never synthesised from the local clock: a time this
 // process made up would say an alarm was delivered when the API never said so.
@@ -58,26 +59,76 @@ export const TELEGRAM_API = "https://api.telegram.org";
 const SEND_TIMEOUT_MS = 20_000;
 
 /**
- * The three secrets environment `alerts` must hold for a page to reach a
+ * The two secrets environment `alerts` must hold for a page to reach a
  * person, and what each one's absence means.
  *
- * The copy is not optional. OPEN-OWNER-35 closed with one responder at launch
- * and KNICE receiving a copy of every page, and BOT-86 escalates to KNICE when
- * the owner does not acknowledge. An estate that quietly stopped copying has
- * one responder and no escalation, and nothing about it looks different.
+ * **KNICE sees every page by being in the alarm chat, not by a second
+ * message** (the owner's decision of 2026-09-23). OPEN-OWNER-35 closed with
+ * one responder at launch and KNICE receiving a copy of every page; this
+ * repository first built that as two chats, the owner's and a copy chat of
+ * KNICE's, and made the copy a required secret. The owner then chose ONE
+ * group holding both of them. So `ASTRA_ALERT_CHAT_ID` is that group, and the
+ * copy chat is optional.
+ *
+ * What that costs, said here because nothing else can say it: whether KNICE
+ * is actually IN the group is a fact about Telegram, and no job here can see
+ * it. A group he has left pages the owner alone and looks, from every run in
+ * this repository, exactly like a group he is in. The owner's runbook checks
+ * it by hand; BOT-86's escalation to KNICE goes through the receiver, not
+ * through this chat, and does not depend on it.
  */
 export const REQUIRED_SECRETS = [
   ["ASTRA_ALERT_TELEGRAM_TOKEN", "the registry's own Telegram bot token (never the storefront's, never astra-alarm-watch's)"],
-  ["ASTRA_ALERT_CHAT_ID", "the owner's alarm chat"],
-  ["ASTRA_ALERT_COPY_CHAT_ID", "KNICE's copy of every page (OPEN-OWNER-35)"],
+  ["ASTRA_ALERT_CHAT_ID", "the alarm chat: the one group the owner and KNICE share (2026-09-23)"],
 ];
+
+/**
+ * Channel secrets a job reads when they are set and does not miss when they
+ * are not. Every alert job still MAPS them (`bot/tests/workflows.test.mjs`),
+ * because an environment secret reaches only the jobs that name it, and a copy
+ * chat the owner sets later must reach every page and not only some.
+ *
+ * `ASTRA_ALERT_COPY_CHAT_ID`, and what it does:
+ *
+ *   * absent, or blank — the page goes to the alarm chat alone;
+ *   * the alarm chat itself — the page is sent ONCE. Two identical messages in
+ *     one chat are not a copy, they are noise the reader learns to scroll past;
+ *   * any other chat — the page goes to the alarm chat and then to it, as
+ *     before 2026-09-23, and a failed copy never withholds `delivered_at`.
+ */
+export const OPTIONAL_SECRETS = [
+  ["ASTRA_ALERT_COPY_CHAT_ID", "a separate chat that receives a second copy of every page (optional since 2026-09-23)"],
+];
+
+const present = (value) => typeof value === "string" && value.trim() !== "";
+
+/**
+ * Where the second copy goes, or null when there is none to send: the copy
+ * chat is absent or blank, or it is the alarm chat itself. Compared trimmed,
+ * because a pasted id with a stray space is still the same chat and would
+ * otherwise page the group twice.
+ */
+export function copyChat(env = process.env) {
+  const copy = env.ASTRA_ALERT_COPY_CHAT_ID;
+  if (!present(copy)) return null;
+  if (present(env.ASTRA_ALERT_CHAT_ID) && copy.trim() === env.ASTRA_ALERT_CHAT_ID.trim()) return null;
+  return copy;
+}
+
+/** One sentence on the copy chat, for a log line. */
+function copySentence(env) {
+  if (!present(env.ASTRA_ALERT_COPY_CHAT_ID)) {
+    return "no separate copy chat is set, so every page goes to the alarm chat alone — KNICE sees it by being in that group";
+  }
+  if (copyChat(env) === null) return "ASTRA_ALERT_COPY_CHAT_ID is the alarm chat itself, so each page is sent once";
+  return "ASTRA_ALERT_COPY_CHAT_ID is a separate chat, which gets a second copy of each page";
+}
 
 /** @returns {string[]} one sentence per secret that is absent or blank */
 export function credentialProblems(env = process.env) {
   const problems = [];
   for (const [name, what] of REQUIRED_SECRETS) {
-    const value = env[name];
-    if (typeof value !== "string" || value.trim() === "") {
+    if (!present(env[name])) {
       problems.push(
         `${name} is not set in this job — ${what}. It is a secret of environment \`alerts\`, which the owner ` +
         `creates in astra-registry admitting only \`main\` (registry plan RC-R1-0, §2.12's R1 row). No alarm can ` +
@@ -125,7 +176,12 @@ async function sendMessage({ token, chatId, text, apiBase, fetchImpl }) {
 }
 
 /**
- * @returns {Promise<{code: number, delivered_at: string|null, copy_delivered: boolean, problems: string[]}>}
+ * `copy_delivered` is `true` when a separate copy chat got the page, `false`
+ * when it was sent one and did not, and `null` when no copy was sent at all —
+ * there is no separate copy chat, or nothing was sent. `false` therefore means
+ * one thing only: a copy that was tried and failed.
+ *
+ * @returns {Promise<{code: number, delivered_at: string|null, copy_delivered: boolean|null, alerted: boolean, problems: string[]}>}
  */
 export async function runAlert({
   verdict,
@@ -138,7 +194,7 @@ export async function runAlert({
 } = {}) {
   const fail = (problems) => {
     for (const p of problems) log.error(`FAIL  ${p}`);
-    return { code: 1, delivered_at: null, copy_delivered: false, alerted: false, problems };
+    return { code: 1, delivered_at: null, copy_delivered: null, alerted: false, problems };
   };
 
   const missing = credentialProblems(env);
@@ -159,7 +215,7 @@ export async function runAlert({
   // alarm that could not be rendered on the night it mattered.
   if (ifRed && verdict.status !== "red") {
     log.log(`ok    verdict for ${verdict.check} is green; its grammar is sound and there is nothing to send`);
-    return { code: 0, delivered_at: null, copy_delivered: false, alerted: false, problems: [] };
+    return { code: 0, delivered_at: null, copy_delivered: null, alerted: false, problems: [] };
   }
 
   // The acknowledgement link comes from the receiver's own secret, never from
@@ -199,21 +255,25 @@ export async function runAlert({
   }
   const deliveredAt = rfc3339(result.date);
 
-  // KNICE's copy. A failed copy is reported once, here, and never withholds
-  // `delivered_at`: the owner was paged, the estate's one responder knows, and
-  // holding back a publication because a COPY failed would punish the wrong
-  // thing. It is still visible — the annotation is in the run, and
-  // `copy_delivered=false` is a step output somebody can gate on later.
-  let copyDelivered = true;
-  try {
-    await sendMessage({ token, chatId: env.ASTRA_ALERT_COPY_CHAT_ID, text, apiBase, fetchImpl });
-  } catch (e) {
-    copyDelivered = false;
-    log.error(`::warning::KNICE's copy of this alarm did not send: ${e.message} (OPEN-OWNER-35)`);
+  // The separate copy, only when there is one (`copyChat`). A failed copy is
+  // reported once, here, and never withholds `delivered_at`: the alarm chat
+  // was paged, and holding back a publication because a COPY failed would
+  // punish the wrong thing. It is still visible — the annotation is in the
+  // run, and `copy_delivered=false` is a step output somebody can gate on.
+  const copy = copyChat(env);
+  let copyDelivered = null;
+  if (copy !== null) {
+    try {
+      await sendMessage({ token, chatId: copy, text, apiBase, fetchImpl });
+      copyDelivered = true;
+    } catch (e) {
+      copyDelivered = false;
+      log.error(`::warning::the copy of this alarm to ASTRA_ALERT_COPY_CHAT_ID did not send: ${e.message}`);
+    }
   }
 
-  log.log(`ok    alarm delivered to the owner's chat at ${deliveredAt}`);
-  if (!copyDelivered) log.log("warn  KNICE's copy did not send; delivered_at stands");
+  log.log(`ok    alarm delivered to the alarm chat at ${deliveredAt}; ${copySentence(env)}`);
+  if (copyDelivered === false) log.log("warn  the separate copy did not send; delivered_at stands");
   return { code: 0, delivered_at: deliveredAt, copy_delivered: copyDelivered, alerted: true, problems: [] };
 }
 
@@ -243,7 +303,7 @@ async function main(argv) {
     const problems = credentialProblems();
     for (const p of problems) console.error(`FAIL  ${p}`);
     if (problems.length) return 1;
-    console.log("ok    environment `alerts` carries the three channel secrets");
+    console.log(`ok    environment \`alerts\` carries every required channel secret (${REQUIRED_SECRETS.map(([n]) => n).join(", ")}); ${copySentence(process.env)}`);
     return 0;
   }
 
@@ -264,7 +324,7 @@ async function main(argv) {
   if (process.env.GITHUB_OUTPUT && out.code === 0) {
     fs.appendFileSync(
       process.env.GITHUB_OUTPUT,
-      `alerted=${out.alerted}\ndelivered_at=${out.delivered_at ?? ""}\ncopy_delivered=${out.copy_delivered}\n`,
+      `alerted=${out.alerted}\ndelivered_at=${out.delivered_at ?? ""}\ncopy_delivered=${out.copy_delivered ?? "none"}\n`,
     );
   }
   return out.code;

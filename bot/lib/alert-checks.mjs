@@ -431,14 +431,36 @@ export function secretName(name, signal = "success") {
  * order a person would create them. The two service checks contribute none:
  * this repository posts to neither, so it holds no value that addresses them,
  * which is the half of attack M-5's rule that this side owns.
+ *
+ * **Required secrets only.** The channel's two are `bot/alert.mjs`'s
+ * `REQUIRED_SECRETS`, spelled here again because this file imports nothing
+ * (`bot/alert.mjs` imports IT, and astra-plugins-ops'
+ * `tools/check-alerts-runbook.mjs` evaluates it alone, from a `data:` URL),
+ * and held to that export by `bot/tests/alert.test.mjs`. The copy chat,
+ * optional since the owner chose one alarm group on 2026-09-23, is
+ * `optionalAlertsSecrets()` and never this list, because this list is what
+ * the owner's runbook compares the live environment with (its step 8, a
+ * `diff`): a name here that he rightly did not create would be a difference
+ * on every correct environment, and a check that differs when nothing is
+ * wrong is a check that teaches its reader to stop reading it.
  */
 export function alertsEnvironmentSecrets() {
-  const out = ["ASTRA_ALERT_TELEGRAM_TOKEN", "ASTRA_ALERT_CHAT_ID", "ASTRA_ALERT_COPY_CHAT_ID"];
+  const out = ["ASTRA_ALERT_TELEGRAM_TOKEN", "ASTRA_ALERT_CHAT_ID"];
   for (const check of CHECKS) {
     if (check.party !== "registry") continue;
     for (const signal of check.signals) out.push(secretName(check.name, signal));
   }
   return out;
+}
+
+/**
+ * Secrets environment `alerts` MAY hold and every alert job reads when it
+ * does: `bot/alert.mjs`'s `OPTIONAL_SECRETS`, held to that export by
+ * `bot/tests/alert.test.mjs`. Absent is a correct environment; present is one
+ * too. A name here is never in `alertsEnvironmentSecrets()`.
+ */
+export function optionalAlertsSecrets() {
+  return ["ASTRA_ALERT_COPY_CHAT_ID"];
 }
 
 /** Problems with the table itself, as a list of sentences. Empty means sound. */

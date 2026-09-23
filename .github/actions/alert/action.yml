@@ -3,9 +3,9 @@
 # Four things happen here, in an order that is the whole point:
 #
 #   1. the two scripts are actually present;
-#   2. environment `alerts` carries the three channel secrets — asked on EVERY
-#      run, green or red — with ONE state excepted: a channel that has never
-#      been created at all, which is said out loud and is not a failure;
+#   2. environment `alerts` carries the channel's required secrets — asked on
+#      EVERY run, green or red — with ONE state excepted: a channel that has
+#      never been created at all, which is said out loud and is not a failure;
 #   3. the alarm, if the verdict is red, and the start signal for BOT-86's
 #      acknowledgement check in the same step as the alarm it is about;
 #   4. BOT-85's heartbeat, LAST.
@@ -31,20 +31,21 @@
 # rule above.** "Never created yet" and "created and now broken" look identical
 # to a job that asks only *is this secret set*, and they are not alike at all.
 #
-#   * **Unconfigured** — NONE of the three channel secrets is present. That is
-#     the repository before the owner performs §2.12's R1 act, it has a named
+#   * **Unconfigured** — NONE of the channel secrets is present: not the two
+#     required ones, and not the optional copy chat either. That is the
+#     repository before the owner performs §2.12's R1 act, it has a named
 #     owner act and a date nobody has yet, and it is not a defect. The step
 #     says so, loudly, in the log and in the job summary; sets `configured` to
 #     `false`; sends nothing; and posts NO heartbeat, because the receiver does
 #     not exist either and a heartbeat to a check nobody created is a 404 that
 #     reads like a typo. The job is green.
-#   * **Broken** — SOME are present and some are not, or the Bot API refuses,
-#     or a 2xx carries no `result.date`. Red, exactly as before, with the name
-#     of each missing secret. A half-configured channel is somebody's edit, or
-#     an `env:` block naming fewer secrets than the environment holds, and it
-#     looks nothing like a fresh repository.
+#   * **Broken** — some channel secret is present and a required one is not,
+#     or the Bot API refuses, or a 2xx carries no `result.date`. Red, exactly
+#     as before, with the name of each missing secret. A half-configured
+#     channel is somebody's edit, or an `env:` block naming fewer secrets than
+#     the environment holds, and it looks nothing like a fresh repository.
 #
-# The state is DERIVED from the absence of all three and never declared: there
+# The state is DERIVED from the absence of all of them and never declared: there
 # is no input, flag or variable here that turns the alarm off, because a switch
 # is how a channel ends up muted for a reason nobody remembers.
 #
@@ -67,12 +68,14 @@
 # **The calling job, in full.** Two things about it are not optional and both
 # are checked by `bot/tests/workflows.test.mjs`: the environment, and the
 # `env:` block, because an environment secret is not ambient — a job sees one
-# only where it says so. The block lists the three channel secrets and the
-# whole ping URL of each check THIS job posts to, and nothing else.
+# only where it says so. The block lists the three channel secrets — the
+# optional copy chat among them, so that a copy chat the owner sets later
+# reaches every job and not only some — and the whole ping URL of each check
+# THIS job posts to, and nothing else.
 #
 # **Both of those used to be caught twice, and since 2026-09-19 are caught
 # once.** A job with no environment, or with no `env:` block, sees none of the
-# three secrets — which is exactly what the repository before §2.12's R1 act
+# channel secrets — which is exactly what the repository before §2.12's R1 act
 # looks like from inside a job, and this action now reports that state and
 # stays green. So a forgotten `env:` block no longer turns anything red, and
 # the test above is the whole of what stands between it and an alert job that
@@ -110,8 +113,9 @@
 
 name: Alert and heartbeat
 description: >-
-  Send a grammar-checked verdict to the owner's alarm chat with a copy to
-  KNICE, and post the check's BOT-85 heartbeat to the dead-man receiver.
+  Send a grammar-checked verdict to the alarm chat — the one group the owner
+  and KNICE share — and to a separate copy chat only if one is set, and post
+  the check's BOT-85 heartbeat to the dead-man receiver.
 
 inputs:
   verdict:
@@ -153,7 +157,7 @@ outputs:
   configured:
     description: >-
       Whether an alarm channel exists to be sent on, as `true` or `false`.
-      `false` means none of the three channel secrets is present — the state
+      `false` means none of the channel secrets is present — the state
       before §2.12's R1 act, in which this action sends nothing, posts no
       heartbeat and does not fail. A channel that is present and broken is red
       here and never reaches this output. `alarm-drill.yml` asserts it is
@@ -183,13 +187,25 @@ runs:
           exit 1
         fi
 
-    # The three names are `bot/alert.mjs`'s `REQUIRED_SECRETS`, and a copy of a
-    # list is a list that goes stale: `bot/tests/workflows.test.mjs` compares
-    # this loop's names with that export and is red when they differ. Without
-    # that, a fourth channel secret added there would leave this step counting
-    # three — and a channel missing only its fourth would read as "never
-    # created" and go quiet, which is the exact failure this whole file is
-    # written against.
+    # The names are every channel secret `bot/alert.mjs` names — its
+    # `REQUIRED_SECRETS` and its `OPTIONAL_SECRETS` — and a copy of a list is a
+    # list that goes stale: `bot/tests/workflows.test.mjs` compares this loop's
+    # names with those two exports and is red when they differ. Without that, a
+    # channel secret added there would be one this step never counts — and a
+    # channel missing all but that one would read as "never created" and go
+    # quiet, which is the exact failure this whole file is written against.
+    #
+    # The optional copy chat is counted on purpose. "Never created" is the
+    # absence of EVERY channel secret; a copy chat standing alone, with no
+    # token and no alarm chat beside it, is a channel somebody created and
+    # something took apart, and it is red below like any other half.
+    #
+    # Which of them a channel cannot work without is `bot/alert.mjs`'s to say,
+    # and this step asks it rather than counting. Until 2026-09-23 it counted —
+    # fewer than three present was half-configured — and that stopped being
+    # true the day the owner chose one alarm group for himself and KNICE and
+    # the copy chat became optional: a correct channel now holds two of the
+    # three.
     #
     # Nothing is printed but names. A value is tested for presence and never
     # echoed, and `${value//[[:space:]]/}` is the same question `alert.mjs`
@@ -210,7 +226,7 @@ runs:
 
         if [ "$present" -eq 0 ]; then
           echo "configured=false" >> "$GITHUB_OUTPUT"
-          line="THE ALARM CHANNEL DOES NOT EXIST YET. None of ASTRA_ALERT_TELEGRAM_TOKEN, ASTRA_ALERT_CHAT_ID and ASTRA_ALERT_COPY_CHAT_ID is present in this job, so this repository cannot reach a person at all: nothing was sent, no BOT-85 heartbeat was posted, and this job is green because a repository whose channel has never been created is not a repository with a defect. The act that creates it is registry plan RC-R1-0's owner approval, the R1 row of the plan's 2.12 — environment alerts in astra-registry, admitting only main, holding the registry's own Telegram bot token, the owner's alarm chat id, KNICE's copy chat id and one ASTRA_DEADMAN_URL_<CHECK> per receiver check, with the receiver account created beside it. Until that act, the workflow that says so is .github/workflows/alarm-drill.yml, which is red once a week for exactly this reason and is the one workflow whose whole subject is this question."
+          line="THE ALARM CHANNEL DOES NOT EXIST YET. None of ASTRA_ALERT_TELEGRAM_TOKEN, ASTRA_ALERT_CHAT_ID and ASTRA_ALERT_COPY_CHAT_ID is present in this job, so this repository cannot reach a person at all: nothing was sent, no BOT-85 heartbeat was posted, and this job is green because a repository whose channel has never been created is not a repository with a defect. The act that creates it is registry plan RC-R1-0's owner approval, the R1 row of the plan's 2.12 — environment alerts in astra-registry, admitting only main, holding the registry's own Telegram bot token, the id of the one alarm group the owner and KNICE share, and one ASTRA_DEADMAN_URL_<CHECK> per receiver check (a separate copy chat, ASTRA_ALERT_COPY_CHAT_ID, is optional), with the receiver account created beside it. Until that act, the workflow that says so is .github/workflows/alarm-drill.yml, which is red once a week for exactly this reason and is the one workflow whose whole subject is this question."
           # One line, once: the annotation form is also what the raw log shows,
           # so a second bare echo of it would be the same sentence twice in the
           # place a reader is skimming.
@@ -224,10 +240,10 @@ runs:
         fi
 
         echo "configured=true" >> "$GITHUB_OUTPUT"
-        if [ "$present" -lt 3 ]; then
-          echo "::error::the alarm channel is HALF-CONFIGURED: $present of the three channel secrets are present in this job and the rest are not. This is not a repository waiting on §2.12's R1 act — that state has none of the three — it is a channel somebody created and something then took apart: a secret deleted from environment alerts, or an env: block naming fewer of them than the environment holds. The names follow; nothing is sent and no heartbeat is posted."
+        if ! node bot/alert.mjs --check-credentials; then
+          echo "::error::the alarm channel is HALF-CONFIGURED: $present of its secrets are present in this job and a required one is not — the names are above. This is not a repository waiting on §2.12's R1 act — that state has none of them — it is a channel somebody created and something then took apart: a secret deleted from environment alerts, or an env: block naming fewer of them than the environment holds. Nothing is sent and no heartbeat is posted."
+          exit 1
         fi
-        node bot/alert.mjs --check-credentials
 
     - name: The alarm, and BOT-86's start signal with it
       id: alarm

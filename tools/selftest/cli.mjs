@@ -106,6 +106,148 @@ function refusedBy(guard, tail) {
   assert(out.stderr.includes(`FAIL  ${guard}: `), `the refusal does not name ${guard}; stderr: ${out.stderr}`);
 }
 
+// ── the weekly drill, through the alert action's own bash (2026-09-23) ──────
+//
+// The owner chose ONE alarm group, holding him and KNICE, so the channel he is
+// about to create holds the bot token and the alarm chat and no copy chat.
+// `bot/tests/alert.test.mjs` proves `runAlert` sends that page once. What it
+// cannot prove is the path a workflow takes to it: the action's `channel` step
+// decides in bash, before the alarm step runs, whether a channel exists and
+// whether it is whole — and until this commit that step counted "two of the
+// three secrets" as HALF-CONFIGURED and failed the drill on exactly the
+// environment the owner chose, with every unit test of `runAlert` green.
+//
+// So these run the steps themselves: the drill's own verdict step out of
+// `alarm-drill.yml`, then the action's `channel`, alarm and heartbeat steps out
+// of `action.yml`, each under bash in a copy of the job's sparse checkout, in
+// the order and under the conditions the runner applies — and the drill's
+// assertion step when its `if:` would hold. `fetch` is a preload that answers
+// as the Bot API and the receiver do and prints what it was asked, so "sent
+// once" is a count of requests and not a reading of a log line.
+
+const DRILL = path.join(REPO_ROOT, ".github", "workflows", "alarm-drill.yml");
+
+/**
+ * The `run: |` script of the one step in `yml` that `pick` selects, dedented.
+ * Throws unless exactly one step matches and it has a script, and unless the
+ * script holds no `${{ }}` once `subst` is applied — a template run here would
+ * be a test of text, not of the script a runner executes.
+ */
+function stepScript(yml, pick, what, subst = {}) {
+  const lines = yml.split("\n");
+  const starts = lines.map((l, i) => (/^\s+- (name|uses):/.test(l) ? i : -1)).filter((i) => i >= 0);
+  const steps = starts.map((s, k) => lines.slice(s, k + 1 < starts.length ? starts[k + 1] : lines.length));
+  const hits = steps.filter(pick);
+  if (hits.length !== 1) throw new Error(`${what}: expected exactly one step, found ${hits.length}`);
+  const step = hits[0];
+  const at = step.findIndex((l) => /^\s+run:\s*\|\s*$/.test(l));
+  if (at < 0) throw new Error(`${what}: the step has no \`run: |\` script`);
+  const indent = /^\s*/.exec(step[at])[0].length;
+  const body = [];
+  for (const l of step.slice(at + 1)) {
+    if (l.trim() !== "" && /^\s*/.exec(l)[0].length <= indent) break;
+    body.push(l);
+  }
+  const strip = Math.min(...body.filter((l) => l.trim()).map((l) => /^\s*/.exec(l)[0].length));
+  let script = body.map((l) => l.slice(strip)).join("\n");
+  for (const [from, to] of Object.entries(subst)) {
+    if (!script.includes(from)) throw new Error(`${what}: the script no longer holds ${from}`);
+    script = script.split(from).join(to);
+  }
+  if (script.includes("${{")) throw new Error(`${what}: the script still holds a \${{ }} expression`);
+  return script;
+}
+
+const byId = (id) => (step) => step.some((l) => new RegExp(`^\\s+id:\\s*${id}\\s*$`).test(l));
+const byName = (name) => (step) => step.some((l) => l.trim() === `- name: ${name}`);
+const byLine = (needle) => (step) => step.some((l) => l.trim() === needle);
+
+/**
+ * The drill, as the runner would run it, with these channel secrets. Returns
+ * whether the job ended green, every Bot API `sendMessage` by chat id, every
+ * receiver POST, and each step's exit and output.
+ */
+function drill(name, secrets) {
+  const action = fs.readFileSync(ACTION, "utf8");
+  const workflow = fs.readFileSync(DRILL, "utf8");
+  const dir = alertCheckout(`drill-${name}`);
+  const recorder = path.join(tmp, "drill-fetch.mjs");
+  fs.writeFileSync(
+    recorder,
+    "globalThis.fetch = async (url, init = {}) => {\n" +
+    "  const u = String(url);\n" +
+    "  if (u.startsWith(\"https://api.telegram.org/bot\") && u.endsWith(\"/sendMessage\")) {\n" +
+    "    process.stdout.write(`telegram sendMessage ${JSON.stringify(JSON.parse(init.body).chat_id)}\\n`);\n" +
+    "    return { ok: true, status: 200, json: async () => ({ ok: true, result: { message_id: 1, date: 1789000000 } }) };\n" +
+    "  }\n" +
+    "  process.stdout.write(`receiver ${init.method ?? \"GET\"} ${u}\\n`);\n" +
+    "  return { ok: true, status: 200 };\n" +
+    "};\n",
+  );
+  const output = path.join(dir, "github-output");
+  const base = {
+    PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH}`,
+    NODE_OPTIONS: `--import=${pathToFileURL(recorder).href}`,
+    GITHUB_OUTPUT: output,
+    GITHUB_STEP_SUMMARY: path.join(dir, "github-step-summary"),
+    ASTRA_DEADMAN_URL_ALARM_DRILL: "https://ping.example/alarm-drill",
+    ASTRA_DEADMAN_URL_ALARM_ACK: "https://ping.example/alarm-ack",
+    ASTRA_DEADMAN_URL_ALARM_ACK_START: "https://ping.example/alarm-ack-start",
+    ...secrets,
+  };
+  const ran = [];
+  const step = (label, script, env = {}) => {
+    fs.writeFileSync(output, "");
+    const r = spawnSync("bash", ["-c", script], { cwd: dir, encoding: "utf8", env: { ...base, ...env } });
+    assert(r.error === undefined, `${label}: bash did not run (${r.error})`);
+    const out = { label, status: r.status, stdout: r.stdout, stderr: r.stderr, outputs: fs.readFileSync(output, "utf8") };
+    ran.push(out);
+    return out;
+  };
+
+  const verdict = step("the synthetic alarm", stepScript(workflow, byName("The synthetic alarm BOT-86 sends"),
+    "alarm-drill.yml's verdict step", {
+      "${{ github.server_url }}": "https://github.com",
+      "${{ github.repository }}": "mihailinl/astra-registry",
+      "${{ github.run_id }}": "1",
+    }));
+  let green = verdict.status === 0;
+  let configured = "";
+  if (green) {
+    const channel = step("channel", stepScript(action, byId("channel"), "the action's channel step"));
+    configured = /^configured=(.*)$/m.exec(channel.outputs)?.[1] ?? "";
+    green = channel.status === 0;
+  }
+  if (green && configured === "true") {
+    const alarm = step("alarm", stepScript(action, byId("alarm"), "the action's alarm step"),
+      { ASTRA_ALERT_VERDICT: "verdict.json", ASTRA_ALERT_ACK_CHECK: "alarm-ack" });
+    green = alarm.status === 0;
+    if (green) {
+      const beat = step("heartbeat", stepScript(action, byLine('node bot/heartbeat.mjs --check "$ASTRA_ALERT_CHECK"'),
+        "the action's heartbeat step"), { ASTRA_ALERT_CHECK: "alarm-drill", ASTRA_ALERT_NO_HEARTBEAT: "" });
+      green = beat.status === 0;
+    }
+  }
+  // The drill's own assertion, under its own condition: every step before it
+  // succeeded (the implicit `success()`) and the channel is not configured.
+  if (green && configured !== "true") {
+    const proved = step("assertion", stepScript(workflow, byName("A drill that sent nothing proved nothing"),
+      "alarm-drill.yml's assertion step"));
+    green = proved.status === 0;
+  }
+  const lines = ran.flatMap((r) => r.stdout.split("\n"));
+  return {
+    green,
+    configured,
+    ran,
+    sends: lines.filter((l) => l.startsWith("telegram sendMessage ")).map((l) => JSON.parse(l.slice(21))),
+    posts: lines.filter((l) => l.startsWith("receiver ")),
+    said: ran.map((r) => `${r.label} exit ${r.status}\n${r.stdout}${r.stderr}`).join("\n"),
+  };
+}
+
+const TOKEN = "1234567:AAHselftestNOTAREALTOKENatall";
+
 export async function run() {
   console.log("\ncli surface");
   await test("`build-index.mjs --check` exits 0 on the committed tree", () => {
@@ -195,5 +337,54 @@ export async function run() {
     refusedBy("alertsEnvironmentSecrets",
       "CHECKS.find((c) => c.party === \"plugins-service\").name = " +
       "`${CHECKS.find((c) => c.party === \"registry\" && c.signals.includes(\"start\")).name}-start`;");
+  });
+
+  await test("the drill, through the alert action's own bash, is GREEN on one group with no copy chat and sends the page once", () => {
+    // The owner's environment. Red before 2026-09-23's change, at the channel
+    // step, as HALF-CONFIGURED: the copy chat was required.
+    const d = drill("one-group", { ASTRA_ALERT_TELEGRAM_TOKEN: TOKEN, ASTRA_ALERT_CHAT_ID: "-1001" });
+    assert(d.green, `the drill is red on the owner's one-group channel:\n${d.said}`);
+    assertEqual(d.configured, "true", "the channel step did not report a configured channel");
+    assertEqual(JSON.stringify(d.sends), JSON.stringify(["-1001"]), `one group is one message:\n${d.said}`);
+    assert(/^delivered_at=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/m.test(d.ran.find((r) => r.label === "alarm").stdout),
+      `the alarm step printed no delivered_at, so TRUST-32 has nothing to gate on:\n${d.said}`);
+    assertEqual(d.posts.join("\n"),
+      "receiver POST https://ping.example/alarm-ack-start\nreceiver POST https://ping.example/alarm-drill",
+      "BOT-86's start signal and BOT-85's heartbeat, in that order, after the alarm");
+  });
+
+  await test("the drill sends a copy chat that IS the alarm chat once, and a separate copy chat its own copy", () => {
+    const same = drill("same-chat", {
+      ASTRA_ALERT_TELEGRAM_TOKEN: TOKEN, ASTRA_ALERT_CHAT_ID: "-1001", ASTRA_ALERT_COPY_CHAT_ID: "-1001",
+    });
+    assert(same.green, `the drill is red with the copy chat set to the alarm chat:\n${same.said}`);
+    assertEqual(JSON.stringify(same.sends), JSON.stringify(["-1001"]),
+      `a copy chat that is the alarm chat paged it ${same.sends.length} times`);
+    const two = drill("separate", {
+      ASTRA_ALERT_TELEGRAM_TOKEN: TOKEN, ASTRA_ALERT_CHAT_ID: "-1001", ASTRA_ALERT_COPY_CHAT_ID: "-1002",
+    });
+    assert(two.green, `the drill is red with a separate copy chat:\n${two.said}`);
+    assertEqual(JSON.stringify(two.sends), JSON.stringify(["-1001", "-1002"]),
+      "a separate copy chat gets its copy, after the alarm chat");
+  });
+
+  await test("the drill is RED and sends nothing with no channel at all, and with a copy chat and nothing else", () => {
+    // A drill that sent nothing proved nothing. With no channel secret the
+    // action is green and the drill's own last step is the red one; with a
+    // copy chat standing alone the channel step is, as half-configured.
+    const none = drill("none", {});
+    assert(!none.green, `the drill is green with no alarm channel:\n${none.said}`);
+    assertEqual(none.sends.length + none.posts.length, 0, `something was sent with no channel:\n${none.said}`);
+    assertEqual(none.configured, "false", "no channel secret at all is the unconfigured state");
+    assertEqual(none.ran.at(-1).label, "assertion", `the drill went red somewhere other than its assertion:\n${none.said}`);
+
+    const alone = drill("copy-alone", { ASTRA_ALERT_COPY_CHAT_ID: "-1002" });
+    assert(!alone.green, `the drill is green with only a copy chat:\n${alone.said}`);
+    assertEqual(alone.sends.length + alone.posts.length, 0, `something was sent from half a channel:\n${alone.said}`);
+    const channel = alone.ran.find((r) => r.label === "channel");
+    assertEqual(channel?.status, 1, `the channel step did not refuse half a channel:\n${alone.said}`);
+    for (const needle of ["HALF-CONFIGURED", "ASTRA_ALERT_TELEGRAM_TOKEN is not set", "ASTRA_ALERT_CHAT_ID is not set"]) {
+      assert(`${channel.stdout}${channel.stderr}`.includes(needle), `the channel step never said ${needle}:\n${alone.said}`);
+    }
   });
 }
