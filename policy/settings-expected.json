@@ -92,7 +92,7 @@
       },
       "rulesets": {
         "history is append-only": {
-          "$comment": "ROLL-5, ops runbooks/registry-r0-settings.md step 4: main and signed cannot be deleted or force-pushed, by anyone. SERVE-90 step 5 (restricting updates to signed) was not attempted, so there is no update rule.",
+          "$comment": "ROLL-5, ops runbooks/registry-r0-settings.md step 4: main and signed cannot be deleted or force-pushed, by anyone. There is no update rule on signed (SERVE-90, step 5) and no required status check on main (ops dev/couplings.md 74) because neither can exempt the bots on a repository a user owns. Measured 2026-09-23 on a throwaway user-owned repository (ops runbooks/registry-r0-settings.md step 5 names it): GitHub refuses GitHub Actions (integration 15368) as a bypass actor, HTTP 422 \"Actor GitHub Actions integration must be part of the ruleset source or owner organization\"; a role bypass is accepted and does not cover GITHUB_TOKEN; and with no bypass a GITHUB_TOKEN push is refused by either rule (GH013 \"Cannot update this protected ref.\", \"Required status check \\\"check\\\" is expected.\"). Every bot here pushes with GITHUB_TOKEN, and the signer pushes signed, so either rule would stop them. SERVE-90 is carried by served-set.yml's provenance check instead (RC-R1-5).",
           "target": "branch",
           "enforcement": "active",
           "include": [
