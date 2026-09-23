@@ -1883,7 +1883,7 @@ const FLOORS = new Map(Object.entries({
   "regenerate.mjs": 15,
   "migration-notice.mjs": 6,
   "times.mjs": 4,
-  "settings.mjs": 13,
+  "settings.mjs": 14,
   "baseline.mjs": 9,
   "loads.mjs": 2,
 }));
