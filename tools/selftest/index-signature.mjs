@@ -281,17 +281,54 @@ export async function run() {
     // fixture regenerated silently on every run could not be the one that does.
     execFileSync("node", ["bot/fixtures/index/regenerate.mjs", "--check"], { cwd: REPO_ROOT, stdio: "pipe" });
   });
-  await test("`sign-index.mjs --test-key` will not write into registry/", () => {
+  // `--test-key` runs of the CLI, with the two real-key variables stripped from
+  // the environment unless a case names one. Stripped because the guard below
+  // refuses on either of them, and a registry/ case that inherited one would be
+  // refused by the wrong guard and pass without asking its own.
+  const testKeyRun = (args, extraEnv = {}) => {
+    const env = { ...process.env };
+    delete env.ASTRA_INDEX_SIGNING_KEY;
+    delete env.ASTRA_INDEX_SIGNING_KEY_NEXT;
     let status = 0;
+    let stderr = "";
     try {
-      execFileSync("node", [
-        "bot/sign-index.mjs", "--test-key", TEST_INDEX_KEY,
-        "--in", "registry/v1/index.json", "--out", "registry/v1/index.json",
-      ], { cwd: REPO_ROOT, stdio: "pipe" });
+      execFileSync("node", ["bot/sign-index.mjs", "--test-key", TEST_INDEX_KEY, ...args], {
+        cwd: REPO_ROOT, stdio: "pipe", env: { ...env, ...extraEnv },
+      });
     } catch (e) {
       status = e.status;
+      stderr = String(e.stderr);
     }
+    return { status, stderr };
+  };
+  await test("`sign-index.mjs --test-key` will not write into registry/", () => {
+    const { status, stderr } = testKeyRun(["--in", "registry/v1/index.json", "--out", "registry/v1/index.json"]);
     assert(status === 2, `exit ${status}: a catalogue that LOOKS signed and is signed with a published key is worse than an unsigned one`);
+    assert(stderr.includes("refusing to write a TEST-key signature"), `refused, but not by the registry/ guard: ${stderr}`);
+  });
+  await test("`sign-index.mjs --test-key` will not run at all beside ASTRA_INDEX_SIGNING_KEY or ASTRA_INDEX_SIGNING_KEY_NEXT", () => {
+    // tools/signer/run.mjs's third guard, ported (ops couplings entry 126). The
+    // failure it is for is `--test-key` reaching a job that holds the real key:
+    // the run ignores that key, signs with a committed one and exits 0. Each
+    // variable is asked on its own, since the condition is an OR and a guard
+    // that read only the first would pass a one-variable case. The value is a
+    // plain word — the guard reads presence, so no key material is needed to
+    // ask it — and `--out` is outside registry/, so the other guard cannot be
+    // the one that answers. The control run first: the same invocation with
+    // neither variable signs, so a refusal below is the variable's doing.
+    const control = path.join(tmp, "test-key-control.json");
+    const ok = testKeyRun(["--in", "registry/v1/index.json", "--out", control]);
+    assert(ok.status === 0 && fs.existsSync(control),
+      `the control run, with neither variable, did not sign (exit ${ok.status}): ${ok.stderr}`);
+    for (const name of ["ASTRA_INDEX_SIGNING_KEY", "ASTRA_INDEX_SIGNING_KEY_NEXT"]) {
+      const out = path.join(tmp, `test-key-beside-${name}.json`);
+      const { status, stderr } = testKeyRun(["--in", "registry/v1/index.json", "--out", out], { [name]: "present" });
+      assert(status === 2,
+        `${name} beside --test-key exited ${status}: a test-key run in a job holding the real key signs with the committed one`);
+      assert(stderr.includes("also holds ASTRA_INDEX_SIGNING_KEY or ASTRA_INDEX_SIGNING_KEY_NEXT"),
+        `${name} beside --test-key: refused, but not by this guard: ${stderr}`);
+      assert(!fs.existsSync(out), `${name} beside --test-key: the refused run still wrote ${out}`);
+    }
   });
   await test("the CI path — key from the environment, verified against trust.json — works end to end", () => {
     // The real signing route, exercised with a throwaway key: the seed arrives in
