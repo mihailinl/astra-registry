@@ -91,6 +91,22 @@ export const PARTIES = ["registry", "test-repository", "probe-host", "plugins-se
 // `plugins-moderation.yml`'s schedule is the first — is red until its row here
 // is armed, in the same commit.
 //
+// **Extended 2026-09-23 by the coordinator session, under the owner's
+// delegation of that day, to the checks another party posts to** (the same
+// entry 25): those are created disarmed too, and arm at their first post. The
+// two this changed are `probe` and `canary-tag`, which said
+// `created_disarmed: false` while neither poster existed — the probe host is
+// still the owner's to choose, and BOT-88's test repository has not been
+// created — so each would have paged from R1 about a silence that is not an
+// outage, exactly as the five registry rows did. The rule cannot be computed
+// for them the way it is for registry rows: their posters run on another
+// machine or in another repository, where nothing here can see a schedule. So
+// it is asserted as the rule itself — `bot/tests/alert.test.mjs`, "a check
+// another party posts to is created disarmed" — and the residual risk named
+// above (a poster that runs and fails before its first successful post never
+// arms its check) is accepted for these, because the alternative is a check
+// armed on a promise.
+//
 // Arming after creation is recorded in `armed_at`, as it is for the two service
 // checks below. Nothing in this repository arms a check: it is a receiver
 // setting (or the receiver's own first-post behaviour, whichever product the
@@ -178,9 +194,12 @@ export const CHECKS = [
     // pages through a bot of its own precisely so that a lost catalogue host
     // cannot take the alarm with it, and a registry job holding its ping URL
     // would put both back in one place.
+    //
+    // Disarmed (2026-09-23, the block above `CHECKS`): the prober does not run
+    // anywhere yet, because its host is not chosen.
     source: "RC-R1-7 (ROLL-15)",
     interval_seconds: 900,
-    created_disarmed: false,
+    created_disarmed: true,
     armed_at: null,
     signals: ["success"],
   },
@@ -237,9 +256,12 @@ export const CHECKS = [
     // B-T1.6 names this check by name and puts its poster in the test
     // repository, so its secret is stored there, under the same name, and
     // never in `alerts`. It is here because the owner creates the check.
+    //
+    // Disarmed (2026-09-23, the block above `CHECKS`): the test repository
+    // and its canary-tag.yml do not exist yet, so nothing posts here.
     source: "B-T1.6 (BOT-88), the test repository's canary-tag.yml",
     interval_seconds: 604800,
-    created_disarmed: false,
+    created_disarmed: true,
     armed_at: null,
     signals: ["success"],
   },

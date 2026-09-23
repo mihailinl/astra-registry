@@ -510,6 +510,25 @@ await test("the two service-posted checks are created disarmed and not yet armed
   }
 });
 
+await test("a check another party posts to is created disarmed", () => {
+  // The 2026-09-22 rule — armed at creation only if its poster runs on a live
+  // schedule — extended on 2026-09-23 to every party but `registry`
+  // (dev/couplings.md entry 25; the block above CHECKS). A poster on another
+  // machine or in another repository has no schedule this repository can
+  // read, so nothing here can show it runs, and a check armed on that promise
+  // pages from R1 about a silence that is not an outage. `probe` and
+  // `canary-tag` were the two that said otherwise, while the probe host was
+  // unchosen and the test repository did not exist.
+  const outside = CHECKS.filter((c) => c.party !== "registry");
+  assert.ok(outside.length >= 4, `only ${outside.length} checks another party posts to; the table has shrunk`);
+  assert.ok(outside.some((c) => c.party === "probe-host") && outside.some((c) => c.party === "test-repository"),
+    "the probe host's and the test repository's checks are what this is about; one of them has gone");
+  const armed = outside.filter((c) => c.created_disarmed !== true).map((c) => `${c.name ?? c.name_pending} (${c.party})`);
+  assert.deepEqual(armed, [],
+    "created armed with a poster nothing here can see running: set `created_disarmed: true` in " +
+    "bot/lib/alert-checks.mjs; it arms at its first post, recorded in `armed_at`");
+});
+
 // Which REGISTRY checks are created disarmed is not asked here. It was, as "no
 // registry check is created disarmed", with the failure message "has a poster
 // in this repository" — false for five of the thirteen, and its reason ("every
