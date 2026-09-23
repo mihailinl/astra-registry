@@ -184,7 +184,7 @@ jobs:
       # is being argued about. If you ever add a dependency here, explain in
       # this comment why the gate is better for it.
       - name: Self-test (schemas, canonical JSON, the rejections)
-        run: node tools/selftest.mjs
+        run: node tools/selftest.mjs --loads  # records what the run loads; no gate passes this (ops couplings 116)
 
       # `bot/manifest-probe/astra-plugins.pin` names the AstraPlugins commit
       # whose `astra-plugin-manifest` this bot judges a stranger's manifest
