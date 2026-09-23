@@ -47,6 +47,8 @@ import {
   EXAMPLE_RE, pluginId, run as examplesRule,
 } from "../../tools/coverage/examples-staging-id.mjs";
 import { stagingListingId } from "../../tools/lib/reserved.mjs";
+import { compareTree, expectationProblems, workflowJobs } from "../../tools/lib/settings.mjs";
+import { githubGetter, localWorkflows, run as settingsRun } from "../../tools/coverage/settings.mjs";
 import { mergeOwnChanges } from "../../tools/coverage/git.mjs";
 import { RULES, outstandingActs, ruleNames } from "../../tools/coverage/rules.mjs";
 import { compose } from "../../tools/coverage-verdict.mjs";
@@ -1423,4 +1425,221 @@ test("the live run is still owed, and cannot stop being printed without being do
     assert.match(live.act, /OWNER APPROVAL/);
     assert.match(live.act, /fixture repository/);
   }
+});
+
+// ── repo-settings: the settings GitHub serves, against the committed file ───
+//
+// Ops `dev/couplings.md` gap 22. The comparison's own clauses are watched red
+// with fixtures in `tools/selftest/settings.mjs`; these hold the RULE — the
+// committed expectation against this tree on every pull request, the network
+// failures that must never read green, the token that is only for the rate
+// limit — and they are here rather than in the selftest because they read
+// `policy/settings-expected.json`, which no bot run reads and which therefore
+// stays outside TRUST-31's set.
+
+const SETTINGS_FILE = path.join(REPO, "policy", "settings-expected.json");
+const settingsDoc = () => JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf8"));
+const checkoutSlug = (doc) => Object.keys(doc.repositories).find((s) => doc.repositories[s].tree === "checkout");
+
+/** This tree's workflows through the rule's own reader, concatenated as the rule concatenates them. */
+function thisTree(files = localWorkflows(REPO)) {
+  const tree = { jobs: [], problems: [] };
+  for (const f of files) {
+    const r = workflowJobs(f.text, f.path);
+    tree.jobs.push(...r.jobs);
+    tree.problems.push(...r.problems);
+  }
+  return tree;
+}
+
+/**
+ * GitHub's answers, played back from an expectation: the inverse of the
+ * rule's normaliser, so that a clean run against it is the file agreeing with
+ * itself and every red below is one value somebody changed.
+ */
+function servesSettings(doc, { fail = () => null } = {}) {
+  const dbp = (k) => (k === "all" ? null : k === "protected"
+    ? { protected_branches: true, custom_branch_policies: false }
+    : { protected_branches: false, custom_branch_policies: true });
+  const routes = new Map();
+  for (const [slug, r] of Object.entries(doc.repositories)) {
+    routes.set(`repos/${slug}`, { default_branch: r.default_branch });
+    const envs = Object.entries(r.environments);
+    routes.set(`repos/${slug}/environments?per_page=100`, {
+      total_count: envs.length,
+      environments: envs.map(([name, e]) => ({
+        name, deployment_branch_policy: dbp(e.deployment_branch_policy),
+        protection_rules: e.protection_rules.map((type, i) => ({ id: i + 1, type })), can_admins_bypass: e.can_admins_bypass,
+      })),
+    });
+    for (const [name, e] of envs) {
+      routes.set(`repos/${slug}/environments/${encodeURIComponent(name)}/deployment-branch-policies?per_page=100`,
+        { total_count: e.branch_policies.length, branch_policies: e.branch_policies.map((p, i) => ({ id: i + 1, ...p })) });
+    }
+    const sets = Object.entries(r.rulesets);
+    routes.set(`repos/${slug}/rulesets?per_page=100`, sets.map(([name], i) => ({ id: 100 + i, name })));
+    sets.forEach(([name, s], i) => routes.set(`repos/${slug}/rulesets/${100 + i}`, {
+      id: 100 + i, name, target: s.target, enforcement: s.enforcement,
+      conditions: { ref_name: { include: s.include, exclude: s.exclude } }, rules: s.rules.map((type) => ({ type })),
+    }));
+    routes.set(`repos/${slug}/rules/branches/${encodeURIComponent(r.default_branch)}?per_page=100`, r.rules_on_default_branch.map((type) => ({ type })));
+  }
+  return async (route) => {
+    const why = fail(route);
+    if (why) return { ok: false, why: `${route}: ${why}` };
+    if (!routes.has(route)) return { ok: false, why: `${route}: HTTP 404 — Not Found` };
+    return { ok: true, data: structuredClone(routes.get(route)), auth: "the fixture" };
+  };
+}
+
+/** A remote tree that names each of a repository's expected environments from one job. */
+const servesRemoteTree = (doc) => async () => {
+  const [, r] = Object.entries(doc.repositories).find(([, x]) => x.tree === "remote");
+  const jobs = Object.keys(r.environments).map((name, i) =>
+    `  job${i}:\n    runs-on: ubuntu-24.04\n    environment: ${name}\n    steps:\n      - run: echo\n`).join("");
+  return { kind: "files", branch: r.default_branch, files: [{ path: ".github/workflows/release.yml", text: `name: release\non: push\njobs:\n${jobs}` }] };
+};
+
+const settingsRule = (overrides = {}) => settingsRun(REPO, {
+  get: servesSettings(settingsDoc()), readRemote: servesRemoteTree(settingsDoc()), env: {}, ...overrides,
+});
+
+test("repo-settings: the committed expectation is well formed, and every environment this tree names is in it", () => {
+  const doc = settingsDoc();
+  assert.deepEqual(expectationProblems(doc), [], "policy/settings-expected.json is malformed");
+  const slug = checkoutSlug(doc);
+  assert.equal(slug, "mihailinl/astra-registry", "the checkout this suite runs in is not the repository the file reads it as");
+  const tree = thisTree();
+  const named = tree.jobs.filter((j) => j.environment !== null);
+  assert.ok(named.length >= 15, `${named.length} jobs name an environment and there were 20 on 2026-09-22; the reader stopped reading`);
+  const { findings } = compareTree(slug, doc.repositories[slug], tree);
+  assert.deepEqual(findings.map((f) => `${f.code} ${f.detail}`), [],
+    "a workflow names an environment policy/settings-expected.json does not hold live and pinned, or pending and held — " +
+    "or the file lists one no workflow names. Fix the workflow, or change the file in a commit that says why");
+});
+
+test("repo-settings: deleting a committed `if: false` before its environment exists is red, naming the job and the environment", () => {
+  // Committed material, not a fixture: the jobs this tree holds today, each
+  // with its hold deleted in memory. A guard that has never seen its case is
+  // not proven by passing.
+  const doc = settingsDoc();
+  const slug = checkoutSlug(doc);
+  const expected = doc.repositories[slug];
+  const files = localWorkflows(REPO);
+  const held = thisTree(files).jobs.filter((j) => j.held && j.environment in (expected.pending_environments ?? {}));
+  if (held.length === 0) {
+    assert.deepEqual(Object.keys(expected.pending_environments ?? {}), [],
+      "no held job names a pending environment, and the file still lists one");
+    return; // nothing is pending any more; tools/selftest/settings.mjs still holds the rule with its fixture
+  }
+  for (const j of held) {
+    const copy = files.map((f) => {
+      if (f.path !== j.file) return f;
+      const lines = f.text.split("\n");
+      const at = lines.findIndex((l, i) => i > j.line - 1 && /^\s+if:\s*false\s*$/.test(l));
+      assert.ok(at > j.line - 1 && at < j.environmentLine, `${j.file}: the hold of job ${j.job} is not between its name and its environment`);
+      const text = [...lines.slice(0, at), ...lines.slice(at + 1)].join("\n");
+      assert.notEqual(text, f.text, "the edit changed nothing");
+      return { path: f.path, text };
+    });
+    const codes = compareTree(slug, expected, thisTree(copy)).findings;
+    const hit = codes.filter((f) => f.code === "SETTINGS_TREE_ENV_NOT_LIVE");
+    assert.equal(hit.length, 1, `with ${j.file}'s job ${j.job} unheld: ${codes.map((f) => f.code).join(", ") || "nothing"}`);
+    assert.match(hit[0].detail, new RegExp(`job \`${j.job}\``));
+    assert.match(hit[0].detail, new RegExp(`\`${j.environment}\``));
+  }
+});
+
+test("repo-settings: the file against GitHub answering exactly what it says is green, and names what it cannot ask", async () => {
+  const r = await settingsRule();
+  assert.equal(r.status, "green", r.detail.join("\n"));
+  const text = r.detail.join("\n");
+  assert.match(text, /NOT ASKED \(by design\): which secrets exist where/);
+  assert.match(text, /NOT ASKED \(by design\): ruleset bypass actors/);
+  assert.match(text, /`bot-state` pending creation \(B-T5\.0\)/);
+  assert.deepEqual(r.ids, [], "an environment name is not a plugin id");
+  assert.equal(RULES.find((x) => x.name === "repo-settings")?.network, true, "the settings rule leaves the runner and does not say so");
+});
+
+test("repo-settings: one wrong value in the file is red, naming it", async () => {
+  const doc = settingsDoc();
+  const slug = checkoutSlug(doc);
+  const wrong = structuredClone(doc);
+  wrong.repositories[slug].environments.publish.branch_policies = [{ name: "release", type: "branch" }];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-settings-"));
+  tmpRoots.push(dir);
+  const file = path.join(dir, "settings-expected.json");
+  fs.writeFileSync(file, `${JSON.stringify(wrong, null, 2)}\n`);
+  const r = await settingsRule({ expectation: file });
+  assert.equal(r.status, "red");
+  assert.deepEqual(r.codes, ["SETTINGS_ENV_DRIFT"]);
+  assert.match(r.detail.join("\n"), /environment `publish` branch_policies/);
+});
+
+test("repo-settings: a read that fails is NOT ASKED by route and red, never green, and the rest is still compared", async () => {
+  const doc = settingsDoc();
+  const slug = checkoutSlug(doc);
+  const r = await settingsRule({
+    get: servesSettings(doc, { fail: (route) => (route.startsWith(`repos/${slug}/rulesets`) ? "HTTP 403, rate limit exhausted" : null) }),
+  });
+  assert.equal(r.status, "red");
+  assert.deepEqual(r.codes, ["SETTINGS_NOT_ASKED"]);
+  assert.match(r.detail.join("\n"), new RegExp(`NOT ASKED \\(this run\\): ${escapeRe(slug)}'s rulesets: repos/${escapeRe(slug)}/rulesets`));
+
+  // One environment's branch policies unread: that is NOT ASKED, and it is not
+  // an environment gone missing — the half-read member is not compared at all.
+  const half = await settingsRule({
+    get: servesSettings(doc, { fail: (route) => (route.includes("/environments/publish/") ? "HTTP 502" : null) }),
+  });
+  assert.deepEqual(half.codes, ["SETTINGS_NOT_ASKED"], half.detail.join("\n"));
+  assert.match(half.detail.join("\n"), /environment `publish`'s branch policies: .*HTTP 502/);
+
+  const down = await settingsRule({ readRemote: async () => ({ kind: "unreachable", why: "fatal: unable to access" }) });
+  assert.equal(down.status, "red");
+  assert.deepEqual(down.codes, ["SETTINGS_NOT_ASKED"]);
+  assert.match(down.detail.join("\n"), /NOT ASKED \(this run\): mihailinl\/AstraPlugins's workflow tree: fatal/);
+
+  const nothing = await settingsRule({ get: async (route) => ({ ok: false, why: `${route}: fetch failed` }) });
+  assert.equal(nothing.status, "red", "a run in which GitHub answered nothing at all was green");
+  assert.deepEqual(nothing.codes, ["SETTINGS_NOT_ASKED"]);
+});
+
+test("repo-settings: an unreadable or malformed file, and a checkout it does not describe, are red", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-settings-"));
+  tmpRoots.push(dir);
+  const missing = await settingsRule({ expectation: path.join(dir, "absent.json") });
+  assert.deepEqual(missing.codes, ["SETTINGS_EXPECTATION_UNREADABLE"]);
+  const bad = path.join(dir, "bad.json");
+  fs.writeFileSync(bad, JSON.stringify({ schema: "astra.registry.settings-expected/1", repositories: {} }));
+  assert.deepEqual((await settingsRule({ expectation: bad })).codes, ["SETTINGS_EXPECTATION_MALFORMED"]);
+  const fork = await settingsRule({ env: { GITHUB_REPOSITORY: "someone/astra-registry" } });
+  assert.ok(fork.codes.includes("SETTINGS_EXPECTATION_REPO"), fork.detail.join("\n"));
+});
+
+test("repo-settings: the token is sent, a token GitHub refuses is dropped for that read, and an exhausted limit is not retried", async () => {
+  const seen = [];
+  const reply = (status, body, remaining = "59") => ({
+    status, headers: { get: (h) => (h === "x-ratelimit-remaining" ? remaining : null) }, text: async () => JSON.stringify(body),
+  });
+  const refused = githubGetter({
+    token: "fixture-token", attempts: 1,
+    fetchImpl: async (url, init) => {
+      seen.push(init.headers.authorization ?? "none");
+      return init.headers.authorization ? reply(403, { message: "Resource not accessible by integration" }) : reply(200, { ok: 1 });
+    },
+  });
+  const a = await refused("repos/x/y/environments");
+  assert.equal(a.ok, true);
+  assert.equal(a.auth, "no credential (the workflow token was refused)");
+  assert.deepEqual(seen, ["Bearer fixture-token", "none"]);
+
+  let calls = 0;
+  const exhausted = githubGetter({
+    token: null, attempts: 3,
+    fetchImpl: async () => { calls += 1; return reply(403, { message: "API rate limit exceeded" }, "0"); },
+  });
+  const b = await exhausted("repos/x/y/rulesets");
+  assert.equal(b.ok, false);
+  assert.match(b.why, /HTTP 403, rate limit exhausted/);
+  assert.equal(calls, 1, "a rate limit at zero was asked again, which two seconds cannot refill");
 });

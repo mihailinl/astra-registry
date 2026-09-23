@@ -1,0 +1,195 @@
+{
+  "schema": "astra.registry.settings-expected/1",
+  "$comment": [
+    "What GitHub must say about the settings this estate depends on, and what tools/coverage/settings.mjs compares it with every fifteen minutes in the coverage canary (ops dev/couplings.md gap 22). Both directions: a live environment or ruleset this file does not list is red, and so is one it lists and GitHub does not have; every environment a workflow job names must be here with a custom branch policy, or under pending_environments and named only by jobs a literal `if: false` holds.",
+    "Read on 2026-09-23T00:13Z with `node tools/coverage/settings.mjs --print-live` and NO credential, then reviewed against what the tree claims each policy must be (the `because` members; they are not compared). A value the tree contradicted would have been a finding, not a line here. None was.",
+    "To change a setting: the owner changes it (ROLL-3), then this file changes in a commit that says why. Re-reading the live answer into this file without that review is how a drift gets blessed.",
+    "Not here, because a read with no credential cannot see it: which secrets exist in which environment, and ruleset bypass actors. The rule prints both as NOT ASKED on every run."
+  ],
+  "repositories": {
+    "mihailinl/astra-registry": {
+      "$comment": "Its workflows are read from the checkout the canary runs in.",
+      "tree": "checkout",
+      "default_branch": "main",
+      "environments": {
+        "alerts": {
+          "because": "RC-R1-0 and registry plan RC-R0-3(f): the alarm channel secrets land here at R1, so it admits only main before they do. It was found admitting every ref on 2026-09-20, with no secrets yet (ops dev/couplings.md gap 22).",
+          "deployment_branch_policy": "custom",
+          "branch_policies": [
+            {
+              "name": "main",
+              "type": "branch"
+            }
+          ],
+          "protection_rules": [
+            "branch_policy"
+          ],
+          "can_admins_bypass": true
+        },
+        "github-pages": {
+          "because": "Created by GitHub for Pages, not by the plan. sign.yml job `pages` deploys the site from main, and the environment has admitted only main since before R0 (ops runbooks/registry-r0-settings.md).",
+          "deployment_branch_policy": "custom",
+          "branch_policies": [
+            {
+              "name": "main",
+              "type": "branch"
+            }
+          ],
+          "protection_rules": [
+            "branch_policy"
+          ],
+          "can_admins_bypass": true
+        },
+        "operator": {
+          "because": "Registry plan RC-R0-3a and docs/RUNBOOK.md 7.7: the operator workflow authority check lives in the tree at the ref the dispatcher chooses, so the environment, not the check, is what pins it to main. No secret (not checkable here).",
+          "named_by_no_workflow": "M-T3.5 writes .github/workflows/operator.yml (docs/RUNBOOK.md 7.7), which detectors.yml, sign.yml and moderation-coverage.yml already hear by its name `Operator`. RC-R0-3a created the environment first on purpose, so that workflow lands pinned to main rather than being pinned after it.",
+          "deployment_branch_policy": "custom",
+          "branch_policies": [
+            {
+              "name": "main",
+              "type": "branch"
+            }
+          ],
+          "protection_rules": [
+            "branch_policy"
+          ],
+          "can_admins_bypass": true
+        },
+        "plugins-service": {
+          "because": "Registry plan RC-R0-3(d), ROLL-6, and plugins-ingest.yml job `claim`: bot/lib/oidc.mjs refuses to mint outside this environment, which makes its main-only policy the control. No secret (not checkable here).",
+          "deployment_branch_policy": "custom",
+          "branch_policies": [
+            {
+              "name": "main",
+              "type": "branch"
+            }
+          ],
+          "protection_rules": [
+            "branch_policy"
+          ],
+          "can_admins_bypass": true
+        },
+        "publish": {
+          "because": "ROLL-4 and registry plan RC-R0-3(a): the index signing key lives here and sign.yml job `publish` is the one job that reaches it. No required reviewer (LM-1; SECURITY.md, docs/RUNBOOK.md), so its only protection rule is the branch policy.",
+          "deployment_branch_policy": "custom",
+          "branch_policies": [
+            {
+              "name": "main",
+              "type": "branch"
+            }
+          ],
+          "protection_rules": [
+            "branch_policy"
+          ],
+          "can_admins_bypass": true
+        }
+      },
+      "pending_environments": {
+        "bot-state": {
+          "task": "B-T5.0",
+          "why": "The owner creates it at R5, admitting only main, with the sweep-memory HMAC key (registry plan RC-R0-3(f), ext.12). plugins-ingest.yml jobs `load` and `remember` name it now and are held by `if: false` until then: a run of either before it exists would have GitHub create it with no branch policy."
+        }
+      },
+      "rulesets": {
+        "history is append-only": {
+          "$comment": "ROLL-5, ops runbooks/registry-r0-settings.md step 4: main and signed cannot be deleted or force-pushed, by anyone. SERVE-90 step 5 (restricting updates to signed) was not attempted, so there is no update rule.",
+          "target": "branch",
+          "enforcement": "active",
+          "include": [
+            "refs/heads/main",
+            "refs/heads/signed"
+          ],
+          "exclude": [],
+          "rules": [
+            "deletion",
+            "non_fast_forward"
+          ]
+        }
+      },
+      "rules_on_default_branch": [
+        "deletion",
+        "non_fast_forward"
+      ]
+    },
+    "mihailinl/AstraPlugins": {
+      "$comment": "Its workflows are read over git from its default branch, at the remote bot/manifest-probe/astra-plugins.pin declares.",
+      "tree": "remote",
+      "default_branch": "master",
+      "environments": {
+        "crates-io": {
+          "because": "release-sdks.yml job `publish-rust`. Pinned 2026-09-20 to master plus tag sdk-v*: the tag is how a release starts, and workflow_dispatch on master is how a half-published release is finished (ops dev/couplings.md, the publish-credential row).",
+          "deployment_branch_policy": "custom",
+          "branch_policies": [
+            {
+              "name": "master",
+              "type": "branch"
+            },
+            {
+              "name": "sdk-v*",
+              "type": "tag"
+            }
+          ],
+          "protection_rules": [
+            "branch_policy"
+          ],
+          "can_admins_bypass": true
+        },
+        "npm": {
+          "because": "release-sdks.yml job `publish-ts`. npm trusted publishing matches the environment NAME, so without this policy any branch declaring it with id-token: write could mint a token npmjs accepts. master plus tag sdk-v*, as crates-io.",
+          "deployment_branch_policy": "custom",
+          "branch_policies": [
+            {
+              "name": "master",
+              "type": "branch"
+            },
+            {
+              "name": "sdk-v*",
+              "type": "tag"
+            }
+          ],
+          "protection_rules": [
+            "branch_policy"
+          ],
+          "can_admins_bypass": true
+        },
+        "pypi": {
+          "because": "release-sdks.yml job `publish-python`, PyPI trusted publishing. master plus tag sdk-v*, as crates-io.",
+          "deployment_branch_policy": "custom",
+          "branch_policies": [
+            {
+              "name": "master",
+              "type": "branch"
+            },
+            {
+              "name": "sdk-v*",
+              "type": "tag"
+            }
+          ],
+          "protection_rules": [
+            "branch_policy"
+          ],
+          "can_admins_bypass": true
+        }
+      },
+      "rulesets": {
+        "history is append-only": {
+          "$comment": "Created 2026-09-20: master was deletable and force-pushable while the registry was protected (ops dev/couplings.md gap 22).",
+          "target": "branch",
+          "enforcement": "active",
+          "include": [
+            "refs/heads/master"
+          ],
+          "exclude": [],
+          "rules": [
+            "deletion",
+            "non_fast_forward"
+          ]
+        }
+      },
+      "rules_on_default_branch": [
+        "deletion",
+        "non_fast_forward"
+      ]
+    }
+  }
+}
