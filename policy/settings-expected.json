@@ -92,7 +92,7 @@
       },
       "rulesets": {
         "history is append-only": {
-          "$comment": "ROLL-5, ops runbooks/registry-r0-settings.md step 4: main and signed cannot be deleted or force-pushed, by anyone. SERVE-90 step 5 (restricting updates to signed) was not attempted, so there is no update rule.",
+          "$comment": "ROLL-5, ops runbooks/registry-r0-settings.md step 4: main and signed cannot be deleted or force-pushed, by anyone. There is no update rule on signed (SERVE-90, step 5) and no required status check on main (ops dev/couplings.md 74) because neither can exempt the bots on a repository a user owns. Measured 2026-09-23 on a throwaway user-owned repository (ops runbooks/registry-r0-settings.md step 5 names it): GitHub refuses GitHub Actions (integration 15368) as a bypass actor, HTTP 422 \"Actor GitHub Actions integration must be part of the ruleset source or owner organization\"; a Write-role bypass is accepted, covers the owner and did not let a GITHUB_TOKEN push past the required check; and with no bypass a GITHUB_TOKEN push is refused by either rule (GH013 \"Cannot update this protected ref.\", \"Required status check \\\"check\\\" is expected.\"). Every bot here pushes with GITHUB_TOKEN, and the signer pushes signed, so either rule would stop them. SERVE-90 is carried by served-set.yml's provenance check instead (RC-R1-5).",
           "target": "branch",
           "enforcement": "active",
           "include": [
@@ -183,6 +183,60 @@
           "rules": [
             "deletion",
             "non_fast_forward"
+          ]
+        }
+      },
+      "rules_on_default_branch": [
+        "deletion",
+        "non_fast_forward"
+      ]
+    },
+    "mihailinl/astra-registry-canary": {
+      "$comment": "BOT-88's test repository (registry plan B-T1.6, ext.6), created 2026-09-23 under the owner's standing grant of that day. Read here because it holds a write credential: environment canary-tag carries the private half of its write deploy key, which pushes the weekly canary tag, and the receiver ping URL for check canary-tag. From R2 it is also the staging listing's source (M-T2.1). Its workflows are read over git from its own default branch, at `remote`.",
+      "tree": "remote",
+      "remote": "https://github.com/mihailinl/astra-registry-canary",
+      "default_branch": "main",
+      "environments": {
+        "canary-tag": {
+          "because": "canary-tag.yml job `push` is the one job that reads the write deploy key CANARY_TAG_DEPLOY_KEY and ASTRA_DEADMAN_URL_CANARY_TAG. The branch policy is the whole guard: a job in this environment from any other ref could push tags with that key, and the key reaches every tag this repository releases through. can_admins_bypass is false for the same reason as publish here.",
+          "deployment_branch_policy": "custom",
+          "branch_policies": [
+            {
+              "name": "main",
+              "type": "branch"
+            }
+          ],
+          "protection_rules": [
+            "branch_policy"
+          ],
+          "can_admins_bypass": false
+        }
+      },
+      "rulesets": {
+        "history is append-only": {
+          "$comment": "main cannot be deleted or force-pushed, as in the two repositories above.",
+          "target": "branch",
+          "enforcement": "active",
+          "include": [
+            "refs/heads/main"
+          ],
+          "exclude": [],
+          "rules": [
+            "deletion",
+            "non_fast_forward"
+          ]
+        },
+        "tags never move": {
+          "$comment": "No tag here can be moved once pushed: a canary tag that could be re-pointed would make a week's release mean a different commit than the one it was built from. Creation and deletion stay open, because the weekly job creates tags and its prune job deletes the ninth-oldest per caller.",
+          "target": "tag",
+          "enforcement": "active",
+          "include": [
+            "~ALL"
+          ],
+          "exclude": [],
+          "rules": [
+            "non_fast_forward",
+            "update"
           ]
         }
       },

@@ -188,7 +188,8 @@ export const PENDING_OWNER_ACTS = [
       "built to remove. The half that closes it is BOT-85's `coverage-canary` receiver, which pages on this " +
       "workflow's silence from OFF this box; `bot/lib/alert-checks.mjs` declares it at 900 s and nothing in " +
       "this repository can prove the receiver exists. Stand it up, post one heartbeat, watch it page after " +
-      "3 x 900 s of silence, and record it in `state/ingest-schedule-watch.json` " +
+      "the silence bound `boundMinutes()` gives it (a day, the floor for a poster GitHub schedules), and " +
+      "record it in `state/ingest-schedule-watch.json` " +
       "(`{at, receiver, check, silence_paged_at}`). Until then the inner guard is the whole guard, and it is " +
       "deliberately not waiting: `ingest.yml` carried a written claim that the plugins service's BOT-47 " +
       "watched this schedule, and a claim of coverage is what stops anybody looking.",

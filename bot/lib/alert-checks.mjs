@@ -54,6 +54,12 @@ const CHECK_NAME_RE = new RegExp(CHECK_NAME_PATTERN);
 export const MIN_BOUND_MINUTES = 90;
 
 /**
+ * The floor for a check whose poster runs on GitHub Actions' `schedule`:
+ * 24 hours. Why a day, and the measurement it rests on, are at `boundMinutes`.
+ */
+export const GITHUB_SCHEDULE_FLOOR_MINUTES = 1440;
+
+/**
  * Who posts. `registry` is a job in this repository. The other three are
  * checks the owner creates here, with the rest, and that this repository must
  * never hold a URL for: `test-repository` is BOT-88's separate repository,
@@ -63,6 +69,26 @@ export const MIN_BOUND_MINUTES = 90;
  * parties, and no credential of one resolving a check of another.
  */
 export const PARTIES = ["registry", "test-repository", "probe-host", "plugins-service"];
+
+/**
+ * The parties whose posters GitHub's scheduler feeds, and so the checks
+ * `boundMinutes` gives `GITHUB_SCHEDULE_FLOOR_MINUTES`. Decided by party, not
+ * per row, because the party IS where the poster runs:
+ *
+ *   * `registry` — a job in this repository's `.github/workflows/`. Every
+ *     heartbeat here goes through `.github/actions/alert`, and
+ *     `bot/tests/workflows.test.mjs` holds each armed registry check to a
+ *     poster on a live `schedule:` ("a registry check is armed exactly when a
+ *     workflow here posts to it on a live schedule");
+ *   * `test-repository` — B-T1.6's `canary-tag.yml`, a weekly `schedule:` in
+ *     BOT-88's test repository, which is a GitHub repository too;
+ *
+ * and not the other two: ROLL-15's prober runs on the probe host (RC-R1-7) and
+ * the service's two posters on minice-be's host, each on a clock of its own
+ * that GitHub does not hold back. `bot/tests/alert.test.mjs` pins this list,
+ * and is red until a party added to `PARTIES` is put on one side or the other.
+ */
+export const GITHUB_SCHEDULED_PARTIES = ["registry", "test-repository"];
 
 // ── which registry checks are created ARMED ──────────────────────────────────
 //
@@ -127,8 +153,11 @@ export const CHECKS = [
     party: "registry",
     // 600 s is a contract MUST since A6, recorded in the token file and in
     // ROLL-7's file; a cron edit waits for a contract MINOR (SCOPE-1). So this
-    // interval is pinned rather than guessed, and 3 × 600 s is under the floor,
-    // which is why the bound comes out at 90 minutes and not at 30.
+    // interval is pinned rather than guessed. 3 × 600 s is 30 minutes, under
+    // both floors: BOT-85's 90 minutes made it 90, and since 2026-09-23 its
+    // poster being a GitHub schedule makes it a day (`boundMinutes`). The
+    // service's own moderation bound (BOT-84) is a different number and is
+    // not this one.
     //
     // Disarmed: its poster is the `settled` job, and the workflow's schedule
     // is commented out until R3 opens (§2.5), so today it runs only on a
@@ -398,15 +427,56 @@ export const CHECKS = [
 export const SERVICE_CHECK_COUNT = CHECKS.filter((c) => c.party === "plugins-service").length;
 
 /**
- * BOT-85's silence bound: the longer of 3 × the interval and 90 minutes,
- * recalibrated at R3 to at least twice the p99 gap between completed runs over
- * 7 days (OPEN-OPS-13).
+ * The silence bound: the longest of 3 × the interval, 90 minutes (BOT-85), and
+ * — when the poster runs on GitHub Actions' `schedule` (a party in
+ * `GITHUB_SCHEDULED_PARTIES`) — 24 hours. Recalibrated at R3 to at least twice
+ * the p99 gap between completed runs over 7 days (OPEN-OPS-13).
+ *
+ * **Why the 24-hour floor (decided 2026-09-23 by the coordinator session,
+ * under the owner's delegation of that day; ops `dev/couplings.md` entry
+ * 87).** BOT-85's rule alone trusts the cron, and GitHub does not keep it.
+ * Measured that day from the Actions API, on `main`, to 10:24Z:
+ *
+ *   * since the four posters' workflows landed (2026-09-20), the longest gap
+ *     between completed runs — which is when the alert job posts — was 312
+ *     minutes for Detectors (bound 180), 230 for Signer (180), 425 for Served
+ *     set (90) and 313 for Moderation coverage (90). Counting only the runs
+ *     GitHub's scheduler started, which are the only posters on a day nobody
+ *     pushes: 442, 376, 425 and 421. Armed with those bounds, the new alarm
+ *     channel would have paged about forty times in three days about
+ *     GitHub's scheduler — the failure the rule above `CHECKS` exists to
+ *     prevent, a channel that is noise on its first day;
+ *   * over the longest window the API gives in this repository, 43 days of the
+ *     two oldest hourly schedules (Registry index and Ingest, since
+ *     2026-08-12), the longest scheduled gap was 800 minutes (13 h 20 min),
+ *     from 2026-08-28 05:27Z. Nothing at all ran in the repository from 05:27Z
+ *     to 15:30Z, and that day's two daily jobs started 12 hours late. That is
+ *     GitHub holding back every schedule here for half a day, not a dropped
+ *     slot, and the next such event may be longer.
+ *
+ * A floor of 12 hours was the first proposal; the 800-minute gap is over it,
+ * so it would have paged falsely on 2026-08-28. A day is 1.8 × the worst gap
+ * measured (640 minutes of margin) and is over twice the 43-day p99 (497
+ * minutes). It is not over twice the worst single week's p99 (800 of 89 gaps,
+ * the same event), so if R3 measures a week like that one, OPEN-OPS-13 raises
+ * this. And past a day, silence is worth a page whatever its cause: the
+ * estate has not run for a day.
+ *
+ * What the floor gives up is a fast page for a poster that STOPPED, and only
+ * that: a job that runs and fails alerts through its own verdict on that run.
+ * A dead-man check is for the silence, and GitHub's own silences are hours
+ * long. BOT-85's 3 × rule still decides every longer interval (`keepalive`,
+ * `alarm-drill`, `baseline-names` and the rest), and the checks whose posters
+ * are not on GitHub keep BOT-85's rule as it was: `probe` and the service's
+ * evaluator, both every 15 minutes, 90 minutes.
  *
  * @returns {number|null} minutes, or null when the interval is not fixed yet
  */
 export function boundMinutes(check) {
   if (check.interval_seconds === null || check.interval_seconds === undefined) return null;
-  return Math.max(MIN_BOUND_MINUTES, (check.interval_seconds / 60) * 3);
+  const threeIntervals = (check.interval_seconds / 60) * 3;
+  const floor = GITHUB_SCHEDULED_PARTIES.includes(check.party) ? GITHUB_SCHEDULE_FLOOR_MINUTES : MIN_BOUND_MINUTES;
+  return Math.max(MIN_BOUND_MINUTES, floor, threeIntervals);
 }
 
 /** @returns {object|undefined} the check with this name */

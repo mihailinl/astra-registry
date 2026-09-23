@@ -14,6 +14,9 @@
 //     `if: false` removed is red naming the job and the environment;
 //   * the expectation against the tree: an environment nobody names says why,
 //     and a pending one somebody still names;
+//   * a repository's own `remote` (BOT-88's test repository is the first that
+//     is not AstraPlugins): only on a remote tree, only github.com, and only
+//     naming the same repository as its key;
 //   * GitHub against the expectation, both directions, for environments,
 //     rulesets, the default branch and the rules in force on it, each field on
 //     its own — and a member the live read could not fill is not compared as
@@ -359,6 +362,31 @@ export async function run() {
       const d = DOC();
       mutate(d);
       assert(expectationProblems(d).length >= 1, `${why} was accepted`);
+    }
+  });
+
+  await test("a repository's own `remote` is accepted only on a remote tree, on github.com, naming that same repository", () => {
+    // Registry plan B-T1.6: BOT-88's test repository is the first remote repository that is not
+    // AstraPlugins, so it says where its workflows are read. A `remote` naming another repository
+    // would compare that one's workflows with this one's settings, and every environment would read
+    // as named by nobody — or by a stranger.
+    const withRemote = (remote, tree = "remote") => {
+      const d = DOC();
+      d.repositories["fixture/canary"] = { ...EXPECTED(), tree, remote };
+      return d;
+    };
+    assertEqual(expectationProblems(withRemote("https://github.com/fixture/canary")).join(" / "), "", "a well-formed remote was refused");
+    assertEqual(expectationProblems(withRemote("https://github.com/Fixture/Canary.git")).join(" / "), "", "GitHub slugs are case-insensitive, and `.git` is a clone URL's spelling");
+    const refused = {
+      "on a checkout tree": [withRemote("https://github.com/fixture/canary", "checkout"), /remote is set on a `tree: "checkout"` repository/],
+      "not github.com over https": [withRemote("http://github.com/fixture/canary"), /not an https:\/\/github\.com\/<owner>\/<name> URL/],
+      "somewhere else": [withRemote("https://gitlab.com/fixture/canary"), /not an https:\/\/github\.com\/<owner>\/<name> URL/],
+      "another repository": [withRemote("https://github.com/fixture/registry"), /remote names fixture\/registry, not fixture\/canary/],
+      "not a string": [withRemote(["https://github.com/fixture/canary"]), /not an https:\/\/github\.com/],
+    };
+    for (const [why, [doc, re]] of Object.entries(refused)) {
+      const said = expectationProblems(doc).join(" / ");
+      assert(re.test(said), `a remote ${why} was not refused by name: ${said || "(accepted)"}`);
     }
   });
 }

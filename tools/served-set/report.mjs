@@ -11,10 +11,10 @@
 // the channel refuses is not a cosmetic problem: `bot/lib/alert-verdict.mjs`
 // refuses the whole verdict, `bot/alert.mjs` exits non-zero, and the alarm that
 // was about a real drift is never sent — the run goes red in a tab nobody has
-// open, and the receiver hears the heartbeat's absence ninety minutes later at
-// best. So `CODE_PATTERN` is imported from the channel rather than re-typed,
-// and a code that does not match makes THIS job red, in CI, where its author is
-// standing.
+// open, and the receiver hears the heartbeat's absence a day later at best
+// (`boundMinutes`'s floor for a poster GitHub schedules). So `CODE_PATTERN`
+// is imported from the channel rather than re-typed, and a code that does not
+// match makes THIS job red, in CI, where its author is standing.
 //
 // **Nothing from a plugin's tree reaches the verdict.** The channel's grammar
 // would take plugin ids and 64-hex digests, and the first draft of this file
