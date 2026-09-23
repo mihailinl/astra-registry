@@ -37,10 +37,11 @@ about the catalogue itself.
 
 **Not the copy in this branch.** `raw.githubusercontent.com/…/main/registry/v1/index.json`
 serves the committed file, which carries `"signatures": []` permanently and by
-design — see below. The signed catalogue exists only in the deployment, so
-fetching the branch copy gets a catalogue the daemon will classify `UNSIGNED`
-and refuse. That URL was the daemon's default until it was measured against this
-one; `astra-daemon`'s `DEFAULT_REGISTRY_URL` now points here.
+design — see below. The signed catalogue exists only on the `signed` branch and
+in the deployment, so fetching `main`'s copy gets a catalogue the daemon will
+classify `UNSIGNED` and refuse. That URL was the daemon's default until it was
+measured against this one; `astra-daemon`'s `DEFAULT_REGISTRY_URL` now points
+here.
 
 Since Phase 3.2 the catalogue is a **signed envelope** —
 `{ "signatures": [...], "signed": { "schema", "serial", "plugins" } }` — and only
@@ -58,22 +59,46 @@ was fetched from. The catalogue can move to another host without a daemon
 change, and an attacker serving their own file from this exact URL gains
 nothing.
 
-Two things are honestly not true yet, and the code says so rather than
-pretending otherwise:
+Where the signatures are, and where they are not:
 
-- The **committed** `registry/v1/index.json` carries `signatures: []`. This
-  repository holds no signing key; CI signs the deploy candidate inside the
-  `publish` environment. An empty array says "unsigned" out loud, where an
-  absent member could not be told from a stripped one.
-- The **root ceremony has been run** — 2026-08-11, offline.
-  [`registry/v1/root.json`](registry/v1/root.json) publishes the two Ed25519
-  public keys, and `astra-daemon`'s `PRODUCTION_ROOT_KEYS` compiles in the same
-  two. **No `trust.json` has been signed yet**, though, so nothing is delegated,
-  there are no index keys to verify a catalogue against, and the daemon still
-  reads every catalogue as `UNSIGNED`. That is the correct fail-closed state for
-  a chain whose anchor exists and has not vouched for anything, and not a gap to
-  be plugged with the clearly-labelled test keys in `tools/testkeys/`. See
-  [`SECURITY.md`](SECURITY.md) and [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
+- The **committed** `registry/v1/index.json` carries `signatures: []`, and so
+  does the committed `registry/v1/revocations.json`. This repository holds no
+  signing key; `sign.yml`'s `publish` job signs both inside the `publish`
+  environment and commits the signed copies to the `signed` branch. An empty
+  array says "unsigned" out loud, where an absent member could not be told from
+  a stripped one.
+- The **root ceremony was run** on 2026-08-11, offline.
+  [`registry/v1/root.json`](registry/v1/root.json) publishes two Ed25519 public
+  keys, `astra-root-2026a` (active) and `astra-root-2026a-reserve`, and
+  `node bot/check-roots.mjs` holds them to the two `bot/lib/roots.mjs` compiles
+  in. **`trust.json` is signed**: at serial 1 by `50c40c3` (2026-08-11), and
+  again at serial 2 by `5283fa7` (2026-08-19). Measured at `62c0f8e`, it
+  carries one signature, by the active root `astra-root-2026a`; it delegates
+  one index key, `astra-index-2026a`, with `not_before` 2026-08-19T11:00:49Z
+  and no `not_after`; it allows two reusable-workflow commits; and the document
+  expires 2027-08-19T11:00:49Z. The catalogue and the withdrawal list at the
+  head of `signed`, `430efba` at that measurement, each carry one signature, by
+  `astra-index-2026a`, and both verify under it. None of that has to be taken
+  from this page — these print it, serials and expiry included:
+
+  ```bash
+  node tools/sign-trust.mjs --verify registry/v1/trust.json   # against root.json's keys
+  git fetch origin signed && d=$(mktemp -d)
+  git show origin/signed:registry/v1/index.json > "$d/index.json"
+  git show origin/signed:registry/v1/revocations.json > "$d/revocations.json"
+  node bot/sign-index.mjs --verify "$d/index.json" --trust registry/v1/trust.json
+  node tools/sign-revocations.mjs --verify "$d/revocations.json" --trust registry/v1/trust.json
+  ```
+
+  Pages serves `signed`'s catalogue, `trust.json` and `root.json`, and `main`'s
+  **unsigned** withdrawal list, on purpose, until the commit that adds
+  `policy/pages-withdrawal-list.json` (`tools/signer/pages.mjs` says why);
+  `served-set.yml` compares what Pages serves with `signed` on a schedule.
+  **What the daemon does with any of this is outside this repository.** Its
+  verifier is in `Astra`, which nothing here reads, so no sentence on this page
+  about how a daemon classifies a catalogue is checked by anything in it. The
+  clearly-labelled test keys in `tools/testkeys/` are never a stand-in for these
+  keys. See [`SECURITY.md`](SECURITY.md) and [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
 
 `bot/lib/phase3.mjs` still lists every check that does not run yet, by its final
 error code, so nobody forgets which of these is which.
