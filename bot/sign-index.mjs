@@ -16,8 +16,10 @@
 // `--test-key` uses the clearly-labelled throwaway keys in tools/testkeys/,
 // whose private halves are committed on purpose. It exists to produce the
 // fixtures under bot/fixtures/index/ that prove the JavaScript signer and the
-// Rust verifier canonicalise identically, and it refuses to write into
-// registry/v1/.
+// Rust verifier canonicalise identically. It refuses to write into
+// registry/v1/, and it refuses to run at all beside a real key in the
+// environment — the same three guards `tools/signer/run.mjs`'s `--test-key`
+// has, for the same reason.
 //
 // ── what this adds that the generator could not ──────────────────────────────
 //
@@ -168,6 +170,22 @@ function main(argv) {
   const testKeyId = arg(argv, "--test-key");
   let signers;
   if (testKeyId) {
+    // The production signer's third guard (`testKeySigners` in
+    // tools/signer/run.mjs), same condition, checked before any key is loaded.
+    // It is not for a fixture author: it is for `--test-key` reaching a job
+    // that holds the real key, where the run would ignore that key, sign with a
+    // committed one, and exit 0 on a catalogue every daemon refuses — green,
+    // with a WARNING in a log nobody reads. No workflow runs this file's CLI
+    // today; the guard costs nothing until one does, and then it is the one
+    // that matters.
+    if (process.env.ASTRA_INDEX_SIGNING_KEY || process.env.ASTRA_INDEX_SIGNING_KEY_NEXT) {
+      console.error(
+        "FAIL  --test-key was passed to a run that also holds ASTRA_INDEX_SIGNING_KEY or " +
+          "ASTRA_INDEX_SIGNING_KEY_NEXT. One of the two is a mistake and this run cannot tell which, so it " +
+          "signs nothing: a test-key signature made where the real key is present is a catalogue every daemon refuses.",
+      );
+      return 2;
+    }
     const key = loadTestRoot(testKeyId);
     signers = [{ key_id: key.key_id, privateKey: key.privateKey }];
     console.error(
