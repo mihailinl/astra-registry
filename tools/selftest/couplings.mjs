@@ -29,7 +29,7 @@ import { CORPUS_NO_RULE_ID, deriveLocaleText, localeEnumProblems } from "../../b
 import { summarise } from "../../bot/lib/derive.mjs";
 import { REPO_ROOT, loadPolicy, loadSchemas } from "../lib/sources.mjs";
 import {
-  SERIAL_PATHSPEC, SOURCE_DIR, SOURCE_PATHSPEC, checkAdvisory, pathUnder, resolveSerial,
+  SERIAL_FLAGS, SERIAL_PATHSPEC, SOURCE_DIR, SOURCE_PATHSPEC, checkAdvisory, pathUnder, resolveSerial,
 } from "../lib/revocations.mjs";
 import { ADVISORY_ID_GRAMMAR, ADVISORY_ID_PATTERN } from "../lib/ids.mjs";
 import { validate as validateSchema } from "../lib/jsonschema.mjs";
@@ -41,14 +41,15 @@ import { buildSignedCommit, commitMessage, signRun } from "../signer/run.mjs";
 import { trailersOf } from "../served-set/provenance.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
 import { loadTestRoot } from "../testkeys/regenerate.mjs";
-import { TRUST_SCHEMA } from "../../bot/lib/sign.mjs";
-import { LIST_PATHSPEC, gather } from "../served-set/main-vs-signed.mjs";
+import { REVOCATIONS_SCHEMA, TRUST_SCHEMA } from "../../bot/lib/sign.mjs";
+import { LIST_PATHSPEC, gather, serve85 } from "../served-set/main-vs-signed.mjs";
 import { CATALOGUE_PATHSPEC, resolveSerial as resolveCatalogueSerial } from "../build-index.mjs";
 import { serialFor } from "../regenerate-signed.mjs";
 import { a7, a9, gitReader } from "../../bot/detectors.mjs";
 import { nextAdvisoryId } from "../../bot/lib/compile-decision.mjs";
 import { triggersOf } from "../moderation-coverage.mjs";
-import { test, assert, assertEqual, tmp } from "./harness.mjs";
+import { isShallow } from "../coverage/git.mjs";
+import { test, assert, assertEqual, neverAsk, tmp } from "./harness.mjs";
 
 export async function run() {
   // ── the locale couplings ────────────────────────────────────────────────────
@@ -725,8 +726,9 @@ export async function run() {
 
   // ── the withdrawal list's serial, and the clock that is measured from it ────
   //
-  // Gap 64. The serial is `git rev-list --count <commit> -- <pathspec>` + 1,
-  // and three readers compute or depend on it: the signer's `serialsAt`, the
+  // Gap 64. The serial is `git rev-list --count --full-history <commit> --
+  // <pathspec>` + 1 (how it counts is entry 117's check, further down; this one
+  // is about WHAT it counts over), and three readers compute or depend on it: the signer's `serialsAt`, the
   // regeneration's `resolveSerial`, and SERVE-85, whose serial window runs from
   // the newest commit under that same pathspec because that commit is the last
   // thing that could have moved the serial. Two of the three typed the string
@@ -783,7 +785,7 @@ export async function run() {
     commit("tools/README-fixture.md", "under tools/, outside the list's directory\n", "2026-09-19T11:00:00Z");
     commit("plugins/dice-roller/plugin.json", "{}\n", "2026-09-19T12:00:00Z");
     const head = git("rev-parse", "HEAD");
-    const count = (spec) => Number(git("rev-list", "--count", head, "--", spec));
+    const count = (spec) => Number(git("rev-list", "--count", ...SERIAL_FLAGS, head, "--", spec));
     const newest = (spec) => git("log", "-1", "--format=%cI", head, "--", spec) || null;
     const expect = { count: count(SERIAL_PATHSPEC), newest: newest(SERIAL_PATHSPEC) };
 
@@ -1029,6 +1031,344 @@ export async function run() {
       `build-index.yml's serial step counts origin/main over ${which(primary)}, and the signer over ${CATALOGUE_PATHSPEC}`);
     assertEqual(fallback, expect.count,
       `build-index.yml's serial step, without origin/main, counts HEAD over ${which(fallback)}, and the signer over ${CATALOGUE_PATHSPEC}`);
+  });
+
+  // ── entry 117: HOW each serial counts, which gaps 64 and 71 never asked ─────
+  //
+  // Gaps 64 and 71 hold every reader of each serial to one PATHSPEC, on
+  // fixtures that are a straight line — where git's default count,
+  // `--full-history` and `--first-parent` all give the same number. So nothing
+  // asked how a count simplifies history at a merge, and git's DEFAULT count,
+  // which DEC-9 published for both serials until contract 0.35.0, follows only
+  // the parent of a merge that is TREESAME to it for the pathspec. Ops lane AV
+  // measured two shapes where that makes the list's serial fall or hold at a
+  // merge that adds an advisory (ops register entry 117):
+  //
+  //   (5) main adds an advisory and withdraws it after a branch forked, and the
+  //       branch's own advisory merges — default counts 0, 1, 2 and then 1 at
+  //       the merge; the signer's SERVE-36 gate refuses the list, D4 carries
+  //       the old one under the merge's Source-Commit, and SERVE-85, detector
+  //       A7 and row 7 all go quiet with the advisory unpublished;
+  //   (6) the same README fix lands on main and inside a pull request that also
+  //       adds an advisory — the merge's default count is the commit before it.
+  //
+  // DEC-9's list serial is `--full-history`'s from 0.35.0 (`SERIAL_FLAGS`):
+  // every reachable commit whose tree under the directory differs from at least
+  // one parent's. That predicate belongs to each commit, so the count cannot
+  // fall along any ancestry and rises at every first-parent commit that changes
+  // the list. The first check below holds the three list readers to it on both
+  // shapes, built from this tree's own README and real advisories; the second
+  // proves the head check below it can see a serial that falls or holds, on the
+  // same shapes; the third asks it of main's own head on every run, for both
+  // serials — for the list a regression guard, for the catalogue, which 0.35.0
+  // did NOT move (the two counts differ at 233 of main's 337 first-parent
+  // commits), the canary entry 117 asks for.
+
+  /** A scratch repository whose commits are a minute apart, for the merge shapes. */
+  function shapeRepo(name) {
+    const dir = path.join(tmp, name);
+    fs.mkdirSync(dir, { recursive: true });
+    const git = (...a) =>
+      execFileSync("git", ["-C", dir, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+    git("init", "-q", "-b", "main");
+    git("config", "user.email", "couplings-fixture@example.invalid");
+    git("config", "user.name", "couplings fixture");
+    git("config", "commit.gpgsign", "false");
+    let minute = 0;
+    const dated = (args) => {
+      const at = new Date(Date.parse("2026-09-19T08:00:00Z") + 60000 * minute++).toISOString().replace(".000Z", "Z");
+      execFileSync("git", ["-C", dir, ...args], {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at },
+      });
+      return git("rev-parse", "HEAD");
+    };
+    return {
+      dir,
+      git,
+      put: (rel, body) => {
+        fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+        fs.writeFileSync(path.join(dir, rel), body);
+      },
+      drop: (rel) => fs.rmSync(path.join(dir, rel)),
+      commit: (message) => {
+        git("add", "-A");
+        return dated(["commit", "-qm", message]);
+      },
+      merge: (branch, message) => dated(["merge", "-q", "--no-ff", "-m", message, branch]),
+    };
+  }
+
+  /**
+   * Entry 117's two shapes under directory `under`: `file(n)` is entry n's
+   * [path, bytes], `readme` the directory's README. Each shape is
+   * `{name, repo, before, merge}` — `before` main's commit the merge's first
+   * parent is, `merge` the merge.
+   */
+  function entry117Shapes(label, under, file, readme) {
+    const fix = "\nA sentence fixed on two branches at once.\n";
+
+    const five = shapeRepo(`couplings-entry117-${label}-5`);
+    five.put("README.md", "a registry\n");
+    five.commit("seed");
+    five.git("checkout", "-q", "-b", "topic");
+    five.put(...file(2));
+    five.commit("an entry, on a branch");
+    five.git("checkout", "-q", "main");
+    five.put(...file(1));
+    five.commit("an entry, in error");
+    five.drop(file(1)[0]);
+    const before5 = five.commit("the entry made in error, withdrawn");
+    const merge5 = five.merge("topic", "Merge pull request #2 from topic");
+
+    const six = shapeRepo(`couplings-entry117-${label}-6`);
+    six.put(`${under}/README.md`, readme);
+    six.commit("the directory and its README");
+    six.git("checkout", "-q", "-b", "topic");
+    six.put(`${under}/README.md`, readme + fix);
+    six.put(...file(1));
+    six.commit("an entry, and the README fix");
+    six.git("checkout", "-q", "main");
+    six.put(`${under}/README.md`, readme + fix);
+    const before6 = six.commit("the same README fix, on main");
+    const merge6 = six.merge("topic", "Merge pull request #3 from topic");
+
+    return [
+      { name: "(5) an entry withdrawn on main, a branch's entry merged", repo: five, before: before5, merge: merge5 },
+      { name: "(6) one README fix on both sides, an entry merged with it", repo: six, before: before6, merge: merge6 },
+    ];
+  }
+
+  /** `sha:spec`'s tree id, or null where the path is not in that commit (or there is no commit). */
+  const treeAt = (git, sha, spec) => {
+    if (!sha) return null;
+    try {
+      return git("rev-parse", "-q", "--verify", `${sha}:${spec}`);
+    } catch {
+      return null;
+    }
+  };
+
+  /**
+   * DEC-9's gloss, counted without asking git to simplify anything: the commits
+   * reachable from `sha` whose tree under `spec` differs from at least one of
+   * their parents' (a root commit's parent is the empty tree).
+   */
+  function glossCount(git, sha, spec) {
+    const trees = new Map();
+    const tree = (c) => {
+      if (!trees.has(c)) trees.set(c, treeAt(git, c, spec));
+      return trees.get(c);
+    };
+    let n = 0;
+    for (const line of git("rev-list", "--parents", sha).split("\n").filter(Boolean)) {
+      const [c, ...parents] = line.split(" ");
+      if (parents.length === 0 ? tree(c) !== null : parents.some((p) => tree(p) !== tree(c))) n++;
+    }
+    return n;
+  }
+
+  /**
+   * Entry 117's canary at one commit: each serial `serialsAt` gives there,
+   * against its first parent's, and each pathspec's tree at both. A root
+   * commit is compared with the empty history, where nothing is counted and
+   * the list is at its reserved zero plus one — a real question with a real
+   * answer, so it is asked rather than skipped. Returns the numbers and one
+   * problem per serial that fell, or held across a change under its pathspec.
+   */
+  function headSerialProblems(root, sha = "HEAD") {
+    const git = (...a) =>
+      execFileSync("git", ["-C", root, ...a], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trimEnd();
+    const head = git("rev-parse", "--verify", `${sha}^{commit}`);
+    let parent = null;
+    try {
+      parent = git("rev-parse", "-q", "--verify", `${head}^1`);
+    } catch {
+      parent = null;
+    }
+    const at = serialsAt({ root, sha: head });
+    const before = parent ? serialsAt({ root, sha: parent }) : { index: 0, revocations: 1 };
+    const where = parent ? `its first parent ${parent.slice(0, 12)}` : "the empty history before a root commit";
+    const problems = [];
+    for (const [key, spec, what] of [
+      ["revocations", SERIAL_PATHSPEC, "the withdrawal list"],
+      ["index", CATALOGUE_PATHSPEC, "the catalogue"],
+    ]) {
+      const changed = treeAt(git, head, spec) !== treeAt(git, parent, spec);
+      if (at[key] < before[key]) {
+        problems.push(`${what}'s serial falls from ${before[key]} at ${where} to ${at[key]} at ${head.slice(0, 12)}`);
+      } else if (changed && at[key] === before[key]) {
+        problems.push(`${what}'s serial holds at ${at[key]} from ${where} to ${head.slice(0, 12)}, across a change under ${spec}/`);
+      }
+    }
+    return { head, parent, at, before, problems };
+  }
+
+  const listReadme = fs.readFileSync(path.join(REPO_ROOT, SOURCE_DIR, "README.md"), "utf8");
+  const listEntry = (n) => {
+    const id = `ASTRA-2026-${String(n).padStart(4, "0")}`;
+    const doc = {
+      id,
+      published: "2026-09-10",
+      severity: "high",
+      action: "block_install",
+      reason: "A fixture advisory, long enough to be a sentence a user can act on.",
+      entries: [{ kind: "id", value: `fixture-${n}` }],
+    };
+    return [`${SOURCE_DIR}/${id}.json`, `${JSON.stringify(doc, null, 2)}\n`];
+  };
+  const catalogueEntry = (n) => [
+    `${CATALOGUE_PATHSPEC}/fixture-${n}/plugin.json`,
+    `${JSON.stringify({ schema: "astra.registry.plugin/1", id: `fixture-${n}` }, null, 2)}\n`,
+  ];
+
+  await test("entry 117 — the list's serial never falls and rises at every first-parent commit that changes the list, on the two merges git's default count lowers or holds: the signer's, the regeneration's and SERVE-85's", () => {
+    // The fixture's own material, first: its advisories are advisories by the
+    // validator's word, so SERVE-85's list builds at every commit and a red
+    // below is about a count and not about a file the generator refused.
+    for (const n of [1, 2]) {
+      const [rel, body] = listEntry(n);
+      const errs = checkAdvisory(JSON.parse(body), rel);
+      assert(errs.length === 0, `the fixture's advisory is not one: ${errs.join("; ")}`);
+    }
+    const override = process.env.ASTRA_REVOCATIONS_SERIAL;
+    delete process.env.ASTRA_REVOCATIONS_SERIAL;
+    try {
+      for (const shape of entry117Shapes("list", SOURCE_DIR, listEntry, listReadme)) {
+        const { repo, before, merge } = shape;
+        // The fixture guard: git's default count must hold or fall at this
+        // merge, or the shape cannot see the formula 0.35.0 replaced.
+        const byDefault = (sha) => Number(repo.git("rev-list", "--count", sha, "--", SERIAL_PATHSPEC));
+        assert(byDefault(merge) <= byDefault(before),
+          `${shape.name}: git's default count rises at the merge (${byDefault(before)} → ${byDefault(merge)}), so this ` +
+            "fixture cannot tell DEC-9's count from the one it replaced");
+
+        // Each reader, at each commit on main's first-parent line, against
+        // the commit before it on that line: never lower, and higher wherever
+        // the list's tree changed. Then exactly DEC-9's gloss, so a reader that
+        // is monotone by some other count is red too.
+        const line = repo.git("rev-list", "--first-parent", "--reverse", "main").split("\n");
+        const prev = {};
+        let prevSha = null;
+        for (const sha of line) {
+          const want = glossCount(repo.git, sha, SERIAL_PATHSPEC) + 1;
+          const changed = prevSha !== null &&
+            treeAt(repo.git, sha, SERIAL_PATHSPEC) !== treeAt(repo.git, prevSha, SERIAL_PATHSPEC);
+          repo.git("checkout", "-q", "--detach", sha);
+          const readers = {
+            "the signer's serialsAt": serialsAt({ root: repo.dir, sha }).revocations,
+            "the regeneration's resolveSerial": resolveSerial({ root: repo.dir }),
+            "SERVE-85's gather": gather({ root: repo.dir }).generated?.serial,
+          };
+          for (const [who, got] of Object.entries(readers)) {
+            if (prevSha !== null) {
+              assert(got >= prev[who] && (!changed || got > prev[who]),
+                `${shape.name}: ${who} takes the list serial ${prev[who]} → ${got} at ${sha.slice(0, 12)}` +
+                  `${changed ? `, a commit that changes ${SERIAL_PATHSPEC}/` : ""} — DEC-9's count may never fall, ` +
+                  "and rises wherever the list changes. It has stopped counting with SERIAL_FLAGS (ops register entry 117)");
+            }
+            assertEqual(got, want,
+              `${shape.name}, at ${sha.slice(0, 12)}: ${who} gives the list serial ${got}, and DEC-9's count — every ` +
+                `reachable commit whose tree under ${SERIAL_PATHSPEC}/ differs from one of its parents', plus one — ` +
+                `gives ${want}. It has stopped counting with SERIAL_FLAGS (ops register entry 117)`);
+            prev[who] = got;
+          }
+          prevSha = sha;
+        }
+        repo.git("checkout", "-q", "main");
+      }
+    } finally {
+      if (override !== undefined) process.env.ASTRA_REVOCATIONS_SERIAL = override;
+    }
+
+    // And what the shape did to the one check that compares main with
+    // `signed`: `signed` at (5)'s withdrawal, the merge that adds an advisory
+    // after it. With the default count the merge gave the list serial 2 below
+    // `signed`'s 3 and SERVE-85 called it the system working, for as long as
+    // it lasted; it has to page, and not before its grace.
+    const [five] = entry117Shapes("serve85", SOURCE_DIR, listEntry, listReadme);
+    const served = serialsAt({ root: five.repo.dir, sha: five.before }).revocations;
+    const doc = { signatures: [], signed: { schema: REVOCATIONS_SCHEMA, serial: served, revocations: [] } };
+    const head = {
+      present: true, reason: null, sha: "a".repeat(40), parseErrors: [],
+      bytes: { revocations: stableStringify(doc) }, documents: { revocations: doc },
+    };
+    const facts = gather({ root: five.repo.dir });
+    const merged = five.repo.git("log", "-1", "--format=%cI", five.merge);
+    const at = (minutes) => new Date(Date.parse(merged) + minutes * 60000).toISOString();
+    assertEqual(serve85({ ...facts, head, now: at(29) }).status, "green",
+      `(5): SERVE-85 paged 29 minutes after the merge, inside its grace: ${serve85({ ...facts, head, now: at(29) }).findings.map((f) => f.code)}`);
+    const late = serve85({ ...facts, head, now: at(31) });
+    assertEqual(late.findings.map((f) => f.code).join(","), "SERVE_85_SERIAL_DRIFT",
+      `(5): 31 minutes after a merge that adds an advisory to a list \`signed\` serves at ${served}, SERVE-85 ` +
+        `reported ${late.status} (${late.notes.slice(1).join(" | ")}) — the silence ops register entry 117 measured`);
+  });
+
+  await test("entry 117 — the head check sees a serial that falls or holds at a merge: red for the catalogue, which counts by git's default, on both shapes, and green for the list", () => {
+    // Proved on the shapes, because main's real history has never held either
+    // (both serials rise at all 337 first-parent commits at 3653dc5): a check
+    // whose case the corpus never contained is proved on a corpus that does.
+    const catalogue = entry117Shapes("catalogue", CATALOGUE_PATHSPEC, catalogueEntry, "the plugins\n");
+    const list = entry117Shapes("head-list", SOURCE_DIR, listEntry, listReadme);
+    const override = process.env.ASTRA_REGISTRY_SERIAL;
+    delete process.env.ASTRA_REGISTRY_SERIAL;
+    try {
+      for (const shape of catalogue) {
+        const r = headSerialProblems(shape.repo.dir);
+        assertEqual(r.head, shape.merge, `${shape.name}: the head check read ${r.head}, not the merge`);
+        assertEqual(r.problems.length, 1,
+          `${shape.name}, under ${CATALOGUE_PATHSPEC}/: the head check found ${JSON.stringify(r.problems)} — the ` +
+            "catalogue's serial counts by git's default, which holds or lowers here, and the canary on main is only " +
+            "as good as its answer on this merge");
+        assert(r.problems[0].startsWith("the catalogue's serial"), `${shape.name}: ${r.problems[0]}`);
+        // The catalogue's other readers count as the signer does at this
+        // merge: gap 71 holds their pathspec on a line, and a line cannot
+        // tell one counting mode from another.
+        assertEqual(resolveCatalogueSerial({ root: shape.repo.dir }), r.at.index,
+          `${shape.name}: build-index's resolveSerial and the signer count the catalogue differently at a merge`);
+        assertEqual(serialFor(shape.repo.dir, shape.merge), r.at.index,
+          `${shape.name}: the carrier's serialFor and the signer count the catalogue differently at a merge`);
+      }
+      for (const shape of list) {
+        const r = headSerialProblems(shape.repo.dir);
+        assertEqual(r.head, shape.merge, `${shape.name}: the head check read ${r.head}, not the merge`);
+        assertEqual(r.problems.length, 0,
+          `${shape.name}, under ${SERIAL_PATHSPEC}/: ${r.problems.join("; ")} — DEC-9's --full-history count cannot ` +
+            "do this, so a list reader has stopped counting with SERIAL_FLAGS (ops register entry 117)");
+        assert(r.at.revocations > r.before.revocations,
+          `${shape.name}: the list serial is ${r.before.revocations} → ${r.at.revocations} at a merge that adds an advisory`);
+      }
+    } finally {
+      if (override !== undefined) process.env.ASTRA_REGISTRY_SERIAL = override;
+    }
+  });
+
+  await test("entry 117 — at main's head neither serial falls, or holds across a change under its pathspec: the list's by construction, the catalogue's as the canary", () => {
+    // Asked of whatever this suite's own checkout holds: on `main` the commit
+    // just pushed, on a pull request the merge `actions/checkout` builds, whose
+    // first parent is the base. Both serials are counted over the whole
+    // history, so a shallow checkout counts what it was given and nothing here
+    // is askable. The runner finds this gate by reading it — a `neverAsk(`
+    // first in the block of an `if` whose whole condition is the shallowness
+    // question — and prints the live lanes that ask it. Keep it written that way.
+    if (isShallow(REPO_ROOT)) {
+      neverAsk(
+        "this checkout is shallow, and both serials are commit counts over the whole history, so HEAD's and its " +
+        "parent's are the commits this checkout holds and a fall or a hold here says nothing about main",
+        "a checkout with its whole history asks it: the runner prints the live lanes that reach this suite with " +
+        "it under the totals and goes red when there are none (`node tools/selftest.mjs --lanes`)",
+      );
+    }
+    const r = headSerialProblems(REPO_ROOT);
+    console.log(
+      `      (at ${r.head.slice(0, 12)}: list ${r.before.revocations} → ${r.at.revocations}, catalogue ` +
+      `${r.before.index} → ${r.at.index}, from ${r.parent ? r.parent.slice(0, 12) : "the empty history"})`,
+    );
+    assert(r.problems.length === 0,
+      `${r.problems.join("; ")}. For the list this cannot happen under DEC-9's --full-history count (SERIAL_FLAGS), so ` +
+        "a reader or the flags have changed. For the catalogue it is the hazard contract 0.35.0 did not carry: its " +
+        "serial counts by git's default, which a merge can hold or lower, and the signer's SERVE-36 gate will refuse " +
+        "the catalogue and carry the old one. Ops register entry 117; DEC-9's catalogue formula is the decision it waits on");
   });
 
   // ── TRUST-43's anchor, and the three files that make it narrow ─────────────

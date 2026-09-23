@@ -15,11 +15,14 @@
 // ── the serials are D3's, at the Source-Commit ──────────────────────────────
 //
 //   catalogue: git rev-list --count <sha> -- CATALOGUE_PATHSPEC
-//   list:      git rev-list --count <sha> -- SERIAL_PATHSPEC     + 1
+//   list:      git rev-list --count --full-history <sha> -- SERIAL_PATHSPEC  + 1
 //
-// `SERIAL_PATHSPEC` is `tools/lib/revocations.mjs`'s, and SERVE-85's clock reads
-// the same export; the reason it is one export, and why it is the whole
-// `tools/revocations` directory, is written there.
+// `SERIAL_PATHSPEC` and `SERIAL_FLAGS` are `tools/lib/revocations.mjs`'s, and
+// SERVE-85's clock reads the same exports; the reason each is one export, why
+// the pathspec is the whole `tools/revocations` directory, and why the list
+// counts `--full-history` while the catalogue counts by git's default (a
+// default count can go down at a merge; contract DEC-9 from 0.35.0) are
+// written there.
 //
 // The signer is the only thing that assigns them. The two regenerations count
 // at HEAD, and they do NOT treat a pending change alike (gap 69; the
@@ -45,7 +48,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { CATALOGUE_PATHSPEC, buildIndex } from "../build-index.mjs";
-import { SERIAL_PATHSPEC, buildRevocations } from "../lib/revocations.mjs";
+import { SERIAL_FLAGS, SERIAL_PATHSPEC, buildRevocations } from "../lib/revocations.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { runValidation } from "../validate.mjs";
@@ -192,7 +195,7 @@ export function fetchSignedHead({
 export function serialsAt({ root, sha }) {
   return {
     index: revCount({ root, sha, pathspec: CATALOGUE_PATHSPEC }),
-    revocations: revCount({ root, sha, pathspec: SERIAL_PATHSPEC }) + 1,
+    revocations: revCount({ root, sha, pathspec: SERIAL_PATHSPEC, flags: SERIAL_FLAGS }) + 1,
   };
 }
 
@@ -474,7 +477,11 @@ export function carryAlert(result) {
     : "nothing is served for it";
   const outage =
     result.document === "revocations"
-      ? " A carried withdrawal list is an outage, not a delay: SERVE-85 fires 30 minutes from the main commit."
+      ? " A carried withdrawal list is an outage, not a delay. SERVE-85 reports it 30 minutes after the oldest " +
+        "main commit whose list serial passed the carried one; at the carried serial, only when the entries " +
+        "differ, 30 minutes after main's head; and at its next run when main's serial is below the carried one " +
+        "(SERVE_85_SERIAL_AHEAD). A carry at the carried serial with the carried entries is reported by this " +
+        "alert alone."
       : "";
   return `CARRY ${result.file}: ${result.reasons.join("; ")}. ${served}.${outage}`;
 }
