@@ -19,7 +19,7 @@
 // Registry plan B-T0.3.
 
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -41,9 +41,22 @@ const write = (root, rel, body) => {
   fs.writeFileSync(path.join(root, rel), body);
 };
 
+// Every estate is removed when the process exits. None ever was: each run of
+// this file left eighteen of them (~10 MB) in `/tmp`, a tmpfs every session on
+// the machine shares, and on 2026-09-23 1,566 of them held 883 MiB of it (ops
+// `dev/couplings.md` entry 135). An `exit` handler rather than a `finally` in
+// each test, because it also runs when an assertion fails or the process dies
+// of an uncaught error, and it cannot be forgotten by the next test written.
+// The last test in this file runs the file again and holds it to that.
+const estates = [];
+process.on("exit", () => {
+  for (const d of estates) fs.rmSync(d, { recursive: true, force: true });
+});
+
 /** A bare remote with one commit, and two clones of it. */
 function estate() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-publish-apply-"));
+  estates.push(dir);
   const bare = path.join(dir, "remote.git");
   git(dir, "init", "--bare", "--initial-branch=main", bare);
 
@@ -493,4 +506,61 @@ test("idOfPath and newestVersionInTree", () => {
   // Sorted as semver, not as text: 0.10.0 is newer than 0.9.0, and a string
   // sort says the opposite.
   assert.equal(newestVersionInTree(one, "alpha"), "0.10.0");
+});
+
+// ── this file, from outside ──────────────────────────────────────────────────
+//
+// The `exit` handler above is invisible from inside the process it runs in:
+// whether the estates are gone can only be seen after this process has ended.
+// So this last test runs the whole file again as a child, whose TMPDIR is a
+// directory made for that child alone, and looks in it once the child is gone.
+//
+// It does not count `astra-*` entries in the shared `/tmp`, because other
+// sessions create and delete them there at the same moment and a count would
+// be flaky. The private directory starts empty and nothing else on the machine
+// knows its name, so "empty afterwards" is exact. `os.tmpdir()` reads TMPDIR on
+// every POSIX system, and the canary below proves that the child built here
+// honours it: one that did not would pass by writing where nobody looks.
+//
+// Whether the child's tests PASS is theirs to say, here in the parent; a
+// failing one stays in, since a cleanup that ran only after every assertion
+// held is exactly what this is for. What it cannot see: a directory made
+// from a literal `/tmp/...` path, and a child killed by a signal (exit handlers
+// do not run then, so that is reported as a kill and not as a leak).
+const CHILD = "ASTRA_PUBLISH_APPLY_CHILD";
+
+test("this file, run again as a child, leaves its temp directory empty", { skip: process.env[CHILD] === "1" }, (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-temp-check-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const env = { ...process.env, TMPDIR: dir, TMP: dir, TEMP: dir, [CHILD]: "1" };
+  // Set by the runner in every child it starts; a nested `node --test` that
+  // inherits it reports to a parent that is not listening.
+  delete env.NODE_TEST_CONTEXT;
+  const node = (args) => {
+    const r = spawnSync(process.execPath, args, { env, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 5 * 60 * 1000 });
+    assert.equal(r.error, undefined, `the child could not be run: ${r.error}`);
+    assert.equal(r.signal, null, `the child was killed by ${r.signal}, so its exit handlers never ran`);
+    return r;
+  };
+  const left = () => fs.readdirSync(dir).map((n) => n.replace(/[A-Za-z0-9]{6}$/, "*")).sort();
+
+  node(["-e", 'require("node:fs").mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "canary-"))']);
+  const canary = left();
+  assert.deepEqual(canary, ["canary-*"],
+    `a child that made one directory under os.tmpdir() left ${JSON.stringify(canary)} where this test looks, ` +
+    "so the check below would be looking in the wrong place");
+  for (const n of fs.readdirSync(dir)) fs.rmSync(path.join(dir, n), { recursive: true, force: true });
+
+  const r = node(["--test", "--test-reporter=tap", import.meta.filename]);
+  // Every test this file declares ran in the child (this one as a skip), so
+  // the estates it makes were made; derived, so a new test needs no edit here.
+  const declared = (fs.readFileSync(import.meta.filename, "utf8").match(/^test\(/gm) ?? []).length;
+  const ran = Number(/^# tests (\d+)$/m.exec(r.stdout)?.[1] ?? -1);
+  assert.equal(ran, declared, `the child ran ${ran} test(s) of the ${declared} this file declares:\n${r.stdout.slice(-3000)}`);
+
+  const after = left();
+  assert.deepEqual(after, [],
+    `the child left ${after.length} entr${after.length === 1 ? "y" : "ies"} in its temp directory after it exited ` +
+    `(${[...new Set(after)].join(", ")}); every directory a test here makes has to go into \`estates\`, which the ` +
+    "`exit` handler at the top of this file removes");
 });
