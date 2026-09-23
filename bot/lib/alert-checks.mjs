@@ -64,6 +64,38 @@ export const MIN_BOUND_MINUTES = 90;
  */
 export const PARTIES = ["registry", "test-repository", "probe-host", "plugins-service"];
 
+// ── which registry checks are created ARMED ──────────────────────────────────
+//
+// **Decided 2026-09-22 by the coordinator session (astra-plugins-ops,
+// `dev/couplings.md` entry 25):** a registry check is created armed only if a
+// poster for it runs on a live trigger in this repository today; otherwise it
+// is created disarmed and arms at its first heartbeat.
+//
+// Why. Armed with no running poster, a check can only page falsely, and it
+// starts doing so on the day the owner creates the receiver (R1) — the first
+// thing a new alarm channel would say is an absence that is not an outage,
+// which is how a person learns the channel is noise. A check created disarmed
+// that arms at its first post loses nothing while its poster does not run.
+// The residual risk is a poster that runs but fails before its first
+// successful post and so never arms its check; that is why a check whose
+// poster already runs stays armed.
+//
+// Until 2026-09-22 every registry row said `created_disarmed: false` and a test
+// asserted it with the message "has a poster in this repository", which was
+// false for five of the thirteen. The rule is COMPUTED now, not listed:
+// `bot/tests/workflows.test.mjs` finds every job that calls
+// `.github/actions/alert` with `check:` or `ack-check:`, asks whether its
+// workflow has a live `schedule:` — the one trigger that counts as live here,
+// for the reason that test gives — and fails by name in both directions. So a
+// poster that goes live — R3's open commit un-commenting
+// `plugins-moderation.yml`'s schedule is the first — is red until its row here
+// is armed, in the same commit.
+//
+// Arming after creation is recorded in `armed_at`, as it is for the two service
+// checks below. Nothing in this repository arms a check: it is a receiver
+// setting (or the receiver's own first-post behaviour, whichever product the
+// owner chooses, Q-O2), and this field is the record that it happened.
+
 export const CHECKS = [
   {
     name: "detectors",
@@ -81,9 +113,13 @@ export const CHECKS = [
     // ROLL-7's file; a cron edit waits for a contract MINOR (SCOPE-1). So this
     // interval is pinned rather than guessed, and 3 × 600 s is under the floor,
     // which is why the bound comes out at 90 minutes and not at 30.
+    //
+    // Disarmed: its poster is the `settled` job, and the workflow's schedule
+    // is commented out until R3 opens (§2.5), so today it runs only on a
+    // dispatch. R3's open commit arms this row with the schedule.
     source: "M-T3.4 (BOT-83), .github/workflows/plugins-moderation.yml",
     interval_seconds: 600,
-    created_disarmed: false,
+    created_disarmed: true,
     armed_at: null,
     signals: ["success"],
   },
@@ -210,9 +246,10 @@ export const CHECKS = [
   {
     name: "release-canary",
     party: "registry",
+    // Disarmed: `release-canary.yml` does not exist yet, so nothing posts here.
     source: "B-T1.6 (BOT-88), .github/workflows/release-canary.yml",
     interval_seconds: 604800,
-    created_disarmed: false,
+    created_disarmed: true,
     armed_at: null,
     signals: ["success"],
   },
@@ -220,10 +257,11 @@ export const CHECKS = [
     name: "conformance",
     party: "registry",
     // BOT-90. B-T3.11 fixes the schedule at R3; until it does, the bound
-    // cannot be computed and saying so is the honest state.
+    // cannot be computed and saying so is the honest state. Disarmed: no
+    // workflow posts here yet.
     source: "B-T3.11 (BOT-90)",
     interval_seconds: null,
-    created_disarmed: false,
+    created_disarmed: true,
     armed_at: null,
     signals: ["success"],
   },
@@ -232,18 +270,20 @@ export const CHECKS = [
     party: "registry",
     // BOT-87, at R5. Same: B-T5.0 and B-T5.1 fix the poll interval and the
     // daily sweep, and the receiver's bound is recalibrated at R3 anyway.
+    // Disarmed: no workflow posts here yet.
     source: "B-T5.0, B-T5.1 (BOT-87)",
     interval_seconds: null,
-    created_disarmed: false,
+    created_disarmed: true,
     armed_at: null,
     signals: ["success"],
   },
   {
     name: "deadline-watch",
     party: "registry",
+    // Disarmed: no workflow posts here yet.
     source: "M-T5.4 (ROLL-63)",
     interval_seconds: 86400,
-    created_disarmed: false,
+    created_disarmed: true,
     armed_at: null,
     signals: ["success"],
   },
@@ -275,26 +315,13 @@ export const CHECKS = [
     // with no rename in it. That is the same argument `alarm-drill` above is
     // here for, and it is the argument BOT-85 is.
     //
-    // **Created ARMED, like every other registry check, and that is a
-    // deliberate choice made against the merits — see the note below.** The
-    // owner creates the receiver at R1 (§2.12); `baseline.yml` lands at R3.
-    // Between those an armed check has no poster and pages on its bound about
-    // a workflow nobody has written yet, which is attack B-1's failure with a
-    // registry poster instead of a service one.
-    //
-    // It is armed anyway because **this is not one check's decision.** Read
-    // off the plan on 2026-09-19, five registry checks already in this table
-    // have posters later than R1: `detectors` (B-T3.8, R3), `moderation-run`
-    // (M-T3.4, R3), `conformance` (B-T3.11, R3), `deadline-watch` (M-T5.4,
-    // R4b) and `poll-and-sweep` (B-T5.0/B-T5.1, R5). The comment on `no
-    // registry check is created disarmed` in `bot/tests/alert.test.mjs` gives
-    // the reason for the invariant as "every other check's poster lands in the
-    // same step as the check", and for those five it does not. Disarming this
-    // one would split the table for the sixth case of a pattern nobody has
-    // decided about, and leave a reader with no way to tell why. So the
-    // question goes to the coordinator and the owner as ONE question, with
-    // that measurement, in B-T3.7b's report — and until it is answered this
-    // row reads the same as its five neighbours.
+    // **Created ARMED, by the rule above `CHECKS`.** This row used to say it
+    // was armed against the merits, pending ONE decision about every registry
+    // check whose poster lands after R1, because `baseline.yml` was expected
+    // at R3. That decision was taken on 2026-09-22 (the block above `CHECKS`),
+    // and by then `baseline.yml` had been on `main` since `b248a34`
+    // (2026-09-19) with a live daily cron, so its `names` job is a poster that
+    // runs today and this check is armed on the merits.
     source: "B-T3.7b (MIG-20's rename watch), .github/workflows/baseline.yml, the `names` job",
     interval_seconds: 86400,
     created_disarmed: false,

@@ -67,9 +67,9 @@ export function finding(code, message) {
  * a status: a comparison whose other side does not exist yet is green, says so
  * out loud in the transcript, and still posts its heartbeat — so the dead-man
  * path is live from the first run while the comparison is honest about having
- * nothing to compare. RC-R1-0 created two receiver checks disarmed for the same
- * reason, and TRUST-45 prices the alternative: "an always-firing alarm is
- * ignored".
+ * nothing to compare. RC-R1-0 creates every receiver check whose poster does
+ * not run yet disarmed for the same reason (`bot/lib/alert-checks.mjs`), and
+ * TRUST-45 prices the alternative: "an always-firing alarm is ignored".
  *
  * @param {{findings?: object[], waiting?: string[], hexes?: string[], notes?: string[]}} parts
  */
