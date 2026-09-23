@@ -1802,11 +1802,13 @@ test("every suite that builds a git fixture leaves a hook's repository byte-iden
   try {
     for (const n of suites) {
       const before = victim.print();
-      const r = spawnSync(process.execPath, ["--test", path.join("bot", "tests", n)], {
+      // TAP, named: the default reporter is `spec` on Node 26 and `tap` on the
+      // Node 22 CI runs when stdout is a pipe, and the count below reads one of them.
+      const r = spawnSync(process.execPath, ["--test", "--test-reporter=tap", path.join("bot", "tests", n)], {
         cwd: REPO, encoding: "utf8", env: victim.hostile, maxBuffer: 64 * 1024 * 1024,
       });
       const diff = changedIn(before, victim.print());
-      const passed = Number(/^ℹ pass (\d+)$/m.exec(r.stdout ?? "")?.[1] ?? 0);
+      const passed = Number(/^# pass (\d+)$/m.exec(r.stdout ?? "")?.[1] ?? 0);
       if (diff.length) wrong.push(`${n} wrote into the repository GIT_DIR names: ${diff.join("; ")}`);
       else if (r.status === 0 && passed === 0) wrong.push(`${n} exited 0 and reported no test passing, so nothing was asked`);
       else if (r.status !== 0) {
