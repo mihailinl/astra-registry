@@ -18,9 +18,10 @@
 // URL lives in its own secret in environment `alerts`, and this file only says
 // what that secret is called. That split is attack M-5's rule and the reason
 // there is no base URL anywhere in this repository: a base plus a name is a
-// project-level ping key, and whoever held it could silence the two checks the
-// plugins service pages through — including the one that fires when the Almaty
-// box, and with it the service's own on-box Telegram path, is gone.
+// project-level ping key, and whoever held it could silence the three checks the
+// plugins service pages through — including `minice-alarm-relay-almaty`, which
+// fires when the Almaty box, and with it the service's own on-box Telegram
+// path, is gone.
 //
 // **Unknown intervals are null, deliberately.** Several of these checks belong
 // to tasks that have not landed, and their schedules are theirs to fix. An
@@ -84,7 +85,7 @@ export const PARTIES = ["registry", "test-repository", "probe-host", "plugins-se
  *     BOT-88's test repository, which is a GitHub repository too;
  *
  * and not the other two: ROLL-15's prober runs on the probe host (RC-R1-7) and
- * the service's two posters on minice-be's host, each on a clock of its own
+ * the service's three posters on minice-be's hosts, each on a clock of its own
  * that GitHub does not hold back. `bot/tests/alert.test.mjs` pins this list,
  * and is red until a party added to `PARTIES` is put on one side or the other.
  */
@@ -133,7 +134,7 @@ export const GITHUB_SCHEDULED_PARTIES = ["registry", "test-repository"];
 // arms its check) is accepted for these, because the alternative is a check
 // armed on a promise.
 //
-// Arming after creation is recorded in `armed_at`, as it is for the two service
+// Arming after creation is recorded in `armed_at`, as it is for the three service
 // checks below. Nothing in this repository arms a check: it is a receiver
 // setting (or the receiver's own first-post behaviour, whichever product the
 // owner chooses, Q-O2), and this field is the record that it happened.
@@ -379,44 +380,70 @@ export const CHECKS = [
     armed_at: null,
     signals: ["success"],
   },
-  // ── the two the plugins service posts to ───────────────────────────────────
+  // ── the three the plugins service posts to ─────────────────────────────────
   //
   // Created here, with the rest, because the receiver is this plan's to create
-  // (ext.4) — and created DISARMED, because their poster is not. The relay's
-  // delivery heartbeat is built at minice-be's W2, which is inside R2, and
-  // §1.3 row 8.1 asks for it before R1's gate walk. A check armed from its
-  // first minute would page every ninety minutes for a heartbeat nobody sends,
-  // through the whole of R1 — the step whose exit arms every shipped client's
-  // 7-day block — and the repair reached for on the third night is the one
-  // repair that must never be reached for: switching the estate's only path to
-  // a person off. Creating them disarmed is what stops anyone needing it
-  // (attack B-1; TRUST-45: "an always-firing alarm is ignored").
+  // (ext.4) — and created DISARMED, because none of their posters is wired
+  // yet. The relay's delivery heartbeat is minice-be's production change for
+  // its edge decision D-16, and §1.3 row 8.1 asks for it before R1's gate
+  // walk; the evaluator's is its S9/S10. A check armed from its first minute
+  // would page every ninety minutes for a heartbeat nobody sends, through the
+  // whole of R1 — the step whose exit arms every shipped client's 7-day block
+  // — and the repair reached for on the third night is the one repair that
+  // must never be reached for: switching the estate's only path to a person
+  // off. Creating them disarmed is what stops anyone needing it (attack B-1;
+  // TRUST-45: "an always-firing alarm is ignored").
   //
   // `armed_at` is filled in, in this file, by the first post each one receives,
   // and RC-R1-12's exit note says whether it was armed when R1 exited or still
   // waiting. Nothing arms them automatically: arming is a receiver setting the
   // owner changes, and this record is what says he did.
   //
-  // **The names are minice-be's to supply** (§1.3 row 8.1), which is why they
-  // are `null` here and why nothing may be invented in their place: a check
-  // created under a guessed name is a check the service never posts to and the
-  // receiver pages about for ever.
+  // **The names are minice-be's to supply** (§1.3 row 8.1), and until
+  // 2026-09-23 they were two rows with `name: null` and a `name_pending` note,
+  // because a check created under a guessed name is a check the service never
+  // posts to and the receiver pages about for ever. **The plugins-service
+  // session, minice-e4, sent them on 2026-09-23** — its statement, relayed by
+  // the coordinator session — with the intervals below, and these three rows
+  // are that statement and nothing added to it.
+  //
+  // **Three, not two.** The relay's heartbeat is posted by `astra-alarm.py
+  // watch`, and that runs on two hosts — the Almaty box and the mac-mini, each
+  // from `astra-alarm-watch.timer`, a pass about every two minutes. One check
+  // fed by both would stay quiet while either one posted, so a live relay
+  // would mask a dead one; and the one it would mask is the point of the
+  // check, since the Almaty box going away is what this alarm is for. So each
+  // host has its own check. The Almaty one is the relay that will carry the
+  // plugins alarms (D-16).
+  //
+  // Bounds, by `boundMinutes`: 3 × 15 minutes and 3 × 2 minutes are both under
+  // BOT-85's 90, and no GitHub schedule feeds this party, so each is 90
+  // minutes.
   {
-    name: null,
-    name_pending: "MBE-PENDING: the relay's delivery-heartbeat check name (§1.3 row 8.1)",
+    name: "minice-plugins-evaluator",
     party: "plugins-service",
-    source: "minice-be's astra-alarm-watch, on each pass (SERVE-104)",
-    interval_seconds: null,
+    source: "SERVE-104's evaluator on minice-be's host, posting on each pass, at least every 15 minutes (minice-be S9/S10)",
+    interval_seconds: 900,
     created_disarmed: true,
     armed_at: null,
     signals: ["success"],
   },
   {
-    name: null,
-    name_pending: "MBE-PENDING: the SERVE-104 evaluator's check name (§1.3 row 8.1)",
+    name: "minice-alarm-relay-almaty",
     party: "plugins-service",
-    source: "minice-be's evaluator, every 15 minutes (SERVE-104)",
-    interval_seconds: 900,
+    source: "the relay's delivery heartbeat (SERVE-104): `astra-alarm.py watch` on the Almaty box, " +
+      "`astra-alarm-watch.timer`, each pass; the relay that will carry the plugins alarms (minice-be D-16)",
+    interval_seconds: 120,
+    created_disarmed: true,
+    armed_at: null,
+    signals: ["success"],
+  },
+  {
+    name: "minice-alarm-relay-macmini",
+    party: "plugins-service",
+    source: "the relay's delivery heartbeat (SERVE-104): `astra-alarm.py watch` on the mac-mini, " +
+      "`astra-alarm-watch.timer`, each pass (minice-be D-16)",
+    interval_seconds: 120,
     created_disarmed: true,
     armed_at: null,
     signals: ["success"],
@@ -467,8 +494,10 @@ export const SERVICE_CHECK_COUNT = CHECKS.filter((c) => c.party === "plugins-ser
  * A dead-man check is for the silence, and GitHub's own silences are hours
  * long. BOT-85's 3 × rule still decides every longer interval (`keepalive`,
  * `alarm-drill`, `baseline-names` and the rest), and the checks whose posters
- * are not on GitHub keep BOT-85's rule as it was: `probe` and the service's
- * evaluator, both every 15 minutes, 90 minutes.
+ * are not on GitHub keep BOT-85's rule as it was, 90 minutes each: `probe`
+ * and `minice-plugins-evaluator`, every 15 minutes, and the relay's two
+ * watches, `minice-alarm-relay-almaty` and `minice-alarm-relay-macmini`, every
+ * 2 minutes.
  *
  * @returns {number|null} minutes, or null when the interval is not fixed yet
  */
@@ -498,7 +527,7 @@ export function secretName(name, signal = "success") {
 
 /**
  * Every secret the owner's act has to place in environment `alerts`, in the
- * order a person would create them. The two service checks contribute none:
+ * order a person would create them. The service's checks contribute none:
  * this repository posts to neither, so it holds no value that addresses them,
  * which is the half of attack M-5's rule that this side owns.
  *
