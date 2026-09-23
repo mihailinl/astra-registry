@@ -81,9 +81,10 @@ health; the list is `bot/lib/phase3.mjs`.
 
 - **Anything whose artifact cannot be verified.** No digest, no listing. The one
   exception is a `staging` entry, which requires an explicit `--allow-staging`
-  and is uninstallable by construction; every listing here is one today, and
-  README.md §The staging entries says exactly what has to happen upstream before
-  the first of them carries a digest.
+  and is uninstallable by construction. Every listing was one when this
+  catalogue began; which still are moves, so this page does not count them —
+  `git grep -l '"staging": true' -- plugins` lists them, and README.md §The
+  staging entries says what takes an entry out of staging.
 - **Malware, or anything whose described purpose differs from its behaviour.**
   Including "the plugin does what it says plus one more thing".
 - **Credential harvesters, undisclosed telemetry, or anything that exfiltrates
