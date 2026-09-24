@@ -4,6 +4,7 @@
   "id": "astra-chess",
   "version": "0.1.13",
   "published_at": "2026-08-22T20:38:20Z",
+  "yanked": true,
   "release": {
     "kind": "github_release",
     "repo": "KNICE-TECH/astra-chess",

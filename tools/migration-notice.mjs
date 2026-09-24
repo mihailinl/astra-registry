@@ -27,7 +27,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
-  NOTICE_DOC, RECOMMIT_TRAILER, authoritative, judgeIssuePaths, planResend, planRound, readMarkers, recipients,
+  NOTICE_DOC, authoritative, judgeIssuePaths, planResend, planRound, readMarkers, recipients,
   renderRound,
 } from "./lib/migration-notice.mjs";
 import { readMarkers as readRecords } from "../bot/lib/listing-state.mjs";
@@ -66,17 +66,12 @@ function printPlan(plan, args) {
     console.log("writes no marker");
     return 0;
   }
-  const recommit = plan.writes.some((w) => fs.existsSync(path.join(args.root, w.file)));
   for (const w of plan.writes) {
     if (args.write) fs.writeFileSync(path.join(args.root, w.file), w.text);
     console.log(`${args.write ? "wrote" : "would write"} ${w.file}\n${w.text}`);
   }
   // Only with the sends: the marker is the record of a round that went out.
   console.log("Commit these WITH the round's sends, never before them.");
-  if (recommit) {
-    console.log("This re-commits a marker already on main, so the commit's message ends with this trailer, or the " +
-      "coverage canary refuses it as an edit under log/ (MOD-34):\n\n" + RECOMMIT_TRAILER);
-  }
   if (!args.write) console.log("Re-run with --write to write the files.");
   return 0;
 }
