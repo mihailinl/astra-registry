@@ -111,10 +111,9 @@ name: Plugins ingest
 # **B-T5.0's poll and sweep run in shadow**, and `POLL_MODE` below is the whole
 # of the switch: `claim`'s register half prints a `would register` line per
 # polled tag and calls nothing, and B-T5.1's commit — the cutover commit B —
-# turns it `live`. `load` and `remember` are still held by `if: false`, for a
-# reason that is not this file's: they hold the key in environment `bot-state`,
-# which an owner-approved settings act creates, admitting only `main`. Each of
-# the two says what replaces its `if: false` the day that environment exists.
+# turns it `live`. `load` and `remember` hold the key in environment
+# `bot-state`, admitting only `main`; they were held by `if: false` until that
+# environment existed, and run since 2026-09-24.
 #
 
 on:
@@ -231,17 +230,11 @@ jobs:
   # again, so the signed memory is read by the two key-holding jobs and no other.
   load:
     needs: roots
-    # Held until environment `bot-state` exists. B-T5.0 built this job; the
-    # environment — admitting only `main`, with the memory's HMAC key as its
-    # one secret — is an owner-approved settings act (RC-R0-3(f), ext.12). A
-    # run of this job before it existed would have GitHub create it with no
-    # branch policy, which admits every ref: a job on a branch could then read
-    # the key and sign a sweep memory in which an unregistered tag reads as
-    # seen (attack M-6). `policy/settings-expected.json` lists it as pending,
-    # and the coverage canary's settings rule refuses this job without the
-    # literal line below. Once the environment exists and that file lists it
-    # as live, delete the line: the job then runs whenever `roots` passed.
-    if: false
+    # Held by `if: false` until environment `bot-state` existed (created
+    # 2026-09-24, main only, one secret; policy/settings-expected.json lists it
+    # live since #317). A run before it existed would have had GitHub create it
+    # with no branch policy, which admits every ref (attack M-6). Now the job
+    # runs whenever `roots` passed.
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: bot-state
@@ -437,19 +430,17 @@ jobs:
   # which `poll-alert` sends, and saves the sealed memory under this run's key.
   remember:
     needs: [roots, load, poll, claim, sweep]
-    # Held until environment `bot-state` exists, as `load` is. The day it
-    # does, this line becomes:
-    #
-    #   if: >-
-    #     always() && !cancelled() && needs.roots.result == 'success' &&
-    #     needs.load.result == 'success'
+    # Held by `if: false` until environment `bot-state` existed, as `load` was
+    # (created 2026-09-24).
     #
     # `always()`, because `claim` is red until B-T3.6 builds its lease step and
     # a `remember` that waited for claim's success would never save; and
     # because a poll or a sweep that failed is exactly what this job exists to
     # write down. From `claim` it takes only `registered`, and a claim that
     # died before answering registered nothing.
-    if: false
+    if: >-
+      always() && !cancelled() && needs.roots.result == 'success' &&
+      needs.load.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: bot-state
