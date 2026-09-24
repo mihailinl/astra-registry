@@ -15,9 +15,13 @@ name: Submission checks
 # where it runs in a separate, minimal job that consumes this one's output.
 
 on:
+  # EVERY pull request, with no `paths:` filter, since B-T5.4. The `door` job
+  # below has to see the pull requests that do not touch `plugins/**` in order
+  # to pass them, and a filter is a door-shaped hole: GitHub evaluates `paths`
+  # over at most 300 changed files, so a large enough PR skips the workflow
+  # altogether. `check` is unaffected — it reads the PR's own diff and does
+  # nothing when no listing is in it.
   pull_request:
-    paths:
-      - 'plugins/**'
   workflow_dispatch:
     inputs:
       plugin:
@@ -32,6 +36,83 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ── door: BOT-54, after cutover no pull request changes a listing or a log ──
+  #
+  # OD-19 closed the hand-edited door for `plugins/**` (registry plan B-T5.4):
+  # once the BASE carries `log/cutover.json`, a pull request that adds, changes
+  # or deletes any file under `plugins/**` or `log/**` is red, with no
+  # exception for a yank or a delist — those reach `plugins/**` only through
+  # the moderation and operator workflows (BOT-33). Before cutover it passes
+  # everything, which is why it can land before commit B. tools/pr-door.mjs
+  # says what it reads and why.
+  #
+  # **It judges with the base's copy of the door.** The checkout is the base
+  # commit, and the head is fetched only as objects to diff, so a PR that edits
+  # tools/pr-door.mjs is judged by the door it is trying to change. (A PR can
+  # still edit THIS file, because GitHub runs a `pull_request` workflow from
+  # the PR's merge ref; that edit is a diff to .github/workflows/ a reviewer
+  # reads.) It holds no secret, no token beyond `contents: read`, and no write.
+  #
+  # **The residual: a red door blocks no merge.** ROLL-5 allows no required
+  # checks on `main` (three writers push to it directly), so this is a check a
+  # person has to read, and merging past it is overriding BOT-54 by hand.
+  door:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: No listing and no log changes by pull request after cutover (BOT-54)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # The PR's commits, as objects only; nothing of the head is checked out.
+          git fetch --no-tags --quiet origin "$HEAD_SHA" \
+            || git fetch --no-tags --quiet origin "+refs/pull/$PR_NUMBER/head:refs/remotes/pr/head"
+          if [ ! -f tools/pr-door.mjs ]; then
+            if [ -f log/cutover.json ]; then
+              echo "::error::the base is past cutover and carries no tools/pr-door.mjs: the door was deleted, and a deleted door is not an open one"
+              exit 1
+            fi
+            echo "ok    the base predates the door (B-T5.4), so there is no base copy to judge with"
+            exit 0
+          fi
+          node tools/pr-door.mjs --base "$BASE_SHA" --head "$HEAD_SHA"
+
+  # The door's own canary, on the PR's checkout: a PR that edits the door is
+  # tested here, and judged above by the door it had before.
+  door-tests:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: The door refuses what BOT-54 closes and passes the rest
+        run: node --test bot/tests/pr-door.test.mjs
+
   check:
     runs-on: ubuntu-24.04
     steps:
