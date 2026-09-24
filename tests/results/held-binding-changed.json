@@ -8,7 +8,7 @@
       "code": "R_BINDING_CHANGED",
       "stage": "policy",
       "location": null,
-      "message": "R_BINDING_CHANGED"
+      "message": "The binding token changed since this listing was bound"
     }
   ],
   "decision_id": "00000000000000000000000000000000",

@@ -619,29 +619,21 @@ test("MOD-47's `reset` is an action, carries `identity_reset` alone, and names a
 // here, because a literal would be a fourth copy of a list three documents
 // already disagree about.
 //
-// THE GAP, DECLARED SO IT RETIRES ITSELF. The ops generator adds a §7.2 code
-// only when B.7 has not already added it (`tools/contract-tokens.mjs`, "if
-// (this.entries.some(… `code:${code}`)) continue"), so the four codes B.7 also
-// names carry no `artefact` and their §7.2 cell is not in the file. Their log
-// words are declared below from §7.2 as 2.9.0 prints them, and the test
-// REQUIRES that each still lacks an `artefact`: the day the generator carries
-// one, this goes red and asks for the declaration to be dropped and the cell
-// compared instead.
-const NOT_IN_TOKEN_FILE = Object.freeze({
-  M_IDENTITY_RESET: "reset", // §7.2: "… log `reset`; none"
-  M_APPEAL: "appeal", // §7.2: "log `appeal` (MOD-33) …"
-  A_REMOVAL_REQUEST: "delist", // §7.2: "from a bound account: `unlisted`, log `delist` with `author_request` …"
-  A_YANK: "yank", // §7.2: "… `yanked`, log `yank` with `author_request` …"
-});
+// THE GAP THAT RETIRED. Until contract 2.10.0 the ops generator skipped a
+// §7.2 code that B.7 had already added, so M_IDENTITY_RESET, M_APPEAL, A_YANK
+// and A_REMOVAL_REQUEST carried no `artefact`, and this test declared their
+// log words by hand and required them to stay missing. 2.10.0's generator
+// merges the §7.2 cell into B.7's entry, so every code's cell is compared,
+// whichever section added the entry first (its `source` stays B.7).
 
 const logWords = (artefact) => [...String(artefact).matchAll(/log `([a-z_]+)`/g)].map((m) => m[1]);
 
 test("ACTIONS is exactly the log actions §7.2's codes write, as the token file publishes them (ops couplings 154)", () => {
   const tokens = JSON.parse(fs.readFileSync(path.join(REPO, "schema/contract-tokens-v1.json"), "utf8"));
   const byCode = new Map(tokens.entries.filter((e) => e?.kind === "reason_code").map((e) => [e.name, e]));
-  const published = tokens.entries.filter((e) => e?.kind === "reason_code" && e.source === "§7.2" && typeof e.artefact === "string");
-  assert.ok(published.length >= 7,
-    `the token file (${tokens.contract_version}) carries ${published.length} §7.2 artefact cells; there were 7 at 2.9.0, ` +
+  const published = tokens.entries.filter((e) => e?.kind === "reason_code" && typeof e.artefact === "string");
+  assert.ok(published.length >= 11,
+    `the token file (${tokens.contract_version}) carries ${published.length} §7.2 artefact cells; there were 11 at 2.10.0, ` +
     "so a smaller number is a broken read and every comparison below would run over less than the table");
 
   // (1) Every published cell against the writer, both ways: a cell naming a
@@ -655,25 +647,15 @@ test("ACTIONS is exactly the log actions §7.2's codes write, as the token file 
       `${JSON.stringify(LOG_ACTION[e.name])}`);
   }
 
-  // (2) The declared four still need declaring, and still say what the writer writes.
-  for (const [code, word] of Object.entries(NOT_IN_TOKEN_FILE)) {
-    const entry = byCode.get(code);
-    assert.ok(entry, `${code} is not in the token file at all, so the declaration beside it names nothing`);
-    assert.equal(typeof entry.artefact, "undefined",
-      `the token file now carries ${code}'s §7.2 cell (${JSON.stringify(entry.artefact)}): drop it from ` +
-      "NOT_IN_TOKEN_FILE so the cell is compared rather than the declaration");
-    assert.equal(LOG_ACTION[code], word, `${code}: §7.2 says log \`${word}\` and the compiler writes ${LOG_ACTION[code]}`);
-  }
-
-  // (3) Every code the compiler logs is accounted for by one of the two, so a
+  // (2) Every code the compiler logs has a published cell, so a
   //     code added to LOG_ACTION alone cannot widen the list unseen.
   for (const code of Object.keys(LOG_ACTION)) {
-    assert.ok(published.some((e) => e.name === code) || Object.hasOwn(NOT_IN_TOKEN_FILE, code),
-      `bot/lib/compile-decision.mjs logs ${code} as ${LOG_ACTION[code]}, and neither the token file's §7.2 cells ` +
-      "nor the declared four say it writes a log entry");
+    assert.ok(published.some((e) => e.name === code),
+      `bot/lib/compile-decision.mjs logs ${code} as ${LOG_ACTION[code]}, and no §7.2 cell in the token file ` +
+      "says it writes a log entry");
   }
 
-  // (4) The reader equals the writer: every action the log accepts is one some
+  // (3) The reader equals the writer: every action the log accepts is one some
   //     code writes, and every action a code writes the log accepts.
   assert.deepEqual([...ACTIONS].sort(), [...new Set(Object.values(LOG_ACTION))].sort(),
     "bot/lib/moderation.mjs's ACTIONS and the log actions §7.2's codes write have parted: an action a code writes " +

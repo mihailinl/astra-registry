@@ -475,6 +475,8 @@ exists first; nothing downstream changes when it arrives.
 | `R_FIRST_LISTING` | First listing — a person reads it, once, ever. |
 | `R_NEW_HIGH_RISK` | A high-risk permission this plugin did not have before. |
 | `R_IDENTITY_CHANGED` | The repository this plugin is listed from changed. |
+| `R_FIRST_BINDING` | The first release of an already published listing to carry a binding line. A moderator approves it once; later releases under that binding are not held for it again. |
+| `R_BINDING_CHANGED` | The binding line carries a different token from the one the listing was bound with. The previously bound account is told, and a moderator can approve it only after that account's objection window. |
 | `R_CHECK_HELD` | A check handed the decision to a person; not one of the three, same SLA. |
 | `P_DELAY_HIGH_RISK` | Waiting, because the plugin holds a high-risk permission. |
 | `P_FIRST_LISTING_APPROVED` | Approved and published without waiting, because a first listing has no installed copies for a delay to protect. |
@@ -489,6 +491,24 @@ exists first; nothing downstream changes when it arrives.
 | `P_APPROVAL_STALE` | An `/approve` named a different submission from this one — the release changed after the comment it answered. Nothing published; the hold stands. |
 | `P_UNKNOWN_PERMISSION` | A permission name this registry cannot describe. Reported, never blocking — the daemon default-denies, so it grants nothing. |
 | `P_SLA` | What happens next, and by when. |
+
+### Codes the plugins panel shows
+
+On the plugins-service path the Astra plugins panel shows each of these with
+its title, what clears it, and what to do, from the same table as the codes
+above (FLOW-13).
+
+| Code | Meaning | What clears it |
+|---|---|---|
+| `M_APPROVE` | A moderator approved the submission. An approval clears holds only; it never shortens a delay, a stop or a pending notice. | Nothing needs clearing. |
+| `M_REJECT` | A moderator rejected the submission. A Recheck does not reopen it. | An appeal a moderator reverses, which opens exactly one Recheck. |
+| `M_APPEAL` | An appeal was decided, `stands` or `reversed`, with the moderator's public reason and never the appeal's text. | Nothing; the outcome is final. |
+| `A_STOP` | The submission was stopped from its notice link. A stop cannot be lifted. | Only a release under a new tag. |
+| `A_WITHDRAW` | The submission was withdrawn before it was checked. | Only a release under a new tag. |
+| `A_YANK` | The listing's bound account yanked versions from the panel. A yank cannot be undone by anyone, and installed copies keep running. | Nothing. |
+| `B_BINDING_INVALID` | Shown only to the token's owner and moderators, behind `B_BINDING_UNUSABLE`: the token is unknown, revoked, expired or superseded, or was minted for another repository. | Only a new tag carrying a usable line. |
+| `B_ACCOUNT_INELIGIBLE` | Shown only to the token's owner and moderators, behind `B_BINDING_UNUSABLE`: the account holding the token is not eligible. | A Recheck of the same tag, once the account is eligible. |
+| `W_REGISTRY_UNACKNOWLEDGED` | The registry changed its bot and an operator has not yet acknowledged it, so the service holds the bot's calls. Nothing is decided and nothing is lost. | The registry's operator acknowledging the change. |
 
 ## 7. The publisher badge
 
