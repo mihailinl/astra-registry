@@ -451,6 +451,7 @@ jobs:
             --revocations dist/registry/v1/revocations.json \
             --registry-dir dist/registry/v1 \
             --repo "${{ github.repository }}" \
+            --redirects site/redirects.json \
             --out dist/site
 
       # The acceptance criterion, asserted against what was actually written
