@@ -18,7 +18,13 @@
 # writes a verdict. `alert` holds the alarm channel and reads nothing but that
 # verdict, exactly as `moderation-coverage.yml` splits them (BOT-46).
 #
-# ── WHY THERE IS NO SCHEDULE YET, AND WHAT ARMS IT ──────────────────────────
+# ── HOW IT WAS ARMED ────────────────────────────────────────────────────────
+#
+# **Armed 2026-09-24.** Dispatched run 35963496422 on `main` (6ef23ef) posted
+# the first heartbeat at 2026-09-24T06:15:47Z ("ok    success posted for
+# receiver check deadline-watch"), and the commit that uncommented the cron
+# below recorded that time as the row's `armed_at`. The paragraph below is
+# the order that was followed, kept so a re-arming follows it too.
 #
 # **Dispatch only, until one dispatched run has posted.** The receiver check
 # `deadline-watch` was created DISARMED (bot/lib/alert-checks.mjs), and it
@@ -36,10 +42,10 @@
 name: Deadline watch
 
 on:
-  # The cron the arming commit uncomments. Daily is `interval_seconds: 86400`
-  # in bot/lib/alert-checks.mjs, and the two have to agree.
-  # schedule:
-  #   - cron: '17 5 * * *'
+  # Daily is `interval_seconds: 86400` in bot/lib/alert-checks.mjs, and the
+  # two have to agree.
+  schedule:
+    - cron: '17 5 * * *'
   workflow_dispatch:
 
 permissions: {}

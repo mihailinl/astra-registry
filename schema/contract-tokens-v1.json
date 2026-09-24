@@ -1,6 +1,6 @@
 {
-  "contract_version": "2.2.0",
-  "source_commit": "5b839ac776773d1e81a13bbaae83d6ec2185c9ff",
+  "contract_version": "2.3.0",
+  "source_commit": "958e2531c87cbf7914d73e101483f501502cbb73",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -649,7 +649,6 @@
         "service"
       ],
       "acceptor": [
-        "client",
         "panel"
       ],
       "state": "live",
@@ -672,7 +671,6 @@
         "stop"
       ],
       "emitter": [
-        "client",
         "panel"
       ],
       "acceptor": [
@@ -745,7 +743,6 @@
         "service"
       ],
       "acceptor": [
-        "client",
         "panel"
       ],
       "state": "live",
@@ -1061,7 +1058,6 @@
       "kind": "reason_code",
       "name": "A_STOP",
       "emitter": [
-        "client",
         "panel"
       ],
       "acceptor": [
@@ -1082,7 +1078,6 @@
       "kind": "reason_code",
       "name": "A_WITHDRAW",
       "emitter": [
-        "client",
         "panel"
       ],
       "acceptor": [
@@ -1103,7 +1098,6 @@
       "kind": "reason_code",
       "name": "A_BINDING_REVOKE",
       "emitter": [
-        "client",
         "panel"
       ],
       "acceptor": [
@@ -1124,7 +1118,6 @@
       "kind": "reason_code",
       "name": "A_REMOVAL_REQUEST",
       "emitter": [
-        "client",
         "panel"
       ],
       "acceptor": [
@@ -1139,15 +1132,13 @@
         "SCOPE-8",
         "FLOW-13"
       ],
-      "fixed_reason": null,
-      "fixed_reason_pending": "fixed_reasons"
+      "fixed_reason": "Delisted at its author's own request, made from the Astra plugins panel. Installed copies are not removed."
     },
     {
       "id": "code:A_YANK",
       "kind": "reason_code",
       "name": "A_YANK",
       "emitter": [
-        "client",
         "panel"
       ],
       "acceptor": [
@@ -1162,8 +1153,7 @@
         "SCOPE-8",
         "FLOW-13"
       ],
-      "fixed_reason": null,
-      "fixed_reason_pending": "fixed_reasons"
+      "fixed_reason": "Yanked at its author's own request, made from the Astra plugins panel."
     },
     {
       "id": "wait:W_LEASE_EXPIRED",
@@ -1707,6 +1697,27 @@
       ]
     },
     {
+      "id": "list:client_event_kinds",
+      "kind": "closed_list",
+      "name": "client_event_kinds",
+      "values": [
+        "install",
+        "update"
+      ],
+      "emitter": [
+        "client"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
       "id": "list:token_state",
       "kind": "closed_list",
       "name": "token_state",
@@ -1896,8 +1907,7 @@
         "registry"
       ],
       "acceptor": [
-        "service",
-        "client"
+        "service"
       ],
       "state": "live",
       "source": "§0.8, other closed lists",
@@ -4879,7 +4889,6 @@
       ],
       "acceptor": [
         "service",
-        "client",
         "guest"
       ],
       "state": "live",
@@ -4906,8 +4915,7 @@
         "panel"
       ],
       "acceptor": [
-        "guest",
-        "client"
+        "guest"
       ],
       "state": "live",
       "source": "Table 5-F",
@@ -4931,8 +4939,7 @@
         "panel"
       ],
       "acceptor": [
-        "guest",
-        "client"
+        "guest"
       ],
       "state": "live",
       "source": "Table 5-F",
@@ -4956,8 +4963,7 @@
         "panel"
       ],
       "acceptor": [
-        "guest",
-        "client"
+        "guest"
       ],
       "state": "live",
       "source": "Table 5-F",
@@ -4981,8 +4987,7 @@
         "panel"
       ],
       "acceptor": [
-        "guest",
-        "client"
+        "guest"
       ],
       "state": "live",
       "source": "Table 5-F",
@@ -5008,8 +5013,7 @@
         "panel"
       ],
       "acceptor": [
-        "guest",
-        "client"
+        "guest"
       ],
       "state": "live",
       "source": "Table 5-F",
@@ -5034,8 +5038,7 @@
         "panel"
       ],
       "acceptor": [
-        "guest",
-        "client"
+        "guest"
       ],
       "state": "live",
       "source": "Table 5-F",
@@ -5059,8 +5062,7 @@
         "panel"
       ],
       "acceptor": [
-        "guest",
-        "client"
+        "guest"
       ],
       "state": "live",
       "source": "Table 5-F",
@@ -6337,47 +6339,27 @@
     ],
     "codes": 121
   },
-  "fixed_reasons": null,
-  "templates": [],
-  "staging_listing_id": null,
-  "shared_vector_paths": [],
+  "fixed_reasons": {
+    "A_YANK": "Yanked at its author's own request, made from the Astra plugins panel.",
+    "A_REMOVAL_REQUEST": "Delisted at its author's own request, made from the Astra plugins panel. Installed copies are not removed."
+  },
+  "templates": [
+    {
+      "version": "1",
+      "audience": null,
+      "notify_path": null,
+      "stopped_by": null,
+      "state": "live"
+    }
+  ],
+  "staging_listing_id": "astra-withdrawal-canary",
+  "shared_vector_paths": [
+    "tests/binding-line/vectors.json",
+    "tests/moderation-reasons.json",
+    "tools/testkeys/vectors/signed-set-v1.json",
+    "tests/results/"
+  ],
   "pending": [
-    {
-      "id": "fixed_reasons",
-      "what": "the one fixed registry reason string each of `A_YANK` and `A_REMOVAL_REQUEST` carries",
-      "why": "BOT-80 says an `A_*` entry's `reason` is \"the one fixed registry string SCOPE-7's file lists for that code\", and §0.8 records no string. The service's decision type carries `public_reason`, which is NULL by design for an author action, so the first author yank either fails a body check or carries an invented string that the registry silently substitutes its own copy for.",
-      "owed_by": "astra-plugins-ops (contract version ops.15, §0.8); minice-be's half is §1.3 row 8.5",
-      "lands_with": "ops.15, before R2",
-      "floor": "until ops.15 lands, `fixed_reasons` is null and the selftest asserts that it is null and that this record is present; from ops.15 it is two non-empty strings and the selftest asserts that.",
-      "asserted_by": "astra-registry:tools/selftest/contract-tokens.mjs#the token file's fixed_reasons is null under its pending record, or a string for each A_* code with none"
-    },
-    {
-      "id": "templates",
-      "what": "the generated-workflow template list: every version `init-ci` has emitted, with the author audience and author-notify path it compiles",
-      "why": "SCOPE-7 requires the list and the contract names no entry of it. ID-73 forbids marking an audience or the notify path `retired` while a listed template compiles it, so an empty list is not the same claim as a list with template `1` in it: the empty one lets a later regeneration retire a name that authors' repositories still compile.",
-      "owed_by": "astra-plugins-ops (contract version ops.15, §0.8)",
-      "lands_with": "ops.15, before R2",
-      "floor": "until ops.15 lands, `templates` is an empty array, this record is present, and nothing may be marked `retired` on the strength of it; from ops.15 the selftest asserts at least one template, each with an audience, a notify path and a state.",
-      "asserted_by": "astra-registry:tools/selftest/contract-tokens.mjs#the token file's templates list is empty under its pending record, or templates naming this file's entries with none"
-    },
-    {
-      "id": "staging_listing_id",
-      "what": "the staging listing id",
-      "why": "MOD-10 refuses `path_test` on any id but MOD-16's staging listing, and MOD-16 names no id. The registry reserves it in `policy/reserved-ids.json` (M-T2.1) and reads it only there, through `tools/lib/reserved.mjs`'s `stagingListingId`: the derive rule, the validator, the moderation-coverage walk and the takedown bound's exclusion through it, and the examples rule. No registry code reads this member; the registry's `tools/selftest/contract-tokens.mjs` holds it to that file. It is here for the party that compiles against this file (SCOPE-7), whose half of MOD-10 refuses `path_test` on any other id.",
-      "owed_by": "astra-plugins-ops (contract version ops.15, §0.8)",
-      "lands_with": "ops.15, before R2",
-      "floor": "until ops.15 lands the member is null and this record is present.",
-      "asserted_by": "astra-registry:tools/selftest/contract-tokens.mjs#the token file's staging_listing_id is null under its pending record, or policy/reserved-ids.json's id with none"
-    },
-    {
-      "id": "shared_vector_paths",
-      "what": "the shared-vector paths `tests/binding-line/vectors.json`, `tests/moderation-reasons.json`, `tools/testkeys/vectors/signed-set-v1.json` and `tests/results/`",
-      "why": "Three corpora are read from a pinned registry commit by a party that is not this one (§1.3 row 8.3). A corpus whose path is agreed in prose and nowhere else is a corpus two readers can disagree about while both suites stay green.",
-      "owed_by": "astra-plugins-ops (contract version ops.15, §0.8)",
-      "lands_with": "ops.15, before R2",
-      "floor": "until ops.15 lands the list is empty and this record is present.",
-      "asserted_by": "astra-registry:tools/selftest/contract-tokens.mjs#the token file's shared_vector_paths is empty under its pending record, or paths this repository commits with none"
-    },
     {
       "id": "mod54_report_page",
       "what": "MOD-54's report page path",

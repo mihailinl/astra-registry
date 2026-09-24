@@ -2771,3 +2771,25 @@ test("`plugins-ingest.yml`'s publish job commits through publish-apply and not b
     "something reaches `main` without the rules that file holds",
   );
 });
+
+// B-T3.6 step 1: R3 opens with `DRY_RUN: "true"` committed, and while it is
+// anything but "false" the publish job commits on the runner and never pushes.
+// The flag is read in ONE place — the apply step — and the direction a typo
+// errs in is the withholding one: `!= "false"`, never `== "true"`. Watched
+// failing by keying the guard on `== "true"`, and by dropping `--dry-run`.
+test("`plugins-ingest.yml` never pushes while DRY_RUN is not exactly false", () => {
+  const src = read(INGEST);
+  assert.match(src, /^env:\n\s+DRY_RUN:\s*"true"\s*$/m, "DRY_RUN is not committed as \"true\" at workflow level");
+  const body = code(jobOf(INGEST, "publish")).join("\n");
+  assert.match(body, /if \[ "\$DRY_RUN" != "false" \]; then dry=\(--dry-run\); fi/,
+    "the apply step does not pass --dry-run whenever DRY_RUN is not exactly \"false\"");
+  assert.match(body, /node bot\/publish-apply\.mjs[\s\S]*"\$\{dry\[@\]\}"/, "and publish-apply is not handed it");
+});
+
+// `--service-path` lets publish-apply write an identity record and an alert
+// record. The legacy path never binds a listing (BOT-77), so the flag belongs
+// to exactly one workflow. Watched failing by adding it to ingest.yml.
+test("only `plugins-ingest.yml` hands publish-apply `--service-path`", () => {
+  const passing = files.filter((f) => read(f).split("\n").some((l) => !l.trim().startsWith("#") && l.includes("--service-path")));
+  assert.deepEqual(passing, [INGEST], "a workflow other than the service path's publish job may write identity records");
+});
