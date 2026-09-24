@@ -52,8 +52,11 @@
 // exception to it.
 //
 // A panel-only flag is FLOW-13's sixth member and is **not** written per entry
-// here: every code in this file is one the bot emits, which is what panel-only
-// denies. `tools/gen-codes-table.mjs` derives it, and asserts the denial.
+// here: every code in `CODES` is one the bot emits, which is what panel-only
+// denies. `tools/gen-codes-table.mjs` derives it, and asserts the denial. The
+// one exception is `PANEL_CODES` at the foot of this file, which the bot never
+// emits and FLOW-13 still carries a row for (B.7's panel-only details, and the
+// wait only the service shows).
 
 /**
  * @typedef {"error"|"review"|"warn"|"note"|"pass"|"skip"} Level
@@ -588,6 +591,60 @@ export const CODES = {
     level: "error", stage: "derive", fix: "registry",
     title: "The listing the bot derived does not pass this repository's own validator",
     remedy: "A bug in this registry, not in your plugin. Please leave the issue open.",
+  },
+};
+
+// ── rows FLOW-13 carries for codes the bot never emits ──────────────────────
+//
+// Contract B.7: FLOW-13's table lists the codes "and the waits only the service
+// shows", and its panel-only flag "marks B.7's panel-only details and the waits
+// only the service shows". So three rows belong in the table and must never be
+// emitted by the bot: the two details B.7 puts behind `B_BINDING_UNUSABLE` for
+// the token's owner and moderators alone (ID-9; BOT-89 forbids the bot printing
+// which of token or account failed), and `W_REGISTRY_UNACKNOWLEDGED`, which the
+// plugins service shows while TRUST-45 holds the bot's calls in shadow.
+//
+// **Kept out of `CODES`, and that is the mechanism.** `codeDef`, the ingest
+// comment, `docs/BOT-CHECKS.md` and the moderation run's `knownCodes` all read
+// `CODES`, so a detail declared there would be one the bot could emit. Here it
+// is a row and nothing else; `tools/gen-codes-table.mjs` flags each one
+// panel-only and fails if a key here is not one of B.7's, or if one of B.7's is
+// declared in a table the bot emits from.
+//
+// The keys are bare identifiers on purpose: `tools/selftest/scope9.mjs` reads a
+// quoted code name under `bot/` as a code the bot carries, and two of these are
+// sheltered there as unemitted until R3.
+//
+// `fix` is B.7's own (2.5.0): the token half is `new_tag` because the line is
+// read at the attested commit (ID-22), the account half `recheck` because the
+// account's own eligibility clears it, and the shadow wait `registry`.
+
+/** @type {Record<string, {level: string, stage: string, fix: Fix, title: string, remedy: string}>} */
+export const PANEL_CODES = {
+  B_BINDING_INVALID: {
+    level: "error", stage: "ownership", fix: "new_tag",
+    title: "The binding token cannot be used for this repository",
+    remedy:
+      "Shown only to the token's owner and to moderators; everyone else sees `B_BINDING_UNUSABLE` (ID-9). " +
+      "The token on the tagged commit is unknown, revoked, expired or superseded, or was minted for another " +
+      "repository. Mint a fresh token for this repository in the Astra plugins panel, commit its line and push " +
+      "a new tag: the line is read at the attested commit (ID-22), so this tag cannot change.",
+  },
+  B_ACCOUNT_INELIGIBLE: {
+    level: "error", stage: "ownership", fix: "recheck",
+    title: "The account holding the binding token is not eligible to bind",
+    remedy:
+      "Shown only to the token's owner and to moderators; everyone else sees `B_BINDING_UNUSABLE` (ID-9). " +
+      "The token is sound and the Minice account that holds it is not eligible (DEC-11). The account's own " +
+      "eligibility clears it: once the account is eligible again, a Recheck of the same tag reads it afresh.",
+  },
+  W_REGISTRY_UNACKNOWLEDGED: {
+    level: "wait", stage: "shadow", fix: "registry",
+    title: "Awaiting an operator acknowledgement",
+    remedy:
+      "The registry changed its bot, and until an operator acknowledges that change the plugins service holds " +
+      "the bot's calls (TRUST-45). Nothing about this submission has been decided and nothing is lost; it " +
+      "continues once the change is acknowledged, with nothing for you to do.",
   },
 };
 
