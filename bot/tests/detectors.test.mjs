@@ -877,6 +877,50 @@ test("A9: a `source.repo` change with no decision, and a README change without o
   assert.deepEqual(codes(detect({ root: dir })), ["A9_IDENTITY_CHANGED_NO_DECISION"]);
 });
 
+test("A9: a hand deletion of an identity record alarms, and one beside its identity-reset record does not", () => {
+  const seed = (dir) => {
+    baseline(dir);
+    write(dir, "plugins/alpha/identity.json", {
+      schema: "astra.registry.identity/1", plugin_id: "alpha", repository_id: "111",
+      repository_owner_id: "222", repo: "example/alpha", token_hash: "c".repeat(64),
+    });
+    version_(dir, "alpha", "1.1.0");
+    record(dir, {
+      decided_at: "2026-01-03T00:00:00Z", actor: "bot", trigger: "issue", plugin_id: "alpha", version: "1.1.0",
+      repo: "example/alpha", tag: "v1.1.0", state: "published", repository_id: "111", repository_owner_id: "222",
+    });
+    commit(dir, "registry: publish, first bound listing", "2026-01-03T00:00:00Z");
+  };
+
+  const hand = estate();
+  seed(hand);
+  fs.rmSync(path.join(hand, "plugins/alpha/identity.json"));
+  commit(hand, "registry: tidy up", "2026-01-05T00:00:00Z");
+  assert.deepEqual(codes(detect({ root: hand })), ["A9_IDENTITY_CHANGED_NO_DECISION"],
+    "a hand deletion of identity.json raised nothing; A9 read additions and edits only");
+
+  const reset = estate();
+  seed(reset);
+  fs.rmSync(path.join(reset, "plugins/alpha/identity.json"));
+  record(reset, {
+    decided_at: "2026-01-05T00:00:00Z", actor: "moderator", moderator: "mod-1", trigger: "moderation",
+    plugin_id: "alpha", state: "identity_reset", reasons: ["M_IDENTITY_RESET"], category: "identity_reset",
+  });
+  commit(reset, "moderation: identity reset for alpha", "2026-01-05T00:00:00Z");
+  assert.deepEqual(codes(detect({ root: reset })), [], "the reset's own release commit alarmed");
+
+  const other = estate();
+  seed(other);
+  fs.rmSync(path.join(other, "plugins/alpha/identity.json"));
+  record(other, {
+    decided_at: "2026-01-05T00:00:00Z", actor: "moderator", moderator: "mod-1", trigger: "moderation",
+    plugin_id: "beta", state: "identity_reset", reasons: ["M_IDENTITY_RESET"], category: "identity_reset",
+  });
+  commit(other, "moderation: a reset for a different id", "2026-01-05T00:00:00Z");
+  assert.deepEqual(codes(detect({ root: other })), ["A9_IDENTITY_CHANGED_NO_DECISION"],
+    "a reset of another id excused this deletion");
+});
+
 // ── the verdict ─────────────────────────────────────────────────────────────
 
 test("what a finding becomes in the alarm channel passes the channel's own grammar", () => {

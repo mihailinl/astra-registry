@@ -50,6 +50,7 @@ import { execFileSync } from "node:child_process";
 import { cleanEnv } from "../tools/lib/git-env.mjs";
 
 import { readDecisionRecords } from "./baseline.mjs";
+import { isVoidingRecord } from "./lib/identity.mjs";
 import { VERDICT_SCHEMA, runUrl } from "./lib/alert-verdict.mjs";
 import {
   BASELINE_FILE,
@@ -700,11 +701,32 @@ export function a9({ anchor, git }, findings, skipped, scanned) {
       ...git.changedIn(sha, "AM", ["plugins/*/identity.json"]),
       ...git.changedIn(sha, "M", ["plugins/*/plugin.json"]).filter((f) => sourceChangedIn(git, sha, f)),
     ];
-    if (touched.length === 0) continue;
+    // A DELETION of an identity record, which "AM" never saw (B-T4.2's
+    // canary: A9 is silent on the reset commit and alarms on a hand
+    // deletion). Deleting `identity.json` by hand does not unbind anything
+    // cleanly — the listing is `frozen` (ID-25), and the baseline its later
+    // publication records carry still stands — so the one deletion that is a
+    // decision is `M_IDENTITY_RESET`'s release commit, which adds the voiding
+    // record for that id in the same commit (`isVoidingRecord`). No such
+    // record can exist before the contract MINOR adds the category, so until
+    // then every deletion alarms, which is the refusal ID-41 says stands.
+    const deleted = git.changedIn(sha, "D", ["plugins/*/identity.json"]);
+    if (touched.length === 0 && deleted.length === 0) continue;
 
-    const addedRecords = git.changedIn(sha, "A", ["log/decisions"])
-      .map((f) => readJsonAt(git, sha, f))
-      .filter((d) => d && d.state === "published");
+    const added = git.changedIn(sha, "A", ["log/decisions"]).map((f) => readJsonAt(git, sha, f)).filter(Boolean);
+    const addedRecords = added.filter((d) => d.state === "published");
+    for (const file of deleted) {
+      const id = /^plugins\/([^/]+)\//.exec(file)?.[1] ?? null;
+      if (added.some((d) => isVoidingRecord(d) && d.plugin_id === id)) continue;
+      findings.push({
+        detector: "A9",
+        code: "A9_IDENTITY_CHANGED_NO_DECISION",
+        message: `${sha.slice(0, 12)} deleted ${file} and added no identity-reset record for ${id ?? "that id"} ` +
+          "(B-T4.2's `M_IDENTITY_RESET`, the one commit that may delete one)",
+        plugin_id: id,
+        hex: sha,
+      });
+    }
 
     for (const file of touched) {
       const id = /^plugins\/([^/]+)\//.exec(file)?.[1] ?? null;
