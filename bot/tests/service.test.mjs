@@ -2466,6 +2466,38 @@ test("B-T3.5: the members that apply and no others — `publish_after`, `read_co
   assert.throws(() => resultBody({ ...plans["held-binding-changed"], result_extra: { ...plans["held-binding-changed"].result_extra, bogus: 1 } }) && composeBody("astra.plugins.bot-result/1", { ...b("held"), bogus: 1 }));
 });
 
+// ── FLOW-11 against FLOW-13: the stage a result reports is its row's ───────
+//
+// The panel shows a reason's stage from the bot's result (FLOW-10; FLOW-11),
+// and the same code's title, remedy and `fix` from FLOW-13's row. FLOW-13
+// publishes one entry per code, with its stage, generated from the bot's code
+// tables. So the two stages are one member, read in two places. Until
+// 2026-09-24 `stageOf` answered `binding` for every `B_*` it did not find in
+// `CODES`, which covered all five binding refusals, while their rows said
+// `ownership` (ops couplings 161). The golden `refused-flow67.json`
+// published the result's half to the service as a shared vector, and nothing
+// compared the two halves.
+import { reasonOf, stageOf } from "../lib/service-decide.mjs";
+
+test("FLOW-11: every code the bot reports carries in its result the stage its FLOW-13 row publishes (ops couplings 161)", () => {
+  const table = JSON.parse(fs.readFileSync(path.join(REPO, "tools", "codes-table.json"), "utf8")).flow13_table;
+  const reported = table.filter((r) => !r.panel_only);
+  assert.ok(reported.length >= 140,
+    `${reported.length} FLOW-13 rows the bot may report; there were 145 on 2026-09-24, so fewer is a broken read`);
+  const parted = reported
+    .filter((r) => stageOf(r.code) !== r.stage)
+    .map((r) => `${r.code}: row ${r.stage}, result ${stageOf(r.code)}`);
+  assert.deepEqual(parted, [],
+    "a result's reason and FLOW-13's row name two stages for one code, and the panel shows the one beside the other");
+  // The five binding refusals by name, and through `reasonOf`, the function a
+  // result is built with, so a filter that skipped them cannot pass.
+  for (const code of ["B_UNBOUND", "B_BINDING_MALFORMED", "B_BINDING_UNUSABLE", "B_OWNER_CHANGED", "B_REPOSITORY_RECYCLED"]) {
+    const row = table.find((r) => r.code === code);
+    assert.ok(row && !row.panel_only, `${code} has no FLOW-13 row the bot reports`);
+    assert.equal(reasonOf(code).stage, row.stage, `${code}: the result's stage is not the row's`);
+  }
+});
+
 test("B-T3.5: a 600-character cause is cut to 512, and a result differing from its record fails before posting", () => {
   const plan = { ...goldenPlans().wait };
   plan.wait = { ...plan.wait, cause: "x".repeat(600) };

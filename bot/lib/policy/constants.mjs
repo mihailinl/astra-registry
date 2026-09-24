@@ -72,10 +72,14 @@ export const REVIEW_SLA_HOURS = 48;
 export const SLA_BREACH_HOURS = REVIEW_SLA_HOURS * 2;
 
 /**
- * `stage` is `policy` for every entry here, and the contract says so rather
- * than this file: FLOW-11 requires a stage with every reason code and fixes it
- * at `policy` for `R_*` and `P_*`, which is all nineteen of these. It is
- * written out per entry rather than defaulted by the emitter, because FLOW-13's
+ * `stage` is `policy` for every `R_*`, `P_*`, `M_*` and `A_*` entry here, and
+ * the contract says so for the first two rather than this file: FLOW-11
+ * requires a stage with every reason code and fixes it at `policy` for `R_*`
+ * and `P_*`. The binding refusals (`B_*`) are at `ownership`, the stage of the
+ * file their line is read from (`.well-known/astra-plugin-owner`), beside
+ * `E_OWNERSHIP_UNPROVEN`. `bot/lib/service-decide.mjs`'s `stageOf` reads the
+ * stage from here, so a result reports the stage the FLOW-13 row publishes. It
+ * is written out per entry rather than defaulted by the emitter, because FLOW-13's
  * table is one entry per code with six members each, and a member a generator
  * supplies when the table omits it is a member that silently keeps the old
  * value after somebody adds a twentieth entry with a different stage.
@@ -316,10 +320,10 @@ export const POLICY_CODES = {
   // Contract B.7's `M_*` and `A_*` codes that end or clear a SUBMISSION, and
   // the author's yank, each of which the bot writes into a decision record's
   // `reasons` (BOT-30; BOT-34; DEC-7) and the panel shows with FLOW-13's row.
-  // Stage `policy`, which is what `bot/lib/service-decide.mjs`'s `stageOf`
-  // reports for them in a result's reason (FLOW-11 fixes a stage only for `R_*`
-  // and `P_*`, and the bot falls back to `policy`), so the row the panel reads
-  // and the reason the bot reports name one stage. Each `fix` is the
+  // Stage `policy`, which `bot/lib/service-decide.mjs`'s `stageOf` reads from
+  // here for a result's reason (FLOW-11 fixes a stage only for `R_*` and
+  // `P_*`), so the row the panel reads and the reason the bot reports name one
+  // stage. Each `fix` is the
   // clause that says what clears it: an approval blocks nothing (DEC-6); a
   // rejection is reopened only by a reversed appeal, a moderator's decision
   // (FLOW-18; MOD-33); an appeal's outcome is final (MOD-32); a stop or a
