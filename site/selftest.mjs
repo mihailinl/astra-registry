@@ -880,6 +880,93 @@ test("the committed R4b set is armed only with its evidence, and is armed once R
   assert.deepEqual(noReview, ["set R4b's armed.edge_review is empty; ROLL-55 does not redirect before ROLL-54's review is recorded"]);
 });
 
+// ── RC-R9-1: the R9a set, and "every generated page is in R4b or R9a" ──────
+//
+// R9a moves every page R4b does not, to Table 5-F's successors under the
+// panel's origin (ROLL-55), once each successor answers 200 (SERVE-84). The
+// canary is RC-R9-1's: over the COMMITTED catalogue, R9a's set moves exactly
+// the pages R4b leaves, `/policy/` and `/security/` each to its own successor,
+// and nothing a daemon or an outside checker reads; and from R5's exit — R9a's
+// request follows it at once — every generated HTML path is in set R4b or R9a,
+// with `404.html` the one named exemption.
+
+test("RC-R9-1 — Table 5-F's R9a set, over the committed catalogue, moves every page R4b leaves, each to its own successor", () => {
+  const expected = successors.tableSet(TOKENS, "R9a");
+  assert.deepEqual(expected, {
+    "/publisher/<owner>/": "https://astra.minice.ai/plugins/_/publishers/<owner>",
+    "/publish/": "https://astra.minice.ai/plugins/_/publish",
+    "/policy/": "https://astra.minice.ai/plugins/_/policy",
+    "/security/": "https://astra.minice.ai/plugins/_/security",
+    "/transparency/": "https://astra.minice.ai/plugins/_/transparency",
+    "/advisory/<id>/": "https://astra.minice.ai/plugins/_/advisories/<id>",
+  });
+  // R4b's mapping is unchanged by the positional rule R9a needed.
+  assert.deepEqual(successors.tableSet(TOKENS, "R4b")["/search/"], "https://astra.minice.ai/plugins");
+  const doc = successors.onlyStep(successors.withSet(COMMITTED_REDIRECTS, "R9a", expected), "R9a");
+  const x = successors.expand({ ...REAL, redirectsDoc: doc, root: REPO });
+  assert.deepEqual(successors.coverageProblems({ step: "R9a", expected, ...x }), []);
+  const files = x.redirected.map((r) => r.file);
+  for (const f of ["publish/index.html", "policy/index.html", "security/index.html", "transparency/index.html"]) {
+    assert.ok(files.includes(f), `${f} is not moved at R9a`);
+  }
+  assert.ok(files.some((f) => /^publisher\/[^/]+\/index\.html$/.test(f)), "no publisher page moved; the catalogue has publishers");
+  assert.ok(!files.includes("transparency/moderation-log.json"), "the moderation log is a document, never a redirect (ROLL-55)");
+});
+
+test("RC-R9-1's canary is red on a page R9a leaves out, on one R4b moves, and on /security/ sent to /policy/'s successor", () => {
+  const expected = successors.tableSet(TOKENS, "R9a");
+  const { "/publish/": _gone, ...short } = expected;
+  const x1 = successors.expand({ ...REAL, redirectsDoc: successors.onlyStep(successors.withSet(COMMITTED_REDIRECTS, "R9a", short), "R9a"), root: REPO });
+  const p1 = successors.coverageProblems({ step: "R9a", expected, ...x1 });
+  assert.ok(p1.some((p) => p.startsWith("publish/index.html is not redirected")), p1.join(" | "));
+
+  const wide = { ...expected, "/search/": "https://astra.minice.ai/plugins" };
+  const x2 = successors.expand({ ...REAL, redirectsDoc: successors.onlyStep(successors.withSet(COMMITTED_REDIRECTS, "R9a", wide), "R9a"), root: REPO });
+  const p2 = successors.coverageProblems({ step: "R9a", expected, ...x2 });
+  assert.ok(p2.some((p) => p.startsWith("search/index.html is redirected")), p2.join(" | "));
+
+  const crossed = { ...expected, "/security/": expected["/policy/"] };
+  const x3 = successors.expand({ ...REAL, redirectsDoc: successors.onlyStep(successors.withSet(COMMITTED_REDIRECTS, "R9a", crossed), "R9a"), root: REPO });
+  const p3 = successors.coverageProblems({ step: "R9a", expected, ...x3 });
+  assert.ok(p3.some((p) => p.startsWith("security/index.html redirects to https://astra.minice.ai/plugins/_/policy")), p3.join(" | "));
+
+  // A set whose patterns reach none of R9a's fixed pages holds nothing, and is
+  // red rather than green about nothing.
+  const x4 = successors.expand({ ...REAL, redirectsDoc: successors.onlyStep(successors.withSet(COMMITTED_REDIRECTS, "R9a", {}), "R9a"), root: REPO });
+  const p4 = successors.coverageProblems({ step: "R9a", expected: { "/advisory/<id>/": expected["/advisory/<id>/"] }, ...x4 });
+  assert.ok(p4.some((p) => /does not reach publish, policy, security and transparency/.test(p)), p4.join(" | "));
+});
+
+test("RC-R9-1 — from R5's exit every generated HTML page is in set R4b or R9a, and 404.html is the one exemption", () => {
+  const both = successors.withSet(successors.withSet(COMMITTED_REDIRECTS, "R4b", successors.tableSet(TOKENS, "R4b")), "R9a", successors.tableSet(TOKENS, "R9a"));
+  const x = successors.expand({ ...REAL, redirectsDoc: both, root: REPO });
+  assert.deepEqual(successors.allPathsProblems(x), []);
+  // Watched on an unmapped page: /publish/ left out of R9a.
+  const { "/publish/": _gone, ...short } = successors.tableSet(TOKENS, "R9a");
+  const gap = successors.withSet(both, "R9a", short);
+  const y = successors.expand({ ...REAL, redirectsDoc: gap, root: REPO });
+  assert.deepEqual(successors.allPathsProblems(y), ["publish/index.html is in neither set R4b nor set R9a, and RC-R9-1 moves every generated page before R9a's request"]);
+  assert.ok(x.plain.has("404.html"), "the build wrote no 404.html, so the exemption was asked about nothing");
+});
+
+test("the committed R9a set is armed only with its evidence, and must be armed once R5's exit marker is on the tree", () => {
+  const common = { step: "R9a", tokens: TOKENS, ...REAL, root: REPO };
+  const marker = fs.existsSync(path.join(REPO, successors.R5_EXIT_MARKER));
+  assert.deepEqual(successors.armedSetProblems({ doc: COMMITTED_REDIRECTS, markerPresent: marker, ...common }), []);
+  const empty = successors.withSet(COMMITTED_REDIRECTS, "R9a", {});
+  assert.deepEqual(successors.armedSetProblems({ doc: empty, markerPresent: false, ...common }), []);
+  const opened = successors.armedSetProblems({ doc: empty, markerPresent: true, ...common });
+  assert.equal(opened.length, 1);
+  assert.match(opened[0], /R5-exit\.json is on the tree and set R9a is empty/);
+  const expected = successors.tableSet(TOKENS, "R9a");
+  const byHand = successors.armedSetProblems({ doc: successors.withSet(COMMITTED_REDIRECTS, "R9a", expected), markerPresent: true, ...common });
+  assert.equal(byHand.length, 1, byHand.join(" | "));
+  assert.match(byHand[0], /carries paths and no `armed` record/);
+  // R9a needs no edge review (ROLL-55 asks one of R4b only), only the probe.
+  const record = { at: "2026-10-01T00:00:00Z", successors_answered_200: 8 };
+  assert.deepEqual(successors.armedSetProblems({ doc: successors.withSet(COMMITTED_REDIRECTS, "R9a", expected, { armed: record }), markerPresent: true, ...common }), []);
+});
+
 const asyncTests = [];
 const atest = (name, fn) => asyncTests.push([name, fn]);
 
