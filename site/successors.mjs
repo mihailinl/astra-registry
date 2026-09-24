@@ -68,18 +68,36 @@ export const USER_AGENT = "astra-registry-lane (+https://github.com/mihailinl/as
 
 /**
  * ROLL-55's split of Table 5-F by step: the token file's row ids that move at
- * each. R4b is `/p/<id>/`, `/` and `/search/`. R9a — every other row, with
- * `404.html` exempted — is RC-R9-1's to add, with its own canary.
+ * each. R4b is `/p/<id>/`, `/` and `/search/`. R9a is every other row
+ * (RC-R9-1), and `404.html` is the one generated page no set moves.
  */
 export const STEP_ROWS = Object.freeze({
   R4b: Object.freeze(["page:5F:/,/search/", "page:5F:/p/<id>/"]),
+  R9a: Object.freeze([
+    "page:5F:/publisher/<owner>/", "page:5F:/publish/", "page:5F:/policy/,/security/",
+    "page:5F:/transparency/", "page:5F:/advisory/<id>/",
+  ]),
 });
+
+/**
+ * The generated page no set moves (RC-R9-1). It is what Pages serves for a path
+ * that matches nothing; redirecting it would send every mistyped URL into the
+ * service's guest zone, which is the traffic SERVE-105 and ROLL-54 are about.
+ */
+export const UNMOVED_PAGES = Object.freeze(["404.html"]);
+
+/** The registry marker R5 exits with: R9a's request follows it at once (registry plan §2.10). */
+export const R5_EXIT_MARKER = "log/rollout/R5-exit.json";
+
 
 /** Where a set's own evidence lives once `--arm` has written it. */
 export const ARMED_MEMBER = "armed";
 
 /** The registry marker R4b opens with (registry plan §2.7, landing order step 3). */
 export const R4B_MARKER = "log/rollout/R4b-open.json";
+
+/** Which marker says a step's set must be armed by now. */
+const STEP_MARKER = Object.freeze({ R4b: R4B_MARKER, R9a: R5_EXIT_MARKER });
 
 /** §0.7: RFC 3339 UTC, whole seconds, `Z`. */
 const TIME_RE = /^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$/;
@@ -129,12 +147,18 @@ export function tableSet(tokens, step) {
     const row = (tokens.entries ?? []).find((e) => e?.id === id);
     if (!row) throw new Error(`the token file carries no ${id} entry, so Table 5-F's successor for it is unknown`);
     if (row.state !== "live") throw new Error(`${id} is ${JSON.stringify(row.state)} in the token file, not live`);
-    const [successor] = Array.isArray(row.successors) ? row.successors : [];
+    const all = Array.isArray(row.successors) ? row.successors : [];
+    const [successor] = all;
     if (typeof successor !== "string" || !successor.startsWith("/")) {
       throw new Error(`${id} has no successor path to redirect to`);
     }
     if (!Array.isArray(row.pages_today) || !row.pages_today.length) throw new Error(`${id} names no page today`);
-    for (const page of row.pages_today) paths[page] = `${origin}${successor}`;
+    // Positional only where the row pairs pages with pages: `/policy/,/security/`
+    // lists one successor page each. `/,/search/` lists the search QUERY second
+    // and `/transparency/` its document second, so there the first successor
+    // is every page's (the plan: `/` and `/search/` → `/plugins`).
+    const pagesOnly = all.length === row.pages_today.length && all.every((x) => typeof x === "string" && x.startsWith("/") && !/[?#]|\.json$/.test(x));
+    row.pages_today.forEach((page, i) => { paths[page] = `${origin}${pagesOnly ? all[i] : successor}`; });
   }
   return paths;
 }
@@ -201,6 +225,19 @@ export function expand({ index, revocations = null, registryDir = null, redirect
   }
 }
 
+/**
+ * RC-R9-1's canary: every generated HTML page is redirected by one set or the
+ * other, `UNMOVED_PAGES` aside. Asked of a build with BOTH sets applied, before
+ * R9a's request (from R5's exit marker), because a page in neither set is a
+ * page Pages keeps serving after the owner is told the site has moved.
+ */
+export function allPathsProblems({ plain, redirected }) {
+  const moved = new Set(redirected.map((r) => r.file));
+  return [...plain.keys()].filter((k) => k.endsWith(".html")).sort()
+    .filter((k) => !moved.has(k) && !UNMOVED_PAGES.includes(k))
+    .map((k) => `${k} is in neither set R4b nor set R9a, and RC-R9-1 moves every generated page before R9a's request`);
+}
+
 /** Every distinct URL a set of redirected pages points at, sorted. */
 export const targetsOf = (redirected) => [...new Set(redirected.map((r) => r.target))].sort();
 
@@ -227,6 +264,26 @@ export function coverageProblems({ step, expected, ids, redirected, plain, moved
     want.set("index.html", index);
     want.set("search/index.html", search);
     for (const id of ids) want.set(`p/${id}/index.html`, perPlugin.replace("<id>", id));
+  } else if (step === "R9a") {
+    // Every generated page each R9a pattern matches, with its captured value.
+    const htmlFiles = [...plain.keys()].filter((k) => k.endsWith(".html"));
+    for (const [sitePath, target] of Object.entries(expected)) {
+      const rel = sitePath.replace(/^\//, "");
+      const filePattern = rel === "" || rel.endsWith("/") ? `${rel}index.html` : rel;
+      const names = [...filePattern.matchAll(/<([a-z][a-z0-9_]*)>/g)].map((m) => m[1]);
+      const re = new RegExp(`^${filePattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/<[a-z][a-z0-9_]*>/g, "([^/]+)")}$`);
+      for (const f of htmlFiles) {
+        const m = re.exec(f);
+        if (!m) continue;
+        let t = target;
+        names.forEach((n, i) => { t = t.replace(`<${n}>`, m[i + 1]); });
+        want.set(f, t);
+      }
+    }
+    if (!["publish/index.html", "policy/index.html", "security/index.html", "transparency/index.html"].every((f) => want.has(f))) {
+      problems.push("the expected R9a set does not reach publish, policy, security and transparency, so there is nothing to hold it to");
+      return problems;
+    }
   } else {
     problems.push(`no canary is written for step ${step}`);
     return problems;
@@ -240,11 +297,16 @@ export function coverageProblems({ step, expected, ids, redirected, plain, moved
   for (const [file, target] of got) {
     if (!want.has(file)) problems.push(`${file} is redirected (to ${target}), and ${step} does not move it`);
   }
-  const floor = ids.length + 2;
-  if (redirected.length < floor) {
-    problems.push(`${redirected.length} page(s) redirected; the floor is the catalogue's ${ids.length} plugin page(s) + 2`);
+  if (step === "R4b") {
+    const floor = ids.length + 2;
+    if (redirected.length < floor) {
+      problems.push(`${redirected.length} page(s) redirected; the floor is the catalogue's ${ids.length} plugin page(s) + 2`);
+    }
+    if (!ids.length) problems.push("the catalogue has no plugins, so the floor held nothing");
   }
-  if (!ids.length) problems.push("the catalogue has no plugins, so the floor held nothing");
+  // R9a's floor is the four fixed pages its `want` must reach, asserted above:
+  // every page `want` holds is then checked one by one, so a count here could
+  // never fail on its own (measured: disabling it left the suite green).
 
   const pinned = [...plain.keys()].filter((k) => k.startsWith("registry/v1/") || k === "transparency/moderation-log.json");
   if (!pinned.some((k) => k === "transparency/moderation-log.json")) {
@@ -320,7 +382,7 @@ export async function arm({
   const probed = problems.length ? [] : await probeTargets(targets, { fetchImpl });
   for (const p of probed) {
     if (!p.ok) {
-      problems.push(`${p.url} answered ${p.status ?? p.error}${p.location ? ` → ${p.location}` : ""}; SERVE-84 wants 200 before R4b`);
+      problems.push(`${p.url} answered ${p.status ?? p.error}${p.location ? ` → ${p.location}` : ""}; SERVE-84 wants 200 before ${step}`);
     }
   }
   if (problems.length) return { armed: false, problems, targets, probed };
@@ -355,10 +417,11 @@ export function armedSetProblems({ doc, step = "R4b", markerPresent, tokens, ind
   const problems = [];
   if (!Object.keys(set.paths ?? {}).length) {
     if (markerPresent) {
-      problems.push(
-        `${R4B_MARKER} is on the tree and set ${step} is empty: R4b opened with every Pages page still serving ` +
-          "the page the service replaced (ROLL-55; RC-R4-1)",
-      );
+      problems.push(step === "R4b"
+        ? `${R4B_MARKER} is on the tree and set ${step} is empty: R4b opened with every Pages page still serving ` +
+          "the page the service replaced (ROLL-55; RC-R4-1)"
+        : `${STEP_MARKER[step] ?? "its marker"} is on the tree and set ${step} is empty: R5 exited and R9a's request ` +
+          "would go with the old pages still serving what the service replaced (ROLL-55; RC-R9-1)");
     }
     return problems;
   }
