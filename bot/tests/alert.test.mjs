@@ -681,7 +681,7 @@ await test("every bound is the longest of 3 × the interval, 90 minutes, and a d
   }
 });
 
-await test("the four service-posted checks are the names minice-e4 sent, created disarmed and not yet armed", () => {
+await test("the four service-posted checks are the names minice-e4 sent, created disarmed, and armed only by a recorded first post", () => {
   // Spelled out rather than read from the table: these are another party's
   // names (§1.3 row 8.1), and a check created under any other spelling is one
   // the service never posts to, which the receiver pages about for ever.
@@ -704,9 +704,38 @@ await test("the four service-posted checks are the names minice-e4 sent, created
     assert.equal(check.created_disarmed, true,
       "armed from their first minute they would page every ninety minutes through the whole of R1, and the " +
       "repair reached for on the third night is the one repair that must never be reached for");
-    assert.equal(check.armed_at, null, "nothing has posted to it yet; RC-R1-12's exit note reports this");
     assert.deepEqual(check.signals, ["success"], `${check.name} is a heartbeat, one success ping per pass`);
   }
+  // Which of them a first post has armed, as recorded (contract SERVE-104a:
+  // "The post that arms a check is recorded as its armed_at in CHECKS"). The
+  // receiver alerts on no check that has never been pinged, so a null here is
+  // a check whose silence pages nobody, and RC-R1-12's exit note says so.
+  // Spelled out, because an arming nobody recorded is the state
+  // bot/lib/alert-checks.mjs's own rule calls "did not happen".
+  assert.deepEqual(
+    Object.fromEntries(service.map((c) => [c.name, c.armed_at])),
+    {
+      "minice-alarm-relay-almaty": "2026-09-23T14:17:48Z",
+      "minice-alarm-relay-macmini": null,
+      "minice-plugins-evaluator": null,
+      "minice-plugins-evaluator-operator": null,
+    },
+    "the service checks' recorded armings are not the ones on record: the Almaty relay's first post at " +
+      "2026-09-23T14:17:48Z (ops dev/couplings.md entry 139), and none yet for the other three",
+  );
+});
+
+await test("the probe host's check records the post that armed it", () => {
+  // ROLL-15's prober on the mac-mini sends its first heartbeat whatever it
+  // holds, so that the check arms (ops tools/probe-signed-set/lib/run.mjs).
+  // Its first tick ran at 2026-09-24T01:43:55Z and its first push at
+  // 01:43:59Z (the public probe log's first commit, 511d7d0f, with
+  // `ticks: 1`), and the receiver took the post at 01:43:59Z.
+  const probe = CHECKS.find((c) => c.name === "probe");
+  assert.ok(probe, "the probe host's check is gone from the table");
+  assert.equal(probe.created_disarmed, true);
+  assert.equal(probe.armed_at, "2026-09-24T01:43:59Z",
+    "the prober has posted since 2026-09-24T01:43:59Z; a null here says its silence pages nobody");
 });
 
 await test("a name another party still owes is held as a pending row, and never as a registry check", () => {
