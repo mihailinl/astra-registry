@@ -92,7 +92,7 @@ import {
   latinFraction,
   localeEnumProblems,
 } from "../bot/lib/locales.mjs";
-import { buildIndex, indexContent } from "./build-index.mjs";
+import { buildIndex, indexContent, publisherKeyProblems } from "./build-index.mjs";
 import { RESERVED_KEYS, SUPPORTED_KEYS } from "./lib/platform.mjs";
 import { isTime } from "./lib/time.mjs";
 
@@ -852,6 +852,16 @@ function checkIndex(ctx) {
   // bare document keeps this readable for a tree that predates the envelope —
   // the fields and their meanings are unchanged, only their depth is.
   const signed = doc.signed ?? doc;
+
+  // ID-51 over the committed file: every `signed.publishers` key, and every
+  // listing's `publisher`, is the owner login of a publishers/ record here.
+  // Asked of the file rather than left to the regeneration below, because a
+  // catalogue keyed on owner ids by a changed generator regenerates to itself.
+  for (const problem of publisherKeyProblems(doc, loadPublishers(root).publishers)) {
+    report.error(rel, problem,
+      "ID-51: the daemon reads `signed.publishers` keyed by login (A:d/plugins/registry_client.rs:543-570); owner " +
+      "ids pin the join (TRUST-25) and are never the key.");
+  }
 
   let regenerated;
   try {
@@ -2605,6 +2615,35 @@ export function checkPublisherRecords(ctx, loaded = loadPublishers(ctx.root)) {
         "schema/publisher-v1.json. A publisher record is joined into `signed.publishers`, inside the signature a " +
         "client verifies, and a client renders the badge on exact membership of `tier`; a member of the wrong " +
         "shape is a claim the registry signs without having checked (docs/POLICY.md §7).");
+    }
+    // `owner_ids` (contract B.4, 2.5.0; registry plan TRUST-25): what the
+    // schema cannot say. Each key must be a login THIS record speaks for, and
+    // each login at most once — compared case-insensitively, because logins
+    // are and `publisherFor` looks the key up that way. A key for a login the
+    // record does not claim would pin a badge nowhere today and be read the
+    // day a `covers` entry is added for it, without anybody having reviewed
+    // that id; two keys for one login in two cases are two answers to one
+    // account's id, and the join refuses both (no badge), silently. The
+    // values' grammar is the schema's, above.
+    const ids = doc?.owner_ids;
+    if (ids !== null && typeof ids === "object" && !Array.isArray(ids)) {
+      const claims = new Set([doc.owner, ...(Array.isArray(doc.covers) ? doc.covers : [])]
+        .map((l) => String(l).toLowerCase()));
+      const seen = new Map();
+      for (const key of Object.keys(ids)) {
+        const login = key.toLowerCase();
+        if (!claims.has(login)) {
+          report.error(file, `owner_ids names ${JSON.stringify(key)}, which is not \`owner\` or a \`covers\` login of this record`,
+            "B.4: `owner_ids` maps each login the record speaks for to its GitHub id. An id for any other login is a " +
+            "claim about an account nobody reviewed this record for (registry plan TRUST-25).");
+        }
+        if (seen.has(login)) {
+          report.error(file, `owner_ids names one login twice, as ${JSON.stringify(seen.get(login))} and ${JSON.stringify(key)}`,
+            "Logins are case-insensitive, so these are two ids for one account; the badge join takes neither.");
+        } else {
+          seen.set(login, key);
+        }
+      }
     }
   }
 }

@@ -39,7 +39,7 @@ import { signIndex } from "../../bot/sign-index.mjs";
 import { signRevocations } from "../sign-revocations.mjs";
 import { REVOCATIONS_SCHEMA, TRUST_SCHEMA } from "../../bot/lib/sign.mjs";
 import { RETIREMENTS_PATH, RETIREMENTS_SCHEMA, WINDOW_EXEMPT_KEY_IDS } from "../signer/key-window.mjs";
-import { SIGNED_FILES, planRun } from "../signer/plan.mjs";
+import { SIGNED_FILES, planRun, serialsAt } from "../signer/plan.mjs";
 import { trailersOf } from "../served-set/provenance.mjs";
 import { buildSignedCommit, commitMessage, pushSigned, signRun, writeTree } from "../signer/run.mjs";
 import { test, assert, assertEqual, tmp } from "./harness.mjs";
@@ -568,5 +568,97 @@ export async function run() {
       `the refusal does not name the event: ${odd.said}`);
     const empty = cli("", 25);
     assertEqual(empty.status, 2, `an empty --event was planned as a shell run: ${empty.said}`);
+  });
+
+  // ── SERVE-49 on the bytes a client receives (ops couplings 155) ───────────
+  //
+  // The client refuses a served, signed document over 1,048,576 bytes, and so
+  // does the service (SERVE-50). The plan's gate measures the generator's
+  // output, before `issued_at`, `expires_at` and the signatures are added,
+  // so a catalogue a few hundred bytes under the cap passed it and was signed
+  // past it: 239 bytes with one signer on `signed`'s serial-54 head. Each
+  // fixture below is sized from its own bytes, just under the cap before
+  // signing and one byte over it after, so neither the cap nor today's
+  // envelope is pinned.
+  const envelopeFixture = async (name, { trustKeys, signer, head }) => {
+    const t = makeTree(name, { trustKeys });
+    t.addListing("dice-roller");
+    const first = t.commit("a listing");
+    const builtHead = head ? head({ t, first }) : { present: false };
+    t.addListing("second-plugin");
+    const sourceCommit = t.commit("a second listing");
+    const now = "2026-09-20T00:00:00Z";
+    const serial = serialsAt({ root: t.dir, sha: sourceCommit }).index;
+    const candidate = buildIndex({ root: t.dir, serial });
+    const unsigned = Buffer.byteLength(stableStringify(candidate), "utf8");
+    const served = Buffer.byteLength(
+      stableStringify(signIndex(candidate, { signer: signerFor(signer), issuedAt: new Date(now) })), "utf8");
+    assert(served > unsigned + 1, `signing added ${served - unsigned} byte(s), so no cap sits between the two`);
+    return { t, sourceCommit, now, head: builtHead, unsigned, served };
+  };
+
+  await test("SERVE-49 measures the signed catalogue: under the cap before signing and over it after is carried, never served", async () => {
+    const f = await envelopeFixture("serve49-envelope-carry", {
+      trustKeys: [KEY_A],
+      signer: KEY_A,
+      head: ({ t }) => headFrom({
+        index: signIndex(buildIndex({ root: t.dir, serial: 1 }), {
+          signer: signerFor(KEY_A), issuedAt: new Date("2026-09-19T00:00:00Z"),
+        }),
+        revocations: signRevocations(
+          { signed: { schema: REVOCATIONS_SCHEMA, serial: 1, revocations: [] } },
+          { signer: signerFor(KEY_A), issuedAt: new Date("2026-09-19T00:00:00Z") },
+        ),
+        trust: trustDelegating([KEY_A]),
+        sha: t.head(),
+      }),
+    });
+    const run = (limit) => signRun({
+      root: f.t.dir, sourceCommit: f.sourceCommit, head: f.head, now: f.now, limit,
+      available: [signerFor(KEY_A)],
+      delegatedAt: new Map([[KEY_A, "2026-09-01T00:00:00Z"]]),
+    });
+
+    // At the signed size exactly: signed, and the bytes written are the bytes
+    // this fixture predicted, so the cap below sits where it claims to.
+    const at = await run(f.served);
+    assertEqual(at.documents.index.decision, "changed", `a catalogue exactly at the cap was not signed: ${at.alerts.join(" | ")}`);
+    assertEqual(Buffer.byteLength(at.files[SIGNED_FILES.index], "utf8"), f.served,
+      "the run wrote other bytes than the fixture measured, so the cap below is not one byte under them");
+
+    // One byte under the signed size, and still over the unsigned one.
+    const limit = f.served - 1;
+    assert(f.unsigned <= limit, `the fixture is not under the cap before signing (${f.unsigned} > ${limit})`);
+    const plan = await planRun({ root: f.t.dir, sourceCommit: f.sourceCommit, head: f.head, now: f.now, limit });
+    assertEqual(plan.gates.index.ok, true,
+      "the plan's pre-signing gate refused this catalogue, so the fixture does not reach the case the signed bytes decide");
+
+    const over = await run(limit);
+    assertEqual(over.documents.index.decision, "carry",
+      `a catalogue signed to ${f.served} bytes, over a ${limit}-byte cap, was ${over.documents.index.decision}`);
+    assertEqual(over.files[SIGNED_FILES.index], f.head.bytes.index, "the carry is not byte-for-byte the head's");
+    assert(Buffer.byteLength(over.files[SIGNED_FILES.index], "utf8") <= limit, "the catalogue the run would serve is over the cap");
+    assertEqual(over.codes.includes("SIGNER_CARRIED_INDEX"), true, `${over.codes.join(" ")}`);
+    assertEqual(over.alerts.length, 1, `every carry alerts: ${over.alerts.join(" | ")}`);
+    assert(over.alerts[0].includes("SERVE-49") && over.alerts[0].includes(String(f.served)) && over.alerts[0].includes("signed"),
+      `the alert has to name the rule and the signed size: ${over.alerts[0]}`);
+    assertEqual(over.status, "red", "a carry reported green");
+  });
+
+  await test("SERVE-49 measures the signed catalogue: with nothing to carry, over the cap after signing blocks the run", async () => {
+    const f = await envelopeFixture("serve49-envelope-block", { trustKeys: [BOOTSTRAP], signer: BOOTSTRAP });
+    const limit = f.served - 1;
+    assert(f.unsigned <= limit, `the fixture is not under the cap before signing (${f.unsigned} > ${limit})`);
+    const record = await signRun({
+      root: f.t.dir, sourceCommit: f.sourceCommit, head: { present: false }, now: f.now, limit,
+      available: [signerFor(BOOTSTRAP)],
+    });
+    assertEqual(record.documents.index.decision, "blocked",
+      `a first catalogue signed past the cap was ${record.documents.index.decision}`);
+    assertEqual(record.commit, false, "the run committed a catalogue every client refuses");
+    assertEqual(record.files[SIGNED_FILES.index], undefined, "a blocked catalogue still has bytes to write");
+    assert(record.refusals.some((r) => r.includes("SERVE-49") && r.includes(String(f.served))),
+      `the refusal has to name the rule and the signed size: ${record.refusals.join(" | ")}`);
+    assertEqual(record.status, "red", "a blocked run reported green");
   });
 }

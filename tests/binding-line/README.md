@@ -33,7 +33,13 @@ commit that makes one **states whether any entry a minice reader pins changed**
 regenerations, and the reason the pin move is its own numbered record
 (`ops.26a`).
 
-## `MBE-PENDING`: five things this corpus decides that the contract does not
+## Q1 to Q5: once `MBE-PENDING`, stated in contract ID-23 since 2.8.0
+
+**Contract 2.8.0 (astra-plugins-ops `3cdf653`) states all five in ID-23, and minice-e4 agreed on 2026-09-24.** Its parser holds the five edges. It fails 9 vectors on ID-24's classification (06, 09 ×2, 16, 17, 18, 19, 20 ×2), because it has no `malformed` outcome yet, and its read fetches 4096 bytes where it needs 4097 to judge case 12. minice-e4 has scheduled both fixes and the pin, before its ID-59 reader exists. The vectors' `why` texts still say `MBE-PENDING`: `vectors.json` is mirrored byte for byte into AstraPlugins (rule C31), so those words change only together with the mirror.
+
+What follows is the section as it stood before 2.8.0.
+
+### Was: five things this corpus decides that the contract does not
 
 Contract 0.13.0 states ID-23 and ID-24 and leaves five edges open. They are
 written down as questions in the registry plan (`§1.3` row 5) and marked on the
