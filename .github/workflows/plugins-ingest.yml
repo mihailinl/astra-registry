@@ -1,7 +1,8 @@
 name: Plugins ingest
 
-# The service-path ingest: twelve jobs, and the split between them is the whole
-# subject of the file (registry plan B-T3.1).
+# The service-path ingest: fourteen jobs, and the split between them is the
+# whole subject of the file (registry plan B-T3.1; `sweep` and `poll-alert`
+# from B-T5.0).
 #
 # ── what this file is for ──────────────────────────────────────────────────
 #
@@ -12,29 +13,34 @@ name: Plugins ingest
 # because the two jobs are different jobs.
 #
 # This file adds a THIRD thing to keep apart, and it is the reason the graph is
-# twelve jobs rather than four: a **bot OIDC token** for the plugins service.
+# fourteen jobs rather than four: a **bot OIDC token** for the plugins service.
 # A token that speaks for the registry is not like `GITHUB_TOKEN`. It claims
 # submissions, reads binding verdicts and eligibility, and posts results the
 # service records. Contract DEC-4 pins a run by that token; registry plan
 # BOT-1, BOT-2, ID-38, BOT-55 and BOT-56 say where it may and may not be held.
+# (Twelve until B-T5.0 added `sweep`, which reads a stranger's `git ls-remote`
+# answer, and `poll-alert`, which posts BOT-87's verdict: neither could join a
+# job that already holds something.)
 #
 # **The rule, in one line: each job holds at most one of — a bot token,
 # `contents: write`, stranger bytes, the alarm channel's credential.**
 #
-#   | job        | holds                                    |
-#   |------------|------------------------------------------|
-#   | `roots`    | nothing                                  |
-#   | `load`     | the `bot-state` HMAC key                 |
-#   | `poll`     | stranger text (`releases.atom`)          |
-#   | `claim`    | a bot token                              |
-#   | `remember` | the `bot-state` HMAC key                 |
-#   | `verify`   | `GITHUB_TOKEN` with `contents: read`     |
-#   | `check`    | a stranger archive                       |
-#   | `ask`      | a bot token                              |
-#   | `decide`   | nothing                                  |
-#   | `alert`    | the alarm channel's credential           |
-#   | `publish`  | `contents: write`                        |
-#   | `report`   | a bot token                              |
+#   | job          | holds                                    |
+#   |--------------|------------------------------------------|
+#   | `roots`      | nothing                                  |
+#   | `load`       | the `bot-state` HMAC key                 |
+#   | `poll`       | stranger text (`releases.atom`)          |
+#   | `sweep`      | stranger text (`git ls-remote`)          |
+#   | `claim`      | a bot token                              |
+#   | `remember`   | the `bot-state` HMAC key                 |
+#   | `poll-alert` | the alarm channel's credential           |
+#   | `verify`     | `GITHUB_TOKEN` with `contents: read`     |
+#   | `check`      | a stranger archive                       |
+#   | `ask`        | a bot token                              |
+#   | `decide`     | nothing                                  |
+#   | `alert`      | the alarm channel's credential           |
+#   | `publish`    | `contents: write`                        |
+#   | `report`     | a bot token                              |
 #
 # Nothing in YAML enforces that table. `bot/tests/workflows.test.mjs` does, and
 # it is the half of this task that keeps working after everybody who read this
@@ -67,14 +73,18 @@ name: Plugins ingest
 # `"true"` through R3 and is turned off by B-T3.6's own commit, whose SHA the
 # operator acknowledgement names.
 #
-# Three jobs below — `load`, `poll` and `remember` — are `if: false` and carry
-# a step marked `(not built: B-T5.0)`. Each such step prints `::error::` and
-# exits non-zero, naming the task that replaces it: a placeholder that exits 0
-# is a job that reports success for work nobody wrote, and
-# `bot/tests/workflows.test.mjs` refuses one that cannot fail its job.
+# A step marked `(not built: <task>)` prints `::error::` and exits non-zero,
+# naming the task that replaces it: a placeholder that exits 0 is a job that
+# reports success for work nobody wrote, and `bot/tests/workflows.test.mjs`
+# refuses one that cannot fail its job. Since B-T5.0 no step here is one:
+# `load`, `poll`, `sweep` and `remember` run `bot/lib/poll-run.mjs`, and
+# `poll-alert` runs `bot/lib/relay-verdict.mjs`.
 #
-# Every other job is built (B-T3.1's steps, B-T3.2, B-T3.3a–c, B-T3.4, B-T3.5):
+# Every job is built (B-T3.1's steps, B-T3.2, B-T3.3a–c, B-T3.4, B-T3.5, B-T5.0):
 #
+#   load     node bot/lib/poll-run.mjs load         (B-T5.0; held until bot-state)
+#   poll     node bot/lib/poll-run.mjs poll         (B-T5.0)
+#   sweep    node bot/lib/poll-run.mjs sweep        (B-T5.0)
 #   claim    node bot/lib/service-jobs.mjs --job claim
 #   verify   node bot/ingest.mjs --verify-facts        (never unpacks)
 #   check    node bot/ingest.mjs --check-facts         (the one job that does)
@@ -84,6 +94,8 @@ name: Plugins ingest
 #   publish  node bot/lib/service-publish.mjs --compose, bot/publish-apply.mjs,
 #            node bot/lib/service-publish.mjs --finalize
 #   report   node bot/lib/service-jobs.mjs --job report
+#   remember node bot/lib/poll-run.mjs remember     (B-T5.0; held until bot-state)
+#   poll-alert node bot/lib/relay-verdict.mjs        (B-T5.0)
 #
 # The modules live under `bot/lib/` and not beside `bot/moderation-run.mjs`
 # because a new top-level `bot/*.mjs` is an entry TRUST-31's published set
@@ -95,6 +107,15 @@ name: Plugins ingest
 # there; while they answer in shadow, every job runs, `decide` prints what it
 # WOULD have done — kind and body hash — and nothing is committed or posted
 # (BOT-92).
+#
+# **B-T5.0's poll and sweep run in shadow**, and `POLL_MODE` below is the whole
+# of the switch: `claim`'s register half prints a `would register` line per
+# polled tag and calls nothing, and B-T5.1's commit — the cutover commit B —
+# turns it `live`. `load` and `remember` are still held by `if: false`, for a
+# reason that is not this file's: they hold the key in environment `bot-state`,
+# which an owner-approved settings act creates, admitting only `main`. Each of
+# the two says what replaces its `if: false` the day that environment exists.
+#
 
 on:
   # ── BOT-51's schedule, off until R3 opens ─────────────────────────────────
@@ -142,6 +163,13 @@ concurrency:
 # SHA is what the operator acknowledgement names.
 env:
   DRY_RUN: "true"
+  # B-T5.0: `shadow` or `live`, and nothing else — `bot/lib/poll-run.mjs` and
+  # `bot/lib/service-jobs.mjs` refuse
+  # any other value rather than defaulting. In shadow `claim` registers no tag
+  # and BOT-87's unregistered-tag code is logged as `would alarm` and not sent,
+  # because its premise ("the poll should have registered this") is false by
+  # construction while nothing registers. B-T5.1 sets `live`, in commit B.
+  POLL_MODE: shadow
 
 jobs:
   # ── roots: the anchor, before anything else ───────────────────────────────
@@ -194,14 +222,25 @@ jobs:
   # `bot-state` and is held by this job and `remember` alone. `poll` holds no
   # key: it is the job that reads a stranger's feed.
   #
-  # `if: false` until B-T5.0 enables it. The environment is named here rather
-  # than at R5 so that the graph is complete and the lints have something to
-  # assert about — but the SECRET is not named, and that is deliberate: B-T5.0
-  # creates the environment under an owner approval, with a deployment-branch
-  # policy admitting only `main`, and inventing a secret's name here would put
-  # a string in this file for that task to match rather than to choose.
+  # It verifies the newest cached memory, seeds it from
+  # `state/releases-seen.json` (MIG-23), reads which listings are polled
+  # (BOT-41, through MIG-1's state), and says whether the poll (every 30
+  # minutes) and the sweep (daily) are due. It hands on the listings and each
+  # polled repository's ETag and registered tags — and NOT the memory: `remember`
+  # restores the same entry by the exact key this job matched and verifies it
+  # again, so the signed memory is read by the two key-holding jobs and no other.
   load:
     needs: roots
+    # Held until environment `bot-state` exists. B-T5.0 built this job; the
+    # environment — admitting only `main`, with the memory's HMAC key as its
+    # one secret — is an owner-approved settings act (RC-R0-3(f), ext.12). A
+    # run of this job before it existed would have GitHub create it with no
+    # branch policy, which admits every ref: a job on a branch could then read
+    # the key and sign a sweep memory in which an unregistered tag reads as
+    # seen (attack M-6). `policy/settings-expected.json` lists it as pending,
+    # and the coverage canary's settings rule refuses this job without the
+    # literal line below. Once the environment exists and that file lists it
+    # as live, delete the line: the job then runs whenever `roots` passed.
     if: false
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -210,59 +249,122 @@ jobs:
       contents: read
       id-token: none
     outputs:
-      memory: ${{ steps.restore.outputs.memory }}
+      listings: ${{ steps.load.outputs.listings }}
+      rows: ${{ steps.load.outputs.rows }}
+      poll_due: ${{ steps.load.outputs.poll_due }}
+      sweep_due: ${{ steps.load.outputs.sweep_due }}
+      discarded: ${{ steps.load.outputs.discarded }}
+      # The exact entry this job verified, so that `remember` restores that
+      # one and not whatever was saved under the prefix in between.
+      cache_key: ${{ steps.restore.outputs.cache-matched-key }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+          # `bot/lib/listing-state.mjs` walks `git log` for ID-25's "ever had
+          # an identity record", and refuses a shallow clone rather than guess.
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: "Restore and verify the signed poll memory (not built: B-T5.0)"
+      # By prefix, newest first. The key below is this run's own — the one
+      # `remember` saves under — so it never exists yet and `restore-keys` is
+      # what matches. Whatever comes back is bytes any workflow on `main`
+      # could have saved under the prefix, which is why the next step verifies
+      # the signature before it trusts a byte, and discards what fails.
+      - uses: actions/cache/restore@v4
         id: restore
-        run: |
-          set -euo pipefail
-          echo "::error::B-T5.0 builds this step: restore the Actions cache entry holding the poll and sweep memory, verify its HMAC with environment bot-state's key, and discard an entry whose signature does not check out. Until then this job is if: false and nothing reads its output."
-          exit 1
+        with:
+          path: .poll-memory
+          key: poll-memory-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: poll-memory-
+
+      - name: Verify the signed poll memory, and say which of the poll and the sweep are due
+        id: load
+        env:
+          BOT_STATE_HMAC_KEY: ${{ secrets.BOT_STATE_HMAC_KEY }}
+        run: node bot/lib/poll-run.mjs load
 
   # ── poll: a stranger's feed, and no credential of any kind ────────────────
   #
   # `releases.atom` is text somebody else writes. This job holds no token, no
   # write access and no HMAC key, and every tag it produces is
   # grammar-validated before it leaves (BOT-1's rule about what a token job may
-  # parse is met by keeping the parsing over here).
-  #
-  # `if: false` until B-T5.0.
+  # parse is met by keeping the parsing over here). One conditional GET per
+  # repository, however many listings it hosts, judged by BOT-74's prefix.
   poll:
-    needs: roots
-    if: false
+    needs: [roots, load]
+    if: needs.load.outputs.poll_due == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
       id-token: none
     outputs:
+      polled: ${{ steps.poll.outputs.polled }}
       tags: ${{ steps.poll.outputs.tags }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: "Poll releases.atom over the quiet listings (not built: B-T2.6, B-T5.0)"
+      - name: Poll releases.atom for every listed, grandfathered and frozen listing (BOT-41, BOT-74)
         id: poll
-        run: |
-          set -euo pipefail
-          echo "::error::B-T2.6 writes bot/lib/poll.mjs and B-T5.0 enables this job: fetch each listed, grandfathered and frozen listing's releases.atom with If-None-Match, filter tags by the newest listed version's prefix, and emit grammar-validated tags only."
-          exit 1
+        env:
+          ASTRA_POLL_LISTINGS: ${{ needs.load.outputs.listings }}
+          ASTRA_POLL_ROWS: ${{ needs.load.outputs.rows }}
+        run: node bot/lib/poll-run.mjs poll
+
+  # ── sweep: `git ls-remote`, daily, and no credential of any kind ──────────
+  #
+  # BOT-87's second half: `git ls-remote` of each polled repository, once a
+  # day — `load` says when — and never on a dispatch alone. The sweep counts a
+  # tag's age in sweeps, so two sweeps an hour apart would make a tag the poll
+  # has had an hour to register look a day old. Its answer is tag names and
+  # SHAs and nothing else; `remember` decides what they mean.
+  #
+  # A job of its own because it reads a stranger's answer, as `poll` does, and
+  # a job that did that could not also hold the key that signs the memory.
+  sweep:
+    needs: [roots, load]
+    if: needs.load.outputs.sweep_due == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: none
+    outputs:
+      remote: ${{ steps.sweep.outputs.remote }}
+    steps:
+      # No credential in the checkout's config: `git ls-remote` runs in this
+      # directory, and a persisted token would ride along to every repository
+      # it asks.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: List every polled repository's tags with git ls-remote (BOT-87's daily sweep)
+        id: sweep
+        env:
+          ASTRA_POLL_LISTINGS: ${{ needs.load.outputs.listings }}
+        run: node bot/lib/poll-run.mjs sweep
 
   # ── claim: the first job that speaks for this registry ────────────────────
   #
   # It mints a bot OIDC token, registers the tags `poll` found and claims at
-  # most three leases. `bot/lib/oidc.mjs` refuses to run outside
+  # most three leases. The register half runs in shadow until B-T5.1: with
+  # `POLL_MODE: shadow` it prints a `would register` line per polled tag and
+  # calls nothing (bot/lib/service-jobs.mjs `claimJob`). `bot/lib/oidc.mjs` refuses to run outside
   # `environment: plugins-service`, which is what makes that environment's
   # deployment-branch policy — `main` only — a real control rather than a
   # label.
@@ -272,8 +374,9 @@ jobs:
   # grammar-validated; nothing here unpacks anything.
   claim:
     needs: [roots, poll]
-    # `poll` is `if: false` until B-T5.0, and a skipped dependency skips this
-    # job under the default condition. `always()` would carry it past a failed
+    # `poll` is skipped whenever it is not due (and while `load` is held until
+    # environment `bot-state` exists), and a skipped dependency skips this job
+    # under the default condition. `always()` would carry it past a failed
     # roots check, so the roots result is asked for by name — the rule this
     # file inherits from `ingest.yml`, where forgetting it once left the only
     # committing job running on an anchor nobody had checked.
@@ -292,6 +395,8 @@ jobs:
       # derived from it rather than by a pattern (BOT-56).
       submissions: ${{ steps.claim.outputs.submissions }}
       count: ${{ steps.claim.outputs.count }}
+      # The `<owner>/<repo>@<tag>` the service answered for, and nothing else:
+      # `remember` adds a tag to memory only on this (B-T2.6). `[]` in shadow.
       registered: ${{ steps.claim.outputs.registered }}
       # The leases themselves, keyed by submission id and held to §4.3's
       # grammar before they leave this job: `repo` and `tag` are what `verify`
@@ -309,9 +414,10 @@ jobs:
           node-version: '22'
 
       # One bot OIDC token per call, masked before first use (bot/lib/oidc.mjs).
-      # `poll` is `if: false` until B-T5.0, so there is nothing to register
-      # yet and the register half is a loop over nothing; B-T5.1 turns it live
-      # by enabling `poll`, with no edit here.
+      # B-T5.0: the workflow's `POLL_MODE` reaches this step as it reaches
+      # every step, and in `shadow` the register half prints `would register`
+      # lines and calls nothing; B-T5.1 — in the cutover commit B — sets it
+      # `live`, with no edit here.
       - name: Register the polled tags, then claim at most three
         id: claim
         env:
@@ -324,9 +430,25 @@ jobs:
   # then sees a tag it believes was handled, and BOT-87 — the only detector for
   # a release that silently never reached the service — never fires for it.
   #
-  # `if: false` until B-T5.0.
+  # It restores the entry `load` verified, by that exact key, verifies it
+  # again, and re-derives the memory from what `poll`, `claim` and `sweep`
+  # answered — each answer re-read against its grammar, and a malformed one a
+  # failed job rather than a smaller memory. Then it composes BOT-87's verdict,
+  # which `poll-alert` sends, and saves the sealed memory under this run's key.
   remember:
-    needs: [roots, claim]
+    needs: [roots, load, poll, claim, sweep]
+    # Held until environment `bot-state` exists, as `load` is. The day it
+    # does, this line becomes:
+    #
+    #   if: >-
+    #     always() && !cancelled() && needs.roots.result == 'success' &&
+    #     needs.load.result == 'success'
+    #
+    # `always()`, because `claim` is red until B-T3.6 builds its lease step and
+    # a `remember` that waited for claim's success would never save; and
+    # because a poll or a sweep that failed is exactly what this job exists to
+    # write down. From `claim` it takes only `registered`, and a claim that
+    # died before answering registered nothing.
     if: false
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -334,21 +456,102 @@ jobs:
     permissions:
       contents: read
       id-token: none
+    outputs:
+      verdict: ${{ steps.remember.outputs.verdict }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: "Save the signed memory for the tags claim reported registered (not built: B-T5.0)"
+      # The entry `load` verified and no other. A miss is a failure, not a
+      # fresh start: an entry that vanished between the two jobs is something
+      # to look at, and a fresh memory would re-seed over it.
+      - uses: actions/cache/restore@v4
+        if: needs.load.outputs.cache_key != ''
+        with:
+          path: .poll-memory
+          key: ${{ needs.load.outputs.cache_key }}
+          fail-on-cache-miss: true
+
+      - name: Save the signed memory for the tags claim reported registered, and compose BOT-87's verdict
+        id: remember
         env:
+          BOT_STATE_HMAC_KEY: ${{ secrets.BOT_STATE_HMAC_KEY }}
+          ASTRA_POLL_LISTINGS: ${{ needs.load.outputs.listings }}
+          ASTRA_POLLED: ${{ needs.poll.outputs.polled }}
           ASTRA_REGISTERED: ${{ needs.claim.outputs.registered }}
-        run: |
-          set -euo pipefail
-          echo "::error::B-T5.0 builds this step: HMAC-sign the poll and sweep memory with environment bot-state's key and save it to the Actions cache, for the tags claim reported registered and for no others."
-          exit 1
+          ASTRA_SWEPT: ${{ needs.sweep.outputs.remote }}
+          ASTRA_SWEEP_DUE: ${{ needs.load.outputs.sweep_due }}
+          ASTRA_SWEEP_RESULT: ${{ needs.sweep.result }}
+        run: node bot/lib/poll-run.mjs remember
+
+      # Under this run's own key: a cache entry cannot be overwritten, and the
+      # next `load` takes the newest under the prefix.
+      - uses: actions/cache/save@v4
+        if: steps.remember.outputs.changed == 'true'
+        with:
+          path: .poll-memory
+          key: poll-memory-${{ github.run_id }}-${{ github.run_attempt }}
+
+  # ── poll-alert: BOT-87's verdict, and BOT-85's heartbeat for it ───────────
+  #
+  # The `alert` job below cannot carry this: it posts no heartbeat, for a
+  # reason about BOT-51's schedule that it states, and an alert job names a
+  # receiver check or a reason it posts none, never both. BOT-87 is on BOT-85's
+  # list, so its verdict goes out from a job of its own, posting to
+  # `poll-and-sweep` (`bot/lib/alert-checks.mjs`).
+  #
+  # It runs whenever `load` ran, so a `load` that failed — a missing key is the
+  # likely one — pages rather than going quiet: `remember` is then skipped, and
+  # the relay turns the missing verdict into a red one. It is skipped with
+  # `load`, which today means while `load` is held.
+  poll-alert:
+    needs: [roots, load, remember]
+    if: >-
+      always() && !cancelled() && needs.roots.result == 'success' &&
+      needs.load.result != 'skipped'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: alerts
+    permissions:
+      contents: read
+      id-token: none
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_DEADMAN_URL_POLL_AND_SWEEP: ${{ secrets.ASTRA_DEADMAN_URL_POLL_AND_SWEEP }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert
+            bot/alert.mjs
+            bot/heartbeat.mjs
+            bot/lib/relay-verdict.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: BOT-87's verdict as remember composed it, or an alarm saying it did not
+        env:
+          ASTRA_RELAYED_VERDICT: ${{ needs.remember.outputs.verdict }}
+        run: node bot/lib/relay-verdict.mjs --check poll-and-sweep --code BOT_87_DID_NOT_REPORT --out verdict.json
+
+      - uses: ./.github/actions/alert
+        with:
+          verdict: verdict.json
+          check: poll-and-sweep
 
   # ── verify: identity comes from the certificate, never from the archive ────
   #

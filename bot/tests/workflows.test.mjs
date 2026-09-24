@@ -2405,17 +2405,12 @@ test("a step marked `not built` cannot let its job report success", () => {
       }
     }
   }
-  // The floor. When every job is built this number is 0 and the rule becomes
-  // vacuous — correctly, and visibly, because this assertion is what has to be
-  // deleted for that to happen.
-  assert.ok(
-    found >= 1,
-    `no \`not built\` step was found in ${INGEST}, and there were 10 on 2026-09-20 — counted from the step ` +
-    `names and not from the marker, which also appears once in the file's header comment. Either every job is ` +
-    `now ` +
-    `built — in which case delete this floor in the commit that builds the last one — or the marker was ` +
-    `renamed and this rule has stopped applying to anything`,
-  );
+  // The floor was here: at least one `not built` step, with 10 on 2026-09-20.
+  // B-T5.0 built the last three (`load`, `poll` and `remember`, 2026-09-24),
+  // and the floor's own message said to delete it in that commit. The rule
+  // stays: it re-arms on the next placeholder anybody writes, and until then
+  // it is vacuous on purpose, and says so in the log, not by accident.
+  if (found === 0) console.log(`# no \`not built\` step in ${INGEST}: every job is built (B-T5.0 built the last, 2026-09-24)`);
   assert.equal(problems.join("\n"), "", "a placeholder step can let its job report success");
 });
 

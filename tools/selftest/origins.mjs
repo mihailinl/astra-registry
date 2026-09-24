@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { stableStringify } from "../lib/canonical.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
-import { test, assert, tmp, validateTree, errorsMatching } from "./harness.mjs";
+import { test, assert, assertEqual, tmp, validateTree, errorsMatching } from "./harness.mjs";
 
 export async function run() {
   console.log("\nwhere artifacts may come from");
@@ -106,5 +106,56 @@ export async function run() {
       assert(errorsMatching(report, "`..` path segment").length === 1,
         `a ${name} traversal resolved out of its prefix unnoticed:\n${report.errors.map((e) => e.message).join("\n")}`);
     }
+  });
+
+  // M-T6.3 step 1 (OPEN-OWNER-10). astra-chess is listed from KNICE-TECH, a
+  // login freed by the organisation's rename, and KNICE's re-release from
+  // MINICE-AI/astra-chess is held R_IDENTITY_CHANGED (issue #76). Approving it
+  // moves `source.repo`, and the four versions already published still record
+  // KNICE-TECH, which is where they were really built. Built from the COMMITTED
+  // listing rather than a made-up one, so that this is the tree the approval
+  // will actually meet: a fixture that had never contained the case would prove
+  // nothing about it.
+  await test("a listing that moves repository keeps its yanked history, and no live version of the old one", async () => {
+    const MOVED_TO = "MINICE-AI/astra-chess";
+    const src = path.join(REPO_ROOT, "plugins", "astra-chess");
+    assert(fs.existsSync(src), "plugins/astra-chess is gone; this test is about that listing and must be rewritten or deleted");
+    const moved = (name, yank) => {
+      const dir = path.join(tmp, name);
+      fs.cpSync(src, path.join(dir, "plugins", "astra-chess"), { recursive: true });
+      const pf = path.join(dir, "plugins", "astra-chess", "plugin.json");
+      const p = JSON.parse(fs.readFileSync(pf, "utf8"));
+      p.source.repo = MOVED_TO;
+      fs.writeFileSync(pf, stableStringify(p));
+      const vdir = path.join(dir, "plugins", "astra-chess", "versions");
+      const names = fs.readdirSync(vdir).filter((n) => n.endsWith(".json")).sort();
+      names.forEach((n, i) => {
+        const vf = path.join(vdir, n);
+        const v = JSON.parse(fs.readFileSync(vf, "utf8"));
+        if (yank(i, names.length)) v.yanked = true; else delete v.yanked;
+        fs.writeFileSync(vf, stableStringify(v));
+      });
+      return { dir, versions: names.length };
+    };
+    const mismatches = async (dir) => errorsMatching((await validateTree(dir)).report, "is not the listing's source repo");
+
+    // Every old version still live: each one is refused. This is the rule doing
+    // its job, and the reason the re-release cannot publish without step 1.
+    const live = moved("moved-live", () => false);
+    assert(live.versions >= 4, `astra-chess has ${live.versions} version file(s); it had 4 when this was written`);
+    const liveHits = await mismatches(live.dir);
+    assertEqual(liveHits.length, live.versions,
+      `${liveHits.length} of ${live.versions} pre-move versions refused; every live version from the old repository must be`);
+
+    // Every old version yanked: none is refused, so the approval can publish.
+    const yanked = await mismatches(moved("moved-yanked", () => true).dir);
+    assertEqual(yanked.length, 0,
+      "a yanked pre-move version was still refused, so the approved re-release cannot publish:\n" +
+      yanked.map((e) => `${e.where}: ${e.message}`).join("\n"));
+
+    // And the exemption is exactly as wide as a yank: one version left live is
+    // one refusal.
+    const one = await mismatches(moved("moved-one-live", (i, n) => i !== n - 1).dir);
+    assertEqual(one.length, 1, `${one.length} refusal(s) with one pre-move version left live; the exemption is wider than a yank`);
   });
 }

@@ -56,6 +56,10 @@ import { parseReleasesAtom, pollFeed } from "../lib/poll.mjs";
 // place rather than each pinned alone; see the last test in this file.
 import { safeTag } from "../lib/intake.mjs";
 import { loadRecords, loadSources } from "../../tools/lib/sources.mjs";
+// B-T5.0: the jobs' side of the same rules, and the relay that sends BOT-87's verdict.
+import * as run from "../lib/poll-run.mjs";
+import { relayedVerdict } from "../lib/relay-verdict.mjs";
+import { claimJob, POLL_MODES } from "../lib/service-jobs.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 
@@ -1021,4 +1025,524 @@ test("MIG-23: the tag memory seeds from state/releases-seen.json, tags only", ()
   });
   assert.deepEqual(seeded.repos["someone/quiet"], { etag: null, last_success_at: null, registered: ["v0.1.0", "cli-v1.0.0", "v0.2.0"] });
   assert.equal(poll.memoryProblem(seeded), null);
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// A monorepo's feed (B-T5.0, found building the shadow poll on B-T2.6)
+// ───────────────────────────────────────────────────────────────────────────
+//
+// `mihailinl/AstraPlugins` hosts six pollable listings, and `runPoll` used to
+// walk listings rather than repositories: each one fetched the same feed and
+// wrote `out.repos[<repo>]`, so every listing overwrote the one before it and
+// only the last listing's candidates survived. A new `bad-apple-v0.1.3` would
+// then have been judged by `bad-apple`, found, and thrown away when `text-utils`
+// judged the same feed and found nothing — in shadow a missing "would register"
+// line, and live a release that never reached the service, which is BOT-87's
+// alarm a day later for something the poll had in its hands.
+
+/** A listing in the shape `pollableListings` returns. */
+const monoListing = (id, prefix, recorded = [], { terminal = [] } = {}) => ({
+  id, repo: "someone/mono", repository_id: null, state: "grandfathered", prefix,
+  prefix_from: prefix === null ? { version: "0.1.0", tag: "release-0.1" } : { version: "0.1.0", tag: `${prefix}0.1.0` },
+  recorded_tags: recorded, terminal_tags: terminal, named_tags: [...recorded, ...terminal],
+});
+
+test("a monorepo's feed is read once and judged by every listing it hosts, none overwriting another", async () => {
+  const MONO = "someone/mono";
+  const listings = [
+    monoListing("alpha", "alpha-v", ["alpha-v0.1.0"]),
+    monoListing("beta", "beta-v", ["beta-v0.1.0"]),
+  ];
+  const xml = feed(
+    entry(tagUrl("alpha-v0.2.0", MONO)),
+    entry(tagUrl("beta-v0.1.0", MONO)),
+    entry(tagUrl("cli-v1.0.0", MONO)),
+  );
+  const { calls, fetchImpl } = queueFetch(ok(xml), ok(xml));
+  const out = await poll.runPoll({ listings, memory: poll.newMemory("2026-09-24T00:00:00Z"), now: new Date("2026-09-24T00:30:00Z"), fetchImpl });
+  const res = out.repos[MONO];
+  assert.deepEqual(res.candidates, ["alpha-v0.2.0"],
+    "alpha's new release is a candidate whichever listing of the repository was judged last");
+  assert.equal(calls.length, 1, "one conditional GET per repository, not one per listing it hosts");
+  assert.deepEqual(res.ids, ["alpha", "beta"], "and the result says which listings it spoke for");
+
+  // A tag one listing records is not registered because another listing's
+  // prefix admits it. `loose` has a tag that does not end in its version, so
+  // BOT-74 gives it no prefix and it admits every tag, alpha's included.
+  const mixed = [monoListing("alpha", "alpha-v", ["alpha-v0.1.0"]), monoListing("loose", null, [])];
+  const again = queueFetch(ok(feed(entry(tagUrl("alpha-v0.1.0", MONO)), entry(tagUrl("gamma-1", MONO)))));
+  const out2 = await poll.runPoll({ listings: mixed, memory: poll.newMemory("2026-09-24T00:00:00Z"), fetchImpl: again.fetchImpl });
+  assert.deepEqual(out2.repos[MONO].candidates, ["gamma-1"],
+    "alpha-v0.1.0 is recorded by alpha's version, and BOT-74 registers no tag a listed version records, " +
+    "whichever listing's prefix would have let it through");
+  const why = Object.fromEntries(out2.repos[MONO].skipped.map((s) => [s.tag, s.why]));
+  assert.match(why["alpha-v0.1.0"], /recorded/);
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// B-T5.0: the poll and the sweep as jobs, in shadow
+// ───────────────────────────────────────────────────────────────────────────
+//
+// `bot/lib/poll-run.mjs` is the plumbing between `plugins-ingest.yml`'s jobs; the
+// rules above are what it runs. What is asserted here is the plumbing's own
+// promises: B-T5.0's canary (a shadow run registers no tag
+// `state/releases-seen.json` records, and an emptied copy would), the memory
+// saved only on claim's answer, shadow keeping BOT-87's registration alarm out
+// of the verdict, the sweep's daily cadence, each job reaching only what it
+// holds, and the workflow wired to exactly what each subcommand reads and
+// writes.
+
+const RUN_FILE = path.join(REPO_ROOT, "bot", "lib", "poll-run.mjs");
+const INGEST_YML = path.join(REPO_ROOT, ".github", "workflows", "plugins-ingest.yml");
+const NOW = new Date("2026-09-24T12:00:00Z");
+
+/** A quiet listing of REPO, `v0.2.0` listed. */
+const quietListing = () => ({
+  id: "quiet", repo: REPO, repository_id: null, state: "grandfathered", prefix: "v",
+  prefix_from: { version: "0.2.0", tag: "v0.2.0" }, recorded_tags: ["v0.2.0"], terminal_tags: [], named_tags: [],
+});
+
+test("B-T5.0's canary: a shadow run registers no tag releases-seen records, and an emptied copy would", async () => {
+  const listings = [quietListing()];
+  // `v0.1.9` is a tag the legacy backstop saw and no version records — a
+  // refused or never-finished release, exactly the case MIG-23's seed is for.
+  const seen = { repos: { [REPO]: { checked_tags: ["v0.1.9"], last_seen_tag: "v0.1.9" } } };
+  const xml = feed(entry(tagUrl("v0.1.9")), entry(tagUrl("v0.2.0")), entry(tagUrl("cli-v1.0.0")));
+
+  // The whole path the shadow run takes, through the REAL claim job: load's
+  // seeded rows, the poll, the tags it hands on, and claim's register half in
+  // shadow — with a client that records every call it is asked to make.
+  const shadowRun = async (seenDoc) => {
+    const { rows } = run.loadOutputs({ opened: poll.newMemory(NOW), seen: seenDoc, listings, now: NOW, dispatched: true });
+    const out = await poll.runPoll({ listings, memory: { repos: rows }, now: NOW, fetchImpl: async () => ok(xml) });
+    const { tags } = run.pollOutputs(out, listings);
+    const client = stubClient();
+    const { lines, log } = quietLog();
+    const claimed = await claimJob({ client, polled: tags, mode: "shadow", log });
+    assert.deepEqual(client.calls.filter((c) => c.op === "register"), [], "claim registered a tag in shadow");
+    return { lines: lines.filter((l) => l.startsWith("would register")), registered: claimed.registered };
+  };
+
+  const seeded = await shadowRun(seen);
+  assert.deepEqual(seeded.lines, ["would register nothing: the poll offered no tag this run"],
+    "a tag state/releases-seen.json records is the legacy backstop's, and the shadow poll offers none of them");
+  assert.deepEqual(seeded.registered, [], "and in shadow nothing is registered, whatever the poll offered");
+
+  const emptied = await shadowRun({ repos: {} });
+  assert.deepEqual(emptied.lines, [`would register ${REPO}@v0.1.9`],
+    "the same run seeded from an emptied copy offers the recorded tag — which is the line the canary watches for");
+  assert.deepEqual(emptied.registered, []);
+});
+
+test("the memory keeps a polled tag only once claim answered for it", () => {
+  const listings = [quietListing()];
+  const key = REPO.toLowerCase();
+  const memory = poll.newMemory(NOW);
+  const polled = { at: "2026-09-24T12:00:00Z", repos: { [key]: { ok: true, candidates: ["v0.3.0"], etag: 'W/"new"' } } };
+  const base = { memory, discarded: null, listings, polled, swept: null, sweepDue: false, sweepFailed: false, now: NOW, mode: "shadow" };
+
+  const unanswered = run.composeRemember({ ...base, registered: [] });
+  assert.deepEqual(unanswered.memory.repos[key].registered, [],
+    "claim registered nothing (shadow, or a register that failed), so the tag stays unseen and is offered again");
+  assert.equal(unanswered.memory.repos[key].etag, null,
+    "and the feed's new ETag is not kept: saved, the next poll would be a 304 and the tag would never come back");
+
+  const answered = run.composeRemember({ ...base, registered: [{ repo: REPO, tag: "v0.3.0" }] });
+  assert.deepEqual(answered.memory.repos[key].registered, ["v0.3.0"]);
+  assert.equal(answered.memory.repos[key].etag, 'W/"new"');
+});
+
+test("in shadow BOT-87's registration alarm is logged as `would alarm`; live it is sent", () => {
+  const listings = [quietListing()];
+  const key = REPO.toLowerCase();
+  // Three sweeps' worth of memory: seeded, then v0.3.0 first seen, then
+  // still unhandled — the case canary 2 alarms on.
+  let memory = poll.newMemory(NOW);
+  const s0 = [["v0.2.0", SHA(1)]];
+  const s1 = [...s0, ["v0.3.0", SHA(3)]];
+  const at = (h) => new Date(NOW.getTime() + h * 3600 * 1000);
+  // Each step polls successfully too, so that the only thing that could turn
+  // the verdict red is the tag nobody registered.
+  const polledAt = (h) => ({ at: at(h).toISOString().slice(0, 19) + "Z", repos: { [key]: { ok: true, candidates: [], etag: null } } });
+  const step = (tags, h, mode) => run.composeRemember({
+    memory, discarded: null, listings, polled: polledAt(h), registered: [], swept: { [key]: { tags } },
+    sweepDue: true, sweepFailed: false, now: at(h), mode,
+  });
+  memory = step(s0, 0, "shadow").memory;
+  memory = step(s1, 24, "shadow").memory;
+
+  const shadow = step(s1, 48, "shadow");
+  assert.equal(shadow.verdict.status, "green",
+    "in shadow the poll registers nothing by construction, so an unregistered tag is not news to page about");
+  assert.deepEqual(shadow.wouldAlarm.map((a) => a.tag), ["v0.3.0"], "and it is still found, and said, in the log");
+
+  const live = step(s1, 48, "live");
+  assert.deepEqual(live.verdict.codes, ["BOT_87_TAG_UNREGISTERED"]);
+  assert.deepEqual(live.verdict.hexes, [SHA(3)]);
+  assert.deepEqual(live.wouldAlarm, []);
+});
+
+test("a sweep that was due and did not answer is BOT_87_SWEEP_FAILED for every listing, in shadow too", () => {
+  const listings = [quietListing(), { ...quietListing(), id: "other", repo: "someone/other" }];
+  const r = run.composeRemember({
+    memory: poll.newMemory(NOW), discarded: null, listings, polled: null, registered: [], swept: null,
+    sweepDue: true, sweepFailed: true, now: NOW, mode: "shadow",
+  });
+  assert.deepEqual(r.verdict.codes, ["BOT_87_SWEEP_FAILED"]);
+  assert.deepEqual(r.verdict.ids, ["other", "quiet"]);
+  const notDue = run.composeRemember({
+    memory: poll.newMemory(NOW), discarded: null, listings, polled: null, registered: [], swept: null,
+    sweepDue: false, sweepFailed: true, now: NOW, mode: "shadow",
+  });
+  assert.equal(notDue.verdict.status, "green", "a sweep that was not due and was skipped is not a failure");
+});
+
+test("the poll every 30 minutes and the sweep daily, and a dispatch forces only the poll", () => {
+  const withPoll = (secondsAgo) => {
+    const m = poll.newMemory(NOW);
+    m.repos["a/b"] = { etag: null, last_success_at: new Date(NOW.getTime() - secondsAgo * 1000).toISOString().slice(0, 19) + "Z", registered: [] };
+    return m;
+  };
+  assert.equal(run.pollDue(poll.newMemory(NOW), NOW).due, true, "nothing polled yet");
+  assert.equal(run.pollDue(withPoll(1500), NOW).due, true, "the :33 run, a few minutes early, is due");
+  assert.equal(run.pollDue(withPoll(1499), NOW).due, false, "the :23 run is not");
+  assert.equal(run.pollDue(withPoll(60), NOW, { dispatched: true }).due, true, "a dispatch means pull now (BOT-4)");
+
+  const swept = (secondsAgo) => {
+    const m = poll.newMemory(NOW);
+    m.sweep.last_at = new Date(NOW.getTime() - secondsAgo * 1000).toISOString().slice(0, 19) + "Z";
+    m.sweep.count = 1;
+    return m;
+  };
+  assert.equal(run.sweepDue(poll.newMemory(NOW), NOW).due, true, "the first sweep seeds, and is due");
+  assert.equal(run.sweepDue(swept(86100), NOW).due, true);
+  assert.equal(run.sweepDue(swept(86099), NOW).due, false);
+  // `loadOutputs` is where a dispatch reaches the two questions, so it is
+  // asked there: a dispatched sweep an hour after the last would make a tag
+  // the poll has had an hour to register look a sweep old.
+  const out = run.loadOutputs({ opened: swept(3600), seen: null, listings: [], now: NOW, dispatched: true });
+  assert.equal(out.poll.due, true);
+  assert.equal(out.sweep.due, false, "a dispatch does not make the sweep due");
+});
+
+test("each answer another job hands on is held to its grammar, and refused whole", () => {
+  const listings = [quietListing()];
+  const key = REPO.toLowerCase();
+  const polled = (res, k = key) => JSON.stringify({ at: "2026-09-24T12:00:00Z", repos: { [k]: res } });
+  assert.equal(run.readPolled("", listings), null, "a poll that did not run answered nothing");
+  assert.ok(run.readPolled(polled({ ok: true, candidates: ["v0.3.0"], etag: 'W/"x"' }), listings));
+  assert.throws(() => run.readPolled(polled({ ok: true, candidates: [], etag: null }, "someone/else"), listings), /load did not list/);
+  assert.throws(() => run.readPolled(polled({ ok: true, candidates: ["../evil"], etag: null }), listings), /grammar/);
+  assert.throws(() => run.readPolled(polled({ ok: true, candidates: [], etag: "not quoted" }), listings), /grammar/);
+  assert.throws(() => run.readPolled(polled({ ok: true, candidates: Array.from({ length: 51 }, (_, i) => `v${i}`), etag: null }), listings), /grammar/,
+    "a feed shows ten entries; fifty-one candidates did not come from one");
+
+  assert.deepEqual(run.readRegistered(""), []);
+  assert.throws(() => run.readRegistered(JSON.stringify([{ repo: "no slash", tag: "v1" }])), /registered/);
+
+  assert.equal(run.readSwept("", listings), null);
+  assert.ok(run.readSwept(JSON.stringify({ [key]: { tags: [["v0.2.0", SHA(1)]] } }), listings));
+  assert.ok(run.readSwept(JSON.stringify({ [key]: { error: "HTTP 500" } }), listings));
+  assert.throws(() => run.readSwept(JSON.stringify({ [key]: { tags: [["v0.2.0", "short"]] } }), listings), /sweep/);
+
+  assert.throws(() => run.readListings(""), /did `load` run/);
+  assert.throws(() => run.readListings(JSON.stringify([{ id: "x" }])), /pollableListings/);
+});
+
+test("the sweep asks each repository once, however many listings it hosts", () => {
+  const asked = [];
+  const listings = [
+    { ...quietListing(), id: "a", repo: "Some/Mono" },
+    { ...quietListing(), id: "b", repo: "some/mono" },
+    { ...quietListing(), id: "c", repo: "some/broken" },
+  ];
+  const out = run.sweepRemote(listings, (repo) => {
+    asked.push(repo);
+    if (repo === "some/broken") throw new Error("exit 128");
+    return [{ tag: "v1.0.0", sha: SHA(9) }];
+  });
+  assert.deepEqual(asked, ["Some/Mono", "some/broken"]);
+  assert.deepEqual(out, { "some/mono": { tags: [["v1.0.0", SHA(9)]] }, "some/broken": { error: "exit 128" } });
+});
+
+test("a job output that would not survive the trip to the next job is refused where it is written", () => {
+  assert.equal(run.outputLine("x", { a: 1 }), 'x={"a":1}\n');
+  assert.throws(() => run.outputLine("x", "a\nb"), /newline/);
+  assert.throws(() => run.outputLine("x", "a".repeat(run.MAX_OUTPUT_BYTES + 1)), /128 KiB/);
+});
+
+test("each subcommand reaches only what its job holds", () => {
+  // The key: read by `load` and `remember` and by nothing else, as data…
+  const keyed = Object.entries(run.JOB_IO).filter(([, io]) => io.reads.includes("BOT_STATE_HMAC_KEY")).map(([c]) => c);
+  assert.deepEqual(keyed.sort(), ["load", "remember"]);
+  // …and as code: the functions each job runs.
+  const src = (cmd) => run.COMMANDS[cmd].toString();
+  for (const cmd of ["poll", "sweep"]) {
+    for (const needle of ["loadMemory", "rememberMemory", "STATE_KEY_ENV", "BOT_STATE_HMAC_KEY"]) {
+      assert.ok(!src(cmd).includes(needle), `${cmd} reaches ${needle}; only load and remember hold the bot-state key`);
+    }
+  }
+  for (const cmd of ["load", "remember"]) {
+    for (const needle of ["runPoll", "pollFeed", "sweepRemote", "lsRemoteTags"]) {
+      assert.ok(!src(cmd).includes(needle), `${cmd} reaches ${needle}, which reads a stranger's answer`);
+    }
+  }
+  // And a name outside the table is refused at the read, not just in review:
+  // `poll` asking for the key is an exception, whatever the environment holds.
+  const env = { BOT_STATE_HMAC_KEY: KEY_HEX, ASTRA_POLL_ROWS: "{}" };
+  assert.throws(() => run.input("poll", env, "BOT_STATE_HMAC_KEY"), /JOB_IO does not list/);
+  assert.throws(() => run.input("sweep", env, "ASTRA_POLL_ROWS"), /JOB_IO does not list/);
+  assert.equal(run.input("poll", env, "ASTRA_POLL_ROWS"), "{}");
+});
+
+/** Run `node bot/lib/poll-run.mjs <cmd>` in `cwd`, with `env` and nothing ambient but PATH. */
+function runCmd(cmd, cwd, env) {
+  const outFile = path.join(cwd, `out-${cmd}-${Math.random().toString(36).slice(2)}`);
+  let code = 0;
+  let stdout = "";
+  let stderr = "";
+  try {
+    stdout = execFileSync(process.execPath, [RUN_FILE, cmd], {
+      cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      env: { PATH: process.env.PATH, HOME: process.env.HOME, GITHUB_OUTPUT: outFile, ...env },
+    });
+  } catch (e) {
+    code = e.status;
+    stdout = String(e.stdout ?? "");
+    stderr = String(e.stderr ?? "");
+  }
+  const outputs = {};
+  if (fs.existsSync(outFile)) {
+    for (const line of fs.readFileSync(outFile, "utf8").split("\n")) {
+      const i = line.indexOf("=");
+      if (i > 0) outputs[line.slice(0, i)] = line.slice(i + 1);
+    }
+  }
+  return { code, stdout, stderr, outputs };
+}
+
+test("claim's register half, in shadow, prints what it would register, calls nothing, and refuses a mode it does not know", async () => {
+  const tags = [{ repo: REPO, tag: "v0.3.0" }, { repo: "Some/Mono", tag: "alpha-v0.2.0" }];
+  assert.deepEqual([...POLL_MODES], ["shadow", "live"]);
+  assert.equal(run.MODES, POLL_MODES, "poll-run and the claim job read one list of modes, not two");
+
+  const shadowClient = stubClient();
+  const { lines, log } = quietLog();
+  const shadow = await claimJob({ client: shadowClient, polled: tags, mode: "shadow", log });
+  assert.ok(lines.includes(`would register ${REPO}@v0.3.0`), lines.join("\n"));
+  assert.ok(lines.includes("would register Some/Mono@alpha-v0.2.0"), lines.join("\n"));
+  assert.deepEqual(shadow.registered, [], "in shadow claim reports nothing registered, so the memory keeps nothing");
+  assert.deepEqual(shadowClient.calls.map((c) => c.op), ["claim"], "shadow made a register call; only the claim half calls");
+
+  // live — B-T5.1's value — registers each tag, and reports it in the form
+  // remember reads back.
+  const liveClient = stubClient();
+  const live = await claimJob({ client: liveClient, polled: tags, mode: "live", log: quietLog().log });
+  assert.deepEqual(liveClient.calls.filter((c) => c.op === "register").map((c) => `${c.body.repo}@${c.body.tag}`),
+    [`${REPO}@v0.3.0`, "Some/Mono@alpha-v0.2.0"]);
+  assert.deepEqual(run.readRegistered(JSON.stringify(live.registered)),
+    [{ repo: REPO, tag: "v0.3.0" }, { repo: "Some/Mono", tag: "alpha-v0.2.0" }]);
+
+  for (const mode of [undefined, null, "", "Shadow", "dry"]) {
+    const c = stubClient();
+    await assert.rejects(claimJob({ client: c, polled: tags, mode, log: quietLog().log }), /POLL_MODE/,
+      `POLL_MODE ${JSON.stringify(mode)} must refuse, never default`);
+    assert.deepEqual(c.calls, [], `POLL_MODE ${JSON.stringify(mode)} reached the service before refusing`);
+  }
+  // No tag, no mode needed: the claim half is B-T3.x's and is not the poll's switch.
+  const none = stubClient();
+  await claimJob({ client: none, polled: [], log: quietLog().log });
+  assert.deepEqual(none.calls.map((c) => c.op), ["claim"]);
+  // A tag that is not grammar-valid is refused by the job holding the token.
+  await assert.rejects(claimJob({ client: stubClient(), polled: [{ repo: REPO, tag: "../x" }], mode: "shadow", log: quietLog().log }),
+    /outside the grammar/);
+});
+
+const pathToUrl = (p) => new URL(`file://${path.resolve(p)}`).href;
+
+/** A service client that answers `claim` with no lease and records every call. */
+function stubClient() {
+  const calls = [];
+  return {
+    calls,
+    alerts: [],
+    async call(op, body) {
+      calls.push({ op, body });
+      if (op === "register") return { ok: true, body: {} };
+      return { ok: false, wait: "W_SERVICE_UNREACHABLE" };
+    },
+  };
+}
+const quietLog = () => { const lines = []; return { lines, log: { log: (l) => lines.push(l), error: (l) => lines.push(l) } }; };
+
+test("remember seals what it saves, and a forged cache entry is discarded and alarmed on", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "poll-run-"));
+  const env = {
+    POLL_MODE: "shadow", [poll.STATE_KEY_ENV]: KEY_HEX, ASTRA_POLL_LISTINGS: JSON.stringify([quietListing()]),
+    ASTRA_SWEEP_DUE: "false", ASTRA_SWEEP_RESULT: "skipped",
+  };
+  const first = runCmd("remember", dir, env);
+  assert.equal(first.code, 0, first.stderr);
+  assert.equal(first.outputs.changed, "true", "a first run saves the memory it started");
+  assert.equal(JSON.parse(first.outputs.verdict).status, "green");
+  const file = path.join(dir, poll.MEMORY_FILE);
+  assert.equal(poll.openMemory(JSON.parse(fs.readFileSync(file, "utf8")), poll.stateKey(keyEnv())).discarded, null,
+    "what remember wrote opens under the same key");
+
+  const again = runCmd("remember", dir, env);
+  assert.equal(again.outputs.changed, "false", "nothing new, nothing saved");
+
+  // Forged: a registered tag added by whoever could write the cache.
+  const envelope = JSON.parse(fs.readFileSync(file, "utf8"));
+  envelope.memory.repos[REPO.toLowerCase()] = { etag: null, last_success_at: null, registered: ["v0.3.0"] };
+  fs.writeFileSync(file, JSON.stringify(envelope));
+  const forged = runCmd("remember", dir, env);
+  assert.equal(forged.code, 0, forged.stderr);
+  assert.deepEqual(JSON.parse(forged.outputs.verdict).codes, ["BOT_87_MEMORY_DISCARDED"]);
+  assert.equal(forged.outputs.changed, "true", "and the fresh memory replaces it");
+
+  const loaded = runCmd("load", dir, { [poll.STATE_KEY_ENV]: OTHER_KEY_HEX, GITHUB_EVENT_NAME: "schedule" });
+  assert.equal(loaded.code, 0, loaded.stderr);
+  assert.match(loaded.outputs.discarded, /does not verify/, "load discards an entry sealed under another key, and says so");
+
+  const keyless = runCmd("remember", dir, { ...env, [poll.STATE_KEY_ENV]: "" });
+  assert.equal(keyless.code, 1, "no key, no memory saved and no verdict relayed — poll-alert turns that into a red alarm");
+  assert.equal(keyless.outputs.verdict, undefined);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("the relay sends the verdict remember composed, or a red one that says it did not", () => {
+  const opts = { check: "poll-and-sweep", code: "BOT_87_DID_NOT_REPORT", run: null };
+  const red = { schema: "astra.registry.alert-verdict/1", check: "poll-and-sweep", status: "red", codes: ["BOT_87_DID_NOT_REPORT"] };
+  const green = { schema: "astra.registry.alert-verdict/1", check: "poll-and-sweep", status: "green" };
+  assert.deepEqual(relayedVerdict(JSON.stringify(green), opts), { verdict: green, why: null });
+  for (const [text, why] of [
+    [undefined, /reported none/], ["", /reported none/], ["{", /not JSON/],
+    [JSON.stringify({ ...green, status: "amber" }), /not sendable/],
+    [JSON.stringify({ ...green, check: "ingest-roots" }), /about "ingest-roots"/],
+  ]) {
+    const r = relayedVerdict(text, opts);
+    assert.deepEqual(r.verdict, red, `${JSON.stringify(text)} is relayed as red`);
+    assert.match(r.why, why);
+  }
+  assert.throws(() => relayedVerdict("", { ...opts, code: "not a code" }), /fixed code/);
+});
+
+// ── the workflow, held to the table ────────────────────────────────────────
+
+/** `plugins-ingest.yml`'s jobs, each as its lines, by a two-space-indent key under `jobs:`. */
+function ingestJobs() {
+  const lines = fs.readFileSync(INGEST_YML, "utf8").split("\n");
+  const start = lines.indexOf("jobs:");
+  assert.ok(start > 0, "plugins-ingest.yml has no jobs: block");
+  const jobs = {};
+  let name = null;
+  for (const line of lines.slice(start + 1)) {
+    const m = /^ {2}([a-z][a-z0-9-]*):\s*$/.exec(line);
+    if (m) { name = m[1]; jobs[name] = []; continue; }
+    if (name && !line.trim().startsWith("#")) jobs[name].push(line);
+  }
+  return jobs;
+}
+
+/** The env keys of the step whose `id:` is `id`, in a job's lines. */
+function stepEnv(jobLines, id) {
+  const at = jobLines.findIndex((l) => new RegExp(`^\\s+id:\\s*${id}\\s*$`).test(l));
+  assert.ok(at >= 0, `no step with id ${id}`);
+  let begin = at;
+  while (begin > 0 && !/^\s+- (name|uses):/.test(jobLines[begin])) begin--;
+  let end = at + 1;
+  while (end < jobLines.length && !/^\s+- (name|uses):/.test(jobLines[end])) end++;
+  const step = jobLines.slice(begin, end);
+  const envAt = step.findIndex((l) => /^\s+env:\s*$/.test(l));
+  const keys = [];
+  if (envAt >= 0) {
+    const indent = step[envAt].search(/\S/);
+    for (const l of step.slice(envAt + 1)) {
+      if (l.trim() === "") continue;
+      if (l.search(/\S/) <= indent) break;
+      const k = /^\s+([A-Z][A-Z0-9_]*):/.exec(l);
+      if (k) keys.push(k[1]);
+    }
+  }
+  return { keys, text: step.join("\n") };
+}
+
+test("every step that runs bot/lib/poll-run.mjs maps what its subcommand reads, and nothing else it could hold", () => {
+  const jobs = ingestJobs();
+  const workflowEnv = ["DRY_RUN", "POLL_MODE"];
+  const src = fs.readFileSync(INGEST_YML, "utf8");
+  assert.match(src, /^env:\n(?:\s+#.*\n|\s+[A-Z_]+:.*\n)*\s+POLL_MODE: shadow\s*$/m,
+    "POLL_MODE is set once, at the top, and B-T5.0 lands it as `shadow`; B-T5.1's commit is the edit to `live`");
+  let checked = 0;
+  for (const [cmd, io] of Object.entries(run.JOB_IO)) {
+    const job = jobs[io.job];
+    assert.ok(job, `plugins-ingest.yml has no ${io.job} job for ${cmd}`);
+    const { keys, text } = stepEnv(job, io.step);
+    assert.match(text, new RegExp(`run: node bot/lib/poll-run\\.mjs ${cmd}\\s*$`, "m"), `${io.job}'s ${io.step} step does not run ${cmd}`);
+    for (const name of io.reads) {
+      if (workflowEnv.includes(name) || name.startsWith("GITHUB_")) continue;
+      assert.ok(keys.includes(name), `${io.job}'s ${io.step} step does not map ${name}, which ${cmd} reads`);
+    }
+    for (const name of keys) {
+      assert.ok(io.reads.includes(name), `${io.job}'s ${io.step} step maps ${name}, which ${cmd} never reads`);
+    }
+    checked++;
+  }
+  assert.equal(checked, 4);
+  // No other job runs a subcommand: a subcommand is a job.
+  const runs = [...src.matchAll(/run: node bot\/lib\/poll-run\.mjs (\S+)/g)].map((m) => m[1]);
+  assert.deepEqual(runs.sort(), Object.keys(run.JOB_IO).sort());
+});
+
+test("every output a job hands on is one its step writes, and every one read downstream is handed on", () => {
+  const jobs = ingestJobs();
+  const src = fs.readFileSync(INGEST_YML, "utf8");
+  const outputsOf = (lines) => {
+    const at = lines.findIndex((l) => /^ {4}outputs:\s*$/.test(l));
+    if (at < 0) return {};
+    const out = {};
+    for (const l of lines.slice(at + 1)) {
+      if (l.trim() === "") continue;
+      if (!/^ {6}/.test(l)) break;
+      const m = /^ {6}([a-z_]+):\s*\$\{\{\s*steps\.([a-z_-]+)\.outputs\.([a-z_-]+)\s*\}\}/.exec(l);
+      if (m) out[m[1]] = { step: m[2], name: m[3] };
+    }
+    return out;
+  };
+  const problems = [];
+  for (const io of Object.values(run.JOB_IO)) {
+    for (const [name, o] of Object.entries(outputsOf(jobs[io.job]))) {
+      if (o.step !== io.step) continue;
+      if (!io.writes.includes(o.name)) problems.push(`${io.job}.outputs.${name} reads ${io.step}'s ${o.name}, which it never writes`);
+    }
+  }
+  let reads = 0;
+  for (const m of src.matchAll(/needs\.([a-z-]+)\.outputs\.([a-z_]+)/g)) {
+    reads++;
+    const out = outputsOf(jobs[m[1]] ?? []);
+    if (!out[m[2]]) problems.push(`needs.${m[1]}.outputs.${m[2]} is read and ${m[1]} declares no such output`);
+  }
+  assert.ok(reads >= 15, `only ${reads} needs.*.outputs reads found; this walk read nothing`);
+  assert.equal(problems.join("\n"), "", "an output read downstream is an empty string, which reads as nothing to report");
+});
+
+test("poll-alert checks out every file the relay imports, and posts to BOT-87's check", () => {
+  const job = ingestJobs()["poll-alert"];
+  assert.ok(job, "plugins-ingest.yml has no poll-alert job");
+  const listed = new Set(job.map((l) => /^\s{12}(\S+)\s*$/.exec(l)?.[1]).filter(Boolean));
+  const closure = (entry, seen = new Set()) => {
+    if (seen.has(entry)) return seen;
+    seen.add(entry);
+    const text = fs.readFileSync(path.join(REPO_ROOT, entry), "utf8");
+    for (const m of text.matchAll(/^import\s+[\s\S]*?from\s+"(\.[^"]+)";/gm)) {
+      closure(path.relative(REPO_ROOT, path.resolve(path.dirname(path.join(REPO_ROOT, entry)), m[1])), seen);
+    }
+    return seen;
+  };
+  const need = closure("bot/lib/relay-verdict.mjs");
+  assert.ok(need.size >= 3, `the relay's closure is ${[...need].join(", ")}; this walk read nothing`);
+  for (const f of need) assert.ok(listed.has(f), `poll-alert runs bot/lib/relay-verdict.mjs, which needs ${f}, and its sparse checkout omits it`);
+  assert.ok(job.some((l) => /^\s+check:\s*poll-and-sweep\s*$/.test(l)), "poll-alert posts to poll-and-sweep");
+  assert.ok(job.some((l) => /--check poll-and-sweep --code BOT_87_DID_NOT_REPORT/.test(l)));
 });

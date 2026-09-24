@@ -1,0 +1,13 @@
+{
+  "$comment": "M-T6.3 step 1 (OPEN-OWNER-10), a security commit. KNICE's re-release from MINICE-AI/astra-chess is held R_IDENTITY_CHANGED on issue #76 (since 2026-09-17), and this lands before that hold is approved. Approving it moves source.repo to MINICE-AI/astra-chess; these four versions record KNICE-TECH, where they were built, and tools/validate.mjs accepts that only for a yanked version. The listing is unlisted since 2026-09-12, so nothing new could install them anyway. Yanks are never undone.",
+  "date": "2026-09-24",
+  "action": "yank",
+  "plugin": "astra-chess",
+  "versions": [
+    "0.1.13",
+    "0.1.15",
+    "0.1.16",
+    "0.1.17"
+  ],
+  "reason": "Released from KNICE-TECH/astra-chess, a login freed by the organisation's rename to MINICE-AI and claimable by anyone. Yanked so the listing can move to MINICE-AI/astra-chess; installed copies keep running."
+}
