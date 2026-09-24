@@ -266,6 +266,10 @@ import { isTime } from "./lib/time.mjs";
 import { DEADLINE_FILE, DEADLINE_SCHEMA } from "../bot/lib/listing-state.mjs";
 
 const DAY = 86_400_000;
+// The DEADLINE's floor only (MIG-29, checked by `evalDeadline`): cutover waits
+// until the binding deadline is at least 30 days away, which is R7's arithmetic
+// and which contract 2.0.0 kept. Round 2 has no interval since 2.0.0 (ROLL-32),
+// so nothing in `evalRound2` reads this.
 const THIRTY_DAYS = 30 * DAY;
 
 /** `log/migration-notice-<n>.json` — MIG-13's markers, one per round (n10). */
@@ -596,6 +600,21 @@ export function evalRound2(markers, now, types = null) {
   // No interval since contract 2.0.0: the age is printed, never required.
   const age = now.getTime() - sentAt.getTime();
   lines.push(`round 2 is ${days(age)} days old; no interval applies since contract 2.0.0 (ROLL-32)`);
+  // What 2.0.0 leaves: round 2 was actually sent, and sent BEFORE the date it
+  // announced. A `sent_at` after now records a send that has not happened; one
+  // at or after its own `cutover_planned_at` announced nothing in advance.
+  if (sentAt.getTime() > now.getTime()) {
+    return unmet(`round 2's sent_at is ${days(-age)} days in the future`, [
+      ...lines,
+      "a marker is committed with each round's sends (M-T5.3); a sent_at after now is not a record of one.",
+    ]);
+  }
+  if (sentAt.getTime() >= plannedAt.getTime()) {
+    return unmet("round 2 was sent at or after the cutover date it announced", [
+      ...lines,
+      "ROLL-32 needs the notice before the date it announces; this one announced a date already come.",
+    ]);
+  }
   if (now.getTime() < plannedAt.getTime()) {
     return unmet(
       `the announced cutover date has not come (${days(plannedAt.getTime() - now.getTime())} days away)`,
@@ -1928,6 +1947,28 @@ function selftest() {
     evalRound2([marker(2, "2026-09-21T00:00:00Z", "2026-09-22T00:00:00Z")], T("2026-09-21T06:00:00Z")).verdict,
     UNMET,
   );
+  // One day old and its date come: the case the 30 days used to refuse.
+  is(
+    "2.0.0: one day old, date come",
+    evalRound2([marker(2, "2026-09-20T00:00:00Z", "2026-09-20T12:00:00Z")], T("2026-09-21T00:00:00Z")).verdict,
+    MET,
+  );
+  // What 2.0.0 leaves of "advance": the notice precedes the date it announces.
+  // Sent AT the announced date announced nothing ahead of it.
+  is(
+    "2.0.0: sent at the announced date",
+    evalRound2([marker(2, "2026-09-20T00:00:00Z", "2026-09-20T00:00:00Z")], T("2026-09-21T00:00:00Z")).verdict,
+    UNMET,
+  );
+  // And a round 2 dated after now is a record of a send that has not happened.
+  // Whatever it announced, one of the two date rules would refuse it too, so
+  // the headline is asserted: the operator is told the send has not happened,
+  // not that a date has not come.
+  for (const planned of ["2026-09-20T00:00:00Z", "2026-09-25T00:00:00Z"]) {
+    const v = evalRound2([marker(2, "2026-09-22T00:00:00Z", planned)], T("2026-09-21T00:00:00Z"));
+    is(`2.0.0: sent in the future, announcing ${planned.slice(0, 10)}`, v.verdict, UNMET);
+    is(`2.0.0: and named as a send in the future (${planned.slice(0, 10)})`, /in the future/.test(v.headline), true);
+  }
 
   // The announced date has not come.
   is(
@@ -1963,10 +2004,13 @@ function selftest() {
   // Round 3's own sent_at is 3 days old; taking it would give UNMET.
   is(
     "the clock is round 2's, with round 3 present",
+    // Round 3's own sent_at is AFTER the date it repeats: taking it would be
+    // UNMET under the sent-before-announced rule, so MET here means round 2's
+    // sent_at was the one read.
     evalRound2(
       [
         marker(2, "2026-08-01T00:00:00Z", "2026-09-20T00:00:00Z"),
-        marker(3, "2026-09-18T00:00:00Z", "2026-09-20T00:00:00Z"),
+        marker(3, "2026-09-20T12:00:00Z", "2026-09-20T00:00:00Z"),
       ],
       T("2026-09-21T00:00:00Z"),
     ).verdict,
