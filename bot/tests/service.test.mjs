@@ -587,6 +587,23 @@ const NOT_MEMBER_READERS = [
       "schemas\" it is absent from (dev/couplings.md entry 67), and opens it only to ask whether it carries " +
       "`$schema`, as it opens every file under `schema/`. It parses no entry and reads no member",
   },
+  {
+    file: "tools/deadline-watch.mjs",
+    reads: [],
+    why:
+      "ROLL-63's watch (M-T5.4). It imports `tools/cutover-preflight.mjs` for one constant, `R4B_MARKER`, and asks " +
+      "only whether that path exists on the tree, to tell a 404 from the dark plugins zone before R4b from one after " +
+      "it (MIG-13, contract 2.7.0). The markers it reads come from `tools/lib/migration-notice.mjs`'s `readMarkers`, " +
+      "judged by `schema/migration-notice-v1.json`; it opens no entry of the token file and evaluates no condition",
+  },
+  {
+    file: "bot/tests/listing-state.test.mjs",
+    reads: [],
+    why:
+      "imports `tools/cutover-preflight.mjs` for `R4B_MARKER` alone: to hold it equal to `site/successors.mjs`'s, " +
+      "and to write R4b's marker into a fixture tree the deadline watch then reads. It opens no entry of the token " +
+      "file and evaluates no condition",
+  },
 ];
 
 /**
