@@ -47,6 +47,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "../tools/lib/git-env.mjs";
 
 import { readDecisionRecords } from "./baseline.mjs";
 import { VERDICT_SCHEMA, runUrl } from "./lib/alert-verdict.mjs";
@@ -100,7 +101,7 @@ const QUEUE_GLOB = "state/queue/*.json";
 export function gitReader(root) {
   const git = (args, allowFail = false) => {
     try {
-      return execFileSync("git", ["-C", root, ...args], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).replace(/\n$/, "");
+      return execFileSync("git", ["-C", root, ...args], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, env: cleanEnv() }).replace(/\n$/, "");
     } catch (e) {
       if (allowFail) return null;
       throw new Error(`git ${args.join(" ")}: ${String(e.stderr ?? e.message).trim().split("\n")[0]}`);
@@ -115,7 +116,7 @@ export function gitReader(root) {
     },
     isAncestor(a, b) {
       try {
-        execFileSync("git", ["-C", root, "merge-base", "--is-ancestor", a, b], { stdio: "ignore" });
+        execFileSync("git", ["-C", root, "merge-base", "--is-ancestor", a, b], { stdio: "ignore", env: cleanEnv() });
         return true;
       } catch {
         return false;

@@ -37,6 +37,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "../../tools/lib/git-env.mjs";
 
 import {
   ACTIONS, BACKING, CATEGORIES, ENTRY_MEMBERS, ESCALATING_ACTIONS, OUTCOMES,
@@ -240,7 +241,7 @@ test("every entry on `main` is tracked, valid, and counted with git rather than 
   // `git ls-files`, not `readdir`: an untracked stray in a working tree would
   // pad a readdir count, and a `bot/moderation/` that a merge lost would empty
   // it. The floor's failure has to say which of the two happened.
-  const tracked = execFileSync("git", ["-C", REPO, "ls-files", `${SOURCE_DIR}/*.json`], { encoding: "utf8" })
+  const tracked = execFileSync("git", ["-C", REPO, "ls-files", `${SOURCE_DIR}/*.json`], { encoding: "utf8", env: cleanEnv() })
     .split("\n").filter(Boolean);
   assert.ok(
     tracked.length >= ENTRY_FLOOR,

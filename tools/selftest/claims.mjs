@@ -120,6 +120,7 @@
 // Registry plan: gap 21 of `O:dev/couplings.md`; RC-R1-6 (the AV-7 rows).
 
 import { execFileSync } from "node:child_process";
+import { cleanEnv, fixtureEnv } from "../lib/git-env.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -269,6 +270,7 @@ export function trackedFiles(dir, { under = [], exts = [] } = {}) {
   try {
     listed = execFileSync("git", ["-C", dir, "ls-files", "-z"], {
       encoding: "utf8", maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
+      env: cleanEnv(),
     });
   } catch (e) {
     throw new Error(`\`git -C ${dir} ls-files\` failed: ${String(e.stderr || e.message).trim()}`);
@@ -317,6 +319,7 @@ export function listedFiles(dir, paths) {
     try {
       listed = execFileSync("git", ["-C", dir, "ls-files", "-z", "--", ...spec], {
         encoding: "utf8", maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
+        env: cleanEnv(),
       });
     } catch (e) {
       throw new Error(`\`git -C ${dir} ls-files -- ${spec.join(" ")}\` failed: ${String(e.stderr || e.message).trim()}`);
@@ -1328,8 +1331,8 @@ export async function run() {
     put("ws/crate/src/nested/deeper.rs", "NEEDLE one level below the directory\n");
     put("ws/crate/data/named/top.txt", "nothing here either\n");
     put("ws/crate/data/named/sub/under.txt", "NEEDLE in a subdirectory nobody listed\n");
-    execFileSync("git", ["-C", root, "init", "-q"], { stdio: "ignore" });
-    execFileSync("git", ["-C", root, "add", "-A"], { stdio: "ignore" });
+    execFileSync("git", ["-C", root, "init", "-q"], { stdio: "ignore", env: fixtureEnv(root) });
+    execFileSync("git", ["-C", root, "add", "-A"], { stdio: "ignore", env: fixtureEnv(root) });
 
     const trees = {
       fixture: { label: "a listed fixture", env: null, siblings: [root], probe: "ws/Cargo.toml", onlyListedPaths: true },

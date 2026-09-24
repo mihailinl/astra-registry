@@ -19,6 +19,7 @@
 // right there.
 
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "../lib/git-env.mjs";
 
 /** 64 MiB. A `git log -p` of this repository is nowhere near it; a runaway is. */
 const MAX_BUFFER = 64 * 1024 * 1024;
@@ -35,7 +36,7 @@ export function git(args, opts = {}) {
       encoding: "utf8",
       maxBuffer: MAX_BUFFER,
       // A pager or a hook writing to stdout would end up parsed as data.
-      env: { ...process.env, GIT_PAGER: "cat", GIT_OPTIONAL_LOCKS: "0" },
+      env: { ...cleanEnv(), GIT_PAGER: "cat", GIT_OPTIONAL_LOCKS: "0" },
       stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (e) {
@@ -168,7 +169,7 @@ export function mergeOwnChanges(sha, cwd) {
     out = execFileSync("git", ["-C", cwd, "merge-tree", "--write-tree", "-z", "--name-only", "--no-messages",
       parents[0], parents[1]], {
       encoding: "utf8", maxBuffer: MAX_BUFFER,
-      env: { ...process.env, GIT_PAGER: "cat", GIT_OPTIONAL_LOCKS: "0" },
+      env: { ...cleanEnv(), GIT_PAGER: "cat", GIT_OPTIONAL_LOCKS: "0" },
       stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (e) {

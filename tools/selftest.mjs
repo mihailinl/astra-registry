@@ -38,9 +38,36 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { REPO_ROOT } from "./lib/sources.mjs";
+import { repositoryVars } from "./lib/git-env.mjs";
 import { isShallow } from "./coverage/git.mjs";
 import { cleanupTmp, drain, registeredCount, results, walkRepo } from "./selftest/harness.mjs";
 import { NODE_FLOOR, RELAUNCHED, loadsState, loadsUnrecorded, relaunchUnderHook } from "./selftest/loads/record.mjs";
+
+// **No repository variable reaches a case, or a child a case starts.** git
+// exports `GIT_DIR` to a hook, to `rebase -x` and to a `!` alias — from a
+// worktree an absolute path whose `config` and `refs/heads` are the shared
+// repository's — and a child git obeys it over its `cwd` and `-C`. Measured on
+// 2026-09-23 (astra-plugins-ops couplings 142, 143): run that way, a fixture
+// builder writes into the repository it names; this suite happened to refuse
+// first only because its workflow walk read that repository and found no
+// workflows. So the variables are dropped here, before anything is asked or
+// relaunched, rather than refused: the suite is the check a change must pass
+// wherever it is about to land, a hook included, and a refusal would teach
+// whoever runs it to strip the environment by hand. Every git command in the
+// cases takes `cleanEnv()` or `fixtureEnv(dir)` as well (tools/lib/git-env.mjs,
+// swept by tools/selftest/git-env.mjs); this is the layer that holds for
+// whatever the sweep cannot read. Imports above run first, and none of them
+// runs git at import (measured: a run under a hook's GIT_DIR leaves the
+// repository it names byte-identical, bot/tests/workflows.test.mjs). Said
+// out loud when it happens, never when it does not.
+{
+  const dropped = repositoryVars().filter((v) => v in process.env);
+  for (const v of dropped) delete process.env[v];
+  if (dropped.length) {
+    console.log(`note  ${dropped.join(", ")} inherited from the caller (a git hook, \`rebase -x\` or a \`!\` alias sets ` +
+      "them) and dropped for this run, so no case or child can act on the repository they name");
+  }
+}
 
 const ARGS = process.argv.slice(2);
 const WANT_LANES = ARGS.includes("--lanes");
@@ -222,6 +249,13 @@ const MODULES = [
   // belong to, and `baseline.mjs` stays after it. **This line, its FLOORS entry and
   // the file are one change**, for the reason written out at `regenerate.mjs`.
   "settings.mjs",
+  // Ops couplings 142 and 143 — every git spawn in the tree takes a clean
+  // environment, read from source. It prints its own section header and sits
+  // between two modules that print theirs, so it moves no existing name under a
+  // header it does not belong to, and `baseline.mjs` stays after it. **This
+  // line, its FLOORS entry and the file are one change**, for the reason
+  // written out at `regenerate.mjs` above.
+  "git-env.mjs",
   // Last until `loads.mjs` below, and with a section header of its own. The
   // boundary to protect is `update-notes.mjs` → `repo-rules.mjs`:
   // `repo-rules.mjs` prints no header, so its names come out under
@@ -1885,6 +1919,7 @@ const FLOORS = new Map(Object.entries({
   "migration-notice.mjs": 6,
   "times.mjs": 4,
   "settings.mjs": 14,
+  "git-env.mjs": 8,
   "baseline.mjs": 9,
   "loads.mjs": 2,
 }));

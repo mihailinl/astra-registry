@@ -57,6 +57,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "./lib/git-env.mjs";
 
 import { stableStringify } from "./lib/canonical.mjs";
 import { compareSemver } from "./lib/semver.mjs";
@@ -117,6 +118,7 @@ export function resolveSerial({ explicit, root = REPO_ROOT } = {}) {
       cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      env: cleanEnv(),
     });
     const committed = Number(out.trim());
 
@@ -149,6 +151,7 @@ export function resolveSerial({ explicit, root = REPO_ROOT } = {}) {
       cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      env: cleanEnv(),
     });
     return dirty.trim() ? committed + 1 : committed;
   } catch {

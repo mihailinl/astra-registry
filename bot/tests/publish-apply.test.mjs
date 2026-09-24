@@ -20,6 +20,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
+import { fixtureEnv } from "../../tools/lib/git-env.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -34,7 +35,7 @@ import {
 } from "../publish-apply.mjs";
 
 const git = (cwd, ...args) =>
-  execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(cwd) }).trim();
 
 const write = (root, rel, body) => {
   fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });

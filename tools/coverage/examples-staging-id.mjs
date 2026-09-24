@@ -72,6 +72,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "../lib/git-env.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { report } from "./rules.mjs";
@@ -153,7 +154,7 @@ const gitIn = (dir, args, timeoutMs) =>
     timeout: timeoutMs,
     maxBuffer: 64 * 1024 * 1024,
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "echo", GIT_CONFIG_NOSYSTEM: "1", GIT_PAGER: "cat" },
+    env: { ...cleanEnv(), GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "echo", GIT_CONFIG_NOSYSTEM: "1", GIT_PAGER: "cat" },
   });
 
 /**
@@ -181,7 +182,7 @@ export async function fetchExamples(remoteUrl, { timeoutMs = TIMEOUT_MS } = {}) 
       encoding: "utf8",
       timeout: timeoutMs,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "echo", GIT_CONFIG_NOSYSTEM: "1" },
+      env: { ...cleanEnv(), GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "echo", GIT_CONFIG_NOSYSTEM: "1" },
     });
     const paths = gitIn(dir, ["ls-tree", "-r", "--name-only", "-z", "HEAD"], timeoutMs)
       .split("\0").filter((p) => EXAMPLE_RE.test(p)).sort();

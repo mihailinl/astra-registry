@@ -21,6 +21,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { fixtureEnv } from "../../tools/lib/git-env.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -41,7 +42,7 @@ import { runValidation } from "../../tools/validate.mjs";
 import { REPO_ROOT } from "../../tools/lib/sources.mjs";
 
 const git = (cwd, args) =>
-  execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(cwd) }).trim();
 
 const trash = [];
 process.on("exit", () => {

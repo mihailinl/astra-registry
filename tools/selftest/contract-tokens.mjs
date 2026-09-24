@@ -62,6 +62,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
+import { cleanEnv } from "../lib/git-env.mjs";
 
 import { isShallow } from "../coverage/git.mjs";
 import { REPO_ROOT, loadPublishers, loadRecords, loadSources, publisherRecords } from "../lib/sources.mjs";
@@ -175,6 +176,7 @@ const SCHEDULE_FLOOR = 1;
 function git(args) {
   return execFileSync("git", ["-C", REPO_ROOT, ...args], {
     encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
+    env: cleanEnv(),
   });
 }
 
@@ -2553,6 +2555,7 @@ function fixtureRepo(dirs) {
   const dest = fs.mkdtempSync(path.join(tmp, "workflow-half-"));
   const listed = execFileSync("git", ["-C", REPO_ROOT, "ls-files", "-z", "--", ...dirs], {
     encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
+    env: cleanEnv(),
   }).split("\0").filter(Boolean);
   let copied = 0;
   for (const rel of listed) {

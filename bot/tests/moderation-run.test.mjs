@@ -30,6 +30,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
+import { fixtureEnv } from "../../tools/lib/git-env.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -109,8 +110,14 @@ process.on("exit", () => {
   for (const dir of tmpRoots) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-const sh = (args, cwd, env = null) => execFileSync("git", args, {
-  cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", ...(env ? { env: { ...process.env, ...env } } : {}),
+// `when` is `dated(iso)`'s two dates, or nothing; the rest of the environment is
+// a fixture's (tools/lib/git-env.mjs), so no inherited GIT_DIR can take the command.
+const sh = (args, cwd, when = null) => execFileSync("git", args, {
+  cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8",
+  env: {
+    ...fixtureEnv(cwd),
+    ...(when ? { GIT_AUTHOR_DATE: when.GIT_AUTHOR_DATE, GIT_COMMITTER_DATE: when.GIT_COMMITTER_DATE } : {}),
+  },
 });
 /** Both of a commit's clocks at one instant, for a fixture whose history says when. */
 const dated = (iso) => ({ GIT_COMMITTER_DATE: iso, GIT_AUTHOR_DATE: iso });
@@ -1313,7 +1320,9 @@ test("a batch with one held decision leaves a tree in which every `paths.txt` en
         "names a hold no file records");
     }
     // The workflow's own command, over the tree the job left.
-    const add = spawnSync("git", ["add", "--pathspec-from-file=moderation/paths.txt"], { cwd: root, encoding: "utf8" });
+    const add = spawnSync("git", ["add", "--pathspec-from-file=moderation/paths.txt"], {
+      cwd: root, encoding: "utf8", env: fixtureEnv(root),
+    });
     assert.equal(add.status, 0, `git add --pathspec-from-file exited ${add.status}: ${add.stderr}`);
 
     // The entry is one the next run can read, released on the rule MOD-9 states.
@@ -1642,10 +1651,14 @@ function runApply(root, env = {}) {
   const output = path.join(dir, "github-output");
   fs.writeFileSync(file, applyStep());
   fs.writeFileSync(output, "");
+  // The step runs `git add`, `git commit` and `git push` itself, so its shell
+  // gets a fixture's environment: under a hook's GIT_DIR it committed into the
+  // repository that names (measured 2026-09-23, ops couplings 143), and
+  // tools/selftest/git-env.mjs reads `git` spawns, not the git a shell runs.
   const step = spawnSync("bash", ["-e", file], {
     cwd: root,
     encoding: "utf8",
-    env: { ...process.env, ...env, GITHUB_OUTPUT: output },
+    env: { ...fixtureEnv(root), ...env, GITHUB_OUTPUT: output },
   });
   return { ...step, outputs: readOutputs(output) };
 }

@@ -21,6 +21,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { fixtureEnv } from "../../tools/lib/git-env.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -34,8 +35,16 @@ import {
   SOURCE_PATHSPEC as REVOCATIONS_SOURCE_PATHSPEC,
 } from "../../tools/lib/revocations.mjs";
 
-const git = (cwd, args, env = {}) =>
-  execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...env } }).trim();
+// `when` is `AT(iso)`'s two dates, or nothing; the rest of the environment is a
+// fixture's (tools/lib/git-env.mjs), so no inherited GIT_DIR can take the command.
+const git = (cwd, args, when = {}) =>
+  execFileSync("git", args, {
+    cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+    env: {
+      ...fixtureEnv(cwd),
+      ...(when.GIT_AUTHOR_DATE ? { GIT_AUTHOR_DATE: when.GIT_AUTHOR_DATE, GIT_COMMITTER_DATE: when.GIT_COMMITTER_DATE } : {}),
+    },
+  }).trim();
 
 const write = (root, rel, body) => {
   fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });

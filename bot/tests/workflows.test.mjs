@@ -13,12 +13,16 @@
 // extend it).
 
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 
 import { OPTIONAL_SECRETS, REQUIRED_SECRETS } from "../alert.mjs";
 import { CHECKS, alertsEnvironmentSecrets, optionalAlertsSecrets, secretName } from "../lib/alert-checks.mjs";
+import { cleanEnv, fixtureEnv } from "../../tools/lib/git-env.mjs";
 
 /**
  * Every channel secret `bot/alert.mjs` names: the required two and the
@@ -1668,6 +1672,185 @@ test("every suite under bot/tests/ is named by a workflow, and the list has a fl
   );
   assert.ok(files.length >= 10, `only ${files.length} workflow file(s) read; there were 13 on 2026-09-20`);
 
+});
+
+// ── ops couplings 142 and 143: a hook's environment reaches no repository ────
+//
+// git exports `GIT_DIR` to a hook, to `rebase -x` and to a `!` alias — from a
+// worktree, an ABSOLUTE path to the worktree's gitdir, whose `config` and
+// `refs/heads` are the shared repository's — and a child git obeys it over its
+// `cwd` and over `-C`. On 2026-09-23 a fixture builder run from
+// astra-plugins-ops' pre-push hook in a worktree made that repository's shared
+// checkout bare and moved its `main`. Measured the same day, here: the seven
+// suites below, run under a hook-shaped `GIT_DIR` naming a throwaway
+// repository, wrote `core.bare = true`, a user and a fetch refspec into its
+// config, moved its `main` and `side`, created five branches and re-pointed its
+// worktree's HEAD. Every git spawn now takes `cleanEnv()` or `fixtureEnv(dir)`
+// (tools/lib/git-env.mjs), `tools/selftest/git-env.mjs` sweeps the source for
+// one that does not, and `tools/selftest.mjs` drops the variables before it
+// asks anything. These two tests run the real thing, end to end, the way a
+// hook would.
+//
+// **Why this suite.** For gap 28's reason below: a new file under bot/tests/ is
+// run by nothing until bot-tests.yml names it, and that file is the
+// coordinator's. This suite is the one whose subject is what CI runs and how,
+// and the §2.0 check above is about the same population these walk.
+//
+// **The environment is exactly a hook's**: this process's, without any
+// repository variable, plus the one git 2.55 exports to `pre-push` from a
+// worktree — `GIT_DIR`, absolute. The five other variables the ops hook unsets
+// are LESS hostile, not more: with `GIT_WORK_TREE` exported, `git init --bare`
+// refuses outright instead of rewriting the repository (measured). Each test
+// shows the environment hostile before it asks for the pass.
+
+/**
+ * `env` as a child run by hand would see it. This file runs under `node
+ * --test`, which hands its own children `NODE_TEST_CONTEXT`: a `node --test`
+ * child that inherits it reports to a parent runner that is not listening,
+ * and prints nothing a reader here can count (measured: a child suite's
+ * tests did not appear in its output at all).
+ */
+function asByHand(env) {
+  const out = { ...env };
+  for (const k of Object.keys(out)) if (k.startsWith("NODE_TEST_")) delete out[k];
+  return out;
+}
+
+/** A throwaway repository with one commit and a worktree on `side`. */
+function hookVictim(label) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `astra-hook-victim-${label}-`)));
+  const repo = path.join(root, "repo");
+  const wt = path.join(root, "wt");
+  fs.mkdirSync(repo);
+  const g = (cwd, ...args) => execFileSync("git", ["-C", cwd, "-c", "user.name=victim", "-c", "user.email=victim@example.invalid",
+    "-c", "commit.gpgsign=false", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(cwd) }).trim();
+  g(repo, "init", "-q", "-b", "main");
+  fs.writeFileSync(path.join(repo, "README"), "a repository a hook's GIT_DIR names\n");
+  g(repo, "add", "-A");
+  g(repo, "commit", "-q", "-m", "victim");
+  g(repo, "worktree", "add", "-q", wt, "-b", "side");
+  const gitdir = g(wt, "rev-parse", "--absolute-git-dir");
+  return {
+    root,
+    gitdir,
+    hostile: asByHand({ ...cleanEnv(), GIT_DIR: gitdir }),
+    cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
+    /** Every file under the common git dir but objects/, the object counts, and the worktree's files. */
+    print() {
+      const out = new Map();
+      const walk = (dir, prefix, skip) => {
+        for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+          const abs = path.join(dir, e.name);
+          if (skip(e.name)) continue;
+          if (e.isDirectory()) walk(abs, `${prefix}${e.name}/`, () => false);
+          else if (e.isFile()) out.set(`${prefix}${e.name}`, crypto.createHash("sha256").update(fs.readFileSync(abs)).digest("hex"));
+        }
+      };
+      walk(path.join(repo, ".git"), "repo:", (n) => n === "objects");
+      walk(wt, "wt:", (n) => n === ".git");
+      const objects = path.join(repo, ".git", "objects");
+      let loose = 0;
+      for (const d of fs.readdirSync(objects)) if (/^[0-9a-f]{2}$/.test(d)) loose += fs.readdirSync(path.join(objects, d)).length;
+      out.set("objects:loose", String(loose));
+      out.set("objects:packs", fs.readdirSync(path.join(objects, "pack")).sort().join(","));
+      return out;
+    },
+  };
+}
+
+function changedIn(before, after) {
+  return [...new Set([...before.keys(), ...after.keys()])].sort()
+    .filter((k) => before.get(k) !== after.get(k))
+    .map((k) => (!before.has(k) ? `${k} added` : !after.has(k) ? `${k} removed` : `${k} changed`));
+}
+
+/** The suites under bot/tests/ that build a git fixture: a git spawn, and a git `init`. This file is not one. */
+function fixtureSuites() {
+  const dir = path.join(REPO, "bot", "tests");
+  return fs.readdirSync(dir).filter((n) => n.endsWith(".test.mjs") && n !== path.basename(import.meta.filename)).sort()
+    .filter((n) => {
+      const text = fs.readFileSync(path.join(dir, n), "utf8");
+      return /(execFileSync|spawnSync)\(\s*"git"/.test(text) && /["']init["']/.test(text);
+    });
+}
+
+test("every suite that builds a git fixture leaves a hook's repository byte-identical, and passes under it", () => {
+  // Hostile first: a plain `git init --bare` in a directory of its own, under
+  // this environment, rewrites the repository GIT_DIR names. Without that,
+  // every "unchanged" below would prove nothing.
+  const probe = hookVictim("probe");
+  try {
+    const before = probe.print();
+    const fresh = fs.mkdtempSync(path.join(probe.root, "fresh-"));
+    // git-env: inherits on purpose — this is the hook's environment being shown
+    // hostile, in a throwaway repository, before anything is asked of it.
+    spawnSync("git", ["init", "-q", "--bare"], { cwd: fresh, env: probe.hostile });
+    assert.ok(changedIn(before, probe.print()).includes("repo:config changed"),
+      "a bare init under a hook-shaped GIT_DIR did not rewrite the repository it names, so this environment is not " +
+      "a hook's and the checks below would prove nothing");
+  } finally {
+    probe.cleanup();
+  }
+
+  const suites = fixtureSuites();
+  // The seven measured on 2026-09-23. A floor, so a new fixture suite joins
+  // without an edit and a derivation that stopped matching is loud.
+  assert.ok(suites.length >= 7, `only ${suites.length} fixture-building suite(s) found (${suites.join(", ")}); ` +
+    "there were 7 on 2026-09-23, so the derivation has stopped matching and every suite it lost goes unasked");
+  const victim = hookVictim("suites");
+  const wrong = [];
+  try {
+    for (const n of suites) {
+      const before = victim.print();
+      // TAP, named: the default reporter is `spec` on Node 26 and `tap` on the
+      // Node 22 CI runs when stdout is a pipe, and the count below reads one of them.
+      const r = spawnSync(process.execPath, ["--test", "--test-reporter=tap", path.join("bot", "tests", n)], {
+        cwd: REPO, encoding: "utf8", env: victim.hostile, maxBuffer: 64 * 1024 * 1024,
+      });
+      const diff = changedIn(before, victim.print());
+      const passed = Number(/^# pass (\d+)$/m.exec(r.stdout ?? "")?.[1] ?? 0);
+      if (diff.length) wrong.push(`${n} wrote into the repository GIT_DIR names: ${diff.join("; ")}`);
+      else if (r.status === 0 && passed === 0) wrong.push(`${n} exited 0 and reported no test passing, so nothing was asked`);
+      else if (r.status !== 0) {
+        const tail = `${r.stdout}${r.stderr}`.split("\n").filter((l) => /not ok|fail|Error/.test(l)).slice(0, 3).join(" | ");
+        wrong.push(`${n} exited ${r.status} under a hook's environment, and a hand run passes: ${tail}`);
+      }
+    }
+  } finally {
+    victim.cleanup();
+  }
+  assert.deepEqual(wrong, [], "a suite that builds git fixtures reached the repository a hook's GIT_DIR names. " +
+    "Its git spawns take cleanEnv() or fixtureEnv(dir) (tools/lib/git-env.mjs); tools/selftest/git-env.mjs names " +
+    "any that does not");
+});
+
+test("tools/selftest.mjs under a hook's environment drops it, and runs as it does by hand", async () => {
+  const victim = hookVictim("selftest");
+  try {
+    const before = victim.print();
+    // Both runs at once (about fifteen seconds each on this machine): the
+    // question is whether the two agree, not how long each takes.
+    const runOf = (env) => new Promise((resolve) => {
+      const child = spawn(process.execPath, [path.join("tools", "selftest.mjs")], { cwd: REPO, env });
+      let out = "";
+      child.stdout.on("data", (d) => { out += d; });
+      child.stderr.on("data", (d) => { out += d; });
+      child.on("close", (status) => resolve({ status, out }));
+    });
+    const [hooked, plain] = await Promise.all([runOf(victim.hostile), runOf(asByHand(cleanEnv()))]);
+    assert.deepEqual(changedIn(before, victim.print()), [], "the suite wrote into the repository a hook's GIT_DIR names");
+    assert.match(hooked.out, /^note {2}GIT_DIR inherited from the caller .* dropped for this run/m,
+      "the suite did not say it dropped the GIT_DIR it inherited, so it did not drop it");
+    const verdict = (out) => out.split("\n").find((l) => /^(PASS|FAIL|INCOMPLETE) {2}\d+ passed/.test(l)) ?? "(no summary line)";
+    // A suite that died before its summary would make two equal verdicts out of nothing.
+    assert.match(plain.out, /^(PASS|FAIL|INCOMPLETE) {2}\d+ passed/m, `the hand run printed no summary line:\n${plain.out.slice(-600)}`);
+    assert.equal(verdict(hooked.out), verdict(plain.out),
+      "under a hook's environment the suite's verdict differs from a hand run's, so it read the repository the " +
+      "hook names instead of this one");
+    assert.equal(hooked.status, plain.status, "the two runs exited differently");
+  } finally {
+    victim.cleanup();
+  }
 });
 
 // ── gap 28: an absence a later reader can disagree with ─────────────────────

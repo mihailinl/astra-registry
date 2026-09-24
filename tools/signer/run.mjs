@@ -45,6 +45,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "../lib/git-env.mjs";
 import { pathToFileURL } from "node:url";
 
 import { indexSignersFromEnv } from "../../bot/lib/sign.mjs";
@@ -360,11 +361,21 @@ export function writeTree({ out, files }) {
 export function buildSignedCommit({ root, files, parent, message, identity }) {
   const indexFile = path.join(root, ".git", "astra-signer-index");
   fs.rmSync(indexFile, { force: true });
-  const git = (args, extraEnv = {}) =>
+  // The index is this function's own file; everything else in the environment
+  // is `cleanEnv()`, so an inherited GIT_DIR cannot take the commit elsewhere
+  // (tools/lib/git-env.mjs). `who` is the commit's identity, when one is made.
+  const git = (args, { input, who } = {}) =>
     execFileSync("git", ["-C", root, ...args], {
       encoding: "utf8",
-      input: extraEnv.input,
-      env: { ...process.env, GIT_INDEX_FILE: indexFile, ...extraEnv.env },
+      input,
+      env: {
+        ...cleanEnv(),
+        GIT_INDEX_FILE: indexFile,
+        ...(who ? {
+          GIT_AUTHOR_NAME: who.name, GIT_AUTHOR_EMAIL: who.email,
+          GIT_COMMITTER_NAME: who.name, GIT_COMMITTER_EMAIL: who.email,
+        } : {}),
+      },
       stdio: ["pipe", "pipe", "pipe"],
     });
 
@@ -375,14 +386,8 @@ export function buildSignedCommit({ root, files, parent, message, identity }) {
     }
     const tree = git(["write-tree"]).trim();
     const who = identity ?? { name: "astra-registry signer", email: "signer@users.noreply.github.com" };
-    const env = {
-      GIT_AUTHOR_NAME: who.name,
-      GIT_AUTHOR_EMAIL: who.email,
-      GIT_COMMITTER_NAME: who.name,
-      GIT_COMMITTER_EMAIL: who.email,
-    };
     const args = ["commit-tree", tree, ...(parent ? ["-p", parent] : [])];
-    return git(args, { input: message, env }).trim();
+    return git(args, { input: message, who }).trim();
   } finally {
     fs.rmSync(indexFile, { force: true });
   }

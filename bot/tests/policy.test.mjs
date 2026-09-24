@@ -18,6 +18,7 @@
 // Nothing touches the network.
 
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "../../tools/lib/git-env.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -1513,7 +1514,7 @@ await test("no workflow reads `author_association`, and the scan has a floor", (
   // The floor, written before the assertion and measured against what git
   // actually tracks — a `readdirSync` of a renamed directory returns [] and an
   // empty scan reads exactly like a pass.
-  const tracked = execFileSync("git", ["ls-files", ".github/workflows"], { cwd: REPO_ROOT, encoding: "utf8" })
+  const tracked = execFileSync("git", ["ls-files", ".github/workflows"], { cwd: REPO_ROOT, encoding: "utf8", env: cleanEnv() })
     .split("\n").filter((l) => /\.ya?ml$/.test(l));
   assertEqual(files.length, tracked.length,
     `scanned ${files.length} workflow file(s), git tracks ${tracked.length} — the scan is reading the wrong place`);
@@ -3000,7 +3001,7 @@ await test("M-T3.2 — the takedown bound the code enforces is the one a documen
   // The floor, measured against the TRACKED set rather than a readdir: a third
   // published policy document is a document this scan would never open, and the
   // absence branch would go on being green about the number in it.
-  const tracked = execFileSync("git", ["-C", REPO_ROOT, "ls-files"], { encoding: "utf8" })
+  const tracked = execFileSync("git", ["-C", REPO_ROOT, "ls-files"], { encoding: "utf8", env: cleanEnv() })
     .split("\n").filter((p) => /(^|\/)POLICY\.md$/.test(p)).sort();
   assertEqual(tracked.join(", "), "POLICY.md, docs/POLICY.md",
     "the published policy documents are not the two this check reads; a document it does not open can state " +

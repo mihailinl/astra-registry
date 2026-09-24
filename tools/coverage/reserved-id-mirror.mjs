@@ -65,6 +65,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { cleanEnv } from "../lib/git-env.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { report } from "./rules.mjs";
@@ -258,7 +259,7 @@ export function defaultBranch(url, { timeoutMs = TIMEOUT_MS } = {}) {
     encoding: "utf8",
     timeout: timeoutMs,
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "echo", GIT_CONFIG_NOSYSTEM: "1" },
+    env: { ...cleanEnv(), GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "echo", GIT_CONFIG_NOSYSTEM: "1" },
   });
   const m = /^ref:\s+refs\/heads\/(\S+)\s+HEAD$/m.exec(out);
   if (!m) throw new Error(`no symbolic HEAD in \`git ls-remote --symref ${url} HEAD\``);

@@ -32,6 +32,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { fixtureEnv } from "../../tools/lib/git-env.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -62,7 +63,7 @@ process.on("exit", () => {
   for (const dir of tmpRoots) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-const sh = (args, cwd) => execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" });
+const sh = (args, cwd) => execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", env: fixtureEnv(cwd) });
 
 function writeAll(root, files) {
   for (const [rel, body] of Object.entries(files)) {
