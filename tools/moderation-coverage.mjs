@@ -95,13 +95,14 @@ export const RULE = "moderation-coverage";
 // ── the two floors ──────────────────────────────────────────────────────────
 //
 // **Unlisted listings.** Six on 2026-09-19: astra-chess, echo-stt, knice-chess,
-// mock-stt, tone-tts, web-chat. Every state-mode rule below is a loop over a
+// mock-stt, tone-tts, web-chat. Five from M-T6.3 step 3, which relisted
+// astra-chess under MINICE-AI. Every state-mode rule below is a loop over a
 // set, and a loop over an empty set is green about nothing. The number is a
 // floor rather than an equality because relisting a plugin is a legitimate act
 // and this line is not the inventory; it goes red when the WALK has stopped
 // finding listings, which is the failure that would otherwise read as a clean
 // bill of health.
-export const UNLISTED_FLOOR = 6;
+export const UNLISTED_FLOOR = 5;
 
 // **History.** 228 commits reachable from HEAD on 2026-09-19. This is not a
 // statement that history is interesting; it is the check that the checkout is

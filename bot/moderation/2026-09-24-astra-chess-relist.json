@@ -1,0 +1,7 @@
+{
+  "$comment": "M-T6.3 step 3 (OPEN-OWNER-10), a security commit, after step 2: the owner approved KNICE's re-release from MINICE-AI/astra-chess (issue #76), which moved source.repo off the freed KNICE-TECH login. DEC-17: installed copies carry a pin to KNICE-TECH/astra-chess and strand there until reinstalled.",
+  "date": "2026-09-24",
+  "action": "relist",
+  "plugin": "astra-chess",
+  "reason": "Re-released from MINICE-AI/astra-chess and approved as an identity change. Copies installed from the old repository keep running but are offered no update until reinstalled."
+}
