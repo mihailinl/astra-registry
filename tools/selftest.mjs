@@ -1950,7 +1950,7 @@ const FLOORS = new Map(Object.entries({
   "contract-tokens.mjs": 28,
   "regenerate.mjs": 15,
   "migration-notice.mjs": 6,
-  "deadline.mjs": 11,
+  "deadline.mjs": 15,
   "times.mjs": 4,
   "settings.mjs": 14,
   "git-env.mjs": 8,

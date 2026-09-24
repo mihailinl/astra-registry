@@ -1720,6 +1720,10 @@ const GATED_ELSEWHERE = {
   // #305: the PR door's tests run in the job that must pass before the door
   // itself runs, in the workflow whose subject the door is.
   "pr-door.test.mjs": { workflow: "bot-checks.yml", job: "door-tests" },
+  // B-T1.6: BOT-88's release canary, the same shape as the door. Its suite
+  // runs on every pull request and push in the job that must pass before the
+  // weekly verification runs, in the workflow whose subject the canary is.
+  "release-canary.test.mjs": { workflow: "release-canary.yml", job: "suite" },
 };
 
 test("every suite under bot/tests/ runs in Bot tests, or names the workflow that gates it instead", () => {
