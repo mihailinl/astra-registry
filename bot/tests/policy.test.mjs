@@ -4036,18 +4036,21 @@ await boundRow("ROLL-59 (d) — after `A_BINDING_REVOKE`, a release carrying a n
   () => boundInputs({ line: "V".repeat(32), verdict: { token_state: "seen" } }), "R_BINDING_CHANGED",
   "a new line after the revocation was not held R_BINDING_CHANGED for review");
 
-// ROLL-25 (3): the approval of the text-utils hold. TRUST-27 honours no
-// `R_FIRST_BINDING` approval before 7 days from its held record, and TRUST-32
-// waits the operator window after a delivered alert. A day after the hold,
-// with an approval naming this exact submission, nothing may publish.
+// ROLL-25 (3): the approval of the text-utils hold. Contract 2.1.0 set
+// TRUST-27's first-binding period to 0 days (the owner's beta decision,
+// 2026-09-24), so what still stands between an approval and a publication is
+// DEC-6's operator window: TRUST-14's alert, and TRUST-32's 6 hours from its
+// reported delivery (`W_ALERT_UNDELIVERED` while none is reported). This
+// fixture has no alert record, so a day after the hold, with an approval
+// naming this exact submission, nothing may publish.
 const firstBindingHeld = (over = {}) => decide(publishable({
   path: "service",
   findings: [{ level: "review", code: "R_FIRST_BINDING", where: "binding", message: "a first binding line (MIG-10)" }],
   now: new Date("2026-09-26T12:00:00Z"),
   ...over,
 }));
-await gap("ROLL-25 (3) — an approved `R_FIRST_BINDING` hold publishes nothing a day after its held record (TRUST-27; TRUST-32)", {
-  blocker: "B-T3.3b (TRUST-27, TRUST-32): `decide()` lets an approval clear any `R_*` hold on the run it arrives in",
+await gap("ROLL-25 (3) — an approved `R_FIRST_BINDING` hold publishes nothing while no alert is reported delivered (DEC-6; TRUST-32; TRUST-27 at 0 days since 2.1.0)", {
+  blocker: "B-T3.3b (TRUST-14, TRUST-32; TRUST-27): `decide()` lets an approval clear any `R_*` hold on the run it arrives in",
   standing: () => {
     const fingerprint = firstBindingHeld().fingerprint;
     const d = firstBindingHeld({ approval: { by: "the-moderator", at: "2026-09-26T11:00:00Z", for: fingerprint } });
@@ -4059,7 +4062,8 @@ await gap("ROLL-25 (3) — an approved `R_FIRST_BINDING` hold publishes nothing 
     const d = firstBindingHeld({ approval: { by: "the-moderator", at: "2026-09-26T11:00:00Z", for: fingerprint } });
     walkExpects(d.outcome !== "publish" && !d.publishes_now,
       `an R_FIRST_BINDING approval a day after the hold published (${JSON.stringify(d.reasons.map((x) => x.code))}); ` +
-      "TRUST-27 honours none before 7 days, and TRUST-32 waits the operator window after the alert is delivered");
+      "with no alert reported delivered TRUST-32 publishes nothing (W_ALERT_UNDELIVERED), and after one it waits DEC-6's " +
+      "6-hour operator window; TRUST-27's period is 0 days since contract 2.1.0");
   },
 });
 
