@@ -13,9 +13,24 @@
 //
 // The banner is read from `https://astra.minice.ai/plugins/<id>`, with no
 // credential, for the first listing of the first MIG-13 recipient on the tree
-// (a `grandfathered` listing, which is where MIG-13's banner is rendered), and
-// only once a dated marker exists. `--banner-body`/`--banner-status` stand in
-// for the read, which is how the fixtures run.
+// (a `grandfathered` listing, which is where MIG-13's banner is rendered),
+// once the tree has anything the banner shows: the deadline, which it carries
+// in its `binding-deadline` hook from M-T5.2's commit on, or any marker, whose
+// round it carries from round 1 (contract 2.7.0's hooks). `--banner-body`/
+// `--banner-status` stand in for the read, which is how the fixtures run.
+//
+// **Whether R4b has opened is whether `log/rollout/R4b-open.json` is on the
+// tree** — the registry marker R4b opens with (registry plan §2.7, landing
+// order 3), and the one the R6 preflight and the redirects' armed-set check
+// already read, so the constant is imported from the preflight rather than
+// spelled a third time. MIG-13 (2.7.0) reads the plugins zone's `404` as the
+// zone not being open until R4b opens, so before the marker a 404 is a line of
+// detail and from it BANNER_UNREACHABLE. Existence decides, and not a parse as
+// the preflight's does: the preflight is a GATE, where "not opened" is the safe
+// reading of a marker it cannot read, and this is an ALARM, where "opened" is.
+// `log/cutover.json` would be the wrong record: it is R6's, and between R4b and
+// R6 — when rounds 1 and 2 go out and the banner is how they reach an author —
+// it would have read every 404 as a zone not yet open.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -27,6 +42,7 @@ import { CHECK, judge } from "./lib/deadline-watch.mjs";
 import { LISTING_PAGE, readMarkers, recipients } from "./lib/migration-notice.mjs";
 import { CUTOVER_FILE, readMarkers as readRecords } from "../bot/lib/listing-state.mjs";
 import { VERDICT_SCHEMA, runUrl, verdictProblems } from "../bot/lib/alert-verdict.mjs";
+import { R4B_MARKER } from "./cutover-preflight.mjs";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const USER_AGENT = "astra-registry-lane (+https://github.com/mihailinl/astra-registry)";
@@ -100,8 +116,9 @@ export async function main(argv) {
       histories[m.file] = h;
     }
     let banner = null;
-    const dated = markers.some((m) => m.doc?.round >= 2);
-    if (dated && !args.noBanner) {
+    const r4bOpen = fs.existsSync(path.join(args.root, R4B_MARKER));
+    const shown = markers.length > 0 || deadline !== null;
+    if (shown && !args.noBanner) {
       const first = recipients(args.root)[0]?.listings[0]?.id ?? null;
       if (args.bannerBody || args.bannerStatus !== null) {
         const body = args.bannerBody ? fs.readFileSync(args.bannerBody, "utf8") : null;
@@ -110,7 +127,8 @@ export async function main(argv) {
         banner = await readBanner(first);
       }
     }
-    const result = judge({ deadline, cutoverOnMain, markers, histories, now, banner });
+    const result = judge({ deadline, cutoverOnMain, markers, histories, now, banner, r4bOpen });
+    if (banner) result.detail.push(`R4b ${r4bOpen ? "has opened" : "has not opened"}: ${R4B_MARKER} is ${r4bOpen ? "" : "not "}on this tree`);
     if (noHistory) result.detail.push("a marker's git history could not be read, so guard n22 saw only its current version");
     for (const line of result.detail) console.log(`${result.status === "red" ? "red  " : "     "} ${line}`);
     verdict = { schema: VERDICT_SCHEMA, check: CHECK, status: result.status, codes: [...new Set(result.codes)] };
