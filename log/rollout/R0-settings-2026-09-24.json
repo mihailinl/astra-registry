@@ -1,0 +1,237 @@
+{
+  "schema": "astra.registry.settings/1",
+  "$comment": [
+    "ROLL-7's file, amended: the registry's measured settings, which TRUST-10's acknowledgement records and TRUST-44 compares hourly (registry plan RC-R0-4). Name-free: repository coordinates, counts, dates and GitHub's own setting names, never a login.",
+    "A dated amendment of log/rollout/R0-settings.json, which log/** being append-only (MOD-34) forbids editing. It pins `bot-state`, created 2026-09-24 for registry plan B-T5.0 with one secret, and re-reads everything else; the newest dated ROLL-7 file under log/rollout/ is the one a reader takes, and R0-settings.json stays as R0's record.",
+    "MBE-PENDING G3: the schema name, its members and how a reader finds the newest amendment are the registry plan's proposal (§1.3 row 2).",
+    "Every environment row is policy/settings-expected.json's own row at expectation_commit, compared with GitHub read with no credential at read_at; bot/tests/moderation-coverage.test.mjs fails in both directions when the two disagree. secret_names were read with a write-capable session (names only, never a value).",
+    "Carried from R0-settings.json and not re-read, because no repository endpoint answers them: private_repository_actions_start_jobs, tokens_with_access and id39 (whose revisit is before R3 grants a second writer)."
+  ],
+  "read_at": "2026-09-24T11:06:18Z",
+  "expectation_commit": "49e97087ea6283ad367241f650dc533147999c11",
+  "repository": {
+    "repository_id": 1331176498,
+    "repository_owner_id": 193032699,
+    "default_branch": "main",
+    "visibility": "public",
+    "main_protected": true
+  },
+  "environments": {
+    "alerts": {
+      "deployment_branch_policy": "custom",
+      "branch_policies": [
+        {
+          "name": "main",
+          "type": "branch"
+        }
+      ],
+      "protection_rules": [
+        "branch_policy"
+      ],
+      "can_admins_bypass": true,
+      "secret_names": [
+        "ASTRA_ALERT_CHAT_ID",
+        "ASTRA_ALERT_TELEGRAM_TOKEN",
+        "ASTRA_DEADMAN_URL_ALARM_ACK",
+        "ASTRA_DEADMAN_URL_ALARM_ACK_START",
+        "ASTRA_DEADMAN_URL_ALARM_DRILL",
+        "ASTRA_DEADMAN_URL_BASELINE_NAMES",
+        "ASTRA_DEADMAN_URL_CONFORMANCE",
+        "ASTRA_DEADMAN_URL_COVERAGE_CANARY",
+        "ASTRA_DEADMAN_URL_DEADLINE_WATCH",
+        "ASTRA_DEADMAN_URL_DETECTORS",
+        "ASTRA_DEADMAN_URL_KEEPALIVE",
+        "ASTRA_DEADMAN_URL_MODERATION_RUN",
+        "ASTRA_DEADMAN_URL_POLL_AND_SWEEP",
+        "ASTRA_DEADMAN_URL_RELEASE_CANARY",
+        "ASTRA_DEADMAN_URL_SERVED_SET",
+        "ASTRA_DEADMAN_URL_SIGNER"
+      ],
+      "secret_count": 16,
+      "trust44_monitors": true
+    },
+    "bot-state": {
+      "deployment_branch_policy": "custom",
+      "branch_policies": [
+        {
+          "name": "main",
+          "type": "branch"
+        }
+      ],
+      "protection_rules": [
+        "branch_policy"
+      ],
+      "can_admins_bypass": true,
+      "secret_names": [
+        "BOT_STATE_HMAC_KEY"
+      ],
+      "secret_count": 1,
+      "trust44_monitors": true
+    },
+    "github-pages": {
+      "deployment_branch_policy": "custom",
+      "branch_policies": [
+        {
+          "name": "main",
+          "type": "branch"
+        }
+      ],
+      "protection_rules": [
+        "branch_policy"
+      ],
+      "can_admins_bypass": true,
+      "secret_names": [],
+      "secret_count": 0,
+      "trust44_monitors": true
+    },
+    "operator": {
+      "deployment_branch_policy": "custom",
+      "branch_policies": [
+        {
+          "name": "main",
+          "type": "branch"
+        }
+      ],
+      "protection_rules": [
+        "branch_policy"
+      ],
+      "can_admins_bypass": true,
+      "secret_names": [],
+      "secret_count": 0,
+      "trust44_monitors": true
+    },
+    "plugins-service": {
+      "deployment_branch_policy": "custom",
+      "branch_policies": [
+        {
+          "name": "main",
+          "type": "branch"
+        }
+      ],
+      "protection_rules": [
+        "branch_policy"
+      ],
+      "can_admins_bypass": true,
+      "secret_names": [],
+      "secret_count": 0,
+      "trust44_monitors": true
+    },
+    "publish": {
+      "deployment_branch_policy": "custom",
+      "branch_policies": [
+        {
+          "name": "main",
+          "type": "branch"
+        }
+      ],
+      "protection_rules": [
+        "branch_policy"
+      ],
+      "can_admins_bypass": false,
+      "secret_names": [
+        "ASTRA_INDEX_SIGNING_KEY",
+        "ASTRA_INDEX_SIGNING_KEY_ID"
+      ],
+      "secret_count": 2,
+      "trust44_monitors": true
+    }
+  },
+  "environment_count": 6,
+  "environment_floor": {
+    "R0": 4,
+    "R1": 5,
+    "R5": 6
+  },
+  "pending_environments": [],
+  "rulesets": {
+    "history is append-only": {
+      "id": 23694850,
+      "target": "branch",
+      "enforcement": "active",
+      "include": [
+        "refs/heads/main",
+        "refs/heads/signed"
+      ],
+      "exclude": [],
+      "rules": [
+        "deletion",
+        "non_fast_forward"
+      ],
+      "bypass_actor_count": 0,
+      "trust44_monitors": true
+    }
+  },
+  "rules_on_main": [
+    "deletion",
+    "non_fast_forward"
+  ],
+  "trust44_monitors": {
+    "rulesets": true,
+    "rules_on_main": true,
+    "environments": true,
+    "main_protected": true,
+    "collaborators": false,
+    "deploy_keys": false,
+    "secrets": false,
+    "bypass_actors": false
+  },
+  "trust44_read": {
+    "formula": "4 + R + E",
+    "calls": 11,
+    "reservation": 12
+  },
+  "collaborators": {
+    "count": 1,
+    "with_write": 1,
+    "admins": 1
+  },
+  "deploy_keys": {
+    "count": 0,
+    "with_write": 0
+  },
+  "repository_secret_count": 0,
+  "serve9_host_or_gcore_secrets": 0,
+  "actions": {
+    "enabled": true,
+    "allowed_actions": "all",
+    "default_workflow_permissions": "read",
+    "can_approve_pull_request_reviews": false
+  },
+  "private_repository_actions_start_jobs": false,
+  "tokens_with_access": "not readable: GitHub lists fine-grained token grants only for an organisation, and this repository belongs to a user",
+  "id39": {
+    "answer": "written acceptance: no rule on .github/workflows/** or bot/**, so any registry writer can mint bot tokens while there is one writer",
+    "given": "2026-09-13",
+    "confirmed": "2026-09-24",
+    "revisit": "before R3 grants a second account write access (OPEN-OWNER-13(p); registry plan M-T3.5)"
+  },
+  "schedule_interval_seconds": {
+    "ingest": 600,
+    "moderation": 600
+  },
+  "read_with": {
+    "no_credential": [
+      "/repos/{r}",
+      "/environments",
+      "/environments/{e}/deployment-branch-policies (each of 6)",
+      "/rulesets",
+      "/rulesets/{id}",
+      "/rules/branches/main",
+      "/branches/main"
+    ],
+    "write_capable_session": [
+      "/collaborators",
+      "/keys",
+      "/environments/{e}/secrets (each of 6)",
+      "/actions/secrets",
+      "/actions/permissions",
+      "/actions/permissions/workflow",
+      "/rulesets/{id} bypass actors"
+    ],
+    "no_write_token": "NOT ASKED: no credential that cannot write exists on this side; the one-step way to produce one is in log/rollout/R0-exit-note.md"
+  },
+  "not_readable": [
+    "tokens with access (no endpoint for a user-owned repository)",
+    "which secret VALUES are set (GitHub returns names only, and none was asked for)"
+  ]
+}
