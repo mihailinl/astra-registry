@@ -159,7 +159,9 @@ const NOTIFY_SURFACE = [
 
 // And what `bot/watch.mjs` exports now: what it exported at that commit, minus
 // `pollFeed`. The removal is the one intended surface change in this task.
-const WATCH_SURFACE = ["bot74Filter", "runDrain", "runWatch"];
+// `recordedTagsByRepo` joined it with B-T3.9: the backstop and the `/release` ping
+// read one derivation of a repository's recorded tags (BOT-74), not two.
+const WATCH_SURFACE = ["bot74Filter", "recordedTagsByRepo", "runDrain", "runWatch"];
 
 // ── the list that is identical across the cut ─────────────────────────────
 //
@@ -790,13 +792,28 @@ test("a tag with a terminal record for this repository_id never registers, and o
     "a record for another repository_id is about a repository that reused the name, not this one");
 });
 
-test("BOT-19 and BOT-74 read one set of terminal states", async () => {
+// BOT-19 and BOT-74 do NOT read one set, and this test used to say they did.
+// BOT-74 keeps the poll from registering a tag with a terminal record for its
+// repository — `refused`, `revoked`, `yanked`, `withdrawn`, `deprecated` —
+// which is `poll.TERMINAL_STATES`. BOT-19 is narrower and names its records
+// exactly (registry plan notes): a `published`, `stopped` or `M_REJECT`
+// `refused` record carrying this run's fingerprint, and a `stopped` record for
+// the same tag of the same repository; "a `held` or `delayed` record MUST NOT
+// stop the run", and neither does a bot refusal, which a `/recheck` exists to
+// re-decide. Held to one set, one old refusal of a plugin stopped every later
+// release of it for ever (B-T3.9). So this asserts the two rules apart.
+test("BOT-19's terminal records are its own, and BOT-74's terminal states are the poll's", async () => {
   const { terminalOnMain } = await import("../decide.mjs");
-  for (const state of [...poll.TERMINAL_STATES, "published", "held", "delayed", "stopped"]) {
-    const hit = terminalOnMain({ records: [{ state, repo: "a/b", tag: "v1.0.0" }], pluginId: null, repo: "a/b", tag: "v1.0.0" });
-    assert.equal(hit !== null, poll.TERMINAL_STATES.includes(state),
-      `terminalOnMain and TERMINAL_STATES disagree about ${state}: bot/decide.mjs must import the set, not copy it`);
+  const byTag = (state, reasons) => terminalOnMain({ records: [{ state, reasons, repo: "a/b", tag: "v1.0.0" }], fingerprint: null, repo: "a/b", tag: "v1.0.0" });
+  for (const state of [...poll.TERMINAL_STATES, "published", "held", "delayed"]) {
+    assert.equal(byTag(state), null, `a ${state} record for the tag is not BOT-19's; only a stop is`);
   }
+  assert.notEqual(byTag("stopped"), null, "a stop of the same tag is BOT-19's (FLOW-26)");
+  const byFp = (state, reasons) => terminalOnMain({ records: [{ state, reasons, fingerprint: "0123456789abcdef" }], fingerprint: "0123456789abcdef", repo: "a/b", tag: "v2.0.0" });
+  assert.notEqual(byFp("published"), null);
+  assert.notEqual(byFp("refused", ["M_REJECT"]), null);
+  assert.equal(byFp("refused", ["E_LICENSE_NOT_ALLOWED"]), null, "a bot refusal is re-decided on a recheck");
+  assert.ok(poll.TERMINAL_STATES.includes("refused"), "BOT-74 still keeps a refused tag out of the poll");
 });
 
 test("MIG-30: an unlisted listing is never polled, and one whose state cannot be decided is skipped out loud", () => {

@@ -622,6 +622,63 @@ test("once the marker is on main, a version or queue addition with no record is 
 });
 
 
+// ── the service path's two record kinds (B-T3.4) ────────────────────────────
+
+const FP16 = "0123456789abcdef";
+const alertDoc = (over = {}) => ({ schema: "astra.registry.alert/1", fingerprint: FP16, event: "approval", approval_decided_at: "2026-09-24T00:00:00Z", delivered_at: "2026-09-24T00:00:05Z", run: "1/1", ...over });
+const identityDoc = (over = {}) => ({ schema: "astra.registry.identity/1", plugin_id: "alpha", repository_id: "12", repository_owner_id: "34", repo: "you/alpha", token_hash: FP16, ...over });
+
+test("an alert record and an identity record land only through the service path", () => {
+  for (const [what, plant] of [
+    ["an alert record", (at) => write(at, `state/alerts/${FP16}.json`, `${JSON.stringify(alertDoc())}\n`)],
+    ["an identity record", (at) => write(at, "plugins/alpha/identity.json", `${JSON.stringify(identityDoc())}\n`)],
+  ]) {
+    const legacy = estate();
+    const reports = withRecord(report(legacy.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", recordDoc());
+    plant(path.join(reports, "ingest-report-0"));
+    const refused = run({ root: legacy.one, reports, watchState: path.join(legacy.dir, "none"), skipChecks: true, log: quiet });
+    assert.equal(refused.outcome, "refused", `the legacy path applied ${what}`);
+    assert.match(refused.refusals[0].message, /service-path record/);
+
+    const svc = estate();
+    const r2 = withRecord(report(svc.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", recordDoc());
+    plant(path.join(r2, "ingest-report-0"));
+    const ok = run({ root: svc.one, reports: r2, watchState: path.join(svc.dir, "none"), skipChecks: true, servicePath: true, log: quiet });
+    assert.equal(ok.outcome, "committed", `${what}: ${JSON.stringify(ok.refusals)}`);
+  }
+});
+
+test("an identity record needs a publication beside it, and each record is what its name says", () => {
+  const lone = estate();
+  const reports = report(lone.dir, "ingest-report-0", {});
+  write(path.join(reports, "ingest-report-0"), "plugins/alpha/identity.json", `${JSON.stringify(identityDoc())}\n`);
+  const r = run({ root: lone.one, reports, watchState: path.join(lone.dir, "none"), skipChecks: true, servicePath: true, log: quiet });
+  assert.equal(r.outcome, "refused", "an identity record landed in a commit that publishes nothing (ID-40)");
+  assert.match(r.refusals[0].message, /ID-40/);
+  for (const [what, rel, doc, expected] of [
+    ["an alert named for another fingerprint", `state/alerts/${"f".repeat(16)}.json`, alertDoc(), /name is its fingerprint/],
+    ["an identity record with a seventh member", "plugins/alpha/identity.json", identityDoc({ note: "x" }), /exactly B\.4's six members/],
+    ["an identity record for another id", "plugins/alpha/identity.json", identityDoc({ plugin_id: "beta" }), /names plugin_id beta/],
+  ]) {
+    const e = estate();
+    const rep = withRecord(report(e.dir, "ingest-report-0", { id: "alpha", version: "0.1.0" }), "ingest-report-0", recordDoc());
+    write(path.join(rep, "ingest-report-0"), rel, `${JSON.stringify(doc)}\n`);
+    const out = run({ root: e.one, reports: rep, watchState: path.join(e.dir, "none"), skipChecks: true, servicePath: true, log: quiet });
+    assert.equal(out.outcome, "refused", what);
+    assert.match(out.refusals[0].message, expected, what);
+  }
+});
+
+test("DRY_RUN commits on the runner, pushes nothing, and says `dry-run`", () => {
+  const { dir, one, bare } = estate();
+  const reports = report(dir, "ingest-report-0", { id: "alpha", version: "0.1.0" });
+  const lines = [];
+  const result = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, dryRun: true, log: (l) => lines.push(l) });
+  assert.equal(result.outcome, "dry-run");
+  assert.equal(git(bare, "rev-list", "--count", "main"), "1", "nothing reached the remote");
+  assert.ok(lines.some((l) => l.includes("would push  plugins/alpha/versions/0.1.0.json")), lines.join("\n"));
+});
+
 // ── this file, from outside ──────────────────────────────────────────────────
 //
 // The `exit` handler above is invisible from inside the process it runs in:

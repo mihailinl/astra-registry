@@ -54,7 +54,16 @@ import { deriveListing } from "./lib/derive.mjs";
 import * as gh from "./lib/github.mjs";
 import { loadWorkflowAllowlist, verifyAttestation } from "./lib/attestation.mjs";
 import { checkBundlesAgree } from "./lib/certificate.mjs";
-import { applyIdentity, identityFromCertificate } from "./lib/identity.mjs";
+import {
+  applyIdentity,
+  checkDownloadRepository,
+  compareActor,
+  idAndVersionFromAssetName,
+  identityFromCertificate,
+} from "./lib/identity.mjs";
+import { readBindingLine } from "./lib/binding.mjs";
+import { OWNER_FILE } from "./lib/ownership.mjs";
+import { submissionFingerprint } from "./lib/policy/release.mjs";
 import { localeSignature } from "./lib/locales.mjs";
 import { checkDisplayName, checkNames, loadTrademarks } from "./lib/names.mjs";
 import { proveOwnership } from "./lib/ownership.mjs";
@@ -836,6 +845,395 @@ export function renderComment(f, derived, opts) {
   return `${[...body].slice(0, GITHUB_COMMENT_MAX - tail.length - 1).join("")}${tail}`;
 }
 
+// ── the service path: the same checks, split at the stranger's bytes ────────
+//
+// Registry plan B-T3.2. `ingest()` above does everything in one process —
+// fetch, hash, verify, unpack, probe, derive — because on the legacy path one
+// job holds all of it and nothing else. `plugins-ingest.yml` splits the same
+// work across two jobs, and the split is the point (BOT-55): `verify` holds
+// `GITHUB_TOKEN` with `contents: read`, downloads and hashes the assets and
+// verifies them, and NEVER UNPACKS ANYTHING; `check` opens the archive and
+// holds nothing at all. Every identity value — both ids, `.12`'s name, the
+// commit, the digests, the binding line, the fingerprint, the plugin id and
+// version from the ATTESTED asset names (BOT-21) — comes out of `verify`, and
+// `check`'s output is a facts file of codes and levels plus the card.
+//
+// The two functions below are those two jobs' whole programs, and they reuse
+// every check `ingest()` runs rather than restating one: the same
+// `verifyAttestation`, `inspectBundle`, `runProbe`, `checkNames`,
+// `deriveListing` and `validateDerived`, called in the same order. What is
+// new is only what the split needs — the certificate's ids against the
+// repository the bytes were downloaded from (`checkDownloadRepository`), the
+// binding line at the attested commit, and the rename that agreeing ids under a
+// different name is (TRUST-23; ID-41).
+
+/**
+ * `verify`'s answer for one lease: every identity value, or why there is none.
+ *
+ * `outcome` is `ok` (every value below is the verification's), `wait` (a read
+ * that did not happen, FLOW-72 — nothing is recorded), `alert` (the download
+ * and the certificate disagree about where the bytes came from, BOT-21 — nothing
+ * is written or posted, and an operator is paged), or `refuse` (the release has
+ * no verifiable bundle; the result is a refusal, and its record carries no
+ * identity value, because none was established).
+ *
+ * @param {{lease: object, root?: string, assetsDir: string, trustFile?: string,
+ *   signerWorkflow?: string}} opts
+ * @param {object} deps the same seam `ingest` takes, plus the by-id readers
+ */
+export async function verifyFacts(opts, deps = {}) {
+  const { lease } = opts;
+  const root = opts.root ?? REPO_ROOT;
+  const policy = loadPolicy(REPO_ROOT);
+  const signerWorkflow = opts.signerWorkflow ?? DEFAULT_SIGNER_WORKFLOW;
+  const fetchRelease = deps.fetchRelease ?? gh.fetchRelease;
+  const headAsset = deps.headAsset ?? gh.headAsset;
+  const downloadAsset = deps.downloadAsset ?? gh.downloadAsset;
+  const attest = deps.verifyAttestation ?? verifyAttestation;
+  const repoIds = deps.fetchRepositoryIds ?? gh.fetchRepositoryIds;
+  const findings = [];
+  const out = (outcome, extra = {}) => {
+    // `assets-<submission_id>` is uploaded with `if-no-files-found: error`; a
+    // lease this job refused or waited on still leaves one file, so the upload
+    // of the next lease's bytes is not failed by this one's absence.
+    const dir = path.join(opts.assetsDir, lease.submission_id);
+    fs.mkdirSync(dir, { recursive: true });
+    // Only VERIFIED bytes are handed to the check job. A lease this job
+    // refused, waited on or alerted about leaves nothing there to unpack.
+    if (outcome !== "ok") {
+      for (const n of fs.readdirSync(dir)) if (n.endsWith(".astraplugin")) fs.rmSync(path.join(dir, n));
+    }
+    fs.writeFileSync(path.join(dir, "verify-outcome.txt"), `${outcome}\n`);
+    return { submission_id: lease.submission_id, outcome, findings, ...extra };
+  };
+  const refuse = (code, where, message) => {
+    findings.push({ level: "error", code, where, message });
+    return out("refuse", { code });
+  };
+
+  if (!REPO_RE.test(lease.repo ?? "") || !TAG_RE.test(lease.tag ?? "")) {
+    return refuse("E_INPUT_REPO", "submission", "the lease names a repository or a tag outside §0.7's grammar");
+  }
+
+  const trust = loadWorkflowAllowlist({
+    trustFile: opts.trustFile ?? path.join(root, "registry", "v1", "trust.json"),
+    roots: deps.rootKeys,
+  });
+  if (!trust.ok) {
+    // FLOW-72: on this path an unprovisioned trust set is a wait, never a
+    // recorded refusal of somebody's release.
+    findings.push({ level: "error", code: trust.code, where: "trust", message: trust.message });
+    return out("wait", { code: trust.code, reason: trust.message });
+  }
+
+  let release;
+  try {
+    release = await fetchRelease(lease.repo, lease.tag);
+  } catch (e) {
+    return refuse("E_RELEASE_NOT_FOUND", "release", e.message);
+  }
+  const bundles = (release.assets ?? []).filter((a) => typeof a?.name === "string" && a.name.endsWith(".astraplugin"));
+  if (bundles.length === 0) return refuse("E_NO_BUNDLE_ASSETS", "release", `${lease.repo}@${lease.tag} carries no .astraplugin asset`);
+
+  const releasePrefix = `https://github.com/${lease.repo}/releases/download/${lease.tag}/`;
+  const dir = path.join(opts.assetsDir, lease.submission_id);
+  fs.mkdirSync(dir, { recursive: true });
+  const assets = [];
+  const certificates = [];
+  let sourceDigest = null;
+  let certRepoMismatch = false;
+
+  for (const asset of bundles) {
+    const where = asset.name;
+    const url = asset.browser_download_url;
+    // BOT-21: plugin id and version from the ATTESTED asset name, and the
+    // name is attested only once its digest verifies below.
+    const named = idAndVersionFromAssetName(asset.name);
+    if (!named.ok) return refuse("E_ASSET_FILENAME", where, `${where} is not <id>-<version>-<platform>.astraplugin`);
+    if (typeof url !== "string" || !url.startsWith(releasePrefix)) {
+      return refuse("E_ASSET_URL_FOREIGN", where, `${url} does not sit under ${releasePrefix}`);
+    }
+    let head;
+    try {
+      head = await headAsset(url);
+    } catch (e) {
+      return refuse("E_ASSET_HEAD_FAILED", where, e.message);
+    }
+    if (head.size > policy.limits.max_artifact_bytes) {
+      return refuse("E_ARTIFACT_TOO_LARGE", where, `the origin declares ${head.size} bytes, over max_artifact_bytes`);
+    }
+    let bytes;
+    try {
+      bytes = await downloadAsset(url, policy.limits.max_artifact_bytes);
+    } catch (e) {
+      return refuse("E_ASSET_HEAD_FAILED", where, e.message);
+    }
+    if (asset.size !== undefined && bytes.length !== asset.size) {
+      return refuse("E_ASSET_SIZE", where, `the release API says ${asset.size} bytes, the download is ${bytes.length}`);
+    }
+    const digest = sha256(bytes);
+    // The one place a stranger's archive reaches this job's disk: whole, under
+    // its own name, for `gh` and for the `check` job's download. Nothing is
+    // extracted from it here or anywhere in this job.
+    const file = path.join(dir, path.basename(asset.name));
+    fs.writeFileSync(file, bytes);
+
+    const att = await attest({
+      file, repo: lease.repo, signerWorkflow, allowlist: trust.allowlist, artifactSha256: digest,
+      tag: lease.tag, runner: deps.ghRunner,
+    });
+    for (const x of att.findings) {
+      // A certificate naming another repository is a RENAME when the ids agree
+      // with the download repository's (TRUST-23; ID-41), and an alert when
+      // they do not — `checkDownloadRepository` below decides which, so the
+      // finding is held back rather than refused here.
+      if (x.code === "E_ATTESTATION_REPO_MISMATCH" && att.facts?.fields) {
+        certRepoMismatch = true;
+        continue;
+      }
+      findings.push({ ...x, where });
+    }
+    const blocking = att.findings.filter((x) => x.level === "error" && !(x.code === "E_ATTESTATION_REPO_MISMATCH" && att.facts?.fields));
+    if (blocking.length) {
+      const code = blocking[0].code;
+      // FLOW-72: a verifier that could not run is a wait, never a refusal.
+      if (code === "E_ATTESTATION_UNCHECKED") return out("wait", { code, reason: blocking[0].message });
+      return out("refuse", { code });
+    }
+    certificates.push({ where, fields: att.facts?.fields ?? {} });
+    sourceDigest = sourceDigest ?? att.facts?.sourceDigest ?? null;
+    if (assets.some((a) => a.platform === named.platformKey)) {
+      return refuse("E_MANIFEST_PLATFORM_MISMATCH", where, `two bundles claim ${named.platformKey}`);
+    }
+    if (!SUPPORTED_KEYS.includes(named.platformKey)) return refuse("E_PLATFORM_UNSUPPORTED", where, `${named.platformKey}`);
+    assets.push({ name: asset.name, platform: named.platformKey, sha256: digest, size: bytes.length, url, id: named.id, version: named.version });
+  }
+
+  const ids = new Set(assets.map((a) => a.id));
+  const versions = new Set(assets.map((a) => a.version));
+  if (ids.size !== 1) return refuse("E_MANIFEST_ID_MISMATCH", "release", `the attested asset names disagree about the plugin id: ${[...ids].join(", ")}`);
+  if (versions.size !== 1) return refuse("E_VERSION_INCONSISTENT", "release", `the attested asset names disagree about the version: ${[...versions].join(", ")}`);
+  const agree = checkBundlesAgree(certificates);
+  for (const x of agree) findings.push({ ...x, where: x.where ?? "provenance" });
+  if (agree.some((x) => x.level === "error")) return out("refuse", { code: agree.find((x) => x.level === "error").code });
+
+  const identity = identityFromCertificate(certificates[0].fields);
+  if (!identity.ok) {
+    return out("alert", { code: "E_ATTESTATION_INVALID", reason: `the certificate is missing ${identity.missing.join(", ")}` });
+  }
+
+  // BOT-21: `.15` against the id of the repository the bytes came from.
+  const download = await repoIds(lease.repo);
+  const checked = checkDownloadRepository({
+    identity,
+    downloadRepoIds: download?.status === "found"
+      ? { status: "found", id: download.id, owner_id: download.owner_id, full_name: download.full_name }
+      : { status: download?.status ?? "transient", reason: download?.reason ?? "no answer" },
+  });
+  if (checked.outcome === "wait") return out("wait", { code: checked.code, reason: checked.reason });
+  if (checked.outcome === "alert") return out("alert", { code: checked.code, reason: checked.reason });
+  if (certRepoMismatch) {
+    // The certificate names another repository than the lease, and the ids
+    // agree with the repository the bytes were downloaded from: the name moved
+    // between signing and now. That is a rename, and TRUST-23 or ID-41 rules
+    // on it — never this job, and never by refusing here.
+    findings.push({ level: "note", code: "E_ATTESTATION_REPO_MISMATCH", where: "provenance", message: "the ids agree and the name differs: a rename, which the identity comparison decides" });
+  }
+
+  const attested = identity.commit && /^[0-9a-f]{40}$/.test(identity.commit) ? identity.commit : sourceDigest;
+  if (!attested || !/^[0-9a-f]{40}$/.test(attested)) {
+    return out("alert", { code: "E_ATTESTATION_INVALID", reason: "the certificate names no source commit (.13)" });
+  }
+  const releaseCommit = /^[0-9a-f]{40}$/.test(release.target_commitish ?? "") ? release.target_commitish : null;
+  if (releaseCommit && releaseCommit !== attested) {
+    return refuse("E_RELEASE_COMMIT_MISMATCH", "provenance", `the Release names ${releaseCommit} and the attestation names ${attested}`);
+  }
+
+  // ID-22: the binding line at the ATTESTED commit, by repository id.
+  const line = await readBindingLine({ repositoryId: identity.repository_id, commit: attested, deps: deps.binding ?? {} });
+  const binding = {
+    outcome: line.outcome,
+    token: line.outcome === "one" ? line.token : null,
+    token_hash: line.outcome === "one" ? sha256(Buffer.from(line.token, "utf8")).slice(0, 16) : null,
+    code: line.code ?? null,
+    alert: line.alert === true,
+    reason: line.reason ?? null,
+  };
+
+  // ID-63 and MIG-31: read only where a binding line makes them matter.
+  let ownerFile = null;
+  let actor = null;
+  if (binding.outcome === "one") {
+    const last = await (deps.lastCommitTouching ?? gh.lastCommitTouching)(identity.repository_id, attested, OWNER_FILE);
+    if (last.status !== "found") return out("wait", { code: "W_GITHUB_RATE_LIMITED", reason: `ID-63: ${last.reason}` });
+    let pr = null;
+    if (last.commit) {
+      const pulls = await (deps.pullsForCommit ?? gh.pullsForCommit)(identity.repository_id, last.commit);
+      if (pulls.status !== "found") return out("wait", { code: "W_GITHUB_RATE_LIMITED", reason: `ID-63: ${pulls.reason}` });
+      pr = pulls.pulls.length > 0;
+    }
+    ownerFile = { commit: last.commit, pull_request: pr };
+    if (identity.run_id) {
+      const run = await (deps.workflowRun ?? gh.workflowRun)(identity.repository_id, identity.run_id);
+      const cmp = compareActor({ identity, actor: run?.status === "found" ? { status: "found", triggering_actor_id: run.triggering_actor_id } : { status: "transient", reason: run?.reason } });
+      if (cmp.outcome === "wait") return out("wait", { code: cmp.code, reason: cmp.reason });
+      actor = { triggering_actor_id: run.triggering_actor_id, floor_days: cmp.floor_days };
+    }
+  }
+
+  const digests = assets.map((a) => `${a.platform}:${a.sha256}`).sort();
+  const [pluginId] = ids;
+  const [version] = versions;
+  return out("ok", {
+    plugin_id: pluginId,
+    version,
+    tag: lease.tag,
+    commit: attested,
+    artifact_digests: digests,
+    fingerprint: submissionFingerprint({ repo: identity.repo, tag: lease.tag, id: pluginId, version, commit: attested, digests }),
+    repo: identity.repo,
+    repository_id: identity.repository_id,
+    repository_owner_id: identity.repository_owner_id,
+    renamed: Boolean(checked.renamed),
+    published_at: normaliseTime(release.published_at),
+    assets: assets.map(({ id: _i, version: _v, ...a }) => a),
+    binding,
+    owner_file: ownerFile,
+    actor,
+  });
+}
+
+/**
+ * `check`'s program for one submission: open the verified bytes, probe them,
+ * derive the card, and write exactly two things — a facts file of codes and
+ * levels, and the listing files.
+ *
+ * It takes `verified` for the name the card is derived under (BOT-21: never
+ * the lease's, never a name this job read) and reads nothing else from it; the
+ * decide job compares everything this writes against `verified` again, because
+ * this is the job to assume exploited.
+ *
+ * @param {{submissionId: string, assetsDir: string, verified: object, out: string, root?: string,
+ *   hostAstraVersion?: string|null}} opts
+ */
+export async function checkFacts(opts, deps = {}) {
+  const f = new Findings();
+  const root = opts.root ?? REPO_ROOT;
+  const policy = loadPolicy(REPO_ROOT);
+  const trademarks = loadTrademarks();
+  const probe = deps.runProbe ?? runProbe;
+  const v = opts.verified ?? {};
+  const files = fs.existsSync(opts.assetsDir)
+    ? fs.readdirSync(opts.assetsDir).filter((n) => n.endsWith(".astraplugin")).sort()
+    : [];
+  const perBundle = [];
+  const artifacts = {};
+
+  for (const name of files) {
+    const bytes = fs.readFileSync(path.join(opts.assetsDir, name));
+    const inspected = inspectBundle(bytes, { id: null, version: null, platformKey: null }, policy.limits);
+    f.absorb(inspected.findings, name);
+    if (!inspected.manifest || inspected.findings.some((x) => x.level === "error")) continue;
+    const toml = inspected.files.find((x) => x.name === "plugin.toml");
+    if (!toml) { f.error("E_PLUGIN_TOML_MISSING", name, "no plugin.toml in MANIFEST.files"); continue; }
+    const probed = await probe({
+      pluginToml: toml.bytes.toString("utf8"),
+      manifestJson: inspected.manifestBytes.toString("utf8"),
+      hostAstraVersion: opts.hostAstraVersion ?? null,
+    });
+    f.absorb(probed.findings, name);
+    if (!probed.manifest || probed.findings.some((x) => x.level === "error")) continue;
+    const key = inspected.platformKey;
+    const expected = `${probed.manifest.id}-${probed.manifest.version}-${key}.astraplugin`;
+    if (name !== expected) { f.error("E_ASSET_FILENAME", name, `the bundle declares ${expected}`); continue; }
+    const asset = (v.assets ?? []).find((a) => a.name === name);
+    artifacts[key] = { url: asset?.url ?? null, filename: name, sha256: sha256(bytes), size: bytes.length };
+    perBundle.push({ where: name, facts: probed.manifest, manifest: inspected.manifest, files: inspected.files });
+  }
+
+  const write = (derived) => {
+    fs.mkdirSync(opts.out, { recursive: true });
+    const first = perBundle[0]?.facts ?? null;
+    const facts = {
+      schema: CHECK_FACTS_SCHEMA,
+      submission_id: opts.submissionId,
+      plugin_id: first?.id ?? null,
+      version: first?.version ?? null,
+      platforms: Object.keys(artifacts).sort(),
+      // Codes and levels, and nothing that names anything: `where` and
+      // `message` interpolate entry names out of a stranger's archive.
+      findings: f.items.map((i) => ({ code: i.code, level: i.level })),
+    };
+    fs.writeFileSync(path.join(opts.out, "facts.json"), `${JSON.stringify(facts, null, 2)}\n`);
+    const listingDir = path.join(opts.out, "listing");
+    fs.mkdirSync(listingDir, { recursive: true });
+    if (derived?.plugin && derived?.version) writeListing(path.join(listingDir, "plugins", derived.plugin.id), derived);
+    // `listing-<submission_id>` is uploaded with `if-no-files-found: error`,
+    // and a refused bundle derives no card: the marker keeps "nothing to list"
+    // an answer rather than a failed upload that takes the other legs' work
+    // down with it.
+    else fs.writeFileSync(path.join(listingDir, "NO-LISTING"), "this submission derived no listing; its facts file says why\n");
+    return { facts, derived };
+  };
+
+  if (perBundle.length === 0) {
+    if (files.length === 0) f.error("E_NO_BUNDLE_ASSETS", "release", "the verify job handed this job no bundle");
+    return write(null);
+  }
+  const first = perBundle[0];
+  const firstSignature = localeSignature(first.files, policy.limits);
+  for (const b of perBundle.slice(1)) {
+    if (b.facts.id !== first.facts.id) f.error("E_MANIFEST_ID_MISMATCH", b.where, "the bundles name two plugins");
+    if (b.facts.version !== first.facts.version) f.error("E_VERSION_INCONSISTENT", b.where, "the bundles name two versions");
+    if (localeSignature(b.files, policy.limits) !== firstSignature) f.error("E_LOCALE_BUNDLE_MISMATCH", b.where, "the bundles' locale files disagree");
+  }
+  if (f.errors.length) return write(null);
+
+  const facts = first.facts;
+  const { plugins } = loadSources(root);
+  const existing = plugins.find((p) => p.doc?.id === facts.id) ?? null;
+  const catalogue = plugins.filter((p) => p.doc?.id).map((p) => ({ id: p.doc.id, name: p.doc.name ?? "", i18n: p.doc.i18n }));
+  const repo = typeof v.repo === "string" ? v.repo : null;
+  const repoOwner = repo ? repo.split("/")[0] : "";
+  f.absorb(checkNames({ id: facts.id, name: facts.name, repoOwner }, catalogue, { flagDistance: policy.limits.typosquat_flag_distance, trademarks }), "names");
+  if (existing) {
+    const listed = existing.versions.map((x) => x.doc?.version).filter((x) => parseSemver(x));
+    if (listed.includes(facts.version)) f.error("E_VERSION_NOT_NEW", "version", `${facts.id} ${facts.version} is already listed`);
+    else {
+      const highest = listed.sort(compareSemver).at(-1);
+      if (highest && compareSemver(facts.version, highest) <= 0) f.error("E_VERSION_NOT_NEW", "version", `${facts.version} is not newer than ${highest}`);
+    }
+  }
+  for (const b of perBundle) {
+    f.absorb(scanHostRpcs(b.files, { capabilities: b.facts.capabilities, permissions: b.manifest.permissions }), b.where);
+  }
+  const derived = deriveListing({
+    facts, manifest: first.manifest, repo: repo ?? "unknown/unknown", tag: v.tag ?? null, commit: v.commit ?? null,
+    publishedAt: typeof v.published_at === "string" ? v.published_at : normaliseTime(null),
+    artifacts, files: first.files, ownershipMethod: null, existingPlugin: existing?.doc ?? null, policy,
+  });
+  f.absorb(derived.findings, "metadata");
+  for (const [code, block] of Object.entries(derived.plugin?.i18n ?? {})) {
+    f.absorb(checkDisplayName({ id: facts.id, name: block.name, repoOwner, locale: code }, catalogue, { trademarks }), `locales/${code}.json`);
+  }
+  const listedRepo = existing?.doc?.source?.repo ?? null;
+  if (f.errors.length === 0) {
+    if (listedRepo && repo && listedRepo.toLowerCase() !== repo.toLowerCase()) {
+      f.skip("E_DERIVED_LISTING_INVALID", "derive", "not checked: the listing's repository changed, and the identity comparison decides first");
+    } else {
+      f.absorb(await validateDerived(root, derived, opts), "derive");
+    }
+  }
+  return write(derived);
+}
+
+/**
+ * The check job's facts file schema string: registry-internal, never
+ * committed, and read only by `bot/lib/service-decide.mjs`, which refuses a
+ * facts file carrying any member but the six it names.
+ */
+export const CHECK_FACTS_SCHEMA = "astra.registry.check-facts/1";
+
 // ── CLI ─────────────────────────────────────────────────────────────────────
 
 // Exported so `bot/tests/roots.test.mjs` can ask this function what flags
@@ -867,7 +1265,74 @@ export function parseArgs(argv) {
   return opts;
 }
 
+/**
+ * The service path's two modes, parsed apart from the legacy flags so that
+ * `parseArgs` — which `bot/tests/roots.test.mjs` asks what flags exist — keeps
+ * saying exactly what the legacy command line takes.
+ */
+export function parseServiceArgs(argv) {
+  const opts = { mode: null, leases: null, submissions: null, assetsDir: null, out: null, submissionId: null, verified: null, root: REPO_ROOT, hostAstraVersion: null };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--verify-facts") opts.mode = "verify";
+    else if (a === "--check-facts") opts.mode = "check";
+    else if (a === "--leases") opts.leases = argv[++i];
+    else if (a === "--submissions") opts.submissions = argv[++i];
+    else if (a === "--assets-dir") opts.assetsDir = path.resolve(argv[++i]);
+    else if (a === "--submission-id") opts.submissionId = argv[++i];
+    else if (a === "--verified") opts.verified = argv[++i];
+    else if (a === "--out") opts.out = path.resolve(argv[++i]);
+    else if (a === "--registry-dir") opts.root = path.resolve(argv[++i]);
+    else if (a === "--astra-version") opts.hostAstraVersion = argv[++i];
+    else throw new Error(`unknown argument: ${a}`);
+  }
+  return opts;
+}
+
+/** A JSON job output, from the text a `needs.*.outputs` value arrives as. */
+function jsonInput(text, what) {
+  if (text === null || text === undefined || String(text).trim() === "") return null;
+  try {
+    return JSON.parse(String(text));
+  } catch (e) {
+    throw new Error(`${what} is not JSON: ${e.message}`);
+  }
+}
+
+async function serviceMain(argv) {
+  const opts = parseServiceArgs(argv);
+  if (opts.mode === "verify") {
+    const leases = jsonInput(opts.leases, "--leases") ?? {};
+    const ids = jsonInput(opts.submissions, "--submissions") ?? Object.keys(leases);
+    if (!opts.assetsDir) throw new Error("--verify-facts needs --assets-dir");
+    const verified = {};
+    for (const id of ids) {
+      const lease = leases[id];
+      if (!lease) throw new Error(`claim reported ${id} and handed on no lease for it`);
+      verified[id] = await verifyFacts({ lease, root: opts.root, assetsDir: opts.assetsDir });
+      console.log(`${id}: ${verified[id].outcome}${verified[id].code ? ` ${verified[id].code}` : ""}`);
+    }
+    const text = JSON.stringify(verified);
+    if (opts.out) fs.writeFileSync(opts.out, `${text}\n`);
+    if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `verified=${text}\n`);
+    return 0;
+  }
+  if (opts.mode === "check") {
+    if (!opts.submissionId || !opts.assetsDir || !opts.out) throw new Error("--check-facts needs --submission-id, --assets-dir and --out");
+    const all = jsonInput(opts.verified, "--verified") ?? {};
+    const { facts } = await checkFacts({
+      submissionId: opts.submissionId, assetsDir: opts.assetsDir, verified: all[opts.submissionId] ?? {},
+      out: opts.out, root: opts.root, hostAstraVersion: opts.hostAstraVersion,
+    });
+    const blocking = facts.findings.filter((x) => x.level === "error").length;
+    console.log(`${opts.submissionId}: ${facts.findings.length} finding(s), ${blocking} blocking`);
+    return 0;
+  }
+  throw new Error("one of --verify-facts or --check-facts is required");
+}
+
 async function main(argv) {
+  if (argv[0] === "--verify-facts" || argv[0] === "--check-facts") return serviceMain(argv);
   const opts = parseArgs(argv);
   const result = await ingest(opts);
   console.log(result.comment);

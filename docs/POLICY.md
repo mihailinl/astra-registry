@@ -265,6 +265,40 @@ shipped through a side channel, because at least the registry saw it.
 The cron job prints the queue's age on every run (`node bot/watch.mjs --sla`) so
 a breach is loud rather than something a maintainer has to go and look for.
 
+### 3.2 On the plugins-service path: approvals, and the windows around them
+
+From R3 a submission can also reach this registry through the plugins service
+(a panel request, an author's CI, or the release poll) rather than through an
+issue. On that path a moderator's approval arrives from the service, and four
+numbers bound what it can do. They are the owner's answers of 2026-09-13, as
+contract 0.12.0 and 0.20.0 record them, and `bot/lib/service-decide.mjs`
+enforces exactly these:
+
+- **An approval older than 7 days is not honoured.** The bot re-runs every
+  check in the run that acts on an approval, and it honours the approval only
+  when a record on `main` shows the release held under exactly that
+  fingerprint, nothing is blocking, and the approval was given within the last
+  **7 days** (BOT-26).
+- **An approved update waits 6 hours after its author notice.** An approval
+  clears a hold and never a delay. An approved update with no delay reason is
+  published only once the service reports the author's notice was accepted at
+  least **6 hours** earlier; an approved first listing with no delay reason
+  waits for the notice and no longer; a release with a delay reason waits its
+  §4 delay as always (BOT-28).
+- **Every approval, and every delayed release reaching its time, is shown to an
+  operator first, and waits 6 hours after that.** The alert goes out in the run
+  that first reads the event, and the release is published only once the
+  channel has reported the alert delivered and **6 hours** have passed since;
+  a waiting author sees `W_OPERATOR_WINDOW` with the window's end, or
+  `W_ALERT_UNDELIVERED` while no delivery is reported (TRUST-14, TRUST-32).
+- **A first binding waits 7 days after its hold.** An approval of
+  `R_FIRST_BINDING` — the first release of a published listing that carries a
+  binding line — is honoured no earlier than **7 days** after the record of
+  that hold reached `main` (TRUST-27).
+
+There is no `/publish` on that path, and an approved first listing that carries
+a delay reason waits out its delay like any other release (ROLL-49).
+
 ## 4. The publication delay
 
 Some releases publish themselves, but not immediately.
