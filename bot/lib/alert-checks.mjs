@@ -330,12 +330,18 @@ export const CHECKS = [
     // run (BOT-41's 1800 s) and the sweep daily. The bound is a day either
     // way, because the poster is GitHub-scheduled.
     //
-    // Disarmed, because nothing posts yet: the workflow's schedule is
-    // commented until R3 opens, and `load` is held by `if: false` until
-    // environment `bot-state` exists. R3's open commit is red on this row
-    // until it arms it (the workflows test's arming rule), and arming it then
-    // is right only if `load` is no longer held — a held `load` skips
-    // `poll-alert`, which that rule cannot see.
+    // Disarmed, because nothing posts on a schedule yet: the workflow's
+    // schedule is commented until R3 opens. `load` ran for the first time
+    // on 2026-09-24, once environment `bot-state` existed (#319), and
+    // dispatched run 35992534051 on main posted this check's first success at
+    // 2026-09-24T11:22:44Z. That post is not an arming. The workflows test's
+    // arming rule is red on an `armed_at` while the schedule is commented,
+    // and it is right to be: nothing would post again, so an armed check
+    // could only page. The same run ended red, at `claim`, because the
+    // service answered 404 (W_SERVICE_UNREACHABLE). A live schedule today
+    // would therefore be a red run every ten minutes. The commit that
+    // uncomments the schedule records `armed_at` here, from its first
+    // scheduled post, in the same change.
     source: "B-T5.0, B-T5.1 (BOT-87), .github/workflows/plugins-ingest.yml, the `poll-alert` job",
     interval_seconds: 600,
     created_disarmed: true,
