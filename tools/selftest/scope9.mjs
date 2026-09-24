@@ -60,16 +60,22 @@ const TOKEN_FILE = "schema/contract-tokens-v1.json";
 const OURS = ["registry", "bot"];
 
 /** The gaps known on 2026-09-24, each with who closes it and until when. */
+//
+// **The two `misattributed` rows went red once already, as designed.** Contract
+// 2.4.0 regenerated the token file without the generator fix, the rows stopped
+// sheltering, and `Registry index` went red on `main` at `858b238`. They were
+// moved to 2.4.0 the same hour, so that `main` is green while the fix is owed;
+// the next version that regenerates the file without it goes red the same way.
 export const KNOWN = Object.freeze({
   "wait:W_OPERATOR_WINDOW": {
     gap: "misattributed",
-    through: "2.3.0",
+    through: "2.4.0",
     closes: "astra-plugins-ops tools/contract-tokens.mjs's wait loop: `[^.;]{0,80}` crosses into the next wait; " +
       "`[^.;`]{0,80}` does not. A contract version regenerates the file",
   },
   "wait:W_ALERT_UNDELIVERED": {
     gap: "misattributed",
-    through: "2.3.0",
+    through: "2.4.0",
     closes: "the same generator fix as W_OPERATOR_WINDOW",
   },
   "wait:W_LEASE_EXPIRED": {
