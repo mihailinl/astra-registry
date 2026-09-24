@@ -194,8 +194,10 @@ export function build(opts) {
 
   // ── publishers ───────────────────────────────────────────────────────────
   //
-  // A publisher is the owner of the repository a plugin is released from —
-  // there are no registry accounts, so there is nothing else it could be.
+  // A publisher is the owner of the repository a plugin is released from. The
+  // registry has no accounts of its own, and the Minice account a binding
+  // needs from R4a is never a publisher (ROLL-47 A1, amended 2026-09-24), so
+  // there is nothing else it could be.
   const byOwner = new Map();
   for (const entry of entries) {
     const repoName = entry.source?.repo ?? "";
