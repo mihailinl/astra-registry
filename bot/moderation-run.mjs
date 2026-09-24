@@ -111,16 +111,16 @@
 //
 // ── WHAT THIS FILE DOES NOT DO ─────────────────────────────────────────────
 //
-//   * It does not count TRUST-26's bound. `bot/lib/takedown-bound.mjs` does,
-//     and it imports `stagingListingId` and `triggersOf` from
-//     `tools/moderation-coverage.mjs` — a DESK TOOL, outside TRUST-31's hashed
-//     set. Importing it here would pull that file into the closure of a bot
-//     run, which contract 0.23.0 states is a thirteenth hashed path and a
-//     contract MINOR of its own, owed BEFORE that commit lands. So `overBound`
-//     arrives as an input, and `compileAll` REFUSES TO GUESS it: with a
-//     takedown in the batch and no answer, it throws. Reading an absent input
-//     as `false` would apply a takedown the bound should have held, which is
-//     the one direction MOD-9 exists to prevent.
+//   * It does not take TRUST-26's bound from anyone. The `commit` job counts
+//     it itself with `bot/lib/takedown-bound.mjs`'s `countWindow`, out of its
+//     own full-history checkout, and `compileAll` spends it entry by entry
+//     (`boundLedger`), so a batch of four takedowns under a bound of three
+//     holds the fourth. Until 2026-09-24 the bound arrived as
+//     `ASTRA_OVER_BOUND`, an input nothing supplied, because the counter's
+//     imports sat outside TRUST-31's set; contract 0.38.0 put them inside. The
+//     input is gone rather than kept as an override: one that can say "under
+//     the bound" applies a takedown MOD-9 should have held. With no ledger and
+//     no fixed answer `compileAll` still refuses to guess, and throws.
 //   * It does not push. The workflow's `commit` job runs the gates — both
 //     documents held to their generators' `--check`, `tools/validate.mjs`
 //     over the staged tree, `tools/selftest.mjs`, MOD-3's backing check — and
@@ -145,6 +145,8 @@ import {
   REJECT_CODE,
   allowlistedSubmission,
   compileDecision,
+  newBatch,
+  recordInBatch,
 } from "./lib/compile-decision.mjs";
 import { CODES } from "./lib/codes.mjs";
 import {
@@ -158,11 +160,14 @@ import {
   HOLDS_DIR,
   classifyHoldCommit,
   holdEntry,
+  isTakedown,
   readHolds,
   resolveHold,
   resultKey,
   resultsToPost,
 } from "./lib/holds.mjs";
+import { boundLedger, countWindow, headListing, withdrawnBy } from "./lib/takedown-bound.mjs";
+import { stagingListingId } from "../tools/moderation-coverage.mjs";
 import { VERDICT_SCHEMA, runUrl, verdictProblems } from "./lib/alert-verdict.mjs";
 import { SOURCE_DIR as MODERATION_DIR } from "./lib/moderation.mjs";
 import {
@@ -521,33 +526,49 @@ export function hasTakedown(entries) {
 }
 
 /**
- * Compile every surviving entry.
+ * Compile every surviving entry, in the order the list answer gave them.
  *
- * `overBound` is `null` when nobody measured it, and that is not the same as
- * `false`. See the header: the count lives in `bot/lib/takedown-bound.mjs`,
- * which reaches a desk tool outside TRUST-31's set, so wiring it in here is a
- * contract MINOR of its own. Until then a batch with a takedown in it and no
- * measured bound FAILS THE RUN.
+ * **The bound is spent entry by entry, and the batch is one tree.** The run
+ * commits the whole batch at once (BOT-73), so each decision after the first
+ * compiles against a tree that does not show the ones before it. `batch`
+ * (`newBatch`) carries what this run has already compiled — advisory ids, log
+ * names, listings delisted, versions yanked — and `ledger` (`boundLedger`)
+ * what it has already withdrawn: each takedown asks the ledger whether the
+ * estate is over TRUST-26's bound AFTER the ones admitted before it, and a
+ * compiled takedown spends what it withdraws (`withdrawnBy`).
+ *
+ * `ledger` is what the commit job passes. `overBound`, a fixed answer for the
+ * whole batch, is kept for single-entry fixtures and says nothing about a
+ * second takedown. With neither, a batch holding a takedown FAILS: an absent
+ * answer is not `false`, because false is the direction that applies a
+ * takedown MOD-9 should have held.
  */
-export function compileAll(entries, { root = REPO_ROOT, overBound = null } = {}) {
-  if (overBound === null && hasTakedown(entries)) {
+export function compileAll(entries, { root = REPO_ROOT, overBound = null, ledger = null } = {}) {
+  if (ledger === null && overBound === null && hasTakedown(entries)) {
     throw new Error(
       "this batch holds a takedown and TRUST-26's bound was not measured for this run. `overBound` is not " +
       "defaulted to false, because false is the direction that APPLIES a takedown MOD-9 should have held: over " +
       "the bound every takedown waits for an operator's MOD-52 confirmation, and a run that guessed would take " +
-      "software off machines that the bound exists to protect. The count is `bot/lib/takedown-bound.mjs`'s and " +
-      "importing it here pulls `tools/moderation-coverage.mjs` — a desk tool — into a bot run's import closure, " +
-      "which contract 0.23.0 prices as a thirteenth TRUST-31 path and a MINOR before that commit lands",
+      "software off machines that the bound exists to protect. The commit job measures it with " +
+      "`bot/lib/takedown-bound.mjs` and passes a `ledger`",
     );
   }
+  const batch = newBatch();
+  const head = ledger ? headListing(root) : null;
   const compiled = [];
   const refused = [];
   const held = [];
   for (const entry of entries) {
-    const result = compileDecision(entry, { root, overBound: overBound === true });
+    const takedown = isTakedown(entry);
+    const over = ledger ? takedown && ledger.over() : overBound === true;
+    const result = compileDecision(entry, { root, overBound: over, batch });
     if (result.outcome === "refused") refused.push(result);
     else if (result.outcome === "held") held.push(result);
-    else compiled.push(result);
+    else {
+      compiled.push(result);
+      recordInBatch(batch, result);
+      if (ledger && takedown) ledger.spend(withdrawnBy(result, head));
+    }
   }
   return { compiled, refused, held };
 }
@@ -1520,9 +1541,15 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     const entries = JSON.parse(env.ASTRA_ENTRIES || "[]");
     const submissions = JSON.parse(env.ASTRA_SUBMISSIONS || "[]");
     const shadow = env.ASTRA_SHADOW === "false" ? false : true;
-    const overBound = env.ASTRA_OVER_BOUND === undefined || env.ASTRA_OVER_BOUND === ""
-      ? null
-      : env.ASTRA_OVER_BOUND === "true";
+    // TRUST-26's bound, counted out of this job's own checkout (`fetch-depth:
+    // 0`) and never taken from outside. It used to be `ASTRA_OVER_BOUND`, an
+    // input nothing supplied; an input that can say "under the bound" is a
+    // switch that applies a takedown MOD-9 should have held, so the job no
+    // longer reads one and `bot/tests/moderation-run.test.mjs` sets it to
+    // "false" over a full bound to prove it.
+    const counted = countWindow(root, { now });
+    const ledger = boundLedger(counted, { staging: stagingListingId(root) });
+    log.log(`bound  ${ledger.reason()}`);
 
     // Re-checked, never trusted: `list` is a different job and its outputs
     // travel through the run's metadata. Re-reading them through the same
@@ -1538,7 +1565,8 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
 
     // Compiled in both modes: in shadow for timing (OPEN-OPS-13), and so that a
     // compile that throws is red in shadow too rather than first at R3's exit.
-    const compiledAll = compileAll(recheck.entries, { root, overBound });
+    const compiledAll = compileAll(recheck.entries, { root, ledger });
+    if (ledger.admitted.length) log.log(`bound  this run withdraws ${ledger.admitted.join(", ")}; ${ledger.reason()}`);
 
     // BOT-92: from here to `composeCommit`, the work the list answer names is
     // written ONLY under `shadow === false` — and "written" is every one of

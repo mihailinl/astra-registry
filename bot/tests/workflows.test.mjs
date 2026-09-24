@@ -1867,10 +1867,10 @@ test("tools/selftest.mjs under a hook's environment drops it, and runs as it doe
 // §2.0 check above is the same shape, a scan of tracked paths against what a
 // text file says, with its own floors. `policy.test.mjs` is the publication
 // policy's suite, end to end from a bundle to the catalogue, and a tree-wide
-// docblock scan is not policy. (2) `policy.test.mjs` is deliberately RED on
-// `main` — M-T3.2's takedown bound exits at R3 — so a new guard added there
-// has no legible verdict of its own until R3; this suite is green, so this
-// guard's red is its own. **That suite's red is exactly ONE failure in CI
+// docblock scan is not policy. (2) `policy.test.mjs` was deliberately RED on
+// `main` when this was written — M-T3.2's takedown bound, until reg.61a
+// published it on 2026-09-24 — so a new guard added there had no legible
+// verdict of its own; this suite is green, so this guard's red is its own. **That suite's red is exactly ONE failure in CI
 // (`160 passed, 1 failed`, run 35718722709 on `main` and 35719323357 here,
 // identical). It is 41 failures on a laptop, and the 40 extra are the local
 // environment — no pinned `AstraPlugins` checkout, so the manifest probe and
@@ -2427,8 +2427,9 @@ test("a step marked `not built` cannot let its job report success", () => {
 // pipefail`, an `::error::` echo or `exit 1`. Its outputs are the builder's to
 // write, and it fails its job until they are. The shape is read off the lines
 // and not off the `(not built: …)` marker in the step's name, because the
-// `apply` step carries that marker too — its job cannot run until M-T3.2 — and
-// is built: excusing it by name is exactly how its two outputs went unasked.
+// `apply` step carried that marker too until M-T3.4 built its job's compile
+// step, while being built itself: excusing it by name is exactly how its two
+// outputs went unasked.
 test("every output a moderation job hands on is one a step of that job writes", () => {
   const MODERATION = "plugins-moderation.yml";
   const problems = [];

@@ -2468,9 +2468,13 @@ const INDEX_DORMANT = new Map([
     "Plugins moderation",
     {
       file: "plugins-moderation.yml",
-      why: "its commit job's compile step exits 1 on M-T3.2 — ASTRA_OVER_BOUND, TRUST-26's count for the " +
-        "run, is supplied by nothing — and every later step in that job is gated on its success",
-      dormant: (src) => /ASTRA_OVER_BOUND/.test(src) && /^\s+exit 1\s*$/m.test(src),
+      // Until 2026-09-24 the reason was the commit job's compile step, which
+      // exited 1 on an ASTRA_OVER_BOUND nothing supplied. M-T3.4 made that step
+      // real and the job counts TRUST-26's bound itself, so the entry now rests
+      // on the reason that is left, read the way the ingest entry reads its own.
+      why: "its BOT-83 schedule is commented out until R3 (plan row reg.53, \"R2 exit, dark\") and its list " +
+        "job's call to the service is a placeholder until then, so a dispatch commits nothing but a due hold",
+      dormant: (src) => !/^\s{2}schedule:\s*$/m.test(topLevelBlock(src, "on") ?? ""),
     },
   ],
 ]);
@@ -2574,7 +2578,7 @@ await test("build-index.yml hears every workflow that commits, by the name in th
   if (stillDormant.length) {
     console.log(`        note  DORMANT: ${stillDormant.join(", ")} — heard, and committing nothing until R3. ` +
       `The assertions above are over the workflow files and ran in full; it is the trigger's run-time effect ` +
-      `that is inert, until reg.52 uncomments the schedule and M-T3.2 lands the takedown bound.`);
+      `that is inert, until the R3-open commit uncomments both schedules (reg.52, reg.53).`);
   }
 });
 
