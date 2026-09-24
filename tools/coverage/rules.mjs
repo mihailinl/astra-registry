@@ -7,8 +7,8 @@
 // belong to other tasks, landing across R1, R2, R3 and R6: M-T1.3's docs grep,
 // M-T5.7's mirror-staleness alarm, M-T2.1's examples rule, M-T5.8's badge
 // trailer, the ROLL-47 promise greps, RC-R1-9(b)'s keepalive age, and M-T6.2's
-// no-issue-channel rule. Six of the eight have landed; the seam below carries
-// what is left. Eight steps in one job, each `if: always()` so one red
+// no-issue-channel rule. All but M-T6.2's have landed — M-T5.8 and the ROLL-47
+// promise greps on 2026-09-24 — and the seam below carries what is left. Eight steps in one job, each `if: always()` so one red
 // rule does not hide the next, is easy. The failure that shape permits is not:
 // a step that never ran — a typo in a path, a `continue-on-error` somebody
 // added while debugging, a step deleted in a merge, a rule that threw before
@@ -156,7 +156,7 @@ export const RULES = [
   //
   // M-T5.8's badge-withdrawal trailer is NOT a line here: the plan puts it
   // inside `tools/moderation-coverage.mjs`'s walk, beside the rules it is one
-  // of, and that file carries the seam for it instead.
+  // of, and it landed there (`badgeNarrowing`, `badgeWithdrawnCover`).
 ];
 
 /**
