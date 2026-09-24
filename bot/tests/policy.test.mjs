@@ -2970,6 +2970,62 @@ await test("MIG-3 — the deadline is in one place, and no document states one t
   }
 });
 
+// MIG-14, registry plan M-T5.3: what every notice to the authors of an
+// existing listing says, and what none may say. The texts are
+// `docs/migration-notice.md`'s three rounds, filled by
+// `tools/lib/migration-notice.mjs` — the same function the desk command sends
+// from — with fixture values, so "the deadline value" is asserted as a value
+// and not as a placeholder. ID-16's sentence is held to 0.14.0's test ("when
+// the rule is applied", never "at expiry" or "by then") and to 0.15.0's n25
+// consequent: committing the line is what KEEPS the token, so "an author who
+// commits the line and tags much later mints again" is the sentence that told
+// authors the opposite of the rule, and it is refused by name.
+await test("MIG-14 — every round of the migration notice says what a notice must, and nothing it must not", async () => {
+  const { NOTICE_DOC, renderRound } = await import("../../tools/lib/migration-notice.mjs");
+  const doc = fs.readFileSync(path.join(REPO_ROOT, NOTICE_DOC), "utf8");
+  const values = { deadline: "2031-05-06T07:08:09Z", cutover: "2031-03-04T05:06:07Z", listings: ["demo-listing"] };
+  for (const round of [1, 2, 3]) {
+    const text = renderRound(doc, round, values);
+    const where = `${NOTICE_DOC} round ${round}`;
+    const present = [
+      ["the deadline value", (t) => t.includes("2031-05-06") && t.includes(values.deadline)],
+      ["`astraUser`", (t) => t.includes("`astraUser`")],
+      ["a binding line", (t) => /binding line/.test(t) && t.includes("astra-binding: <your token>")],
+      ["a new tag", (t) => /\bnew tag\b/.test(t)],
+      ["one `R_FIRST_BINDING` review", (t) => /One `R_FIRST_BINDING` review/.test(t)],
+      ["what `frozen` does", (t) => /`frozen`: it stays listed[^.]*takes no new version until it is bound/.test(t)],
+      ["MIG-12's wait from cutover", (t) => /From the cutover\*\*, a delayed or reviewed release[^.]*waits until the listing is bound/.test(t)],
+      ["ID-16's expiry, tested when the rule is applied",
+        (t) => /expires 30 days after its mint unless a live submission names it or its line is on the repository's default branch when the rule is applied/.test(t)],
+      ["ID-16's consequent, the right way round (n25)",
+        (t) => /tags much later without the line on the default branch mints again, and one whose line is still on that branch when the rule is applied does not/.test(t)],
+      ["that the panel is the only place to act", (t) => /the panel is the only place to act/i.test(t)],
+      ["the listing it is about, with its page", (t) => t.includes("https://astra.minice.ai/plugins/demo-listing")],
+    ];
+    if (round >= 2) present.push(["the cutover date", (t) => t.includes("2031-03-04") && t.includes(values.cutover)]);
+    for (const [what, holds] of present) assert(holds(text), `${where} does not state ${what} (MIG-14)`);
+
+    const absent = [
+      ["\"at expiry\", 0.13.0's single test at the 30-day mark", /\bat expiry\b/i],
+      ["\"by then\", the same", /\bby then\b/i],
+      ["n25's inverted consequent", /commits? the line and tags? much later[^.]*mints? again/i],
+      ["a binding line carrying a token", /astra-binding[ \t]*:[ \t]*[A-Za-z0-9_-]{16,}/],
+      ["a string in §0.7's token grammar", /[A-Za-z0-9_-]{22,}/],
+      ["anything shaped like a Minice identifier", /\b\d{15,}\b/],
+      ["an address", /@/],
+      ["a request to reply", /\brepl(?:y|ies|ied|ying)\b/i],
+      ["an `issues/` link", /issues\//i],
+    ];
+    for (const [what, re] of absent) {
+      const hit = re.exec(text);
+      assert(!hit, `${where} carries ${what}: ${JSON.stringify(hit?.[0])} (MIG-14)`);
+    }
+  }
+  assert(/highest `round` present on\s+`main`/.test(doc),
+    `${NOTICE_DOC} does not state which marker is authoritative — the highest \`round\` present on \`main\` — which ` +
+    "two parties read and an outside reader of the markers needs (M-T5.3)");
+});
+
 // M-T3.2's half of reg.61a, written — like MIG-3 above — against the ABSENCE,
 // because the number is not published yet and inventing one here would be the
 // registry promising a blast-radius cap nobody can read.
