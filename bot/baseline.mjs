@@ -108,6 +108,7 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -119,6 +120,7 @@ import { resolveWriter } from "./export-issues.mjs";
 // defined`, exit 2 — never reached, because no version carries an
 // `artifact_url` for `verifyOne` to get as far as `gh`.
 import { classifyVerifyFailure } from "./lib/attestation.mjs";
+import { decisionCommitMessage } from "./lib/decisions.mjs";
 import { artifactDigests, submissionFingerprint } from "./lib/policy/release.mjs";
 import { safeRepo, safeTag } from "./lib/intake.mjs";
 import { DEFAULT_SIGNER_WORKFLOW } from "./ingest.mjs";
@@ -237,6 +239,13 @@ export function population(root = REPO_ROOT) {
       tag,
       commit,
       artifact_digests: digests,
+      // What `--verify` downloads: every asset, by the URL and digest the
+      // version file records. `--population` emitted no URL until B-T3.7b was
+      // walked end to end, and `verifyOne` fetched nothing without one — 42
+      // facts, 0 verified, every time. Every platform, not the first: a
+      // two-platform release is two downloads and two attestation checks, and
+      // its record is only as verified as the weaker of them.
+      artifacts: artifactList(doc),
       fingerprint: submissionFingerprint({
         repo,
         tag,
@@ -254,6 +263,21 @@ export function population(root = REPO_ROOT) {
     ? a.version.localeCompare(b.version)
     : a.plugin_id.localeCompare(b.plugin_id)));
   return { versions, problems, commitless };
+}
+
+/** `artifacts.<platform>` as `[{platform, url, sha256}]`, sorted by platform. */
+function artifactList(doc) {
+  const out = [];
+  const artifacts = doc?.artifacts && typeof doc.artifacts === "object" ? doc.artifacts : {};
+  for (const platform of Object.keys(artifacts).sort()) {
+    const a = artifacts[platform] ?? {};
+    out.push({
+      platform,
+      url: typeof a.url === "string" ? a.url : null,
+      sha256: typeof a.sha256 === "string" && SHA256_RE.test(a.sha256) ? a.sha256 : null,
+    });
+  }
+  return out;
 }
 
 // ── the certificate half ────────────────────────────────────────────────────
@@ -378,10 +402,16 @@ const RECORD_MEMBERS = {
   version: (v) => SEMVER_RE.test(v),
   repo: (v) => safeRepo(v) !== null,
   tag: (v) => safeTag(v) !== null,
-  commit: (v) => SHA1_RE.test(v),
+  commit: (v) => typeof v === "string" && SHA1_RE.test(v),
   fingerprint: (v) => FINGERPRINT_RE.test(v),
-  repository_id: (v) => v === null || BASE10_RE.test(v),
-  repository_owner_id: (v) => v === null || BASE10_RE.test(v),
+  // A string, never null. schema/decision-v1.json: "ABSENT MEANS ABSENT, NOT
+  // NULL" — an unverified certificate's ids are carried by OMITTING both
+  // members, and MIG-20's "null ids never count" is read as "no ids". This
+  // grammar admitted null until the dispatch was walked end to end, and a
+  // record carrying one is a record tools/validate.mjs refuses on `main`,
+  // after the run that cannot be repeated.
+  repository_id: (v) => typeof v === "string" && BASE10_RE.test(v),
+  repository_owner_id: (v) => typeof v === "string" && BASE10_RE.test(v),
   state: (v) => v === "published",
 };
 
@@ -460,6 +490,11 @@ export function composeRecords(facts, publishedAt) {
         "be dated by the run's clock and would say the publication happened today",
       );
     }
+    // Absent where it does not apply (DEC-7), never null: a commitless
+    // version (dice-roller 0.1.2 predates `release.commit` being bound) has no
+    // `commit`, and a certificate that did not verify has no ids. Both are
+    // named in the commit message instead, which is where a reader of a
+    // record-with-a-hole is sent.
     const record = {
       decided_at: at,
       actor: "system",
@@ -468,10 +503,13 @@ export function composeRecords(facts, publishedAt) {
       version: fact.version,
       repo: fact.repo,
       tag: fact.tag,
-      commit: fact.commit,
+      ...(fact.commit === null || fact.commit === undefined ? {} : { commit: fact.commit }),
       fingerprint: fact.fingerprint,
-      repository_id: fact.repository_id,
-      repository_owner_id: fact.repository_owner_id,
+      // Both ids or neither. A baseline with a repository id and no owner id
+      // is half an anchor: TRUST-23 compares the pair, and a reader that found
+      // one member would compare it against nothing.
+      ...(typeof fact.repository_id === "string" && typeof fact.repository_owner_id === "string"
+        ? { repository_id: fact.repository_id, repository_owner_id: fact.repository_owner_id } : {}),
       state: "published",
     };
     refuseUncomposable(record);
@@ -526,6 +564,83 @@ export function markerProblems(doc) {
     problems.push("record_count is below version_count; MIG-20 asks for one record per version and MIG-21 adds more");
   }
   return problems;
+}
+
+// ── the dispatch's own checks and message ───────────────────────────────────
+
+/**
+ * Every way a facts file fails to describe the population exactly.
+ *
+ * By `plugin_id@version` and by fingerprint: a fact for the right version
+ * whose fingerprint differs is a fact computed over a different tree — a
+ * re-cut tag, a version file edited between `verify` and `write` — and
+ * writing it would baseline bytes the tree does not describe.
+ */
+export function coverageProblems(versions, facts) {
+  const problems = [];
+  const byKey = new Map();
+  for (const f of facts ?? []) {
+    const k = `${f?.plugin_id}@${f?.version}`;
+    if (byKey.has(k)) problems.push(`${f?.plugin_id} ${f?.version} is in the facts file twice`);
+    byKey.set(k, f);
+  }
+  const seen = new Set();
+  for (const v of versions) {
+    const k = `${v.plugin_id}@${v.version}`;
+    seen.add(k);
+    const f = byKey.get(k);
+    if (!f) { problems.push(`${v.plugin_id} ${v.version} is in the population and not in the facts file`); continue; }
+    for (const member of ["repo", "tag", "fingerprint"]) {
+      if (f[member] !== v[member]) {
+        problems.push(`${v.plugin_id} ${v.version}: the facts file says ${member} ${JSON.stringify(f[member])} and the tree says ${JSON.stringify(v[member])}`);
+      }
+    }
+    if ((f.commit ?? null) !== (v.commit ?? null)) {
+      problems.push(`${v.plugin_id} ${v.version}: the facts file says commit ${JSON.stringify(f.commit ?? null)} and the tree says ${JSON.stringify(v.commit ?? null)}`);
+    }
+  }
+  for (const k of byKey.keys()) {
+    if (!seen.has(k)) problems.push(`${k.replace("@", " ")} is in the facts file and not in the population`);
+  }
+  return problems;
+}
+
+/** BOT-37's `Run:` value from the Actions environment, or null outside one. */
+export function runTrailer(env = process.env) {
+  const id = /^[0-9]{1,20}$/.test(String(env.GITHUB_RUN_ID ?? "")) ? env.GITHUB_RUN_ID : null;
+  if (!id) return null;
+  const attempt = /^[0-9]{1,5}$/.test(String(env.GITHUB_RUN_ATTEMPT ?? "")) ? env.GITHUB_RUN_ATTEMPT : null;
+  return attempt ? `${id}/${attempt}` : id;
+}
+
+/**
+ * BOT-73's one commit message: what was written, what could not be, and what
+ * this commit does NOT carry — in the run's own words, because a reader of a
+ * record with no ids or no commit is sent here to find out why (B-T3.7b:
+ * "names every version whose certificate or approver was unrecoverable").
+ */
+export function baselineCommitMessage({ sourceCommit, written, versions, unrecoverable, historic, run }) {
+  if (!run) throw new Error("the baseline commit carries BOT-37's `Run:` trailer; pass --run or run inside Actions");
+  const commitless = versions.filter((v) => v.commit === null).map((v) => `${v.plugin_id} ${v.version} (${v.repo}@${v.tag})`);
+  const lines = [
+    `MIG-20's baseline over ${sourceCommit}: ${written} \`migration\` record(s), one per non-staging published ` +
+      `version (${versions.length}), and log/baseline.json.`,
+    "",
+    `Certificate ids unrecoverable, recorded with no ids (${unrecoverable.length}):`,
+    ...(unrecoverable.length ? unrecoverable.map((u) => `- ${u}`) : ["- none"]),
+    "",
+    `Published with no release commit, recorded with no \`commit\` (${commitless.length}):`,
+    ...(commitless.length ? commitless.map((c) => `- ${c}`) : ["- none"]),
+    "",
+    `Not in this commit: ${historic} MIG-21 historic decision(s) the export read from issue threads. BOT-35's ` +
+      "`migration:<owner/name>@<tag>` domain separates versions, not decisions about one version, so they would " +
+      "derive shared ids; they are composed once an amendment to BOT-35 widens the domain (ops.22).",
+  ];
+  return decisionCommitMessage({
+    subject: `baseline: MIG-20's migration records and marker, over ${sourceCommit.slice(0, 12)}`,
+    body: lines.join("\n"),
+    run,
+  });
 }
 
 // ── the daily name watch (MIG-20's last sentence) ───────────────────────────
@@ -658,12 +773,13 @@ const USAGE = `usage:
   bot/baseline.mjs --population [--registry-dir DIR] [--out FILE]
   bot/baseline.mjs --verify --population-file FILE [--out FILE]
   bot/baseline.mjs --write --facts-file FILE --historic-file FILE --source-commit SHA [--registry-dir DIR]
+                   [--message-out FILE] [--run RUN_ID[/ATTEMPT]]
   bot/baseline.mjs --names [--registry-dir DIR]`;
 
 function parseArgs(argv) {
   const opts = {
     mode: null, root: REPO_ROOT, out: null, populationFile: null, factsFile: null, historicFile: null,
-    sourceCommit: null,
+    sourceCommit: null, messageOut: null, run: null,
     // The escape hatch for a catalogue that really is wholly unattested, and
     // it is a NUMBER rather than a boolean on purpose: a flag that means "yes,
     // whatever it is" is a flag somebody adds to a red run without reading it.
@@ -683,6 +799,8 @@ function parseArgs(argv) {
     else if (a === "--facts-file") opts.factsFile = path.resolve(argv[++i]);
     else if (a === "--historic-file") opts.historicFile = path.resolve(argv[++i]);
     else if (a === "--source-commit") opts.sourceCommit = argv[++i];
+    else if (a === "--message-out") opts.messageOut = path.resolve(argv[++i]);
+    else if (a === "--run") opts.run = argv[++i];
     else if (a === "--expect-unverified") {
       const raw = argv[++i];
       if (!/^\d+$/.test(String(raw))) throw new Error(`--expect-unverified needs a count, not ${JSON.stringify(raw)}\n${USAGE}`);
@@ -825,51 +943,92 @@ async function main(argv) {
     );
   }
   const historic = JSON.parse(fs.readFileSync(opts.historicFile, "utf8"));
-  const { versions } = population(opts.root);
+  const { versions, problems: treeProblems } = population(opts.root);
+  if (treeProblems.length) {
+    throw new Error(
+      `this tree has ${treeProblems.length} version file(s) the baseline cannot read, and a baseline taken over it ` +
+      `is missing a record nobody will notice is missing:\n  ${treeProblems.slice(0, 5).join("\n  ")}`,
+    );
+  }
+  // The facts file must cover the population EXACTLY, checked before a single
+  // record is written. `write` needs only that `verify` succeeded, and a facts
+  // file that dropped a version — a re-run over a changed tree, a hand-edited
+  // artifact — would otherwise leave that version with no `migration` record,
+  // in a baseline written once, with detector A1 reporting it for ever.
+  const coverage = coverageProblems(versions, factList);
+  if (coverage.length) {
+    throw new Error(
+      `the facts file does not describe the population this tree holds (${coverage.length} difference(s)):\n  ` +
+      coverage.slice(0, 5).join("\n  ") + (coverage.length > 5 ? `\n  … and ${coverage.length - 5} more` : ""),
+    );
+  }
   const publishedAt = new Map(versions.map((v) => [`${v.plugin_id}@${v.version}`, v.published_at]));
-  const composed = composeRecords(verified.facts ?? [], publishedAt);
+  const composed = composeRecords(factList, publishedAt);
   const write = await resolveWriter({});
-  for (const { key, record } of composed) await write({ key, record, root: opts.root });
-  const historicCount = Array.isArray(historic.facts) ? historic.facts.length : 0;
-  console.error(`wrote ${composed.length} baseline record(s); ${historicCount} MIG-21 historic fact(s) pending, none composed`);
+  const written = [];
+  for (const { key, record } of composed) {
+    const out = await write({ key, record, root: opts.root });
+    // A dropped write here is a SECOND baseline: a `migration` record for this
+    // version is already on the tree. The marker guard above stops a second
+    // dispatch; this stops a tree that carries records without a marker —
+    // a half-taken baseline — from being papered over with a new marker.
+    if (out && out.written === false) {
+      throw new Error(`${record.plugin_id} ${record.version}: ${out.dropped}. A baseline is taken once, over a tree with no \`migration\` records`);
+    }
+    written.push(out);
+  }
+
+  // MIG-21's historic decisions: exported, counted, and NOT composed here.
+  //
+  // `bot/export-issues.mjs --compose` refuses the live archive, because
+  // BOT-35's `migration:<owner/name>@<tag>` domain separates versions, not
+  // decisions about one version: this registry refused and then approved one
+  // tag two to eight times, and each of those derives one id. The same domain
+  // also collides with THIS run's records — a historic approval of a tag that
+  // is now a published version derives the id of that version's baseline
+  // record. Widening the domain is an amendment to BOT-35 (ops.22), not an
+  // edit here, so this commit carries MIG-20's records and the marker, and
+  // its message says how many historic decisions are waiting and on what.
+  // Nothing MIG-20 feeds waits on them: B-T3.7's writer, detector A1, MIG-28
+  // and B-T3.6's work source all key on the baseline records and the marker.
+  const historicFacts = Array.isArray(historic?.facts) ? historic.facts : [];
+  const markerDoc = marker({
+    writtenAt: `${new Date().toISOString().slice(0, 19)}Z`,
+    sourceCommit: opts.sourceCommit,
+    versionCount: versions.length,
+    recordCount: written.length,
+  });
+  fs.mkdirSync(path.join(opts.root, "log"), { recursive: true });
+  fs.writeFileSync(path.join(opts.root, BASELINE_FILE), `${JSON.stringify(markerDoc, null, 2)}\n`);
+  console.error(
+    `wrote ${written.length} baseline record(s) and ${BASELINE_FILE}; ${historicFacts.length} MIG-21 historic ` +
+    "decision(s) exported and not composed (BOT-35's migration domain cannot separate them; ops.22)",
+  );
+
+  if (opts.messageOut) {
+    fs.writeFileSync(opts.messageOut, baselineCommitMessage({
+      sourceCommit: opts.sourceCommit,
+      written: written.length,
+      versions,
+      unrecoverable: Array.isArray(verified.unrecoverable) ? verified.unrecoverable : [],
+      historic: historicFacts.length,
+      run: opts.run ?? runTrailer(process.env),
+    }));
+  }
 
   // ── the marker floor ──
   //
-  // **Every stop above is a refusal, and this was the one path that exited 0
-  // — having taken no baseline.** Measured 2026-09-22 at `0df08e6`
-  // (astra-registry #205) and again at `1ae13d2`: over a copy of the tree,
-  // with a synthetic all-verified facts file and the commitless version left
-  // out, `--write` wrote 41 records under the copy's `log/decisions/`, wrote
-  // no marker, composed none of the historic facts and exited 0, and the
-  // `write` job has no step that commits. The three stops in front of it
-  // (`baseline.yml`'s header) are each one design decision from removal, and
-  // the dispatch after that would have gone green with nothing on `main` —
-  // which the operator of a ceremony that happens once reads as "baseline
-  // taken".
-  //
-  // So it refuses by name, like every other part here that is not built, and
-  // it is keyed on the one thing a run can check about itself: whether the
-  // marker is on the tree when it ends. It is LAST on purpose. Every refusal
-  // above it — the facts file, the record grammar, B-T2.2's writer — stays
-  // reachable through the CLI, so this one holds no defect out of reach (ops
-  // register entry 29: a refusal can hold a defect out of reach, and removing
-  // it ships the defect). The commit that makes it lift is the commit that has
-  // to run the dispatch's jobs end to end, once.
-  //
-  // What it cannot see: a run that writes the marker here and then commits
-  // nothing. Whether the commit is `baseline.yml`'s step or this file's is
-  // B-T3.7b's choice, and whichever makes it owes the check that the marker
-  // reached `main`.
-  if (!fs.existsSync(path.join(opts.root, BASELINE_FILE))) {
+  // Kept after the write that now makes it pass, because it is the one thing
+  // this run can check about itself: whether the marker is on the tree when
+  // it ends. Until B-T3.7b was walked end to end no version of `--write` wrote
+  // one, and every earlier dispatch would have gone green with nothing for
+  // A1, B-T3.7 or MIG-28 to key on. A future edit that drops the write above
+  // is refused here by name, not discovered at R3.
+  const onTree = markerOnMain(opts.root);
+  if (!onTree.present || JSON.stringify(onTree.doc) !== JSON.stringify(markerDoc)) {
     throw new Error(
-      `this --write leaves no ${BASELINE_FILE} on the tree, so it has not taken MIG-20's baseline, and it will ` +
-      `not exit 0 as if it had. It wrote ${composed.length} \`migration\` record(s) under ` +
-      `${path.join("log", "decisions")} in ${opts.root} and stops there: it writes no marker (\`marker()\` ` +
-      `builds and checks one, and nothing calls it), it composes none of the ${historicCount} MIG-21 historic ` +
-      "fact(s) (`bot/export-issues.mjs --compose`), and it makes no commit (BOT-73's one commit, holding every " +
-      "record and the marker). Those three are B-T3.7b's to build. Until they are, a green run here would read " +
-      "as \"baseline taken\" over a run that left nothing on `main`, and a second dispatch would not refuse, " +
-      "because the marker it refuses on was never written.",
+      `this --write leaves no ${BASELINE_FILE} on the tree matching the marker it composed, so it has not taken ` +
+      "MIG-20's baseline, and it will not exit 0 as if it had.",
     );
   }
   return 0;
@@ -891,17 +1050,63 @@ async function main(argv) {
  * because the only floor it had was `facts.length === 0`.
  */
 async function verifyOne(v, certificateIds, deps = {}) {
+  const assets = Array.isArray(v.artifacts) ? v.artifacts : [];
+  const none = { repository_id: null, repository_owner_id: null };
+  if (assets.length === 0) {
+    return { outcome: "unverified", why: "the version file names no artifact to download", ...none };
+  }
+  // Every asset, and the version is only as verified as the weakest of them:
+  // one bundle that did not verify is a release whose certificate cannot be
+  // said to cover what the listing serves.
+  const answers = [];
+  for (const a of assets) answers.push(await verifyAsset(v, a, certificateIds, deps));
+  const unchecked = answers.find((x) => x.outcome === "unchecked");
+  if (unchecked) return unchecked;
+  const failed = answers.find((x) => x.outcome !== "verified");
+  if (failed) return { outcome: "unverified", why: failed.why ?? null, ...none };
+  // One release, one repository. Two assets whose certificates name different
+  // ids are not a release this baseline can anchor to either of them.
+  const ids = new Set(answers.map((x) => `${x.repository_id}/${x.repository_owner_id}`));
+  if (ids.size !== 1) {
+    return { outcome: "unverified", why: `its ${answers.length} assets' certificates name ${ids.size} different repositories`, ...none };
+  }
+  return { outcome: "verified", repository_id: answers[0].repository_id, repository_owner_id: answers[0].repository_owner_id };
+}
+
+/**
+ * One asset: download, hash against the recorded digest, `gh attestation
+ * verify`, read the ids. Never unpacked.
+ */
+async function verifyAsset(v, a, certificateIds, deps = {}) {
   const fetchImpl = deps.fetch ?? fetch;
   const run = deps.run ?? ((args) => execFileAsync("gh", args, { maxBuffer: 16 * 1024 * 1024, timeout: 120_000 }));
-  const url = v.artifact_url;
-  if (!url) return { outcome: "unverified", repository_id: null, repository_owner_id: null };
-  const res = await fetchImpl(url);
-  if (!res.ok) return { outcome: "unverified", repository_id: null, repository_owner_id: null };
+  const none = { repository_id: null, repository_owner_id: null };
+  if (!a?.url) return { outcome: "unverified", why: `${a?.platform ?? "an asset"} has no URL`, ...none };
+  let res;
+  try {
+    res = await fetchImpl(a.url);
+  } catch (e) {
+    // A download that could not happen is a fact about the network, not about
+    // the artifact, and this record is written once.
+    return { outcome: "unchecked", why: `the ${a.platform} asset could not be downloaded: ${String(e?.message ?? e)}`, ...none };
+  }
+  if (!res.ok) {
+    if (res.status >= 500 || res.status === 429) {
+      return { outcome: "unchecked", why: `the ${a.platform} asset's host answered HTTP ${res.status}`, ...none };
+    }
+    return { outcome: "unverified", why: `the ${a.platform} asset is gone (HTTP ${res.status})`, ...none };
+  }
   // Hashed, never unpacked: a baseline run must not be the thing that opens
   // forty strangers' archives (B-T3.7b: "never unpacking an archive").
   const bytes = Buffer.from(await res.arrayBuffer());
   const artifactSha256 = crypto.createHash("sha256").update(bytes).digest("hex");
-  const tmp = path.join(fs.mkdtempSync(path.join(process.env.RUNNER_TEMP ?? "/tmp", "astra-baseline-")), "asset");
+  // The bytes at the URL have to be the bytes the listing recorded. An
+  // attestation over different bytes is an attestation about a different
+  // artifact, however well it verifies.
+  if (a.sha256 && artifactSha256 !== a.sha256) {
+    return { outcome: "unverified", why: `the ${a.platform} asset's bytes are not the ones its version file records`, ...none };
+  }
+  const tmp = path.join(fs.mkdtempSync(path.join(process.env.RUNNER_TEMP ?? os.tmpdir(), "astra-baseline-")), "asset");
   fs.writeFileSync(tmp, bytes);
   try {
     // `--signer-workflow` is not optional here, and leaving it out is not a
@@ -911,14 +1116,6 @@ async function verifyOne(v, certificateIds, deps = {}) {
     // repository. Measured 2026-09-19 over every listing: the command without
     // the flag fails on **12 of 18** perfectly good attestations, with
     // `Error: verifying with issuer "sigstore.dev"` and no named check.
-    //
-    // What that would have cost here and nowhere else: MIG-20's baseline is
-    // meant to be written ONCE — `--write` refuses once the marker is on the
-    // tree — so two thirds of the catalogue would have been recorded for ever
-    // as `unverified` with null ids, and detector A1, MIG-28 and TRUST-23 all
-    // read that record. The `catch` below turns the failure into exactly
-    // that, silently, which is why this line and that `catch` have to be read
-    // together.
     const { stdout } = await run([
       "attestation", "verify", tmp, "--repo", v.repo,
       "--signer-workflow", DEFAULT_SIGNER_WORKFLOW,
@@ -927,23 +1124,18 @@ async function verifyOne(v, certificateIds, deps = {}) {
     const ids = await certificateIds({ bundle: JSON.parse(stdout), artifactSha256 });
     return { outcome: "verified", repository_id: ids?.repository_id ?? null, repository_owner_id: ids?.repository_owner_id ?? null };
   } catch (e) {
-    // This `catch` used to be bare, and the comment above already said it had
-    // to be read together with the `--signer-workflow` line. It had to be read
-    // together with one more thing: `gh` exits 1 whether the attestation is
-    // absent, wrong, or **never checked at all** — no network, Sigstore's trust
-    // root unreachable, a timeout. Collapsing the third into "unverified"
-    // writes a fact about the RUNNER into a record about the ARTIFACT, in a
-    // file that is written once and can never be corrected.
-    //
-    // So the third is its own outcome and it stops the run. `unchecked` never
-    // reaches a record: `verificationFacts` counts it, `--verify` exits
-    // non-zero on it, and `--write` refuses a facts file that carries one.
-    const { unavailable } = classifyVerifyFailure(`${e?.stderr ?? ""}${e?.message ?? ""}`);
+    // `gh` exits 1 whether the attestation is absent, wrong, or **never
+    // checked at all** — no network, Sigstore's trust root unreachable, a
+    // timeout. Collapsing the third into "unverified" writes a fact about the
+    // RUNNER into a record about the ARTIFACT, in a file that is written once
+    // and can never be corrected. So the third is its own outcome and it stops
+    // the run: `unchecked` never reaches a record.
+    const said = `${e?.stderr ?? ""}${e?.message ?? ""}`;
+    const { unavailable } = classifyVerifyFailure(said);
     return {
       outcome: unavailable ? "unchecked" : "unverified",
-      why: unavailable ? (String(e?.stderr ?? e?.message ?? "").trim().split("\n")[0] || "the verifier could not run") : null,
-      repository_id: null,
-      repository_owner_id: null,
+      why: (String(e?.stderr ?? e?.message ?? "").trim().split("\n")[0]) || "the verifier could not run",
+      ...none,
     };
   } finally {
     fs.rmSync(path.dirname(tmp), { recursive: true, force: true });

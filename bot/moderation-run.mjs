@@ -648,7 +648,9 @@ export function terminalSubmissionRecord(entry, { root = REPO_ROOT, existing = n
     }
   }
   return writeDecisionRecord({
-    key: submissionKey({ submission_id: e.submission_id }),
+    // BOT-35 derives over (`submission_id`, fingerprint, state): the record's own
+    // two, so a stop and a later refusal of one submission are two ids.
+    key: submissionKey({ submission_id: e.submission_id, fingerprint: record.fingerprint ?? null, state: record.state }),
     record,
     root,
     existing: existing ?? recordsOnMain(root),
