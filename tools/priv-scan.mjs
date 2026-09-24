@@ -155,7 +155,10 @@ const COMPOSED = [
   { re: /^log\/decisions\/.*\.json$/, kind: "decision" },
   { re: /^log\/cutover\.json$/, kind: "cutover" },
   { re: /^log\/signed-wake-ack\.json$/, kind: "signed-wake-ack" },
-  { re: /^log\/rollout\/R0-settings\.json$/, kind: "settings" },
+  // ROLL-7's file and its dated amendments (`R0-settings-<YYYY-MM-DD>[-<n>].json`):
+  // log/** is append-only, so a pin added later is a new file, and it is the
+  // same kind with the same member tables (B-T5.0 added `bot-state` this way).
+  { re: /^log\/rollout\/R0-settings(?:-\d{4}-\d{2}-\d{2}(?:-\d+)?)?\.json$/, kind: "settings" },
   { re: /^log\/.*\.json$/, kind: null },               // log/** with no declared kind
   { re: /^plugins\/[^/]+\/identity\.json$/, kind: "identity" },
   { re: /^state\/alerts\/[^/]+\.json$/, kind: "alert-record" },
