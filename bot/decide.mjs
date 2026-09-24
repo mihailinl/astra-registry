@@ -64,6 +64,8 @@ import {
   renderPolicySection,
   trackRecord,
 } from "./lib/policy.mjs";
+// BOT-19's terminal states, spelled once: BOT-74's poll reads the same set.
+import { TERMINAL_STATES } from "./lib/poll.mjs";
 
 const EXIT = { publish: 0, refuse: 1, review: 3, delay: 4 };
 
@@ -101,7 +103,7 @@ const EXIT = { publish: 0, refuse: 1, review: 3, delay: 4 };
  * @param {{records: object[], pluginId: string|null, repo: string, tag: string|null}} opts
  */
 export function terminalOnMain({ records = [], pluginId, repo, tag }) {
-  const TERMINAL = new Set(["refused", "revoked", "yanked", "withdrawn", "deprecated"]);
+  const TERMINAL = new Set(TERMINAL_STATES);
   const mine = records.filter((r) =>
     (pluginId && r?.plugin_id === pluginId) ||
     (r?.repo === repo && tag && r?.tag === tag));
