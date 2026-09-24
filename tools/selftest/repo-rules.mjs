@@ -16,6 +16,12 @@ import { REPO_ROOT } from "../lib/sources.mjs";
 import { test, assert, assertEqual, walkRepo, grepRepo, isSuiteFile, tmp } from "./harness.mjs";
 
 export async function run() {
+  // Its own section header since RC-R3-4(b). Until then this module printed
+  // none and its names came out under the update-notes module's, the header
+  // every insertion into the runner's list had to step around; with that
+  // module moved into Astra they would have come out under the desk canary's.
+  console.log("\nrepository rules");
+
   // Every rule below that scans the repository asks `walkRepo`, and `walkRepo`
   // answers with a list. A skip in its exclusion list does not make a rule fail
   // — it makes the rule find nothing, which is the same output as compliance.
@@ -672,8 +678,14 @@ export async function run() {
   const SPLIT_MODULES = [
     "primitives.mjs", "catalogue.mjs", "publishers.mjs", "validation.mjs", "couplings.mjs",
     "listings.mjs", "origins.mjs", "bundles.mjs", "index-signature.mjs", "revocations.mjs",
-    "cli.mjs", "root-delegation.mjs", "update-signing.mjs", "update-notes.mjs", "repo-rules.mjs",
+    "cli.mjs", "root-delegation.mjs", "repo-rules.mjs",
     "signer.mjs",
+    // RC-R3-4(b) took the update manifest signer's two case modules out of
+    // this list, with the modules: they moved into Astra beside the signer
+    // (client plan C2.1). `desk-moved.mjs` is what stands in their place, the
+    // canary that the desk stays gone and that `loadTestRoot`, which Astra
+    // still reads here, keeps its shape.
+    "desk-moved.mjs",
     // `roots.mjs` was added on 2026-09-19 with B-T1.5, watched failing by
     // deleting the file and its runner entry together — which is the one loss
     // `checkModuleSet` is silent about, because that guard compares those two
