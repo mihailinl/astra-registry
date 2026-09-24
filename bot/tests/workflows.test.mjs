@@ -1031,6 +1031,33 @@ const NOT_HEARD = new Map([
   ],
 ]);
 
+// M-T3.5 (attack B-2). The operator's acts — a hold's confirm or cancel record,
+// a MOD-52 revert, a TRUST-33 deny — are written by `tools/operator.mjs --job
+// act`, and its role check lives in the tree at the ref the dispatcher chose.
+// The dispatch API takes a ref and plain write access is enough to dispatch,
+// so a write-only account could run a branch whose role check says "admin".
+// What refuses that job before it starts is environment `operator`, whose
+// deployment-branch policy admits `main` alone (RC-R0-3a) — a setting outside
+// the tree that the same push cannot edit. So every job that runs the act is
+// in that environment. Deleting the `environment:` line is the one edit that
+// reopens B-2, and it is the mutation this is watched with.
+test("every job that writes an operator record runs in environment `operator`", () => {
+  const jobs = allJobs();
+  const writers = jobs.filter((j) => code(j).some((l) => /node\s+tools\/operator\.mjs\s+--job\s+act\b/.test(l)));
+  // The floor, written before the mutation: with no writer found, the loop
+  // below proves nothing about the one workflow it exists for.
+  assert.ok(writers.length >= 1, "no job runs `tools/operator.mjs --job act`; this check would prove nothing");
+  const problems = writers
+    .filter((j) => !inEnvironment(j, "operator"))
+    .map((j) => `${where(j)} writes operator records outside environment \`operator\`, so a dispatch on any ref runs it`);
+  // And nothing else sits in `operator`: an environment admits a ref, not a
+  // job, and a second job there is a second thing that ref admits.
+  for (const j of jobs.filter((x) => inEnvironment(x, "operator") && !writers.includes(x))) {
+    problems.push(`${where(j)} is in environment \`operator\` and writes no operator record`);
+  }
+  assert.equal(problems.join("\n"), "", "an operator act can run from a ref environment `operator` does not admit");
+});
+
 test("the signer hears every workflow that commits, by the name in the file", () => {
   const heard = signerHears();
   // D1's two names and RC-R3-3's two. Three of the four have no file yet and a
@@ -1068,12 +1095,15 @@ test("the signer hears every workflow that commits, by the name in the file", ()
       `cron. Add the name to sign.yml's workflow_run list, or add it to NOT_HEARD here with the paths it writes.`,
     );
   }
-  // The floor, and it is the one RC-R3-3 raises. One committing workflow is
-  // heard today — `Ingest`. It becomes three when M-T3.4's `Plugins
-  // moderation` and M-T3.5's `Operator` land, and this number rises with them,
-  // in RC-R3-3's commit, which is the task that adds both names to `sign.yml`'s
-  // `workflow_run` list. Without it the loop above runs over nothing and
-  // reports a signer that hears everything because there is nothing to hear.
+  // The floor, and it is the one RC-R3-3 raises. It was 1 — `Ingest` — until
+  // M-T3.5 landed `Operator`; it is 4 from that commit: `Ingest`, `Plugins
+  // ingest`, `Plugins moderation` and `Operator`, each with a `contents:
+  // write` job and each named in `sign.yml`'s `workflow_run` list. The plan
+  // said 3; it was written before `Plugins ingest` existed, and the number is
+  // the tree's, measured on the commit that raised it. Without a floor the
+  // loop above runs over nothing and reports a signer that hears everything
+  // because there is nothing to hear; with it at 1, three of the four could
+  // fall out of the list — a rename is enough — and this would stay green.
   //
   // This comment said "B-T3.10's `Operator`" and was wrong twice, in a way
   // that sent a reader to the wrong task and would have sent a lane to edit a
@@ -1085,9 +1115,10 @@ test("the signer hears every workflow that commits, by the name in the file", ()
   // raise itself is RC-R3-3's `Repo/files` line, not B-T3.10's. Both halves
   // of the sentence had been true of some task; neither was true of that one.
   assert.ok(
-    heardCommitters.length >= 1,
-    `sign.yml hears ${heardCommitters.length} of this repository's committing workflows and heard 1 on ` +
-    `2026-09-19; this is a broken read, not a smaller repository`,
+    heardCommitters.length >= 4,
+    `sign.yml hears ${heardCommitters.length} of this repository's committing workflows (${heardCommitters.join(", ")}) ` +
+    `and heard 4 on 2026-09-24 — Ingest, Plugins ingest, Plugins moderation and Operator (RC-R3-3). A committer ` +
+    `that fell out of the list waits an hour for the signer's cron with nothing red`,
   );
   // An exception that no longer names a workflow is an exception nobody will
   // notice has stopped applying.

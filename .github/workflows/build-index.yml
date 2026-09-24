@@ -101,8 +101,11 @@ on:
   #                       that can leave the committed index disagreeing with a
   #                       fresh generation, which is the single assertion this
   #                       file exists to make.
+  #   Operator            a MOD-52 revert removes `unlisted` or an advisory and
+  #                       regenerates both documents (M-T3.5); its other acts
+  #                       write state/** records only.
   #
-  # **Three of the four commit nothing today, and are listed anyway**, exactly
+  # **Three of the five commit nothing today, and are listed anyway**, exactly
   # as `sign.yml`'s list was and for the reason its header gives: a trigger
   # naming a workflow that never runs costs nothing, and a checker that goes
   # deaf on the day one of them lands costs an hour of `main` being wrong with
@@ -113,7 +116,7 @@ on:
   # re-check` runs daily but writes only for a publisher whose tier is
   # `verified`, and both records here are `astra_team`.
   workflow_run:
-    workflows: ["Ingest", "Plugins ingest", "Plugins moderation", "publisher re-check"]
+    workflows: ["Ingest", "Plugins ingest", "Plugins moderation", "publisher re-check", "Operator"]
     types: [completed]
   # Hourly. THE BOT'S PUBLISH COMMIT DOES NOT TRIGGER THIS FILE by `push`:
   # `ingest.yml`'s publish job commits with the repository's own
