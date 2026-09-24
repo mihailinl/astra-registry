@@ -25,7 +25,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { markerOnMain } from "../baseline.mjs";
+import { markerOnMain, readDecisionRecords } from "../baseline.mjs";
+import { validate as validateJsonSchema } from "../../tools/lib/jsonschema.mjs";
 import { LEGACY_TRIGGERS, alreadyPublished, decideRelease, legacyTrigger, noListingNoBinding, readIdentityRecord, terminalOnMain, writeOutputs } from "../decide.mjs";
 import { recordCommitRefusal } from "../publish-apply.mjs";
 import { bot74Filter } from "../watch.mjs";
@@ -98,6 +99,19 @@ process.on("exit", () => { for (const d of scratch) fs.rmSync(d, { recursive: tr
 function tmp(prefix) {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   scratch.push(d);
+  return d;
+}
+
+/** This repository, for the schema a record written into a temp tree is held to. */
+const ROOT_OF_REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+/** Every decision record under a tree's log/decisions, with `/`-separated paths. */
+const listRecords = (dir) => readDecisionRecords(dir).map((r) => ({ ...r, file: r.file.split(path.sep).join("/") }));
+/** A tree carrying MIG-20's marker and nothing else. */
+function markerTree() {
+  const d = tmp("astra-b4-marker-");
+  fs.mkdirSync(path.join(d, "log"), { recursive: true });
+  fs.writeFileSync(path.join(d, "log", "baseline.json"),
+    JSON.stringify({ schema: "astra.registry.baseline/1", version_count: 1, record_count: 1 }));
   return d;
 }
 
@@ -3645,11 +3659,58 @@ await test("end to end — a drained publication with the marker on main carries
   // write it. Asserted from the FILE rather than from the object, because the
   // object is not what `plugins-ingest.yml` will read.
   const outDir = tmp("astra-b4-legacy-out-");
-  writeOutputs(outDir, { repo: REPO, tag: TAG, issue: null }, drained);
+  writeOutputs(outDir, { repo: REPO, tag: TAG, issue: null, root }, drained);
   const written = JSON.parse(fs.readFileSync(path.join(outDir, "decision.json"), "utf8"));
   assertEqual(written.trigger, "legacy", "decision.json carries no trigger, so the writer has nothing to stamp");
   assertEqual(written.record?.write, true, "decision.json does not say whether a record is owed");
   assertEqual(written.shadow, false, "decision.json does not say whether the answer was shadow");
+
+  // B-T3.7 itself: the record, on disk, where the publish job copies from.
+  // This test stopped at decision.json until B-T3.7 was built, and every
+  // assertion above held while NOTHING on the legacy path wrote
+  // `log/decisions/` — "a record is owed" was said and never done.
+  const logged = listRecords(outDir);
+  assertEqual(logged.length, 1, `a drained publication wrote ${logged.length} decision record(s) under out/log/decisions`);
+  const [rec] = logged;
+  assertEqual(rec.doc.trigger, "legacy", "the record's trigger is not the drain's");
+  assertEqual(rec.doc.state, "published", "the record does not say the release was published");
+  assertEqual(rec.doc.actor, "bot", "the legacy path's decision is the bot's");
+  assertEqual(rec.doc.plugin_id, drained.derived.plugin.id, "the record names another plugin");
+  assertEqual(rec.doc.version, drained.derived.version.version, "the record names another version");
+  assertEqual(rec.doc.fingerprint, drained.decision.fingerprint, "the record's fingerprint is not the one this run hashed");
+  assertEqual(Object.hasOwn(rec.doc, "submission_id"), false, "a legacy record carries a submission id no service minted");
+  const schemaProblems = validateJsonSchema(JSON.parse(fs.readFileSync(path.join(ROOT_OF_REPO, "schema", "decision-v1.json"), "utf8")), rec.doc, "$");
+  assertEqual(JSON.stringify(schemaProblems), "[]", "the legacy record is one schema/decision-v1.json refuses");
+  assertEqual(rec.file, `log/decisions/${rec.doc.decided_at.slice(0, 4)}/${rec.doc.decided_at.slice(5, 7)}/${rec.doc.decision_id}.json`,
+    "the record is not where its own contents put it");
+
+  // A second run over a tree that already carries the record writes nothing:
+  // BOT-36, against the tree the run read.
+  fs.mkdirSync(path.join(root, path.dirname(rec.file)), { recursive: true });
+  fs.copyFileSync(path.join(outDir, rec.file), path.join(root, rec.file));
+  const again = tmp("astra-b4-legacy-again-");
+  writeOutputs(again, { repo: REPO, tag: TAG, issue: null, root }, drained);
+  assertEqual(listRecords(again).length, 0, "a record already on main was written a second time");
+
+  // And no marker, no record, on disk as well as in the object.
+  const before = tmp("astra-b4-legacy-before-");
+  writeOutputs(before, { repo: REPO, tag: TAG, issue: null, root: registryTree([{}]) }, beforeBaseline);
+  assertEqual(fs.existsSync(path.join(before, "log")), false, "a record was written before MIG-20's baseline exists");
+});
+
+await test("a legacy record is never composed with the `migration` trigger, even by a caller that forged one", () => {
+  // `legacyTrigger` refuses `migration` at the source; this is the writer's
+  // own refusal, for a caller that set the trigger by hand.
+  const out = tmp("astra-b4-legacy-migration-");
+  const forged = {
+    comment: "", derived: null, findings: [], identity: null,
+    decision: { outcome: "refuse", reasons: [{ code: "P_REFUSED" }], decided_at: "2026-09-24T00:00:00Z",
+      trigger: "migration", record: { write: true }, artifact_digests: [], fingerprint: null, shadow: false },
+  };
+  let threw = null;
+  try { writeOutputs(out, { repo: REPO, tag: TAG, issue: null, root: markerTree() }, forged); } catch (e) { threw = e; }
+  assert(threw && /migration/.test(String(threw.message)), "the legacy writer composed a `migration` record");
+  assertEqual(fs.existsSync(path.join(out, "log")), false, "the refusal came after the file was written");
 });
 
 // ── result ──────────────────────────────────────────────────────────────────
