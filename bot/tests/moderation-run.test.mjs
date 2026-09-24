@@ -2901,3 +2901,37 @@ test("M-T3.5: the operator's allowlist admits its records, its revert paths and 
     assert.equal(operatorPath(bad), false, `${bad} passes the operator's allowlist`);
   }
 });
+
+// ── A yank of a listing's last listed version (the coordinator's decision, 2026-09-24) ──
+//
+// Measured before the repair: a batch carrying an `M_YANK` of a one-version
+// listing made `regenerateDocuments` throw "every version is yanked or
+// missing" from `tools/build-index.mjs`, so the commit job wrote nothing for
+// ANY decision in the batch, and the list answer named the same decisions on
+// the next run. The decision: such a yank is valid, and the catalogue omits a
+// listing with no installable version; its records stay on `main`.
+
+test("a batch that yanks a one-version listing, with another takedown: both apply, and the listing leaves the catalogue", async () => {
+  const root = crowd();
+  const entries = [
+    decision({ service_decision_id: SDIS[0], plugin_id: "gizmos", code: "M_YANK", category: "broken",
+      moderator: "amoderator", versions: ["1.0.0"] }),
+    takedownOf("gadgets", 1),
+  ];
+  const { code, logs, results } = await measuredJob(root, entries);
+  assert.equal(code, 0, logs.join("\n"));
+  assert.deepEqual(results.compiled, [SDIS[0], SDIS[1]],
+    "the batch lost a takedown: a yank of a listing's last version must not stop the others");
+  assert.ok(results.written.includes("plugins/gizmos/versions/1.0.0.json"), `the yank was not written: ${results.written.join(", ")}`);
+  const index = JSON.parse(fs.readFileSync(path.join(root, "registry", "v1", "index.json"), "utf8"));
+  const ids = index.signed.plugins.map((p) => p.id).sort();
+  assert.deepEqual(ids, ["doohickeys", "widgets"],
+    "the regenerated catalogue still carries a listing with no installable version, or lost one that has one");
+  assert.ok(fs.existsSync(path.join(root, "plugins", "gizmos", "plugin.json")), "the yanked listing's records left main");
+
+  // A later release that is not yanked brings it back.
+  writeAll(root, { "plugins/gizmos/versions/1.1.0.json": version("gizmos", "1.1.0") });
+  const back = buildIndex({ root, serial: 1 }).signed.plugins.find((p) => p.id === "gizmos");
+  assert.ok(back, "a new version did not bring the listing back");
+  assert.equal(back.version, "1.1.0");
+});

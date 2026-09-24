@@ -205,6 +205,9 @@ suggest otherwise.
 - An author may **yank** a version (`"yanked": true`). It leaves the index and
   stays in git. Yanking is the author's tool for "do not use this one"; it is
   not a security control, it does not touch installs, and it is not revocation.
+  Yanking a plugin's **last** listed version takes the whole plugin out of the
+  index, because nothing installable is left; its listing and its history stay
+  in git, and the next version that is not yanked brings it back.
 - Retiring a plugin entirely is `"unlisted": true` on `plugin.json`. The audit
   trail stays.
 
