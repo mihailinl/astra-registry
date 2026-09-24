@@ -3,12 +3,31 @@
   "submission_id": "0192f1c2-3b4a-7c5d-8e6f-1a2b3c4d5e6f",
   "attempt": "att-1",
   "wait": {
-    "code": "W_SERVICE_UNREACHABLE",
+    "code": "W_NOTICE_PENDING",
     "started_at": "2026-09-26T12:00:00Z",
-    "cause": "the stop status of this submission is `unavailable` after a restore (SERVE-93)",
+    "cause": "BOT-28: the notice status is `pending` (BOT-28; BOT-29)",
     "earliest_retry_at": "2026-09-26T12:10:00Z"
   },
-  "reasons": [],
+  "reasons": [
+    {
+      "code": "R_FIRST_LISTING",
+      "stage": "policy",
+      "location": null,
+      "message": "First listing for this plugin"
+    },
+    {
+      "code": "P_APPROVED",
+      "stage": "policy",
+      "location": null,
+      "message": "@mod-7 cleared the hold at 2026-09-26T08:00:00Z, against submission `476e6975802d8801` — 1 artifact digest(s) hashed in this run: linux-x64:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "code": "P_PUBLISHED",
+      "stage": "policy",
+      "location": null,
+      "message": "identity unchanged, permissions unchanged, every check green, version strictly greater"
+    }
+  ],
   "plugin_id": "dice-roller",
   "version": "0.2.0",
   "tag": "v0.2.0",

@@ -2141,6 +2141,8 @@ test("BOT-15: a facts file or a listing disagreeing with the verification writes
   const moved = decideWith({ facts: facts({ findings: [{ code: "E_X", level: "error", where: "x" }] }) });
   assert.equal(moved.kind, "none", "a facts file carrying free text beside its codes is not the check job's shape");
   assert.equal(decideWith({ facts: null }).kind, "none", "no facts file is no decision");
+  assert.equal(decideWith({ facts: { ...facts(), message: "a stranger's sentence" } }).kind, "none",
+    "a facts file with a member beyond the six is not the check job's shape");
 });
 
 test("BOT-21: the committed listing's identity comes from the verification, never from the check job", () => {
@@ -2256,6 +2258,8 @@ test("BOT-28: `pending`, `none_unbound`, and a notice younger than the window ea
     });
     assert.equal(plan.kind, "wait", `${JSON.stringify(notice)}`);
     assert.equal(plan.wait.code, "W_NOTICE_PENDING");
+    // BOT-29 by name: `none_unbound` is `pending`, not "a status with no time".
+    if (notice?.status === "none_unbound") assert.match(plan.wait.cause, /BOT-29/);
   }
   // An approved UPDATE with no delay reason waits the update window.
   const young = decideWith({
@@ -2353,7 +2357,12 @@ function goldenPlans() {
     refused: decideWith({ facts: facts({ findings: [{ code: "E_LICENSE_NOT_ALLOWED", level: "error" }] }) }),
     "refused-flow67": decideWith({ lease: { trigger: "panel" }, git: git({ listingNamesRepo: false }) }),
     reported: decideWith({ git: git({ records: [{ submission_id: P.sid, fingerprint: FP, state: "refused", decision_id: "a".repeat(32), decided_at: "2026-09-20T00:00:00Z", reasons: ["E_LICENSE_NOT_ALLOWED"] }] }) }),
-    wait: decideWith({ ask: ask({ gates: { stop_status: "unavailable", decisions: [] } }) }),
+    // A wait that carries reasons, so the golden holds `location` on one.
+    wait: decideWith({
+      lease: { claimed_from: "approved" },
+      ask: ask({ gates: { stop_status: "no_stop", decisions: [approval()] }, notice: { kind: "approved", status: "pending" } }),
+      git: git({ records: [heldRecord()] }),
+    }),
   };
   return plans;
 }
@@ -2630,7 +2639,8 @@ test("BOT-89's scan fails on each planted value, and not on the four outcomes or
   try {
     // The floor, written before anything else: ten values, one line each.
     assert.equal(VERDICT_VALUES.length, 10);
-    const planted = VERDICT_VALUES.map((v, i) => (i % 2 ? `  token_state: ${v}` : `{"eligibility":"${v}"}`));
+    // Three shapes: keyed, keyed-and-quoted, and a bare JSON array element.
+    const planted = VERDICT_VALUES.map((v, i) => [`  token_state: ${v}`, `{"eligibility":"${v}"}`, `["${v}"]`][i % 3]);
     const decoys = [...ACTED_OUTCOMES.map((o) => `outcome=${o}`), "state/releases-seen.json updated", "direction: outbound", "code: W_ELIGIBILITY_UNREADABLE"];
     fs.writeFileSync(path.join(dir, "log.txt"), [...planted, ...decoys].join("\n"));
     const out = scanFiles([path.join(dir, "log.txt")]);
