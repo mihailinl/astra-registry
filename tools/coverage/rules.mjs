@@ -131,6 +131,16 @@ export const RULES = [
       "live with a custom branch policy, or pending creation and named only by jobs a literal `if: false` holds",
     network: true,
   },
+  {
+    name: "roll47-promises",
+    owner: "M-T4.2 (ROLL-47 A1, A2, and its rewrite clause); M-T4.3 and M-T6.2 add their rows",
+    script: "tools/coverage/roll47-promises.mjs",
+    what:
+      "no tracked text file outside authors' words restates a promise ROLL-47 has retired — rows A1 and A2's " +
+      "account promises and the sandbox-phase prose, spelled in that rule's own table and nowhere else here — " +
+      "and the scan read both documents the plan names and at least its floor of files",
+    network: false,
+  },
   // ── the seam. Each line below is one other task's, and lands with it. ─────
   //
   // Written here as a comment rather than as a disabled entry, because an
@@ -139,7 +149,9 @@ export const RULES = [
   // that task does — which for M-T6.2 is R6. An alarm that fires for six
   // milestones is an alarm somebody switches off in month one (TRUST-45).
   //
-  //   { name: "roll47-promises",     owner: "M-T4.2, M-T4.3, M-T6.2",  … }          R4a
+  // `roll47-promises` landed with M-T4.2 (above); M-T4.3 and M-T6.2 add their
+  // ROLL-47 rows to its PROMISES table, not a second rule here.
+  //
   //   { name: "no-issue-channel",    owner: "M-T6.2 (DEC-12)",         … }          R6
   //
   // M-T5.8's badge-withdrawal trailer is NOT a line here: the plan puts it

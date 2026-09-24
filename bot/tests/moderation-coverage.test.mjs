@@ -39,6 +39,7 @@ import {
   DOCUMENT_MEMBERS, HISTORY_FLOOR as PRIV_HISTORY_FLOOR, run as privScan, withoutAuthorship,
 } from "../../tools/priv-scan.mjs";
 import { ADVISORY_BASE, DOC as DOCS_DOC, run as docsRule } from "../../tools/coverage/docs-advisory-url.mjs";
+import { NAMED as ROLL47_NAMED, PROMISES as ROLL47_PROMISES, run as roll47Rule } from "../../tools/coverage/roll47-promises.mjs";
 import { KEEPALIVE, run as keepaliveRule } from "../../tools/coverage/keepalive-age.mjs";
 import {
   AP7_LANDED, ASTRAPLUGINS_URL, astraPluginsRemote, loadPolicyReserved,
@@ -847,6 +848,98 @@ test("M-T1.3: a document that has moved is red, because the rule would otherwise
   const r = docsRule(docsFixture("gone", null));
   assert.equal(r.status, "red");
   assert.match(codesOf(r), /MOD_13_DOCS_ABSENT/);
+});
+
+// ── M-T4.2: the ROLL-47 promise greps ───────────────────────────────────────
+//
+// The retired sentences are spelled here, whole, because this file is the one
+// place the rule does not read (its SKIP): each is the text the tree carried
+// at d44f0cf, before M-T4.2 amended it, so every case below is the pre-amend
+// tree coming back, not a sentence invented to match a regex.
+
+const RETIRED_TEXT = {
+  "site/README.md":
+    "| `/publisher/<owner>/` | The GitHub account a plugin is released from. There are no registry accounts, " +
+    "so there is nothing else a publisher could be. |\n",
+  "docs/POLICY.md":
+    "forged by a one-line edit. The only identity this registry proves is the GitHub\n" +
+    "owner of `source.repo`, because that is what the ownership check binds to, so\n" +
+    "that is what carries a tier.\n\n" +
+    "the machine, because there is no sandbox: a plugin is a native process with the\n" +
+    "user's full privileges, and Phase 7 is where that changes. Read the table above\n",
+  "site/templates/pages.mjs":
+    "released from. There are no registry accounts, no passwords and nothing to sign in to: the identity\n",
+};
+
+/** A tree holding both named documents, amended, plus whatever `extra` says. */
+function promisesFixture(name, extra = {}) {
+  const f = fixture(`roll47-${name}`)
+    .write("site/README.md", "| `/publisher/<owner>/` | The registry itself has no accounts. |\n")
+    .write("docs/POLICY.md", "# Policy\n\nA badge is keyed on the GitHub owner.\n");
+  for (const [rel, text] of Object.entries(extra)) f.write(rel, text);
+  return f.commit(`fixture ${name}`);
+}
+
+const roll47 = (dir, opts = {}) => roll47Rule(dir, { scannedFloor: 0, ...opts });
+
+test("M-T4.2: this repository restates no promise ROLL-47 has retired, and read what it had to", () => {
+  const r = roll47Rule(REPO);
+  assert.equal(r.status, "green", r.detail.join("\n"));
+  for (const named of ROLL47_NAMED) {
+    assert.ok(fs.existsSync(path.join(REPO, named)), `${named} is not in the tree the rule is asked about`);
+  }
+});
+
+test("M-T4.2: the pre-amend tree is red, once per sentence, naming the file", () => {
+  const f = promisesFixture("pre-amend", RETIRED_TEXT);
+  const r = roll47(f.dir);
+  assert.equal(r.status, "red");
+  const said = r.detail.join("\n");
+  for (const rel of Object.keys(RETIRED_TEXT)) assert.match(said, new RegExp(`^${rel.replace(/[.]/g, "\\.")} says`, "m"));
+  // Two A1 sentences, one A2, one sandbox: four findings, and none merged into another.
+  assert.deepEqual([...new Set(r.codes)], ["ROLL47_PROMISE_RESTATED"]);
+  assert.equal(r.detail.filter((d) => / says "/.test(d)).length, 4);
+  for (const p of ROLL47_PROMISES) assert.match(said, new RegExp(`row ${p.row}\\b`), `row ${p.row} did not fire`);
+});
+
+test("M-T4.2: each literal is found across a line break and in any case, and each row alone reds", () => {
+  for (const p of ROLL47_PROMISES) {
+    const words = p.literal.split(" ");
+    const mid = Math.max(1, Math.floor(words.length / 2));
+    const wrapped = `${words.slice(0, mid).join(" ").toUpperCase()}\n   ${words.slice(mid).join(" ")}`;
+    const f = promisesFixture(`row-${p.row}`, { "docs/extra.md": `Some prose, then ${wrapped}, then more.\n` });
+    const r = roll47(f.dir);
+    assert.equal(r.status, "red", `row ${p.row} wrapped as ${JSON.stringify(wrapped)} was not found`);
+    assert.match(r.detail.join("\n"), new RegExp(`^docs/extra\\.md says ".*" \\(ROLL-47 row ${p.row},`, "m"));
+  }
+});
+
+test("M-T4.2: an author's README is the author's words, and the amended sentences are green", () => {
+  const f = promisesFixture("authors", {
+    "plugins/a/readme/README.md": "This plugin has no registry accounts and Phase 7 of its roadmap is a sandbox.\n",
+    "registry/v1/index.json": "{\"readme\": \"There are no registry accounts\"}\n",
+    "site/README.md": "The registry itself has no accounts, so a publisher page is always a GitHub owner.\n",
+  });
+  const r = roll47(f.dir);
+  assert.equal(r.status, "green", r.detail.join("\n"));
+});
+
+test("M-T4.2: a scan that lost its subject or read almost nothing is red, not clean", () => {
+  const gone = fixture("roll47-gone").write("README.md", "# nothing\n").commit("no named documents");
+  const r = roll47(gone.dir);
+  assert.equal(r.status, "red");
+  assert.match(codesOf(r), /ROLL47_SUBJECT_ABSENT/);
+
+  const f = promisesFixture("floor");
+  const small = roll47Rule(f.dir);
+  assert.equal(small.status, "red", "two files read is below the floor the real tree sets");
+  assert.match(codesOf(small), /ROLL47_SCAN_FLOOR/);
+
+  const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), "astra-coverage-roll47-norepo-"));
+  tmpRoots.push(notRepo);
+  const broken = roll47Rule(notRepo, { scannedFloor: 0 });
+  assert.equal(broken.status, "red");
+  assert.match(codesOf(broken), /ROLL47_SCAN_FAILED|ROLL47_SUBJECT_ABSENT/);
 });
 
 // ── M-T5.7: the reserved-id mirror ──────────────────────────────────────────
