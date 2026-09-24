@@ -2785,3 +2785,11 @@ test("`plugins-ingest.yml` never pushes while DRY_RUN is not exactly false", () 
     "the apply step does not pass --dry-run whenever DRY_RUN is not exactly \"false\"");
   assert.match(body, /node bot\/publish-apply\.mjs[\s\S]*"\$\{dry\[@\]\}"/, "and publish-apply is not handed it");
 });
+
+// `--service-path` lets publish-apply write an identity record and an alert
+// record. The legacy path never binds a listing (BOT-77), so the flag belongs
+// to exactly one workflow. Watched failing by adding it to ingest.yml.
+test("only `plugins-ingest.yml` hands publish-apply `--service-path`", () => {
+  const passing = files.filter((f) => read(f).split("\n").some((l) => !l.trim().startsWith("#") && l.includes("--service-path")));
+  assert.deepEqual(passing, [INGEST], "a workflow other than the service path's publish job may write identity records");
+});
