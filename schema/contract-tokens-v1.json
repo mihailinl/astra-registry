@@ -1,6 +1,6 @@
 {
-  "contract_version": "2.13.0",
-  "source_commit": "0a04ed5a6d1f92924f4fb319743528c9f13582ba",
+  "contract_version": "2.14.0",
+  "source_commit": "aff46c11c90a11a7d73d3b31c33072484a16e083",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -1979,6 +1979,28 @@
       ],
       "acceptor": [
         "service",
+        "client"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:advisory_action",
+      "kind": "closed_list",
+      "name": "advisory_action",
+      "values": [
+        "warn",
+        "block_install",
+        "disable"
+      ],
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
         "client"
       ],
       "state": "live",
