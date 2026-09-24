@@ -2907,11 +2907,11 @@ test("only `load` and `remember` reach BOT_STATE_HMAC_KEY, each in one step's en
   const withText = (text) => sources.map((s) => (s === ingest ? { ...s, text } : s));
   const breaks = [
     ["`poll` joins environment bot-state",
-      once(ingest.text, "  poll:\n    needs: roots\n", "  poll:\n    needs: roots\n    environment: bot-state\n"), ["`poll`", "only"]],
+      once(ingest.text, "\n  poll:\n", "\n  poll:\n    environment: bot-state\n"), ["`poll`", "only"]],
     ["`load` loses environment bot-state",
       ingest.text.replace(/(\n  load:\n(?:.*\n)*?)    environment: bot-state\n/, "$1"), ["load", "does not name environment"]],
     ["the key mapped at job level",
-      once(ingest.text, "  poll:\n    needs: roots\n", `  poll:\n    needs: roots\n    env:\n      ${STATE_KEY}: \${{ secrets.${STATE_KEY} }}\n`), ["outside"]],
+      once(ingest.text, "\n  poll:\n", `\n  poll:\n    env:\n      ${STATE_KEY}: \${{ secrets.${STATE_KEY} }}\n`), ["outside"]],
     ["the key named in a workflow-level env",
       once(ingest.text, "env:\n  DRY_RUN:", `env:\n  ${STATE_KEY}: \${{ secrets.${STATE_KEY} }}\n  DRY_RUN:`), ["outside"]],
   ];
