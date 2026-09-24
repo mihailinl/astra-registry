@@ -476,9 +476,17 @@ test("every entry resolves, or carries an excuse that expires", () => {
   // state, and it is asserted rather than assumed, or the loop above is
   // `if (true)` with a comment on it. Two instruments, because an absence is a
   // claim about the tool: `git ls-tree` over HEAD, and the working directory.
+  //
+  // R0 has a marker and no exit file: the plan makes `log/rollout/R0-settings.json`
+  // R0's marker (ROLL-7's file), with its note beside it, and nothing else in
+  // `log/rollout/` may be there while no step has exited. Named files, not a
+  // pattern, so an exit marker spelled wrongly still turns this red.
   if (exited.size === 0) {
-    assert.equal(files.filter((f) => f.startsWith("log/rollout/")).length, 0);
-    assert.equal(fs.existsSync(path.join(REPO, "log", "rollout")), false);
+    const R0_RECORDS = new Set(["log/rollout/R0-settings.json", "log/rollout/R0-exit-note.md"]);
+    assert.deepEqual(files.filter((f) => f.startsWith("log/rollout/") && !R0_RECORDS.has(f)), []);
+    const dir = path.join(REPO, "log", "rollout");
+    const onDisk = fs.existsSync(dir) ? fs.readdirSync(dir).map((n) => `log/rollout/${n}`) : [];
+    assert.deepEqual(onDisk.filter((f) => !R0_RECORDS.has(f)), []);
     console.log(
       `note  no rollout exit marker is on the tree, so ${UNRESOLVED_BY.size} excuse(s) have not expired: ` +
         `${[...UNRESOLVED_BY].map(([e, r]) => `${e} until ${r.due}`).join(", ")}.`,
