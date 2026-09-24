@@ -108,7 +108,8 @@ on:
   # deaf on the day one of them lands costs an hour of `main` being wrong with
   # nothing red anywhere. `plugins-ingest.yml`'s schedule is commented out until
   # R3 (plan row reg.52) and its publish job exits 1 on B-T3.4;
-  # `plugins-moderation.yml`'s commit job exits 1 on M-T3.2; `publisher
+  # `plugins-moderation.yml`'s schedule is commented out until R3 too (reg.53)
+  # and its list job's service call is a placeholder; `publisher
   # re-check` runs daily but writes only for a publisher whose tier is
   # `verified`, and both records here are `astra_team`.
   workflow_run:

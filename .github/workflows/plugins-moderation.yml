@@ -81,12 +81,15 @@ name: Plugins moderation
 # SCOPE-1 makes an edit to it a contract MINOR published BEFORE the line moves:
 # a cron edit here is not a cron edit.
 #
-# So a `workflow_dispatch` of this file today is RED at `commit`, because
-# TRUST-26's bound is not measured in a bot run yet — `bot/lib/takedown-bound.mjs`
-# imports a desk tool outside TRUST-31's hashed set, which contract 0.23.0
-# prices as a thirteenth path and a MINOR of its own. `compileAll` refuses to
-# read an unmeasured bound as "under the bound", because that is the direction
-# that APPLIES a takedown MOD-9 should have held.
+# So a `workflow_dispatch` of this file today is RED at `list`, whose call to
+# the service is a placeholder until the R3-open commit (B-T5.1), and `commit`
+# runs over an empty list: it walks the holds and commits nothing. `commit`
+# measures TRUST-26's bound itself, out of its own full-history checkout
+# (`bot/lib/takedown-bound.mjs`, M-T3.2), and spends it entry by entry, so no
+# job hands it a bound and nothing outside the job can say "under the bound".
+# Until 2026-09-24 this job read the bound from an input nothing supplied and
+# was red here instead; contract 0.38.0 put the counter's imports inside
+# TRUST-31's set, which is what let the job import it.
 
 on:
   # ── BOT-83's schedule, off until R3 opens ─────────────────────────────────
@@ -296,7 +299,11 @@ jobs:
         with:
           node-version: '22'
 
-      - name: "Compile, walk the holds, and write what this run produced (not built: M-T3.2)"
+      # TRUST-26's bound is counted here, out of this checkout's whole history,
+      # and each takedown this run compiles spends it before the next is asked.
+      # There is no bound input: `bot/moderation-run.mjs` reads none, because an
+      # input that says "under the bound" would be the whole of the bypass.
+      - name: Compile, walk the holds, and write what this run produced
         id: compile
         env:
           ASTRA_SHADOW: ${{ needs.list.outputs.shadow }}
@@ -307,10 +314,7 @@ jobs:
           # for a result this job's own walk derived.
           ASTRA_SETTLED: ${{ needs.list.outputs.settled }}
           ASTRA_DELIVERED_AT: ${{ needs.alert.outputs.delivered_at }}
-        run: |
-          set -euo pipefail
-          echo "::error::This step runs 'node bot/moderation-run.mjs --job commit', and it needs one thing nothing supplies yet: ASTRA_OVER_BOUND, TRUST-26's count for this run. M-T3.2 landed the count in bot/lib/takedown-bound.mjs, and that module imports stagingListingId and triggersOf from the moderation-coverage desk tool, which is OUTSIDE TRUST-31's hashed set. Importing it from bot/moderation-run.mjs pulls it into a bot run's import closure, which contract 0.23.0 states is a thirteenth hashed path and a contract MINOR owed BEFORE that commit lands; the alternative is to move those two functions under tools/lib/, which is already a directory entry. See the header of bot/moderation-run.mjs for the path and the argument. compileAll() refuses to read an absent bound as 'under the bound', because that is the direction that applies a takedown MOD-9 should have held."
-          exit 1
+        run: node bot/moderation-run.mjs --job commit --out moderation
 
       # The gates, in the order the plan states, and every one of them is about
       # the documents this job is about to commit. `tools/validate.mjs` is
@@ -367,7 +371,7 @@ jobs:
       # wrote either, so `settled` was handed no results on every run and would
       # have paged for decisions that had landed (ops entry 102). Written after
       # the push, so a step that failed on the way hands on nothing at all.
-      - name: "Commit once, with a Service-Decision: trailer per decision, and push (not built: M-T3.2)"
+      - name: "Commit once, with a Service-Decision: trailer per decision, and push"
         id: apply
         if: ${{ !cancelled() && steps.compile.conclusion == 'success' }}
         run: |
