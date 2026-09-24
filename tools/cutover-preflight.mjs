@@ -12,13 +12,35 @@
 // its output is pasted into that estate's `notes/state.md` (ops.43), which is
 // the record the cutover commit's gate is read from.
 //
+// ── WHAT THE GATE IS, SINCE CONTRACT 2.2.0 ──────────────────────────────────
+//
+// §9's R6 row reads `R4b; ROLL-32; MOD-54`. Until 2.2.0 it began with "R5
+// published"; the owner freed the order ("we must move to new registry", to
+// the coordinator, 2026-09-24), because after cutover every release still
+// reaches `main`, `signed` and Pages the way it does today, and R9a keeps the
+// Pages catalogue and list until R5 is published. So nothing here asks about
+// R5, and R5 may follow R6. What each gate-in is to this tool:
+//
+//   R4b      its registry marker, `log/rollout/R4b-open.json` (registry plan
+//            §2.7 landing order 3), read from the ref: check 1.
+//   ROLL-32  as 2.0.0 words it: MIG-19 closed (check 2); round 2's marker on
+//            `main` and the date it announced come, with NO interval between
+//            round 2 and cutover any more (check 3); the deadline at least 30
+//            days away, which stays because it is R7's arithmetic (check 4);
+//            ROLL-25's steps (3) and (5) and ROLL-59 (d)'s approval recorded
+//            (check 5, a record in ops); the third-party walk (check 6).
+//   MOD-54   the report page, from a signed-in walk (check 7).
+//
+// The rest are the plan's own preconditions for the cutover commit set (M-T6.1;
+// MIG-23; OPEN-OWNER-20; BOT-85), unchanged by 2.2.0.
+//
 // ── THE ONE DISTINCTION THIS FILE EXISTS TO KEEP ────────────────────────────
 //
-// Eleven preconditions, and a preflight that answers all eleven with PASS or
+// Thirteen preconditions, and a preflight that answers all thirteen with PASS or
 // FAIL is wrong in one specific way, which is the way that gets a cutover done
 // on a question nobody asked.
 //
-// Five of the eleven CANNOT BE ANSWERED by any tool run from this repository.
+// Six of the thirteen CANNOT BE ANSWERED by any tool run from this repository.
 // MOD-54's report page needs a signed-in `astraUser` session. OPEN-OWNER-20's
 // delivery proof is the owner reading a mailbox. ROLL-32's walk needs a second
 // Astra owner and the panel. BOT-85's heartbeats live at a dead-man receiver
@@ -27,8 +49,8 @@
 // OWNER-APPROVED change to another repository that has not been made.
 //
 // A tool that prints FAIL for those five in the same words it prints FAIL for
-// "seven `listing` issues are open" has told the operator that eleven questions
-// were asked and eleven answers came back no. Six were asked. Five were not.
+// "seven `listing` issues are open" has told the operator that thirteen questions
+// were asked and thirteen answers came back no. Seven were asked. Six were not.
 // Those are different facts and the operator acts on them differently: an
 // answered no is work, and an unasked question is a person to go and find.
 //
@@ -45,10 +67,10 @@
 // ── WHY THERE IS NO --attested FLAG ─────────────────────────────────────────
 //
 // The obvious next feature is a way to tell the tool that a walk happened, so
-// the five NOT ASKED lines can go green. It is not here on purpose. A flag that
+// the six NOT ASKED lines can go green. It is not here on purpose. A flag that
 // turns "I could not ask" into PASS on the operator's say-so makes this file a
 // place to record a belief, and the whole point of it is to be the one place in
-// the cutover that records only measurements. The five walks are recorded in
+// the cutover that records only measurements. The six walks are recorded in
 // ops.43 in prose, dated, beside this output, by the person who did them, and
 // the gate is read from the pair. This output is one half of that record and
 // never the whole of it.
@@ -103,7 +125,7 @@
 // Within one check the three words compose as a conjunction: an answered no
 // stands whatever else was unasked, because a conjunction with a false conjunct
 // is false; a yes beside an unasked question is NOT ASKED. That is the same
-// rule the summary at the bottom applies across the eleven.
+// rule the summary at the bottom applies across the thirteen.
 //
 // ── AND THE ONE QUESTION THIS FILE USED TO ANSWER WITH A BELIEF ─────────────
 //
@@ -436,12 +458,19 @@ const days = (ms) => (ms / DAY).toFixed(1);
  * MIG-13's markers. Three rules live here and each has cost somebody a plan
  * revision:
  *
- *   n10  the clock is the marker's `sent_at`, NEVER the commit date. A re-send
- *        that moves cutover LATER re-commits the marker and leaves `sent_at`
- *        alone; a reader keyed on the commit would restart the 30 days and
- *        delay a cutover the authors had already had notice of.
+ *   n10  `sent_at` is the marker's, NEVER the commit date. A re-send that
+ *        moves cutover LATER re-commits the marker and leaves `sent_at` alone.
  *   n22  a cutover date moved EARLIER is a new round 2 with its own `sent_at`,
- *        so the clock is the LATEST round-2 marker's, not the first one's.
+ *        so the round-2 marker read is the LATEST one, not the first one.
+ *
+ * **Since contract 2.0.0 there is no interval between round 2 and cutover**
+ * (ROLL-32). Until then round 2 had to be 30 days old by its `sent_at`; the
+ * owner removed the 30 days on 2026-09-24, and his own notice to the
+ * publishers that the old path will be removed, given in Telegram on about
+ * 2026-09-09, is the advance notice they stood for (his statement, recorded in
+ * the contract). What is left is the marker on the ref and the date it
+ * announced having come. `sent_at` is still read and printed, because MIG-13's
+ * banner and M-T5.4's watch count from it, and it must still be a real moment.
  *   n28  every later round's marker is re-committed with the new date, so no
  *        marker on `main` announces a superseded date. Two markers disagreeing
  *        about `cutover_planned_at` is the procedure done wrong, and it is
@@ -454,7 +483,7 @@ export function evalRound2(markers, now, types = null) {
   if (markers.length === 0) {
     return unmet("no migration-notice marker is on this ref at all", [
       `looked at: ${MARKER_DIR}/migration-notice-<n>.json`,
-      "round 2 has not been sent, so ROLL-32's 30 days have not started.",
+      "round 2 has not been sent: ROLL-32 needs its marker on `main` and the date it announced come.",
     ]);
   }
   // Entry 58. Every line below this one needs `round` to be an integer: the
@@ -564,17 +593,16 @@ export function evalRound2(markers, now, types = null) {
     `round 2 sent_at: ${two.doc.sent_at} — read from the record, never from the commit (n10)`,
     `round 2 cutover_planned_at: ${two.doc.cutover_planned_at}`,
   );
+  // No interval since contract 2.0.0: the age is printed, never required.
   const age = now.getTime() - sentAt.getTime();
-  if (age < THIRTY_DAYS) {
-    return unmet(`round 2 is ${days(age)} days old; ROLL-32 needs 30`, lines);
-  }
+  lines.push(`round 2 is ${days(age)} days old; no interval applies since contract 2.0.0 (ROLL-32)`);
   if (now.getTime() < plannedAt.getTime()) {
     return unmet(
       `the announced cutover date has not come (${days(plannedAt.getTime() - now.getTime())} days away)`,
       lines,
     );
   }
-  return met(`round 2 is ${days(age)} days old and its announced date has come`, lines);
+  return met("round 2's marker is on this ref and the cutover date it announced has come", lines);
 }
 
 /** MIG-29/ROLL-32: the deadline is at least 30 days away from now. */
@@ -1415,7 +1443,8 @@ function checkShadowPoll(ctx) {
     return unmet(`B-T5.0's jobs are still off (${dark.join(", ")})`, [
       ...lines,
       "no shadow poll has run, so there is nothing recorded, nothing seeded from state/releases-seen.json,",
-      "and no evidence that it registers no recorded tag. reg.94 turns them on at R5.",
+      "and no evidence that it registers no recorded tag. B-T5.0 (reg.94) turns them on in shadow before",
+      "cutover, and the cutover commit switches the poll live (B-T5.1); since contract 2.2.0 neither waits for R5.",
     ]);
   }
   return notAsked(
@@ -1436,6 +1465,56 @@ function jobBlock(yaml, name) {
     out.push(lines[i]);
   }
   return out.join("\n");
+}
+
+/** R6's first gate-in since contract 2.2.0: R4b, by its registry marker. */
+export const R4B_MARKER = "log/rollout/R4b-open.json";
+
+/**
+ * The R4b marker's bytes at the ref, judged. Pure, so the selftest drives it.
+ *
+ * Existence is the question: R4b has no exit record ("Exit needs: none"), so
+ * its marker is the record that it OPENED (registry plan §2.7 landing order 3:
+ * ROLL-59's walks, M-T5.5, the ops records, then the marker). A marker that is
+ * not JSON is not one, because a reader cannot tell it from a file somebody
+ * started and did not finish.
+ *
+ * @param {string|null} text
+ */
+export function evalR4bOpen(text) {
+  if (text === null) {
+    return unmet(`R4b has not opened: ${R4B_MARKER} is not on this ref`, [
+      "§9's R6 row, since contract 2.2.0: `R4b; ROLL-32; MOD-54`. R4b opens once ROLL-25 and ROLL-59 are",
+      "recorded and MIG-2's date is fixed (ROLL-26), and the registry marker is its record.",
+    ]);
+  }
+  try {
+    JSON.parse(text);
+  } catch (e) {
+    return unmet(`${R4B_MARKER} is on this ref and is not JSON`, [`  ${String(e.message).split("\n")[0]}`]);
+  }
+  return met(`R4b has opened: ${R4B_MARKER} is on this ref`);
+}
+
+function checkR4bOpen(ctx, tree = refTree(ctx)) {
+  return evalR4bOpen(tree.show(R4B_MARKER));
+}
+
+function checkRollWalkRecords() {
+  return notAsked(
+    "ROLL-25's steps (3) and (5) and ROLL-59 (d)'s approval are not recorded here",
+    "the walk's operator, each recorded with its run URL in ops notes/state.md (ops.43 beside this output)",
+    [
+      "ROLL-32 since contract 2.0.0 requires all three recorded before cutover:",
+      "  ROLL-25 (3): the text-utils release held under MIG-10, approved, and `served`, with `notice.binding`",
+      "               and `notice.published` received — after TRUST-27's period and DEC-6's window, whatever",
+      "               they are at the time (both are publisher protections; contract 2.1.0 set TRUST-27's to 0);",
+      "  ROLL-25 (5): the new telegram-client tag's delay waited out, and the release published;",
+      "  ROLL-59 (d): the rebind's approval, which ID-61 refuses until the author objection window has passed.",
+      "why this tool cannot: each is a walk through the panel and the service, recorded by the person who",
+      "      made it; git holds its effects, not the record that the walk ROLL-32 names was the one made.",
+    ],
+  );
 }
 
 function checkReportPage() {
@@ -1524,15 +1603,19 @@ function checkOpenOps14(ctx) {
   return notAsked("OPEN-OPS-14's observation has not been made", "the owner, then ops.43", lines);
 }
 
+// In §9's gate-in order since contract 2.2.0 (`R4b; ROLL-32; MOD-54`), then
+// the plan's own preconditions for the cutover commit set.
 const CHECKS = [
-  { id: "listing-issues", clause: "zero open `listing` issues (MIG-19)", run: checkListingIssues },
-  { id: "round-2-marker", clause: "round 2 is 30 days old and its announced date has come (ROLL-32; n10, n22, n28)", run: checkRound2 },
-  { id: "binding-deadline", clause: "the deadline is at least 30 days away (MIG-29)", run: checkDeadline },
+  { id: "r4b-open", clause: "R4b has opened: its registry marker is on the ref (§9's R6 gate-in, contract 2.2.0)", run: checkR4bOpen },
+  { id: "listing-issues", clause: "zero open `listing` issues (MIG-19; ROLL-32)", run: checkListingIssues },
+  { id: "round-2-marker", clause: "round 2's marker is on the ref and its announced date has come (ROLL-32 since 2.0.0; n10, n22, n28)", run: checkRound2 },
+  { id: "binding-deadline", clause: "the deadline is at least 30 days away (MIG-29; ROLL-32)", run: checkDeadline },
+  { id: "roll-25-59-records", clause: "ROLL-25's steps (3) and (5) and ROLL-59 (d)'s approval are recorded (ROLL-32 since 2.0.0)", run: checkRollWalkRecords },
+  { id: "roll-32-third-party-walk", clause: "ROLL-32's third-party walk", run: checkThirdPartyWalk },
+  { id: "mod-54-report-page", clause: "MOD-54's page, from a signed-in walk", run: checkReportPage },
   { id: "queue-drain", clause: "`state/queue/` entries are listed", run: checkQueue },
   { id: "astraplugins-issue-links", clause: "the AstraPlugins registry-issue link count, by both greps", run: checkLinks },
-  { id: "mod-54-report-page", clause: "MOD-54's page, from a signed-in walk", run: checkReportPage },
   { id: "owner-20-delivery-proof", clause: "OPEN-OWNER-20's delivery proof", run: checkDeliveryProof },
-  { id: "roll-32-third-party-walk", clause: "ROLL-32's third-party walk", run: checkThirdPartyWalk },
   { id: "shadow-poll", clause: "B-T5.0's shadow poll recorded, seeded, registering no recorded tag", run: checkShadowPoll },
   { id: "bot-85-heartbeats", clause: "BOT-85 heartbeats for the poll and the sweep, at the receiver", run: checkHeartbeats },
   { id: "open-ops-14", clause: "OPEN-OPS-14's test-repository observation", run: checkOpenOps14 },
@@ -1826,10 +1909,23 @@ function selftest() {
     MET,
   );
 
-  // 29 days is not 30.
+  // Contract 2.0.0: no interval between round 2 and cutover. 29 days, and one
+  // day, are both enough once the announced date has come — each of these was
+  // UNMET under the 30 days, so re-adding them turns both red here.
   is(
-    "29 days",
+    "2.0.0: 29 days old, date come",
     evalRound2([marker(2, "2026-08-23T00:00:00Z", "2026-09-20T00:00:00Z")], T("2026-09-21T00:00:00Z")).verdict,
+    MET,
+  );
+  is(
+    "2.0.0: sent yesterday, date come this morning",
+    evalRound2([marker(2, "2026-09-20T00:00:00Z", "2026-09-21T00:00:00Z")], T("2026-09-21T06:00:00Z")).verdict,
+    MET,
+  );
+  // And the announced date is still the gate: sent today, cutover tomorrow.
+  is(
+    "2.0.0: sent today, date tomorrow",
+    evalRound2([marker(2, "2026-09-21T00:00:00Z", "2026-09-22T00:00:00Z")], T("2026-09-21T06:00:00Z")).verdict,
     UNMET,
   );
 
@@ -1841,11 +1937,12 @@ function selftest() {
   );
 
   // n22: an earlier date is a NEW round 2 with its own `sent_at`. One file per
-  // round, so the latest content is what is read — 10 days old here, and UNMET.
+  // round, so the latest content is what is read — 10 days old here, which no
+  // longer matters since 2.0.0; its announced date has come, so MET.
   is(
     "n22: a new round 2, 10 days old",
     evalRound2([marker(2, "2026-09-11T00:00:00Z", "2026-09-20T00:00:00Z")], T("2026-09-21T00:00:00Z")).verdict,
-    UNMET,
+    MET,
   );
 
   // n28: rounds 2 and 3 announcing different dates is the procedure done wrong,
@@ -1909,6 +2006,20 @@ function selftest() {
     evalRound2([marker(2, "2026-02-31T00:00:00Z", "2026-09-20T00:00:00Z")], T("2026-09-21T00:00:00Z")).verdict,
     UNMET,
   );
+
+  // R4b, R6's first gate-in since contract 2.2.0.
+  is("2.2.0: no R4b marker", evalR4bOpen(null).verdict, UNMET);
+  is("2.2.0: an R4b marker", evalR4bOpen('{"opened_at":"2026-09-26T00:00:00Z"}\n').verdict, MET);
+  is("2.2.0: an R4b marker that is not JSON", evalR4bOpen("{").verdict, UNMET);
+  // The gate's order is §9's: R4b first, then ROLL-32's registry half, then
+  // MOD-54, and nothing anywhere asks about R5.
+  is("2.2.0: R4b is the first check", CHECKS[0].id, "r4b-open");
+  is("2.2.0: MOD-54 follows ROLL-32's", CHECKS.findIndex((c) => c.id === "mod-54-report-page") >
+    CHECKS.findIndex((c) => c.id === "roll-32-third-party-walk"), true);
+  is("2.2.0: no check is about R5", CHECKS.some((c) => /\bR5\b/.test(c.clause)), false);
+  is("2.0.0: ROLL-32's walk records are asked", CHECKS.some((c) => c.id === "roll-25-59-records"), true);
+  is("2.0.0: and are never answered here", checkRollWalkRecords().verdict, NOT_ASKED);
+  is("2.0.0: no clause asks round 2 for an age", CHECKS.some((c) => /30 days old/.test(c.clause)), false);
 
   // The deadline.
   is("no deadline file", evalDeadline(null, T("2026-09-21T00:00:00Z")).verdict, UNMET);
