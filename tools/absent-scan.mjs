@@ -118,8 +118,16 @@ const DEFAULT_REPO = path.resolve(fileURLToPath(new URL("..", import.meta.url)))
 /** Measured 2026-09-22 with this file tracked: 515 tracked, 43 NUL-bearing (all images). */
 export const CORPUS_FLOOR = 450;
 
-/** Measured 2026-09-22: 1. See "the floors" above before lowering this. */
-export const MARKER_FLOOR = 1;
+/**
+ * Measured 2026-09-22: 1, the `log/baseline.json` marker in bot/baseline.mjs.
+ * B-T3.7b's baseline dispatch filled that absence, and it was the last one in
+ * the tree, so the floor goes with it, as "the floors" above says it must: a
+ * floor of 1 over a tree with no true absence left could be met only by
+ * writing a marker for its own sake. The scan still reads every tracked file
+ * (CORPUS_FLOOR), so the next marker anybody writes is checked on the commit
+ * that adds it. Raise this again when one is.
+ */
+export const MARKER_FLOOR = 0;
 
 /** Repositories of this estate that are not this checkout. */
 export const FOREIGN_REPOS = ["AstraPlugins", "Astra", "astra-registry", "astra-plugins-ops", "astra-api"];

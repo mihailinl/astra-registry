@@ -606,7 +606,7 @@ test("the two enumerated groups are exactly what is on the tree", () => {
 
 const ROUTINE = [
   { p: "log/decisions/2026/09/abc.json", why: "a decision record (DEC-7)", exists: false, by: "B-T2.2, first written at R3" },
-  { p: "log/baseline.json", why: "the migration baseline marker (MIG-20)", exists: false, by: "B-T3.7b's single dispatch" },
+  { p: "log/baseline.json", why: "the migration baseline marker (MIG-20), written by B-T3.7b's single dispatch", exists: true },
   { p: "tools/revocations/ASTRA-2026-0001.json", why: "an advisory", exists: false, by: "the first withdrawal; `tools/revocations/` holds only its README today" },
   { p: "bot/moderation/2026-08-19-echo-stt-delist.json", why: "a moderation log entry (MOD-47)", exists: true },
   { p: "state/queue/demo@1.0.0.json", why: "a queue entry (BOT-38)", exists: false, by: "written by an ingest run" },
