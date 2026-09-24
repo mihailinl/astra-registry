@@ -1546,3 +1546,66 @@ test("poll-alert checks out every file the relay imports, and posts to BOT-87's 
   assert.ok(job.some((l) => /^\s+check:\s*poll-and-sweep\s*$/.test(l)), "poll-alert posts to poll-and-sweep");
   assert.ok(job.some((l) => /--check poll-and-sweep --code BOT_87_DID_NOT_REPORT/.test(l)));
 });
+
+// ── a release whose listing request its author withdrew (BOT-74, MIG-23) ────
+//
+// Decided by the coordinator on 2026-09-24: a release whose legacy listing
+// request ended withdrawn or superseded is never registered, by the backstop
+// now or by the poll once B-T5.1 makes it live. The first recorded shadow run
+// (plugins-ingest run 35992534051) printed `would register
+// Voltur792/voice-text-input@v1.0.0`. That tag's request, issue #69, was closed
+// by its author: "Superseded: re-submitting with release v1.0.1". No version
+// records it. No decision record names it, because a held request carries no
+// decision and MIG-21's export counts holds without exporting them.
+// `state/releases-seen.json` had no row for the repository, because the
+// backstop skips a listing released within seven days, and this one always
+// had been.
+//
+// **The general rule is data here, not code.** `bot/lib/poll.mjs` reads
+// listings, identity and decision records, the seed file and a stranger's
+// feed. None of them says how a legacy issue ended, and the poll reads no
+// issues and must not start to. So the rule is carried by the seed: each such
+// tag is in `state/releases-seen.json` as seen. MIG-21's export can carry it
+// once it emits a terminal `withdrawn` record for such a request.
+// `TERMINAL_STATES` already holds `withdrawn`, so BOT-74's terminal-record
+// rule would then skip the tag with no change to the poll.
+//
+// This list is measured, not complete by construction. It came from every
+// closed `listing` issue on 2026-09-24 (23): the requested tag, who closed the
+// issue, and the bot's last verdict on it. The one withdrawn listing request is
+// below; every refused tag of a polled listing is already in the seed or no
+// longer on its feed. Re-measure with
+// `gh issue list --label listing --state closed` before cutover commit B.
+const LEGACY_WITHDRAWN = [
+  { repo: "Voltur792/voice-text-input", tag: "v1.0.0", issue: 69, ended: "closed by its author: superseded by v1.0.1" },
+];
+
+test("a release whose legacy listing request was withdrawn is offered by neither the poll nor the backstop", async () => {
+  const sources = loadSources(REPO_ROOT);
+  const seen = run.readReleasesSeen(REPO_ROOT);
+  assert.ok(seen, "state/releases-seen.json is gone; B-T5.1 retires it only after it seeded the poll's memory");
+  for (const w of LEGACY_WITHDRAWN) {
+    const plugin = sources.plugins.find((p) => String(p.doc?.source?.repo).toLowerCase() === w.repo.toLowerCase());
+    assert.ok(plugin, `${w.repo} is no longer a listing here; drop it from LEGACY_WITHDRAWN rather than test nothing`);
+    const { listings } = poll.pollableListings({ sources: { plugins: [plugin] }, stateOf: () => ({ state: "grandfathered", unlisted: false }) });
+    assert.equal(listings.length, 1, `${w.repo}'s listing is not pollable, so this would pass without asking`);
+    // Its real tags, as its feed shows them: every recorded version and the withdrawn one.
+    const tags = [...new Set([...listings[0].recorded_tags, w.tag])];
+    const xml = feed(...tags.map((t) => entry(tagUrl(t, w.repo))));
+
+    // The poll, as `load` seeds it and `poll` runs it.
+    const { rows } = run.loadOutputs({ opened: poll.newMemory(NOW), seen, listings, now: NOW, dispatched: true });
+    const out = await poll.runPoll({ listings, memory: { repos: rows }, now: NOW, fetchImpl: async () => ok(xml) });
+    const offered = run.pollOutputs(out, listings).tags.map((t) => `${t.repo}@${t.tag}`);
+    assert.ok(!offered.includes(`${w.repo}@${w.tag}`),
+      `the poll offers ${w.repo}@${w.tag} (issue #${w.issue}, ${w.ended}); state/releases-seen.json must record it as seen`);
+
+    // The legacy backstop, which polls this listing once it has been quiet for a week.
+    const row = seen.repos[w.repo.toLowerCase()] ?? {};
+    const planned = { repo: w.repo, listed_tag: listings[0].prefix_from?.tag ?? null };
+    const fresh = notify.newReleases(planned, tags.map((tag) => ({ tag })), row)
+      .filter((f) => watch.bot74Filter({ tag: f.tag, listedTags: listings[0].recorded_tags }).pass);
+    assert.deepEqual(fresh.map((f) => f.tag), [],
+      `the legacy backstop would ingest ${w.repo}@${w.tag} (issue #${w.issue}, ${w.ended}) the first week the listing is quiet`);
+  }
+});
