@@ -2428,12 +2428,9 @@ export function checkRecords(ctx, sources, records = loadRecords(ctx.root, sourc
  * compiles exactly that string. An `M_YANK` carries the moderator's own MOD-48
  * reason, which MOD-41 requires to be 10 to 300 code points of free-ish text.
  *
- * **Today that string is not published**, so the discriminant falls back to
- * (action, category) and a note says so. The fallback is the strict direction —
- * it reads an `M_YANK` with `author_request` as an author yank and asks it for
- * records — and it is live rather than dormant, which matters because no yank
- * of either kind is on `main` yet and a check that waited for ops.15 would be
- * a check nobody had ever seen run.
+ * **Contract 2.3.0 publishes that string** (ops.15). Until then the
+ * discriminant fell back to (action, category) with a note; with the string
+ * on `main` that branch was dead, and a token file without it is now refused.
  */
 export function checkAuthorActionRecords(ctx, sources, records = loadRecords(ctx.root, sources)) {
   const { report } = ctx;
@@ -2451,17 +2448,21 @@ export function checkAuthorActionRecords(ctx, sources, records = loadRecords(ctx
   const allYanks = entries.map((doc, i) => ({ doc, file: `${MODERATION_DIR}/${files[i]}` }))
     .filter(({ doc }) => doc.action === "yank" && doc.category === "author_request");
 
-  const yanks = fixed === null ? allYanks : allYanks.filter(({ doc }) => doc.reason === fixed);
-
-  if (fixed === null && allYanks.length > 0) {
-    report.note(MODERATION_DIR,
-      `${allYanks.length} \`author_request\` yank(s) are being counted as \`A_YANK\`s by action and category ` +
-      "alone, because `schema/contract-tokens-v1.json` carries `fixed_reasons: null`",
-      "SCOPE-7's fixed `A_YANK` reason is what tells an author's yank from an `M_YANK` a moderator took on an " +
-      "unbound listing's behalf (FLOW-79), and it lands with contract version ops.15. Until it does this check " +
-      "is strict in the safe direction — it asks an `M_YANK` for records it does not owe, which is a red a " +
-      "person resolves, rather than letting a short-counted `A_YANK` through, which nothing else catches.");
+  // Contract 2.3.0 published the string (ops.15), so a null here is a token
+  // file that lost it, not a registry that has not learnt it yet. The
+  // fallback that counted every `author_request` yank as an `A_YANK` is gone
+  // with the state it served; a missing string is refused, loudly, because a
+  // count taken without it asks the wrong set of entries for records.
+  if (fixed === null) {
+    if (allYanks.length > 0) {
+      report.error("schema/contract-tokens-v1.json",
+        "carries no fixed `A_YANK` reason, which contract 2.3.0 publishes (SCOPE-7's `fixed_reasons`)",
+        `${allYanks.length} \`author_request\` yank(s) cannot be told apart from an \`M_YANK\` without it (FLOW-79), ` +
+        "so no author-action record was counted. Regenerate the token file from the contract.");
+    }
+    return;
   }
+  const yanks = allYanks.filter(({ doc }) => doc.reason === fixed);
   if (yanks.length === 0) return;
 
   const authorActions = decisions.filter(({ doc }) => isAuthorAction(doc));

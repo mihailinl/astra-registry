@@ -19,16 +19,14 @@
 // the reason `bot/tests/takedown-bound.test.mjs` and
 // `bot/tests/listing-state.test.mjs` build repositories too.
 //
-// ── THE TOKEN FILE IN A FIXTURE CARRIES `fixed_reasons`; `main` DOES NOT ────
+// ── THE TOKEN FILE IN A FIXTURE CARRIES `fixed_reasons`, AND SO DOES `main` ─
 //
-// `schema/contract-tokens-v1.json` on `main` carries `fixed_reasons: null`, and
-// its own `pending` record says the two strings land with contract version
-// ops.15. So every fixture below writes a token file with them, and one test
-// asserts the OTHER direction against the real repository: with the strings
-// unpublished, `fixedReason` is null and an `A_YANK` THROWS rather than being
-// refused `reason_refused`. That asymmetry is the point — a refusal is final
-// (BOT-81), and settling every author yank as refused until ops.15 lands reads
-// from the panel exactly like a service that sent something wrong.
+// Contract 2.3.0 published the two strings (ops.15), and every fixture below
+// writes a token file with its own. One test reads the real repository's, and
+// asserts that a token file WITHOUT them still makes an `A_YANK` THROW rather
+// than be refused `reason_refused`: a refusal is final (BOT-81), and settling
+// every author yank as refused reads from the panel exactly like a service
+// that sent something wrong.
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -728,11 +726,16 @@ test("a contiguous run with a version above it becomes one exact version_range; 
   assert.deepEqual(whole.advisories[0].entries.filter((e) => e.kind === "id").map((e) => e.value), ["widgets"]);
 });
 
-// ── the floor: `fixed_reasons` is null on `main` today ──────────────────────
+// ── the floor: `fixed_reasons` is published on `main` since contract 2.3.0 ──
 
-test("on the real tree `fixed_reasons` is unpublished, and an A_YANK throws rather than being refused", () => {
-  assert.equal(fixedReason("A_YANK", { root: REPO_ROOT }), null,
-    "if this ever returns a string, ops.15 has landed and the fallback in tools/validate.mjs is dead code");
+test("on the real tree `fixed_reasons` is published, and a token file without it makes an A_YANK throw", () => {
+  // Contract 2.3.0 (ops.15). The two strings are §0.8's *Fixed registry
+  // reasons*, byte for byte; this reads them through the one reader the bot
+  // and tools/validate.mjs share.
+  assert.equal(fixedReason("A_YANK", { root: REPO_ROOT }),
+    "Yanked at its author's own request, made from the Astra plugins panel.");
+  assert.equal(fixedReason("A_REMOVAL_REQUEST", { root: REPO_ROOT }),
+    "Delisted at its author's own request, made from the Astra plugins panel. Installed copies are not removed.");
 
   const root = estate({ extra: { "schema/contract-tokens-v1.json": tokenFile({ fixed: false }) } });
   assert.throws(
@@ -822,11 +825,14 @@ test("with the fixed reason published, an M_YANK a moderator took for an unbound
   const published = runCount(root, { authorYankReason: FIXED_YANK });
   assert.equal(published.errors.length, 0, published.text());
 
+  // Since contract 2.3.0 the string is published, so a token file without it
+  // is broken: refused by name, and no record is counted against a set the
+  // check cannot draw.
   const unpublished = runCount(root, { authorYankReason: null });
-  assert.equal(unpublished.errors.length, 1,
-    "until ops.15 publishes the string the check is strict in the safe direction: it asks an M_YANK for records " +
-    "it does not owe, which is a red a person resolves");
-  assert.equal(unpublished.notes.length, 1, "and it says so, because a check that silently changed its subject is worse");
+  assert.equal(unpublished.errors.length, 1, unpublished.text());
+  assert.match(unpublished.errors[0].message, /no fixed `A_YANK` reason/,
+    "a token file that lost the string is refused as that, not counted by action and category");
+  assert.equal(unpublished.notes.length, 0, "the fallback note went with the fallback");
 });
 
 test("a yank naming no version is refused rather than passing a count of zero against zero", () => {
