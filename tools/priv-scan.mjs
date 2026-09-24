@@ -154,6 +154,7 @@ export const HISTORY_FLOOR = 228;
 const COMPOSED = [
   { re: /^log\/decisions\/.*\.json$/, kind: "decision" },
   { re: /^log\/cutover\.json$/, kind: "cutover" },
+  { re: /^log\/signed-wake-ack\.json$/, kind: "signed-wake-ack" },
   { re: /^log\/.*\.json$/, kind: null },               // log/** with no declared kind
   { re: /^plugins\/[^/]+\/identity\.json$/, kind: "identity" },
   { re: /^state\/alerts\/[^/]+\.json$/, kind: "alert-record" },
