@@ -392,9 +392,10 @@ counts in the catalogue are <code>0</code> because nothing counts them.</li>
 </ul>
 
 <h2>How to make something appear here</h2>
-<p>Report it from the plugin's page in Minice's panel, at
-<a href="${href("https://astra.minice.ai/plugins")}">astra.minice.ai/plugins</a>, signed in as an Astra
-owner, with the version and what you observed. Since the cutover (ROLL-33) an issue on this
+<p>Report it on Minice's report page, at
+<a href="${href("https://astra.minice.ai/plugins/_/report")}">astra.minice.ai/plugins/_/report</a>,
+or from the plugin's page in the panel, which opens it with the plugin chosen. Sign in as an Astra
+owner, and give the version and what you observed. Since the cutover (ROLL-33) an issue on this
 repository reaches nobody. Behaviour reports beat every heuristic this registry has, and they are
 the mechanism it actually relies on. For anything that would let somebody ship code to a user, use
 the path on the <a href="../security/">security page</a> instead.</p>

@@ -343,7 +343,9 @@ an appeal against a moderation action from the account the listing is bound to
 does not, that is a bug in the bot and worth reporting on its own.
 
 To **report** a listed plugin, use the report link on its page in the panel,
-signed in as an Astra owner, and say which version and what you observed (MOD-21,
-MOD-54). Reports about behaviour beat every heuristic in this document, and they
+which opens <https://astra.minice.ai/plugins/_/report?plugin=PLUGIN_ID> with the
+plugin chosen, or go to <https://astra.minice.ai/plugins/_/report> and choose it
+there. Sign in as an Astra owner, and say which version and what you observed
+(MOD-21, MOD-54). Reports about behaviour beat every heuristic in this document, and they
 are the mechanism this registry actually relies on. A security problem is not a
 report: see `SECURITY.md`.

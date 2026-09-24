@@ -25,7 +25,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { fixtureEnv } from "../../tools/lib/git-env.mjs";
+import { cleanEnv, fixtureEnv } from "../../tools/lib/git-env.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -2447,4 +2447,57 @@ test("drain-age: a stale releases-seen is red before cutover and retired after i
   const r = drainAge(unrouted.dir, { now });
   assert.equal(r.status, "red");
   assert.ok(r.codes.includes("DRAIN_CRON_UNROUTED"), r.codes.join(" "));
+});
+
+// ── MOD-54's report page, from commit C on (M-T6.2) ─────────────────────────
+//
+// Commit C sends every reporter to the panel. Until 2026-09-24 it sent them to
+// the panel's plugin list, because contract MOD-54 names the report page only
+// as "under /plugins/_/". minice-e4 then gave the path, and it is the one
+// minice-be's panel document cites and tools/cutover-preflight.mjs already
+// walks: `/plugins/_/report?plugin=<plugin_id>`, or bare, where the reporter
+// picks the plugin. The token file keeps its pending record until a contract
+// version records the path.
+//
+// What this holds: the issue page's first link, and each page that tells a
+// reader how to report, name that page, bare where they know no plugin. Every
+// spelling of the path in the tree is one of those two forms, so a `/reports`,
+// a `/report/` or a stray `?id=` fails here, by file and line, and not after
+// cutover when a reporter follows it.
+const REPORT_PAGE = "https://astra.minice.ai/plugins/_/report";
+
+test("commit C: config.yml's first link and every how-to-report page name MOD-54's report page", () => {
+  const read = (f) => fs.readFileSync(path.join(REPO, f), "utf8");
+  const config = read(".github/ISSUE_TEMPLATE/config.yml");
+  const urls = [...config.matchAll(/^\s+url:\s*(\S+)\s*$/gm)].map((m) => m[1]);
+  assert.equal(urls[0], REPORT_PAGE, "the issue page's first link is MOD-54's report page, in its bare form");
+  const first = config.slice(config.indexOf("contact_links:")).split(/^  - name:/m)[1] ?? "";
+  for (const [what, re] of [
+    ["the vulnerability mailbox", /security@minice\.ai/],
+    ["who reads it", /project\s+owner/],
+    ["that it is not encrypted", /not\s+encrypted/],
+    ["that a report is not embargoed", /not\s+embargoed/],
+  ]) assert.match(first, re, `MOD-45: the report link's text names ${what}`);
+
+  for (const file of ["site/templates/pages.mjs", "site/build.mjs", "POLICY.md", "docs/POLICY.md"]) {
+    assert.ok(read(file).includes(REPORT_PAGE), `${file} tells a reader how to report and does not link ${REPORT_PAGE}`);
+  }
+  assert.ok(read("tools/cutover-preflight.mjs").includes(`"${REPORT_PAGE}?plugin=<id>"`),
+    "the preflight's MOD-54 walk and the links point at different pages");
+
+  const tracked = execFileSync("git", ["-C", REPO, "ls-files", "-z"], { encoding: "utf8", env: cleanEnv() }).split("\0").filter(Boolean)
+    .filter((f) => !f.startsWith("log/") && !/\.(png|ico|gz|wasm|sig|bin)$/.test(f));
+  const bad = [];
+  for (const f of tracked) {
+    let text;
+    try { text = read(f); } catch { continue; }
+    text.split("\n").forEach((line, i) => {
+      for (const m of line.matchAll(/astra\.minice\.ai\/plugins\/_\/report[^\s"'`)\]]*/g)) {
+        if (!/^astra\.minice\.ai\/plugins\/_\/report(\?plugin=(<id>|<plugin_id>|PLUGIN_ID|\$\{[^}]+\}))?(>|<\/a>)?[.,;:]?$/.test(m[0])) {
+          bad.push(`${f}:${i + 1} ${m[0]}`);
+        }
+      }
+    });
+  }
+  assert.equal(bad.join("\n"), "", "a spelling of MOD-54's report page that is neither the bare page nor ?plugin=");
 });

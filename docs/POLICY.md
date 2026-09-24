@@ -823,8 +823,8 @@ anyone but us decides how much detail somebody pastes into a first message. Say
 you have a report, without the mechanism, if you want to agree how to send the
 rest. This registry offers no issue form and no GitHub private reporting for it,
 and an issue opened here reaches nobody (DEC-12). A report to the panel's
-`report` page is not embargoed either: it is for behaviour, not for a
-vulnerability.
+report page (<https://astra.minice.ai/plugins/_/report>) is not embargoed either:
+it is for behaviour, not for a vulnerability.
 
 A report that arrives the wrong way is still a report. Nothing here is a reason
 to sit on a finding, and the registry will deal with the disclosure rather than
