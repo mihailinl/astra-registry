@@ -607,12 +607,15 @@ function checkVersionDoc(plugin, version, ctx) {
 
 function checkPluginVersions(plugin, ctx) {
   const { report, policy } = ctx;
-  const listed = plugin.versions.filter((v) => v.doc?.yanked !== true);
+  // A listing whose every version is yanked is valid: an `M_YANK` or `A_YANK`
+  // of its last listed version, and the catalogue leaves it out until a
+  // version that is not yanked is added (tools/build-index.mjs; the
+  // coordinator's decision, 2026-09-24). This refused it until then, and the
+  // moderation commit job runs this validator before it pushes, so a yank of a
+  // last version stopped the whole batch here. A listing with no version files
+  // at all is still refused: that is a broken tree, not a withdrawal.
   if (plugin.versions.length === 0) {
     report.error(`plugins/${plugin.dir}/versions/`, "contains no version files");
-  } else if (listed.length === 0 && plugin.doc.unlisted !== true) {
-    report.error(`plugins/${plugin.dir}/versions/`, "every version is yanked, but the plugin is still listed",
-      "Set `\"unlisted\": true` in plugin.json to retire it while keeping the audit trail.");
   }
   if (plugin.versions.length > policy.limits.max_versions_per_plugin) {
     report.error(`plugins/${plugin.dir}/versions/`,

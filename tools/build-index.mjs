@@ -357,9 +357,23 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
     if (plugin.doc.unlisted === true) continue;
     const releases = listedReleases(plugin);
     if (releases.length === 0) {
+      // Two different states, and only one is an error. A listing with NO
+      // version records is a broken tree — nobody withdrew anything, and a
+      // listing silently dropped here is a plugin that vanishes from every
+      // store with nothing red anywhere — so the build refuses it. A listing
+      // whose every version record says `yanked: true` is a withdrawal somebody
+      // made and recorded: an `M_YANK` or `A_YANK` of its last listed version
+      // is valid (the coordinator's decision, 2026-09-24), and a listing with
+      // no installable version has nothing to offer, so the catalogue omits
+      // it. Its directory, records and history stay on `main`, and the next
+      // version that is not yanked brings it back. Until 2026-09-24 both were
+      // one error, and the moderation commit job threw on it — losing every
+      // takedown in the batch, on every run.
+      const everyYanked = plugin.versions.length > 0 && plugin.versions.every((v) => v.doc?.yanked === true);
+      if (everyYanked) continue;
       entryErrors.push({
         file: `plugins/${plugin.dir}`,
-        message: "every version is yanked or missing; delete the listing or add a release",
+        message: "has no version records; delete the listing or add a release",
       });
       continue;
     }
