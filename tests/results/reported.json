@@ -5,10 +5,10 @@
   "state": "refused",
   "reasons": [
     {
-      "code": "E_LICENSE_NOT_ALLOWED",
-      "stage": "metadata",
+      "code": "M_REJECT",
+      "stage": "policy",
       "location": null,
-      "message": "That licence is not on the allowlist"
+      "message": "M_REJECT"
     }
   ],
   "decision_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

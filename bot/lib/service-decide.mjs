@@ -63,7 +63,7 @@ import { decide } from "./policy/decision.mjs";
 // "no listing names the repository and no usable line". Imported, not
 // re-written — a second copy of a no-record rule is a second answer to when
 // the registry writes nothing.
-import { alreadyPublished, noListingNoBinding } from "../decide.mjs";
+import { alreadyPublished, noListingNoBinding, terminalOnMain } from "../decide.mjs";
 import { CHECK_FACTS_SCHEMA } from "../ingest.mjs";
 import { artifactDigests, submissionFingerprint } from "./policy/release.mjs";
 import { DELAY_HOURS } from "./policy/constants.mjs";
@@ -122,9 +122,6 @@ export const CLAIMED_FROM = Object.freeze(["received", "approved", "delayed"]);
 
 /** BOT-89's four, and what `ask` may carry for a submission it did not ask about. */
 export const VERDICT_OUTCOMES = Object.freeze(["pass", "B_BINDING_UNUSABLE", "W_ELIGIBILITY_UNREADABLE", "shadow"]);
-
-/** The record states the bot writes on this path, and the terminal ones BOT-19 reports. */
-const TERMINAL_STATES = new Set(["refused", "stopped", "yanked", "withdrawn", "revoked", "deprecated"]);
 
 /** TRUST-14's two events. */
 export const ALERT_EVENTS = Object.freeze(["approval", "delay_elapsed"]);
@@ -317,21 +314,25 @@ export function readQueueOnMain(root, pluginId, version) {
 // ── BOT-19, for THIS submission ─────────────────────────────────────────────
 
 /**
- * A terminal record on `main` for this submission, or for this fingerprint.
+ * BOT-19's search, on this path: `bot/decide.mjs`'s `terminalOnMain` — the
+ * one implementation of the rule, which names BOT-19's records exactly (a
+ * `published`, `stopped` or `M_REJECT` `refused` record carrying this
+ * fingerprint, and a stop of the same tag of the same repository) — plus the
+ * clause it has no submission to ask about: a `stopped` record for this
+ * `submission_id` (FLOW-23).
  *
- * Narrower than `bot/decide.mjs`'s `terminalOnMain`, deliberately, and the
- * difference is a finding against that function rather than a style: it
- * matches any record of the PLUGIN ID in a terminal state, so a plugin one of
- * whose old versions was once refused would have every later release reported
- * `refused` and never decided. On this path a submission and a fingerprint are
- * both known exactly, and the search is for one of them.
+ * A bot refusal of the same bytes is NOT a hit: a `/recheck`, or a re-claim,
+ * exists to decide them again. The first cut of this function reported any
+ * refused record for the fingerprint, which was the same over-match
+ * `terminalOnMain` had by plugin id, one clause narrower.
  */
-export function terminalForSubmission({ records, submissionId, fingerprint }) {
-  const mine = (records ?? []).filter((r) =>
-    (submissionId && r?.submission_id === submissionId) || (fingerprint && r?.fingerprint === fingerprint));
-  const hits = mine.filter((r) => TERMINAL_STATES.has(String(r?.state)));
-  hits.sort((a, b) => String(a.decided_at).localeCompare(String(b.decided_at)));
-  return hits.at(-1) ?? null;
+export function terminalForSubmission({ records, submissionId, fingerprint, repo = null, tag = null, repositoryId = null }) {
+  const list = records ?? [];
+  const stop = [...list].reverse().find((r) => r?.state === "stopped" && submissionId && r.submission_id === submissionId);
+  if (stop) return stop;
+  const hit = terminalOnMain({ records: list, fingerprint, repo, tag, repositoryId });
+  if (!hit) return null;
+  return list.find((r) => r?.decision_id && r.decision_id === hit.names) ?? { state: hit.reported, decision_id: hit.names, reasons: [] };
 }
 
 /**
@@ -729,7 +730,10 @@ export function decideSubmission(input) {
   const identityRecord = existing?.identity ?? null;
 
   // 3 ── BOT-19: a terminal answer already on `main` ───────────────────────
-  const terminal = terminalForSubmission({ records, submissionId: sid, fingerprint: verified.fingerprint });
+  const terminal = terminalForSubmission({
+    records, submissionId: sid, fingerprint: verified.fingerprint,
+    repo: verified.repo, tag: verified.tag, repositoryId: verified.repository_id,
+  });
   if (terminal) {
     return plan("reported", {
       state: terminal.state,

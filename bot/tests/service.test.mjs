@@ -2182,12 +2182,23 @@ test("verify's alert, wait and refusal each keep their own shape", () => {
 
 // ── B-T3.3c: the outcomes that write nothing ────────────────────────────────
 
-test("BOT-19: a terminal record already on main for this fingerprint is reported, and nothing is written", () => {
-  const plan = decideWith({ git: git({ records: [{ submission_id: P.sid, fingerprint: FP, state: "refused", decision_id: "a".repeat(32), decided_at: "2026-09-20T00:00:00Z", reasons: ["E_LICENSE_NOT_ALLOWED"] }] }) });
+const mReject = { submission_id: P.sid2, fingerprint: FP, state: "refused", decision_id: "a".repeat(32), decided_at: "2026-09-20T00:00:00Z", reasons: ["M_REJECT"] };
+
+test("BOT-19: a moderator's rejection of these bytes, or a stop, is reported, and nothing is written", () => {
+  const plan = decideWith({ git: git({ records: [mReject] }) });
   assert.equal(plan.kind, "reported");
   assert.equal(plan.state, "refused");
   assert.equal(plan.decision_id, "a".repeat(32));
   assert.equal(plan.record, null);
+  const stopped = decideWith({ git: git({ records: [{ submission_id: P.sid, state: "stopped", decision_id: "b".repeat(32), decided_at: "2026-09-20T00:00:00Z", reasons: ["A_STOP"] }] }) });
+  assert.equal(stopped.kind, "reported", "FLOW-23: a stop for this submission id");
+  const byTag = decideWith({ git: git({ records: [{ state: "stopped", tag: P.tag, repo: P.repo, repository_id: P.rid, decision_id: "c".repeat(32), decided_at: "2026-09-20T00:00:00Z", reasons: ["A_WITHDRAW"] }] }) });
+  assert.equal(byTag.kind, "reported", "FLOW-26: a stop of the same tag of the same repository");
+});
+
+test("BOT-19: a bot refusal of the same bytes is decided again, never reported", () => {
+  const plan = decideWith({ git: git({ records: [{ ...mReject, reasons: ["E_LICENSE_NOT_ALLOWED"] }] }) });
+  assert.notEqual(plan.kind, "reported", "a recheck of refused bytes re-decides them");
 });
 
 test("BOT-74: a version listed with identical digests is reported `published`, naming the record", () => {
@@ -2366,7 +2377,7 @@ function goldenPlans() {
     }),
     refused: decideWith({ facts: facts({ findings: [{ code: "E_LICENSE_NOT_ALLOWED", level: "error" }] }) }),
     "refused-flow67": decideWith({ lease: { trigger: "panel" }, git: git({ listingNamesRepo: false }) }),
-    reported: decideWith({ git: git({ records: [{ submission_id: P.sid, fingerprint: FP, state: "refused", decision_id: "a".repeat(32), decided_at: "2026-09-20T00:00:00Z", reasons: ["E_LICENSE_NOT_ALLOWED"] }] }) }),
+    reported: decideWith({ git: git({ records: [mReject] }) }),
     // A wait that carries reasons, so the golden holds `location` on one.
     wait: decideWith({
       lease: { claimed_from: "approved" },
