@@ -72,7 +72,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        **What this registry cannot tell you.** It has no telemetry. It cannot
-        say how many people are running the version you are reporting, and it
-        will not pretend to. Reports received and not acted on are not published
+        **What this registry cannot tell you.** It receives nothing from an
+        installed copy. (Amended YYYY-MM-DD, ROLL-47 B3: Minice's plugins service
+        counts installs as aggregates; it names no person and no machine.) Reports received and not acted on are not published
         — a report is not an accusation this registry has substantiated.

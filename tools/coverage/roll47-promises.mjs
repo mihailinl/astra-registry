@@ -104,6 +104,34 @@ export const PROMISES = [
       "sandboxed and will not be (settled); a sentence promising the phase in which that changes is a promise " +
       "the estate has refused to keep",
   },
+  {
+    row: "B1",
+    task: "M-T4.3",
+    literal: "this registry counts nothing about anyone",
+    amended: "YYYY-MM-DD",
+    why: "from the plugins service's install deploy, installs are counted as aggregates there (ROLL-48); this repository still counts nothing, and the catalogue's downloads and stars stay 0",
+  },
+  {
+    row: "B2",
+    task: "M-T4.3",
+    literal: "receives no install pings",
+    amended: "YYYY-MM-DD",
+    why: "the site's copy of B1-B3: the service counts installs as aggregates",
+  },
+  {
+    row: "B3",
+    task: "M-T4.3",
+    literal: "has no telemetry and cannot tell you how many",
+    amended: "YYYY-MM-DD",
+    why: "the docs/POLICY.md copy: the service counts installs as aggregates, so 'cannot tell how many' stopped being the estate's answer",
+  },
+  {
+    row: "B3-report",
+    task: "M-T4.3",
+    literal: "cannot say how many people are running",
+    amended: "YYYY-MM-DD",
+    why: "the report form's copy (deleted with the forms in the cutover commit set)",
+  },
 ];
 
 /**
@@ -168,6 +196,18 @@ export function run(repo, { promises = PROMISES, scannedFloor = SCANNED_FLOOR } 
     };
   }
 
+  // ROLL-47: "amended explicitly, DATED". A row prepared ahead of the change
+  // that makes its promise false (M-T4.3 waits for the service's install
+  // deploy) carries the placeholder until the day it lands; the placeholder in
+  // the table or in the amended text is red, so the prepared commit cannot land
+  // undated.
+  for (const p of promises) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(p.amended) && p.amended !== "cutover") {
+      codes.push("ROLL47_UNDATED_AMENDMENT");
+      detail.push(`row ${p.row} (${p.task}) is amended ${JSON.stringify(p.amended)}, not a date; set it to the day the amendment lands`);
+    }
+  }
+
   const inScope = files.filter((f) => !SKIP.some((s) => f === s.prefix || f.startsWith(s.prefix)));
   for (const named of NAMED) {
     if (!inScope.includes(named)) {
@@ -192,6 +232,11 @@ export function run(repo, { promises = PROMISES, scannedFloor = SCANNED_FLOOR } 
     scanned++;
     const text = buf.toString("utf8");
     const flat = normalise(text);
+    // The amended text's own date, still a placeholder.
+    if (/amended yyyy-mm-dd/.test(flat)) {
+      codes.push("ROLL47_UNDATED_AMENDMENT");
+      detail.push(`${rel} carries an amendment whose date is still the placeholder: prepared ahead of its day and not dated when it landed`);
+    }
     for (const p of wanted) {
       let at = flat.indexOf(p.needle);
       while (at !== -1) {

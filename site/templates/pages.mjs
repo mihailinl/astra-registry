@@ -383,9 +383,10 @@ issue tracker, publicly, with the failing check named &mdash; but a refusal is n
 action against a listed plugin, and mixing the two would make the count meaningless.</li>
 <li><strong>Reports we received and did not act on.</strong> Publishing those would publish an
 accusation the registry did not substantiate.</li>
-<li><strong>Anything about installed copies.</strong> This registry has no telemetry, receives no
-install pings, and cannot tell you how many people are running a withdrawn version. The download
-counts in the catalogue are <code>0</code> because nothing counts them.</li>
+<li><strong>Anything about installed copies.</strong> This registry receives nothing from them, and
+the download and star counts in the catalogue stay <code>0</code>. Amended YYYY-MM-DD (ROLL-47 B2): Minice&rsquo;s
+plugins service counts installs and updates as aggregates, under its own privacy disclosure; none of
+it names a person or a machine, and none of it is in this log.</li>
 </ul>
 
 <h2>How to make something appear here</h2>
