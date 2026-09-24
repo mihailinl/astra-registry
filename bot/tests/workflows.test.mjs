@@ -1705,6 +1705,44 @@ test("every suite under bot/tests/ is named by a workflow, and the list has a fl
 
 });
 
+// ── Bot tests is the gate, so every suite runs there or says where it runs ──
+//
+// The test above holds a weaker thing: that SOME workflow names each suite.
+// Lane S3a found on 2026-09-24 that `bot/tests/service-conformance.test.mjs`
+// ran only from `service-conformance.yml`'s `suite` job. That job is a
+// separate workflow, whose later jobs are about a live service, and nobody
+// reads it as the bot's tests. The coordinator's answer was a step in
+// bot-tests.yml. This test is what keeps that answer true for the next suite.
+// A suite gated by another workflow instead is a decision, so it needs an
+// entry below naming the workflow and the job, and each entry is checked
+// against that workflow's uncommented lines.
+const GATED_ELSEWHERE = {
+  // #305: the PR door's tests run in the job that must pass before the door
+  // itself runs, in the workflow whose subject the door is.
+  "pr-door.test.mjs": { workflow: "bot-checks.yml", job: "door-tests" },
+};
+
+test("every suite under bot/tests/ runs in Bot tests, or names the workflow that gates it instead", () => {
+  const uncommented = (text) => text.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+  const suites = fs.readdirSync(path.join(REPO, "bot", "tests")).filter((n) => n.endsWith(".test.mjs")).sort();
+  assert.ok(suites.length >= 27, `only ${suites.length} suite(s) under bot/tests/; there were 27 on 2026-09-24`);
+  const botTests = uncommented(read("bot-tests.yml"));
+  const missing = suites.filter((n) => !botTests.includes(`bot/tests/${n}`) && !GATED_ELSEWHERE[n]);
+  assert.deepEqual(missing, [],
+    `${missing.join(", ")}: run by no step of bot-tests.yml, and not declared in GATED_ELSEWHERE. Add a step ` +
+    "to bot-tests.yml's `suites` job, next to the suites it belongs with, or, if another workflow is its " +
+    "gate by decision, an entry there that says which workflow and job");
+  for (const [suite, { workflow, job }] of Object.entries(GATED_ELSEWHERE)) {
+    assert.ok(suites.includes(suite), `GATED_ELSEWHERE names ${suite}, which is gone; drop the entry`);
+    assert.ok(!botTests.includes(`bot/tests/${suite}`), `${suite} runs in bot-tests.yml now; drop its GATED_ELSEWHERE entry`);
+    const text = uncommented(read(workflow));
+    const at = text.indexOf(`\n  ${job}:`);
+    assert.ok(at >= 0, `${workflow} has no job \`${job}\`, which GATED_ELSEWHERE says gates ${suite}`);
+    const body = text.slice(at + 1).split(/\n  [A-Za-z0-9_-]+:\s*\n/)[0];
+    assert.ok(body.includes(`bot/tests/${suite}`), `${workflow}'s \`${job}\` does not run ${suite}, so nothing gates it`);
+  }
+});
+
 // ── ops couplings 142 and 143: a hook's environment reaches no repository ────
 //
 // git exports `GIT_DIR` to a hook, to `rebase -x` and to a `!` alias — from a
