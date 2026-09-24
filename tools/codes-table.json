@@ -10,6 +10,11 @@
     "bot/lib/policy/constants.mjs"
   ],
   "codes": [
+    "B_BINDING_MALFORMED",
+    "B_BINDING_UNUSABLE",
+    "B_OWNER_CHANGED",
+    "B_REPOSITORY_RECYCLED",
+    "B_UNBOUND",
     "E_ARTIFACT_TOO_LARGE",
     "E_ASSET_FILENAME",
     "E_ASSET_HEAD_FAILED",
@@ -108,6 +113,7 @@
     "P_DELAY_WAIVED_BY_COMMAND",
     "P_DELAY_WIDENED",
     "P_FIRST_LISTING_APPROVED",
+    "P_OPERATOR_DENIED",
     "P_PUBLISHED",
     "P_REFUSED",
     "P_SLA",
@@ -136,13 +142,8 @@
     "owed_by": "reg.61a (registry plan B-T3.3b), which writes these codes' author-facing sentences into docs/POLICY.md",
     "why": "FLOW-13 requires a title and a remedy per entry. These codes carry a level in `bot/lib/policy/constants.mjs`'s `BOUND_WORLD_CODES` and no title and no remedy anywhere in this repository. `policyCodeDef` synthesises `See docs/POLICY.md.` for them at emit time, which is the right answer in a comment and the wrong one in a published table three estates compile against.",
     "codes": [
-      "B_UNBOUND",
-      "B_BINDING_MALFORMED",
-      "B_BINDING_UNUSABLE",
       "B_BINDING_INVALID",
       "B_ACCOUNT_INELIGIBLE",
-      "B_OWNER_CHANGED",
-      "B_REPOSITORY_RECYCLED",
       "R_FIRST_BINDING",
       "R_BINDING_CHANGED",
       "W_LEASE_EXPIRED",
@@ -165,6 +166,51 @@
     ]
   },
   "flow13_table": [
+    {
+      "code": "B_BINDING_MALFORMED",
+      "level": "error",
+      "stage": "ownership",
+      "fix": "new_tag",
+      "panel_only": false,
+      "title": "The binding file is not one well-formed binding line",
+      "remedy": "`.well-known/astra-plugin-owner` must hold exactly one `astra-binding: <token>` line (ID-24). Fix the file and push a new tag: the line is read at the attested commit."
+    },
+    {
+      "code": "B_BINDING_UNUSABLE",
+      "level": "error",
+      "stage": "ownership",
+      "fix": "new_tag",
+      "panel_only": false,
+      "title": "The binding token on the tagged commit cannot bind this release",
+      "remedy": "The token in `.well-known/astra-plugin-owner` at the tagged commit cannot bind this repository (ID-9); the Astra plugins panel tells the token's owner why. Mint a fresh token there if you need one, commit its line and push a new tag."
+    },
+    {
+      "code": "B_OWNER_CHANGED",
+      "level": "error",
+      "stage": "ownership",
+      "fix": "moderator",
+      "panel_only": false,
+      "title": "The repository's owner changed since it was bound",
+      "remedy": "The owner the build attestation names differs from the one this listing's identity record carries (ID-41). A moderator decides what happens next; a new tag or a Recheck does not clear it."
+    },
+    {
+      "code": "B_REPOSITORY_RECYCLED",
+      "level": "error",
+      "stage": "ownership",
+      "fix": "moderator",
+      "panel_only": false,
+      "title": "The repository was re-created under this name by another owner",
+      "remedy": "This refusal is permanent for the repository's recorded identity (ID-41): no Recheck, new tag or approval clears it. Only a moderator's identity reset (`M_IDENTITY_RESET`) does, after which the next release is reviewed as a first binding."
+    },
+    {
+      "code": "B_UNBOUND",
+      "level": "error",
+      "stage": "ownership",
+      "fix": "new_tag",
+      "panel_only": false,
+      "title": "No binding line where the registry needs one",
+      "remedy": "From cutover, a first listing and a frozen listing's next release need an `astra-binding:` line in `.well-known/astra-plugin-owner` at the tagged commit (ID-25). Mint a token in the Astra plugins panel, commit its line and push a new tag: the line is read at the attested commit, so this tag cannot change."
+    },
     {
       "code": "E_ARTIFACT_TOO_LARGE",
       "level": "error",
@@ -1046,6 +1092,15 @@
       "panel_only": false,
       "title": "Approved, and published without waiting",
       "remedy": "Nothing to do. A first listing has no installed copies, so the publication delay would have protected nobody who had not already chosen to install it — and a person read this submission, which is the check the delay stands in for. The delay still applies to every later release from this repository, where existing installs follow an update whether or not anybody looked."
+    },
+    {
+      "code": "P_OPERATOR_DENIED",
+      "level": "error",
+      "stage": "policy",
+      "fix": "registry",
+      "panel_only": false,
+      "title": "Not published: the registry's operator withheld this exact build",
+      "remedy": "An operator deny record on `main` names this fingerprint (TRUST-33). No Recheck, approval or moderator decision clears it; only the operator removing the record does. A new tag is a new fingerprint and is judged afresh."
     },
     {
       "code": "P_PUBLISHED",

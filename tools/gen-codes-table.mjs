@@ -102,9 +102,13 @@ const OWED = {
     "`bot/lib/policy/constants.mjs`'s `BOUND_WORLD_CODES` and no title and no remedy anywhere in this " +
     "repository. `policyCodeDef` synthesises `See docs/POLICY.md.` for them at emit time, which is the " +
     "right answer in a comment and the wrong one in a published table three estates compile against.",
+  // The five `B_*` codes the bot emits left this list with contract 2.5.0,
+  // which records their `fix` (lane S6); their rows come from
+  // `bot/lib/policy/constants.mjs`'s POLICY_CODES now. The two panel-only
+  // details stay owed: the bot never emits them, and their rows are the
+  // service's.
   codes: [
-    "B_UNBOUND", "B_BINDING_MALFORMED", "B_BINDING_UNUSABLE", "B_BINDING_INVALID",
-    "B_ACCOUNT_INELIGIBLE", "B_OWNER_CHANGED", "B_REPOSITORY_RECYCLED",
+    "B_BINDING_INVALID", "B_ACCOUNT_INELIGIBLE",
     "R_FIRST_BINDING", "R_BINDING_CHANGED",
     "W_LEASE_EXPIRED", "W_ELIGIBILITY_UNREADABLE", "W_NOTICE_PENDING", "W_GITHUB_RATE_LIMITED",
     "W_SERVICE_UNREACHABLE", "W_MODERATION_HOLD", "W_ALERT_UNDELIVERED", "W_OPERATOR_WINDOW",

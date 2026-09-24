@@ -240,6 +240,9 @@ export const ENTRIES = [
   "policy/reserved-ids.json",
   "policy/spdx-allowlist.json",
   "policy/listing-language-exemptions.json",
+  // Contract 2.4.0's: B.4's alert record, which tools/validate.mjs judges
+  // against it by literal path (the fourteenth schema).
+  "schema/alert-v1.json",
   "schema/cutover-v1.json",
   "schema/deadline-v1.json",
   // B-T2.1's three, added by contract 0.21.0. `tools/lib/sources.mjs`'s

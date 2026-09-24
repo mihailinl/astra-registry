@@ -1070,9 +1070,9 @@ export function decideSubmission(input) {
   if (git.denied?.has(verified.fingerprint)) {
     return plan("state", {
       state: "refused",
-      reasons: [reasonOf("P_REFUSED", { message: "an operator deny record on main names this fingerprint (TRUST-33)" })],
+      reasons: [reasonOf("P_OPERATOR_DENIED", { message: "an operator deny record on main names this fingerprint (TRUST-33)" })],
       derived: derivedFacts,
-      record: { ...baseRecord, decided_at: startedAt, state: "refused", reasons: ["P_REFUSED"] },
+      record: { ...baseRecord, decided_at: startedAt, state: "refused", reasons: ["P_OPERATOR_DENIED"] },
       drop_queue: Boolean(queued),
     });
   }
