@@ -144,7 +144,7 @@ const normalise = (s) => s.replace(/\s+/g, " ").toLowerCase();
 function tracked(repo) {
   try {
     const out = execFileSync("git", ["-C", repo, "ls-files", "-z"], {
-      encoding: "utf8", env: cleanEnv(), maxBuffer: 64 * 1024 * 1024,
+      encoding: "utf8", env: cleanEnv(), maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
     });
     return out.split("\0").filter(Boolean);
   } catch (e) {
