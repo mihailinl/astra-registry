@@ -2701,3 +2701,179 @@ test("the service-path modules this section drives are all on the tree", () => {
   }
   assert.ok(crypto.createHash("sha256").update("x").digest("hex").length === 64);
 });
+
+// ── the whole path, once, as a run would take it ────────────────────────────
+//
+// claim → verify → check → ask → decide → compose → publish-apply → finalize
+// → report, over a real temporary registry tree, real fixture bundles, the
+// real manifest probe, and the stub above standing in for the service. The
+// one thing not real is `gh`, which answers from the fixture's certificate.
+
+import { checkFacts, verifyFacts } from "../ingest.mjs";
+import { decideJob } from "../lib/service-decide.mjs";
+import { run as publishApply } from "../publish-apply.mjs";
+import { loadRootKeys } from "../lib/attestation.mjs";
+import { makeBundle, fakeGitHub, fakeGh, FIXTURE_REPOSITORY_ID, FIXTURE_OWNER_ID } from "../fixtures/ingest/make.mjs";
+
+function e2eWorld() {
+  const t = registryTree();
+  const w = (rel, doc) => {
+    fs.mkdirSync(path.join(t.dir, path.dirname(rel)), { recursive: true });
+    fs.writeFileSync(path.join(t.dir, rel), typeof doc === "string" ? doc : `${JSON.stringify(doc, null, 2)}\n`);
+  };
+  w(`plugins/${P.id}/plugin.json`, {
+    schema: "astra.registry.plugin/1", id: P.id, name: "Dice Roller", summary: "Rolls dice when you ask it to.",
+    license: "MIT", source: { kind: "github", repo: P.repo }, added_at: "2026-01-01",
+  });
+  w(`plugins/${P.id}/versions/0.1.0.json`, {
+    schema: "astra.registry.version/1", id: P.id, version: "0.1.0", published_at: "2026-01-01T00:00:00Z",
+    release: { kind: "github_release", repo: P.repo, tag: "v0.1.0" }, capabilities: ["tools"], staging: true,
+    staging_reason: "Test fixture: the release this points at is a fake, so there is no digest to pin.",
+    artifacts: { "linux-x64": { url: `https://github.com/${P.repo}/releases/download/v0.1.0/${P.id}-0.1.0-linux-x64.astraplugin`, filename: `${P.id}-0.1.0-linux-x64.astraplugin` } },
+  });
+  // MIG-20's baseline for the id, and its marker, so BOT-34's commit rule is on.
+  w(`log/decisions/2026/09/${"e".repeat(32)}.json`, {
+    schema: "astra.registry.decision/1", decision_id: "e".repeat(32), decided_at: "2026-09-01T00:00:00Z", actor: "system",
+    trigger: "migration", plugin_id: P.id, version: "0.1.0", repo: P.repo, repository_id: FIXTURE_REPOSITORY_ID,
+    repository_owner_id: FIXTURE_OWNER_ID, tag: "v0.1.0", state: "published", fingerprint: "0123456789abcdef",
+  });
+  w("log/baseline.json", {
+    schema: "astra.registry.baseline/1", written_at: "2026-09-01T00:00:00Z", source_commit: "1".repeat(40), version_count: 1, record_count: 1,
+  });
+  t.g("add", "-A");
+  t.g("commit", "-q", "-m", "a listed plugin, its baseline and the marker");
+  return t;
+}
+
+function testRootKeys() {
+  const keys = ["root-a", "root-b"].map((n) =>
+    JSON.parse(fs.readFileSync(path.join(REPO, "tools", "testkeys", `TEST-ONLY-DO-NOT-TRUST-${n}.pub.json`), "utf8")));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-roots-"));
+  const file = path.join(dir, "root.json");
+  fs.writeFileSync(file, JSON.stringify({
+    schema: "astra.registry.root/1", status: "provisioned",
+    roots: keys.map((k) => ({ key_id: k.key_id, public_key: k.public_key, role: k.role })),
+  }));
+  const loaded = loadRootKeys(file);
+  fs.rmSync(dir, { recursive: true, force: true });
+  return loaded;
+}
+
+async function e2eRun({ shadow = false } = {}) {
+  const t = e2eWorld();
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-e2e-"));
+  const cleanup = () => { t.cleanup(); fs.rmSync(work, { recursive: true, force: true }); };
+  const name = `${P.id}-${P.version}-linux-x64.astraplugin`;
+  const bytes = makeBundle({});
+  const posted = [];
+  const s = await stub((call) => {
+    if (call.url.endsWith("/leases")) return ok({ schema: "astra.plugins.bot-leases/1", shadow, leases: [lease({ attempt: "att-9" })] });
+    if (call.url.endsWith("/gates")) {
+      return ok({ schema: "astra.plugins.bot-gates/1", shadow, items: [{ submission_id: P.sid, fingerprint: JSON.parse(call.raw).items[0].fingerprint, stop_status: "no_stop", decisions: [] }] });
+    }
+    if (call.url.endsWith("/results")) {
+      posted.push(JSON.parse(call.raw));
+      return ok({ schema: "astra.plugins.bot-ack/1", shadow, outcome: "accepted" });
+    }
+    return { status: 500, body: {} };
+  });
+  try {
+    // claim
+    const claimed = await claimJob({ client: client(s), log: { log: () => {}, error: () => {} } });
+    // verify
+    const github = fakeGitHub({ repo: P.repo, tag: P.tag, assets: [{ name, bytes }] });
+    const assetsDir = path.join(work, "assets");
+    const verifiedAll = {};
+    for (const id of claimed.submissions) {
+      verifiedAll[id] = await verifyFacts({
+        lease: claimed.leases[id], root: t.dir, assetsDir,
+        trustFile: path.join(REPO, "tools", "testkeys", "fixtures", "trust-active-signed.json"),
+      }, {
+        rootKeys: testRootKeys(),
+        fetchRelease: github.fetchRelease.bind(github), headAsset: github.headAsset.bind(github), downloadAsset: github.downloadAsset.bind(github),
+        ghRunner: (args) => fakeGh({ repo: P.repo, signerDigest: "0".repeat(40), tag: P.tag, subjectDigest: crypto.createHash("sha256").update(fs.readFileSync(args[2])).digest("hex") })(args),
+        fetchRepositoryIds: async () => ({ status: "found", id: FIXTURE_REPOSITORY_ID, owner_id: FIXTURE_OWNER_ID, full_name: P.repo }),
+        binding: { commitInRepository: async () => ({ status: "found", reason: "ok" }), fileAtCommit: async () => ({ status: "not_found", reason: "HTTP 404" }) },
+      });
+    }
+    // check, laid out the way the two artifacts download
+    const factsDir = path.join(work, "facts");
+    const listingsDir = path.join(work, "listings");
+    const pubListings = path.join(work, "pub-listings");
+    for (const id of claimed.submissions) {
+      const out = path.join(work, `check-${id}`);
+      await checkFacts({ submissionId: id, assetsDir: path.join(assetsDir, id), verified: verifiedAll[id], out, root: t.dir });
+      fs.mkdirSync(path.join(factsDir, `facts-${id}`), { recursive: true });
+      fs.copyFileSync(path.join(out, "facts.json"), path.join(factsDir, `facts-${id}`, "facts.json"));
+      fs.cpSync(path.join(out, "listing"), path.join(listingsDir, `listing-${id}`), { recursive: true });
+      fs.cpSync(path.join(out, "listing"), pubListings, { recursive: true });
+    }
+    // ask
+    const asked = await askJob({ client: client(s), submissions: claimed.submissions, leases: claimed.leases, verified: verifiedAll });
+    // decide
+    const decided = decideJob({
+      root: t.dir, submissions: claimed.submissions, leases: claimed.leases, claimShadow: claimed.shadow,
+      verified: verifiedAll, outcome: asked.outcome, factsDir, listingsDir, now: P.now, startedAt: P.now,
+      readCommit: t.g("rev-parse", "HEAD").trim(),
+    });
+    // publish
+    const reportsDir = path.join(work, "reports");
+    fs.mkdirSync(reportsDir, { recursive: true });
+    const { pending } = composePublication({ plans: decided.plans, root: t.dir, listingsDir: pubListings, reportsDir, run: "77/1" });
+    const applied = publishApply({
+      root: t.dir, reports: reportsDir, watchState: path.join(work, "none"), base: t.g("rev-parse", "HEAD").trim(),
+      skipChecks: true, push: false, servicePath: true, message: "registry: publish (plugins ingest)", trailer: commitTrailers({ pending, run: "77/1" }), log: () => {},
+    });
+    const head = t.g("rev-parse", "HEAD").trim();
+    const results = finalizeResults({
+      pending, applied: { outcome: applied.outcome, refused: (applied.refusals ?? []).map((r) => r.report), pushed: applied.outcome === "committed" }, mainCommit: head,
+    });
+    // report
+    await reportJob({ client: client(s), results: results.map((r) => ({ ...r, shadow: false })) });
+    return { t, decided, pending, applied, head, results, posted, verifiedAll, cleanup };
+  } catch (e) {
+    cleanup();
+    throw e;
+  } finally {
+    await s.close();
+  }
+}
+
+test("end to end: one lease becomes one commit holding the listing and its record, and one result naming both", async () => {
+  const r = await e2eRun();
+  try {
+    assert.equal(r.verifiedAll[P.sid].outcome, "ok", JSON.stringify(r.verifiedAll[P.sid].findings.filter((f) => f.level === "error")));
+    const plan = r.decided.plans[0];
+    assert.equal(plan.state, "published", `${plan.kind} ${plan.state ?? ""} ${JSON.stringify(plan.reasons?.map((x) => x.code) ?? plan.why)}`);
+    assert.equal(r.applied.outcome, "committed", JSON.stringify(r.applied.refusals));
+    const files = r.t.g("show", "--name-only", "--format=", "HEAD").trim().split("\n");
+    assert.ok(files.includes(`plugins/${P.id}/versions/${P.version}.json`), files.join(" "));
+    const rec = files.find((f) => /^log\/decisions\/2026\/09\/[0-9a-f]{32}\.json$/.test(f));
+    assert.ok(rec, "the record is in the same commit (BOT-34, BOT-73)");
+    const message = r.t.g("log", "-1", "--format=%B").trim();
+    assert.match(message, new RegExp(`Submission: ${P.sid}`), "BOT-37's trailers");
+    assert.equal(r.posted.length, 1, "one result posted");
+    const body = r.posted[0];
+    assert.equal(body.state, "published");
+    assert.equal(body.main_commit, r.head, "the result names the commit that landed");
+    assert.equal(`log/decisions/2026/09/${body.decision_id}.json`, rec, "and the record in it");
+    assert.equal(body.attempt, "att-9", "BOT-12: the attempt identity is echoed");
+    const version = JSON.parse(fs.readFileSync(path.join(r.t.dir, "plugins", P.id, "versions", `${P.version}.json`), "utf8"));
+    assert.equal(version.release.repo, P.repo, "BOT-21: the committed repo is the certificate's");
+  } finally {
+    r.cleanup();
+  }
+});
+
+test("end to end, in shadow: the same lease commits nothing and posts nothing", async () => {
+  const r = await e2eRun({ shadow: true });
+  try {
+    assert.equal(r.decided.plans[0].kind, "none");
+    assert.equal(r.decided.plans[0].would.state, "published", "the shadow run still decided what it would do");
+    assert.equal(r.pending.length, 0);
+    assert.equal(r.applied.outcome, "nothing");
+    assert.equal(r.posted.length, 0, "BOT-92: no result of any kind");
+  } finally {
+    r.cleanup();
+  }
+});

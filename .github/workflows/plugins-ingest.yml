@@ -892,6 +892,7 @@ jobs:
           dry=()
           if [ "$DRY_RUN" != "false" ]; then dry=(--dry-run); fi
           node bot/publish-apply.mjs \
+            --service-path \
             --reports reports \
             --base "$GITHUB_SHA" \
             --message "$MESSAGE" \
