@@ -2722,3 +2722,182 @@ test("M-T3.4: the staging listing costs the batch nothing, as it costs the windo
   assert.deepEqual(results.held, [], "the staging listing's path test spent the bound and held a real takedown");
   assert.deepEqual(results.compiled, [SDIS[4], SDIS[0], SDIS[1], SDIS[2]]);
 });
+
+// ── M-T3.5: the operator's four acts (MOD-52, TRUST-33, BOT-70) ─────────────
+//
+// `tools/operator.mjs` and `bot/lib/operator-role.mjs`, run the way
+// `.github/workflows/operator.yml` runs them. The workflow's own boundary —
+// environment `operator`, which admits `main` alone — is a setting GitHub
+// enforces before a job starts, and `bot/tests/workflows.test.mjs` holds the
+// workflow to it; what is tested here is everything the tree decides.
+
+const OP_RUN = "https://github.com/mihailinl/astra-registry/actions/runs/35999999999";
+const OP_NOW = new Date("2026-09-24T08:00:00Z");
+
+/** A stub of GitHub's collaborator-permission endpoint: login → role, or an HTTP status. */
+function rolesApi(table) {
+  return async (url) => {
+    const login = decodeURIComponent(String(url).split("/collaborators/")[1].split("/")[0]);
+    const v = table[login];
+    if (typeof v === "number") return { ok: false, status: v, json: async () => ({}) };
+    if (v === undefined) return { ok: true, status: 200, json: async () => ({ role_name: "read", permission: "read" }) };
+    return { ok: true, status: 200, json: async () => ({ role_name: v, permission: v === "maintain" ? "write" : v }) };
+  };
+}
+
+test("M-T3.5: only an admin or a maintainer may act, as actor AND triggering actor, on the first attempt only", async () => {
+  const { operatorAuthority } = await import("../lib/operator-role.mjs");
+  const ask = (over) => operatorAuthority({
+    repo: "mihailinl/astra-registry", actor: "opadmin", triggeringActor: "opadmin", runAttempt: "1",
+    fetchImpl: rolesApi({ opadmin: "admin", opmaint: "maintain", opwriter: "write", opgone: 404, opblind: 403 }), ...over,
+  });
+  assert.equal((await ask({})).ok, true, "an admin on attempt 1 was refused");
+  assert.equal((await ask({ actor: "opmaint", triggeringActor: "opmaint" })).ok, true, "a maintainer was refused");
+  for (const [what, over] of [
+    ["a `write` collaborator", { actor: "opwriter", triggeringActor: "opwriter" }],
+    ["an admin actor with a `write` triggering actor", { triggeringActor: "opwriter" }],
+    ["a `write` actor re-run by an admin", { actor: "opwriter" }],
+    ["an unanswered API (403)", { actor: "opblind", triggeringActor: "opblind" }],
+    ["an unanswered API (404)", { actor: "opgone", triggeringActor: "opgone" }],
+    ["a non-collaborator", { actor: "stranger", triggeringActor: "stranger" }],
+    ["run_attempt 2", { runAttempt: "2" }],
+    ["a login that is not one", { actor: "not a login" }],
+  ]) {
+    const got = await ask(over);
+    assert.equal(got.ok, false, `${what} was allowed an operator act: ${got.why}`);
+  }
+});
+
+/** An estate with one bound listing, and holds entered the way the commit job enters them. */
+function heldEstate(decisions) {
+  const root = crowd();
+  const { held } = compileAll(decisions, { root, overBound: true });
+  moderationRun.writeHoldEntries(held, { root, heldAt: "2026-09-24T07:00:00Z", run: OP_RUN });
+  sh(["add", "-A"], root);
+  sh(["commit", "-q", "-m", "holds"], root, dated("2026-09-24T07:00:00Z"));
+  return root;
+}
+
+async function operator(root, env, { authority = null } = {}) {
+  const { main: operatorMain } = await import("../../tools/operator.mjs");
+  const logs = [];
+  const out = path.join(root, "operator");
+  const code = await operatorMain(["--job", "act", "--registry-dir", root, "--out", out], {
+    env: { GITHUB_SERVER_URL: "https://github.com", GITHUB_REPOSITORY: "mihailinl/astra-registry", GITHUB_RUN_ID: "35999999999", ...env },
+    log: { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) },
+    now: OP_NOW,
+    ...(authority ? { fetchImpl: authority } : {}),
+  });
+  const read = (f) => (fs.existsSync(path.join(out, f)) ? fs.readFileSync(path.join(out, f), "utf8") : null);
+  return { code, logs, paths: (read("paths.txt") ?? "").split("\n").filter(Boolean), message: read("commit-message.txt") };
+}
+
+test("M-T3.5: confirm and cancel answer a hold on main once, and a confirm never reaches an unbound_yank", async () => {
+  const root = heldEstate([takedownOf("widgets", 0), takedownOf("gadgets", 1)]);
+  const ok = await operator(root, { ASTRA_ACT: "confirm", ASTRA_SERVICE_DECISION_ID: SDIS[0] });
+  assert.equal(ok.code, 0, ok.logs.join("\n"));
+  assert.deepEqual(ok.paths, [`state/holds/${SDIS[0]}.confirm.json`]);
+  const record = JSON.parse(fs.readFileSync(path.join(root, ok.paths[0]), "utf8"));
+  assert.deepEqual(Object.keys(record).sort(), ["act", "at", "plugin_id", "run", "schema", "service_decision_id"]);
+  assert.equal(record.act, "confirm");
+  assert.match(ok.message, /^Run: 35999999999$/m);
+  const holds = readHolds(root);
+  assert.ok(holds.find((h) => h.id === SDIS[0]).confirm, "readHolds does not see the record the operator wrote");
+  assert.deepEqual(holds.find((h) => h.id === SDIS[0]).problems, []);
+
+  const again = await operator(root, { ASTRA_ACT: "cancel", ASTRA_SERVICE_DECISION_ID: SDIS[0] });
+  assert.equal(again.code, 1, "a hold already answered took a second answer");
+  const none = await operator(root, { ASTRA_ACT: "confirm", ASTRA_SERVICE_DECISION_ID: SDIS[4] });
+  assert.equal(none.code, 1, "a confirmation of a hold that is not on main was written");
+  const cancel = await operator(root, { ASTRA_ACT: "cancel", ASTRA_SERVICE_DECISION_ID: SDIS[1] });
+  assert.equal(cancel.code, 0, cancel.logs.join("\n"));
+  assert.deepEqual(cancel.paths, [`state/holds/${SDIS[1]}.cancel.json`]);
+
+  // An unbound listing's A_YANK is held `unbound_yank`, and only a cancel ends it.
+  const unbound = estate({ bound: false, at: "2026-09-24T06:00:00Z" });
+  const yank = decision({ code: "A_YANK", category: "author_request", reason: FIXED_YANK, versions: ["1.0.0"] });
+  const { held } = compileAll([yank], { root: unbound, overBound: false });
+  assert.equal(held[0]?.held_for, "unbound_yank", "the fixture did not produce an unbound_yank hold");
+  moderationRun.writeHoldEntries(held, { root: unbound, heldAt: "2026-09-24T06:30:00Z", run: OP_RUN });
+  const refused = await operator(unbound, { ASTRA_ACT: "confirm", ASTRA_SERVICE_DECISION_ID: SDI });
+  assert.equal(refused.code, 1, "a confirmation was written for an unbound_yank, which no confirmation releases");
+  assert.ok(refused.logs.some((l) => /unbound_yank/.test(l)), refused.logs.join("\n"));
+});
+
+test("M-T3.5: a revert undoes an applied delist or revoke, logs what it reverses, and refuses a yank", async () => {
+  const root = crowd();
+  const job = await measuredJob(root, [
+    takedownOf("gadgets", 0),
+    decision({ service_decision_id: SDIS[1], plugin_id: "gizmos", code: "M_REVOKE", category: "security_defect",
+      severity: "high", action: "block_install", moderator: "amoderator", versions: ["1.0.0"] }),
+    // widgets has three versions; yanking a listing's LAST listed version makes
+    // the index generator refuse the whole tree, which is a finding of its own.
+    decision({ service_decision_id: SDIS[2], plugin_id: "widgets", code: "M_YANK", category: "broken",
+      moderator: "amoderator", versions: ["1.0.0"] }),
+  ]);
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  sh(["add", "-A", "--", ".", ":!moderation"], root);
+  sh(["commit", "-q", "-m", "moderation"], root, dated("2026-09-24T07:00:00Z"));
+
+  const relist = await operator(root, { ASTRA_ACT: "revert", ASTRA_SERVICE_DECISION_ID: SDIS[0] });
+  assert.equal(relist.code, 0, relist.logs.join("\n"));
+  assert.ok(!("unlisted" in JSON.parse(fs.readFileSync(path.join(root, "plugins/gadgets/plugin.json"), "utf8"))));
+  const logFile = relist.paths.find((p) => p.startsWith("bot/moderation/"));
+  assert.equal(logFile, "bot/moderation/2026-09-24-gadgets-relist.json");
+  const entry = JSON.parse(fs.readFileSync(path.join(root, logFile), "utf8"));
+  assert.equal(entry.action, "relist");
+  assert.equal(entry.reverses, SDIS[0]);
+  assert.equal(entry.category, "error");
+  assert.ok(relist.paths.includes("registry/v1/index.json"), `the index was not regenerated: ${relist.paths.join(", ")}`);
+  assert.match(relist.message, new RegExp(`^Service-Decision: ${SDIS[0]}$`, "m"), "MOD-52's revert carries Service-Decision:");
+
+  const unrevoke = await operator(root, { ASTRA_ACT: "revert", ASTRA_SERVICE_DECISION_ID: SDIS[1] });
+  assert.equal(unrevoke.code, 0, unrevoke.logs.join("\n"));
+  const advisory = unrevoke.paths.find((p) => p.startsWith("tools/revocations/"));
+  assert.ok(advisory && !fs.existsSync(path.join(root, advisory)), `the advisory was not deleted: ${unrevoke.paths.join(", ")}`);
+  assert.ok(unrevoke.paths.includes("registry/v1/revocations.json"), "the withdrawal list was not regenerated");
+
+  const yank = await operator(root, { ASTRA_ACT: "revert", ASTRA_SERVICE_DECISION_ID: SDIS[2] });
+  assert.equal(yank.code, 1, "a yank was reverted; MOD-52 reverts a delist, a deprecate or a revoke only");
+  assert.ok(yank.logs.some((l) => /not reversible/.test(l)),
+    `a yank was refused, but not because a yank is not reversible: ${yank.logs.join(" | ")}`);
+  sh(["add", "-A", "--", ".", ":!operator"], root);
+  sh(["commit", "-q", "-m", "reverts"], root, dated("2026-09-24T08:00:00Z"));
+  // The same listing delisted AGAIN by a later decision: the tree now looks
+  // exactly like the first delist before its revert, so only the log can say
+  // the first decision is already reverted.
+  withdrawnInGit(root, ["gadgets"], "2026-09-24T08:30:00Z");
+  const twice = await operator(root, { ASTRA_ACT: "revert", ASTRA_SERVICE_DECISION_ID: SDIS[0] });
+  assert.equal(twice.code, 1, "a decision already reverted was reverted again, relisting a plugin a later decision delisted");
+  assert.ok(twice.logs.some((l) => /already reverted/.test(l)), twice.logs.join(" | "));
+});
+
+test("M-T3.5: a deny is TRUST-33's four members, written once, and names a fingerprint and nothing else", async () => {
+  const root = crowd();
+  const fp = "4f1c9a02be773d15";
+  const ok = await operator(root, { ASTRA_ACT: "deny", ASTRA_FINGERPRINT: fp });
+  assert.equal(ok.code, 0, ok.logs.join("\n"));
+  assert.deepEqual(ok.paths, [`state/deny/${fp}.json`]);
+  const doc = JSON.parse(fs.readFileSync(path.join(root, ok.paths[0]), "utf8"));
+  assert.deepEqual(Object.keys(doc).sort(), ["at", "fingerprint", "run", "schema"]);
+  assert.equal(doc.schema, "astra.registry.deny/1");
+  assert.equal((await operator(root, { ASTRA_ACT: "deny", ASTRA_FINGERPRINT: fp })).code, 1, "a deny was written twice");
+  assert.equal((await operator(root, { ASTRA_ACT: "deny", ASTRA_FINGERPRINT: "not-a-fingerprint" })).code, 1);
+  assert.equal((await operator(root, { ASTRA_ACT: "deny", ASTRA_FINGERPRINT: fp.replace("4", "5"), ASTRA_SERVICE_DECISION_ID: SDIS[0] })).code, 1,
+    "a deny naming a service decision too was accepted");
+  assert.equal((await operator(root, { ASTRA_ACT: "approve", ASTRA_SERVICE_DECISION_ID: SDIS[0] })).code, 1, "a fifth act ran");
+});
+
+test("M-T3.5: the operator's allowlist admits its records, its revert paths and the two documents, and nothing else", async () => {
+  const { operatorPath } = await import("../../tools/operator.mjs");
+  for (const good of [`state/holds/${SDIS[0]}.confirm.json`, `state/holds/${SDIS[0]}.cancel.json`, "state/deny/4f1c9a02be773d15.json",
+    "plugins/widgets/plugin.json", "bot/moderation/2026-09-24-widgets-relist.json", "bot/moderation/2026-09-24-widgets-unrevoke-2.json",
+    "tools/revocations/ASTRA-2026-0001.json", "registry/v1/index.json", "registry/v1/revocations.json"]) {
+    assert.equal(operatorPath(good), true, `${good} is a path an operator act writes`);
+  }
+  for (const bad of [`state/holds/${SDIS[0]}.json`, "state/queue/x.json", "plugins/widgets/versions/1.0.0.json",
+    "bot/moderation/2026-09-24-widgets-delist.json", "policy/reserved-ids.json", "state/deny/../../x.json",
+    "bot/lib/operator-role.mjs", ".github/workflows/operator.yml", "tools/revocations/README.md"]) {
+    assert.equal(operatorPath(bad), false, `${bad} passes the operator's allowlist`);
+  }
+});

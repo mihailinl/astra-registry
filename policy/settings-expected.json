@@ -42,7 +42,6 @@
         },
         "operator": {
           "because": "Registry plan RC-R0-3a and docs/RUNBOOK.md 7.7: the operator workflow authority check lives in the tree at the ref the dispatcher chooses, so the environment, not the check, is what pins it to main. No secret (not checkable here).",
-          "named_by_no_workflow": "M-T3.5 writes .github/workflows/operator.yml (docs/RUNBOOK.md 7.7), which detectors.yml, sign.yml and moderation-coverage.yml already hear by its name `Operator`. RC-R0-3a created the environment first on purpose, so that workflow lands pinned to main rather than being pinned after it.",
           "deployment_branch_policy": "custom",
           "branch_policies": [
             {
