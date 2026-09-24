@@ -53,7 +53,9 @@ import path from "node:path";
 
 import { loadSources, REPO_ROOT } from "../tools/lib/sources.mjs";
 
-import { markerOnMain, readDecisionRecords } from "./baseline.mjs";
+import { markerOnMain, readDecisionRecords, runTrailer } from "./baseline.mjs";
+import { legacyKey, recordsOnMain, writeDecisionRecord } from "./lib/decisions.mjs";
+import { safeRepo, safeTag } from "./lib/intake.mjs";
 import { ingest, writeListing } from "./ingest.mjs";
 import {
   decide,
@@ -416,6 +418,88 @@ export function legacyTrigger(source) {
   return trigger;
 }
 
+// ── B-T3.7: the legacy record, composed and written ────────────────────────
+//
+// `decideRelease` decides whether a record is owed; this is where one is
+// WRITTEN, and until B-T3.7 was built nothing was. The end-to-end test said
+// `record.write: true` for a drained publication with the marker on main, and
+// `log/decisions/` stayed empty — a record owed and never made, on the one
+// path every publication before R6 takes.
+//
+// The record goes into the OUT directory, under `log/decisions/<YYYY>/<MM>/`,
+// beside the listing files, because this runs in the `check` job, which holds
+// no write access: `bot/publish-apply.mjs` copies it to `main` in the same
+// commit as the publication it records (BOT-34, BOT-73), and refuses that
+// publication without it once the marker is on the tree.
+
+/** DEC-7's state for each of `decide()`'s four outcomes. `stopped` is the moderation run's. */
+export const LEGACY_STATE = Object.freeze({ publish: "published", delay: "delayed", review: "held", refuse: "refused" });
+
+/** A B.7 code as DEC-7's `reasons` holds one (schema/decision-v1.json). */
+const REASON_CODE_RE = /^[A-Z]_[A-Z0-9]+(?:_[A-Z0-9]+)*$/;
+const SHA1_RE = /^[0-9a-f]{40}$/;
+const BASE10_RE = /^[0-9]{1,20}$/;
+
+/**
+ * DEC-7's record for one legacy decision, and the BOT-35 key it is filed under.
+ *
+ * Every member is taken from what THIS run established — the derived listing,
+ * the certificate's identity, the policy's answer — and nothing from the
+ * issue thread: no login (PRIV-2; a maintainer's `/approve` is recorded as the
+ * bot's decision and names nobody), no issue number (OD-2), no free text
+ * (`reasons` is codes). Absent where it does not apply, never null.
+ *
+ * @returns {{key: string, record: object}}
+ */
+export function composeLegacyRecord(result, opts) {
+  const { decision, derived, identity } = result;
+  if (!LEGACY_TRIGGERS.includes(decision?.trigger)) {
+    throw new Error(
+      `a legacy record was asked for with trigger ${JSON.stringify(decision?.trigger ?? null)}. The legacy path ` +
+      `writes ${LEGACY_TRIGGERS.join(", ")} and nothing else: \`migration\` is MIG-20's baseline, written once ` +
+      "by baseline.yml's single audited dispatch, and a legacy run that composed one would become the baseline " +
+      "for this id on the strength of an issue comment (B-T3.7; BOT-39)",
+    );
+  }
+  const state = LEGACY_STATE[decision.outcome];
+  if (!state) throw new Error(`${JSON.stringify(decision.outcome)} is not an outcome a legacy record has a state for`);
+  if (decision.wait) {
+    throw new Error("a wait was handed to the record writer; waits never record (FLOW-72)");
+  }
+  const repo = safeRepo(derived?.version?.release?.repo ?? null) ?? safeRepo(opts.repo);
+  const tag = safeTag(opts.tag);
+  if (!repo || !tag) throw new Error("a legacy record names a repository and a tag, and this run has neither in grammar");
+  const findings = Array.isArray(result.findings) ? result.findings : [];
+  const reasons = [...new Set([
+    ...findings.filter((f) => f?.level === "error" || f?.level === "review").map((f) => f.code),
+    ...(decision.reasons ?? []).map((r) => r?.code),
+  ])].filter((c) => typeof c === "string" && c.length <= 64 && REASON_CODE_RE.test(c)).sort();
+  const commit = derived?.version?.release?.commit;
+  const ids = identity && typeof identity.repository_id === "string" && BASE10_RE.test(identity.repository_id) &&
+    typeof identity.repository_owner_id === "string" && BASE10_RE.test(identity.repository_owner_id)
+    ? { repository_id: identity.repository_id, repository_owner_id: identity.repository_owner_id } : {};
+  const run = runTrailer(process.env);
+  const record = {
+    decided_at: decision.decided_at,
+    actor: "bot",
+    trigger: decision.trigger,
+    ...(derived?.plugin?.id ? { plugin_id: derived.plugin.id } : {}),
+    ...(derived?.version?.version ? { version: derived.version.version } : {}),
+    repo,
+    ...ids,
+    tag,
+    ...(typeof commit === "string" && SHA1_RE.test(commit) ? { commit } : {}),
+    ...(Array.isArray(decision.artifact_digests) && decision.artifact_digests.length
+      ? { artifact_digests: [...new Set(decision.artifact_digests)].sort() } : {}),
+    ...(decision.fingerprint ? { fingerprint: decision.fingerprint } : {}),
+    state,
+    ...(reasons.length ? { reasons } : {}),
+    ...(state === "delayed" && decision.publish_after ? { publish_after: decision.publish_after } : {}),
+    ...(run ? { run } : {}),
+  };
+  return { key: legacyKey({ repo, tag, fingerprint: decision.fingerprint ?? null, state }), record };
+}
+
 /** `plugins/<id>/identity.json` on the checked-out tree, or null. */
 export function readIdentityRecord(root, pluginId) {
   if (!pluginId) return null;
@@ -442,6 +526,19 @@ export function readIdentityRecord(root, pluginId) {
 /** Lay the outcome out under `--out` in the shape of the repository. */
 export function writeOutputs(out, opts, result) {
   const { decision, derived } = result;
+  // The record is composed BEFORE anything is written, so a refusal — a
+  // `migration` trigger, a state with no outcome — leaves no half-written out
+  // directory behind for the publish job to find.
+  //
+  // Asked of the tree the run READ (`opts.root`), twice over: the marker gate
+  // again, because this function is the writer and `decideRelease` is only one
+  // of its callers; and BOT-36's dedupe, against the records `main` already
+  // carries — a re-run, or a drain that re-decides a release it already
+  // recorded, finds the same id and writes nothing.
+  const root = opts.root ?? REPO_ROOT;
+  const planned = decision?.record?.write === true && markerOnMain(root).present
+    ? composeLegacyRecord(result, opts)
+    : null;
   fs.mkdirSync(out, { recursive: true });
   fs.writeFileSync(path.join(out, "comment.md"), `${result.comment}\n`);
   fs.writeFileSync(
@@ -533,14 +630,21 @@ export function writeOutputs(out, opts, result) {
     removals.push(queueFile(derived.plugin.id, derived.version.version));
   }
   fs.writeFileSync(path.join(out, "remove.txt"), removals.map((r) => `${r}\n`).join(""));
-  return { removals };
+
+  const record = planned
+    ? writeDecisionRecord({ key: planned.key, record: planned.record, root: out, existing: recordsOnMain(root) })
+    : null;
+  return { removals, record };
 }
 
 async function main(argv) {
   const opts = parseArgs(argv);
   const result = await decideRelease(opts);
   console.log(result.comment);
-  if (opts.out) writeOutputs(opts.out, opts, result);
+  if (opts.out) {
+    const { record } = writeOutputs(opts.out, opts, result);
+    if (record) console.error(`decision record ${record.decision_id}: ${record.written ? `written, ${record.path}` : record.dropped}`);
+  }
   return EXIT[result.decision.outcome] ?? 2;
 }
 
