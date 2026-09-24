@@ -23,12 +23,19 @@
 // search then fails to find, which the service's detector B then reports as a
 // decision with no record. Every one of those reads as somebody else's bug.
 //
-// ── THE FOUR KEY DOMAINS (BOT-35), AND WHICH ONE IS STILL AN EXTENSION ──────
+// ── THE FIVE KEY DOMAINS (BOT-35), AND WHICH ONE IS STILL AN EXTENSION ──────
 //
 //   submission:<submission_id>:<fingerprint>:<state>
-//   migration:<owner/name>@<tag>                     B-T3.7b's baseline, M-T3.8
+//   migration:<owner/name>@<tag>                     B-T3.7b's baseline (MIG-20)
 //   legacy:<owner/name>@<tag>:<fingerprint>:<state>  B-T3.7's legacy path
 //   service-decision:<service_decision_id>:<plugin_id>:<version>:<state>
+//   history:<owner/name>@<tag>:<decided_at>:<state>  M-T3.8's export (MIG-21)
+//
+// The fifth is contract 2.5.0's (lane S3b's spelling). MIG-21 asks for one
+// record per historic decision. This registry decided some versions more than
+// once on one issue thread: a refusal, a re-check, an approval. Under
+// `migration:` all of those derived one id, so each later record landed on the
+// first one's path. `decided_at` and `state` separate them.
 //
 // The fourth is contract 0.13.0's own tuple, spelled with a domain in front of
 // it: BOT-35 now derives an author-action record's id over (`service_decision_id`,
@@ -122,12 +129,12 @@ const DECISION_ID_RE = new RegExp(`^[0-9a-f]{${DECISION_ID_CHARS}}$`);
 /** bot/lib/policy/release.mjs's FINGERPRINT_CHARS: 16 lowercase hex. */
 const FINGERPRINT_RE = /^[0-9a-f]{16}$/;
 
-// ── BOT-35: one key, one hash, four domains ─────────────────────────────────
+// ── BOT-35: one key, one hash, five domains ─────────────────────────────────
 
 /**
- * The four domains, each with the builder that spells its key.
+ * The five domains, each with the builder that spells its key.
  *
- * A table rather than four exported functions with four spellings, so that
+ * A table rather than five exported functions with five spellings, so that
  * "the key has a domain prefix" is a property of the data and a canary can
  * drop one and watch the derivation refuse. Dropping the prefix is the
  * mutation B-T2.2's canary list names.
@@ -175,6 +182,20 @@ const DOMAINS = {
       if (typeof state !== "string") throw new Error(`\`state\` ${JSON.stringify(state)} is not a state`);
       if (!state) throw new Error("the author-action tuple's `state` is missing, and BOT-35 derives the id over it");
       return `service-decision:${service_decision_id}:${plugin_id}:${version}:${state}`;
+    },
+  },
+  // MIG-21's export (contract 2.5.0): one record per historic decision, where
+  // one version may have been decided more than once on its issue thread.
+  history: {
+    tuple: "(`owner/name`, `tag`, `decided_at`, `state`)",
+    build: (f) => {
+      if (!isTime(f.decided_at)) {
+        throw new Error(
+          `\`decided_at\` ${JSON.stringify(f.decided_at)} is not a §0.7 time, and BOT-35 derives a \`history:\` ` +
+          "id over it: it is what separates two decisions about one version",
+        );
+      }
+      return `history:${repoTag(f)}:${f.decided_at}:${statePart(f.state)}`;
     },
   },
 };
@@ -243,15 +264,15 @@ function repoTag({ repo, tag }) {
 /**
  * The key an id is derived over, for one domain.
  *
- * @param {"submission"|"migration"|"legacy"|"service-decision"} domain
+ * @param {"submission"|"migration"|"legacy"|"service-decision"|"history"} domain
  * @param {object} parts the tuple members for that domain
  */
 export function decisionKey(domain, parts) {
   const entry = DOMAINS[domain];
   if (!entry) {
     throw new Error(
-      `\`${domain}\` is not one of BOT-35's key domains (${KEY_DOMAINS.join(", ")}). A fifth domain is a fifth ` +
-      "kind of decision, which is a contract amendment (`legacy:` needed ops.22) and not an argument",
+      `\`${domain}\` is not one of BOT-35's key domains (${KEY_DOMAINS.join(", ")}). A sixth domain is a sixth ` +
+      "kind of decision, which is a contract amendment (`history:` needed 2.5.0) and not an argument",
     );
   }
   return entry.build(parts ?? {});
@@ -259,12 +280,14 @@ export function decisionKey(domain, parts) {
 
 /** `submission:<submission_id>:<fingerprint>:<state>` (BOT-35, first tuple). */
 export const submissionKey = (parts) => decisionKey("submission", parts);
-/** `migration:<owner/name>@<tag>` — MIG-20's baseline and MIG-21's export. */
+/** `migration:<owner/name>@<tag>` — MIG-20's baseline, one record per published version. */
 export const migrationKey = (parts) => decisionKey("migration", parts);
 /** `legacy:<owner/name>@<tag>:<fingerprint>:<state>` — B-T3.7's legacy path (BOT-35; ops.22). */
 export const legacyKey = (parts) => decisionKey("legacy", parts);
 /** `service-decision:<service_decision_id>:<plugin_id>:<version>:<state>` (BOT-35, second tuple). */
 export const serviceDecisionKey = (parts) => decisionKey("service-decision", parts);
+/** `history:<owner/name>@<tag>:<decided_at>:<state>` — MIG-21's export (BOT-35, contract 2.5.0). */
+export const historyKey = (parts) => decisionKey("history", parts);
 
 /** The domain a key carries, or `null` when it carries none. */
 export function keyDomain(key) {

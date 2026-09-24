@@ -338,7 +338,7 @@ await test("one migration record per fact, actor system, and only DEC-7's member
   const composed = composeRecords(facts);
   assert.equal(composed.length, facts.length, "MIG-21: one record each");
   for (const { key, record } of composed) {
-    assert.match(key, /^migration:[^@]+@.+$/, "BOT-35's domain-separated key");
+    assert.match(key, /^history:[^@]+@[^:]+:[0-9T:-]+Z:(refused|approved)$/, "BOT-35's `history:` key (contract 2.5.0)");
     assert.equal(record.actor, "system", "PRIV-10: every historic approver is `system`");
     assert.equal(record.trigger, "migration", "DEC-7's trigger, reserved for MIG-20 and MIG-21");
     assert.ok(record.state === "refused" || record.state === "approved",
@@ -363,16 +363,27 @@ await test("a login written into a record is refused by the allowlist, not by a 
   assert.throws(() => refuseUncomposable({ ...record, state: "published" }), /does not match its own grammar/);
 });
 
-await test("two decisions about one tag share BOT-35's key, and composing them is refused", () => {
+await test("two decisions about one tag get two `history:` keys and two records; one decision read twice is refused", () => {
+  // Until contract 2.5.0 both facts below shared `migration:a/b@v1`, and
+  // composing them was refused: the live archive had 24 such keys across 102
+  // facts on 2026-09-24. `history:` adds the time and the state, so MIG-21's
+  // "one record each" holds, and over that archive no key is shared.
   const facts = [
     { repository: "a/b", tag: "v1", plugin_id: null, version: null, state: "refused", date: "2026-08-01T00:00:00Z", reasons: [] },
-    { repository: "a/b", tag: "v1", plugin_id: "b", version: "1.0.0", state: "approved", date: "2026-08-02T00:00:00Z", reasons: [] },
+    { repository: "a/b", tag: "v1", plugin_id: "bee", version: "1.0.0", state: "approved", date: "2026-08-02T00:00:00Z", reasons: [] },
   ];
-  assert.deepEqual(keyCollisions(facts), [{ key: "migration:a/b@v1", facts_sharing_it: 2 }]);
-  assert.throws(() => composeRecords(facts), /derive one id and overwrite each other/,
-    "silently writing one record where MIG-21 asks for two is the failure this refusal exists to prevent");
-  // The live repository has 24 of these across 99 decisions, so this is not a
-  // hypothetical: it is what the baseline run meets on the day it is dispatched.
+  assert.deepEqual(keyCollisions(facts), []);
+  assert.deepEqual(composeRecords(facts).map((c) => c.key), [
+    "history:a/b@v1:2026-08-01T00:00:00Z:refused",
+    "history:a/b@v1:2026-08-02T00:00:00Z:approved",
+  ]);
+  // The same decision twice, same time and same state, is one line of the
+  // archive read twice. Writing one record for it would hide the double read,
+  // so it is still refused, by key.
+  const twice = [facts[0], { ...facts[0] }];
+  assert.deepEqual(keyCollisions(twice), [{ key: "history:a/b@v1:2026-08-01T00:00:00Z:refused", facts_sharing_it: 2 }]);
+  assert.throws(() => composeRecords(twice), /derive one id and overwrite each other/,
+    "silently writing one record for two facts is the failure this refusal exists to prevent");
 });
 
 await test("--compose refuses by name while B-T2.2's writer is absent, and takes it when it is there", async () => {

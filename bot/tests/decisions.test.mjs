@@ -70,6 +70,7 @@ import {
   decisionId,
   decisionKey,
   decisionSchema,
+  historyKey,
   keyDomain,
   legacyKey,
   migrationKey,
@@ -86,7 +87,7 @@ import {
   writeDecisionRecord,
 } from "../lib/decisions.mjs";
 
-import { migrationKey as exportIssuesMigrationKey, resolveWriter } from "../export-issues.mjs";
+import { historyKey as exportIssuesHistoryKey, resolveWriter } from "../export-issues.mjs";
 import { migrationKey as baselineMigrationKey } from "../baseline.mjs";
 import { REPO_ROOT } from "../../tools/lib/sources.mjs";
 import { roleAddresses } from "../../tools/priv-scan.mjs";
@@ -211,7 +212,7 @@ test("the tuple's fingerprint and state are refused when they are not the thing 
   assert.throws(() => legacyKey({ repo: "you/x", tag: "v1.0.0", fingerprint: 123, state: "held" }), /fingerprint/);
 });
 
-test("`legacy:`, `migration:` and `service-decision:` records for one tag differ", () => {
+test("`legacy:`, `migration:`, `service-decision:` and `history:` records for one tag differ", () => {
   const repo = "teletemagame-dev/dice-roller";
   const tag = "v1.0.0";
   const ids = [
@@ -220,9 +221,31 @@ test("`legacy:`, `migration:` and `service-decision:` records for one tag differ
     decisionId(serviceDecisionKey({
       service_decision_id: SERVICE_DECISION, plugin_id: "dice-roller", version: "1.0.0", state: "yanked",
     })),
+    decisionId(historyKey({ repo, tag, decided_at: "2026-08-20T07:19:05Z", state: "approved" })),
   ];
-  assert.equal(new Set(ids).size, 3,
+  assert.equal(new Set(ids).size, 4,
     "two domains derived one id for one release, so one of the two records would land on the other's path");
+});
+
+test("`history:` separates the decisions one version got on its thread, and refuses a key it cannot place", () => {
+  // Contract 2.5.0 (BOT-35's fifth domain; lane S3b's spelling). MIG-21 asks
+  // for one record per historic decision, and a version refused, re-checked
+  // and approved on one thread is three. Under `migration:` they were one id.
+  const repo = "teletemagame-dev/minecraft-for-astra";
+  const tag = "v0.3.1";
+  const refused = historyKey({ repo, tag, decided_at: "2026-08-20T07:19:05Z", state: "refused" });
+  assert.equal(refused, "history:teletemagame-dev/minecraft-for-astra@v0.3.1:2026-08-20T07:19:05Z:refused");
+  const ids = new Set([
+    decisionId(refused),
+    decisionId(historyKey({ repo, tag, decided_at: "2026-08-20T09:02:11Z", state: "refused" })),
+    decisionId(historyKey({ repo, tag, decided_at: "2026-08-21T17:26:42Z", state: "approved" })),
+  ]);
+  assert.equal(ids.size, 3, "three decisions about one version derived fewer ids, so one record lands on another");
+  assert.throws(() => historyKey({ repo, tag, decided_at: "2026-08-20", state: "refused" }), /§0.7 time/);
+  assert.throws(() => historyKey({ repo, tag, decided_at: "2026-08-20T07:19:60Z", state: "refused" }), /§0.7 time/);
+  assert.throws(() => historyKey({ repo, tag, decided_at: "2026-08-20T07:19:05Z" }), /`state`/);
+  assert.throws(() => historyKey({ repo: "not a repo", tag, decided_at: "2026-08-20T07:19:05Z", state: "refused" }),
+    /is not an `owner\/name`/);
 });
 
 test("a key with no domain is refused — the mutation is dropping the prefix", () => {
@@ -233,11 +256,11 @@ test("a key with no domain is refused — the mutation is dropping the prefix", 
   assert.throws(() => decisionId(`${SUBMISSION}`), /carries none of BOT-35's domains/);
   assert.equal(keyDomain("submission:"), null, "a domain with nothing after it names no decision");
 
-  // And the floor, written before the mutation: four domains, not "some".
-  assert.equal(KEY_DOMAINS.length, 4,
-    `BOT-35 has four key domains and this module lists ${KEY_DOMAINS.length}; a fifth is a contract amendment ` +
-    "(`legacy:` needed ops.22) and a fourth gone silently is two records sharing an id");
-  assert.deepEqual([...KEY_DOMAINS].sort(), ["legacy", "migration", "service-decision", "submission"]);
+  // And the floor, written before the mutation: five domains, not "some".
+  assert.equal(KEY_DOMAINS.length, 5,
+    `BOT-35 has five key domains since contract 2.5.0 and this module lists ${KEY_DOMAINS.length}; a sixth is a ` +
+    "contract amendment (`history:` needed 2.5.0) and a fifth gone silently is two records sharing an id");
+  assert.deepEqual([...KEY_DOMAINS].sort(), ["history", "legacy", "migration", "service-decision", "submission"]);
 });
 
 test("a malformed id in a key is refused rather than hashed", () => {
@@ -252,15 +275,17 @@ test("a malformed id in a key is refused rather than hashed", () => {
 
 // ── the coupling that already exists on `main` ──────────────────────────────
 
-test("all three spellings of BOT-35's `migration:` key agree", () => {
+test("both spellings of BOT-35's `migration:` key agree, and both of its `history:` key", () => {
   // THE FINDING THIS SUITE EXISTS TO HOLD.
   //
-  // `migration:<owner/name>@<tag>` is written out three times in this
+  // `migration:<owner/name>@<tag>` was written out three times in this
   // repository: here, in `bot/export-issues.mjs` (over `fact.repository`) and
   // in `bot/baseline.mjs` (over `fact.repo`). Both of those were deliberate —
   // each file argues, correctly, that the collision check belongs beside the
   // facts it is checking — and both say in their own comments that the key is
-  // "the domain B-T2.2 states". Nothing compared them until this line.
+  // "the domain B-T2.2 states". Nothing compared them until this line. Since
+  // contract 2.5.0 the export derives `history:` instead, spelled here and
+  // there, and the same comparison holds that pair.
   //
   // What a drift would look like: `migration:you/x@v1` against
   // `migration:you/x@v1.0.0`, or a `/` that became a `:`. Two ids for one
@@ -269,11 +294,17 @@ test("all three spellings of BOT-35's `migration:` key agree", () => {
   // too many — reported as a defect in the check.
   const fact = { repo: "teletemagame-dev/dice-roller", repository: "teletemagame-dev/dice-roller", tag: "v1.0.0" };
   const mine = migrationKey(fact);
-  assert.equal(exportIssuesMigrationKey(fact), mine,
-    "bot/export-issues.mjs spells BOT-35's migration key differently from bot/lib/decisions.mjs");
   assert.equal(baselineMigrationKey(fact), mine,
     "bot/baseline.mjs spells BOT-35's migration key differently from bot/lib/decisions.mjs");
   assert.equal(mine, "migration:teletemagame-dev/dice-roller@v1.0.0");
+
+  // The export's fact spells the time `date` and the repository `repository`;
+  // the tuple spells them `decided_at` and `repo`. Same values, one key.
+  const decided = { ...fact, date: "2026-08-20T07:19:05Z", decided_at: "2026-08-20T07:19:05Z", state: "refused" };
+  const history = historyKey(decided);
+  assert.equal(exportIssuesHistoryKey(decided), history,
+    "bot/export-issues.mjs spells BOT-35's history key differently from bot/lib/decisions.mjs");
+  assert.equal(history, "history:teletemagame-dev/dice-roller@v1.0.0:2026-08-20T07:19:05Z:refused");
 });
 
 test("no second derivation of a decision id is on the tree", () => {
