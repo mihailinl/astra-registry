@@ -1943,7 +1943,9 @@ test("repo-settings: the file against GitHub answering exactly what it says is g
   const text = r.detail.join("\n");
   assert.match(text, /NOT ASKED \(by design\): which secrets exist where/);
   assert.match(text, /NOT ASKED \(by design\): ruleset bypass actors/);
-  assert.match(text, /`bot-state` pending creation \(B-T5\.0\)/);
+  // `bot-state` was pending creation until 2026-09-24 (B-T5.0); it is live now,
+  // and the live list the rule prints is where a reader finds it.
+  assert.match(text, /mihailinl\/astra-registry live, read with the fixture: \d+ environment\(s\) \([^)]*\bbot-state\b/);
   assert.deepEqual(r.ids, [], "an environment name is not a plugin id");
   assert.equal(RULES.find((x) => x.name === "repo-settings")?.network, true, "the settings rule leaves the runner and does not say so");
 });
@@ -2090,6 +2092,24 @@ test("repo-settings: the token is sent, a token GitHub refuses is dropped for th
 // file, once RC-R0-4 lands it, is compared with no edit here.
 const ROLL7_FILE = "log/rollout/R0-settings.json";
 
+// log/** is append-only (MOD-34), so a pin ROLL-7's file gains later is a NEW
+// file beside it, dated: `R0-settings-<YYYY-MM-DD>[-<n>].json`. `bot-state`
+// arrived that way (B-T5.0, 2026-09-24). The newest is the file the service's
+// pins are acknowledged from, so it is the one held to the expectation; the
+// older ones are dated history and legitimately stale.
+const ROLL7_AMENDMENT = /^R0-settings-(\d{4}-\d{2}-\d{2})(?:-(\d+))?\.json$/;
+
+/** Every ROLL-7 file on the tree, oldest first: the R0 file, then its amendments by date and number. */
+function roll7Files(repo = REPO) {
+  const dir = path.join(repo, "log", "rollout");
+  if (!fs.existsSync(dir)) return [];
+  const names = fs.readdirSync(dir);
+  const amendments = names.map((n) => [n, ROLL7_AMENDMENT.exec(n)]).filter(([, m]) => m)
+    .sort(([, a], [, b]) => a[1].localeCompare(b[1]) || Number(a[2] ?? 1) - Number(b[2] ?? 1))
+    .map(([n]) => `log/rollout/${n}`);
+  return [...(names.includes("R0-settings.json") ? [ROLL7_FILE] : []), ...amendments];
+}
+
 /** Every way ROLL-7's environment rows and the expectation's live environments disagree, as sentences. */
 function roll7Disagreements(roll7, expected) {
   const out = [];
@@ -2128,6 +2148,32 @@ function roll7Disagreements(roll7, expected) {
   return out;
 }
 
+test("repo-settings: ROLL-7's files are read oldest first, and a dated amendment is newer than the R0 file", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-roll7-"));
+  tmpRoots.push(dir);
+  fs.mkdirSync(path.join(dir, "log", "rollout"), { recursive: true });
+  for (const n of ["R0-settings-2026-10-02.json", "R0-settings-2026-09-24-2.json", "R0-exit-note.md",
+    "R0-settings.json", "R0-settings-2026-09-24.json", "R5-exit.json", "R0-settings-2026-9-30.json"]) {
+    fs.writeFileSync(path.join(dir, "log", "rollout", n), "{}\n");
+  }
+  assert.deepEqual(roll7Files(dir), [
+    "log/rollout/R0-settings.json",
+    "log/rollout/R0-settings-2026-09-24.json",
+    "log/rollout/R0-settings-2026-09-24-2.json",
+    "log/rollout/R0-settings-2026-10-02.json",
+  ], "the newest ROLL-7 file is not the last one read, so the file held to the expectation is a stale one");
+  // Every ROLL-7 file on the real tree is the settings kind to PRIV-2's scan,
+  // and clean: an amendment the scan did not recognise would be an undeclared
+  // document, and one it did not scan would be a place a login could land.
+  const real = roll7Files();
+  assert.ok(real.length >= 1, "no ROLL-7 file is on the tree, and R0's exit committed one");
+  for (const rel of real) {
+    assert.equal(privClassify(rel).kind, "settings", `${rel} is not scanned as the settings kind`);
+    assert.deepEqual(scanDocument(JSON.parse(fs.readFileSync(path.join(REPO, rel), "utf8")), "settings", new Set()), [],
+      `the committed ${rel} is not clean`);
+  }
+});
+
 test("repo-settings: ROLL-7's R0 file pins each environment's branch policies as the expectation does, built from it and broken, and committed when it is", () => {
   const doc = settingsDoc();
   const expected = doc.repositories[checkoutSlug(doc)];
@@ -2165,12 +2211,14 @@ test("repo-settings: ROLL-7's R0 file pins each environment's branch policies as
     for (const w of words) assert.ok(said.includes(w), `${how}: red, but not naming ${JSON.stringify(w)}: ${said}`);
   }
 
-  // The committed file, once RC-R0-4 lands it. Until then this says so, and
-  // the predicate above is what is proven.
-  const at = path.join(REPO, ROLL7_FILE);
+  // The committed file, once RC-R0-4 lands it — the NEWEST ROLL-7 file, which is
+  // R0-settings.json until a dated amendment follows it. Until then this says
+  // so, and the predicate above is what is proven.
+  const newest = roll7Files().at(-1);
+  const at = newest ? path.join(REPO, newest) : path.join(REPO, ROLL7_FILE);
   if (fs.existsSync(at)) {
     assert.deepEqual(roll7Disagreements(JSON.parse(fs.readFileSync(at, "utf8")), expected), [],
-      `${ROLL7_FILE} and policy/settings-expected.json disagree about a pinned environment's branch policies. The ` +
+      `${newest} and policy/settings-expected.json disagree about a pinned environment's branch policies. The ` +
       "expectation is the source (it is compared with GitHub every 15 minutes); re-derive the file's rows from it, " +
       "as a dated amendment, and the service's acknowledgement with them");
   } else {

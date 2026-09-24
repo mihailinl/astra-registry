@@ -479,13 +479,18 @@ test("every entry resolves, or carries an excuse that expires", () => {
   // R0 has a marker and no exit file: the plan makes `log/rollout/R0-settings.json`
   // R0's marker (ROLL-7's file), with its note beside it, and nothing else in
   // `log/rollout/` may be there while no step has exited. Named files, not a
-  // pattern, so an exit marker spelled wrongly still turns this red.
+  // pattern, so an exit marker spelled wrongly still turns this red — with one
+  // exception that is a pattern and cannot be mistaken for an exit marker:
+  // ROLL-7's dated amendments, `R0-settings-<YYYY-MM-DD>[-<n>].json` (log/** is
+  // append-only, so a pin added later — `bot-state`, B-T5.0 — is a new file).
   if (exited.size === 0) {
     const R0_RECORDS = new Set(["log/rollout/R0-settings.json", "log/rollout/R0-exit-note.md"]);
-    assert.deepEqual(files.filter((f) => f.startsWith("log/rollout/") && !R0_RECORDS.has(f)), []);
+    const ROLL7_AMENDMENT = /^log\/rollout\/R0-settings-\d{4}-\d{2}-\d{2}(?:-\d+)?\.json$/;
+    const known = (f) => R0_RECORDS.has(f) || ROLL7_AMENDMENT.test(f);
+    assert.deepEqual(files.filter((f) => f.startsWith("log/rollout/") && !known(f)), []);
     const dir = path.join(REPO, "log", "rollout");
     const onDisk = fs.existsSync(dir) ? fs.readdirSync(dir).map((n) => `log/rollout/${n}`) : [];
-    assert.deepEqual(onDisk.filter((f) => !R0_RECORDS.has(f)), []);
+    assert.deepEqual(onDisk.filter((f) => !known(f)), []);
     console.log(
       `note  no rollout exit marker is on the tree, so ${UNRESOLVED_BY.size} excuse(s) have not expired: ` +
         `${[...UNRESOLVED_BY].map(([e, r]) => `${e} until ${r.due}`).join(", ")}.`,

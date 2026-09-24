@@ -26,6 +26,20 @@
           ],
           "can_admins_bypass": true
         },
+        "bot-state": {
+          "because": "Registry plan B-T5.0 (R5), RC-R0-3(f), ROLL-4 and attack M-6: plugins-ingest.yml jobs `load` and `remember` hold the sweep-memory HMAC key BOT_STATE_HMAC_KEY here and no other job may (bot/tests/workflows.test.mjs). With no branch policy any ref could run a job in it, read the key and forge the Actions-cache memory so that an unregistered tag reads as seen, which silences BOT-87, the only detector for a release that never reached the service. Created by the coordinator on the owner's delegation, main only, as publish, plugins-service, operator and alerts are. Secret names are not checkable here; ROLL-7's file records them.",
+          "deployment_branch_policy": "custom",
+          "branch_policies": [
+            {
+              "name": "main",
+              "type": "branch"
+            }
+          ],
+          "protection_rules": [
+            "branch_policy"
+          ],
+          "can_admins_bypass": true
+        },
         "github-pages": {
           "because": "Created by GitHub for Pages, not by the plan. sign.yml job `pages` deploys the site from main, and the environment has admitted only main since before R0 (ops runbooks/registry-r0-settings.md).",
           "deployment_branch_policy": "custom",
@@ -81,12 +95,6 @@
             "branch_policy"
           ],
           "can_admins_bypass": false
-        }
-      },
-      "pending_environments": {
-        "bot-state": {
-          "task": "B-T5.0",
-          "why": "The owner creates it at R5, admitting only main, with the sweep-memory HMAC key (registry plan RC-R0-3(f), ext.12). plugins-ingest.yml jobs `load` and `remember` name it now and are held by `if: false` until then: a run of either before it exists would have GitHub create it with no branch policy."
         }
       },
       "rulesets": {
