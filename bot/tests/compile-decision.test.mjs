@@ -440,6 +440,48 @@ test("M_BINDING_REVOKE compiles to nothing at all (§7.2)", () => {
   assert.deepEqual([r.edits, r.log, r.advisories, r.records], [[], [], [], []]);
 });
 
+// ROLL-59 (e), the bot's half of the walk M-T5.5 owns (registry plan §2.7):
+// `M_YANK`, then a `reversed` appeal, "as a new record". MOD-34 is the rule —
+// a reversed appeal is a NEW artefact and the originals are left unchanged —
+// and B.3 is why it has to be: a version's `yanked` is never undone, so what
+// follows a reversed yank is a new version, never an un-yank. The walk runs in
+// the order the live one will, with the yank's effects committed before the
+// appeal is compiled, so "a path the appeal writes already exists" is asked of
+// the tree the appeal actually meets. Watched failing: with `compileAppeal`
+// made to answer a reversed appeal by setting the version's `yanked` back to
+// false, the first assertion is red.
+test("ROLL-59 (e): an M_YANK, then its appeal reversed, is two artefacts, and the yank stands (MOD-34)", () => {
+  const root = estate();
+  const yank = compileDecision(entry({ code: "M_YANK", category: "broken", versions: ["1.1.0"], moderator: "knice" }), { root });
+  assert.equal(yank.outcome, "compiled");
+  // The yank's commit, as M-T3.4's `commit` job would make it.
+  writeAll(root, {
+    "plugins/widgets/versions/1.1.0.json": version("widgets", "1.1.0", { yanked: true }),
+    [yank.log[0].file]: yank.log[0].doc,
+  });
+  sh(["add", "-A"], root);
+  sh(["commit", "-q", "-m", `M_YANK widgets 1.1.0\n\nService-Decision: ${SDI}`], root);
+
+  const appeal = compileDecision(entry({
+    code: "M_APPEAL", service_decision_id: SDI2, appeal_of: SDI, outcome: "reversed", moderator: "knice",
+  }), { root });
+  assert.equal(appeal.outcome, "compiled", `a reversed appeal of a yank was refused ${appeal.refusal}`);
+  assert.deepEqual(appeal.edits, [],
+    "a reversed appeal edited the tree; B.3 never undoes `yanked`, and MOD-34 makes the reversal a new artefact");
+  assert.equal(appeal.log.length, 1);
+  assert.notEqual(appeal.log[0].file, yank.log[0].file, "the appeal's log entry is the yank's file, so the original is overwritten");
+  assert.equal(appeal.log[0].doc.action, "appeal");
+  assert.equal(appeal.log[0].doc.appeal_of, SDI, "the appeal does not name the decision it reverses");
+  assert.equal(appeal.log[0].doc.outcome, "reversed");
+  const writes = [...appeal.log, ...appeal.advisories, ...appeal.records].map((w) => w.file).filter(Boolean);
+  for (const file of writes) {
+    assert.ok(!fs.existsSync(path.join(root, file)),
+      `${file} already exists on the tree the appeal meets, so the appeal rewrites an original (MOD-34)`);
+  }
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "plugins/widgets/versions/1.1.0.json"), "utf8")).yanked, true);
+  assert.equal(appeal.trailers["Service-Decision"], SDI2, "the appeal's commit names its own decision, not the yank's");
+});
+
 // ── the seven refusals ──────────────────────────────────────────────────────
 
 test("target_not_in_registry: an id with no `plugins/` directory (TRUST-26)", () => {
