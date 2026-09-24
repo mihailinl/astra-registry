@@ -129,6 +129,18 @@ export const DOCUMENT_MEMBERS = {
     handleOk: [],
     source: "registry plan M-T6.2, commit B",
   },
+  // RC-R2-3 commit (ii)'s precondition: the one answer the release desk read
+  // from SERVE-94's wake hint before `sign.yml` may send it. Declared here
+  // before the document exists, so that the commit which records it is the
+  // one-line flip plus the record and nothing else. The member list is also the
+  // record's closed member set: `tools/selftest/repo-rules.mjs` reads it from
+  // here rather than keeping a second copy.
+  "signed-wake-ack": {
+    members: ["schema", "method", "url", "status", "body", "read_at", "read_from"],
+    uuidOk: [],
+    handleOk: [],
+    source: "registry plan RC-R2-3 commit (ii); contract SERVE-94 and §4.2's `astra.plugins.wake-ack/1`",
+  },
   // ROLL-7's file, `log/rollout/R0-settings.json` (registry plan RC-R0-4;
   // contract ROLL-7; `astra.registry.settings/1`, MBE-PENDING G3). Name-free:
   // repository coordinates, counts, dates, fixed words and GitHub's own
