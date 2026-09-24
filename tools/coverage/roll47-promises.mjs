@@ -135,6 +135,76 @@ export const PROMISES = [
       "from the cutover a later release is found by the poll every 30 minutes (BOT-41) and taken up within 10 " +
       "(BOT-51); there is no listing issue and no comment. docs/RUNBOOK.md's operator copy is commit C's",
   },
+  {
+    row: "C1-docs-appeal",
+    task: "M-T6.2 commit C (ROLL-47; MOD-40; MOD-45)",
+    literal: "open an issue titled",
+    amended: "cutover",
+    why: "from the cutover an appeal is made in the panel (MOD-31), never on an issue; the template in docs/POLICY.md \u00a711 went with the form",
+  },
+  {
+    row: "C2-security",
+    task: "M-T6.2 commit C (ROLL-47; MOD-40; MOD-45)",
+    literal: "open a private security advisory on this repository",
+    amended: "cutover",
+    why: "from R6 no registry page offers the issue form or GitHub private reporting for a vulnerability; the channel is security@minice.ai, read by the owner, unencrypted (MOD-45)",
+  },
+  {
+    row: "C2-notification",
+    task: "M-T6.2 commit C (ROLL-47; MOD-40; MOD-45)",
+    literal: "out-of-band notification to the author on every publish",
+    amended: "cutover",
+    why: "the author is told by `notice.published` to the listing's bound account (OD-17), and a listing not yet bound has nobody to tell; the old sentence promised a notice for every listing",
+  },
+  {
+    row: "C4-runbook",
+    task: "M-T6.2 commit C (ROLL-47; MOD-40; MOD-45)",
+    literal: "expect a new comment within minutes",
+    amended: "cutover",
+    why: "the operator's copy of C4: from the cutover a moderator decides in the panel, and no comment is posted anywhere",
+  },
+  {
+    row: "C5-policy",
+    task: "M-T6.2 commit C (ROLL-47; MOD-40; MOD-45)",
+    literal: "an author may **yank**",
+    amended: "cutover",
+    why: "C5: an author yanks from the panel (A_YANK, FLOW-79), compiled to a yank with an author-action decision record, never undone; the old sentence described a hand edit",
+  },
+  {
+    row: "C5-docs",
+    task: "M-T6.2 commit C (ROLL-47; MOD-40; MOD-45)",
+    literal: "yanking is the author's tool",
+    amended: "cutover",
+    why: "the docs/POLICY.md copy of C5, amended with the same panel path and record",
+  },
+  {
+    row: "MOD-40-docs",
+    task: "M-T6.2 commit C (ROLL-47; MOD-40; MOD-45)",
+    literal: "those are public issues",
+    amended: "cutover",
+    why: "MOD-40: refusals are public in the decision log, never as issues",
+  },
+  {
+    row: "MOD-40-site",
+    task: "M-T6.2 commit C (ROLL-47; MOD-40; MOD-45)",
+    literal: "in the issue tracker, publicly",
+    amended: "cutover",
+    why: "the copy of MOD-40 on the site's transparency page",
+  },
+  {
+    row: "MOD-40-log",
+    task: "M-T6.2 commit C (ROLL-47; MOD-40; MOD-45)",
+    literal: "never got listed is a public issue",
+    amended: "cutover",
+    why: "the copy of MOD-40 in bot/moderation/README.md",
+  },
+  {
+    row: "MOD-45-fallback",
+    task: "M-T6.2 commit C (ROLL-47; MOD-40; MOD-45)",
+    literal: "ask for the channel in public",
+    amended: "cutover",
+    why: "MOD-45: from R6 no public-issue fallback for a vulnerability; the form route in docs/POLICY.md \u00a712 went with the forms",
+  },
 ];
 
 /**

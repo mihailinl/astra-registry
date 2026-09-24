@@ -660,9 +660,11 @@ signed statements that do. The behaviour in the fourth column is
 true for everything except `warn`, and `stops_installed()` is true only for
 `disable`.
 
-**Yanking is the author's tool**, not a moderation action — it means "do not use
-this one". It appears in the log when the registry does it; when an author does
-it, the commit is the record.
+An author's yank is not a moderation action — it means "do not use this one".
+Since the cutover (ROLL-33) an author yanks from Minice's panel (`A_YANK`,
+FLOW-79), the bot compiles it to `"yanked": true` with an author-action decision
+record, and nobody can undo it. It appears in the moderation log when the
+registry does it; when an author does it, the decision record is the record.
 
 **A revocation is deliberately undoable.** The daemon replaces its set on a
 strictly greater serial and may only *add* on an equal one, so a mistaken
@@ -728,7 +730,8 @@ transparency log that can claim an unsigned revocation is a tool for scaring
 people off a competitor.
 
 What the log does not contain, stated on the page itself: submissions refused
-before they were ever listed (those are public issues), reports received and not
+before they were ever listed (since the cutover, those are public in the decision
+log, `log/decisions/`, never as issues — MOD-40), reports received and not
 acted on (publishing those publishes an unsubstantiated accusation), and anything
 about installed copies — this registry has no telemetry and cannot tell you how
 many people are running a withdrawn version.
@@ -788,30 +791,16 @@ one of the four actions in §9, and that is a person's decision.
 ## 11. Appeals
 
 Every action in §9 can be appealed, including one that has already taken effect,
-and the answer arrives within **7 days**. Open an issue titled
-`[appeal] <plugin-id>` and use this template:
+and the answer arrives within **7 days**. Since the cutover (ROLL-33) an appeal is
+made in Minice's panel, at <https://astra.minice.ai/plugins>: against a refusal,
+from the account the refusal's notice reached, and against a moderation action,
+from the account the listing is bound to (MOD-31). Say what the registry decided,
+what you say happened, what has changed since, and what you are asking for —
+relist, reduce the action to a warning, or withdraw the advisory entirely.
 
-```
-Plugin id:
-Action being appealed:      yank / delist / deprecate / revoke
-Advisory id (if any):       ASTRA-YYYY-NNNN
-Your relationship to it:    author / co-maintainer / user / other
-
-What the registry said:
-  (paste the reason from the log entry or the advisory)
-
-What you say happened:
-
-What has changed since, if anything:
-  (a new release, a corrected manifest, a licence fix, a disclosure added to
-  the store card)
-
-What you are asking for:
-  (relist / reduce the action to a warning / withdraw the advisory entirely)
-```
-
-What happens: the maintainer answers on the thread, in public, naming the rule
-that was applied and whether it still applies. If the appeal succeeds, the
+What happens: a moderator answers in the panel, naming the rule that was applied
+and whether it still applies, and the outcome is published in the moderation log
+as an `appeal` entry (MOD-33), without your text. If the appeal succeeds, the
 correction is a commit — a field deleted, or an advisory withdrawn by publishing
 a higher serial without it — and the moderation log keeps both the original entry
 and the reversal. Nothing is quietly deleted; a log that can be edited is not a
@@ -819,73 +808,27 @@ log.
 
 If the action was taken in error by this registry rather than by a rule, say so
 plainly in the appeal. That is a bug report about the bot or about this document,
-and it is worth filing on its own.
+and it is worth making on its own.
 
 ## 12. Embargoed reports
 
 For anything that would let somebody **ship code to a user** — a hole in the
 verification chain, a way to get a listing past the checks, a compromised
-publisher — do not open a public issue.
+publisher — do not put it anywhere public.
 
-**Today, the channel is a private GitHub security advisory on this repository.**
-It needs no key ceremony, and it is the path this registry can honestly offer
-right now.
-
-**Who can read it, exactly.** You, this repository's admins, and GitHub. It is
-*private*; it is not end-to-end encrypted, and this document used to say it was.
-That is a difference worth a sentence, because it is the difference between "not
-public" and "unreadable by anyone but us", and which of those you believe decides
-how much detail you paste into a first message. Until the PGP slot below is
-filled, nothing this registry publishes can offer the second one.
-
-**How to open one, including when the button is not there.**
-
-1. Go to
-   [Security → Advisories](https://github.com/mihailinl/astra-registry/security/advisories)
-   and use **Report a vulnerability**.
-2. **If there is no such button, that is expected right now.** GitHub shows it to
-   outside reporters only when *private vulnerability reporting* is enabled for
-   the repository, and on this one it is not yet
-   (`gh api repos/mihailinl/astra-registry/private-vulnerability-reporting` →
-   `{"enabled":false}`, checked 2026-08-15). Enabling it is one switch, it is on
-   the maintainer's list in `docs/RUNBOOK.md` §1, and this paragraph goes away
-   the day it is flipped.
-3. Until then, ask for the channel in public and put nothing in it. Blank issues
-   are off, so the door is the **Report a listed plugin** form; use `n/a` for the
-   plugin id if the finding is about the registry itself, say that you have a
-   security report and how to reach you, and **write not one word about the
-   mechanism** — that form is public the moment you submit it. A maintainer opens
-   an advisory and adds you to it, and the details go there. It costs one
-   round-trip and it needs no setting to have been switched on first.
+**Since the cutover (ROLL-33) the channel is e-mail: security@minice.ai** (MOD-45).
+It is read by the project owner. It is **not encrypted**: there is no PGP key, and
+this document will not pretend otherwise, because whether a channel is readable by
+anyone but us decides how much detail somebody pastes into a first message. Say
+you have a report, without the mechanism, if you want to agree how to send the
+rest. This registry offers no issue form and no GitHub private reporting for it,
+and an issue opened here reaches nobody (DEC-12). A report to the panel's
+report page (<https://astra.minice.ai/plugins/_/report>) is not embargoed either:
+it is for behaviour, not for a vulnerability.
 
 A report that arrives the wrong way is still a report. Nothing here is a reason
-to sit on a finding: if the only way you can reach somebody is a public issue
-with details in it, send it and say why, and the registry will deal with the
-disclosure rather than blame the reporter.
-
-**There is no PGP key yet, and no `security@` mailbox yet.** Both are slots in
-`bot/security-contact.json`, and both are empty. The security page on the website
-is generated from that file and says so in a box rather than printing a
-fingerprint for a key nobody holds — the same shape as the two compiled-in root
-key slots, which are also empty and which a default Astra build fails closed on.
-A vulnerability report sent into a void is worse than one never sent, because the
-reporter believes they told us.
-
-Provisioning it, when it happens, is this checklist and not fewer steps:
-
-1. Register `security@` on the domain the catalogue is served from, and prove
-   delivery by sending to it from an unrelated account and receiving it.
-2. Generate the key **offline**, on the same machine and with the same custody
-   rules as the root key ceremony in `SECURITY.md` §3 — one person, two copies,
-   one of them physical.
-3. Publish the armored public key in this repository, and the 40-hex fingerprint
-   in `bot/security-contact.json`, `SECURITY.md` and the repository profile, in
-   **one commit**. A fingerprint published in one place and not another is a
-   fingerprint an attacker gets to choose between.
-4. Send yourself an encrypted test report and decrypt it before announcing the
-   address anywhere.
-
-Until step 4 has happened, this section stays as it is.
+to sit on a finding, and the registry will deal with the disclosure rather than
+blame the reporter.
 
 **What you get for reporting privately:** an acknowledgement inside the §10
 window, a coordinated disclosure date agreed with you rather than announced at

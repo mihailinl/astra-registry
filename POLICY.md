@@ -202,9 +202,12 @@ suggest otherwise.
 - A version file is **immutable once merged**. Fixing a published release means
   publishing a new version, never editing a digest in place: the digest is the
   whole promise, and a mutable one is not a promise.
-- An author may **yank** a version (`"yanked": true`). It leaves the index and
-  stays in git. Yanking is the author's tool for "do not use this one"; it is
-  not a security control, it does not touch installs, and it is not revocation.
+- An author yanks a version from Minice's panel (`A_YANK`, FLOW-79), and the bot
+  records it as `"yanked": true` with an author-action decision record; since the
+  cutover (ROLL-33) that is the only way an author yanks. A yank is never undone
+  by anyone. It leaves the index and stays in git. It means "do not use this
+  one"; it is not a security control, it does not touch installs, and it is not
+  revocation.
 - Retiring a plugin entirely is `"unlisted": true` on `plugin.json`. The audit
   trail stays.
 
@@ -340,7 +343,9 @@ an appeal against a moderation action from the account the listing is bound to
 does not, that is a bug in the bot and worth reporting on its own.
 
 To **report** a listed plugin, use the report link on its page in the panel,
-signed in as an Astra owner, and say which version and what you observed (MOD-21,
-MOD-54). Reports about behaviour beat every heuristic in this document, and they
+which opens <https://astra.minice.ai/plugins/_/report?plugin=PLUGIN_ID> with the
+plugin chosen, or go to <https://astra.minice.ai/plugins/_/report> and choose it
+there. Sign in as an Astra owner, and say which version and what you observed
+(MOD-21, MOD-54). Reports about behaviour beat every heuristic in this document, and they
 are the mechanism this registry actually relies on. A security problem is not a
 report: see `SECURITY.md`.

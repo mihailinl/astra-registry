@@ -1,66 +1,39 @@
-# The template is the only door.
+# Since the cutover (ROLL-33; registry plan M-T6.2 commit C) there is no form
+# here. The five forms went once the legacy queue drained: a listing, a release
+# ping, a report, an appeal and a publisher verification are all made in
+# Minice's panel now, and an issue opened on this repository reaches nobody
+# (DEC-12). Blank issues stay off, so this page is the whole of what a visitor
+# sees, and each link says where the thing they came for went.
 #
-# Blank issues used to be on, and there was no config.yml, so nothing stopped a
-# submission bypassing the form. Two did — `#13` and `#14` — and because the
-# form is what applies the `listing` label, both arrived with **zero labels**.
-# `bot/triage.mjs` acts on a labelled issue, so it answered "nothing here asks
-# for an ingest", set `targets=[]`, and every later job was skipped. The Actions
-# run went green: it had succeeded at deciding to do nothing. Neither author was
-# told anything at all.
+# The first link is MOD-54's report page, in its bare form: this page knows
+# no plugin, so the reporter picks one there. With a plugin id the same page is
+# `/plugins/_/report?plugin=<plugin_id>`, which each plugin page in the panel
+# links. The path is the one minice-e4 gave on 2026-09-24, and the one
+# minice-be's panel document cites (registry plan §1.3 row 7); contract MOD-54
+# says only "under /plugins/_/", so the token file keeps its pending record
+# `mod54_report_page` until a contract version records the path. The link names
+# the vulnerability channel as MOD-45 requires: security@minice.ai, its reader
+# (the owner), "no encryption", and that a report is not embargoed.
 #
-# Two changes came out of that, and both are needed. The bot now answers an
-# unlabelled listing request instead of going quiet (`bot/lib/intake.mjs`), and
-# this file removes the way in that produced the unlabelled issue in the first
-# place. The first is the safety net; this is the fix.
-#
-# Every path a person might have used a blank issue for now has a template or a
-# link, and that is not optional courtesy — `docs/POLICY.md` §5 promises the
-# release ping as a new issue and §10 promises an appeal, and turning blank
-# issues off without those two forms would have quietly broken both.
+# Appeals and listings are not reports, so they have their own link, to the
+# panel itself.
 blank_issues_enabled: false
 
-# ── why the security link goes to a document and not to the advisory form ───
-#
-# It used to point straight at `/security/advisories/new` and describe that page
-# as "end-to-end between you and the maintainer". Two things were wrong with it,
-# and this is the one report the registry can least afford to lose.
-#
-# **The link was a dead end for the people it was for.** The "Report a
-# vulnerability" form on a public repository is only open to outside reporters
-# when *private vulnerability reporting* is switched on for that repository. It
-# is not:
-#
-#     $ gh api repos/mihailinl/astra-registry/private-vulnerability-reporting
-#     {"enabled":false}
-#
-# (checked 2026-08-15). With it off, that URL works for accounts with write
-# access to this repository — the maintainer, who does not need a contact link —
-# and 404s for everybody else. A stranger who finds a hole in the verification
-# chain, follows the one link that says "do not open an issue", and lands on a
-# 404 either opens the public issue they were just told not to open, or gives up.
-#
-# **And "end-to-end" was not what that page is.** A private advisory is private,
-# which is a real and sufficient property: it is visible to the reporter, to this
-# repository's admins, and to GitHub. It is not end-to-end encrypted, and using
-# the phrase for it teaches a reporter that the contents are unreadable in
-# transit and at rest, which is exactly the belief that decides how much detail
-# somebody pastes into a first message.
-#
-# So the link goes to `docs/POLICY.md` §11, which is honest about both, works for
-# everybody today, and carries the fallback that needs no configuration: say you
-# have a report, without the details, and the maintainer opens the private
-# channel and adds you to it. `docs/RUNBOOK.md` §1 has the one toggle that makes
-# the direct form work, and what to change here on the day it is flipped.
 contact_links:
-  - name: A security problem — do not open an issue
-    url: https://github.com/mihailinl/astra-registry/blob/main/docs/POLICY.md#11-embargoed-reports
+  - name: Report a plugin — on Minice's report page
+    url: https://astra.minice.ai/plugins/_/report
     about: >-
-      Anything that would let somebody ship code to a user: a hole in the
-      verification chain, a way to get a listing past the checks, a compromised
-      publisher. Section 11 gives you the private channel, says who can actually
-      read it (you, this repository's admins, and GitHub — it is private, not
-      end-to-end encrypted), and states plainly that there is no PGP key and no
-      security@ mailbox yet. Read it before you paste any detail anywhere.
+      Sign in with a Minice account, pick the plugin, and say which version and
+      what you observed. A report is not embargoed, so put no vulnerability in
+      it. A vulnerability goes to security@minice.ai instead, which the project
+      owner reads. It is not encrypted, so say you have one before you send the
+      details. Issues here reach nobody.
+
+  - name: Appeal a decision, or submit a listing — in Minice's panel
+    url: https://astra.minice.ai/plugins
+    about: >-
+      Sign in with a Minice account. Appeal a refusal or a moderation action, or
+      submit a listing. Issues here reach nobody.
 
   - name: How do I build, sign and release a plugin?
     url: https://github.com/mihailinl/AstraPlugins
@@ -68,10 +41,3 @@ contact_links:
       The SDKs, the CLI, the release workflow and the documentation all live in
       AstraPlugins. Get a release built and attested there first — this registry
       only ever reads a release that already exists.
-
-  - name: Astra itself is misbehaving
-    url: https://github.com/mihailinl/AstraPlugins/issues
-    about: >-
-      A plugin that crashes, a permission prompt that looks wrong, a daemon that
-      will not start. This repository is the catalogue; it holds no code that
-      runs on your machine.

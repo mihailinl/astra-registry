@@ -2629,23 +2629,10 @@ await test("the owner file is read, not claimed", async () => {
 // author never sees it. That means three files have to name the same path, and
 // nothing but a test keeps them agreeing.
 
-await test("the submission form asks for the file, with the exact path, before the submission", () => {
-  const form = fs.readFileSync(
-    path.join(REPO_ROOT, ".github", "ISSUE_TEMPLATE", "plugin-listing.yml"), "utf8");
-  assert(form.includes(".well-known/astra-plugin-owner"),
-    "the form must name the file an author is refused for not having");
-  assert(/echo YOUR-GITHUB-LOGIN > \.well-known\/astra-plugin-owner/.test(form),
-    "and give the line that creates it, so it is a copy rather than a translation");
-  assert(/one commit/i.test(form), "and say what it costs");
-  // A required confirmation, not a paragraph somebody scrolls past.
-  const confirmations = [...form.matchAll(/- label: ([\s\S]*?)\n\s+required: true/g)].map((m) => m[1]);
-  assert(confirmations.some((c) => c.includes(".well-known/astra-plugin-owner")),
-    `the owner file has to be one of the required confirmations: ${JSON.stringify(confirmations)}`);
-  // `bot/lib/issue.mjs` reads every `- [ ]` line in the rendered body and
-  // `bot/lib/intake.mjs` refuses an unticked one, so adding it here needs no
-  // parser change — but a prose block that is not a checkbox would be read by
-  // nothing at all.
-});
+// The submission form's own test went with the form (registry plan M-T6.2
+// commit C): since the cutover a listing is requested in Minice's panel, and
+// .github/ISSUE_TEMPLATE/plugin-listing.yml no longer exists. The remedy and
+// the run's message below still name the file, for listings submitted before.
 
 await test("the fixed remedy and the run's own message name the same file", () => {
   const remedy = codeDef("E_OWNERSHIP_UNPROVEN").remedy;

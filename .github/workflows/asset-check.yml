@@ -64,7 +64,8 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      issues: write
+    outputs:
+      verdict: ${{ steps.verdict.outputs.verdict }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -102,56 +103,79 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-      # An issue, not a failed job. A red cron nobody is assigned to is a red
-      # cron everybody learns to scroll past; an issue has an owner, a thread and
-      # a place for the decision to be recorded.
-      - name: Open an issue when an artifact no longer matches
-        if: steps.check.outputs.code != '0'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require("node:fs");
+      # An alarm, not an issue (registry plan M-T6.2 commit C, BOT-53). This step
+      # used to open an issue; from the cutover no issue on this repository
+      # reaches anybody (DEC-12), and the job lost `issues: write` with it. The
+      # verdict is composed HERE, where the report is read, and handed to the
+      # `alert` job as a job output: the job that holds the alarm channel's
+      # credential reads no report and no plugin file (BOT-46).
+      - name: The verdict an artifact mismatch owes the alarm channel
+        id: verdict
+        if: always()
+        env:
+          CHECK_CODE: ${{ steps.check.outputs.code }}
+        run: |
+          set -euo pipefail
+          node --input-type=module -e '
+            import fs from "node:fs";
+            import { runUrl } from "./bot/lib/alert-verdict.mjs";
+            import { invalidId } from "./tools/lib/ids.mjs";
             let report = { results: [] };
             try { report = JSON.parse(fs.readFileSync("asset-report.json", "utf8")); } catch {}
-            const bad = report.results.filter((r) => r.verdict === "mismatch");
-            if (!bad.length) return;
-
-            const title = `[asset] ${bad.length} listed artifact(s) no longer match the signed index`;
-            const open = await github.rest.issues.listForRepo({
-              owner: context.repo.owner, repo: context.repo.repo, state: "open", labels: "asset-check",
-            });
-            const body = [
-              "The nightly asset check found artifacts whose bytes are no longer the bytes this",
-              "catalogue pinned.",
-              "",
-              "**Nobody is at risk right now.** Astra verifies the SHA-256 out of the signed index",
-              "before it unpacks anything, so these plugins are uninstallable rather than dangerous.",
-              "What has happened is that the release this catalogue points at is not the release that",
-              "was reviewed.",
-              "",
-              ...bad.map((r) => `- \`${r.id}\` ${r.version} ${r.target} — ${r.why}`),
-              "",
-              "Next: find out why (a re-upload by the author is the common case, a compromised",
-              "account is the one that matters), then pick one of the four actions in",
-              "`docs/POLICY.md`. Yanking the version is usually right for a re-upload; an advisory is",
-              "right when the replacement is hostile.",
-            ].join("\n");
-
-            // One issue, reopened and updated, rather than a new one every night
-            // for the same artifact. A nightly job that files a duplicate issue
-            // per run is a nightly job somebody mutes.
-            const existing = open.data.find((i) => i.title === title);
-            if (existing) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner, repo: context.repo.repo, issue_number: existing.number,
-                body: `Still failing as of ${report.checked_at}.\n\n${body}`,
-              });
-              return;
-            }
-            await github.rest.issues.create({
-              owner: context.repo.owner, repo: context.repo.repo, title, body, labels: ["asset-check"],
-            });
+            const bad = (report.results ?? []).filter((r) => r.verdict === "mismatch");
+            const ids = [...new Set(bad.map((r) => String(r.id)).filter((id) => !invalidId(id)))];
+            const red = bad.length > 0;
+            const run = runUrl();
+            const verdict = { schema: "astra.registry.alert-verdict/1", check: "asset-check",
+              status: red ? "red" : "green", codes: red ? ["ASSET_MISMATCH"] : [], ids, ...(run ? { run } : {}) };
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `verdict=${JSON.stringify(verdict)}\n`);
+            console.log(red ? `${bad.length} artifact(s) no longer match: ${ids.join(", ")}` : "no mismatch; nothing to send");
+          '
 
       - name: Fail the job too, so the run history shows it
         if: steps.check.outputs.code != '0'
         run: exit 1
+
+  # The alarm, in environment `alerts`, reading nothing but the verdict the
+  # check job composed. Replaces the issue the check job used to open.
+  alert:
+    needs: check
+    if: always() && !cancelled() && needs.check.outputs.verdict != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: alerts
+    permissions:
+      contents: read
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert
+            bot/alert.mjs
+            bot/heartbeat.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: The verdict the check job composed
+        env:
+          VERDICT: ${{ needs.check.outputs.verdict }}
+        run: printf '%s\n' "$VERDICT" > verdict.json
+      - uses: ./.github/actions/alert
+        with:
+          verdict: verdict.json
+          no-heartbeat-because: >-
+            The nightly asset check has no receiver check of its own: it is not
+            on BOT-85's list, and its silence costs a delayed finding about a
+            re-uploaded artifact, which Astra's digest check already makes
+            uninstallable rather than dangerous. A red run is also the job's
+            own red X.

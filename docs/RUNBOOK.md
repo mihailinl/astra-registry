@@ -3,8 +3,8 @@
 What to type, as the person who runs this registry. `SECURITY.md` says *why*;
 this file says *what*.
 
-**§1 is the one you need most nights** — a listing request is open and somebody
-is waiting. Everything from §2 onwards is key custody, and most of it happens
+**§1 is the one you need most nights** — since the cutover (ROLL-33), a
+submission is held in the panel and somebody is waiting. Everything from §2 onwards is key custody, and most of it happens
 once a year or once ever.
 
 Everything here assumes one maintainer. Where a bigger team would use a second
@@ -14,7 +14,7 @@ pair of eyes, this document says what compensates instead.
 
 ## Contents
 
-1. [A listing request is open — what do I do?](#1-a-listing-request-is-open--what-do-i-do)
+1. [A submission is held — what do I do?](#1-a-submission-is-held--what-do-i-do)
 2. [Where each thing lives](#2-where-each-thing-lives)
 3. [The root ceremony](#3-the-root-ceremony)
 4. [Signing `trust.json`](#4-signing-trustjson)
@@ -26,248 +26,35 @@ pair of eyes, this document says what compensates instead.
 
 ---
 
-## 1. A listing request is open — what do I do?
+## 1. A submission is held — what do I do?
 
-The whole procedure is: **check the label, read the bot's comment, type one
-command.** Everything below is that, with the failure cases named.
+**Rewritten in the cutover commit set (ROLL-33; registry plan M-T6.2 commit C).**
+Until the cutover this section was the issue procedure: check the `listing`
+label, read the bot's comment, type `/approve` or `/reject`. None of that reaches
+anything any more (DEC-12, BOT-49). The git history of this file keeps it.
 
-You need nothing installed. Every step is a click or a comment on the issue.
+**Where the work arrives.** A submission reaches this registry through the
+plugins service (FLOW-2), and the bot's decision is published as a decision
+record under `log/decisions/`. A submission the bot holds — one of the three
+events in `docs/POLICY.md` §3, or `R_CHECK_HELD` — waits for a moderator **in
+Minice's panel**, at <https://astra.minice.ai/plugins>, within the 48-hour SLA.
+The author hears every outcome as a notice (e-mail and panel; OD-17), so there is
+no thread to answer on.
 
-### Step 1 — Does it have the `listing` label?
+**Deciding.** In the panel, as a moderator whose account holds an enrolled TOTP
+factor and an enrolled confirmation channel (MOD-11, TRUST-16). An approval is
+honoured for 7 days, and an approved update still waits its publication delay
+and DEC-6's window before it publishes; neither is yours to shorten (MOD-10).
 
-Open the issue and look at the labels.
+**What only an operator can do, and where.** A confirmation, a cancellation or a
+revert of a held moderation decision is not a panel action: it is a
+`workflow_dispatch` of the operator workflow, by an admin or maintainer, naming
+the `service_decision_id` (MOD-52; §7.7). A takedown above the bound waits for
+exactly that.
 
-**It does.** Go to step 2; the bot is already working.
-
-**It does not, and the bot has commented** saying it reads as a listing request.
-Add the label. One click.
-
-```
-The Labels box, right-hand side → listing
-```
-
-Adding the label starts verification on **this** issue within one run. Nothing
-needs reopening and nothing needs retyping. That is why the bot asks for a
-label rather than applying one itself: in this repository the label is an
-authority token, not a category. A labelled issue may drive an ingest of a
-repository this registry has never seen. An unlabelled one may only ask for a
-re-check of something already listed. A bot that minted that label from the
-shape of a body would let anybody who can copy a form choose which repositories
-this registry downloads archives from.
-
-**It does not, and the bot has said nothing.** That is a bug. Check
-`gh run list --workflow=Ingest --limit 5 --repo mihailinl/astra-registry` for a
-run against that issue. If there is no run at all, the event never fired; if
-there is a green run with everything skipped, `bot/triage.mjs` decided the issue
-is not a listing request.
-
-**Until 2026-09-20 this page told you that was a missing test case.** It was
-not — it was B-T0.2's defect, and a green run with everything skipped on a
-bot-authored `[notice]` thread was the registry printing a command on a thread
-it would not then read it off. Fixed; the diagnosis is kept because a runbook
-that quietly drops a wrong instruction teaches nobody what it was wrong
-about.
-
-### Step 2 — Read the bot's comment
-
-The run compiles a Rust manifest probe before it checks anything, so allow
-minutes rather than seconds. When it finishes the bot comments with two tables:
-the checks, then a **Publication** section with the outcome in bold.
-
-Four outcomes, and only one of them needs you:
-
-| The comment says | What to do |
-|---|---|
-| **Published** | Nothing. It is live. |
-| **Publishing itself at `<time>`** | Nothing. It goes live at that time on its own. |
-| **Held for a maintainer** | Step 3. This is the one. |
-| **Not published** | Nothing. A check failed; the author fixes it and comments `/recheck`. |
-
-The comment also states an SLA of 48 h from the moment it was posted. That
-number is declared in `bot/lib/policy.mjs` and is a commitment about the three
-blocking events only.
-
-### Step 2a — If the refusal is `E_OWNERSHIP_UNPROVEN`
-
-The most common refusal, and the one most likely to be aimed at you in a
-follow-up comment. **Do not work around it by publishing the listing by hand.**
-The fix is one commit in the author's repository, and the bot's comment already
-leads with it:
-
-```
-mkdir -p .well-known
-echo THEIR-GITHUB-LOGIN > .well-known/astra-plugin-owner
-```
-
-Then they comment `/recheck` on the same issue. Nothing needs reopening.
-
-| What the refusal says | What it means, and what you do |
-|---|---|
-| "there is no `.well-known/astra-plugin-owner` on that branch (HTTP 404)" | The ordinary case. The file has not been created, or it landed on a branch that is not the default one. Point at the two lines above. |
-| "the file is there but does not name you: it lists `…`" | A typo, a second account, or an organisation listing its release bot. The refusal prints what the file *does* contain, so compare it with the issue's author by eye. Adding a line and `/recheck` is the whole fix. |
-| "GitHub reports @x has `write` on …" | Not a visibility problem: GitHub answered directly, and the answer was that this account is not `admin` or `maintain`. The owner file does **not** override that, on purpose — it speaks where GitHub will not, it does not overrule GitHub where it will. Someone with `admin`/`maintain` opens the request, or grants the role. |
-| "the file could not be read (HTTP 403)" | Not a private repository — GitHub hides those, so a private one comes back **404** and lands in row 1. A 403 here is the repository being blocked, or a token that may not read it. |
-| "the bot ran out of GitHub API requests before it could read the file" | Rate limiting (403 with `x-ratelimit-remaining: 0`, or 429). Nothing was learnt about the file, so the refusal does **not** tell the author to commit one; it asks for a `/recheck`. If a run of submissions all say this, wait for the window to reset rather than answering them one by one. |
-| Any mention of a **403 or 404 from the collaborator** endpoint | You should never see this in a comment. It means the bot's token cannot see that repository's collaborator list — true of every repository this registry does not itself own, and evidence of nothing. If it is being reported to an author as a finding, that is a bug in `bot/lib/ownership.mjs`: it belongs in the audit trail (`tried`), never in the comment. An **answered** collaborator call is a different fact and belongs in the comment — that is row 3. |
-
-Two things worth knowing before you answer a question about it. The file proves
-**write access to the default branch**, not legal ownership — so "prove you own
-it" is not what is being asked, and saying so avoids an argument nobody here can
-settle. And it is read live on every run that consults it: an author handing a
-plugin over removes their login and adds the new one, and the next *listing
-request or `/recheck`* follows the file. It does not follow a release ping or
-the cron backstop — those prove the release against the account that published
-it (`resolveSubmitter`, `bot/lib/notify.mjs`), so the outgoing maintainer's own
-releases would still ingest. If someone asks you to cut a person off entirely,
-that is a repository-side question, not a file-side one.
-
-### Step 3 — Decide, in one comment
-
-Read the `R_…` rows in the Publication table. They say exactly what is being
-asked of you. There are only four:
-
-| Row | What you are actually deciding |
-|---|---|
-| `R_FIRST_LISTING` | Is this a real plugin, named honestly, doing what it says? Once per plugin, ever. |
-| `R_NEW_HIGH_RISK` | The release asks for a permission that reaches outside its own surface. Is the stated reason one a user would accept? |
-| `R_IDENTITY_CHANGED` | The repository moved. Every installed copy is pinned to the old one. Is this the same author, or a takeover? |
-| `R_CHECK_HELD` | A name one edit from a listed plugin, or a display name that collides. Is it a coincidence? |
-
-Then comment **one line**. For a yes, that line is printed in the bot's own
-comment, in a code block, ready to copy — **do not retype it from memory**:
-
-```
-/approve you/dice-roller@v0.2.0 4f1c9a02be773d15
-```
-
-or
-
-```
-/reject the licence is not one this registry allows — POLICY.md §4
-```
-
-Expect a new comment within minutes. For `/approve` it is a full check table
-again with a line naming you, the time, and the submission you cleared. For
-`/reject` it is your reason quoted back to the author with what they can do next,
-and then the issue closes.
-
-**Approving does not skip anything.** The entire ingest runs again from
-scratch — the assets are re-downloaded, the attestation re-verified, the
-manifest re-read, the digests re-hashed. A tag can be moved and a release asset
-can be replaced between the hold and your yes, so what publishes is what *this*
-run verified, never what an earlier one did.
-
-**And it applies to nothing but what you read.** The last field of the line is a
-fingerprint of that submission: the repository, the tag, the version, and the
-digest of every asset that run hashed. The re-run works it out again from the
-release in front of it and compares. So the answer to "what if it changed between
-my reading it and my yes" is no longer only *the checks would run again* — it is
-**the approval is refused, and you are told what moved**: `P_APPROVAL_STALE`, a
-comment naming both fingerprints, and a fresh line to copy if you still want to
-say yes. There is still no "publish the version I already looked at" command, and
-there never will be; the bytes are re-fetched every time. The fingerprint buys
-the other half — that the bytes being re-fetched are the ones you meant.
-
-The case that made this necessary does not look like an attack while it is
-happening: **the issue body belongs to its author.** They can edit the repository
-and tag fields at any time, including after the bot posts the hold and before you
-answer it. A bare `/approve` meant "approve whatever this issue says right now",
-so two edits were enough to point your yes at a release you never saw. If you get
-*"this issue no longer describes what you approved"*, read the issue's edit
-history before you retype anything.
-
-**A rejection is a sentence, not a close.** `/reject` with nothing after it does
-nothing and tells you so. A silent close is the one thing this flow will not do.
-
-### When the command does not work
-
-| The bot replies | What it means, and the fix |
-|---|---|
-| "is refused" … "role is `read`" | GitHub does report a role for you on **this** repository, and it is not `admin` or `maintain`. Check which account you commented from. An answered role stands: `author_association` cannot override it, because it is not a permission — `COLLABORATOR` is true for a `triage` role that cannot push a byte, and `CONTRIBUTOR` never expires. |
-| "is refused" … "would not say" | The permission call itself failed. Re-run it. There is **no fallback any more and that is deliberate**: B-T0.4b removed the `author_association: OWNER` branch on 2026-09-20, because run `35487527105` printed `collaborator-permission: answered=true outcome=role is 'admin'` — the endpoint answers a workflow `GITHUB_TOKEN`, so the silence the fallback handled has been observed **not** to happen. If it ever does, the command is refused from every account including the owner's, and the way round is to publish the listing by hand through a pull request — `bot/run-checks.mjs` is that path. |
-| ~~"would not say … but the event payload marks the comment `author_association: OWNER`"~~ | **This line cannot be printed any more, and the sentence that retired it is the one it asked for.** It used to say the API path "has not been observed in a live run". It has: run `35487527105`, 2026-09-20, `answered=true outcome=role is 'admin'`. So the fallback was dead code keeping a second authority alive — `COLLABORATOR` is true of a `triage` role that cannot push a byte — and B-T0.4b deleted it. The row is struck rather than removed because a maintainer who saw this wording once should be able to find out what happened to it. |
-| "has nothing to act on here" | The issue carries no readable form — **and since B-T0.2 that is the only thing it means.** Before 2026-09-20 a `/approve` on a bot-authored `[notice]` or `[release]` thread was refused with *"not a listing request"* before anything read the command, so this wording and that one both really meant "the bot would not look". Ask the author to open a fresh request with the listing template. |
-| "`/approve` has to name what it is approving" | You typed the bare word, or the line lost a field on the way into the comment box. Copy the whole line out of the bot's **Held for a maintainer** comment: `/approve <owner/repo>@<tag> <fingerprint>`. |
-| "this issue no longer describes what you approved" | The repository or tag in the issue is not the one your command named. **Look at the issue's edit history before doing anything else** — this is what an author swapping a submission under review looks like from here, and it is also what a stale browser tab looks like. If the issue as it stands is what you meant, comment `/recheck`, read the new comment, and copy the line out of *that* one. |
-| `P_APPROVAL_STALE` in the new comment | Your command was well formed and named an earlier state of the release: the tag moved, or a release asset was replaced, after the comment you answered. Nothing published and the hold stands. Re-read the table as it now is; the same comment prints the current line. |
-| Nothing at all | The command was not the first line you wrote, or it was inside a quoted reply. Post it alone, on its own line. |
-
-### Reproducing a decision locally
-
-Only worth doing when you disagree with the bot. It needs a Rust toolchain and
-network access, and it writes nothing into this repository.
-
-```sh
-bot/manifest-probe/link-deps.sh
-cargo build --release --manifest-path bot/manifest-probe/Cargo.toml
-ASTRA_MANIFEST_PROBE=bot/manifest-probe/target/release/astra-manifest-probe \
-  node bot/decide.mjs --repo you/dice-roller --tag v0.2.0 --submitter you --out /tmp/ingest
-```
-
-It prints the same comment the bot posts and exits `0` published, `1` refused,
-`3` held, `4` delayed, `2` the bot itself broke.
-
-To reproduce what your `/approve` would decide, run it once as above, take the
-fingerprint out of the `/approve` line it printed, and run it again with all
-three flags:
-
-```sh
-… node bot/decide.mjs --repo you/dice-roller --tag v0.2.0 --submitter you \
-    --approved-by you --approved-at 2026-08-14T09:00:00Z \
-    --approved-for 4f1c9a02be773d15 --out /tmp/ingest
-```
-
-`--approved-by` on its own is refused exactly as a bare `/approve` is, and for
-the same reason: it says yes without saying to what.
-
-The trust chain is provisioned, so this really does run: `registry/v1/root.json`
-carries `astra-root-2026a` and its reserve, and `registry/v1/trust.json` is
-signed by a root. `node tools/sign-trust.mjs --verify registry/v1/trust.json`
-prints which one, the index key it delegates to and the reusable-workflow
-commits it allows. An attestation from any other workflow is refused, which is
-the point of the allowlist.
-
-### The one switch that is not flipped yet
-
-**Private vulnerability reporting is off on this repository.** Check it, and
-check it after you change it — the answer is one line either way:
-
-```sh
-gh api repos/mihailinl/astra-registry/private-vulnerability-reporting
-```
-
-```
-{"enabled":false}          # as of 2026-08-15
-```
-
-While it says `false`, `https://github.com/mihailinl/astra-registry/security/advisories/new`
-works **for you** and 404s for everybody else: GitHub shows the "Report a
-vulnerability" form to outside reporters only when this is on. That is the
-opposite of what a security contact link is for, and it is why the one in
-`.github/ISSUE_TEMPLATE/config.yml` now points at `docs/POLICY.md` §11 — which
-carries a fallback that works today — rather than at the form.
-
-Turn it on:
-
-```
-Settings → Advanced Security → Private vulnerability reporting → Enable
-```
-
-Then, in one commit: delete step 2 of §11's "how to open one" in
-`docs/POLICY.md`, and point the security contact link in
-`.github/ISSUE_TEMPLATE/config.yml` back at `/security/advisories/new`. Leave the
-sentence about who can read an advisory where it is — enabling the form does not
-make it end-to-end encrypted.
-
-**Two other places to fix, neither done here.** `site/build.mjs` still generates
-"it is end-to-end between you and the maintainer" onto the published security
-page (`bot/security-contact.json`, which feeds it, has been corrected).
-`SECURITY.md`'s third paragraph says "open a private security advisory on this
-repository, or email the address in the repository profile" — the first half is
-the form that 404s while the switch is off, and the second names an address this
-repository does not publish anywhere it can be checked.
-
----
+**When the bot says nothing.** Silence is a bug, as it always was. Look at the
+`Plugins ingest` run for the submission, and at the coverage canary; an alarm in
+the alert group names what it saw.
 
 ## 2. Where each thing lives
 
