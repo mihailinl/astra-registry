@@ -594,8 +594,9 @@ the moment one is provisioned.</p>`;
 
   return `${embargo}
 <p class="thin">Everything else &mdash; a plugin behaving differently from its description, a name
-that looks like impersonation &mdash; is a report, made from the plugin&rsquo;s page in Minice&rsquo;s
-panel, and those are the reports this registry actually relies on. A report is not embargoed, so a
+that looks like impersonation &mdash; is a report, made on Minice&rsquo;s
+<a href="https://astra.minice.ai/plugins/_/report">report page</a> or from the plugin&rsquo;s page in
+the panel, and those are the reports this registry actually relies on. A report is not embargoed, so a
 vulnerability does not go there. An issue opened on this repository reaches nobody.</p>`;
 }
 
