@@ -61,6 +61,9 @@ export const ISSUE_TRIGGERS = ["issues", "issue_comment", "repository_dispatch"]
  */
 export const WORKFLOW_FLOOR = 10;
 
+/** The one workflow that may still grant `issues: write` after cutover, until commit E deletes it. */
+export const WRITE_EXEMPT = "ingest.yml";
+
 const unquote = (s) => s.trim().replace(/^['"]|['"]$/g, "");
 
 /**
@@ -166,11 +169,16 @@ export function run(repo, { workflowFloor = WORKFLOW_FLOOR } = {}) {
     );
   }
   const hits = [];
+  const writers = [];
   for (const name of files) {
     const src = fs.readFileSync(path.join(dir, name), "utf8");
     for (const { trigger, line } of triggersOf(src)) {
       if (ISSUE_TRIGGERS.includes(trigger)) hits.push(`.github/workflows/${name}:${line} ${trigger}`);
     }
+    src.split("\n").forEach((l, i) => {
+      if (/^\s*#/.test(l)) return;
+      if (/^\s+issues:\s*write\s*(#.*)?$/.test(l)) writers.push({ name, line: i + 1 });
+    });
   }
   const armed = fs.existsSync(path.join(repo, CUTOVER));
   if (armed) {
@@ -185,7 +193,21 @@ export function run(repo, { workflowFloor = WORKFLOW_FLOOR } = {}) {
       `not armed: ${CUTOVER} is not on this tree, so the issue channel is still the live path; ` +
       `${hits.length} trigger(s) of ${ISSUE_TRIGGERS.join(", ")} today${hits.length ? `: ${hits.join(", ")}` : ""}`,
     );
-  } else if (hits.length) {
+  } else if (writers.some((w) => w.name !== WRITE_EXEMPT)) {
+    // Commit C's leg (M-T6.2, BOT-53): nothing writes an issue after cutover.
+    // `ingest.yml` alone is exempt, by name, because it is deleted outright in
+    // commit E once the legacy queue has drained, and its issue-writing jobs
+    // are unreachable since commit B took its triggers. The exemption goes
+    // with the file; a workflow still named ingest.yml after E is a new file.
+    codes.push("ISSUE_CHANNEL_WRITE");
+    for (const w of writers.filter((x) => x.name !== WRITE_EXEMPT)) {
+      detail.push(
+        `.github/workflows/${w.name}:${w.line} grants \`issues: write\` after cutover: nothing may write an issue ` +
+        "on this repository any more (DEC-12, BOT-53); alert through environment `alerts` instead",
+      );
+    }
+  }
+  if (armed && hits.length) {
     codes.push("ISSUE_CHANNEL_TRIGGER");
     for (const h of hits) {
       detail.push(
@@ -194,7 +216,7 @@ export function run(repo, { workflowFloor = WORKFLOW_FLOOR } = {}) {
         "tells authors an issue reaches nobody",
       );
     }
-  } else {
+  } else if (armed) {
     detail.push(`${CUTOVER} is on this tree and no workflow of ${files.length} starts on ${ISSUE_TRIGGERS.join(", ")}`);
   }
   return { status: codes.length ? "red" : "green", codes, ids: [], hexes: [], detail };

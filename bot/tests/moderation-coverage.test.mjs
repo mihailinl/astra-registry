@@ -1150,15 +1150,31 @@ const RETIRED_TEXT = {
     "owner of `source.repo`, because that is what the ownership check binds to, so\n" +
     "that is what carries a tier.\n\n" +
     "the machine, because there is no sandbox: a plugin is a native process with the\n" +
-    "user's full privileges, and Phase 7 is where that changes. Read the table above\n",
+    "user's full privileges, and Phase 7 is where that changes. Read the table above\n" +
+    // Commit C's rows (M-T6.2), verbatim from the pre-cutover tree.
+    "and the answer arrives within **7 days**. Open an issue titled\n`[appeal] <plugin-id>` and use this template:\n" +
+    "**Yanking is the author's tool**, not a moderation action — it means \"do not use\n" +
+    "before they were ever listed (those are public issues), reports received and not\n" +
+    "3. Until then, ask for the channel in public and put nothing in it. Blank issues\n",
   "site/templates/pages.mjs":
     "released from. There are no registry accounts, no passwords and nothing to sign in to: the identity\n" +
     // Commit B's rows (M-T6.2, FLOW-64), verbatim from the pre-cutover tree.
-    "<p>Open an issue with the plugin id and what you observed. Behaviour reports beat every heuristic\n",
+    "<p>Open an issue with the plugin id and what you observed. Behaviour reports beat every heuristic\n" +
+    "action against a listed plugin. They are in the\nissue tracker, publicly, with the failing check named\n",
   "POLICY.md":
     "## 9. Appeals and reports\n\n" +
     "Open an issue. A rejection names the check that failed and the file it failed\n" +
-    "in — if it does not, that is a bug in the bot and worth reporting on its own.\n",
+    "in — if it does not, that is a bug in the bot and worth reporting on its own.\n" +
+    "- An author may **yank** a version (`\"yanked\": true`). It leaves the index and\n",
+  "SECURITY.md":
+    "Reporting a vulnerability: open a private security advisory on this repository,\n" +
+    "or email the address in the repository profile.\n" +
+    "holding a high-risk permission, out-of-band notification to the author on every\n" +
+    "publish (so a takeover victim sees it happen), permission-diff re-consent, and\n",
+  "docs/RUNBOOK.md":
+    "Expect a new comment within minutes. For `/approve` it is a full check table\n",
+  "bot/moderation/README.md":
+    "A refusal is not in here. A submission that never got listed is a public issue\n",
   "README.md":
     "CI build and attest it, and the registry picks it up — by a `/release v0.2.0`\n" +
     "comment on your listing issue within minutes, or by a daily backstop that polls\n",
@@ -1189,10 +1205,10 @@ test("M-T4.2: the pre-amend tree is red, once per sentence, naming the file", ()
   assert.equal(r.status, "red");
   const said = r.detail.join("\n");
   for (const rel of Object.keys(RETIRED_TEXT)) assert.match(said, new RegExp(`^${rel.replace(/[.]/g, "\\.")} says`, "m"));
-  // Two A1 sentences, one A2, one sandbox, and commit B's three: seven findings,
-  // and none merged into another.
+  // Two A1 sentences, one A2, one sandbox, commit B's three and commit C's ten:
+  // seventeen findings, and none merged into another.
   assert.deepEqual([...new Set(r.codes)], ["ROLL47_PROMISE_RESTATED"]);
-  assert.equal(r.detail.filter((d) => / says "/.test(d)).length, 7);
+  assert.equal(r.detail.filter((d) => / says "/.test(d)).length, 17);
   for (const p of ROLL47_PROMISES) assert.match(said, new RegExp(`row ${p.row}\\b`), `row ${p.row} did not fire`);
 });
 
@@ -2370,6 +2386,24 @@ test("no-issue-channel: the marker's cutover_at is the time main acquired it, wi
   merged.checkout("main").git("merge", "-q", "--no-ff", "-m", "merge the cutover", "cutover");
   const m = nic(merged.dir);
   assert.equal(m.status, "green", m.detail.join("\n"));
+});
+
+test("no-issue-channel: from cutover no workflow grants `issues: write`, except ingest.yml until commit E deletes it", () => {
+  const writer = "name: w\non:\n  schedule:\n    - cron: '1 1 * * *'\njobs:\n  j:\n    runs-on: ubuntu-24.04\n    permissions:\n      contents: read\n      issues: write\n    steps: []\n";
+  const armed = nic(channelFixture("nic-writer", { ingest: INGEST_CUT, extra: { "writer.yml": writer }, cutover: true }).dir);
+  assert.equal(armed.status, "red");
+  assert.ok(armed.codes.includes("ISSUE_CHANNEL_WRITE"), armed.codes.join(" "));
+  assert.match(armed.detail.join("\n"), /writer\.yml:\d+ grants `issues: write`/);
+  // Before cutover an issue writer is the live path, not a finding.
+  const pre = nic(channelFixture("nic-writer-pre", { extra: { "writer.yml": writer } }).dir);
+  assert.equal(pre.status, "green", pre.detail.join("\n"));
+  // ingest.yml's own grants are exempt by name until E deletes the file, and a
+  // commented grant is not a grant.
+  const ingestWrites = INGEST_CUT.includes("issues: write") ? INGEST_CUT : `${INGEST_CUT}\n# issues: write\n`;
+  const exempt = nic(channelFixture("nic-writer-exempt", {
+    ingest: ingestWrites, extra: { "quiet.yml": writer.replace("      issues: write\n", "      # issues: write\n") }, cutover: true,
+  }).dir);
+  assert.equal(exempt.status, "green", exempt.detail.join("\n"));
 });
 
 // ── drain-age's leg 2 retires at cutover (M-T6.2 commit B, B-T5.1) ──────────

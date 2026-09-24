@@ -2906,8 +2906,11 @@ await test("docs/POLICY.md quotes the triage clock the moderation code declares"
     const titled = action[0].toUpperCase() + action.slice(1);
     assert(doc.includes(`**${titled}**`), `docs/POLICY.md does not name the ${action} action`);
   }
-  // And the appeals template, which is what an author is told to use.
-  assert(doc.includes("[appeal] <plugin-id>"), "docs/POLICY.md carries no appeals template");
+  // And where an appeal goes. Until the cutover that was an issue template,
+  // `[appeal] <plugin-id>`; since commit C (M-T6.2; MOD-31) it is the panel, and
+  // the issue template is a retired promise the roll47-promises rule refuses.
+  assert(doc.includes("[appeal] <plugin-id>") || /appeal is\s+made in Minice's panel/.test(doc),
+    "docs/POLICY.md says nowhere how to appeal");
 });
 
 await test("POLICY.md points at the detail rather than restating it", () => {

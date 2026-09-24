@@ -4,9 +4,12 @@ This document describes the keys that make the Astra plugin catalogue
 trustworthy, who holds them, what happens when one is lost, and — the part most
 documents of this kind omit — what this design does **not** protect against.
 
-Reporting a vulnerability: open a private security advisory on this repository,
-or email the address in the repository profile. Please do not open a public
-issue for anything that would let someone ship code to a user.
+Reporting a vulnerability: e-mail **security@minice.ai**. It is read by the
+project owner, and it is **not encrypted** — say you have a report, without the
+details, if you want to agree a channel first. Since the cutover (ROLL-33) this
+registry offers no issue form and no GitHub private reporting for it (MOD-45),
+and an issue opened here reaches nobody. Please never put anything that would let
+someone ship code to a user into a public place.
 
 ---
 
@@ -276,9 +279,11 @@ The provenance will be **perfect** and will attest a malicious build. There is
 no cryptographic defence, and `POLICY.md` says so in the same words.
 
 What actually applies: the 24-hour publication delay on any release of a plugin
-holding a high-risk permission, out-of-band notification to the author on every
-publish (so a takeover victim sees it happen), permission-diff re-consent, and
-revocation once it is noticed.
+holding a high-risk permission; since the cutover (ROLL-33), a `notice.published`
+to the listing's bound Minice account on every publish, by e-mail and in the
+panel (OD-17), so a takeover victim sees it happen — and none for a listing not
+yet bound, which is one reason binding is mandatory by the deadline (OD-9);
+permission-diff re-consent; and revocation once it is noticed.
 
 ### 5.6 This repository is compromised, but no key is
 

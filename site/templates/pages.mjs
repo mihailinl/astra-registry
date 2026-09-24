@@ -380,9 +380,10 @@ each other by <code>tools/lib/revocations.mjs</code>, so a published id cannot b
 
 <h2>What this log does not contain</h2>
 <ul>
-<li><strong>Submissions that were refused before they were ever listed.</strong> They are in the
-issue tracker, publicly, with the failing check named &mdash; but a refusal is not a moderation
-action against a listed plugin, and mixing the two would make the count meaningless.</li>
+<li><strong>Submissions that were refused before they were ever listed.</strong> Since the cutover
+they are public in the decision log (<code>log/decisions/</code>), with the failing check named, and
+never as issues &mdash; but a refusal is not a moderation action against a listed plugin, and mixing
+the two would make the count meaningless.</li>
 <li><strong>Reports we received and did not act on.</strong> Publishing those would publish an
 accusation the registry did not substantiate.</li>
 <li><strong>Anything about installed copies.</strong> This registry has no telemetry, receives no

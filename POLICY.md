@@ -202,9 +202,12 @@ suggest otherwise.
 - A version file is **immutable once merged**. Fixing a published release means
   publishing a new version, never editing a digest in place: the digest is the
   whole promise, and a mutable one is not a promise.
-- An author may **yank** a version (`"yanked": true`). It leaves the index and
-  stays in git. Yanking is the author's tool for "do not use this one"; it is
-  not a security control, it does not touch installs, and it is not revocation.
+- An author yanks a version from Minice's panel (`A_YANK`, FLOW-79), and the bot
+  records it as `"yanked": true` with an author-action decision record; since the
+  cutover (ROLL-33) that is the only way an author yanks. A yank is never undone
+  by anyone. It leaves the index and stays in git. It means "do not use this
+  one"; it is not a security control, it does not touch installs, and it is not
+  revocation.
 - Retiring a plugin entirely is `"unlisted": true` on `plugin.json`. The audit
   trail stays.
 

@@ -37,7 +37,8 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write   # commit a renewed window, or a withdrawal
-      issues: write     # say so, where the publisher can see it
+    outputs:
+      verdict: ${{ steps.verdict.outputs.verdict }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -104,20 +105,68 @@ jobs:
           git commit -F "$RUNNER_TEMP/commit-message.txt"
           git push
 
-      # A withdrawal is the one outcome a person has to hear about, and the
-      # publisher is the person. Reported rather than left in a commit log
-      # nobody subscribed to.
-      - name: Say so when a badge came off
-        if: contains(steps.run.outputs.report, 'GONE')
+      # A withdrawal is the one outcome a person has to hear about. It used to
+      # open an issue for the publisher; from the cutover no issue on this
+      # repository reaches anybody (DEC-12), so it is an alarm to the owner
+      # through environment `alerts`, and this job lost `issues: write`
+      # (registry plan M-T6.2 commit C, BOT-53). A lapse is not a withdrawal
+      # for cause (MOD-44), so no `notice.moderated` goes to the publisher; the
+      # owner, told here, is who can ask them to restore the evidence. The
+      # verdict carries a code and the run, never a login.
+      - name: The verdict a withdrawn badge owes the alarm channel
+        id: verdict
+        if: always()
         env:
-          GH_TOKEN: ${{ github.token }}
-          REPORT: ${{ steps.run.outputs.report }}
+          GONE: ${{ contains(steps.run.outputs.report, 'GONE') }}
         run: |
           set -euo pipefail
-          printf '%s\n' "A publisher verification badge was withdrawn." '' \
-            'The evidence behind it stopped holding long enough for the confirmation window to run out. Nothing is wrong with the plugins, and nothing about them changed — the registry simply stopped being able to say who publishes them.' '' \
-            'To get it back: put the document back where it was, then say so here.' '' \
-            '```' "$REPORT" '```' > /tmp/body.md
-          gh issue create --repo "$GITHUB_REPOSITORY" \
-            --title "[publisher] a verification badge was withdrawn" \
-            --body-file /tmp/body.md
+          node --input-type=module -e '
+            import fs from "node:fs";
+            import { runUrl } from "./bot/lib/alert-verdict.mjs";
+            const red = process.env.GONE === "true";
+            const run = runUrl();
+            const verdict = { schema: "astra.registry.alert-verdict/1", check: "publisher-recheck",
+              status: red ? "red" : "green", codes: red ? ["PUBLISHER_BADGE_WITHDRAWN"] : [], ...(run ? { run } : {}) };
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `verdict=${JSON.stringify(verdict)}\n`);
+          '
+
+  # The alarm, in environment `alerts`, reading nothing but the verdict.
+  alert:
+    needs: recheck
+    if: always() && !cancelled() && needs.recheck.outputs.verdict != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: alerts
+    permissions:
+      contents: read
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert
+            bot/alert.mjs
+            bot/heartbeat.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: The verdict the recheck job composed
+        env:
+          VERDICT: ${{ needs.recheck.outputs.verdict }}
+        run: printf '%s\n' "$VERDICT" > verdict.json
+      - uses: ./.github/actions/alert
+        with:
+          verdict: verdict.json
+          no-heartbeat-because: >-
+            The publisher re-check has no receiver check of its own: it is not
+            on BOT-85's list, and a missed run only delays a withdrawal to the
+            next day's run. A failed run is also the job's own red X.
