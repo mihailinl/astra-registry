@@ -554,6 +554,16 @@ const NOT_MEMBER_READERS = [
       "set and the publish path runs it",
   },
   {
+    file: "tools/service-conformance.mjs",
+    reads: ["member-table"],
+    why:
+      "BOT-90's black-box probe (B-T3.11). It opens the token file for the METHOD and PATH of four records — " +
+      "`operation:bot:claim`, `operation:client:rating.get`, and the `service_only` entries `health` and " +
+      "`listings-view` — and for `audience:bot`'s value, and reads no entry's members from it. The one member " +
+      "table it touches is `astra.plugins.error/1`'s, taken from `bot/lib/service.mjs`'s compiled `BODIES`, which " +
+      "this census already proves against the file; it evaluates no condition",
+  },
+  {
     file: "tools/selftest/primitives.mjs",
     reads: [],
     why:
