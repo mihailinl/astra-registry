@@ -3136,9 +3136,13 @@ test("B-T4.2 (i): an unbound listing's reset writes the voiding record and the e
   const { root, origin } = await heldReset({ bound: false });
   writeAll(root, { [`state/holds/${SDI}.confirm.json`]: confirmOf(SDI, "2026-09-20T13:00:00Z") });
   commitAt(root, "2026-09-20T13:00:00Z", "operator: confirm");
-  const job = await commitJob(root, { entries: [], now: new Date("2026-09-21T12:46:00Z") });
+  // Under a SHADOW answer: a hold is not work the answer names, and its release
+  // is driven by the MOD-52 record in git, so it is committed in shadow too —
+  // and nothing is posted for it (BOT-92). `report` reads `compiled` and `held`.
+  const job = await commitJob(root, { entries: [], shadow: true, now: new Date("2026-09-21T12:46:00Z") });
   assert.equal(job.code, 0, job.logs.join("\n"));
   assert.deepEqual(job.results.released_holds, [SDI]);
+  assert.deepEqual([job.results.compiled, job.results.held], [[], []], "a shadow run handed report a result to post");
   assert.ok(!job.paths.some((p) => p.endsWith("identity.json")), "a release with no identity record touched one");
   assert.equal(runApply(root, dated("2026-09-21T12:50:00Z")).status, 0);
   const records = loadRecords(root).decisions.map((r) => r.doc);

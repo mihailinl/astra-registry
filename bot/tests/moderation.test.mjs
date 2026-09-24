@@ -46,6 +46,7 @@ import {
   loadEntries, reasonProblems,
 } from "../lib/moderation.mjs";
 import { checkAdvisory, buildRevocations } from "../../tools/lib/revocations.mjs";
+import { LOG_ACTION } from "../lib/compile-decision.mjs";
 import { DOCUMENT_MEMBERS } from "../../tools/priv-scan.mjs";
 import { actionVocabulary, loadLog } from "../../tools/moderation-coverage.mjs";
 
@@ -591,4 +592,92 @@ test("MOD-47's `reset` is an action, carries `identity_reset` alone, and names a
   }
   assert.ok(checkEntry({ ...DELIST, category: "identity_reset" }).some((e) => /not one a delist may carry/.test(e)),
     "a delist carried identity_reset");
+});
+
+// ── ops couplings 154, the registry half: `ACTIONS` is the contract's list ───
+//
+// MOD-47 lists the actions the log gains; §7.2 says which `log <action>` each
+// code writes; Table 5-I lists the words the panel's read may carry, and
+// minice-e4's reader treats that list as CLOSED. ops `tools/check-contract.mjs`
+// (`mod47Leg`, ops c696aac) holds those three to one list on the page. Nothing
+// held THIS repository's `ACTIONS` to it, which is how 2.5.0 added `reset` to
+// the contract while the log here kept refusing the entry `M_IDENTITY_RESET`
+// writes.
+//
+// THE SOURCE, AND WHY. Table 5-I and MOD-47 are prose and in no machine-
+// readable artefact this repository pins. §7.2's code table IS: the token file
+// carries each §7.2 row's second cell as `artefact` ("`yanked`, log `yank`"),
+// generated from the contract at the version the file names. So the chain is:
+//
+//   token file `artefact` ──(this test)── compile-decision.mjs `LOG_ACTION`
+//                                          ──(this test)── moderation.mjs `ACTIONS`
+//
+// `LOG_ACTION` and not `bot/lib/policy/constants.mjs` as the middle link,
+// because it is the code that WRITES the log action, and the defect is a
+// writer and a reader disagreeing; constants.mjs carries codes' levels and
+// remedies and no log actions at all. The token file and not a literal list
+// here, because a literal would be a fourth copy of a list three documents
+// already disagree about.
+//
+// THE GAP, DECLARED SO IT RETIRES ITSELF. The ops generator adds a §7.2 code
+// only when B.7 has not already added it (`tools/contract-tokens.mjs`, "if
+// (this.entries.some(… `code:${code}`)) continue"), so the four codes B.7 also
+// names carry no `artefact` and their §7.2 cell is not in the file. Their log
+// words are declared below from §7.2 as 2.9.0 prints them, and the test
+// REQUIRES that each still lacks an `artefact`: the day the generator carries
+// one, this goes red and asks for the declaration to be dropped and the cell
+// compared instead.
+const NOT_IN_TOKEN_FILE = Object.freeze({
+  M_IDENTITY_RESET: "reset", // §7.2: "… log `reset`; none"
+  M_APPEAL: "appeal", // §7.2: "log `appeal` (MOD-33) …"
+  A_REMOVAL_REQUEST: "delist", // §7.2: "from a bound account: `unlisted`, log `delist` with `author_request` …"
+  A_YANK: "yank", // §7.2: "… `yanked`, log `yank` with `author_request` …"
+});
+
+const logWords = (artefact) => [...String(artefact).matchAll(/log `([a-z_]+)`/g)].map((m) => m[1]);
+
+test("ACTIONS is exactly the log actions §7.2's codes write, as the token file publishes them (ops couplings 154)", () => {
+  const tokens = JSON.parse(fs.readFileSync(path.join(REPO, "schema/contract-tokens-v1.json"), "utf8"));
+  const byCode = new Map(tokens.entries.filter((e) => e?.kind === "reason_code").map((e) => [e.name, e]));
+  const published = tokens.entries.filter((e) => e?.kind === "reason_code" && e.source === "§7.2" && typeof e.artefact === "string");
+  assert.ok(published.length >= 7,
+    `the token file (${tokens.contract_version}) carries ${published.length} §7.2 artefact cells; there were 7 at 2.9.0, ` +
+    "so a smaller number is a broken read and every comparison below would run over less than the table");
+
+  // (1) Every published cell against the writer, both ways: a cell naming a
+  //     log word the compiler writes differently, and one naming none (M_BINDING_REVOKE,
+  //     "none") that the compiler logs anyway.
+  for (const e of published) {
+    const words = logWords(e.artefact);
+    assert.ok(words.length <= 1, `${e.name}'s §7.2 cell names ${words.length} log actions: ${e.artefact}`);
+    assert.equal(LOG_ACTION[e.name], words[0],
+      `§7.2 publishes ${e.name} as ${JSON.stringify(e.artefact)}, and bot/lib/compile-decision.mjs writes ` +
+      `${JSON.stringify(LOG_ACTION[e.name])}`);
+  }
+
+  // (2) The declared four still need declaring, and still say what the writer writes.
+  for (const [code, word] of Object.entries(NOT_IN_TOKEN_FILE)) {
+    const entry = byCode.get(code);
+    assert.ok(entry, `${code} is not in the token file at all, so the declaration beside it names nothing`);
+    assert.equal(typeof entry.artefact, "undefined",
+      `the token file now carries ${code}'s §7.2 cell (${JSON.stringify(entry.artefact)}): drop it from ` +
+      "NOT_IN_TOKEN_FILE so the cell is compared rather than the declaration");
+    assert.equal(LOG_ACTION[code], word, `${code}: §7.2 says log \`${word}\` and the compiler writes ${LOG_ACTION[code]}`);
+  }
+
+  // (3) Every code the compiler logs is accounted for by one of the two, so a
+  //     code added to LOG_ACTION alone cannot widen the list unseen.
+  for (const code of Object.keys(LOG_ACTION)) {
+    assert.ok(published.some((e) => e.name === code) || Object.hasOwn(NOT_IN_TOKEN_FILE, code),
+      `bot/lib/compile-decision.mjs logs ${code} as ${LOG_ACTION[code]}, and neither the token file's §7.2 cells ` +
+      "nor the declared four say it writes a log entry");
+  }
+
+  // (4) The reader equals the writer: every action the log accepts is one some
+  //     code writes, and every action a code writes the log accepts.
+  assert.deepEqual([...ACTIONS].sort(), [...new Set(Object.values(LOG_ACTION))].sort(),
+    "bot/lib/moderation.mjs's ACTIONS and the log actions §7.2's codes write have parted: an action a code writes " +
+    "and the log refuses is a takedown that throws at compile (MOD-3); one the log accepts and no code writes is a " +
+    "word minice-e4's closed Table 5-I reader may refuse (ops couplings 154)");
+  assert.ok(ACTIONS.length >= 8, `${ACTIONS.length} actions; §7.2 with MOD-47 names 8 at contract 2.9.0`);
 });

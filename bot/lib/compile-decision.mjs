@@ -329,6 +329,9 @@ const KNOWN_CODES = Object.freeze({
 
 /**
  * §7.2's left column, keyed by code: which moderation-log action each becomes.
+ * Exported for `bot/tests/moderation.test.mjs`, which holds the log's `ACTIONS`
+ * to exactly these values, and these to the `log \`<action>\`` words the token
+ * file publishes in §7.2's artefact cells (ops couplings 154, the registry half).
  *
  * `M_BINDING_REVOKE` is absent because it produces no log entry at all — §7.2's
  * "Git artefact" cell for it is "none" — so there is no action to check its
@@ -336,7 +339,7 @@ const KNOWN_CODES = Object.freeze({
  * `M_APPEAL` maps to `appeal`, whose allowed-category list is deliberately
  * EMPTY: §7.2 gives one category per `M_*` decision except that one.
  */
-const LOG_ACTION = Object.freeze({
+export const LOG_ACTION = Object.freeze({
   M_YANK: "yank",
   A_YANK: "yank",
   M_DELIST: "delist",
