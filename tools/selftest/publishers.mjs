@@ -17,11 +17,13 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { buildIndex } from "../build-index.mjs";
+import * as generator from "../build-index.mjs";
 import { validate as validateSchema } from "../lib/jsonschema.mjs";
 import { reservedPrefixViolation, stagingListingId } from "../lib/reserved.mjs";
 import {
   REPO_ROOT,
   expiredPublishers,
+  loadIdentities,
   loadPublishers,
   loadSchemas,
   loadSources,
@@ -138,7 +140,13 @@ function publisherReach(root, noListingText) {
   const index = buildIndex({ root, serial: 1 });
   const shipped = new Set(Object.keys(index.signed.publishers ?? {}));
   const generated = new Map(index.signed.plugins.map((e) => [e.id, e.publisher]));
-  const recordOf = (p) => publishers.get(String(p.doc?.source?.repo ?? "").split("/")[0].toLowerCase());
+  // The generator's own join (`publisherFor`), not a login lookup of this
+  // check's: since TRUST-25 a listing with an identity record reaches a record
+  // only through `owner_ids`, and the day the rule moved is the day a second
+  // copy of it here would have started disagreeing about the unlisted half.
+  const identityOf = new Map(loadIdentities(root, plugins.map((p) => p.dir)).identities
+    .map((r) => [r.file.split("/")[1], r.doc]));
+  const recordOf = (p) => generator.publisherFor({ plugin: p, publishers, identity: identityOf.get(p.dir) ?? null }) ?? undefined;
 
   for (const p of plugins) {
     if (p.doc?.unlisted === true) continue;
@@ -404,12 +412,14 @@ export async function run() {
     }
   });
 
-  // Fail closed, and exercised rather than asserted over an empty set. Every
-  // listing today HAS a publisher record, so a test that walked the shipped
-  // document looking for owners without one would loop over nothing and pass for
-  // that reason — the exact vacuity this suite exists to refuse. So the generator
-  // is run against a tree with no publishers/ at all, which is also the state
-  // every fork and every first day is in.
+  // Fail closed, and exercised rather than asserted over an empty set. When
+  // this was written every listing had a publisher record, so a test that
+  // walked the shipped document looking for owners without one would have
+  // looped over nothing and passed for that reason — the exact vacuity this
+  // suite exists to refuse. So the generator is run against a tree with no
+  // publishers/ at all, which is also the state every fork and every first day
+  // is in. (Since then third-party listings arrived with no record, and the
+  // INV-18 test below asks the per-listing question over the committed tree.)
   await test("with no publishers/ at all, no listing carries a publisher key", () => {
     const tmp = fs.mkdtempSync(path.join(SUITE_TMP, "astra-nopub-"));
     try {
@@ -427,6 +437,216 @@ export async function run() {
         `no record exists and ${badged.length} listing(s) still carry a publisher key`);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  // INV-18, per listing and with records present — the case the test above
+  // cannot reach, because there every listing lacks a record. On the committed
+  // tree nine listed plugins are published from owners with no record here
+  // (Belnash3, Voltur792, …), so this walk is not over an empty set; the floor
+  // says so, and if the catalogue ever badges every owner the floor is what
+  // goes red rather than this check passing over nothing.
+  await test("INV-18: a listing whose owner login has no publishers/ record carries no publisher key", () => {
+    const { publishers } = loadPublishers(REPO_ROOT);
+    const doc = buildIndex({ root: REPO_ROOT, serial: 1 });
+    const unrecorded = doc.signed.plugins.filter((e) => !publishers.has(e.source.repo.split("/")[0].toLowerCase()));
+    assert(unrecorded.length >= 3,
+      `${unrecorded.length} listed plugin(s) are published from an owner with no publishers/ record; nine were on ` +
+      "2026-09-24, and below three this check is walking too little to say anything");
+    const badged = unrecorded.filter((e) => Object.hasOwn(e, "publisher"));
+    assert(badged.length === 0,
+      `${badged.map((e) => `${e.id} (${e.source.repo}) → ${e.publisher}`).join(", ")} carry a badge with no reviewed ` +
+      "record for their owner (INV-18: the signer joins a badge only through a reviewed record in publishers/)");
+  });
+
+  // ── TRUST-25: the badge join is pinned by owner id (registry plan RC-R3-5) ──
+  //
+  // A listing with `plugins/<id>/identity.json` takes a badge only from a
+  // publisher record whose `owner_ids[<login>]` equals the identity record's
+  // `repository_owner_id` (contract B.4, 2.5.0). Without it, a login given up
+  // and registered again by somebody else — `KNICE-TECH` is a real one — would
+  // inherit the badge of the account that gave it up, because the join was by
+  // name. Made from committed material: the real tree, one listing given an
+  // identity record, and the real mihailinl record with `owner_ids` edited.
+  // Nothing in the committed tree has an identity record yet (they arrive at
+  // R4a), so without a fixture this rule would be asserted over nothing.
+  //
+  // The functions come through a namespace import so that a generator which
+  // does not export them fails THIS test by name rather than the whole module.
+  await test("TRUST-25: a listing with an identity record takes a badge only from a record whose owner_ids carries its owner id", () => {
+    const tree = fs.mkdtempSync(path.join(SUITE_TMP, "astra-pub-ownerid-"));
+    try {
+      for (const dir of ["plugins", "registry", "policy", "schema", "publishers"]) {
+        fs.cpSync(path.join(REPO_ROOT, dir), path.join(tree, dir), { recursive: true });
+      }
+      const pluginFile = path.join(tree, "plugins", "dice-roller", "plugin.json");
+      const plugin = JSON.parse(fs.readFileSync(pluginFile, "utf8"));
+      assert(plugin.source.repo === "mihailinl/astra-dice-roller" && plugin.unlisted !== true,
+        `plugins/dice-roller is ${plugin.source.repo}${plugin.unlisted ? ", unlisted" : ""}; this fixture needs a LISTED mihailinl listing`);
+      const identityFile = path.join(tree, "plugins", "dice-roller", "identity.json");
+      const identity = (over = {}) => fs.writeFileSync(identityFile, JSON.stringify({
+        schema: "astra.registry.identity/1", plugin_id: "dice-roller", repository_id: "1001",
+        repository_owner_id: "2002", repo: plugin.source.repo, token_hash: "0123456789abcdef", ...over,
+      }, null, 2) + "\n");
+      const pubFile = path.join(tree, "publishers", "mihailinl.json");
+      const base = JSON.parse(fs.readFileSync(pubFile, "utf8"));
+      const publisher = (ownerIds) => {
+        const doc = { ...base };
+        delete doc.owner_ids;
+        if (ownerIds !== undefined) doc.owner_ids = ownerIds;
+        fs.writeFileSync(pubFile, JSON.stringify(doc, null, 2) + "\n");
+      };
+      const badges = () => {
+        const doc = buildIndex({ root: tree, serial: 1 });
+        return new Map(doc.signed.plugins.map((e) => [e.id, e.publisher ?? null]));
+      };
+
+      identity();
+      // (a) a record whose owner id differs: no badge. The one the rule exists for.
+      publisher({ mihailinl: "9999" });
+      let b = badges();
+      assert(b.get("dice-roller") === null,
+        `dice-roller has an identity record with repository_owner_id 2002 and publishers/mihailinl.json's owner_ids ` +
+        `says 9999, and it still carries publisher ${JSON.stringify(b.get("dice-roller"))}: the join is by login alone (TRUST-25)`);
+      // (d) a listing with no identity record keeps the login join, in the same run.
+      assert(b.get("bad-apple") === "mihailinl",
+        `bad-apple has no identity record and lost its badge (${JSON.stringify(b.get("bad-apple"))}); TRUST-25 keeps the login join for it`);
+
+      // (b) the owner id matches: the badge, keyed by login (ID-51).
+      publisher({ mihailinl: "2002" });
+      b = badges();
+      assert(b.get("dice-roller") === "mihailinl",
+        `owner_ids.mihailinl is 2002, the identity record's repository_owner_id, and dice-roller carries ${JSON.stringify(b.get("dice-roller"))}`);
+      // Logins are case-insensitive, so the key is too.
+      publisher({ MihailinL: "2002" });
+      assert(badges().get("dice-roller") === "mihailinl", "owner_ids keyed `MihailinL` did not match the login `mihailinl`");
+
+      // (c) no owner_ids at all: no badge for the identity-recorded listing only.
+      publisher(undefined);
+      b = badges();
+      assert(b.get("dice-roller") === null,
+        `publishers/mihailinl.json has no owner_ids and dice-roller, which has an identity record, carries ${JSON.stringify(b.get("dice-roller"))}`);
+      assert(b.get("bad-apple") === "mihailinl", "bad-apple lost its badge when the record lost owner_ids");
+
+      // A number is not §0.7's base-10 string, and the comparison is of strings.
+      publisher({ mihailinl: 2002 });
+      assert(badges().get("dice-roller") === null, "owner_ids.mihailinl as the NUMBER 2002 matched the string \"2002\"");
+
+      // An identity record with no usable owner id matches nothing: fail closed.
+      publisher({ mihailinl: "2002" });
+      identity({ repository_owner_id: undefined });
+      assert(badges().get("dice-roller") === null, "an identity record with no repository_owner_id still took a badge");
+      identity({ repository_owner_id: 2002 });
+      assert(badges().get("dice-roller") === null, "an identity record whose repository_owner_id is a number still took a badge");
+
+      // An identity record that does not parse stops the build, naming it,
+      // rather than being read as "no identity record" and badged by login.
+      fs.writeFileSync(identityFile, "{ not json");
+      let threw = null;
+      try { buildIndex({ root: tree, serial: 1 }); } catch (e) { threw = e; }
+      assert(threw && threw.message.includes("plugins/dice-roller/identity.json"),
+        `an unreadable identity record did not stop the build naming it: ${threw ? threw.message.split("\n")[0] : "no error"}`);
+
+      // A covered login is a login: the entry that counts is the one for the
+      // login the listing is published under, never the record's own owner's.
+      identity({ repo: "covered-org/astra-dice-roller" });
+      plugin.source.repo = "covered-org/astra-dice-roller";
+      fs.writeFileSync(pluginFile, JSON.stringify(plugin, null, 2) + "\n");
+      const covering = (ownerIds) => {
+        const doc = { ...base, covers: ["covered-org"], owner_ids: ownerIds };
+        fs.writeFileSync(pubFile, JSON.stringify(doc, null, 2) + "\n");
+      };
+      covering({ mihailinl: "2002" });
+      assert(badges().get("dice-roller") === null,
+        "the listing is published under covered-org and owner_ids carries only the owner's own login; the owner's id stood in for the covered login's");
+      covering({ mihailinl: "1", "covered-org": "2002" });
+      assert(badges().get("dice-roller") === "mihailinl",
+        "owner_ids[covered-org] equals the identity record's owner id and the covered listing took no badge");
+    } finally {
+      fs.rmSync(tree, { recursive: true, force: true });
+    }
+  });
+
+  // ID-51: `signed.publishers` stays keyed by login while `astra.registry.index/1`
+  // stands. A grammar check is not enough and this is why the test says so: a
+  // GitHub numeric id is all digits, and all digits match the login grammar, so
+  // "the keys look like logins" passes a catalogue keyed on owner ids. What is
+  // asserted instead is that every key, and every listing's `publisher`, is the
+  // `owner` of a publishers/ record here — which a numeric id is not.
+  await test("ID-51: every signed.publishers key and listing publisher is the owner login of a publishers/ record", () => {
+    const loginGrammar = new RegExp(loadSchemas(REPO_ROOT).publisher.properties.owner.pattern);
+    assert(loginGrammar.test("1234567"), "a numeric id no longer matches the login grammar, so this test's premise has moved");
+    assert(typeof generator.publisherKeyProblems === "function",
+      "tools/build-index.mjs exports no publisherKeyProblems, so nothing states ID-51's rule as a check");
+    const { publishers } = loadPublishers(REPO_ROOT);
+    const committed = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "registry/v1/index.json"), "utf8"));
+    const clean = generator.publisherKeyProblems(committed, publishers);
+    assert(clean.length === 0, `the committed catalogue fails ID-51:\n${clean.join("\n")}`);
+    const keys = Object.keys(committed.signed.publishers ?? {});
+    assert(keys.length >= 1, "the committed catalogue ships no publisher, so this proves nothing");
+
+    // The catalogue as a generator keyed on owner ids would write it.
+    const byId = structuredClone(committed);
+    const idOf = (login) => `${9000 + keys.indexOf(login)}`;
+    byId.signed.publishers = Object.fromEntries(Object.entries(committed.signed.publishers).map(([k, v]) => [idOf(k), v]));
+    for (const e of byId.signed.plugins) if (e.publisher) e.publisher = idOf(e.publisher);
+    const problems = generator.publisherKeyProblems(byId, publishers);
+    for (const k of keys) {
+      assert(problems.some((p) => p.includes(JSON.stringify(idOf(k)))),
+        `a catalogue keyed on owner id ${idOf(k)} instead of ${k} was not refused:\n${problems.join("\n")}`);
+    }
+    // And a listing naming a login the map does not carry.
+    const dangling = structuredClone(committed);
+    const one = dangling.signed.plugins.find((e) => e.publisher);
+    one.publisher = "nobody-reviewed";
+    assert(generator.publisherKeyProblems(dangling, publishers).some((p) => p.includes(one.id)),
+      `${one.id} naming a publisher with no record was not refused`);
+  });
+
+  // `owner_ids` is judged at the first gate. The schema says the values are
+  // base-10 strings and the keys look like logins; what a schema cannot say is
+  // that each key is a login THIS record speaks for, once. A key for somebody
+  // else's login would let one reviewed record pin a badge onto a login it
+  // never claimed, and two keys differing in case are two answers to one
+  // login's id.
+  await test("tools/validate.mjs judges owner_ids: base-10 strings, each keyed by a login the record speaks for, once", () => {
+    const schemas = loadSchemas(REPO_ROOT);
+    const judge = (docs) => {
+      const tree = fs.mkdtempSync(path.join(SUITE_TMP, "astra-pub-ownerids-"));
+      try {
+        fs.mkdirSync(path.join(tree, "publishers"));
+        for (const doc of docs) {
+          fs.writeFileSync(path.join(tree, "publishers", `${doc.owner}.json`), JSON.stringify(doc, null, 2) + "\n");
+        }
+        const items = [];
+        const push = (where, message) => items.push({ where, message });
+        checkPublisherRecords({ report: { error: push, warn: push, note: push }, schemas }, loadPublishers(tree));
+        return items;
+      } finally {
+        fs.rmSync(tree, { recursive: true, force: true });
+      }
+    };
+    const rec = (ownerIds, over = {}) => ({
+      schema: "astra.registry.publisher/1", owner: "someone", covers: ["SOMEONE-TECH"], display_name: "Someone",
+      tier: "astra_team", verified_at: "2026-01-01", evidence: { kind: "first-party", note: "fixture" },
+      ...(ownerIds === undefined ? {} : { owner_ids: ownerIds }), ...over,
+    });
+    const say = (items) => items.map((i) => `${i.where}: ${i.message}`).join("\n");
+
+    const good = judge([rec({ someone: "123", "someone-tech": "456" })]);
+    assert(good.length === 0, `a well-formed owner_ids, covering both logins, was refused:\n${say(good)}`);
+    assert(judge([rec(undefined)]).length === 0, "a record with no owner_ids was refused; the member is optional (B.4)");
+
+    const bad = [
+      ["a number", { someone: 123 }, "owner_ids"],
+      ["a non-digit string", { someone: "12a" }, "owner_ids"],
+      ["a login the record does not speak for", { someone: "1", stranger: "2" }, "stranger"],
+      ["one login twice, in two cases", { someone: "1", SOMEONE: "1" }, "SOMEONE"],
+    ];
+    for (const [what, ids, needle] of bad) {
+      const items = judge([rec(ids)]);
+      assert(items.some((i) => i.message.includes(needle)),
+        `owner_ids with ${what} (${JSON.stringify(ids)}) was not refused naming ${needle}:\n${say(items)}`);
     }
   });
 

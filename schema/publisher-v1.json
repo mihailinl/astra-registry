@@ -35,6 +35,19 @@
       },
       "description": "Further owner logins this ONE record speaks for — an organisation the publisher runs, an account they also publish from. Listings under any of them resolve to this record, so the badge, the display name and the byline are written once and cannot disagree between them.\n\nWhy this exists rather than a second file: the badge is keyed on the owner half of source.repo, and a person's plugins do not all live under their personal login. `KnlCE` publishes `astra-chess` from the `KNICE-TECH` organisation, so the reviewed record about the PERSON reached none of their listings while being entirely correct. A second record for the org would have carried the same display_name and tripped the collision check — correctly, because two records rendering as one word IS the thing that check is for. One record, several keys, is the shape that says what is actually true.\n\nWhat it is NOT: a claim the registry verifies. Nothing here re-fetches an organisation's membership. The claim is this line, in a reviewed commit, exactly as strong as the `owner` line above it and no stronger — and it is worth knowing that it extends the badge to every repository under that owner, including one a collaborator pushes. Add an org you would vouch for as a whole; the narrower knob is to leave this out and let each account carry its own record."
     },
+    "owner_ids": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 9,
+      "propertyNames": {
+        "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[0-9]{1,20}$"
+      },
+      "description": "Contract B.4 (2.5.0), OPTIONAL: each login this record speaks for — `owner`, and any login in `covers` — mapped to that account's GitHub numeric id as a base-10 string, read from `GET /users/<login>` and added only by a reviewed commit. The signer's badge join reads it (registry plan TRUST-25; tools/build-index.mjs `publisherFor`): a listing that has `plugins/<id>/identity.json` takes this record's badge only when `owner_ids[<the login it is published under>]` equals that identity record's `repository_owner_id`, and a record with no such entry gives it none. A listing with no identity record keeps the join by login.\n\nWHY A NUMBER BESIDE A NAME. A login is a string its owner can give away: `KNICE-TECH` was freed by an organisation rename and is registrable by anybody. A badge joined by login alone is a badge whoever registers a freed login inherits, on the first bound listing they publish. The numeric id does not move with the name and is never reissued, and the identity record pins the one the binding proved — so the two agreeing is the claim \"the account this record was reviewed for is the account that bound this listing\".\n\nA STRING, NOT A NUMBER, for the reason schema/identity-v1.json gives: §0.7's canonical base-10 digit string, never coerced. GitHub ids are past 2^31 and a JSON number is a double. The join compares strings, so a number here matches nothing, which fails closed.\n\nWHAT THE SCHEMA CANNOT SAY and tools/validate.mjs does: every key is a login this record speaks for (`owner` or a `covers` entry), compared case-insensitively as logins are, and no login appears twice in two cases. `maxProperties` is `owner` plus `covers`' eight. Nothing re-fetches these ids: like `covers`, the claim is the reviewed line and no stronger. `signed.publishers` never carries them and stays keyed by login (ID-51)."
+    },
     "display_name": {
       "type": "string",
       "minLength": 1,

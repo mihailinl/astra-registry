@@ -1909,7 +1909,7 @@ const FLOORS = new Map(Object.entries({
   // the list above does.
   "primitives.mjs": 16,
   "catalogue.mjs": 9,
-  "publishers.mjs": 17,
+  "publishers.mjs": 21,
   "validation.mjs": 18,
   "couplings.mjs": 18,
   "listings.mjs": 5,
@@ -1927,7 +1927,7 @@ const FLOORS = new Map(Object.entries({
   "bundles.mjs": 14,
   "index-signature.mjs": 21,
   "signer.mjs": 26,
-  "signer-run.mjs": 8,
+  "signer-run.mjs": 10,
   "rehearsal-r2.mjs": 14,
   "served-set.mjs": 35,
   "revocations.mjs": 24,
