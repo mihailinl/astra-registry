@@ -1152,7 +1152,16 @@ const RETIRED_TEXT = {
     "the machine, because there is no sandbox: a plugin is a native process with the\n" +
     "user's full privileges, and Phase 7 is where that changes. Read the table above\n",
   "site/templates/pages.mjs":
-    "released from. There are no registry accounts, no passwords and nothing to sign in to: the identity\n",
+    "released from. There are no registry accounts, no passwords and nothing to sign in to: the identity\n" +
+    // Commit B's rows (M-T6.2, FLOW-64), verbatim from the pre-cutover tree.
+    "<p>Open an issue with the plugin id and what you observed. Behaviour reports beat every heuristic\n",
+  "POLICY.md":
+    "## 9. Appeals and reports\n\n" +
+    "Open an issue. A rejection names the check that failed and the file it failed\n" +
+    "in — if it does not, that is a bug in the bot and worth reporting on its own.\n",
+  "README.md":
+    "CI build and attest it, and the registry picks it up — by a `/release v0.2.0`\n" +
+    "comment on your listing issue within minutes, or by a daily backstop that polls\n",
 };
 
 /** A tree holding both named documents, amended, plus whatever `extra` says. */
@@ -1180,9 +1189,10 @@ test("M-T4.2: the pre-amend tree is red, once per sentence, naming the file", ()
   assert.equal(r.status, "red");
   const said = r.detail.join("\n");
   for (const rel of Object.keys(RETIRED_TEXT)) assert.match(said, new RegExp(`^${rel.replace(/[.]/g, "\\.")} says`, "m"));
-  // Two A1 sentences, one A2, one sandbox: four findings, and none merged into another.
+  // Two A1 sentences, one A2, one sandbox, and commit B's three: seven findings,
+  // and none merged into another.
   assert.deepEqual([...new Set(r.codes)], ["ROLL47_PROMISE_RESTATED"]);
-  assert.equal(r.detail.filter((d) => / says "/.test(d)).length, 4);
+  assert.equal(r.detail.filter((d) => / says "/.test(d)).length, 7);
   for (const p of ROLL47_PROMISES) assert.match(said, new RegExp(`row ${p.row}\\b`), `row ${p.row} did not fire`);
 });
 
@@ -2248,11 +2258,28 @@ test("repo-settings: TRUST-44's read of what ROLL-7 pins fits the 12 calls the c
 // `ingest.yml`'s three triggers.
 
 const INGEST_REAL = fs.readFileSync(path.join(REPO, ".github", "workflows", "ingest.yml"), "utf8");
-const CUTOVER_DOC = { schema: "astra.registry.cutover/1", cutover_at: "2026-09-27T12:00:00Z" };
+// The three trigger blocks as ingest.yml carried them until the cutover commit
+// (ROLL-33) removed them. Before that commit the real file IS the pre-cutover
+// shape; from it on, that shape is the real file with these put back, so both
+// fixtures stay built from committed material on either side of the cutover.
+const ISSUE_TRIGGER_BLOCKS = [
+  /\n {2}issues:\n {4}types: \[[^\]]*\]/,
+  /\n {2}issue_comment:\n {4}types: \[[^\]]*\]/,
+  /\n {2}repository_dispatch:\n {4}types: \[[^\]]*\]/,
+];
+const INGEST_HAS_TRIGGERS = ISSUE_TRIGGER_BLOCKS.every((b) => b.test(INGEST_REAL));
+const INGEST_PRE = INGEST_HAS_TRIGGERS ? INGEST_REAL : INGEST_REAL.replace(/^on:\n/m,
+  "on:\n  issues:\n    types: [opened, edited, labeled]\n  issue_comment:\n    types: [created]\n" +
+  "  repository_dispatch:\n    types: [plugin-release]\n");
+const INGEST_CUT = ISSUE_TRIGGER_BLOCKS.reduce((t, b) => t.replace(b, ""), INGEST_PRE);
+// Stamped now: ROLL-33 makes cutover_at the commit time, and the rule holds the
+// marker to the commit that brought it (the stamp leg, below).
+const nowStamp = () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+const CUTOVER_DOC = { schema: "astra.registry.cutover/1", cutover_at: nowStamp() };
 const PLAIN_WORKFLOW = "name: plain\non:\n  push:\n    branches: [main]\n  workflow_dispatch:\njobs: {}\n";
 
 /** A fixture with the real ingest.yml, plus `extra` workflows, optionally past cutover. */
-function channelFixture(name, { ingest = INGEST_REAL, extra = {}, cutover = false } = {}) {
+function channelFixture(name, { ingest = INGEST_PRE, extra = {}, cutover = false } = {}) {
   const f = fixture(name);
   f.write(".github/workflows/ingest.yml", ingest);
   for (const [n, text] of Object.entries(extra)) f.write(`.github/workflows/${n}`, text);
@@ -2278,26 +2305,22 @@ test("no-issue-channel: from the cutover marker, every live issue trigger is red
 });
 
 test("no-issue-channel: the cutover commit's own shape — triggers dropped, drain kept — is green", () => {
-  // ROLL-33's edit, made to the REAL ingest.yml: the three triggers go and the
-  // schedule and dispatch stay. Each removal is asserted to have matched once.
-  let cut = INGEST_REAL;
-  for (const block of [
-    /\n {2}issues:\n {4}types: \[[^\]]*\]/,
-    /\n {2}issue_comment:\n {4}types: \[[^\]]*\]/,
-    /\n {2}repository_dispatch:\n {4}types: \[[^\]]*\]/,
-  ]) {
+  // ROLL-33's edit, made to the pre-cutover ingest.yml: the three triggers go and
+  // the schedule and dispatch stay. Each removal is asserted to have matched once.
+  let cut = INGEST_PRE;
+  for (const block of ISSUE_TRIGGER_BLOCKS) {
     assert.equal((cut.match(new RegExp(block.source, "g")) ?? []).length, 1, `${block} did not match exactly once in ingest.yml`);
     cut = cut.replace(block, "");
   }
+  // From the cutover commit on, the real file is that shape.
+  if (!INGEST_HAS_TRIGGERS) assert.equal(INGEST_REAL, cut, "ingest.yml carries no issue trigger, but is not the cutover shape");
   assert.ok(nicTriggers(cut).some((t) => t.trigger === "schedule"), "the edit removed the schedule too");
   const r = nic(channelFixture("nic-cut", { ingest: cut, cutover: true }).dir);
   assert.equal(r.status, "green", r.detail.join("\n"));
 });
 
 test("no-issue-channel: a trigger restored in any spelling, in any workflow, is red after cutover", () => {
-  let cut = INGEST_REAL.replace(/\n {2}issues:\n {4}types: \[[^\]]*\]/, "")
-    .replace(/\n {2}issue_comment:\n {4}types: \[[^\]]*\]/, "")
-    .replace(/\n {2}repository_dispatch:\n {4}types: \[[^\]]*\]/, "");
+  const cut = INGEST_CUT;
   const cases = [
     ["a block key in another workflow", { "copied.yml": "name: copied\non:\n  issue_comment:\n    types: [created]\njobs: {}\n" }, "issue_comment"],
     ["a flow list", { "flow.yml": "name: flow\non: [push, issues]\njobs: {}\n" }, "issues"],
@@ -2323,6 +2346,30 @@ test("no-issue-channel: the real tree is not armed yet, reads every workflow, an
     `the tree carries ${NIC_CUTOVER} and a live issue trigger: ${r.detail.join("\n")}`);
   assert.ok(!r.codes.includes("ISSUE_CHANNEL_FLOOR"), r.detail.join("\n"));
   assert.ok(ruleNames().includes("no-issue-channel"), "the rule is not in the register, so its silence would not be red");
+});
+
+test("no-issue-channel: the marker's cutover_at is the time main acquired it, within a day, or it is red", () => {
+  // ROLL-33 and M-T6.2: cutover_at is the commit time. The cutover commit is a
+  // pull request prepared days ahead, so a stamp from the day it was written is
+  // the failure to catch; the rule compares it with the first-parent commit that
+  // brought the marker.
+  const cut = INGEST_CUT;
+  const fresh = nic(channelFixture("nic-stamp-fresh", { ingest: cut, cutover: true }).dir);
+  assert.equal(fresh.status, "green", fresh.detail.join("\n"));
+  assert.match(fresh.detail.join("\n"), /cutover_at is \d+\.\d h from/);
+
+  const stale = channelFixture("nic-stamp-stale", { ingest: cut });
+  stale.write(NIC_CUTOVER, { schema: "astra.registry.cutover/1", cutover_at: "2026-09-20T00:00:00Z" }).commit("a stamp from the day the branch was written");
+  const r = nic(stale.dir);
+  assert.equal(r.status, "red");
+  assert.deepEqual(r.codes, ["CUTOVER_STAMP_STALE"]);
+
+  // Merged: the moment is the merge on main's first-parent line, not the branch commit.
+  const merged = channelFixture("nic-stamp-merge", { ingest: cut });
+  merged.branch("cutover").write(NIC_CUTOVER, { schema: "astra.registry.cutover/1", cutover_at: nowStamp() }).commit("cutover");
+  merged.checkout("main").git("merge", "-q", "--no-ff", "-m", "merge the cutover", "cutover");
+  const m = nic(merged.dir);
+  assert.equal(m.status, "green", m.detail.join("\n"));
 });
 
 // ── drain-age's leg 2 retires at cutover (M-T6.2 commit B, B-T5.1) ──────────
@@ -2351,6 +2398,14 @@ test("drain-age: a stale releases-seen is red before cutover and retired after i
   f.remove(DRAIN_SEEN).commit("B-T5.1 retires releases-seen");
   const gone = drainAge(f.dir, { now });
   assert.equal(gone.status, "green", gone.detail.join("\n"));
+
+  // BOT-42: after the commit that brought the marker, nothing writes the file
+  // again; deleting it (B-T5.1's retirement) is fine, a write is red.
+  const written = drainFixture("drain-written", { cutover: true, seenAt: stale });
+  written.write(DRAIN_SEEN, { updated_at: "2026-10-09T05:41:00Z", repos: { "someone/plugin": { etag: "x" } } }).commit("a backstop that was not paused");
+  const w = drainAge(written.dir, { now });
+  assert.equal(w.status, "red");
+  assert.ok(w.codes.includes("DRAIN_SEEN_WRITTEN_AFTER_CUTOVER"), w.codes.join(" "));
 
   // Leg 1 is not retired: the hourly drain still has to be routed after cutover.
   const unrouted = drainFixture("drain-unrouted", { cutover: true, seenAt: stale });

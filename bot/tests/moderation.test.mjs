@@ -380,8 +380,10 @@ test("service_decision_id is §0.7's UUID and nothing else", () => {
 
 test("an appeal URL is accepted before cutover and refused after it", () => {
   const withUrl = { ...DELIST, appeal: "https://github.com/mihailinl/astra-registry/issues/42" };
-  // No marker: cutover has not happened (ROLL-33), which is `main` today.
-  assert.equal(cutoverAt(REPO), null);
+  // The tree's own marker, whichever side of the cutover commit this runs on:
+  // null before it (ROLL-33), and the marker's cutover_at from it on.
+  const marker = path.join(REPO, "log", "cutover.json");
+  assert.equal(cutoverAt(REPO), fs.existsSync(marker) ? JSON.parse(fs.readFileSync(marker, "utf8")).cutover_at : null);
   assert.deepEqual(checkEntry(withUrl), []);
   assert.deepEqual(checkEntry(withUrl, "<entry>", { cutoverAt: "2026-12-01T00:00:00Z" }), []);
   const after = checkEntry(withUrl, "<entry>", { cutoverAt: "2026-09-01T00:00:00Z" });

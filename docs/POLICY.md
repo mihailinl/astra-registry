@@ -18,6 +18,16 @@ document is decoration.
 
 ## 0. You always get an answer
 
+> **Since the cutover (ROLL-33).** A listing is requested in Minice's panel at
+> <https://astra.minice.ai/plugins>, and the answer reaches your Minice account
+> as a notice, by e-mail and in the panel, and by Telegram only if you linked it
+> (OD-17). A first listing needs a binding line in
+> `.well-known/astra-plugin-owner` that your account minted, instead of your
+> login on a line of its own. Silence is still a bug in this registry or in the
+> plugins service. The rest of this section describes the issue path as it
+> worked until the cutover; it stays as the record of what applied to
+> submissions made before it, and none of it applies to a new one.
+
 Open a listing request and the bot comments on it. Every time.
 
 That is worth stating because it was not true. Two submissions — `#13` and
@@ -88,6 +98,15 @@ take:
 
 ## 1. The four outcomes
 
+> **Since the cutover (ROLL-33).** The four outcomes are unchanged; they reach
+> you as notices (`notice.published`, `notice.delayed`, `notice.held`,
+> `notice.refused`) and in the panel, not as comments, and there is no issue to
+> close. A held release is decided by a moderator in the panel. A refused
+> release is fixed by a new release, and a refusal can be appealed in the panel.
+> The rest of this section describes the issue path as it worked until the
+> cutover; it stays as the record of what applied to submissions made before it,
+> and none of it applies to a new one.
+
 | Outcome | What it means | Who is involved |
 |---|---|---|
 | **Published** | The listing is committed and reaches the catalogue on the next index build. | Nobody. |
@@ -122,6 +141,13 @@ All five of these, and it goes live with no human:
 Drop the last condition and it still publishes itself — after a delay.
 
 ## 3. The three events that need a person
+
+> **Since the cutover (ROLL-33).** The three events, their codes and the 48-hour
+> SLA are unchanged. A moderator decides each one in the panel; `/approve`,
+> `/reject` and `/publish` on an issue decide nothing any more (BOT-49). The
+> rest of this section describes the issue path as it worked until the cutover;
+> it stays as the record of what applied to submissions made before it, and none
+> of it applies to a new one.
 
 Exactly three, and this list does not grow without a change to this document:
 
@@ -301,6 +327,14 @@ a delay reason waits out its delay like any other release (ROLL-49).
 
 ## 4. The publication delay
 
+> **Since the cutover (ROLL-33).** Every delay below is unchanged. The window a
+> delay buys is used from the panel: the account bound to the listing is told by
+> a notice and can stop the release there before it publishes. A delay is
+> shortened only as this section says, never by a comment. The rest of this
+> section describes the issue path as it worked until the cutover; it stays as
+> the record of what applied to submissions made before it, and none of it
+> applies to a new one.
+
 Some releases publish themselves, but not immediately.
 
 | Situation | Code | Delay |
@@ -410,6 +444,14 @@ release whose re-check now fails, or now needs a person, stops waiting rather
 than being retried for ever.
 
 ## 5. How this registry hears that you released
+
+> **Since the cutover (ROLL-33).** Neither a comment nor the daily backstop: the
+> registry polls every listed, grandfathered and frozen listing's release feed
+> every 30 minutes (BOT-41) and registers each new tag that carries the
+> listing's tag prefix (BOT-74). The bot takes a registered release up at its
+> next run, every 10 minutes (BOT-51). The rest of this section describes the
+> issue path as it worked until the cutover; it stays as the record of what
+> applied to submissions made before it, and none of it applies to a new one.
 
 Three ways in, all of which end in the same verification. None of them requires
 you to hold a credential for this repository — the bot verifies everything from

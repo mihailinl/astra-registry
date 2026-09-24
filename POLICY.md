@@ -230,7 +230,7 @@ nowhere else (MIG-3).
 | Situation | What happens |
 |---|---|
 | Policy breach found before install matters | The listing is removed. `git log plugins/<id>/` keeps the record. |
-| Author asks for removal | **Through an issue here:** removed, no argument, no delay. **Through the plugins service** (amended 2026-09-24): removed, no argument, and at once — unless the takedown bound below is full that day, when it waits for an operator's confirmation. For a listing not yet bound to its author's account, the registry cannot tell the author from anyone else with push access to the repository, so there the request goes to a moderator instead, 7 days after the registry records it. |
+| Author asks for removal | **Through the plugins service**, the only way since the cutover (ROLL-33; amended 2026-09-24, and again in the cutover commit): removed, no argument, and at once — unless the takedown bound below is full that day, when it waits for an operator's confirmation. For a listing not yet bound to its author's account, the registry cannot tell the author from anyone else with push access to the repository, so there the request goes to a moderator instead, 7 days after the registry records it. |
 | Malicious plugin, already installed by users | Removal alone still does nothing to an installed copy — but a **signed revocation** does, and it exists. An advisory with `"action": "disable"` refuses new installs *and* stops the copy that is there and will not start it again; `"block_install"` refuses installs and updates and leaves a running copy alone. `docs/POLICY.md` §8 is the full table. |
 | Licensing or trademark dispute | Listing removed pending resolution. Not a reason to break a working install, so it gets `"action": "warn"` at most, and usually no advisory at all. |
 
@@ -329,9 +329,18 @@ do".
 
 ## 9. Appeals and reports
 
-Open an issue. A rejection names the check that failed and the file it failed
-in — if it does not, that is a bug in the bot and worth reporting on its own.
+**Since the cutover (ROLL-33) both go through Minice's panel**, at
+<https://astra.minice.ai/plugins>, signed in with a Minice account; nothing
+opened on this repository reaches anybody (DEC-12). This section was rewritten
+in the cutover commit.
 
-To report a listed plugin, open an issue with the plugin id and what you
-observed. Reports about behaviour beat every heuristic in this document, and
-they are the mechanism this registry actually relies on.
+An **appeal** against a refusal is made from the account its notice reached, and
+an appeal against a moderation action from the account the listing is bound to
+(MOD-31). A refusal names the check that failed and the file it failed in — if it
+does not, that is a bug in the bot and worth reporting on its own.
+
+To **report** a listed plugin, use the report link on its page in the panel,
+signed in as an Astra owner, and say which version and what you observed (MOD-21,
+MOD-54). Reports about behaviour beat every heuristic in this document, and they
+are the mechanism this registry actually relies on. A security problem is not a
+report: see `SECURITY.md`.

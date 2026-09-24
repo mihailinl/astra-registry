@@ -278,6 +278,10 @@ the same reason.
 
 ## Listing a plugin
 
+**Since the cutover (ROLL-33), a listing is requested in Minice's panel, not
+through an issue here.** This section was rewritten in the cutover commit; the
+issue path it used to describe takes no new submissions (DEC-12).
+
 Three steps, and you write nothing into this repository. The bot writes the
 listing, from your release bundle.
 
@@ -288,20 +292,14 @@ first — `plugin-release.yml` there produces the `.astraplugin` files and the
 which repository, built those exact bytes. Without one there is nothing here to
 verify.
 
-**Second, you need one commit on your side.** `.well-known/astra-plugin-owner`,
-on your default branch, containing your GitHub login on a line of its own:
-
-```bash
-mkdir -p .well-known
-echo YOUR-GITHUB-LOGIN > .well-known/astra-plugin-owner
-git add .well-known/astra-plugin-owner && git commit -m "registry: owner" && git push
-```
-
-That is what proves the account opening the request controls the repository. For
-a repository this registry does not itself own it is the **only** proof
-available — GitHub answers the collaborator endpoint only for a caller that can
-already see the repository, so it tells this bot nothing — and the form asks for
-it as a required confirmation. One commit, no CI.
+**Second, you need a Minice account holding `astraUser`, and one line in your
+repository.** Sign in at <https://astra.minice.ai/plugins>, mint a binding token
+for your repository, and commit the line the panel shows you —
+`astra-binding: <token>` — into `.well-known/astra-plugin-owner` at the root of
+your repository, on the commit you tag, within the file's first 4096 bytes. It
+covers every plugin in that repository. The line records that your account
+consents to the binding; it authenticates no release by itself, and you should
+never merge a binding line you did not mint yourself.
 
 ### 1. Check it locally first
 
@@ -315,44 +313,40 @@ It takes seconds and prints the checks it ran plus the ones only the registry
 can run. Fixing something here is minutes; fixing it after you have submitted is
 a round trip.
 
-### 2. Open a listing request
+### 2. Submit it in the panel
 
-<https://github.com/mihailinl/astra-registry/issues/new?template=plugin-listing.yml>
+<https://astra.minice.ai/plugins/_/submit?repo=OWNER/NAME&tag=TAG>
 
-It asks for **two facts** — the repository and the release tag — and three
-required confirmations, the first being that you have committed
-`.well-known/astra-plugin-owner` to your default branch with your login in it.
-Everything else (id, version, capabilities, permissions, licence,
-summary, platforms, digests) is read out of the bundle, which is covered by the
-attestation. That is why there is no "your form disagrees with `plugin.toml`"
-rejection: the form is not consulted about any of it.
+It takes **two facts** — the repository and the release tag. Everything else
+(id, version, capabilities, permissions, licence, summary, platforms, digests)
+is read out of the bundle, which is covered by the attestation. That is why
+there is no "your form disagrees with `plugin.toml`" rejection: the form is not
+consulted about any of it.
 
-Blank issues are off, so this link is the way in. If you land on a chooser page,
-pick **Plugin listing request**.
-
-### 3. Read the bot's comment
+### 3. Read the answer
 
 The bot downloads your release assets, verifies the attestation, reads the
-manifest and comments on your issue with a table of every check and a digest.
-Allow minutes, not seconds — the run compiles a manifest parser first.
-
-You get one of four answers, always on the thread:
+manifest and decides. The answer reaches your Minice account as a notice, by
+e-mail and in the panel — and by Telegram only if you linked it, which nothing
+requires (OD-17).
 
 | | What it means |
 |---|---|
 | **Published** | Live. Nothing more to do. |
-| **Publishing itself at `<time>`** | Everything passed; it waits out a publication delay and then goes live on its own. |
-| **Held for a maintainer** | A first listing is one of exactly three things a person decides. Answer within 48 h, by `/approve` or `/reject <reason>`. |
-| **Not published** | A check failed. The comment names it and the fix; comment `/recheck` when you have pushed a new release. |
+| **Publishing itself at `<time>`** | Everything passed; it waits out a publication delay and then goes live on its own. You can stop it in the panel until then. |
+| **Held for a moderator** | A first listing is one of exactly three things a person decides, in the panel. |
+| **Not published** | A check failed. The notice names it and the fix; release again with it fixed. You can appeal a refusal in the panel. |
 
-**If you ever get silence, that is a bug in this registry.** Say so on the issue.
+**If a submission of yours gets no notice, that is a bug** in this registry or in
+the plugins service, not a queue you are in.
 
 ### After the first time
 
-Listing happens **once, ever**. Every later release is zero-touch: tag it, let
-CI build and attest it, and the registry picks it up — by a `/release v0.2.0`
-comment on your listing issue within minutes, or by a daily backstop that polls
-your release feed within a week.
+Listing happens **once, ever**. Every later release is zero-touch: tag it with
+your listing's tag prefix, on a commit that carries your binding line, and let CI
+build and attest it. This registry polls your release feed every 30 minutes
+(BOT-41) and takes a registered release up at its next run, every 10 minutes
+(BOT-51). No comment, no form.
 
 A person sees your plugin again only on a newly requested high-risk permission,
 a change of repository, or a report. `docs/POLICY.md` is the detail.

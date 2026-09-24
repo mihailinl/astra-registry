@@ -1472,8 +1472,15 @@ test("every step that runs bot/lib/poll-run.mjs maps what its subcommand reads, 
   const jobs = ingestJobs();
   const workflowEnv = ["DRY_RUN", "POLL_MODE"];
   const src = fs.readFileSync(INGEST_YML, "utf8");
-  assert.match(src, /^env:\n(?:\s+#.*\n|\s+[A-Z_]+:.*\n)*\s+POLL_MODE: shadow\s*$/m,
-    "POLL_MODE is set once, at the top, and B-T5.0 lands it as `shadow`; B-T5.1's commit is the edit to `live`");
+  // B-T5.1 is the cutover commit's (M-T6.2 commit B): POLL_MODE is `live`
+  // exactly when log/cutover.json is on the tree, and `shadow` before. A marker
+  // without the live poll would be a cutover with no release detection at all
+  // (the backstop is paused in the same commit); a live poll before the marker
+  // would register tags the legacy path is still handling.
+  const cut = fs.existsSync(path.join(REPO_ROOT, "log", "cutover.json"));
+  const mode = /^env:\n(?:\s+#.*\n|\s+[A-Z_]+:.*\n)*\s+POLL_MODE: (\w+)\s*$/m.exec(src)?.[1];
+  assert.equal(mode, cut ? "live" : "shadow",
+    `POLL_MODE is ${mode} and log/cutover.json is ${cut ? "" : "not "}on the tree; B-T5.1 flips the mode in the commit that adds the marker, and in no other`);
   let checked = 0;
   for (const [cmd, io] of Object.entries(run.JOB_IO)) {
     const job = jobs[io.job];

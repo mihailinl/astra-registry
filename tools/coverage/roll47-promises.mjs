@@ -104,6 +104,37 @@ export const PROMISES = [
       "sandboxed and will not be (settled); a sentence promising the phase in which that changes is a promise " +
       "the estate has refused to keep",
   },
+  // M-T6.2 commit B, the cutover commit: FLOW-64 moves these three out of
+  // commit C and into the commit that makes them false, and ROLL-47 rows C1
+  // and C4 are where they are listed. `amended` is "cutover" because the text
+  // is dated by the cutover it names (log/cutover.json carries the moment).
+  {
+    row: "C1-report",
+    task: "M-T6.2 commit B (FLOW-64)",
+    literal: "open an issue with the plugin id",
+    amended: "cutover",
+    why:
+      "from the cutover no issue on this repository reaches anybody (DEC-12); a report is made from the plugin's " +
+      "page in Minice's panel, by an Astra owner (MOD-21, MOD-54)",
+  },
+  {
+    row: "C1-appeal",
+    task: "M-T6.2 commit B (FLOW-64)",
+    literal: "open an issue. a rejection names the check",
+    amended: "cutover",
+    why:
+      "from the cutover an appeal is made in the panel, from the account the notice reached (MOD-31), and never " +
+      "on an issue",
+  },
+  {
+    row: "C4-readme",
+    task: "M-T6.2 commit B (FLOW-64)",
+    literal: "comment on your listing issue within minutes",
+    amended: "cutover",
+    why:
+      "from the cutover a later release is found by the poll every 30 minutes (BOT-41) and taken up within 10 " +
+      "(BOT-51); there is no listing issue and no comment. docs/RUNBOOK.md's operator copy is commit C's",
+  },
 ];
 
 /**
