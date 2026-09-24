@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://registry.astra.app/schema/alert-v1.json",
+  "title": "astra.registry.alert/1",
+  "description": "state/alerts/<fingerprint>.json — TRUST-14's alert record: one per fingerprint, written by the service path's publish job in the run whose alert the channel reported delivered, and the record TRUST-32's gate reads (contract B.4 from 2.4.0; registry plan TRUST-14, TRUST-32, B-T3.3b).\n\nREGISTRY-ONLY. No other party reads it, so it is outside SCOPE-8's two-way test and SCOPE-7's file. It is inside TRUST-31's set, as its fourteenth schema, because tools/validate.mjs judges every record against it by literal path from this repository, and a writer who could edit it from outside the set could make the publish path's first check pass a record TRUST-32 reads.\n\nEXACTLY SIX MEMBERS, and they are bot/lib/service-publish.mjs's ALERT_MEMBERS and alertProblems, rule for rule: bot/tests/service.test.mjs holds the two to one verdict on every case it builds, so a rule added to one and not the other is red.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "fingerprint", "event", "approval_decided_at", "delivered_at", "run"],
+  "properties": {
+    "schema": { "const": "astra.registry.alert/1" },
+    "fingerprint": {
+      "$comment": "The submission fingerprint the alert was raised for, 16 lowercase hex. The file is named for it.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$"
+    },
+    "event": {
+      "$comment": "TRUST-14's two events: an approval, and a delayed fingerprint past its publish_after.",
+      "enum": ["approval", "delay_elapsed"]
+    },
+    "approval_decided_at": {
+      "$comment": "The approval's decided_at for an `approval`, and null for `delay_elapsed`. The oneOf below ties the two.",
+      "type": ["string", "null"]
+    },
+    "delivered_at": {
+      "$comment": "The message time the channel reported (§0.7). TRUST-32 publishes nothing before it exists, so no record is written without it.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$"
+    },
+    "run": {
+      "$comment": "<run_id>, or <run_id>/<run_attempt>.",
+      "type": "string",
+      "pattern": "^[0-9]{1,20}(?:/[0-9]{1,5})?$"
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "event": { "const": "approval" },
+        "approval_decided_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$"
+        }
+      }
+    },
+    {
+      "properties": {
+        "event": { "const": "delay_elapsed" },
+        "approval_decided_at": { "type": "null" }
+      }
+    }
+  ]
+}

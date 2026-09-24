@@ -197,6 +197,9 @@ export function loadSchemas(root = REPO_ROOT) {
     // the tree under test — and that reading is what makes the file a gate
     // input rather than a document, which is TRUST-31's test for its set.
     migrationNotice: readJson(path.join(root, "schema", "migration-notice-v1.json")),
+    // Contract 2.4.0's: B.4's alert record, TRUST-31's fourteenth schema,
+    // loaded here for the reason the others are.
+    alert: readJson(path.join(root, "schema", "alert-v1.json")),
   };
 }
 

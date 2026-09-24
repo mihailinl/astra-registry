@@ -82,11 +82,12 @@ export const SLA_BREACH_HOURS = REVIEW_SLA_HOURS * 2;
  *
  * `fix` is FLOW-13's closed list — `recheck`, `new_tag`, `moderator`,
  * `registry`, `none` — and the rule that decides it is stated once, in
- * `bot/lib/codes.mjs`'s header. Here it collapses to three answers: a `review`
+ * `bot/lib/codes.mjs`'s header. Here it collapses to four answers: a `review`
  * waits on a person (`moderator`); `P_REFUSED` points at findings the author
- * clears and then re-runs against the same tag (`recheck`); and every other
- * `P_*` reports something that has already happened, which nothing clears
- * (`none`).
+ * clears and then re-runs against the same tag (`recheck`);
+ * `P_OPERATOR_DENIED` is lifted only by the registry's operator removing the
+ * deny record (`registry`); and every other `P_*` reports something that has
+ * already happened, which nothing clears (`none`).
  *
  * @typedef {{level: string, title: string, remedy: string, stage: string, fix: string}} PolicyCodeDef
  */
@@ -102,6 +103,63 @@ export const POLICY_CODES = {
     level: "error", stage: "policy", fix: "recheck",
     title: "Not published, because a check failed",
     remedy: "Fix the blocking findings above and comment `/recheck`. The policy did not reject this; a check did.",
+  },
+  // Contract 2.4.0 (registry plan TRUST-33). A deny record is the operator's
+  // stop, outside the service and the moderators; until 2.4.0 it was reported
+  // as `P_REFUSED`, whose `recheck` told the author a Recheck could clear it.
+  P_OPERATOR_DENIED: {
+    level: "error", stage: "policy", fix: "registry",
+    title: "Not published: the registry's operator withheld this exact build",
+    remedy:
+      "An operator deny record on `main` names this fingerprint (TRUST-33). No Recheck, approval or " +
+      "moderator decision clears it; only the operator removing the record does. A new tag is a new " +
+      "fingerprint and is judged afresh.",
+  },
+  // The five binding refusals the bot emits (contract B.7; FLOW-13's `fix` per
+  // contract 2.5.0, lane S6). They keep their BOUND_WORLD_CODES level below;
+  // this entry is what `policyCodeDef` answers first and what
+  // tools/gen-codes-table.mjs publishes as their FLOW-13 rows. The two
+  // panel-only details of B_BINDING_UNUSABLE are not here: the bot never
+  // emits them (BOT-89), and their rows are the service's to render. (Named
+  // without quotes on purpose: tools/selftest/scope9.mjs reads a quoted code
+  // name in this directory as a code the bot carries.)
+  B_UNBOUND: {
+    level: "error", stage: "ownership", fix: "new_tag",
+    title: "No binding line where the registry needs one",
+    remedy:
+      "From cutover, a first listing and a frozen listing's next release need an `astra-binding:` line in " +
+      "`.well-known/astra-plugin-owner` at the tagged commit (ID-25). Mint a token in the Astra plugins panel, " +
+      "commit its line and push a new tag: the line is read at the attested commit, so this tag cannot change.",
+  },
+  B_BINDING_MALFORMED: {
+    level: "error", stage: "ownership", fix: "new_tag",
+    title: "The binding file is not one well-formed binding line",
+    remedy:
+      "`.well-known/astra-plugin-owner` must hold exactly one `astra-binding: <token>` line (ID-24). Fix the file " +
+      "and push a new tag: the line is read at the attested commit.",
+  },
+  B_BINDING_UNUSABLE: {
+    level: "error", stage: "ownership", fix: "new_tag",
+    title: "The binding token on the tagged commit cannot bind this release",
+    remedy:
+      "The token in `.well-known/astra-plugin-owner` at the tagged commit cannot bind this repository (ID-9); " +
+      "the Astra plugins panel tells the token's owner why. Mint a fresh token there if you need one, commit its " +
+      "line and push a new tag.",
+  },
+  B_OWNER_CHANGED: {
+    level: "error", stage: "ownership", fix: "moderator",
+    title: "The repository's owner changed since it was bound",
+    remedy:
+      "The owner the build attestation names differs from the one this listing's identity record carries " +
+      "(ID-41). A moderator decides what happens next; a new tag or a Recheck does not clear it.",
+  },
+  B_REPOSITORY_RECYCLED: {
+    level: "error", stage: "ownership", fix: "moderator",
+    title: "The repository was re-created under this name by another owner",
+    remedy:
+      "This refusal is permanent for the repository's recorded identity (ID-41): no Recheck, new tag or approval " +
+      "clears it. Only a moderator's identity reset (`M_IDENTITY_RESET`) does, after which the next release is " +
+      "reviewed as a first binding.",
   },
   R_FIRST_LISTING: {
     level: "review", stage: "policy", fix: "moderator",

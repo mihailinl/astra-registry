@@ -2390,24 +2390,28 @@ export function checkRecords(ctx, sources, records = loadRecords(ctx.root, sourc
     }
   }
 
-  // ── alert records: the path is accepted; the members are RC-R1-4's ────────
+  // ── alert records: `astra.registry.alert/1`, schema/alert-v1.json ─────────
+  //
+  // Contract 2.4.0 publishes the kind and TRUST-31 takes its schema in. Until
+  // then this loop checked only that a record said what it was, and a note
+  // said the members were unchecked; the schema is the composer's own rules
+  // (bot/lib/service-publish.mjs's alertProblems), and the times are
+  // round-tripped here, because a pattern admits days that do not exist.
   for (const { file, doc } of alerts) {
     if (doc === null || typeof doc !== "object" || Array.isArray(doc)) {
       report.error(file, "is not a JSON object");
       continue;
     }
-    if (typeof doc.schema !== "string" || doc.schema.length === 0) {
-      report.error(file, "carries no `schema` string",
-        "Every record in this repository that another party may read says what it is. This one's member set is " +
-        "contract TRUST-14's and registry plan RC-R1-4's to fix; until that schema exists this is the whole of " +
-        "what can be checked, and it is checked rather than assumed.");
+    for (const p of validateSchema(schemas.alert, doc, "$")) {
+      report.error(file, `${p.path} ${p.message}`,
+        "An alert record is what TRUST-32's gate reads before it lets an approval or an elapsed delay publish, " +
+        "so a record the composer would not have written is refused rather than counted from.");
     }
-  }
-  if (alerts.length) {
-    report.note(ALERTS_DIR,
-      `${alerts.length} alert record(s) accepted by path and not schema-checked: TRUST-14's member set is ` +
-      "RC-R1-4's schema to write, and inventing one here would put a second, older answer in the tree",
-      "This note exists so a reader meets the gap rather than reading a silent pass as a check.");
+    for (const k of ["approval_decided_at", "delivered_at"]) {
+      if (typeof doc[k] !== "string") continue;
+      const bad = unreadableTime(doc[k], `${file}'s \`${k}\``);
+      if (bad) report.error(file, bad, "The pattern admits dates that are not moments.");
+    }
   }
 }
 

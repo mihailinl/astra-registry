@@ -466,6 +466,12 @@ exists first; nothing downstream changes when it arrives.
 |---|---|
 | `P_PUBLISHED` | Live, nobody in the loop. What a routine release looks like. |
 | `P_REFUSED` | A check failed; the policy never ran. The reason is above it in the same comment. |
+| `P_OPERATOR_DENIED` | The registry's operator withheld this exact build with a deny record. Only the operator can lift it; a new tag is judged afresh. |
+| `B_UNBOUND` | No binding line where one is needed: a first listing from cutover, or a frozen listing's next release. Commit the line and tag again. |
+| `B_BINDING_MALFORMED` | The binding file is not exactly one `astra-binding:` line. Fix it and tag again. |
+| `B_BINDING_UNUSABLE` | The binding token on the tagged commit cannot bind this repository. The panel tells the token's owner why; tag again with a usable line. |
+| `B_OWNER_CHANGED` | The repository's owner changed since it was bound. A moderator decides. |
+| `B_REPOSITORY_RECYCLED` | The repository was re-created by another owner. Permanent, until a moderator resets the listing's identity. |
 | `R_FIRST_LISTING` | First listing — a person reads it, once, ever. |
 | `R_NEW_HIGH_RISK` | A high-risk permission this plugin did not have before. |
 | `R_IDENTITY_CHANGED` | The repository this plugin is listed from changed. |

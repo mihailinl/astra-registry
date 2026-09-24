@@ -224,7 +224,9 @@ export function serialiseSeen(seen) {
     {
       $comment:
         "What the release backstop last saw, per listed repository (PRODUCTION_PLAN task 3.4). " +
-        "Cache only: deleting this file costs one full poll of every listing and nothing else. " +
+        "Mostly a cache: deleting this file costs one full poll of every listing, and it re-offers " +
+        "each tag held here as seen because its listing request was withdrawn (BOT-74, MIG-23; " +
+        "bot/tests/poll.test.mjs names them). " +
         "`etag` is fed back as If-None-Match so an unchanged repository costs a 304.",
       updated_at: seen.updated_at ?? null,
       repos,
