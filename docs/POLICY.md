@@ -168,8 +168,11 @@ expensive than not declaring — an undeclared authority simply does not work.
 
 **What it still does not buy.** A permission decides what the daemon will do
 *for* a plugin. It decides nothing about what the plugin's own process may do to
-the machine, because there is no sandbox: a plugin is a native process with the
-user's full privileges, and Phase 7 is where that changes. Read the table above
+the machine, because there is no sandbox, and there will not be one: a plugin is
+a native process with the user's full privileges, deliberately, so that people
+can build what Astra does not ship. (*Amended 2026-09-24:* this sentence used to
+name a later phase in which that would change. No such phase is planned.) Read
+the table above
 as "what the daemon will permit", and root `POLICY.md` §0 for the part no
 permission model reaches.
 
@@ -452,9 +455,17 @@ exists first; nothing downstream changes when it arrives.
 A badge belongs to the **account**, never to the plugin, and never to the
 `author` string. That string is read out of the plugin's own manifest, inside
 the bundle, and it is whatever the author typed — a badge keyed on it would be
-forged by a one-line edit. The only identity this registry proves is the GitHub
-owner of `source.repo`, because that is what the ownership check binds to, so
-that is what carries a tier.
+forged by a one-line edit. A badge is keyed on the GitHub owner of
+`source.repo`, because that is what the ownership check binds to, so that is
+what carries a tier.
+
+*Amended 2026-09-24, for rollout step R4a.* This section used to say that the
+GitHub owner was the only identity the registry proves. From R4a that is no
+longer the whole of it: binding a repository to its listing needs a Minice
+account holding `astraUser`, and that account is the one told about each of the
+listing's releases, with the means to stop one. The registry itself still has no
+accounts, and a badge still names the GitHub owner — never the Minice account,
+which is not published here.
 
 Records live in `publishers/<owner>.json`, hand-written and hand-reviewed like a
 listing. They are joined into `signed.publishers` at generation time and are
@@ -599,9 +610,9 @@ escalation table above: they are the other direction. An appeal that is
 `reversed` is followed by whichever of the first two it calls for.
 
 A reverted delist, deprecate or revoke applies **at once** — unheld, and outside
-the takedown bound — because a correction that queues behind a bound designed to
-slow takedowns down is a correction that leaves a wrongly-withdrawn plugin
-withdrawn for longer.
+the takedown bound (root `POLICY.md` §7 states it and what counts toward it) —
+because a correction that queues behind a bound designed to slow takedowns down
+is a correction that leaves a wrongly-withdrawn plugin withdrawn for longer.
 
 ### How it reaches a machine, and how fast
 

@@ -7,9 +7,10 @@
 // belong to other tasks, landing across R1, R2, R3 and R6: M-T1.3's docs grep,
 // M-T5.7's mirror-staleness alarm, M-T2.1's examples rule, M-T5.8's badge
 // trailer, the ROLL-47 promise greps, RC-R1-9(b)'s keepalive age, and M-T6.2's
-// no-issue-channel rule. Seven of the eight have landed (M-T6.2's on 2026-09-24,
-// armed by the cutover marker); the seam below carries
-// what is left. Eight steps in one job, each `if: always()` so one red
+// no-issue-channel rule. All eight have landed — M-T5.8 and the ROLL-47 promise
+// greps on 2026-09-24, and M-T6.2's no-issue-channel rule the same day, armed
+// by the cutover marker — and the seam below says what each still adds.
+// Eight steps in one job, each `if: always()` so one red
 // rule does not hide the next, is easy. The failure that shape permits is not:
 // a step that never ran — a typo in a path, a `continue-on-error` somebody
 // added while debugging, a step deleted in a merge, a rule that threw before
@@ -133,6 +134,16 @@ export const RULES = [
     network: true,
   },
   {
+    name: "roll47-promises",
+    owner: "M-T4.2 (ROLL-47 A1, A2, and its rewrite clause); M-T4.3 and M-T6.2 add their rows",
+    script: "tools/coverage/roll47-promises.mjs",
+    what:
+      "no tracked text file outside authors' words restates a promise ROLL-47 has retired — rows A1 and A2's " +
+      "account promises and the sandbox-phase prose, spelled in that rule's own table and nowhere else here — " +
+      "and the scan read both documents the plan names and at least its floor of files",
+    network: false,
+  },
+  {
     name: "no-issue-channel",
     owner: "M-T6.2 (DEC-12, ROLL-33)",
     script: "tools/coverage/no-issue-channel.mjs",
@@ -149,11 +160,15 @@ export const RULES = [
   // that task does — which for M-T6.2 is R6. An alarm that fires for six
   // milestones is an alarm somebody switches off in month one (TRUST-45).
   //
-  //   { name: "roll47-promises",     owner: "M-T4.2, M-T4.3, M-T6.2",  … }          R4a
+  // `roll47-promises` landed with M-T4.2 (above); M-T4.3 and M-T6.2 add their
+  // ROLL-47 rows to its PROMISES table, not a second rule here.
+  //
+  // `no-issue-channel` landed before cutover (above), armed by log/cutover.json;
+  // commit C adds its `issues: write` leg (M-T6.2).
   //
   // M-T5.8's badge-withdrawal trailer is NOT a line here: the plan puts it
   // inside `tools/moderation-coverage.mjs`'s walk, beside the rules it is one
-  // of, and that file carries the seam for it instead.
+  // of, and it landed there (`badgeNarrowing`, `badgeWithdrawnCover`).
 ];
 
 /**

@@ -3124,6 +3124,128 @@ await test("M-T3.2 — the takedown bound the code enforces is the one a documen
   }
 });
 
+// reg.61a's other two numbers — B-T3.3b's half of it — and the bot's copy.
+//
+// BOT-26 (4) honours an approval only while its `decided_at` is younger than
+// "the POLICY.md maximum, which the owner set at 7 days (OPEN-OWNER-5) … and
+// with none committed no approval passes". BOT-28 waits an approved update
+// with no delay reason for "the POLICY.md number, which the owner set at 6 h
+// (OPEN-OWNER-6) … without which it waits". Both rules are keyed on the
+// DOCUMENT, as TRUST-26's bound is: the number is a promise to authors first,
+// and the bot is what keeps it. So the three are held together here the same
+// way M-T3.2 holds the bound above:
+//
+//   * the constants in `bot/lib/moderation.mjs` are the owner's 7 and 6. A
+//     different value is a policy change, which is his, and an edit to the
+//     contract's BOT-26 or BOT-28 — never a constant edit that a document
+//     edit in the same commit makes look consistent;
+//   * POLICY.md states each EXACTLY ONCE, in the form this check reads, and
+//     that statement equals the constant;
+//   * no published policy document states either in another value.
+//
+// THE CANONICAL FORMS are this check's own requirement, as M-T3.2's and
+// MIG-3's are theirs: "approval is honoured for <n> days" and "approved update
+// waits <n> hours", a digit or the word. A machine can hold two documents and
+// a constant to one number only if it can find the number.
+//
+// **These are not TRUST-27's 7 days or TRUST-32's 6-hour operator window**,
+// which are the same two numbers in the same units and are B-T3.10's: the
+// first is how long an `R_FIRST_BINDING` approval waits before it may be
+// honoured, the second how long a delivered operator alert waits before a
+// publication. A check that read "7 days" anywhere near "approval" would pin
+// all of them to one another and be green on the day one of them moved, which
+// is FLOW-42's lesson in M-T3.2's scan arriving again.
+await test("reg.61a — the approval maximum and the approved-update window are the owner's, and POLICY.md publishes each once", async () => {
+  const m = await import("../lib/moderation.mjs");
+  const { execFileSync } = await import("node:child_process");
+  const WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9 };
+  const N = "(\\d+|one|two|three|four|five|six|seven|eight|nine)";
+  const numbers = [
+    {
+      name: "APPROVAL_MAX_AGE_DAYS", owner: 7, unit: "days", open: "OPEN-OWNER-5", rule: "BOT-26 (4)",
+      shut: "no approval passes",
+      re: new RegExp(`\\bapprovals?\\s+(?:is|are)\\s+honoured\\s+for\\s+${N}\\s+days?\\b`, "gi"),
+      form: "approval is honoured for <n> days",
+    },
+    {
+      name: "APPROVED_UPDATE_WINDOW_HOURS", owner: 6, unit: "hours", open: "OPEN-OWNER-6", rule: "BOT-28",
+      shut: "an approved update with no delay reason waits for ever",
+      re: new RegExp(`\\bapproved\\s+updates?\\s+waits?\\s+${N}\\s+hours?\\b`, "gi"),
+      form: "approved update waits <n> hours",
+    },
+  ];
+  const read = (rel) => fs.readFileSync(path.join(REPO_ROOT, rel), "utf8");
+  // The TRACKED policy documents, as M-T3.2 counts them: a third one is a
+  // document this scan would never open.
+  const tracked = execFileSync("git", ["-C", REPO_ROOT, "ls-files"], { encoding: "utf8", env: cleanEnv() })
+    .split("\n").filter((p) => /(^|\/)POLICY\.md$/.test(p)).sort();
+  assertEqual(tracked.join(", "), "POLICY.md, docs/POLICY.md",
+    "the published policy documents are not the two this check reads");
+
+  for (const n of numbers) {
+    const value = m[n.name];
+    assertEqual(value, n.owner,
+      `bot/lib/moderation.mjs's ${n.name} is ${JSON.stringify(value)}. The owner set ${n.owner} ${n.unit} on ` +
+      `2026-09-13 (${n.open}) and contract ${n.rule} carries his number; a different one is his to give and a ` +
+      "contract edit to record, and a constant moved together with the document would read as consistent here");
+    const claims = tracked.flatMap((rel) => {
+      const text = read(rel);
+      return [...text.matchAll(n.re)].map((c) => ({
+        where: `${rel}:${text.slice(0, c.index).split("\n").length}`,
+        value: WORDS[c[1].toLowerCase()] ?? Number(c[1]),
+      }));
+    });
+    const inPolicy = claims.filter((c) => c.where.startsWith("POLICY.md:"));
+    assertEqual(inPolicy.length, 1,
+      `POLICY.md states ${inPolicy.length} ${n.name} value(s) in the form this check reads ` +
+      `(${inPolicy.map((c) => c.where).join(", ") || "none"}). reg.61a states it exactly once, as ` +
+      `\`${n.form}\`; until a document does, ${n.rule} fails closed — ${n.shut}`);
+    for (const c of claims) {
+      assertEqual(c.value, value,
+        `${c.where} publishes ${c.value} ${n.unit} and bot/lib/moderation.mjs keeps ${value}. The published ` +
+        "number is the promise; the constant is what keeps it");
+    }
+  }
+});
+
+// ROLL-47's row C6, the half of it reg.61a owns. POLICY.md §7 promised an
+// author's removal request "Removed, no argument, no delay." MOD-9's holds
+// make that false on the plugins-service path: a request for a listing with no
+// bound account reaches a moderator only after TRUST-27's 7 days (FLOW-28),
+// and one above the takedown bound waits for an operator. ROLL-47 wants the
+// promise amended explicitly, DATED, with a grep canary. This is the canary.
+//
+// **It was amended ahead of the change that first makes it false** — the
+// moderation run going live at R3 — on 2026-09-24, and that is a reading of
+// ROLL-47 rather than a departure from it. The amended row keeps the issue
+// path's promise word for word and states the plugins-service path's waits,
+// and it is true on both sides of R3: before it, that path decides nothing and
+// its waits cost nobody anything; after it, they are what happens. A row
+// amended late is false for a while. A row amended early and scoped is not.
+await test("ROLL-47 C6 — POLICY.md's removal row states the plugins-service path's waits, dated, and not \"no delay\"", () => {
+  const doc = fs.readFileSync(path.join(REPO_ROOT, "POLICY.md"), "utf8");
+  const rows = doc.split("\n").filter((l) => /^\|\s*Author asks for removal\s*\|/.test(l));
+  assertEqual(rows.length, 1,
+    `POLICY.md §7 has ${rows.length} \`Author asks for removal\` row(s); this canary reads exactly one`);
+  const row = rows[0];
+  const cell = row.split("|").slice(2).join("|").trim();
+  assert(!/^Removed, no argument, no delay\.?\s*\|?$/.test(cell),
+    "POLICY.md §7 promises an author's removal request \"Removed, no argument, no delay\" again, unqualified. On " +
+    "the plugins-service path MOD-9 holds an unbound listing's request for a moderator after TRUST-27's 7 days " +
+    "(FLOW-28) and holds any takedown above the bound for an operator, so the promise is false there; ROLL-47 " +
+    "C6 requires it amended, dated, and this is its canary");
+  assert(/\bamended\s+\d{4}-\d{2}-\d{2}\b/i.test(row),
+    "POLICY.md §7's removal row is amended but not DATED. ROLL-47 requires each promise it lists amended " +
+    "\"explicitly, dated\", so that a reader can tell which version of the promise they were given");
+  for (const [what, re] of [
+    ["which path the waits are on", /plugins service/i],
+    ["that above the takedown bound the request waits for an operator", /\boperator\b/i],
+    ["that an unbound listing's request goes to a moderator", /\bmoderator\b/i],
+  ]) {
+    assert(re.test(row), `POLICY.md §7's removal row never says ${what} (FLOW-28, MOD-9)`);
+  }
+});
+
 
 // ── B-T3.3c: the outcomes that write nothing ────────────────────────────────
 
