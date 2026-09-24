@@ -688,8 +688,10 @@ people off a competitor.
 What the log does not contain, stated on the page itself: submissions refused
 before they were ever listed (those are public issues), reports received and not
 acted on (publishing those publishes an unsubstantiated accusation), and anything
-about installed copies — this registry has no telemetry and cannot tell you how
-many people are running a withdrawn version.
+about installed copies — this registry receives nothing from them. (Amended YYYY-MM-DD,
+ROLL-47 B3: Minice's plugins service counts installs and updates as aggregates
+under its own privacy disclosure, ROLL-48; the catalogue's `downloads` and
+`stars` stay `0`, and nothing here names a person or a machine.)
 
 ## 10. Triage: how long a report takes
 

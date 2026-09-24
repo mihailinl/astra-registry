@@ -1152,7 +1152,19 @@ const RETIRED_TEXT = {
     "the machine, because there is no sandbox: a plugin is a native process with the\n" +
     "user's full privileges, and Phase 7 is where that changes. Read the table above\n",
   "site/templates/pages.mjs":
-    "released from. There are no registry accounts, no passwords and nothing to sign in to: the identity\n",
+    "released from. There are no registry accounts, no passwords and nothing to sign in to: the identity\n" +
+    // M-T4.3's rows (ROLL-47 B1-B3), verbatim from the tree before the install deploy.
+    "<li><strong>Anything about installed copies.</strong> This registry has no telemetry, receives no\n" +
+    "install pings, and cannot tell you how many people are running a withdrawn version. The download\n",
+  "README.md":
+    "  because the daemon's current reader requires the fields. This registry counts\n" +
+    "  nothing about anyone; \"popular\" sorting will need a source that is not a\n",
+  "docs/extra-b3.md":
+    "about installed copies — this registry has no telemetry and cannot tell you how\n" +
+    "many people are running a withdrawn version.\n",
+  ".github/ISSUE_TEMPLATE/report.yml":
+    "        **What this registry cannot tell you.** It has no telemetry. It cannot\n" +
+    "        say how many people are running the version you are reporting, and it\n",
 };
 
 /** A tree holding both named documents, amended, plus whatever `extra` says. */
@@ -1180,10 +1192,24 @@ test("M-T4.2: the pre-amend tree is red, once per sentence, naming the file", ()
   assert.equal(r.status, "red");
   const said = r.detail.join("\n");
   for (const rel of Object.keys(RETIRED_TEXT)) assert.match(said, new RegExp(`^${rel.replace(/[.]/g, "\\.")} says`, "m"));
-  // Two A1 sentences, one A2, one sandbox: four findings, and none merged into another.
-  assert.deepEqual([...new Set(r.codes)], ["ROLL47_PROMISE_RESTATED"]);
-  assert.equal(r.detail.filter((d) => / says "/.test(d)).length, 4);
+  // Two A1 sentences, one A2, one sandbox, and M-T4.3's four: eight findings,
+  // and none merged into another.
+  assert.ok(r.codes.includes("ROLL47_PROMISE_RESTATED"), r.codes.join(" "));
+  assert.equal(r.detail.filter((d) => / says "/.test(d)).length, 8);
   for (const p of ROLL47_PROMISES) assert.match(said, new RegExp(`row ${p.row}\\b`), `row ${p.row} did not fire`);
+});
+
+test("M-T4.3: an amendment prepared ahead of its day is red until it is dated, in the table and in the text", () => {
+  const dated = (p) => ({ ...p, amended: /^\d{4}-\d{2}-\d{2}$/.test(p.amended) || p.amended === "cutover" ? p.amended : "2026-10-01" });
+  const f = promisesFixture("undated-text", { "docs/extra.md": "Some prose. Amended YYYY-MM-DD (ROLL-47 B1): counted.\n" });
+  const r = roll47(f.dir, { promises: ROLL47_PROMISES.map(dated) });
+  assert.equal(r.status, "red");
+  assert.deepEqual([...new Set(r.codes)], ["ROLL47_UNDATED_AMENDMENT"]);
+  assert.match(r.detail.join("\n"), /docs\/extra\.md carries an amendment whose date is still the placeholder/);
+  const clean = promisesFixture("dated-text", { "docs/extra.md": "Some prose. Amended 2026-10-01 (ROLL-47 B1): counted.\n" });
+  assert.equal(roll47(clean.dir, { promises: ROLL47_PROMISES.map(dated) }).status, "green");
+  const table = roll47(clean.dir, { promises: [...ROLL47_PROMISES.map(dated), { row: "Bx", task: "t", literal: "zzz qqq", amended: "YYYY-MM-DD", why: "w" }] });
+  assert.deepEqual([...new Set(table.codes)], ["ROLL47_UNDATED_AMENDMENT"]);
 });
 
 test("M-T4.2: each literal is found across a line break and in any case, and each row alone reds", () => {

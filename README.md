@@ -407,10 +407,12 @@ Named, so nobody assumes otherwise:
   to and the maintainer reading the diff is the control. `bot/run-checks.mjs`
   prints every such unchecked row on every run rather than reporting a clean
   bill of health.
-- **No download counts, no stars, no telemetry.** The index emits `0` for both
-  because the daemon's current reader requires the fields. This registry counts
-  nothing about anyone; "popular" sorting will need a source that is not a
-  privacy problem before it means anything.
+- **No download counts and no stars in the catalogue.** The index emits `0` for
+  both because the daemon's current reader requires the fields, and it will go on
+  emitting `0`. **Amended YYYY-MM-DD (ROLL-47 B1):** this repository itself still
+  receives nothing from an installed copy, but Minice's plugins service now counts
+  installs and updates as aggregates, under its own privacy disclosure (ROLL-48);
+  "popular" sorting, if it comes, comes from there and not from this catalogue.
 - **Not the desktop update manifest.** Its signer, its test-key helpers and
   their tests moved into Astra as `tools/update-manifest-signer/`, and the
   records of each signed release as `release-records/`, at
