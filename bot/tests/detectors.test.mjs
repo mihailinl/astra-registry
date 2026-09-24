@@ -207,7 +207,9 @@ test("MIG-20's tree check: a baselined version whose `migration` record is gone"
   const file = fs.readdirSync(path.join(dir, "log/decisions/2026/01"))[0];
   fs.rmSync(path.join(dir, "log/decisions/2026/01", file));
   commit(dir, "registry: a record disappears", "2026-01-04T00:00:00Z");
-  assert.deepEqual(codes(detect({ root: dir })), ["MIG20_NO_MIGRATION_RECORD"]);
+  // Two witnesses since the marker's count became a floor: the version with
+  // no record, and a walk that reads fewer records than the baseline wrote.
+  assert.deepEqual(codes(detect({ root: dir })), ["A1_RECORDS_BELOW_MARKER", "MIG20_NO_MIGRATION_RECORD"]);
 });
 
 test("MIG-20's tree check: a staging entry never carries a baseline record", () => {
@@ -942,4 +944,105 @@ test("a green run is a green verdict, and it still names the check", () => {
   assert.deepEqual(verdictProblems(doc), []);
   assert.equal(doc.status, "green");
   assert.equal(doc.check, "detectors");
+});
+
+// ── B-T3.8: the detectors over records the real writers make ────────────────
+//
+// Every fixture above hand-writes its records. These seed the tree with the
+// writers the registry actually runs — `bot/baseline.mjs`'s composer and
+// `bot/lib/decisions.mjs`' writer, under BOT-35's own keys — because a
+// detector armed by the marker is only as good as its agreement with the shape
+// of what the marker lets through, and the marker and those writers landed
+// together.
+
+import { composeRecords, marker as baselineMarker } from "../baseline.mjs";
+import { legacyKey, migrationKey as decisionsMigrationKey, writeDecisionRecord } from "../lib/decisions.mjs";
+
+/** The baseline commit as `bot/baseline.mjs --write` makes it: its records, its marker, one commit. */
+function realBaseline(dir, versions) {
+  const sourceCommit = git(dir, ["rev-parse", "HEAD"]);
+  const facts = versions.map(([id, version, over = {}]) => ({
+    plugin_id: id, version, repo: `example/${id}`, tag: `v${version}`, commit: "c".repeat(40),
+    fingerprint: `${id.length}${version.replace(/\./g, "")}`.padEnd(16, "0").slice(0, 16),
+    outcome: "verified", repository_id: "111", repository_owner_id: "222", ...over,
+  }));
+  const at = new Map(facts.map((f) => [`${f.plugin_id}@${f.version}`, "2026-01-01T00:00:00Z"]));
+  for (const { key, record } of composeRecords(facts, at)) {
+    assert.equal(key, decisionsMigrationKey(record));
+    writeDecisionRecord({ key, record, root: dir });
+  }
+  write(dir, "log/baseline.json", baselineMarker({
+    writtenAt: "2026-01-02T00:00:00Z", sourceCommit, versionCount: facts.length, recordCount: facts.length,
+  }));
+  return commit(dir, "baseline: MIG-20's migration records and marker", "2026-01-02T00:00:00Z");
+}
+
+/** One legacy decision, as `bot/decide.mjs`'s writer files it. */
+function legacyRecord(dir, { state, version = "1.1.0", decided_at, fingerprint = "a1b2c3d4e5f60718", extra = {} }) {
+  const record = {
+    decided_at, actor: "bot", trigger: state === "published" ? "legacy" : "issue", plugin_id: "alpha", version,
+    repo: "example/alpha", repository_id: "111", repository_owner_id: "222", tag: `v${version}`, fingerprint, state,
+    ...extra,
+  };
+  return writeDecisionRecord({ key: legacyKey({ repo: record.repo, tag: record.tag, fingerprint, state }), record, root: dir });
+}
+
+test("B-T3.8: over a baseline the real writer made, all four detectors run and a quiet tree is quiet", () => {
+  const dir = estate();
+  realBaseline(dir, [["alpha", "1.0.0"]]);
+  const r = detect({ root: dir });
+  assert.deepEqual(skipped(r), ["A7"], "a detector the marker arms still skipped");
+  assert.deepEqual(codes(r), [], JSON.stringify(r.findings));
+  assert.equal(r.scanned.records, 1);
+  assert.equal(r.scanned.versions_baselined, 1);
+});
+
+test("A3: a delay that drained — the `delayed` record, then the entry removed with its `published` record — is silent", () => {
+  // The sequence every delayed release takes, written by the writers that
+  // write it: run one records `delayed` and queues; the drain removes the
+  // entry and records `published`, in one commit. A3 read every `delayed`
+  // record as a live promise, so the drained one alarmed for ever — on the
+  // first delayed release after the baseline, and every hour after.
+  const dir = estate();
+  realBaseline(dir, [["alpha", "1.0.0"]]);
+  legacyRecord(dir, { state: "delayed", decided_at: "2026-01-03T00:00:00Z", extra: { publish_after: "2026-01-04T00:00:00Z" } });
+  write(dir, "state/queue/alpha@1.1.0.json", { repo: "example/alpha", tag: "v1.1.0", publish_after: "2026-01-04T00:00:00Z" });
+  commit(dir, "registry: publish (issues) — delayed", "2026-01-03T00:00:00Z");
+  assert.deepEqual(codes(detect({ root: dir })), [], "a delay and its entry alarmed");
+
+  fs.rmSync(path.join(dir, "state/queue/alpha@1.1.0.json"));
+  version_(dir, "alpha", "1.1.0");
+  legacyRecord(dir, { state: "published", decided_at: "2026-01-04T01:00:00Z" });
+  commit(dir, "registry: publish (schedule) — drained", "2026-01-04T01:00:00Z");
+  assert.deepEqual(codes(detect({ root: dir })), [], "a drained delay alarmed as a promise never queued");
+});
+
+test("A3: a delay superseded by a record for OTHER bytes is still a promise, and still alarms without its entry", () => {
+  // The supersession is keyed on the fingerprint the delay was for: a later
+  // record about a re-cut release of the same version does not settle a
+  // promise made about the first bytes.
+  const dir = estate();
+  realBaseline(dir, [["alpha", "1.0.0"]]);
+  legacyRecord(dir, { state: "delayed", decided_at: "2026-01-03T00:00:00Z", extra: { publish_after: "2026-01-04T00:00:00Z" } });
+  legacyRecord(dir, { state: "held", decided_at: "2026-01-03T02:00:00Z", fingerprint: "ffffffffffffffff" });
+  commit(dir, "registry: a promise with no entry, and a hold about other bytes", "2026-01-03T02:00:00Z");
+  assert.deepEqual(codes(detect({ root: dir })), ["A3_DELAYED_NO_ENTRY"]);
+});
+
+test("the records a baseline counted are a floor: fewer on the tree is a finding, not a quieter detector", () => {
+  // Records are never deleted (DEC-7; git never forgets), and the marker says
+  // how many the baseline wrote. A walk that sees fewer has lost its input —
+  // a moved directory, a broken reader — and a detector that reads nothing
+  // finds nothing.
+  const dir = estate();
+  listing(dir, "beta", "2.0.0");
+  commit(dir, "beta", "2026-01-01T01:00:00Z");
+  realBaseline(dir, [["alpha", "1.0.0"], ["beta", "2.0.0"]]);
+  for (const f of fs.readdirSync(path.join(dir, "log/decisions/2026/01"))) {
+    const doc = JSON.parse(fs.readFileSync(path.join(dir, "log/decisions/2026/01", f), "utf8"));
+    if (doc.plugin_id === "beta") fs.rmSync(path.join(dir, "log/decisions/2026/01", f));
+  }
+  commit(dir, "a record goes missing", "2026-01-03T00:00:00Z");
+  const found = codes(detect({ root: dir }));
+  assert.ok(found.includes("A1_RECORDS_BELOW_MARKER"), `found ${found.join(", ")}`);
 });

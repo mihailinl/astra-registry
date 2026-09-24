@@ -111,6 +111,7 @@ import { ID_PATTERN } from "../../tools/lib/ids.mjs";
 import {
   ACTIONS as ADVISORY_ACTIONS,
   ADVISORY_FILE,
+  ADVISORY_URL_BASE,
   SEVERITIES,
   SOURCE_DIR as REVOCATIONS_DIR,
   checkAdvisory,
@@ -181,7 +182,11 @@ export const IDENTITY_PREFIX = "github:";
  * service serves is a signed link to a 404 on the one document a user reads
  * when something has already gone wrong.
  */
-export const ADVISORY_URL_BASE = "https://astra.minice.ai/plugins/_/advisories/";
+// Imported from `tools/lib/revocations.mjs`, whose `checkAdvisory` refuses any
+// other value since M-T3.9, and re-exported so its readers here keep one name.
+// A second literal would be a second base, and the gate that runs before the
+// commit job's push would refuse every advisory compiled from it.
+export { ADVISORY_URL_BASE };
 
 /**
  * §7.2's two account-level categories, which are the only ones MOD-19's

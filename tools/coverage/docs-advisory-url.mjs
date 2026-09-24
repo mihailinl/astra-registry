@@ -54,6 +54,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { report } from "./rules.mjs";
+import { ADVISORY_URL_BASE } from "../lib/revocations.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_REPO = path.resolve(HERE, "..", "..");
@@ -69,7 +70,9 @@ export const DOC = "tools/revocations/README.md";
  * §7.2 (MOD-13) when OPEN-MBE-15 closed; M-T3.9 is the task that teaches it to
  * `tools/lib/revocations.mjs` and to the README.
  */
-export const ADVISORY_BASE = "https://astra.minice.ai/plugins/_/advisories/";
+// M-T3.9 taught it to `tools/lib/revocations.mjs`, which declares it once;
+// this module reads it from there rather than keeping a second literal.
+export const ADVISORY_BASE = ADVISORY_URL_BASE;
 
 /** Any absolute URL, with trailing Markdown and JSON punctuation left behind. */
 const URL_RE = /https?:\/\/[^\s"'`<>()[\]{},]+/g;

@@ -259,6 +259,23 @@ export const KINDS = {
  */
 export const REFUSED_ADVISORY_HOSTS = ["github.com", "github.io"];
 
+/**
+ * MOD-13's advisory page base (OPEN-MBE-15, closed at contract 0.12.0), and
+ * the ONE place this repository declares it. An `advisory_url` is this plus
+ * the advisory's own id, or absent (M-T3.9).
+ *
+ * The service serves one page per advisory id under this base, and the daemon
+ * shows the URL to a user on the screen that says their plugin was disabled —
+ * from a SIGNED document the client keeps. So every other value is refused,
+ * not only a foreign host: the project's own base with another advisory's id
+ * is a signed link to the wrong explanation, and a query or a fragment is a
+ * URL nobody compiled. `bot/lib/compile-decision.mjs` compiles exactly this
+ * (it imports it), the token file publishes it as
+ * `page:MOD-13-advisory-base`, and `tools/selftest/revocations.mjs` holds all
+ * three to one string.
+ */
+export const ADVISORY_URL_BASE = "https://astra.minice.ai/plugins/_/advisories/";
+
 /** What the daemon does about a plugin an entry covers. */
 export const ACTIONS = ["block_install", "disable", "warn"];
 
@@ -345,6 +362,17 @@ export function checkAdvisory(doc, where = "<advisory>") {
             "until the project's own advisory pages exist; it is optional, and a withdrawal works without it.",
         );
       }
+    }
+    // MOD-13, compared as a string and not parsed: a parser normalises case,
+    // default ports and dot segments, and each normalisation is a URL that
+    // reads as the right one and is not the one anybody compiled.
+    const want = typeof doc.id === "string" ? `${ADVISORY_URL_BASE}${doc.id}` : null;
+    if (doc.advisory_url !== want) {
+      bad(
+        `advisory_url ${JSON.stringify(doc.advisory_url)} is not ${JSON.stringify(want ?? `${ADVISORY_URL_BASE}<id>`)} ` +
+          "(MOD-13). The only URL that names this advisory's page is the advisory page base plus this " +
+          "advisory's own id; the bot sets exactly that, and a hand-written advisory omits the field.",
+      );
     }
   }
 

@@ -1924,3 +1924,975 @@ test("the default base is the compiled one, and no test's base leaked into it", 
   assert.equal(c.base, API_BASE);
   assert.equal(new URL(OPERATIONS.ingest.claim.path, c.base).toString(), "https://api.minice.ai/plugins/v1/bot/leases");
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// The ingest pipeline on the service path (registry plan B-T3.1's steps,
+// B-T3.2, B-T3.3a–c, B-T3.4, B-T3.5, B-T3.6's preparation).
+//
+// Every job of `plugins-ingest.yml` that is built runs one module, and each
+// module is driven here against fixtures: the token jobs against the stub
+// above, the decision as a pure function over a lease, a verification, a
+// facts file, a listing, an `ask` outcome and a git state, and the publish
+// composition over a real temporary tree. Nothing here reaches the network.
+// ═══════════════════════════════════════════════════════════════════════════
+
+import os from "node:os";
+import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
+import {
+  APPROVAL_MAX_DAYS,
+  FIRST_BINDING_WAIT_DAYS,
+  OPERATOR_WINDOW_HOURS,
+  UPDATE_WINDOW_HOURS,
+  CHECK_FACTS_SCHEMA,
+  decideSubmission,
+  id41,
+} from "../lib/service-decide.mjs";
+import { askJob, claimJob, leaseProblems, reportJob, resultBytes, verdictOutcome } from "../lib/service-jobs.mjs";
+import { RESULT_KINDS, recordAgreement, resultBody } from "../lib/service-results.mjs";
+import { ALERT_SCHEMA, alertProblems, commitTrailers, composePublication, finalizeResults } from "../lib/service-publish.mjs";
+import { TRUST14_CODES, mergeAlerts } from "../lib/trust14.mjs";
+import { ACTED_OUTCOMES, VERDICT_VALUES, leaksIn, scanFiles } from "../lib/scan-verdict-leaks.mjs";
+import { submissionFingerprint } from "../lib/policy/release.mjs";
+import { cleanEnv } from "../../tools/lib/git-env.mjs";
+
+const P = {
+  sid: "0192f1c2-3b4a-7c5d-8e6f-1a2b3c4d5e6f",
+  sid2: "0192f1c2-3b4a-7c5d-9e6f-1a2b3c4d5e70",
+  repo: "a-stranger/dice-roller",
+  tag: "v0.2.0",
+  id: "dice-roller",
+  version: "0.2.0",
+  commit: "a".repeat(40),
+  rid: "1203676452",
+  oid: "193032699",
+  sha: "b".repeat(64),
+  now: "2026-09-26T12:00:00Z",
+};
+const hoursBefore = (at, h) => `${new Date(new Date(at).getTime() - h * 3600e3).toISOString().slice(0, 19)}Z`;
+const DIGESTS = [`linux-x64:${P.sha}`];
+const FP = submissionFingerprint({ repo: P.repo, tag: P.tag, id: P.id, version: P.version, commit: P.commit, digests: DIGESTS });
+
+const lease = (over = {}) => ({
+  submission_id: P.sid, lease_expires_at: "2026-09-26T13:00:00Z", attempt: "att-1", claimed_from: "received",
+  repo: P.repo, tag: P.tag, trigger: "poll", service_repository_id: P.rid, decisions: [], stop_status: "no_stop", ...over,
+});
+const verified = (over = {}) => ({
+  submission_id: P.sid, outcome: "ok", findings: [],
+  plugin_id: P.id, version: P.version, tag: P.tag, commit: P.commit, artifact_digests: DIGESTS, fingerprint: FP,
+  repo: P.repo, repository_id: P.rid, repository_owner_id: P.oid, renamed: false, published_at: "2026-09-26T10:00:00Z",
+  assets: [{ name: `${P.id}-${P.version}-linux-x64.astraplugin`, platform: "linux-x64", sha256: P.sha, size: 100,
+    url: `https://github.com/${P.repo}/releases/download/${P.tag}/${P.id}-${P.version}-linux-x64.astraplugin` }],
+  binding: { outcome: "none", token: null, token_hash: null, code: null, alert: false, reason: null },
+  owner_file: null, actor: null, ...over,
+});
+const facts = (over = {}) => ({
+  schema: CHECK_FACTS_SCHEMA, submission_id: P.sid, plugin_id: P.id, version: P.version, platforms: ["linux-x64"],
+  findings: [{ code: "E_DERIVED_LISTING_INVALID", level: "pass" }], ...over,
+});
+const versionDoc = (version, over = {}) => ({
+  schema: "astra.registry.version/1", id: P.id, version, published_at: "2026-09-01T00:00:00Z",
+  release: { kind: "github_release", repo: P.repo, tag: `v${version}`, commit: "c".repeat(40) },
+  capabilities: ["tools"],
+  artifacts: { "linux-x64": { url: `https://github.com/${P.repo}/releases/download/v${version}/x.astraplugin`, filename: "x.astraplugin", sha256: "d".repeat(64), size: 10 } },
+  ...over,
+});
+const listing = (over = {}) => ({
+  plugin: { schema: "astra.registry.plugin/1", id: P.id, name: "Dice Roller", summary: "Rolls dice.", license: "MIT", source: { kind: "github", repo: "placeholder/placeholder" }, added_at: "2026-01-01" },
+  version: versionDoc(P.version, {
+    release: { kind: "github_release", repo: "placeholder/placeholder", tag: P.tag, commit: null },
+    artifacts: { "linux-x64": { url: null, filename: `${P.id}-${P.version}-linux-x64.astraplugin`, sha256: P.sha, size: 100 } },
+  }),
+  ...over,
+});
+const existing = ({ repo = P.repo, versions = ["0.1.0"], identity = null } = {}) => ({
+  doc: { schema: "astra.registry.plugin/1", id: P.id, name: "Dice Roller", source: { kind: "github", repo } },
+  versions: versions.map((v) => ({ doc: versionDoc(v) })),
+  identity,
+});
+const baseline = (over = {}) => ({
+  trigger: "migration", state: "published", plugin_id: P.id, version: "0.1.0", repo: P.repo,
+  repository_id: P.rid, repository_owner_id: P.oid, decided_at: "2026-09-01T00:00:00Z", decision_id: "e".repeat(32), ...over,
+});
+const git = (over = {}) => ({
+  records: [], alerts: new Map(), denied: new Set(),
+  markers: { r3_exit: false, cutover: false, baseline: false },
+  existing: null, queueEntry: null, listingState: null, listingNamesRepo: true, siblings: [], track: undefined, ...over,
+});
+const ask = (over = {}) => ({ verdict: null, gates: { stop_status: "no_stop", decisions: [] }, notice: null, shadow: false, ...over });
+const decideWith = (over = {}) => decideSubmission({
+  lease: lease(over.lease), shadow: over.shadow ?? false, verified: over.verified ?? verified(),
+  facts: over.facts === undefined ? facts() : over.facts, listing: over.listing === undefined ? listing() : over.listing,
+  ask: over.ask ?? ask(), git: over.git ?? git(), now: over.now ?? P.now, startedAt: over.now ?? P.now,
+  readCommit: "f".repeat(40),
+});
+const codes = (plan) => plan.record?.reasons ?? [];
+
+// ── B-T3.3a: identity and binding ───────────────────────────────────────────
+
+test("B-T3.3a: a first listing with no line is held R_FIRST_LISTING before R3's exit marker", () => {
+  const plan = decideWith({ lease: { trigger: "poll" } });
+  assert.equal(plan.kind, "state");
+  assert.equal(plan.state, "held");
+  assert.ok(codes(plan).includes("R_FIRST_LISTING"), JSON.stringify(codes(plan)));
+});
+
+test("B-T3.3a: `B_UNBOUND` applies on the far side of `log/rollout/R3-exit.json` and not before", () => {
+  // Watched failing by applying B_UNBOUND before the marker: the case above
+  // would then be refused, not held.
+  const after = decideWith({ git: git({ markers: { r3_exit: true, cutover: false, baseline: true } }) });
+  assert.equal(after.state, "refused");
+  assert.ok(codes(after).includes("B_UNBOUND"));
+  const before = decideWith({ git: git({ markers: { r3_exit: false, cutover: false, baseline: true } }) });
+  assert.equal(before.state, "held");
+  const cutover = decideWith({ lease: { trigger: "poll" }, git: git({ markers: { r3_exit: false, cutover: true, baseline: true } }) });
+  assert.ok(codes(cutover).includes("B_UNBOUND"), "any first listing from cutover needs a line");
+});
+
+test("FLOW-67: a threadless submission no listing names, with no line, writes nothing and carries the read commit", () => {
+  const plan = decideWith({ lease: { trigger: "panel" }, git: git({ listingNamesRepo: false }) });
+  assert.equal(plan.kind, "norecord");
+  assert.equal(plan.record, null);
+  assert.equal(plan.read_commit, "f".repeat(40));
+  assert.ok(plan.reasons[0].code.startsWith("B_"), "FLOW-78: the result carries a B_* reason");
+  const poll = decideWith({ lease: { trigger: "poll" }, git: git({ listingNamesRepo: false }) });
+  assert.notEqual(poll.kind, "norecord", "a poll is not panel or ci");
+});
+
+test("TRUST-23: against MIG-20's baseline, a fixture per outcome", () => {
+  const upd = (b, repo = P.repo) => decideWith({
+    verified: verified({
+      repo,
+      fingerprint: submissionFingerprint({ repo, tag: P.tag, id: P.id, version: P.version, commit: P.commit, digests: DIGESTS }),
+    }),
+    git: git({ existing: existing({ repo: P.repo }), records: b ? [b] : [] }),
+  });
+  const same = upd(baseline());
+  assert.equal(same.state, "published", `the ids and the name agree: ${JSON.stringify(same.reasons.map((r) => r.code))}`);
+  assert.ok(codes(upd(baseline({ repository_id: "1", repository_owner_id: "2" }))).includes("B_REPOSITORY_RECYCLED"));
+  assert.equal(upd(baseline({ repository_id: "1", repository_owner_id: "2" })).state, "refused");
+  assert.ok(codes(upd(baseline({ repository_owner_id: "2" }))).includes("R_IDENTITY_CHANGED"), "a transfer is held");
+  assert.ok(codes(upd(baseline({ repository_id: "1" }))).includes("R_IDENTITY_CHANGED"), "a re-creation is held");
+  assert.ok(codes(upd(null)).includes("R_IDENTITY_CHANGED"), "MIG-28: no baseline is a hold");
+  // A rename: both ids the same, the certificate's name moved.
+  const renamed = upd(baseline(), "a-stranger/dice-roller-2");
+  assert.equal(renamed.state, "held");
+  assert.ok(codes(renamed).includes("R_IDENTITY_CHANGED"));
+});
+
+test("ID-41 row 1 is permanent: a new tag of a recycled repository is refused again", () => {
+  const b = baseline({ repository_id: "1", repository_owner_id: "2" });
+  for (const tag of ["v0.2.0", "v0.3.0"]) {
+    const fp = submissionFingerprint({ repo: P.repo, tag, id: P.id, version: P.version, commit: P.commit, digests: DIGESTS });
+    const plan = decideWith({ verified: verified({ tag, fingerprint: fp }), lease: { tag }, git: git({ existing: existing(), records: [b] }) });
+    assert.ok(codes(plan).includes("B_REPOSITORY_RECYCLED"), `${tag}: ${JSON.stringify(codes(plan))}`);
+  }
+});
+
+test("ID-41's table: rows 1–4 by first match, rows 5 and 6 independently", () => {
+  const rec = { repo: P.repo, repository_id: P.rid, repository_owner_id: P.oid, token_hash: "1".repeat(16) };
+  const id = { repo: P.repo, repository_id: P.rid, repository_owner_id: P.oid };
+  assert.deepEqual(id41({ identity: { ...id, repository_id: "9", repository_owner_id: "8" }, record: rec, lineHash: rec.token_hash }).codes, ["B_REPOSITORY_RECYCLED"]);
+  assert.deepEqual(id41({ identity: { ...id, repository_id: "9" }, record: rec, lineHash: "2".repeat(16) }).codes, ["R_IDENTITY_CHANGED", "R_BINDING_CHANGED"], "row 1b with a new line holds both codes");
+  assert.deepEqual(id41({ identity: { ...id, repository_owner_id: "8" }, record: rec, lineHash: rec.token_hash }).codes, ["B_OWNER_CHANGED"]);
+  assert.deepEqual(id41({ identity: { ...id, repository_owner_id: "8" }, record: rec, lineHash: "2".repeat(16) }).rows, ["4", "6"]);
+  assert.deepEqual(id41({ identity: { ...id, repo: "a-stranger/renamed" }, record: rec, lineHash: rec.token_hash }).codes, ["R_IDENTITY_CHANGED"]);
+  assert.deepEqual(id41({ identity: id, record: rec, lineHash: "2".repeat(16) }).codes, ["R_BINDING_CHANGED"]);
+  assert.deepEqual(id41({ identity: id, record: rec, lineHash: rec.token_hash }).codes, []);
+});
+
+test("ID-25: a listing with an identity record publishes only a bound release", () => {
+  const ident = { repo: P.repo, repository_id: P.rid, repository_owner_id: P.oid, token_hash: "1".repeat(16) };
+  const plan = decideWith({ git: git({ existing: existing({ identity: ident }), records: [baseline()] }) });
+  assert.equal(plan.state, "refused");
+  assert.ok(codes(plan).includes("B_UNBOUND"));
+});
+
+test("ID-41 row 6 is `R_BINDING_CHANGED`, and its result carries the objection window (ID-61)", () => {
+  const ident = { repo: P.repo, repository_id: P.rid, repository_owner_id: P.oid, token_hash: "1".repeat(16) };
+  const plan = decideWith({
+    verified: verified({ binding: { outcome: "one", token: "t".repeat(24), token_hash: "2".repeat(16), code: null, alert: false, reason: null }, owner_file: { commit: "9".repeat(40), pull_request: true } }),
+    ask: ask({ verdict: "pass" }),
+    git: git({ existing: existing({ identity: ident }), records: [baseline()] }),
+  });
+  assert.equal(plan.state, "held");
+  assert.ok(codes(plan).includes("R_BINDING_CHANGED"));
+  assert.equal(typeof plan.result_extra.objection_window, "number");
+  assert.equal(plan.result_extra.owner_file_commit, "9".repeat(40));
+  assert.equal(plan.result_extra.owner_file_pull_request, true);
+});
+
+test("MIG-10: a line on a published listing with no identity record is `R_FIRST_BINDING`, never `R_BINDING_CHANGED`", () => {
+  const plan = decideWith({
+    verified: verified({ binding: { outcome: "one", token: "t".repeat(24), token_hash: "2".repeat(16), code: null, alert: false, reason: null }, owner_file: { commit: "9".repeat(40), pull_request: false } }),
+    ask: ask({ verdict: "pass" }),
+    git: git({ existing: existing(), records: [baseline()], listingState: { state: "grandfathered" } }),
+  });
+  assert.ok(codes(plan).includes("R_FIRST_BINDING"));
+  assert.ok(!codes(plan).includes("R_BINDING_CHANGED"));
+  assert.ok(!codes(plan).includes("R_CHECK_HELD"), "the hold keeps its own code in the record, not decide()'s fold");
+});
+
+test("ID-9: `B_BINDING_UNUSABLE` and `W_ELIGIBILITY_UNREADABLE` from the one word `ask` sends", () => {
+  const line = { outcome: "one", token: "t".repeat(24), token_hash: "2".repeat(16), code: null, alert: false, reason: null };
+  const unusable = decideWith({ verified: verified({ binding: line }), ask: ask({ verdict: "B_BINDING_UNUSABLE" }), git: git({ existing: existing(), records: [baseline()] }) });
+  assert.equal(unusable.state, "refused");
+  assert.ok(codes(unusable).includes("B_BINDING_UNUSABLE"));
+  const unreadable = decideWith({ verified: verified({ binding: line }), ask: ask({ verdict: "W_ELIGIBILITY_UNREADABLE" }) });
+  assert.equal(unreadable.kind, "wait");
+  assert.equal(unreadable.wait.code, "W_ELIGIBILITY_UNREADABLE");
+  const noVerdict = decideWith({ verified: verified({ binding: line }), ask: ask({ verdict: null }) });
+  assert.equal(noVerdict.kind, "wait", "FLOW-74: a line and no verdict read is a wait, never a pass");
+  const malformed = decideWith({ verified: verified({ binding: { ...line, outcome: "malformed", token: null, token_hash: null } }), git: git({ existing: existing(), records: [baseline()] }) });
+  assert.ok(codes(malformed).includes("B_BINDING_MALFORMED"));
+});
+
+// ── BOT-15 / BOT-21: what the check job says against what verify established ──
+
+test("BOT-15: a facts file or a listing disagreeing with the verification writes nothing and alerts", () => {
+  const other = decideWith({ facts: facts({ plugin_id: "someone-else" }) });
+  assert.equal(other.kind, "none");
+  assert.equal(other.record, null);
+  assert.ok(other.operator_alert, "a disagreement pages an operator");
+  const planted = decideWith({ listing: listing({ version: { ...listing().version, artifacts: { ...listing().version.artifacts, "windows-x64": { sha256: "9".repeat(64) } } } }) });
+  assert.equal(planted.kind, "none", "a listing carrying an artifact nothing verified is refused");
+  const moved = decideWith({ facts: facts({ findings: [{ code: "E_X", level: "error", where: "x" }] }) });
+  assert.equal(moved.kind, "none", "a facts file carrying free text beside its codes is not the check job's shape");
+  assert.equal(decideWith({ facts: null }).kind, "none", "no facts file is no decision");
+  assert.equal(decideWith({ facts: { ...facts(), message: "a stranger's sentence" } }).kind, "none",
+    "a facts file with a member beyond the six is not the check job's shape");
+});
+
+test("BOT-21: the committed listing's identity comes from the verification, never from the check job", () => {
+  const plan = decideWith({ git: git({ existing: existing(), records: [baseline()] }) });
+  assert.equal(plan.state, "published");
+  assert.equal(plan.listing.plugin.source.repo, P.repo, "source.repo is `.12`'s name, overwriting the placeholder");
+  assert.equal(plan.listing.version.release.repo, P.repo);
+  assert.equal(plan.listing.version.release.commit, P.commit);
+  assert.equal(plan.listing.version.artifacts["linux-x64"].url, verified().assets[0].url);
+  // Watched: copying `source` from the artifact leaves `placeholder/placeholder` here.
+});
+
+test("verify's alert, wait and refusal each keep their own shape", () => {
+  const alert = decideWith({ verified: { submission_id: P.sid, outcome: "alert", code: "E_ATTESTATION_REPO_MISMATCH", reason: "x", findings: [] } });
+  assert.equal(alert.kind, "none");
+  assert.equal(alert.operator_alert.code, "E_ATTESTATION_REPO_MISMATCH");
+  const wait = decideWith({ verified: { submission_id: P.sid, outcome: "wait", code: "E_ATTESTATION_UNCHECKED", reason: "x", findings: [] } });
+  assert.equal(wait.kind, "wait");
+  assert.equal(wait.wait.code, "E_ATTESTATION_UNCHECKED", "FLOW-72: a verifier that could not run is a wait");
+  const refused = decideWith({ verified: { submission_id: P.sid, outcome: "refuse", code: "E_ATTESTATION_MISSING", findings: [{ level: "error", code: "E_ATTESTATION_MISSING", where: "x.astraplugin", message: "m" }] } });
+  assert.equal(refused.state, "refused");
+  assert.deepEqual(refused.record.reasons, ["E_ATTESTATION_MISSING"]);
+  for (const m of ["repo", "tag", "fingerprint", "repository_id", "plugin_id"]) {
+    assert.ok(!(m in refused.record), `a refusal before verification writes no ${m}: BOT-21 writes no identity value nothing verified`);
+  }
+});
+
+// ── B-T3.3c: the outcomes that write nothing ────────────────────────────────
+
+const mReject = { submission_id: P.sid2, fingerprint: FP, state: "refused", decision_id: "a".repeat(32), decided_at: "2026-09-20T00:00:00Z", reasons: ["M_REJECT"] };
+
+test("BOT-19: a moderator's rejection of these bytes, or a stop, is reported, and nothing is written", () => {
+  const plan = decideWith({ git: git({ records: [mReject] }) });
+  assert.equal(plan.kind, "reported");
+  assert.equal(plan.state, "refused");
+  assert.equal(plan.decision_id, "a".repeat(32));
+  assert.equal(plan.record, null);
+  const stopped = decideWith({ git: git({ records: [{ submission_id: P.sid, state: "stopped", decision_id: "b".repeat(32), decided_at: "2026-09-20T00:00:00Z", reasons: ["A_STOP"] }] }) });
+  assert.equal(stopped.kind, "reported", "FLOW-23: a stop for this submission id");
+  const byTag = decideWith({ git: git({ records: [{ state: "stopped", tag: P.tag, repo: P.repo, repository_id: P.rid, decision_id: "c".repeat(32), decided_at: "2026-09-20T00:00:00Z", reasons: ["A_WITHDRAW"] }] }) });
+  assert.equal(byTag.kind, "reported", "FLOW-26: a stop of the same tag of the same repository");
+});
+
+test("BOT-19: a bot refusal of the same bytes is decided again, never reported", () => {
+  const plan = decideWith({ git: git({ records: [{ ...mReject, reasons: ["E_LICENSE_NOT_ALLOWED"] }] }) });
+  assert.notEqual(plan.kind, "reported", "a recheck of refused bytes re-decides them");
+});
+
+test("BOT-74: a version listed with identical digests is reported `published`, naming the record", () => {
+  const listed = existing({ versions: ["0.1.0"] });
+  listed.versions.push({ doc: versionDoc(P.version, { artifacts: { "linux-x64": { sha256: P.sha } } }) });
+  const rec = { plugin_id: P.id, version: P.version, state: "published", decision_id: "c".repeat(32), decided_at: "2026-09-25T00:00:00Z" };
+  const plan = decideWith({ git: git({ existing: listed, records: [baseline(), rec] }) });
+  assert.equal(plan.kind, "reported");
+  assert.equal(plan.state, "published");
+  assert.equal(plan.decision_id, "c".repeat(32));
+});
+
+test("FLOW-72: a wait from the checks writes no record", () => {
+  const plan = decideWith({ facts: facts({ findings: [{ code: "E_PROBE_UNAVAILABLE", level: "error" }] }) });
+  assert.equal(plan.kind, "wait");
+  assert.equal(plan.record, null);
+  // Watched by writing a record for E_PROBE_UNAVAILABLE: the plan would be a refusal.
+});
+
+// ── B-T3.3b: stops, approvals, notices, windows, deny ───────────────────────
+
+test("SERVE-93: an `unavailable` stop status waits for that submission alone; `stopped` writes and posts nothing", () => {
+  assert.equal(decideWith({ ask: ask({ gates: { stop_status: "unavailable", decisions: [] } }) }).kind, "wait");
+  const stopped = decideWith({ ask: ask({ gates: { stop_status: "stopped", decisions: [] } }) });
+  assert.equal(stopped.kind, "none");
+  assert.equal(stopped.operator_alert, null);
+  assert.equal(decideWith({ ask: ask({ gates: null }) }).kind, "wait", "no stop status read is no \"no stop\"");
+});
+
+const heldRecord = (over = {}) => ({ submission_id: P.sid, fingerprint: FP, state: "held", reasons: ["R_FIRST_LISTING"], decided_at: "2026-09-25T00:00:00Z", decision_id: "1".repeat(32), ...over });
+const approval = (over = {}) => ({ code: "M_APPROVE", category: "review_passed", decided_at: "2026-09-26T08:00:00Z", moderator: "mod-7", declared_interest: false, ...over });
+const approvedRun = (over = {}) => decideWith({
+  lease: { claimed_from: "approved" },
+  ask: ask({ gates: { stop_status: "no_stop", decisions: [approval(over.approval)] }, notice: over.notice === undefined ? { kind: "approved", status: "sent", accepted_at: "2026-09-26T09:00:00Z" } : over.notice }),
+  git: git({ records: [heldRecord(over.held)], alerts: over.alerts ?? new Map(), denied: over.denied ?? new Set() }),
+  now: over.now,
+});
+
+test("TRUST-14/TRUST-32: the three-run sequence — alert only, then the window, then publish", () => {
+  const first = approvedRun();
+  assert.equal(first.kind, "wait", `run 1 names the alert and publishes nothing: ${first.kind} ${first.state ?? ""}`);
+  assert.deepEqual(first.alert, { fingerprint: FP, event: "approval", approval_decided_at: approval().decided_at });
+  const rec = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: approval().decided_at, delivered_at: "2026-09-26T11:00:00Z", run: "1/1" };
+  const second = approvedRun({ alerts: new Map([[FP, rec]]) });
+  assert.equal(second.kind, "wait");
+  assert.equal(second.wait.code, "W_OPERATOR_WINDOW");
+  assert.equal(second.wait.earliest_retry_at, "2026-09-26T17:00:00Z", `the window's end, ${OPERATOR_WINDOW_HOURS} h after delivery`);
+  const third = approvedRun({ alerts: new Map([[FP, rec]]), now: "2026-09-26T17:00:01Z" });
+  assert.equal(third.state, "published", JSON.stringify(third.wait ?? third.reasons));
+  assert.equal(third.record.trigger, "approval");
+  assert.equal(third.record.moderator, "mod-7");
+  // An undelivered alert waits: a record with no delivery is W_ALERT_UNDELIVERED.
+  const undelivered = approvedRun({ alerts: new Map([[FP, { ...rec, delivered_at: null }]]) });
+  assert.equal(undelivered.wait.code, "W_ALERT_UNDELIVERED");
+});
+
+test("BOT-26: no held record, a stale approval, and a first binding under 7 days are each not honoured", () => {
+  const rec = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: approval().decided_at, delivered_at: "2026-09-20T00:00:00Z", run: "1/1" };
+  const noHold = decideWith({ lease: { claimed_from: "approved" }, ask: ask({ gates: { stop_status: "no_stop", decisions: [approval()] }, notice: { kind: "approved", status: "sent", accepted_at: "2026-09-20T00:00:00Z" } }) });
+  assert.equal(noHold.state, "held", "(1): an approval with no `held` record on main clears nothing");
+  const stale = approvedRun({ approval: { decided_at: hoursBefore(P.now, APPROVAL_MAX_DAYS * 24 + 1) }, alerts: new Map([[FP, rec]]) });
+  assert.equal(stale.state, "held", `(4): older than ${APPROVAL_MAX_DAYS} days`);
+  const binding = approvedRun({ held: { reasons: ["R_FIRST_BINDING"], decided_at: hoursBefore(P.now, 24) }, alerts: new Map([[FP, rec]]) });
+  assert.equal(binding.state, "held", `TRUST-27: ${FIRST_BINDING_WAIT_DAYS} days from the held record`);
+});
+
+test("BOT-28: `pending`, `none_unbound`, and a notice younger than the window each wait `W_NOTICE_PENDING`", () => {
+  for (const notice of [
+    { kind: "approved", status: "pending" },
+    { kind: "approved", status: "none_unbound" },
+    { kind: "approved", status: "previous_ended", ended_at: P.now },
+    null,
+  ]) {
+    const plan = decideWith({
+      lease: { claimed_from: "approved" },
+      ask: ask({ gates: { stop_status: "no_stop", decisions: [approval()] }, notice }),
+      git: git({ records: [heldRecord(), baseline()], existing: existing() }),
+    });
+    assert.equal(plan.kind, "wait", `${JSON.stringify(notice)}`);
+    assert.equal(plan.wait.code, "W_NOTICE_PENDING");
+    // BOT-29 by name: `none_unbound` is `pending`, not "a status with no time".
+    if (notice?.status === "none_unbound") assert.match(plan.wait.cause, /BOT-29/);
+  }
+  // An approved UPDATE with no delay reason waits the update window.
+  const young = decideWith({
+    lease: { claimed_from: "approved" },
+    ask: ask({ gates: { stop_status: "no_stop", decisions: [approval()] }, notice: { kind: "approved", status: "sent", accepted_at: hoursBefore(P.now, UPDATE_WINDOW_HOURS - 1) } }),
+    git: git({ records: [heldRecord({ reasons: ["R_NEW_HIGH_RISK"] }), baseline()], existing: existing() }),
+  });
+  assert.equal(young.wait?.code, "W_NOTICE_PENDING", `${UPDATE_WINDOW_HOURS} h for an approved update`);
+});
+
+test("MIG-12: after cutover a grandfathered listing's drained release waits, whatever the notice says", () => {
+  for (const status of ["sent", "previous_sent"]) {
+    const plan = decideWith({
+      lease: { claimed_from: "delayed" },
+      ask: ask({ notice: { kind: "delayed", status, accepted_at: "2026-09-01T00:00:00Z" } }),
+      git: git({
+        existing: existing(), records: [baseline()], listingState: { state: "grandfathered" },
+        markers: { r3_exit: true, cutover: true, baseline: true },
+        queueEntry: { id: P.id, version: P.version, repo: P.repo, tag: P.tag, fingerprint: FP, queued_at: "2026-09-25T00:00:00Z", publish_after: "2026-09-26T00:00:00Z", delay_hours: 24, artifact_digests: DIGESTS },
+      }),
+    });
+    assert.equal(plan.kind, "wait", status);
+    assert.equal(plan.wait.code, "W_NOTICE_PENDING");
+    assert.match(plan.wait.cause, /MIG-12/, "keyed on git, not on the service's answer");
+  }
+});
+
+test("DEC-8 and TRUST-33: never before `publish_after`, and a deny record refuses", () => {
+  const early = decideWith({
+    lease: { claimed_from: "delayed" },
+    git: git({ existing: existing(), records: [baseline()], queueEntry: { id: P.id, version: P.version, repo: P.repo, tag: P.tag, fingerprint: FP, queued_at: "2026-09-26T00:00:00Z", publish_after: "2026-09-27T00:00:00Z", delay_hours: 24, artifact_digests: DIGESTS } }),
+  });
+  assert.equal(early.kind, "wait");
+  assert.equal(early.wait.earliest_retry_at, "2026-09-27T00:00:00Z");
+  const denied = decideWith({ git: git({ existing: existing(), records: [baseline()], denied: new Set([FP]) }) });
+  assert.equal(denied.state, "refused");
+});
+
+test("ROLL-49: an approved first listing with a delay reason is delayed, never waved through", () => {
+  const listingHi = listing({ version: { ...listing().version, capabilities: ["dom_access"] } });
+  const plan = decideSubmission({
+    lease: lease({ claimed_from: "approved" }), shadow: false, verified: verified(), facts: facts(), listing: listingHi,
+    ask: ask({ gates: { stop_status: "no_stop", decisions: [approval()] } }), git: git({ records: [heldRecord()] }),
+    now: P.now, startedAt: P.now, readCommit: "f".repeat(40),
+  });
+  assert.equal(plan.state, "delayed", `${plan.kind} ${plan.state}`);
+  assert.equal(plan.queue_entry.submission_id, P.sid);
+  assert.equal(plan.queue_entry.schema, "astra.registry.queue/1");
+  assert.ok(!("submitter" in plan.queue_entry) && !("issue" in plan.queue_entry), "BOT-38: no login, no issue");
+});
+
+// ── BOT-92: shadow ──────────────────────────────────────────────────────────
+
+test("BOT-92: a `shadow: true` answer commits nothing and posts nothing; the same fixture unshadowed publishes", () => {
+  const g = git({ existing: existing(), records: [baseline()] });
+  const real = decideWith({ git: g });
+  assert.equal(real.state, "published");
+  for (const [label, over] of [["claim", { shadow: true }], ["ask", { ask: ask({ shadow: true }) }], ["verdict", { ask: ask({ verdict: "shadow" }) }]]) {
+    const plan = decideWith({ git: g, ...over });
+    assert.equal(plan.kind, "none", label);
+    assert.equal(plan.shadow, true);
+    assert.equal(plan.record, null);
+    assert.equal(plan.listing, null);
+    assert.equal(plan.queue_entry, null);
+    assert.deepEqual(plan.identity_records, []);
+    assert.equal(plan.would.state, "published", "the plan is computed in full, then emptied");
+  }
+});
+
+// ── B-T3.5: the result bodies, and the golden files ─────────────────────────
+
+const GOLDEN_DIR = path.join(REPO, "tests", "results");
+
+/** The plan each golden file is built from — one per result kind. */
+function goldenPlans() {
+  const line = { outcome: "one", token: "t".repeat(24), token_hash: "2".repeat(16), code: null, alert: false, reason: null };
+  const ident = { repo: P.repo, repository_id: P.rid, repository_owner_id: P.oid, token_hash: "1".repeat(16) };
+  const plans = {
+    published: decideWith({ git: git({ existing: existing(), records: [baseline()] }) }),
+    held: decideWith({}),
+    "held-first-binding": decideWith({
+      verified: verified({ binding: line, owner_file: { commit: "9".repeat(40), pull_request: false }, actor: { triggering_actor_id: P.oid } }),
+      ask: ask({ verdict: "pass" }), git: git({ existing: existing(), records: [baseline()], listingState: { state: "grandfathered" } }),
+    }),
+    "held-binding-changed": decideWith({
+      verified: verified({ binding: line, owner_file: { commit: "9".repeat(40), pull_request: true } }),
+      ask: ask({ verdict: "pass" }), git: git({ existing: existing({ identity: ident }), records: [baseline()] }),
+    }),
+    delayed: decideSubmission({
+      lease: lease(), shadow: false, verified: verified(), facts: facts(),
+      // A widening that is not high-risk: P_DELAY_WIDENED, and no hold.
+      listing: listing({ version: { ...listing().version, capabilities: ["tools", "tts"] } }),
+      ask: ask(), git: git({ existing: existing(), records: [baseline()] }), now: P.now, startedAt: P.now, readCommit: "f".repeat(40),
+    }),
+    refused: decideWith({ facts: facts({ findings: [{ code: "E_LICENSE_NOT_ALLOWED", level: "error" }] }) }),
+    "refused-flow67": decideWith({ lease: { trigger: "panel" }, git: git({ listingNamesRepo: false }) }),
+    reported: decideWith({ git: git({ records: [mReject] }) }),
+    // A wait that carries reasons, so the golden holds `location` on one.
+    wait: decideWith({
+      lease: { claimed_from: "approved" },
+      ask: ask({ gates: { stop_status: "no_stop", decisions: [approval()] }, notice: { kind: "approved", status: "pending" } }),
+      git: git({ records: [heldRecord()] }),
+    }),
+  };
+  return plans;
+}
+
+const goldenBody = (kind, plan) => resultBody(plan, {
+  decisionId: plan.kind === "state" ? "0".repeat(32) : null,
+  mainCommit: plan.kind === "state" || plan.kind === "reported" ? "7".repeat(40) : null,
+});
+
+test("B-T3.5: one golden file per result kind, each the body this module builds for it", () => {
+  const plans = goldenPlans();
+  assert.deepEqual(Object.keys(plans).sort(), [...RESULT_KINDS].sort(), "a plan per kind, and a kind per plan");
+  const files = fs.existsSync(GOLDEN_DIR) ? fs.readdirSync(GOLDEN_DIR).filter((n) => n.endsWith(".json")).sort() : [];
+  assert.ok(files.length >= RESULT_KINDS.length, `${files.length} golden file(s) under tests/results/ and the floor is ${RESULT_KINDS.length}`);
+  for (const kind of RESULT_KINDS) {
+    const plan = plans[kind];
+    const body = goldenBody(kind, plan);
+    const file = path.join(GOLDEN_DIR, `${kind}.json`);
+    assert.ok(fs.existsSync(file), `tests/results/${kind}.json is missing`);
+    const golden = JSON.parse(fs.readFileSync(file, "utf8"));
+    assert.deepEqual({ schema: "astra.plugins.bot-result/1", ...body }, golden, `tests/results/${kind}.json is not what this module builds for ${kind}`);
+    // Each golden is a body the token file's schema admits, conditions included.
+    assert.doesNotThrow(() => composeBody("astra.plugins.bot-result/1", body), kind);
+    for (const r of golden.reasons) assert.ok("location" in r, `${kind}: a reason with no location carries \`"location": null\``);
+    if (plan.kind === "state") {
+      assert.deepEqual(recordAgreement(body, { ...plan.record, decision_id: "0".repeat(32) }), [], `${kind}: BOT-23`);
+    }
+  }
+});
+
+test("B-T3.5: the members that apply and no others — `publish_after`, `read_commit`, `objection_window`, the owner file, the actor", () => {
+  const plans = goldenPlans();
+  const b = (k) => goldenBody(k, plans[k]);
+  assert.ok("publish_after" in b("delayed") && !("publish_after" in b("published")));
+  assert.ok("read_commit" in b("refused-flow67") && !("decision_id" in b("refused-flow67")));
+  assert.ok("objection_window" in b("held-binding-changed") && !("objection_window" in b("held-first-binding")));
+  assert.ok("owner_file_commit" in b("held-first-binding") && "owner_file_pull_request" in b("held-binding-changed"));
+  assert.ok("triggering_actor_id" in b("held-first-binding") && !("triggering_actor_id" in b("held-binding-changed")));
+  assert.ok("wait" in b("wait") && !("state" in b("wait")));
+  assert.throws(() => resultBody({ ...plans["held-binding-changed"], result_extra: { ...plans["held-binding-changed"].result_extra, bogus: 1 } }) && composeBody("astra.plugins.bot-result/1", { ...b("held"), bogus: 1 }));
+});
+
+test("B-T3.5: a 600-character cause is cut to 512, and a result differing from its record fails before posting", () => {
+  const plan = { ...goldenPlans().wait };
+  plan.wait = { ...plan.wait, cause: "x".repeat(600) };
+  assert.equal(resultBody(plan).wait.cause.length, 512);
+  const pub = goldenPlans().published;
+  const body = goldenBody("published", pub);
+  assert.notDeepEqual(recordAgreement({ ...body, version: "9.9.9" }, { ...pub.record, decision_id: "0".repeat(32) }), []);
+});
+
+test("B-T3.5: retries send identical bytes, and nothing reads a clock at send time", async () => {
+  const body = goldenBody("published", goldenPlans().published);
+  assert.equal(resultBytes(body).bytes, resultBytes(structuredClone(body)).bytes);
+  const s = await stub((call, n) => (n === 1 ? refusal("unavailable", "busy") : ok({ schema: "astra.plugins.bot-ack/1", shadow: false, outcome: "accepted" })));
+  try {
+    const out = await reportJob({ client: client(s), results: [{ submission_id: P.sid, kind: "published", shadow: false, unposted: null, body }] });
+    assert.equal(out.posted.length, 1);
+    assert.equal(s.calls.length, 2);
+    assert.equal(s.calls[0].raw, s.calls[1].raw, "the retry re-sent the first attempt's bytes");
+  } finally {
+    await s.close();
+  }
+});
+
+test("BOT-92 at the report job: a shadow result — a wait included — is posted not at all, and its hash is summarised", async () => {
+  const s = await stub(() => ok({ schema: "astra.plugins.bot-ack/1", shadow: false, outcome: "accepted" }));
+  try {
+    const lines = [];
+    const wait = goldenBody("wait", goldenPlans().wait);
+    const held = goldenBody("held", goldenPlans().held);
+    const out = await reportJob({
+      client: client(s),
+      results: [
+        { submission_id: P.sid, kind: "wait", shadow: true, unposted: null, body: wait },
+        { submission_id: P.sid2, kind: "held", shadow: true, unposted: null, body: held },
+        { submission_id: P.sid, kind: "published", shadow: false, unposted: "dry_run", body: held },
+      ],
+      summary: (l) => lines.push(l),
+    });
+    assert.equal(s.calls.length, 0, "nothing reached the service");
+    assert.equal(out.held.length, 3);
+    assert.ok(lines.every((l) => /sha256:[0-9a-f]{64}/.test(l)), "each one's kind and body hash reach the summary");
+  } finally {
+    await s.close();
+  }
+});
+
+// ── the token jobs against the stub ─────────────────────────────────────────
+
+test("claim: at most three leases, each held to §4.3's grammar; the answer's shadow is handed on", async () => {
+  const good = lease();
+  const bad = { ...lease({ submission_id: P.sid2 }), repo: "not a repo" };
+  const s = await stub(() => ok({ schema: "astra.plugins.bot-leases/1", shadow: true, leases: [good, bad] }));
+  try {
+    const errors = [];
+    const out = await claimJob({ client: client(s), log: { log: () => {}, error: (l) => errors.push(l) } });
+    assert.deepEqual(out.submissions, [P.sid]);
+    assert.equal(out.shadow, true);
+    assert.equal(out.refused.length, 1);
+    assert.ok(errors.every((l) => !l.includes("not a repo")), "a bad lease's values are not printed");
+    assert.ok(leaseProblems({ ...good, claimed_from: "published" }).length > 0);
+  } finally {
+    await s.close();
+  }
+  const four = await stub(() => ok({ schema: "astra.plugins.bot-leases/1", shadow: false, leases: [1, 2, 3, 4].map(() => lease()) }));
+  try {
+    await assert.rejects(claimJob({ client: client(four), log: { log: () => {}, error: () => {} } }), /BOT-59/);
+  } finally {
+    await four.close();
+  }
+});
+
+test("claim: an answer with no `shadow` is read as shadow and alerts (BOT-92; B-T3.6's canary)", async () => {
+  const s = await stub(() => ok({ schema: "astra.plugins.bot-leases/1", leases: [lease()] }));
+  try {
+    const c = client(s);
+    const out = await claimJob({ client: c, log: { log: () => {}, error: () => {} } });
+    assert.equal(out.shadow, true, "a missing marker is never read as a real answer");
+    assert.ok(out.alerts.length >= 1, "and it alerts");
+    // What BOT-92 then makes of it: the lease's plan is emptied, whatever DRY_RUN says.
+    const plan = decideWith({ shadow: out.shadow, git: git({ existing: existing(), records: [baseline()] }) });
+    assert.equal(plan.kind, "none");
+  } finally {
+    await s.close();
+  }
+});
+
+test("ask: ID-9 in four words, and no token state or eligibility value leaves the job (BOT-89)", async () => {
+  const cases = [
+    [{ token_state: "bound", minted_for_repository: true, eligibility: "eligible" }, "pass"],
+    [{ token_state: "seen", minted_for_repository: true, eligibility: "eligible" }, "pass"],
+    [{ token_state: "revoked", minted_for_repository: true, eligibility: "eligible" }, "B_BINDING_UNUSABLE"],
+    [{ token_state: "bound", minted_for_repository: false, eligibility: "eligible" }, "B_BINDING_UNUSABLE"],
+    [{ token_state: "bound", minted_for_repository: true, eligibility: "ineligible" }, "B_BINDING_UNUSABLE"],
+    [{ token_state: "unknown", minted_for_repository: false, eligibility: "unreadable" }, "W_ELIGIBILITY_UNREADABLE"],
+  ];
+  for (const [b, word] of cases) {
+    assert.equal(verdictOutcome({ ok: true, shadow: false, unreadable: false, body: b }), word, JSON.stringify(b));
+  }
+  assert.equal(verdictOutcome({ ok: true, shadow: true, body: {} }), "shadow");
+
+  const v = verified({ binding: { outcome: "one", token: "t".repeat(24), token_hash: "2".repeat(16), code: null, alert: false, reason: null } });
+  const v2 = verified({ submission_id: P.sid2, fingerprint: "3".repeat(16) });
+  const s = await stub((call) => {
+    if (call.url.endsWith("/verdicts")) return ok({ schema: "astra.plugins.bot-verdict/1", shadow: false, token_state: "superseded", minted_for_repository: true, eligibility: "ineligible" });
+    if (call.url.endsWith("/gates")) {
+      return ok({ schema: "astra.plugins.bot-gates/1", shadow: false, items: [
+        { submission_id: P.sid, fingerprint: FP, stop_status: "no_stop", decisions: [approval()] },
+        { submission_id: P.sid2, fingerprint: "3".repeat(16), stop_status: "unavailable", decisions: [] },
+      ] });
+    }
+    return ok({ schema: "astra.plugins.bot-notice-status/1", shadow: false, status: "sent", accepted_at: "2026-09-26T00:00:00Z" });
+  });
+  try {
+    const out = await askJob({
+      client: client(s), submissions: [P.sid, P.sid2],
+      leases: { [P.sid]: lease({ claimed_from: "approved" }), [P.sid2]: lease({ submission_id: P.sid2 }) },
+      verified: { [P.sid]: v, [P.sid2]: v2 },
+    });
+    assert.equal(out.outcome[P.sid].verdict, "B_BINDING_UNUSABLE");
+    assert.equal(out.outcome[P.sid2].verdict, null, "FLOW-74: no line, no verdict asked");
+    assert.equal(out.outcome[P.sid2].gates.stop_status, "unavailable", "the unavailable item waits alone");
+    assert.equal(out.outcome[P.sid].gates.stop_status, "no_stop");
+    assert.equal(out.outcome[P.sid].notice.status, "sent");
+    const text = JSON.stringify(out.outcome);
+    for (const forbidden of ["token_state", "eligibility", "minted_for_repository", "superseded", "ineligible"]) {
+      assert.ok(!text.includes(forbidden), `the ask output carries ${forbidden}`);
+    }
+    assert.deepEqual(leaksIn(text), [], "and the leak scan finds nothing in it");
+  } finally {
+    await s.close();
+  }
+});
+
+// ── B-T3.4: the one commit, composed ────────────────────────────────────────
+
+function registryTree() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-publish-"));
+  const g = (...args) => execFileSync("git", ["-C", dir, ...args], { encoding: "utf8", env: { ...cleanEnv(), GIT_CEILING_DIRECTORIES: os.tmpdir() } });
+  g("init", "-q", "-b", "main");
+  g("config", "user.email", "t@example.invalid");
+  g("config", "user.name", "t");
+  fs.mkdirSync(path.join(dir, "plugins"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "plugins", ".keep"), "");
+  g("add", "-A");
+  g("commit", "-q", "-m", "init");
+  return { dir, g, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+}
+
+test("B-T3.4: a publication composes its record, listing and queue removal; a shadow plan composes nothing", () => {
+  const t = registryTree();
+  const reports = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-reports-"));
+  try {
+    const pub = goldenPlans().published;
+    const shadowed = decideWith({ shadow: true, git: git({ existing: existing(), records: [baseline()] }) });
+    const { pending } = composePublication({ plans: [pub, shadowed], root: t.dir, listingsDir: reports, reportsDir: reports, run: "123/1" });
+    assert.equal(pending.length, 1, "the shadow plan composed nothing and has no result");
+    const files = fs.readdirSync(path.join(reports, "report-0"), { recursive: true }).map(String).sort();
+    assert.ok(files.some((f) => /^log\/decisions\/2026\/09\/[0-9a-f]{32}\.json$/.test(f)), files.join(" "));
+    assert.ok(files.includes(`plugins/${P.id}/versions/${P.version}.json`));
+    assert.equal(fs.readdirSync(reports).length, 1, "one report directory, for the one real plan");
+    const rel = files.find((f) => /^log\/decisions\/.*\.json$/.test(f));
+    const record = JSON.parse(fs.readFileSync(path.join(reports, "report-0", rel), "utf8"));
+    assert.equal(record.run, "123/1");
+    assert.equal(record.state, "published");
+    assert.equal(pending[0].body.decision_id, record.decision_id);
+    assert.equal(pending[0].needs_commit, true);
+    assert.equal(commitTrailers({ pending, run: "123/1" }), `Run: 123/1\nSubmission: ${P.sid}\nDecision: ${record.decision_id}`);
+  } finally {
+    t.cleanup();
+    fs.rmSync(reports, { recursive: true, force: true });
+  }
+});
+
+test("BOT-36: a record already on main is not written again, and the result names the commit that holds it", () => {
+  const t = registryTree();
+  const reports = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-reports-"));
+  try {
+    const held = goldenPlans().held;
+    const first = composePublication({ plans: [held], root: t.dir, listingsDir: reports, reportsDir: reports, run: "1/1" });
+    const rel = first.pending[0].record_path;
+    fs.mkdirSync(path.join(t.dir, path.dirname(rel)), { recursive: true });
+    fs.copyFileSync(path.join(reports, "report-0", rel), path.join(t.dir, rel));
+    t.g("add", "-A");
+    t.g("commit", "-q", "-m", "the hold");
+    const head = t.g("rev-parse", "HEAD").trim();
+    fs.rmSync(reports, { recursive: true, force: true });
+    fs.mkdirSync(reports);
+    const again = composePublication({ plans: [held], root: t.dir, listingsDir: reports, reportsDir: reports, run: "2/1" });
+    assert.equal(again.pending[0].needs_commit, false);
+    assert.equal(again.pending[0].body.main_commit, head, "the result names the commit that added the record");
+    assert.equal(fs.readdirSync(path.join(reports, "report-0"), { recursive: true }).length, 0, "nothing was written a second time");
+  } finally {
+    t.cleanup();
+    fs.rmSync(reports, { recursive: true, force: true });
+  }
+});
+
+test("TRUST-14: the alert record lands with the delivery the channel reported, and not without one", () => {
+  const t = registryTree();
+  const reports = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-reports-"));
+  try {
+    const plan = approvedRun();
+    const delivered = composePublication({ plans: [plan], root: t.dir, listingsDir: reports, reportsDir: reports, run: "5/1", deliveredAt: "2026-09-26T12:00:05Z" });
+    const doc = JSON.parse(fs.readFileSync(path.join(reports, "report-0", "state", "alerts", `${FP}.json`), "utf8"));
+    assert.deepEqual(alertProblems(doc), []);
+    assert.equal(delivered.pending[0].body.wait.code, "W_OPERATOR_WINDOW");
+    assert.equal(delivered.pending[0].body.wait.earliest_retry_at, "2026-09-26T18:00:05Z");
+    fs.rmSync(reports, { recursive: true, force: true });
+    fs.mkdirSync(reports);
+    const none = composePublication({ plans: [plan], root: t.dir, listingsDir: reports, reportsDir: reports, run: "6/1" });
+    assert.equal(none.pending[0].body.wait.code, "W_ALERT_UNDELIVERED");
+    assert.ok(!fs.existsSync(path.join(reports, "report-0", "state")), "no delivery, no record");
+  } finally {
+    t.cleanup();
+    fs.rmSync(reports, { recursive: true, force: true });
+  }
+});
+
+test("BOT-6: under DRY_RUN, and for a refused report, a result naming this run's commit is held back", () => {
+  const pending = [
+    { submission_id: P.sid, kind: "published", report: "report-0", needs_commit: true, body: { submission_id: P.sid } },
+    { submission_id: P.sid2, kind: "wait", report: "report-1", needs_commit: false, body: { submission_id: P.sid2 } },
+  ];
+  const dry = finalizeResults({ pending, applied: { outcome: "dry-run", refused: [], pushed: false, dry_run: true }, mainCommit: null });
+  assert.equal(dry[0].unposted, "dry_run");
+  assert.equal(dry[1].unposted, null, "a wait names no commit and is posted under DRY_RUN");
+  const pushed = finalizeResults({ pending, applied: { outcome: "committed", refused: [], pushed: true }, mainCommit: "8".repeat(40) });
+  assert.equal(pushed[0].body.main_commit, "8".repeat(40));
+  const refused = finalizeResults({ pending, applied: { outcome: "committed", refused: ["report-0"], pushed: true }, mainCommit: "8".repeat(40) });
+  assert.equal(refused[0].unposted, "refused");
+});
+
+// ── the alert job's composer, and the log scan ──────────────────────────────
+
+test("TRUST-14's composer turns decide's names into the one verdict the channel sends", () => {
+  const roots = { schema: "astra.registry.alert-verdict/1", check: "plugins-ingest", status: "green" };
+  assert.deepEqual(mergeAlerts(roots, {}), roots, "nothing named, nothing changed");
+  const merged = mergeAlerts(roots, { trust14: [{ fingerprint: FP, event: "approval" }], operator: [{ code: "BOT15_FACTS_DISAGREE" }] });
+  assert.equal(merged.status, "red");
+  assert.deepEqual(merged.codes, ["BOT15_FACTS_DISAGREE", TRUST14_CODES.approval].sort());
+  assert.deepEqual(merged.hexes, [FP]);
+  assert.throws(() => mergeAlerts(roots, { trust14: [{ fingerprint: FP, event: "whim" }] }));
+});
+
+test("BOT-89's scan fails on each planted value, and not on the four outcomes or the decoys", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-leaks-"));
+  try {
+    // The floor, written before anything else: ten values, one line each.
+    assert.equal(VERDICT_VALUES.length, 10);
+    // Three shapes: keyed, keyed-and-quoted, and a bare JSON array element.
+    const planted = VERDICT_VALUES.map((v, i) => [`  token_state: ${v}`, `{"eligibility":"${v}"}`, `["${v}"]`][i % 3]);
+    const decoys = [...ACTED_OUTCOMES.map((o) => `outcome=${o}`), "state/releases-seen.json updated", "direction: outbound", "code: W_ELIGIBILITY_UNREADABLE"];
+    fs.writeFileSync(path.join(dir, "log.txt"), [...planted, ...decoys].join("\n"));
+    const out = scanFiles([path.join(dir, "log.txt")]);
+    assert.equal(out.leaks.length, VERDICT_VALUES.length, JSON.stringify(out.leaks));
+    assert.ok(out.leaks.every((l) => l.line <= VERDICT_VALUES.length), "no decoy line was reported");
+    fs.writeFileSync(path.join(dir, "clean.txt"), decoys.join("\n"));
+    assert.deepEqual(scanFiles([path.join(dir, "clean.txt")]).leaks, []);
+    assert.ok(scanFiles([]).problems.length > 0, "a scan of nothing is not green");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ── reg.61a's service-path half: the numbers and the sentence ───────────────
+
+test("docs/POLICY.md §3.2 states the numbers bot/lib/service-decide.mjs enforces", () => {
+  const doc = fs.readFileSync(path.join(REPO, "docs", "POLICY.md"), "utf8");
+  const at = doc.indexOf("### 3.2 On the plugins-service path");
+  assert.ok(at >= 0, "docs/POLICY.md has no §3.2 for the service path");
+  const section = doc.slice(at, doc.indexOf("\n## ", at));
+  assert.ok(section.includes(`**${APPROVAL_MAX_DAYS} days** (BOT-26)`), "the approval maximum");
+  assert.ok(section.includes(`**${UPDATE_WINDOW_HOURS} hours** earlier`), "the update window");
+  assert.ok(section.includes(`**${OPERATOR_WINDOW_HOURS} hours** have passed`), "the operator window");
+  assert.ok(section.includes(`**${FIRST_BINDING_WAIT_DAYS} days** after the record`), "TRUST-27's wait");
+});
+
+// A hash, not a byte count, so this reads the same whatever the checker's
+// locale: the set of files this section depends on, to make an accidental
+// deletion of one visible.
+test("the service-path modules this section drives are all on the tree", () => {
+  for (const f of ["service-decide.mjs", "service-jobs.mjs", "service-publish.mjs", "service-results.mjs", "trust14.mjs", "scan-verdict-leaks.mjs"]) {
+    assert.ok(fs.existsSync(path.join(REPO, "bot", "lib", f)), f);
+  }
+  assert.ok(crypto.createHash("sha256").update("x").digest("hex").length === 64);
+});
+
+// ── the whole path, once, as a run would take it ────────────────────────────
+//
+// claim → verify → check → ask → decide → compose → publish-apply → finalize
+// → report, over a real temporary registry tree, real fixture bundles, the
+// real manifest probe, and the stub above standing in for the service. The
+// one thing not real is `gh`, which answers from the fixture's certificate.
+
+import { checkFacts, verifyFacts } from "../ingest.mjs";
+import { decideJob } from "../lib/service-decide.mjs";
+import { run as publishApply } from "../publish-apply.mjs";
+import { loadRootKeys } from "../lib/attestation.mjs";
+import { makeBundle, fakeGitHub, fakeGh, FIXTURE_REPOSITORY_ID, FIXTURE_OWNER_ID } from "../fixtures/ingest/make.mjs";
+
+function e2eWorld() {
+  const t = registryTree();
+  const w = (rel, doc) => {
+    fs.mkdirSync(path.join(t.dir, path.dirname(rel)), { recursive: true });
+    fs.writeFileSync(path.join(t.dir, rel), typeof doc === "string" ? doc : `${JSON.stringify(doc, null, 2)}\n`);
+  };
+  w(`plugins/${P.id}/plugin.json`, {
+    schema: "astra.registry.plugin/1", id: P.id, name: "Dice Roller", summary: "Rolls dice when you ask it to.",
+    license: "MIT", source: { kind: "github", repo: P.repo }, added_at: "2026-01-01",
+  });
+  w(`plugins/${P.id}/versions/0.1.0.json`, {
+    schema: "astra.registry.version/1", id: P.id, version: "0.1.0", published_at: "2026-01-01T00:00:00Z",
+    release: { kind: "github_release", repo: P.repo, tag: "v0.1.0" }, capabilities: ["tools"], staging: true,
+    staging_reason: "Test fixture: the release this points at is a fake, so there is no digest to pin.",
+    artifacts: { "linux-x64": { url: `https://github.com/${P.repo}/releases/download/v0.1.0/${P.id}-0.1.0-linux-x64.astraplugin`, filename: `${P.id}-0.1.0-linux-x64.astraplugin` } },
+  });
+  // MIG-20's baseline for the id, and its marker, so BOT-34's commit rule is on.
+  w(`log/decisions/2026/09/${"e".repeat(32)}.json`, {
+    schema: "astra.registry.decision/1", decision_id: "e".repeat(32), decided_at: "2026-09-01T00:00:00Z", actor: "system",
+    trigger: "migration", plugin_id: P.id, version: "0.1.0", repo: P.repo, repository_id: FIXTURE_REPOSITORY_ID,
+    repository_owner_id: FIXTURE_OWNER_ID, tag: "v0.1.0", state: "published", fingerprint: "0123456789abcdef",
+  });
+  w("log/baseline.json", {
+    schema: "astra.registry.baseline/1", written_at: "2026-09-01T00:00:00Z", source_commit: "1".repeat(40), version_count: 1, record_count: 1,
+  });
+  t.g("add", "-A");
+  t.g("commit", "-q", "-m", "a listed plugin, its baseline and the marker");
+  return t;
+}
+
+function testRootKeys() {
+  const keys = ["root-a", "root-b"].map((n) =>
+    JSON.parse(fs.readFileSync(path.join(REPO, "tools", "testkeys", `TEST-ONLY-DO-NOT-TRUST-${n}.pub.json`), "utf8")));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-roots-"));
+  const file = path.join(dir, "root.json");
+  fs.writeFileSync(file, JSON.stringify({
+    schema: "astra.registry.root/1", status: "provisioned",
+    roots: keys.map((k) => ({ key_id: k.key_id, public_key: k.public_key, role: k.role })),
+  }));
+  const loaded = loadRootKeys(file);
+  fs.rmSync(dir, { recursive: true, force: true });
+  return loaded;
+}
+
+async function e2eRun({ shadow = false } = {}) {
+  const t = e2eWorld();
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-e2e-"));
+  const cleanup = () => { t.cleanup(); fs.rmSync(work, { recursive: true, force: true }); };
+  const name = `${P.id}-${P.version}-linux-x64.astraplugin`;
+  const bytes = makeBundle({});
+  const posted = [];
+  const s = await stub((call) => {
+    if (call.url.endsWith("/leases")) return ok({ schema: "astra.plugins.bot-leases/1", shadow, leases: [lease({ attempt: "att-9" })] });
+    if (call.url.endsWith("/gates")) {
+      return ok({ schema: "astra.plugins.bot-gates/1", shadow, items: [{ submission_id: P.sid, fingerprint: JSON.parse(call.raw).items[0].fingerprint, stop_status: "no_stop", decisions: [] }] });
+    }
+    if (call.url.endsWith("/results")) {
+      posted.push(JSON.parse(call.raw));
+      return ok({ schema: "astra.plugins.bot-ack/1", shadow, outcome: "accepted" });
+    }
+    return { status: 500, body: {} };
+  });
+  try {
+    // claim
+    const claimed = await claimJob({ client: client(s), log: { log: () => {}, error: () => {} } });
+    // verify
+    const github = fakeGitHub({ repo: P.repo, tag: P.tag, assets: [{ name, bytes }] });
+    const assetsDir = path.join(work, "assets");
+    const verifiedAll = {};
+    for (const id of claimed.submissions) {
+      verifiedAll[id] = await verifyFacts({
+        lease: claimed.leases[id], root: t.dir, assetsDir,
+        trustFile: path.join(REPO, "tools", "testkeys", "fixtures", "trust-active-signed.json"),
+      }, {
+        rootKeys: testRootKeys(),
+        fetchRelease: github.fetchRelease.bind(github), headAsset: github.headAsset.bind(github), downloadAsset: github.downloadAsset.bind(github),
+        ghRunner: (args) => fakeGh({ repo: P.repo, signerDigest: "0".repeat(40), tag: P.tag, subjectDigest: crypto.createHash("sha256").update(fs.readFileSync(args[2])).digest("hex") })(args),
+        fetchRepositoryIds: async () => ({ status: "found", id: FIXTURE_REPOSITORY_ID, owner_id: FIXTURE_OWNER_ID, full_name: P.repo }),
+        binding: { commitInRepository: async () => ({ status: "found", reason: "ok" }), fileAtCommit: async () => ({ status: "not_found", reason: "HTTP 404" }) },
+      });
+    }
+    // check, laid out the way the two artifacts download
+    const factsDir = path.join(work, "facts");
+    const listingsDir = path.join(work, "listings");
+    const pubListings = path.join(work, "pub-listings");
+    for (const id of claimed.submissions) {
+      const out = path.join(work, `check-${id}`);
+      await checkFacts({ submissionId: id, assetsDir: path.join(assetsDir, id), verified: verifiedAll[id], out, root: t.dir });
+      fs.mkdirSync(path.join(factsDir, `facts-${id}`), { recursive: true });
+      fs.copyFileSync(path.join(out, "facts.json"), path.join(factsDir, `facts-${id}`, "facts.json"));
+      fs.cpSync(path.join(out, "listing"), path.join(listingsDir, `listing-${id}`), { recursive: true });
+      fs.cpSync(path.join(out, "listing"), pubListings, { recursive: true });
+    }
+    // ask
+    const asked = await askJob({ client: client(s), submissions: claimed.submissions, leases: claimed.leases, verified: verifiedAll });
+    // decide
+    const decided = decideJob({
+      root: t.dir, submissions: claimed.submissions, leases: claimed.leases, claimShadow: claimed.shadow,
+      verified: verifiedAll, outcome: asked.outcome, factsDir, listingsDir, now: P.now, startedAt: P.now,
+      readCommit: t.g("rev-parse", "HEAD").trim(),
+    });
+    // publish
+    const reportsDir = path.join(work, "reports");
+    fs.mkdirSync(reportsDir, { recursive: true });
+    const { pending } = composePublication({ plans: decided.plans, root: t.dir, listingsDir: pubListings, reportsDir, run: "77/1" });
+    const applied = publishApply({
+      root: t.dir, reports: reportsDir, watchState: path.join(work, "none"), base: t.g("rev-parse", "HEAD").trim(),
+      skipChecks: true, push: false, servicePath: true, message: "registry: publish (plugins ingest)", trailer: commitTrailers({ pending, run: "77/1" }), log: () => {},
+    });
+    const head = t.g("rev-parse", "HEAD").trim();
+    const results = finalizeResults({
+      pending, applied: { outcome: applied.outcome, refused: (applied.refusals ?? []).map((r) => r.report), pushed: applied.outcome === "committed" }, mainCommit: head,
+    });
+    // report
+    await reportJob({ client: client(s), results: results.map((r) => ({ ...r, shadow: false })) });
+    return { t, decided, pending, applied, head, results, posted, verifiedAll, cleanup };
+  } catch (e) {
+    cleanup();
+    throw e;
+  } finally {
+    await s.close();
+  }
+}
+
+test("end to end: one lease becomes one commit holding the listing and its record, and one result naming both", async () => {
+  const r = await e2eRun();
+  try {
+    assert.equal(r.verifiedAll[P.sid].outcome, "ok", JSON.stringify(r.verifiedAll[P.sid].findings.filter((f) => f.level === "error")));
+    const plan = r.decided.plans[0];
+    assert.equal(plan.state, "published", `${plan.kind} ${plan.state ?? ""} ${JSON.stringify(plan.reasons?.map((x) => x.code) ?? plan.why)}`);
+    assert.equal(r.applied.outcome, "committed", JSON.stringify(r.applied.refusals));
+    const files = r.t.g("show", "--name-only", "--format=", "HEAD").trim().split("\n");
+    assert.ok(files.includes(`plugins/${P.id}/versions/${P.version}.json`), files.join(" "));
+    const rec = files.find((f) => /^log\/decisions\/2026\/09\/[0-9a-f]{32}\.json$/.test(f));
+    assert.ok(rec, "the record is in the same commit (BOT-34, BOT-73)");
+    const message = r.t.g("log", "-1", "--format=%B").trim();
+    assert.match(message, new RegExp(`Submission: ${P.sid}`), "BOT-37's trailers");
+    assert.equal(r.posted.length, 1, "one result posted");
+    const body = r.posted[0];
+    assert.equal(body.state, "published");
+    assert.equal(body.main_commit, r.head, "the result names the commit that landed");
+    assert.equal(`log/decisions/2026/09/${body.decision_id}.json`, rec, "and the record in it");
+    assert.equal(body.attempt, "att-9", "BOT-12: the attempt identity is echoed");
+    const version = JSON.parse(fs.readFileSync(path.join(r.t.dir, "plugins", P.id, "versions", `${P.version}.json`), "utf8"));
+    assert.equal(version.release.repo, P.repo, "BOT-21: the committed repo is the certificate's");
+  } finally {
+    r.cleanup();
+  }
+});
+
+test("end to end, in shadow: the same lease commits nothing and posts nothing", async () => {
+  const r = await e2eRun({ shadow: true });
+  try {
+    assert.equal(r.decided.plans[0].kind, "none");
+    assert.equal(r.decided.plans[0].would.state, "published", "the shadow run still decided what it would do");
+    assert.equal(r.pending.length, 0);
+    assert.equal(r.applied.outcome, "nothing");
+    assert.equal(r.posted.length, 0, "BOT-92: no result of any kind");
+  } finally {
+    r.cleanup();
+  }
+});

@@ -59,6 +59,7 @@
 // target.
 
 import fs from "node:fs";
+import path from "node:path";
 
 import { REPO_ROOT, loadSources } from "../tools/lib/sources.mjs";
 
@@ -122,6 +123,8 @@ export function recordPermissionProbe(proof, env = process.env, appendFile = fs.
   }
 }
 import { findListingByRepo, parseReleasePing, resolveSubmitter } from "./lib/notify.mjs";
+import { bot74Filter, recordedTagsByRepo } from "./watch.mjs";
+import { readIdentityRecord } from "./decide.mjs";
 import { readQueue } from "./lib/policy.mjs";
 
 function parseArgs(argv) {
@@ -259,6 +262,21 @@ export async function triage(opts, release = fetchRelease, deps = {}) {
         "exists. Open a listing request with the template.",
       reply: renderPingForUnlisted({ registry, repo }),
     };
+  }
+
+  // BOT-74's two filters, before anything is spent — the same ones the
+  // backstop applies, over the same recorded tags. They applied to the
+  // backstop alone, so a `/release <repo> cli-v1.4.0` on a repository this
+  // registry lists ran the whole ingest, was refused E_NO_BUNDLE_ASSETS, and
+  // from MIG-20's baseline on would have committed a `refused` record for a
+  // release that never was a plugin's. A first listing (no listing yet)
+  // records no tag, so there is nothing to filter by and the form's path is
+  // the human one.
+  if (listing) {
+    const verdict = bot74Filter({ tag: ping.tag, listedTags: recordedTagsByRepo(sources).get(String(repo).toLowerCase()) ?? [] });
+    if (!verdict.pass) {
+      return { mode: "none", why: `BOT-74: ${verdict.why}; nothing is ingested and nothing is recorded` };
+    }
   }
 
   let submitter;
@@ -625,6 +643,32 @@ async function decideCommand({ command, opts, registry, labelled, issueTitle, fo
       };
     }
   }
+  // ── from R4a: a command for a bound listing is the service path's ───────
+  //
+  // Once `log/rollout/R3-exit.json` is on main, R4a is open and a listing can
+  // be bound. BOT-77 already stops the ingest from publishing, queueing or
+  // clearing a hold on a listing with an identity record; this stops the
+  // COMMAND, so the maintainer is told on the thread rather than by a hold
+  // nobody can clear (B-T3.9; ROLL-49). Before the marker no listing is bound
+  // and nothing here applies.
+  if (fs.existsSync(path.join(opts.root ?? REPO_ROOT, "log", "rollout", "R3-exit.json"))) {
+    const bound = (sources.plugins ?? []).filter((p) =>
+      String(p.doc?.source?.repo ?? "").toLowerCase() === String(named ?? "").toLowerCase() &&
+      readIdentityRecord(opts.root ?? REPO_ROOT, p.doc?.id));
+    if (bound.length) {
+      return {
+        mode: "reply",
+        why:
+          `/${command.command} from @${commenter} names ${named}@${namedTag}, and ${bound.map((p) => p.doc.id).join(", ")} ` +
+          "is bound: from R4a a bound listing's releases are decided on the service path, not by an issue command",
+        reply:
+          `\`${bound.map((p) => p.doc.id).join("\`, \`")}\` is bound to its repository, and from R4a a bound listing's ` +
+          "releases are decided by the plugins service's path — the verdict, the eligibility and the binding line — " +
+          "not by an issue command. Nothing was approved. See docs/POLICY.md.",
+      };
+    }
+  }
+
   // ── stage 2 of B-T0.2: the approval binds to a `held` RECORD on main ─────
   //
   // Everything above binds the approval to what the maintainer was looking at.
