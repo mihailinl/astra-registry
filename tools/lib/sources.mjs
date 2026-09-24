@@ -280,6 +280,34 @@ function readRecord(rel, full, out, errors) {
 }
 
 /**
+ * `plugins/<dir>/identity.json` for each of `pluginDirs` that has one, as
+ * `{file, doc}`, and every one that could not be read, as `{file, message}`.
+ *
+ * ONE READER, TWO CALLERS. `loadRecords` below reads identity records for
+ * tools/validate.mjs to judge, and `tools/build-index.mjs` reads them for the
+ * badge join (registry plan RC-R3-5; TRUST-25): a listing with an identity
+ * record takes a badge only from a publisher record whose `owner_ids` carries
+ * that record's `repository_owner_id`. Two readers of one path would be two
+ * answers to "does this listing have an identity record", and the one that
+ * answered "no" would badge by login — which is exactly the recycled-login
+ * case the join exists to refuse. Structure only, like the rest of this
+ * module: the schema is tools/validate.mjs's.
+ *
+ * @param {string} root
+ * @param {string[]} pluginDirs the directory names under `plugins/` to look in
+ */
+export function loadIdentities(root = REPO_ROOT, pluginDirs = []) {
+  const identities = [];
+  const errors = [];
+  for (const dir of pluginDirs) {
+    const full = path.join(root, "plugins", dir, IDENTITY_BASENAME);
+    if (!fs.existsSync(full)) continue;
+    readRecord(`plugins/${dir}/${IDENTITY_BASENAME}`, full, identities, errors);
+  }
+  return { identities, errors };
+}
+
+/**
  * Every B.4 record outside `plugins/<id>/plugin.json` and `versions/*.json`.
  *
  * Structure and NAME only — no schema, no policy — which is this module's whole
@@ -318,11 +346,9 @@ export function loadRecords(root = REPO_ROOT, sources = null) {
         .filter((d) => d.isDirectory()).map((d) => d.name).sort()
       : []);
 
-  for (const dir of pluginDirs) {
-    const full = path.join(root, "plugins", dir, IDENTITY_BASENAME);
-    if (!fs.existsSync(full)) continue;
-    readRecord(`plugins/${dir}/${IDENTITY_BASENAME}`, full, identities, errors);
-  }
+  const loaded = loadIdentities(root, pluginDirs);
+  identities.push(...loaded.identities);
+  errors.push(...loaded.errors);
 
   const decisionsRoot = path.join(root, ...DECISIONS_DIR.split("/"));
   for (const year of jsonFilesIn(decisionsRoot)) {
