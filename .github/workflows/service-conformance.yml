@@ -1,0 +1,205 @@
+# BOT-90: an hourly black-box check of the live plugins service, holding no
+# bot OIDC token (registry plan B-T3.11; contract SERVE-83, BOT-62).
+#
+# Every rule lives in `tools/service-conformance.mjs`; this file reads the
+# world and runs it. Four legs, each at a path the token file records:
+# `token_refused` for an OIDC token this NON-bot workflow mints with the bot
+# audience, sent to `POST bot/leases`; `unauthenticated` for CLIENT-80's
+# `rating.get` with no bearer; `plugin_not_listed` at the `service-only`
+# `listings/{plugin_id}`; and `health`, the read that must succeed. On every
+# answer, `nosniff` and an exact `Content-Type`; on every refusal, a body that
+# is exactly `astra.plugins.error/1`. Statuses are logged and never asserted.
+#
+# ── it is dark, and this is what dark means ────────────────────────────────
+#
+# The `schedule:` below is COMMENTED OUT. The plugins service is not answering
+# yet — `registry.minice.ai` is up on 2026-09-26 and the R3 handlers open on
+# 09-27/28, by minice-e4's statement — and an hourly probe against a service
+# that is not there is a run that is red every hour, pages the owner with a
+# copy to KNICE, and teaches both to ignore this channel before it has said
+# anything true. The commit that turns it on uncomments the two lines AND arms
+# `conformance`'s row in `bot/lib/alert-checks.mjs` (`created_disarmed:
+# false`, or the `armed_at` of its first post), in the same commit:
+# `bot/tests/workflows.test.mjs`, "a registry check is armed exactly when a
+# workflow here posts to it on a live schedule", is red on `conformance` from
+# the moment the schedule is live until the row says it is armed.
+#
+# ── the burst, and why a dispatch of it here is always refused ─────────────
+#
+# `burst: true` asks for BOT-62's burst: two shapes of refused requests within
+# 10 s, sized from crowdsec thresholds re-read that day, then two ordinary
+# reads 60 s apart. It is an OWNER APPROVAL per burst, fired by the plugins-
+# service session from an address the owner named — never from a GitHub-
+# hosted runner, whose address is shared with other tenants and may be drawn
+# by the registry's own next ingest run. So on this workflow's runner the
+# burst step REFUSES, by construction, and the run is red saying so. That red
+# is the watched failure of the refusal, not a defect: the real burst is
+# `tools/service-conformance.mjs --burst` on the approved machine, and its
+# removal step — `cscli decisions delete` on the box, recorded in ops.29 — is
+# the step after it that this workflow names and cannot perform.
+#
+# ── not a bot workflow ─────────────────────────────────────────────────────
+#
+# It claims no lease and holds no bot token, so BOT-4's no-inputs rule does
+# not bind it and TRUST-31's set does not hold it. The probe job mints an OIDC
+# token with the BOT audience and no `plugins-service` environment, which is
+# exactly the token BOT-91 must refuse; ID-38's lint that `id-token: write`
+# outside the bot workflows never sits beside `plugins-service` is what keeps
+# this job from ever becoming a bot job by accident.
+
+name: Service conformance
+
+on:
+  # The suite, on every change, so a pull request that breaks the harness is
+  # red before it merges. The probe never runs on these.
+  pull_request:
+  push:
+    branches: [main]
+
+  # ── BOT-90's hourly probe, off until the service answers ──────────────────
+  #
+  # Hourly, at a minute no other schedule here uses and away from the ingest
+  # (3-59/10) and moderation (8-59/10) claims.
+  #
+  # schedule:
+  #   - cron: '29 * * * *'
+
+  workflow_dispatch:
+    inputs:
+      burst:
+        description: >-
+          BOT-62's burst. Refused on this workflow's runner by design: it is an
+          owner-approved act fired from an approved address, never from a
+          GitHub-hosted runner.
+        type: boolean
+        required: false
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: service-conformance-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # The harness's own suite, against a stub on 127.0.0.1. On every event, and
+  # first: a probe run by a harness that fails its own tests is a probe whose
+  # verdict means nothing.
+  suite:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: The harness, against a stub that answers each way the service could be wrong
+        run: node --test bot/tests/service-conformance.test.mjs
+
+  probe:
+    needs: suite
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      status: ${{ steps.probe.outputs.status }}
+      codes: ${{ steps.probe.outputs.codes }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: The four legs, at the paths the token file records
+        id: probe
+        run: node tools/service-conformance.mjs --probe
+
+      # Refused on this runner (header). Named so the refusal is in the log
+      # with its reasons, and so a dispatch that asked for a burst is never a
+      # green run.
+      - name: "BOT-62's burst (refused on a GitHub-hosted runner, by design)"
+        if: inputs.burst == true
+        run: node tools/service-conformance.mjs --burst --out-dir burst
+
+      # The step after a burst that no runner here can perform: removing the
+      # crowdsec decision for the burst's source address. It refuses without a
+      # removal record for the same burst, so a burst is never reported
+      # complete with its decision still in place.
+      - name: "Remove the burst's crowdsec decision: `cscli decisions delete`, run on the box and recorded in ops.29"
+        if: always() && inputs.burst == true
+        run: node tools/service-conformance.mjs --burst-complete
+
+  alert:
+    needs: [suite, probe]
+    if: always() && !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    environment: alerts
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_DEADMAN_URL_CONFORMANCE: ${{ secrets.ASTRA_DEADMAN_URL_CONFORMANCE }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert
+            bot/alert.mjs
+            bot/heartbeat.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+
+      # From job outputs, never an artifact. The codes are the harness's fixed
+      # vocabulary, and each is held to the verdict grammar here as well, so a
+      # value that is not a code cannot become a line in the owner's chat.
+      - name: The verdict this run reached
+        env:
+          ASTRA_CONFORMANCE_JOBS: suite probe
+          SUITE: ${{ needs.suite.result }}
+          PROBE: ${{ needs.probe.result }}
+          STATUS: ${{ needs.probe.outputs.status }}
+          CODES: ${{ needs.probe.outputs.codes }}
+        run: |
+          set -euo pipefail
+          codes=""
+          add() { codes="${codes:+$codes, }\"$1\""; }
+          [ "$SUITE" = success ] || add CONFORMANCE_SUITE_FAILED
+          [ "$PROBE" = success ] || [ "$PROBE" = failure ] || add CONFORMANCE_PROBE_DID_NOT_RUN
+          for c in $CODES; do
+            [[ "$c" =~ ^[A-Z][A-Z0-9_]{0,47}$ ]] || { echo "::error::the probe reported a value that is not a code"; exit 1; }
+            add "$c"
+          done
+          [ "$PROBE" = failure ] && [ -z "$CODES" ] && add CONFORMANCE_PROBE_FAILED
+          status=green
+          [ -n "$codes" ] && status=red
+          [ "$STATUS" = red ] && status=red
+          cat > verdict.json <<JSON
+          {
+            "schema": "astra.registry.alert-verdict/1",
+            "check": "conformance",
+            "status": "$status",
+            "codes": [$codes],
+            "run": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          JSON
+          if [ -z "$codes" ]; then
+            grep -v '"codes": \[\]' verdict.json > verdict.tmp && mv verdict.tmp verdict.json
+          fi
+          cat verdict.json
+
+      - uses: ./.github/actions/alert
+        with:
+          verdict: verdict.json
+          check: conformance

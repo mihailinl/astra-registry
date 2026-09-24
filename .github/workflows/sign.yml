@@ -180,6 +180,12 @@ jobs:
       # documents into `dist/signed/` and a record of what it decided into
       # `record.json`. It does not push, which is why the step that does needs
       # no key.
+      #
+      # `--event` is what lets the schedule own the equal-serial refresh: a
+      # push or a workflow_run publishes every CHANGED document at once, and
+      # re-signs an unchanged one only at the 34 h backstop, so that a merge
+      # just past the 20-hour mark no longer takes the unattended re-sign
+      # ROLL-14 counts (tools/signer/plan.mjs, RESIGN_HOURS_BY_EVENT).
       - name: Plan the run, sign what changed, and verify it against the trust.json beside it
         id: sign
         env:
@@ -194,6 +200,7 @@ jobs:
           node tools/signer/run.mjs \
             --step sign \
             --source-commit "${{ steps.source.outputs.sha }}" \
+            --event "$GITHUB_EVENT_NAME" \
             --out dist/signed \
             --record record.json
 
@@ -306,6 +313,15 @@ jobs:
       # NON-FATAL, and that is the whole of MOD-46 and ROLL-55 in one line. The
       # site is prose and templates; the four documents are what a daemon
       # fetches. A render failure must cost the website and nothing else.
+      #
+      # `--redirects` is ROLL-55's other half, and THIS is where it has to be:
+      # this job builds the tree Pages serves, so a set filled in
+      # site/redirects.json takes effect here and nowhere else (build-index.yml
+      # builds the same pages only to assert them). With every set empty it
+      # changes no byte, which site/selftest.mjs holds. A filled set that makes
+      # the render throw lands in the D5 fallback below, which redeploys the
+      # newest site that DID render; build-index.yml passes the same flag so the
+      # pull request that fills a set is where a bad mapping goes red first.
       - name: The website, from what `signed` holds
         id: site
         continue-on-error: true
@@ -321,6 +337,7 @@ jobs:
             --revocations dist/registry/v1/revocations.json \
             --registry-dir dist/registry/v1 \
             --repo "${{ github.repository }}" \
+            --redirects site/redirects.json \
             --out dist/site
 
       # D5's fallback. The newest `pages-site` from a run that DID render, with
