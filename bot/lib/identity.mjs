@@ -364,6 +364,30 @@ export function refuseUnclaimedEntries({ entries, claimedIds }) {
 // ── TRUST-23, against MIG-20's baseline (the B-T3.3a half that is buildable) ─
 
 /**
+ * B-T4.2's baseline-voiding decision record, in the shape the registry plan
+ * proposes for OPEN-OPS-20's contract MINOR: `actor` `moderator`, `trigger`
+ * `moderation`, `category` `identity_reset`, and the `plugin_id` it voids.
+ *
+ * **Keyed on all four, and on nothing a record could carry by accident.**
+ * Until 2026-09-24 this was `trigger === "identity_reset" || state ===
+ * "identity_reset"`. The first half can never match a valid record —
+ * `identity_reset` is not a DEC-7 trigger, and schema/decision-v1.json's
+ * trigger list is closed — so the reader was keyed on a guess the plan does not
+ * make; and the second half let any record whose `state` happened to say
+ * `identity_reset`, from any actor, end a baseline, which turns a permanent
+ * `B_REPOSITORY_RECYCLED` into a hold. Today no record can match: the category
+ * is not in schema/decision-v1.json's enum until the MINOR adds it, which is
+ * the dark state ID-41 asks for ("until a contract version adds one the
+ * refusal stands"). `bot/detectors.mjs`'s A9 asks the same predicate of a
+ * deletion of `identity.json`.
+ */
+export function isVoidingRecord(r) {
+  return !!r && typeof r === "object"
+    && r.actor === "moderator" && r.trigger === "moderation" && r.category === "identity_reset"
+    && typeof r.plugin_id === "string" && r.plugin_id !== "";
+}
+
+/**
  * A baseline ends at the newest voiding record (B-T4.2's reset).
  *
  * Without this rule a reset leaves the OLD certificate ids as the baseline
@@ -380,7 +404,7 @@ export function refuseUnclaimedEntries({ entries, claimedIds }) {
 export function effectiveBaseline({ records, pluginId }) {
   const mine = (records ?? []).filter((r) => r?.plugin_id === pluginId);
   const resets = mine
-    .filter((r) => r?.trigger === "identity_reset" || r?.state === "identity_reset")
+    .filter(isVoidingRecord)
     .map((r) => r.decided_at)
     .filter(Boolean)
     .sort();

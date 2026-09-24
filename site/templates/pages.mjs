@@ -159,8 +159,11 @@ ${entries.map((e) => card(e, { depth: 2, withdrawn: withdrawnIds.has(e.id) })).j
 <section>
 <h2>What &ldquo;publisher&rdquo; means here</h2>
 <p>It means the GitHub account or organisation that owns the repository each plugin is built and
-released from. There are no registry accounts, no passwords and nothing to sign in to: the identity
-is the repository, and control of it is proved against GitHub every time a release is ingested.</p>
+released from. This registry has no accounts of its own, and nothing here to sign in to: the
+identity is the repository, and control of it is proved against GitHub every time a release is
+ingested. <em>Amended 2026-09-24:</em> binding a repository to its listing also needs a Minice account
+holding <code>astraUser</code>, at astra.minice.ai. That account is told about each release, and it
+is never shown on this page.</p>
 <p>Astra pins that identity on first install. A later release from a <em>different</em> repository
 is not a routine update &mdash; it is an identity change, one of the three events that stop and wait
 for a person (<a href="../../policy/#3-the-three-events-that-need-a-person">policy</a>). What the app
