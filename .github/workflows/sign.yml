@@ -306,6 +306,15 @@ jobs:
       # NON-FATAL, and that is the whole of MOD-46 and ROLL-55 in one line. The
       # site is prose and templates; the four documents are what a daemon
       # fetches. A render failure must cost the website and nothing else.
+      #
+      # `--redirects` is ROLL-55's other half, and THIS is where it has to be:
+      # this job builds the tree Pages serves, so a set filled in
+      # site/redirects.json takes effect here and nowhere else (build-index.yml
+      # builds the same pages only to assert them). With every set empty it
+      # changes no byte, which site/selftest.mjs holds. A filled set that makes
+      # the render throw lands in the D5 fallback below, which redeploys the
+      # newest site that DID render; build-index.yml passes the same flag so the
+      # pull request that fills a set is where a bad mapping goes red first.
       - name: The website, from what `signed` holds
         id: site
         continue-on-error: true
@@ -321,6 +330,7 @@ jobs:
             --revocations dist/registry/v1/revocations.json \
             --registry-dir dist/registry/v1 \
             --repo "${{ github.repository }}" \
+            --redirects site/redirects.json \
             --out dist/site
 
       # D5's fallback. The newest `pages-site` from a run that DID render, with
