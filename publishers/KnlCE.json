@@ -3,6 +3,7 @@
   "schema": "astra.registry.publisher/1",
   "owner": "KnlCE",
   "covers": ["MINICE-AI"],
+  "owner_ids": { "KnlCE": "114572819", "MINICE-AI": "280318216" },
   "display_name": "KNICE",
   "description_text": "Astra's co-founder and main developer",
   "tier": "astra_team",
