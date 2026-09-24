@@ -173,11 +173,17 @@ jobs:
       # what makes a step that never ran visible; a step with no entry is red,
       # and an entry with no step is red.
       #
-      #   M-T4.2, M-T4.3, M-T6.2   the ROLL-47 promise greps
+      #   M-T4.3, M-T6.2   their ROLL-47 rows, in roll47-promises.mjs's table
       #   M-T6.2   no issue channel, no `issues: write`     R6
       #
-      # M-T5.8's badge-withdrawal trailer is not a step: it goes inside
-      # `tools/moderation-coverage.mjs`'s walk, where its seam is written.
+      # M-T5.8's badge-withdrawal trailer is not a step: it is inside
+      # `tools/moderation-coverage.mjs`'s walk, the first step above.
+
+      # Over every tracked text file but authors' own words, because the plan
+      # named two places and the tree said the same promise in six.
+      - name: No document restates a promise ROLL-47 has retired             # M-T4.2, ROLL-47
+        if: always()
+        run: node tools/coverage/roll47-promises.mjs --report "$ASTRA_COVERAGE_FINDINGS"
 
       - name: The withdrawal docs teach no advisory URL we do not serve      # M-T1.3, MOD-13
         if: always()

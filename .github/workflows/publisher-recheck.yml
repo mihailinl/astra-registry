@@ -48,10 +48,10 @@ jobs:
         id: run
         run: |
           set -euo pipefail
-          node bot/recheck-publishers.mjs --write | tee /tmp/recheck.log
+          node bot/recheck-publishers.mjs --write | tee "$RUNNER_TEMP/recheck.log"
           {
             echo 'report<<REPORT'
-            cat /tmp/recheck.log
+            cat "$RUNNER_TEMP/recheck.log"
             echo REPORT
           } >> "$GITHUB_OUTPUT"
 
@@ -64,6 +64,26 @@ jobs:
       # stages anything inside contract TRUST-31's hashed set: this job runs
       # unattended, and after R3 such a commit would put the bot into shadow.
       # That is why the declarations are under state/ and not tools/selftest/.
+      #
+      # The message, and why it is built this way (registry plan M-T5.8,
+      # contract MOD-44). A deletion here narrows a publisher record, and the
+      # coverage canary's walk (moderation-coverage.yml) is red on a narrowing
+      # that carries neither `Badge-Withdrawn: <reason>` nor
+      # `Moderation-Exempt:`. A lapse is no withdrawal for cause — it sends no
+      # notice (MOD-44: "for such a commit, and no other") — so it never
+      # carries `Badge-Withdrawn:`, and it carries the exemption only when the
+      # report says a badge came off (`GONE`), because a renewal narrows
+      # nothing and an exemption on it would say something false.
+      #
+      # **The report is indented** before it goes into the message. The walk
+      # reads `Moderation-Exempt:` and `Badge-Withdrawn:` at the start of ANY
+      # line of a message, and a `Moderation-Exempt: <sha>: …` line clears
+      # another commit. Every line the re-check prints starts with a fixed
+      # word today, and the one variable part that is not a committed file is
+      # an error message; indenting the whole report makes "no line of the
+      # report can be a trailer" a property of this step rather than of every
+      # message the fetcher may one day print. `bot/tests/moderation-coverage
+      # .test.mjs` runs this block for real, in a fixture, and holds both.
       - name: Commit whatever moved
         run: |
           set -euo pipefail
@@ -74,9 +94,14 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- publishers/ state/publishers-without-listing.json
-          git commit -m "publishers: re-check $(date -u +%Y-%m-%d)
-
-          $(cat /tmp/recheck.log)"
+          {
+            printf 'publishers: re-check %s\n\n' "$(date -u +%Y-%m-%d)"
+            sed 's/^/    /' "$RUNNER_TEMP/recheck.log"
+            if grep -q '^GONE ' "$RUNNER_TEMP/recheck.log"; then
+              printf '\nModeration-Exempt: publisher-recheck: evidence lapsed past the confirmation window\n'
+            fi
+          } > "$RUNNER_TEMP/commit-message.txt"
+          git commit -F "$RUNNER_TEMP/commit-message.txt"
           git push
 
       # A withdrawal is the one outcome a person has to hear about, and the

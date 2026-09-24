@@ -1805,6 +1805,13 @@ export async function run() {
     beta.source.subdirectory = "plugin";
     put("plugins/beta/plugin.json", beta);
     commit("beta's source, changed by hand");
+    // And one DELETED, which A9 flags since B-T4.2's reader half (2026-09-24):
+    // a deletion of identity.json with no identity-reset record for that id.
+    // Deleting the record is a change under plugins/ like the others, so the
+    // Why's "every commit under plugins/ moves the catalogue's serial" has to
+    // hold for it too.
+    fs.rmSync(path.join(dir, "plugins/alpha/identity.json"));
+    commit("alpha's identity record, deleted by hand");
     const tip = git("rev-parse", "HEAD");
 
     // Detector 9, asked, through a reader that records what it asks.

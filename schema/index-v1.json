@@ -280,7 +280,7 @@
         },
         "publisher": {
           "type": "string",
-          "description": "The key into `signed.publishers`, i.e. the GitHub owner of `source.repo` — the only identity this registry proves. ABSENT when no reviewed record exists, and absence is the answer: a client that renders a badge from this field being present would badge every listing. Deliberately not the `author` string, which comes out of the plugin's own manifest and is whatever the author typed."
+          "description": "The key into `signed.publishers`, i.e. the GitHub owner of `source.repo` — the identity the ownership check proves. The Minice account a binding needs from R4a is never here (ROLL-47 A2, amended 2026-09-24). ABSENT when no reviewed record exists, and absence is the answer: a client that renders a badge from this field being present would badge every listing. Deliberately not the `author` string, which comes out of the plugin's own manifest and is whatever the author typed."
         }
       }
     },
