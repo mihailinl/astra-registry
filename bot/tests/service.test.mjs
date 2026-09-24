@@ -1982,6 +1982,7 @@ import { TRUST14_CODES, mergeAlerts } from "../lib/trust14.mjs";
 import { ACTED_OUTCOMES, VERDICT_VALUES, leaksIn, scanFiles } from "../lib/scan-verdict-leaks.mjs";
 import { submissionFingerprint } from "../lib/policy/release.mjs";
 import { cleanEnv } from "../../tools/lib/git-env.mjs";
+import { ACTOR_MISMATCH_FLOOR_DAYS } from "../lib/identity.mjs";
 
 const P = {
   sid: "0192f1c2-3b4a-7c5d-8e6f-1a2b3c4d5e6f",
@@ -2789,6 +2790,10 @@ test("docs/POLICY.md §3.2 states the numbers bot/lib/service-decide.mjs enforce
   assert.ok(section.includes(`**${UPDATE_WINDOW_HOURS} hours** earlier`), "the update window");
   assert.ok(section.includes(`**${OPERATOR_WINDOW_HOURS} hours** have passed`), "the operator window");
   assert.ok(section.includes(`**${FIRST_BINDING_WAIT_DAYS} days** after the record`), "TRUST-27's wait");
+  // MIG-31's floor, which service-decide.mjs has enforced since B-T4.1's walk
+  // (h) found it unenforced (registry #334) and which this section did not
+  // state. Watched failing before the sentence below it was written.
+  assert.ok(section.includes(`**${ACTOR_MISMATCH_FLOOR_DAYS} days** after the record`), "MIG-31's floor for a first binding the owner did not build");
 });
 
 // A hash, not a byte count, so this reads the same whatever the checker's
