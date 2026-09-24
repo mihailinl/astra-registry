@@ -105,9 +105,9 @@
 // **A MOD-52 revert.** M-T3.2 calls this "the one place a trailer test is
 // kept". There is no trailer to test, and the exclusion does not need one:
 //
-//   * no revert trailer exists on `main`. `operator.yml` is not written
-//     (M-T3.5), and the revert commit that task specifies carries
-//     `Service-Decision:` — the same trailer a service takedown carries. A
+//   * no revert trailer exists. `operator.yml` (M-T3.5, `tools/operator.mjs`)
+//     commits a revert with `Service-Decision:` naming the reverted decision,
+//     as MOD-52 requires — the same trailer a service takedown carries. A
 //     filter on it would exclude every service takedown, which is the M-2
 //     defect with the sign flipped;
 //   * it is structural anyway. A revert's tree change is the REMOVAL of a

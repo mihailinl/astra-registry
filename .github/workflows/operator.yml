@@ -1,0 +1,163 @@
+name: Operator
+
+# The operator's four acts (registry plan M-T3.5; contract MOD-52, TRUST-33,
+# BOT-70): confirm or cancel a moderation hold, revert an applied delist,
+# deprecate or revoke, and deny a release by its fingerprint for ever.
+#
+# ── what pins this workflow to `main`, and what does not ───────────────────
+#
+# **Environment `operator` is the whole defence** (attack B-2). MOD-9 makes a
+# confirmation here the only thing that releases a `disable`, a held relist or
+# unrevoke, or a takedown over TRUST-26's bound, and TRUST-33 makes this the
+# writer of a permanent deny. The role check that refuses a write-only
+# collaborator lives in the tree AT THE REF THE DISPATCHER CHOSE, the dispatch
+# API takes a `ref`, and plain write access is enough to dispatch. So a
+# write-only account could push a branch whose `bot/lib/operator-role.mjs`
+# returns "admin", dispatch there, and confirm a `disable` that reaches every
+# installed copy. A guard written in this file is no answer, because the same
+# push edits it. What refuses the job BEFORE IT STARTS is a setting outside the
+# tree: `operator`'s deployment-branch policy admits `main` and nothing else
+# (RC-R0-3a). `bot/tests/workflows.test.mjs` holds every job that writes an
+# operator record to that environment, and deleting the `environment:` line
+# below is the one edit that reopens B-2.
+#
+# The role check is defence in depth: on `main`, the real check runs and
+# refuses a write-only actor, a write-only triggering actor, and any re-run.
+#
+# ── what it is not ─────────────────────────────────────────────────────────
+#
+# It is not a bot workflow. It holds no bot OIDC token and mints none (no
+# `id-token`), it calls nothing at the plugins service ("It posts no result;
+# the service reads `main`", MOD-52), and it is outside TRUST-31's hashed set,
+# so editing it returns nothing to shadow. The moderation run reads its records
+# from git on its next run.
+#
+# Each job holds at most one of `contents: write` and the alarm channel's
+# credential, as everywhere in this repository.
+
+on:
+  workflow_dispatch:
+    inputs:
+      act:
+        description: "confirm or cancel a hold, revert an applied delist/deprecate/revoke, or deny a fingerprint"
+        type: choice
+        required: true
+        options: [confirm, cancel, revert, deny]
+      service_decision_id:
+        description: "the decision the act names (confirm, cancel, revert)"
+        type: string
+        required: false
+      fingerprint:
+        description: "the release fingerprint (deny only)"
+        type: string
+        required: false
+
+permissions: {}
+
+# One operator act at a time. A second dispatch waits rather than racing the
+# first to `main`.
+concurrency:
+  group: registry-operator
+  cancel-in-progress: false
+
+jobs:
+  act:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # MOD-52's boundary (RC-R0-3a): this environment admits `main` alone, so a
+    # dispatch on any other ref is refused before this job starts.
+    environment: operator
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          # A revert finds the decision's log entry and regenerates both
+          # documents; the list's serial is a count over history.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: The dispatcher and the triggering actor are an admin or a maintainer (MOD-52)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASTRA_ACTOR: ${{ github.actor }}
+          ASTRA_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          ASTRA_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: node tools/operator.mjs --job authority
+
+      # Through `env:`, never interpolated into the script: the inputs are
+      # typed by a person, and a `${{ }}` in a `run:` is the injection.
+      - name: The act, written to the tree and listed
+        env:
+          ASTRA_ACT: ${{ inputs.act }}
+          ASTRA_SERVICE_DECISION_ID: ${{ inputs.service_decision_id }}
+          ASTRA_FINGERPRINT: ${{ inputs.fingerprint }}
+        run: node tools/operator.mjs --job act --out operator
+
+      - name: The documents are the generators' own
+        run: |
+          set -euo pipefail
+          node tools/build-index.mjs --check
+          node tools/build-revocations.mjs --check
+
+      - name: Every registry rule, over the staged tree
+        run: |
+          set -euo pipefail
+          node tools/validate.mjs --allow-staging
+          node tools/selftest.mjs
+          node bot/moderation.mjs --check
+
+      - name: Commit once, and push
+        run: |
+          set -euo pipefail
+          if [ ! -s operator/paths.txt ]; then
+            echo "::error::the act listed no path; every operator act writes one record or edit"
+            exit 1
+          fi
+          git config user.name "astra-registry-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add --all --pathspec-from-file=operator/paths.txt
+          git commit --file=operator/commit-message.txt
+          git push origin HEAD:main
+
+  # A refused or failed act is the case worth a page: somebody who can dispatch
+  # this workflow tried an operator act and it did not happen. A green verdict
+  # sends nothing — the act itself is on `main` and on the run page.
+  alert:
+    needs: act
+    if: always() && !cancelled()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: alerts
+    permissions:
+      contents: read
+      id-token: none
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: The verdict for the act
+        env:
+          ASTRA_ACT_RESULT: ${{ needs.act.result }}
+        run: node tools/operator.mjs --job verdict --out verdict.json
+
+      - uses: ./.github/actions/alert
+        id: alert
+        with:
+          verdict: verdict.json
+          no-heartbeat-because: >-
+            This workflow runs only when a person dispatches it, so it has no
+            interval for a dead-man receiver to be silent about; its failures
+            page through the verdict above instead.
