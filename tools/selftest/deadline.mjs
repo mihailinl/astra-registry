@@ -24,7 +24,7 @@ import {
   withPolicyLine,
 } from "../lib/binding-deadline.mjs";
 import {
-  NOTICE_DOC, RECOMMIT_TRAILER, authoritative, judgeIssuePaths, markerText, planResend, planRound, recipients,
+  NOTICE_DOC, authoritative, judgeIssuePaths, markerText, planResend, planRound, recipients,
   renderRound, roundTemplate,
 } from "../lib/migration-notice.mjs";
 import { CODES, judge } from "../lib/deadline-watch.mjs";
@@ -204,8 +204,6 @@ export async function run() {
       assert(!verdict.codes.includes(CODES.superseded) && !verdict.codes.includes(CODES.earlier),
         `the tree the ${plan.branch} branch leaves is one the watch alarms on: ${verdict.detail.join(" | ")}`);
     }
-    assert(/^Moderation-Exempt: [a-z-]+: \S/.test(RECOMMIT_TRAILER),
-      "the re-commit trailer is not in the grammar tools/moderation-coverage.mjs reads");
   });
 
   await test("every round of the notice states what MIG-14 requires, filled from the tree's values", () => {

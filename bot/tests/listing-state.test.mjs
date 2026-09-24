@@ -486,7 +486,8 @@ test("M-T5.3 + M-T5.4: a re-send the command writes is one the watch passes, and
   const later = notice("resend", "--cutover", "2026-11-15T00:00:00Z", "--at", "2026-09-28T00:00:00Z", "--write");
   assert.equal(later.status, 0, later.out);
   assert.match(later.out, /branch later/);
-  assert.match(later.out, /Moderation-Exempt: migration-notice: /, "a re-commit was written without the trailer that clears it");
+  assert.doesNotMatch(later.out, /Moderation-Exempt:/,
+    "the re-send asked for a self-exemption, which clears every trigger in its commit; contract 2.3.0 excepts the markers instead");
   commit(root, "re-send: later");
   const two = JSON.parse(fs.readFileSync(path.join(root, "log/migration-notice-2.json"), "utf8"));
   assert.deepEqual([two.sent_at, two.cutover_planned_at], ["2026-09-25T00:00:00Z", "2026-11-15T00:00:00Z"]);

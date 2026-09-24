@@ -121,22 +121,13 @@ export function authoritative(markers) {
   return { marker: rounds.length ? byRound.get(rounds[0])[0] : null, problems };
 }
 
-/**
- * The trailer a commit that RE-COMMITS a marker carries.
- *
- * `tools/moderation-coverage.mjs` refuses any change or deletion under `log/`
- * (MOD-34's append-only rule, `log-tree-edited`), and a marker re-commit is a
- * change under `log/`: every MIG-13 re-send and every new round 2 is one. The
- * canary is right that `log/` is append-only for the records MOD-34 is about,
- * and a marker is not one of them — but carving the markers out of the rule is
- * a contract question about MOD-34's reach, and the rule's own clearing path
- * already exists. So a re-commit clears itself on its own commit, in the
- * grammar the canary reads (`Moderation-Exempt: <actor>: <reason>`), and the
- * act stays visible in history as a declared one. A first commit of a marker
- * is an addition and needs nothing.
- */
-export const RECOMMIT_TRAILER =
-  "Moderation-Exempt: migration-notice: MIG-13 re-commits a migration-notice marker with the announced cutover date";
+// A commit that RE-COMMITS a marker needs no trailer. Contract 2.3.0 excepts
+// `log/migration-notice-<n>.json` from MOD-34's append-only refusal, and
+// `tools/moderation-coverage.mjs` follows it (`NOTICE_MARKER_RE`). Before that
+// version this module exported a `Moderation-Exempt: migration-notice: …`
+// trailer for every re-commit, which cleared EVERY trigger in the commit — a
+// delist typed into the same commit included — so it is gone, not kept "to be
+// safe": an exemption nobody needs is one somebody copies.
 
 /** Markers that carry a date, which from round 2 is every one of them (B.4). */
 const dated = (markers) => markers.filter((m) => m.doc && m.doc.round >= 2);

@@ -125,6 +125,20 @@ const ADVISORY_RE = ADVISORY_FILE;
 const LOG_ENTRY_RE = /^bot\/moderation\/[^/]+\.json$/;
 const LOG_TREE_RE = /^log\//;
 
+// The one record under `log/` that is re-committed on purpose (contract 2.3.0,
+// MOD-34's Check: "CI refuses edits to existing `bot/moderation/*.json` and
+// `log/**`, except `log/migration-notice-<n>.json`, which contract MIG-13's
+// re-send re-commits"). A re-send that announces a later cutover date writes
+// the new date into every marker from round 2 on, each keeping its own
+// `sent_at`, so ROLL-32's and ROLL-63's clocks do not move. Only a CHANGE is
+// excepted: no MIG-13 procedure deletes a marker, and a deleted one erases the
+// round the banner and the deadline watch read. The name is B.4's, `<n>` a
+// positive integer, so a look-alike (`…-2.json.bak`, `…-x.json`) stays under
+// the rule. Until 2.3.0 each re-send cleared itself with `Moderation-Exempt:`,
+// which clears every trigger in its commit; the exception is the narrower
+// instrument.
+const NOTICE_MARKER_RE = /^log\/migration-notice-[1-9][0-9]*\.json$/;
+
 // **Deliberately looser than `tools/lib/ids.mjs`'s `ID_PATTERN`.**
 //
 // The first spelling of these two copied that pattern, which is a rule this
@@ -590,6 +604,7 @@ export function triggersOf(sha, repo, view = firstParentView(sha, repo)) {
       refusals.push({ kind: "log-entry-edited", path: p, status });
       continue;
     }
+    if (NOTICE_MARKER_RE.test(p) && status === "M") continue;
     if (LOG_TREE_RE.test(p) && (status === "M" || status === "D")) {
       refusals.push({ kind: "log-tree-edited", path: p, status });
       continue;

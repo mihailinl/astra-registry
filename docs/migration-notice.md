@@ -73,12 +73,10 @@ dates, and nobody chooses the branch:
 which branch the dates give and the files it writes; `round` does the same for
 a round.
 
-A commit that re-commits a marker already on `main` ends with the
-`Moderation-Exempt: migration-notice: …` trailer the command prints. The
-moderation coverage canary treats every change under `log/` as an edit of an
-append-only record (MOD-34) and is red without it; the trailer is that rule's
-own clearing path, and it leaves the re-commit visible in history as a
-declared act. A marker's first commit is an addition and needs none.
+A commit that re-commits a marker already on `main` needs no trailer: the
+markers are the one record under `log/` that MOD-34's append-only rule
+excepts, for a change and not for a deletion (contract 2.3.0). No procedure
+here deletes a marker.
 
 ## When
 

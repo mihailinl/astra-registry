@@ -629,20 +629,40 @@ test("M-T5.3: a migration-notice marker is a declared composed document, and a m
     `a marker carrying \`accounts\` was not refused for that member: ${codesOf(r)}`);
 });
 
-test("M-T5.3: a marker re-commit is red in the coverage walk without the re-send trailer, and green with it", async () => {
-  const { RECOMMIT_TRAILER, markerText } = await import("../../tools/lib/migration-notice.mjs");
+test("M-T5.3: a re-committed migration-notice marker passes with no trailer, and every other log/ edit is still refused (contract 2.3.0)", async () => {
+  // MOD-34's Check, as 2.3.0 words it: "CI refuses edits to existing
+  // `bot/moderation/*.json` and `log/**`, except `log/migration-notice-<n>.json`,
+  // which contract MIG-13's re-send re-commits". Before that version a re-send
+  // needed a self-exemption, and `Moderation-Exempt:` on a commit clears EVERY
+  // trigger in it — a delist typed into the same commit included.
+  const { markerText } = await import("../../tools/lib/migration-notice.mjs");
   const r2 = (cutover) => markerText({ round: 2, sent_at: "2026-09-25T00:00:00Z", cutover_planned_at: cutover });
-  const bare = fixture("notice-recommit-bare").landTools()
-    .write("log/migration-notice-2.json", r2("2026-10-30T00:00:00Z")).commit("round 2 sent");
-  bare.write("log/migration-notice-2.json", r2("2026-11-15T00:00:00Z")).commit("re-send: cutover moved later");
-  assert.match(codesOf(mod(bare.dir, { mode: "commits" })), /MOD_LOG_APPEND_ONLY/,
-    "a re-commit under log/ with no trailer was not refused; the trailer below would then be clearing nothing");
+  const seed = (name) => fixture(name).landTools()
+    .write("log/migration-notice-1.json", markerText({ round: 1, sent_at: "2026-09-24T00:00:00Z" }))
+    .write("log/migration-notice-2.json", r2("2026-10-30T00:00:00Z"))
+    .write("log/decisions/2026/09/d1.json", { schema: "astra.registry.decision/1", decision_id: "d1" })
+    .write("log/rollout/R3-exit.json", { walked: true })
+    .commit("round 2 sent");
 
-  const cleared = fixture("notice-recommit-trailer").landTools()
-    .write("log/migration-notice-2.json", r2("2026-10-30T00:00:00Z")).commit("round 2 sent");
-  cleared.write("log/migration-notice-2.json", r2("2026-11-15T00:00:00Z"))
-    .commit(`re-send: cutover moved later\n\n${RECOMMIT_TRAILER}`);
-  assert.equal(mod(cleared.dir, { mode: "commits" }).status, "green", codesOf(mod(cleared.dir, { mode: "commits" })));
+  const resend = seed("notice-recommit");
+  resend.write("log/migration-notice-2.json", r2("2026-11-15T00:00:00Z")).commit("re-send: cutover moved later");
+  const ok = mod(resend.dir, { mode: "commits" });
+  assert.equal(ok.status, "green", `a marker re-commit with no trailer was refused: ${ok.detail.join(" | ")}`);
+
+  // Everything else under log/ is exactly as append-only as before.
+  for (const [what, act] of [
+    ["a deleted marker", (f) => f.remove("log/migration-notice-2.json")],
+    ["a decision record edited", (f) => f.write("log/decisions/2026/09/d1.json", { schema: "astra.registry.decision/1", decision_id: "d2" })],
+    ["a rollout record edited", (f) => f.write("log/rollout/R3-exit.json", { walked: false })],
+    ["a file that only looks like a marker", (f) => f.write("log/migration-notice-2.json.bak", "x").commit("seed a look-alike").write("log/migration-notice-2.json.bak", "y")],
+    ["a marker with no round number", (f) => f.write("log/migration-notice-x.json", "{}").commit("seed").write("log/migration-notice-x.json", "{ }")],
+  ]) {
+    const f = seed(`notice-recommit-${what.replace(/\W+/g, "-")}`);
+    act(f);
+    f.commit(what);
+    const r = mod(f.dir, { mode: "commits" });
+    assert.match(codesOf(r), /MOD_LOG_APPEND_ONLY/, `${what} was not refused`);
+  }
 });
 
 // ── gap 93: what a merge's own resolution wrote ────────────────────────────
