@@ -192,6 +192,18 @@ export const DOCUMENT_MEMBERS = {
       not_readable: { scalars: true },
     },
   },
+  // MIG-13's marker, `log/migration-notice-<n>.json`. Declared before the
+  // first one is committed, because the first is committed WITH a round's
+  // sends and a red canary on that commit is found by the person sending the
+  // notices, not by the one who wrote the rule. B.4 fixes the members
+  // exactly, and none of them may carry a person: MIG-13's marker is
+  // "non-personal", and the plan dropped `account_count` from it for that.
+  "migration-notice": {
+    members: ["schema", "round", "sent_at", "cutover_planned_at"],
+    uuidOk: [],
+    handleOk: [],
+    source: "contract B.4 (`log/migration-notice-<n>.json`, exactly these members); MIG-13; registry plan M-T5.3",
+  },
   // Read off the tree rather than out of a document, because this one exists
   // and the others do not: `git log -p -- 'state/queue/*'` over 228 commits
   // gives exactly these fifteen members and exactly three values that have
