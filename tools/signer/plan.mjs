@@ -178,13 +178,24 @@ export function maxIndexBytes(root = REPO_ROOT) {
   return n;
 }
 
-/** SERVE-49, as a decision over a number so it can be tested at the boundary. */
-export function indexSizeVerdict(byteLength, limit) {
+/**
+ * SERVE-49, as a decision over a number so it can be tested at the boundary.
+ *
+ * `what` says which bytes were measured: `generated`, the plan's early gate
+ * over the generator's output, or `signed`, the run's gate over the bytes
+ * `signed` will hold and a client receives (`tools/signer/run.mjs`; ops
+ * couplings 155). Only the second is SERVE-49 on what clients refuse.
+ */
+export function indexSizeVerdict(byteLength, limit, what = "generated") {
   if (byteLength <= limit) return { ok: true, message: null };
+  const measured = what === "signed"
+    ? `the signed catalogue, with its \`issued_at\`, \`expires_at\` and signatures, is ${byteLength} bytes, ` +
+      `which the service (SERVE-50) and every client refuse, and policy/limits.json caps it at ${limit}`
+    : `the generated catalogue is ${byteLength} bytes and policy/limits.json caps it at ${limit}`;
   return {
     ok: false,
     message:
-      `the generated catalogue is ${byteLength} bytes and policy/limits.json caps it at ${limit} ` +
+      `${measured} ` +
       `(SERVE-49). The catalogue at \`signed\`'s head is carried; raising the cap is a written ` +
       `decision in policy/limits.json, and the note there says what grew.`,
   };
@@ -343,6 +354,11 @@ export async function catalogueGate({ root, serial, head, limit }) {
     return { ok: false, failures, notes, candidate: null, bytes: null, serial };
   }
 
+  // The generator's output, before signing. A necessary condition only:
+  // signing adds `issued_at`, `expires_at` and the signatures, so SERVE-49
+  // holds on the signed bytes in `tools/signer/run.mjs` (ops couplings 155).
+  // This stays because it refuses before a key is touched and names the size
+  // an author's listing moved.
   const size = indexSizeVerdict(Buffer.byteLength(bytes, "utf8"), limit);
   if (!size.ok) failures.push(size.message);
 

@@ -67,7 +67,9 @@ import { blobAt, gitMaybe, gitText } from "./git.mjs";
 import {
   DOCUMENT_DOMAINS, keyPlan, readDelegationTimes, refusesDroppedKey, retirementRecordAt, trustAtCommit,
 } from "./key-window.mjs";
-import { SIGNED_BRANCH, SIGNED_FILES, carryAlert, fetchSignedHead, planRun, resignAfterHoursFor } from "./plan.mjs";
+import {
+  SIGNED_BRANCH, SIGNED_FILES, carryAlert, fetchSignedHead, indexSizeVerdict, maxIndexBytes, planRun, resignAfterHoursFor,
+} from "./plan.mjs";
 import { armingState, pagesRegistryFiles, pagesTree } from "./pages.mjs";
 
 /** D2's four trailers, in the order they are written. */
@@ -141,12 +143,14 @@ export async function signRun({
   // commit as the trust.json that drops it, never from a working tree.
   const retirements = retirementRecordAt({ root, sha: sourceCommit });
   const keys = keyPlan({ candidateTrust, headTrust, delegatedAt, now, available, retirements });
+  // One cap for the plan's gate and for the signed bytes below.
+  const cap = limit ?? maxIndexBytes();
   const plan = await planRun({
     root,
     sourceCommit,
     head,
     now,
-    limit,
+    limit: cap,
     resignAfterHours,
     carryCatalogueAllowed: keys.carryCatalogueAllowed,
   });
@@ -183,10 +187,10 @@ export async function signRun({
       continue;
     }
 
-    // `changed` or `resign`: this run signs it, if a key may.
-    const signers = keys[name].signers;
-    if (signers.length === 0) {
-      const reason = keys[name].refused ?? "no index key may sign this document";
+    // A document this run may not sign, or signed past what a client accepts:
+    // the head's exact bytes with an alert, or, with nothing to carry, no
+    // commit at all. One decision for both reasons.
+    const carryOrBlock = (reason, extra = []) => {
       const headBytes = head?.present ? head.bytes[name] : null;
       const carryAllowed = name === "index" ? keys.carryCatalogueAllowed : true;
       if (carryAllowed && typeof headBytes === "string") {
@@ -197,7 +201,7 @@ export async function signRun({
           bytes: headBytes,
           doc: headDoc,
         };
-        codes.push(CODES.carry[name], CODES.noKey);
+        codes.push(CODES.carry[name], ...extra);
         alerts.push(carryAlert({
           document: name,
           file,
@@ -207,20 +211,44 @@ export async function signRun({
         }));
       } else {
         documents[name] = { decision: "blocked", serial: decided.serial, bytes: null, doc: null };
-        codes.push(CODES.blocked, CODES.noKey);
+        codes.push(CODES.blocked, ...extra);
         refusals.push(
           `BLOCKED ${file}: ${reason}, and there is nothing to carry. A \`signed\` commit holds all four ` +
           `documents (D2), so the run commits nothing.`,
         );
       }
+    };
+
+    // `changed` or `resign`: this run signs it, if a key may.
+    const signers = keys[name].signers;
+    if (signers.length === 0) {
+      carryOrBlock(keys[name].refused ?? "no index key may sign this document", [CODES.noKey]);
       continue;
     }
 
     const signed = signDocument({ name, candidate: decided.candidate, signers, now });
+    const bytes = stableStringify(signed);
+
+    // SERVE-49 on the bytes a client receives (ops couplings 155). These are
+    // the bytes `writeTree` puts on `signed`, the service holds to SERVE-50's
+    // 1,048,576 and the client refuses over the same number. The plan's gate
+    // measured the generator's output, which is short of them by
+    // `issued_at`, `expires_at` and every signature (239 bytes with one signer
+    // at serial 54), so a catalogue a few hundred bytes under the cap passed
+    // it and was served past it. Measured here, after signing, it is exact
+    // for any number of signers and any key id.
+    if (name === "index") {
+      const size = indexSizeVerdict(Buffer.byteLength(bytes, "utf8"), cap, "signed");
+      if (!size.ok) {
+        carryOrBlock(size.message);
+        continue;
+      }
+    }
+
     documents[name] = {
       decision: decided.decision,
       serial: decided.serial,
-      bytes: stableStringify(signed),
+      bytes,
       doc: signed,
       signed_by: signers.map((s) => s.key_id),
     };
