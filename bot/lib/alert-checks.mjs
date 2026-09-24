@@ -308,11 +308,15 @@ export const CHECKS = [
   {
     name: "conformance",
     party: "registry",
-    // BOT-90. B-T3.11 fixes the schedule at R3; until it does, the bound
-    // cannot be computed and saying so is the honest state. Disarmed: no
-    // workflow posts here yet.
-    source: "B-T3.11 (BOT-90)",
-    interval_seconds: null,
+    // BOT-90. B-T3.11 fixed the schedule: hourly, `29 * * * *` in
+    // `service-conformance.yml`, whose `alert` job posts here. That schedule
+    // lands COMMENTED OUT, because the plugins service does not answer yet
+    // and an hourly probe of nothing pages every hour; a dispatch posts here
+    // and nothing else does. So this row stays disarmed, and the commit that
+    // uncomments the cron arms it in the same commit (the workflow's header;
+    // `bot/tests/workflows.test.mjs` is red on it until then).
+    source: "B-T3.11 (BOT-90), .github/workflows/service-conformance.yml",
+    interval_seconds: 3600,
     created_disarmed: true,
     armed_at: null,
     signals: ["success"],
