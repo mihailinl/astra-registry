@@ -68,6 +68,65 @@ export const SIGNED_FILES = {
 /** D4's cadence: an unchanged document is re-signed once the head's is this old. */
 export const RESIGN_AFTER_HOURS = 20;
 
+// ── who refreshes an unchanged document (2026-09-24) ────────────────────────
+//
+// ROLL-14 arms every shipped client only after THREE CONSECUTIVE UNATTENDED
+// re-signs, and SERVE-41's re-sign is "attempted, unattended and at least
+// hourly" — the schedule. The decision below used to be blind to what started
+// the run, so any `push` or `workflow_run` that landed after the 20-hour mark
+// re-signed first. Measured on `signed` on 2026-09-24: four of its five
+// re-signs were fired by a `push` (de0d294, f2afd04, 5966ccf, 430efba), each
+// a merge minutes past the mark, and one by the schedule (5b46b89). With
+// several lanes merging a day that resets the unattended count every time,
+// and the claim ROLL-14 exists to test — the documents stay fresh with nobody
+// watching — is never the one that gets tested.
+//
+// So an UNCHANGED document is refreshed at 20 h only by the schedule, or by a
+// hand dispatch (RUNBOOK §7, the recovery drill). A `push` or `workflow_run`
+// run still publishes every CHANGED document at once, exactly as before, and
+// refreshes an unchanged one only as a backstop, at 34 h.
+//
+// Why 34, and why this weakens no bound. The longest gap between two runs of
+// any hourly schedule in this repository is 13.34 h (build-index.yml, 472
+// scheduled runs from 2026-08-12, the gap ending 2026-08-28T18:47Z); sign.yml's
+// own, over its 21 scheduled runs from 2026-09-20T11:36Z to 09-23T23:47Z, is
+// 6.26 h, with a mean of 4.21 h. So the schedule's refresh lands by
+// 20 + 13.34 = 33.34 h after the last one, before the backstop can pre-empt it,
+// and the backstop is under Table 5-C's 36 h operator alarm on the served list,
+// its 72 h page, and CLIENT-81's 7-day staleness. The catalogue's 30 days are
+// further still. A quiet day with no pushes was already schedule-only.
+export const BACKSTOP_RESIGN_AFTER_HOURS = 34;
+
+/**
+ * Every event `sign.yml` starts on, and the age at which that run re-signs an
+ * unchanged document. `tools/selftest/signer.mjs` holds these keys equal to
+ * the workflow's `on:` block, so a trigger added there must choose here.
+ */
+export const RESIGN_HOURS_BY_EVENT = Object.freeze({
+  schedule: RESIGN_AFTER_HOURS,
+  workflow_dispatch: RESIGN_AFTER_HOURS,
+  push: BACKSTOP_RESIGN_AFTER_HOURS,
+  workflow_run: BACKSTOP_RESIGN_AFTER_HOURS,
+});
+
+/**
+ * The re-sign age for the event that started this run (`GITHUB_EVENT_NAME`).
+ * No event is a run from an operator's shell, which gets D4's 20 h. An event
+ * `sign.yml` does not list is refused rather than guessed: either answer would
+ * be a decision nobody took.
+ */
+export function resignAfterHoursFor(event) {
+  if (event === undefined || event === null || event === "") return RESIGN_AFTER_HOURS;
+  if (!Object.hasOwn(RESIGN_HOURS_BY_EVENT, event)) {
+    throw new Error(
+      `the signer was started by \`${event}\`, and RESIGN_HOURS_BY_EVENT in tools/signer/plan.mjs names no ` +
+      `re-sign age for it (it names ${Object.keys(RESIGN_HOURS_BY_EVENT).join(", ")}). A trigger added to sign.yml ` +
+      "decides whether its runs may refresh an unchanged document, in the same commit",
+    );
+  }
+  return RESIGN_HOURS_BY_EVENT[event];
+}
+
 const HOUR_MS = 3600 * 1000;
 
 const hoursBetween = (from, to) => (Date.parse(to) - Date.parse(from)) / HOUR_MS;

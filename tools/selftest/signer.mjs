@@ -34,8 +34,8 @@ import {
   delegationTimes, keyPlan, readDelegationTimes, refusesDroppedKey,
 } from "../signer/key-window.mjs";
 import {
-  RESIGN_AFTER_HOURS, SIGNED_FILES, catalogueGate, contentOf, decideDocument, fetchSignedHead,
-  gateVerdict, indexSizeVerdict, listGate, maxIndexBytes, planRun, serialsAt,
+  BACKSTOP_RESIGN_AFTER_HOURS, RESIGN_AFTER_HOURS, RESIGN_HOURS_BY_EVENT, SIGNED_FILES, catalogueGate, contentOf, decideDocument, fetchSignedHead,
+  gateVerdict, indexSizeVerdict, listGate, maxIndexBytes, planRun, resignAfterHoursFor, serialsAt,
 } from "../signer/plan.mjs";
 import { armingState, pagesRegistryFiles, pagesTree } from "../signer/pages.mjs";
 import { test, assert, assertEqual, neverAsk, tmp } from "./harness.mjs";
@@ -620,6 +620,53 @@ export async function run() {
     assertEqual(at(19).bytes, head.bytes.revocations, "an unchanged document must re-commit the head's exact bytes");
     assertEqual(at(20).decision, "resign", "no re-sign at 20 h");
     assertEqual(RESIGN_AFTER_HOURS, 20, "D4's cadence");
+  });
+
+  await test("every event that starts sign.yml has a re-sign age, the schedule's is 20 h, and a push's backstop sits between the schedule's worst gap and the 36 h alarm", () => {
+    // The table is keyed by GITHUB_EVENT_NAME, and a trigger it does not
+    // name makes the signer refuse to plan. So the two lists are one set:
+    // sign.yml's `on:` block, read as the lines at exactly two spaces'
+    // indent between `on:` and the next top-level key, against the keys.
+    const wf = fs.readFileSync(path.join(REPO_ROOT, ".github", "workflows", "sign.yml"), "utf8").split("\n");
+    const start = wf.findIndex((l) => l === "on:");
+    assert(start >= 0 && wf.indexOf("on:", start + 1) < 0, "sign.yml has no single top-level `on:` line");
+    const triggers = [];
+    for (let i = start + 1; i < wf.length && !/^[A-Za-z]/.test(wf[i]); i++) {
+      const m = /^  ([a-z_]+):/.exec(wf[i]);
+      if (m) triggers.push(m[1]);
+    }
+    assert(triggers.length >= 4, `sign.yml's \`on:\` read as ${triggers.length} trigger(s) and held 4 on 2026-09-24; the read stopped reading`);
+    assertEqual(triggers.slice().sort().join(","), Object.keys(RESIGN_HOURS_BY_EVENT).sort().join(","),
+      "sign.yml's triggers and RESIGN_HOURS_BY_EVENT are not one set");
+    // And the event reaches the plan: the one `--step sign` invocation in the
+    // workflow passes it. Without the flag the run plans as a shell run, at
+    // 20 h, and a push takes the schedule's refresh again with nothing red.
+    const text = wf.join("\n");
+    const signSteps = text.split("--step sign").length - 1;
+    assertEqual(signSteps, 1, "sign.yml does not hold exactly one `--step sign` invocation");
+    assertEqual(text.split('--event "$GITHUB_EVENT_NAME"').length - 1, 1,
+      "sign.yml's `--step sign` does not pass `--event \"$GITHUB_EVENT_NAME\"` exactly once");
+
+    // What each event may do, pinned: the schedule and a hand dispatch
+    // refresh at D4's 20 h; a push or a workflow_run only at the backstop.
+    assertEqual(RESIGN_HOURS_BY_EVENT.schedule, RESIGN_AFTER_HOURS, "the schedule's refresh");
+    assertEqual(RESIGN_HOURS_BY_EVENT.workflow_dispatch, RESIGN_AFTER_HOURS, "a hand dispatch's refresh (RUNBOOK §7, the drill)");
+    assertEqual(RESIGN_HOURS_BY_EVENT.push, BACKSTOP_RESIGN_AFTER_HOURS, "a push-fired run's refresh");
+    assertEqual(RESIGN_HOURS_BY_EVENT.workflow_run, BACKSTOP_RESIGN_AFTER_HOURS, "a workflow_run-fired run's refresh");
+    // 13.34 h: the longest gap between two runs of any hourly schedule in this
+    // repository (build-index.yml, ending 2026-08-28T18:47Z). Below it the
+    // backstop would pre-empt a schedule behaving as measured; at 36 h Table
+    // 5-C's operator alarm on the served list would fire first.
+    assert(BACKSTOP_RESIGN_AFTER_HOURS > RESIGN_AFTER_HOURS + 13.34,
+      `the backstop, ${BACKSTOP_RESIGN_AFTER_HOURS} h, would pre-empt a schedule 13.34 h late`);
+    assert(BACKSTOP_RESIGN_AFTER_HOURS < 36, `the backstop, ${BACKSTOP_RESIGN_AFTER_HOURS} h, is past Table 5-C's 36 h alarm`);
+
+    assertEqual(resignAfterHoursFor(undefined), RESIGN_AFTER_HOURS, "a run from a shell, with no event");
+    assertEqual(resignAfterHoursFor("push"), BACKSTOP_RESIGN_AFTER_HOURS, "the lookup a push-fired run gets");
+    let refused = null;
+    try { resignAfterHoursFor("pull_request"); } catch (e) { refused = e.message; }
+    assert(refused && refused.includes("pull_request") && refused.includes("RESIGN_HOURS_BY_EVENT"),
+      `an event sign.yml does not list was given a re-sign age: ${refused}`);
   });
 
   await test("an unchanged list beside a changed catalogue keeps the list's bytes", async () => {

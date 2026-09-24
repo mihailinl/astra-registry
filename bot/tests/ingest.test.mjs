@@ -407,6 +407,42 @@ await test("MOD-16 — a first listing under the staging id derives `unlisted: t
     "a first listing is still a human's to approve; being born unlisted does not publish it unattended");
 });
 
+// M-T2.2 publishes the staging listing from BOT-88's test repository,
+// `mihailinl/astra-registry-canary`, and not from AstraPlugins (registry plan
+// §1.2: the staging repository is the test repository under mihailinl). The
+// test above proves the derive rule from AstraPlugins, which was first-party
+// already; this one proves the repository the listing will actually come
+// from gets past both first-party gates. Before M-T2.1's widening of
+// `first_party_repos` it did not: the owner's own `/approve` would have been
+// answered `E_ID_RESERVED_PREFIX`, and the release would have had to be cut
+// again from somewhere else. The widening is ONE repository, not the owner —
+// `first_party_owners` is the wider knob and `mihailinl` is deliberately not
+// in it — so another repository under the same login is still refused.
+await test("MOD-16 — the staging id released from the test repository passes both first-party gates, and nothing wider does", async () => {
+  const id = stagingListingId(loadPolicy(REPO_ROOT).reserved);
+  assert(id !== null, "policy/reserved-ids.json reserves no staging_listing_id");
+
+  const canary = await run({
+    repo: "mihailinl/astra-registry-canary",
+    assets: [conformingAsset({ id, name: "Astra Withdrawal Canary" })],
+    root: registryWith({ id: "something-else" }),
+  });
+  assert(!canary.blocked,
+    `the staging listing's first release from mihailinl/astra-registry-canary is blocked: ` +
+    `${JSON.stringify(canary.findings.filter((i) => i.level === "error"))}. M-T2.2's publish commit cannot be made ` +
+    "from the repository the plan names, and the owner's /approve would be answered with a refusal");
+  assertEqual(canary.derived.plugin.unlisted, true, `${id} from the test repository derived a listed document`);
+  assert(codes(canary).includes("R_FIRST_LISTING"),
+    "a first listing from the test repository is still a human's to approve");
+
+  const sibling = await run({
+    repo: "mihailinl/some-other-repository",
+    assets: [conformingAsset({ id, name: "Astra Withdrawal Canary" })],
+    root: registryWith({ id: "something-else" }),
+  });
+  assertBlockedWith(sibling, "E_ID_RESERVED_PREFIX");
+});
+
 await test("MOD-16 — no `facts.*` can lift the staging listing back into the catalogue", async () => {
   // The bundle is written by whoever publishes the canary, and the canary is
   // published from a repository the estate controls — which is a statement
