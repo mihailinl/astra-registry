@@ -42,7 +42,7 @@ export const RUN_URL_PATTERN =
   "^https://github\\.com/[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}/actions/runs/[0-9]{1,20}(?:/job/[0-9]{1,20})?$";
 const RUN_URL_RE = new RegExp(RUN_URL_PATTERN);
 
-const CHECK_NAME_RE = /^[a-z][a-z0-9-]{1,30}[a-z0-9]$/;
+const CHECK_NAME_RE = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
 
 const MEMBERS = ["schema", "check", "status", "codes", "ids", "hexes", "run"];
 const REQUIRED = ["schema", "check", "status"];

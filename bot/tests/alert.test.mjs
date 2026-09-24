@@ -42,6 +42,7 @@ import {
   MIN_BOUND_MINUTES,
   PARTIES,
   alertsEnvironmentSecrets,
+  CHECK_NAME_PATTERN,
   boundMinutes,
   optionalAlertsSecrets,
   secretName,
@@ -649,6 +650,8 @@ await test("each check's bound, by name: five GitHub-scheduled checks moved to a
     // are both under 90. The evaluator's bound was 90 while it was unnamed;
     // the relay heartbeat had no interval, and so no bound, until that day
     "minice-plugins-evaluator": 90,
+    // contract 2.12.0: the evaluator's operator conditions, on their own check
+    "minice-plugins-evaluator-operator": 90,
     "minice-alarm-relay-almaty": 90,
     "minice-alarm-relay-macmini": 90,
     // B-T3.11 fixed its interval at an hour; posted from GitHub, so a day
@@ -678,7 +681,7 @@ await test("every bound is the longest of 3 × the interval, 90 minutes, and a d
   }
 });
 
-await test("the three service-posted checks are the names minice-e4 sent, created disarmed and not yet armed", () => {
+await test("the four service-posted checks are the names minice-e4 sent, created disarmed and not yet armed", () => {
   // Spelled out rather than read from the table: these are another party's
   // names (§1.3 row 8.1), and a check created under any other spelling is one
   // the service never posts to, which the receiver pages about for ever.
@@ -692,10 +695,11 @@ await test("the three service-posted checks are the names minice-e4 sent, create
       "minice-alarm-relay-almaty": 120,
       "minice-alarm-relay-macmini": 120,
       "minice-plugins-evaluator": 900,
+      "minice-plugins-evaluator-operator": 900,
     },
-    "the plugins service's checks are not the three minice-e4 named on 2026-09-23, at the intervals it gave",
+    "the plugins service's checks are not the four minice-e4 named (three on 2026-09-23, the evaluator's operator check in contract 2.12.0), at the intervals it gave",
   );
-  assert.equal(service.length, 3, "the reach assertion's floor is the number of service check names recorded");
+  assert.equal(service.length, 4, "the reach assertion's floor is the number of service check names recorded");
   for (const check of service) {
     assert.equal(check.created_disarmed, true,
       "armed from their first minute they would page every ninety minutes through the whole of R1, and the " +
@@ -860,6 +864,20 @@ await test("the heartbeat dials the secret's bytes, and composes nothing onto th
       `${JSON.stringify(secret)}. One whole URL per check means the bytes the owner pasted, not a URL built ` +
       `from them — and a fragment or a query is where the difference stops being visible on the wire.`);
   }
+});
+
+await test("the check-name grammar is one pattern in the table and in the verdict, and admits every name the contract publishes (2.12.0)", () => {
+  // The cap was 32 until contract 2.12.0 published `minice-plugins-evaluator-operator`,
+  // 33 characters, which made tableProblems refuse the whole table: every alert job
+  // would have posted nothing. The verdict record's reader carries its own copy.
+  const verdictSrc = fs.readFileSync(path.join(REPO, "bot/lib/alert-verdict.mjs"), "utf8");
+  const m = verdictSrc.match(/const CHECK_NAME_RE = \/(.+)\/;/);
+  assert.ok(m, "bot/lib/alert-verdict.mjs no longer spells CHECK_NAME_RE as a literal this test can read");
+  assert.equal(m[1], CHECK_NAME_PATTERN, "the verdict's check-name pattern and the table's have parted");
+  const re = new RegExp(CHECK_NAME_PATTERN);
+  for (const c of CHECKS) if (c.name !== null) assert.ok(re.test(c.name), `${c.name} is refused by the grammar`);
+  assert.ok(re.test("minice-plugins-evaluator-operator"));
+  assert.ok(!re.test("a".repeat(41)), "41 characters is past the cap");
 });
 
 console.log(`\n${failures === 0 ? "PASS" : "FAIL"}  bot/tests/alert.test.mjs, ${failures} failed`);

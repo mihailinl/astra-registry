@@ -47,8 +47,12 @@ export function isArmedAt(value) {
   return Number.isFinite(ms) && new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z") === value;
 }
 
-/** The `<CHECK>` grammar: what may appear in a check name and in a secret's suffix. */
-export const CHECK_NAME_PATTERN = "^[a-z][a-z0-9-]{1,30}[a-z0-9]$";
+/** The `<CHECK>` grammar: what may appear in a check name and in a secret's suffix.
+ * At most 40 characters since contract 2.12.0: `minice-plugins-evaluator-operator`, the
+ * name the plugins service builds and 2.12.0 publishes, is 33, and the old cap of 32 refused
+ * the whole table, so every alert job would have posted nothing. bot/lib/alert-verdict.mjs
+ * carries the same pattern for the verdict record's `check`, and the two must stay equal. */
+export const CHECK_NAME_PATTERN = "^[a-z][a-z0-9-]{1,38}[a-z0-9]$";
 const CHECK_NAME_RE = new RegExp(CHECK_NAME_PATTERN);
 
 /** BOT-85's floor: no bound is shorter than this, whatever the interval. */
@@ -448,7 +452,22 @@ export const CHECKS = [
   {
     name: "minice-plugins-evaluator",
     party: "plugins-service",
-    source: "SERVE-104's evaluator on minice-be's host, posting on each pass, at least every 15 minutes (minice-be S9/S10)",
+    source: "SERVE-104's evaluator on minice-be's host, for its paged conditions, posting on each pass, at least every 15 minutes (minice-be S9/S10)",
+    interval_seconds: 900,
+    created_disarmed: true,
+    armed_at: null,
+    signals: ["success"],
+  },
+  // **The evaluator's second check (contract 2.12.0).** minice-e4 built the
+  // evaluator for two checks, paged and operator, and it refuses one URL for
+  // both: healthchecks.io alerts only on a change of state, so one check held
+  // down by a standing operator condition would swallow a later paged one.
+  // Its posters also send `/fail` on a degraded pass, appended to the check's
+  // own whole URL. That is not a second secret, so it is not a `signals` entry.
+  {
+    name: "minice-plugins-evaluator-operator",
+    party: "plugins-service",
+    source: "SERVE-104's evaluator on minice-be's host, for its operator conditions, posting on each pass, at least every 15 minutes (contract 2.12.0)",
     interval_seconds: 900,
     created_disarmed: true,
     armed_at: null,
