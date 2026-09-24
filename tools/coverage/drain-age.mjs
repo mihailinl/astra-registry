@@ -238,6 +238,26 @@ export function run(repo, { now = new Date() } = {}) {
       `leg 2 is retired: ${CUTOVER} is on this tree, the cutover commit paused the backstop that wrote ${SEEN}, ` +
       "and B-T5.1 retires the file; the drain's liveness is legs 1 and 3, and the poll's is BOT-85's heartbeat",
     );
+    // BOT-42's Check, which the retirement makes possible: from the commit on
+    // main's first-parent line that brought the marker, nothing may WRITE
+    // state/releases-seen.json again. Its only writer was the backstop the
+    // cutover paused, so a later write is a backstop that was not paused, or a
+    // bot still keeping poll memory in git (BOT-42: outside git). Deleting it is
+    // the retirement, and is fine.
+    const brought = git(["log", "--first-parent", "--diff-filter=A", "--format=%H", "--", CUTOVER], { cwd: repo, allowFailure: true })
+      .split("\n").map((x) => x.trim()).filter(Boolean).at(-1);
+    if (brought) {
+      const writes = git(["log", "--first-parent", "--diff-filter=AM", "--format=%H", `${brought}..HEAD`, "--", SEEN],
+        { cwd: repo, allowFailure: true }).split("\n").map((x) => x.trim()).filter(Boolean);
+      if (writes.length) {
+        codes.push("DRAIN_SEEN_WRITTEN_AFTER_CUTOVER");
+        detail.push(
+          `${writes.length} commit(s) on main wrote ${SEEN} after the cutover commit ${brought.slice(0, 12)}: ` +
+          `${writes.map((x) => x.slice(0, 12)).join(", ")}. Its only writer was the backstop the cutover paused ` +
+          "(ROLL-33), and poll memory lives outside git (BOT-42), so something is still running that should not be",
+        );
+      }
+    }
   } else if (!fs.existsSync(seenPath)) {
     if (everAdded.length === 0) {
       neverRan = true;
