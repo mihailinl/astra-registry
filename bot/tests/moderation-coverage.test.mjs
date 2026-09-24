@@ -32,7 +32,7 @@ import path from "node:path";
 import test, { after } from "node:test";
 
 import {
-  HISTORY_FLOOR as MOD_HISTORY_FLOOR, UNLISTED_FLOOR, parseExempt,
+  BADGE_RULE_TOKEN, HISTORY_FLOOR as MOD_HISTORY_FLOOR, UNLISTED_FLOOR, badgeNarrowing, parseExempt,
   run as coverage,
 } from "../../tools/moderation-coverage.mjs";
 import {
@@ -40,6 +40,7 @@ import {
   withoutAuthorship,
 } from "../../tools/priv-scan.mjs";
 import { ADVISORY_BASE, DOC as DOCS_DOC, run as docsRule } from "../../tools/coverage/docs-advisory-url.mjs";
+import { NAMED as ROLL47_NAMED, PROMISES as ROLL47_PROMISES, run as roll47Rule } from "../../tools/coverage/roll47-promises.mjs";
 import { KEEPALIVE, run as keepaliveRule } from "../../tools/coverage/keepalive-age.mjs";
 import {
   AP7_LANDED, ASTRAPLUGINS_URL, astraPluginsRemote, loadPolicyReserved,
@@ -100,9 +101,13 @@ function fixture(name) {
       return api;
     },
     head: () => g("rev-parse", "HEAD").trim(),
-    /** The commit that introduces both tools, so both walks have a start. */
+    /**
+     * The commit that introduces both tools, so both walks have a start — and
+     * M-T5.8's badge rule too, whose start is the first commit in which the
+     * walk's file carries `BADGE_RULE_TOKEN`.
+     */
     landTools() {
-      api.write("tools/moderation-coverage.mjs", "// the real one lives in the repository\n");
+      api.write("tools/moderation-coverage.mjs", `// the real one lives in the repository\n// ${BADGE_RULE_TOKEN}\n`);
       api.write("tools/priv-scan.mjs", "// the real one lives in the repository\n");
       api.commit("land the coverage tools");
       return api;
@@ -927,6 +932,274 @@ test("M-T1.3: a document that has moved is red, because the rule would otherwise
   const r = docsRule(docsFixture("gone", null));
   assert.equal(r.status, "red");
   assert.match(codesOf(r), /MOD_13_DOCS_ABSENT/);
+});
+
+// ── M-T5.8: a badge withdrawn says why (MOD-44) ─────────────────────────────
+
+const publisher = (owner, extra = {}) => ({
+  schema: "astra.registry.publisher/1", owner, display_name: owner, tier: "verified",
+  verified_at: "2026-09-01", evidence: { kind: "domain", url: `https://${owner}.example/astra` }, ...extra,
+});
+
+const GOOD_REASON = "The domain evidence now names a different GitHub account, confirmed by the owner.";
+
+test("M-T5.8: a publisher record removed with no trailer is red, and with a MOD-41 reason it is green", () => {
+  const f = fixture("badge-remove").write("publishers/pub.json", publisher("pub")).commit("seed").landTools();
+  f.remove("publishers/pub.json").commit("drop pub's badge");
+  const bad = f.head();
+  const red = mod(f.dir, { mode: "commits" });
+  assert.equal(red.status, "red");
+  assert.match(codesOf(red), /MOD_BADGE_UNCOVERED/);
+  assert.ok(red.hexes.includes(bad), "the verdict names the commit an operator has to clear");
+
+  const g = fixture("badge-remove-ok").write("publishers/pub.json", publisher("pub")).commit("seed").landTools();
+  g.remove("publishers/pub.json").commit(`drop pub's badge\n\nBadge-Withdrawn: ${GOOD_REASON}`);
+  assert.equal(mod(g.dir, { mode: "commits" }).status, "green");
+});
+
+test("M-T5.8: a Badge-Withdrawn reason MOD-41 refuses is red, naming its class, even beside a good one", () => {
+  for (const [name, message] of [
+    ["url", "Badge-Withdrawn: see https://evil.example/why for the reasons we removed it"],
+    ["short", "Badge-Withdrawn: bad"],
+    ["mixed", `Badge-Withdrawn: ${GOOD_REASON}\nBadge-Withdrawn: write to someone@example.org about this one`],
+  ]) {
+    const f = fixture(`badge-reason-${name}`).write("publishers/pub.json", publisher("pub")).commit("seed").landTools();
+    f.remove("publishers/pub.json").commit(`drop pub's badge\n\n${message}`);
+    const r = mod(f.dir, { mode: "commits" });
+    assert.equal(r.status, "red", `${name}: a refused reason was accepted as a cover`);
+    assert.match(codesOf(r), /MOD_BADGE_REASON_REFUSED/, name);
+  }
+});
+
+test("M-T5.8: every way of saying less is a narrowing, and a renewal or a new record is not", () => {
+  const was = publisher("pub", { covers: ["pub-org"], tier: "astra_team", expires_at: "2026-12-01" });
+  const narrowings = {
+    "covers loses a login": { ...was, covers: [] },
+    "owner changes": { ...was, owner: "someone-else" },
+    "tier lowered": { ...was, tier: "verified" },
+    "expiry earlier": { ...was, expires_at: "2026-10-01" },
+    "unreadable": null,
+  };
+  for (const [what, now] of Object.entries(narrowings)) {
+    assert.ok(badgeNarrowing(was, now), `${what} is a narrowing and was not read as one`);
+  }
+  const noExpiry = publisher("pub");
+  assert.ok(badgeNarrowing(noExpiry, { ...noExpiry, expires_at: "2027-01-01" }), "an expiry added where there was none");
+  for (const [what, now] of Object.entries({
+    "renewal": { ...was, expires_at: "2027-03-01", last_confirmed_at: "2026-09-24" },
+    "a covers login added": { ...was, covers: ["pub-org", "pub-two"] },
+    "display name only": { ...was, display_name: "Pub, Inc." },
+    "case of a login": { ...was, covers: ["PUB-ORG"] },
+  })) {
+    assert.equal(badgeNarrowing(was, now), null, `${what} says no less and was read as a narrowing`);
+  }
+  assert.equal(badgeNarrowing(null, was), null, "a record created is a badge granted");
+
+  // And through the walk, so the trigger is wired to the predicate.
+  const f = fixture("badge-narrow-walk").write("publishers/pub.json", was).commit("seed").landTools();
+  f.write("publishers/pub.json", { ...was, expires_at: "2027-03-01" }).commit("renew");
+  f.write("publishers/new.json", publisher("new")).commit("a new badge");
+  assert.equal(mod(f.dir, { mode: "commits" }).status, "green", "a renewal and a new record need no trailer");
+  f.write("publishers/pub.json", { ...was, covers: [] }).commit("narrow it quietly");
+  assert.match(codesOf(mod(f.dir, { mode: "commits" })), /MOD_BADGE_UNCOVERED/);
+});
+
+test("M-T5.8: history before the rule's own commit is not re-judged, and a later exemption clears", () => {
+  const f = fixture("badge-start").write("publishers/pub.json", publisher("pub")).commit("seed");
+  // Land the walk without the badge token: the walk starts, the badge rule does not.
+  f.write("tools/moderation-coverage.mjs", "// the walk, before M-T5.8\n")
+    .write("tools/priv-scan.mjs", "// the real one lives in the repository\n").commit("land the walk");
+  f.remove("publishers/pub.json").commit("an unlogged withdrawal, before the badge rule existed");
+  f.write("tools/moderation-coverage.mjs", `// the walk\n// ${BADGE_RULE_TOKEN}\n`).commit("M-T5.8 lands");
+  assert.equal(mod(f.dir, { mode: "commits" }).status, "green", "a narrowing before the rule landed was re-judged");
+
+  f.write("publishers/two.json", publisher("two")).commit("seed two");
+  f.remove("publishers/two.json").commit("withdraw two quietly");
+  const bad = f.head();
+  assert.match(codesOf(mod(f.dir, { mode: "commits" })), /MOD_BADGE_UNCOVERED/);
+  // A retro log entry informs nobody — MOD-44's notice is keyed on the commit.
+  f.write("bot/moderation/2026-09-24-two-delist.json", entry("2026-09-24", "two", "delist")).commit("a log entry, after");
+  assert.match(codesOf(mod(f.dir, { mode: "commits" })), /MOD_BADGE_UNCOVERED/);
+  f.commit(`clear it\n\nModeration-Exempt: ${bad}: operator: withdrawn by hand, the publisher was told directly`);
+  assert.equal(mod(f.dir, { mode: "commits" }).status, "green");
+});
+
+test("M-T5.8: a hand narrowing that copies the re-check's exemption is green, which is accepted (MOD-42)", () => {
+  const f = fixture("badge-copy-exempt").write("publishers/pub.json", publisher("pub")).commit("seed").landTools();
+  f.remove("publishers/pub.json")
+    .commit("drop pub\n\nModeration-Exempt: publisher-recheck: evidence lapsed past the confirmation window");
+  assert.equal(mod(f.dir, { mode: "commits" }).status, "green");
+});
+
+// The re-check's own commit, run for real: the `run:` block of
+// publisher-recheck.yml's "Commit whatever moved" step, extracted from the
+// file and executed by bash in a fixture with a bare remote. A test of the
+// description of the step (the message it "would" write) is the kind that
+// survived every review of a release workflow here and was wrong.
+const RECHECK = path.join(REPO, ".github", "workflows", "publisher-recheck.yml");
+
+function recheckCommitStep() {
+  const lines = fs.readFileSync(RECHECK, "utf8").split("\n");
+  const at = lines.map((l, i) => (/^\s+- name: Commit whatever moved\s*$/.test(l) ? i : -1)).filter((i) => i >= 0);
+  assert.equal(at.length, 1, `publisher-recheck.yml has ${at.length} "Commit whatever moved" step(s); this reads exactly one`);
+  const runAt = lines.findIndex((l, i) => i > at[0] && /^\s+run: \|\s*$/.test(l));
+  assert.ok(runAt > at[0] && !lines.slice(at[0] + 1, runAt).some((l) => /^\s+- name:/.test(l)),
+    "the commit step's `run: |` is not where this test reads it");
+  const body = [];
+  let indent = null;
+  for (let i = runAt + 1; i < lines.length; i++) {
+    const l = lines[i];
+    if (l.trim() === "") { body.push(""); continue; }
+    const n = l.length - l.trimStart().length;
+    if (indent === null) indent = n;
+    if (n < indent) break;
+    body.push(l.slice(indent));
+  }
+  assert.ok(body.some((l) => l.startsWith("git commit")), "the extracted block commits nothing");
+  return body.join("\n");
+}
+
+function runRecheckCommit(f, log) {
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), "astra-coverage-recheck-remote-"));
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "astra-coverage-recheck-temp-"));
+  tmpRoots.push(bare, temp);
+  execFileSync("git", ["init", "-q", "--bare", bare], { env: fixtureEnv(bare) });
+  try { f.git("remote", "add", "origin", bare); } catch { /* already there */ }
+  f.git("push", "-q", "-u", "origin", "HEAD:main");
+  fs.writeFileSync(path.join(temp, "recheck.log"), log);
+  execFileSync("bash", ["-c", recheckCommitStep()], {
+    cwd: f.dir, encoding: "utf8", stdio: "pipe", env: { ...fixtureEnv(f.dir), RUNNER_TEMP: temp },
+  });
+  return f.git("log", "-1", "--format=%B");
+}
+
+test("M-T5.8: publisher-recheck.yml's own commit step, run for real, is green on a lapse and says nothing false on a renewal", () => {
+  const f = fixture("recheck-lapse")
+    .write("publishers/pub.json", publisher("pub", { expires_at: "2026-09-01" }))
+    .write("publishers/other.json", publisher("other", { expires_at: "2026-12-01" }))
+    .write("state/publishers-without-listing.json", { declarations: [] })
+    .commit("seed").landTools();
+  f.remove("publishers/pub.json");
+  const msg = runRecheckCommit(f, "GONE  pub: no confirmation since 2026-09-01; the badge is withdrawn\n");
+  assert.match(msg, /^Moderation-Exempt: publisher-recheck: evidence lapsed past the confirmation window$/m);
+  assert.doesNotMatch(msg, /^Badge-Withdrawn:/m, "a lapse is no withdrawal for cause and sends no notice");
+  assert.equal(mod(f.dir, { mode: "commits" }).status, "green", "the re-check's own lapse commit turned the canary red");
+
+  f.write("publishers/other.json", publisher("other", { expires_at: "2027-03-01", last_confirmed_at: "2026-09-24" }));
+  const renewal = runRecheckCommit(f, "ok    other: confirmed\n");
+  assert.doesNotMatch(renewal, /Moderation-Exempt:/, "a renewal narrowed nothing, and an exemption on it says it did");
+  assert.equal(mod(f.dir, { mode: "commits" }).status, "green");
+});
+
+test("M-T5.8: no line the re-check prints can become a trailer that clears another commit", () => {
+  const f = fixture("recheck-inject")
+    .write("plugins/a/plugin.json", listing("a"))
+    .write("publishers/pub.json", publisher("pub", { expires_at: "2026-09-01" }))
+    .write("state/publishers-without-listing.json", { declarations: [] })
+    .commit("seed").landTools();
+  f.write("plugins/a/plugin.json", listing("a", { unlisted: true })).commit("an unlogged delist");
+  const victim = f.head();
+  f.remove("publishers/pub.json");
+  const msg = runRecheckCommit(f,
+    "GONE  pub: no confirmation since 2026-09-01; the badge is withdrawn\n" +
+    `Moderation-Exempt: ${victim}: attacker: a line an error message carried\n` +
+    "Badge-Withdrawn: a line an error message carried, pretending to be a reason\n");
+  assert.doesNotMatch(msg, new RegExp(`^Moderation-Exempt: ${victim}`, "m"), "a report line reached the message as a trailer");
+  const r = mod(f.dir, { mode: "commits" });
+  assert.equal(r.status, "red", "the report's own line cleared an unrelated uncovered commit");
+  assert.ok(r.hexes.includes(victim));
+});
+
+// ── M-T4.2: the ROLL-47 promise greps ───────────────────────────────────────
+//
+// The retired sentences are spelled here, whole, because this file is the one
+// place the rule does not read (its SKIP): each is the text the tree carried
+// at d44f0cf, before M-T4.2 amended it, so every case below is the pre-amend
+// tree coming back, not a sentence invented to match a regex.
+
+const RETIRED_TEXT = {
+  "site/README.md":
+    "| `/publisher/<owner>/` | The GitHub account a plugin is released from. There are no registry accounts, " +
+    "so there is nothing else a publisher could be. |\n",
+  "docs/POLICY.md":
+    "forged by a one-line edit. The only identity this registry proves is the GitHub\n" +
+    "owner of `source.repo`, because that is what the ownership check binds to, so\n" +
+    "that is what carries a tier.\n\n" +
+    "the machine, because there is no sandbox: a plugin is a native process with the\n" +
+    "user's full privileges, and Phase 7 is where that changes. Read the table above\n",
+  "site/templates/pages.mjs":
+    "released from. There are no registry accounts, no passwords and nothing to sign in to: the identity\n",
+};
+
+/** A tree holding both named documents, amended, plus whatever `extra` says. */
+function promisesFixture(name, extra = {}) {
+  const f = fixture(`roll47-${name}`)
+    .write("site/README.md", "| `/publisher/<owner>/` | The registry itself has no accounts. |\n")
+    .write("docs/POLICY.md", "# Policy\n\nA badge is keyed on the GitHub owner.\n");
+  for (const [rel, text] of Object.entries(extra)) f.write(rel, text);
+  return f.commit(`fixture ${name}`);
+}
+
+const roll47 = (dir, opts = {}) => roll47Rule(dir, { scannedFloor: 0, ...opts });
+
+test("M-T4.2: this repository restates no promise ROLL-47 has retired, and read what it had to", () => {
+  const r = roll47Rule(REPO);
+  assert.equal(r.status, "green", r.detail.join("\n"));
+  for (const named of ROLL47_NAMED) {
+    assert.ok(fs.existsSync(path.join(REPO, named)), `${named} is not in the tree the rule is asked about`);
+  }
+});
+
+test("M-T4.2: the pre-amend tree is red, once per sentence, naming the file", () => {
+  const f = promisesFixture("pre-amend", RETIRED_TEXT);
+  const r = roll47(f.dir);
+  assert.equal(r.status, "red");
+  const said = r.detail.join("\n");
+  for (const rel of Object.keys(RETIRED_TEXT)) assert.match(said, new RegExp(`^${rel.replace(/[.]/g, "\\.")} says`, "m"));
+  // Two A1 sentences, one A2, one sandbox: four findings, and none merged into another.
+  assert.deepEqual([...new Set(r.codes)], ["ROLL47_PROMISE_RESTATED"]);
+  assert.equal(r.detail.filter((d) => / says "/.test(d)).length, 4);
+  for (const p of ROLL47_PROMISES) assert.match(said, new RegExp(`row ${p.row}\\b`), `row ${p.row} did not fire`);
+});
+
+test("M-T4.2: each literal is found across a line break and in any case, and each row alone reds", () => {
+  for (const p of ROLL47_PROMISES) {
+    const words = p.literal.split(" ");
+    const mid = Math.max(1, Math.floor(words.length / 2));
+    const wrapped = `${words.slice(0, mid).join(" ").toUpperCase()}\n   ${words.slice(mid).join(" ")}`;
+    const f = promisesFixture(`row-${p.row}`, { "docs/extra.md": `Some prose, then ${wrapped}, then more.\n` });
+    const r = roll47(f.dir);
+    assert.equal(r.status, "red", `row ${p.row} wrapped as ${JSON.stringify(wrapped)} was not found`);
+    assert.match(r.detail.join("\n"), new RegExp(`^docs/extra\\.md says ".*" \\(ROLL-47 row ${p.row},`, "m"));
+  }
+});
+
+test("M-T4.2: an author's README is the author's words, and the amended sentences are green", () => {
+  const f = promisesFixture("authors", {
+    "plugins/a/readme/README.md": "This plugin has no registry accounts and Phase 7 of its roadmap is a sandbox.\n",
+    "registry/v1/index.json": "{\"readme\": \"There are no registry accounts\"}\n",
+    "site/README.md": "The registry itself has no accounts, so a publisher page is always a GitHub owner.\n",
+  });
+  const r = roll47(f.dir);
+  assert.equal(r.status, "green", r.detail.join("\n"));
+});
+
+test("M-T4.2: a scan that lost its subject or read almost nothing is red, not clean", () => {
+  const gone = fixture("roll47-gone").write("README.md", "# nothing\n").commit("no named documents");
+  const r = roll47(gone.dir);
+  assert.equal(r.status, "red");
+  assert.match(codesOf(r), /ROLL47_SUBJECT_ABSENT/);
+
+  const f = promisesFixture("floor");
+  const small = roll47Rule(f.dir);
+  assert.equal(small.status, "red", "two files read is below the floor the real tree sets");
+  assert.match(codesOf(small), /ROLL47_SCAN_FLOOR/);
+
+  const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), "astra-coverage-roll47-norepo-"));
+  tmpRoots.push(notRepo);
+  const broken = roll47Rule(notRepo, { scannedFloor: 0 });
+  assert.equal(broken.status, "red");
+  assert.match(codesOf(broken), /ROLL47_SCAN_FAILED|ROLL47_SUBJECT_ABSENT/);
 });
 
 // ── M-T5.7: the reserved-id mirror ──────────────────────────────────────────
