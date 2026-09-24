@@ -517,18 +517,27 @@ export function seedFromReleasesSeen(memory, seen) {
 // ── poll: a stranger's feed, and no key ────────────────────────────────────
 
 /**
- * One listing's feed, judged. Pure.
+ * One repository's feed, judged by every listing it hosts. Pure.
  *
- * @param {{listing: object, row: object|undefined, feed: {changed: boolean, etag: string|null, entries: {tag: string}[]}}} opts
+ * `listing` is the one-listing spelling and `listings` the general one: a
+ * monorepo — `mihailinl/AstraPlugins` hosts six pollable listings — has one
+ * feed and several prefixes. A tag registers when some listing's BOT-74
+ * verdict registers it AND no listing of the repository records it or holds a
+ * terminal record for it: BOT-74 refuses "a tag that a listed version
+ * records", whichever listing's prefix would have admitted it. For one
+ * listing this is exactly `tagVerdict`.
+ *
+ * @param {{listing?: object, listings?: object[], row: object|undefined,
+ *   feed: {changed: boolean, etag: string|null, entries: {tag: string}[]}}} opts
  * @returns {{candidates: string[], skipped: {tag: string, why: string}[], etag: string|null}}
  */
-export function pollListing({ listing, row, feed }) {
+export function pollListing({ listing, listings = [listing], row, feed }) {
   if (!feed.changed) return { candidates: [], skipped: [], etag: row?.etag ?? null };
   const memoryTags = row?.registered ?? [];
   const candidates = [];
   const skipped = [];
   for (const { tag } of feed.entries) {
-    const v = tagVerdict(listing, tag, memoryTags);
+    const v = repoVerdict(listings, tag, memoryTags);
     if (v.register) {
       if (!candidates.includes(tag)) candidates.push(tag);
     } else {
@@ -536,6 +545,22 @@ export function pollListing({ listing, row, feed }) {
     }
   }
   return { candidates, skipped, etag: feed.etag };
+}
+
+/** BOT-74 over every listing of one repository; see `pollListing`. */
+function repoVerdict(listings, tag, memoryTags) {
+  const verdicts = listings.map((l) => tagVerdict(l, tag, memoryTags));
+  const yes = verdicts.find((v) => v.register);
+  if (!yes) return verdicts.find((_, i) => matchesPrefix(listings[i].prefix, tag)) ?? verdicts[0];
+  const vetoedBy = listings.find((l) => l.recorded_tags.includes(tag) || l.terminal_tags.includes(tag));
+  if (vetoedBy) {
+    return {
+      register: false,
+      why: `${tag} is recorded, or has a terminal decision record, under ${vetoedBy.id}, a listing of the same ` +
+        "repository; BOT-74 registers no tag a listed version records, whichever listing's prefix admits it",
+    };
+  }
+  return yes;
 }
 
 /**
@@ -546,17 +571,25 @@ export function pollListing({ listing, row, feed }) {
  */
 export async function runPoll({ listings, memory, now = new Date(), fetchImpl = fetch }) {
   const out = { at: iso(now), repos: {} };
+  // By repository, not by listing: one conditional GET per feed, and one
+  // result per repository that no other listing's result can overwrite.
+  const byRepo = new Map();
   for (const listing of listings) {
     const key = repoKey(listing.repo);
+    if (!byRepo.has(key)) byRepo.set(key, []);
+    byRepo.get(key).push(listing);
+  }
+  for (const [key, group] of byRepo) {
     const row = memory.repos[key];
+    const ids = group.map((l) => l.id);
     try {
-      const feed = await pollFeed(listing.repo, row?.etag ?? null, fetchImpl);
-      const judged = pollListing({ listing, row, feed });
-      out.repos[key] = { id: listing.id, ok: true, changed: feed.changed, ...judged };
+      const feed = await pollFeed(group[0].repo, row?.etag ?? null, fetchImpl);
+      const judged = pollListing({ listings: group, row, feed });
+      out.repos[key] = { id: ids[0], ids, ok: true, changed: feed.changed, ...judged };
     } catch (e) {
       // One repository that 404s must not stop the walk; BOT-87's staleness
       // alarm is what notices it keeps failing.
-      out.repos[key] = { id: listing.id, ok: false, error: String(e.message).slice(0, 200), candidates: [], skipped: [], etag: row?.etag ?? null };
+      out.repos[key] = { id: ids[0], ids, ok: false, error: String(e.message).slice(0, 200), candidates: [], skipped: [], etag: row?.etag ?? null };
     }
   }
   return out;

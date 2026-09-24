@@ -38,6 +38,7 @@ import { pathToFileURL } from "node:url";
 import { ServiceRunFailure, W_SERVICE_UNREACHABLE, composeBody, createClient } from "./service.mjs";
 import { CLAIMED_FROM, VERDICT_OUTCOMES } from "./service-decide.mjs";
 import { safeRepo, safeTag } from "./intake.mjs";
+import { isUsableTag } from "./poll.mjs";
 import { isTime } from "../../tools/lib/time.mjs";
 
 const UUID_V47_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[47][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -123,21 +124,47 @@ function decisionOf(d) {
   return out;
 }
 
+/** B-T5.0's switch, `plugins-ingest.yml`'s `POLL_MODE`: the two values it may take. */
+export const POLL_MODES = Object.freeze(["shadow", "live"]);
+
 /**
- * `claim`: register what `poll` found (B-T5.1), then claim at most three.
+ * `claim`: register what `poll` found, then claim at most three.
+ *
+ * **The register half runs in shadow until B-T5.1** (registry plan B-T5.0).
+ * With `mode` `shadow` it prints one `would register <owner>/<repo>@<tag>` line
+ * per polled tag, calls nothing and reports nothing registered, so the poll's
+ * memory keeps no tag and M-T6.1's preflight can read a recorded run that
+ * registered no tag `state/releases-seen.json` records. `live` is B-T5.1's, set
+ * in the cutover commit. There is no default once there is a tag to register:
+ * a job that guessed would one day guess `live`. The claim half is B-T3.x's and
+ * is not the poll's to switch.
  *
  * @returns {Promise<{submissions: string[], leases: object, shadow: boolean,
- *   registered: string[], refused: object[], alerts: object[]}>}
+ *   registered: string[], wouldRegister: string[], refused: object[], alerts: object[]}>}
  */
-export async function claimJob({ client, polled = [], log = console }) {
+export async function claimJob({ client, polled = [], mode = null, log = console }) {
   const registered = [];
+  const wouldRegister = [];
+  if (polled.length && !POLL_MODES.includes(mode)) {
+    throw new Error(`POLL_MODE is ${JSON.stringify(mode)}; plugins-ingest.yml sets it to one of ${POLL_MODES.join(", ")}`);
+  }
   for (const t of polled) {
-    if (!safeRepo(t?.repo) || !safeTag(t?.tag)) {
+    // Both grammars: intake's `safeTag` is the lease grammar and admits `../x`
+    // and `-x`; the poll's `isUsableTag` is the one the poll validated with,
+    // and refuses both. The job holding the token re-applies the stricter one
+    // rather than trusting the job that read the feed to have been this code.
+    if (!safeRepo(t?.repo) || !safeTag(t?.tag) || !isUsableTag(t.tag)) {
       throw new Error("poll handed on a tag outside the grammar; poll validates before anything leaves it (BOT-1)");
+    }
+    if (mode === "shadow") {
+      wouldRegister.push(`${t.repo}@${t.tag}`);
+      log.log(`would register ${t.repo}@${t.tag}`);
+      continue;
     }
     const answer = await client.call("register", { repo: t.repo, repository_id: t.repository_id ?? null, tag: t.tag, trigger: "poll" });
     if (answer.ok && !answer.unreadable) registered.push(`${t.repo}@${t.tag}`);
   }
+  if (mode === "shadow" && polled.length === 0) log.log("would register nothing: the poll offered no tag this run");
 
   const answer = await client.call("claim", { wanted: WANTED });
   if (!answer.ok) {
@@ -146,7 +173,7 @@ export async function claimJob({ client, polled = [], log = console }) {
     // is this bot's own request being wrong, which must fail the run.
     if (answer.refused === "invalid") throw new ServiceRunFailure(`the service refused the claim as \`invalid\`: ${answer.message}`);
     log.log(`claim: no leases this run (${answer.wait ?? answer.refused ?? "no answer"})`);
-    return { submissions: [], leases: {}, shadow: true, registered, refused: [], alerts: client.alerts };
+    return { submissions: [], leases: {}, shadow: true, registered, wouldRegister, refused: [], alerts: client.alerts };
   }
   const shadow = answer.shadow === true;
   const list = Array.isArray(answer.body?.leases) ? answer.body.leases : [];
@@ -169,7 +196,7 @@ export async function claimJob({ client, polled = [], log = console }) {
   for (const r of refused) {
     log.error(`::error::claim: a lease${r.submission_id ? ` for ${r.submission_id}` : ""} is outside §4.3's grammar (${r.problems.length} problem(s)); nothing is fetched for it`);
   }
-  return { submissions: Object.keys(leases), leases, shadow, registered, refused, alerts: client.alerts };
+  return { submissions: Object.keys(leases), leases, shadow, registered, wouldRegister, refused, alerts: client.alerts };
 }
 
 // ── ask ─────────────────────────────────────────────────────────────────────
@@ -408,7 +435,7 @@ async function main(argv) {
 
   if (args.job === "claim") {
     const polled = parseJson(process.env.ASTRA_POLLED_TAGS, []);
-    const out = await claimJob({ client, polled: Array.isArray(polled) ? polled : [] });
+    const out = await claimJob({ client, polled: Array.isArray(polled) ? polled : [], mode: process.env.POLL_MODE ?? null });
     output("submissions", out.submissions);
     output("count", String(out.submissions.length));
     output("registered", out.registered);
