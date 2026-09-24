@@ -1208,6 +1208,18 @@ export async function run() {
       { name: "an empty list under its pending record", doc: variant([], [record]), red: [], state: "pending" },
       { name: "template 1 naming the author audience and notify path, and no record", doc: variant([template()], []), red: [], state: "recorded" },
       { name: "template 1 naming the audience by name", doc: variant([template({ audience: audience.name })], []), red: [], state: "recorded" },
+      // Template 1 as it is: AstraPlugins' `init-ci` caller compiles no author
+      // audience and no notify path (its test
+      // `the_generated_caller_calls_nothing_but_the_reusable_workflow`; AP-4's
+      // C25). SCOPE-7 lists what a template compiles, and `null` is that it
+      // compiles none. ID-73 then protects nothing on its behalf, which is true.
+      { name: "template 1 compiling no audience and no notify path, as init-ci's caller does", doc: variant([template({ audience: null, notify_path: null })], []), red: [], state: "recorded" },
+      { name: "a template compiling the audience and no notify path", doc: variant([template({ notify_path: null })], []), red: [], state: "recorded" },
+      { name: "a template whose audience is the empty string", doc: variant([template({ audience: "" })], []), red: [TOKEN_FILE, "audience", "null"] },
+      { name: "a template whose notify path is a number", doc: variant([template({ notify_path: 7 })], []), red: [TOKEN_FILE, "notify_path", "null"] },
+      // Compiling nothing, it protects nothing: ID-73 is about what a listed
+      // template compiles, and the reusable workflow's half is AstraPlugins' C33.
+      { name: "a template compiling nothing, with the author audience retired", doc: variant([template({ audience: null, notify_path: null })], [], [audience.id]), red: [], state: "recorded" },
       { name: "an empty list with no record", doc: variant([], []), red: [TOKEN_FILE, "no pending record"] },
       { name: "an empty list under a record with no lands_with", doc: variant([], [without("lands_with")]), red: [TOKEN_FILE, "lands_with"] },
       { name: "an empty list under a record with no owed_by", doc: variant([], [without("owed_by")]), red: [TOKEN_FILE, "owed_by"] },
@@ -2372,10 +2384,23 @@ function templatesAgainstEntries(value, doc) {
   const malformed = [];
   const seen = new Set();
   value.forEach((t, i) => {
-    for (const k of ["version", "audience", "notify_path", "state"]) {
+    for (const k of ["version", "state"]) {
       if (!(t && typeof t[k] === "string" && t[k].trim() !== "")) {
         malformed.push(`${TOKEN_FILE}'s \`${TEMPLATES_MEMBER}\`[${i}] has no \`${k}\`; SCOPE-7 lists each template with ` +
           `the author audience and author-notify path it compiles, and its state`);
+      }
+    }
+    // What a template compiles is a value or `null`, and `null` is a statement:
+    // it compiles none. Template 1, `init-ci`'s caller, compiles neither — its
+    // AstraPlugins test `the_generated_caller_calls_nothing_but_the_reusable_workflow`
+    // and C25 hold that — so a judge that took only strings could not accept the
+    // one true entry the list has (registry plan AP-24: "both `null` for version
+    // 1"). Absent is still refused: absence says nothing, and the reader of ID-73
+    // has to be told.
+    for (const k of ["audience", "notify_path"]) {
+      if (!(t && Object.hasOwn(t, k) && (t[k] === null || (typeof t[k] === "string" && t[k].trim() !== "")))) {
+        malformed.push(`${TOKEN_FILE}'s \`${TEMPLATES_MEMBER}\`[${i}] has no \`${k}\`; SCOPE-7 lists each template with ` +
+          `the author audience and author-notify path it compiles, as a value or \`null\` when it compiles none`);
       }
     }
     if (t && typeof t.state === "string" && t.state.trim() !== "" && !isTokenState(t.state)) {
@@ -2391,13 +2416,15 @@ function templatesAgainstEntries(value, doc) {
   const compiled = authorCompiled(doc);
   const problems = [];
   for (const t of value) {
-    const aud = compiled.find((e) => e.kind === "audience" && (e.value === t.audience || e.name === t.audience));
-    const op = compiled.find((e) => e.kind === "operation" && e.path === t.notify_path);
-    if (!aud) {
+    const aud = t.audience === null ? null
+      : compiled.find((e) => e.kind === "audience" && (e.value === t.audience || e.name === t.audience));
+    const op = t.notify_path === null ? null
+      : compiled.find((e) => e.kind === "operation" && e.path === t.notify_path);
+    if (t.audience !== null && !aud) {
       problems.push(`${TOKEN_FILE}'s template ${JSON.stringify(t.version)} compiles audience ${JSON.stringify(t.audience)}, ` +
         `and the file lists no author audience by that value or name`);
     }
-    if (!op) {
+    if (t.notify_path !== null && !op) {
       problems.push(`${TOKEN_FILE}'s template ${JSON.stringify(t.version)} calls notify path ${JSON.stringify(t.notify_path)}, ` +
         `and the file lists no author-CI operation at that path`);
     }
