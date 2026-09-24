@@ -9,8 +9,13 @@
 # under 14 days away with no round 3; the n22 guard, a marker whose cutover
 # date moved EARLIER under the same `sent_at`; the n28 guard, a marker
 # announcing a date the authoritative one does not; and the banner at
-# `https://astra.minice.ai/plugins/<id>` not carrying the announced date.
-# Every clock is read from the records' own members, never from a commit.
+# `https://astra.minice.ai/plugins/<id>`, read by the hooks MIG-13 publishes
+# since contract 2.7.0 (`cutover-planned`, `binding-deadline` and the
+# banner's `data-astra-round`), saying something the marker and
+# `policy/binding-deadline.json` do not. Until `log/rollout/R4b-open.json` is
+# on the tree a 404 from that page is the plugins zone not being open yet, and
+# a line of detail; from then on it is BANNER_UNREACHABLE. Every clock is read
+# from the records' own members, never from a commit.
 #
 # ── THE TWO JOBS ────────────────────────────────────────────────────────────
 #
