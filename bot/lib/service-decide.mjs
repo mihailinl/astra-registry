@@ -70,7 +70,7 @@ import { DELAY_HOURS } from "./policy/constants.mjs";
 import { HOUR_MS, iso } from "./policy/time.mjs";
 import { CODES } from "./codes.mjs";
 import { POLICY_CODES } from "./policy/constants.mjs";
-import { applyIdentity, compareWithBaseline, effectiveBaseline } from "./identity.mjs";
+import { ACTOR_MISMATCH_FLOOR_DAYS, applyIdentity, compareWithBaseline, effectiveBaseline } from "./identity.mjs";
 import { safeRepo, safeTag } from "./intake.mjs";
 import { execFileSync } from "node:child_process";
 import { trackRecord } from "./policy/track-record.mjs";
@@ -414,8 +414,26 @@ export function id41({ identity, record, lineHash }) {
  * `P_APPROVAL_STALE`; (3) no `E_*` or `B_*` finding — `decide()`'s step 1
  * refuses before an approval is read; (4) `decided_at` is younger than the
  * committed maximum. ROLL-49: no approval carries a delay waiver.
+ *
+ * **MIG-31.** At a `grandfathered` or `frozen` listing's `R_FIRST_BINDING`
+ * hold whose build was started by an account other than the repository's
+ * owner, an approval is not honoured before `floorDays` (the identity
+ * module's 14) have passed since the hold's record, counted as TRUST-27
+ * counts. `floorDays` is `verify`'s `compareActor` answer for the build's
+ * run, which is the same run on every re-verification of these bytes. An
+ * actor nobody could read is treated as the floor applying: the withholding
+ * direction, because a first binding is the one approval that moves who owns
+ * a listing. Until 2026-09-24 `verify` read the actor and the decide job
+ * reported it (`triggering_actor_is_owner`) and nothing deferred an approval
+ * by it; the canary walk ROLL-59 (h) found that (B-T4.1).
+ *
+ * "Deferred, not lost" (MIG-31): while a floor runs, BOT-26 (4)'s age is
+ * counted from the floor's end rather than from `decided_at`, so an approval
+ * given on the first day of a 14-day floor is still an approval on the
+ * fifteenth. Without that, the committed maximum of 7 days would expire every
+ * approval given in the first week, which is losing it.
  */
-export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, now }) {
+export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, now, mig31 = null }) {
   const approvals = (decisions ?? []).filter((d) => d?.code === "M_APPROVE");
   if (approvals.length === 0) return { approval: null, why: null, decision: null };
   // The newest, by the service's own time. Two approvals of one fingerprint
@@ -431,7 +449,14 @@ export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, 
       decision,
     };
   }
-  const age = new Date(now).getTime() - new Date(decision.decided_at).getTime();
+  const firstBinding = (heldCodes ?? []).includes("R_FIRST_BINDING");
+  // MIG-31's floor, in days, or 0 where it does not apply.
+  const actorFloor = firstBinding && mig31?.applies === true
+    ? (Number.isInteger(mig31.floorDays) && mig31.floorDays >= 0 ? mig31.floorDays : ACTOR_MISMATCH_FLOOR_DAYS)
+    : 0;
+  const floorEnd = actorFloor > 0 ? new Date(heldRecord.decided_at).getTime() + actorFloor * DAY_MS : null;
+  const countedFrom = Math.max(new Date(decision.decided_at).getTime(), floorEnd ?? 0);
+  const age = new Date(now).getTime() - countedFrom;
   if (age > APPROVAL_MAX_DAYS * DAY_MS) {
     return {
       approval: null,
@@ -451,6 +476,17 @@ export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, 
         earliest: plusMs(heldRecord.decided_at, FIRST_BINDING_WAIT_DAYS * DAY_MS),
       };
     }
+  }
+  if (floorEnd !== null && new Date(now).getTime() < floorEnd) {
+    return {
+      approval: null,
+      why:
+        `MIG-31: this first binding's build was started by ${mig31.actorId ? `account ${mig31.actorId}` : "an account nobody could read"}, ` +
+        `not the repository's owner, so its approval is honoured ${actorFloor} days after the \`held\` record reached ` +
+        `main (${heldRecord.decided_at}), at ${iso(new Date(floorEnd))}. It is deferred, not lost`,
+      decision,
+      earliest: iso(new Date(floorEnd)),
+    };
   }
   return {
     approval: {
@@ -893,6 +929,12 @@ export function decideSubmission(input) {
     heldRecord,
     heldCodes: heldRecord?.reasons ?? heldCodes,
     now,
+    // MIG-31's scope: a grandfathered or frozen listing's first binding.
+    mig31: {
+      applies: ["grandfathered", "frozen"].includes(listingState?.state) && binding.outcome === "one",
+      floorDays: verified.actor?.floor_days ?? null,
+      actorId: verified.actor?.triggering_actor_id ?? null,
+    },
   });
 
   const queued = git.queueEntry ?? null;
@@ -1360,15 +1402,29 @@ export function decideJob({ root, submissions, leases, claimShadow, verified, ou
     })();
     const listing = pluginId ? readListingArtifact(path.join(listingsDir, `listing-${id}`), pluginId) : null;
     const existing = pluginId ? readListingOnMain(root, pluginId) : null;
+    // MIG-1's state, read from history as `listing-state.mjs` reads it. `now`
+    // goes in as §0.7's string: the reader holds its tree to that grammar, and
+    // until 2026-09-24 this call passed a `Date`, which it refused on every run.
+    // A `catch` here turned that refusal into "no state", so the three rules
+    // that read it — `B_UNBOUND` on a `frozen` listing (ID-25), MIG-12's wait
+    // for a grandfathered listing after cutover, and MIG-31's report of the
+    // triggering actor — never fired, and nothing said so. The `catch` claimed
+    // a missing state "blocks nothing they would not also block with one",
+    // which was false for the first two: both are refusals or waits that only
+    // a state can trigger. So a tree the reader cannot answer from — shallow,
+    // commit-less, or with a marker it refuses — now fails the job, the way
+    // `readListingOnMain` fails it for an unreadable identity record: loudly,
+    // with the lease left to expire under BOT-15, rather than deciding the
+    // release as though the listing had no state at all.
     let listingState = null;
     if (existing) {
       try {
-        listingState = (deps.listingStateAt ?? listingStateAt)(root, pluginId, { now: new Date(now) });
-      } catch {
-        // MIG-1 could not be decided from this tree; the rules that need it
-        // (B_UNBOUND on a frozen listing, MIG-12) then see no state, which
-        // blocks nothing they would not also block with one.
-        listingState = null;
+        listingState = (deps.listingStateAt ?? listingStateAt)(root, pluginId, { now: iso(now) });
+      } catch (e) {
+        throw new Error(
+          `MIG-1's state of ${pluginId} cannot be read from this tree (${e.message}); deciding its release without ` +
+          "one would skip B_UNBOUND on a frozen listing, MIG-12 and MIG-31's report, so this run decides nothing",
+        );
       }
     }
     const perListing = {
