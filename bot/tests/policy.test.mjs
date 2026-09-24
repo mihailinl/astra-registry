@@ -4308,6 +4308,22 @@ await test("ROLL-25 (2) — a re-run of the rejected json-tools 0.1.3 writes not
   assertEqual(fs.readFileSync(path.join(out, "remove.txt"), "utf8"), "", "a hit removes nothing either");
 });
 
+await test("BOT-19 — a hit that would have dropped a queue entry removes nothing either", () => {
+  // A drain re-decided `refuse`, or handed to a person, drops its queue entry;
+  // on a BOT-19 hit (a stop of the tag, say) the run writes nothing at all.
+  const derived = { plugin: { id: "json-tools" }, version: { version: "0.1.3" } };
+  const base = { outcome: "refuse", reasons: [], publishes_now: false, queue_entry: null, drop_queue: true, record: { write: false } };
+  const out = tmp("astra-hit-removals-");
+  writeOutputs(out, { repo: WALK_REPO, tag: "json-tools-v0.1.3", issue: null, root: walkTree() },
+    { comment: "", derived, decision: { ...base, reported: "stopped" } });
+  assertEqual(fs.readFileSync(path.join(out, "remove.txt"), "utf8"), "", "a BOT-19 hit dropped a queue entry");
+  const control = tmp("astra-hit-removals-control-");
+  writeOutputs(control, { repo: WALK_REPO, tag: "json-tools-v0.1.3", issue: null, root: walkTree() },
+    { comment: "", derived, decision: base });
+  assertEqual(fs.readFileSync(path.join(control, "remove.txt"), "utf8"), "state/queue/json-tools@0.1.3.json\n",
+    "the control: without a hit the same decision drops its entry");
+});
+
 // Closed by B-T3.9 (terminalOnMain names BOT-19's records exactly), and held
 // here as a test, as the gap asked (B-T4.1).
 await test("ROLL-25 (2)→(6) — the rejection of 0.1.3 is not a hit for 0.1.4 (BOT-19 matches the submission)", async () => {
