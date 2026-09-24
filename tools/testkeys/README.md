@@ -75,6 +75,7 @@ TEST-ONLY-DO-NOT-TRUST-root-b.SECRET-TEST-KEY.json
 regenerate.mjs                                   rederives all four from the phrases
 sign-trust.mjs                                   signs a trust.json `signed` block
 make-rehearsal-r2.mjs                            builds fixtures/rehearsal-r2/ — see below
+rehearsal-push.mjs                               serves it on mihailinl/astra-registry-canary, one step at a time
 fixtures/                                        signed documents the daemon tests read
 fixtures/rehearsal-r2/                           the ROLL-60 rehearsal series — see its README
 vectors/                                         the signed-set corpus — see vectors/README.md
@@ -104,6 +105,12 @@ four files at once, and a fixture that did not go through it would prove
 something about the fixture and nothing about the signer.
 [`fixtures/rehearsal-r2/README.md`](fixtures/rehearsal-r2/README.md) has the
 series, the borrowed key id and why it is borrowed, and how to replay it.
+
+`rehearsal-push.mjs --step N` serves it: step N's commit, rebuilt from those
+bytes and pushed only if it is the sha the signer committed, one step at a
+time onto BOT-88's test repository and nowhere else. `--list`, `--status` and
+`--dry-run` say what it would do; astra-plugins-ops
+`runbooks/roll-60-rehearsal.md` is the day it is run on.
 
 ## Regenerating
 
