@@ -18,7 +18,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { buildIndex } from "../build-index.mjs";
 import { validate as validateSchema } from "../lib/jsonschema.mjs";
-import { reservedPrefixViolation } from "../lib/reserved.mjs";
+import { reservedPrefixViolation, stagingListingId } from "../lib/reserved.mjs";
 import {
   REPO_ROOT,
   expiredPublishers,
@@ -593,6 +593,17 @@ export async function run() {
     }
     assert(reservedPrefixViolation("astra-anything", "someone-else/x", real)?.prefix === "astra-",
       "policy/reserved-ids.json admits everybody; the prefix is no longer reserved");
+    // MOD-16's staging repository (registry plan M-T2.1): the staging listing is
+    // published from BOT-88's test repository, so that ONE repository is
+    // first-party, and the login it lives under is not.
+    const staging = stagingListingId(real);
+    assert(staging !== null && reservedPrefixViolation(staging, "mihailinl/astra-registry-canary", real) === null,
+      `policy/reserved-ids.json refuses ${JSON.stringify(staging)} from mihailinl/astra-registry-canary, the staging ` +
+      "repository M-T2.2 publishes it from, so the owner's /approve of the staging listing would be answered " +
+      "E_ID_RESERVED_PREFIX");
+    assert(reservedPrefixViolation("astra-anything", "mihailinl/some-other-repository", real)?.prefix === "astra-",
+      "policy/reserved-ids.json admits every repository under mihailinl to the reserved prefixes; M-T2.1 widened " +
+      "first_party_repos by one repository, and first_party_owners is the knob that vouches for a whole login");
   });
 
   // The other two files that can hand the freed login something, and until this
