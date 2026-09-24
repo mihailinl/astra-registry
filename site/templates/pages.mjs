@@ -389,10 +389,12 @@ counts in the catalogue are <code>0</code> because nothing counts them.</li>
 </ul>
 
 <h2>How to make something appear here</h2>
-<p>Open an issue with the plugin id and what you observed. Behaviour reports beat every heuristic
-this registry has, and they are the mechanism it actually relies on. For anything that would let
-somebody ship code to a user, use the embargoed path on the <a href="../security/">security
-page</a> instead of a public issue.</p>
+<p>Report it from the plugin's page in Minice's panel, at
+<a href="${href("https://astra.minice.ai/plugins")}">astra.minice.ai/plugins</a>, signed in as an Astra
+owner, with the version and what you observed. Since the cutover (ROLL-33) an issue on this
+repository reaches nobody. Behaviour reports beat every heuristic this registry has, and they are
+the mechanism it actually relies on. For anything that would let somebody ship code to a user, use
+the path on the <a href="../security/">security page</a> instead.</p>
 `;
   return page({ title: "Transparency — Astra plugin registry", description: "Every moderation action this registry has taken.", depth: 1, active: "transparency", body });
 }

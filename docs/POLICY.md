@@ -31,6 +31,16 @@ publishes, with a warning for users rather than a block, so the two now differ:
 
 ## 0. You always get an answer
 
+> **Since the cutover (ROLL-33).** A listing is requested in Minice's panel at
+> <https://astra.minice.ai/plugins>, and the answer reaches your Minice account
+> as a notice, by e-mail and in the panel, and by Telegram only if you linked it
+> (OD-17). A first listing needs a binding line in
+> `.well-known/astra-plugin-owner` that your account minted, instead of your
+> login on a line of its own. Silence is still a bug in this registry or in the
+> plugins service. The rest of this section describes the issue path as it
+> worked until the cutover; it stays as the record of what applied to
+> submissions made before it, and none of it applies to a new one.
+
 Open a listing request and the bot comments on it. Every time.
 
 That is worth stating because it was not true. Two submissions — `#13` and
@@ -100,6 +110,17 @@ take:
   anybody's ability to ship a release of a plugin that is already listed.
 
 ## 1. The outcomes
+
+> **Since the cutover (ROLL-33).** Only the service path's three outcomes
+> apply, in the second table below: published at once and marked not reviewed
+> (§2.1), held for a change of hands (§3), or refused. Nothing new is delayed.
+> They reach you as notices (`notice.published`, `notice.held`,
+> `notice.refused`) and in the panel, not as comments, and there is no issue to
+> close. A held release is decided by a moderator in the panel. A refused
+> release is fixed by a new release, and a refusal can be appealed in the panel.
+> The issue path's four outcomes, and what this section says about closing its
+> issues, stay as the record of what applied to submissions made before the
+> cutover, and none of it applies to a new one.
 
 On the issue path, until the cutover:
 
@@ -216,6 +237,15 @@ a wider permission set, a name a check flags — carries `P_REVIEW_PRIORITY`, so
 that moderators read it first.
 
 ## 3. What waits for a person
+
+> **Since the cutover (ROLL-33).** Only the service path's table below
+> applies: a change of hands on a listing that already exists, decided by a
+> moderator in the panel and then waiting out every window in §3.2. Everything
+> else publishes at once, marked not reviewed (§2.1). `/approve`, `/reject` and
+> `/publish` on an issue decide nothing any more (BOT-49). The issue path's
+> three events, its `R_CHECK_HELD`, §3.1 and its 48-hour SLA stay as the record
+> of what applied to submissions made before the cutover, and none of it
+> applies to a new one.
 
 **On the service path, one kind of release waits: a change of hands on a
 listing that already exists.** *Amended 2026-09-26 (contract 3.0.0, DEC-19).*
@@ -442,6 +472,17 @@ on it is held or delayed: it publishes at once, marked not reviewed (§2.1).
 
 ## 4. The publication delay
 
+> **Since the cutover (ROLL-33).** Nothing new is delayed. The service path
+> is the only way in, and on it a release that would have waited here
+> publishes at once, marked not reviewed (§2.1), with `P_REVIEW_PRIORITY`;
+> **What the service path has instead**, below, says what stands in the
+> delay's place. A release the issue path queued before the cutover still
+> waits out its delay and drains from `state/queue/` (MIG-23). Its date can be
+> brought forward by editing `publish_after`, as below, and never by a comment.
+> The rest of this section describes the issue path as it worked until the
+> cutover; it stays as the record of what applied to submissions made before
+> it, and none of it applies to a new one.
+
 **This section is the issue path's, until the cutover.** *Amended 2026-09-26
 (contract 3.0.0, DEC-19).* On the service path nothing is delayed: a release
 that would have waited here publishes at once, marked not reviewed (§2.1), with
@@ -569,6 +610,14 @@ release whose re-check now fails, or now needs a person, stops waiting rather
 than being retried for ever.
 
 ## 5. How this registry hears that you released
+
+> **Since the cutover (ROLL-33).** Neither a comment nor the daily backstop: the
+> registry polls every listed, grandfathered and frozen listing's release feed
+> every 30 minutes (BOT-41) and registers each new tag that carries the
+> listing's tag prefix (BOT-74). The bot takes a registered release up at its
+> next run, every 10 minutes (BOT-51). The rest of this section describes the
+> issue path as it worked until the cutover; it stays as the record of what
+> applied to submissions made before it, and none of it applies to a new one.
 
 Three ways in, all of which end in the same verification. None of them requires
 you to hold a credential for this repository — the bot verifies everything from
