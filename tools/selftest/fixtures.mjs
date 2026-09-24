@@ -4,10 +4,11 @@
 //
 // The test root's key id is spelled ONCE, as `ROOT_A_KEY_ID`. It used to be
 // typed twice — at the `testRootPem` call that publishes the PEM as the sandbox's
-// active root, and at the `loadTestRoot` call that hands the update signer its
-// private half — and the update sandbox works only because those two are the same
-// key. Two files with the string typed twice is one typo away from every update
-// test failing with "does not verify", which names nothing.
+// active root, and at the `loadTestRoot` call that handed the update signer its
+// private half, before RC-R3-4(b) moved that signer and its cases into Astra —
+// and a sandbox works only because the two are the same key. Two files with the
+// string typed twice is one typo away from every test failing with "does not
+// verify", which names nothing.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -74,7 +75,7 @@ export function sandboxWithRoot(name, keyId, publicKey, extraRoots = []) {
   // wholesale drags in `bot/manifest-probe/target/`, which is a Rust build
   // directory and filled /tmp the first time this was written.
   for (const f of [
-    "tools/sign-trust.mjs", "tools/sign-update-manifest.mjs",
+    "tools/sign-trust.mjs",
     "tools/lib/canonical.mjs", "tools/lib/semver.mjs", "bot/lib/sign.mjs",
   ]) {
     fs.mkdirSync(path.join(dir, path.dirname(f)), { recursive: true });

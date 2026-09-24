@@ -84,10 +84,16 @@ const CODE = /\.(mjs|cjs|js)$/;
  * `--loads`: 192 processes and 132 repository modules. Half of each, so an
  * honest retirement of tests does not redden them and a broken inheritance of
  * NODE_OPTIONS — the children stop recording — does.
+ *
+ * The process floor was re-measured on 2026-09-24 for an honest retirement
+ * bigger than half: RC-R3-4(b) moved the update manifest signer and its two
+ * case modules into Astra, and those cases ran the signer as a node child per
+ * test. Main recorded 208 processes at `1054163`; the tree without them records
+ * 84. Half of 84 still reds a broken inheritance — the runner alone is one.
  */
-const FLOOR_PROCESSES = 96;
+const FLOOR_PROCESSES = 42;
 const FLOOR_MODULES = 65;
-const FLOOR_DAY = "2026-09-22";
+const FLOOR_DAY = "2026-09-24";
 
 const words = (s) => (typeof s === "string" ? s.trim().split(/\s+/).filter(Boolean).length : 0);
 
@@ -197,7 +203,7 @@ export async function run() {
       "the record does not hold this runner loading tools/selftest.mjs and tools/selftest/loads.mjs, so it is not a " +
       "record of this run and everything below would be judged against someone else's");
     assert(m.processes.length >= FLOOR_PROCESSES,
-      `the record holds ${m.processes.length} process(es), and a --loads run recorded 192 on ${FLOOR_DAY}: node ` +
+      `the record holds ${m.processes.length} process(es), and a --loads run recorded 84 on ${FLOOR_DAY}: node ` +
       "children have stopped recording themselves (NODE_OPTIONS no longer reaches them), so what they load is " +
       "missing from the record and every module only a child loads would look unloaded");
     assert(m.loaded.size >= FLOOR_MODULES,

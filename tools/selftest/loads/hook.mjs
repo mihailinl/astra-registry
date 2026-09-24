@@ -74,7 +74,10 @@
 //      and `tools/lib/sources.mjs` that `publishers.mjs` changes under the
 //      daily job, two copies of `tools/build-index.mjs` that are not today's
 //      bytes in the trees `tools/regenerate-signed.mjs` assembles for a
-//      generator commit, and the clock stub `update-fixtures.mjs` writes.
+//      generator commit, and the clock stub the update signer's fixtures
+//      module wrote (loaded twice by 2026-09-24). That module moved into Astra
+//      with the signer at RC-R3-4(b); measured after it, 4 such loads remain:
+//      build-index.mjs ×2, recheck-publishers.mjs and sources.mjs.
 
 import fs from "node:fs";
 import path from "node:path";

@@ -220,7 +220,6 @@ export const ENTRIES = [
   "tools/served-set/",
   "tools/sign-revocations.mjs",
   "tools/sign-trust.mjs",
-  "tools/sign-update-manifest.mjs",
   "tools/signer/git.mjs",
   "tools/signer/key-window.mjs",
   "tools/signer/pages.mjs",
@@ -608,11 +607,13 @@ const ROUTINE = [
   { p: "state/deny/abc123.json", why: "an operator deny record (TRUST-33)", exists: false, by: "operator.yml's `act: deny`, M-T3.5" },
   { p: "state/alerts/abc123.json", why: "an alert record (TRUST-32); its delivery report is what the operator window counts from", exists: false, by: "the ingest run's alert job" },
   { p: "policy/binding-deadline.json", why: "the binding deadline, which the OWNER commits by hand (MIG-2)", exists: false, by: "the owner, before R4b" },
-  // Until contract 0.38.0 two rows here held `tools/sign-update-manifest.mjs`
-  // and `tools/signer/plan.mjs` OUTSIDE, as desk and ceremony tools the bot
+  // Until contract 0.38.0 two rows here held the update manifest signer and
+  // `tools/signer/plan.mjs` OUTSIDE, as desk and ceremony tools the bot
   // never reaches — true of the bot's closure and false of its fifth gate,
-  // which loads both (ops pending item 19). They are in the set now, and the
-  // row that stays is the one file under `tools/signer/` neither reaches.
+  // which loaded both (ops pending item 19). Both went into the set; the
+  // manifest signer has since left the tree with the rest of the release desk
+  // (RC-R3-4(b)), and the row that stays is the one file under `tools/signer/`
+  // neither reaches.
   { p: "tools/signer/verdict.mjs", why: "the signer workflow's verdict step, which neither a bot run nor the fifth gate loads", exists: true },
 ];
 
