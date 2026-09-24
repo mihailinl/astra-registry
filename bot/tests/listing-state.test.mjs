@@ -438,7 +438,9 @@ function noticeEstate() {
   write(root, "plugins/alpha/plugin.json", { id: "alpha", source: { repo: "stranger/alpha" }, added_at: "2026-08-01" });
   write(root, "plugins/gamma/plugin.json", { id: "gamma", source: { repo: "other/gamma" }, added_at: "2026-08-02" });
   write(root, "plugins/ours/plugin.json", { id: "ours", source: { repo: "team/ours" }, added_at: "2026-08-01" });
-  git(root, ["init", "--quiet", "-b", "main"]);
+  git(root, ["init", "--quiet", "--initial-branch=main"]);
+  git(root, ["config", "user.email", "test@example.invalid"]);
+  git(root, ["config", "user.name", "test"]);
   commit(root, "an estate");
   return root;
 }
