@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // The signer's three acts: sign, commit, and assemble what Pages serves.
 //
-//     node tools/signer/run.mjs --step sign   --source-commit <sha> --out dist/signed --record record.json
+//     node tools/signer/run.mjs --step sign   --source-commit <sha> --out dist/signed --record record.json [--event <GITHUB_EVENT_NAME>]
 //     node tools/signer/run.mjs --step commit --record record.json --tree dist/signed
 //     node tools/signer/run.mjs --step pages  --out dist/pages --site dist/site --record pages.json
 //
@@ -67,7 +67,7 @@ import { blobAt, gitMaybe, gitText } from "./git.mjs";
 import {
   DOCUMENT_DOMAINS, keyPlan, readDelegationTimes, refusesDroppedKey, retirementRecordAt, trustAtCommit,
 } from "./key-window.mjs";
-import { SIGNED_BRANCH, SIGNED_FILES, carryAlert, fetchSignedHead, planRun } from "./plan.mjs";
+import { SIGNED_BRANCH, SIGNED_FILES, carryAlert, fetchSignedHead, planRun, resignAfterHoursFor } from "./plan.mjs";
 import { armingState, pagesRegistryFiles, pagesTree } from "./pages.mjs";
 
 /** D2's four trailers, in the order they are written. */
@@ -440,7 +440,7 @@ export function pushSigned({ root, sha, parent, remote = "origin", branch = SIGN
 function parseArgs(argv) {
   const args = {
     step: "sign", root: REPO_ROOT, out: null, record: null, tree: null, site: null,
-    sourceCommit: null, now: null, testKeys: [],
+    sourceCommit: null, now: null, testKeys: [], event: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
@@ -452,6 +452,7 @@ function parseArgs(argv) {
     else if (flag === "--site") args.site = argv[++i];
     else if (flag === "--source-commit") args.sourceCommit = argv[++i];
     else if (flag === "--now") args.now = argv[++i];
+    else if (flag === "--event") args.event = argv[++i] ?? "";
     else if (flag === "--test-key") args.testKeys.push(argv[++i]);
     else throw new Error(`unknown argument: ${flag}`);
   }
@@ -541,9 +542,25 @@ async function stepSign(args) {
   const root = args.root;
   const sourceCommit = args.sourceCommit ?? gitText(["rev-parse", "HEAD"], { root });
   const now = args.now ?? rfc3339(Date.now());
+  // Who refreshes an unchanged document is decided by what started the run
+  // (plan.mjs, RESIGN_HOURS_BY_EVENT): the schedule and a hand dispatch at
+  // 20 h, a push or a workflow_run only at the 34 h backstop. `sign.yml` says
+  // which with `--event`. It is a flag and not a read of GITHUB_EVENT_NAME
+  // because every other caller of this file — the rehearsal generator, the
+  // suite — runs INSIDE some other workflow's job, whose event would leak in
+  // and change what a fixture decides. No flag is a run from a shell: 20 h.
+  const event = args.event;
+  let resignAfterHours;
+  let available;
+  try {
+    if (event === "") throw new Error("--event was given an empty value; sign.yml passes the run's GITHUB_EVENT_NAME, which Actions always sets");
+    resignAfterHours = resignAfterHoursFor(event);
+  } catch (e) {
+    console.error(`FAIL  ${e.message}`);
+    return 2;
+  }
   const head = fetchSignedHead({ root });
   const delegatedAt = head.present ? readDelegationTimes({ root, ref: head.ref }) : new Map();
-  let available;
   try {
     available = args.testKeys.length
       ? testKeySigners(args.testKeys, { out: args.out })
@@ -563,7 +580,7 @@ async function stepSign(args) {
     return 1;
   }
 
-  const record = await signRun({ root, sourceCommit, head, now, available, delegatedAt });
+  const record = await signRun({ root, sourceCommit, head, now, available, delegatedAt, resignAfterHours });
   writeTree({ out: args.out ?? "dist/signed", files: record.files });
   // The bytes are on disk; the record is what every step after this one reads,
   // and it never carries them — a document in a JSON field is a document
@@ -575,7 +592,8 @@ async function stepSign(args) {
   for (const refusal of record.refusals) console.error(`::error::${refusal}`);
   console.log(
     `ok    ${record.key_mode} mode, catalogue ${record.serials.index} (${record.documents.index?.decision}), ` +
-    `list ${record.serials.revocations} (${record.documents.revocations?.decision}); commit=${record.commit}`,
+    `list ${record.serials.revocations} (${record.documents.revocations?.decision}); commit=${record.commit}; ` +
+    `an unchanged document is re-signed at ${resignAfterHours} h on a ${event ?? "local"} run`,
   );
   output({
     status: record.status,
