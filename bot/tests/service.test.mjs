@@ -554,6 +554,14 @@ const NOT_MEMBER_READERS = [
       "set and the publish path runs it",
   },
   {
+    file: "tools/coverage/roll47-promises.mjs",
+    reads: [],
+    why:
+      "names the token file only in its SKIP list, as one of the files ROLL-47's promise grep does NOT read — " +
+      "it is generated from the contract, which quotes the retired promises. It opens no entry and reads no " +
+      "member; every file it does read is read as text for three literals (M-T4.2)",
+  },
+  {
     file: "tools/selftest/primitives.mjs",
     reads: [],
     why:
