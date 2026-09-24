@@ -54,6 +54,10 @@ import { compareTree, expectationProblems, workflowJobs } from "../../tools/lib/
 import { githubGetter, localWorkflows, run as settingsRun } from "../../tools/coverage/settings.mjs";
 import { mergeOwnChanges } from "../../tools/coverage/git.mjs";
 import { RULES, outstandingActs, ruleNames } from "../../tools/coverage/rules.mjs";
+import {
+  CUTOVER as NIC_CUTOVER, ISSUE_TRIGGERS, WORKFLOW_FLOOR as NIC_FLOOR, run as noIssueChannel, triggersOf as nicTriggers,
+} from "../../tools/coverage/no-issue-channel.mjs";
+import { run as drainAge, SEEN as DRAIN_SEEN } from "../../tools/coverage/drain-age.mjs";
 import { compose } from "../../tools/coverage-verdict.mjs";
 import { CHECKS } from "../lib/alert-checks.mjs";
 
@@ -604,6 +608,64 @@ test("every declared document kind lists members, a source and its exempt sets",
     assert.ok(Array.isArray(t.uuidOk), `${name} has no uuidOk set`);
     assert.ok(Array.isArray(t.handleOk), `${name} has no handleOk set`);
     assert.ok(t.source && t.source.length > 10, `${name} names no requirement that fixes its members`);
+  }
+});
+
+// ── MIG-13's markers, which land under `log/` (registry plan M-T5.3) ────────
+//
+// Both canaries walk `log/`, and neither had met a migration-notice marker:
+// none has ever been committed. Measured on the tree before this: the privacy
+// scan refused the first marker as E_PRIV_UNDECLARED_DOCUMENT, and the
+// coverage walk refused every re-commit a MIG-13 re-send makes as an edit
+// under `log/` (MOD-34). The first was a declaration nobody had written; the
+// second is the rule working, and the re-send clears it on its own commit
+// with the trailer the desk command prints.
+
+test("M-T5.3: a migration-notice marker is a declared composed document, and a member B.4 does not list is red", async () => {
+  const { markerText } = await import("../../tools/lib/migration-notice.mjs");
+  const f = fixture("notice-marker").landTools();
+  f.write("log/migration-notice-1.json", markerText({ round: 1, sent_at: "2026-09-24T00:00:00Z" })).commit("round 1 sent");
+  assert.equal(priv(f.dir).status, "green", codesOf(priv(f.dir)));
+  f.write("log/migration-notice-2.json", { schema: "x", round: 2, sent_at: "2026-09-25T00:00:00Z", cutover_planned_at: "2026-10-30T00:00:00Z", accounts: ["someone"] })
+    .commit("round 2 sent, with a member no marker has");
+  const r = priv(f.dir);
+  assert.deepEqual([r.status, r.codes], ["red", ["E_PRIV_UNDECLARED_MEMBER"]],
+    `a marker carrying \`accounts\` was not refused for that member: ${codesOf(r)}`);
+});
+
+test("M-T5.3: a re-committed migration-notice marker passes with no trailer, and every other log/ edit is still refused (contract 2.3.0)", async () => {
+  // MOD-34's Check, as 2.3.0 words it: "CI refuses edits to existing
+  // `bot/moderation/*.json` and `log/**`, except `log/migration-notice-<n>.json`,
+  // which contract MIG-13's re-send re-commits". Before that version a re-send
+  // needed a self-exemption, and `Moderation-Exempt:` on a commit clears EVERY
+  // trigger in it — a delist typed into the same commit included.
+  const { markerText } = await import("../../tools/lib/migration-notice.mjs");
+  const r2 = (cutover) => markerText({ round: 2, sent_at: "2026-09-25T00:00:00Z", cutover_planned_at: cutover });
+  const seed = (name) => fixture(name).landTools()
+    .write("log/migration-notice-1.json", markerText({ round: 1, sent_at: "2026-09-24T00:00:00Z" }))
+    .write("log/migration-notice-2.json", r2("2026-10-30T00:00:00Z"))
+    .write("log/decisions/2026/09/d1.json", { schema: "astra.registry.decision/1", decision_id: "d1" })
+    .write("log/rollout/R3-exit.json", { walked: true })
+    .commit("round 2 sent");
+
+  const resend = seed("notice-recommit");
+  resend.write("log/migration-notice-2.json", r2("2026-11-15T00:00:00Z")).commit("re-send: cutover moved later");
+  const ok = mod(resend.dir, { mode: "commits" });
+  assert.equal(ok.status, "green", `a marker re-commit with no trailer was refused: ${ok.detail.join(" | ")}`);
+
+  // Everything else under log/ is exactly as append-only as before.
+  for (const [what, act] of [
+    ["a deleted marker", (f) => f.remove("log/migration-notice-2.json")],
+    ["a decision record edited", (f) => f.write("log/decisions/2026/09/d1.json", { schema: "astra.registry.decision/1", decision_id: "d2" })],
+    ["a rollout record edited", (f) => f.write("log/rollout/R3-exit.json", { walked: false })],
+    ["a file that only looks like a marker", (f) => f.write("log/migration-notice-2.json.bak", "x").commit("seed a look-alike").write("log/migration-notice-2.json.bak", "y")],
+    ["a marker with no round number", (f) => f.write("log/migration-notice-x.json", "{}").commit("seed").write("log/migration-notice-x.json", "{ }")],
+  ]) {
+    const f = seed(`notice-recommit-${what.replace(/\W+/g, "-")}`);
+    act(f);
+    f.commit(what);
+    const r = mod(f.dir, { mode: "commits" });
+    assert.match(codesOf(r), /MOD_LOG_APPEND_ONLY/, `${what} was not refused`);
   }
 });
 
@@ -2225,4 +2287,123 @@ test("repo-settings: TRUST-44's read of what ROLL-7 pins fits the 12 calls the c
   console.log(`# TRUST-44's read: 4 + ${Object.keys(expected.rulesets ?? {}).length} ruleset(s) + ` +
     `${Object.keys(expected.environments ?? {}).length} live and ${Object.keys(expected.pending_environments ?? {}).length} ` +
     `pending environment(s) = ${calls} of ${TRUST44_RESERVATION}`);
+});
+
+// ── M-T6.2: no issue channel from cutover on (DEC-12, ROLL-33) ──────────────
+//
+// Armed by `log/cutover.json`, so these fixtures are the whole proof until the
+// cutover commit: the real tree is not armed, and the rule says so and names
+// `ingest.yml`'s three triggers.
+
+const INGEST_REAL = fs.readFileSync(path.join(REPO, ".github", "workflows", "ingest.yml"), "utf8");
+const CUTOVER_DOC = { schema: "astra.registry.cutover/1", cutover_at: "2026-09-27T12:00:00Z" };
+const PLAIN_WORKFLOW = "name: plain\non:\n  push:\n    branches: [main]\n  workflow_dispatch:\njobs: {}\n";
+
+/** A fixture with the real ingest.yml, plus `extra` workflows, optionally past cutover. */
+function channelFixture(name, { ingest = INGEST_REAL, extra = {}, cutover = false } = {}) {
+  const f = fixture(name);
+  f.write(".github/workflows/ingest.yml", ingest);
+  for (const [n, text] of Object.entries(extra)) f.write(`.github/workflows/${n}`, text);
+  if (cutover) f.write(NIC_CUTOVER, CUTOVER_DOC);
+  return f.commit("fixture");
+}
+const nic = (dir) => noIssueChannel(dir, { workflowFloor: 0 });
+
+test("no-issue-channel: before the cutover marker the channel is live, the rule is green and names today's triggers", () => {
+  const r = nic(channelFixture("nic-pre").dir);
+  assert.equal(r.status, "green", r.detail.join("\n"));
+  const text = r.detail.join("\n");
+  assert.match(text, /not armed/);
+  for (const t of ISSUE_TRIGGERS) assert.ok(text.includes(` ${t}`), `the unarmed rule does not name ingest.yml's ${t} trigger: ${text}`);
+});
+
+test("no-issue-channel: from the cutover marker, every live issue trigger is red, named by file and line", () => {
+  const r = nic(channelFixture("nic-armed", { cutover: true }).dir);
+  assert.equal(r.status, "red");
+  assert.deepEqual(r.codes, ["ISSUE_CHANNEL_TRIGGER"]);
+  const text = r.detail.join("\n");
+  for (const t of ISSUE_TRIGGERS) assert.match(text, new RegExp(`ingest\\.yml:\\d+ ${t}:`), `${t} is not named: ${text}`);
+});
+
+test("no-issue-channel: the cutover commit's own shape — triggers dropped, drain kept — is green", () => {
+  // ROLL-33's edit, made to the REAL ingest.yml: the three triggers go and the
+  // schedule and dispatch stay. Each removal is asserted to have matched once.
+  let cut = INGEST_REAL;
+  for (const block of [
+    /\n {2}issues:\n {4}types: \[[^\]]*\]/,
+    /\n {2}issue_comment:\n {4}types: \[[^\]]*\]/,
+    /\n {2}repository_dispatch:\n {4}types: \[[^\]]*\]/,
+  ]) {
+    assert.equal((cut.match(new RegExp(block.source, "g")) ?? []).length, 1, `${block} did not match exactly once in ingest.yml`);
+    cut = cut.replace(block, "");
+  }
+  assert.ok(nicTriggers(cut).some((t) => t.trigger === "schedule"), "the edit removed the schedule too");
+  const r = nic(channelFixture("nic-cut", { ingest: cut, cutover: true }).dir);
+  assert.equal(r.status, "green", r.detail.join("\n"));
+});
+
+test("no-issue-channel: a trigger restored in any spelling, in any workflow, is red after cutover", () => {
+  let cut = INGEST_REAL.replace(/\n {2}issues:\n {4}types: \[[^\]]*\]/, "")
+    .replace(/\n {2}issue_comment:\n {4}types: \[[^\]]*\]/, "")
+    .replace(/\n {2}repository_dispatch:\n {4}types: \[[^\]]*\]/, "");
+  const cases = [
+    ["a block key in another workflow", { "copied.yml": "name: copied\non:\n  issue_comment:\n    types: [created]\njobs: {}\n" }, "issue_comment"],
+    ["a flow list", { "flow.yml": "name: flow\non: [push, issues]\njobs: {}\n" }, "issues"],
+    ["a scalar", { "scalar.yml": "name: scalar\non: repository_dispatch\njobs: {}\n" }, "repository_dispatch"],
+    ["a quoted key", { "quoted.yml": "name: quoted\n\"on\":\n  \"issues\":\n    types: [opened]\njobs: {}\n" }, "issues"],
+  ];
+  for (const [how, extra, trigger] of cases) {
+    const r = nic(channelFixture(`nic-${trigger}-${Object.keys(extra)[0].replace(/\W/g, "")}`, { ingest: cut, extra, cutover: true }).dir);
+    assert.equal(r.status, "red", `${how}: ${r.detail.join("\n")}`);
+    assert.ok(r.detail.join("\n").includes(` ${trigger}:`), `${how}: red, but not naming ${trigger}`);
+  }
+  // A commented trigger is not a trigger, and a plain workflow is not one either.
+  const quiet = nic(channelFixture("nic-commented", {
+    ingest: cut, extra: { "plain.yml": PLAIN_WORKFLOW, "commented.yml": "name: c\non:\n  # issues:\n  push:\njobs: {}\n" }, cutover: true,
+  }).dir);
+  assert.equal(quiet.status, "green", quiet.detail.join("\n"));
+});
+
+test("no-issue-channel: the real tree is not armed yet, reads every workflow, and is registered", () => {
+  const r = noIssueChannel(REPO);
+  assert.ok(NIC_FLOOR >= 10, "the workflow floor has been lowered");
+  assert.ok(!fs.existsSync(path.join(REPO, NIC_CUTOVER)) || r.status === "green",
+    `the tree carries ${NIC_CUTOVER} and a live issue trigger: ${r.detail.join("\n")}`);
+  assert.ok(!r.codes.includes("ISSUE_CHANNEL_FLOOR"), r.detail.join("\n"));
+  assert.ok(ruleNames().includes("no-issue-channel"), "the rule is not in the register, so its silence would not be red");
+});
+
+// ── drain-age's leg 2 retires at cutover (M-T6.2 commit B, B-T5.1) ──────────
+
+function drainFixture(name, { cutover, seenAt }) {
+  const f = fixture(name);
+  f.write(".github/workflows/ingest.yml", INGEST_REAL);
+  f.write(DRAIN_SEEN, { updated_at: seenAt, repos: { "someone/plugin": { etag: null } } });
+  if (cutover) f.write(NIC_CUTOVER, CUTOVER_DOC);
+  return f.commit("fixture");
+}
+
+test("drain-age: a stale releases-seen is red before cutover and retired after it, and leg 1 still holds", () => {
+  const now = new Date("2026-10-10T00:00:00Z");
+  const stale = "2026-09-27T05:00:00Z"; // 307 h before now: the backstop's last run on cutover day
+  const before = drainAge(drainFixture("drain-pre", { cutover: false, seenAt: stale }).dir, { now });
+  assert.equal(before.status, "red");
+  assert.ok(before.codes.includes("DRAIN_SCHEDULE_STALE"), before.codes.join(" "));
+
+  const after = drainAge(drainFixture("drain-post", { cutover: true, seenAt: stale }).dir, { now });
+  assert.equal(after.status, "green", after.detail.join("\n"));
+  assert.match(after.detail.join("\n"), /leg 2 is retired/);
+
+  // B-T5.1 retires the file itself: after cutover its absence is not a deletion.
+  const f = drainFixture("drain-retired", { cutover: true, seenAt: stale });
+  f.remove(DRAIN_SEEN).commit("B-T5.1 retires releases-seen");
+  const gone = drainAge(f.dir, { now });
+  assert.equal(gone.status, "green", gone.detail.join("\n"));
+
+  // Leg 1 is not retired: the hourly drain still has to be routed after cutover.
+  const unrouted = drainFixture("drain-unrouted", { cutover: true, seenAt: stale });
+  unrouted.write(".github/workflows/ingest.yml", INGEST_REAL.replace("- cron: '17 * * * *'", "- cron: '18 * * * *'")).commit("retimed");
+  const r = drainAge(unrouted.dir, { now });
+  assert.equal(r.status, "red");
+  assert.ok(r.codes.includes("DRAIN_CRON_UNROUTED"), r.codes.join(" "));
 });

@@ -1,0 +1,149 @@
+# ROLL-63's deadline watch (registry plan M-T5.4): the binding deadline, the
+# migration-notice markers and the listing banner, compared once a day.
+#
+# ── WHAT IT ALARMS ON ───────────────────────────────────────────────────────
+#
+# `tools/lib/deadline-watch.mjs` is the whole list, and its header says why
+# each is there: (a) round 2 can no longer be 60 days before the deadline;
+# (b) the deadline is under 30 days away with no `log/cutover.json`; (c) it is
+# under 14 days away with no round 3; the n22 guard, a marker whose cutover
+# date moved EARLIER under the same `sent_at`; the n28 guard, a marker
+# announcing a date the authoritative one does not; and the banner at
+# `https://astra.minice.ai/plugins/<id>` not carrying the announced date.
+# Every clock is read from the records' own members, never from a commit.
+#
+# ── THE TWO JOBS ────────────────────────────────────────────────────────────
+#
+# `check` reads the repository and the public banner with NO credential and
+# writes a verdict. `alert` holds the alarm channel and reads nothing but that
+# verdict, exactly as `moderation-coverage.yml` splits them (BOT-46).
+#
+# ── HOW IT WAS ARMED ────────────────────────────────────────────────────────
+#
+# **Armed 2026-09-24.** Dispatched run 35963496422 on `main` (6ef23ef) posted
+# the first heartbeat at 2026-09-24T06:15:47Z ("ok    success posted for
+# receiver check deadline-watch"), and the commit that uncommented the cron
+# below recorded that time as the row's `armed_at`. The paragraph below is
+# the order that was followed, kept so a re-arming follows it too.
+#
+# **Dispatch only, until one dispatched run has posted.** The receiver check
+# `deadline-watch` was created DISARMED (bot/lib/alert-checks.mjs), and it
+# arms at its first heartbeat. `bot/tests/workflows.test.mjs` holds a registry
+# check armed exactly when a workflow posts to it on a live schedule, so a
+# live cron here with the row still disarmed is red there, and arming the row
+# before anything has posted would record an arming that did not happen. The
+# order is therefore: this file lands dispatch-only; one dispatched run on
+# `main` posts the first heartbeat, which arms the receiver check; then ONE
+# commit uncomments the cron below and records that run's heartbeat time as
+# the row's `armed_at`. Until then the watch is a person's command, and it
+# watches nothing on its own — which costs nothing while no deadline is
+# committed, since (a), (b) and (c) have nothing to count down to without one.
+
+name: Deadline watch
+
+on:
+  # Daily is `interval_seconds: 86400` in bot/lib/alert-checks.mjs, and the
+  # two have to agree.
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: deadline-watch
+  # NOT cancel-in-progress: a watch wants every answer, and a cancelled run is
+  # a finding lost, not delayed.
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    outputs:
+      verdict: ${{ steps.verdict.outputs.verdict }}
+      status: ${{ steps.verdict.outputs.status }}
+    steps:
+      # `fetch-depth: 0` is load-bearing: the n22 guard reads every committed
+      # version of each marker, and a shallow checkout has only the last.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: The deadline, the markers and the banner, compared        # M-T5.4, ROLL-63
+        id: verdict
+        run: |
+          set -euo pipefail
+          node tools/deadline-watch.mjs --out verdict.json
+          {
+            echo "verdict=$(cat verdict.json)"
+            echo "status=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync("verdict.json","utf8")).status)')"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: A red watch is a red run
+        if: always() && steps.verdict.outputs.status == 'red'
+        run: |
+          echo "::error::the deadline watch is red; every line of detail is in the step above"
+          exit 1
+
+  alert:
+    needs: check
+    if: always() && !cancelled()
+    runs-on: ubuntu-24.04
+    environment: alerts
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    # The complete list: the three channel secrets and the whole ping URL of
+    # the one check this job posts to (attack M-5).
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_DEADMAN_URL_DEADLINE_WATCH: ${{ secrets.ASTRA_DEADMAN_URL_DEADLINE_WATCH }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            .github/actions/alert
+            bot/alert.mjs
+            bot/heartbeat.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+
+      # Through `env:`, never through `${{ }}` in the script body: the verdict
+      # carries plugin ids read from the tree.
+      - name: The verdict the checking job wrote, or the alarm that it wrote none
+        env:
+          VERDICT: ${{ needs.check.outputs.verdict }}
+          CHECK_RESULT: ${{ needs.check.result }}
+        run: |
+          set -euo pipefail
+          if [ -n "$VERDICT" ]; then
+            printf '%s\n' "$VERDICT" > verdict.json
+          else
+            cat > verdict.json <<JSON
+          {
+            "schema": "astra.registry.alert-verdict/1",
+            "check": "deadline-watch",
+            "status": "red",
+            "codes": ["E_CHECK_DID_NOT_REPORT"],
+            "run": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          JSON
+            echo "::warning::the check job finished '$CHECK_RESULT' with no verdict; alarming about that instead"
+          fi
+
+      - uses: ./.github/actions/alert
+        with:
+          verdict: verdict.json
+          check: deadline-watch

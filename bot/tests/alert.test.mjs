@@ -653,9 +653,10 @@ await test("each check's bound, by name: five GitHub-scheduled checks moved to a
     "minice-alarm-relay-macmini": 90,
     // B-T3.11 fixed its interval at an hour; posted from GitHub, so a day
     conformance: D,
+    // B-T5.0 fixed its interval at BOT-51's 600 s; posted from GitHub, so a day
+    "poll-and-sweep": D,
     // unchanged: no interval, so no bound
     "alarm-ack": null,
-    "poll-and-sweep": null,
   };
   const named = CHECKS.filter((c) => c.name !== null);
   assert.deepEqual(named.map((c) => c.name).sort(), Object.keys(want).sort(),

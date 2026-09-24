@@ -2405,17 +2405,12 @@ test("a step marked `not built` cannot let its job report success", () => {
       }
     }
   }
-  // The floor. When every job is built this number is 0 and the rule becomes
-  // vacuous — correctly, and visibly, because this assertion is what has to be
-  // deleted for that to happen.
-  assert.ok(
-    found >= 1,
-    `no \`not built\` step was found in ${INGEST}, and there were 10 on 2026-09-20 — counted from the step ` +
-    `names and not from the marker, which also appears once in the file's header comment. Either every job is ` +
-    `now ` +
-    `built — in which case delete this floor in the commit that builds the last one — or the marker was ` +
-    `renamed and this rule has stopped applying to anything`,
-  );
+  // The floor was here: at least one `not built` step, with 10 on 2026-09-20.
+  // B-T5.0 built the last three (`load`, `poll` and `remember`, 2026-09-24),
+  // and the floor's own message said to delete it in that commit. The rule
+  // stays: it re-arms on the next placeholder anybody writes, and until then
+  // it is vacuous on purpose, and says so in the log, not by accident.
+  if (found === 0) console.log(`# no \`not built\` step in ${INGEST}: every job is built (B-T5.0 built the last, 2026-09-24)`);
   assert.equal(problems.join("\n"), "", "a placeholder step can let its job report success");
 });
 
@@ -2937,4 +2932,26 @@ test("only `load` and `remember` reach BOT_STATE_HMAC_KEY, each in one step's en
     assert.ok(said, `${how}: the key reached somewhere new and the lint was silent`);
     for (const w of words) assert.ok(said.includes(w), `${how}: red, but not naming ${JSON.stringify(w)}: ${said}`);
   }
+});
+
+// B-T3.6 step 1: R3 opens with `DRY_RUN: "true"` committed, and while it is
+// anything but "false" the publish job commits on the runner and never pushes.
+// The flag is read in ONE place — the apply step — and the direction a typo
+// errs in is the withholding one: `!= "false"`, never `== "true"`. Watched
+// failing by keying the guard on `== "true"`, and by dropping `--dry-run`.
+test("`plugins-ingest.yml` never pushes while DRY_RUN is not exactly false", () => {
+  const src = read(INGEST);
+  assert.match(src, /^env:\n\s+DRY_RUN:\s*"true"\s*$/m, "DRY_RUN is not committed as \"true\" at workflow level");
+  const body = code(jobOf(INGEST, "publish")).join("\n");
+  assert.match(body, /if \[ "\$DRY_RUN" != "false" \]; then dry=\(--dry-run\); fi/,
+    "the apply step does not pass --dry-run whenever DRY_RUN is not exactly \"false\"");
+  assert.match(body, /node bot\/publish-apply\.mjs[\s\S]*"\$\{dry\[@\]\}"/, "and publish-apply is not handed it");
+});
+
+// `--service-path` lets publish-apply write an identity record and an alert
+// record. The legacy path never binds a listing (BOT-77), so the flag belongs
+// to exactly one workflow. Watched failing by adding it to ingest.yml.
+test("only `plugins-ingest.yml` hands publish-apply `--service-path`", () => {
+  const passing = files.filter((f) => read(f).split("\n").some((l) => !l.trim().startsWith("#") && l.includes("--service-path")));
+  assert.deepEqual(passing, [INGEST], "a workflow other than the service path's publish job may write identity records");
 });

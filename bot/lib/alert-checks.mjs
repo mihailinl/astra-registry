@@ -324,11 +324,20 @@ export const CHECKS = [
   {
     name: "poll-and-sweep",
     party: "registry",
-    // BOT-87, at R5. Same: B-T5.0 and B-T5.1 fix the poll interval and the
-    // daily sweep, and the receiver's bound is recalibrated at R3 anyway.
-    // Disarmed: no workflow posts here yet.
-    source: "B-T5.0, B-T5.1 (BOT-87)",
-    interval_seconds: null,
+    // BOT-87. B-T5.0 fixed the interval: `plugins-ingest.yml`'s `poll-alert`
+    // posts on every run in which `load` ran, which is BOT-51's 600 s once
+    // that workflow's schedule is live; the poll inside it runs every third
+    // run (BOT-41's 1800 s) and the sweep daily. The bound is a day either
+    // way, because the poster is GitHub-scheduled.
+    //
+    // Disarmed, because nothing posts yet: the workflow's schedule is
+    // commented until R3 opens, and `load` is held by `if: false` until
+    // environment `bot-state` exists. R3's open commit is red on this row
+    // until it arms it (the workflows test's arming rule), and arming it then
+    // is right only if `load` is no longer held — a held `load` skips
+    // `poll-alert`, which that rule cannot see.
+    source: "B-T5.0, B-T5.1 (BOT-87), .github/workflows/plugins-ingest.yml, the `poll-alert` job",
+    interval_seconds: 600,
     created_disarmed: true,
     armed_at: null,
     signals: ["success"],
@@ -336,11 +345,14 @@ export const CHECKS = [
   {
     name: "deadline-watch",
     party: "registry",
-    // Disarmed: no workflow posts here yet.
-    source: "M-T5.4 (ROLL-63)",
+    // Created disarmed, and armed by its first heartbeat: dispatched run
+    // 35963496422 on main posted it at 2026-09-24T06:15:47Z, and the commit
+    // that uncommented `.github/workflows/deadline-watch.yml`'s daily cron
+    // recorded that time here, in the same change (the workflow's header).
+    source: "M-T5.4 (ROLL-63), .github/workflows/deadline-watch.yml",
     interval_seconds: 86400,
     created_disarmed: true,
-    armed_at: null,
+    armed_at: "2026-09-24T06:15:47Z",
     signals: ["success"],
   },
   {

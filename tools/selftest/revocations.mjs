@@ -52,7 +52,7 @@ export async function run() {
     severity: "critical",
     action: "disable",
     reason: "Exfiltrates the clipboard to a third-party host.",
-    advisory_url: "https://example.test/advisories/ASTRA-2026-0001",
+    advisory_url: "https://astra.minice.ai/plugins/_/advisories/ASTRA-2026-0001",
     // A digest AND an id. Not decoration: a `digest` entry cannot match a
     // sideloaded source directory (no archive, so no bundle digest), so an
     // advisory that carries only digests leaves "run the same code from a folder"
@@ -299,6 +299,47 @@ export async function run() {
     // one-host check would silently lose.
     assertEqual(REFUSED_ADVISORY_HOSTS.slice().sort().join(","), "github.com,github.io",
       "the refused-host list changed; ROLL-50 names github.com and github.io");
+  });
+
+  // M-T3.9 (MOD-13's registry half). Until this, `checkAdvisory` accepted any
+  // https URL on any host but GitHub's, so an advisory carrying
+  // `https://advisories.example.invalid/…` — or the project's own base with
+  // ANOTHER advisory's id — was signed into the withdrawal list and shown to a
+  // user on the screen that says their plugin was disabled. MOD-13 records one
+  // base (OPEN-MBE-15, closed at 0.12.0) and the service serves one page per
+  // id under it, so the only URL that names THIS advisory's page is the base
+  // plus this advisory's id. Everything else is somebody's guess, signed.
+  await test("MOD-13: advisory_url is the advisory page base plus this advisory's own id, or absent (M-T3.9)", async () => {
+    const { ADVISORY_URL_BASE } = await import("../lib/revocations.mjs");
+    const { ADVISORY_URL_BASE: COMPILED, tokenAdvisoryBase } = await import("../../bot/lib/compile-decision.mjs");
+    assertEqual(ADVISORY_URL_BASE, "https://astra.minice.ai/plugins/_/advisories/",
+      "tools/lib/revocations.mjs's advisory base is not MOD-13's");
+    assertEqual(COMPILED, ADVISORY_URL_BASE,
+      "bot/lib/compile-decision.mjs compiles a base the validator does not accept, so every advisory the bot " +
+      "writes would be refused by the gate that runs before its push");
+    assertEqual(ADVISORY_URL_BASE, tokenAdvisoryBase({ root: REPO_ROOT }),
+      "the token file's page:MOD-13-advisory-base is not the base this repository checks, and the service " +
+      "serves the token file's");
+    const id = GOOD_ADVISORY.id;
+    assertEqual(checkAdvisory({ ...GOOD_ADVISORY, advisory_url: `${ADVISORY_URL_BASE}${id}` }).join("; "), "",
+      "base + id, the one URL the bot compiles, was refused");
+    const { advisory_url, ...withoutUrl } = GOOD_ADVISORY;
+    assertEqual(checkAdvisory(withoutUrl).join("; "), "", "an advisory with no advisory_url was refused");
+    for (const [what, url] of [
+      ["a foreign prefix", `https://advisories.example.invalid/${id}`],
+      ["the base with another advisory's id", `${ADVISORY_URL_BASE}ASTRA-2026-0002`],
+      ["the base alone", ADVISORY_URL_BASE],
+      ["base + id with a query", `${ADVISORY_URL_BASE}${id}?from=mail`],
+      ["base + id with a fragment", `${ADVISORY_URL_BASE}${id}#details`],
+      ["base + id with a trailing slash", `${ADVISORY_URL_BASE}${id}/`],
+      ["the base on plain http", `${ADVISORY_URL_BASE.replace("https://", "http://")}${id}`],
+      ["the base's host in another case", `${ADVISORY_URL_BASE.replace("astra.minice.ai", "Astra.Minice.AI")}${id}`],
+      ["a path under the base's host but not the base", `https://astra.minice.ai/plugins/${id}`],
+    ]) {
+      const errs = checkAdvisory({ ...GOOD_ADVISORY, advisory_url: url });
+      assert(errs.some((e) => e.includes("MOD-13")),
+        `${what} (${url}) was accepted into a signed document: ${errs.join("; ") || "no error at all"}`);
+    }
   });
   // A fixture repository with its whole history, built by `build`: the flag
   // rule's subject, at whatever state of breakage a check needs. Shared by the

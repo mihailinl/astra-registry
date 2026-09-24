@@ -50,6 +50,30 @@ const MAX_DISPATCH = 20;
 // is wrong is silent: the tag passes the filter, the ingest runs, and the
 // refusal is recorded.
 
+/**
+ * Every tag the listings naming each repository have recorded, keyed by the
+ * lowercased `owner/name`.
+ *
+ * ONE entry per repository, holding the tags of EVERY listing that names it.
+ * The first spelling built a Map from one entry per listing, and a Map keeps
+ * the last value under a repeated key: `mihailinl/AstraPlugins` holds ten
+ * listings, so the backstop filtered nine of them by the tenth's prefix and
+ * dropped their releases as foreign tags. Shared with the `/release` ping
+ * (`bot/triage.mjs`), so the two BOT-74 filters cannot disagree about what
+ * a repository has recorded.
+ */
+export function recordedTagsByRepo(sources) {
+  const out = new Map();
+  for (const p of sources?.plugins ?? []) {
+    const repo = p.doc?.source?.repo;
+    if (!repo) continue;
+    const key = String(repo).toLowerCase();
+    const tags = (p.versions ?? []).map((v) => v.doc?.release?.tag).filter(Boolean).map(String);
+    out.set(key, [...new Set([...(out.get(key) ?? []), ...tags])]);
+  }
+  return out;
+}
+
 /** Everything before the first digit: `cli-v1.4.0` → `cli-v`, `v0.2.0` → `v`. */
 const tagPrefix = (tag) => /^([^0-9]*)/.exec(String(tag ?? ""))?.[1] ?? "";
 
@@ -116,14 +140,7 @@ export async function runWatch({ root = REPO_ROOT, now = new Date(), deps = {} }
   // plan's entry carries the NEWEST tag and the filter needs the set: one tag
   // yields one prefix, and a listing that has ever changed its tag shape would
   // then filter out its own releases.
-  const recordedTags = new Map(
-    (sources.plugins ?? [])
-      .filter((p) => p.doc?.source?.repo)
-      .map((p) => [
-        String(p.doc.source.repo).toLowerCase(),
-        (p.versions ?? []).map((v) => v.doc?.release?.tag).filter(Boolean).map(String),
-      ]),
-  );
+  const recordedTags = recordedTagsByRepo(sources);
 
   const dispatch = [];
   const log = [];

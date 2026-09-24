@@ -111,6 +111,7 @@ import { ID_PATTERN } from "../../tools/lib/ids.mjs";
 import {
   ACTIONS as ADVISORY_ACTIONS,
   ADVISORY_FILE,
+  ADVISORY_URL_BASE,
   SEVERITIES,
   SOURCE_DIR as REVOCATIONS_DIR,
   checkAdvisory,
@@ -181,7 +182,11 @@ export const IDENTITY_PREFIX = "github:";
  * service serves is a signed link to a 404 on the one document a user reads
  * when something has already gone wrong.
  */
-export const ADVISORY_URL_BASE = "https://astra.minice.ai/plugins/_/advisories/";
+// Imported from `tools/lib/revocations.mjs`, whose `checkAdvisory` refuses any
+// other value since M-T3.9, and re-exported so its readers here keep one name.
+// A second literal would be a second base, and the gate that runs before the
+// commit job's push would refuse every advisory compiled from it.
+export { ADVISORY_URL_BASE };
 
 /**
  * §7.2's two account-level categories, which are the only ones MOD-19's
@@ -448,9 +453,9 @@ export function nextAdvisoryId({ root = REPO_ROOT, year } = {}) {
  * SCOPE-7's fixed registry reason for an `A_*` code, out of the token file.
  *
  * `null` when the file carries `fixed_reasons: null`, which is where `main`
- * stands today: the token file's own `pending` record says the two strings land
- * with contract version ops.15, and §1.3 row 8.5 makes minice-be's half due at
- * R4a "before the first author yank".
+ * stood until contract 2.3.0 published the two strings (ops.15); §1.3 row 8.5
+ * makes minice-be's half due at R4a "before the first author yank". On `main`
+ * today a null means a token file that lost them.
  *
  * The caller must not turn that null into `reason_refused`. See
  * `compileDecision`: an unpublished string is a registry that does not yet know

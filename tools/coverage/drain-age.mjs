@@ -120,6 +120,8 @@ export const RULE = "drain-age";
 export const SEEN = "state/releases-seen.json";
 export const QUEUE_DIR = "state/queue";
 export const INGEST = ".github/workflows/ingest.yml";
+/** The cutover marker (contract B.4; ROLL-33), from which leg 2 is retired. */
+export const CUTOVER = "log/cutover.json";
 
 /** Three consecutive missed daily backstops. Largest gap ever seen: 34.72 h. */
 export const MAX_SEEN_AGE_HOURS = 72;
@@ -211,6 +213,16 @@ export function run(repo, { now = new Date() } = {}) {
   }
 
   // ── leg 2: has the schedule committed anything recently?
+  //
+  // **Retired at cutover** (registry plan M-T6.2 commit B, B-T5.1). The cutover
+  // commit pauses the daily backstop, which is the only thing that ever wrote
+  // `state/releases-seen.json`, and B-T5.1 retires the file itself once the
+  // live poll has seeded from it (BOT-42). From `log/cutover.json` on, the
+  // file's age measures a job that no longer exists, so leg 2 would go red 72 h
+  // after every cutover for a schedule doing exactly what it was told. The
+  // hourly drain's liveness is then legs 1 and 3 here, and the poll's is
+  // BOT-85's `poll-and-sweep` heartbeat at the receiver.
+  const cutover = fs.existsSync(path.join(repo, CUTOVER));
   const seenPath = path.join(repo, ...SEEN.split("/"));
   const everAdded = git(["log", "--format=%H", "--diff-filter=A", "--", SEEN], { cwd: repo, allowFailure: true })
     .split("\n").map((s) => s.trim()).filter(Boolean);
@@ -221,7 +233,12 @@ export function run(repo, { now = new Date() } = {}) {
   // them the moment somebody handed it a fresh checkout.
   let neverRan = false;
 
-  if (!fs.existsSync(seenPath)) {
+  if (cutover) {
+    detail.push(
+      `leg 2 is retired: ${CUTOVER} is on this tree, the cutover commit paused the backstop that wrote ${SEEN}, ` +
+      "and B-T5.1 retires the file; the drain's liveness is legs 1 and 3, and the poll's is BOT-85's heartbeat",
+    );
+  } else if (!fs.existsSync(seenPath)) {
     if (everAdded.length === 0) {
       neverRan = true;
       detail.push(

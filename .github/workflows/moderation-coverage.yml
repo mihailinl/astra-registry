@@ -174,7 +174,8 @@ jobs:
       # and an entry with no step is red.
       #
       #   M-T4.3, M-T6.2   their ROLL-47 rows, in roll47-promises.mjs's table
-      #   M-T6.2   no issue channel, no `issues: write`     R6
+      #   M-T6.2   no `issues: write`                      R6 (commit C); its
+      #            no-issue-channel rule landed below, armed by log/cutover.json
       #
       # M-T5.8's badge-withdrawal trailer is not a step: it is inside
       # `tools/moderation-coverage.mjs`'s walk, the first step above.
@@ -184,6 +185,13 @@ jobs:
       - name: No document restates a promise ROLL-47 has retired             # M-T4.2, ROLL-47
         if: always()
         run: node tools/coverage/roll47-promises.mjs --report "$ASTRA_COVERAGE_FINDINGS"
+
+      # Armed by log/cutover.json, so it lands before cutover and needs no edit
+      # on the day: before the marker it is green and names ingest.yml's three
+      # triggers, and from the cutover commit on any of them is red.
+      - name: From cutover, no workflow starts on a GitHub issue event        # M-T6.2, DEC-12, ROLL-33
+        if: always()
+        run: node tools/coverage/no-issue-channel.mjs --report "$ASTRA_COVERAGE_FINDINGS"
 
       - name: The withdrawal docs teach no advisory URL we do not serve      # M-T1.3, MOD-13
         if: always()

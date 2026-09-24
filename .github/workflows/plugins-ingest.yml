@@ -1,7 +1,8 @@
 name: Plugins ingest
 
-# The service-path ingest: twelve jobs, and the split between them is the whole
-# subject of the file (registry plan B-T3.1).
+# The service-path ingest: fourteen jobs, and the split between them is the
+# whole subject of the file (registry plan B-T3.1; `sweep` and `poll-alert`
+# from B-T5.0).
 #
 # ── what this file is for ──────────────────────────────────────────────────
 #
@@ -12,29 +13,34 @@ name: Plugins ingest
 # because the two jobs are different jobs.
 #
 # This file adds a THIRD thing to keep apart, and it is the reason the graph is
-# twelve jobs rather than four: a **bot OIDC token** for the plugins service.
+# fourteen jobs rather than four: a **bot OIDC token** for the plugins service.
 # A token that speaks for the registry is not like `GITHUB_TOKEN`. It claims
 # submissions, reads binding verdicts and eligibility, and posts results the
 # service records. Contract DEC-4 pins a run by that token; registry plan
 # BOT-1, BOT-2, ID-38, BOT-55 and BOT-56 say where it may and may not be held.
+# (Twelve until B-T5.0 added `sweep`, which reads a stranger's `git ls-remote`
+# answer, and `poll-alert`, which posts BOT-87's verdict: neither could join a
+# job that already holds something.)
 #
 # **The rule, in one line: each job holds at most one of — a bot token,
 # `contents: write`, stranger bytes, the alarm channel's credential.**
 #
-#   | job        | holds                                    |
-#   |------------|------------------------------------------|
-#   | `roots`    | nothing                                  |
-#   | `load`     | the `bot-state` HMAC key                 |
-#   | `poll`     | stranger text (`releases.atom`)          |
-#   | `claim`    | a bot token                              |
-#   | `remember` | the `bot-state` HMAC key                 |
-#   | `verify`   | `GITHUB_TOKEN` with `contents: read`     |
-#   | `check`    | a stranger archive                       |
-#   | `ask`      | a bot token                              |
-#   | `decide`   | nothing                                  |
-#   | `alert`    | the alarm channel's credential           |
-#   | `publish`  | `contents: write`                        |
-#   | `report`   | a bot token                              |
+#   | job          | holds                                    |
+#   |--------------|------------------------------------------|
+#   | `roots`      | nothing                                  |
+#   | `load`       | the `bot-state` HMAC key                 |
+#   | `poll`       | stranger text (`releases.atom`)          |
+#   | `sweep`      | stranger text (`git ls-remote`)          |
+#   | `claim`      | a bot token                              |
+#   | `remember`   | the `bot-state` HMAC key                 |
+#   | `poll-alert` | the alarm channel's credential           |
+#   | `verify`     | `GITHUB_TOKEN` with `contents: read`     |
+#   | `check`      | a stranger archive                       |
+#   | `ask`        | a bot token                              |
+#   | `decide`     | nothing                                  |
+#   | `alert`      | the alarm channel's credential           |
+#   | `publish`    | `contents: write`                        |
+#   | `report`     | a bot token                              |
 #
 # Nothing in YAML enforces that table. `bot/tests/workflows.test.mjs` does, and
 # it is the half of this task that keeps working after everybody who read this
@@ -67,25 +73,49 @@ name: Plugins ingest
 # `"true"` through R3 and is turned off by B-T3.6's own commit, whose SHA the
 # operator acknowledgement names.
 #
-# Several jobs below carry a step marked `(not built: <task>)`. Each one prints
-# `::error::` and exits non-zero, naming the task that replaces it. That is
-# deliberate and is checked: a placeholder that exits 0 is a job that reports
-# success for work nobody wrote, which is the exact shape of false green this
-# estate has spent its worst two bugs on. `bot/tests/workflows.test.mjs`
-# refuses a placeholder step that cannot fail its job.
+# A step marked `(not built: <task>)` prints `::error::` and exits non-zero,
+# naming the task that replaces it: a placeholder that exits 0 is a job that
+# reports success for work nobody wrote, and `bot/tests/workflows.test.mjs`
+# refuses one that cannot fail its job. Since B-T5.0 no step here is one:
+# `load`, `poll`, `sweep` and `remember` run `bot/lib/poll-run.mjs`, and
+# `poll-alert` runs `bot/lib/relay-verdict.mjs`.
 #
-# So a `workflow_dispatch` of this file today is RED at `claim`, because the
-# claim step is one of those placeholders (B-T2.5, B-T5.1). That is the correct
-# answer to dispatching a workflow whose claim is unwritten.
+# Every job is built (B-T3.1's steps, B-T3.2, B-T3.3a–c, B-T3.4, B-T3.5, B-T5.0):
 #
-# This sentence used to give a different reason — that `bot/lib/service.mjs`
-# (B-T2.5) "is not on `main`". It landed `68f9dde` on 2026-09-20, four hours
-# and forty-eight minutes after this file's last commit, and the sentence went
-# on being read as true for two days. Same class as the step name below that
-# asserted a task was unbuilt forty-six minutes after it merged. Neither is
-# reachable by `tools/absent-scan.mjs`, which reads `@absent <path> (<task>)`
-# markers and not prose — the marker is for absences an author chooses to
-# state in a form a machine can re-ask.
+#   load     node bot/lib/poll-run.mjs load         (B-T5.0; held until bot-state)
+#   poll     node bot/lib/poll-run.mjs poll         (B-T5.0)
+#   sweep    node bot/lib/poll-run.mjs sweep        (B-T5.0)
+#   claim    node bot/lib/service-jobs.mjs --job claim
+#   verify   node bot/ingest.mjs --verify-facts        (never unpacks)
+#   check    node bot/ingest.mjs --check-facts         (the one job that does)
+#   ask      node bot/lib/service-jobs.mjs --job ask   (BOT-89's four words)
+#   decide   node bot/lib/service-decide.mjs --decide
+#   alert    node bot/lib/trust14.mjs --merge          (TRUST-14's names)
+#   publish  node bot/lib/service-publish.mjs --compose, bot/publish-apply.mjs,
+#            node bot/lib/service-publish.mjs --finalize
+#   report   node bot/lib/service-jobs.mjs --job report
+#   remember node bot/lib/poll-run.mjs remember     (B-T5.0; held until bot-state)
+#   poll-alert node bot/lib/relay-verdict.mjs        (B-T5.0)
+#
+# The modules live under `bot/lib/` and not beside `bot/moderation-run.mjs`
+# because a new top-level `bot/*.mjs` is an entry TRUST-31's published set
+# enumerates, and a contract MINOR publishes it before it lands; `bot/lib/` is
+# a directory entry of the set, so all of it is hashed already.
+#
+# A dispatch today mints a real bot token and calls the real service. Until
+# the service's R3 handlers answer, `claim` gets no lease and the run ends
+# there; while they answer in shadow, every job runs, `decide` prints what it
+# WOULD have done — kind and body hash — and nothing is committed or posted
+# (BOT-92).
+#
+# **B-T5.0's poll and sweep run in shadow**, and `POLL_MODE` below is the whole
+# of the switch: `claim`'s register half prints a `would register` line per
+# polled tag and calls nothing, and B-T5.1's commit — the cutover commit B —
+# turns it `live`. `load` and `remember` are still held by `if: false`, for a
+# reason that is not this file's: they hold the key in environment `bot-state`,
+# which an owner-approved settings act creates, admitting only `main`. Each of
+# the two says what replaces its `if: false` the day that environment exists.
+#
 
 on:
   # ── BOT-51's schedule, off until R3 opens ─────────────────────────────────
@@ -133,6 +163,13 @@ concurrency:
 # SHA is what the operator acknowledgement names.
 env:
   DRY_RUN: "true"
+  # B-T5.0: `shadow` or `live`, and nothing else — `bot/lib/poll-run.mjs` and
+  # `bot/lib/service-jobs.mjs` refuse
+  # any other value rather than defaulting. In shadow `claim` registers no tag
+  # and BOT-87's unregistered-tag code is logged as `would alarm` and not sent,
+  # because its premise ("the poll should have registered this") is false by
+  # construction while nothing registers. B-T5.1 sets `live`, in commit B.
+  POLL_MODE: shadow
 
 jobs:
   # ── roots: the anchor, before anything else ───────────────────────────────
@@ -185,14 +222,25 @@ jobs:
   # `bot-state` and is held by this job and `remember` alone. `poll` holds no
   # key: it is the job that reads a stranger's feed.
   #
-  # `if: false` until B-T5.0 enables it. The environment is named here rather
-  # than at R5 so that the graph is complete and the lints have something to
-  # assert about — but the SECRET is not named, and that is deliberate: B-T5.0
-  # creates the environment under an owner approval, with a deployment-branch
-  # policy admitting only `main`, and inventing a secret's name here would put
-  # a string in this file for that task to match rather than to choose.
+  # It verifies the newest cached memory, seeds it from
+  # `state/releases-seen.json` (MIG-23), reads which listings are polled
+  # (BOT-41, through MIG-1's state), and says whether the poll (every 30
+  # minutes) and the sweep (daily) are due. It hands on the listings and each
+  # polled repository's ETag and registered tags — and NOT the memory: `remember`
+  # restores the same entry by the exact key this job matched and verifies it
+  # again, so the signed memory is read by the two key-holding jobs and no other.
   load:
     needs: roots
+    # Held until environment `bot-state` exists. B-T5.0 built this job; the
+    # environment — admitting only `main`, with the memory's HMAC key as its
+    # one secret — is an owner-approved settings act (RC-R0-3(f), ext.12). A
+    # run of this job before it existed would have GitHub create it with no
+    # branch policy, which admits every ref: a job on a branch could then read
+    # the key and sign a sweep memory in which an unregistered tag reads as
+    # seen (attack M-6). `policy/settings-expected.json` lists it as pending,
+    # and the coverage canary's settings rule refuses this job without the
+    # literal line below. Once the environment exists and that file lists it
+    # as live, delete the line: the job then runs whenever `roots` passed.
     if: false
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -201,59 +249,122 @@ jobs:
       contents: read
       id-token: none
     outputs:
-      memory: ${{ steps.restore.outputs.memory }}
+      listings: ${{ steps.load.outputs.listings }}
+      rows: ${{ steps.load.outputs.rows }}
+      poll_due: ${{ steps.load.outputs.poll_due }}
+      sweep_due: ${{ steps.load.outputs.sweep_due }}
+      discarded: ${{ steps.load.outputs.discarded }}
+      # The exact entry this job verified, so that `remember` restores that
+      # one and not whatever was saved under the prefix in between.
+      cache_key: ${{ steps.restore.outputs.cache-matched-key }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+          # `bot/lib/listing-state.mjs` walks `git log` for ID-25's "ever had
+          # an identity record", and refuses a shallow clone rather than guess.
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: "Restore and verify the signed poll memory (not built: B-T5.0)"
+      # By prefix, newest first. The key below is this run's own — the one
+      # `remember` saves under — so it never exists yet and `restore-keys` is
+      # what matches. Whatever comes back is bytes any workflow on `main`
+      # could have saved under the prefix, which is why the next step verifies
+      # the signature before it trusts a byte, and discards what fails.
+      - uses: actions/cache/restore@v4
         id: restore
-        run: |
-          set -euo pipefail
-          echo "::error::B-T5.0 builds this step: restore the Actions cache entry holding the poll and sweep memory, verify its HMAC with environment bot-state's key, and discard an entry whose signature does not check out. Until then this job is if: false and nothing reads its output."
-          exit 1
+        with:
+          path: .poll-memory
+          key: poll-memory-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: poll-memory-
+
+      - name: Verify the signed poll memory, and say which of the poll and the sweep are due
+        id: load
+        env:
+          BOT_STATE_HMAC_KEY: ${{ secrets.BOT_STATE_HMAC_KEY }}
+        run: node bot/lib/poll-run.mjs load
 
   # ── poll: a stranger's feed, and no credential of any kind ────────────────
   #
   # `releases.atom` is text somebody else writes. This job holds no token, no
   # write access and no HMAC key, and every tag it produces is
   # grammar-validated before it leaves (BOT-1's rule about what a token job may
-  # parse is met by keeping the parsing over here).
-  #
-  # `if: false` until B-T5.0.
+  # parse is met by keeping the parsing over here). One conditional GET per
+  # repository, however many listings it hosts, judged by BOT-74's prefix.
   poll:
-    needs: roots
-    if: false
+    needs: [roots, load]
+    if: needs.load.outputs.poll_due == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
       id-token: none
     outputs:
+      polled: ${{ steps.poll.outputs.polled }}
       tags: ${{ steps.poll.outputs.tags }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: "Poll releases.atom over the quiet listings (not built: B-T2.6, B-T5.0)"
+      - name: Poll releases.atom for every listed, grandfathered and frozen listing (BOT-41, BOT-74)
         id: poll
-        run: |
-          set -euo pipefail
-          echo "::error::B-T2.6 writes bot/lib/poll.mjs and B-T5.0 enables this job: fetch each listed, grandfathered and frozen listing's releases.atom with If-None-Match, filter tags by the newest listed version's prefix, and emit grammar-validated tags only."
-          exit 1
+        env:
+          ASTRA_POLL_LISTINGS: ${{ needs.load.outputs.listings }}
+          ASTRA_POLL_ROWS: ${{ needs.load.outputs.rows }}
+        run: node bot/lib/poll-run.mjs poll
+
+  # ── sweep: `git ls-remote`, daily, and no credential of any kind ──────────
+  #
+  # BOT-87's second half: `git ls-remote` of each polled repository, once a
+  # day — `load` says when — and never on a dispatch alone. The sweep counts a
+  # tag's age in sweeps, so two sweeps an hour apart would make a tag the poll
+  # has had an hour to register look a day old. Its answer is tag names and
+  # SHAs and nothing else; `remember` decides what they mean.
+  #
+  # A job of its own because it reads a stranger's answer, as `poll` does, and
+  # a job that did that could not also hold the key that signs the memory.
+  sweep:
+    needs: [roots, load]
+    if: needs.load.outputs.sweep_due == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: none
+    outputs:
+      remote: ${{ steps.sweep.outputs.remote }}
+    steps:
+      # No credential in the checkout's config: `git ls-remote` runs in this
+      # directory, and a persisted token would ride along to every repository
+      # it asks.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: List every polled repository's tags with git ls-remote (BOT-87's daily sweep)
+        id: sweep
+        env:
+          ASTRA_POLL_LISTINGS: ${{ needs.load.outputs.listings }}
+        run: node bot/lib/poll-run.mjs sweep
 
   # ── claim: the first job that speaks for this registry ────────────────────
   #
   # It mints a bot OIDC token, registers the tags `poll` found and claims at
-  # most three leases. `bot/lib/oidc.mjs` refuses to run outside
+  # most three leases. The register half runs in shadow until B-T5.1: with
+  # `POLL_MODE: shadow` it prints a `would register` line per polled tag and
+  # calls nothing (bot/lib/service-jobs.mjs `claimJob`). `bot/lib/oidc.mjs` refuses to run outside
   # `environment: plugins-service`, which is what makes that environment's
   # deployment-branch policy — `main` only — a real control rather than a
   # label.
@@ -263,8 +374,9 @@ jobs:
   # grammar-validated; nothing here unpacks anything.
   claim:
     needs: [roots, poll]
-    # `poll` is `if: false` until B-T5.0, and a skipped dependency skips this
-    # job under the default condition. `always()` would carry it past a failed
+    # `poll` is skipped whenever it is not due (and while `load` is held until
+    # environment `bot-state` exists), and a skipped dependency skips this job
+    # under the default condition. `always()` would carry it past a failed
     # roots check, so the roots result is asked for by name — the rule this
     # file inherits from `ingest.yml`, where forgetting it once left the only
     # committing job running on an anchor nobody had checked.
@@ -283,7 +395,16 @@ jobs:
       # derived from it rather than by a pattern (BOT-56).
       submissions: ${{ steps.claim.outputs.submissions }}
       count: ${{ steps.claim.outputs.count }}
+      # The `<owner>/<repo>@<tag>` the service answered for, and nothing else:
+      # `remember` adds a tag to memory only on this (B-T2.6). `[]` in shadow.
       registered: ${{ steps.claim.outputs.registered }}
+      # The leases themselves, keyed by submission id and held to §4.3's
+      # grammar before they leave this job: `repo` and `tag` are what `verify`
+      # fetches, and never an identity value (BOT-21).
+      leases: ${{ steps.claim.outputs.leases }}
+      # The claim answer's `shadow` (BOT-92). `"true"` whenever the answer was
+      # shadow or could not be read, never defaulted the other way.
+      shadow: ${{ steps.claim.outputs.shadow }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -292,14 +413,16 @@ jobs:
         with:
           node-version: '22'
 
-      - name: "Register the polled tags, then claim at most three (not built: B-T2.5, B-T5.1)"
+      # One bot OIDC token per call, masked before first use (bot/lib/oidc.mjs).
+      # B-T5.0: the workflow's `POLL_MODE` reaches this step as it reaches
+      # every step, and in `shadow` the register half prints `would register`
+      # lines and calls nothing; B-T5.1 — in the cutover commit B — sets it
+      # `live`, with no edit here.
+      - name: Register the polled tags, then claim at most three
         id: claim
         env:
           ASTRA_POLLED_TAGS: ${{ needs.poll.outputs.tags }}
-        run: |
-          set -euo pipefail
-          echo "::error::B-T2.5 writes bot/lib/oidc.mjs and bot/lib/service.mjs, and B-T5.1 turns the register step live. This step mints one bot OIDC token per call with the bot audience, masks it before first use, POSTs bot/submissions for each polled tag and then POSTs bot/leases for at most three."
-          exit 1
+        run: node bot/lib/service-jobs.mjs --job claim
 
   # ── remember: the memory is saved only for what was actually registered ────
   #
@@ -307,9 +430,25 @@ jobs:
   # then sees a tag it believes was handled, and BOT-87 — the only detector for
   # a release that silently never reached the service — never fires for it.
   #
-  # `if: false` until B-T5.0.
+  # It restores the entry `load` verified, by that exact key, verifies it
+  # again, and re-derives the memory from what `poll`, `claim` and `sweep`
+  # answered — each answer re-read against its grammar, and a malformed one a
+  # failed job rather than a smaller memory. Then it composes BOT-87's verdict,
+  # which `poll-alert` sends, and saves the sealed memory under this run's key.
   remember:
-    needs: [roots, claim]
+    needs: [roots, load, poll, claim, sweep]
+    # Held until environment `bot-state` exists, as `load` is. The day it
+    # does, this line becomes:
+    #
+    #   if: >-
+    #     always() && !cancelled() && needs.roots.result == 'success' &&
+    #     needs.load.result == 'success'
+    #
+    # `always()`, because `claim` is red until B-T3.6 builds its lease step and
+    # a `remember` that waited for claim's success would never save; and
+    # because a poll or a sweep that failed is exactly what this job exists to
+    # write down. From `claim` it takes only `registered`, and a claim that
+    # died before answering registered nothing.
     if: false
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -317,21 +456,102 @@ jobs:
     permissions:
       contents: read
       id-token: none
+    outputs:
+      verdict: ${{ steps.remember.outputs.verdict }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: "Save the signed memory for the tags claim reported registered (not built: B-T5.0)"
+      # The entry `load` verified and no other. A miss is a failure, not a
+      # fresh start: an entry that vanished between the two jobs is something
+      # to look at, and a fresh memory would re-seed over it.
+      - uses: actions/cache/restore@v4
+        if: needs.load.outputs.cache_key != ''
+        with:
+          path: .poll-memory
+          key: ${{ needs.load.outputs.cache_key }}
+          fail-on-cache-miss: true
+
+      - name: Save the signed memory for the tags claim reported registered, and compose BOT-87's verdict
+        id: remember
         env:
+          BOT_STATE_HMAC_KEY: ${{ secrets.BOT_STATE_HMAC_KEY }}
+          ASTRA_POLL_LISTINGS: ${{ needs.load.outputs.listings }}
+          ASTRA_POLLED: ${{ needs.poll.outputs.polled }}
           ASTRA_REGISTERED: ${{ needs.claim.outputs.registered }}
-        run: |
-          set -euo pipefail
-          echo "::error::B-T5.0 builds this step: HMAC-sign the poll and sweep memory with environment bot-state's key and save it to the Actions cache, for the tags claim reported registered and for no others."
-          exit 1
+          ASTRA_SWEPT: ${{ needs.sweep.outputs.remote }}
+          ASTRA_SWEEP_DUE: ${{ needs.load.outputs.sweep_due }}
+          ASTRA_SWEEP_RESULT: ${{ needs.sweep.result }}
+        run: node bot/lib/poll-run.mjs remember
+
+      # Under this run's own key: a cache entry cannot be overwritten, and the
+      # next `load` takes the newest under the prefix.
+      - uses: actions/cache/save@v4
+        if: steps.remember.outputs.changed == 'true'
+        with:
+          path: .poll-memory
+          key: poll-memory-${{ github.run_id }}-${{ github.run_attempt }}
+
+  # ── poll-alert: BOT-87's verdict, and BOT-85's heartbeat for it ───────────
+  #
+  # The `alert` job below cannot carry this: it posts no heartbeat, for a
+  # reason about BOT-51's schedule that it states, and an alert job names a
+  # receiver check or a reason it posts none, never both. BOT-87 is on BOT-85's
+  # list, so its verdict goes out from a job of its own, posting to
+  # `poll-and-sweep` (`bot/lib/alert-checks.mjs`).
+  #
+  # It runs whenever `load` ran, so a `load` that failed — a missing key is the
+  # likely one — pages rather than going quiet: `remember` is then skipped, and
+  # the relay turns the missing verdict into a red one. It is skipped with
+  # `load`, which today means while `load` is held.
+  poll-alert:
+    needs: [roots, load, remember]
+    if: >-
+      always() && !cancelled() && needs.roots.result == 'success' &&
+      needs.load.result != 'skipped'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: alerts
+    permissions:
+      contents: read
+      id-token: none
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_DEADMAN_URL_POLL_AND_SWEEP: ${{ secrets.ASTRA_DEADMAN_URL_POLL_AND_SWEEP }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert
+            bot/alert.mjs
+            bot/heartbeat.mjs
+            bot/lib/relay-verdict.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: BOT-87's verdict as remember composed it, or an alarm saying it did not
+        env:
+          ASTRA_RELAYED_VERDICT: ${{ needs.remember.outputs.verdict }}
+        run: node bot/lib/relay-verdict.mjs --check poll-and-sweep --code BOT_87_DID_NOT_REPORT --out verdict.json
+
+      - uses: ./.github/actions/alert
+        with:
+          verdict: verdict.json
+          check: poll-and-sweep
 
   # ── verify: identity comes from the certificate, never from the archive ────
   #
@@ -376,15 +596,19 @@ jobs:
         with:
           node-version: '22'
 
-      - name: "Verify the assets and read identity off the certificate (not built: B-T3.2)"
+      # gh attestation verify over the downloaded bytes; the .12/.15/.17
+      # certificate facts; the by-id reads and the repository_id lookup in this
+      # runner (BOT-21); the binding line at the attested commit (ID-22); the
+      # fingerprint. `gh` will not run in Actions without `GH_TOKEN`, and this
+      # job's token is `contents: read` and nothing else.
+      - name: Verify the assets and read identity off the certificate
         id: verify
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
           ASTRA_SUBMISSIONS: ${{ needs.claim.outputs.submissions }}
-        run: |
-          set -euo pipefail
-          echo "::error::B-T1.1, B-T1.3, B-T2.4 and B-T3.2 build this step: gh attestation verify over the downloaded bytes; the .12/.15/.17 certificate facts; the by-id reads and the repository_id lookup in this runner; the binding line at the attested commit; the fingerprint. Each result is emitted as a member of the `verified` output, keyed by submission id."
-          exit 1
+          ASTRA_LEASES: ${{ needs.claim.outputs.leases }}
+        run: node bot/ingest.mjs --verify-facts --submissions "$ASTRA_SUBMISSIONS" --leases "$ASTRA_LEASES" --assets-dir assets
 
       # One artifact per submission, named exactly, so that `check` downloads
       # by name and never by pattern. Three steps rather than a loop because
@@ -517,14 +741,16 @@ jobs:
           name: assets-${{ matrix.submission_id }}
           path: assets
 
-      - name: "Unpack, probe, and write the facts and the listing (not built: B-T3.2)"
+      # Exactly two outputs: a facts file of codes and levels with no free
+      # text, and the listing files a publication would commit. It emits no
+      # identity value of its own; BOT-21's values come from verify, and the
+      # card is derived under the name verify read off the certificate.
+      - name: Unpack, probe, and write the facts and the listing
         env:
           ASTRA_MANIFEST_PROBE: ${{ github.workspace }}/bot/manifest-probe/target/release/astra-manifest-probe
           ASTRA_SUBMISSION_ID: ${{ matrix.submission_id }}
-        run: |
-          set -euo pipefail
-          echo "::error::B-T3.2 builds this step: unpack the verified bytes, run the probe, and write exactly two outputs — a fixed-schema facts file with no free text, and the listing files a publication would commit. It emits no identity value of its own; BOT-21's values come from verify."
-          exit 1
+          ASTRA_VERIFIED: ${{ needs.verify.outputs.verified }}
+        run: node bot/ingest.mjs --check-facts --submission-id "$ASTRA_SUBMISSION_ID" --assets-dir assets --verified "$ASTRA_VERIFIED" --out out
 
       # Exactly two artifacts leave this job, and they are the whole of what an
       # exploited `check` can put in front of anything else in the run. The
@@ -582,15 +808,20 @@ jobs:
         with:
           node-version: '22'
 
-      - name: "The verdict, reduced to the outcome the bot acts on (not built: B-T2.5, B-T3.3a)"
+      # POST bot/verdicts (only where the attested commit carries a line,
+      # FLOW-74), bot/gates and bot/notice-status; each verdict mapped under
+      # ID-9 to one of ASTRA_ASK_OUTCOMES and nothing else. No verdict, token
+      # state or eligibility value is printed, summarised, uploaded or
+      # committed (BOT-89); the stop status, the approvals and the notice
+      # status travel beside the word, because `decide` cannot decide without
+      # them and none of them is a verdict.
+      - name: The verdict, reduced to the outcome the bot acts on
         id: ask
         env:
           ASTRA_SUBMISSIONS: ${{ needs.claim.outputs.submissions }}
+          ASTRA_LEASES: ${{ needs.claim.outputs.leases }}
           ASTRA_VERIFIED: ${{ needs.verify.outputs.verified }}
-        run: |
-          set -euo pipefail
-          echo "::error::B-T2.5's service client and B-T3.3a's ID-9 mapping build this step: POST bot/verdicts, bot/gates and bot/notice-status, map each answer under ID-9, and write outcome as a JSON object keyed by submission id whose values are drawn from ASTRA_ASK_OUTCOMES and from nothing else. No verdict, token state or eligibility value is printed, summarised, uploaded or committed (BOT-89)."
-          exit 1
+        run: node bot/lib/service-jobs.mjs --job ask
 
   # ── decide: policy, over facts, verification, the outcome and git ─────────
   #
@@ -600,7 +831,16 @@ jobs:
   # one artifact each, by name, from this job.
   decide:
     needs: [roots, claim, verify, check, ask]
-    if: needs.claim.outputs.count != '0'
+    # `always()`, with every result it depends on asked for by name: one
+    # `check` leg that died, or an `ask` that could not reach the service,
+    # must not skip the decision about the other submissions. A missing facts
+    # file is BOT-15's disagreement for that submission alone, and a missing
+    # answer is a wait (DEC-11). The roots, the claim and the verification
+    # must still have succeeded.
+    if: >-
+      always() && !cancelled() && needs.roots.result == 'success' &&
+      needs.claim.result == 'success' && needs.claim.outputs.count != '0' &&
+      needs.verify.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -635,37 +875,24 @@ jobs:
           pattern: listing-*
           path: listings
 
-      # B-T3.3c is NOT in this list, and the correction is the point.
-      #
-      # This step landed naming three tasks as unbuilt. One of them — B-T3.3c —
-      # had merged **forty-six minutes earlier** (`4b5c331`'s ancestor at
-      # 09:37Z; this file at 10:23Z), in a merge order the coordinator chose. So
-      # the tree carried a workflow asserting a task was not built and the task
-      # sitting beside it, which is the same defect as a module header stating
-      # an absence that had stopped being true — four of those were found and
-      # fixed the same day, and this is the fifth wearing different clothes.
-      #
-      # What is honestly still missing is B-T3.3a's remainder and B-T3.3b,
-      # which is blocked on B-T3.10's contract version.
-      #
-      # **B-T3.3c's two service-path rules are written and have no caller, and
-      # THIS STEP is the caller they are waiting for.** `alreadyPublished` and
-      # `noListingNoBinding` are exported from `bot/decide.mjs` and referenced
-      # nowhere outside `bot/tests/policy.test.mjs`; `bot/decide.mjs` itself is
-      # invoked from exactly one place, `ingest.yml`'s legacy path, whose
-      # sources are issue/ping/dispatch/legacy/backstop/queue — never the
-      # `panel` or `ci` that `noListingNoBinding` gates on. So B-T3.3c's rules
-      # are true of a function and not yet true of the registry, and whoever
-      # builds this step wires them rather than writing them again.
-      - name: "Decide, and name the alerts that must go out first (not built: B-T3.3a, B-T3.3b)"
+      # B-T3.3a's binding and identity decisions, B-T3.3b's approvals,
+      # stops, notices, windows and deny records, and B-T3.3c's no-record
+      # outcomes — `bot/decide.mjs`'s `alreadyPublished` and
+      # `noListingNoBinding`, which waited here for a caller and are called,
+      # not re-written. Every BOT-21 identity value is taken from
+      # ASTRA_VERIFIED and never from the facts file. TRUST-14's alerts are
+      # named before any commit that publishes. Under a shadow answer the
+      # plan is computed and emptied (BOT-92), and the step summary carries
+      # what each result would have been as its kind and body hash.
+      - name: Decide, and name the alerts that must go out first
         id: decide
         env:
+          ASTRA_SUBMISSIONS: ${{ needs.claim.outputs.submissions }}
+          ASTRA_LEASES: ${{ needs.claim.outputs.leases }}
+          ASTRA_CLAIM_SHADOW: ${{ needs.claim.outputs.shadow }}
           ASTRA_VERIFIED: ${{ needs.verify.outputs.verified }}
           ASTRA_OUTCOME: ${{ needs.ask.outputs.outcome }}
-        run: |
-          set -euo pipefail
-          echo "::error::B-T3.3a's remainder and B-T3.3b build this step: the binding and identity decisions, the approvals, stops, notices, windows and deny records. It refuses any BOT-21 identity value that arrives from the facts file rather than from ASTRA_VERIFIED, and it names TRUST-14's alerts before any commit that publishes. B-T3.3c's no-record outcomes are already written — bot/decide.mjs exports alreadyPublished and noListingNoBinding, and this step is the caller they have been waiting for; wire them, do not rewrite them."
-          exit 1
+        run: node bot/lib/service-decide.mjs --decide --facts facts --listings listings --out decisions
 
       # One artifact, one exact name, and it is the only thing the job holding
       # `contents: write` downloads besides the listings. The funnel is here
@@ -736,6 +963,7 @@ jobs:
             bot/lib/alert-checks.mjs
             bot/lib/roots.mjs
             bot/lib/sign.mjs
+            bot/lib/trust14.mjs
             tools/lib/canonical.mjs
             tools/lib/ids.mjs
           sparse-checkout-cone-mode: false
@@ -754,23 +982,14 @@ jobs:
           ASTRA_ROOTS_VERDICT: ${{ needs.roots.outputs.verdict }}
         run: node bot/check-roots.mjs --relay --out verdict.json
 
-      # TRUST-14's alarms are named by `decide` and composed by B-T3.3b. Until
-      # that lands `decide` names none, and this step is a no-op that says so.
-      # It is NOT a placeholder that always fails, because the roots half of
-      # this job works today and an unconditional `exit 1` here would take the
-      # one working alarm down with the one that is not written yet. It is also
-      # not silent: the day `decide` starts naming alerts with nothing to
-      # compose them, this step is red and says which task owes the composer.
-      - name: TRUST-14's alarms, if decide named any
+      # TRUST-14's alarms: every approval and every delayed fingerprint past
+      # its `publish_after` that `decide` named, and every disagreement it
+      # refused to write anything over (BOT-15, BOT-21), merged into the one
+      # verdict this job sends. Codes, plugin ids and fingerprints only.
+      - name: TRUST-14's alarms, and the disagreements decide wrote nothing over
         env:
           ASTRA_DECIDE_ALERTS: ${{ needs.decide.outputs.alerts }}
-        run: |
-          set -euo pipefail
-          if [ -n "${ASTRA_DECIDE_ALERTS//[[:space:]]/}" ] && [ "$ASTRA_DECIDE_ALERTS" != "[]" ]; then
-            echo "::error::the decide job named TRUST-14 alerts and nothing in this repository composes them into a verdict yet. B-T3.3b owes that composer; until it exists, an approval or a delayed fingerprint past its publish_after would be published with no operator ever paged, which is what TRUST-32's window exists to prevent."
-            exit 1
-          fi
-          echo "ok    decide named no TRUST-14 alert in this run"
+        run: node bot/lib/trust14.mjs --merge --verdict verdict.json
 
       - uses: ./.github/actions/alert
         id: alert
@@ -804,7 +1023,12 @@ jobs:
   # the graph rather than of a script's control flow.
   publish:
     needs: [roots, claim, check, decide, alert]
-    if: needs.roots.result == 'success' && needs.decide.outputs.publish == 'true'
+    # `always()` so that an alert job which could not send does not also lose
+    # this run's waits and records: TRUST-32 answers that case per
+    # fingerprint, as `W_ALERT_UNDELIVERED`, from the empty `delivered_at`.
+    if: >-
+      always() && !cancelled() && needs.roots.result == 'success' &&
+      needs.decide.result == 'success' && needs.decide.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -847,50 +1071,45 @@ jobs:
           name: listing-${{ fromJSON(needs.claim.outputs.submissions)[2] }}
           path: listings
 
-      # `bot/publish-apply.mjs` is on `main` and carries the allow-list, the
-      # re-validation and the race handling. What it does NOT yet carry is
-      # B-T3.4's record commit: the allow-list is not widened to `log/`, and
-      # `recordCommitRefusal()` refuses by name — not because a file is
-      # missing, but because it checks the `available` argument its CALLER
-      # passes rather than which files exist, so it stops refusing when a
-      # caller can supply both and not when one of the two lands. This step is
-      # that caller, and it is unbuilt.
-      #
-      # This comment said `bot/lib/decisions.mjs` "is not written" until
-      # 2026-09-22; it landed `407b2ae` on 2026-09-20. That is the SECOND
-      # absence in this file that stopped being true and went on being read —
-      # after the step name fixed forty-six minutes late, above, and after the
-      # header's own `bot/lib/service.mjs` line.
-      #
-      # **What is still missing for B-T3.4 is not path-shaped**, and that is
-      # the boundary `tools/absent-scan.mjs` cannot cross: a widened allow-list
-      # and a caller are behaviours inside files that already exist, so there
-      # is no `@absent <path> (<task>)` marker that could hold this step
-      # honest. A comment is what holds it, and a comment is what failed here
-      # twice — which is the argument for building the step, not for inventing
-      # a marker that would be green about the wrong thing.
-      - name: "Compose every record this run produced, into one commit (not built: B-T3.4)"
+      # One decision record per state entry, the identity and sibling
+      # records, queue entries carrying `decision_id` and `publish_after`, and
+      # the `state/alerts/` records with this run's `delivered_at` — composed
+      # into report directories through `bot/lib/decisions.mjs`, the one
+      # writer of a decision id, and applied by `bot/publish-apply.mjs` as
+      # BOT-73's one commit. The path list is printed, which is what a
+      # `DRY_RUN` publish shows instead of pushing.
+      - name: Compose every record this run produced, into one commit
         env:
           ASTRA_DELIVERED_AT: ${{ needs.alert.outputs.delivered_at }}
-        run: |
-          set -euo pipefail
-          echo "::error::B-T3.4 builds this step: one decision record per state entry, the identity and sibling records, queue entries carrying decision_id and publish_after, and the state/alerts/ records with this run's delivered_at — composed into the single commit bot/publish-apply.mjs then applies. bot/lib/decisions.mjs (B-T2.2) landed 407b2ae and exports writeDecisionRecord, so the writer is here; what is missing is this caller and the widened allow-list, and publish-apply's recordCommitRefusal() refuses on the available argument its caller passes rather than on which files exist."
-          exit 1
+        run: node bot/lib/service-publish.mjs --compose --decisions decisions --listings listings --reports reports --results results/pending.json
 
+      # `DRY_RUN` commits on the runner and never pushes (B-T3.6 step 1).
       - name: Apply the decisions, hold them to the rules, and push
         id: apply
         env:
           MESSAGE: "registry: publish (plugins ingest)"
-          TRAILER: "Decided by bot/decide.mjs in run ${{ github.run_id }}. See docs/POLICY.md."
         run: |
           set -euo pipefail
           git config user.name "astra-registry-bot"
           git config user.email "bot@users.noreply.github.com"
+          dry=()
+          if [ "$DRY_RUN" != "false" ]; then dry=(--dry-run); fi
           node bot/publish-apply.mjs \
-            --reports decisions \
+            --service-path \
+            --reports reports \
             --base "$GITHUB_SHA" \
             --message "$MESSAGE" \
-            --trailer "$TRAILER"
+            --trailer "$(cat results/trailer.txt)" \
+            "${dry[@]}"
+
+      # The commit each result names, and what cannot be posted held back: a
+      # refused report's result, and — under `DRY_RUN` — any result naming a
+      # commit that was not pushed (BOT-6).
+      - name: Name the commit in each result, and hold back what cannot be posted
+        env:
+          ASTRA_APPLY_OUTCOME: ${{ steps.apply.outputs.outcome }}
+          ASTRA_APPLY_REFUSED: ${{ steps.apply.outputs.refused }}
+        run: node bot/lib/service-publish.mjs --finalize --results results/pending.json --out results/results.json
 
       # The result bodies, composed here because two of their members —
       # `decision_id` and `main_commit` — are facts about the commit this job
@@ -937,11 +1156,9 @@ jobs:
           name: results
           path: results
 
-      - name: "Post each result, built once and re-sent byte-identical (not built: B-T3.5)"
-        env:
-          ASTRA_SUBMISSIONS: ${{ needs.claim.outputs.submissions }}
-          ASTRA_MAIN_COMMIT: ${{ needs.publish.outputs.outcome }}
-        run: |
-          set -euo pipefail
-          echo "::error::B-T3.5 builds this step: POST bot/results with the §4.4 body for each claimed submission, built once per attempt from committed facts and re-sent byte-identical on each retry. Under a shadow lease it posts no result of any kind, a wait included (BOT-92), and sends each one's kind and body hash to the step summary instead."
-          exit 1
+      # POST bot/results with the §4.4 body for each claimed submission,
+      # built once per attempt from committed facts and re-sent byte-identical
+      # on each retry. Under a shadow answer nothing is posted, a wait
+      # included (BOT-92); the kind and body hash go to the step summary.
+      - name: Post each result, built once and re-sent byte-identical
+        run: node bot/lib/service-jobs.mjs --job report --results results/results.json
