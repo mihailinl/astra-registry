@@ -626,7 +626,7 @@ await test("no check GitHub's scheduler feeds has a silence bound under a day", 
     "would page about GitHub's scheduler rather than about a poster that stopped");
 });
 
-await test("each check's bound, by name: five GitHub-scheduled checks moved to a day, and no other bound moved", () => {
+await test("each check's bound, by name: five GitHub-scheduled checks moved to a day, B-T3.11 gave conformance one, and no other bound moved", () => {
   const D = 1440;
   const want = {
     // moved on 2026-09-23; BOT-85's rule alone gave the number in the comment
@@ -651,9 +651,10 @@ await test("each check's bound, by name: five GitHub-scheduled checks moved to a
     "minice-plugins-evaluator": 90,
     "minice-alarm-relay-almaty": 90,
     "minice-alarm-relay-macmini": 90,
+    // B-T3.11 fixed its interval at an hour; posted from GitHub, so a day
+    conformance: D,
     // unchanged: no interval, so no bound
     "alarm-ack": null,
-    conformance: null,
     "poll-and-sweep": null,
   };
   const named = CHECKS.filter((c) => c.name !== null);
