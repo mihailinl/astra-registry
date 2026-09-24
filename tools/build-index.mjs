@@ -61,7 +61,7 @@ import { cleanEnv } from "./lib/git-env.mjs";
 
 import { stableStringify } from "./lib/canonical.mjs";
 import { compareSemver } from "./lib/semver.mjs";
-import { loadPublishers, loadSources, REPO_ROOT } from "./lib/sources.mjs";
+import { loadIdentities, loadPublishers, loadSources, REPO_ROOT } from "./lib/sources.mjs";
 import { INDEX_SCHEMA } from "../bot/lib/sign.mjs";
 import { MAX_README_BYTES, iconDataUri } from "../bot/lib/assets.mjs";
 import { SUPPORTED_KEYS } from "./lib/platform.mjs";
@@ -335,10 +335,99 @@ function cardText(doc) {
   return { name: doc.name, description: doc.summary };
 }
 
+/** §0.7's canonical base-10 digit string, as schema/identity-v1.json spells an owner id. */
+const OWNER_ID_RE = /^[0-9]{1,20}$/;
+
+/**
+ * The publisher record a listing's badge comes from, or `null` for no badge.
+ *
+ * THE ONE STATEMENT OF THE BADGE JOIN. `buildIndex` below calls it, and so
+ * does `tools/selftest/publishers.mjs`'s reach check for the unlisted plugins
+ * the generator skips, so the two cannot come to disagree about which record a
+ * listing reaches.
+ *
+ *   - INV-18: no reviewed record for the owner login of `source.repo` (or for a
+ *     login a record `covers`), no badge.
+ *   - TRUST-25 (registry plan RC-R3-5; contract B.4, 2.5.0): a listing WITH an
+ *     identity record takes the record's badge only when the record's
+ *     `owner_ids` entry for the login the listing is published under equals
+ *     the identity record's `repository_owner_id`. No entry, a second entry for
+ *     the same login in another case, or anything that is not the same base-10
+ *     string, is no badge. The join used to be by login alone, so a login given
+ *     up and registered again — `KNICE-TECH` is one — would have carried the
+ *     reviewed badge of the account that gave it up onto the first listing its
+ *     new holder bound.
+ *   - A listing WITHOUT an identity record keeps the join by login. TRUST-23
+ *     and TRUST-24 guard those, and none of them has proved an owner id yet.
+ *
+ * An identity record is present-or-absent, never "unreadable, so absent": the
+ * caller has already refused to build over one that did not parse. A parsed
+ * record with no usable `repository_owner_id` matches nothing — fail closed,
+ * because the alternative is the login join, which is the thing this refuses.
+ *
+ * @param {{plugin: {doc: object}, publishers: Map<string, {file: string, doc: object}>,
+ *          identity?: object|null}} args `identity` is the parsed identity.json, or
+ *          null/undefined when the listing has none
+ */
+export function publisherFor({ plugin, publishers, identity = null }) {
+  const login = String(plugin?.doc?.source?.repo ?? "").split("/")[0];
+  const record = publishers.get(login.toLowerCase());
+  if (!record) return null;
+  if (identity === null || identity === undefined) return record;
+
+  const ownerId = identity?.repository_owner_id;
+  if (typeof ownerId !== "string" || !OWNER_ID_RE.test(ownerId)) return null;
+  const ids = record.doc?.owner_ids;
+  if (ids === null || typeof ids !== "object" || Array.isArray(ids)) return null;
+  const keys = Object.keys(ids).filter((k) => k.toLowerCase() === login.toLowerCase());
+  if (keys.length !== 1) return null;
+  return ids[keys[0]] === ownerId ? record : null;
+}
+
+/**
+ * ID-51: `signed.publishers` stays keyed by login while `astra.registry.index/1`
+ * stands (the daemon reads it that way, A:d/plugins/registry_client.rs:543-570).
+ *
+ * Not a grammar check, and the reason is the case it exists for: a GitHub
+ * numeric id is all digits, and all digits match the login grammar, so "every
+ * key looks like a login" passes a catalogue keyed on owner ids. The check is
+ * that every key, and every listing's `publisher`, is exactly the `owner` of a
+ * record in `publishers` — which an owner id never is. `buildIndex` refuses its
+ * own output on it, `--check` asks it of the committed file, and
+ * tools/validate.mjs's `checkIndex` asks it too.
+ *
+ * @returns {string[]} empty when the catalogue holds to it
+ */
+export function publisherKeyProblems(doc, publishers) {
+  const signed = doc?.signed ?? doc ?? {};
+  const problems = [];
+  const isOwner = (key) => typeof key === "string" && publishers.get(key.toLowerCase())?.doc?.owner === key;
+  for (const key of Object.keys(signed.publishers ?? {})) {
+    if (!isOwner(key)) {
+      problems.push(`signed.publishers is keyed ${JSON.stringify(key)}, which is not the \`owner\` of any publishers/ ` +
+        "record; ID-51 keeps it keyed by that login while astra.registry.index/1 stands");
+    }
+  }
+  for (const entry of signed.plugins ?? []) {
+    if (entry?.publisher === undefined) continue;
+    if (!isOwner(entry.publisher) || !Object.hasOwn(signed.publishers ?? {}, entry.publisher)) {
+      problems.push(`${entry?.id}: publisher ${JSON.stringify(entry.publisher)} is not the owner login of a ` +
+        "publishers/ record shipped in signed.publishers (ID-51; INV-18)");
+    }
+  }
+  return problems;
+}
+
 export function buildIndex({ root = REPO_ROOT, serial } = {}) {
   const { errors, plugins } = loadSources(root);
   const { errors: pubErrors, publishers } = loadPublishers(root);
   errors.push(...pubErrors);
+  // TRUST-25's input. An identity record that does not parse is a load error
+  // like any other, so the build stops naming it: read as "no identity
+  // record", it would put the listing back on the login join.
+  const { errors: idErrors, identities } = loadIdentities(root, plugins.map((p) => p.dir));
+  errors.push(...idErrors);
+  const identityOf = new Map(identities.map((r) => [r.file.split("/")[1], r.doc]));
   if (errors.length) {
     const lines = errors.map((e) => `  ${e.file}: ${e.message}`).join("\n");
     throw new Error(`cannot generate the index, the sources do not load:\n${lines}`);
@@ -387,6 +476,7 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
       entryErrors.push(...pres.errors);
       continue;
     }
+    const badge = publisherFor({ plugin, publishers, identity: identityOf.get(plugin.dir) ?? null });
 
     entries.push({
       id: p.id,
@@ -409,15 +499,15 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
         repo: p.source.repo,
         ...(p.source.subdirectory !== undefined ? { subdirectory: p.source.subdirectory } : {}),
       },
-      // The lookup key only, and only when a reviewed record exists. The
-      // display name lives once in `signed.publishers` rather than being
-      // copied onto every listing, so a rename is one edit and two entries
-      // cannot disagree. An owner with no record emits no key at all: the
-      // absence is what a client must read as "no badge", and a client that
-      // renders on the field merely being present would badge everybody.
-      ...(publishers.has(p.source.repo.split("/")[0].toLowerCase())
-        ? { publisher: publishers.get(p.source.repo.split("/")[0].toLowerCase()).doc.owner }
-        : {}),
+      // The lookup key only, and only when a reviewed record joins
+      // (`publisherFor`: INV-18, and TRUST-25's owner-id pin for a listing
+      // with an identity record). The display name lives once in
+      // `signed.publishers` rather than being copied onto every listing, so a
+      // rename is one edit and two entries cannot disagree. A listing with no
+      // joined record emits no key at all: the absence is what a client must
+      // read as "no badge", and a client that renders on the field merely
+      // being present would badge everybody.
+      ...(badge ? { publisher: badge.doc.owner } : {}),
       downloads: 0,
       stars: 0,
       updated_at: latest.published_at,
@@ -455,7 +545,7 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
     };
   }
 
-  return {
+  const doc = {
     $comment: BANNER,
     // Empty, and written out rather than omitted: a reader that finds no
     // `signatures` member at all cannot tell "this catalogue is unsigned" from
@@ -477,6 +567,12 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
       ...(Object.keys(usedPublishers).length ? { publishers: usedPublishers } : {}),
     },
   };
+  // ID-51, asked of this generator's own output before anything can sign it.
+  const keyProblems = publisherKeyProblems(doc, publishers);
+  if (keyProblems.length) {
+    throw new Error(`cannot generate the index, its publisher keys break ID-51:\n${keyProblems.map((p) => `  ${p}`).join("\n")}`);
+  }
+  return doc;
 }
 
 /**
@@ -545,6 +641,15 @@ function main(argv) {
         `FAIL  ${path.relative(opts.root, outFile)} has no \`signed\` member. Since 3.2 the ` +
           "catalogue is a signed envelope. Regenerate with: node tools/build-index.mjs",
       );
+      return 1;
+    }
+    // ID-51's Check is `--check`: asked of the COMMITTED file, so a catalogue
+    // re-keyed by hand, or by a generator changed and re-run, is refused here
+    // even when it would regenerate byte for byte.
+    const keyProblems = publisherKeyProblems(parsed, loadPublishers(opts.root).publishers);
+    if (keyProblems.length) {
+      console.error(`FAIL  ${path.relative(opts.root, outFile)} breaks ID-51:`);
+      for (const p of keyProblems) console.error(`      ${p}`);
       return 1;
     }
     const claimed = parsed.signed.serial;
