@@ -1360,15 +1360,29 @@ export function decideJob({ root, submissions, leases, claimShadow, verified, ou
     })();
     const listing = pluginId ? readListingArtifact(path.join(listingsDir, `listing-${id}`), pluginId) : null;
     const existing = pluginId ? readListingOnMain(root, pluginId) : null;
+    // MIG-1's state, read from history as `listing-state.mjs` reads it. `now`
+    // goes in as §0.7's string: the reader holds its tree to that grammar, and
+    // until 2026-09-24 this call passed a `Date`, which it refused on every run.
+    // A `catch` here turned that refusal into "no state", so the three rules
+    // that read it — `B_UNBOUND` on a `frozen` listing (ID-25), MIG-12's wait
+    // for a grandfathered listing after cutover, and MIG-31's report of the
+    // triggering actor — never fired, and nothing said so. The `catch` claimed
+    // a missing state "blocks nothing they would not also block with one",
+    // which was false for the first two: both are refusals or waits that only
+    // a state can trigger. So a tree the reader cannot answer from — shallow,
+    // commit-less, or with a marker it refuses — now fails the job, the way
+    // `readListingOnMain` fails it for an unreadable identity record: loudly,
+    // with the lease left to expire under BOT-15, rather than deciding the
+    // release as though the listing had no state at all.
     let listingState = null;
     if (existing) {
       try {
-        listingState = (deps.listingStateAt ?? listingStateAt)(root, pluginId, { now: new Date(now) });
-      } catch {
-        // MIG-1 could not be decided from this tree; the rules that need it
-        // (B_UNBOUND on a frozen listing, MIG-12) then see no state, which
-        // blocks nothing they would not also block with one.
-        listingState = null;
+        listingState = (deps.listingStateAt ?? listingStateAt)(root, pluginId, { now: iso(now) });
+      } catch (e) {
+        throw new Error(
+          `MIG-1's state of ${pluginId} cannot be read from this tree (${e.message}); deciding its release without ` +
+          "one would skip B_UNBOUND on a frozen listing, MIG-12 and MIG-31's report, so this run decides nothing",
+        );
       }
     }
     const perListing = {

@@ -18,7 +18,7 @@
 // Nothing touches the network.
 
 import { execFileSync } from "node:child_process";
-import { cleanEnv } from "../../tools/lib/git-env.mjs";
+import { cleanEnv, fixtureEnv } from "../../tools/lib/git-env.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -28,7 +28,7 @@ import { fileURLToPath } from "node:url";
 import { markerOnMain, readDecisionRecords } from "../baseline.mjs";
 import { validate as validateJsonSchema } from "../../tools/lib/jsonschema.mjs";
 import { LEGACY_TRIGGERS, alreadyPublished, decideRelease, legacyTrigger, noListingNoBinding, readIdentityRecord, terminalOnMain, writeOutputs } from "../decide.mjs";
-import { recordCommitRefusal } from "../publish-apply.mjs";
+import { recordCommitRefusal, run as publishApply } from "../publish-apply.mjs";
 import { bot74Filter } from "../watch.mjs";
 import { DEFAULT_SIGNER_WORKFLOW } from "../ingest.mjs";
 import { BOT_AUTHOR, decidableThread, parseMaintainerCommand, safeLogin } from "../lib/intake.mjs";
@@ -63,11 +63,17 @@ import {
 // re-exports it: that re-export is what keeps five importers unchanged, and a
 // test that stopped reading it would stop witnessing it.
 import { pollFeed } from "../lib/poll.mjs";
-// The canary walks (B-T4.1) run B-T3.3a's inputs through the modules that own
-// them, so a gap is judged against real readers rather than hand-made shapes.
+// The canary walks (B-T4.1) run on the service path: the decide job, the
+// publish job's composer and publish-apply, over a committed tree, with the
+// records a person's act writes coming from that act's own writer.
 import { parseBindingFile } from "../lib/binding.mjs";
-import { bindingDecision } from "../lib/identity.mjs";
-import { listingState } from "../lib/listing-state.mjs";
+import { listingStateAt } from "../lib/listing-state.mjs";
+import { CHECK_FACTS_SCHEMA, FIRST_BINDING_WAIT_DAYS, decideJob } from "../lib/service-decide.mjs";
+import { verdictOutcome } from "../lib/service-jobs.mjs";
+import { commitTrailers, composePublication } from "../lib/service-publish.mjs";
+import { submissionFingerprint } from "../lib/policy/release.mjs";
+import { terminalSubmissionRecord } from "../moderation-run.mjs";
+import { operatorAct } from "../../tools/operator.mjs";
 import { runDrain, runWatch } from "../watch.mjs";
 import { recordPermissionProbe, triage } from "../triage.mjs";
 import { makeBundle, fakeGitHub, fakeGh, fakeOwnership, FIXTURE_COMMIT } from "../fixtures/ingest/make.mjs";
@@ -4275,20 +4281,6 @@ await test("ROLL-25 (4)→(5) — the stop of telegram-client 0.4.0 does not sto
     "the service path's records are B-T3.4's; this run must not claim one from the legacy trigger map");
 });
 
-// ── the gaps: steps whose code is not on `main` ─────────────────────────────
-
-await gap("ROLL-25 (4) — a `stopped` record for this tag is a terminal hit (BOT-19; FLOW-26)", {
-  blocker: "B-T3.3c (BOT-19): `terminalOnMain` in bot/decide.mjs has no `stopped` in its terminal set",
-  standing: () =>
-    terminalOnMain({ records: [STOPPED_0_4_0], pluginId: "telegram-client", repo: WALK_REPO, tag: STOPPED_0_4_0.tag }) === null,
-  walk: () => {
-    const hit = terminalOnMain({ records: [STOPPED_0_4_0], pluginId: "telegram-client", repo: WALK_REPO, tag: STOPPED_0_4_0.tag });
-    walkExpects(hit?.reported === "stopped",
-      `a stop the author recorded for ${STOPPED_0_4_0.tag} is not found by the git fence, so a drain after a restore ` +
-      "publishes the release the author stopped (FLOW-26; SERVE-93)");
-  },
-});
-
 // Closed by lane s3a (bot/decide.mjs's writeOutputs writes nothing on a
 // BOT-19 or BOT-74 hit), and held here as a test, as the gap asked (B-T4.1).
 await test("ROLL-25 (2) — a re-run of the rejected json-tools 0.1.3 writes nothing (BOT-19's \"write nothing\")", async () => {
@@ -4339,145 +4331,561 @@ await test("ROLL-25 (2)→(6) — the rejection of 0.1.3 is not a hit for 0.1.4 
     "reads the next baseline from");
 });
 
-// A first binding on a `grandfathered` listing, with every input B-T3.3a's
-// refusal names present and each taken from the module that owns it.
-const firstBindingInputs = () => ({
-  listingState: listingState({
-    plugin_id: "json-tools", now: "2026-09-25T12:00:00Z", unlisted: false,
-    identity: null, ever_identity: false, deadline: null, cutover: null,
-  }),
-  bindingLine: parseBindingFile(`astra-binding: ${"T".repeat(32)}\n`),
-  verdict: { shadow: false, token_state: "seen", minted_for_repository: true, eligibility: "eligible" },
-  marker: { r3_exit: true, cutover: false },
-});
-const placeholderAnswer = (r) =>
-  r?.ok === true && r?.code === null && /every input a binding decision needs is present/.test(String(r?.reason));
+// ═══════════════════════════════════════════════════════════════════════════
+// The walks on the service path: `decideJob`, which is `decideSubmission`
+// over a committed tree, as `plugins-ingest.yml`'s `decide` job runs it.
+//
+// Until 2026-09-24 the eight steps below were `gap()`s, and not one of their
+// blockers still held:
+//
+//   * five walked `bindingDecision` in bot/lib/identity.mjs, a stub that answers
+//     `code: null` by construction. B-T3.3a did not land there. It landed as
+//     `decideSubmission` in bot/lib/service-decide.mjs, which is what the
+//     `decide` job runs. A gap standing on a function no job calls could never
+//     close, because nothing would ever change the stub: the vacuous green
+//     `gap()` exists to refuse, one level up;
+//   * two walked the legacy `decide()` through `decideRelease`, which is the
+//     issue path's pipeline with `path: "service"` passed in, not the service
+//     path's decide job;
+//   * ROLL-59 (f) named "operator.yml, which writes it, is not on main" and
+//     "nothing reads `state/deny/`". Both were false: M-T3.5 landed
+//     `operator.yml` (21f5de8), and `readGitState` reads `state/deny/`;
+//   * ROLL-25 (4) walked a `stopped` record with no `repo` and no
+//     `repository_id`. No writer produces one: `terminalSubmissionRecord`
+//     (BOT-30) writes both, and `terminalOnMain` has matched a stop by tag of
+//     the same repository since B-T3.3c.
+//
+// Each walk now runs the decide job itself over a COMMITTED tree, so listing
+// state is read from history as the job reads it. It lands what the job
+// decided with the publish job's own composer (`composePublication`) and
+// `publish-apply`, and the next step reads what landed. What the job takes
+// from the jobs before it — `verify`'s entry, `check`'s facts and listing,
+// `ask`'s outcome — is built here in the shapes those jobs write: the token
+// hash is §0.7's, and the verdict is reduced from the service's body by `ask`'s
+// own `verdictOutcome`. A record a person's act writes comes from that act's
+// writer: `terminalSubmissionRecord` for a stop or an `M_REJECT` (the
+// moderation run), and `operatorAct` for a deny (`operator.yml`).
+// ═══════════════════════════════════════════════════════════════════════════
 
-await gap("ROLL-25 (2)/(3) — a grandfathered listing's first binding line is held `R_FIRST_BINDING` (MIG-10)", {
-  blocker: "B-T3.3a (MIG-10; ID-41): `bindingDecision` in bot/lib/identity.mjs decides no row — with every input " +
-    "present it answers `code: null`",
-  standing: () => {
-    const inputs = firstBindingInputs();
-    return inputs.listingState.state === "grandfathered" && inputs.bindingLine.outcome === "one" &&
-      placeholderAnswer(bindingDecision(inputs));
-  },
-  walk: () => {
-    const r = bindingDecision(firstBindingInputs());
-    walkExpects(r.code === "R_FIRST_BINDING",
-      `a grandfathered listing's first binding line is answered ${JSON.stringify(r.code)}, not held R_FIRST_BINDING`);
-  },
-});
+const SVC_RID = "700000001";
+const SVC_OID = "700000002";
+const SVC_COMMIT = "7".repeat(40);
+/** The owner's binding token (ROLL-25 (1)), a second account's (ROLL-59 (a)), and the rebind's (ROLL-59 (d)). */
+const LINE_OWNER = "owner-binding-token-0001";
+const LINE_SECOND = "second-account-token-0002";
+const LINE_REBIND = "rebind-after-revoke-0003";
+/** §0.7: the first 16 lowercase hex of the token's SHA-256 — `verifyFacts`'s own expression. */
+const lineHash = (token) => crypto.createHash("sha256").update(Buffer.from(token, "utf8")).digest("hex").slice(0, 16);
+const T0 = "2026-09-25T12:00:00Z";
+/** A §0.7 time `minutes` after `base`. */
+const at = (base, minutes) => `${new Date(new Date(base).getTime() + minutes * 60_000).toISOString().slice(0, 19)}Z`;
 
-// ROLL-59 (a), (c) and (d)'s bot half: the rows ID-41 decides WITH an
-// identity record. The members `identityRecord` and `identity` are the
-// contract's inputs (the record on `main`, and the certificate's ids and line
-// token), named as the plan names them; `bindingDecision` reads neither yet,
-// and `standing` is what makes the guess safe — the day it reads anything, each
-// of these fails until it is pointed at what B-T3.3a actually takes.
-const RECORD = { plugin_id: "json-tools", repository_id: "700000001", repository_owner_id: "700000002", repo: WALK_REPO, token_hash: "c".repeat(16) };
-const boundInputs = ({ verdict = {}, identity = {}, line = "T".repeat(32) } = {}) => ({
-  listingState: listingState({
-    plugin_id: "json-tools", now: "2026-09-25T12:00:00Z", unlisted: false,
-    identity: { ...RECORD }, ever_identity: true, deadline: null, cutover: null,
-  }),
-  bindingLine: parseBindingFile(`astra-binding: ${line}\n`),
-  verdict: { shadow: false, token_state: "bound", minted_for_repository: true, eligibility: "eligible", ...verdict },
-  marker: { r3_exit: true, cutover: false },
-  identityRecord: { ...RECORD },
-  identity: {
-    ok: true, repo: WALK_REPO, repository_id: RECORD.repository_id, repository_owner_id: RECORD.repository_owner_id, ...identity,
-  },
-});
-const boundRow = (label, inputs, code, why) => gap(label, {
-  blocker: "B-T3.3a (ID-41): `bindingDecision` decides no row, and reads no identity record",
-  standing: () => placeholderAnswer(bindingDecision(inputs())),
-  walk: () => {
-    const r = bindingDecision(inputs());
-    walkExpects(r.code === code, `${why}; answered ${JSON.stringify(r.code)}`);
-  },
-});
+const SVC_LISTINGS = [
+  { id: "json-tools", name: "JSON Tools", version: "0.1.2", capabilities: ["tools"] },
+  { id: "text-utils", name: "Text Utils", version: "0.2.0", capabilities: ["tools"] },
+  { id: "telegram-client", name: "Telegram Client", version: "0.3.0", capabilities: ["tools", "dom_access"] },
+];
 
-// A different token hash under an unchanged repository: the second account's
-// own line (ID-41 row 6).
-await boundRow("ROLL-59 (a) — a second account's own line under a bound listing is held `R_BINDING_CHANGED`",
-  () => boundInputs({ line: "U".repeat(32), verdict: { token_state: "seen" } }), "R_BINDING_CHANGED",
-  "the line's token is not the recorded one, and the release was not held for the bound account's notice");
-// The owner id moved and the repository id did not: a transfer (ID-41).
-await boundRow("ROLL-59 (c) — after a transfer, a bound listing's release is refused `B_OWNER_CHANGED`",
-  () => boundInputs({ identity: { repository_owner_id: "700000999" } }), "B_OWNER_CHANGED",
-  "the certificate's owner id is not the identity record's, and the release was not refused B_OWNER_CHANGED");
-// The recorded token is `revoked` (A_BINDING_REVOKE) and the line still
-// carries it (ID-9).
-await boundRow("ROLL-59 (d) — after `A_BINDING_REVOKE`, a release still carrying the old line is `B_BINDING_UNUSABLE`",
-  () => boundInputs({ verdict: { token_state: "revoked" } }), "B_BINDING_UNUSABLE",
-  "the recorded token is revoked and the release carrying it was not refused B_BINDING_UNUSABLE");
-// A rebind: a new line after the revocation (ID-41 row 6), approved later.
-await boundRow("ROLL-59 (d) — after `A_BINDING_REVOKE`, a release carrying a new line is held `R_BINDING_CHANGED`",
-  () => boundInputs({ line: "V".repeat(32), verdict: { token_state: "seen" } }), "R_BINDING_CHANGED",
-  "a new line after the revocation was not held R_BINDING_CHANGED for review");
-
-// ROLL-25 (3): the approval of the text-utils hold. Contract 2.1.0 set
-// TRUST-27's first-binding period to 0 days (the owner's beta decision,
-// 2026-09-24), so what still stands between an approval and a publication is
-// DEC-6's operator window: TRUST-14's alert, and TRUST-32's 6 hours from its
-// reported delivery (`W_ALERT_UNDELIVERED` while none is reported). This
-// fixture has no alert record, so a day after the hold, with an approval
-// naming this exact submission, nothing may publish.
-const firstBindingHeld = (over = {}) => decide(publishable({
-  path: "service",
-  findings: [{ level: "review", code: "R_FIRST_BINDING", where: "binding", message: "a first binding line (MIG-10)" }],
-  now: new Date("2026-09-26T12:00:00Z"),
-  ...over,
-}));
-await gap("ROLL-25 (3) — an approved `R_FIRST_BINDING` hold publishes nothing while no alert is reported delivered (DEC-6; TRUST-32; TRUST-27 at 0 days since 2.1.0)", {
-  blocker: "B-T3.3b (TRUST-14, TRUST-32; TRUST-27): `decide()` lets an approval clear any `R_*` hold on the run it arrives in",
-  standing: () => {
-    const fingerprint = firstBindingHeld().fingerprint;
-    const d = firstBindingHeld({ approval: { by: "the-moderator", at: "2026-09-26T11:00:00Z", for: fingerprint } });
-    return d.outcome === "publish" && d.reasons.some((x) => x.code === "P_APPROVED");
-  },
-  walk: () => {
-    const fingerprint = firstBindingHeld().fingerprint;
-    walkExpects(typeof fingerprint === "string" && fingerprint.length > 0, "the held run names no fingerprint to approve");
-    const d = firstBindingHeld({ approval: { by: "the-moderator", at: "2026-09-26T11:00:00Z", for: fingerprint } });
-    walkExpects(d.outcome !== "publish" && !d.publishes_now,
-      `an R_FIRST_BINDING approval a day after the hold published (${JSON.stringify(d.reasons.map((x) => x.code))}); ` +
-      "with no alert reported delivered TRUST-32 publishes nothing (W_ALERT_UNDELIVERED), and after one it waits DEC-6's " +
-      "6-hour operator window; TRUST-27's period is 0 days since contract 2.1.0");
-  },
-});
-
-// ROLL-59 (f): a deny record withholds an approved fingerprint (TRUST-33).
-// The fingerprint is the one the maintainer's `/approve` names, copied out of
-// the held run's comment as `approveFromComment` copies it. The hold is
-// `collidingTree`'s display-name collision, the clean case for "an approval
-// clears the hold and the release publishes" — so the control, with no deny
-// record, publishes, and the gap can only close on the deny being read. It
-// first read as closed on a world whose approved release went on to a delay,
-// which is not a withheld fingerprint.
-async function approvedRun({ deny }) {
-  const root = collidingTree();
-  const world = { root, assets: [conforming()] };
-  const held = await run(world);
-  const line = /^\/approve (\S+)@(\S+) ([0-9a-f]{16})$/m.exec(held.comment);
-  assert(line !== null, "the held run printed no /approve line to approve or deny");
-  if (deny) {
-    fs.mkdirSync(path.join(root, "state", "deny"), { recursive: true });
-    fs.writeFileSync(path.join(root, "state", "deny", `${line[3]}.json`),
-      `${JSON.stringify({ fingerprint: line[3], reason: "operator objection inside the window" }, null, 2)}\n`);
-  }
-  return run({ ...world, approvedBy: "the-maintainer", approvedAt: "2026-08-10T11:59:00Z", approvedFor: line[3] });
+const svcGit = (root, ...args) =>
+  execFileSync("git", ["-C", root, ...args], { encoding: "utf8", env: fixtureEnv(root) }).trim();
+function svcCommit(root, message) {
+  svcGit(root, "add", "-A");
+  svcGit(root, "commit", "-q", "--allow-empty", "-m", message);
+  return svcGit(root, "rev-parse", "HEAD");
 }
-await gap("ROLL-59 (f) — an operator deny record on main withholds an approved fingerprint (TRUST-33)", {
-  blocker: "B-T3.3b and M-T3.5 (TRUST-33): nothing reads `state/deny/`, and `operator.yml`, which writes it, is not on main",
-  standing: async () => (await approvedRun({ deny: true })).decision.outcome === "publish",
-  walk: async () => {
-    const control = await approvedRun({ deny: false });
-    assertEqual(control.decision.outcome, "publish",
-      `the control approval does not publish, so this gap cannot tell a deny from a broken fixture: ${JSON.stringify(codes(control))}`);
-    const r = await approvedRun({ deny: true });
-    walkExpects(r.decision.outcome !== "publish" && !r.decision.publishes_now && !r.decision.queue_entry,
-      `a fingerprint named by state/deny/ was published on its approval (${JSON.stringify(codes(r))})`);
+
+/** An identity record exactly as the publish job writes one (`composePublication`). */
+const identityBytes = (pluginId, token) => `${JSON.stringify({
+  schema: "astra.registry.identity/1",
+  plugin_id: pluginId,
+  repository_id: SVC_RID,
+  repository_owner_id: SVC_OID,
+  repo: WALK_REPO,
+  token_hash: lineHash(token),
+}, null, 2)}\n`;
+
+/**
+ * ROLL-25's world after B-T3.7b's baseline and before any binding: the three
+ * listings, MIG-20's `migration` record for each carrying both ids, and the
+ * marker. With `bound`, it is the world ROLL-25 (3)'s publication leaves
+ * behind: that walk asserts its landed identity records are these bytes, so
+ * the ROLL-59 walks start where the bot itself put them.
+ */
+function serviceWorld({ bound = false } = {}) {
+  const root = registryTree(SVC_LISTINGS.map((l) => ({
+    id: l.id, name: l.name, repo: WALK_REPO,
+    versions: [{ version: l.version, staging: false, tag: walkTag(l.id, l.version), capabilities: l.capabilities }],
+  })));
+  for (const l of SVC_LISTINGS) {
+    const file = path.join(root, "plugins", l.id, "versions", `${l.version}.json`);
+    const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+    for (const a of Object.values(doc.artifacts)) {
+      a.url = `https://github.com/${WALK_REPO}/releases/download/${doc.release.tag}/${a.filename}`;
+    }
+    fs.writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
+    const decisionId = crypto.createHash("sha256").update(`migration ${l.id}`).digest("hex").slice(0, 32);
+    const dir = path.join(root, "log", "decisions", "2026", "09");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${decisionId}.json`), `${JSON.stringify({
+      schema: "astra.registry.decision/1", decision_id: decisionId, decided_at: "2026-09-20T00:00:00Z",
+      actor: "system", trigger: "migration", state: "published",
+      plugin_id: l.id, version: l.version, repo: WALK_REPO, tag: walkTag(l.id, l.version),
+      repository_id: SVC_RID, repository_owner_id: SVC_OID,
+      fingerprint: crypto.createHash("sha256").update(`baseline ${l.id}`).digest("hex").slice(0, 16),
+    }, null, 2)}\n`);
+    if (bound) fs.writeFileSync(path.join(root, "plugins", l.id, "identity.json"), identityBytes(l.id, LINE_OWNER));
+  }
+  fs.writeFileSync(path.join(root, "log", "baseline.json"), `${JSON.stringify({
+    schema: "astra.registry.baseline/1", written_at: "2026-09-20T00:00:00Z", version_count: 3, record_count: 3,
+  }, null, 2)}\n`);
+  svcGit(root, "init", "-q", "-b", "main");
+  svcGit(root, "config", "user.email", "walk@example.invalid");
+  svcGit(root, "config", "user.name", "walk");
+  svcCommit(root, bound ? "three listings, bound by ROLL-25 (3)" : "three listings and MIG-20's baseline");
+  return root;
+}
+
+let svcSeq = 0;
+/**
+ * One submission as the jobs before `decide` hand it on. `line` is the binding
+ * line at the attested commit; `ownerId` is the certificate's owner id; `salt`
+ * moves the bytes under the same tag.
+ */
+function svcSubmission({ id, version, line = null, ownerId = SVC_OID, salt = "" }) {
+  const sid = `0192f1c2-3b4a-7c5d-8e6f-${String(++svcSeq).padStart(12, "0")}`;
+  const l = SVC_LISTINGS.find((x) => x.id === id);
+  const tag = walkTag(id, version);
+  const name = `${id}-${version}-linux-x64.astraplugin`;
+  const sha = crypto.createHash("sha256").update(`${id}@${version}${salt}`).digest("hex");
+  const digests = [`linux-x64:${sha}`];
+  const parsed = line === null ? { outcome: "none" } : parseBindingFile(`astra-binding: ${line}\n`);
+  assert(line === null || (parsed.outcome === "one" && parsed.token === line),
+    `the walk's binding line does not parse as one line: ${JSON.stringify(parsed)}`);
+  const one = parsed.outcome === "one";
+  const verified = {
+    submission_id: sid, outcome: "ok", findings: [],
+    plugin_id: id, version, tag, commit: SVC_COMMIT, artifact_digests: digests,
+    fingerprint: submissionFingerprint({ repo: WALK_REPO, tag, id, version, commit: SVC_COMMIT, digests }),
+    repo: WALK_REPO, repository_id: SVC_RID, repository_owner_id: ownerId, renamed: false,
+    published_at: "2026-09-25T09:00:00Z",
+    assets: [{ name, platform: "linux-x64", sha256: sha, size: 1024, url: `https://github.com/${WALK_REPO}/releases/download/${tag}/${name}` }],
+    binding: {
+      outcome: parsed.outcome, token: one ? parsed.token : null, token_hash: one ? lineHash(parsed.token) : null,
+      code: null, alert: false, reason: null,
+    },
+    owner_file: one ? { commit: "8".repeat(40), pull_request: false } : null,
+    // On the owner's own repository the triggering actor is the owner (ROLL-59's Why).
+    actor: one ? { triggering_actor_id: ownerId, floor_days: 0 } : null,
+  };
+  return {
+    sid,
+    fingerprint: verified.fingerprint,
+    tag,
+    verified,
+    facts: {
+      schema: CHECK_FACTS_SCHEMA, submission_id: sid, plugin_id: id, version, platforms: ["linux-x64"],
+      findings: [{ code: "E_DERIVED_LISTING_INVALID", level: "pass" }],
+    },
+    listing: {
+      plugin: {
+        schema: "astra.registry.plugin/1", id, name: l.name, summary: "A walk fixture.", license: "MIT",
+        source: { kind: "github", repo: "placeholder/placeholder" }, added_at: "2026-01-01",
+      },
+      version: {
+        schema: "astra.registry.version/1", id, version, published_at: "2026-09-25T09:00:00Z",
+        release: { kind: "github_release", repo: "placeholder/placeholder", tag, commit: null },
+        capabilities: l.capabilities,
+        artifacts: { "linux-x64": { url: null, filename: name, sha256: sha, size: 1024 } },
+      },
+    },
+    lease: {
+      submission_id: sid, lease_expires_at: "2026-12-31T00:00:00Z", attempt: "att-1", claimed_from: "received",
+      repo: WALK_REPO, tag, trigger: "poll", service_repository_id: SVC_RID, decisions: [], stop_status: "no_stop",
+    },
+  };
+}
+
+/** `ask`'s outcome for one submission; the verdict is `verdictOutcome` of the body the service returns. */
+function svcAsk(sub, { tokenState = "seen", stop = "no_stop", decisions = [], notice = null } = {}) {
+  const verdict = sub.verified.binding.outcome === "one"
+    ? verdictOutcome({ ok: true, shadow: false, body: { eligibility: "eligible", minted_for_repository: true, token_state: tokenState } })
+    : null;
+  return { verdict, gates: { stop_status: stop, decisions }, notice, shadow: false };
+}
+
+/** The `decide` job, once, over the committed tree. */
+function svcDecide(root, sub, { ask, now, claimedFrom = "received" }) {
+  const work = tmp("astra-walk-svc-");
+  const factsDir = path.join(work, "facts");
+  const listingsDir = path.join(work, "listings");
+  fs.mkdirSync(path.join(factsDir, `facts-${sub.sid}`), { recursive: true });
+  fs.writeFileSync(path.join(factsDir, `facts-${sub.sid}`, "facts.json"), JSON.stringify(sub.facts));
+  const pdir = path.join(listingsDir, `listing-${sub.sid}`, "plugins", sub.verified.plugin_id);
+  fs.mkdirSync(path.join(pdir, "versions"), { recursive: true });
+  fs.writeFileSync(path.join(pdir, "plugin.json"), JSON.stringify(sub.listing.plugin));
+  fs.writeFileSync(path.join(pdir, "versions", `${sub.verified.version}.json`), JSON.stringify(sub.listing.version));
+  const job = decideJob({
+    root, submissions: [sub.sid], leases: { [sub.sid]: { ...sub.lease, claimed_from: claimedFrom } }, claimShadow: false,
+    verified: { [sub.sid]: sub.verified }, outcome: { [sub.sid]: ask }, factsDir, listingsDir,
+    now, startedAt: now, readCommit: svcGit(root, "rev-parse", "HEAD"),
+  });
+  assertEqual(job.plans.length, 1, "the decide job did not make exactly one plan for one lease");
+  return { plan: job.plans[0], job, listingsDir: path.join(listingsDir, `listing-${sub.sid}`) };
+}
+
+/** What a plan says, in one line, for a failure message. */
+const said = (plan) =>
+  `${plan.kind}${plan.state ? ` ${plan.state}` : ""}${plan.wait ? ` ${plan.wait.code}` : ""} ` +
+  `${JSON.stringify(plan.record?.reasons ?? plan.reasons?.map((r) => r.code) ?? [])}${plan.why ? ` (${plan.why})` : ""}`;
+
+/**
+ * The `publish` job: compose the reports and apply them onto the tree, as a
+ * commit. `deliveredAt` is what the `alert` job reported (TRUST-14). Returns
+ * the paths the commit changed; none, if the plan wrote nothing.
+ */
+function svcLand(root, decided, { deliveredAt = null } = {}) {
+  const work = tmp("astra-walk-land-");
+  const reportsDir = path.join(work, "reports");
+  fs.mkdirSync(reportsDir, { recursive: true });
+  const run = "88/1";
+  const before = svcGit(root, "rev-parse", "HEAD");
+  const { pending } = composePublication({ plans: [decided.plan], root, listingsDir: decided.listingsDir, reportsDir, deliveredAt, run });
+  const applied = publishApply({
+    root, reports: reportsDir, watchState: path.join(work, "none"), base: before,
+    skipChecks: true, push: false, servicePath: true, message: "registry: publish (plugins ingest)",
+    trailer: commitTrailers({ pending, run }), log: () => {},
+  });
+  assert(applied.outcome === "committed" || applied.outcome === "nothing",
+    `publish-apply refused the walk's report: ${applied.outcome} ${JSON.stringify(applied.refusals ?? [])}`);
+  const after = svcGit(root, "rev-parse", "HEAD");
+  const changed = before === after ? [] : svcGit(root, "diff", "--name-only", before, after).split("\n").filter(Boolean);
+  return { pending, applied, changed };
+}
+
+/**
+ * A hold, approved a day after TRUST-27's period, walked through every gate an
+ * approval has on this path: BOT-28's author notice window, TRUST-14's alert
+ * (undelivered, then delivered), TRUST-32's operator window, and the run that
+ * finally decides. `beforeFinal(root, sub)` runs on the tree just before that
+ * last run.
+ *
+ * The approval is dated from the module's own `FIRST_BINDING_WAIT_DAYS`, so
+ * these walks hold the gates that come AFTER TRUST-27 whatever its period is.
+ * That period is a separate question: contract 2.1.0 made it 0 days and
+ * bot/lib/service-decide.mjs still enforces 7 (lane S11's report, 2026-09-24).
+ */
+function approvalWalk(root, sub, { tokenState = "seen", notice = { kind: "approved", status: "sent" }, beforeFinal = null } = {}) {
+  const s = {};
+  s.held = svcDecide(root, sub, { ask: svcAsk(sub, { tokenState }), now: T0 });
+  s.heldLanded = svcLand(root, s.held);
+  const approvedAt = at(T0, (FIRST_BINDING_WAIT_DAYS + 1) * 24 * 60);
+  const decisions = [{ code: "M_APPROVE", category: "review_passed", decided_at: approvedAt, moderator: "the-owner", declared_interest: false }];
+  const ask = svcAsk(sub, { tokenState, decisions, notice: { ...notice, accepted_at: approvedAt } });
+  const approved = (now) => svcDecide(root, sub, { ask, now, claimedFrom: "approved" });
+  s.noticeRunning = approved(at(approvedAt, 1));
+  const noticeDone = at(approvedAt, 6 * 60 + 1);
+  s.undelivered = approved(noticeDone);
+  s.undeliveredLanded = svcLand(root, s.undelivered, { deliveredAt: null });
+  s.approvedAt = approvedAt;
+  s.deliveredAt = at(noticeDone, 11);
+  s.delivered = approved(at(noticeDone, 10));
+  s.deliveredLanded = svcLand(root, s.delivered, { deliveredAt: s.deliveredAt });
+  s.windowRunning = approved(at(s.deliveredAt, 60));
+  if (beforeFinal) beforeFinal(root, sub);
+  s.final = approved(at(s.deliveredAt, 6 * 60 + 1));
+  s.finalLanded = svcLand(root, s.final);
+  return s;
+}
+
+// ── ROLL-25 (2): json-tools 0.1.3, held `R_FIRST_BINDING`, then rejected ─────
+//
+// Watched failing: with MIG-10's `heldCodes.push("R_FIRST_BINDING")` in
+// `decideSubmission` removed, the release publishes and the first assertion is
+// red; with `baselineFor` answering no baseline, `R_IDENTITY_CHANGED` joins the
+// hold (MIG-28) and the exact-codes assertion is red; and with `decideJob`
+// handing `listingStateAt` a `Date` again, the job refuses to decide. Before
+// 2026-09-24 it decided anyway with no state, so MIG-31's report went missing:
+// that is how this walk found the bug, on its first run.
+await test("ROLL-25 (2) — json-tools 0.1.3's first binding line is held `R_FIRST_BINDING` against MIG-20's baseline, then rejected, and a re-claim writes nothing", () => {
+  const root = serviceWorld();
+  assertEqual(listingStateAt(root, "json-tools", { now: T0 }).state, "grandfathered",
+    "the walk's premise: json-tools is published, unbound and never bound (MIG-1)");
+  const sub = svcSubmission({ id: "json-tools", version: "0.1.3", line: LINE_OWNER });
+  const held = svcDecide(root, sub, { ask: svcAsk(sub), now: T0 });
+  assertEqual(held.plan.state, "held", `a grandfathered listing's first binding line was not held: ${said(held.plan)}`);
+  assertEqual(JSON.stringify(held.plan.record.reasons), JSON.stringify(["R_FIRST_BINDING"]),
+    "MIG-10's hold, and only it: R_IDENTITY_CHANGED here means MIG-20's baseline was not read (MIG-28), and " +
+    "R_BINDING_CHANGED means ID-41 was applied to a listing with no identity record");
+  assertEqual(held.plan.result_extra.triggering_actor_is_owner, true,
+    "MIG-31: a grandfathered listing's first-binding hold reports whether the triggering actor is the owner");
+  const landed = svcLand(root, held);
+  assert(landed.changed.some((f) => /^log\/decisions\/2026\/09\/[0-9a-f]{32}\.json$/.test(f)),
+    `the hold's record did not land: ${landed.changed.join(", ")}`);
+  assert(!landed.changed.some((f) => f.startsWith("plugins/")), `a hold wrote under plugins/: ${landed.changed.join(", ")}`);
+
+  // The rejection, as the moderation run records it (BOT-30).
+  terminalSubmissionRecord({
+    code: "M_REJECT", submission_id: sub.sid, repo: WALK_REPO, tag: sub.tag, trigger: "poll",
+    service_repository_id: SVC_RID, stop_status: "no_stop", fingerprints: [sub.fingerprint],
+    category: "broken", moderator: "the-owner", decided_at: at(T0, 120), declared_interest: false,
+  }, { root, now: new Date(at(T0, 121)) });
+  svcCommit(root, "moderation: M_REJECT json-tools 0.1.3");
+  const again = svcDecide(root, sub, { ask: svcAsk(sub), now: at(T0, 180) });
+  assertEqual(`${again.plan.kind} ${again.plan.state}`, "reported refused",
+    `a re-claim of the rejected submission was not answered by the rejection on main (BOT-19): ${said(again.plan)}`);
+  assertEqual(svcLand(root, again).changed.length, 0, "a BOT-19 hit wrote something");
+});
+
+// Watched failing: with the `catch` around `listingStateAt` in `decideJob`
+// answering `null` again, the job decides json-tools' release with no state and
+// this is red.
+await test("the decide job refuses to decide a listed plugin whose MIG-1 state it cannot read, rather than deciding it stateless", () => {
+  // A shallow checkout — the decide job's own, had it lost `fetch-depth: 0`:
+  // ID-25's "ever had an identity record" cannot be answered from it, and the
+  // reader says so.
+  const full = serviceWorld();
+  const root = path.join(tmp("astra-walk-shallow-"), "tree");
+  execFileSync("git", ["clone", "-q", "--depth", "1", `file://${full}`, root], { env: fixtureEnv(root) });
+  assertEqual(svcGit(root, "rev-parse", "--is-shallow-repository"), "true", "the fixture's clone is not shallow");
+  const sub = svcSubmission({ id: "json-tools", version: "0.1.3", line: LINE_OWNER });
+  let threw = null;
+  try {
+    svcDecide(root, sub, { ask: svcAsk(sub), now: T0 });
+  } catch (e) {
+    threw = e;
+  }
+  assert(threw !== null && /MIG-1's state of json-tools cannot be read/.test(threw.message),
+    `the decide job decided a release whose listing state it could not read: ${threw?.message ?? "it did not throw"}`);
+});
+
+// ── ROLL-25 (3): text-utils held under MIG-10, approved, served ──────────────
+//
+// The approval comes a day after TRUST-27's period (whatever the module
+// enforces), and what then stands between it and the catalogue is BOT-28's
+// notice window, TRUST-14's alert, and TRUST-32's six hours from the alert's
+// reported delivery.
+//
+// Watched failing: with TRUST-27's comparison in `honourApproval` made two
+// days longer than the constant, the approval is not honoured and the walk is
+// red at the notice; with `decideSubmission`'s TRUST-14 gate (`if (w.name)`)
+// made `false`, the run that raises the alert publishes and is red; with
+// `operatorWindow`'s `due > now` made `false`, the run an hour after delivery
+// publishes and is red; and with the identity records written for the plugin
+// alone (`ids = [verified.plugin_id]`), ID-64's siblings are unbound and it is
+// red.
+await test("ROLL-25 (3) — text-utils held `R_FIRST_BINDING`, approved, published only after TRUST-27's period, the notice window, the alert's delivery and the operator window, binding every sibling (DEC-6; TRUST-14; TRUST-32; ID-64)", () => {
+  const root = serviceWorld();
+  const sub = svcSubmission({ id: "text-utils", version: "0.2.1", line: LINE_OWNER });
+  const s = approvalWalk(root, sub);
+  assertEqual(JSON.stringify(s.held.plan.record?.reasons), JSON.stringify(["R_FIRST_BINDING"]), `the hold: ${said(s.held.plan)}`);
+  assertEqual(`${s.noticeRunning.plan.kind} ${s.noticeRunning.plan.wait?.code}`, "wait W_NOTICE_PENDING",
+    `a minute after the approval the author notice window has not passed (BOT-28): ${said(s.noticeRunning.plan)}`);
+  assertEqual(`${s.undelivered.plan.kind} ${s.undelivered.plan.wait?.code}`, "wait W_ALERT_UNDELIVERED",
+    `with the notice window passed, the approval raises TRUST-14's alert and publishes nothing: ${said(s.undelivered.plan)}`);
+  assertEqual(JSON.stringify(s.undelivered.plan.alert),
+    JSON.stringify({ fingerprint: sub.fingerprint, event: "approval", approval_decided_at: s.approvedAt }),
+    "the alert does not name this fingerprint's approval");
+  assertEqual(s.undeliveredLanded.changed.length, 0,
+    `no delivery was reported and the run wrote ${s.undeliveredLanded.changed.join(", ")}: TRUST-32 counts only from a reported delivery`);
+  assertEqual(JSON.stringify(s.deliveredLanded.changed), JSON.stringify([`state/alerts/${sub.fingerprint}.json`]),
+    "a reported delivery lands the alert record, and nothing else");
+  assertEqual(`${s.windowRunning.plan.kind} ${s.windowRunning.plan.wait?.code}`, "wait W_OPERATOR_WINDOW",
+    `an hour after delivery the operator window is still running (TRUST-32): ${said(s.windowRunning.plan)}`);
+  assertEqual(s.windowRunning.plan.wait.earliest_retry_at, at(s.deliveredAt, 6 * 60),
+    "W_OPERATOR_WINDOW's earliest retry is not the window's end");
+  assertEqual(s.final.plan.state, "published",
+    `six hours after delivery, and a day after TRUST-27's ${FIRST_BINDING_WAIT_DAYS} days, the approved first binding is not served: ${said(s.final.plan)}`);
+  assertEqual(s.final.plan.record.moderator, "the-owner", "DEC-7: the approving moderator is not on the record");
+  assert(s.finalLanded.changed.includes("plugins/text-utils/versions/0.2.1.json"),
+    `the publication did not land its version file: ${s.finalLanded.changed.join(", ")}`);
+  // ID-64: the binding commit writes the identity record of every listing the
+  // repository id names, baseline-named ones included — the bound world the
+  // ROLL-59 walks below start from.
+  for (const l of SVC_LISTINGS) {
+    const rel = `plugins/${l.id}/identity.json`;
+    assert(s.finalLanded.changed.includes(rel), `the binding commit did not write ${rel} (ID-64)`);
+    assertEqual(fs.readFileSync(path.join(root, rel), "utf8"), identityBytes(l.id, LINE_OWNER),
+      `${rel} is not the record serviceWorld({ bound: true }) starts the ROLL-59 walks from`);
+  }
+});
+
+// ── ROLL-25 (4): a delayed telegram-client release, stopped ─────────────────
+//
+// Watched failing: with `terminalOnMain`'s tag clause made `false`, the
+// re-registration of the moved tag is red; with `decideSubmission`'s BOT-19
+// step (`if (terminal)`) made `false`, the drain after the restore is red too.
+await test("ROLL-25 (4) — a delayed telegram-client release stopped by its author stays stopped after a restore, for the same submission and for its tag moved to other bytes (BOT-19; FLOW-26; SERVE-93)", () => {
+  const root = serviceWorld({ bound: true });
+  const sub = svcSubmission({ id: "telegram-client", version: "0.4.0", line: LINE_OWNER });
+  const first = svcDecide(root, sub, { ask: svcAsk(sub, { tokenState: "bound" }), now: T0 });
+  assertEqual(first.plan.state, "delayed", `step (4) needs a delayed release: ${said(first.plan)}`);
+  const landed = svcLand(root, first);
+  assert(landed.changed.includes("state/queue/telegram-client@0.4.0.json"), `the delay queued nothing: ${landed.changed.join(", ")}`);
+
+  // The author stops it from the notice, without signing in; this run's gates
+  // say so, and the decide job writes and posts nothing for it.
+  const stopping = svcDecide(root, sub, { ask: svcAsk(sub, { tokenState: "bound", stop: "stopped" }), now: at(T0, 30), claimedFrom: "delayed" });
+  assertEqual(stopping.plan.kind, "none", `a stopped submission was decided: ${said(stopping.plan)}`);
+  assertEqual(svcLand(root, stopping).changed.length, 0, "the decide job wrote something for a stopped submission");
+  // The moderation run records the stop (BOT-30), with the lease's repository id.
+  terminalSubmissionRecord({
+    code: "A_STOP", submission_id: sub.sid, repo: WALK_REPO, tag: sub.tag, trigger: "poll",
+    service_repository_id: SVC_RID, stop_status: "stopped", fingerprints: [sub.fingerprint],
+  }, { root, now: new Date(at(T0, 31)) });
+  svcCommit(root, "moderation: A_STOP telegram-client 0.4.0");
+
+  const due = at(first.plan.publish_after, 1);
+  // The control: without the stop on main, the drain is decided, not answered.
+  const control = serviceWorld({ bound: true });
+  svcLand(control, svcDecide(control, sub, { ask: svcAsk(sub, { tokenState: "bound" }), now: T0 }));
+  const unstopped = svcDecide(control, sub, { ask: svcAsk(sub, { tokenState: "bound" }), now: due, claimedFrom: "delayed" });
+  assert(unstopped.plan.kind !== "reported", `the control drain is answered from main with no stop on it: ${said(unstopped.plan)}`);
+
+  // After a restore the service has lost the stop (SERVE-93) and drains it.
+  const drained = svcDecide(root, sub, { ask: svcAsk(sub, { tokenState: "bound" }), now: due, claimedFrom: "delayed" });
+  assertEqual(`${drained.plan.kind} ${drained.plan.state}`, "reported stopped",
+    `a drain after a restore does not find the author's stop on main: ${said(drained.plan)}`);
+  assertEqual(svcLand(root, drained).changed.length, 0, "a drain of a stopped submission wrote something");
+  // And the same tag, moved to other bytes, registered again: a stop is for
+  // the tag of the repository, not for one set of bytes (FLOW-26).
+  const moved = svcSubmission({ id: "telegram-client", version: "0.4.0", line: LINE_OWNER, salt: " moved" });
+  assert(moved.fingerprint !== sub.fingerprint, "the moved tag's bytes did not move");
+  const again = svcDecide(root, moved, { ask: svcAsk(moved, { tokenState: "bound" }), now: due });
+  assertEqual(`${again.plan.kind} ${again.plan.state}`, "reported stopped",
+    `the stopped tag, moved and registered again, is not stopped: ${said(again.plan)}`);
+});
+
+// ── ROLL-59 (a), (c), (d): ID-41 against the identity record ────────────────
+//
+// Watched failing, one `id41` row at a time: row 6 made `false` reds (a) and
+// the rebind; row 3's `B_OWNER_CHANGED` pushed as a hold instead reds (c); and
+// `USABLE_TOKEN_STATES` gaining `revoked` reds the revoked line.
+await test("ROLL-59 (a) — a second account's own line under a bound listing is held `R_BINDING_CHANGED`, and the first account's stop writes nothing", () => {
+  const root = serviceWorld({ bound: true });
+  const sub = svcSubmission({ id: "json-tools", version: "0.1.5", line: LINE_SECOND });
+  const r = svcDecide(root, sub, { ask: svcAsk(sub, { tokenState: "seen" }), now: T0 });
+  assertEqual(r.plan.state, "held", `a line whose token is not the recorded one was not held: ${said(r.plan)}`);
+  assertEqual(JSON.stringify(r.plan.record.reasons), JSON.stringify(["R_BINDING_CHANGED"]), "ID-41 row 6, and only it");
+  assertEqual(typeof r.plan.result_extra.objection_window, "number", "ID-61: the service learns the objection window only from this result");
+  assertEqual(r.plan.result_extra.owner_file_commit, "8".repeat(40), "ID-63: the owner file's commit is reported");
+  svcLand(root, r);
+  const stopped = svcDecide(root, sub, { ask: svcAsk(sub, { tokenState: "seen", stop: "stopped" }), now: at(T0, 60) });
+  assertEqual(stopped.plan.kind, "none", `the first account's stop through \`notice.binding\` was decided: ${said(stopped.plan)}`);
+  assertEqual(svcLand(root, stopped).changed.length, 0, "a stopped submission wrote something");
+});
+
+await test("ROLL-59 (c) — after a transfer, a bound listing's release carrying the recorded line is refused `B_OWNER_CHANGED`", () => {
+  const root = serviceWorld({ bound: true });
+  const sub = svcSubmission({ id: "json-tools", version: "0.1.6", line: LINE_OWNER, ownerId: "700000999" });
+  const r = svcDecide(root, sub, { ask: svcAsk(sub, { tokenState: "bound" }), now: T0 });
+  assertEqual(r.plan.state, "refused", `the certificate's owner id moved under the recorded token and nothing refused it: ${said(r.plan)}`);
+  assert(r.plan.record.reasons.includes("B_OWNER_CHANGED"), `ID-41 row 3: ${said(r.plan)}`);
+  const landed = svcLand(root, r);
+  assert(!landed.changed.some((f) => f.startsWith("plugins/")), `a refusal wrote under plugins/: ${landed.changed.join(", ")}`);
+});
+
+await test("ROLL-59 (d) — after `A_BINDING_REVOKE`, a release still carrying the old line is refused `B_BINDING_UNUSABLE` (ID-9)", () => {
+  const root = serviceWorld({ bound: true });
+  const sub = svcSubmission({ id: "json-tools", version: "0.1.7", line: LINE_OWNER });
+  const ask = svcAsk(sub, { tokenState: "revoked" });
+  assertEqual(ask.verdict, "B_BINDING_UNUSABLE", "`ask` did not reduce a revoked token's verdict to B_BINDING_UNUSABLE (BOT-89)");
+  const r = svcDecide(root, sub, { ask, now: T0 });
+  assertEqual(r.plan.state, "refused", `a release carrying a revoked token was not refused: ${said(r.plan)}`);
+  assert(r.plan.record.reasons.includes("B_BINDING_UNUSABLE"), said(r.plan));
+});
+
+// A rebind after the revocation: held, and its approval waits for the
+// PREVIOUS account's notice window, never the incoming one's (ID-60), then
+// publishes and rebinds every sibling to the new token (ID-64).
+//
+// Watched failing: with `noticeElapsed`'s `bindingChanged && status === "sent"`
+// refusal removed, the incoming account's notice counts and the walk is red.
+await test("ROLL-59 (d) — after `A_BINDING_REVOKE`, a release carrying a new line is held `R_BINDING_CHANGED`, approved only on the previous account's notice, and rebinds every sibling", () => {
+  const root = serviceWorld({ bound: true });
+  const sub = svcSubmission({ id: "json-tools", version: "0.1.8", line: LINE_REBIND });
+  const incoming = approvalWalk(root, sub, { notice: { kind: "binding_changed", status: "sent" } });
+  assertEqual(JSON.stringify(incoming.held.plan.record?.reasons), JSON.stringify(["R_BINDING_CHANGED"]), `the rebind's hold: ${said(incoming.held.plan)}`);
+  assertEqual(`${incoming.final.plan.kind} ${incoming.final.plan.wait?.code}`, "wait W_NOTICE_PENDING",
+    `the incoming account's own notice counted for an R_BINDING_CHANGED approval (ID-60): ${said(incoming.final.plan)}`);
+
+  const root2 = serviceWorld({ bound: true });
+  const s = approvalWalk(root2, sub, { notice: { kind: "binding_changed", status: "previous_sent" } });
+  assertEqual(s.final.plan.state, "published", `the approved rebind was not served: ${said(s.final.plan)}`);
+  for (const l of SVC_LISTINGS) {
+    const rel = `plugins/${l.id}/identity.json`;
+    assert(s.finalLanded.changed.includes(rel), `the rebind did not rewrite ${rel} (ID-64)`);
+    assertEqual(JSON.parse(fs.readFileSync(path.join(root2, rel), "utf8")).token_hash, lineHash(LINE_REBIND),
+      `${rel} does not carry the new line's token hash`);
+  }
+});
+
+// ── ROLL-59 (f): a deny record withholds an approved fingerprint ────────────
+//
+// The deny is written by `operatorAct`, the function `operator.yml` runs, and
+// read by the decide job's `readGitState` — so this walk fails if the writer's
+// path or member and the reader's key ever part.
+//
+// Watched failing: with `decideSubmission`'s TRUST-33 test
+// (`git.denied?.has(...)`) made `false`, the denied release publishes and the
+// walk is red; with `readGitState` reading `state/denied/`, likewise.
+await test("ROLL-59 (f) — an operator deny record on main withholds an approved fingerprint (TRUST-33)", () => {
+  const control = approvalWalk(serviceWorld(), svcSubmission({ id: "json-tools", version: "0.1.9", line: LINE_OWNER }));
+  assertEqual(control.final.plan.state, "published",
+    `the control approval does not publish, so this walk cannot tell a deny from a broken fixture: ${said(control.final.plan)}`);
+  const root = serviceWorld();
+  const sub = svcSubmission({ id: "json-tools", version: "0.1.9", line: LINE_OWNER });
+  const s = approvalWalk(root, sub, {
+    beforeFinal: (tree, which) => {
+      const act = operatorAct({
+        root: tree, act: "deny", fingerprint: which.fingerprint, now: new Date(at(T0, (FIRST_BINDING_WAIT_DAYS + 1) * 24 * 60 + 60)),
+        runId: "424242", run: "https://github.com/mihailinl/astra-registry/actions/runs/424242",
+      });
+      assertEqual(JSON.stringify(act.paths), JSON.stringify([`state/deny/${which.fingerprint}.json`]), "the operator's deny wrote elsewhere");
+      svcCommit(tree, "operator: deny a release by its fingerprint (TRUST-33)");
+    },
+  });
+  assertEqual(s.final.plan.state, "refused", `a fingerprint an operator denied was published on its approval: ${said(s.final.plan)}`);
+  assertEqual(JSON.stringify(s.final.plan.record.reasons), JSON.stringify(["P_OPERATOR_DENIED"]), said(s.final.plan));
+  assert(!s.finalLanded.changed.some((f) => f.startsWith("plugins/")), `a denied release wrote under plugins/: ${s.finalLanded.changed.join(", ")}`);
+});
+
+// ── the gap: a step whose code is not on `main` ─────────────────────────────
+
+// ROLL-59 (h): a grandfathered first binding whose triggering actor is not the
+// owner, approved a day after TRUST-27's period (8 days after the hold at 7, 1
+// at 0) and so inside MIG-31's 14, "deferred by MIG-31's 14 days, with a
+// recorded fixture clock standing in for them". `verify` reads the actor and
+// its floor (`verified.actor`, bot/ingest.mjs), and the decide job reports it
+// in the hold's result (`triggering_actor_is_owner`), but nothing in
+// `decideSubmission` defers an approval by it.
+/** The (h) walk: a push holder who is not the owner tagged the first binding (MIG-31's report). */
+function nonOwnerFirstBinding() {
+  const sub = svcSubmission({ id: "json-tools", version: "0.2.0", line: LINE_OWNER });
+  sub.verified.actor = { triggering_actor_id: "700000555", floor_days: 14 };
+  return approvalWalk(serviceWorld(), sub);
+}
+await gap("ROLL-59 (h) — a non-owner's grandfathered first binding is not approved inside MIG-31's 14 days", {
+  blocker: "B-T3.3a (MIG-31): `honourApproval` in bot/lib/service-decide.mjs never reads `verified.actor` " +
+    "(`floor_days`, `triggering_actor_id`), so no approval is deferred by MIG-31's 14 days",
+  // Exactly the absence named: the hold reports a non-owner actor, and the
+  // approval inside MIG-31's 14 days is honoured and served anyway.
+  standing: () => {
+    const s = nonOwnerFirstBinding();
+    return s.held.plan.result_extra.triggering_actor_is_owner === false && s.final.plan.state === "published";
+  },
+  walk: () => {
+    // The premise, held as a plain assertion so a break in it is a FAIL and
+    // never a gap: the same walk with the owner as the actor is served, so
+    // whatever defers the non-owner's approval is MIG-31 and not TRUST-27
+    // or another gate of `approvalWalk`.
+    const owner = approvalWalk(serviceWorld(), svcSubmission({ id: "json-tools", version: "0.2.0", line: LINE_OWNER }));
+    assertEqual(owner.final.plan.state, "published", `the owner's own first binding is not served by this walk: ${said(owner.final.plan)}`);
+    const s = nonOwnerFirstBinding();
+    walkExpects(s.held.plan.result_extra.triggering_actor_is_owner === false,
+      "the hold did not report the non-owner actor, so MIG-31's case never arose");
+    walkExpects(s.final.plan.state !== "published",
+      `a non-owner's first binding approved ${FIRST_BINDING_WAIT_DAYS + 1} day(s) after its hold was served (${said(s.final.plan)}); MIG-31 defers ` +
+      "that approval until 14 days after the hold's record reached main");
   },
 });
 
