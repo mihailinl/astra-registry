@@ -274,6 +274,11 @@ const MODULES = [
   // line, its FLOORS entry and the file are one change**, for the reason
   // written out at `regenerate.mjs` above.
   "git-env.mjs",
+  // RC-R3-2 — SCOPE-9's registry half: the token file's parties against the
+  // waits the bot sends and the codes it carries. It prints its own section
+  // header and sits between two modules that print theirs, so it moves no
+  // existing name. **This line, its FLOORS entry and the file are one change.**
+  "scope9.mjs",
   // Last until `loads.mjs` below, and with a section header of its own.
   // Appending after a module that prints its own header moves nothing at all.
   "baseline.mjs",
@@ -1941,6 +1946,7 @@ const FLOORS = new Map(Object.entries({
   "settings.mjs": 14,
   "git-env.mjs": 8,
   "baseline.mjs": 9,
+  "scope9.mjs": 5,
   "loads.mjs": 2,
 }));
 

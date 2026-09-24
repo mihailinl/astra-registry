@@ -897,6 +897,9 @@ export async function run() {
     // one, so a suite that stopped running it would print the same count of
     // NOT ASKED minus two and look like a suite that had less to skip.
     "loads.mjs",
+    // `scope9.mjs` was added on 2026-09-24 with RC-R3-2. Left out of this
+    // list it is silent, which is the half this list exists for.
+    "scope9.mjs",
   ];
   // A literal control character in a tracked source file is invisible, and that
   // is the whole of the defect. `bot/lib/moderation.mjs` carried three NUL
