@@ -242,6 +242,11 @@ export function loadSeries(name, { fixtureDir = FIXTURE_DIR, manifestFile = MANI
       docs,
       sha256: Object.fromEntries(DOCUMENTS.map((rel) => [rel, sha256(docs[rel])])),
       message,
+      expires: {
+        "registry/v1/trust.json": trust.signed?.expires_at,
+        "registry/v1/index.json": index.signed?.expires_at,
+        "registry/v1/revocations.json": list.signed?.expires_at,
+      },
       facts: {
         trust: {
           serial: trust.signed?.serial,
@@ -301,6 +306,19 @@ export function buildCommits(git, steps) {
     parent = sha;
   }
   return steps.map((s) => s.sha);
+}
+
+/**
+ * The step's documents whose `expires_at` has passed at `now`. SERVE-22
+ * refuses a changed document already past it, and a daemon refuses an
+ * expired list, so a step with one is a step nobody will accept. The series'
+ * lists run out seven days after T0 (2026-09-29 for T0 2026-09-22), and that
+ * date is the rehearsal's hard end.
+ */
+export function expiredDocuments(step, now) {
+  return Object.entries(step.expires)
+    .filter(([, at]) => typeof at === "string" && Date.parse(at) <= now)
+    .map(([rel, at]) => `${rel} expired at ${at}`);
 }
 
 /** Where `signed`'s head is in a series: the step index, -1 for no branch, null for a commit not in it. */
@@ -562,7 +580,10 @@ async function run(argv, { fetchImpl, judge, gitConfig = [], log, sleep, clock, 
   if (hasMain) git(["fetch", "--quiet", "--no-tags", "canary", "+refs/heads/main:refs/rehearsal/canary-main"]);
   const at = positionOf(steps, head);
 
+  const nowMs = (clock ?? Date.now)();
+  const firstExpiry = steps.map((s) => s.expires["registry/v1/revocations.json"]).filter(Boolean).sort()[0];
   if (a.status) {
+    log(`hard end: the series' first list expires at ${firstExpiry}${Date.parse(firstExpiry) <= nowMs ? " — PASSED; the service and the daemon will refuse it" : ""}`);
     log(`\`${series.branch}\`: ${head === null ? "absent" : at === null ? `${head}, NOT a commit of this series` : `step ${at} (${steps[at].id}) ${head}`}`);
     for (const s of steps) {
       const src = hasMain ? sourceCheck(git, s, "refs/rehearsal/canary-main") : { ok: false, why: "the canary has no main" };
@@ -577,6 +598,12 @@ async function run(argv, { fetchImpl, judge, gitConfig = [], log, sleep, clock, 
 
   const n = a.step;
   const target = steps[n];
+  const expired = expiredDocuments(target, nowMs);
+  if (expired.length) {
+    throw new Refusal("EXPIRED", `step ${n} (${target.id}) cannot be accepted any more: ${expired.join("; ")}. SERVE-22 refuses a changed ` +
+      "document past its expires_at and a daemon refuses an expired list. The rehearsal's hard end has passed: regenerate the " +
+      "series at a later T0 (tools/testkeys/make-rehearsal-r2.mjs) and serve it on new branches");
+  }
   log(`step ${n}: ${target.id} → \`${series.branch}\` at ${target.sha}`);
   log(`      ${target.clause}`);
   log(`      ${describe(target)}`);
