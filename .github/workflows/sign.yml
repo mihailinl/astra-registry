@@ -180,6 +180,12 @@ jobs:
       # documents into `dist/signed/` and a record of what it decided into
       # `record.json`. It does not push, which is why the step that does needs
       # no key.
+      #
+      # `--event` is what lets the schedule own the equal-serial refresh: a
+      # push or a workflow_run publishes every CHANGED document at once, and
+      # re-signs an unchanged one only at the 34 h backstop, so that a merge
+      # just past the 20-hour mark no longer takes the unattended re-sign
+      # ROLL-14 counts (tools/signer/plan.mjs, RESIGN_HOURS_BY_EVENT).
       - name: Plan the run, sign what changed, and verify it against the trust.json beside it
         id: sign
         env:
@@ -194,6 +200,7 @@ jobs:
           node tools/signer/run.mjs \
             --step sign \
             --source-commit "${{ steps.source.outputs.sha }}" \
+            --event "$GITHUB_EVENT_NAME" \
             --out dist/signed \
             --record record.json
 

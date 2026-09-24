@@ -29,7 +29,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { fixtureEnv } from "../lib/git-env.mjs";
 
 import { buildIndex } from "../build-index.mjs";
@@ -494,5 +494,79 @@ export async function run() {
     assert(refused.reason.includes("no longer holds"), refused.reason);
     assertEqual(t.git("ls-remote", "origin", "refs/heads/signed").split("\t")[0], overtaking,
       "the other publisher's commit was overwritten");
+  });
+
+  await test("an equal-serial re-sign is the schedule's: a push or workflow_run run leaves it alone until 34 h, and the CLI reads the event", async () => {
+    // ROLL-14's first condition is three CONSECUTIVE UNATTENDED re-signs, and
+    // on 2026-09-24 four of the five re-signs `signed` had ever received were
+    // fired by a `push`: a pull request merged minutes after the 20-hour mark
+    // took the refresh from the schedule and reset the count (ops
+    // notes/state.md, RC-R1-9(c)). The decision was blind to what started the
+    // run. So this is asked through the command line `sign.yml` runs, with
+    // `--event` as sign.yml passes it, and with GITHUB_EVENT_NAME set to
+    // something else to show the flag, not the environment, decides: an event
+    // that never reaches the plan is a rule that holds only in a unit test.
+    const t = makeTree("event-cadence", { trustKeys: [BOOTSTRAP] });
+    t.addListing("dice-roller");
+    const sourceCommit = t.commit("a listing");
+    const T0 = Date.parse("2026-09-20T00:00:00Z");
+    const at = (hours) => new Date(T0 + hours * 3600 * 1000).toISOString().replace(/\.\d+Z$/, "Z");
+    const opening = await signRun({
+      root: t.dir, sourceCommit, head: { present: false }, now: at(0), available: [signerFor(BOOTSTRAP)],
+    });
+    assertEqual(opening.commit, true, "the opening run, which creates `signed`, committed nothing");
+    const signedSha = buildSignedCommit({
+      root: t.dir, files: opening.files, parent: null, message: commitMessage(opening, "https://example.invalid/runs/1"),
+    });
+    t.git("update-ref", "refs/heads/signed", signedSha);
+    t.git("remote", "add", "origin", t.dir);
+
+    const RUN = path.join(import.meta.dirname, "..", "signer", "run.mjs");
+    const cli = (event, hours) => {
+      const out = path.join(tmp, `event-cadence-${event ?? "none"}-${event === "" ? "empty-" : ""}${hours}`);
+      const record = `${out}.json`;
+      // Nothing of the job this suite runs in may reach the child: not its
+      // GITHUB_OUTPUT (the child would append to the real step's outputs),
+      // not its own event, and never a signing key (`--test-key` refuses one).
+      const env = Object.fromEntries(Object.entries(fixtureEnv(t.dir)).filter(([k]) =>
+        !k.startsWith("GITHUB_") && !k.startsWith("ASTRA_INDEX_SIGNING_KEY")));
+      env.GITHUB_EVENT_NAME = "pull_request";
+      const r = spawnSync(process.execPath, [
+        RUN, "--step", "sign", "--root", t.dir, "--source-commit", sourceCommit, "--now", at(hours),
+        ...(event === null ? [] : ["--event", event]),
+        "--test-key", `${BOOTSTRAP}=${KEY_A}`, "--out", out, "--record", record,
+      ], { env, encoding: "utf8" });
+      return {
+        status: r.status,
+        said: `${r.stdout}${r.stderr}`,
+        record: r.status === 0 ? JSON.parse(fs.readFileSync(record, "utf8")) : null,
+      };
+    };
+    const expect = (event, hours, resigned) => {
+      const r = cli(event, hours);
+      const who = `${event ?? "a run with no --event"} at ${hours} h`;
+      assertEqual(r.status, 0, `${who} exited ${r.status}: ${r.said}`);
+      for (const name of ["index", "revocations"]) {
+        assertEqual(r.record.documents[name].decision, resigned ? "resign" : "unchanged",
+          `${who}: the ${name} decision`);
+      }
+      assertEqual(r.record.commit, resigned, `${who}: commit`);
+    };
+    expect("schedule", 20, true);
+    expect("workflow_dispatch", 20, true);
+    expect("push", 25, false);
+    expect("workflow_run", 25, false);
+    expect("push", 33, false);
+    expect("push", 34, true);
+    expect("workflow_run", 34, true);
+    expect("schedule", 19, false);
+    expect(null, 20, true);
+
+    const odd = cli("pull_request", 25);
+    assertEqual(odd.status, 2, `an event sign.yml does not list was planned anyway: ${odd.said}`);
+    assert(odd.said.includes("pull_request") && odd.said.includes("RESIGN_HOURS_BY_EVENT"),
+      `the refusal does not name the event: ${odd.said}`);
+    const empty = cli("", 25);
+    assertEqual(empty.status, 2, `an empty --event was planned as a shell run: ${empty.said}`);
   });
 }
