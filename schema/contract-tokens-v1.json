@@ -1,6 +1,6 @@
 {
-  "contract_version": "2.9.0",
-  "source_commit": "51eb13e7270e5cf24467d9a29c82953dbb50bba3",
+  "contract_version": "2.10.0",
+  "source_commit": "ed81e797b8178f5d6771e91ee47e3288d128b263",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -1022,7 +1022,8 @@
       ],
       "acceptor": [
         "service",
-        "panel"
+        "panel",
+        "registry"
       ],
       "state": "live",
       "source": "B.7",
@@ -1031,7 +1032,8 @@
         "SCOPE-7",
         "SCOPE-8",
         "FLOW-13"
-      ]
+      ],
+      "artefact": "MOD-9's hold, as a reversal; on release, one commit carrying `Service-Decision:` with DEC-7's voiding record, `plugins/<id>/identity.json` deleted where it exists (ID-40), log `reset`; none"
     },
     {
       "id": "code:M_APPROVE",
@@ -1082,7 +1084,8 @@
       ],
       "acceptor": [
         "service",
-        "panel"
+        "panel",
+        "registry"
       ],
       "state": "live",
       "source": "B.7",
@@ -1091,7 +1094,8 @@
         "SCOPE-7",
         "SCOPE-8",
         "FLOW-13"
-      ]
+      ],
+      "artefact": "log `appeal` (MOD-33), and for a refusal a decision record; `reversed` adds registry plan: MOD-34's artefact"
     },
     {
       "id": "code:A_STOP",
@@ -1162,7 +1166,8 @@
       ],
       "acceptor": [
         "service",
-        "panel"
+        "panel",
+        "registry"
       ],
       "state": "live",
       "source": "B.7",
@@ -1172,7 +1177,8 @@
         "SCOPE-8",
         "FLOW-13"
       ],
-      "fixed_reason": "Delisted at its author's own request, made from the Astra plugins panel. Installed copies are not removed."
+      "fixed_reason": "Delisted at its author's own request, made from the Astra plugins panel. Installed copies are not removed.",
+      "artefact": "from a bound account: `unlisted`, log `delist` with `author_request`; otherwise MOD-9's hold"
     },
     {
       "id": "code:A_YANK",
@@ -1183,7 +1189,8 @@
       ],
       "acceptor": [
         "service",
-        "panel"
+        "panel",
+        "registry"
       ],
       "state": "live",
       "source": "B.7",
@@ -1193,7 +1200,8 @@
         "SCOPE-8",
         "FLOW-13"
       ],
-      "fixed_reason": "Yanked at its author's own request, made from the Astra plugins panel."
+      "fixed_reason": "Yanked at its author's own request, made from the Astra plugins panel.",
+      "artefact": "from the bound account only (FLOW-79): `yanked`, log `yank` with `author_request`, and DEC-7's author-action record per version named"
     },
     {
       "id": "wait:W_LEASE_EXPIRED",
@@ -5310,6 +5318,51 @@
   ],
   "flow13_table": [
     {
+      "code": "A_STOP",
+      "level": "error",
+      "stage": "policy",
+      "fix": "new_tag",
+      "panel_only": false,
+      "title": "Stopped by its author",
+      "remedy": "A stop was confirmed from this submission's notice link (TRUST-34), so none of its fingerprints publishes. A stop cannot be lifted, and this tag cannot be submitted again (FLOW-26): publish the release under a new tag."
+    },
+    {
+      "code": "A_WITHDRAW",
+      "level": "error",
+      "stage": "policy",
+      "fix": "new_tag",
+      "panel_only": false,
+      "title": "Withdrawn before it was checked",
+      "remedy": "The submission was withdrawn while it was `received` (FLOW-22), so nothing was checked or published. This tag cannot be submitted again (FLOW-26): publish the release under a new tag."
+    },
+    {
+      "code": "A_YANK",
+      "level": "note",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "Yanked at its author's own request",
+      "remedy": "The listing's bound account yanked these versions from the Astra plugins panel (FLOW-79). A yank cannot be undone by anyone, and installed copies keep running. A new version is listed as usual."
+    },
+    {
+      "code": "B_ACCOUNT_INELIGIBLE",
+      "level": "error",
+      "stage": "ownership",
+      "fix": "recheck",
+      "panel_only": true,
+      "title": "The account holding the binding token is not eligible to bind",
+      "remedy": "Shown only to the token's owner and to moderators; everyone else sees `B_BINDING_UNUSABLE` (ID-9). The token is sound and the Minice account that holds it is not eligible (DEC-11). The account's own eligibility clears it: once the account is eligible again, a Recheck of the same tag reads it afresh."
+    },
+    {
+      "code": "B_BINDING_INVALID",
+      "level": "error",
+      "stage": "ownership",
+      "fix": "new_tag",
+      "panel_only": true,
+      "title": "The binding token cannot be used for this repository",
+      "remedy": "Shown only to the token's owner and to moderators; everyone else sees `B_BINDING_UNUSABLE` (ID-9). The token on the tagged commit is unknown, revoked, expired or superseded, or was minted for another repository. Mint a fresh token for this repository in the Astra plugins panel, commit its line and push a new tag: the line is read at the attested commit (ID-22), so this tag cannot change."
+    },
+    {
       "code": "B_BINDING_MALFORMED",
       "level": "error",
       "stage": "ownership",
@@ -6129,6 +6182,33 @@
       "remedy": "Call the Astra reusable release workflow and pin it by commit SHA (`uses: mihailinl/AstraPlugins/.github/workflows/plugin-release.yml@<sha>`). Verifying an attestation without pinning which workflow produced it proves only that GitHub built something. The allowed SHAs live in the root-signed `trust.json`; adding one is a root-key ceremony, not a pull request."
     },
     {
+      "code": "M_APPEAL",
+      "level": "note",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "An appeal was decided",
+      "remedy": "The outcome, `stands` or `reversed`, is recorded with the moderator's public reason and never the appeal's own text (MOD-32; MOD-33). A `reversed` appeal becomes a new decision; the one appealed stays in the log."
+    },
+    {
+      "code": "M_APPROVE",
+      "level": "pass",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "A moderator approved this submission",
+      "remedy": "Nothing to do. An approval clears holds and nothing else: every check runs again in the run that acts on it, and it never shortens a publication delay, a stop or a pending notice (DEC-6)."
+    },
+    {
+      "code": "M_REJECT",
+      "level": "error",
+      "stage": "policy",
+      "fix": "moderator",
+      "panel_only": false,
+      "title": "A moderator rejected this submission",
+      "remedy": "A Recheck does not reopen a rejection (FLOW-18). You can appeal it from the Astra plugins panel; if a moderator reverses the rejection on appeal, exactly one Recheck of this submission is opened (MOD-33)."
+    },
+    {
       "code": "N_HOST_RPC_SCAN_SCOPE",
       "level": "note",
       "stage": "rpc-scan",
@@ -6291,6 +6371,15 @@
       "remedy": "Check the spelling against POLICY.md's permission table. An unknown key grants nothing — the daemon default-denies — so it is reported rather than blocked, but a permission nobody can name is also a permission no consent sheet can describe."
     },
     {
+      "code": "R_BINDING_CHANGED",
+      "level": "review",
+      "stage": "policy",
+      "fix": "moderator",
+      "panel_only": false,
+      "title": "The binding token changed since this listing was bound",
+      "remedy": "The `astra-binding:` line at the tagged commit carries a different token from the one this listing's identity record holds (ID-41 row 6). The account that held the previous binding is told, and a moderator's approval publishes it only once the author objection window has passed since that account was told, or since its binding was revoked (ID-60; ID-61)."
+    },
+    {
       "code": "R_CHECK_HELD",
       "level": "review",
       "stage": "policy",
@@ -6316,6 +6405,15 @@
       "panel_only": false,
       "title": "The display name mixes alphabets",
       "remedy": "Held for a human. Write the name in one alphabet. A name that borrows a single Cyrillic or Greek letter for its Latin shape renders as a name it does not contain, and the id charset cannot catch it because the id is not the string on the card."
+    },
+    {
+      "code": "R_FIRST_BINDING",
+      "level": "review",
+      "stage": "policy",
+      "fix": "moderator",
+      "panel_only": false,
+      "title": "First binding line on a published listing — a moderator approves it once",
+      "remedy": "This listing was published before it had an identity record, and this release is the first to carry an `astra-binding:` line (MIG-10). A moderator approves it once; the approval then waits the operator's objection window like every approval (DEC-6). Once a release under this binding is published, later releases are not held for this again."
     },
     {
       "code": "R_FIRST_LISTING",
@@ -6451,6 +6549,15 @@
       "panel_only": false,
       "title": "A file's recorded mode differs from the archive's",
       "remedy": "The daemon applies the manifest's mode and refuses the mismatch, so this lists and then does not install. Rebuild."
+    },
+    {
+      "code": "W_REGISTRY_UNACKNOWLEDGED",
+      "level": "wait",
+      "stage": "shadow",
+      "fix": "registry",
+      "panel_only": true,
+      "title": "Awaiting an operator acknowledgement",
+      "remedy": "The registry changed its bot, and until an operator acknowledges that change the plugins service holds the bot's calls (TRUST-45). Nothing about this submission has been decided and nothing is lost; it continues once the change is acknowledged, with nothing for you to do."
     }
   ],
   "flow13_source": {
@@ -6458,7 +6565,7 @@
       "bot/lib/codes.mjs",
       "bot/lib/policy/constants.mjs"
     ],
-    "codes": 127
+    "codes": 138
   },
   "fixed_reasons": {
     "A_YANK": "Yanked at its author's own request, made from the Astra plugins panel.",
