@@ -1927,7 +1927,7 @@ const FLOORS = new Map(Object.entries({
   "bundles.mjs": 14,
   "index-signature.mjs": 21,
   "signer.mjs": 26,
-  "signer-run.mjs": 8,
+  "signer-run.mjs": 10,
   "rehearsal-r2.mjs": 14,
   "served-set.mjs": 35,
   "revocations.mjs": 24,
