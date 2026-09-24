@@ -82,7 +82,7 @@ name: Plugins ingest
 #
 # Every job is built (B-T3.1's steps, B-T3.2, B-T3.3a–c, B-T3.4, B-T3.5, B-T5.0):
 #
-#   load     node bot/lib/poll-run.mjs load         (B-T5.0; held until bot-state)
+#   load     node bot/lib/poll-run.mjs load         (B-T5.0)
 #   poll     node bot/lib/poll-run.mjs poll         (B-T5.0)
 #   sweep    node bot/lib/poll-run.mjs sweep        (B-T5.0)
 #   claim    node bot/lib/service-jobs.mjs --job claim
@@ -94,7 +94,7 @@ name: Plugins ingest
 #   publish  node bot/lib/service-publish.mjs --compose, bot/publish-apply.mjs,
 #            node bot/lib/service-publish.mjs --finalize
 #   report   node bot/lib/service-jobs.mjs --job report
-#   remember node bot/lib/poll-run.mjs remember     (B-T5.0; held until bot-state)
+#   remember node bot/lib/poll-run.mjs remember     (B-T5.0)
 #   poll-alert node bot/lib/relay-verdict.mjs        (B-T5.0)
 #
 # The modules live under `bot/lib/` and not beside `bot/moderation-run.mjs`
@@ -367,8 +367,8 @@ jobs:
   # grammar-validated; nothing here unpacks anything.
   claim:
     needs: [roots, poll]
-    # `poll` is skipped whenever it is not due (and while `load` is held until
-    # environment `bot-state` exists), and a skipped dependency skips this job
+    # `poll` is skipped whenever it is not due (and whenever `load` did not
+    # succeed), and a skipped dependency skips this job
     # under the default condition. `always()` would carry it past a failed
     # roots check, so the roots result is asked for by name — the rule this
     # file inherits from `ingest.yml`, where forgetting it once left the only
