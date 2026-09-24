@@ -87,6 +87,153 @@ const LISTING_FILE =
 const QUEUE_FILE = /^state\/queue\/[^/]+\.json$/;
 
 /**
+ * DEC-7's record, and the ONE path under `log/` a publish job may write
+ * (B-T3.7; BOT-33's publish row). The marker, a rollout record, a migration
+ * notice and anything else under `log/` are other writers' — the baseline
+ * dispatch, the owner, the rollout's exit commits — and a publish report that
+ * carries one is refused, never copied.
+ *
+ * Exported so the service path's publish job (B-T3.4) applies the same
+ * grammar rather than a second spelling of it.
+ */
+export const DECISION_RECORD_FILE = /^log\/decisions\/([0-9]{4})\/(0[1-9]|1[0-2])\/([0-9a-f]{32})\.json$/;
+
+/**
+ * The two record kinds the SERVICE path's publish job adds (registry plan
+ * B-T3.4), and only that job: `plugins-ingest.yml` passes `--service-path`,
+ * `ingest.yml` does not, so the legacy path can never write an identity
+ * record (BOT-77) or an alert record.
+ *
+ *   * `state/alerts/<fingerprint>.json` — TRUST-14's record, with the
+ *     delivery TRUST-32's window counts from. Its name is its fingerprint.
+ *   * `plugins/<id>/identity.json` — ID-15's record, written in a publishing
+ *     commit only (ID-40): an identity record in a report with no `published`
+ *     decision record beside it is refused.
+ */
+export const ALERT_FILE = /^state\/alerts\/([0-9a-f]{16})\.json$/;
+export const IDENTITY_FILE = /^plugins\/([^/]+)\/identity\.json$/;
+
+/** What is wrong with one service-path record in a report, before it is copied, or null. */
+export function serviceFileProblem(reportDir, rel) {
+  let doc;
+  try {
+    doc = JSON.parse(fs.readFileSync(path.join(reportDir, rel), "utf8"));
+  } catch (e) {
+    return `${rel} is not JSON (${e.message})`;
+  }
+  const alert = ALERT_FILE.exec(rel);
+  if (alert) {
+    if (doc?.schema !== "astra.registry.alert/1") return `${rel} is not an astra.registry.alert/1 record`;
+    if (doc.fingerprint !== alert[1]) return `${rel} names fingerprint ${doc.fingerprint}; an alert record's name is its fingerprint`;
+    return null;
+  }
+  const ident = IDENTITY_FILE.exec(rel);
+  if (ident) {
+    if (doc?.schema !== "astra.registry.identity/1") return `${rel} is not an astra.registry.identity/1 record`;
+    if (doc.plugin_id !== ident[1]) return `${rel} names plugin_id ${doc.plugin_id}`;
+    const members = Object.keys(doc).sort().join(",");
+    if (members !== "plugin_id,repo,repository_id,repository_owner_id,schema,token_hash") {
+      return `${rel} carries ${members}; an identity record has exactly B.4's six members`;
+    }
+    return null;
+  }
+  return `${rel} is not a service-path record`;
+}
+
+/** MIG-20's marker, whose presence turns BOT-34's commit rule on. */
+export const BASELINE_MARKER = "log/baseline.json";
+
+/**
+ * Is MIG-20's baseline on this tree? Read here rather than imported from
+ * `bot/baseline.mjs`, which pulls in the whole ingest; the answer is the same
+ * one `markerOnMain` gives — the file parses and names its schema.
+ */
+export function baselineOnTree(root) {
+  try {
+    const doc = JSON.parse(fs.readFileSync(path.join(root, BASELINE_MARKER), "utf8"));
+    return doc?.schema === "astra.registry.baseline/1";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Everything wrong with one decision record in a report, before it is copied.
+ *
+ * The NAME is the record: the basename is its `decision_id` and the two
+ * directories are its `decided_at` (BOT-35's writer, `recordPath`). A file
+ * whose contents disagree with its path is one BOT-36's dedupe looks for
+ * somewhere it is not. The full DEC-7 schema is `tools/validate.mjs`'s, which
+ * this job runs over the applied tree before it commits; this is the part
+ * that has to hold before a byte is copied.
+ */
+export function recordFileProblem(reportDir, rel) {
+  const m = DECISION_RECORD_FILE.exec(rel);
+  if (!m) return `${rel} is not a decision record path`;
+  let doc;
+  try {
+    doc = JSON.parse(fs.readFileSync(path.join(reportDir, rel), "utf8"));
+  } catch (e) {
+    return `${rel} is not JSON (${e.message})`;
+  }
+  if (doc?.schema !== "astra.registry.decision/1") return `${rel} is not an astra.registry.decision/1 record`;
+  if (doc.decision_id !== m[3]) return `${rel} names decision_id ${doc.decision_id}; a record's name is its id`;
+  const at = typeof doc.decided_at === "string" ? doc.decided_at : "";
+  if (at.slice(0, 4) !== m[1] || at.slice(5, 7) !== m[2]) {
+    return `${rel}: decided_at ${at} files it under log/decisions/${at.slice(0, 4)}/${at.slice(5, 7)}, not here`;
+  }
+  return null;
+}
+
+/**
+ * BOT-34's commit-level rule, for one report: once MIG-20's baseline is on the
+ * tree, every `plugins/<id>/versions/<v>.json` the report ADDS carries a
+ * `published` record for that id and version in the same report, and every
+ * `state/queue/<id>@<v>.json` it adds carries a `delayed` one.
+ *
+ * An addition, not a rewrite: an identical re-publish changes no bytes, and a
+ * queue entry re-written by a drain that re-decided `delayed` is not a new
+ * entry into `delayed` (BOT-34: "for every ENTRY … into"). Before the marker
+ * nothing writes records at all (B-T3.7's gate), so the rule has nothing to
+ * hold a publication to and does not run.
+ *
+ * Exported for the service path's publish job (B-T3.4), which holds its
+ * additions to the same rule with its own records.
+ *
+ * @returns {string[]} one problem per addition without its record
+ */
+export function recordRequirementProblems({ root, reportDir, rels }) {
+  if (!baselineOnTree(root)) return [];
+  const records = rels.filter((rel) => DECISION_RECORD_FILE.test(rel)).map((rel) => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(reportDir, rel), "utf8"));
+    } catch {
+      return null;
+    }
+  }).filter(Boolean);
+  const has = (state, id, version) => records.some((d) => d.state === state && d.plugin_id === id && d.version === version);
+  const problems = [];
+  for (const rel of rels) {
+    if (fs.existsSync(path.join(root, rel))) continue;
+    const v = /^plugins\/([^/]+)\/versions\/([^/]+)\.json$/.exec(rel);
+    if (v && !has("published", v[1], v[2])) {
+      problems.push(
+        `${rel} is added with no \`published\` decision record for ${v[1]} ${v[2]} in the same commit. MIG-20's ` +
+        "baseline is on this tree, and from it every publication carries its record (contract BOT-34)",
+      );
+    }
+    const q = /^state\/queue\/([^/@]+)@([^/]+)\.json$/.exec(rel);
+    if (q && !has("delayed", q[1], q[2])) {
+      problems.push(
+        `${rel} is added with no \`delayed\` decision record for ${q[1]} ${q[2]} in the same commit. A promise ` +
+        "with no record is the lost publish BOT-34 exists to end",
+      );
+    }
+  }
+  return problems;
+}
+
+/**
  * B-T3.4's half of this file, refused by name.
  *
  * Shaped like `bot/baseline.mjs`'s own refusals and for the reason
@@ -304,6 +451,7 @@ export function refuseVersionRegressions(root, reportDir, rels) {
  * `path.relative` cannot produce that, which is half of why this is here.
  */
 export function applyReport(root, reportDir, state) {
+  const servicePath = state.servicePath === true;
   // Only `plugins/` and `state/` are copied, and that is not tidiness: the
   // artifact this reads is the whole of `bot/decide.mjs`'s output directory, so
   // it also carries `comment.md` and `decision.json` — which the `comment` job
@@ -316,7 +464,7 @@ export function applyReport(root, reportDir, state) {
   // paperwork lives.
   for (const entry of fs.readdirSync(reportDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    if (entry.name !== "plugins" && entry.name !== "state") {
+    if (entry.name !== "plugins" && entry.name !== "state" && entry.name !== "log") {
       throw new Refusal(`${entry.name}/ is not something the publish job knows how to apply`, {
         file: entry.name,
       });
@@ -326,11 +474,44 @@ export function applyReport(root, reportDir, state) {
   const rels = [
     ...filesUnder(path.join(reportDir, "plugins")).map((r) => `plugins/${r}`),
     ...filesUnder(path.join(reportDir, "state")).map((r) => `state/${r}`),
+    ...filesUnder(path.join(reportDir, "log")).map((r) => `log/${r}`),
   ];
 
   for (const rel of rels) {
+    if (rel.startsWith("log/")) {
+      if (!DECISION_RECORD_FILE.test(rel)) {
+        throw new Refusal(`${rel} is not a listing file, a queue entry or a decision record`, { file: rel });
+      }
+      const problem = recordFileProblem(reportDir, rel);
+      if (problem) throw new Refusal(problem, { file: rel });
+      // A record is written once (DEC-7; git never forgets): the same bytes
+      // are a no-op, and different bytes under one id are a second answer to
+      // one decision.
+      const target = path.join(root, rel);
+      if (fs.existsSync(target) && !fs.readFileSync(target).equals(fs.readFileSync(path.join(reportDir, rel)))) {
+        throw new Refusal(`${rel} is already on main with different bytes; a decision record is never rewritten`, { file: rel });
+      }
+      continue;
+    }
+    if (ALERT_FILE.test(rel) || IDENTITY_FILE.test(rel)) {
+      if (!servicePath) {
+        throw new Refusal(
+          `${rel} is a service-path record, and only the plugins-ingest publish job writes one ` +
+          "(the legacy path never binds a listing, BOT-77)",
+          { file: rel },
+        );
+      }
+      const problem = serviceFileProblem(reportDir, rel);
+      if (problem) throw new Refusal(problem, { file: rel });
+      const ident = IDENTITY_FILE.exec(rel);
+      if (ident) {
+        const bad = unsafePathComponent(ident[1]) ?? invalidId(ident[1]);
+        if (bad) throw new Refusal(`${rel}: ${bad}`, { file: rel });
+      }
+      continue;
+    }
     if (!LISTING_FILE.test(rel) && !QUEUE_FILE.test(rel)) {
-      throw new Refusal(`${rel} is not a listing file or a queue entry`, { file: rel });
+      throw new Refusal(`${rel} is not a listing file, a queue entry or a decision record`, { file: rel });
     }
     const id = idOfPath(rel);
     const bad = id === null ? "has no id" : (unsafePathComponent(id) ?? invalidId(id));
@@ -338,6 +519,22 @@ export function applyReport(root, reportDir, state) {
   }
 
   refuseVersionRegressions(root, reportDir, rels);
+  // ID-40: an identity record changes only in a publishing commit.
+  if (rels.some((r) => IDENTITY_FILE.test(r))) {
+    const published = rels.filter((r) => DECISION_RECORD_FILE.test(r)).some((r) => {
+      try {
+        return JSON.parse(fs.readFileSync(path.join(reportDir, r), "utf8"))?.state === "published";
+      } catch {
+        return false;
+      }
+    });
+    if (!published) {
+      const at = rels.find((r) => IDENTITY_FILE.test(r));
+      throw new Refusal(`${at} is written with no \`published\` decision record beside it; an identity record changes only in a publishing commit (ID-40)`, { file: at });
+    }
+  }
+  const unrecorded = recordRequirementProblems({ root, reportDir, rels });
+  if (unrecorded.length) throw new Refusal(unrecorded[0], { file: rels.find((r) => unrecorded[0].startsWith(r)) ?? null });
 
   // What stops waiting. Only a queue entry may be deleted, and only one this
   // run is entitled to name: `remove.txt` comes out of the same artifact as the
@@ -363,9 +560,20 @@ export function applyReport(root, reportDir, state) {
 
   for (const rel of rels) {
     const target = path.join(root, rel);
+    if (DECISION_RECORD_FILE.test(rel)) {
+      // Checked above: absent, or identical. Identical is a no-op, and a
+      // no-op that set `changed` would make a run with nothing new to say
+      // commit an empty diff's worth of regeneration.
+      if (fs.existsSync(target)) continue;
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.copyFileSync(path.join(reportDir, rel), target);
+      state.records.push(rel);
+      state.changed = true;
+      continue;
+    }
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.copyFileSync(path.join(reportDir, rel), target);
-    state.touchedIds.add(idOfPath(rel));
+    if (!ALERT_FILE.test(rel)) state.touchedIds.add(idOfPath(rel));
     if (QUEUE_FILE.test(rel)) state.queued.push(rel);
     state.changed = true;
   }
@@ -410,14 +618,16 @@ export function compareReportNames(a, b) {
  * again, against the tree as it is at that moment, which is the point: the
  * version rules above are only true of the tree they were checked against.
  */
-export function applyAll(root, { reports, watchState, dropWatchState = false }) {
+export function applyAll(root, { reports, watchState, dropWatchState = false, servicePath = false }) {
   const state = {
     changed: false,
     touchedIds: new Set(),
     removals: [],
     queued: [],
+    records: [],
     refusals: [],
     watchState: false,
+    servicePath,
   };
 
   // The etag memory the backstop wrote. Not derived from anything a stranger
@@ -507,6 +717,8 @@ export function run({
   trailer = "",
   skipChecks = false,
   push = true,
+  dryRun = false,
+  servicePath = false,
   log = console.log,
 } = {}) {
   const abs = (p) => (path.isAbsolute(p) ? p : path.resolve(root, p));
@@ -521,7 +733,7 @@ export function run({
   const attemptFailed = (err) => {
     try {
       git(root, ["reset", "--hard", at], { stdio: "pipe" });
-      const present = ["plugins", "state"].filter((d) => fs.existsSync(path.join(root, d)));
+      const present = ["plugins", "state", "log/decisions"].filter((d) => fs.existsSync(path.join(root, d)));
       if (present.length > 0) git(root, ["clean", "-qfd", "--", ...present], { stdio: "pipe" });
     } catch {
       /* the tree is already beyond tidying; the thrown error is the news */
@@ -535,6 +747,7 @@ export function run({
       reports: abs(reports),
       watchState: abs(watchState),
       dropWatchState,
+      servicePath,
     });
     // The queue entries this run is answerable for: the ones that are on disk
     // when it settles. `comment` promises an author "publishes itself at 14:00"
@@ -577,7 +790,9 @@ export function run({
     // downloaded artifacts, and a bare `-A` would commit them. Absent ones are
     // dropped rather than passed, because `git add` fails on a pathspec that
     // matches nothing and a registry with no `state/` yet is a legal registry.
-    const pathspecs = ["plugins", "state", "registry/v1/index.json"].filter((p) =>
+    // `log/decisions` and not `log`: the marker and every other file under
+    // `log/` are other writers', and `applyReport` refuses them in a report.
+    const pathspecs = ["plugins", "state", "log/decisions", "registry/v1/index.json"].filter((p) =>
       fs.existsSync(path.join(root, p)),
     );
     if (pathspecs.length > 0) git(root, ["add", "-A", ...pathspecs], { stdio: "pipe" });
@@ -589,6 +804,17 @@ export function run({
 
     if (!push) {
       return { outcome: "committed", attempts: attempt, touchedIds: [...state.touchedIds], queued: queued(), refusals };
+    }
+
+    // `DRY_RUN` (registry plan B-T3.6 step 1): everything a publication does
+    // — the allow-list, the version rules, the five registry checks, the
+    // commit — and then the path list instead of the push. It is a
+    // production mode, not `--no-push` (which is this file's own tests', and
+    // which no workflow may pass): the outcome says `dry-run`, so nothing
+    // downstream can read it as a commit that landed.
+    if (dryRun) {
+      for (const f of git(root, ["show", "--name-only", "--format=", "HEAD"]).split("\n").filter(Boolean)) log(`would push  ${f}`);
+      return { outcome: "dry-run", attempts: attempt, touchedIds: [...state.touchedIds], queued: queued(), refusals };
     }
 
     try {
@@ -660,6 +886,8 @@ function parseArgv(argv) {
     const a = argv[i];
     if (a === "--skip-checks") opts.skipChecks = true;
     else if (a === "--no-push") opts.push = false;
+    else if (a === "--dry-run") opts.dryRun = true;
+    else if (a === "--service-path") opts.servicePath = true;
     else if (flags[a]) opts[flags[a]] = argv[++i];
     else throw new Refusal(`unknown argument ${a}`);
   }
@@ -692,6 +920,7 @@ function record(result) {
 /** Every outcome `run` can return, and what the process exits with for it. */
 export const OUTCOMES = {
   committed: EXIT.ok,
+  "dry-run": EXIT.ok,
   nothing: EXIT.ok,
   refused: EXIT.refused,
   "checks-failed": EXIT.refused,

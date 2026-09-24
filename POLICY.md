@@ -205,15 +205,35 @@ suggest otherwise.
 - An author may **yank** a version (`"yanked": true`). It leaves the index and
   stays in git. Yanking is the author's tool for "do not use this one"; it is
   not a security control, it does not touch installs, and it is not revocation.
+  Yanking a plugin's **last** listed version takes the whole plugin out of the
+  index, because nothing installable is left; its listing and its history stay
+  in git, and the next version that is not yanked brings it back.
 - Retiring a plugin entirely is `"unlisted": true` on `plugin.json`. The audit
   trail stays.
+
+### 6.1 Listings published before the move to the plugins service
+
+A listing first published before the cutover to the plugins service, and never
+bound to a Minice account, is `grandfathered` until the later of the binding
+deadline below and the cutover, and `frozen` after it until it is bound: it
+stays listed and installable, and takes no new version. From the cutover, a
+delayed or reviewed release of a `grandfathered` listing also waits until the
+listing is bound (contract MIG-12). Binding needs a Minice account holding
+`astraUser`, a binding line in the repository, a new tag, and one
+`R_FIRST_BINDING` review; a bound release unfreezes the listing, with no
+penalty (MIG-1, MIG-10). What the authors of these listings are told, and
+when, is `docs/migration-notice.md`. Enforced by
+the bot, which reads the deadline from `policy/binding-deadline.json` and from
+nowhere else (MIG-3).
+
+**Binding deadline:** not fixed yet. It is committed as `policy/binding-deadline.json` before third-party bindings open, and this line then states it.
 
 ## 7. Removal
 
 | Situation | What happens |
 |---|---|
 | Policy breach found before install matters | The listing is removed. `git log plugins/<id>/` keeps the record. |
-| Author asks for removal | Removed, no argument, no delay. |
+| Author asks for removal | **Through an issue here:** removed, no argument, no delay. **Through the plugins service** (amended 2026-09-24): removed, no argument, and at once — unless the takedown bound below is full that day, when it waits for an operator's confirmation. For a listing not yet bound to its author's account, the registry cannot tell the author from anyone else with push access to the repository, so there the request goes to a moderator instead, 7 days after the registry records it. |
 | Malicious plugin, already installed by users | Removal alone still does nothing to an installed copy — but a **signed revocation** does, and it exists. An advisory with `"action": "disable"` refuses new installs *and* stops the copy that is there and will not start it again; `"block_install"` refuses installs and updates and leaves a running copy alone. `docs/POLICY.md` §8 is the full table. |
 | Licensing or trademark dispute | Listing removed pending resolution. Not a reason to break a working install, so it gets `"action": "warn"` at most, and usually no advisory at all. |
 
@@ -227,6 +247,34 @@ registry inventing a spelling and an older daemon reading it as "do nothing"
 would be a withdrawal that silently did not happen. The behaviour of each action
 is `RevocationAction` in `astra-daemon/src/plugins/trust.rs` — `blocks_install()`
 is true for everything except `warn`, `stops_installed()` only for `disable`.
+
+### The takedown bound
+
+**At most three listed plugins are taken away in any trailing 24 hours before
+the next takedown waits for a person.** Past that, a takedown decided through the
+plugins service — a moderator's yank, delist or revocation, `block_install`
+included, and an author's own yank or removal request — is held until an
+operator confirms it. It caps what a compromised moderation panel, or a
+compromised service behind it, could withdraw in one day; the price is that on a
+day more than three plugins have to go, the fourth waits for a second person. A
+withdrawal the operator makes by hand is already a person's act, and counts like
+any other.
+
+What counts toward the takedown bound is read from this repository's git history,
+whatever route a withdrawal took: every listed plugin delisted or yanked, and
+every listed plugin newly matched by a signed advisory, sibling plugins
+included; **an author's own yank**; and **an author's removal request**, from the
+account bound to the listing. Two things never count: undoing a withdrawal (a
+relist or an unrevoke), and the one staging listing this registry publishes in
+order to test withdrawals, which is excluded by its reserved id.
+
+Author actions count toward the takedown bound on purpose. A yank or a removal
+request takes a plugin away exactly as a moderator's takedown does, and a bound
+that ignored them would let a compromised service withdraw through them without
+limit. The plugins service lets each account spend at most one of the three in
+a day, so filling the bound with author actions alone takes three different
+accounts — and your own yank or removal request waits behind the bound only on a
+day it is already full.
 
 ## 8. Review, and how long it takes
 
@@ -246,6 +294,17 @@ bot can post, what each delay is for and what it honestly buys, how a release
 notification reaches this registry without the author holding any credential for
 it, and — stated there rather than left to be discovered — what happens when the
 SLA slips, which is that auto-publication widens rather than the queue rotting.
+
+**Two more numbers apply on the plugins-service path**, when a release reaches
+this registry through the plugins service rather than through an issue here, and
+both are the owner's (2026-09-13). A maintainer's **approval is honoured for 7
+days** from the moment it was given; past that the release stays held until it
+is approved again. And an **approved update waits 6 hours** after the plugins
+service reports that its notice to the author was accepted, so that an author
+can stop a release they did not make before it reaches anybody — unless it
+already carries a publication delay of its own, which it waits instead. An
+approved first listing has no such wait: it has no installs for a hijacked build
+to reach.
 
 **And here is what that apparatus buys, and exactly where it stops.** Every rule
 above is keyed on what a plugin *declares*, and a declaration is now enforced at

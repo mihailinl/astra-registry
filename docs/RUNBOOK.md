@@ -652,15 +652,12 @@ files.
 `.github/workflows/sign.yml` is the one publisher of the catalogue and the
 withdrawal list, and it is live. It replaces a withdrawal workflow that was
 deleted at R0 having failed every scheduled run it ever made; if you remember
-that one, the procedure below is not it. What is **not** here yet:
-`.github/workflows/operator.yml`, so
-§7.7's confirmations, cancellations, reverts and denies have no dispatch to run
-and are performed as hand commits with the trailer in §7.3; `state/holds/**`
+that one, the procedure below is not it. What is **not** here yet: `state/holds/**`
 has its library (`bot/lib/holds.mjs`) and its schemas, and nothing yet writes
-an entry; and the takedown bound of §7.10 **has its counter now
-(`bot/lib/takedown-bound.mjs`) and nothing yet calls it** — which is the same
-sentence as the holds one beside it, and a different state from the "stated in
-policy and not yet counted by code" this line carried until M-T3.2 landed.
+an entry; and the takedown bound of §7.10 **is counted by the moderation run's
+`commit` job (`bot/lib/takedown-bound.mjs`), which is dark until R3 opens** —
+the same state as the holds beside it. Until the run is live, nothing holds a
+withdrawal for the bound: every withdrawal is yours, by hand, and counts.
 Each of those says so in its own subsection. Nothing below depends on them for
 the withdrawal itself.
 
@@ -869,20 +866,30 @@ installed copy does, and that is only observable on one.
 
 ### 7.7 Confirming, cancelling or reverting a service decision
 
-**Not yet dispatchable.** `.github/workflows/operator.yml` and `bot/operator.mjs`
-land with the moderation workflows. Until they do, each act below is a hand
-commit carrying `Moderation-Exempt:` (§7.3) and the same files. This subsection
-is written now so the procedure is decided before it is needed.
+`.github/workflows/operator.yml` (`Operator`), which runs `tools/operator.mjs`.
+Dispatch it from the Actions tab, **on `main`** — any other ref is refused before
+the job starts:
 
-The operator workflow is dispatched with one `act` and one
-`service_decision_id`, and that is the whole interface:
+    gh workflow run operator.yml -f act=confirm -f service_decision_id=<id>
+
+It is dispatched with one `act` and one `service_decision_id`, and that is the
+whole interface:
 
 | `act` | What it writes |
 |---|---|
 | `confirm` | `state/holds/<id>.confirm.json`. Releases a held decision — see §7.8 |
 | `cancel` | `state/holds/<id>.cancel.json`. Ends the hold without applying the decision |
 | `revert` | Finds the log entry by `service_decision_id`; refuses unless it is a `delist`, `deprecate` or `revoke`; removes the `unlisted` flag or deletes the advisory; and writes a `relist` or `unrevoke` entry naming what it reverses |
-| `deny` | `state/deny/<fingerprint>.json` — §7.9. This one takes a `fingerprint` as well |
+| `deny` | `state/deny/<fingerprint>.json` — §7.9. This one takes a `fingerprint` instead of a `service_decision_id` |
+
+It takes no free text. A revert logs one of two fixed public reasons — "made in
+error", or "a test of the withdrawal path" when the reverted decision was one —
+so nothing typed into a dispatch form can reach the public log. Every refusal
+is a red run with the reason and writes nothing: a hold that is not on `main`
+or is already answered, a confirm of an `unbound_yank` (only a cancel ends one),
+a revert of a yank or of anything already reverted, a deny of a fingerprint
+already denied. A refused or failed run pages through the alarm channel, because
+somebody who can dispatch this tried an act and it did not happen.
 
 Three things about it that are load-bearing:
 

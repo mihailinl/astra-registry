@@ -456,9 +456,22 @@ function checkVersionDoc(plugin, version, ctx) {
   if (doc.id !== plugin.doc.id) {
     report.error(where, `id ${JSON.stringify(doc.id)} does not match plugins/${plugin.dir}/plugin.json (${JSON.stringify(plugin.doc.id)})`);
   }
-  if (doc.release?.repo && plugin.doc.source?.repo && doc.release.repo !== plugin.doc.source.repo) {
+  // A YANKED version is exempt, and only a yanked one (registry plan M-T6.3,
+  // OPEN-OWNER-10). A listing that moves repository — astra-chess, from the
+  // freed login KNICE-TECH to MINICE-AI, approved as an R_IDENTITY_CHANGED
+  // hold — gets a new `source.repo`, and every version published before the
+  // move still records the repository it was really built in. Those files are
+  // signed history and are never rewritten, so without this exemption the
+  // approved re-release could not publish: the tree would refuse its own past.
+  // A yanked version never reaches the index (tools/build-index.mjs skips it),
+  // so the pin a user takes at install can only ever come from a version whose
+  // release.repo IS the source repo, which is what this rule protects. Yanks
+  // are never undone, so the exemption cannot later re-admit such a version.
+  if (doc.release?.repo && plugin.doc.source?.repo && doc.release.repo !== plugin.doc.source.repo
+    && doc.yanked !== true) {
     report.error(where, `release.repo ${JSON.stringify(doc.release.repo)} is not the listing's source repo ${JSON.stringify(plugin.doc.source.repo)}`,
-      "The identity a user pins at install is the source repo. A release from anywhere else is a different author.");
+      "The identity a user pins at install is the source repo. A release from anywhere else is a different author. " +
+      "A version released from the listing's previous repository is accepted only once it is yanked (M-T6.3).");
   }
 
   // A `direct` release is expressible on purpose — a self-hosted or staging
@@ -594,12 +607,15 @@ function checkVersionDoc(plugin, version, ctx) {
 
 function checkPluginVersions(plugin, ctx) {
   const { report, policy } = ctx;
-  const listed = plugin.versions.filter((v) => v.doc?.yanked !== true);
+  // A listing whose every version is yanked is valid: an `M_YANK` or `A_YANK`
+  // of its last listed version, and the catalogue leaves it out until a
+  // version that is not yanked is added (tools/build-index.mjs; the
+  // coordinator's decision, 2026-09-24). This refused it until then, and the
+  // moderation commit job runs this validator before it pushes, so a yank of a
+  // last version stopped the whole batch here. A listing with no version files
+  // at all is still refused: that is a broken tree, not a withdrawal.
   if (plugin.versions.length === 0) {
     report.error(`plugins/${plugin.dir}/versions/`, "contains no version files");
-  } else if (listed.length === 0 && plugin.doc.unlisted !== true) {
-    report.error(`plugins/${plugin.dir}/versions/`, "every version is yanked, but the plugin is still listed",
-      "Set `\"unlisted\": true` in plugin.json to retire it while keeping the audit trail.");
   }
   if (plugin.versions.length > policy.limits.max_versions_per_plugin) {
     report.error(`plugins/${plugin.dir}/versions/`,
@@ -2374,24 +2390,28 @@ export function checkRecords(ctx, sources, records = loadRecords(ctx.root, sourc
     }
   }
 
-  // ── alert records: the path is accepted; the members are RC-R1-4's ────────
+  // ── alert records: `astra.registry.alert/1`, schema/alert-v1.json ─────────
+  //
+  // Contract 2.4.0 publishes the kind and TRUST-31 takes its schema in. Until
+  // then this loop checked only that a record said what it was, and a note
+  // said the members were unchecked; the schema is the composer's own rules
+  // (bot/lib/service-publish.mjs's alertProblems), and the times are
+  // round-tripped here, because a pattern admits days that do not exist.
   for (const { file, doc } of alerts) {
     if (doc === null || typeof doc !== "object" || Array.isArray(doc)) {
       report.error(file, "is not a JSON object");
       continue;
     }
-    if (typeof doc.schema !== "string" || doc.schema.length === 0) {
-      report.error(file, "carries no `schema` string",
-        "Every record in this repository that another party may read says what it is. This one's member set is " +
-        "contract TRUST-14's and registry plan RC-R1-4's to fix; until that schema exists this is the whole of " +
-        "what can be checked, and it is checked rather than assumed.");
+    for (const p of validateSchema(schemas.alert, doc, "$")) {
+      report.error(file, `${p.path} ${p.message}`,
+        "An alert record is what TRUST-32's gate reads before it lets an approval or an elapsed delay publish, " +
+        "so a record the composer would not have written is refused rather than counted from.");
     }
-  }
-  if (alerts.length) {
-    report.note(ALERTS_DIR,
-      `${alerts.length} alert record(s) accepted by path and not schema-checked: TRUST-14's member set is ` +
-      "RC-R1-4's schema to write, and inventing one here would put a second, older answer in the tree",
-      "This note exists so a reader meets the gap rather than reading a silent pass as a check.");
+    for (const k of ["approval_decided_at", "delivered_at"]) {
+      if (typeof doc[k] !== "string") continue;
+      const bad = unreadableTime(doc[k], `${file}'s \`${k}\``);
+      if (bad) report.error(file, bad, "The pattern admits dates that are not moments.");
+    }
   }
 }
 
@@ -2428,12 +2448,9 @@ export function checkRecords(ctx, sources, records = loadRecords(ctx.root, sourc
  * compiles exactly that string. An `M_YANK` carries the moderator's own MOD-48
  * reason, which MOD-41 requires to be 10 to 300 code points of free-ish text.
  *
- * **Today that string is not published**, so the discriminant falls back to
- * (action, category) and a note says so. The fallback is the strict direction —
- * it reads an `M_YANK` with `author_request` as an author yank and asks it for
- * records — and it is live rather than dormant, which matters because no yank
- * of either kind is on `main` yet and a check that waited for ops.15 would be
- * a check nobody had ever seen run.
+ * **Contract 2.3.0 publishes that string** (ops.15). Until then the
+ * discriminant fell back to (action, category) with a note; with the string
+ * on `main` that branch was dead, and a token file without it is now refused.
  */
 export function checkAuthorActionRecords(ctx, sources, records = loadRecords(ctx.root, sources)) {
   const { report } = ctx;
@@ -2451,17 +2468,21 @@ export function checkAuthorActionRecords(ctx, sources, records = loadRecords(ctx
   const allYanks = entries.map((doc, i) => ({ doc, file: `${MODERATION_DIR}/${files[i]}` }))
     .filter(({ doc }) => doc.action === "yank" && doc.category === "author_request");
 
-  const yanks = fixed === null ? allYanks : allYanks.filter(({ doc }) => doc.reason === fixed);
-
-  if (fixed === null && allYanks.length > 0) {
-    report.note(MODERATION_DIR,
-      `${allYanks.length} \`author_request\` yank(s) are being counted as \`A_YANK\`s by action and category ` +
-      "alone, because `schema/contract-tokens-v1.json` carries `fixed_reasons: null`",
-      "SCOPE-7's fixed `A_YANK` reason is what tells an author's yank from an `M_YANK` a moderator took on an " +
-      "unbound listing's behalf (FLOW-79), and it lands with contract version ops.15. Until it does this check " +
-      "is strict in the safe direction — it asks an `M_YANK` for records it does not owe, which is a red a " +
-      "person resolves, rather than letting a short-counted `A_YANK` through, which nothing else catches.");
+  // Contract 2.3.0 published the string (ops.15), so a null here is a token
+  // file that lost it, not a registry that has not learnt it yet. The
+  // fallback that counted every `author_request` yank as an `A_YANK` is gone
+  // with the state it served; a missing string is refused, loudly, because a
+  // count taken without it asks the wrong set of entries for records.
+  if (fixed === null) {
+    if (allYanks.length > 0) {
+      report.error("schema/contract-tokens-v1.json",
+        "carries no fixed `A_YANK` reason, which contract 2.3.0 publishes (SCOPE-7's `fixed_reasons`)",
+        `${allYanks.length} \`author_request\` yank(s) cannot be told apart from an \`M_YANK\` without it (FLOW-79), ` +
+        "so no author-action record was counted. Regenerate the token file from the contract.");
+    }
+    return;
   }
+  const yanks = allYanks.filter(({ doc }) => doc.reason === fixed);
   if (yanks.length === 0) return;
 
   const authorActions = decisions.filter(({ doc }) => isAuthorAction(doc));

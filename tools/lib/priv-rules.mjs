@@ -45,12 +45,21 @@
 /**
  * Every composed document kind, and the TOP-LEVEL members it may carry.
  *
- * Top-level only, said plainly. A nested object — `artifact_digests` keyed by
- * filename, say — has member names this table cannot know, so nested values
- * get the shape rules and not the position rule. The position rule is where a
- * subject id is caught, so a composed document that nests one inside an object
- * is a document this file passes. Nothing here nests today; the day something
- * does, that kind needs its own nested table rather than a looser top level.
+ * Top-level only, said plainly, for every kind that declares no `nested`
+ * table. A nested object — `artifact_digests` keyed by filename, say — has
+ * member names this table cannot know, so nested values get the shape rules
+ * and not the position rule. The position rule is where a subject id is
+ * caught, so a composed document that nests one inside an object is a
+ * document this file passes.
+ *
+ * **`settings` is the first kind that nests, and it carries its own table**,
+ * as this comment said the first one would. It is ROLL-7's R0 file, a row per
+ * environment and per ruleset, and with only the top level declared a
+ * subject-id-shaped value at `environments.alerts.subject` passed green
+ * (ops dev/couplings.md, the ROLL-7 entry, measured 2026-09-20). A kind that
+ * declares `nested` is positional at every depth: each object-valued member
+ * names its table, and a member at any depth that its table does not declare
+ * is refused whatever it holds. The table's forms are in `nestedFindings`.
  */
 export const DOCUMENT_MEMBERS = {
   // MOD-33, as `bot/moderation/README.md` documents it, plus M-T1.6's
@@ -119,6 +128,81 @@ export const DOCUMENT_MEMBERS = {
     uuidOk: [],
     handleOk: [],
     source: "registry plan M-T6.2, commit B",
+  },
+  // RC-R2-3 commit (ii)'s precondition: the one answer the release desk read
+  // from SERVE-94's wake hint before `sign.yml` may send it. Declared here
+  // before the document exists, so that the commit which records it is the
+  // one-line flip plus the record and nothing else. The member list is also the
+  // record's closed member set: `tools/selftest/repo-rules.mjs` reads it from
+  // here rather than keeping a second copy.
+  "signed-wake-ack": {
+    members: ["schema", "method", "url", "status", "body", "read_at", "read_from"],
+    uuidOk: [],
+    handleOk: [],
+    source: "registry plan RC-R2-3 commit (ii); contract SERVE-94 and §4.2's `astra.plugins.wake-ack/1`",
+  },
+  // ROLL-7's file, `log/rollout/R0-settings.json` (registry plan RC-R0-4;
+  // contract ROLL-7; `astra.registry.settings/1`, MBE-PENDING G3). Name-free:
+  // repository coordinates, counts, dates, fixed words and GitHub's own
+  // setting names. Every table is declared, at every depth.
+  settings: {
+    members: ["schema", "$comment", "read_at", "expectation_commit", "repository", "environments",
+      "environment_count", "environment_floor", "pending_environments", "rulesets", "rules_on_main",
+      "trust44_monitors", "trust44_read", "collaborators", "deploy_keys", "repository_secret_count",
+      "serve9_host_or_gcore_secrets", "actions", "private_repository_actions_start_jobs",
+      "tokens_with_access", "id39", "schedule_interval_seconds", "read_with", "not_readable"],
+    uuidOk: [],
+    handleOk: [],
+    source: "contract ROLL-7; registry plan RC-R0-4",
+    nested: {
+      $comment: { scalars: true },
+      repository: { members: ["repository_id", "repository_owner_id", "default_branch", "visibility", "main_protected"] },
+      environments: {
+        each: {
+          members: ["deployment_branch_policy", "branch_policies", "protection_rules", "can_admins_bypass",
+            "secret_names", "secret_count", "trust44_monitors"],
+          nested: {
+            branch_policies: { each: { members: ["name", "type"] } },
+            protection_rules: { scalars: true },
+            secret_names: { scalars: true },
+          },
+        },
+      },
+      environment_floor: { members: ["R0", "R1", "R5"] },
+      pending_environments: { scalars: true },
+      rulesets: {
+        each: {
+          members: ["id", "target", "enforcement", "include", "exclude", "rules", "bypass_actor_count", "trust44_monitors"],
+          nested: { include: { scalars: true }, exclude: { scalars: true }, rules: { scalars: true } },
+        },
+      },
+      rules_on_main: { scalars: true },
+      trust44_monitors: { members: ["rulesets", "rules_on_main", "environments", "main_protected", "collaborators",
+        "deploy_keys", "secrets", "bypass_actors"] },
+      trust44_read: { members: ["formula", "calls", "reservation"] },
+      collaborators: { members: ["count", "with_write", "admins"] },
+      deploy_keys: { members: ["count", "with_write"] },
+      actions: { members: ["enabled", "allowed_actions", "default_workflow_permissions", "can_approve_pull_request_reviews"] },
+      id39: { members: ["answer", "given", "confirmed", "revisit"] },
+      schedule_interval_seconds: { members: ["ingest", "moderation"] },
+      read_with: {
+        members: ["no_credential", "write_capable_session", "no_write_token"],
+        nested: { no_credential: { scalars: true }, write_capable_session: { scalars: true } },
+      },
+      not_readable: { scalars: true },
+    },
+  },
+  // MIG-13's marker, `log/migration-notice-<n>.json`. Declared before the
+  // first one is committed, because the first is committed WITH a round's
+  // sends and a red canary on that commit is found by the person sending the
+  // notices, not by the one who wrote the rule. B.4 fixes the members
+  // exactly, and none of them may carry a person: MIG-13's marker is
+  // "non-personal", and the plan dropped `account_count` from it for that.
+  "migration-notice": {
+    members: ["schema", "round", "sent_at", "cutover_planned_at"],
+    uuidOk: [],
+    handleOk: [],
+    source: "contract B.4 (`log/migration-notice-<n>.json`, exactly these members); MIG-13; registry plan M-T5.3",
   },
   // Read off the tree rather than out of a document, because this one exists
   // and the others do not: `git log -p -- 'state/queue/*'` over 228 commits
@@ -282,8 +366,61 @@ export function scanDocument(value, kind, roles) {
       handleOk: !!table?.handleOk.includes(member),
     };
     walkValue(v, ctx, found, member);
+    if (table?.nested) {
+      for (const f of nestedFindings(v, table.nested[member], member, kind, table.source, roles)) found.push(f);
+    }
   }
   return found;
+}
+
+/**
+ * The position rule below the top, for a kind that declares `nested`. A table
+ * is one of three forms:
+ *
+ *   { members: [...], nested?: {member: table} }  an object with fixed members
+ *   { each: table }                               an object keyed by data (an
+ *                                                 environment's name) or a list,
+ *                                                 each value held to `table`
+ *   { scalars: true }                             a list of plain values
+ *
+ * An object or a list with no table is refused, and so is a member its table
+ * does not declare. A keyed object's keys are data, so they get the shape
+ * rules — an address used as an environment name is still an address.
+ */
+function nestedFindings(value, table, where, kind, source, roles) {
+  if (value === null || typeof value !== "object") return [];
+  const refuse = (what) => [{ code: "E_PRIV_UNDECLARED_MEMBER", what }];
+  if (!table) {
+    return refuse(`\`${where}\` nests, and ${kind} declares no table for it (${source}); a nested member nobody ` +
+      "declared is refused whatever it holds, as a top-level one is");
+  }
+  if (table.scalars) {
+    if (!Array.isArray(value) || value.some((x) => x !== null && typeof x === "object")) {
+      return refuse(`\`${where}\` may hold only a list of plain values in ${kind} (${source})`);
+    }
+    return [];
+  }
+  const out = [];
+  if (table.each) {
+    const entries = Array.isArray(value) ? value.map((e, i) => [String(i), e]) : Object.entries(value);
+    for (const [k, e] of entries) {
+      if (!Array.isArray(value)) {
+        for (const f of shapeFindings(k, { roles })) out.push({ ...f, what: `${where} key ${JSON.stringify(k)}: ${f.what}` });
+      }
+      out.push(...nestedFindings(e, table.each, `${where}.${k}`, kind, source, roles));
+    }
+    return out;
+  }
+  if (Array.isArray(value)) return refuse(`\`${where}\` is a list where ${kind} declares an object (${source})`);
+  for (const [k, e] of Object.entries(value)) {
+    if (!table.members.includes(k)) {
+      out.push(...refuse(`\`${where}.${k}\` is not a member ${kind} may carry there (${source}); PRIV-2's subject-id ` +
+        "rule is enforced by position, at every depth of a kind that declares its tables"));
+      continue;
+    }
+    out.push(...nestedFindings(e, table.nested?.[k], `${where}.${k}`, kind, source, roles));
+  }
+  return out;
 }
 
 function walkValue(v, ctx, found, where) {

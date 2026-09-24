@@ -29,6 +29,7 @@ import {
   compareWithBaseline,
   effectiveBaseline,
   idAndVersionFromAssetName,
+  isVoidingRecord,
   identityFromCertificate,
   refuseUnclaimedEntries,
 } from "../lib/identity.mjs";
@@ -239,7 +240,7 @@ test("a baseline ends at the newest voiding record, and the reset is not refused
   // and the release is refused `B_REPOSITORY_RECYCLED` a second time.
   const records = [
     { plugin_id: "astra-chess", trigger: "migration", state: "published", decided_at: "2026-10-01T00:00:00Z", repo: "KNICE-TECH/astra-chess", repository_id: "1343092393", repository_owner_id: "280318216" },
-    { plugin_id: "astra-chess", trigger: "identity_reset", decided_at: "2026-11-01T00:00:00Z" },
+    { plugin_id: "astra-chess", actor: "moderator", trigger: "moderation", category: "identity_reset", decided_at: "2026-11-01T00:00:00Z" },
     { plugin_id: "other", trigger: "migration", state: "published", decided_at: "2026-10-02T00:00:00Z", repo: "x/y", repository_id: "7", repository_owner_id: "8" },
   ];
   const { baseline, voidedAt } = effectiveBaseline({ records, pluginId: "astra-chess" });
@@ -258,6 +259,35 @@ test("a baseline ends at the newest voiding record, and the reset is not refused
     pluginId: "astra-chess",
   });
   assert.equal(rebaselined.baseline.repository_id, "2000000001", "a baseline written after the reset counts");
+});
+
+test("a record that only looks like a reset voids nothing, so a permanent refusal stays permanent", () => {
+  // Until 2026-09-24 the reader keyed on `trigger: "identity_reset"` — not a
+  // DEC-7 trigger, so no valid record could carry it — OR on `state`, which let
+  // any record saying `identity_reset` end a baseline and turn a permanent
+  // `B_REPOSITORY_RECYCLED` into a hold. The voiding record is the plan's four
+  // members, all of them.
+  const baselineRecord = { plugin_id: "astra-chess", trigger: "migration", state: "published", decided_at: "2026-10-01T00:00:00Z", repo: "KNICE-TECH/astra-chess", repository_id: "1343092393", repository_owner_id: "280318216" };
+  const reset = { plugin_id: "astra-chess", actor: "moderator", trigger: "moderation", category: "identity_reset", decided_at: "2026-11-01T00:00:00Z" };
+  assert.ok(isVoidingRecord(reset));
+  for (const [what, lookalike] of [
+    ["the old trigger guess", { plugin_id: "astra-chess", trigger: "identity_reset", decided_at: "2026-11-01T00:00:00Z" }],
+    ["a state that says so", { ...baselineRecord, trigger: "issue", state: "identity_reset", decided_at: "2026-11-01T00:00:00Z" }],
+    ["a bot, not a moderator", { ...reset, actor: "bot" }],
+    ["another trigger", { ...reset, trigger: "panel" }],
+    ["another category", { ...reset, category: "error" }],
+    ["another plugin", { ...reset, plugin_id: "other" }],
+  ]) {
+    assert.equal(isVoidingRecord(lookalike), what === "another plugin", what);
+    const { baseline, voidedAt } = effectiveBaseline({ records: [baselineRecord, lookalike], pluginId: "astra-chess" });
+    assert.equal(voidedAt, null, `${what} voided the baseline`);
+    assert.equal(baseline?.repository_id, "1343092393", `${what} ended the baseline`);
+    const again = compareWithBaseline({
+      identity: identityFromCertificate({ ...CHESS_FIELDS, repository_id: "2000000001", repository_owner_id: "2000000002" }),
+      baseline,
+    });
+    assert.equal(again.code, IDENTITY_CODES.B_REPOSITORY_RECYCLED, `${what}: the recycled repository was not refused`);
+  }
 });
 
 test("MIG-31: a different account pressing the button waits; a failed read decides nothing", () => {

@@ -336,27 +336,33 @@ export function exportFacts({ issues = [], comments = [], botLogins } = {}) {
 }
 
 /**
- * The BOT-35 key each record's id is derived over.
+ * The BOT-35 key each record's id is derived over:
+ * `history:<owner/name>@<tag>:<decided_at>:<state>` (contract 2.5.0).
  *
- * `migration:<owner/name>@<tag>` is the domain B-T2.2 states, and for
- * B-T3.7b's baseline it is unique by construction: one `published` record per
- * version. It is NOT unique here. This registry decided
- * `teletemagame-dev/minecraft-for-astra@v0.3.1` more than once — a refusal, a
- * re-check, an approval — and MIG-21 asks for "one `migration` record each".
- * Two facts over one key derive one id, so the second record would land on the
- * first's path and the count ROLL-42 and M-T8.1 compare would be short without
- * anything going red.
+ * Until 2.5.0 this was `migration:<owner/name>@<tag>`, B-T3.7b's baseline
+ * domain. That domain is unique by construction for the baseline, which writes
+ * one `published` record per version. It was not unique here. This registry
+ * decided `teletemagame-dev/minecraft-for-astra@v0.3.1` more than once (a
+ * refusal, a re-check, an approval), and MIG-21 asks for one record each. On
+ * 2026-09-24 the live archive held 102 facts under 24 shared keys. Two facts
+ * over one key derive one id, so the second record lands on the first's path
+ * and the count ROLL-42 compares comes up short with nothing red. Lane S3b's
+ * `history:` domain adds the decision's time and state, and over the same 102
+ * facts it shares no key.
  *
- * So the key is derived in one place, the collision is measured in `--facts`
- * and refused in `--compose`, and widening the domain is not this file's to do:
- * `legacy:` needed an amendment to BOT-35 (ops.22) and so does this.
+ * The collision check stays. Two facts with one repository, tag, time and
+ * state are one decision exported twice, and `--compose` refuses them rather
+ * than writing one record for two lines of the archive.
+ *
+ * `bot/lib/decisions.mjs`'s `historyKey` spells the same key, and
+ * `bot/tests/decisions.test.mjs` holds the two to each other.
  */
-export const migrationKey = (fact) => `migration:${fact.repository}@${fact.tag}`;
+export const historyKey = (fact) => `history:${fact.repository}@${fact.tag}:${fact.date}:${fact.state}`;
 
 export function keyCollisions(facts) {
   const seen = new Map();
   for (const f of facts) {
-    const k = migrationKey(f);
+    const k = historyKey(f);
     seen.set(k, (seen.get(k) ?? 0) + 1);
   }
   return [...seen].filter(([, n]) => n > 1).map(([key, facts_sharing_it]) => ({ key, facts_sharing_it })).sort(
@@ -379,7 +385,7 @@ export function keyCollisions(facts) {
  * coordinate PRIV-2 explicitly permits.
  *
  * `schema` and `decision_id` are absent on purpose: B-T2.2's writer stamps the
- * first and derives the second from `migrationKey` above. A second module that
+ * first and derives the second from `historyKey` above. A second module that
  * also knew how to derive a decision id would be a second module that could
  * disagree about one.
  */
@@ -411,12 +417,11 @@ export function composeRecords(facts) {
   const collisions = keyCollisions(facts);
   if (collisions.length) {
     throw new Error(
-      `${collisions.length} of BOT-35's \`migration:<owner/name>@<tag>\` keys are shared by more than one ` +
-      "decision, so the records would derive one id and overwrite each other: " +
+      `${collisions.length} of BOT-35's \`history:<owner/name>@<tag>:<decided_at>:<state>\` keys are shared by ` +
+      "more than one fact, so the records would derive one id and overwrite each other: " +
       `${collisions.slice(0, 3).map((c) => `${c.key} (${c.facts_sharing_it})`).join(", ")}` +
-      `${collisions.length > 3 ? ", …" : ""}. MIG-21 asks for one record per refusal and approval; the ` +
-      "domain separates versions, not decisions about one version. Widening it is an amendment to BOT-35 " +
-      "(ops.22, §1.3 row 6), not a change to this file.",
+      `${collisions.length > 3 ? ", …" : ""}. Two facts with one repository, tag, time and state are one ` +
+      "decision read twice from the archive; find the second reading in `--facts` rather than widening the key.",
     );
   }
   return facts.map((fact) => {
@@ -432,7 +437,7 @@ export function composeRecords(facts) {
     if (fact.version) record.version = fact.version;
     if (fact.reasons?.length) record.reasons = [...fact.reasons];
     refuseUncomposable(record);
-    return { key: migrationKey(fact), record };
+    return { key: historyKey(fact), record };
   });
 }
 

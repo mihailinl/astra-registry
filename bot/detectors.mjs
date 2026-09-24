@@ -50,6 +50,7 @@ import { execFileSync } from "node:child_process";
 import { cleanEnv } from "../tools/lib/git-env.mjs";
 
 import { readDecisionRecords } from "./baseline.mjs";
+import { isVoidingRecord } from "./lib/identity.mjs";
 import { VERDICT_SCHEMA, runUrl } from "./lib/alert-verdict.mjs";
 import {
   BASELINE_FILE,
@@ -292,6 +293,19 @@ export function a1({ anchor, git, versions, records }, findings, skipped, scanne
   scanned.versions_post_baseline = added.length;
   scanned.records = records.length;
 
+  // The floor the marker states. Records are never deleted (DEC-7), and the
+  // baseline counted the ones it wrote, so a walk that reads fewer than that
+  // has lost its input rather than found a quieter registry — and every
+  // detector below reads the same records.
+  const counted = anchor.marker?.record_count;
+  if (Number.isInteger(counted) && records.length < counted) {
+    findings.push({
+      detector: "A1",
+      code: "A1_RECORDS_BELOW_MARKER",
+      message: `${BASELINE_FILE} counts ${counted} record(s) written at the baseline and this walk read ${records.length}`,
+    });
+  }
+
   for (const file of added) {
     const doc = readJsonAt(git, head, file);
     if (!doc) { findings.push({ detector: "A1", code: "A1_VERSION_UNREADABLE", message: `${file} was added after the baseline and is not readable JSON at HEAD` }); continue; }
@@ -391,11 +405,23 @@ export function a3({ anchor, git, root, records }, findings, skipped, scanned) {
   }
   const head = git.head();
 
-  // A `delayed` record whose queue entry is not on disk.
+  // A `delayed` record whose queue entry is not on disk — while the promise is
+  // still open. A delay ENDS in a later record about the same bytes: the
+  // drain's `published`, or the `refused` or `held` a re-check wrote when it
+  // took the entry away. Until that was asked, every drained release left its
+  // `delayed` record behind with no entry, and A3 alarmed on it for ever —
+  // from the first delayed release after the baseline.
+  const settles = new Set(["published", "refused", "held", "stopped"]);
+  const settled = (d) => records.some(({ doc: o }) =>
+    o && o !== d && settles.has(o.state) && String(o.decided_at ?? "") >= String(d.decided_at ?? "") &&
+    (d.fingerprint
+      ? o.fingerprint === d.fingerprint
+      : o.plugin_id === d.plugin_id && o.version === d.version));
   let delayed = 0;
   for (const { doc, file } of records) {
     if (doc?.state !== "delayed") continue;
     delayed++;
+    if (settled(doc)) continue;
     const entry = path.join("state", "queue", `${doc.plugin_id}@${doc.version}.json`);
     if (!fs.existsSync(path.join(root, entry))) {
       findings.push({
@@ -675,11 +701,32 @@ export function a9({ anchor, git }, findings, skipped, scanned) {
       ...git.changedIn(sha, "AM", ["plugins/*/identity.json"]),
       ...git.changedIn(sha, "M", ["plugins/*/plugin.json"]).filter((f) => sourceChangedIn(git, sha, f)),
     ];
-    if (touched.length === 0) continue;
+    // A DELETION of an identity record, which "AM" never saw (B-T4.2's
+    // canary: A9 is silent on the reset commit and alarms on a hand
+    // deletion). Deleting `identity.json` by hand does not unbind anything
+    // cleanly — the listing is `frozen` (ID-25), and the baseline its later
+    // publication records carry still stands — so the one deletion that is a
+    // decision is `M_IDENTITY_RESET`'s release commit, which adds the voiding
+    // record for that id in the same commit (`isVoidingRecord`). No such
+    // record can exist before the contract MINOR adds the category, so until
+    // then every deletion alarms, which is the refusal ID-41 says stands.
+    const deleted = git.changedIn(sha, "D", ["plugins/*/identity.json"]);
+    if (touched.length === 0 && deleted.length === 0) continue;
 
-    const addedRecords = git.changedIn(sha, "A", ["log/decisions"])
-      .map((f) => readJsonAt(git, sha, f))
-      .filter((d) => d && d.state === "published");
+    const added = git.changedIn(sha, "A", ["log/decisions"]).map((f) => readJsonAt(git, sha, f)).filter(Boolean);
+    const addedRecords = added.filter((d) => d.state === "published");
+    for (const file of deleted) {
+      const id = /^plugins\/([^/]+)\//.exec(file)?.[1] ?? null;
+      if (added.some((d) => isVoidingRecord(d) && d.plugin_id === id)) continue;
+      findings.push({
+        detector: "A9",
+        code: "A9_IDENTITY_CHANGED_NO_DECISION",
+        message: `${sha.slice(0, 12)} deleted ${file} and added no identity-reset record for ${id ?? "that id"} ` +
+          "(B-T4.2's `M_IDENTITY_RESET`, the one commit that may delete one)",
+        plugin_id: id,
+        hex: sha,
+      });
+    }
 
     for (const file of touched) {
       const id = /^plugins\/([^/]+)\//.exec(file)?.[1] ?? null;

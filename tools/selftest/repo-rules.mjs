@@ -13,9 +13,17 @@ import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
 import { REPO_ROOT } from "../lib/sources.mjs";
+import { DOCUMENT_MEMBERS } from "../lib/priv-rules.mjs";
+import { cleanEnv } from "../lib/git-env.mjs";
 import { test, assert, assertEqual, walkRepo, grepRepo, isSuiteFile, tmp } from "./harness.mjs";
 
 export async function run() {
+  // Its own section header since RC-R3-4(b). Until then this module printed
+  // none and its names came out under the update-notes module's, the header
+  // every insertion into the runner's list had to step around; with that
+  // module moved into Astra they would have come out under the desk canary's.
+  console.log("\nrepository rules");
+
   // Every rule below that scans the repository asks `walkRepo`, and `walkRepo`
   // answers with a list. A skip in its exclusion list does not make a rule fail
   // — it makes the rule find nothing, which is the same output as compliance.
@@ -595,6 +603,141 @@ export async function run() {
     assertEqual(problems.join("; "), "", "the job that holds the index signing key can do more than sign");
   });
 
+  // ── RC-R2-3 commit (ii): the wake hint goes on only against an answer ─────
+  //
+  // `sign.yml`'s `WAKE_HINT` is one line, and the plan makes its flip a commit
+  // of its own with one precondition: the service's `signed_wake` surface is
+  // OPEN, evidenced by a 202 carrying exactly `{"schema":"astra.plugins.wake-ack/1"}`
+  // read from the release desk (attack M-9; §1.3 row 8.4). Until 2026-09-24 that
+  // precondition lived in a comment naming an astra-plugins-ops record — a
+  // private repository this one cannot read — so nothing refused the flip: a
+  // one-character edit would have had the job holding the index key POST into
+  // api.minice.ai on every commit to `signed`, and between minice-e4's W3a and
+  // W3b there is no plugins location there at all, only cloud's `location /`.
+  //
+  // So the precondition is a committed record, `log/signed-wake-ack.json`, and
+  // this rule reads it. Four clauses, each watched red on a copy of the
+  // committed `sign.yml` in the test after this one:
+  //
+  //   1. `WAKE_HINT` is set once, in the top-level `env:`, to exactly `"off"`
+  //      or `"on"` — quoted, because YAML 1.1 reads a bare `on` as `true`, and
+  //      the step's `env.WAKE_HINT == 'on'` would then never run while the
+  //      file reads as switched on;
+  //   2. `"on"` needs the record;
+  //   3. a record that is committed is judged whether or not the hint is on,
+  //      because a malformed record sitting beside `"off"` is the one the flip
+  //      would be waved through on;
+  //   4. the one step that posts the hint is gated on `env.WAKE_HINT == 'on'`
+  //      with no `||`, or the value above decides nothing.
+  //
+  // The record lives under `log/`, which TRUST-31 excludes as "records, not
+  // rules" (`bot/tests/code-paths.test.mjs`), and NOT under `log/rollout/`:
+  // that directory holds exit markers only, and the same test asserts it is
+  // empty while no step has exited. Its members are declared once, in
+  // `tools/lib/priv-rules.mjs`'s `DOCUMENT_MEMBERS["signed-wake-ack"]`, which
+  // PRIV-2's canary needs for any `log/*.json` anyway and which this rule reads
+  // as the record's closed member set.
+  await test("sign.yml's wake hint is off, or on with the recorded 202 it rests on", async () => {
+    const signText = fs.readFileSync(path.join(WORKFLOW_DIR, "sign.yml"), "utf8");
+    const recordPath = path.join(REPO_ROOT, WAKE_RECORD);
+    const recordText = fs.existsSync(recordPath) ? fs.readFileSync(recordPath, "utf8") : null;
+    const { value, problems } = wakeHintProblems(signText, recordText, { now: new Date() });
+    assertEqual(problems.join("; "), "",
+      "sign.yml's SERVE-94 wake hint is not held to the answer RC-R2-3 commit (ii) rests on");
+    console.log(`        (WAKE_HINT ${JSON.stringify(value)}; ${WAKE_RECORD} ${recordText === null ? "not committed" : "committed and well-formed"})`);
+  });
+
+  await test("the wake-hint rule goes red in each state the tree has not held, built from the committed sign.yml", async () => {
+    // HEAD's file, not the working tree's: the states are built from what is
+    // committed, so a working-tree edit cannot move the baseline they start
+    // from. And normalised to "off" first, so that the day commit (ii) lands
+    // "on" these legs still build every state from it rather than throwing on
+    // an anchor that moved.
+    const head = spawnSync("git", ["-C", REPO_ROOT, "show", "HEAD:.github/workflows/sign.yml"],
+      { encoding: "utf8", env: cleanEnv(), maxBuffer: 16 * 1024 * 1024 });
+    assert(head.status === 0, `sign.yml is not committed at HEAD, so there is nothing to build the states from: ${head.stderr}`);
+    const hintLines = head.stdout.match(/^ {2}WAKE_HINT: "(?:off|on)"\n/gm) ?? [];
+    assert(hintLines.length === 1,
+      `HEAD's sign.yml sets WAKE_HINT to a quoted "off" or "on" ${hintLines.length} time(s), not once; the live check above says why`);
+    const committed = head.stdout.replace(hintLines[0], '  WAKE_HINT: "off"\n');
+    const now = new Date("2026-09-30T00:00:00Z");
+    // Every anchor matches exactly once or the leg throws: a variant that
+    // changed nothing and a variant the rule shrugged at look the same.
+    const swap = (text, from, to) => {
+      const n = text.split(from).length - 1;
+      if (n !== 1) throw new Error(`the anchor ${JSON.stringify(from)} matches ${n} time(s) in sign.yml, not once`);
+      return text.replace(from, to);
+    };
+    const HINT = '  WAKE_HINT: "off"\n';
+    const GATE = "env.WAKE_HINT == 'on' && ";
+    const on = swap(committed, HINT, '  WAKE_HINT: "on"\n');
+    const good = {
+      schema: WAKE_RECORD_SCHEMA,
+      method: "POST",
+      url: WAKE_URL,
+      status: 202,
+      body: WAKE_ACK_BODY,
+      read_at: "2026-09-26T10:00:00Z",
+      read_from: WAKE_READ_FROM,
+    };
+    const rec = (over = {}, drop = []) => {
+      const r = { ...good, ...over };
+      for (const k of drop) delete r[k];
+      return `${JSON.stringify(r, null, 2)}\n`;
+    };
+    const legs = [
+      { name: "the committed file set to off, no record", sign: committed, record: null, red: [] },
+      { name: "off, with a well-formed record committed early", sign: committed, record: rec(), red: [] },
+      { name: "on, with a well-formed record", sign: on, record: rec(), red: [] },
+      { name: "on, and no record", sign: on, record: null, red: [WAKE_RECORD, "not committed"] },
+      { name: "on, the recorded status 200", sign: on, record: rec({ status: 200 }), red: ["status", "202"] },
+      { name: "on, the recorded status a string", sign: on, record: rec({ status: "202" }), red: ["status", "202"] },
+      { name: "on, the body carrying one extra member", sign: on,
+        record: rec({ body: '{"schema":"astra.plugins.wake-ack/1","shadow":false}' }), red: ["body", "exactly"] },
+      { name: "on, the body differing in whitespace only", sign: on,
+        record: rec({ body: '{"schema": "astra.plugins.wake-ack/1"}' }), red: ["body", "exactly"] },
+      { name: "on, another schema's body", sign: on,
+        record: rec({ body: '{"schema":"astra.plugins.bot-ack/1"}' }), red: ["body", "exactly"] },
+      { name: "on, a GET", sign: on, record: rec({ method: "GET" }), red: ["method", "POST"] },
+      { name: "on, another URL", sign: on, record: rec({ url: "https://api.minice.ai/plugins/v1/bot/wake" }), red: ["url"] },
+      { name: "on, read somewhere else", sign: on, record: rec({ read_from: "github-runner" }), red: ["read_from"] },
+      { name: "on, read_at in the future", sign: on, record: rec({ read_at: "2026-10-01T00:00:00Z" }), red: ["read_at", "future"] },
+      { name: "on, read_at a day that does not exist", sign: on, record: rec({ read_at: "2026-02-30T00:00:00Z" }), red: ["read_at"] },
+      { name: "on, read_at with fractional seconds", sign: on, record: rec({ read_at: "2026-09-26T10:00:00.5Z" }), red: ["read_at"] },
+      { name: "on, a member the record does not declare", sign: on, record: rec({ reader: "someone" }), red: ["reader", "declares"] },
+      { name: "on, a member missing", sign: on, record: rec({}, ["read_from"]), red: ["read_from", "missing"] },
+      { name: "on, another record schema", sign: on, record: rec({ schema: "astra.registry.wake-ack/2" }), red: ["schema"] },
+      { name: "on, a record that is not JSON", sign: on, record: "{ status: 202 }\n", red: [WAKE_RECORD, "JSON"] },
+      { name: "off, a malformed record committed", sign: committed, record: rec({ status: 200 }), red: ["status", "202"] },
+      { name: "a bare on, which YAML 1.1 reads as true", sign: swap(committed, HINT, "  WAKE_HINT: on\n"), record: rec(), red: ["WAKE_HINT", "exactly"] },
+      { name: "a value that is neither", sign: swap(committed, HINT, '  WAKE_HINT: "yes"\n'), record: rec(), red: ["WAKE_HINT", "\"yes\""] },
+      { name: "set twice", sign: swap(committed, HINT, `${HINT}  WAKE_HINT: "on"\n`), record: null, red: ["WAKE_HINT", "2 time"] },
+      { name: "the gate dropped from the step", sign: swap(committed, GATE, ""), record: null, red: ["env.WAKE_HINT == 'on'"] },
+      { name: "the gate or-ed away", sign: swap(committed, GATE, "(env.WAKE_HINT == 'on' || true) && "), record: null, red: ["||"] },
+    ];
+    const wrong = [];
+    for (const leg of legs) {
+      let res;
+      try {
+        res = wakeHintProblems(leg.sign, leg.record, { now });
+      } catch (e) {
+        wrong.push(`${leg.name}: threw ${e.message}`);
+        continue;
+      }
+      const text = res.problems.join(" | ");
+      if (leg.red.length === 0 && res.problems.length) wrong.push(`${leg.name}: expected green, got ${text}`);
+      if (leg.red.length && !res.problems.length) wrong.push(`${leg.name}: expected red naming ${leg.red.join(", ")}, got green`);
+      if (leg.red.length && res.problems.length) {
+        const missing = leg.red.filter((w) => !text.includes(w));
+        if (missing.length) wrong.push(`${leg.name}: red, but not naming ${missing.join(", ")}: ${text}`);
+      }
+    }
+    assertEqual(wrong.join("\n"), "",
+      "the wake-hint rule does not answer what its name says on copies of the committed sign.yml");
+    console.log(`        (${legs.length} states built from sign.yml: ${legs.filter((l) => l.red.length).length} red as named, ` +
+      `${legs.filter((l) => !l.red.length).length} green)`);
+  });
+
   await test("Pages is redeployed even when the publish job failed", async () => {
     // D5. Pages serves `signed`'s head, and that head exists whether or not
     // this run added to it. A `pages` job gated on `success()` would let one
@@ -672,8 +815,14 @@ export async function run() {
   const SPLIT_MODULES = [
     "primitives.mjs", "catalogue.mjs", "publishers.mjs", "validation.mjs", "couplings.mjs",
     "listings.mjs", "origins.mjs", "bundles.mjs", "index-signature.mjs", "revocations.mjs",
-    "cli.mjs", "root-delegation.mjs", "update-signing.mjs", "update-notes.mjs", "repo-rules.mjs",
+    "cli.mjs", "root-delegation.mjs", "repo-rules.mjs",
     "signer.mjs",
+    // RC-R3-4(b) took the update manifest signer's two case modules out of
+    // this list, with the modules: they moved into Astra beside the signer
+    // (client plan C2.1). `desk-moved.mjs` is what stands in their place, the
+    // canary that the desk stays gone and that `loadTestRoot`, which Astra
+    // still reads here, keeps its shape.
+    "desk-moved.mjs",
     // `roots.mjs` was added on 2026-09-19 with B-T1.5, watched failing by
     // deleting the file and its runner entry together — which is the one loss
     // `checkModuleSet` is silent about, because that guard compares those two
@@ -748,6 +897,9 @@ export async function run() {
     // one, so a suite that stopped running it would print the same count of
     // NOT ASKED minus two and look like a suite that had less to skip.
     "loads.mjs",
+    // `scope9.mjs` was added on 2026-09-24 with RC-R3-2. Left out of this
+    // list it is silent, which is the half this list exists for.
+    "scope9.mjs",
   ];
   // A literal control character in a tracked source file is invisible, and that
   // is the whole of the defect. `bot/lib/moderation.mjs` carried three NUL
@@ -911,4 +1063,158 @@ export async function run() {
       "an allowed file no longer names the OS temp directory; take it out of `allowed` in this test, so the " +
       "allowance is not there to be reused");
   });
+}
+
+// ── RC-R2-3 commit (ii)'s rule, as a function of two texts ──────────────────
+//
+// Pure: it reads no file, so the second test above can hand it copies of the
+// committed `sign.yml` and synthesised records, and the first hands it the
+// real ones. What it does not judge, and cannot: that the 202 was really read.
+// A record is a statement somebody commits, and review of that commit is the
+// control; what this rule makes impossible is the flip with no statement, and
+// a statement that does not say what the precondition asks.
+
+/** SERVE-94's hint: the one URL `sign.yml`'s publish job may name (TRUST-5). */
+const WAKE_URL = "https://api.minice.ai/plugins/v1/signed/wake";
+/** Where the recorded answer lives. Under `log/`, outside TRUST-31's set. */
+const WAKE_RECORD = "log/signed-wake-ack.json";
+const WAKE_RECORD_SCHEMA = "astra.registry.signed-wake-ack/1";
+/** §4.2's success body for the wake hint: "exactly" this, byte for byte. */
+const WAKE_ACK_BODY = '{"schema":"astra.plugins.wake-ack/1"}';
+/**
+ * Where it may have been read from. One value: the plan's precondition is a
+ * read "from the release desk", and a read from anywhere else — a GitHub
+ * runner above all — is a POST from the shared addresses whose lines land in
+ * the acquired log (attack M-9), which is the thing the precondition exists to
+ * keep off it until the surface is open.
+ */
+const WAKE_READ_FROM = "release-desk";
+const WAKE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+
+/**
+ * Everything wrong with `sign.yml`'s wake hint against the committed record.
+ *
+ * @param {string} signText `.github/workflows/sign.yml`
+ * @param {string|null} recordText `log/signed-wake-ack.json`, or null when absent
+ * @param {{now: Date}} opts the clock a `read_at` may not be after
+ * @returns {{value: string|null, problems: string[]}}
+ */
+function wakeHintProblems(signText, recordText, { now }) {
+  const problems = [];
+  const lines = String(signText).split("\n");
+  const isCode = (l) => l.trim() !== "" && !l.trim().startsWith("#");
+
+  // Clause 1: once, at the top level, exactly one of two quoted words.
+  const sets = [];
+  lines.forEach((l, i) => {
+    if (!isCode(l)) return;
+    const m = /^(\s*)WAKE_HINT:\s*(.*?)\s*$/.exec(l);
+    if (m) sets.push({ i, indent: m[1].length, raw: m[2] });
+  });
+  let value = null;
+  if (sets.length !== 1) {
+    problems.push(`sign.yml sets WAKE_HINT ${sets.length} time(s); it is set once, in the top-level \`env:\``);
+  } else {
+    const [s] = sets;
+    let parent = null;
+    for (let j = s.i - 1; j >= 0; j--) {
+      if (isCode(lines[j]) && !/^\s/.test(lines[j])) { parent = lines[j].trim(); break; }
+    }
+    if (s.indent !== 2 || parent !== "env:") {
+      problems.push(`sign.yml sets WAKE_HINT at line ${s.i + 1} under ${JSON.stringify(parent)} and indent ${s.indent}; ` +
+        "it belongs to the workflow's top-level `env:`, which is what the wake step's `env.WAKE_HINT` reads");
+    }
+    const m = /^"(off|on)"(?:\s+#.*)?$/.exec(s.raw);
+    if (!m) {
+      problems.push(`sign.yml's WAKE_HINT is \`${s.raw}\`, and it is exactly "off" or "on", quoted: YAML 1.1 ` +
+        "reads a bare on as true, and the wake step would then never run while the file reads as switched on");
+    } else {
+      value = m[1];
+    }
+  }
+
+  // Clause 4: the one step that posts the hint is gated on the value.
+  const posts = [];
+  lines.forEach((l, i) => { if (isCode(l) && l.includes(WAKE_URL)) posts.push(i); });
+  if (posts.length !== 1) {
+    problems.push(`sign.yml names ${WAKE_URL} on ${posts.length} line(s) outside comments; the wake step names it once`);
+  } else {
+    const at = posts[0];
+    const indentOf = (l) => l.search(/\S/);
+    let start = -1;
+    for (let j = at - 1; j >= 0; j--) {
+      if (isCode(lines[j]) && /^\s*-\s/.test(lines[j]) && indentOf(lines[j]) < indentOf(lines[at])) { start = j; break; }
+    }
+    if (start < 0) {
+      problems.push(`sign.yml's ${WAKE_URL} is not inside a step`);
+    } else {
+      const stepIndent = indentOf(lines[start]);
+      let end = lines.length;
+      for (let j = start + 1; j < lines.length; j++) {
+        if (isCode(lines[j]) && indentOf(lines[j]) <= stepIndent) { end = j; break; }
+      }
+      const gates = lines.slice(start, end).filter((l) => isCode(l) && /^\s*(?:-\s+)?if:/.test(l));
+      const gate = gates.length === 1 ? gates[0] : "";
+      if (!gate.includes("env.WAKE_HINT == 'on'")) {
+        problems.push(`sign.yml's wake step (line ${start + 1}) is not gated on env.WAKE_HINT == 'on' ` +
+          `(its if: is ${JSON.stringify(gate.trim())}), so WAKE_HINT decides nothing`);
+      } else if (gate.includes("||")) {
+        problems.push(`sign.yml's wake step (line ${start + 1}) gates on env.WAKE_HINT == 'on' inside an ||, so the ` +
+          `hint can be sent with the value "off": ${gate.trim()}`);
+      }
+    }
+  }
+
+  // Clauses 2 and 3: "on" needs the record; a committed record is judged.
+  if (recordText === null) {
+    if (value === "on") {
+      problems.push(`sign.yml's WAKE_HINT is "on" and ${WAKE_RECORD} is not committed: RC-R2-3 commit (ii) rests on a ` +
+        `recorded 202 carrying exactly ${WAKE_ACK_BODY} from POST ${WAKE_URL}, read from the release desk`);
+    }
+    return { value, problems };
+  }
+  let doc;
+  try {
+    doc = JSON.parse(recordText);
+  } catch (e) {
+    problems.push(`${WAKE_RECORD} is not JSON: ${e.message}`);
+    return { value, problems };
+  }
+  if (doc === null || typeof doc !== "object" || Array.isArray(doc)) {
+    problems.push(`${WAKE_RECORD} is ${JSON.stringify(doc)}, not an object`);
+    return { value, problems };
+  }
+  const declared = DOCUMENT_MEMBERS["signed-wake-ack"].members;
+  for (const k of Object.keys(doc)) {
+    if (!declared.includes(k)) {
+      problems.push(`${WAKE_RECORD} carries \`${k}\`, which tools/lib/priv-rules.mjs's DOCUMENT_MEMBERS["signed-wake-ack"] ` +
+        `does not declare; the record declares ${declared.join(", ")}`);
+    }
+  }
+  for (const k of declared) if (!Object.hasOwn(doc, k)) problems.push(`${WAKE_RECORD} has \`${k}\` missing`);
+  const want = (k, v, why) => {
+    if (Object.hasOwn(doc, k) && doc[k] !== v) {
+      problems.push(`${WAKE_RECORD}'s \`${k}\` is ${JSON.stringify(doc[k])}, and it is ${JSON.stringify(v)}: ${why}`);
+    }
+  };
+  want("schema", WAKE_RECORD_SCHEMA, "the record's own schema");
+  want("method", "POST", "SERVE-94's hint is a POST (§4.2)");
+  want("url", WAKE_URL, "the URL sign.yml posts to, and the only one its publish job may name (TRUST-5)");
+  want("status", 202, "the precondition is a 202 (registry plan RC-R2-3, §1.3 row 8.4), recorded as a number");
+  want("read_from", WAKE_READ_FROM, "the precondition is a read from the release desk, never from a runner (attack M-9)");
+  if (Object.hasOwn(doc, "body") && doc.body !== WAKE_ACK_BODY) {
+    problems.push(`${WAKE_RECORD}'s \`body\` is ${JSON.stringify(doc.body)}, and §4.2's wake-hint answer is exactly ` +
+      `${WAKE_ACK_BODY}, byte for byte: an extra member or a space is a different answer`);
+  }
+  if (Object.hasOwn(doc, "read_at")) {
+    const t = doc.read_at;
+    const ok = typeof t === "string" && WAKE_TIME.test(t) && new Date(t).toISOString() === t.replace("Z", ".000Z");
+    if (!ok) {
+      problems.push(`${WAKE_RECORD}'s \`read_at\` is ${JSON.stringify(t)}, not an RFC 3339 UTC time in whole seconds ` +
+        "ending in Z that exists on the calendar");
+    } else if (new Date(t) > now) {
+      problems.push(`${WAKE_RECORD}'s \`read_at\` ${t} is in the future of ${now.toISOString()}; an answer is recorded after it is read`);
+    }
+  }
+  return { value, problems };
 }

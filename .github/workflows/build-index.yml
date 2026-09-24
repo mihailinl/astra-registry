@@ -101,18 +101,22 @@ on:
   #                       that can leave the committed index disagreeing with a
   #                       fresh generation, which is the single assertion this
   #                       file exists to make.
+  #   Operator            a MOD-52 revert removes `unlisted` or an advisory and
+  #                       regenerates both documents (M-T3.5); its other acts
+  #                       write state/** records only.
   #
-  # **Three of the four commit nothing today, and are listed anyway**, exactly
+  # **Three of the five commit nothing today, and are listed anyway**, exactly
   # as `sign.yml`'s list was and for the reason its header gives: a trigger
   # naming a workflow that never runs costs nothing, and a checker that goes
   # deaf on the day one of them lands costs an hour of `main` being wrong with
   # nothing red anywhere. `plugins-ingest.yml`'s schedule is commented out until
   # R3 (plan row reg.52) and its publish job exits 1 on B-T3.4;
-  # `plugins-moderation.yml`'s commit job exits 1 on M-T3.2; `publisher
+  # `plugins-moderation.yml`'s schedule is commented out until R3 too (reg.53)
+  # and its list job's service call is a placeholder; `publisher
   # re-check` runs daily but writes only for a publisher whose tier is
   # `verified`, and both records here are `astra_team`.
   workflow_run:
-    workflows: ["Ingest", "Plugins ingest", "Plugins moderation", "publisher re-check"]
+    workflows: ["Ingest", "Plugins ingest", "Plugins moderation", "publisher re-check", "Operator"]
     types: [completed]
   # Hourly. THE BOT'S PUBLISH COMMIT DOES NOT TRIGGER THIS FILE by `push`:
   # `ingest.yml`'s publish job commits with the repository's own
@@ -451,6 +455,7 @@ jobs:
             --revocations dist/registry/v1/revocations.json \
             --registry-dir dist/registry/v1 \
             --repo "${{ github.repository }}" \
+            --redirects site/redirects.json \
             --out dist/site
 
       # The acceptance criterion, asserted against what was actually written

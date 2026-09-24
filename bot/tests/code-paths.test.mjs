@@ -220,7 +220,6 @@ export const ENTRIES = [
   "tools/served-set/",
   "tools/sign-revocations.mjs",
   "tools/sign-trust.mjs",
-  "tools/sign-update-manifest.mjs",
   "tools/signer/git.mjs",
   "tools/signer/key-window.mjs",
   "tools/signer/pages.mjs",
@@ -241,6 +240,9 @@ export const ENTRIES = [
   "policy/reserved-ids.json",
   "policy/spdx-allowlist.json",
   "policy/listing-language-exemptions.json",
+  // Contract 2.4.0's: B.4's alert record, which tools/validate.mjs judges
+  // against it by literal path (the fourteenth schema).
+  "schema/alert-v1.json",
   "schema/cutover-v1.json",
   "schema/deadline-v1.json",
   // B-T2.1's three, added by contract 0.21.0. `tools/lib/sources.mjs`'s
@@ -476,9 +478,22 @@ test("every entry resolves, or carries an excuse that expires", () => {
   // state, and it is asserted rather than assumed, or the loop above is
   // `if (true)` with a comment on it. Two instruments, because an absence is a
   // claim about the tool: `git ls-tree` over HEAD, and the working directory.
+  //
+  // R0 has a marker and no exit file: the plan makes `log/rollout/R0-settings.json`
+  // R0's marker (ROLL-7's file), with its note beside it, and nothing else in
+  // `log/rollout/` may be there while no step has exited. Named files, not a
+  // pattern, so an exit marker spelled wrongly still turns this red — with one
+  // exception that is a pattern and cannot be mistaken for an exit marker:
+  // ROLL-7's dated amendments, `R0-settings-<YYYY-MM-DD>[-<n>].json` (log/** is
+  // append-only, so a pin added later — `bot-state`, B-T5.0 — is a new file).
   if (exited.size === 0) {
-    assert.equal(files.filter((f) => f.startsWith("log/rollout/")).length, 0);
-    assert.equal(fs.existsSync(path.join(REPO, "log", "rollout")), false);
+    const R0_RECORDS = new Set(["log/rollout/R0-settings.json", "log/rollout/R0-exit-note.md"]);
+    const ROLL7_AMENDMENT = /^log\/rollout\/R0-settings-\d{4}-\d{2}-\d{2}(?:-\d+)?\.json$/;
+    const known = (f) => R0_RECORDS.has(f) || ROLL7_AMENDMENT.test(f);
+    assert.deepEqual(files.filter((f) => f.startsWith("log/rollout/") && !known(f)), []);
+    const dir = path.join(REPO, "log", "rollout");
+    const onDisk = fs.existsSync(dir) ? fs.readdirSync(dir).map((n) => `log/rollout/${n}`) : [];
+    assert.deepEqual(onDisk.filter((f) => !known(f)), []);
     console.log(
       `note  no rollout exit marker is on the tree, so ${UNRESOLVED_BY.size} excuse(s) have not expired: ` +
         `${[...UNRESOLVED_BY].map(([e, r]) => `${e} until ${r.due}`).join(", ")}.`,
@@ -600,11 +615,13 @@ const ROUTINE = [
   { p: "state/deny/abc123.json", why: "an operator deny record (TRUST-33)", exists: false, by: "operator.yml's `act: deny`, M-T3.5" },
   { p: "state/alerts/abc123.json", why: "an alert record (TRUST-32); its delivery report is what the operator window counts from", exists: false, by: "the ingest run's alert job" },
   { p: "policy/binding-deadline.json", why: "the binding deadline, which the OWNER commits by hand (MIG-2)", exists: false, by: "the owner, before R4b" },
-  // Until contract 0.38.0 two rows here held `tools/sign-update-manifest.mjs`
-  // and `tools/signer/plan.mjs` OUTSIDE, as desk and ceremony tools the bot
+  // Until contract 0.38.0 two rows here held the update manifest signer and
+  // `tools/signer/plan.mjs` OUTSIDE, as desk and ceremony tools the bot
   // never reaches — true of the bot's closure and false of its fifth gate,
-  // which loads both (ops pending item 19). They are in the set now, and the
-  // row that stays is the one file under `tools/signer/` neither reaches.
+  // which loaded both (ops pending item 19). Both went into the set; the
+  // manifest signer has since left the tree with the rest of the release desk
+  // (RC-R3-4(b)), and the row that stays is the one file under `tools/signer/`
+  // neither reaches.
   { p: "tools/signer/verdict.mjs", why: "the signer workflow's verdict step, which neither a bot run nor the fifth gate loads", exists: true },
 ];
 

@@ -1,0 +1,33 @@
+{
+  "schema": "astra.plugins.bot-result/1",
+  "submission_id": "0192f1c2-3b4a-7c5d-8e6f-1a2b3c4d5e6f",
+  "attempt": "att-1",
+  "state": "delayed",
+  "reasons": [
+    {
+      "code": "P_DELAY_WIDENED",
+      "stage": "policy",
+      "location": null,
+      "message": "it asks for tts, which 0.1.0 did not"
+    },
+    {
+      "code": "P_DELAY_WAITING",
+      "stage": "policy",
+      "location": null,
+      "message": "it publishes itself at 2026-09-27T12:00:00Z — 24 h after 2026-09-26T12:00:00Z — with nobody touching it"
+    }
+  ],
+  "decision_id": "00000000000000000000000000000000",
+  "main_commit": "7777777777777777777777777777777777777777",
+  "plugin_id": "dice-roller",
+  "version": "0.2.0",
+  "tag": "v0.2.0",
+  "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "artifact_digests": [
+    "linux-x64:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  ],
+  "fingerprint": "476e6975802d8801",
+  "repository_id": "1203676452",
+  "repository_owner_id": "193032699",
+  "publish_after": "2026-09-27T12:00:00Z"
+}

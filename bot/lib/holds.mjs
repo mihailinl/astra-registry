@@ -5,8 +5,9 @@
 // imports it: its `commit` job enters a hold with `holdEntry`, walks every hold
 // here even when `list` failed — a hold's release is driven by a record in git
 // and not by anything the service answers — and reads each commit that deleted
-// an entry with `classifyHoldCommit`. That job is itself dark: its step exits 1
-// until M-T3.2 supplies TRUST-26's bound, so none of this has run in a workflow.
+// an entry with `classifyHoldCommit`. That job is itself dark — its schedule is
+// commented out and its list call is a placeholder until the R3-open commit —
+// so none of this has run in a workflow yet.
 //
 // ── WHY A HOLD IS A FILE ────────────────────────────────────────────────────
 //

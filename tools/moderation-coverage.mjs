@@ -75,12 +75,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { ACTIONS } from "../bot/lib/moderation.mjs";
+import { ACTIONS, reasonProblems } from "../bot/lib/moderation.mjs";
 import { stagingListingId as reservedStagingListingId } from "./lib/reserved.mjs";
 import { ADVISORY_FILE } from "./lib/revocations.mjs";
 import { report } from "./coverage/rules.mjs";
 import {
-  blobAt, changedPaths, commitMeta, commitsAfter, firstParent, historyCount,
+  blobAt, changedPaths, commitMeta, commitsAfter, firstParent, git, historyCount,
   introducingCommit, isShallow, jsonAt, mergeOwnChanges, mergesAfter, trailerValues,
 } from "./coverage/git.mjs";
 
@@ -125,6 +125,20 @@ const ADVISORY_RE = ADVISORY_FILE;
 const LOG_ENTRY_RE = /^bot\/moderation\/[^/]+\.json$/;
 const LOG_TREE_RE = /^log\//;
 
+// The one record under `log/` that is re-committed on purpose (contract 2.3.0,
+// MOD-34's Check: "CI refuses edits to existing `bot/moderation/*.json` and
+// `log/**`, except `log/migration-notice-<n>.json`, which contract MIG-13's
+// re-send re-commits"). A re-send that announces a later cutover date writes
+// the new date into every marker from round 2 on, each keeping its own
+// `sent_at`, so ROLL-32's and ROLL-63's clocks do not move. Only a CHANGE is
+// excepted: no MIG-13 procedure deletes a marker, and a deleted one erases the
+// round the banner and the deadline watch read. The name is B.4's, `<n>` a
+// positive integer, so a look-alike (`…-2.json.bak`, `…-x.json`) stays under
+// the rule. Until 2.3.0 each re-send cleared itself with `Moderation-Exempt:`,
+// which clears every trigger in its commit; the exception is the narrower
+// instrument.
+const NOTICE_MARKER_RE = /^log\/migration-notice-[1-9][0-9]*\.json$/;
+
 // **Deliberately looser than `tools/lib/ids.mjs`'s `ID_PATTERN`.**
 //
 // The first spelling of these two copied that pattern, which is a rule this
@@ -141,6 +155,7 @@ const LOG_TREE_RE = /^log\//;
 // id turns out to be. So it matches any single path component, and the
 // predicate is not in this file in either direction.
 const PLUGIN_JSON_RE = /^plugins\/([^/]+)\/plugin\.json$/;
+const PUBLISHER_JSON_RE = /^publishers\/([^/]+)\.json$/;
 const VERSION_JSON_RE = /^plugins\/([^/]+)\/versions\/([^/]+)\.json$/;
 
 /** MOD-47: `<date>-<plugin>-<action>.json`, and `-2`, `-3` for a second the same day. */
@@ -182,6 +197,100 @@ export function parseExempt(value) {
 
 /** Every `Moderation-Exempt:` on a message, parsed. Unparseable ones are dropped. */
 const exemptions = (message) => trailerValues(message, "Moderation-Exempt").map(parseExempt).filter(Boolean);
+
+// ── M-T5.8: a badge withdrawn says why (MOD-44, MOD-42) ─────────────────────
+//
+// Contract MOD-44: a badge withdrawn for cause is a public commit to
+// `publishers/` whose `Badge-Withdrawn:` trailer carries a MOD-41 reason, and
+// that trailer is what the plugins service reads to send `notice.moderated`
+// to every listing the record covered — "for such a commit, and no other".
+// So a commit that removes or narrows a publisher record with no trailer is a
+// withdrawal nobody is told about, and one whose trailer carries a reason
+// MOD-41 refuses is a notice the service either refuses or sends with text
+// that must never reach a reader. Publisher records are hand commits the bot
+// never validates (MOD-42), which is why the check is here, in the walk that
+// reads hand commits, and not in a publish path.
+//
+// **A lapse is not a withdrawal for cause.** `publisher-recheck.yml` deletes a
+// `verified` record whose confirmations ran out, and that is no moderation
+// act: it sends no notice and carries no `Badge-Withdrawn:`. Its commit
+// carries `Moderation-Exempt: publisher-recheck: …` instead, which this walk
+// already honours for every trigger in a commit. A hand narrowing that copies
+// the same exemption is green too, and that is accepted: `publishers/**` is a
+// reviewed hand path, and a registry writer already has the power it grants.
+//
+// **Narrowing** is anything that leaves the badge saying less than it did:
+// the record deleted or made unreadable; a login it spoke for (its `owner`, or
+// one in `covers`) no longer among those it speaks for; `astra_team` becoming
+// `verified`; or an `expires_at` added where there was none, or moved earlier.
+// A renewal moves `expires_at` LATER, so the re-check's everyday commit is not
+// a narrowing and needs no trailer at all.
+//
+// **It applies to commits after the one that introduced it** (the plan), so
+// history is not re-judged. The start is the oldest commit in which this file
+// carries `BADGE_RULE_TOKEN` — derived, like the walk's own start, rather than
+// pinned to a SHA nobody can write before the commit exists.
+
+/** The string whose first appearance in this file starts M-T5.8's rule. */
+export const BADGE_RULE_TOKEN = "m-t5.8/badge-withdrawn-trailer";
+
+const TIER_RANK = { astra_team: 2, verified: 1 };
+
+/** Every login a publisher record speaks for: its owner, and each of `covers`. */
+const speaksFor = (doc) => new Set([doc?.owner, ...(Array.isArray(doc?.covers) ? doc.covers : [])]
+  .filter((l) => typeof l === "string").map((l) => l.toLowerCase()));
+
+/**
+ * How `now` says less than `before`, or null when it does not. Both are the
+ * parsed record; `now === null` is a deletion or an unreadable file.
+ *
+ * @returns {string|null} a phrase for the run log
+ */
+export function badgeNarrowing(before, now) {
+  if (!before || typeof before !== "object") return null; // a new record widens
+  if (!now || typeof now !== "object") return "removed the record, or left it unreadable";
+  const lost = [...speaksFor(before)].filter((l) => !speaksFor(now).has(l));
+  if (lost.length) return `stopped speaking for ${lost.join(", ")}`;
+  const rb = TIER_RANK[before.tier] ?? 0;
+  const rn = TIER_RANK[now.tier] ?? 0;
+  if (rn < rb) return `lowered the tier from ${before.tier} to ${now.tier ?? "none"}`;
+  if (typeof now.expires_at === "string") {
+    if (typeof before.expires_at !== "string") return `added an expiry, ${now.expires_at}`;
+    if (now.expires_at < before.expires_at) return `moved the expiry earlier, to ${now.expires_at}`;
+  }
+  return null;
+}
+
+/**
+ * Whether a commit's own message covers a badge narrowing: a
+ * `Badge-Withdrawn:` whose reason MOD-41's rules accept. Every value is
+ * judged, so one good trailer beside a refused one still reports the refused
+ * one — a notice the service would send with the bad text is not covered by
+ * the good one next to it.
+ *
+ * @returns {{covered: boolean, refused: string[]}}
+ */
+export function badgeWithdrawnCover(message) {
+  const values = trailerValues(message, "Badge-Withdrawn");
+  const refused = [];
+  for (const v of values) {
+    const problems = reasonProblems(v);
+    if (problems.length) refused.push(problems.map((p) => p.class).join("+"));
+  }
+  return { covered: values.length > 0 && refused.length === 0, refused };
+}
+
+/**
+ * The commit that introduced M-T5.8's rule: the oldest one in which this file
+ * carries `BADGE_RULE_TOKEN`. Null when git knows none (an uncommitted working
+ * copy, or a fixture repository), which the walk reports rather than treats
+ * as "judge nothing".
+ */
+export function badgeRuleStart(repo) {
+  const out = git(["log", "--format=%H", `-S${BADGE_RULE_TOKEN}`, "--", SELF_PATH], { cwd: repo, allowFailure: true });
+  const shas = out.split("\n").map((x) => x.trim()).filter(Boolean);
+  return shas.length ? shas[shas.length - 1] : null;
+}
 
 // ── state mode ──────────────────────────────────────────────────────────────
 
@@ -495,6 +604,7 @@ export function triggersOf(sha, repo, view = firstParentView(sha, repo)) {
       refusals.push({ kind: "log-entry-edited", path: p, status });
       continue;
     }
+    if (NOTICE_MARKER_RE.test(p) && status === "M") continue;
     if (LOG_TREE_RE.test(p) && (status === "M" || status === "D")) {
       refusals.push({ kind: "log-tree-edited", path: p, status });
       continue;
@@ -524,20 +634,21 @@ export function triggersOf(sha, repo, view = firstParentView(sha, repo)) {
       const before = view.before(p, "yanked");
       if (before.present && before.value?.yanked === true) continue;
       triggers.push({ kind: "yank", id, version, path: p });
+      continue;
     }
-    // ── M-T5.8's seam (MOD-44, MOD-42) ───────────────────────────────────────
-    //
-    // A commit that REMOVES or NARROWS a `publishers/*.json` belongs in this
-    // loop, as a trigger whose cover is `Badge-Withdrawn: <reason>` with the
-    // reason passing `tests/moderation-reasons.json`, or `Moderation-Exempt:`
-    // for a lapse. It is not written here because two of its three pieces are
-    // another task's and neither is on `main`: the reason corpus is M-T1.6's
-    // file, and `publisher-recheck.yml`'s commit does not yet carry the
-    // `Moderation-Exempt: publisher-recheck: …` trailer that keeps every
-    // evidence lapse from turning this canary red. Landing the rule first
-    // would make the automated committer the canary's most frequent
-    // offender — which is the state in which a rule gets an exemption written
-    // so wide it stops meaning anything.
+    // M-T5.8 (MOD-44): a publisher record removed or narrowed. See
+    // `badgeNarrowing` above for what counts, and `badgeWithdrawnCover` for
+    // what covers it.
+    const mPublisher = PUBLISHER_JSON_RE.exec(p);
+    if (mPublisher) {
+      if (status === "D" && !view.ownDeletion(p)) continue;
+      if (status !== "D" && !view.ownWrite(p)) continue;
+      const before = view.before(p, "tier");
+      if (!before.present) continue; // a record created: a badge granted, not withdrawn
+      const now = status === "D" ? null : jsonAt(sha, p, repo).value;
+      const how = badgeNarrowing(before.value, now);
+      if (how) triggers.push({ kind: "badge-narrowed", login: mPublisher[1], how, path: p });
+    }
   }
   return { triggers, refusals };
 }
@@ -582,6 +693,7 @@ function triggerCovered(trigger, added) {
 }
 
 const describe = (t) => ({
+  "badge-narrowed": () => `${t.how} in ${t.path} (a badge withdrawn)`,
   delist: () => `delisted ${t.id}`,
   yank: () => `yanked ${t.id}@${t.version}`,
   "advisory-written": () => `wrote advisory ${t.advisory}`,
@@ -608,7 +720,7 @@ function retroCovers(trigger, entries, authorActions) {
   }
 }
 
-export function commitMode(repo, { historyFloor = HISTORY_FLOOR, from } = {}) {
+export function commitMode(repo, { historyFloor = HISTORY_FLOOR, from, badgeFrom } = {}) {
   const codes = [];
   const ids = [];
   const hexes = [];
@@ -645,6 +757,19 @@ export function commitMode(repo, { historyFloor = HISTORY_FLOOR, from } = {}) {
 
   const shas = commitsAfter(start, repo);
   const merges = mergesAfter(start, repo);
+
+  // M-T5.8's own start, which is later than the walk's: its commits are the
+  // ones after the commit that introduced the rule, merges included.
+  const badgeStart = badgeFrom ?? badgeRuleStart(repo);
+  const badgeJudged = new Set(badgeStart ? [...commitsAfter(badgeStart, repo), ...mergesAfter(badgeStart, repo)] : []);
+  if (!badgeStart) {
+    codes.push("MOD_BADGE_RULE_NO_START");
+    detail.push(
+      `git knows no commit in which ${SELF_PATH} carries ${JSON.stringify(BADGE_RULE_TOKEN)}, so M-T5.8's ` +
+      "badge-withdrawal rule has no start and judged nothing; an uncommitted working copy looks like this, and so " +
+      "does a token renamed without its history",
+    );
+  }
   const uncovered = [];
   const cleared = new Set();
   const refusalsFound = [];
@@ -669,6 +794,13 @@ export function commitMode(repo, { historyFloor = HISTORY_FLOOR, from } = {}) {
     }
     for (const t of triggers) {
       if (selfExempt) continue;
+      if (t.kind === "badge-narrowed") {
+        if (!badgeJudged.has(sha)) continue;
+        const cover = badgeWithdrawnCover(meta.message);
+        if (cover.covered) continue;
+        uncovered.push({ sha, subject: meta.message.split("\n")[0], trigger: { ...t, refused: cover.refused } });
+        continue;
+      }
       if (triggerCovered(t, added)) continue;
       uncovered.push({ sha, subject: meta.message.split("\n")[0], trigger: t });
     }
@@ -701,6 +833,23 @@ export function commitMode(repo, { historyFloor = HISTORY_FLOOR, from } = {}) {
 
   for (const u of uncovered) {
     if (clearedBy(u.sha)) continue;
+    if (u.trigger.kind === "badge-narrowed") {
+      // No retro cover: the notice MOD-44 sends is keyed on THIS commit's
+      // trailer, so an entry written later informs nobody. Cleared only by a
+      // `Moderation-Exempt: <sha>: …` naming it, like every other trigger.
+      codes.push(u.trigger.refused.length ? "MOD_BADGE_REASON_REFUSED" : "MOD_BADGE_UNCOVERED");
+      hexes.push(u.sha);
+      detail.push(
+        `${u.sha.slice(0, 12)} ${describe(u.trigger)} and ` +
+        (u.trigger.refused.length
+          ? `its \`Badge-Withdrawn:\` reason is refused by MOD-41 (${u.trigger.refused.join(", ")}), so the ` +
+            "notice the plugins service sends from it would carry text that must never reach a reader"
+          : "carries no `Badge-Withdrawn: <reason>` and no `Moderation-Exempt:`; MOD-44's notice to the covered " +
+            "listings' bound accounts is keyed on that trailer, so nobody is told") +
+        ". A lapse carries `Moderation-Exempt: publisher-recheck: …` instead",
+      );
+      continue;
+    }
     if (retroCovers(u.trigger, entries, authorActions)) continue;
     codes.push("MOD_COMMIT_UNCOVERED");
     hexes.push(u.sha);
@@ -736,12 +885,15 @@ export function commitMode(repo, { historyFloor = HISTORY_FLOOR, from } = {}) {
   detail.push(
     `merges: ${merges.length} merge(s) in range, ${mergesWithOwnChanges} whose own resolution changed a path`,
   );
+  if (badgeStart) {
+    detail.push(`badges (M-T5.8): ${badgeJudged.size} commit(s) after ${badgeStart.slice(0, 12)}, the rule's own start`);
+  }
   return { codes, ids, hexes, detail };
 }
 
 // ── the verdict ─────────────────────────────────────────────────────────────
 
-export function run(repo, { mode = "both", historyFloor, unlistedFloor, from } = {}) {
+export function run(repo, { mode = "both", historyFloor, unlistedFloor, from, badgeFrom } = {}) {
   const codes = [];
   const ids = [];
   const hexes = [];
@@ -751,7 +903,7 @@ export function run(repo, { mode = "both", historyFloor, unlistedFloor, from } =
     codes.push(...r.codes); ids.push(...r.ids); detail.push(...r.detail);
   }
   if (mode === "commits" || mode === "both") {
-    const r = commitMode(repo, { historyFloor, from });
+    const r = commitMode(repo, { historyFloor, from, badgeFrom });
     codes.push(...r.codes); ids.push(...r.ids); hexes.push(...r.hexes); detail.push(...r.detail);
   }
   // The five delists OPEN-OWNER-21 closed with retro entries are M-T1.4's, and

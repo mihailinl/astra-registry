@@ -308,11 +308,15 @@ export const CHECKS = [
   {
     name: "conformance",
     party: "registry",
-    // BOT-90. B-T3.11 fixes the schedule at R3; until it does, the bound
-    // cannot be computed and saying so is the honest state. Disarmed: no
-    // workflow posts here yet.
-    source: "B-T3.11 (BOT-90)",
-    interval_seconds: null,
+    // BOT-90. B-T3.11 fixed the schedule: hourly, `29 * * * *` in
+    // `service-conformance.yml`, whose `alert` job posts here. That schedule
+    // lands COMMENTED OUT, because the plugins service does not answer yet
+    // and an hourly probe of nothing pages every hour; a dispatch posts here
+    // and nothing else does. So this row stays disarmed, and the commit that
+    // uncomments the cron arms it in the same commit (the workflow's header;
+    // `bot/tests/workflows.test.mjs` is red on it until then).
+    source: "B-T3.11 (BOT-90), .github/workflows/service-conformance.yml",
+    interval_seconds: 3600,
     created_disarmed: true,
     armed_at: null,
     signals: ["success"],
@@ -320,11 +324,26 @@ export const CHECKS = [
   {
     name: "poll-and-sweep",
     party: "registry",
-    // BOT-87, at R5. Same: B-T5.0 and B-T5.1 fix the poll interval and the
-    // daily sweep, and the receiver's bound is recalibrated at R3 anyway.
-    // Disarmed: no workflow posts here yet.
-    source: "B-T5.0, B-T5.1 (BOT-87)",
-    interval_seconds: null,
+    // BOT-87. B-T5.0 fixed the interval: `plugins-ingest.yml`'s `poll-alert`
+    // posts on every run in which `load` ran, which is BOT-51's 600 s once
+    // that workflow's schedule is live; the poll inside it runs every third
+    // run (BOT-41's 1800 s) and the sweep daily. The bound is a day either
+    // way, because the poster is GitHub-scheduled.
+    //
+    // Disarmed, because nothing posts on a schedule yet: the workflow's
+    // schedule is commented until R3 opens. `load` ran for the first time
+    // on 2026-09-24, once environment `bot-state` existed (#319), and
+    // dispatched run 35992534051 on main posted this check's first success at
+    // 2026-09-24T11:22:44Z. That post is not an arming. The workflows test's
+    // arming rule is red on an `armed_at` while the schedule is commented,
+    // and it is right to be: nothing would post again, so an armed check
+    // could only page. The same run ended red, at `claim`, because the
+    // service answered 404 (W_SERVICE_UNREACHABLE). A live schedule today
+    // would therefore be a red run every ten minutes. The commit that
+    // uncomments the schedule records `armed_at` here, from its first
+    // scheduled post, in the same change.
+    source: "B-T5.0, B-T5.1 (BOT-87), .github/workflows/plugins-ingest.yml, the `poll-alert` job",
+    interval_seconds: 600,
     created_disarmed: true,
     armed_at: null,
     signals: ["success"],
@@ -332,11 +351,14 @@ export const CHECKS = [
   {
     name: "deadline-watch",
     party: "registry",
-    // Disarmed: no workflow posts here yet.
-    source: "M-T5.4 (ROLL-63)",
+    // Created disarmed, and armed by its first heartbeat: dispatched run
+    // 35963496422 on main posted it at 2026-09-24T06:15:47Z, and the commit
+    // that uncommented `.github/workflows/deadline-watch.yml`'s daily cron
+    // recorded that time here, in the same change (the workflow's header).
+    source: "M-T5.4 (ROLL-63), .github/workflows/deadline-watch.yml",
     interval_seconds: 86400,
     created_disarmed: true,
-    armed_at: null,
+    armed_at: "2026-09-24T06:15:47Z",
     signals: ["success"],
   },
   {

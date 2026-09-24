@@ -32,13 +32,15 @@ import path from "node:path";
 import test, { after } from "node:test";
 
 import {
-  HISTORY_FLOOR as MOD_HISTORY_FLOOR, UNLISTED_FLOOR, parseExempt,
+  BADGE_RULE_TOKEN, HISTORY_FLOOR as MOD_HISTORY_FLOOR, UNLISTED_FLOOR, badgeNarrowing, parseExempt,
   run as coverage,
 } from "../../tools/moderation-coverage.mjs";
 import {
-  DOCUMENT_MEMBERS, HISTORY_FLOOR as PRIV_HISTORY_FLOOR, run as privScan, withoutAuthorship,
+  DOCUMENT_MEMBERS, HISTORY_FLOOR as PRIV_HISTORY_FLOOR, classify as privClassify, run as privScan, scanDocument,
+  withoutAuthorship,
 } from "../../tools/priv-scan.mjs";
 import { ADVISORY_BASE, DOC as DOCS_DOC, run as docsRule } from "../../tools/coverage/docs-advisory-url.mjs";
+import { NAMED as ROLL47_NAMED, PROMISES as ROLL47_PROMISES, run as roll47Rule } from "../../tools/coverage/roll47-promises.mjs";
 import { KEEPALIVE, run as keepaliveRule } from "../../tools/coverage/keepalive-age.mjs";
 import {
   AP7_LANDED, ASTRAPLUGINS_URL, astraPluginsRemote, loadPolicyReserved,
@@ -52,6 +54,10 @@ import { compareTree, expectationProblems, workflowJobs } from "../../tools/lib/
 import { githubGetter, localWorkflows, run as settingsRun } from "../../tools/coverage/settings.mjs";
 import { mergeOwnChanges } from "../../tools/coverage/git.mjs";
 import { RULES, outstandingActs, ruleNames } from "../../tools/coverage/rules.mjs";
+import {
+  CUTOVER as NIC_CUTOVER, ISSUE_TRIGGERS, WORKFLOW_FLOOR as NIC_FLOOR, run as noIssueChannel, triggersOf as nicTriggers,
+} from "../../tools/coverage/no-issue-channel.mjs";
+import { run as drainAge, SEEN as DRAIN_SEEN } from "../../tools/coverage/drain-age.mjs";
 import { compose } from "../../tools/coverage-verdict.mjs";
 import { CHECKS } from "../lib/alert-checks.mjs";
 
@@ -99,9 +105,13 @@ function fixture(name) {
       return api;
     },
     head: () => g("rev-parse", "HEAD").trim(),
-    /** The commit that introduces both tools, so both walks have a start. */
+    /**
+     * The commit that introduces both tools, so both walks have a start — and
+     * M-T5.8's badge rule too, whose start is the first commit in which the
+     * walk's file carries `BADGE_RULE_TOKEN`.
+     */
     landTools() {
-      api.write("tools/moderation-coverage.mjs", "// the real one lives in the repository\n");
+      api.write("tools/moderation-coverage.mjs", `// the real one lives in the repository\n// ${BADGE_RULE_TOKEN}\n`);
       api.write("tools/priv-scan.mjs", "// the real one lives in the repository\n");
       api.commit("land the coverage tools");
       return api;
@@ -468,6 +478,47 @@ test("PRIV-2: a composed document nobody declared is red, naming what to do", ()
   assert.match(r.detail.join("\n"), /declare it there/);
 });
 
+test("PRIV-2: ROLL-7's settings file is declared, positional at every depth, and the committed one is clean", () => {
+  // The first composed kind that nests (tools/lib/priv-rules.mjs). With only
+  // its top level declared, a subject id at `environments.alerts.subject`
+  // passed green, measured 2026-09-20 (ops dev/couplings.md, ROLL-7's entry).
+  const rel = "log/rollout/R0-settings.json";
+  assert.equal(privClassify(rel).kind, "settings", `${rel} is not scanned as the settings kind`);
+  assert.ok(DOCUMENT_MEMBERS.settings?.nested, "the settings kind declares no nested tables");
+  const committed = JSON.parse(fs.readFileSync(path.join(REPO, rel), "utf8"));
+  assert.deepEqual(scanDocument(committed, "settings", new Set()), [], `the committed ${rel} is not clean`);
+
+  // The walk reaches it by path: a fixture holding the committed bytes is green.
+  const f = fixture("priv-settings").commit("seed").landTools();
+  f.write(rel, committed).commit("ROLL-7's file");
+  assert.equal(priv(f.dir).status, "green", "the committed settings file is red inside the walk");
+
+  const env = Object.keys(committed.environments)[0];
+  const breaks = [
+    ["a subject id beside an environment's policy", (d) => { d.environments[env].subject = "usr_a1b2c3"; },
+      "E_PRIV_UNDECLARED_MEMBER", `environments.${env}.subject`],
+    ["a member inside a branch policy", (d) => { d.environments[env].branch_policies[0].owner = "usr_a1b2c3"; },
+      "E_PRIV_UNDECLARED_MEMBER", `environments.${env}.branch_policies.0.owner`],
+    ["logins under the collaborator counts", (d) => { d.collaborators.logins = ["usr_a1b2c3"]; },
+      "E_PRIV_UNDECLARED_MEMBER", "collaborators.logins"],
+    ["an object where a list of plain values belongs", (d) => { d.pending_environments = [{ name: "bot-state", by: "usr_a1b2c3" }]; },
+      "E_PRIV_UNDECLARED_MEMBER", "only a list of plain values"],
+    ["a table-less object under a declared member", (d) => { d.read_with.no_write_token = { holder: "usr_a1b2c3" }; },
+      "E_PRIV_UNDECLARED_MEMBER", "declares no table"],
+    ["an address used as an environment's name", (d) => { d.environments["someone.real@gmail.com"] = structuredClone(d.environments[env]); },
+      "E_PRIV_EMAIL", "someone.real@gmail.com"],
+  ];
+  for (const [how, edit, code, words] of breaks) {
+    const d = structuredClone(committed);
+    edit(d);
+    assert.notDeepEqual(d, committed, `the break "${how}" changed nothing`);
+    const found = scanDocument(d, "settings", new Set());
+    const said = found.map((x) => `${x.code} ${x.what}`).join("\n");
+    assert.ok(found.some((x) => x.code === code), `${how}: expected ${code}, got ${said || "nothing"}`);
+    assert.ok(said.includes(words), `${how}: red, but not naming ${JSON.stringify(words)}: ${said}`);
+  }
+});
+
 test("PRIV-2: git's authorship trailers and reserved TLDs are exempt, and a real address is not", () => {
   const f = fixture("priv-trailers").commit("seed").landTools();
   f.commit([
@@ -557,6 +608,64 @@ test("every declared document kind lists members, a source and its exempt sets",
     assert.ok(Array.isArray(t.uuidOk), `${name} has no uuidOk set`);
     assert.ok(Array.isArray(t.handleOk), `${name} has no handleOk set`);
     assert.ok(t.source && t.source.length > 10, `${name} names no requirement that fixes its members`);
+  }
+});
+
+// ── MIG-13's markers, which land under `log/` (registry plan M-T5.3) ────────
+//
+// Both canaries walk `log/`, and neither had met a migration-notice marker:
+// none has ever been committed. Measured on the tree before this: the privacy
+// scan refused the first marker as E_PRIV_UNDECLARED_DOCUMENT, and the
+// coverage walk refused every re-commit a MIG-13 re-send makes as an edit
+// under `log/` (MOD-34). The first was a declaration nobody had written; the
+// second is the rule working, and the re-send clears it on its own commit
+// with the trailer the desk command prints.
+
+test("M-T5.3: a migration-notice marker is a declared composed document, and a member B.4 does not list is red", async () => {
+  const { markerText } = await import("../../tools/lib/migration-notice.mjs");
+  const f = fixture("notice-marker").landTools();
+  f.write("log/migration-notice-1.json", markerText({ round: 1, sent_at: "2026-09-24T00:00:00Z" })).commit("round 1 sent");
+  assert.equal(priv(f.dir).status, "green", codesOf(priv(f.dir)));
+  f.write("log/migration-notice-2.json", { schema: "x", round: 2, sent_at: "2026-09-25T00:00:00Z", cutover_planned_at: "2026-10-30T00:00:00Z", accounts: ["someone"] })
+    .commit("round 2 sent, with a member no marker has");
+  const r = priv(f.dir);
+  assert.deepEqual([r.status, r.codes], ["red", ["E_PRIV_UNDECLARED_MEMBER"]],
+    `a marker carrying \`accounts\` was not refused for that member: ${codesOf(r)}`);
+});
+
+test("M-T5.3: a re-committed migration-notice marker passes with no trailer, and every other log/ edit is still refused (contract 2.3.0)", async () => {
+  // MOD-34's Check, as 2.3.0 words it: "CI refuses edits to existing
+  // `bot/moderation/*.json` and `log/**`, except `log/migration-notice-<n>.json`,
+  // which contract MIG-13's re-send re-commits". Before that version a re-send
+  // needed a self-exemption, and `Moderation-Exempt:` on a commit clears EVERY
+  // trigger in it — a delist typed into the same commit included.
+  const { markerText } = await import("../../tools/lib/migration-notice.mjs");
+  const r2 = (cutover) => markerText({ round: 2, sent_at: "2026-09-25T00:00:00Z", cutover_planned_at: cutover });
+  const seed = (name) => fixture(name).landTools()
+    .write("log/migration-notice-1.json", markerText({ round: 1, sent_at: "2026-09-24T00:00:00Z" }))
+    .write("log/migration-notice-2.json", r2("2026-10-30T00:00:00Z"))
+    .write("log/decisions/2026/09/d1.json", { schema: "astra.registry.decision/1", decision_id: "d1" })
+    .write("log/rollout/R3-exit.json", { walked: true })
+    .commit("round 2 sent");
+
+  const resend = seed("notice-recommit");
+  resend.write("log/migration-notice-2.json", r2("2026-11-15T00:00:00Z")).commit("re-send: cutover moved later");
+  const ok = mod(resend.dir, { mode: "commits" });
+  assert.equal(ok.status, "green", `a marker re-commit with no trailer was refused: ${ok.detail.join(" | ")}`);
+
+  // Everything else under log/ is exactly as append-only as before.
+  for (const [what, act] of [
+    ["a deleted marker", (f) => f.remove("log/migration-notice-2.json")],
+    ["a decision record edited", (f) => f.write("log/decisions/2026/09/d1.json", { schema: "astra.registry.decision/1", decision_id: "d2" })],
+    ["a rollout record edited", (f) => f.write("log/rollout/R3-exit.json", { walked: false })],
+    ["a file that only looks like a marker", (f) => f.write("log/migration-notice-2.json.bak", "x").commit("seed a look-alike").write("log/migration-notice-2.json.bak", "y")],
+    ["a marker with no round number", (f) => f.write("log/migration-notice-x.json", "{}").commit("seed").write("log/migration-notice-x.json", "{ }")],
+  ]) {
+    const f = seed(`notice-recommit-${what.replace(/\W+/g, "-")}`);
+    act(f);
+    f.commit(what);
+    const r = mod(f.dir, { mode: "commits" });
+    assert.match(codesOf(r), /MOD_LOG_APPEND_ONLY/, `${what} was not refused`);
   }
 });
 
@@ -847,6 +956,274 @@ test("M-T1.3: a document that has moved is red, because the rule would otherwise
   const r = docsRule(docsFixture("gone", null));
   assert.equal(r.status, "red");
   assert.match(codesOf(r), /MOD_13_DOCS_ABSENT/);
+});
+
+// ── M-T5.8: a badge withdrawn says why (MOD-44) ─────────────────────────────
+
+const publisher = (owner, extra = {}) => ({
+  schema: "astra.registry.publisher/1", owner, display_name: owner, tier: "verified",
+  verified_at: "2026-09-01", evidence: { kind: "domain", url: `https://${owner}.example/astra` }, ...extra,
+});
+
+const GOOD_REASON = "The domain evidence now names a different GitHub account, confirmed by the owner.";
+
+test("M-T5.8: a publisher record removed with no trailer is red, and with a MOD-41 reason it is green", () => {
+  const f = fixture("badge-remove").write("publishers/pub.json", publisher("pub")).commit("seed").landTools();
+  f.remove("publishers/pub.json").commit("drop pub's badge");
+  const bad = f.head();
+  const red = mod(f.dir, { mode: "commits" });
+  assert.equal(red.status, "red");
+  assert.match(codesOf(red), /MOD_BADGE_UNCOVERED/);
+  assert.ok(red.hexes.includes(bad), "the verdict names the commit an operator has to clear");
+
+  const g = fixture("badge-remove-ok").write("publishers/pub.json", publisher("pub")).commit("seed").landTools();
+  g.remove("publishers/pub.json").commit(`drop pub's badge\n\nBadge-Withdrawn: ${GOOD_REASON}`);
+  assert.equal(mod(g.dir, { mode: "commits" }).status, "green");
+});
+
+test("M-T5.8: a Badge-Withdrawn reason MOD-41 refuses is red, naming its class, even beside a good one", () => {
+  for (const [name, message] of [
+    ["url", "Badge-Withdrawn: see https://evil.example/why for the reasons we removed it"],
+    ["short", "Badge-Withdrawn: bad"],
+    ["mixed", `Badge-Withdrawn: ${GOOD_REASON}\nBadge-Withdrawn: write to someone@example.org about this one`],
+  ]) {
+    const f = fixture(`badge-reason-${name}`).write("publishers/pub.json", publisher("pub")).commit("seed").landTools();
+    f.remove("publishers/pub.json").commit(`drop pub's badge\n\n${message}`);
+    const r = mod(f.dir, { mode: "commits" });
+    assert.equal(r.status, "red", `${name}: a refused reason was accepted as a cover`);
+    assert.match(codesOf(r), /MOD_BADGE_REASON_REFUSED/, name);
+  }
+});
+
+test("M-T5.8: every way of saying less is a narrowing, and a renewal or a new record is not", () => {
+  const was = publisher("pub", { covers: ["pub-org"], tier: "astra_team", expires_at: "2026-12-01" });
+  const narrowings = {
+    "covers loses a login": { ...was, covers: [] },
+    "owner changes": { ...was, owner: "someone-else" },
+    "tier lowered": { ...was, tier: "verified" },
+    "expiry earlier": { ...was, expires_at: "2026-10-01" },
+    "unreadable": null,
+  };
+  for (const [what, now] of Object.entries(narrowings)) {
+    assert.ok(badgeNarrowing(was, now), `${what} is a narrowing and was not read as one`);
+  }
+  const noExpiry = publisher("pub");
+  assert.ok(badgeNarrowing(noExpiry, { ...noExpiry, expires_at: "2027-01-01" }), "an expiry added where there was none");
+  for (const [what, now] of Object.entries({
+    "renewal": { ...was, expires_at: "2027-03-01", last_confirmed_at: "2026-09-24" },
+    "a covers login added": { ...was, covers: ["pub-org", "pub-two"] },
+    "display name only": { ...was, display_name: "Pub, Inc." },
+    "case of a login": { ...was, covers: ["PUB-ORG"] },
+  })) {
+    assert.equal(badgeNarrowing(was, now), null, `${what} says no less and was read as a narrowing`);
+  }
+  assert.equal(badgeNarrowing(null, was), null, "a record created is a badge granted");
+
+  // And through the walk, so the trigger is wired to the predicate.
+  const f = fixture("badge-narrow-walk").write("publishers/pub.json", was).commit("seed").landTools();
+  f.write("publishers/pub.json", { ...was, expires_at: "2027-03-01" }).commit("renew");
+  f.write("publishers/new.json", publisher("new")).commit("a new badge");
+  assert.equal(mod(f.dir, { mode: "commits" }).status, "green", "a renewal and a new record need no trailer");
+  f.write("publishers/pub.json", { ...was, covers: [] }).commit("narrow it quietly");
+  assert.match(codesOf(mod(f.dir, { mode: "commits" })), /MOD_BADGE_UNCOVERED/);
+});
+
+test("M-T5.8: history before the rule's own commit is not re-judged, and a later exemption clears", () => {
+  const f = fixture("badge-start").write("publishers/pub.json", publisher("pub")).commit("seed");
+  // Land the walk without the badge token: the walk starts, the badge rule does not.
+  f.write("tools/moderation-coverage.mjs", "// the walk, before M-T5.8\n")
+    .write("tools/priv-scan.mjs", "// the real one lives in the repository\n").commit("land the walk");
+  f.remove("publishers/pub.json").commit("an unlogged withdrawal, before the badge rule existed");
+  f.write("tools/moderation-coverage.mjs", `// the walk\n// ${BADGE_RULE_TOKEN}\n`).commit("M-T5.8 lands");
+  assert.equal(mod(f.dir, { mode: "commits" }).status, "green", "a narrowing before the rule landed was re-judged");
+
+  f.write("publishers/two.json", publisher("two")).commit("seed two");
+  f.remove("publishers/two.json").commit("withdraw two quietly");
+  const bad = f.head();
+  assert.match(codesOf(mod(f.dir, { mode: "commits" })), /MOD_BADGE_UNCOVERED/);
+  // A retro log entry informs nobody — MOD-44's notice is keyed on the commit.
+  f.write("bot/moderation/2026-09-24-two-delist.json", entry("2026-09-24", "two", "delist")).commit("a log entry, after");
+  assert.match(codesOf(mod(f.dir, { mode: "commits" })), /MOD_BADGE_UNCOVERED/);
+  f.commit(`clear it\n\nModeration-Exempt: ${bad}: operator: withdrawn by hand, the publisher was told directly`);
+  assert.equal(mod(f.dir, { mode: "commits" }).status, "green");
+});
+
+test("M-T5.8: a hand narrowing that copies the re-check's exemption is green, which is accepted (MOD-42)", () => {
+  const f = fixture("badge-copy-exempt").write("publishers/pub.json", publisher("pub")).commit("seed").landTools();
+  f.remove("publishers/pub.json")
+    .commit("drop pub\n\nModeration-Exempt: publisher-recheck: evidence lapsed past the confirmation window");
+  assert.equal(mod(f.dir, { mode: "commits" }).status, "green");
+});
+
+// The re-check's own commit, run for real: the `run:` block of
+// publisher-recheck.yml's "Commit whatever moved" step, extracted from the
+// file and executed by bash in a fixture with a bare remote. A test of the
+// description of the step (the message it "would" write) is the kind that
+// survived every review of a release workflow here and was wrong.
+const RECHECK = path.join(REPO, ".github", "workflows", "publisher-recheck.yml");
+
+function recheckCommitStep() {
+  const lines = fs.readFileSync(RECHECK, "utf8").split("\n");
+  const at = lines.map((l, i) => (/^\s+- name: Commit whatever moved\s*$/.test(l) ? i : -1)).filter((i) => i >= 0);
+  assert.equal(at.length, 1, `publisher-recheck.yml has ${at.length} "Commit whatever moved" step(s); this reads exactly one`);
+  const runAt = lines.findIndex((l, i) => i > at[0] && /^\s+run: \|\s*$/.test(l));
+  assert.ok(runAt > at[0] && !lines.slice(at[0] + 1, runAt).some((l) => /^\s+- name:/.test(l)),
+    "the commit step's `run: |` is not where this test reads it");
+  const body = [];
+  let indent = null;
+  for (let i = runAt + 1; i < lines.length; i++) {
+    const l = lines[i];
+    if (l.trim() === "") { body.push(""); continue; }
+    const n = l.length - l.trimStart().length;
+    if (indent === null) indent = n;
+    if (n < indent) break;
+    body.push(l.slice(indent));
+  }
+  assert.ok(body.some((l) => l.startsWith("git commit")), "the extracted block commits nothing");
+  return body.join("\n");
+}
+
+function runRecheckCommit(f, log) {
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), "astra-coverage-recheck-remote-"));
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "astra-coverage-recheck-temp-"));
+  tmpRoots.push(bare, temp);
+  execFileSync("git", ["init", "-q", "--bare", bare], { env: fixtureEnv(bare) });
+  try { f.git("remote", "add", "origin", bare); } catch { /* already there */ }
+  f.git("push", "-q", "-u", "origin", "HEAD:main");
+  fs.writeFileSync(path.join(temp, "recheck.log"), log);
+  execFileSync("bash", ["-c", recheckCommitStep()], {
+    cwd: f.dir, encoding: "utf8", stdio: "pipe", env: { ...fixtureEnv(f.dir), RUNNER_TEMP: temp },
+  });
+  return f.git("log", "-1", "--format=%B");
+}
+
+test("M-T5.8: publisher-recheck.yml's own commit step, run for real, is green on a lapse and says nothing false on a renewal", () => {
+  const f = fixture("recheck-lapse")
+    .write("publishers/pub.json", publisher("pub", { expires_at: "2026-09-01" }))
+    .write("publishers/other.json", publisher("other", { expires_at: "2026-12-01" }))
+    .write("state/publishers-without-listing.json", { declarations: [] })
+    .commit("seed").landTools();
+  f.remove("publishers/pub.json");
+  const msg = runRecheckCommit(f, "GONE  pub: no confirmation since 2026-09-01; the badge is withdrawn\n");
+  assert.match(msg, /^Moderation-Exempt: publisher-recheck: evidence lapsed past the confirmation window$/m);
+  assert.doesNotMatch(msg, /^Badge-Withdrawn:/m, "a lapse is no withdrawal for cause and sends no notice");
+  assert.equal(mod(f.dir, { mode: "commits" }).status, "green", "the re-check's own lapse commit turned the canary red");
+
+  f.write("publishers/other.json", publisher("other", { expires_at: "2027-03-01", last_confirmed_at: "2026-09-24" }));
+  const renewal = runRecheckCommit(f, "ok    other: confirmed\n");
+  assert.doesNotMatch(renewal, /Moderation-Exempt:/, "a renewal narrowed nothing, and an exemption on it says it did");
+  assert.equal(mod(f.dir, { mode: "commits" }).status, "green");
+});
+
+test("M-T5.8: no line the re-check prints can become a trailer that clears another commit", () => {
+  const f = fixture("recheck-inject")
+    .write("plugins/a/plugin.json", listing("a"))
+    .write("publishers/pub.json", publisher("pub", { expires_at: "2026-09-01" }))
+    .write("state/publishers-without-listing.json", { declarations: [] })
+    .commit("seed").landTools();
+  f.write("plugins/a/plugin.json", listing("a", { unlisted: true })).commit("an unlogged delist");
+  const victim = f.head();
+  f.remove("publishers/pub.json");
+  const msg = runRecheckCommit(f,
+    "GONE  pub: no confirmation since 2026-09-01; the badge is withdrawn\n" +
+    `Moderation-Exempt: ${victim}: attacker: a line an error message carried\n` +
+    "Badge-Withdrawn: a line an error message carried, pretending to be a reason\n");
+  assert.doesNotMatch(msg, new RegExp(`^Moderation-Exempt: ${victim}`, "m"), "a report line reached the message as a trailer");
+  const r = mod(f.dir, { mode: "commits" });
+  assert.equal(r.status, "red", "the report's own line cleared an unrelated uncovered commit");
+  assert.ok(r.hexes.includes(victim));
+});
+
+// ── M-T4.2: the ROLL-47 promise greps ───────────────────────────────────────
+//
+// The retired sentences are spelled here, whole, because this file is the one
+// place the rule does not read (its SKIP): each is the text the tree carried
+// at d44f0cf, before M-T4.2 amended it, so every case below is the pre-amend
+// tree coming back, not a sentence invented to match a regex.
+
+const RETIRED_TEXT = {
+  "site/README.md":
+    "| `/publisher/<owner>/` | The GitHub account a plugin is released from. There are no registry accounts, " +
+    "so there is nothing else a publisher could be. |\n",
+  "docs/POLICY.md":
+    "forged by a one-line edit. The only identity this registry proves is the GitHub\n" +
+    "owner of `source.repo`, because that is what the ownership check binds to, so\n" +
+    "that is what carries a tier.\n\n" +
+    "the machine, because there is no sandbox: a plugin is a native process with the\n" +
+    "user's full privileges, and Phase 7 is where that changes. Read the table above\n",
+  "site/templates/pages.mjs":
+    "released from. There are no registry accounts, no passwords and nothing to sign in to: the identity\n",
+};
+
+/** A tree holding both named documents, amended, plus whatever `extra` says. */
+function promisesFixture(name, extra = {}) {
+  const f = fixture(`roll47-${name}`)
+    .write("site/README.md", "| `/publisher/<owner>/` | The registry itself has no accounts. |\n")
+    .write("docs/POLICY.md", "# Policy\n\nA badge is keyed on the GitHub owner.\n");
+  for (const [rel, text] of Object.entries(extra)) f.write(rel, text);
+  return f.commit(`fixture ${name}`);
+}
+
+const roll47 = (dir, opts = {}) => roll47Rule(dir, { scannedFloor: 0, ...opts });
+
+test("M-T4.2: this repository restates no promise ROLL-47 has retired, and read what it had to", () => {
+  const r = roll47Rule(REPO);
+  assert.equal(r.status, "green", r.detail.join("\n"));
+  for (const named of ROLL47_NAMED) {
+    assert.ok(fs.existsSync(path.join(REPO, named)), `${named} is not in the tree the rule is asked about`);
+  }
+});
+
+test("M-T4.2: the pre-amend tree is red, once per sentence, naming the file", () => {
+  const f = promisesFixture("pre-amend", RETIRED_TEXT);
+  const r = roll47(f.dir);
+  assert.equal(r.status, "red");
+  const said = r.detail.join("\n");
+  for (const rel of Object.keys(RETIRED_TEXT)) assert.match(said, new RegExp(`^${rel.replace(/[.]/g, "\\.")} says`, "m"));
+  // Two A1 sentences, one A2, one sandbox: four findings, and none merged into another.
+  assert.deepEqual([...new Set(r.codes)], ["ROLL47_PROMISE_RESTATED"]);
+  assert.equal(r.detail.filter((d) => / says "/.test(d)).length, 4);
+  for (const p of ROLL47_PROMISES) assert.match(said, new RegExp(`row ${p.row}\\b`), `row ${p.row} did not fire`);
+});
+
+test("M-T4.2: each literal is found across a line break and in any case, and each row alone reds", () => {
+  for (const p of ROLL47_PROMISES) {
+    const words = p.literal.split(" ");
+    const mid = Math.max(1, Math.floor(words.length / 2));
+    const wrapped = `${words.slice(0, mid).join(" ").toUpperCase()}\n   ${words.slice(mid).join(" ")}`;
+    const f = promisesFixture(`row-${p.row}`, { "docs/extra.md": `Some prose, then ${wrapped}, then more.\n` });
+    const r = roll47(f.dir);
+    assert.equal(r.status, "red", `row ${p.row} wrapped as ${JSON.stringify(wrapped)} was not found`);
+    assert.match(r.detail.join("\n"), new RegExp(`^docs/extra\\.md says ".*" \\(ROLL-47 row ${p.row},`, "m"));
+  }
+});
+
+test("M-T4.2: an author's README is the author's words, and the amended sentences are green", () => {
+  const f = promisesFixture("authors", {
+    "plugins/a/readme/README.md": "This plugin has no registry accounts and Phase 7 of its roadmap is a sandbox.\n",
+    "registry/v1/index.json": "{\"readme\": \"There are no registry accounts\"}\n",
+    "site/README.md": "The registry itself has no accounts, so a publisher page is always a GitHub owner.\n",
+  });
+  const r = roll47(f.dir);
+  assert.equal(r.status, "green", r.detail.join("\n"));
+});
+
+test("M-T4.2: a scan that lost its subject or read almost nothing is red, not clean", () => {
+  const gone = fixture("roll47-gone").write("README.md", "# nothing\n").commit("no named documents");
+  const r = roll47(gone.dir);
+  assert.equal(r.status, "red");
+  assert.match(codesOf(r), /ROLL47_SUBJECT_ABSENT/);
+
+  const f = promisesFixture("floor");
+  const small = roll47Rule(f.dir);
+  assert.equal(small.status, "red", "two files read is below the floor the real tree sets");
+  assert.match(codesOf(small), /ROLL47_SCAN_FLOOR/);
+
+  const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), "astra-coverage-roll47-norepo-"));
+  tmpRoots.push(notRepo);
+  const broken = roll47Rule(notRepo, { scannedFloor: 0 });
+  assert.equal(broken.status, "red");
+  assert.match(codesOf(broken), /ROLL47_SCAN_FAILED|ROLL47_SUBJECT_ABSENT/);
 });
 
 // ── M-T5.7: the reserved-id mirror ──────────────────────────────────────────
@@ -1566,7 +1943,9 @@ test("repo-settings: the file against GitHub answering exactly what it says is g
   const text = r.detail.join("\n");
   assert.match(text, /NOT ASKED \(by design\): which secrets exist where/);
   assert.match(text, /NOT ASKED \(by design\): ruleset bypass actors/);
-  assert.match(text, /`bot-state` pending creation \(B-T5\.0\)/);
+  // `bot-state` was pending creation until 2026-09-24 (B-T5.0); it is live now,
+  // and the live list the rule prints is where a reader finds it.
+  assert.match(text, /mihailinl\/astra-registry live, read with the fixture: \d+ environment\(s\) \([^)]*\bbot-state\b/);
   assert.deepEqual(r.ids, [], "an environment name is not a plugin id");
   assert.equal(RULES.find((x) => x.name === "repo-settings")?.network, true, "the settings rule leaves the runner and does not say so");
 });
@@ -1713,6 +2092,24 @@ test("repo-settings: the token is sent, a token GitHub refuses is dropped for th
 // file, once RC-R0-4 lands it, is compared with no edit here.
 const ROLL7_FILE = "log/rollout/R0-settings.json";
 
+// log/** is append-only (MOD-34), so a pin ROLL-7's file gains later is a NEW
+// file beside it, dated: `R0-settings-<YYYY-MM-DD>[-<n>].json`. `bot-state`
+// arrived that way (B-T5.0, 2026-09-24). The newest is the file the service's
+// pins are acknowledged from, so it is the one held to the expectation; the
+// older ones are dated history and legitimately stale.
+const ROLL7_AMENDMENT = /^R0-settings-(\d{4}-\d{2}-\d{2})(?:-(\d+))?\.json$/;
+
+/** Every ROLL-7 file on the tree, oldest first: the R0 file, then its amendments by date and number. */
+function roll7Files(repo = REPO) {
+  const dir = path.join(repo, "log", "rollout");
+  if (!fs.existsSync(dir)) return [];
+  const names = fs.readdirSync(dir);
+  const amendments = names.map((n) => [n, ROLL7_AMENDMENT.exec(n)]).filter(([, m]) => m)
+    .sort(([, a], [, b]) => a[1].localeCompare(b[1]) || Number(a[2] ?? 1) - Number(b[2] ?? 1))
+    .map(([n]) => `log/rollout/${n}`);
+  return [...(names.includes("R0-settings.json") ? [ROLL7_FILE] : []), ...amendments];
+}
+
 /** Every way ROLL-7's environment rows and the expectation's live environments disagree, as sentences. */
 function roll7Disagreements(roll7, expected) {
   const out = [];
@@ -1751,6 +2148,32 @@ function roll7Disagreements(roll7, expected) {
   return out;
 }
 
+test("repo-settings: ROLL-7's files are read oldest first, and a dated amendment is newer than the R0 file", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-roll7-"));
+  tmpRoots.push(dir);
+  fs.mkdirSync(path.join(dir, "log", "rollout"), { recursive: true });
+  for (const n of ["R0-settings-2026-10-02.json", "R0-settings-2026-09-24-2.json", "R0-exit-note.md",
+    "R0-settings.json", "R0-settings-2026-09-24.json", "R5-exit.json", "R0-settings-2026-9-30.json"]) {
+    fs.writeFileSync(path.join(dir, "log", "rollout", n), "{}\n");
+  }
+  assert.deepEqual(roll7Files(dir), [
+    "log/rollout/R0-settings.json",
+    "log/rollout/R0-settings-2026-09-24.json",
+    "log/rollout/R0-settings-2026-09-24-2.json",
+    "log/rollout/R0-settings-2026-10-02.json",
+  ], "the newest ROLL-7 file is not the last one read, so the file held to the expectation is a stale one");
+  // Every ROLL-7 file on the real tree is the settings kind to PRIV-2's scan,
+  // and clean: an amendment the scan did not recognise would be an undeclared
+  // document, and one it did not scan would be a place a login could land.
+  const real = roll7Files();
+  assert.ok(real.length >= 1, "no ROLL-7 file is on the tree, and R0's exit committed one");
+  for (const rel of real) {
+    assert.equal(privClassify(rel).kind, "settings", `${rel} is not scanned as the settings kind`);
+    assert.deepEqual(scanDocument(JSON.parse(fs.readFileSync(path.join(REPO, rel), "utf8")), "settings", new Set()), [],
+      `the committed ${rel} is not clean`);
+  }
+});
+
 test("repo-settings: ROLL-7's R0 file pins each environment's branch policies as the expectation does, built from it and broken, and committed when it is", () => {
   const doc = settingsDoc();
   const expected = doc.repositories[checkoutSlug(doc)];
@@ -1788,12 +2211,14 @@ test("repo-settings: ROLL-7's R0 file pins each environment's branch policies as
     for (const w of words) assert.ok(said.includes(w), `${how}: red, but not naming ${JSON.stringify(w)}: ${said}`);
   }
 
-  // The committed file, once RC-R0-4 lands it. Until then this says so, and
-  // the predicate above is what is proven.
-  const at = path.join(REPO, ROLL7_FILE);
+  // The committed file, once RC-R0-4 lands it — the NEWEST ROLL-7 file, which is
+  // R0-settings.json until a dated amendment follows it. Until then this says
+  // so, and the predicate above is what is proven.
+  const newest = roll7Files().at(-1);
+  const at = newest ? path.join(REPO, newest) : path.join(REPO, ROLL7_FILE);
   if (fs.existsSync(at)) {
     assert.deepEqual(roll7Disagreements(JSON.parse(fs.readFileSync(at, "utf8")), expected), [],
-      `${ROLL7_FILE} and policy/settings-expected.json disagree about a pinned environment's branch policies. The ` +
+      `${newest} and policy/settings-expected.json disagree about a pinned environment's branch policies. The ` +
       "expectation is the source (it is compared with GitHub every 15 minutes); re-derive the file's rows from it, " +
       "as a dated amendment, and the service's acknowledgement with them");
   } else {
@@ -1862,4 +2287,123 @@ test("repo-settings: TRUST-44's read of what ROLL-7 pins fits the 12 calls the c
   console.log(`# TRUST-44's read: 4 + ${Object.keys(expected.rulesets ?? {}).length} ruleset(s) + ` +
     `${Object.keys(expected.environments ?? {}).length} live and ${Object.keys(expected.pending_environments ?? {}).length} ` +
     `pending environment(s) = ${calls} of ${TRUST44_RESERVATION}`);
+});
+
+// ── M-T6.2: no issue channel from cutover on (DEC-12, ROLL-33) ──────────────
+//
+// Armed by `log/cutover.json`, so these fixtures are the whole proof until the
+// cutover commit: the real tree is not armed, and the rule says so and names
+// `ingest.yml`'s three triggers.
+
+const INGEST_REAL = fs.readFileSync(path.join(REPO, ".github", "workflows", "ingest.yml"), "utf8");
+const CUTOVER_DOC = { schema: "astra.registry.cutover/1", cutover_at: "2026-09-27T12:00:00Z" };
+const PLAIN_WORKFLOW = "name: plain\non:\n  push:\n    branches: [main]\n  workflow_dispatch:\njobs: {}\n";
+
+/** A fixture with the real ingest.yml, plus `extra` workflows, optionally past cutover. */
+function channelFixture(name, { ingest = INGEST_REAL, extra = {}, cutover = false } = {}) {
+  const f = fixture(name);
+  f.write(".github/workflows/ingest.yml", ingest);
+  for (const [n, text] of Object.entries(extra)) f.write(`.github/workflows/${n}`, text);
+  if (cutover) f.write(NIC_CUTOVER, CUTOVER_DOC);
+  return f.commit("fixture");
+}
+const nic = (dir) => noIssueChannel(dir, { workflowFloor: 0 });
+
+test("no-issue-channel: before the cutover marker the channel is live, the rule is green and names today's triggers", () => {
+  const r = nic(channelFixture("nic-pre").dir);
+  assert.equal(r.status, "green", r.detail.join("\n"));
+  const text = r.detail.join("\n");
+  assert.match(text, /not armed/);
+  for (const t of ISSUE_TRIGGERS) assert.ok(text.includes(` ${t}`), `the unarmed rule does not name ingest.yml's ${t} trigger: ${text}`);
+});
+
+test("no-issue-channel: from the cutover marker, every live issue trigger is red, named by file and line", () => {
+  const r = nic(channelFixture("nic-armed", { cutover: true }).dir);
+  assert.equal(r.status, "red");
+  assert.deepEqual(r.codes, ["ISSUE_CHANNEL_TRIGGER"]);
+  const text = r.detail.join("\n");
+  for (const t of ISSUE_TRIGGERS) assert.match(text, new RegExp(`ingest\\.yml:\\d+ ${t}:`), `${t} is not named: ${text}`);
+});
+
+test("no-issue-channel: the cutover commit's own shape — triggers dropped, drain kept — is green", () => {
+  // ROLL-33's edit, made to the REAL ingest.yml: the three triggers go and the
+  // schedule and dispatch stay. Each removal is asserted to have matched once.
+  let cut = INGEST_REAL;
+  for (const block of [
+    /\n {2}issues:\n {4}types: \[[^\]]*\]/,
+    /\n {2}issue_comment:\n {4}types: \[[^\]]*\]/,
+    /\n {2}repository_dispatch:\n {4}types: \[[^\]]*\]/,
+  ]) {
+    assert.equal((cut.match(new RegExp(block.source, "g")) ?? []).length, 1, `${block} did not match exactly once in ingest.yml`);
+    cut = cut.replace(block, "");
+  }
+  assert.ok(nicTriggers(cut).some((t) => t.trigger === "schedule"), "the edit removed the schedule too");
+  const r = nic(channelFixture("nic-cut", { ingest: cut, cutover: true }).dir);
+  assert.equal(r.status, "green", r.detail.join("\n"));
+});
+
+test("no-issue-channel: a trigger restored in any spelling, in any workflow, is red after cutover", () => {
+  let cut = INGEST_REAL.replace(/\n {2}issues:\n {4}types: \[[^\]]*\]/, "")
+    .replace(/\n {2}issue_comment:\n {4}types: \[[^\]]*\]/, "")
+    .replace(/\n {2}repository_dispatch:\n {4}types: \[[^\]]*\]/, "");
+  const cases = [
+    ["a block key in another workflow", { "copied.yml": "name: copied\non:\n  issue_comment:\n    types: [created]\njobs: {}\n" }, "issue_comment"],
+    ["a flow list", { "flow.yml": "name: flow\non: [push, issues]\njobs: {}\n" }, "issues"],
+    ["a scalar", { "scalar.yml": "name: scalar\non: repository_dispatch\njobs: {}\n" }, "repository_dispatch"],
+    ["a quoted key", { "quoted.yml": "name: quoted\n\"on\":\n  \"issues\":\n    types: [opened]\njobs: {}\n" }, "issues"],
+  ];
+  for (const [how, extra, trigger] of cases) {
+    const r = nic(channelFixture(`nic-${trigger}-${Object.keys(extra)[0].replace(/\W/g, "")}`, { ingest: cut, extra, cutover: true }).dir);
+    assert.equal(r.status, "red", `${how}: ${r.detail.join("\n")}`);
+    assert.ok(r.detail.join("\n").includes(` ${trigger}:`), `${how}: red, but not naming ${trigger}`);
+  }
+  // A commented trigger is not a trigger, and a plain workflow is not one either.
+  const quiet = nic(channelFixture("nic-commented", {
+    ingest: cut, extra: { "plain.yml": PLAIN_WORKFLOW, "commented.yml": "name: c\non:\n  # issues:\n  push:\njobs: {}\n" }, cutover: true,
+  }).dir);
+  assert.equal(quiet.status, "green", quiet.detail.join("\n"));
+});
+
+test("no-issue-channel: the real tree is not armed yet, reads every workflow, and is registered", () => {
+  const r = noIssueChannel(REPO);
+  assert.ok(NIC_FLOOR >= 10, "the workflow floor has been lowered");
+  assert.ok(!fs.existsSync(path.join(REPO, NIC_CUTOVER)) || r.status === "green",
+    `the tree carries ${NIC_CUTOVER} and a live issue trigger: ${r.detail.join("\n")}`);
+  assert.ok(!r.codes.includes("ISSUE_CHANNEL_FLOOR"), r.detail.join("\n"));
+  assert.ok(ruleNames().includes("no-issue-channel"), "the rule is not in the register, so its silence would not be red");
+});
+
+// ── drain-age's leg 2 retires at cutover (M-T6.2 commit B, B-T5.1) ──────────
+
+function drainFixture(name, { cutover, seenAt }) {
+  const f = fixture(name);
+  f.write(".github/workflows/ingest.yml", INGEST_REAL);
+  f.write(DRAIN_SEEN, { updated_at: seenAt, repos: { "someone/plugin": { etag: null } } });
+  if (cutover) f.write(NIC_CUTOVER, CUTOVER_DOC);
+  return f.commit("fixture");
+}
+
+test("drain-age: a stale releases-seen is red before cutover and retired after it, and leg 1 still holds", () => {
+  const now = new Date("2026-10-10T00:00:00Z");
+  const stale = "2026-09-27T05:00:00Z"; // 307 h before now: the backstop's last run on cutover day
+  const before = drainAge(drainFixture("drain-pre", { cutover: false, seenAt: stale }).dir, { now });
+  assert.equal(before.status, "red");
+  assert.ok(before.codes.includes("DRAIN_SCHEDULE_STALE"), before.codes.join(" "));
+
+  const after = drainAge(drainFixture("drain-post", { cutover: true, seenAt: stale }).dir, { now });
+  assert.equal(after.status, "green", after.detail.join("\n"));
+  assert.match(after.detail.join("\n"), /leg 2 is retired/);
+
+  // B-T5.1 retires the file itself: after cutover its absence is not a deletion.
+  const f = drainFixture("drain-retired", { cutover: true, seenAt: stale });
+  f.remove(DRAIN_SEEN).commit("B-T5.1 retires releases-seen");
+  const gone = drainAge(f.dir, { now });
+  assert.equal(gone.status, "green", gone.detail.join("\n"));
+
+  // Leg 1 is not retired: the hourly drain still has to be routed after cutover.
+  const unrouted = drainFixture("drain-unrouted", { cutover: true, seenAt: stale });
+  unrouted.write(".github/workflows/ingest.yml", INGEST_REAL.replace("- cron: '17 * * * *'", "- cron: '18 * * * *'")).commit("retimed");
+  const r = drainAge(unrouted.dir, { now });
+  assert.equal(r.status, "red");
+  assert.ok(r.codes.includes("DRAIN_CRON_UNROUTED"), r.codes.join(" "));
 });

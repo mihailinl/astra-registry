@@ -28,6 +28,7 @@ import { build } from "./build.mjs";
 import { markdown, esc, href } from "./lib/html.mjs";
 import { checkEntry, buildModerationLog } from "../bot/lib/moderation.mjs";
 import { withdrawalsFor } from "./templates/plugin.mjs";
+import * as successors from "./successors.mjs";
 
 let failures = 0;
 function test(name, fn) {
@@ -699,32 +700,388 @@ test("a redirect target must be an absolute https URL, and may capture only what
   );
 });
 
-test("the committed redirects file is armable, and arming it reaches the publish job", () => {
+/**
+ * Every `node site/build.mjs` command in a workflow file, as the lines that
+ * make it up: the invocation and each `\`-continued line after it. A flag in a
+ * comment, or on the NEXT command, is not a flag this command passes.
+ */
+function siteBuildCommands(text) {
+  const lines = text.split("\n");
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*#/.test(lines[i]) || !/\bnode site\/build\.mjs\b/.test(lines[i])) continue;
+    const cmd = [lines[i]];
+    let j = i;
+    while (/\\\s*$/.test(lines[j]) && j + 1 < lines.length) cmd.push(lines[++j]);
+    out.push({ line: i + 1, text: cmd.join("\n") });
+  }
+  return out;
+}
+
+test("the committed redirects file is armable, and arming it reaches the job that deploys Pages", () => {
   const doc = JSON.parse(fs.readFileSync(path.join(REPO, "site", "redirects.json"), "utf8"));
   assert.equal(doc.schema, "astra.registry.site-redirects/1");
   assert.deepEqual(doc.sets.map((s) => s.step), ["R4b", "R9a"], "the two steps ROLL-55 names are not both present");
 
-  // THE COUPLING NOTHING ELSE HOLDS. `--redirects` is a flag, and
-  // `.github/workflows/build-index.yml` does not pass it. While every set is
-  // empty that is invisible and harmless. The moment RC-R4-1 or RC-R9-1 fills
-  // one, a set that never reaches the publish job is a takedown of the old
-  // URLs that silently did not happen — green CI, right file on `main`, and
-  // Pages still serving the pages the service has replaced. So this goes red
-  // at exactly that moment and not before.
-  const workflow = fs.readFileSync(path.join(REPO, ".github", "workflows", "build-index.yml"), "utf8");
-  const calls = workflow.split("node site/build.mjs").length - 1;
-  assert.ok(calls > 0, "build-index.yml no longer invokes site/build.mjs, so this check stopped asking anything");
-
-  const armed = doc.sets.filter((s) => Object.keys(s.paths).length);
-  if (!armed.length) return;
-  const wired = [...workflow.matchAll(/--redirects\s+site\/redirects\.json/g)].length;
-  assert.equal(
-    wired,
-    calls,
-    `set(s) ${armed.map((s) => s.step).join(", ")} carry paths, but ${calls - wired} of ${calls} ` +
-      "`node site/build.mjs` invocations in .github/workflows/build-index.yml do not pass " +
-      "`--redirects site/redirects.json`. Those old URLs would keep serving the page the service replaced.",
+  // THE COUPLING NOTHING ELSE HOLDS. `--redirects` is a flag, and a set that
+  // never reaches the job that DEPLOYS the site is a takedown of the old URLs
+  // that silently did not happen — green CI, the right file on `main`, and
+  // Pages still serving the pages the service has replaced.
+  //
+  // Until RC-R4-1 this read `.github/workflows/build-index.yml` alone and
+  // called it "the publish job". It is not: that workflow's site step says of
+  // itself "Nothing assembled here is deployed — this tree exists so the page
+  // set can be asserted", and the tree Pages serves is built by `sign.yml`'s
+  // `pages` job, from `signed`'s bytes. Wiring the flag where this check
+  // looked would have left every deployed page unredirected, and the check
+  // green. So it now reads EVERY workflow, holds every invocation to the flag
+  // unconditionally — with every set empty the flag changes no byte, which the
+  // test below holds — and requires that each workflow that deploys Pages is
+  // among the invokers, so the check cannot pass by finding nothing.
+  const dir = path.join(REPO, ".github", "workflows");
+  const files = fs.readdirSync(dir).filter((f) => /\.ya?ml$/.test(f)).sort();
+  const invocations = [];
+  const deployers = [];
+  for (const f of files) {
+    const text = fs.readFileSync(path.join(dir, f), "utf8");
+    for (const c of siteBuildCommands(text)) invocations.push({ file: f, ...c });
+    if (/uses:\s*actions\/deploy-pages@/.test(text)) deployers.push(f);
+  }
+  assert.ok(deployers.length > 0, "no workflow deploys Pages with actions/deploy-pages, so this check stopped asking anything");
+  for (const f of deployers) {
+    assert.ok(
+      invocations.some((c) => c.file === f),
+      `${f} deploys Pages and never runs site/build.mjs, so the deployed tree is built somewhere this check does not see`,
+    );
+  }
+  const unwired = invocations.filter((c) => !/(^|\s)--redirects\s+site\/redirects\.json(\s|\\|$)/m.test(c.text));
+  assert.deepEqual(
+    unwired.map((c) => `${c.file}:${c.line}`),
+    [],
+    "these `node site/build.mjs` commands do not pass `--redirects site/redirects.json`, so a filled set would " +
+      "never reach the pages they build; the deployed ones are " + deployers.join(", "),
   );
+});
+
+test("with every set empty, --redirects changes no byte of the site", () => {
+  // The claim that makes wiring the flag safe before any set is armed, held
+  // here rather than asserted once in a pull request: the same catalogue,
+  // built with no flag and with the committed file's two steps emptied, is the
+  // same tree file for file and byte for byte.
+  const idx = catalogue(["alpha", "bravo"]);
+  const rev = { signatures: [{ key_id: "k", sig: "x" }], signed: { schema: "astra.registry.revocations/1", serial: 3, revocations: [advisory()] } };
+  const plain = buildInto("empty-plain", idx, rev);
+  const empty = buildWithRedirects("empty-wired", idx, [{ step: "R4b", paths: {} }, { step: "R9a", paths: {} }], rev);
+  assert.deepEqual(empty.result.redirects, []);
+  const tree = (root) => {
+    const acc = {};
+    const walk = (d) => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const full = path.join(d, e.name);
+        if (e.isDirectory()) walk(full);
+        else acc[path.relative(root, full)] = fs.readFileSync(full).toString("base64");
+      }
+    };
+    walk(root);
+    return acc;
+  };
+  const a = tree(plain.out);
+  const b = tree(empty.out);
+  assert.ok(Object.keys(a).length > 10, "the plain build wrote almost nothing, so this compared nothing");
+  assert.deepEqual(Object.keys(b).sort(), Object.keys(a).sort(), "the empty redirects file changed which files exist");
+  for (const k of Object.keys(a)) assert.equal(b[k], a[k], `${k} differs when an empty redirects file is passed`);
+});
+
+// ── RC-R4-1: the R4b set, its successors, and the edit that arms it ─────────
+//
+// `site/successors.mjs` is the arming commit's precondition: it builds the site
+// the way `sign.yml`'s `pages` job does, reads each redirected page's canonical
+// link, probes those URLs, and writes the set only when every one answers 200
+// and ROLL-54's review is named. The canary is RC-R4-1's own: every catalogue
+// plugin page redirects, at least the plugin count + 2 pages move, and
+// `registry/v1/*` and the moderation log keep their bytes. Asked over the
+// COMMITTED catalogue and Table 5-F as the committed token file carries it, so
+// it is not vacuous on a tree whose set is still empty — which is today's.
+
+const REAL = {
+  index: path.join(REPO, "registry", "v1", "index.json"),
+  revocations: path.join(REPO, "registry", "v1", "revocations.json"),
+  registryDir: path.join(REPO, "registry", "v1"),
+};
+const TOKENS = JSON.parse(fs.readFileSync(path.join(REPO, "schema", "contract-tokens-v1.json"), "utf8"));
+const COMMITTED_REDIRECTS = JSON.parse(fs.readFileSync(path.join(REPO, "site", "redirects.json"), "utf8"));
+
+test("RC-R4-1 — Table 5-F's R4b set, over the committed catalogue, moves every plugin page and nothing a daemon reads", () => {
+  const expected = successors.tableSet(TOKENS, "R4b");
+  // What the plan and ROLL-55 say, held against what the token file says: a
+  // renamed row or a moved successor is red here, not at the arming commit.
+  assert.deepEqual(expected, {
+    "/": "https://astra.minice.ai/plugins",
+    "/search/": "https://astra.minice.ai/plugins",
+    "/p/<id>/": "https://astra.minice.ai/plugins/<id>",
+  });
+  const doc = successors.onlyStep(successors.withSet(COMMITTED_REDIRECTS, "R4b", expected), "R4b");
+  const x = successors.expand({ ...REAL, redirectsDoc: doc, root: REPO });
+  assert.ok(x.ids.length > 0, "the committed catalogue has no plugins, so this canary held nothing");
+  assert.deepEqual(successors.coverageProblems({ step: "R4b", expected, ...x }), []);
+  assert.equal(x.redirected.length, x.ids.length + 2, "the pattern set should move exactly the plugin pages, `/` and `/search/`");
+  assert.ok(x.plain.has("registry/v1/index.json"), "the build carried no registry/v1/index.json, so its bytes were compared with nothing");
+});
+
+test("RC-R4-1's canary is red on a plugin page left out, a page R4b does not move, and a byte a daemon reads", () => {
+  const expected = successors.tableSet(TOKENS, "R4b");
+  const ids = JSON.parse(fs.readFileSync(REAL.index, "utf8")).signed.plugins.map((p) => p.id).sort();
+  const left = ids[Math.floor(ids.length / 2)];
+  const literal = { "/": expected["/"], "/search/": expected["/search/"] };
+  for (const id of ids) if (id !== left) literal[`/p/${id}/`] = expected["/p/<id>/"].replace("<id>", id);
+
+  const short = successors.expand({ ...REAL, redirectsDoc: successors.onlyStep(successors.withSet(COMMITTED_REDIRECTS, "R4b", literal), "R4b"), root: REPO });
+  const p1 = successors.coverageProblems({ step: "R4b", expected, ...short });
+  assert.ok(p1.some((p) => p.startsWith(`p/${left}/index.html is not redirected`)), `the page left out was not named: ${p1.join(" | ")}`);
+  assert.ok(p1.some((p) => /the floor is the catalogue/.test(p)), "the floor did not fire on one page short");
+
+  const wide = successors.expand({
+    ...REAL,
+    redirectsDoc: successors.onlyStep(successors.withSet(COMMITTED_REDIRECTS, "R4b", { ...expected, "/policy/": "https://astra.minice.ai/plugins/_/policy" }), "R4b"),
+    root: REPO,
+  });
+  const p2 = successors.coverageProblems({ step: "R4b", expected, ...wide });
+  assert.ok(p2.some((p) => p.startsWith("policy/index.html is redirected")), `a page R9a moves was taken at R4b unnoticed: ${p2.join(" | ")}`);
+
+  const ok = successors.expand({ ...REAL, redirectsDoc: successors.onlyStep(successors.withSet(COMMITTED_REDIRECTS, "R4b", expected), "R4b"), root: REPO });
+  const moved = new Map(ok.moved);
+  moved.set("registry/v1/index.json", Buffer.from("<!doctype html>"));
+  const p3 = successors.coverageProblems({ step: "R4b", expected, ...ok, moved });
+  assert.deepEqual(p3, ["registry/v1/index.json changed when R4b's redirects were applied (ROLL-55)"]);
+});
+
+test("the committed R4b set is armed only with its evidence, and is armed once R4b's marker is on the tree", () => {
+  const common = { tokens: TOKENS, ...REAL, root: REPO };
+  // The committed tree, both legs. Today: an empty set and no marker, which is
+  // green and asks nothing — so the synthesised cases below are what hold the
+  // legs, and this line is what will hold the tree when it changes.
+  const marker = fs.existsSync(path.join(REPO, successors.R4B_MARKER));
+  assert.deepEqual(successors.armedSetProblems({ doc: COMMITTED_REDIRECTS, markerPresent: marker, ...common }), []);
+
+  const empty = successors.withSet(COMMITTED_REDIRECTS, "R4b", {});
+  assert.deepEqual(successors.armedSetProblems({ doc: empty, markerPresent: false, ...common }), []);
+  const opened = successors.armedSetProblems({ doc: empty, markerPresent: true, ...common });
+  assert.equal(opened.length, 1);
+  assert.match(opened[0], /R4b-open\.json is on the tree and set R4b is empty/);
+
+  const expected = successors.tableSet(TOKENS, "R4b");
+  const byHand = successors.armedSetProblems({ doc: successors.withSet(COMMITTED_REDIRECTS, "R4b", expected), markerPresent: true, ...common });
+  assert.equal(byHand.length, 1, byHand.join(" | "));
+  assert.match(byHand[0], /carries paths and no `armed` record/);
+
+  const record = { at: "2026-09-27T00:00:00Z", successors_answered_200: 17, edge_review: "minice docs/plans/…/roll-54.md" };
+  assert.deepEqual(successors.armedSetProblems({ doc: successors.withSet(COMMITTED_REDIRECTS, "R4b", expected, { armed: record }), markerPresent: true, ...common }), []);
+  const noReview = successors.armedSetProblems({ doc: successors.withSet(COMMITTED_REDIRECTS, "R4b", expected, { armed: { ...record, edge_review: " " } }), markerPresent: true, ...common });
+  assert.deepEqual(noReview, ["set R4b's armed.edge_review is empty; ROLL-55 does not redirect before ROLL-54's review is recorded"]);
+});
+
+// ── RC-R9-1: the R9a set, and "every generated page is in R4b or R9a" ──────
+//
+// R9a moves every page R4b does not, to Table 5-F's successors under the
+// panel's origin (ROLL-55), once each successor answers 200 (SERVE-84). The
+// canary is RC-R9-1's: over the COMMITTED catalogue, R9a's set moves exactly
+// the pages R4b leaves, `/policy/` and `/security/` each to its own successor,
+// and nothing a daemon or an outside checker reads; and from R5's exit — R9a's
+// request follows it at once — every generated HTML path is in set R4b or R9a,
+// with `404.html` the one named exemption.
+
+test("RC-R9-1 — Table 5-F's R9a set, over the committed catalogue, moves every page R4b leaves, each to its own successor", () => {
+  const expected = successors.tableSet(TOKENS, "R9a");
+  assert.deepEqual(expected, {
+    "/publisher/<owner>/": "https://astra.minice.ai/plugins/_/publishers/<owner>",
+    "/publish/": "https://astra.minice.ai/plugins/_/publish",
+    "/policy/": "https://astra.minice.ai/plugins/_/policy",
+    "/security/": "https://astra.minice.ai/plugins/_/security",
+    "/transparency/": "https://astra.minice.ai/plugins/_/transparency",
+    "/advisory/<id>/": "https://astra.minice.ai/plugins/_/advisories/<id>",
+  });
+  // R4b's mapping is unchanged by the positional rule R9a needed.
+  assert.deepEqual(successors.tableSet(TOKENS, "R4b")["/search/"], "https://astra.minice.ai/plugins");
+  const doc = successors.onlyStep(successors.withSet(COMMITTED_REDIRECTS, "R9a", expected), "R9a");
+  const x = successors.expand({ ...REAL, redirectsDoc: doc, root: REPO });
+  assert.deepEqual(successors.coverageProblems({ step: "R9a", expected, ...x }), []);
+  const files = x.redirected.map((r) => r.file);
+  for (const f of ["publish/index.html", "policy/index.html", "security/index.html", "transparency/index.html"]) {
+    assert.ok(files.includes(f), `${f} is not moved at R9a`);
+  }
+  assert.ok(files.some((f) => /^publisher\/[^/]+\/index\.html$/.test(f)), "no publisher page moved; the catalogue has publishers");
+  assert.ok(!files.includes("transparency/moderation-log.json"), "the moderation log is a document, never a redirect (ROLL-55)");
+});
+
+test("RC-R9-1's canary is red on a page R9a leaves out, on one R4b moves, and on /security/ sent to /policy/'s successor", () => {
+  const expected = successors.tableSet(TOKENS, "R9a");
+  const { "/publish/": _gone, ...short } = expected;
+  const x1 = successors.expand({ ...REAL, redirectsDoc: successors.onlyStep(successors.withSet(COMMITTED_REDIRECTS, "R9a", short), "R9a"), root: REPO });
+  const p1 = successors.coverageProblems({ step: "R9a", expected, ...x1 });
+  assert.ok(p1.some((p) => p.startsWith("publish/index.html is not redirected")), p1.join(" | "));
+
+  const wide = { ...expected, "/search/": "https://astra.minice.ai/plugins" };
+  const x2 = successors.expand({ ...REAL, redirectsDoc: successors.onlyStep(successors.withSet(COMMITTED_REDIRECTS, "R9a", wide), "R9a"), root: REPO });
+  const p2 = successors.coverageProblems({ step: "R9a", expected, ...x2 });
+  assert.ok(p2.some((p) => p.startsWith("search/index.html is redirected")), p2.join(" | "));
+
+  const crossed = { ...expected, "/security/": expected["/policy/"] };
+  const x3 = successors.expand({ ...REAL, redirectsDoc: successors.onlyStep(successors.withSet(COMMITTED_REDIRECTS, "R9a", crossed), "R9a"), root: REPO });
+  const p3 = successors.coverageProblems({ step: "R9a", expected, ...x3 });
+  assert.ok(p3.some((p) => p.startsWith("security/index.html redirects to https://astra.minice.ai/plugins/_/policy")), p3.join(" | "));
+
+  // A set whose patterns reach none of R9a's fixed pages holds nothing, and is
+  // red rather than green about nothing.
+  const x4 = successors.expand({ ...REAL, redirectsDoc: successors.onlyStep(successors.withSet(COMMITTED_REDIRECTS, "R9a", {}), "R9a"), root: REPO });
+  const p4 = successors.coverageProblems({ step: "R9a", expected: { "/advisory/<id>/": expected["/advisory/<id>/"] }, ...x4 });
+  assert.ok(p4.some((p) => /does not reach publish, policy, security and transparency/.test(p)), p4.join(" | "));
+});
+
+test("RC-R9-1 — from R5's exit every generated HTML page is in set R4b or R9a, and 404.html is the one exemption", () => {
+  const both = successors.withSet(successors.withSet(COMMITTED_REDIRECTS, "R4b", successors.tableSet(TOKENS, "R4b")), "R9a", successors.tableSet(TOKENS, "R9a"));
+  const x = successors.expand({ ...REAL, redirectsDoc: both, root: REPO });
+  assert.deepEqual(successors.allPathsProblems(x), []);
+  // Watched on an unmapped page: /publish/ left out of R9a.
+  const { "/publish/": _gone, ...short } = successors.tableSet(TOKENS, "R9a");
+  const gap = successors.withSet(both, "R9a", short);
+  const y = successors.expand({ ...REAL, redirectsDoc: gap, root: REPO });
+  assert.deepEqual(successors.allPathsProblems(y), ["publish/index.html is in neither set R4b nor set R9a, and RC-R9-1 moves every generated page before R9a's request"]);
+  assert.ok(x.plain.has("404.html"), "the build wrote no 404.html, so the exemption was asked about nothing");
+});
+
+test("the committed R9a set is armed only with its evidence, and must be armed once R5's exit marker is on the tree", () => {
+  const common = { step: "R9a", tokens: TOKENS, ...REAL, root: REPO };
+  const marker = fs.existsSync(path.join(REPO, successors.R5_EXIT_MARKER));
+  assert.deepEqual(successors.armedSetProblems({ doc: COMMITTED_REDIRECTS, markerPresent: marker, ...common }), []);
+  const empty = successors.withSet(COMMITTED_REDIRECTS, "R9a", {});
+  assert.deepEqual(successors.armedSetProblems({ doc: empty, markerPresent: false, ...common }), []);
+  const opened = successors.armedSetProblems({ doc: empty, markerPresent: true, ...common });
+  assert.equal(opened.length, 1);
+  assert.match(opened[0], /R5-exit\.json is on the tree and set R9a is empty/);
+  const expected = successors.tableSet(TOKENS, "R9a");
+  const byHand = successors.armedSetProblems({ doc: successors.withSet(COMMITTED_REDIRECTS, "R9a", expected), markerPresent: true, ...common });
+  assert.equal(byHand.length, 1, byHand.join(" | "));
+  assert.match(byHand[0], /carries paths and no `armed` record/);
+  // R9a needs no edge review (ROLL-55 asks one of R4b only), only the probe.
+  const record = { at: "2026-10-01T00:00:00Z", successors_answered_200: 8 };
+  assert.deepEqual(successors.armedSetProblems({ doc: successors.withSet(COMMITTED_REDIRECTS, "R9a", expected, { armed: record }), markerPresent: true, ...common }), []);
+});
+
+// ── RC-R9-3: no Pages deploy job once R9b has exited ───────────────────────
+
+test("RC-R9-3 — once R9b's marker is on the tree no workflow job deploys Pages, and the scan finds today's", () => {
+  const dir = path.join(REPO, ".github", "workflows");
+  const workflows = fs.readdirSync(dir).filter((n) => /\.ya?ml$/.test(n)).map((n) => ({ file: n, text: fs.readFileSync(path.join(dir, n), "utf8") }));
+  const deployers = successors.pagesDeployers(workflows);
+  const marker = fs.existsSync(path.join(REPO, successors.R9B_MARKER));
+  assert.deepEqual(successors.r9bProblems({ markerPresent: marker, deployers }), []);
+  // Before R9b the scan must find sign.yml's `pages` job, or it is a scan that
+  // would also find nothing after R9b for the wrong reason.
+  if (!marker) assert.ok(deployers.includes("sign.yml:pages"), `the scan found no Pages deploy job before R9b: ${JSON.stringify(deployers)}`);
+  // Watched: the same tree with the marker present is red, naming the job.
+  const red = successors.r9bProblems({ markerPresent: true, deployers });
+  assert.ok(marker || red.some((p) => p.startsWith("sign.yml:pages still deploys GitHub Pages")), red.join(" | "));
+  // Both spellings a job can deploy in, and a comment is not one.
+  const synth = [
+    { file: "a.yml", text: "jobs:\n  one:\n    steps:\n      - uses: actions/deploy-pages@v4\n" },
+    { file: "b.yml", text: "jobs:\n  two:\n    environment:\n      name: github-pages\n" },
+    { file: "c.yml", text: "jobs:\n  three:\n    steps:\n      # - uses: actions/deploy-pages@v4\n      - run: true\n" },
+  ];
+  assert.deepEqual(successors.pagesDeployers(synth), ["a.yml:one", "b.yml:two"]);
+});
+
+const asyncTests = [];
+const atest = (name, fn) => asyncTests.push([name, fn]);
+
+/** A fetch that answers from a table and records what it was asked. */
+function fakeFetch(answers) {
+  const calls = [];
+  const impl = async (url, init) => {
+    calls.push({ url, init });
+    const a = typeof answers === "function" ? answers(url) : answers[url];
+    if (a instanceof Error) throw a;
+    const status = typeof a === "number" ? a : a?.status ?? 404;
+    const headers = new Map(Object.entries(a?.headers ?? {}));
+    return { status, headers: { get: (k) => headers.get(k.toLowerCase()) ?? null } };
+  };
+  return { impl, calls };
+}
+
+atest("the probe asks each successor once, with no credential and no redirect followed, and names what did not answer 200", async () => {
+  const f = fakeFetch({
+    "https://p.example/a": 200,
+    "https://p.example/b": 404,
+    "https://p.example/c": { status: 301, headers: { location: "https://p.example/c/" } },
+    "https://p.example/d": new Error("getaddrinfo ENOTFOUND"),
+  });
+  const urls = ["https://p.example/a", "https://p.example/b", "https://p.example/c", "https://p.example/d"];
+  const got = await successors.probeTargets(urls, { fetchImpl: f.impl });
+  assert.deepEqual(got, [
+    { url: "https://p.example/a", status: 200, ok: true },
+    { url: "https://p.example/b", status: 404, ok: false },
+    { url: "https://p.example/c", status: 301, ok: false, location: "https://p.example/c/" },
+    { url: "https://p.example/d", status: null, ok: false, error: "getaddrinfo ENOTFOUND" },
+  ]);
+  assert.deepEqual(f.calls.map((c) => c.url), urls, "each successor is asked exactly once, in order");
+  for (const { init } of f.calls) {
+    assert.equal(init.method, "GET");
+    assert.equal(init.redirect, "manual", "a redirect was followed, so a successor that moves would read as answering");
+    assert.equal(init.headers["user-agent"], successors.USER_AGENT);
+    const keys = Object.keys(init.headers).map((k) => k.toLowerCase());
+    for (const k of ["authorization", "cookie", "proxy-authorization"]) assert.ok(!keys.includes(k), `the probe sent ${k}`);
+  }
+  assert.equal(successors.USER_AGENT, "astra-registry-lane (+https://github.com/mihailinl/astra-registry)");
+});
+
+atest("--arm writes the set only when every successor answers 200 and ROLL-54's review is named, and writes nothing else", async () => {
+  const file = scratch("arm-redirects.json");
+  const original = fs.readFileSync(path.join(REPO, "site", "redirects.json"));
+  // The edit is only one set if the file round-trips: the committed bytes ARE
+  // JSON.stringify(doc, null, 2) and a newline, so re-serialising changes
+  // nothing but what `arm` changed.
+  assert.equal(JSON.stringify(JSON.parse(original.toString("utf8")), null, 2) + "\n", original.toString("utf8"),
+    "site/redirects.json no longer round-trips, so --arm would rewrite more than the set it arms");
+  const common = { step: "R4b", redirectsFile: file, tokens: TOKENS, ...REAL, root: REPO, now: new Date("2026-09-27T01:02:03.456Z") };
+  const reset = () => fs.writeFileSync(file, original);
+
+  reset();
+  const all200 = fakeFetch(() => 200);
+  const noReview = await successors.arm({ ...common, fetchImpl: all200.impl });
+  assert.equal(noReview.armed, false);
+  assert.match(noReview.problems[0], /ROLL-54's edge review/);
+  assert.equal(all200.calls.length, 0, "it probed before refusing on a missing review");
+  assert.ok(fs.readFileSync(file).equals(original), "a refused arm changed the file");
+
+  reset();
+  const oneMissing = fakeFetch((url) => (url.endsWith("/json-tools") ? 404 : 200));
+  const refused = await successors.arm({ ...common, edgeReview: "recorded", fetchImpl: oneMissing.impl });
+  assert.equal(refused.armed, false);
+  assert.deepEqual(refused.problems, ["https://astra.minice.ai/plugins/json-tools answered 404; SERVE-84 wants 200 before R4b"]);
+  assert.ok(fs.readFileSync(file).equals(original), "an arm with a 404 among its successors changed the file");
+
+  reset();
+  const ok = fakeFetch(() => 200);
+  const done = await successors.arm({ ...common, edgeReview: "minice docs/plans/2026-09-12-plugins-service/roll-54.md", fetchImpl: ok.impl });
+  assert.equal(done.armed, true, done.problems.join(" | "));
+  const ids = JSON.parse(fs.readFileSync(REAL.index, "utf8")).signed.plugins.map((p) => p.id);
+  assert.equal(ok.calls.length, ids.length + 1, "every plugin successor and the index, each once");
+  const after = JSON.parse(fs.readFileSync(file, "utf8"));
+  const before = JSON.parse(original.toString("utf8"));
+  assert.deepEqual(after.sets[0].paths, successors.tableSet(TOKENS, "R4b"));
+  assert.deepEqual(after.sets[0].armed, {
+    at: "2026-09-27T01:02:03Z", successors_answered_200: ids.length + 1, edge_review: "minice docs/plans/2026-09-12-plugins-service/roll-54.md",
+  });
+  // Everything but set R4b's two members is the committed file, unchanged.
+  const { paths: _p, armed: _a, ...restAfter } = after.sets[0];
+  const { paths: _q, ...restBefore } = before.sets[0];
+  assert.deepEqual(restAfter, restBefore);
+  assert.deepEqual({ ...after, sets: after.sets.slice(1) }, { ...before, sets: before.sets.slice(1) });
+  // And what it wrote passes the committed-set canary, marker or not.
+  assert.deepEqual(successors.armedSetProblems({ doc: after, markerPresent: true, tokens: TOKENS, ...REAL, root: REPO }), []);
+
+  const again = await successors.arm({ ...common, edgeReview: "recorded", fetchImpl: ok.impl });
+  assert.equal(again.armed, false);
+  assert.match(again.problems[0], /already carries paths/);
 });
 
 // ── the markdown subset ─────────────────────────────────────────────────────
@@ -756,6 +1113,17 @@ test("the repository's own committed catalogue builds", () => {
   assert.deepEqual(pagesUnder(out), committed.signed.plugins.map((p) => p.id).sort());
   assert.equal(result.plugins.length, committed.signed.plugins.length);
 });
+
+// The async tests, one at a time and in order, so their lines read in place.
+for (const [name, fn] of asyncTests) {
+  try {
+    await fn();
+    console.log(`  ok    ${name}`);
+  } catch (e) {
+    failures++;
+    console.error(`  FAIL  ${name}\n        ${e.message.split("\n").join("\n        ")}`);
+  }
+}
 
 fs.rmSync(tmp, { recursive: true, force: true });
 

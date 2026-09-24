@@ -166,23 +166,56 @@ export const APPEAL_RESPONSE_DAYS = 7;
 // compromised panel or service; `bot/lib/takedown-bound.mjs` is what counts
 // the window, out of git, and `bot/lib/holds.mjs` is what holds above it.
 //
-// **IT IS 1 BECAUSE NO POLICY DOCUMENT PUBLISHES A NUMBER YET, AND THAT IS THE
-// WHOLE OF THE REASON.** The owner closed OPEN-OWNER-3 at 3 — three in the
+// **It is 3 because POLICY.md §7 publishes 3, and that is the whole of the
+// reason.** The owner closed OPEN-OWNER-3 at 3 on 2026-09-13 — three in the
 // trailing 24 h, a bound account's removal request and an author's yank
-// counting — and `reg.61a` lands that 3 here and the sentence that carries it
-// in POLICY.md §7, in one commit, before TRUST-10's acknowledgement (M-T3.2,
-// B-T3.3b). Until then the bot enforces the strictest bound it can that is
-// still a bound: 1 lets the first withdrawal of a day through and holds every
-// one after it for a person, where 0 would hold the first as well and be a
-// stop rather than a bound. A bot enforcing 3 against a policy that promises
-// nothing would be making the estate's most consequential promise out of a
-// literal nobody can read.
+// counting — and contract TRUST-26 reads "the bound is 3, which POLICY.md
+// states, and 1 until it does". `reg.61a` landed the 3 here and the sentence
+// that carries it in POLICY.md §7 in one commit, on 2026-09-24 (M-T3.2,
+// B-T3.3b). Until then this was 1: the strictest bound that is still a bound,
+// because a bot enforcing 3 against a policy that promised nothing would have
+// been making the estate's most consequential promise out of a literal nobody
+// could read. Should the sentence ever go, the value it falls back to is 1
+// again, not this one.
 //
 // `bot/tests/policy.test.mjs` holds the pair together in both directions: with
 // no bound published this must be 1, and with one published it must be that
 // number and the document must also say that a takedown above it waits for an
-// operator. So reg.61a cannot land half of itself.
-export const TAKEDOWN_BOUND = 1;
+// operator. So reg.61a could not land half of itself, and nothing can take
+// half of it back.
+export const TAKEDOWN_BOUND = 3;
+
+// ── the owner's two approval numbers, which POLICY.md §8 publishes ──────────
+//
+// reg.61a's other half (B-T3.3b; OPEN-OWNER-5 and OPEN-OWNER-6, both closed
+// 2026-09-13). They live here, beside the bound and the triage clock, because
+// they are the same kind of thing: a number the published policy promises and
+// the bot keeps, asserted against the document by `bot/tests/policy.test.mjs`.
+//
+// Neither is read by any code on `main` yet. B-T3.3b's service-path decision
+// (BOT-26, BOT-28) is their reader, and it lands after this; it imports these
+// rather than typing a second 7 or 6, so that the document, this file and the
+// rule stay one number each. Until it lands, the service path decides nothing
+// and the promise costs nothing, which is what makes publishing it first safe.
+//
+// **Not TRUST-27's 7 days or TRUST-32's 6-hour operator window.** Those are
+// B-T3.10's, they happen to be the same two numbers in the same units, and a
+// reader who reuses one of these for them has welded two policies together
+// that the owner answered separately.
+
+/**
+ * BOT-26 (4): an approval is honoured only while its `decided_at` is younger
+ * than this many days. With none committed no approval passes.
+ */
+export const APPROVAL_MAX_AGE_DAYS = 7;
+
+/**
+ * BOT-28: the author objection window for an approved update with no delay
+ * reason — the hours between the plugins service accepting the author's
+ * notice (`accepted_at`, or `ended_at` for `previous_ended`) and the run that
+ * may publish. With none committed such an update waits.
+ */
+export const APPROVED_UPDATE_WINDOW_HOURS = 6;
 
 /** Which advisory actions a log entry of each kind is allowed to be backed by. */
 export const BACKING = {

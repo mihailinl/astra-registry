@@ -62,7 +62,7 @@ actually written, after the real build.
 | `/` | Every entry, with the honest privilege sentence above the fold. |
 | `/p/<id>/` | One per entry: releases, artifacts with full SHA-256, permissions with the author's own reason, the provenance panel, the permanent "does not prove" block, and a `astra-plugin verify` one-liner. |
 | `/search/` | Client-side, over `../registry/v1/index.json` fetched at page load. No generated search index — a second document describing the first is a document that can disagree with it. |
-| `/publisher/<owner>/` | The GitHub account a plugin is released from. There are no registry accounts, so there is nothing else a publisher could be. |
+| `/publisher/<owner>/` | The GitHub account a plugin is released from. The registry itself has no accounts, so a publisher page is always a GitHub owner. *Amended 2026-09-24, for rollout step R4a:* binding a repository to its listing needs a Minice account holding `astraUser`, and that account is never shown on this page. |
 | `/publish/` | `init-ci`, a tag, a listing issue. Every command on it was read out of `astra-plugin-cli/src/main.rs`. |
 | `/policy/` | `POLICY.md` and `docs/POLICY.md`, rendered. |
 | `/security/` | `SECURITY.md`, rendered, under the embargoed-report block generated from `bot/security-contact.json`. |

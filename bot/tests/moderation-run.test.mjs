@@ -24,9 +24,9 @@
 //
 // ── AND WHY `fixed_reasons` IS IN THE FIXTURES AND NOT ON `main` ───────────
 //
-// `schema/contract-tokens-v1.json` carries `fixed_reasons: null` until contract
-// version ops.15, so every fixture here writes the two strings and one test
-// asserts the other direction against the real repository.
+// `schema/contract-tokens-v1.json` carried `fixed_reasons: null` until contract
+// 2.3.0 (ops.15). Every fixture here writes its own two strings, so no test
+// here depends on `main`'s; `compile-decision.test.mjs` reads `main`'s.
 
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -83,7 +83,7 @@ import * as moderationRun from "../moderation-run.mjs";
 // Ops entry 100's module, imported so that this suite, run against a tree
 // without it, is red test by test rather than at import.
 const settledLib = await import("../lib/settled.mjs").catch(() => null);
-import { CATEGORIES } from "../lib/moderation.mjs";
+import { CATEGORIES, TAKEDOWN_BOUND } from "../lib/moderation.mjs";
 import { BOT_AUDIENCE } from "../lib/oidc.mjs";
 import { BODIES } from "../lib/service.mjs";
 import { buildIndex } from "../../tools/build-index.mjs";
@@ -2535,4 +2535,403 @@ test("a moderation commit may write the settled record, and exactly that one fil
   for (const bad of [`${SETTLED_FILE_PATH}.bak`, `${SETTLED_FILE_PATH}x`, "state/moderation-settled/other.json", "state/releases-seen.json"]) {
     assert.equal(allowedPath(bad), false, `${bad} passes the allowlist because it begins like the record`);
   }
+});
+
+// ── TRUST-26's bound, measured by the commit job and spent entry by entry ────
+//
+// M-T3.4 × M-T3.2. Until this, the commit job read the bound from an input
+// nothing supplied (`ASTRA_OVER_BOUND`) and asked it ONCE per run: one boolean
+// for the whole batch. Two things were wrong with that, and a single-entry
+// fixture could show neither:
+//
+//   * a batch is not one takedown. With nothing withdrawn today and a bound of
+//     three, a list answer carrying four takedowns compiled all four against
+//     `overBound: false`, and four listed plugins left the catalogue in one
+//     commit — the day the bound exists for, arriving as a batch;
+//   * an environment variable that says "under the bound" is a switch that
+//     applies a takedown MOD-9 should have held, and a workflow step or a
+//     dispatch that set it would have been the whole of the bypass.
+//
+// So the job counts the window out of git itself (`countWindow`, M-T3.2's
+// counter) and each compiled takedown spends what it withdraws before the next
+// one is asked. These fixtures are real repositories with real history,
+// because the count is a comparison between commits.
+
+const PEERS = ["gadgets", "gizmos", "doohickeys"];
+const SDIS = ["…a1", "…a2", "…a3", "…a4", "…a5"].map((_, i) => `0192f3a4-5b6c-7d8e-9f01-2345678910${String(i + 10)}`);
+
+/** An estate with `widgets` and three more listed, bound plugins. */
+function crowd({ at = "2026-09-20T09:00:00Z" } = {}) {
+  const extra = {};
+  for (const id of PEERS) {
+    extra[`plugins/${id}/plugin.json`] = plugin(id);
+    extra[`plugins/${id}/versions/1.0.0.json`] = version(id, "1.0.0");
+    extra[`plugins/${id}/identity.json`] = identity(id);
+  }
+  return estate({ extra, at });
+}
+
+/** Commit, dated, what a hand withdrawal would leave on `main`. */
+function withdrawnInGit(root, ids, when) {
+  for (const id of ids) {
+    const file = path.join(root, "plugins", id, "plugin.json");
+    const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+    fs.writeFileSync(file, `${JSON.stringify({ ...doc, unlisted: true }, null, 2)}\n`);
+  }
+  sh(["add", "-A"], root);
+  sh(["commit", "-q", "-m", `hand delist of ${ids.join(", ")}\n\nModeration-Exempt: operator: fixture`], root, dated(when));
+}
+
+const takedownOf = (id, i) => decision({ service_decision_id: SDIS[i], plugin_id: id, code: "M_DELIST", category: "broken", moderator: "amoderator" });
+
+/** The commit job as the workflow runs it: no bound handed in from outside. */
+async function measuredJob(root, entries, { env = {}, now = new Date("2026-09-20T12:30:00Z") } = {}) {
+  return commitJob(root, { entries, now, env: { ASTRA_OVER_BOUND: "", ...env } });
+}
+
+test("M-T3.4: a batch of four takedowns under a bound of three, with none spent today, applies three and holds the fourth", async () => {
+  assert.equal(TAKEDOWN_BOUND, 3, "this fixture is written for the owner's bound of 3");
+  const root = crowd();
+  const entries = ["widgets", ...PEERS].map(takedownOf);
+  const { code, logs, results } = await measuredJob(root, entries);
+  assert.equal(code, 0, logs.join("\n"));
+  assert.deepEqual(results.compiled, SDIS.slice(0, 3),
+    "the first three takedowns of the batch are the ones the bound admits");
+  assert.deepEqual(results.held.map((h) => [h.service_decision_id, h.held_for]), [[SDIS[3], "bound"]],
+    "the fourth takedown in one batch went out unheld — four withdrawals in one commit under a bound of three");
+});
+
+test("M-T3.4: the bound counts what git already holds, and a full one is not lifted by the environment", async () => {
+  const root = crowd();
+  withdrawnInGit(root, ["gadgets", "gizmos"], "2026-09-20T11:30:00Z");
+  const two = await measuredJob(root, [takedownOf("widgets", 0), takedownOf("doohickeys", 1)]);
+  assert.equal(two.code, 0, two.logs.join("\n"));
+  assert.deepEqual(two.results.compiled, [SDIS[0]], "two withdrawn an hour ago leave one; the first takedown spends it");
+  assert.deepEqual(two.results.held.map((h) => h.held_for), ["bound"]);
+
+  const full = crowd();
+  withdrawnInGit(full, ["gadgets", "gizmos", "doohickeys"], "2026-09-20T11:30:00Z");
+  const forced = await measuredJob(full, [takedownOf("widgets", 0)], { env: { ASTRA_OVER_BOUND: "false" } });
+  assert.equal(forced.code, 0, forced.logs.join("\n"));
+  assert.deepEqual(forced.results.held.map((h) => h.held_for), ["bound"],
+    "ASTRA_OVER_BOUND=false applied a takedown past a full bound: an input that says `under` is the whole bypass");
+  assert.deepEqual(forced.results.compiled, []);
+
+  // And the window is a window: the same three, withdrawn 25 hours earlier, cost nothing now.
+  const old = crowd({ at: "2026-09-19T09:00:00Z" });
+  withdrawnInGit(old, ["gadgets", "gizmos", "doohickeys"], "2026-09-19T11:00:00Z");
+  const later = await measuredJob(old, [takedownOf("widgets", 0)]);
+  assert.deepEqual(later.results.compiled, [SDIS[0]], "a withdrawal older than 24 h still counted");
+});
+
+test("M-T3.4: a count the job cannot make holds every takedown, and says why", async () => {
+  const root = crowd();
+  // A `binary` advisory names a hash this registry records for no listing, so
+  // the listed ids it withdraws are unknown (M-T3.2) — and unknown is over.
+  writeAll(root, { "tools/revocations/ASTRA-2026-0001.json": {
+    id: "ASTRA-2026-0001", published: "2026-09-20", severity: "high", action: "block_install",
+    reason: "A test advisory whose binary entry no listing records.",
+    entries: [{ kind: "binary", value: "b".repeat(64) }, { kind: "id", value: "gizmos" }],
+  } });
+  sh(["add", "-A"], root);
+  sh(["commit", "-q", "-m", "hand advisory\n\nModeration-Exempt: operator: fixture"], root, dated("2026-09-20T11:00:00Z"));
+  const { code, logs, results } = await measuredJob(root, [takedownOf("widgets", 0)]);
+  assert.equal(code, 0, logs.join("\n"));
+  assert.deepEqual(results.held.map((h) => h.held_for), ["bound"], "an uncountable window applied a takedown");
+  assert.ok(logs.some((l) => /bound/.test(l) && /cannot be counted/.test(l)),
+    `the run did not say why it held: ${logs.join(" | ")}`);
+});
+
+test("M-T3.4: two revocations in one batch get two advisory ids, and neither overwrites the other", async () => {
+  const root = crowd();
+  const revoke = (id, i) => decision({
+    service_decision_id: SDIS[i], plugin_id: id, code: "M_REVOKE", category: "security_defect",
+    severity: "high", action: "block_install", moderator: "amoderator", versions: ["1.0.0"],
+  });
+  const { code, logs, results } = await measuredJob(root, [revoke("gadgets", 0), revoke("gizmos", 1)]);
+  assert.equal(code, 0, logs.join("\n"));
+  assert.deepEqual(results.compiled, [SDIS[0], SDIS[1]], logs.join("\n"));
+  const files = results.written.filter((p) => p.startsWith("tools/revocations/")).sort();
+  assert.deepEqual(files, ["tools/revocations/ASTRA-2026-0001.json", "tools/revocations/ASTRA-2026-0002.json"],
+    "two advisories compiled in one run took one id, and the second file overwrote the first: the first plugin's " +
+    "revocation was logged as done and never published");
+  const byPlugin = {};
+  for (const f of files) {
+    const doc = JSON.parse(fs.readFileSync(path.join(root, f), "utf8"));
+    byPlugin[doc.id] = doc.entries.filter((e) => e.kind === "id_version" || e.kind === "id" || e.kind === "version_range").map((e) => e.value)[0];
+  }
+  assert.deepEqual(Object.values(byPlugin).map((v) => String(v).split("@")[0]).sort(), ["gadgets", "gizmos"]);
+  const logFiles = results.written.filter((p) => p.startsWith("bot/moderation/"));
+  assert.equal(new Set(logFiles).size, 2, `two decisions, ${new Set(logFiles).size} log entr(y|ies)`);
+});
+
+test("M-T3.4: a second takedown of one plugin in the same batch is `target_changed`, and costs the bound nothing", async () => {
+  const root = crowd();
+  const { code, logs, results } = await measuredJob(root, [
+    takedownOf("widgets", 0), takedownOf("widgets", 1), takedownOf("gadgets", 2), takedownOf("gizmos", 3),
+  ]);
+  assert.equal(code, 0, logs.join("\n"));
+  assert.deepEqual(results.refused.map((r) => [r.service_decision_id, r.refusal]), [[SDIS[1], "target_changed"]],
+    "a second delist of a plugin this run already delisted compiled a second time, onto the same file and log entry");
+  assert.deepEqual(results.compiled, [SDIS[0], SDIS[2], SDIS[3]],
+    "one plugin taken away twice is one plugin: the bound still had room for the other two");
+  assert.deepEqual(results.held, []);
+});
+
+test("M-T3.4: a revocation spends the bound like a delist, and two of one plugin take two ids and two log names", async () => {
+  const root = crowd();
+  const revoke = (id, i) => decision({
+    service_decision_id: SDIS[i], plugin_id: id, code: "M_REVOKE", category: "security_defect",
+    severity: "high", action: "block_install", moderator: "amoderator", versions: ["1.0.0"],
+  });
+  const three = await measuredJob(root, [revoke("gadgets", 0), revoke("gizmos", 1), revoke("doohickeys", 2), takedownOf("widgets", 3)]);
+  assert.equal(three.code, 0, three.logs.join("\n"));
+  assert.deepEqual(three.results.held.map((h) => [h.service_decision_id, h.held_for]), [[SDIS[3], "bound"]],
+    "three revocations spent nothing, and a fourth takedown went out unheld");
+
+  const same = crowd();
+  const twice = await measuredJob(same, [revoke("gadgets", 0), revoke("gadgets", 1)]);
+  assert.equal(twice.code, 0, twice.logs.join("\n"));
+  assert.deepEqual(twice.results.compiled, [SDIS[0], SDIS[1]]);
+  const logs = twice.results.written.filter((p) => p.startsWith("bot/moderation/")).sort();
+  assert.equal(logs.length, 2, `two revocations of one plugin wrote ${logs.length} log entr(y|ies): ${logs.join(", ")}`);
+  assert.deepEqual(logs, ["bot/moderation/2026-09-20-gadgets-revoke-2.json", "bot/moderation/2026-09-20-gadgets-revoke.json"],
+    "the second revocation of a plugin in one run took the first one's log name and overwrote its entry (MOD-47)");
+});
+
+test("M-T3.4: the staging listing costs the batch nothing, as it costs the window nothing (MOD-16)", async () => {
+  const canary = "astra-withdrawal-canary";
+  const extra = {
+    "policy/reserved-ids.json": { staging_listing_id: canary },
+    [`plugins/${canary}/plugin.json`]: plugin(canary),
+    [`plugins/${canary}/versions/1.0.0.json`]: version(canary, "1.0.0"),
+    [`plugins/${canary}/identity.json`]: identity(canary),
+  };
+  for (const id of PEERS) {
+    extra[`plugins/${id}/plugin.json`] = plugin(id);
+    extra[`plugins/${id}/versions/1.0.0.json`] = version(id, "1.0.0");
+    extra[`plugins/${id}/identity.json`] = identity(id);
+  }
+  const root = estate({ extra, at: "2026-09-20T09:00:00Z" });
+  const pathTest = decision({
+    service_decision_id: SDIS[4], plugin_id: canary, code: "M_DEPRECATE", category: "path_test",
+    severity: "low", moderator: "amoderator", versions: ["1.0.0"],
+  });
+  const { code, logs, results } = await measuredJob(root, [pathTest, takedownOf("widgets", 0), takedownOf("gadgets", 1), takedownOf("gizmos", 2)]);
+  assert.equal(code, 0, logs.join("\n"));
+  assert.deepEqual(results.held, [], "the staging listing's path test spent the bound and held a real takedown");
+  assert.deepEqual(results.compiled, [SDIS[4], SDIS[0], SDIS[1], SDIS[2]]);
+});
+
+// ── M-T3.5: the operator's four acts (MOD-52, TRUST-33, BOT-70) ─────────────
+//
+// `tools/operator.mjs` and `bot/lib/operator-role.mjs`, run the way
+// `.github/workflows/operator.yml` runs them. The workflow's own boundary —
+// environment `operator`, which admits `main` alone — is a setting GitHub
+// enforces before a job starts, and `bot/tests/workflows.test.mjs` holds the
+// workflow to it; what is tested here is everything the tree decides.
+
+const OP_RUN = "https://github.com/mihailinl/astra-registry/actions/runs/35999999999";
+const OP_NOW = new Date("2026-09-24T08:00:00Z");
+
+/** A stub of GitHub's collaborator-permission endpoint: login → role, or an HTTP status. */
+function rolesApi(table) {
+  return async (url) => {
+    const login = decodeURIComponent(String(url).split("/collaborators/")[1].split("/")[0]);
+    const v = table[login];
+    if (typeof v === "number") return { ok: false, status: v, json: async () => ({}) };
+    if (v === undefined) return { ok: true, status: 200, json: async () => ({ role_name: "read", permission: "read" }) };
+    return { ok: true, status: 200, json: async () => ({ role_name: v, permission: v === "maintain" ? "write" : v }) };
+  };
+}
+
+test("M-T3.5: only an admin or a maintainer may act, as actor AND triggering actor, on the first attempt only", async () => {
+  const { operatorAuthority } = await import("../lib/operator-role.mjs");
+  const ask = (over) => operatorAuthority({
+    repo: "mihailinl/astra-registry", actor: "opadmin", triggeringActor: "opadmin", runAttempt: "1",
+    fetchImpl: rolesApi({ opadmin: "admin", opmaint: "maintain", opwriter: "write", opgone: 404, opblind: 403 }), ...over,
+  });
+  assert.equal((await ask({})).ok, true, "an admin on attempt 1 was refused");
+  assert.equal((await ask({ actor: "opmaint", triggeringActor: "opmaint" })).ok, true, "a maintainer was refused");
+  for (const [what, over] of [
+    ["a `write` collaborator", { actor: "opwriter", triggeringActor: "opwriter" }],
+    ["an admin actor with a `write` triggering actor", { triggeringActor: "opwriter" }],
+    ["a `write` actor re-run by an admin", { actor: "opwriter" }],
+    ["an unanswered API (403)", { actor: "opblind", triggeringActor: "opblind" }],
+    ["an unanswered API (404)", { actor: "opgone", triggeringActor: "opgone" }],
+    ["a non-collaborator", { actor: "stranger", triggeringActor: "stranger" }],
+    ["run_attempt 2", { runAttempt: "2" }],
+    ["a login that is not one", { actor: "not a login" }],
+  ]) {
+    const got = await ask(over);
+    assert.equal(got.ok, false, `${what} was allowed an operator act: ${got.why}`);
+  }
+});
+
+/** An estate with one bound listing, and holds entered the way the commit job enters them. */
+function heldEstate(decisions) {
+  const root = crowd();
+  const { held } = compileAll(decisions, { root, overBound: true });
+  moderationRun.writeHoldEntries(held, { root, heldAt: "2026-09-24T07:00:00Z", run: OP_RUN });
+  sh(["add", "-A"], root);
+  sh(["commit", "-q", "-m", "holds"], root, dated("2026-09-24T07:00:00Z"));
+  return root;
+}
+
+async function operator(root, env, { authority = null } = {}) {
+  const { main: operatorMain } = await import("../../tools/operator.mjs");
+  const logs = [];
+  const out = path.join(root, "operator");
+  const code = await operatorMain(["--job", "act", "--registry-dir", root, "--out", out], {
+    env: { GITHUB_SERVER_URL: "https://github.com", GITHUB_REPOSITORY: "mihailinl/astra-registry", GITHUB_RUN_ID: "35999999999", ...env },
+    log: { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) },
+    now: OP_NOW,
+    ...(authority ? { fetchImpl: authority } : {}),
+  });
+  const read = (f) => (fs.existsSync(path.join(out, f)) ? fs.readFileSync(path.join(out, f), "utf8") : null);
+  return { code, logs, paths: (read("paths.txt") ?? "").split("\n").filter(Boolean), message: read("commit-message.txt") };
+}
+
+test("M-T3.5: confirm and cancel answer a hold on main once, and a confirm never reaches an unbound_yank", async () => {
+  const root = heldEstate([takedownOf("widgets", 0), takedownOf("gadgets", 1)]);
+  const ok = await operator(root, { ASTRA_ACT: "confirm", ASTRA_SERVICE_DECISION_ID: SDIS[0] });
+  assert.equal(ok.code, 0, ok.logs.join("\n"));
+  assert.deepEqual(ok.paths, [`state/holds/${SDIS[0]}.confirm.json`]);
+  const record = JSON.parse(fs.readFileSync(path.join(root, ok.paths[0]), "utf8"));
+  assert.deepEqual(Object.keys(record).sort(), ["act", "at", "plugin_id", "run", "schema", "service_decision_id"]);
+  assert.equal(record.act, "confirm");
+  assert.match(ok.message, /^Run: 35999999999$/m);
+  const holds = readHolds(root);
+  assert.ok(holds.find((h) => h.id === SDIS[0]).confirm, "readHolds does not see the record the operator wrote");
+  assert.deepEqual(holds.find((h) => h.id === SDIS[0]).problems, []);
+
+  const again = await operator(root, { ASTRA_ACT: "cancel", ASTRA_SERVICE_DECISION_ID: SDIS[0] });
+  assert.equal(again.code, 1, "a hold already answered took a second answer");
+  const none = await operator(root, { ASTRA_ACT: "confirm", ASTRA_SERVICE_DECISION_ID: SDIS[4] });
+  assert.equal(none.code, 1, "a confirmation of a hold that is not on main was written");
+  const cancel = await operator(root, { ASTRA_ACT: "cancel", ASTRA_SERVICE_DECISION_ID: SDIS[1] });
+  assert.equal(cancel.code, 0, cancel.logs.join("\n"));
+  assert.deepEqual(cancel.paths, [`state/holds/${SDIS[1]}.cancel.json`]);
+
+  // An unbound listing's A_YANK is held `unbound_yank`, and only a cancel ends it.
+  const unbound = estate({ bound: false, at: "2026-09-24T06:00:00Z" });
+  const yank = decision({ code: "A_YANK", category: "author_request", reason: FIXED_YANK, versions: ["1.0.0"] });
+  const { held } = compileAll([yank], { root: unbound, overBound: false });
+  assert.equal(held[0]?.held_for, "unbound_yank", "the fixture did not produce an unbound_yank hold");
+  moderationRun.writeHoldEntries(held, { root: unbound, heldAt: "2026-09-24T06:30:00Z", run: OP_RUN });
+  const refused = await operator(unbound, { ASTRA_ACT: "confirm", ASTRA_SERVICE_DECISION_ID: SDI });
+  assert.equal(refused.code, 1, "a confirmation was written for an unbound_yank, which no confirmation releases");
+  assert.ok(refused.logs.some((l) => /unbound_yank/.test(l)), refused.logs.join("\n"));
+});
+
+test("M-T3.5: a revert undoes an applied delist or revoke, logs what it reverses, and refuses a yank", async () => {
+  const root = crowd();
+  const job = await measuredJob(root, [
+    takedownOf("gadgets", 0),
+    decision({ service_decision_id: SDIS[1], plugin_id: "gizmos", code: "M_REVOKE", category: "security_defect",
+      severity: "high", action: "block_install", moderator: "amoderator", versions: ["1.0.0"] }),
+    // widgets has three versions; yanking a listing's LAST listed version makes
+    // the index generator refuse the whole tree, which is a finding of its own.
+    decision({ service_decision_id: SDIS[2], plugin_id: "widgets", code: "M_YANK", category: "broken",
+      moderator: "amoderator", versions: ["1.0.0"] }),
+  ]);
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  sh(["add", "-A", "--", ".", ":!moderation"], root);
+  sh(["commit", "-q", "-m", "moderation"], root, dated("2026-09-24T07:00:00Z"));
+
+  const relist = await operator(root, { ASTRA_ACT: "revert", ASTRA_SERVICE_DECISION_ID: SDIS[0] });
+  assert.equal(relist.code, 0, relist.logs.join("\n"));
+  assert.ok(!("unlisted" in JSON.parse(fs.readFileSync(path.join(root, "plugins/gadgets/plugin.json"), "utf8"))));
+  const logFile = relist.paths.find((p) => p.startsWith("bot/moderation/"));
+  assert.equal(logFile, "bot/moderation/2026-09-24-gadgets-relist.json");
+  const entry = JSON.parse(fs.readFileSync(path.join(root, logFile), "utf8"));
+  assert.equal(entry.action, "relist");
+  assert.equal(entry.reverses, SDIS[0]);
+  assert.equal(entry.category, "error");
+  assert.ok(relist.paths.includes("registry/v1/index.json"), `the index was not regenerated: ${relist.paths.join(", ")}`);
+  assert.match(relist.message, new RegExp(`^Service-Decision: ${SDIS[0]}$`, "m"), "MOD-52's revert carries Service-Decision:");
+
+  const unrevoke = await operator(root, { ASTRA_ACT: "revert", ASTRA_SERVICE_DECISION_ID: SDIS[1] });
+  assert.equal(unrevoke.code, 0, unrevoke.logs.join("\n"));
+  const advisory = unrevoke.paths.find((p) => p.startsWith("tools/revocations/"));
+  assert.ok(advisory && !fs.existsSync(path.join(root, advisory)), `the advisory was not deleted: ${unrevoke.paths.join(", ")}`);
+  assert.ok(unrevoke.paths.includes("registry/v1/revocations.json"), "the withdrawal list was not regenerated");
+
+  const yank = await operator(root, { ASTRA_ACT: "revert", ASTRA_SERVICE_DECISION_ID: SDIS[2] });
+  assert.equal(yank.code, 1, "a yank was reverted; MOD-52 reverts a delist, a deprecate or a revoke only");
+  assert.ok(yank.logs.some((l) => /not reversible/.test(l)),
+    `a yank was refused, but not because a yank is not reversible: ${yank.logs.join(" | ")}`);
+  sh(["add", "-A", "--", ".", ":!operator"], root);
+  sh(["commit", "-q", "-m", "reverts"], root, dated("2026-09-24T08:00:00Z"));
+  // The same listing delisted AGAIN by a later decision: the tree now looks
+  // exactly like the first delist before its revert, so only the log can say
+  // the first decision is already reverted.
+  withdrawnInGit(root, ["gadgets"], "2026-09-24T08:30:00Z");
+  const twice = await operator(root, { ASTRA_ACT: "revert", ASTRA_SERVICE_DECISION_ID: SDIS[0] });
+  assert.equal(twice.code, 1, "a decision already reverted was reverted again, relisting a plugin a later decision delisted");
+  assert.ok(twice.logs.some((l) => /already reverted/.test(l)), twice.logs.join(" | "));
+});
+
+test("M-T3.5: a deny is TRUST-33's four members, written once, and names a fingerprint and nothing else", async () => {
+  const root = crowd();
+  const fp = "4f1c9a02be773d15";
+  const ok = await operator(root, { ASTRA_ACT: "deny", ASTRA_FINGERPRINT: fp });
+  assert.equal(ok.code, 0, ok.logs.join("\n"));
+  assert.deepEqual(ok.paths, [`state/deny/${fp}.json`]);
+  const doc = JSON.parse(fs.readFileSync(path.join(root, ok.paths[0]), "utf8"));
+  assert.deepEqual(Object.keys(doc).sort(), ["at", "fingerprint", "run", "schema"]);
+  assert.equal(doc.schema, "astra.registry.deny/1");
+  assert.equal((await operator(root, { ASTRA_ACT: "deny", ASTRA_FINGERPRINT: fp })).code, 1, "a deny was written twice");
+  assert.equal((await operator(root, { ASTRA_ACT: "deny", ASTRA_FINGERPRINT: "not-a-fingerprint" })).code, 1);
+  assert.equal((await operator(root, { ASTRA_ACT: "deny", ASTRA_FINGERPRINT: fp.replace("4", "5"), ASTRA_SERVICE_DECISION_ID: SDIS[0] })).code, 1,
+    "a deny naming a service decision too was accepted");
+  assert.equal((await operator(root, { ASTRA_ACT: "approve", ASTRA_SERVICE_DECISION_ID: SDIS[0] })).code, 1, "a fifth act ran");
+});
+
+test("M-T3.5: the operator's allowlist admits its records, its revert paths and the two documents, and nothing else", async () => {
+  const { operatorPath } = await import("../../tools/operator.mjs");
+  for (const good of [`state/holds/${SDIS[0]}.confirm.json`, `state/holds/${SDIS[0]}.cancel.json`, "state/deny/4f1c9a02be773d15.json",
+    "plugins/widgets/plugin.json", "bot/moderation/2026-09-24-widgets-relist.json", "bot/moderation/2026-09-24-widgets-unrevoke-2.json",
+    "tools/revocations/ASTRA-2026-0001.json", "registry/v1/index.json", "registry/v1/revocations.json"]) {
+    assert.equal(operatorPath(good), true, `${good} is a path an operator act writes`);
+  }
+  for (const bad of [`state/holds/${SDIS[0]}.json`, "state/queue/x.json", "plugins/widgets/versions/1.0.0.json",
+    "bot/moderation/2026-09-24-widgets-delist.json", "policy/reserved-ids.json", "state/deny/../../x.json",
+    "bot/lib/operator-role.mjs", ".github/workflows/operator.yml", "tools/revocations/README.md"]) {
+    assert.equal(operatorPath(bad), false, `${bad} passes the operator's allowlist`);
+  }
+});
+
+// ── A yank of a listing's last listed version (the coordinator's decision, 2026-09-24) ──
+//
+// Measured before the repair: a batch carrying an `M_YANK` of a one-version
+// listing made `regenerateDocuments` throw "every version is yanked or
+// missing" from `tools/build-index.mjs`, so the commit job wrote nothing for
+// ANY decision in the batch, and the list answer named the same decisions on
+// the next run. The decision: such a yank is valid, and the catalogue omits a
+// listing with no installable version; its records stay on `main`.
+
+test("a batch that yanks a one-version listing, with another takedown: both apply, and the listing leaves the catalogue", async () => {
+  const root = crowd();
+  const entries = [
+    decision({ service_decision_id: SDIS[0], plugin_id: "gizmos", code: "M_YANK", category: "broken",
+      moderator: "amoderator", versions: ["1.0.0"] }),
+    takedownOf("gadgets", 1),
+  ];
+  const { code, logs, results } = await measuredJob(root, entries);
+  assert.equal(code, 0, logs.join("\n"));
+  assert.deepEqual(results.compiled, [SDIS[0], SDIS[1]],
+    "the batch lost a takedown: a yank of a listing's last version must not stop the others");
+  assert.ok(results.written.includes("plugins/gizmos/versions/1.0.0.json"), `the yank was not written: ${results.written.join(", ")}`);
+  const index = JSON.parse(fs.readFileSync(path.join(root, "registry", "v1", "index.json"), "utf8"));
+  const ids = index.signed.plugins.map((p) => p.id).sort();
+  assert.deepEqual(ids, ["doohickeys", "widgets"],
+    "the regenerated catalogue still carries a listing with no installable version, or lost one that has one");
+  assert.ok(fs.existsSync(path.join(root, "plugins", "gizmos", "plugin.json")), "the yanked listing's records left main");
+
+  // A later release that is not yanked brings it back.
+  writeAll(root, { "plugins/gizmos/versions/1.1.0.json": version("gizmos", "1.1.0") });
+  const back = buildIndex({ root, serial: 1 }).signed.plugins.find((p) => p.id === "gizmos");
+  assert.ok(back, "a new version did not bring the listing back");
+  assert.equal(back.version, "1.1.0");
 });

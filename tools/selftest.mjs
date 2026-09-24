@@ -165,7 +165,7 @@ const MODULES = [
   // end — that module asks whether the offline ceremony's command refuses a
   // key that is not a published root; this one asks whether the published
   // roots are still the keys the bot compiles in (B-T1.5). It prints its own
-  // section header, and so does update-signing.mjs below it, so inserting
+  // section header, and so does trust-anchor.mjs below it, so inserting
   // here moves no existing name under a header it does not belong to.
   "roots.mjs",
   // Gap 48, and the third module in the same line of thought. root-delegation
@@ -177,7 +177,7 @@ const MODULES = [
   // left this file printing `300 passed, 0 failed`, exit 0, with a transcript
   // byte-identical to the sound tree's.
   //
-  // It prints its own section header, and update-signing.mjs below it prints
+  // It prints its own section header, and desk-moved.mjs below it prints
   // its own, so inserting here moves no existing name under a header it does
   // not belong to.
   //
@@ -188,21 +188,30 @@ const MODULES = [
   // compared with this list the same way. Any one of the three alone is a red
   // `node tools/selftest.mjs` in every lane `laneSites()` reports as LIVE.
   "trust-anchor.mjs",
-  "update-signing.mjs",
-  "update-notes.mjs",
+  // RC-R3-4(b). The update manifest signer's two case modules stood here,
+  // with their shared fixtures module beneath them: about 900 lines, testing a
+  // tool this repository no longer ships. They moved into Astra with the signer, in
+  // client plan C2.1's one commit (Astra's `tools/update-manifest-signer/test/`,
+  // run by release.sh's Stage 0), so the signer arrived there with its tests
+  // and this suite stopped testing a tool it no longer ships. What is left
+  // here is the canary that the desk stays gone and that the one file Astra
+  // still reads in this tree keeps its shape. It prints its own section
+  // header.
+  "desk-moved.mjs",
+  // `repo-rules.mjs` printed no section header until RC-R3-4(b), so its
+  // names came out under the update-notes module's — the one boundary every
+  // insertion above had to protect. With that module gone they would have
+  // come out under `desk-moved.mjs`'s instead, so it prints its own now, and
+  // there is no header-less module left to protect.
   "repo-rules.mjs",
-  // After `repo-rules.mjs` rather than before it, and with a section header
-  // of its own. `repo-rules.mjs` has no header, so its names print under
-  // `update-notes.mjs`'s — inserting ABOVE it would move them under this
-  // module's header instead. Inserting below moves nothing, and `baseline.mjs`
-  // stays after it.
+  // After `repo-rules.mjs`, with a section header of its own, and
+  // `baseline.mjs` stays after it.
   "claims.mjs",
   // RC-R2-2 — the token file's own version discipline, and the register of
   // which half of the cron-versus-file comparison runs here and which runs in
   // `bot/tests/workflows.test.mjs`. It prints its own section header, so
   // appending here moves no existing name under a header it does not belong
-  // to; the boundary to protect is still `update-notes.mjs` → `repo-rules.mjs`,
-  // and nothing is inserted between that pair.
+  // to.
   "contract-tokens.mjs",
   // RC-R2-4 — `tools/regenerate-signed.mjs`, run as a carrier runs it. It
   // prints its own section header, so it could sit anywhere after a module
@@ -233,6 +242,15 @@ const MODULES = [
   // `baseline.mjs` stays after it. **This line, its FLOORS entry and the file are
   // one change**, for the reason written out at `regenerate.mjs` above.
   "migration-notice.mjs",
+  // Registry plan M-T5.2, M-T5.3 and M-T5.4 — the procedure around the two
+  // records B.4 fixes: the deadline's floors and its POLICY.md line, MIG-13's
+  // rounds and re-send branches, and ROLL-63's watch, each on fixture clocks
+  // and trees. It prints its own section header and sits between two modules
+  // that print theirs, so it moves no existing name under a header it does not
+  // belong to, and `baseline.mjs` stays after it. **This line, its FLOORS entry
+  // and the file are one change**, for the reason written out at
+  // `regenerate.mjs` above.
+  "deadline.mjs",
   // Contract 0.34.0 — §0.7's time, one statement in every reader: the grammar
   // in tools/lib/time.mjs, every schema pattern held to it byte for byte, every
   // code reader driven with second 60, and no private spelling. It prints its
@@ -256,12 +274,13 @@ const MODULES = [
   // line, its FLOORS entry and the file are one change**, for the reason
   // written out at `regenerate.mjs` above.
   "git-env.mjs",
-  // Last until `loads.mjs` below, and with a section header of its own. The
-  // boundary to protect is `update-notes.mjs` → `repo-rules.mjs`:
-  // `repo-rules.mjs` prints no header, so its names come out under
-  // `update-notes.mjs`'s, and anything inserted between that pair would take
-  // them. Appending after a module that prints its own header moves nothing at
-  // all.
+  // RC-R3-2 — SCOPE-9's registry half: the token file's parties against the
+  // waits the bot sends and the codes it carries. It prints its own section
+  // header and sits between two modules that print theirs, so it moves no
+  // existing name. **This line, its FLOORS entry and the file are one change.**
+  "scope9.mjs",
+  // Last until `loads.mjs` below, and with a section header of its own.
+  // Appending after a module that prints its own header moves nothing at all.
   "baseline.mjs",
   // Ops couplings entry 116 — the modules this run loaded, held to TRUST-31's
   // set and to the residual declared beside the checks. LAST, and it has to
@@ -743,7 +762,8 @@ function siblingGatedChecks(sites) {
 // the lane table said nothing about checkouts at all.
 //
 // The guard now reports `notAsked` in a shallow checkout and its check says
-// NOT ASKED there — as `update-notes.mjs`'s record-history check already did —
+// NOT ASKED there — as the update-notes module's record-history check did, until
+// RC-R3-4(b) moved it into Astra with the signer it tested —
 // and what that leaves is gap 41's second sentence again: "a lane with the
 // whole history asks it" is a claim about lanes. So it is derived. For every
 // site, the last `actions/checkout` of THIS repository before the step (no
@@ -1427,8 +1447,8 @@ function checkAbsenceEnvironment(live, gated) {
 // A CENSUS FLOOR on the checks `checkHistoryEnvironment` below is about, where
 // `checkAbsenceEnvironment` has only "not empty" — and the difference is
 // measured rather than preferred. That set holds one check, so
-// "not empty" is the census. This one holds two, from two lanes of work —
-// revocations.mjs's flag check and update-notes.mjs's release-record check —
+// "not empty" is the census. This one held two, from two lanes of work —
+// revocations.mjs's flag check and the update-notes module's release-record check —
 // and deleting the `if (…shallow…) neverAsk(…)` from EITHER put gap 75 back
 // for it (`ok` in every shallow lane, about history it cannot see) while
 // "not empty" stayed true on the other one, and every FLOORS entry stayed
@@ -1445,6 +1465,11 @@ function checkAbsenceEnvironment(live, gated) {
 // block; `historyGatedChecks` says what counts, and `checkGateCensus` makes
 // five edits to every gate that lose its condition and keep its shape, and
 // fails unless each one loses the gate. Deleting a gate's block turns this red.
+//
+// Still 5 after RC-R3-4(b), measured rather than assumed: the update-notes
+// module's release-record check ("no release record ever committed has left
+// the tree") was a sixth by then, and it moved into Astra with the signer it
+// tested; `node tools/selftest.mjs --lanes` lists five without it.
 const HISTORY_GATED_FLOOR = 5;
 const HISTORY_GATED_DAY = "2026-09-22";
 
@@ -1885,10 +1910,10 @@ const FLOORS = new Map(Object.entries({
   "primitives.mjs": 16,
   "catalogue.mjs": 9,
   "publishers.mjs": 17,
-  "validation.mjs": 17,
+  "validation.mjs": 18,
   "couplings.mjs": 18,
   "listings.mjs": 5,
-  "origins.mjs": 5,
+  "origins.mjs": 6,
   // 8, NOT the 41 this module reports, and it is the one number here that is
   // not its census. 33 of the 41 come from `registerSharedVectorTests` over the
   // VENDORED `tests/vectors/`, one test per vector, refreshed from AstraPlugins
@@ -1901,8 +1926,8 @@ const FLOORS = new Map(Object.entries({
   // whose vectors they are, with a message about vectors.
   "bundles.mjs": 14,
   "index-signature.mjs": 21,
-  "signer.mjs": 25,
-  "signer-run.mjs": 7,
+  "signer.mjs": 26,
+  "signer-run.mjs": 8,
   "rehearsal-r2.mjs": 14,
   "served-set.mjs": 41,
   "revocations.mjs": 24,
@@ -1910,17 +1935,18 @@ const FLOORS = new Map(Object.entries({
   "root-delegation.mjs": 6,
   "roots.mjs": 3,
   "trust-anchor.mjs": 4,
-  "update-signing.mjs": 12,
-  "update-notes.mjs": 9,
-  "repo-rules.mjs": 20,
+  "desk-moved.mjs": 5,
+  "repo-rules.mjs": 22,
   "claims.mjs": 10,
   "contract-tokens.mjs": 28,
   "regenerate.mjs": 15,
   "migration-notice.mjs": 6,
+  "deadline.mjs": 11,
   "times.mjs": 4,
   "settings.mjs": 14,
   "git-env.mjs": 8,
   "baseline.mjs": 9,
+  "scope9.mjs": 5,
   "loads.mjs": 2,
 }));
 

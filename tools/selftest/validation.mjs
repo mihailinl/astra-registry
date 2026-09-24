@@ -24,6 +24,78 @@ import { test, assert, assertEqual, neverAsk, tmp, validateTree, errorsMatching 
 import { withFakeAstraPlugins } from "./fixtures.mjs";
 
 export async function run() {
+  // A listing whose every version is yanked is VALID and is left out of the
+  // catalogue; a later version that is not yanked brings it back. Decided by
+  // the coordinator on 2026-09-24, after the moderation run was measured
+  // failing on it: an `M_YANK` or `A_YANK` of a listing's last listed version
+  // made `tools/build-index.mjs` throw "every version is yanked or missing"
+  // inside the commit job, so every takedown in that batch was lost, and on
+  // every run after it until the entry left the list. Eight listings had
+  // exactly one version that day. `tools/validate.mjs` refused the same tree
+  // ("every version is yanked, but the plugin is still listed"), and the commit
+  // job runs it as a gate before it pushes, so fixing only the generator would
+  // have moved the failure one step later.
+  //
+  // What stays refused is a listing with NO version files. That is a broken
+  // tree, not a withdrawal: nobody yanked anything, and hiding it would make a
+  // plugin vanish from every store with nothing red anywhere.
+  await test("a listing with every version yanked validates and leaves the catalogue; a new version brings it back", async () => {
+    const src = path.join(REPO_ROOT, "tests/fixtures/id-collision/plugins/dice-roller");
+    const tree = (name) => {
+      const dir = path.join(tmp, `all-yanked-${name}`);
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.cpSync(src, path.join(dir, "plugins", "dice-roller"), { recursive: true });
+      return dir;
+    };
+    const versionFile = (dir, v) => path.join(dir, "plugins", "dice-roller", "versions", `${v}.json`);
+    const yank = (dir, v) => {
+      const doc = JSON.parse(fs.readFileSync(versionFile(dir, v), "utf8"));
+      fs.writeFileSync(versionFile(dir, v), stableStringify({ ...doc, yanked: true }));
+    };
+    const ids = (dir) => buildIndex({ root: dir, serial: 1 }).signed.plugins.map((p) => p.id);
+
+    const control = tree("control");
+    const before = await validateTree(control);
+    assertEqual(before.report.errors.map((e) => e.message).join("; "), "", "the fixture listing does not validate as it stands");
+    assertEqual(ids(control).join(","), "dice-roller", "the fixture listing is not in its own catalogue");
+
+    const yanked = tree("yanked");
+    yank(yanked, "1.0.0");
+    const { report } = await validateTree(yanked);
+    assertEqual(report.errors.map((e) => `${e.where}: ${e.message}`).join("; "), "",
+      "a listing whose only version is yanked is refused by tools/validate.mjs, which the moderation commit job runs " +
+      "before it pushes — so an M_YANK of a last version stops the whole batch there");
+    let built;
+    try {
+      built = ids(yanked);
+    } catch (err) {
+      assert(false, `tools/build-index.mjs threw on a listing whose every version is yanked: ${err.message}`);
+    }
+    assertEqual(built.join(","), "", "a listing with no installable version is still in the catalogue");
+
+    // A later release that is not yanked: the listing comes back, at that version.
+    const doc = JSON.parse(fs.readFileSync(versionFile(control, "1.0.0"), "utf8"));
+    const next = JSON.parse(JSON.stringify(doc).replaceAll("1.0.0", "1.1.0"));
+    next.published_at = "2026-09-24T00:00:00Z";
+    fs.writeFileSync(versionFile(yanked, "1.1.0"), stableStringify(next));
+    const back = await validateTree(yanked);
+    assertEqual(back.report.errors.map((e) => e.message).join("; "), "", "the listing with a new release does not validate");
+    const entry = buildIndex({ root: yanked, serial: 1 }).signed.plugins.find((p) => p.id === "dice-roller");
+    assert(entry, "a new release that is not yanked did not bring the listing back");
+    assertEqual(entry.version, "1.1.0", "the listing came back at the wrong version");
+
+    // And a listing with NO version files is still a broken tree, refused by both.
+    const empty = tree("empty");
+    fs.rmSync(path.join(empty, "plugins", "dice-roller", "versions"), { recursive: true, force: true });
+    fs.mkdirSync(path.join(empty, "plugins", "dice-roller", "versions"));
+    const none = await validateTree(empty);
+    assert(errorsMatching(none.report, "contains no version files").length === 1,
+      "a listing with no version files validated; that is a broken tree, not a withdrawal");
+    let threw = false;
+    try { ids(empty); } catch { threw = true; }
+    assert(threw, "tools/build-index.mjs left out a listing with no version files instead of refusing the tree");
+  });
+
   await test("every staging listing is REJECTED without --allow-staging", async () => {
     // The count is read off the tree, never hardcoded. An earlier version of this
     // test asserted `=== 1`, which was true only while the registry held a single

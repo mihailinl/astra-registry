@@ -440,7 +440,13 @@ export function decide(input) {
   // It grants no authority that did not exist: whoever can run it could edit
   // `publish_after`, or write the listing by hand. Unlike writing it by hand,
   // this path re-runs every check from scratch first.
-  if (approval?.publishNow && delayReasons.length) {
+  // Neither shortcut exists on the service path (ROLL-49; registry plan
+  // B-T3.3b). There, an approval clears a hold and never a delay, and the
+  // waiver has no command to arrive by: `P_DELAY_WAIVED_BY_COMMAND` and
+  // `P_FIRST_LISTING_APPROVED` are `until R3` in the token file, and
+  // `bot/lib/service-decide.mjs` refuses a plan that carries either.
+  const legacyShortcuts = path !== "service";
+  if (legacyShortcuts && approval?.publishNow && delayReasons.length) {
     add(
       "P_DELAY_WAIVED_BY_COMMAND",
       `@${approval.by} published this without waiting out the ${track.delay_hours ?? DELAY_HOURS} h delay ` +
@@ -452,7 +458,7 @@ export function decide(input) {
     });
   }
 
-  if (approval && !existing && delayReasons.length) {
+  if (legacyShortcuts && approval && !existing && delayReasons.length) {
     add(
       "P_FIRST_LISTING_APPROVED",
       `@${approval.by} approved the first listing, and a first listing has no installed copies for a delay to protect — ` +

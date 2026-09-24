@@ -1,6 +1,6 @@
 {
-  "contract_version": "1.2.0",
-  "source_commit": "ab085dd227552c5d36252717b5cc7293599691d5",
+  "contract_version": "2.7.0",
+  "source_commit": "5890dd41c6922fe1e45956149ecb2505de5487d3",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -649,7 +649,6 @@
         "service"
       ],
       "acceptor": [
-        "client",
         "panel"
       ],
       "state": "live",
@@ -672,7 +671,6 @@
         "stop"
       ],
       "emitter": [
-        "client",
         "panel"
       ],
       "acceptor": [
@@ -745,7 +743,6 @@
         "service"
       ],
       "acceptor": [
-        "client",
         "panel"
       ],
       "state": "live",
@@ -848,6 +845,26 @@
         "panel"
       ],
       "state": "until R3",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "code:P_OPERATOR_DENIED",
+      "kind": "reason_code",
+      "name": "P_OPERATOR_DENIED",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
       "source": "B.7",
       "requirements": [
         "SCOPE-3",
@@ -997,6 +1014,26 @@
       ]
     },
     {
+      "id": "code:M_IDENTITY_RESET",
+      "kind": "reason_code",
+      "name": "M_IDENTITY_RESET",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
       "id": "code:M_APPROVE",
       "kind": "reason_code",
       "name": "M_APPROVE",
@@ -1061,7 +1098,6 @@
       "kind": "reason_code",
       "name": "A_STOP",
       "emitter": [
-        "client",
         "panel"
       ],
       "acceptor": [
@@ -1082,7 +1118,6 @@
       "kind": "reason_code",
       "name": "A_WITHDRAW",
       "emitter": [
-        "client",
         "panel"
       ],
       "acceptor": [
@@ -1103,7 +1138,6 @@
       "kind": "reason_code",
       "name": "A_BINDING_REVOKE",
       "emitter": [
-        "client",
         "panel"
       ],
       "acceptor": [
@@ -1124,7 +1158,6 @@
       "kind": "reason_code",
       "name": "A_REMOVAL_REQUEST",
       "emitter": [
-        "client",
         "panel"
       ],
       "acceptor": [
@@ -1139,15 +1172,13 @@
         "SCOPE-8",
         "FLOW-13"
       ],
-      "fixed_reason": null,
-      "fixed_reason_pending": "fixed_reasons"
+      "fixed_reason": "Delisted at its author's own request, made from the Astra plugins panel. Installed copies are not removed."
     },
     {
       "id": "code:A_YANK",
       "kind": "reason_code",
       "name": "A_YANK",
       "emitter": [
-        "client",
         "panel"
       ],
       "acceptor": [
@@ -1162,8 +1193,7 @@
         "SCOPE-8",
         "FLOW-13"
       ],
-      "fixed_reason": null,
-      "fixed_reason_pending": "fixed_reasons"
+      "fixed_reason": "Yanked at its author's own request, made from the Astra plugins panel."
     },
     {
       "id": "wait:W_LEASE_EXPIRED",
@@ -1284,14 +1314,14 @@
       "kind": "wait",
       "name": "W_ALERT_UNDELIVERED",
       "emitter": [
-        "service"
+        "registry"
       ],
       "acceptor": [
+        "service",
         "panel"
       ],
       "state": "live",
       "never_in_git": true,
-      "fix": "registry",
       "source": "B.7",
       "requirements": [
         "SCOPE-7",
@@ -1304,14 +1334,14 @@
       "kind": "wait",
       "name": "W_OPERATOR_WINDOW",
       "emitter": [
-        "service"
+        "registry"
       ],
       "acceptor": [
+        "service",
         "panel"
       ],
       "state": "live",
       "never_in_git": true,
-      "fix": "registry",
       "source": "B.7",
       "requirements": [
         "SCOPE-7",
@@ -1591,7 +1621,8 @@
         "author_request",
         "error",
         "appeal_reversed",
-        "path_test"
+        "path_test",
+        "identity_reset"
       ],
       "emitter": [
         "panel"
@@ -1698,6 +1729,27 @@
       ],
       "acceptor": [
         "client"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:client_event_kinds",
+      "kind": "closed_list",
+      "name": "client_event_kinds",
+      "values": [
+        "install",
+        "update"
+      ],
+      "emitter": [
+        "client"
+      ],
+      "acceptor": [
+        "service"
       ],
       "state": "live",
       "source": "§0.8, other closed lists",
@@ -4210,6 +4262,10 @@
         {
           "name": "tier",
           "required": true
+        },
+        {
+          "name": "owner_ids",
+          "required": false
         }
       ],
       "members_recorded": true,
@@ -4870,6 +4926,27 @@
       ]
     },
     {
+      "id": "page:MOD-54",
+      "kind": "page",
+      "name": "MOD-54",
+      "url": "https://astra.minice.ai/plugins/_/report",
+      "query": [
+        "plugin"
+      ],
+      "emitter": [
+        "panel"
+      ],
+      "acceptor": [
+        "guest"
+      ],
+      "state": "live",
+      "source": "MOD-54",
+      "requirements": [
+        "MOD-54",
+        "SCOPE-7"
+      ]
+    },
+    {
       "id": "page:MOD-13-advisory-base",
       "kind": "page",
       "name": "advisory base",
@@ -4879,7 +4956,6 @@
       ],
       "acceptor": [
         "service",
-        "client",
         "guest"
       ],
       "state": "live",
@@ -4906,8 +4982,7 @@
         "panel"
       ],
       "acceptor": [
-        "guest",
-        "client"
+        "guest"
       ],
       "state": "live",
       "source": "Table 5-F",
@@ -4931,8 +5006,7 @@
         "panel"
       ],
       "acceptor": [
-        "guest",
-        "client"
+        "guest"
       ],
       "state": "live",
       "source": "Table 5-F",
@@ -4956,8 +5030,7 @@
         "panel"
       ],
       "acceptor": [
-        "guest",
-        "client"
+        "guest"
       ],
       "state": "live",
       "source": "Table 5-F",
@@ -4981,8 +5054,7 @@
         "panel"
       ],
       "acceptor": [
-        "guest",
-        "client"
+        "guest"
       ],
       "state": "live",
       "source": "Table 5-F",
@@ -5008,8 +5080,7 @@
         "panel"
       ],
       "acceptor": [
-        "guest",
-        "client"
+        "guest"
       ],
       "state": "live",
       "source": "Table 5-F",
@@ -5034,8 +5105,7 @@
         "panel"
       ],
       "acceptor": [
-        "guest",
-        "client"
+        "guest"
       ],
       "state": "live",
       "source": "Table 5-F",
@@ -5059,8 +5129,7 @@
         "panel"
       ],
       "acceptor": [
-        "guest",
-        "client"
+        "guest"
       ],
       "state": "live",
       "source": "Table 5-F",
@@ -5240,6 +5309,51 @@
     }
   ],
   "flow13_table": [
+    {
+      "code": "B_BINDING_MALFORMED",
+      "level": "error",
+      "stage": "ownership",
+      "fix": "new_tag",
+      "panel_only": false,
+      "title": "The binding file is not one well-formed binding line",
+      "remedy": "`.well-known/astra-plugin-owner` must hold exactly one `astra-binding: <token>` line (ID-24). Fix the file and push a new tag: the line is read at the attested commit."
+    },
+    {
+      "code": "B_BINDING_UNUSABLE",
+      "level": "error",
+      "stage": "ownership",
+      "fix": "new_tag",
+      "panel_only": false,
+      "title": "The binding token on the tagged commit cannot bind this release",
+      "remedy": "The token in `.well-known/astra-plugin-owner` at the tagged commit cannot bind this repository (ID-9); the Astra plugins panel tells the token's owner why. Mint a fresh token there if you need one, commit its line and push a new tag."
+    },
+    {
+      "code": "B_OWNER_CHANGED",
+      "level": "error",
+      "stage": "ownership",
+      "fix": "moderator",
+      "panel_only": false,
+      "title": "The repository's owner changed since it was bound",
+      "remedy": "The owner the build attestation names differs from the one this listing's identity record carries (ID-41). A moderator decides what happens next; a new tag or a Recheck does not clear it."
+    },
+    {
+      "code": "B_REPOSITORY_RECYCLED",
+      "level": "error",
+      "stage": "ownership",
+      "fix": "moderator",
+      "panel_only": false,
+      "title": "The repository was re-created under this name by another owner",
+      "remedy": "This refusal is permanent for the repository's recorded identity (ID-41): no Recheck, new tag or approval clears it. Only a moderator's identity reset (`M_IDENTITY_RESET`) does, after which the next release is reviewed as a first binding."
+    },
+    {
+      "code": "B_UNBOUND",
+      "level": "error",
+      "stage": "ownership",
+      "fix": "new_tag",
+      "panel_only": false,
+      "title": "No binding line where the registry needs one",
+      "remedy": "From cutover, a first listing and a frozen listing's next release need an `astra-binding:` line in `.well-known/astra-plugin-owner` at the tagged commit (ID-25). Mint a token in the Astra plugins panel, commit its line and push a new tag: the line is read at the attested commit, so this tag cannot change."
+    },
     {
       "code": "E_ARTIFACT_TOO_LARGE",
       "level": "error",
@@ -6123,6 +6237,15 @@
       "remedy": "Nothing to do. A first listing has no installed copies, so the publication delay would have protected nobody who had not already chosen to install it — and a person read this submission, which is the check the delay stands in for. The delay still applies to every later release from this repository, where existing installs follow an update whether or not anybody looked."
     },
     {
+      "code": "P_OPERATOR_DENIED",
+      "level": "error",
+      "stage": "policy",
+      "fix": "registry",
+      "panel_only": false,
+      "title": "Not published: the registry's operator withheld this exact build",
+      "remedy": "An operator deny record on `main` names this fingerprint (TRUST-33). No Recheck, approval or moderator decision clears it; only the operator removing the record does. A new tag is a new fingerprint and is judged afresh."
+    },
+    {
       "code": "P_PUBLISHED",
       "level": "pass",
       "stage": "policy",
@@ -6335,58 +6458,29 @@
       "bot/lib/codes.mjs",
       "bot/lib/policy/constants.mjs"
     ],
-    "codes": 121
+    "codes": 127
   },
-  "fixed_reasons": null,
-  "templates": [],
-  "staging_listing_id": null,
-  "shared_vector_paths": [],
+  "fixed_reasons": {
+    "A_YANK": "Yanked at its author's own request, made from the Astra plugins panel.",
+    "A_REMOVAL_REQUEST": "Delisted at its author's own request, made from the Astra plugins panel. Installed copies are not removed."
+  },
+  "templates": [
+    {
+      "version": "1",
+      "audience": null,
+      "notify_path": null,
+      "stopped_by": null,
+      "state": "live"
+    }
+  ],
+  "staging_listing_id": "astra-withdrawal-canary",
+  "shared_vector_paths": [
+    "tests/binding-line/vectors.json",
+    "tests/moderation-reasons.json",
+    "tools/testkeys/vectors/signed-set-v1.json",
+    "tests/results/"
+  ],
   "pending": [
-    {
-      "id": "fixed_reasons",
-      "what": "the one fixed registry reason string each of `A_YANK` and `A_REMOVAL_REQUEST` carries",
-      "why": "BOT-80 says an `A_*` entry's `reason` is \"the one fixed registry string SCOPE-7's file lists for that code\", and §0.8 records no string. The service's decision type carries `public_reason`, which is NULL by design for an author action, so the first author yank either fails a body check or carries an invented string that the registry silently substitutes its own copy for.",
-      "owed_by": "astra-plugins-ops (contract version ops.15, §0.8); minice-be's half is §1.3 row 8.5",
-      "lands_with": "ops.15, before R2",
-      "floor": "until ops.15 lands, `fixed_reasons` is null and the selftest asserts that it is null and that this record is present; from ops.15 it is two non-empty strings and the selftest asserts that.",
-      "asserted_by": "astra-registry:tools/selftest/contract-tokens.mjs#the token file's fixed_reasons is null under its pending record, or a string for each A_* code with none"
-    },
-    {
-      "id": "templates",
-      "what": "the generated-workflow template list: every version `init-ci` has emitted, with the author audience and author-notify path it compiles",
-      "why": "SCOPE-7 requires the list and the contract names no entry of it. ID-73 forbids marking an audience or the notify path `retired` while a listed template compiles it, so an empty list is not the same claim as a list with template `1` in it: the empty one lets a later regeneration retire a name that authors' repositories still compile.",
-      "owed_by": "astra-plugins-ops (contract version ops.15, §0.8)",
-      "lands_with": "ops.15, before R2",
-      "floor": "until ops.15 lands, `templates` is an empty array, this record is present, and nothing may be marked `retired` on the strength of it; from ops.15 the selftest asserts at least one template, each with an audience, a notify path and a state.",
-      "asserted_by": "astra-registry:tools/selftest/contract-tokens.mjs#the token file's templates list is empty under its pending record, or templates naming this file's entries with none"
-    },
-    {
-      "id": "staging_listing_id",
-      "what": "the staging listing id",
-      "why": "MOD-10 refuses `path_test` on any id but MOD-16's staging listing, and MOD-16 names no id. The registry reserves it in `policy/reserved-ids.json` (M-T2.1) and reads it only there, through `tools/lib/reserved.mjs`'s `stagingListingId`: the derive rule, the validator, the moderation-coverage walk and the takedown bound's exclusion through it, and the examples rule. No registry code reads this member; the registry's `tools/selftest/contract-tokens.mjs` holds it to that file. It is here for the party that compiles against this file (SCOPE-7), whose half of MOD-10 refuses `path_test` on any other id.",
-      "owed_by": "astra-plugins-ops (contract version ops.15, §0.8)",
-      "lands_with": "ops.15, before R2",
-      "floor": "until ops.15 lands the member is null and this record is present.",
-      "asserted_by": "astra-registry:tools/selftest/contract-tokens.mjs#the token file's staging_listing_id is null under its pending record, or policy/reserved-ids.json's id with none"
-    },
-    {
-      "id": "shared_vector_paths",
-      "what": "the shared-vector paths `tests/binding-line/vectors.json`, `tests/moderation-reasons.json`, `tools/testkeys/vectors/signed-set-v1.json` and `tests/results/`",
-      "why": "Three corpora are read from a pinned registry commit by a party that is not this one (§1.3 row 8.3). A corpus whose path is agreed in prose and nowhere else is a corpus two readers can disagree about while both suites stay green.",
-      "owed_by": "astra-plugins-ops (contract version ops.15, §0.8)",
-      "lands_with": "ops.15, before R2",
-      "floor": "until ops.15 lands the list is empty and this record is present.",
-      "asserted_by": "astra-registry:tools/selftest/contract-tokens.mjs#the token file's shared_vector_paths is empty under its pending record, or paths this repository commits with none"
-    },
-    {
-      "id": "mod54_report_page",
-      "what": "MOD-54's report page path",
-      "why": "MOD-54 says the panel serves a report page \"under `/plugins/_/`\" and names no path. minice-be cites `https://astra.minice.ai/plugins/_/report?plugin=<id>` in its own panel document (§1.3 row 7), which is a citation and not a contract entry; the file carries what a contract version records.",
-      "owed_by": "astra-plugins-ops or minice-be, in the version that records it (§1.3 row 7)",
-      "lands_with": "the version that records MOD-54's path",
-      "floor": "until that version lands the entry is absent and this record is present.",
-      "asserted_by": "astra-registry:tools/selftest/contract-tokens.mjs#the token file's MOD-54 report page is absent under its pending record, or tools/cutover-preflight.mjs's page with none"
-    },
     {
       "id": "report_outcome_codes",
       "what": "the public report-outcome code vocabulary `reports.mine` may return",

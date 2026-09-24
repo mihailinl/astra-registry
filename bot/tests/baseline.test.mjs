@@ -244,9 +244,12 @@ test("an unverifiable certificate gives null ids, and the run names it", async (
   assert.equal(facts[0].repository_owner_id, null);
   assert.deepEqual(unrecoverable, ["alpha 1.0.0 (example/alpha@v1.0.0)"]);
   // And it still composes: MIG-20 says null ids never COUNT toward a baseline,
-  // not that the version gets no record.
+  // not that the version gets no record. The record carries NO ids — absent,
+  // not null, which schema/decision-v1.json refuses (the test after the
+  // end-to-end one below holds the schema to it).
   const [composed] = composeRecords([fact({ outcome: "unverified", repository_id: null, repository_owner_id: null })], at);
-  assert.equal(composed.record.repository_id, null);
+  assert.equal(Object.hasOwn(composed.record, "repository_id"), false);
+  assert.equal(Object.hasOwn(composed.record, "repository_owner_id"), false);
 });
 
 test("a certificate id that is a JSON number is refused (SCOPE-5)", async () => {
@@ -432,7 +435,7 @@ test("a second dispatch with the marker present writes nothing, and the refusal 
     "the marker guard did not fire first; B-T2.2's absence used to hide that, and since it landed nothing does");
 });
 
-test("a baseline write that writes no marker refuses by name", () => {
+test("a baseline write ends with the marker on the tree, and says what it did not compose", () => {
   // The path every other `--write` test stops short of: every gate passes, the
   // writer writes, and the run ends. Until 2026-09-22 it ended with exit 0 and
   // no `log/baseline.json` — a green dispatch over a baseline nobody took, with
@@ -463,16 +466,18 @@ test("a baseline write that writes no marker refuses by name", () => {
     "--source-commit", "a".repeat(40),
     "--registry-dir", dir,
   ], { encoding: "utf8" });
+  // This test held the refusal `--write` ended on while it wrote no marker:
+  // "leaves no log/baseline.json on the tree, so it has not taken MIG-20's
+  // baseline". B-T3.7b's walk end to end built the marker, so it is retired in
+  // the direction it asked for — the run now ends GREEN only with the marker
+  // on the tree, and the floor that refused is still the last thing it checks.
   const said = `${r.stdout}${r.stderr}`;
-  assert.notEqual(r.status, 0, `--write exited 0 and left no marker on the tree:\n${said}`);
-  assert.match(said, /leaves no log\/baseline\.json on the tree, so it has not taken MIG-20's baseline/);
-  assert.match(said, /it writes no marker/);
-  assert.match(said, /composes none of the 1 MIG-21 historic fact\(s\)/);
-  assert.match(said, /it makes no commit/);
-  assert.equal(fs.existsSync(path.join(dir, "log", "baseline.json")), false);
-  const records = readDecisionRecords(dir);
-  assert.equal(records.length, 2,
-    `the refusal was not reached at the end of the run — ${records.length} record(s) were written:\n${said}`);
+  assert.equal(r.status, 0, `--write did not take the baseline:\n${said}`);
+  assert.match(said, /wrote 2 baseline record\(s\) and log\/baseline\.json; 1 MIG-21 historic decision\(s\) exported and not composed/);
+  const doc = JSON.parse(fs.readFileSync(path.join(dir, "log", "baseline.json"), "utf8"));
+  assert.equal(doc.version_count, 2);
+  assert.equal(doc.record_count, 2);
+  assert.equal(readDecisionRecords(dir).length, 2);
 });
 
 test("a verifier that cannot run inside --verify is NOT CHECKED, not a crash", () => {
@@ -492,7 +497,8 @@ test("a verifier that cannot run inside --verify is NOT CHECKED, not a crash", (
   write(dir, "population.json", {
     versions: [{
       plugin_id: "alpha", version: "1.0.0", repo: "example/alpha", tag: "v1.0.0", commit: "a".repeat(40),
-      fingerprint: "0123456789abcdef", artifact_url: "data:application/octet-stream;base64,eA==",
+      fingerprint: "0123456789abcdef",
+      artifacts: [{ platform: "noarch", url: "data:application/octet-stream;base64,eA==", sha256: "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881" }],
     }],
   });
   const r = spawnSync(process.execPath, [
@@ -571,4 +577,321 @@ test("a rename that is only a change of case is not a rename", async () => {
   // publishers on the lowercased login for the same reason.
   const { drifted } = await nameDrift([baselined[0]], async () => ({ answer: "found", full_name: "Example/Alpha" }));
   assert.deepEqual(drifted, []);
+});
+
+// ── the dispatch, end to end, over a fixture registry (B-T3.7b) ─────────────
+//
+// Everything above holds one refusal at a time. This holds the path: the three
+// CLI modes the workflow runs, in the workflow's order, over a git repository
+// laid out like this one, with the network replaced by a local HTTP server and
+// `gh` by a script on PATH. It is the run the header of `baseline.yml` says was
+// never taken end to end — "`verify` goes red at --verify's all-unverified
+// floor, having downloaded nothing", "nothing writes the marker, and nothing
+// commits" — so each of those stops is asserted gone by name.
+
+import http from "node:http";
+import { validate as validateAgainstSchema } from "../../tools/lib/jsonschema.mjs";
+import { cleanEnv } from "../../tools/lib/git-env.mjs";
+import crypto from "node:crypto";
+
+const DECISION_SCHEMA = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "schema", "decision-v1.json"), "utf8"));
+const schemaProblems = (doc) => validateAgainstSchema(DECISION_SCHEMA, doc, "$");
+
+test("every baseline record is one the decision schema accepts: a missing commit or id is ABSENT, never null", () => {
+  // schema/decision-v1.json: "ABSENT MEANS ABSENT, NOT NULL. No member here
+  // admits null." The composer wrote `repository_id: null` for an unverified
+  // certificate and refused a commitless version outright, so over the real
+  // catalogue --write either stopped at dice-roller 0.1.2 or, past it, wrote
+  // records `tools/validate.mjs` then refused — on `main`, after the one
+  // dispatch that cannot be repeated.
+  const withStamp = (r) => ({ schema: "astra.registry.decision/1", decision_id: "0".repeat(32), ...r });
+  const [unverified] = composeRecords([fact({ outcome: "unverified", repository_id: null, repository_owner_id: null })], at);
+  assert.equal(Object.hasOwn(unverified.record, "repository_id"), false, "an unverified certificate's id is carried as a member");
+  assert.equal(Object.hasOwn(unverified.record, "repository_owner_id"), false);
+  assert.deepEqual(schemaProblems(withStamp(unverified.record)), []);
+
+  const [commitless] = composeRecords([fact({ commit: null })], at);
+  assert.equal(Object.hasOwn(commitless.record, "commit"), false, "a commitless version's record carries a `commit` member");
+  assert.deepEqual(schemaProblems(withStamp(commitless.record)), []);
+
+  const [whole] = composeRecords([fact()], at);
+  assert.deepEqual(schemaProblems(withStamp(whole.record)), []);
+  assert.equal(whole.record.commit, "a".repeat(40));
+  assert.equal(whole.record.repository_id, "111");
+});
+
+test("the population names every artifact's URL and digest, so --verify has something to download", () => {
+  // `--population` emitted no `artifact_url`, and `verifyOne` fetched nothing
+  // without one: 42 facts, 0 verified, every time (baseline.yml's header). A
+  // version with two platforms is two downloads and two attestation checks,
+  // not one.
+  const dir = tree();
+  listed(dir, "alpha", "1.0.0", {
+    artifacts: {
+      "linux-x64": { url: "https://example.invalid/alpha-linux", filename: "alpha-1.0.0-linux-x64.astraplugin", sha256: "1".repeat(64), size: 1 },
+      "windows-x64": { url: "https://example.invalid/alpha-windows", filename: "alpha-1.0.0-windows-x64.astraplugin", sha256: "2".repeat(64), size: 1 },
+    },
+  });
+  const [v] = population(dir).versions;
+  assert.deepEqual(v.artifacts, [
+    { platform: "linux-x64", url: "https://example.invalid/alpha-linux", sha256: "1".repeat(64) },
+    { platform: "windows-x64", url: "https://example.invalid/alpha-windows", sha256: "2".repeat(64) },
+  ]);
+});
+
+const gitIn = (cwd, ...args) => execFileSync("git", args, {
+  cwd, encoding: "utf8", env: { ...cleanEnv(), GIT_CEILING_DIRECTORIES: path.dirname(cwd) },
+}).trim();
+
+/** A registry-shaped git repository: two published listings, one of them commitless, and one staging entry. */
+function fixtureRegistry() {
+  const dir = tree();
+  const assets = new Map();
+  const asset = (name) => {
+    const bytes = Buffer.from(`bytes of ${name}`);
+    const sha = crypto.createHash("sha256").update(bytes).digest("hex");
+    assets.set(`/${name}`, bytes);
+    return { name, sha, size: bytes.length };
+  };
+  const a1 = asset("alpha-1.0.0-linux-x64.astraplugin");
+  const a2 = asset("alpha-1.0.0-windows-x64.astraplugin");
+  const b1 = asset("beta-2.0.0-noarch.astraplugin");
+  return { dir, assets, a1, a2, b1 };
+}
+
+function populate(fx, base) {
+  const { dir, a1, a2, b1 } = fx;
+  const art = (a, platform) => ({ url: `${base}/${a.name}`, filename: a.name, sha256: a.sha, size: a.size, platform });
+  const strip = ({ platform, ...rest }) => rest;
+  listed(dir, "alpha", "1.0.0", {
+    artifacts: { "linux-x64": strip(art(a1, "linux-x64")), "windows-x64": strip(art(a2, "windows-x64")) },
+  });
+  listed(dir, "beta", "2.0.0", { artifacts: { noarch: strip(art(b1, "noarch")) } });
+  // beta 2.0.0 predates `release.commit` being bound, like dice-roller 0.1.2.
+  const beta = JSON.parse(fs.readFileSync(path.join(dir, "plugins/beta/versions/2.0.0.json"), "utf8"));
+  delete beta.release.commit;
+  write(dir, "plugins/beta/versions/2.0.0.json", beta);
+  // A staging entry never gets a record (MIG-20).
+  listed(dir, "gamma", "0.1.0", { staging: true, artifacts: { noarch: { url: `${base}/gamma`, filename: "gamma-0.1.0-noarch.astraplugin" } } });
+  gitIn(dir, "init", "-q", "-b", "main");
+  gitIn(dir, "config", "user.email", "fixture@example.invalid");
+  gitIn(dir, "config", "user.name", "fixture");
+  gitIn(dir, "add", "-A");
+  gitIn(dir, "commit", "-q", "-m", "the catalogue before the baseline");
+  return gitIn(dir, "rev-parse", "HEAD");
+}
+
+/**
+ * A `gh` that answers `attestation verify <file> …` the way gh does: one
+ * result, whose subject is the sha256 of the file it was handed, and whose
+ * certificate carries the ids the fixture assigns that digest. `unverified`
+ * digests exit 1 with gh's "no attestation" text.
+ */
+function fakeGh(bin, idsByDigest, { refuse = [] } = {}) {
+  fs.mkdirSync(bin, { recursive: true });
+  const table = path.join(bin, "ids.json");
+  fs.writeFileSync(table, JSON.stringify(idsByDigest));
+  fs.writeFileSync(path.join(bin, "gh"), `#!/usr/bin/env node
+const fs = require("node:fs"); const crypto = require("node:crypto");
+const args = process.argv.slice(2);
+if (args[0] !== "attestation" || args[1] !== "verify") { console.error("unexpected gh " + args.join(" ")); process.exit(9); }
+if (!args.includes("--signer-workflow")) { console.error("Error: verifying with issuer \\"sigstore.dev\\""); process.exit(1); }
+const digest = crypto.createHash("sha256").update(fs.readFileSync(args[2])).digest("hex");
+const refuse = ${JSON.stringify(refuse)};
+if (refuse.includes(digest)) { console.error("Error: no attestations found for subject"); process.exit(1); }
+const ids = JSON.parse(fs.readFileSync(${JSON.stringify(table)}, "utf8"))[digest];
+if (!ids) { console.error("Error: no attestations found for subject"); process.exit(1); }
+console.log(JSON.stringify([{ verificationResult: {
+  statement: { subject: [{ name: "x", digest: { sha256: digest } }] },
+  signature: { certificate: { sourceRepositoryIdentifier: ids[0], sourceRepositoryOwnerIdentifier: ids[1] } },
+} }]));
+`);
+  fs.chmodSync(path.join(bin, "gh"), 0o755);
+}
+
+function serve(assets) {
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      const bytes = assets.get(req.url);
+      if (!bytes) { res.writeHead(404); res.end(); return; }
+      res.writeHead(200, { "Content-Type": "application/octet-stream" });
+      res.end(bytes);
+    });
+    server.listen(0, "127.0.0.1", () => resolve({ server, base: `http://127.0.0.1:${server.address().port}` }));
+  });
+}
+
+const cli = (args, env = {}) => new Promise((resolve) => {
+  // Asynchronous, because the asset server lives in THIS process: a
+  // synchronous child would block the event loop that has to answer it.
+  const child = spawn(process.execPath, [path.join(REPO_ROOT, "bot", "baseline.mjs"), ...args], {
+    env: { ...cleanEnv(), ...env }, stdio: ["ignore", "pipe", "pipe"],
+  });
+  let out = "";
+  child.stdout.on("data", (d) => { out += d; });
+  child.stderr.on("data", (d) => { out += d; });
+  child.on("close", (status) => resolve({ status, out }));
+});
+
+import { spawn } from "node:child_process";
+
+test("--population → --verify → --write, then the commit: MIG-20's records and the marker reach main", async (t) => {
+  const fx = fixtureRegistry();
+  const { server, base } = await serve(fx.assets);
+  t.after(() => server.close());
+  const source = populate(fx, base);
+  const bin = path.join(fx.dir, ".bin");
+  // alpha's two assets carry one attestation's ids; beta's certificate does
+  // not verify, so beta is recorded with no ids and named.
+  fakeGh(bin, { [fx.a1.sha]: ["111", "222"], [fx.a2.sha]: ["111", "222"] }, { refuse: [fx.b1.sha] });
+  const work = path.join(fx.dir, ".work");
+  fs.mkdirSync(work);
+  const env = { PATH: `${bin}${path.delimiter}${process.env.PATH}`, RUNNER_TEMP: work, GITHUB_RUN_ID: "35900000001", GITHUB_RUN_ATTEMPT: "1" };
+
+  const pop = await cli(["--population", "--registry-dir", fx.dir, "--out", path.join(work, "population.json")], env);
+  assert.equal(pop.status, 0, pop.out);
+  const popDoc = JSON.parse(fs.readFileSync(path.join(work, "population.json"), "utf8"));
+  assert.deepEqual(popDoc.versions.map((v) => `${v.plugin_id}@${v.version}`), ["alpha@1.0.0", "beta@2.0.0"],
+    "the staging entry is in the population, or a published version is missing from it");
+
+  const ver = await cli(["--verify", "--population-file", path.join(work, "population.json"), "--out", path.join(work, "facts.json")], env);
+  assert.equal(ver.status, 0, ver.out);
+  assert.match(ver.out, /verified 1 of 2 version\(s\)/, "--verify downloaded nothing again, or verified what it should not have");
+  const facts = JSON.parse(fs.readFileSync(path.join(work, "facts.json"), "utf8"));
+  assert.deepEqual(facts.unrecoverable, ["beta 2.0.0 (example/beta@v2.0.0)"]);
+
+  write(work, "historic.json", { facts: [{ repository: "example/alpha", tag: "v0.9.0", version: "0.9.0", state: "refused", date: "2025-12-01T00:00:00Z" }] });
+  const wr = await cli([
+    "--write", "--facts-file", path.join(work, "facts.json"), "--historic-file", path.join(work, "historic.json"),
+    "--source-commit", source, "--registry-dir", fx.dir, "--message-out", path.join(work, "message.txt"),
+  ], env);
+  assert.equal(wr.status, 0, wr.out);
+
+  // The marker, with the counts a reader will hold the tree to.
+  const markerDoc = JSON.parse(fs.readFileSync(path.join(fx.dir, "log", "baseline.json"), "utf8"));
+  assert.deepEqual(Object.keys(markerDoc), ["schema", "written_at", "source_commit", "version_count", "record_count"]);
+  assert.equal(markerDoc.source_commit, source);
+  assert.equal(markerDoc.version_count, 2);
+  assert.equal(markerDoc.record_count, 2);
+
+  // One `migration` record per non-staging version, each one the schema takes.
+  const records = readDecisionRecords(fx.dir);
+  assert.equal(records.length, 2);
+  for (const r of records) assert.deepEqual(schemaProblems(r.doc), [], `${r.file} is a record validate.mjs refuses`);
+  const byId = Object.fromEntries(records.map((r) => [r.doc.plugin_id, r.doc]));
+  assert.equal(byId.alpha.repository_id, "111");
+  assert.equal(byId.alpha.repository_owner_id, "222");
+  assert.equal(byId.alpha.commit, "a".repeat(40));
+  assert.equal(Object.hasOwn(byId.beta, "repository_id"), false, "an unverified certificate wrote an id");
+  assert.equal(Object.hasOwn(byId.beta, "commit"), false, "a commitless version wrote a commit member");
+  assert.equal(records.some((r) => r.doc.plugin_id === "gamma"), false, "the staging entry got a record");
+
+  // The message names what is unrecoverable, what has no commit, and the
+  // historic decisions this run did NOT compose — in the run's own words.
+  const message = fs.readFileSync(path.join(work, "message.txt"), "utf8");
+  assert.match(message, /^baseline: MIG-20's migration records and marker/);
+  assert.match(message, /beta 2\.0\.0 \(example\/beta@v2\.0\.0\)/);
+  assert.match(message, /no release commit/);
+  assert.match(message, /1 MIG-21 historic decision\(s\)/);
+  assert.match(message, /\nRun: 35900000001\/1\n$/);
+
+  // The workflow's commit step, as it runs it: log/ and nothing else.
+  gitIn(fx.dir, "add", "--", "log/decisions", "log/baseline.json");
+  const staged = gitIn(fx.dir, "diff", "--cached", "--name-only").split("\n").filter(Boolean);
+  assert.ok(staged.every((f) => f === "log/baseline.json" || f.startsWith("log/decisions/")), staged.join(", "));
+  gitIn(fx.dir, "commit", "-q", "-F", path.join(work, "message.txt"));
+  assert.equal(gitIn(fx.dir, "cat-file", "-t", "HEAD:log/baseline.json"), "blob");
+
+  // A second dispatch writes nothing: the marker is on the tree.
+  const again = await cli([
+    "--write", "--facts-file", path.join(work, "facts.json"), "--historic-file", path.join(work, "historic.json"),
+    "--source-commit", gitIn(fx.dir, "rev-parse", "HEAD"), "--registry-dir", fx.dir,
+  ], env);
+  assert.notEqual(again.status, 0);
+  assert.match(again.out, /log\/baseline\.json is already on this tree/);
+  assert.equal(readDecisionRecords(fx.dir).length, 2);
+});
+
+test("--write refuses a facts file that does not cover the population exactly", () => {
+  // A version the facts file dropped is a version with no `migration` record,
+  // in a baseline written once. The workflow's `write` job needs only that
+  // `verify` succeeded; this reads the file in front of it.
+  const dir = tree();
+  listed(dir, "alpha", "1.0.0");
+  listed(dir, "beta", "1.0.0");
+  const [a] = population(dir).versions;
+  write(dir, "facts.json", {
+    facts: [{ plugin_id: a.plugin_id, version: a.version, repo: a.repo, tag: a.tag, commit: a.commit, fingerprint: a.fingerprint, outcome: "verified", repository_id: "1", repository_owner_id: "2" }],
+    unrecoverable: [], unchecked: [],
+  });
+  write(dir, "historic.json", { facts: [] });
+  const r = spawnSync(process.execPath, [
+    path.join(REPO_ROOT, "bot", "baseline.mjs"), "--write",
+    "--facts-file", path.join(dir, "facts.json"), "--historic-file", path.join(dir, "historic.json"),
+    "--source-commit", "a".repeat(40), "--registry-dir", dir,
+  ], { encoding: "utf8" });
+  assert.notEqual(r.status, 0);
+  assert.match(`${r.stdout}${r.stderr}`, /beta 1\.0\.0 is in the population and not in the facts file/);
+  assert.equal(readDecisionRecords(dir).length, 0, "a record was written before the coverage refusal");
+  assert.equal(fs.existsSync(path.join(dir, "log", "baseline.json")), false);
+});
+
+test("an asset whose bytes are not the ones its version file records is unverified, however well it attests", async () => {
+  // `gh` verifies whatever file it is handed. A URL now serving different
+  // bytes — a re-uploaded asset, a swapped release — attests those bytes, and
+  // a baseline that took their certificate would anchor the listing to a
+  // repository the listed bytes may never have come from.
+  const dir = tree();
+  const bin = path.join(dir, "bin");
+  // A `gh` that verifies anything, so only the digest check can refuse.
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, "gh"), `#!/usr/bin/env node
+const fs = require("node:fs"); const crypto = require("node:crypto");
+const digest = crypto.createHash("sha256").update(fs.readFileSync(process.argv[4])).digest("hex");
+console.log(JSON.stringify([{ verificationResult: { statement: { subject: [{ digest: { sha256: digest } }] },
+  signature: { certificate: { sourceRepositoryIdentifier: "111", sourceRepositoryOwnerIdentifier: "222" } } } }]));
+`);
+  fs.chmodSync(path.join(bin, "gh"), 0o755);
+  const version = (sha) => ({
+    plugin_id: "alpha", version: "1.0.0", repo: "example/alpha", tag: "v1.0.0", commit: "a".repeat(40),
+    fingerprint: "0123456789abcdef",
+    artifacts: [{ platform: "noarch", url: "data:application/octet-stream;base64,eA==", sha256: sha }],
+  });
+  const env = { PATH: `${bin}${path.delimiter}${process.env.PATH}`, RUNNER_TEMP: dir };
+  const verifyWith = async (sha) => {
+    write(dir, "population.json", { versions: [version(sha)] });
+    const r = await cli(["--verify", "--population-file", path.join(dir, "population.json"), "--out", path.join(dir, "facts.json")], env);
+    return { ...r, facts: JSON.parse(fs.readFileSync(path.join(dir, "facts.json"), "utf8")) };
+  };
+  const right = await verifyWith("2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881");
+  assert.equal(right.facts.facts[0].outcome, "verified", right.out);
+  const wrong = await verifyWith("f".repeat(64));
+  assert.equal(wrong.facts.facts[0].outcome, "unverified", "a digest that is not the recorded one verified anyway");
+  assert.equal(wrong.facts.facts[0].repository_id, null);
+});
+
+test("a two-platform version is verified only if both assets are", async () => {
+  // Written after a mutation that verified the FIRST asset alone went green
+  // over every test above: the end-to-end fixture's two alpha assets both
+  // attest, so it could not tell one check from two. A release whose Windows
+  // bundle does not verify is not a release whose certificate covers what the
+  // listing serves on Windows.
+  const dir = tree();
+  const bin = path.join(dir, "bin");
+  const x = "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"; // sha256("x")
+  const y = "a1fce4363854ff888cff4b8e7875d600c2682390412a8cf79b37d0b11148b0fa"; // sha256("y")
+  fakeGh(bin, { [x]: ["111", "222"] }, { refuse: [y] });
+  write(dir, "population.json", { versions: [{
+    plugin_id: "alpha", version: "1.0.0", repo: "example/alpha", tag: "v1.0.0", commit: "a".repeat(40),
+    fingerprint: "0123456789abcdef",
+    artifacts: [
+      { platform: "linux-x64", url: "data:application/octet-stream;base64,eA==", sha256: x },
+      { platform: "windows-x64", url: "data:application/octet-stream;base64,eQ==", sha256: y },
+    ],
+  }] });
+  const r = await cli(["--verify", "--population-file", path.join(dir, "population.json"), "--out", path.join(dir, "facts.json")],
+    { PATH: `${bin}${path.delimiter}${process.env.PATH}`, RUNNER_TEMP: dir });
+  const facts = JSON.parse(fs.readFileSync(path.join(dir, "facts.json"), "utf8"));
+  assert.equal(facts.facts[0].outcome, "unverified", `one of two assets failed its attestation and the version verified:\n${r.out}`);
+  assert.equal(facts.facts[0].repository_id, null);
 });

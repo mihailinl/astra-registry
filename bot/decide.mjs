@@ -53,7 +53,10 @@ import path from "node:path";
 
 import { loadSources, REPO_ROOT } from "../tools/lib/sources.mjs";
 
-import { markerOnMain, readDecisionRecords } from "./baseline.mjs";
+import { markerOnMain, readDecisionRecords, runTrailer } from "./baseline.mjs";
+import { legacyKey, recordsOnMain, writeDecisionRecord } from "./lib/decisions.mjs";
+import { artifactDigests, submissionFingerprint } from "./lib/policy/release.mjs";
+import { safeRepo, safeTag } from "./lib/intake.mjs";
 import { ingest, writeListing } from "./ingest.mjs";
 import {
   decide,
@@ -85,25 +88,43 @@ const EXIT = { publish: 0, refuse: 1, review: 3, delay: 4 };
 // asking a different question of each kind.
 
 /**
- * BOT-19: what `main` already says about this submission.
+ * BOT-19: what `main` already says about THIS submission.
  *
- * Searched BEFORE the service is asked, so that a stop recorded in the panel
- * stops a ping too. A terminal record is REPORTED and nothing is written: a
- * second record saying the same thing is a second answer to "what did the
- * registry decide", and the two can drift.
+ * Exactly the three records BOT-19 names (registry plan notes), and no
+ * others: a `published`, `stopped` or `M_REJECT` `refused` record carrying
+ * this run's fingerprint; and a `stopped` record for the same tag of the same
+ * repository — by `repository_id` where the record carries one, by
+ * `owner/name` where it does not (FLOW-26; matching by name there can only
+ * withhold). "A `held` or `delayed` record MUST NOT stop the run", and
+ * neither does a bot refusal of these bytes: a `/recheck` of them is exactly
+ * what an author is told to do.
  *
- * Terminal is asked as a property of the record's state, over the set of
- * states `records` carries, rather than as a list of the terminal state names
- * that existed when this was written. The set is `main`'s to grow.
+ * **What this replaced, and why it could not stay.** The first version took
+ * any "terminal-looking" state — `refused`, `revoked`, `yanked`, … — of any
+ * record for the same PLUGIN ID. One old version refused, or yanked, and every
+ * later release of that plugin was `reported refused` with nothing written:
+ * the plugin could never publish again on the legacy path, from the first
+ * day the decision log existed.
  *
- * @param {{records: object[], pluginId: string|null, repo: string, tag: string|null}} opts
+ * A hit is REPORTED and nothing is written: a second record saying the same
+ * thing is a second answer to "what did the registry decide".
+ *
+ * @param {{records: object[], fingerprint: string|null, repo: string, tag: string|null,
+ *   repositoryId?: string|null}} opts
  */
-export function terminalOnMain({ records = [], pluginId, repo, tag }) {
-  const TERMINAL = new Set(["refused", "revoked", "yanked", "withdrawn", "deprecated"]);
-  const mine = records.filter((r) =>
-    (pluginId && r?.plugin_id === pluginId) ||
-    (r?.repo === repo && tag && r?.tag === tag));
-  const hit = mine.filter((r) => TERMINAL.has(String(r?.state))).at(-1) ?? null;
+export function terminalOnMain({ records = [], fingerprint = null, repo, tag, repositoryId = null }) {
+  const sameRepo = (r) => (typeof r?.repository_id === "string" && typeof repositoryId === "string"
+    ? r.repository_id === repositoryId
+    : String(r?.repo ?? "").toLowerCase() === String(repo ?? "").toLowerCase());
+  const hits = records.filter((r) => {
+    if (!r) return false;
+    if (fingerprint && r.fingerprint === fingerprint) {
+      if (r.state === "published" || r.state === "stopped") return true;
+      if (r.state === "refused" && (r.reasons ?? []).includes("M_REJECT")) return true;
+    }
+    return r.state === "stopped" && tag && r.tag === tag && sameRepo(r);
+  });
+  const hit = hits.at(-1) ?? null;
   if (!hit) return null;
   return {
     reported: hit.state,
@@ -264,18 +285,12 @@ export async function decideRelease(opts, deps = {}) {
   // would be a second, weaker answer to a question `main` already answers.
   const identityRecord = result.derived ? readIdentityRecord(opts.root, result.derived.plugin.id) : null;
 
-  // BOT-19, searched BEFORE anything is decided: a stop recorded in the panel
-  // stops a ping. `readDecisionRecords` reads B-T2.2's layout and needs none
-  // of B-T2.2's writer, so this works from the first record and answers
-  // nothing before that — which is the honest answer, not a skip.
+  // BOT-19's records. `readDecisionRecords` reads B-T2.2's layout and needs
+  // none of B-T2.2's writer, so this works from the first record and answers
+  // nothing before that — which is the honest answer, not a skip. The search
+  // itself runs once the fingerprint is known, below: BOT-19 is keyed on it.
   const records = (deps.readDecisionRecords ?? readDecisionRecords)(opts.root)
     .map((r) => r.doc).filter(Boolean);
-  const terminal = terminalOnMain({
-    records,
-    pluginId: result.derived?.plugin?.id ?? null,
-    repo: opts.repo,
-    tag: opts.tag,
-  });
 
   const decision = decide({
     identityRecord,
@@ -337,10 +352,45 @@ export async function decideRelease(opts, deps = {}) {
     decision.record = { write: false, why: e.message };
   }
 
+  // BOT-19 over this run's fingerprint — the publication-shaped answer's own
+  // one, or, for a refusal that derived no answer, the fingerprint of the
+  // bytes this run hashed — and the tag.
+  const fingerprint = decision.fingerprint ?? fingerprintOf(result, opts);
+  const terminal = terminalOnMain({
+    records,
+    fingerprint,
+    repo: opts.repo,
+    tag: opts.tag,
+    repositoryId: result.identity?.repository_id ?? null,
+  });
+  // BOT-74: a registered tag already listed with identical digests is the
+  // publication that already happened. Without it, a re-ping of a published
+  // tag is refused E_VERSION_NOT_NEW — and from MIG-20's baseline on that
+  // refusal is a durable `refused` record about a release this registry
+  // published.
+  const listedVersion = result.derived && existing
+    ? (existing.versions ?? []).map((v) => v.doc).find((d) => d?.version === result.derived.version.version) ?? null
+    : null;
+  const already = listedVersion
+    ? alreadyPublished({
+      listed: {
+        version: listedVersion.version,
+        artifact_digests: artifactDigests(listedVersion),
+        decision_id: records.find((r) => r.state === "published" && r.plugin_id === listedVersion.id &&
+          r.version === listedVersion.version)?.decision_id ?? null,
+      },
+      digests: artifactDigests(result.derived.version),
+    })
+    : null;
+
   if (terminal) {
     decision.record = terminal.record;
     decision.reported = terminal.reported;
     decision.names_record = terminal.names;
+  } else if (already) {
+    decision.record = already.record;
+    decision.reported = already.reported;
+    decision.names_record = already.names;
   } else if (!marker.present && decision.record.write) {
     decision.record = {
       write: false,
@@ -414,6 +464,98 @@ export function legacyTrigger(source) {
   return trigger;
 }
 
+// ── B-T3.7: the legacy record, composed and written ────────────────────────
+//
+// `decideRelease` decides whether a record is owed; this is where one is
+// WRITTEN, and until B-T3.7 was built nothing was. The end-to-end test said
+// `record.write: true` for a drained publication with the marker on main, and
+// `log/decisions/` stayed empty — a record owed and never made, on the one
+// path every publication before R6 takes.
+//
+// The record goes into the OUT directory, under `log/decisions/<YYYY>/<MM>/`,
+// beside the listing files, because this runs in the `check` job, which holds
+// no write access: `bot/publish-apply.mjs` copies it to `main` in the same
+// commit as the publication it records (BOT-34, BOT-73), and refuses that
+// publication without it once the marker is on the tree.
+
+/** DEC-7's state for each of `decide()`'s four outcomes. `stopped` is the moderation run's. */
+export const LEGACY_STATE = Object.freeze({ publish: "published", delay: "delayed", review: "held", refuse: "refused" });
+
+/** A B.7 code as DEC-7's `reasons` holds one (schema/decision-v1.json). */
+const REASON_CODE_RE = /^[A-Z]_[A-Z0-9]+(?:_[A-Z0-9]+)*$/;
+const SHA1_RE = /^[0-9a-f]{40}$/;
+const BASE10_RE = /^[0-9]{1,20}$/;
+
+/**
+ * DEC-7's record for one legacy decision, and the BOT-35 key it is filed under.
+ *
+ * Every member is taken from what THIS run established — the derived listing,
+ * the certificate's identity, the policy's answer — and nothing from the
+ * issue thread: no login (PRIV-2; a maintainer's `/approve` is recorded as the
+ * bot's decision and names nobody), no issue number (OD-2), no free text
+ * (`reasons` is codes). Absent where it does not apply, never null.
+ *
+ * @returns {{key: string, record: object}}
+ */
+export function composeLegacyRecord(result, opts) {
+  const { decision, derived, identity } = result;
+  if (!LEGACY_TRIGGERS.includes(decision?.trigger)) {
+    throw new Error(
+      `a legacy record was asked for with trigger ${JSON.stringify(decision?.trigger ?? null)}. The legacy path ` +
+      `writes ${LEGACY_TRIGGERS.join(", ")} and nothing else: \`migration\` is MIG-20's baseline, written once ` +
+      "by baseline.yml's single audited dispatch, and a legacy run that composed one would become the baseline " +
+      "for this id on the strength of an issue comment (B-T3.7; BOT-39)",
+    );
+  }
+  const state = LEGACY_STATE[decision.outcome];
+  if (!state) throw new Error(`${JSON.stringify(decision.outcome)} is not an outcome a legacy record has a state for`);
+  if (decision.wait) {
+    throw new Error("a wait was handed to the record writer; waits never record (FLOW-72)");
+  }
+  const repo = safeRepo(derived?.version?.release?.repo ?? null) ?? safeRepo(opts.repo);
+  const tag = safeTag(opts.tag);
+  if (!repo || !tag) throw new Error("a legacy record names a repository and a tag, and this run has neither in grammar");
+  const findings = Array.isArray(result.findings) ? result.findings : [];
+  const reasons = [...new Set([
+    ...findings.filter((f) => f?.level === "error" || f?.level === "review").map((f) => f.code),
+    ...(decision.reasons ?? []).map((r) => r?.code),
+  ])].filter((c) => typeof c === "string" && c.length <= 64 && REASON_CODE_RE.test(c)).sort();
+  const commit = derived?.version?.release?.commit;
+  const ids = identity && typeof identity.repository_id === "string" && BASE10_RE.test(identity.repository_id) &&
+    typeof identity.repository_owner_id === "string" && BASE10_RE.test(identity.repository_owner_id)
+    ? { repository_id: identity.repository_id, repository_owner_id: identity.repository_owner_id } : {};
+  const run = runTrailer(process.env);
+  const record = {
+    decided_at: decision.decided_at,
+    actor: "bot",
+    trigger: decision.trigger,
+    ...(derived?.plugin?.id ? { plugin_id: derived.plugin.id } : {}),
+    ...(derived?.version?.version ? { version: derived.version.version } : {}),
+    repo,
+    ...ids,
+    tag,
+    ...(typeof commit === "string" && SHA1_RE.test(commit) ? { commit } : {}),
+    ...(Array.isArray(decision.artifact_digests) && decision.artifact_digests.length
+      ? { artifact_digests: [...new Set(decision.artifact_digests)].sort() } : {}),
+    ...(decision.fingerprint ? { fingerprint: decision.fingerprint } : {}),
+    state,
+    ...(reasons.length ? { reasons } : {}),
+    ...(state === "delayed" && decision.publish_after ? { publish_after: decision.publish_after } : {}),
+    ...(run ? { run } : {}),
+  };
+  return { key: legacyKey({ repo, tag, fingerprint: decision.fingerprint ?? null, state }), record };
+}
+
+/** The fingerprint of the bytes this run hashed, when the policy's answer carries none. */
+function fingerprintOf(result, opts) {
+  const v = result.derived?.version;
+  if (!v) return null;
+  return submissionFingerprint({
+    repo: opts.repo, tag: opts.tag, id: result.derived.plugin.id, version: v.version,
+    commit: v.release?.commit ?? null, digests: artifactDigests(v),
+  });
+}
+
 /** `plugins/<id>/identity.json` on the checked-out tree, or null. */
 export function readIdentityRecord(root, pluginId) {
   if (!pluginId) return null;
@@ -440,6 +582,19 @@ export function readIdentityRecord(root, pluginId) {
 /** Lay the outcome out under `--out` in the shape of the repository. */
 export function writeOutputs(out, opts, result) {
   const { decision, derived } = result;
+  // The record is composed BEFORE anything is written, so a refusal — a
+  // `migration` trigger, a state with no outcome — leaves no half-written out
+  // directory behind for the publish job to find.
+  //
+  // Asked of the tree the run READ (`opts.root`), twice over: the marker gate
+  // again, because this function is the writer and `decideRelease` is only one
+  // of its callers; and BOT-36's dedupe, against the records `main` already
+  // carries — a re-run, or a drain that re-decides a release it already
+  // recorded, finds the same id and writes nothing.
+  const root = opts.root ?? REPO_ROOT;
+  const planned = decision?.record?.write === true && markerOnMain(root).present
+    ? composeLegacyRecord(result, opts)
+    : null;
   fs.mkdirSync(out, { recursive: true });
   fs.writeFileSync(path.join(out, "comment.md"), `${result.comment}\n`);
   fs.writeFileSync(
@@ -493,6 +648,15 @@ export function writeOutputs(out, opts, result) {
 
   const removals = [];
 
+  // BOT-19 and BOT-74: a hit on `main` is REPORTED and writes nothing — no
+  // listing, no queue entry, no removal. `decideRelease` already withholds the
+  // record on a hit; the listing was still written whenever the policy said
+  // `publish`, so a re-run of a release a moderator had rejected (`M_REJECT`
+  // on main for these bytes) carried the rejected version into the publish
+  // job's tree, and the rejection was undone by a re-run (the canary walk
+  // ROLL-25 (2), B-T4.1).
+  const hit = typeof decision.reported === "string";
+
   // `writeListing`, rather than a second copy of it. There were two writers —
   // this one, and `ingest.mjs`'s, which lays out the tree the validator checks.
   // When a listing gained an icon and a README, only one of them learned to
@@ -501,11 +665,11 @@ export function writeOutputs(out, opts, result) {
   // own rule: `icon "icon.svg" is named here but the file is not in
   // plugins/dice-roller/`. That is the check working, on a document this
   // function had made wrong.
-  if (decision.publishes_now && derived) {
+  if (!hit && decision.publishes_now && derived) {
     writeListing(path.join(out, "plugins", derived.plugin.id), derived);
   }
 
-  if (decision.queue_entry) {
+  if (!hit && decision.queue_entry) {
     const rel = queueFile(decision.queue_entry.id, decision.queue_entry.version);
     fs.mkdirSync(path.dirname(path.join(out, rel)), { recursive: true });
     fs.writeFileSync(path.join(out, rel), `${JSON.stringify(decision.queue_entry, null, 2)}\n`);
@@ -527,18 +691,25 @@ export function writeOutputs(out, opts, result) {
   const holds = decision.reasons.filter((r) => r.level === "review");
   const onlyStale = holds.length > 0 && holds.every((r) => r.code === "P_APPROVAL_STALE");
   const handedToAPerson = decision.outcome === "review" && !onlyStale;
-  if (derived && (decision.drop_queue || decision.outcome === "refuse" || handedToAPerson)) {
+  if (!hit && derived && (decision.drop_queue || decision.outcome === "refuse" || handedToAPerson)) {
     removals.push(queueFile(derived.plugin.id, derived.version.version));
   }
   fs.writeFileSync(path.join(out, "remove.txt"), removals.map((r) => `${r}\n`).join(""));
-  return { removals };
+
+  const record = planned
+    ? writeDecisionRecord({ key: planned.key, record: planned.record, root: out, existing: recordsOnMain(root) })
+    : null;
+  return { removals, record };
 }
 
 async function main(argv) {
   const opts = parseArgs(argv);
   const result = await decideRelease(opts);
   console.log(result.comment);
-  if (opts.out) writeOutputs(opts.out, opts, result);
+  if (opts.out) {
+    const { record } = writeOutputs(opts.out, opts, result);
+    if (record) console.error(`decision record ${record.decision_id}: ${record.written ? `written, ${record.path}` : record.dropped}`);
+  }
   return EXIT[result.decision.outcome] ?? 2;
 }
 

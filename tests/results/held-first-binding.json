@@ -1,0 +1,30 @@
+{
+  "schema": "astra.plugins.bot-result/1",
+  "submission_id": "0192f1c2-3b4a-7c5d-8e6f-1a2b3c4d5e6f",
+  "attempt": "att-1",
+  "state": "held",
+  "reasons": [
+    {
+      "code": "R_FIRST_BINDING",
+      "stage": "policy",
+      "location": null,
+      "message": "R_FIRST_BINDING"
+    }
+  ],
+  "decision_id": "00000000000000000000000000000000",
+  "main_commit": "7777777777777777777777777777777777777777",
+  "plugin_id": "dice-roller",
+  "version": "0.2.0",
+  "tag": "v0.2.0",
+  "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "artifact_digests": [
+    "linux-x64:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  ],
+  "fingerprint": "476e6975802d8801",
+  "repository_id": "1203676452",
+  "repository_owner_id": "193032699",
+  "owner_file_commit": "9999999999999999999999999999999999999999",
+  "owner_file_pull_request": false,
+  "triggering_actor_id": "193032699",
+  "triggering_actor_is_owner": true
+}

@@ -1031,6 +1031,33 @@ const NOT_HEARD = new Map([
   ],
 ]);
 
+// M-T3.5 (attack B-2). The operator's acts — a hold's confirm or cancel record,
+// a MOD-52 revert, a TRUST-33 deny — are written by `tools/operator.mjs --job
+// act`, and its role check lives in the tree at the ref the dispatcher chose.
+// The dispatch API takes a ref and plain write access is enough to dispatch,
+// so a write-only account could run a branch whose role check says "admin".
+// What refuses that job before it starts is environment `operator`, whose
+// deployment-branch policy admits `main` alone (RC-R0-3a) — a setting outside
+// the tree that the same push cannot edit. So every job that runs the act is
+// in that environment. Deleting the `environment:` line is the one edit that
+// reopens B-2, and it is the mutation this is watched with.
+test("every job that writes an operator record runs in environment `operator`", () => {
+  const jobs = allJobs();
+  const writers = jobs.filter((j) => code(j).some((l) => /node\s+tools\/operator\.mjs\s+--job\s+act\b/.test(l)));
+  // The floor, written before the mutation: with no writer found, the loop
+  // below proves nothing about the one workflow it exists for.
+  assert.ok(writers.length >= 1, "no job runs `tools/operator.mjs --job act`; this check would prove nothing");
+  const problems = writers
+    .filter((j) => !inEnvironment(j, "operator"))
+    .map((j) => `${where(j)} writes operator records outside environment \`operator\`, so a dispatch on any ref runs it`);
+  // And nothing else sits in `operator`: an environment admits a ref, not a
+  // job, and a second job there is a second thing that ref admits.
+  for (const j of jobs.filter((x) => inEnvironment(x, "operator") && !writers.includes(x))) {
+    problems.push(`${where(j)} is in environment \`operator\` and writes no operator record`);
+  }
+  assert.equal(problems.join("\n"), "", "an operator act can run from a ref environment `operator` does not admit");
+});
+
 test("the signer hears every workflow that commits, by the name in the file", () => {
   const heard = signerHears();
   // D1's two names and RC-R3-3's two. Three of the four have no file yet and a
@@ -1068,12 +1095,15 @@ test("the signer hears every workflow that commits, by the name in the file", ()
       `cron. Add the name to sign.yml's workflow_run list, or add it to NOT_HEARD here with the paths it writes.`,
     );
   }
-  // The floor, and it is the one RC-R3-3 raises. One committing workflow is
-  // heard today — `Ingest`. It becomes three when M-T3.4's `Plugins
-  // moderation` and M-T3.5's `Operator` land, and this number rises with them,
-  // in RC-R3-3's commit, which is the task that adds both names to `sign.yml`'s
-  // `workflow_run` list. Without it the loop above runs over nothing and
-  // reports a signer that hears everything because there is nothing to hear.
+  // The floor, and it is the one RC-R3-3 raises. It was 1 — `Ingest` — until
+  // M-T3.5 landed `Operator`; it is 4 from that commit: `Ingest`, `Plugins
+  // ingest`, `Plugins moderation` and `Operator`, each with a `contents:
+  // write` job and each named in `sign.yml`'s `workflow_run` list. The plan
+  // said 3; it was written before `Plugins ingest` existed, and the number is
+  // the tree's, measured on the commit that raised it. Without a floor the
+  // loop above runs over nothing and reports a signer that hears everything
+  // because there is nothing to hear; with it at 1, three of the four could
+  // fall out of the list — a rename is enough — and this would stay green.
   //
   // This comment said "B-T3.10's `Operator`" and was wrong twice, in a way
   // that sent a reader to the wrong task and would have sent a lane to edit a
@@ -1085,9 +1115,10 @@ test("the signer hears every workflow that commits, by the name in the file", ()
   // raise itself is RC-R3-3's `Repo/files` line, not B-T3.10's. Both halves
   // of the sentence had been true of some task; neither was true of that one.
   assert.ok(
-    heardCommitters.length >= 1,
-    `sign.yml hears ${heardCommitters.length} of this repository's committing workflows and heard 1 on ` +
-    `2026-09-19; this is a broken read, not a smaller repository`,
+    heardCommitters.length >= 4,
+    `sign.yml hears ${heardCommitters.length} of this repository's committing workflows (${heardCommitters.join(", ")}) ` +
+    `and heard 4 on 2026-09-24 — Ingest, Plugins ingest, Plugins moderation and Operator (RC-R3-3). A committer ` +
+    `that fell out of the list waits an hour for the signer's cron with nothing red`,
   );
   // An exception that no longer names a workflow is an exception nobody will
   // notice has stopped applying.
@@ -1674,6 +1705,44 @@ test("every suite under bot/tests/ is named by a workflow, and the list has a fl
 
 });
 
+// ── Bot tests is the gate, so every suite runs there or says where it runs ──
+//
+// The test above holds a weaker thing: that SOME workflow names each suite.
+// Lane S3a found on 2026-09-24 that `bot/tests/service-conformance.test.mjs`
+// ran only from `service-conformance.yml`'s `suite` job. That job is a
+// separate workflow, whose later jobs are about a live service, and nobody
+// reads it as the bot's tests. The coordinator's answer was a step in
+// bot-tests.yml. This test is what keeps that answer true for the next suite.
+// A suite gated by another workflow instead is a decision, so it needs an
+// entry below naming the workflow and the job, and each entry is checked
+// against that workflow's uncommented lines.
+const GATED_ELSEWHERE = {
+  // #305: the PR door's tests run in the job that must pass before the door
+  // itself runs, in the workflow whose subject the door is.
+  "pr-door.test.mjs": { workflow: "bot-checks.yml", job: "door-tests" },
+};
+
+test("every suite under bot/tests/ runs in Bot tests, or names the workflow that gates it instead", () => {
+  const uncommented = (text) => text.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+  const suites = fs.readdirSync(path.join(REPO, "bot", "tests")).filter((n) => n.endsWith(".test.mjs")).sort();
+  assert.ok(suites.length >= 27, `only ${suites.length} suite(s) under bot/tests/; there were 27 on 2026-09-24`);
+  const botTests = uncommented(read("bot-tests.yml"));
+  const missing = suites.filter((n) => !botTests.includes(`bot/tests/${n}`) && !GATED_ELSEWHERE[n]);
+  assert.deepEqual(missing, [],
+    `${missing.join(", ")}: run by no step of bot-tests.yml, and not declared in GATED_ELSEWHERE. Add a step ` +
+    "to bot-tests.yml's `suites` job, next to the suites it belongs with, or, if another workflow is its " +
+    "gate by decision, an entry there that says which workflow and job");
+  for (const [suite, { workflow, job }] of Object.entries(GATED_ELSEWHERE)) {
+    assert.ok(suites.includes(suite), `GATED_ELSEWHERE names ${suite}, which is gone; drop the entry`);
+    assert.ok(!botTests.includes(`bot/tests/${suite}`), `${suite} runs in bot-tests.yml now; drop its GATED_ELSEWHERE entry`);
+    const text = uncommented(read(workflow));
+    const at = text.indexOf(`\n  ${job}:`);
+    assert.ok(at >= 0, `${workflow} has no job \`${job}\`, which GATED_ELSEWHERE says gates ${suite}`);
+    const body = text.slice(at + 1).split(/\n  [A-Za-z0-9_-]+:\s*\n/)[0];
+    assert.ok(body.includes(`bot/tests/${suite}`), `${workflow}'s \`${job}\` does not run ${suite}, so nothing gates it`);
+  }
+});
+
 // ── ops couplings 142 and 143: a hook's environment reaches no repository ────
 //
 // git exports `GIT_DIR` to a hook, to `rebase -x` and to a `!` alias — from a
@@ -1867,10 +1936,10 @@ test("tools/selftest.mjs under a hook's environment drops it, and runs as it doe
 // §2.0 check above is the same shape, a scan of tracked paths against what a
 // text file says, with its own floors. `policy.test.mjs` is the publication
 // policy's suite, end to end from a bundle to the catalogue, and a tree-wide
-// docblock scan is not policy. (2) `policy.test.mjs` is deliberately RED on
-// `main` — M-T3.2's takedown bound exits at R3 — so a new guard added there
-// has no legible verdict of its own until R3; this suite is green, so this
-// guard's red is its own. **That suite's red is exactly ONE failure in CI
+// docblock scan is not policy. (2) `policy.test.mjs` was deliberately RED on
+// `main` when this was written — M-T3.2's takedown bound, until reg.61a
+// published it on 2026-09-24 — so a new guard added there had no legible
+// verdict of its own; this suite is green, so this guard's red is its own. **That suite's red is exactly ONE failure in CI
 // (`160 passed, 1 failed`, run 35718722709 on `main` and 35719323357 here,
 // identical). It is 41 failures on a laptop, and the 40 extra are the local
 // environment — no pinned `AstraPlugins` checkout, so the manifest probe and
@@ -2405,17 +2474,12 @@ test("a step marked `not built` cannot let its job report success", () => {
       }
     }
   }
-  // The floor. When every job is built this number is 0 and the rule becomes
-  // vacuous — correctly, and visibly, because this assertion is what has to be
-  // deleted for that to happen.
-  assert.ok(
-    found >= 1,
-    `no \`not built\` step was found in ${INGEST}, and there were 10 on 2026-09-20 — counted from the step ` +
-    `names and not from the marker, which also appears once in the file's header comment. Either every job is ` +
-    `now ` +
-    `built — in which case delete this floor in the commit that builds the last one — or the marker was ` +
-    `renamed and this rule has stopped applying to anything`,
-  );
+  // The floor was here: at least one `not built` step, with 10 on 2026-09-20.
+  // B-T5.0 built the last three (`load`, `poll` and `remember`, 2026-09-24),
+  // and the floor's own message said to delete it in that commit. The rule
+  // stays: it re-arms on the next placeholder anybody writes, and until then
+  // it is vacuous on purpose, and says so in the log, not by accident.
+  if (found === 0) console.log(`# no \`not built\` step in ${INGEST}: every job is built (B-T5.0 built the last, 2026-09-24)`);
   assert.equal(problems.join("\n"), "", "a placeholder step can let its job report success");
 });
 
@@ -2432,8 +2496,9 @@ test("a step marked `not built` cannot let its job report success", () => {
 // pipefail`, an `::error::` echo or `exit 1`. Its outputs are the builder's to
 // write, and it fails its job until they are. The shape is read off the lines
 // and not off the `(not built: …)` marker in the step's name, because the
-// `apply` step carries that marker too — its job cannot run until M-T3.2 — and
-// is built: excusing it by name is exactly how its two outputs went unasked.
+// `apply` step carried that marker too until M-T3.4 built its job's compile
+// step, while being built itself: excusing it by name is exactly how its two
+// outputs went unasked.
 test("every output a moderation job hands on is one a step of that job writes", () => {
   const MODERATION = "plugins-moderation.yml";
   const problems = [];
@@ -2770,4 +2835,193 @@ test("`plugins-ingest.yml`'s publish job commits through publish-apply and not b
     "the service path's publish job runs `git commit` or `git push` of its own before publish-apply.mjs, so " +
     "something reaches `main` without the rules that file holds",
   );
+});
+
+// ── environment `bot-state` and its one secret (registry plan B-T5.0) ───────
+//
+// `bot-state` holds `BOT_STATE_HMAC_KEY`, the key that signs the poll and
+// sweep memory in the Actions cache (`bot/lib/poll.mjs`'s `STATE_KEY_ENV`,
+// B-T2.6). The whole of BOT-87 rests on that signature: a job that could read
+// the key could forge a memory in which an unregistered tag reads as seen, and
+// the only detector for a release that silently never reached the service
+// would never fire (registry plan B-T5.0, attack M-6). The environment's
+// main-only policy stops a BRANCH from reaching the key; this is the half that
+// stops a job on `main` from reaching it without anybody deciding it should.
+//
+// An environment secret is not ambient, so the statement is exact: the key
+// reaches a job only through an `environment: bot-state` job, and a line only
+// through `secrets.BOT_STATE_HMAC_KEY`. So:
+//
+//   1. only `plugins-ingest.yml`'s `load` and `remember` may name environment
+//      `bot-state` (`poll` reads a stranger's feed and must hold no key;
+//      `claim` holds a bot token, and the one-credential-per-job table in that
+//      file's header gives it nothing else);
+//   2. the key's name appears nowhere in `.github/` except inside a STEP of one
+//      of those two jobs, as that step's own `env:` mapping of exactly
+//      `${{ secrets.BOT_STATE_HMAC_KEY }}`. A job-level `env:` would hand it to
+//      `actions/checkout` and `actions/setup-node` too, and a mention in a
+//      `run:` is a key in a shell;
+//   3. none of this is vacuous: the two jobs exist and name the environment.
+//
+// Coordinator request of 2026-09-24, with the environment's creation.
+export const STATE_KEY = "BOT_STATE_HMAC_KEY";
+export const STATE_ENV = "bot-state";
+export const STATE_JOBS = ["plugins-ingest.yml:load", "plugins-ingest.yml:remember"];
+
+/**
+ * Every way a set of workflow and action sources lets the sweep-memory key, or
+ * its environment, reach something other than `load`'s and `remember`'s steps.
+ *
+ * @param {{file: string, text: string}[]} sources  `.github/workflows/*` and `.github/actions/**`
+ * @returns {string[]} sentences; empty when the key is where it may be
+ */
+export function stateKeyProblems(sources) {
+  const out = [];
+  const mapping = new RegExp(`^\\s+${STATE_KEY}:\\s*\\$\\{\\{\\s*secrets\\.${STATE_KEY}\\s*\\}\\}\\s*$`);
+  const seenJobs = new Set();
+  for (const { file, text } of sources) {
+    const lines = text.split("\n");
+    const jobsAt = lines.findIndex((l) => /^jobs:\s*$/.test(l));
+    // Job spans, as allJobs() computes them, for this one text.
+    const spans = [];
+    if (jobsAt >= 0) {
+      for (let i = jobsAt + 1; i < lines.length; i++) {
+        if (/^\S/.test(lines[i])) break;
+        const m = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(lines[i]);
+        if (m) spans.push({ job: m[1], start: i });
+      }
+      spans.forEach((s, k) => {
+        let end = k + 1 < spans.length ? spans[k + 1].start : lines.length;
+        for (let j = s.start + 1; j < end; j++) if (/^\S/.test(lines[j])) { end = j; break; }
+        s.end = end;
+      });
+    }
+    const jobAt = (i) => spans.find((s) => i > s.start && i < s.end) ?? null;
+    for (const s of spans) {
+      const body = lines.slice(s.start, s.end).filter((l) => !l.trim().startsWith("#"));
+      const inEnv = body.some((l, i) => new RegExp(`^\\s+environment:\\s*${STATE_ENV}\\s*$`).test(l)
+        || (/^\s+environment:\s*$/.test(l) && new RegExp(`^\\s+name:\\s*${STATE_ENV}\\s*$`).test(body[i + 1] ?? "")));
+      if (!inEnv) continue;
+      const id = `${file}:${s.job}`;
+      seenJobs.add(id);
+      if (!STATE_JOBS.includes(id)) {
+        out.push(`${file}:${s.start + 1} job \`${s.job}\` names environment \`${STATE_ENV}\`, so it can read ${STATE_KEY}; ` +
+          `only ${STATE_JOBS.join(" and ")} may`);
+      }
+    }
+    lines.forEach((line, i) => {
+      if (line.trim().startsWith("#") || !line.includes(STATE_KEY)) return;
+      const s = jobAt(i);
+      const id = s ? `${file}:${s.job}` : null;
+      const at = `${file}:${i + 1}`;
+      if (!s || !STATE_JOBS.includes(id)) {
+        out.push(`${at} names ${STATE_KEY} outside ${STATE_JOBS.join(" and ")}`);
+        return;
+      }
+      const stepsAt = lines.slice(s.start, s.end).findIndex((l) => /^\s{4}steps:\s*$/.test(l));
+      if (stepsAt < 0 || i <= s.start + stepsAt) {
+        out.push(`${at} names ${STATE_KEY} at job level in \`${s.job}\`; map it in the one step that uses it, so ` +
+          "checkout and setup-node never hold it");
+        return;
+      }
+      if (!mapping.test(line)) {
+        out.push(`${at} names ${STATE_KEY} other than as a step's \`env:\` mapping of \${{ secrets.${STATE_KEY} }}`);
+      }
+    });
+  }
+  for (const id of STATE_JOBS) {
+    if (!seenJobs.has(id)) out.push(`${id} does not name environment \`${STATE_ENV}\`, so the key has nowhere it may be read`);
+  }
+  return out;
+}
+
+function githubSources() {
+  const out = [];
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) { walk(full); continue; }
+      if (!/\.(ya?ml|mjs|js|sh)$/.test(e.name)) continue;
+      out.push({ file: path.relative(DIR, full).startsWith("..") ? path.relative(REPO, full) : path.basename(full), text: fs.readFileSync(full, "utf8") });
+    }
+  };
+  walk(DIR);
+  const actions = path.join(REPO, ".github", "actions");
+  if (fs.existsSync(actions)) walk(actions);
+  return out;
+}
+
+test("only `load` and `remember` reach BOT_STATE_HMAC_KEY, each in one step's env, through environment `bot-state`", () => {
+  const sources = githubSources();
+  assert.ok(sources.length >= 10, `read ${sources.length} file(s) under .github/; the walk stopped reading`);
+  assert.deepEqual(stateKeyProblems(sources), [],
+    "the sweep-memory key can reach a job or a line other than load's and remember's own steps");
+
+  // The predicate, watched saying no on the real file broken one way at a
+  // time. Each break is asserted to change the bytes, so a break that matched
+  // nothing cannot pass as a check that caught it.
+  const ingest = sources.find((s) => s.file === "plugins-ingest.yml");
+  assert.ok(ingest, "plugins-ingest.yml is not among the sources");
+  const mapLine = `          ${STATE_KEY}: \${{ secrets.${STATE_KEY} }}`;
+  const once = (text, anchor, replacement) => {
+    const n = text.split(anchor).length - 1;
+    assert.equal(n, 1, `the break's anchor ${JSON.stringify(anchor)} matched ${n} time(s)`);
+    return text.replace(anchor, replacement);
+  };
+  const job = (name) => {
+    const m = new RegExp(`^  ${name}:\\n`, "m").exec(ingest.text);
+    assert.ok(m, `plugins-ingest.yml has no job ${name}`);
+    return m;
+  };
+  job("poll"); job("load"); job("remember");
+  const withText = (text) => sources.map((s) => (s === ingest ? { ...s, text } : s));
+  const breaks = [
+    ["`poll` joins environment bot-state",
+      once(ingest.text, "\n  poll:\n", "\n  poll:\n    environment: bot-state\n"), ["`poll`", "only"]],
+    ["`load` loses environment bot-state",
+      ingest.text.replace(/(\n  load:\n(?:.*\n)*?)    environment: bot-state\n/, "$1"), ["load", "does not name environment"]],
+    ["the key mapped at job level",
+      once(ingest.text, "\n  poll:\n", `\n  poll:\n    env:\n      ${STATE_KEY}: \${{ secrets.${STATE_KEY} }}\n`), ["outside"]],
+    ["the key named in a workflow-level env",
+      once(ingest.text, "env:\n  DRY_RUN:", `env:\n  ${STATE_KEY}: \${{ secrets.${STATE_KEY} }}\n  DRY_RUN:`), ["outside"]],
+  ];
+  // A step-level mapping inside `load` is green, and the same line in a `run:`
+  // is not: built on whatever step `load` has today, placeholder or real.
+  const loadRun = /(\n  load:\n(?:.*\n)*?      - name: [^\n]*\n)/.exec(ingest.text);
+  assert.ok(loadRun, "plugins-ingest.yml's load job has no step to build the step-level cases on");
+  const stepEnv = ingest.text.replace(loadRun[1], `${loadRun[1]}        env:\n${mapLine}\n`);
+  assert.notEqual(stepEnv, ingest.text);
+  if (!ingest.text.includes(mapLine)) {
+    assert.deepEqual(stateKeyProblems(withText(stepEnv)), [], "a step-level mapping inside load was refused");
+  }
+  breaks.push(["the key echoed in a run script",
+    ingest.text.replace(loadRun[1], `${loadRun[1]}        run: echo "$${STATE_KEY}"\n`), ["other than as a step's"]]);
+  for (const [how, text, words] of breaks) {
+    assert.notEqual(text, ingest.text, `the break "${how}" changed nothing`);
+    const said = stateKeyProblems(withText(text)).join("\n");
+    assert.ok(said, `${how}: the key reached somewhere new and the lint was silent`);
+    for (const w of words) assert.ok(said.includes(w), `${how}: red, but not naming ${JSON.stringify(w)}: ${said}`);
+  }
+});
+
+// B-T3.6 step 1: R3 opens with `DRY_RUN: "true"` committed, and while it is
+// anything but "false" the publish job commits on the runner and never pushes.
+// The flag is read in ONE place — the apply step — and the direction a typo
+// errs in is the withholding one: `!= "false"`, never `== "true"`. Watched
+// failing by keying the guard on `== "true"`, and by dropping `--dry-run`.
+test("`plugins-ingest.yml` never pushes while DRY_RUN is not exactly false", () => {
+  const src = read(INGEST);
+  assert.match(src, /^env:\n\s+DRY_RUN:\s*"true"\s*$/m, "DRY_RUN is not committed as \"true\" at workflow level");
+  const body = code(jobOf(INGEST, "publish")).join("\n");
+  assert.match(body, /if \[ "\$DRY_RUN" != "false" \]; then dry=\(--dry-run\); fi/,
+    "the apply step does not pass --dry-run whenever DRY_RUN is not exactly \"false\"");
+  assert.match(body, /node bot\/publish-apply\.mjs[\s\S]*"\$\{dry\[@\]\}"/, "and publish-apply is not handed it");
+});
+
+// `--service-path` lets publish-apply write an identity record and an alert
+// record. The legacy path never binds a listing (BOT-77), so the flag belongs
+// to exactly one workflow. Watched failing by adding it to ingest.yml.
+test("only `plugins-ingest.yml` hands publish-apply `--service-path`", () => {
+  const passing = files.filter((f) => read(f).split("\n").some((l) => !l.trim().startsWith("#") && l.includes("--service-path")));
+  assert.deepEqual(passing, [INGEST], "a workflow other than the service path's publish job may write identity records");
 });

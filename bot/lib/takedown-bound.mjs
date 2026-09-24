@@ -1,11 +1,13 @@
 // The takedown bound: how much the estate has withdrawn in the trailing 24
 // hours, counted out of git.
 //
-// Registry plan M-T3.2 (TRUST-26, BOT-32, MOD-9, FLOW-79, FLOW-42). At R2 exit
-// this is DARK: nothing imports it. `bot/moderation-run.mjs` (M-T3.4) is the
-// first caller, and what it does with the answer is hand `overBound` to
-// `holdKindFor` in `bot/lib/holds.mjs`, which is what turns a full bound into a
-// `bound` hold waiting for an operator's MOD-52 confirmation.
+// Registry plan M-T3.2 (TRUST-26, BOT-32, MOD-9, FLOW-79, FLOW-42).
+// `bot/moderation-run.mjs`'s `commit` job (M-T3.4) is its caller: it counts the
+// window with `countWindow`, spends it entry by entry through `boundLedger` and
+// `withdrawnBy` below, and hands each takedown's `overBound` to `holdKindFor`
+// in `bot/lib/holds.mjs`, which is what turns a full bound into a `bound` hold
+// waiting for an operator's MOD-52 confirmation. That job is dark until the
+// R3-open commit uncomments its schedule.
 //
 // ── THE COUNT IS OF THE TREE, NOT OF A TRAILER ──────────────────────────────
 //
@@ -103,9 +105,9 @@
 // **A MOD-52 revert.** M-T3.2 calls this "the one place a trailer test is
 // kept". There is no trailer to test, and the exclusion does not need one:
 //
-//   * no revert trailer exists on `main`. `operator.yml` is not written
-//     (M-T3.5), and the revert commit that task specifies carries
-//     `Service-Decision:` — the same trailer a service takedown carries. A
+//   * no revert trailer exists. `operator.yml` (M-T3.5, `tools/operator.mjs`)
+//     commits a revert with `Service-Decision:` naming the reverted decision,
+//     as MOD-52 requires — the same trailer a service takedown carries. A
 //     filter on it would exclude every service takedown, which is the M-2
 //     defect with the sign flipped;
 //   * it is structural anyway. A revert's tree change is the REMOVAL of a
@@ -575,4 +577,94 @@ export function overBound(counted, { bound = TAKEDOWN_BOUND } = {}) {
     over: false,
     reason: `${result.count} of ${bound} withdrawals used in the trailing ${WINDOW_HOURS} h`,
   };
+}
+
+// ── the bound as a batch spends it (M-T3.4) ─────────────────────────────────
+//
+// `countWindow` answers for the tree as it stands. A moderation run compiles a
+// whole list answer into ONE commit, and every takedown it compiles adds to
+// the count before the next is asked — so the question MOD-9 asks is not "is
+// the estate over the bound" but "is it over the bound after the takedowns
+// this run has already admitted". A run that asked once and applied the answer
+// to every entry let a batch of four through a bound of three, on the fixture
+// that measured it, and the day the bound exists for is exactly the day that
+// batch arrives.
+//
+// The ledger starts from the window's own set of ids, so a plugin already
+// withdrawn today costs nothing a second time, and the staging listing costs
+// nothing at all (MOD-16), both as `countWindow` counts them. An unknown count
+// stays unknown for the rest of the run, and unknown is over.
+
+/**
+ * @param {{count: number|null, ids?: {id: string}[], unknown?: string|null}} counted a `countWindow` result
+ * @param {{bound?: number, staging?: string|null}} [opts]
+ */
+export function boundLedger(counted, { bound = TAKEDOWN_BOUND, staging = null } = {}) {
+  const spent = new Set((counted?.ids ?? []).map((x) => x.id));
+  let count = typeof counted?.count === "number" ? counted.count : null;
+  let unknown = count === null ? (counted?.unknown ?? "no count was made, and no reason was given for it") : null;
+  const admitted = [];
+  return {
+    get count() { return count; },
+    get unknown() { return unknown; },
+    get admitted() { return [...admitted]; },
+    /** Is the next takedown over the bound? */
+    over() { return overBound({ count, unknown }, { bound }).over; },
+    /** Why, in the words `overBound` uses. */
+    reason() { return overBound({ count, unknown }, { bound }).reason; },
+    /**
+     * Spend what one compiled takedown withdraws. An unresolved entry makes the
+     * rest of the run's count unknown, which holds every takedown after it.
+     */
+    spend({ ids = [], unresolved = [] } = {}) {
+      if (unresolved.length) {
+        count = null;
+        unknown = `a takedown this run compiled cannot be counted: ${unresolved.join(" | ")}`;
+      }
+      for (const id of ids) {
+        if (staging && id === staging) continue;
+        if (spent.has(id)) continue;
+        spent.add(id);
+        admitted.push(id);
+        if (count !== null) count += 1;
+      }
+    },
+  };
+}
+
+/** The listed plugins, and their artifacts' digests, at `HEAD` — what a batch compiles against. */
+export function headListing(repo = REPO_ROOT) {
+  const cache = { listed: new Map(), digests: new Map() };
+  const listed = listedAt("HEAD", repo, cache);
+  return { listed, digests: digestsAt("HEAD", repo, cache) };
+}
+
+/**
+ * The listed ids one compiled takedown withdraws: a listing turned `unlisted`
+ * or a version turned `yanked` by its edits, and every listed id its
+ * advisories' entries match, siblings included — the three triggers
+ * `countWindow` reads out of a commit, read here out of the commit about to be
+ * made.
+ *
+ * @param {{edits?: object[], advisories?: {entries?: object[]}[]}} result a `compileDecision` result
+ * @param {{listed: Map<string, object>, digests: Map<string, string>|null}} head `headListing`'s answer
+ */
+export function withdrawnBy(result, { listed, digests }) {
+  const ids = new Set();
+  const unresolved = [];
+  for (const e of result?.edits ?? []) {
+    if (e?.op !== "set" || e.value !== true) continue;
+    const plugin = PLUGIN_JSON_RE.exec(String(e.file ?? ""));
+    const version = VERSION_JSON_RE.exec(String(e.file ?? ""));
+    const id = e.member === "unlisted" && plugin ? plugin[1] : e.member === "yanked" && version ? version[1] : null;
+    if (id && listed.has(id)) ids.add(id);
+  }
+  for (const advisory of result?.advisories ?? []) {
+    for (const entry of advisory?.entries ?? []) {
+      const got = idsMatchedBy(entry, { listed }, digests);
+      for (const id of got.ids) ids.add(id);
+      if (got.unresolved) unresolved.push(`${advisory.id ?? "<advisory>"}: ${got.unresolved}`);
+    }
+  }
+  return { ids: [...ids].sort(), unresolved };
 }
