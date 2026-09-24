@@ -411,6 +411,14 @@ Named, so nobody assumes otherwise:
   because the daemon's current reader requires the fields. This registry counts
   nothing about anyone; "popular" sorting will need a source that is not a
   privacy problem before it means anything.
+- **Not the desktop update manifest.** Its signer, its test-key helpers and
+  their tests moved into Astra as `tools/update-manifest-signer/`, and the
+  records of each signed release as `release-records/`, at
+  Astra@44e86d82495db4ffa383c9b4ebe6a593014007f2 (client plan C2.1; registry plan RC-R3-4). The
+  manifest is Astra's; this registry shares only the root key's ceremony with
+  it. One file here is still read from there: Astra's rehearsal loads the
+  published TEST root through `tools/testkeys/regenerate.mjs`'s `loadTestRoot`,
+  which `tools/selftest/desk-moved.mjs` holds to its shape.
 
 ## Related
 
