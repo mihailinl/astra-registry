@@ -2,12 +2,12 @@
 # daily job that outlives it.
 #
 # What the dispatch is FOR: one `migration` record per non-staging published
-# version, plus MIG-21's historic records, plus `log/baseline.json` — the marker
-# four other mechanisms wait on (registry plan B-T3.7b) — in one commit
-# (BOT-73). `--write` refuses when the marker is already on the tree, and that
-# refusal is what is meant to make the main path run once in the life of the
-# repository. It can do that only after a run has committed the marker, and no
-# run does yet (below).
+# version, plus `log/baseline.json` — the marker four other mechanisms wait on
+# (registry plan B-T3.7b) — in one commit (BOT-73). MIG-21's historic records
+# follow in a commit of their own (below). `--write` refuses when the marker is
+# already on the tree, and that refusal is what makes the main path run once in
+# the life of the repository: the dispatch that commits the marker is the last
+# one that writes anything.
 #
 # **The daily half is not the same job and does not end.** `names` asks GitHub,
 # for every baseline `repository_id`, what that repository is called today, and
@@ -19,57 +19,42 @@
 # there is one it says so and exits green, which is how the schedule proves it is
 # alive for the weeks between this file landing and the dispatch.
 #
-# ── what this workflow does today, and will not pretend to ─────────────────
+# ── what a dispatch does, walked end to end ────────────────────────────────
 #
-# **This section said three gates were not on `main` and that a dispatch would
-# go red at `verify` with the missing module's name in the log.** All three
-# have landed — `bot/baseline.mjs`'s header names the commits — and the
-# prediction outlived them, because nothing executes a comment.
+# **This section used to list the stops a dispatch met**, measured on
+# 2026-09-22: `verify` downloaded nothing (`--population` emitted no URL, and
+# the job set no `GH_TOKEN` for `gh`); `--write` refused the commitless
+# version (dice-roller 0.1.2) at the record grammar and wrote `null` ids that
+# schema/decision-v1.json refuses; nothing wrote the marker; and no step
+# committed. B-T3.7b walked the three modes end to end over a fixture registry
+# (`bot/tests/baseline.test.mjs`, "--population → --verify → --write") and
+# over four real versions of this catalogue, and removed each stop:
 #
-# What a dispatch does instead, measured on 2026-09-22 at `0df08e6` by running
-# each job's commands locally in the order this file runs them:
+#   * `--population` names every asset's URL and digest; `--verify` downloads
+#     each, holds its bytes to the recorded digest, and runs `gh attestation
+#     verify` with this job's token (contents: read, and nothing else).
+#   * a commitless version's record carries no `commit`, and an unverified
+#     certificate's record carries no ids — absent, never null — and both are
+#     named in the commit message.
+#   * `--write` refuses a facts file that does not cover the population
+#     exactly, writes one `migration` record per version and the marker, and
+#     composes the commit message.
+#   * `write` commits `log/` and nothing else, pushes, and reads the marker
+#     back from `main`. A push that is refused — `main` moved under the run —
+#     fails the job; the marker is not on `main`, so a re-dispatch recomputes
+#     the baseline over the new tree rather than landing one computed over an
+#     old one.
 #
-#   * `verify` goes red at `--verify`'s all-unverified floor ("not one of …
-#     version(s) verified"), having downloaded nothing. `verifyOne` downloads
-#     from a version's `artifact_url`, `--population` emits no such member, and
-#     a version without one is recorded `unverified` without being tried.
-#     Behind that is a second stop: the `verify` job sets no `GH_TOKEN`, and
-#     `gh attestation verify` will not run without one (gh 2.100.0 with no
-#     token and `GITHUB_ACTIONS=true`: exit 4, "set the GH_TOKEN environment
-#     variable") — a message `classifyVerifyFailure` reads as neither `missing`
-#     nor `unavailable`, so it too would land as `unverified`. (At `0df08e6`
-#     it would not have landed at all: `verifyOne` called that function
-#     without importing it, so the first `gh` failure stopped `--verify` with
-#     "classifyVerifyFailure is not defined", exit 2 — measured again at
-#     `1ae13d2` with one `data:` URL and no token. `bot/baseline.mjs` imports
-#     it since, and `bot/tests/baseline.test.mjs` walks that `catch`.)
-#   * `export`'s `--facts` exits 0 over the live archive (read here through
-#     `--from`): it counts the shared BOT-35 keys below and does not refuse them.
-#   * past `verify`, `--write` refuses a version with no release commit:
-#     `--population` carries such a version with `commit: null`, and the record
-#     grammar (`RECORD_MEMBERS`) accepts only 40 hex. With such versions left out of a
-#     synthetic, all-verified facts file, `--write` over a copy of the tree
-#     wrote one record per version under that copy's `log/decisions/`, wrote no
-#     marker, reported the historic facts as "pending", and exited 0 (again at
-#     `1ae13d2`: 41 records, no marker, exit 0).
-#
-# **Nothing writes the marker, and nothing commits.** `marker()` in
-# `bot/baseline.mjs` builds and checks one, and no version of `--write` up to
-# `1ae13d2` called it; the `write` job has no step that commits. So with every
-# stop above removed, a dispatch would have ended green with nothing on `main`.
-# That path is closed by name now: `--write` ends on a refusal whenever a run
-# leaves no `log/baseline.json` on the tree, and the refusal says what the run
-# did not do — the marker, MIG-21's records, the commit. A dispatch past the
-# stops above goes red at `write`, not green. A second dispatch still would not
-# refuse on the marker, because the marker was never written.
-#
-# The plan writes the marker in the same one commit as MIG-21's historic
-# records (BOT-73), and those wait on an amendment: `bot/export-issues.mjs
-# --compose` refuses the live archive, because BOT-35's
-# `migration:<owner/name>@<tag>` keys are shared there by more than one
-# decision. That domain separates versions, which is right for THIS workflow's
-# own records and wrong for MIG-21's. Widening it is an amendment to BOT-35
-# (ops.22, §1.3 row 6).
+# **What the commit does NOT carry: MIG-21's historic records.** `export`
+# still reads them, and `--write` counts them and names the count in the
+# message. `bot/export-issues.mjs --compose` refuses the live archive,
+# because BOT-35's `migration:<owner/name>@<tag>` keys are shared by more
+# than one decision there — this registry refused and approved one tag two to
+# eight times — and by a historic decision and this run's baseline record for
+# the same tag. That domain separates versions, which is right for THIS
+# workflow's own records and wrong for MIG-21's; widening it is an amendment to
+# BOT-35 (ops.22, §1.3 row 6), after which the historic records land in a
+# commit of their own. Nothing the marker gates waits on them.
 #
 # Why `verify` stays first and refuses rather than degrades: there is no second
 # place OIDs .15 and .17 live — ID-28 forbids a predicate fallback and forbids a
@@ -123,13 +108,16 @@ jobs:
       - name: MIG-20's population, from the committed version files
         run: node bot/baseline.mjs --population --out population.json
 
-      # For each version that carries an `artifact_url`: downloads and hashes
-      # the asset, runs `gh attestation verify`, reads the certificate ids.
-      # `--population` gives no version that member, and this job sets no
-      # `GH_TOKEN` for `gh`, so today it downloads nothing and verifies nothing
-      # (header). It NEVER unpacks an archive: a baseline run must not be the
-      # thing that opens every stranger's archive in the catalogue.
+      # For each version: downloads every asset, holds its bytes to the digest
+      # the version file records, runs `gh attestation verify` and reads the
+      # certificate ids. `gh` will not run without a token (gh 2.100.0 with
+      # `GITHUB_ACTIONS=true` and none: exit 4), and this job's is
+      # `contents: read` and nothing else. It NEVER unpacks an archive: a
+      # baseline run must not be the thing that opens every stranger's archive
+      # in the catalogue.
       - name: The certificate ids, from the verified certificate only
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: node bot/baseline.mjs --verify --population-file population.json --out facts.json
 
       - uses: actions/upload-artifact@v4
@@ -173,7 +161,7 @@ jobs:
 
   write:
     needs: [verify, export]
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -197,15 +185,16 @@ jobs:
       # record carried it). `refuseUncomposable` is the refusal, and it is
       # asked of each composed record, not of the files.
       #
-      # It writes into this runner's checkout and nowhere else, and no step of
-      # this job commits. A run that leaves no marker on the tree ends on a
-      # refusal naming what it did not do, not on green (header).
-      - name: One `migration` record per version, left on the runner — no marker, no commit
+      # One record per version and the marker, into this runner's checkout;
+      # the commit is the step after the checks. A run that leaves no marker on
+      # the tree still ends on a refusal naming what it did not do.
+      - name: One `migration` record per version, and the marker
         run: |
           node bot/baseline.mjs --write \
             --facts-file facts.json \
             --historic-file historic.json \
-            --source-commit ${{ github.sha }}
+            --source-commit ${{ github.sha }} \
+            --message-out baseline-commit.txt
 
       # BOT-71: regenerate both unsigned documents and pass the selftest before
       # committing. This step is reached only after a `--write` that left
@@ -218,6 +207,53 @@ jobs:
           node tools/build-revocations.mjs
           node tools/selftest.mjs
           node tools/validate.mjs --allow-staging
+
+      # BOT-73's one commit: `log/` and nothing else, pushed onto the commit
+      # the baseline was computed over, and the marker read back from `main`.
+      #
+      # Nothing else may be in it. The two generators above regenerate from a
+      # tree whose `plugins/` and `tools/revocations/` this run did not touch,
+      # so a difference there is a generator disagreeing with `main` and is a
+      # failure, not something to commit here.
+      #
+      # **No retry on a refused push**, deliberately unlike publish-apply. The
+      # marker names `github.sha` as the commit the population was read at; a
+      # rebase onto a moved `main` would land a baseline over a tree it was not
+      # computed over, and detector A1 would then find the versions published in
+      # between neither baselined nor recorded. Refused, the marker is not on
+      # `main`, and a re-dispatch recomputes it.
+      - name: One commit holding every record and the marker, pushed, and read back
+        run: |
+          set -euo pipefail
+          test -f log/baseline.json
+          git diff --exit-code -- registry/ plugins/ tools/ > /dev/null || {
+            echo "::error::a generator changed a document this commit does not carry; the baseline commit is log/ and nothing else"
+            exit 1
+          }
+          git config user.name "astra-registry-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add -- log/decisions log/baseline.json
+          extra=$(git diff --cached --name-only | grep -v -e '^log/decisions/' -e '^log/baseline\.json$' || true)
+          if [ -n "$extra" ]; then
+            echo "::error::the baseline commit would carry more than log/: $extra"
+            exit 1
+          fi
+          git commit -q -F baseline-commit.txt
+          # One commit on top of the main it was computed over, and nothing
+          # else: a dispatch on another ref (workflow_dispatch takes one) must
+          # not carry that ref's commits to main in the same push. This is a
+          # guard in the file, which that ref can edit, so it is defence in
+          # depth; the structural one is an environment admitting only main.
+          git fetch -q origin main
+          test "$(git rev-parse FETCH_HEAD)" = "$(git rev-parse HEAD^)" || {
+            echo "::error::main is not the commit this baseline was computed over; nothing was pushed, and a re-dispatch recomputes it"
+            exit 1
+          }
+          git push origin "HEAD:main"
+          git fetch -q origin main
+          test "$(git rev-parse FETCH_HEAD)" = "$(git rev-parse HEAD)"
+          git cat-file -e FETCH_HEAD:log/baseline.json
+          echo "ok    $(git rev-parse --short HEAD) is on main and carries log/baseline.json"
 
   # ── the half that does not end ───────────────────────────────────────────
   names:
