@@ -3807,8 +3807,15 @@ await test("BOT-74 — a re-submission of a listed tag with its published bytes 
   assertEqual(first.decision.outcome, "publish", JSON.stringify(codes(first)));
   const out = tmp("astra-b39-first-");
   writeOutputs(out, { repo: REPO, tag: TAG, issue: null, root }, first);
-  // Land the publication in the tree the second run reads.
+  // Land the publication in the tree the second run reads — the listing
+  // first, with no record: a version listed before the decision log carried
+  // one, which only BOT-74's digest comparison can recognise.
   fs.cpSync(path.join(out, "plugins"), path.join(root, "plugins"), { recursive: true });
+  const unrecorded = await run({ root, source: "ping" });
+  assertEqual(unrecorded.decision.reported, "published",
+    `a re-ping of published bytes with no record on main was answered ${unrecorded.decision.outcome}`);
+  assertEqual(unrecorded.decision.record.write, false, "a re-ping of published bytes wrote a record");
+  // Then with its record, which BOT-19 finds first; the answer is the same.
   fs.cpSync(path.join(out, "log"), path.join(root, "log"), { recursive: true });
   const again = await run({ root, source: "ping" });
   assertEqual(again.decision.reported, "published", `a re-ping of published bytes was answered ${again.decision.outcome}`);
