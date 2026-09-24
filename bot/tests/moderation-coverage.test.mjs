@@ -2458,6 +2458,94 @@ test("repo-settings: ROLL-7's R0 file pins each environment's branch policies as
   }
 });
 
+// ── ROLL-7's newest file, with B.4's types (contract 2.11.0) ───────────────
+//
+// Contract B.4 publishes ROLL-7's record, and from 2.11.0 it spells
+// `repository.repository_id` and `repository.repository_owner_id` as §0.7's
+// canonical base-10 digit strings, which SCOPE-5 makes a MUST on every party:
+// "never coerced". The two files committed before it carry GitHub's JSON
+// integers, and B.4 has the newest file — the one a reader takes — conform.
+// The privacy scan holds the member NAMES as closed tables; nothing held their
+// types, or ROLL-7's required members, so an amendment could drop `rulesets`
+// or carry an integer id and be green. This holds the newest file to both.
+
+/** Why ROLL-7's record is not B.4's, beyond its member names, as sentences. */
+function roll7TypeProblems(doc) {
+  const out = [];
+  const digits = /^(0|[1-9][0-9]*)$/;
+  const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+  const isDate = (v) => typeof v === "string" && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(v) && isTime(`${v}T00:00:00Z`);
+  if (doc?.schema !== "astra.registry.settings/1") out.push(`schema is ${JSON.stringify(doc?.schema)}, not astra.registry.settings/1`);
+  // ROLL-7's required members (B.4); the rest are optional.
+  for (const k of ["read_at", "repository", "environments", "rulesets", "rules_on_main", "trust44_monitors", "id39",
+    "schedule_interval_seconds"]) {
+    if (!(k in (doc ?? {}))) out.push(`${k} is missing, and ROLL-7 requires it`);
+  }
+  if ("read_at" in doc && !isTime(doc.read_at)) out.push(`read_at is ${JSON.stringify(doc.read_at)}, not a §0.7 time`);
+  for (const k of ["repository_id", "repository_owner_id"]) {
+    const v = doc.repository?.[k];
+    if (typeof v !== "string" || !digits.test(v)) {
+      out.push(`repository.${k} is ${JSON.stringify(v)}, not a §0.7 canonical base-10 digit string (contract B.4, from 2.11.0)`);
+    }
+  }
+  if (isObj(doc.environments)) {
+    for (const [name, row] of Object.entries(doc.environments)) {
+      if (!["all", "protected", "custom"].includes(row?.deployment_branch_policy)) {
+        out.push(`environments.${name}.deployment_branch_policy is ${JSON.stringify(row?.deployment_branch_policy)}`);
+      }
+      if (!Array.isArray(row?.branch_policies) || row.branch_policies.some((p) => typeof p?.name !== "string" || !["branch", "tag"].includes(p?.type))) {
+        out.push(`environments.${name}.branch_policies is not a list of {name, type: branch or tag}`);
+      }
+      if (typeof row?.trust44_monitors !== "boolean") out.push(`environments.${name}.trust44_monitors is not a boolean`);
+    }
+  } else if ("environments" in doc) out.push("environments is not an object keyed by environment name");
+  if ("rulesets" in doc && !isObj(doc.rulesets)) out.push("rulesets is not an object keyed by ruleset name");
+  if ("rules_on_main" in doc && !(Array.isArray(doc.rules_on_main) && doc.rules_on_main.every((r) => typeof r === "string"))) {
+    out.push("rules_on_main is not a list of strings");
+  }
+  if (isObj(doc.trust44_monitors)) {
+    for (const [k, v] of Object.entries(doc.trust44_monitors)) if (typeof v !== "boolean") out.push(`trust44_monitors.${k} is not a boolean`);
+  } else if ("trust44_monitors" in doc) out.push("trust44_monitors is not an object");
+  for (const k of ["given", "confirmed"]) {
+    if ("id39" in doc && !isDate(doc.id39?.[k])) out.push(`id39.${k} is ${JSON.stringify(doc.id39?.[k])}, not a §0.7 date`);
+  }
+  if (isObj(doc.schedule_interval_seconds)) {
+    for (const [k, v] of Object.entries(doc.schedule_interval_seconds)) {
+      if (!Number.isInteger(v) || v <= 0) out.push(`schedule_interval_seconds.${k} is ${JSON.stringify(v)}, not whole seconds`);
+    }
+  } else if ("schedule_interval_seconds" in doc) out.push("schedule_interval_seconds is not an object");
+  return out;
+}
+
+test("repo-settings: ROLL-7's newest file spells its ids as §0.7 digit strings and carries what ROLL-7 requires, with B.4's types", () => {
+  const newest = roll7Files().at(-1);
+  assert.ok(newest, "no ROLL-7 file is on the tree, and R0's exit committed one");
+  const doc = JSON.parse(fs.readFileSync(path.join(REPO, newest), "utf8"));
+  assert.deepEqual(roll7TypeProblems(doc), [],
+    `${newest} is the ROLL-7 file a reader takes, and it is not B.4's record. From contract 2.11.0 the newest file ` +
+    "spells both repository ids as digit strings; write a dated amendment with ops tools/read-settings.mjs --json, " +
+    "never an edit (log/** is append-only)");
+  // Each rule, watched failing on a copy of the newest file.
+  const breaks = [
+    ["an integer repository id", (d) => { d.repository.repository_id = Number(d.repository.repository_id); }, "repository.repository_id"],
+    ["an integer owner id", (d) => { d.repository.repository_owner_id = 193032699; }, "repository.repository_owner_id"],
+    ["a padded id", (d) => { d.repository.repository_id = `0${d.repository.repository_id}`; }, "repository.repository_id"],
+    ["the rulesets dropped", (d) => { delete d.rulesets; }, "rulesets is missing"],
+    ["an offset read time", (d) => { d.read_at = "2026-09-24T12:00:00+00:00"; }, "read_at"],
+    ["ID-39's day as a time", (d) => { d.id39.given = "2026-09-13T00:00:00Z"; }, "id39.given"],
+    ["an interval as a string", (d) => { d.schedule_interval_seconds.ingest = "600"; }, "schedule_interval_seconds.ingest"],
+    ["a row that says nothing about TRUST-44", (d) => { delete Object.values(d.environments)[0].trust44_monitors; }, "trust44_monitors is not a boolean"],
+    ["a branch policy of another type", (d) => { Object.values(d.environments)[0].branch_policies[0].type = "ref"; }, "branch_policies"],
+  ];
+  for (const [how, edit, words] of breaks) {
+    const d = structuredClone(doc);
+    edit(d);
+    assert.notDeepEqual(d, doc, `the break "${how}" changed nothing`);
+    const said = roll7TypeProblems(d).join("\n");
+    assert.ok(said.includes(words), `${how}: expected a problem naming ${JSON.stringify(words)}, got ${said || "none"}`);
+  }
+});
+
 // ── TRUST-44's reservation, against the read it makes (contract 1.0.0) ──────
 //
 // TRUST-44 reserves 12 of the plugins service's 60 unauthenticated requests an
