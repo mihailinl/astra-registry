@@ -143,24 +143,49 @@ day the signer or D10 is amended, it goes red and says so.
 ## Replaying it onto a staging service
 
 The service reads a `signed` branch whose every commit holds D2's four
-documents. To replay:
+documents. **The steps are one chain, not orphans**: each step's commit has the
+step before it as its parent (`manifest.json`'s `parent`), because SERVE-18
+refuses a head that does not descend from the last one accepted. Only
+`rotation/00-baseline` has no parent.
 
 ```sh
-# one orphan commit per step, in this order, each with the step's four documents
-#   rotation/00-baseline
-#   rotation/01-delegate
-#   rotation/02-mid-window
-#   rotation/03-window-open
-#   rotation/04-root-change
-#   rotation/05-after-root
-# and, on a branch forked from rotation/02-mid-window's commit:
-#   compromise/00-drop-2026a
+node tools/testkeys/rehearsal-push.mjs --list          # the steps, and what each carries
+node tools/testkeys/rehearsal-push.mjs --step N        # serve step N on the canary's `signed`
 ```
+
+`tools/testkeys/rehearsal-push.mjs` rebuilds each step's commit from this
+directory — the four documents, `commit-message.txt` plus the newline the save
+trimmed, the signer's identity, the step's `now` — and pushes it only if it is
+the sha `manifest.json` says the signer committed. It pushes to
+`mihailinl/astra-registry-canary` and refuses every other repository. The
+rotation line goes to `signed`, which the canary's Pages serves; the compromise
+line (`rotation/00`–`02`, then `compromise/00-drop-2026a`) goes to
+`signed-compromise`, because it forks from step 2 and cannot share a branch with
+steps 3-5. The day's order, and what each party checks, is astra-plugins-ops
+`runbooks/roll-60-rehearsal.md`.
+
+**TRUST-3 reads `main`, not `signed`.** Every commit's `Source-Commit` is a
+commit of the generator's throwaway registry, and the service refuses a
+`signed` commit whose `Source-Commit` is not reachable from `main` or whose
+trust.json and root.json differ there. `--export-source <repo>` rebuilds that
+history (it is deterministic) into a repository as `refs/rehearsal-source/*`,
+so it can be merged into the serving repository's `main` with `-s ours`,
+leaving `main`'s tree unchanged.
 
 Each step's `commit-message.txt` is the message that step's commit carried,
 trailers included, so `tools/served-set/provenance.mjs` recognises it.
 `compromise/01-trust-only-blocked` has no documents and is not replayed; it is a
 record.
+
+**The index keys are delegated in trust.json, never in root.json.** root.json
+lists the root keys only (`roots[]`, unsigned, SERVE-16's comparand); the index
+keys, outgoing and incoming, are `signed.index_keys` of the trust.json a root
+signed. A service or daemon that looks for index keys in root.json finds none.
+
+**The withdrawal lists expire on 2026-09-29** (T0 + 7 days, 00:00Z for step 0
+to 11:00Z for step 5), and SERVE-22 refuses a changed document already past its
+`expires_at`. A rehearsal on these bytes has to finish before then; after it,
+the series must be regenerated at a later T0.
 
 **SERVE-92's order is the service's, not this directory's.** Before
 `rotation/04-root-change` is served, the service build must already compile
