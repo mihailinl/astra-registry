@@ -60,7 +60,11 @@ import {
 import {
   AUTHOR_ACTION_FORBIDDEN,
   AUTHOR_ACTION_MEMBERS,
+  VOIDING_FORBIDDEN,
+  VOIDING_MEMBERS,
+  claimsVoiding,
   refuseUncomposableAuthorAction,
+  refuseUncomposableVoidingRecord,
 } from "../bot/lib/decisions.mjs";
 import { SOURCE_DIR as MODERATION_DIR, loadEntries as loadModerationEntries } from "../bot/lib/moderation.mjs";
 import { fixedReason } from "../bot/lib/compile-decision.mjs";
@@ -2351,6 +2355,28 @@ export function checkRecords(ctx, sources, records = loadRecords(ctx.root, sourc
       report.error(file, `is not where its own contents put it (${expected})`,
         "`decision_id` is the basename and `decided_at` is the two directories (DEC-7; registry plan BOT-35). " +
         "A record found only by a path nobody derives is a record BOT-36 will write a second copy of.");
+    }
+
+    // DEC-7's voiding record (contract 2.5.0; B-T4.2), and MIG-20's tree check
+    // on it: a record carrying ANY of the three marks 2.5.0 gave that record
+    // alone — the category or state `identity_reset`, the code
+    // `M_IDENTITY_RESET` — is held to the whole shape. `bot/lib/identity.mjs`
+    // ends a baseline on the category, actor, trigger and id, so a lookalike
+    // that carried the category and a version or the old ids would be
+    // believed by every baseline reader; refusing it here is what makes that
+    // four-member predicate safe to read on a validated tree. The refusal is
+    // bot/lib/decisions.mjs's own, called rather than restated.
+    if (claimsVoiding(doc)) {
+      const { schema: _vs, decision_id: _vd, ...voiding } = doc;
+      try {
+        refuseUncomposableVoidingRecord(voiding);
+      } catch (e) {
+        report.error(file, e.message,
+          `A voiding record carries only DEC-7's ${VOIDING_MEMBERS.length} members (${VOIDING_MEMBERS.join(", ")}) ` +
+          `and none of ${VOIDING_FORBIDDEN.join(", ")}. It ends every earlier baseline of its id (MIG-20), so a ` +
+          "record that only looks like one would lift a permanent `B_REPOSITORY_RECYCLED` nobody reset.");
+      }
+      continue;
     }
 
     if (!isAuthorAction(doc)) continue;

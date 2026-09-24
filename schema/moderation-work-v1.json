@@ -119,7 +119,7 @@
           "$comment": "Every code the compiler has an answer for. A code OUTSIDE this list is refused `kind_refused` at the schema, which is the one place that refusal is right: `bot/lib/compile-decision.mjs` THROWS on an unknown code rather than refusing it, because settling a decision the registry did not understand as a final result is how a takedown disappears quietly. Here the registry has judged the value against a published list, which is a different statement.",
           "enum": [
             "M_YANK", "M_DELIST", "M_DEPRECATE", "M_REVOKE", "M_APPEAL",
-            "M_RELIST", "M_UNREVOKE", "M_BINDING_REVOKE",
+            "M_RELIST", "M_UNREVOKE", "M_BINDING_REVOKE", "M_IDENTITY_RESET",
             "A_YANK", "A_REMOVAL_REQUEST"
           ]
         },
@@ -128,7 +128,8 @@
           "enum": [
             "review_passed", "malicious", "account_compromise", "account_sanction",
             "privacy", "impersonation", "broken", "security_defect", "licence",
-            "naming", "legal", "author_request", "error", "appeal_reversed", "path_test"
+            "naming", "legal", "author_request", "error", "appeal_reversed", "path_test",
+            "identity_reset"
           ]
         },
         "plugin_id": {

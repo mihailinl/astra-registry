@@ -27,7 +27,8 @@
 // closed at "an operator's confirmation for each `disable`, none for
 // `block_install`":
 //
-//   reversal              every `M_RELIST` and `M_UNREVOKE`.
+//   reversal              every `M_RELIST`, `M_UNREVOKE` and `M_IDENTITY_RESET`
+//                         (MOD-9 names the reset a reversal since contract 2.5.0).
 //                         Ends: the 24-hour period AND a confirm record.
 //                         A failing MOD-46 coverage check blocks THIS AND
 //                         NOTHING ELSE — a red coverage report must never be
@@ -186,8 +187,13 @@ export const HOLD_KINDS = [
   "bound",
 ];
 
-/** `M_RELIST` and `M_UNREVOKE`: the two codes that give something back. */
-export const REVERSAL_CODES = ["M_RELIST", "M_UNREVOKE"];
+/**
+ * `M_RELIST`, `M_UNREVOKE` and `M_IDENTITY_RESET`: the three codes MOD-9 calls
+ * reversals, released only on a MOD-52 confirmation after the 24-hour period.
+ * The reset joined in contract 2.5.0: it gives back a repository name that
+ * `B_REPOSITORY_RECYCLED` had closed for good (OPEN-OWNER-15).
+ */
+export const REVERSAL_CODES = ["M_RELIST", "M_UNREVOKE", "M_IDENTITY_RESET"];
 
 /** The author-action codes. Neither carries a moderator (DEC-14, MOD-41, n4). */
 export const AUTHOR_CODES = ["A_REMOVAL_REQUEST", "A_YANK"];
