@@ -107,8 +107,14 @@ permissions: {}
 # is what OPEN-MBE-7 closed with, and nothing serves that path until the R2
 # deploy: a step calling it now would be a step that fails, or worse succeeds
 # against something else, on every run for a step gate away. RC-R2-3's commit
-# turns this to `on` in one line, once ops.19 has recorded the 202 and the
-# `{"schema":"astra.plugins.wake-ack/1"}` body (§1.3 row 8.4).
+# (ii) turns this to `"on"` in one line, once the release desk has read a 202
+# carrying exactly `{"schema":"astra.plugins.wake-ack/1"}` from that URL (§1.3
+# row 8.4), and that answer is committed here as `log/signed-wake-ack.json` in
+# the same commit or before it. ops.19 records it too, but ops is private and
+# nothing in this repository can read it: `tools/selftest/repo-rules.mjs`
+# ("sign.yml's wake hint is off, or on with the recorded 202 it rests on")
+# refuses `"on"` without the record, a record that does not say exactly that,
+# any value but `"off"` or `"on"`, and a wake step not gated on this value.
 #
 # `"off"` is deliberately not one of TRUST-31's hashed values: this is a
 # workflow env, not a bot call's, and flipping it returns nothing to shadow.
@@ -180,6 +186,12 @@ jobs:
       # documents into `dist/signed/` and a record of what it decided into
       # `record.json`. It does not push, which is why the step that does needs
       # no key.
+      #
+      # `--event` is what lets the schedule own the equal-serial refresh: a
+      # push or a workflow_run publishes every CHANGED document at once, and
+      # re-signs an unchanged one only at the 34 h backstop, so that a merge
+      # just past the 20-hour mark no longer takes the unattended re-sign
+      # ROLL-14 counts (tools/signer/plan.mjs, RESIGN_HOURS_BY_EVENT).
       - name: Plan the run, sign what changed, and verify it against the trust.json beside it
         id: sign
         env:
@@ -194,6 +206,7 @@ jobs:
           node tools/signer/run.mjs \
             --step sign \
             --source-commit "${{ steps.source.outputs.sha }}" \
+            --event "$GITHUB_EVENT_NAME" \
             --out dist/signed \
             --record record.json
 
@@ -306,6 +319,15 @@ jobs:
       # NON-FATAL, and that is the whole of MOD-46 and ROLL-55 in one line. The
       # site is prose and templates; the four documents are what a daemon
       # fetches. A render failure must cost the website and nothing else.
+      #
+      # `--redirects` is ROLL-55's other half, and THIS is where it has to be:
+      # this job builds the tree Pages serves, so a set filled in
+      # site/redirects.json takes effect here and nowhere else (build-index.yml
+      # builds the same pages only to assert them). With every set empty it
+      # changes no byte, which site/selftest.mjs holds. A filled set that makes
+      # the render throw lands in the D5 fallback below, which redeploys the
+      # newest site that DID render; build-index.yml passes the same flag so the
+      # pull request that fills a set is where a bad mapping goes red first.
       - name: The website, from what `signed` holds
         id: site
         continue-on-error: true
@@ -321,6 +343,7 @@ jobs:
             --revocations dist/registry/v1/revocations.json \
             --registry-dir dist/registry/v1 \
             --repo "${{ github.repository }}" \
+            --redirects site/redirects.json \
             --out dist/site
 
       # D5's fallback. The newest `pages-site` from a run that DID render, with
