@@ -208,6 +208,23 @@ suggest otherwise.
 - Retiring a plugin entirely is `"unlisted": true` on `plugin.json`. The audit
   trail stays.
 
+### 6.1 Listings published before the move to the plugins service
+
+A listing first published before the cutover to the plugins service, and never
+bound to a Minice account, is `grandfathered` until the later of the binding
+deadline below and the cutover, and `frozen` after it until it is bound: it
+stays listed and installable, and takes no new version. From the cutover, a
+delayed or reviewed release of a `grandfathered` listing also waits until the
+listing is bound (contract MIG-12). Binding needs a Minice account holding
+`astraUser`, a binding line in the repository, a new tag, and one
+`R_FIRST_BINDING` review; a bound release unfreezes the listing, with no
+penalty (MIG-1, MIG-10). What the authors of these listings are told, and
+when, is `docs/migration-notice.md`. Enforced by
+the bot, which reads the deadline from `policy/binding-deadline.json` and from
+nowhere else (MIG-3).
+
+**Binding deadline:** not fixed yet. It is committed as `policy/binding-deadline.json` before third-party bindings open, and this line then states it.
+
 ## 7. Removal
 
 | Situation | What happens |
