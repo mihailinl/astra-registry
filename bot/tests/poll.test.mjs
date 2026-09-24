@@ -112,7 +112,9 @@ const NOTIFY_SURFACE = [
 
 // And what `bot/watch.mjs` exports now: what it exported at that commit, minus
 // `pollFeed`. The removal is the one intended surface change in this task.
-const WATCH_SURFACE = ["bot74Filter", "runDrain", "runWatch"];
+// `recordedTagsByRepo` joined it with B-T3.9: the backstop and the `/release` ping
+// read one derivation of a repository's recorded tags (BOT-74), not two.
+const WATCH_SURFACE = ["bot74Filter", "recordedTagsByRepo", "runDrain", "runWatch"];
 
 // ── the list that is identical across the cut ─────────────────────────────
 //

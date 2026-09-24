@@ -3236,16 +3236,19 @@ await test("`decide()` passes the path to every level lookup", () => {
 });
 
 await test("BOT-19 — a terminal record on main is reported, and nothing is written", () => {
+  // Rewritten with BOT-19's own records: this case used to be a `revoked`
+  // record matched by plugin id, which is the over-match the B-T3.9 case
+  // below exists to refuse.
   const hit = terminalOnMain({
-    records: [{ plugin_id: "dice-roller", state: "revoked", decision_id: "d0" }],
-    pluginId: "dice-roller", repo: "you/dice-roller", tag: "v1.0.1",
+    records: [{ plugin_id: "dice-roller", repo: "you/dice-roller", tag: "v1.0.1", state: "stopped", decision_id: "d0" }],
+    fingerprint: "0123456789abcdef", repo: "you/dice-roller", tag: "v1.0.1",
   });
-  assertEqual(hit?.reported, "revoked", "a panel stop in git did not stop a ping");
+  assertEqual(hit?.reported, "stopped", "a panel stop in git did not stop a ping");
   assertEqual(hit.record.write, false, "a second record was written for a decision main already carries");
   assertEqual(hit.names, "d0", "the report names no existing record, so nobody can go and read it");
   // A non-terminal record does not stop anything.
   assertEqual(
-    terminalOnMain({ records: [{ plugin_id: "dice-roller", state: "published", decision_id: "d1" }], pluginId: "dice-roller", repo: "you/dice-roller", tag: "v1.0.1" }),
+    terminalOnMain({ records: [{ plugin_id: "dice-roller", fingerprint: "ffffffffffffffff", state: "published", decision_id: "d1" }], fingerprint: "0123456789abcdef", repo: "you/dice-roller", tag: "v1.0.1" }),
     null,
     "a published record was read as terminal, which stops every later release of a live plugin",
   );
@@ -3717,6 +3720,123 @@ await test("a legacy record is never composed with the `migration` trigger, even
   try { writeOutputs(out, { repo: REPO, tag: TAG, issue: null, root: markerTree() }, forged); } catch (e) { threw = e; }
   assert(threw && /migration/.test(String(threw.message)), "the legacy writer composed a `migration` record");
   assertEqual(fs.existsSync(path.join(out, "log")), false, "the refusal came after the file was written");
+});
+
+// ── B-T3.9: the legacy path under the new records ───────────────────────────
+
+await test("BOT-74 — the backstop's recorded tags are every listing's that names the repository", async () => {
+  // A monorepo carries several listings under one `source.repo`, and a Map
+  // built from them one entry per listing keeps only the LAST listing's tags:
+  // the backstop then filtered every other plugin's releases out as a foreign
+  // prefix. `mihailinl/AstraPlugins` holds ten listings.
+  const { recordedTagsByRepo } = await import("../watch.mjs");
+  assert(typeof recordedTagsByRepo === "function", "there is no one derivation of a repository's recorded tags to share");
+  const sources = { plugins: [
+    { doc: { id: "json-tools", source: { repo: "Mono/Repo" } }, versions: [{ doc: { release: { tag: "json-tools-v0.1.2" } } }] },
+    { doc: { id: "text-utils", source: { repo: "mono/repo" } }, versions: [{ doc: { release: { tag: "text-utils-v0.1.0" } } }] },
+  ] };
+  const tags = recordedTagsByRepo(sources).get("mono/repo") ?? [];
+  assertEqual(JSON.stringify([...tags].sort()), JSON.stringify(["json-tools-v0.1.2", "text-utils-v0.1.0"]),
+    "one listing's recorded tags replaced another's under their shared repository");
+  assertEqual(bot74Filter({ tag: "json-tools-v0.1.3", listedTags: tags }).pass, true,
+    "the first listing's next release was filtered out as a foreign prefix");
+});
+
+await test("BOT-74 — a `cli-v` ping on a listed repository starts no ingest, so it records nothing", async () => {
+  // The filter was the backstop's alone; a `/release` ping for a CLI tag on
+  // a repository this registry lists ran the whole ingest, was refused
+  // E_NO_BUNDLE_ASSETS, and from the baseline on would have committed a
+  // durable `refused` record for a release that never was a plugin's.
+  const root = registryTree([{}]);
+  const cli = await triage({
+    event: "issues", labels: "", root,
+    ...bodies({ issue: `/release ${REPO} cli-v1.4.0` }),
+  }, releaseBy("the-author"));
+  assert(cli.mode !== "ping", `a cli-v ping on a listed repository was dispatched to an ingest: ${cli.why}`);
+  assert(/BOT-74/.test(cli.why), "and it does not say which rule held it back");
+  const plugin = await triage({
+    event: "issues", labels: "", root,
+    ...bodies({ issue: `/release ${REPO} v0.3.0` }),
+  }, releaseBy("the-author"));
+  assertEqual(plugin.mode, "ping", `the floor: a real release of the listing was held back too: ${plugin.why}`);
+});
+
+await test("BOT-19 — only a publication, a stop or a rejection of THESE bytes, or a stop of this tag, ends the run", () => {
+  // BOT-19 (registry plan notes) names three records and no others. The
+  // search matched any "terminal-looking" record of the PLUGIN ID, so one old
+  // refused version made every later release of that plugin `reported
+  // refused` with nothing written — the plugin could never publish again on
+  // the legacy path.
+  const fp = "0123456789abcdef";
+  const repo = "you/dice-roller";
+  const tag = "v1.0.1";
+  const oldRefusal = [{ plugin_id: "dice-roller", repo, tag: "v1.0.0", fingerprint: "ffffffffffffffff", state: "refused", reasons: ["E_ASSET_SIZE"], decision_id: "d0" }];
+  assertEqual(terminalOnMain({ records: oldRefusal, fingerprint: fp, repo, tag }), null,
+    "an old version's refusal stopped a new release of the same plugin");
+  const yanked = [{ plugin_id: "dice-roller", version: "1.0.0", state: "yanked", decision_id: "d9" }];
+  assertEqual(terminalOnMain({ records: yanked, fingerprint: fp, repo, tag }), null,
+    "a yank of an old version stopped a new release");
+  for (const [what, rec] of [
+    ["a publication of these bytes", { fingerprint: fp, state: "published", decision_id: "d1" }],
+    ["a stop of these bytes", { fingerprint: fp, state: "stopped", decision_id: "d2" }],
+    ["a moderator's rejection of these bytes", { fingerprint: fp, state: "refused", reasons: ["M_REJECT"], decision_id: "d3" }],
+    ["a stop of this tag", { repo, tag, state: "stopped", decision_id: "d4" }],
+  ]) {
+    const hit = terminalOnMain({ records: [rec], fingerprint: fp, repo, tag });
+    assert(hit, `${what} did not stop the run`);
+    assertEqual(hit.record.write, false, `${what}: a second record was written`);
+    assertEqual(hit.names, rec.decision_id, `${what}: the report names no existing record`);
+  }
+  for (const state of ["held", "delayed"]) {
+    assertEqual(terminalOnMain({ records: [{ fingerprint: fp, state, decision_id: "d5" }], fingerprint: fp, repo, tag }), null,
+      `a ${state} record stopped the run; BOT-19: "A held or delayed record MUST NOT stop the run"`);
+  }
+  assertEqual(terminalOnMain({ records: [{ fingerprint: fp, state: "refused", reasons: ["E_ASSET_SIZE"] }], fingerprint: fp, repo, tag }), null,
+    "a bot refusal of these bytes stopped a /recheck of them; only a moderator's M_REJECT does");
+});
+
+await test("BOT-74 — a re-submission of a listed tag with its published bytes is reported `published`, and writes nothing", async () => {
+  // Today's answer to a re-ping of a published tag is E_VERSION_NOT_NEW, a
+  // refusal — and from the baseline on, a durable `refused` record about a
+  // release this registry published. The published bytes' answer is the
+  // publication that already happened.
+  const root = registryTree([{}]);
+  fs.mkdirSync(path.join(root, "log"), { recursive: true });
+  fs.writeFileSync(path.join(root, "log", "baseline.json"), JSON.stringify({ schema: "astra.registry.baseline/1" }));
+  const first = await run({ root, source: "ping" });
+  assertEqual(first.decision.outcome, "publish", JSON.stringify(codes(first)));
+  const out = tmp("astra-b39-first-");
+  writeOutputs(out, { repo: REPO, tag: TAG, issue: null, root }, first);
+  // Land the publication in the tree the second run reads.
+  fs.cpSync(path.join(out, "plugins"), path.join(root, "plugins"), { recursive: true });
+  fs.cpSync(path.join(out, "log"), path.join(root, "log"), { recursive: true });
+  const again = await run({ root, source: "ping" });
+  assertEqual(again.decision.reported, "published", `a re-ping of published bytes was answered ${again.decision.outcome}`);
+  assertEqual(again.decision.record.write, false, "a re-ping of published bytes wrote a record");
+  const out2 = tmp("astra-b39-again-");
+  writeOutputs(out2, { repo: REPO, tag: TAG, issue: null, root }, again);
+  assertEqual(listRecords(out2).length, 0, "a re-ping of published bytes wrote a record to disk");
+});
+
+await test("from R4a, a maintainer command for a bound listing is refused before it is dispatched", async () => {
+  // ROLL-49 / B-T3.9: once `log/rollout/R3-exit.json` is on main a listing can
+  // be bound, and a bound listing's releases are the service path's. BOT-77
+  // already stops the ingest; this stops the command, so a maintainer is told
+  // at the thread rather than by a hold nobody can clear.
+  const root = registryTree([{}]);
+  fs.writeFileSync(path.join(root, "plugins", "dice-roller", "identity.json"),
+    JSON.stringify({ schema: "astra.registry.identity/1", plugin_id: "dice-roller", repo: REPO, repository_id: "1", repository_owner_id: "2" }));
+  const ask = async () => triage({
+    event: "issue_comment", labels: "listing", root, commenter: "maint", issueAuthor: SUBMITTER,
+    ...bodies({ issue: FORM, comment: `/approve ${REPO}@${TAG} 0123456789abcdef` }),
+  }, releaseBy("the-author"), { proveMaintainer: async () => ({ ok: true, role: "admin", detail: "admin", answered: true }) });
+  const before = await ask();
+  assertEqual(before.mode, "approve", `the floor: before R3's exit the command was not dispatched: ${before.why}`);
+  fs.mkdirSync(path.join(root, "log", "rollout"), { recursive: true });
+  fs.writeFileSync(path.join(root, "log", "rollout", "R3-exit.json"), JSON.stringify({ schema: "astra.registry.rollout/1" }));
+  const after = await ask();
+  assertEqual(after.mode, "reply", `from R4a a command for a bound listing was dispatched: ${after.mode} ${after.why}`);
+  assert(/bound/.test(after.why), "and the refusal does not say the listing is bound");
 });
 
 // ── result ──────────────────────────────────────────────────────────────────

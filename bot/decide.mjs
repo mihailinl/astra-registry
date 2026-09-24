@@ -55,6 +55,7 @@ import { loadSources, REPO_ROOT } from "../tools/lib/sources.mjs";
 
 import { markerOnMain, readDecisionRecords, runTrailer } from "./baseline.mjs";
 import { legacyKey, recordsOnMain, writeDecisionRecord } from "./lib/decisions.mjs";
+import { artifactDigests, submissionFingerprint } from "./lib/policy/release.mjs";
 import { safeRepo, safeTag } from "./lib/intake.mjs";
 import { ingest, writeListing } from "./ingest.mjs";
 import {
@@ -87,25 +88,43 @@ const EXIT = { publish: 0, refuse: 1, review: 3, delay: 4 };
 // asking a different question of each kind.
 
 /**
- * BOT-19: what `main` already says about this submission.
+ * BOT-19: what `main` already says about THIS submission.
  *
- * Searched BEFORE the service is asked, so that a stop recorded in the panel
- * stops a ping too. A terminal record is REPORTED and nothing is written: a
- * second record saying the same thing is a second answer to "what did the
- * registry decide", and the two can drift.
+ * Exactly the three records BOT-19 names (registry plan notes), and no
+ * others: a `published`, `stopped` or `M_REJECT` `refused` record carrying
+ * this run's fingerprint; and a `stopped` record for the same tag of the same
+ * repository — by `repository_id` where the record carries one, by
+ * `owner/name` where it does not (FLOW-26; matching by name there can only
+ * withhold). "A `held` or `delayed` record MUST NOT stop the run", and
+ * neither does a bot refusal of these bytes: a `/recheck` of them is exactly
+ * what an author is told to do.
  *
- * Terminal is asked as a property of the record's state, over the set of
- * states `records` carries, rather than as a list of the terminal state names
- * that existed when this was written. The set is `main`'s to grow.
+ * **What this replaced, and why it could not stay.** The first version took
+ * any "terminal-looking" state — `refused`, `revoked`, `yanked`, … — of any
+ * record for the same PLUGIN ID. One old version refused, or yanked, and every
+ * later release of that plugin was `reported refused` with nothing written:
+ * the plugin could never publish again on the legacy path, from the first
+ * day the decision log existed.
  *
- * @param {{records: object[], pluginId: string|null, repo: string, tag: string|null}} opts
+ * A hit is REPORTED and nothing is written: a second record saying the same
+ * thing is a second answer to "what did the registry decide".
+ *
+ * @param {{records: object[], fingerprint: string|null, repo: string, tag: string|null,
+ *   repositoryId?: string|null}} opts
  */
-export function terminalOnMain({ records = [], pluginId, repo, tag }) {
-  const TERMINAL = new Set(["refused", "revoked", "yanked", "withdrawn", "deprecated"]);
-  const mine = records.filter((r) =>
-    (pluginId && r?.plugin_id === pluginId) ||
-    (r?.repo === repo && tag && r?.tag === tag));
-  const hit = mine.filter((r) => TERMINAL.has(String(r?.state))).at(-1) ?? null;
+export function terminalOnMain({ records = [], fingerprint = null, repo, tag, repositoryId = null }) {
+  const sameRepo = (r) => (typeof r?.repository_id === "string" && typeof repositoryId === "string"
+    ? r.repository_id === repositoryId
+    : String(r?.repo ?? "").toLowerCase() === String(repo ?? "").toLowerCase());
+  const hits = records.filter((r) => {
+    if (!r) return false;
+    if (fingerprint && r.fingerprint === fingerprint) {
+      if (r.state === "published" || r.state === "stopped") return true;
+      if (r.state === "refused" && (r.reasons ?? []).includes("M_REJECT")) return true;
+    }
+    return r.state === "stopped" && tag && r.tag === tag && sameRepo(r);
+  });
+  const hit = hits.at(-1) ?? null;
   if (!hit) return null;
   return {
     reported: hit.state,
@@ -266,18 +285,12 @@ export async function decideRelease(opts, deps = {}) {
   // would be a second, weaker answer to a question `main` already answers.
   const identityRecord = result.derived ? readIdentityRecord(opts.root, result.derived.plugin.id) : null;
 
-  // BOT-19, searched BEFORE anything is decided: a stop recorded in the panel
-  // stops a ping. `readDecisionRecords` reads B-T2.2's layout and needs none
-  // of B-T2.2's writer, so this works from the first record and answers
-  // nothing before that — which is the honest answer, not a skip.
+  // BOT-19's records. `readDecisionRecords` reads B-T2.2's layout and needs
+  // none of B-T2.2's writer, so this works from the first record and answers
+  // nothing before that — which is the honest answer, not a skip. The search
+  // itself runs once the fingerprint is known, below: BOT-19 is keyed on it.
   const records = (deps.readDecisionRecords ?? readDecisionRecords)(opts.root)
     .map((r) => r.doc).filter(Boolean);
-  const terminal = terminalOnMain({
-    records,
-    pluginId: result.derived?.plugin?.id ?? null,
-    repo: opts.repo,
-    tag: opts.tag,
-  });
 
   const decision = decide({
     identityRecord,
@@ -339,10 +352,45 @@ export async function decideRelease(opts, deps = {}) {
     decision.record = { write: false, why: e.message };
   }
 
+  // BOT-19 over this run's fingerprint — the publication-shaped answer's own
+  // one, or, for a refusal that derived no answer, the fingerprint of the
+  // bytes this run hashed — and the tag.
+  const fingerprint = decision.fingerprint ?? fingerprintOf(result, opts);
+  const terminal = terminalOnMain({
+    records,
+    fingerprint,
+    repo: opts.repo,
+    tag: opts.tag,
+    repositoryId: result.identity?.repository_id ?? null,
+  });
+  // BOT-74: a registered tag already listed with identical digests is the
+  // publication that already happened. Without it, a re-ping of a published
+  // tag is refused E_VERSION_NOT_NEW — and from MIG-20's baseline on that
+  // refusal is a durable `refused` record about a release this registry
+  // published.
+  const listedVersion = result.derived && existing
+    ? (existing.versions ?? []).map((v) => v.doc).find((d) => d?.version === result.derived.version.version) ?? null
+    : null;
+  const already = listedVersion
+    ? alreadyPublished({
+      listed: {
+        version: listedVersion.version,
+        artifact_digests: artifactDigests(listedVersion),
+        decision_id: records.find((r) => r.state === "published" && r.plugin_id === listedVersion.id &&
+          r.version === listedVersion.version)?.decision_id ?? null,
+      },
+      digests: artifactDigests(result.derived.version),
+    })
+    : null;
+
   if (terminal) {
     decision.record = terminal.record;
     decision.reported = terminal.reported;
     decision.names_record = terminal.names;
+  } else if (already) {
+    decision.record = already.record;
+    decision.reported = already.reported;
+    decision.names_record = already.names;
   } else if (!marker.present && decision.record.write) {
     decision.record = {
       write: false,
@@ -496,6 +544,16 @@ export function composeLegacyRecord(result, opts) {
     ...(run ? { run } : {}),
   };
   return { key: legacyKey({ repo, tag, fingerprint: decision.fingerprint ?? null, state }), record };
+}
+
+/** The fingerprint of the bytes this run hashed, when the policy's answer carries none. */
+function fingerprintOf(result, opts) {
+  const v = result.derived?.version;
+  if (!v) return null;
+  return submissionFingerprint({
+    repo: opts.repo, tag: opts.tag, id: result.derived.plugin.id, version: v.version,
+    commit: v.release?.commit ?? null, digests: artifactDigests(v),
+  });
 }
 
 /** `plugins/<id>/identity.json` on the checked-out tree, or null. */
