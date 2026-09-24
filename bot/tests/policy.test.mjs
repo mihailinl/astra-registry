@@ -4574,16 +4574,19 @@ function svcLand(root, decided, { deliveredAt = null } = {}) {
  * That period is a separate question: contract 2.1.0 made it 0 days and
  * bot/lib/service-decide.mjs still enforces 7 (lane S11's report, 2026-09-24).
  */
-function approvalWalk(root, sub, { tokenState = "seen", notice = { kind: "approved", status: "sent" }, beforeFinal = null } = {}) {
+function approvalWalk(root, sub, { tokenState = "seen", notice = { kind: "approved", status: "sent" }, beforeFinal = null, readAfterDays = null } = {}) {
   const s = {};
   s.held = svcDecide(root, sub, { ask: svcAsk(sub, { tokenState }), now: T0 });
   s.heldLanded = svcLand(root, s.held);
   const approvedAt = at(T0, (FIRST_BINDING_WAIT_DAYS + 1) * 24 * 60);
   const decisions = [{ code: "M_APPROVE", category: "review_passed", decided_at: approvedAt, moderator: "the-owner", declared_interest: false }];
-  const ask = svcAsk(sub, { tokenState, decisions, notice: { ...notice, accepted_at: approvedAt } });
+  // `readAfterDays`: the approval is first read that many days after the
+  // hold, not just after it was given (MIG-31's floor; the notice accepted then).
+  const readFrom = readAfterDays === null ? approvedAt : at(T0, readAfterDays * 24 * 60 + 1);
+  const ask = svcAsk(sub, { tokenState, decisions, notice: { ...notice, accepted_at: readFrom } });
   const approved = (now) => svcDecide(root, sub, { ask, now, claimedFrom: "approved" });
-  s.noticeRunning = approved(at(approvedAt, 1));
-  const noticeDone = at(approvedAt, 6 * 60 + 1);
+  s.noticeRunning = approved(at(readFrom, 1));
+  const noticeDone = at(readFrom, 6 * 60 + 1);
   s.undelivered = approved(noticeDone);
   s.undeliveredLanded = svcLand(root, s.undelivered, { deliveredAt: null });
   s.approvedAt = approvedAt;
@@ -4849,44 +4852,55 @@ await test("ROLL-59 (f) — an operator deny record on main withholds an approve
   assert(!s.finalLanded.changed.some((f) => f.startsWith("plugins/")), `a denied release wrote under plugins/: ${s.finalLanded.changed.join(", ")}`);
 });
 
-// ── the gap: a step whose code is not on `main` ─────────────────────────────
-
-// ROLL-59 (h): a grandfathered first binding whose triggering actor is not the
-// owner, approved a day after TRUST-27's period (8 days after the hold at 7, 1
-// at 0) and so inside MIG-31's 14, "deferred by MIG-31's 14 days, with a
-// recorded fixture clock standing in for them". `verify` reads the actor and
-// its floor (`verified.actor`, bot/ingest.mjs), and the decide job reports it
-// in the hold's result (`triggering_actor_is_owner`), but nothing in
-// `decideSubmission` defers an approval by it.
+// ── ROLL-59 (h): MIG-31's 14 days, on a recorded fixture clock ──────────────
+//
+// A grandfathered first binding whose build a push holder started, not the
+// owner: "a grandfathered first binding's approval deferred by MIG-31's 14
+// days, with a recorded fixture clock standing in for them". This was the one
+// walk that stayed a gap when the other eight closed, because `verify` read the
+// actor and the decide job reported it (`triggering_actor_is_owner`) and
+// nothing deferred an approval by it. `honourApproval` now does.
+//
+// Watched failing: with `honourApproval`'s MIG-31 deferral made `false`, the
+// approval inside the 14 days is served and the first half is red; with
+// BOT-26 (4)'s age counted from `decided_at` again instead of the floor's end,
+// the approval is stale when it is read on day 16 and the "deferred, not lost"
+// half is red; and with an unreadable actor's floor made 0, the build nobody
+// could attribute is served inside the 14 days and the last half is red.
 /** The (h) walk: a push holder who is not the owner tagged the first binding (MIG-31's report). */
-function nonOwnerFirstBinding() {
+function nonOwnerFirstBinding(over = {}) {
   const sub = svcSubmission({ id: "json-tools", version: "0.2.0", line: LINE_OWNER });
   sub.verified.actor = { triggering_actor_id: "700000555", floor_days: 14 };
-  return approvalWalk(serviceWorld(), sub);
+  return approvalWalk(serviceWorld(), sub, over);
 }
-await gap("ROLL-59 (h) — a non-owner's grandfathered first binding is not approved inside MIG-31's 14 days", {
-  blocker: "B-T3.3a (MIG-31): `honourApproval` in bot/lib/service-decide.mjs never reads `verified.actor` " +
-    "(`floor_days`, `triggering_actor_id`), so no approval is deferred by MIG-31's 14 days",
-  // Exactly the absence named: the hold reports a non-owner actor, and the
-  // approval inside MIG-31's 14 days is honoured and served anyway.
-  standing: () => {
-    const s = nonOwnerFirstBinding();
-    return s.held.plan.result_extra.triggering_actor_is_owner === false && s.final.plan.state === "published";
-  },
-  walk: () => {
-    // The premise, held as a plain assertion so a break in it is a FAIL and
-    // never a gap: the same walk with the owner as the actor is served, so
-    // whatever defers the non-owner's approval is MIG-31 and not TRUST-27
-    // or another gate of `approvalWalk`.
-    const owner = approvalWalk(serviceWorld(), svcSubmission({ id: "json-tools", version: "0.2.0", line: LINE_OWNER }));
-    assertEqual(owner.final.plan.state, "published", `the owner's own first binding is not served by this walk: ${said(owner.final.plan)}`);
-    const s = nonOwnerFirstBinding();
-    walkExpects(s.held.plan.result_extra.triggering_actor_is_owner === false,
-      "the hold did not report the non-owner actor, so MIG-31's case never arose");
-    walkExpects(s.final.plan.state !== "published",
-      `a non-owner's first binding approved ${FIRST_BINDING_WAIT_DAYS + 1} day(s) after its hold was served (${said(s.final.plan)}); MIG-31 defers ` +
-      "that approval until 14 days after the hold's record reached main");
-  },
+await test("ROLL-59 (h) — a non-owner's grandfathered first binding is not approved inside MIG-31's 14 days, and the same approval is honoured after them (MIG-31)", () => {
+  // The control: the owner's own first binding, the same walk, is served.
+  const owner = approvalWalk(serviceWorld(), svcSubmission({ id: "json-tools", version: "0.2.0", line: LINE_OWNER }));
+  assertEqual(owner.final.plan.state, "published", `the owner's own first binding is not served by this walk: ${said(owner.final.plan)}`);
+
+  const inside = nonOwnerFirstBinding();
+  assertEqual(inside.held.plan.result_extra.triggering_actor_is_owner, false,
+    "MIG-31: the hold did not report that the build's triggering actor is not the owner");
+  assertEqual(inside.final.plan.state, "held",
+    `a non-owner's first binding approved ${FIRST_BINDING_WAIT_DAYS + 1} day(s) after its hold was served: ${said(inside.final.plan)}`);
+  assert(inside.final.plan.reasons.some((r) => r.code === "P_APPROVAL_STALE" && /MIG-31/.test(r.message) && /deferred, not lost/.test(r.message)),
+    `the deferral does not say why, or when: ${JSON.stringify(inside.final.plan.reasons.map((r) => [r.code, r.message]))}`);
+
+  // The same approval, still the newest, read again after the 14 days: it
+  // was deferred, not lost, and the walk's remaining gates run from there.
+  // Read on day 16, the approval is more than BOT-26's 7 days past its
+  // `decided_at` and less than 7 past the floor's end: honoured only if the
+  // floor deferred it rather than aged it.
+  const after = nonOwnerFirstBinding({ readAfterDays: 16 });
+  assertEqual(after.final.plan.state, "published",
+    `the approval given on day ${FIRST_BINDING_WAIT_DAYS + 1} was lost rather than deferred: ${said(after.final.plan)}`);
+
+  // A build whose triggering actor nobody could read is not an owner's.
+  const sub = svcSubmission({ id: "json-tools", version: "0.2.0", line: LINE_OWNER });
+  sub.verified.actor = null;
+  const unread = approvalWalk(serviceWorld(), sub);
+  assertEqual(unread.final.plan.state, "held",
+    `a first binding whose build nobody could attribute was approved inside MIG-31's 14 days: ${said(unread.final.plan)}`);
 });
 
 // ── result ──────────────────────────────────────────────────────────────────
