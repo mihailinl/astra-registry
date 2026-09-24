@@ -630,7 +630,12 @@ export function renderTrailers(t = {}) {
 export function decisionCommitMessage({ subject, body = "", ...trailers }) {
   if (!subject || /\n/.test(subject)) throw new Error("a commit subject is one non-empty line");
   const lines = renderTrailers(trailers);
-  const text = [subject, "", body, "", lines.join("\n")].filter((p, i) => i === 0 || p !== "").join("\n");
+  // Paragraphs joined by ONE BLANK LINE, and an absent body is dropped whole.
+  // This joined the parts with their blank separators filtered out, so git
+  // read the body's first paragraph as part of the subject and the trailer
+  // block as body text — `%(trailers)` printed nothing for a commit ending
+  // "Run: …". Measured by committing one (bot/tests/decisions.test.mjs).
+  const text = [subject, String(body ?? "").trim(), lines.join("\n")].filter((p) => p !== "").join("\n\n");
   const found = subjectIdFindings(text);
   if (found.length) {
     throw new Error(

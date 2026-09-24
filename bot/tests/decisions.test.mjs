@@ -966,3 +966,30 @@ test("a commit message for a yank, whole", () => {
   assert.match(message, new RegExp(`\nService-Decision: ${SERVICE_DECISION}\n$`));
   assert.equal(message.endsWith("\n"), true);
 });
+
+test("a decision commit's subject is its subject, and git reads its trailers as trailers", () => {
+  // Found by committing one. `decisionCommitMessage` joined its three parts
+  // with the blank lines FILTERED OUT, so git read the subject and the first
+  // paragraph of the body as one subject line, and the trailer block as body
+  // text: \`git log --format='%(trailers)'\` printed nothing for a commit whose
+  // message ended "Run: …". BOT-37's trailers are correlation that has to
+  // outlive a 14-day artifact, and a trailer git does not parse is one only a
+  // reader with its own regex can find.
+  const dir = tree();
+  const env = { ...cleanEnv(), GIT_CEILING_DIRECTORIES: path.dirname(dir) };
+  const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", env }).trim();
+  git("init", "-q", "-b", "main");
+  const message = decisionCommitMessage({
+    subject: "registry: publish (one release)",
+    body: "One record per state entry (BOT-34).\nA second body line.",
+    run: "35502265394/2",
+    decision: "0".repeat(32),
+  });
+  fs.writeFileSync(path.join(dir, "m.txt"), message);
+  git("-c", "user.name=x", "-c", "user.email=x@example.invalid", "commit", "-q", "--allow-empty", "-F", "m.txt");
+  assert.equal(git("log", "-1", "--format=%s"), "registry: publish (one release)",
+    "git read the body into the subject: the blank line after it is missing");
+  assert.equal(git("log", "-1", "--format=%(trailers:key=Run,valueonly)"), "35502265394/2",
+    "git does not read `Run:` as a trailer: the blank line before the block is missing");
+  assert.equal(git("log", "-1", "--format=%(trailers:key=Decision,valueonly)"), "0".repeat(32));
+});
