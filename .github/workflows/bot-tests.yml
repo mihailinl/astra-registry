@@ -510,3 +510,15 @@ jobs:
       - name: The moderation run, and the member that must reach no file
         if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/moderation-run.test.mjs
+
+      # B-T3.11. BOT-90's conformance harness, against a stub service on
+      # 127.0.0.1 that answers each way the real one could be wrong. It ran
+      # only from service-conformance.yml's `suite` job until lane S3a found
+      # that on 2026-09-24, and nobody reads that workflow as the bot's tests;
+      # the job stays, because it gates that workflow's own probe. The test
+      # "every suite under bot/tests/ runs in Bot tests, or names the workflow
+      # that gates it instead" in workflows.test.mjs holds this for the next
+      # suite. Pure, no probe, no network beyond loopback.
+      - name: The conformance harness, against a stub that answers each way the service could be wrong
+        if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
+        run: node --test bot/tests/service-conformance.test.mjs
