@@ -421,6 +421,28 @@ export async function run() {
     });
     assert(extra.some((p) => p.includes("must hold exactly")),
       `a third field in the flag produced no problem: ${extra.join("\n") || "none at all"}`);
+
+    // `armed_at` is a §0.7 time (contract B.4, 2.11.0). Until 2.11.0 nothing
+    // read its type: `armingState` takes it only if it is a string, and
+    // nothing decides on it. But the file can never be edited once it is on
+    // `main` (above), so a malformed time that merged would be a red suite for
+    // good. The suite runs on the flag's own pull request, which is the one
+    // place this can still be refused. Each is a way a hand-written time goes
+    // wrong: an offset instead of `Z`, a day February does not have, a
+    // fraction, a number, and a date with no time.
+    for (const [how, value] of [
+      ["an offset instead of Z", "2026-09-24T12:00:00+00:00"],
+      ["a day its month does not have", "2026-02-30T00:00:00Z"],
+      ["a fraction of a second", "2026-09-24T12:00:00.5Z"],
+      ["a number", 1790000000],
+      ["a date with no time", "2026-09-24"],
+    ]) {
+      const bad = problemsFor(Object.defineProperty(function badTime({ write, commit }) {
+        write({ ...armed, armed_at: value }); commit("arm");
+      }, "name", { value: `bad-time-${how.replace(/[^a-z]+/gi, "-")}` }));
+      assert(bad.some((p) => p.includes("armed_at") && p.includes("§0.7")),
+        `a flag whose armed_at is ${how} (${JSON.stringify(value)}) produced no problem: ${bad.join("\n") || "none at all"}`);
+    }
   });
 
   // GAP 75. The guard's own precondition, watched on the checkout

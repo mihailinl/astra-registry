@@ -126,8 +126,8 @@ export const GITHUB_SCHEDULED_PARTIES = ["registry", "test-repository"];
 // delegation of that day, to the checks another party posts to** (the same
 // entry 25): those are created disarmed too, and arm at their first post. The
 // two this changed are `probe` and `canary-tag`, which said
-// `created_disarmed: false` while neither poster existed — the probe host is
-// still the owner's to choose, and BOT-88's test repository has not been
+// `created_disarmed: false` while neither poster existed — the probe host was
+// still the owner's to choose, and BOT-88's test repository had not been
 // created — so each would have paged from R1 about a silence that is not an
 // outage, exactly as the five registry rows did. The rule cannot be computed
 // for them the way it is for registry rows: their posters run on another
@@ -138,10 +138,14 @@ export const GITHUB_SCHEDULED_PARTIES = ["registry", "test-repository"];
 // arms its check) is accepted for these, because the alternative is a check
 // armed on a promise.
 //
-// Arming after creation is recorded in `armed_at`, as it is for the three service
-// checks below. Nothing in this repository arms a check: it is a receiver
-// setting (or the receiver's own first-post behaviour, whichever product the
-// owner chooses, Q-O2), and this field is the record that it happened.
+// Arming after creation is recorded in `armed_at`, as it is for the service
+// checks below. Nothing in this repository arms a check. The receiver is one
+// healthchecks.io project (contract SERVE-104a, 2.11.0; Q-O2, decided for the
+// owner 2026-09-23 and confirmed by him 2026-09-24), and a check created
+// disarmed arms at its first post, because healthchecks.io alerts on no check
+// that has never been pinged. This field is the record of that post
+// (SERVE-104a: "The post that arms a check is recorded as its armed_at in
+// CHECKS"). Arming is recorded or it did not happen.
 
 export const CHECKS = [
   {
@@ -222,19 +226,26 @@ export const CHECKS = [
     party: "probe-host",
     // ROLL-15's probe runs on the owner's chosen host at 96 runs a day
     // (RC-R1-7, §2.12's probe-host decision), which is one run every 15
-    // minutes. The host is still the owner's to choose; the cadence is the
-    // one ROLL-21 counts against. Its ping URL lives on that host in a 0600
+    // minutes. The host is the mac-mini (decided 2026-09-24); the cadence is
+    // the one ROLL-21 counts against. Its ping URL lives on that host in a 0600
     // file beside its own Telegram credential, never in `alerts`: the prober
     // pages through a bot of its own precisely so that a lost catalogue host
     // cannot take the alarm with it, and a registry job holding its ping URL
     // would put both back in one place.
     //
-    // Disarmed (2026-09-23, the block above `CHECKS`): the prober does not run
-    // anywhere yet, because its host is not chosen.
+    // Disarmed (2026-09-23, the block above `CHECKS`), when the prober ran
+    // nowhere. **Armed 2026-09-24T01:43:59Z, by its first post.** The prober
+    // sends its first heartbeat whatever it holds, so that this check arms
+    // (ops tools/probe-signed-set/lib/run.mjs). Its own record, the public
+    // probe log, puts that post inside its first tick: `run_at`
+    // 2026-09-24T01:43:55Z, then the first push, `pushed_at` 01:43:59Z with
+    // `ticks: 1` (mihailinl/astra-signed-set-probe-log 511d7d0f). The
+    // receiver took the post at 01:43:59Z (ops notes/state.md, recorded the
+    // same day), which is the time written here.
     source: "RC-R1-7 (ROLL-15)",
     interval_seconds: 900,
     created_disarmed: true,
-    armed_at: null,
+    armed_at: "2026-09-24T01:43:59Z",
     signals: ["success"],
   },
   {
@@ -410,7 +421,7 @@ export const CHECKS = [
     armed_at: null,
     signals: ["success"],
   },
-  // ── the three the plugins service posts to ─────────────────────────────────
+  // ── the four the plugins service posts to ──────────────────────────────────
   //
   // Created here, with the rest, because the receiver is this plan's to create
   // (ext.4) — and created DISARMED, because none of their posters is wired
@@ -424,10 +435,10 @@ export const CHECKS = [
   // off. Creating them disarmed is what stops anyone needing it (attack B-1;
   // TRUST-45: "an always-firing alarm is ignored").
   //
-  // `armed_at` is filled in, in this file, by the first post each one receives,
-  // and RC-R1-12's exit note says whether it was armed when R1 exited or still
-  // waiting. Nothing arms them automatically: arming is a receiver setting the
-  // owner changes, and this record is what says he did.
+  // Each arms at its first post, because the receiver alerts on no check that
+  // has never been pinged (SERVE-104a). `armed_at` records that post, in this
+  // file, and RC-R1-12's exit note says whether each was armed when R1 exited
+  // or still waiting.
   //
   // **The names are minice-be's to supply** (§1.3 row 8.1), and until
   // 2026-09-23 they were two rows with `name: null` and a `name_pending` note,
@@ -480,7 +491,14 @@ export const CHECKS = [
       "`astra-alarm-watch.timer`, each pass; the relay that will carry the plugins alarms (minice-be D-16)",
     interval_seconds: 120,
     created_disarmed: true,
-    armed_at: null,
+    // **Armed 2026-09-23T14:17:48Z, by its first post**: the receiver's own
+    // record, read that day, with the next pings at 14:19:56 and 14:21:56 (ops
+    // dev/couplings.md entry 139). The relay's first pass after install, at
+    // 14:17:19Z, posted nothing: per minice-e4's journal the timer fired
+    // before `daemon-reload`, under the old unit. Since contract 2.12.0 this
+    // heartbeat says the relay runs, not that it carries the plugins alarms:
+    // it does only once the single-relay path is built (SERVE-104a).
+    armed_at: "2026-09-23T14:17:48Z",
     signals: ["success"],
   },
   {
@@ -561,9 +579,12 @@ export function findCheck(name) {
 /**
  * The secret in `alerts` that carries this check's WHOLE ping URL for this
  * signal. A name, never a URL, and never a base plus a name: `_START` is a
- * second secret rather than a path appended to the first, because the receiver
- * product is still the owner's to choose (Q-O2) and appending a suffix would
- * pin this repository to one product's ping protocol before anybody picked one.
+ * second secret rather than a path appended to the first. The receiver is
+ * healthchecks.io (contract SERVE-104a, 2.11.0), whose start signal is the
+ * check's URL with `/start` appended, and the tool that builds the receiver
+ * stores that URL whole (ops tools/deadman-setup.mjs). SERVE-104a has every
+ * poster post only to whole URLs it was issued and compose none, so this
+ * repository appends nothing to a secret it holds.
  */
 export function secretName(name, signal = "success") {
   const stem = `ASTRA_DEADMAN_URL_${name.toUpperCase().replaceAll("-", "_")}`;

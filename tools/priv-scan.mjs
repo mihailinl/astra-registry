@@ -151,6 +151,18 @@ export const HISTORY_FLOOR = 228;
 
 // ── what counts as composed ─────────────────────────────────────────────────
 
+/**
+ * A rollout marker's path (contract B.4, 2.11.0): `log/rollout/<step>-exit.json`
+ * for each step whose exit walk is recorded, and `log/rollout/R4b-open.json`
+ * for R4b, which has no exit needs. There is no `R0-exit.json` — R0's marker
+ * is ROLL-7's record — so a step is `R` and a number from 1, with `a` or
+ * `b`. The one grammar: this scan declares the kind by it, and
+ * `bot/tests/moderation-coverage.test.mjs` holds every reader's spelling of a
+ * marker to it, because a marker spelt otherwise is one no reader sees.
+ * Group 1 is an exit's step, group 2 R4b's opening.
+ */
+export const ROLLOUT_MARKER_RE = /^log\/rollout\/(?:(R[1-9]\d*[ab]?)-exit|(R4b)-open)\.json$/;
+
 const COMPOSED = [
   { re: /^log\/decisions\/.*\.json$/, kind: "decision" },
   { re: /^log\/cutover\.json$/, kind: "cutover" },
@@ -160,6 +172,7 @@ const COMPOSED = [
   // same kind with the same member tables (B-T5.0 added `bot-state` this way).
   { re: /^log\/rollout\/R0-settings(?:-\d{4}-\d{2}-\d{2}(?:-\d+)?)?\.json$/, kind: "settings" },
   { re: /^log\/migration-notice-\d+\.json$/, kind: "migration-notice" },
+  { re: ROLLOUT_MARKER_RE, kind: "rollout" },
   { re: /^log\/baseline\.json$/, kind: "baseline" },
   { re: /^log\/.*\.json$/, kind: null },               // log/** with no declared kind
   { re: /^plugins\/[^/]+\/identity\.json$/, kind: "identity" },
