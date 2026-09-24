@@ -261,9 +261,12 @@ const WRONG = [
     const a = conforming(req, b);
     return req.url.endsWith("/health") ? { status: 200, body: { schema: "astra.plugins.status/1" } } : a;
   }],
+  // The redirect points back at this stub, where a conforming health answer
+  // waits: a harness that FOLLOWED it would be green, so the leg is red only
+  // because the redirect was refused, and not because its target was absent.
   ["a redirect, which is never followed", "BOT90_UNREACHABLE", (req, b) => {
     const a = conforming(req, b);
-    return req.url.endsWith("/health") ? { status: 302, headers: { Location: "https://example.invalid/" }, body: "" } : a;
+    return req.url.endsWith("/health") ? { status: 302, headers: { Location: "/plugins/v1/health?followed=1" }, body: "" } : a;
   }],
 ];
 
