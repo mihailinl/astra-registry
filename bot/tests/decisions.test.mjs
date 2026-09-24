@@ -46,7 +46,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cleanEnv } from "../../tools/lib/git-env.mjs";
+import { cleanEnv, fixtureEnv } from "../../tools/lib/git-env.mjs";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
@@ -976,8 +976,7 @@ test("a decision commit's subject is its subject, and git reads its trailers as 
   // outlive a 14-day artifact, and a trailer git does not parse is one only a
   // reader with its own regex can find.
   const dir = tree();
-  const env = { ...cleanEnv(), GIT_CEILING_DIRECTORIES: path.dirname(dir) };
-  const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", env }).trim();
+  const git = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8", env: fixtureEnv(dir) }).trim();
   git("init", "-q", "-b", "main");
   const message = decisionCommitMessage({
     subject: "registry: publish (one release)",
