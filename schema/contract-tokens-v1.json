@@ -1,6 +1,6 @@
 {
-  "contract_version": "2.12.0",
-  "source_commit": "f09b72bcac6cde9dbbebf122d7157cdefdb617c8",
+  "contract_version": "2.14.0",
+  "source_commit": "aff46c11c90a11a7d73d3b31c33072484a16e083",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -1979,6 +1979,28 @@
       ],
       "acceptor": [
         "service",
+        "client"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:advisory_action",
+      "kind": "closed_list",
+      "name": "advisory_action",
+      "values": [
+        "warn",
+        "block_install",
+        "disable"
+      ],
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
         "client"
       ],
       "state": "live",
@@ -6593,7 +6615,7 @@
       "what": "the public report-outcome code vocabulary `reports.mine` may return",
       "why": "CLIENT-80's `reports.mine` returns an `outcome`, \"a public code or null\", and no party has written the list down (attack m-2). The client branches on it to render a reporter's own reports, so a floor that counts the schema and not this list leaves the client's SCOPE-10 scan passing vacuously over a vocabulary a human reporter actually reads.",
       "owed_by": "minice-be supplies the enumeration (accepted as its W-16); either plan publishes it into §0.8",
-      "lands_with": "the report-outcome version, before R5",
+      "lands_with": "the report-outcome version, before R10 (reports left R5 in contract 2.0.0)",
       "floor": "until that version lands the client-side floor is written for B.3's four report states alone and this record says the outcome list is not floored; from then it counts both.",
       "asserted_by": "astra-registry:tools/selftest/contract-tokens.mjs#the token file's report-outcome list is absent under its pending record, or a list of codes with none"
     }

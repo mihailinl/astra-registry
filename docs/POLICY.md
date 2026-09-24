@@ -269,10 +269,10 @@ a breach is loud rather than something a maintainer has to go and look for.
 
 From R3 a submission can also reach this registry through the plugins service
 (a panel request, an author's CI, or the release poll) rather than through an
-issue. On that path a moderator's approval arrives from the service, and four
-numbers bound what it can do. They are the owner's answers of 2026-09-13, as
-contract 0.12.0 and 0.20.0 record them, and `bot/lib/service-decide.mjs`
-enforces exactly these:
+issue. On that path a moderator's approval arrives from the service, and five
+numbers bound what it can do. The first four are the owner's answers of
+2026-09-13, as contract 0.12.0 and 0.20.0 record them; the fifth is contract
+MIG-31's. `bot/lib/service-decide.mjs` enforces exactly these:
 
 - **An approval older than 7 days is not honoured.** The bot re-runs every
   check in the run that acts on an approval, and it honours the approval only
@@ -295,6 +295,13 @@ enforces exactly these:
   `R_FIRST_BINDING` — the first release of a published listing that carries a
   binding line — is honoured no earlier than **7 days** after the record of
   that hold reached `main` (TRUST-27).
+- **A first binding somebody other than the owner built waits 14 days.** When
+  the account that started the release's build is not the repository's owner
+  — or the bot could not read which account it was — an approval of a
+  published listing's first binding is honoured no earlier than
+  **14 days** after the record of that hold reached `main`. The approval is
+  deferred, not lost: the 7-day age above counts from the end of those 14 days
+  (MIG-31).
 
 There is no `/publish` on that path, and an approved first listing that carries
 a delay reason waits out its delay like any other release (ROLL-49).
