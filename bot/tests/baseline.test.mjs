@@ -895,3 +895,74 @@ test("a two-platform version is verified only if both assets are", async () => {
   assert.equal(facts.facts[0].outcome, "unverified", `one of two assets failed its attestation and the version verified:\n${r.out}`);
   assert.equal(facts.facts[0].repository_id, null);
 });
+
+// ── the write job's generator step, on the checkout that job actually has ───
+//
+// `baseline.yml`'s `write` job ran `node tools/build-index.mjs` and
+// `node tools/build-revocations.mjs` in WRITE mode, then refused to commit if
+// either had changed a document ("the baseline commit is log/ and nothing
+// else"). Both generators take their default serial from `git rev-list
+// --count` over their sources. The job's checkout is `actions/checkout@v4`
+// with no `fetch-depth`, so a one-commit history: the index's serial came out
+// as 1 or 2 where main's committed one is its whole history's count, and the
+// guard refused. On a full clone of main at `fc50fad` (2026-09-24) it refused
+// too, for the withdrawal list alone: its committed serial is 1, the one
+// `--check` regenerates at, and write mode computes 14 from
+// `tools/revocations/` history. So the one dispatch MIG-20 is taken by
+// could never commit, and nothing ran the step until lane S11 walked the job
+// by hand: every test above calls `bot/baseline.mjs`, none the step after it.
+//
+// This runs the step's own generator lines, read out of the workflow, over a
+// copy of this tree with the history that job has (one commit), and holds the
+// property the step's guard needs: no committed document changes.
+//
+// Watched failing: with the step's `--check` flags removed, `registry/v1/
+// index.json` and `registry/v1/revocations.json` both change and this is red.
+test("the baseline write job's generator step changes no committed document on the one-commit checkout it runs on", () => {
+  const wf = fs.readFileSync(path.join(REPO_ROOT, ".github", "workflows", "baseline.yml"), "utf8").split("\n");
+  const job = wf.findIndex((l) => /^ {2}write:\s*$/.test(l));
+  assert.ok(job >= 0, "baseline.yml has no `write` job");
+  let end = wf.findIndex((l, i) => i > job && /^ {2}[A-Za-z0-9_-]+:\s*$/.test(l));
+  if (end < 0) end = wf.length;
+  const steps = wf.slice(job, end);
+  const named = steps.map((l, i) => [l, i]).filter(([l]) => /^\s+- name: The catalogue the records were composed beside\s*$/.test(l));
+  assert.equal(named.length, 1, "the write job's catalogue step is not there exactly once");
+  const at = named[0][1];
+  let stop = steps.findIndex((l, i) => i > at && /^\s+- (name|uses):/.test(l));
+  if (stop < 0) stop = steps.length;
+  const generators = steps.slice(at, stop)
+    .filter((l) => !/^\s*#/.test(l))
+    .map((l) => l.trim())
+    .filter((l) => /^node tools\/build-(index|revocations)\.mjs(\s|$)/.test(l));
+  assert.deepEqual(generators.map((l) => l.split(/\s+/)[1]).sort(), ["tools/build-index.mjs", "tools/build-revocations.mjs"],
+    `the step runs ${JSON.stringify(generators)}; BOT-71 regenerates both unsigned documents, once each`);
+
+  // A copy of this tree as the job checks it out: tracked files, one commit.
+  const dir = tree();
+  const tracked = execFileSync("git", ["-C", REPO_ROOT, "ls-files", "-z"], { encoding: "utf8", env: cleanEnv() })
+    .split("\0").filter(Boolean);
+  assert.ok(tracked.length > 500, `only ${tracked.length} tracked file(s) read; the copy would not be this tree`);
+  for (const rel of tracked) {
+    const from = path.join(REPO_ROOT, rel);
+    if (!fs.existsSync(from) || !fs.statSync(from).isFile()) continue;
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.copyFileSync(from, path.join(dir, rel));
+  }
+  gitIn(dir, "init", "-q", "-b", "main");
+  gitIn(dir, "config", "user.email", "fixture@example.invalid");
+  gitIn(dir, "config", "user.name", "fixture");
+  gitIn(dir, "add", "-A");
+  gitIn(dir, "commit", "-q", "-m", "the checkout the write job has: one commit");
+
+  for (const line of generators) {
+    const [, script, ...flags] = line.split(/\s+/);
+    const r = spawnSync(process.execPath, [script, ...flags], {
+      cwd: dir, encoding: "utf8", env: { ...cleanEnv(), GIT_CEILING_DIRECTORIES: path.dirname(dir) },
+    });
+    assert.equal(r.status, 0, `\`${line}\` exited ${r.status} on the write job's checkout:\n${r.stdout}${r.stderr}`);
+  }
+  const changed = gitIn(dir, "status", "--porcelain", "--", "registry/", "plugins/", "tools/");
+  assert.equal(changed, "",
+    "the write job's generator step changed a committed document, so the next step's guard refuses the commit " +
+    `and MIG-20's baseline can never be taken:\n${changed}`);
+});

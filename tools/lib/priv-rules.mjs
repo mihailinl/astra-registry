@@ -204,6 +204,19 @@ export const DOCUMENT_MEMBERS = {
     handleOk: [],
     source: "contract B.4 (`log/migration-notice-<n>.json`, exactly these members); MIG-13; registry plan M-T5.3",
   },
+  // MIG-20's marker, `log/baseline.json` (registry plan B-T3.7b: "a
+  // name-free, registry-only marker"). Declared before it is committed,
+  // because the commit that adds it is the baseline dispatch's, which carries
+  // `log/` and nothing else (BOT-73), so the declaration cannot ride in it.
+  // Measured 2026-09-24 on a local commit of that dispatch: undeclared, the
+  // scan was red on it. `bot/tests/moderation-coverage.test.mjs` holds this
+  // list to the members `marker()` in `bot/baseline.mjs` writes.
+  baseline: {
+    members: ["schema", "written_at", "source_commit", "version_count", "record_count"],
+    uuidOk: [],
+    handleOk: [],
+    source: "contract MIG-20 and BOT-75; registry plan B-T3.7b (`astra.registry.baseline/1`)",
+  },
   // Read off the tree rather than out of a document, because this one exists
   // and the others do not: `git log -p -- 'state/queue/*'` over 228 commits
   // gives exactly these fifteen members and exactly three values that have
