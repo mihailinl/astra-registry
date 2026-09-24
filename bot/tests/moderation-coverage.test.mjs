@@ -36,7 +36,8 @@ import {
   run as coverage,
 } from "../../tools/moderation-coverage.mjs";
 import {
-  DOCUMENT_MEMBERS, HISTORY_FLOOR as PRIV_HISTORY_FLOOR, run as privScan, withoutAuthorship,
+  DOCUMENT_MEMBERS, HISTORY_FLOOR as PRIV_HISTORY_FLOOR, classify as privClassify, run as privScan, scanDocument,
+  withoutAuthorship,
 } from "../../tools/priv-scan.mjs";
 import { ADVISORY_BASE, DOC as DOCS_DOC, run as docsRule } from "../../tools/coverage/docs-advisory-url.mjs";
 import { KEEPALIVE, run as keepaliveRule } from "../../tools/coverage/keepalive-age.mjs";
@@ -466,6 +467,47 @@ test("PRIV-2: a composed document nobody declared is red, naming what to do", ()
   assert.equal(r.status, "red");
   assert.match(codesOf(r), /E_PRIV_UNDECLARED_DOCUMENT/);
   assert.match(r.detail.join("\n"), /declare it there/);
+});
+
+test("PRIV-2: ROLL-7's settings file is declared, positional at every depth, and the committed one is clean", () => {
+  // The first composed kind that nests (tools/lib/priv-rules.mjs). With only
+  // its top level declared, a subject id at `environments.alerts.subject`
+  // passed green, measured 2026-09-20 (ops dev/couplings.md, ROLL-7's entry).
+  const rel = "log/rollout/R0-settings.json";
+  assert.equal(privClassify(rel).kind, "settings", `${rel} is not scanned as the settings kind`);
+  assert.ok(DOCUMENT_MEMBERS.settings?.nested, "the settings kind declares no nested tables");
+  const committed = JSON.parse(fs.readFileSync(path.join(REPO, rel), "utf8"));
+  assert.deepEqual(scanDocument(committed, "settings", new Set()), [], `the committed ${rel} is not clean`);
+
+  // The walk reaches it by path: a fixture holding the committed bytes is green.
+  const f = fixture("priv-settings").commit("seed").landTools();
+  f.write(rel, committed).commit("ROLL-7's file");
+  assert.equal(priv(f.dir).status, "green", "the committed settings file is red inside the walk");
+
+  const env = Object.keys(committed.environments)[0];
+  const breaks = [
+    ["a subject id beside an environment's policy", (d) => { d.environments[env].subject = "usr_a1b2c3"; },
+      "E_PRIV_UNDECLARED_MEMBER", `environments.${env}.subject`],
+    ["a member inside a branch policy", (d) => { d.environments[env].branch_policies[0].owner = "usr_a1b2c3"; },
+      "E_PRIV_UNDECLARED_MEMBER", `environments.${env}.branch_policies.0.owner`],
+    ["logins under the collaborator counts", (d) => { d.collaborators.logins = ["usr_a1b2c3"]; },
+      "E_PRIV_UNDECLARED_MEMBER", "collaborators.logins"],
+    ["an object where a list of plain values belongs", (d) => { d.pending_environments = [{ name: "bot-state", by: "usr_a1b2c3" }]; },
+      "E_PRIV_UNDECLARED_MEMBER", "only a list of plain values"],
+    ["a table-less object under a declared member", (d) => { d.read_with.no_write_token = { holder: "usr_a1b2c3" }; },
+      "E_PRIV_UNDECLARED_MEMBER", "declares no table"],
+    ["an address used as an environment's name", (d) => { d.environments["someone.real@gmail.com"] = structuredClone(d.environments[env]); },
+      "E_PRIV_EMAIL", "someone.real@gmail.com"],
+  ];
+  for (const [how, edit, code, words] of breaks) {
+    const d = structuredClone(committed);
+    edit(d);
+    assert.notDeepEqual(d, committed, `the break "${how}" changed nothing`);
+    const found = scanDocument(d, "settings", new Set());
+    const said = found.map((x) => `${x.code} ${x.what}`).join("\n");
+    assert.ok(found.some((x) => x.code === code), `${how}: expected ${code}, got ${said || "nothing"}`);
+    assert.ok(said.includes(words), `${how}: red, but not naming ${JSON.stringify(words)}: ${said}`);
+  }
 });
 
 test("PRIV-2: git's authorship trailers and reserved TLDs are exempt, and a real address is not", () => {
