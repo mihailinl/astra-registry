@@ -434,13 +434,21 @@ export async function run() {
   });
 
   await test("the cost of OPEN-OWNER-25's answer is measured from these bytes, not stated", () => {
-    // The owner's page says a different answer to OPEN-OWNER-25's compromise
+    // The owner's page said a different answer to OPEN-OWNER-25's compromise
     // half re-cuts "exactly one of five rehearsal fixtures". That number is
     // this fixture's to make true, so it is checked here rather than asserted
     // in prose that nothing reads.
     const open = manifest.open_questions?.["OPEN-OWNER-25, compromise half"];
-    assert(open, "the manifest records no cost for the one open question this series is built around");
-    assertEqual(open.status, "open", "the open question's status");
+    assert(open, "the manifest records no cost for the one question this series is built around");
+    // DECIDED on 2026-09-23 — D10 as proposed, by the coordinator at the
+    // owner's delegation (contract 0.38.0). "Nothing already built changes,
+    // because the rehearsal fixtures were cut to D10" is the reason the
+    // decision gave, and it is a claim about THESE bytes: the answer taken is
+    // one of the answers below, and its re-cut list is empty.
+    assertEqual(open.status, "decided", "the question's status");
+    const taken = open.answers.find((a) => a.answer === open.decided?.answer);
+    assert(taken, `the decided answer ${JSON.stringify(open.decided?.answer)} is not one the manifest priced`);
+    assertEqual(taken.recut.join(" "), "", "the answer taken re-cuts fixtures the series still carries as cut to D10");
 
     // Every step an answer could re-cut is in the compromise series, and every
     // step of the rotation is untouched: that is what "one of five" means, and

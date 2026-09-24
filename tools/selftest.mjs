@@ -964,8 +964,9 @@ const ENVIRONMENTS = {
   // Ops couplings entry 116: the checks that read what a run LOADED, which
   // only a run started with `--loads`, on a Node with `module.registerHooks`,
   // has a record of. The bot's gates run the suite without the flag on
-  // purpose — what a gate runs is the owner's decision (pending item 19) — so
-  // the lane that asks them is one that is not a gate.
+  // purpose: pending item 19 was decided (a) — the modules went into the set,
+  // contract 0.38.0 — and running a GATE under the recorder is a separate
+  // choice nobody has made, so the lane that asks them is one that is not a gate.
   loads: {
     recognise: asksLoads,
     condition: "the run does not record the modules it loads",
@@ -975,8 +976,8 @@ const ENVIRONMENTS = {
     remedy:
       "Where it can be asked: a live lane that is not one of the bot's gates, whose step runs " +
       "`node tools/selftest.mjs --loads` on a setup-node `node-version` of " + NODE_FLOOR + " or newer — " +
-      "build-index.yml's `check` job is the one that did. Putting `--loads` on a gate's run is the owner's " +
-      "decision (contract pending item 19), not this file's.",
+      "build-index.yml's `check` job is the one that did. Putting `--loads` on a gate's run is a decision " +
+      "nobody has taken — pending item 19 chose the set, not the gate — and not this file's.",
   },
 };
 
@@ -1866,8 +1867,8 @@ const FLOORS = new Map(Object.entries({
   // whose vectors they are, with a message about vectors.
   "bundles.mjs": 14,
   "index-signature.mjs": 21,
-  "signer.mjs": 24,
-  "signer-run.mjs": 6,
+  "signer.mjs": 25,
+  "signer-run.mjs": 7,
   "rehearsal-r2.mjs": 14,
   "served-set.mjs": 35,
   "revocations.mjs": 24,

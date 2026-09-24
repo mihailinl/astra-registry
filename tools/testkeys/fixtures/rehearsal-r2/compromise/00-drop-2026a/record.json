@@ -49,7 +49,7 @@
   "alerts": [],
   "refusals": [],
   "notes": [
-    "compromise mode (D10): the Source-Commit's trust.json drops astra-index-2026a, which signed the head. The seven-hour window is waived and the catalogue may not be carried."
+    "compromise mode (D10): the Source-Commit's trust.json drops astra-index-2026a, which signed the head, and policy/index-key-retirements.json records no planned retirement of it from a time already reached. The seven-hour window is waived and the catalogue may not be carried."
   ],
   "codes": [],
   "hexes": [

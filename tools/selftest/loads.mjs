@@ -1,5 +1,6 @@
 // THE MODULES A SELFTEST RUN LOADS, HELD TO TRUST-31'S SET — ops
-// `dev/couplings.md` entry 116, contract pending item 19. Measure mode.
+// `dev/couplings.md` entry 116, contract pending item 19. Measure mode, and
+// the residual is EMPTY.
 //
 // `bot/publish-apply.mjs` runs this suite as the last of five checks before a
 // publication commits, and the moderation commit job runs it too, so what the
@@ -8,10 +9,21 @@
 // STATIC imports; the runner loads the cases by a dynamic `import()`, and the
 // cases reach modules no static walk follows. Measured at runtime on
 // 2026-09-22 (lane AQ, and again by this module's first run): 31 repository
-// modules outside the set. Whether they join the set — option (a) — or the
-// gates stop running the cases that reach them — option (c) — is the owner's
-// decision, and both need this first: it is what makes either one TRUE rather
-// than true of a static walk.
+// modules outside the set. The choice was the owner's, between (a) putting
+// them in the set and (c) gating a bot commit only on the cases whose closure
+// lies inside it; he asked for it to be decided for him, and on 2026-09-23 it
+// was decided (a). Contract 0.38.0 published the 31 as set entries, so the
+// table below that declared them is empty, and every out-of-set module a run
+// loads is now a hole this module names.
+//
+// **Still measure mode, deliberately.** With an empty residual, the first
+// check below already turns `build-index.yml`'s `check` job red, by name, on
+// any out-of-set module the run loads — which is everything a REFUSING hook
+// could do in that lane, since it is no gate. Refusing there would add a
+// decision this module has no basis for — what to do with the handful of
+// loads per run whose bytes match no tracked module (the recorder's header,
+// limit 6) — and refusing in a GATE lane would change what a publication is
+// held to, which (a) did not decide.
 //
 // What is asked, when the run records its loads (`node tools/selftest.mjs
 // --loads`, which relaunches the runner under `loads/hook.mjs`):
@@ -45,195 +57,21 @@ import { test, assert, assertEqual, neverAsk, walkRepo } from "./harness.mjs";
 import { trust31Entries, trust31Covers, TRUST31_COPY } from "./trust31.mjs";
 import { loadsState, loadsUnrecorded, whyUnrecorded, readRecord, NODE_FLOOR } from "./loads/record.mjs";
 
-/** The owner decision every entry below waits on. */
-const ITEM_19 =
-  "contract pending item 19 — the owner's choice between (a) adding it to TRUST-31's set and (c) gating a bot " +
-  "commit only on the cases whose closure lies inside the set; until then the fifth gate runs it outside what the " +
-  "service's acknowledgement covers";
-
 /**
  * THE DECLARED RESIDUAL: every repository module outside TRUST-31's set that a
- * `--loads` run of this suite loads today, why it is loaded, and the decision
- * it waits on. Measured, not walked — each row was in the record of a run in
- * `build-index.yml`'s environment (whole history, no AstraPlugins beside it).
+ * `--loads` run of this suite loads, why it is loaded, and the decision it
+ * waits on. **Empty since contract 0.38.0**, which put the 31 rows this table
+ * held into the set (ops pending item 19, decided (a) on 2026-09-23).
  *
- * A row leaves when the module leaves the run or joins the set; a row arrives
- * only with the reason a case now loads it. The check below is red for a
- * module loaded and not here, and for a row here that nothing loaded.
+ * A row arrives only with a module a case newly loads AND a decision, recorded
+ * in the contract's pending register, to leave it outside for now; the second
+ * check below refuses a row that names no pending item. The first check is
+ * red for a module loaded and not here, and the second for a row here that
+ * nothing loaded — so an empty table is a claim, asked on every `--loads` run,
+ * that the fifth gate loads nothing the service's acknowledgement does not
+ * cover.
  */
-export const RESIDUAL = [
-  {
-    module: "bot/fixtures/index/regenerate.mjs",
-    why: "index-signature.mjs, revocations.mjs and signer.mjs import the fixture catalogue and its issued_at from it, " +
-      "and index-signature.mjs runs it as a child with `--check`",
-    waits: ITEM_19,
-  },
-  {
-    module: "bot/tests/workflows.test.mjs",
-    why: "contract-tokens.mjs copies it into a temp tree and runs the copy as a node child, to ask the half of the " +
-      "cron-versus-token-file comparison that lives in that test; the record names the copy by its content",
-    waits: ITEM_19,
-  },
-  {
-    module: "site/build.mjs",
-    why: "couplings.mjs imports its `build` to hold the site's advisory page guard to the advisory grammar",
-    waits: ITEM_19,
-  },
-  {
-    module: "site/lib/html.mjs",
-    why: "site/build.mjs imports it, and couplings.mjs imports site/build.mjs to hold the site's advisory page guard " +
-      "to the advisory grammar",
-    waits: ITEM_19,
-  },
-  {
-    module: "site/templates/advisory.mjs",
-    why: "site/build.mjs imports it, and couplings.mjs imports site/build.mjs to hold the site's advisory page guard " +
-      "to the advisory grammar",
-    waits: ITEM_19,
-  },
-  {
-    module: "site/templates/pages.mjs",
-    why: "site/build.mjs imports it, and couplings.mjs imports site/build.mjs to hold the site's advisory page guard " +
-      "to the advisory grammar",
-    waits: ITEM_19,
-  },
-  {
-    module: "site/templates/plugin.mjs",
-    why: "site/build.mjs imports it, and couplings.mjs imports site/build.mjs to hold the site's advisory page guard " +
-      "to the advisory grammar",
-    waits: ITEM_19,
-  },
-  {
-    module: "tests/shared-vectors.mjs",
-    why: "bundles.mjs imports it to register one check per vendored shared bundle vector from AstraPlugins",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/coverage-verdict.mjs",
-    why: "served-set.mjs imports its `compose` to hold the coverage verdict to the alarm channel's code and hex caps",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/coverage/docs-advisory-url.mjs",
-    why: "couplings.mjs imports `looksLikeAdvisory` to hold it to the advisory id grammar; it imports " +
-      "tools/coverage/rules.mjs, which is why that file stays in the set",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/make-fixtures.mjs",
-    why: "primitives.mjs, validation.mjs and bundles.mjs import `makeFixtures` to build the trees whose refusals they assert",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/moderation-coverage.mjs",
-    why: "couplings.mjs imports `triggersOf` to hold the coverage canary's advisory trigger to the moderation source directory",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/regenerate-signed.mjs",
-    why: "couplings.mjs imports `serialFor` to hold its serial count to the signer's, and regenerate.mjs runs it as " +
-      "`--generator` children, as a carrier runs it",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/served-set/check.mjs",
-    why: "served-set.mjs imports `JOBS` to hold the jobs served-set.yml runs to the comparisons it can run",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/served-set/compose.mjs",
-    why: "served-set.mjs imports `composeVerdict` to hold the served-set verdict to the alarm channel's caps",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/served-set/main-vs-signed.mjs",
-    why: "tools/served-set/provenance.mjs imports it, and tools/signer/run.mjs imports that module, in the runner " +
-      "and in each `--step` child of the signer",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/served-set/provenance.mjs",
-    why: "tools/signer/run.mjs imports it, in the runner and in each `--step` child of the signer",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/served-set/report.mjs",
-    why: "tools/served-set/provenance.mjs imports it, and tools/signer/run.mjs imports that module, in the runner " +
-      "and in each `--step` child of the signer",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/served-set/runway.mjs",
-    why: "served-set.mjs imports `runwayVerdict` to ask ROLL-45's runway of the trust document",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/served-set/served-vs-signed.mjs",
-    why: "tools/signer/run.mjs imports it, in the runner and in each `--step` child of the signer",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/sign-revocations.mjs",
-    why: "tools/signer/run.mjs imports it, and cli.mjs runs it as a child to sign a revocation list and to refuse one",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/sign-trust.mjs",
-    why: "root-delegation.mjs runs it as a child, in the checkout and in the sandbox copies fixtures.mjs makes, to " +
-      "ask whether the ceremony refuses a key that is not a published root",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/sign-update-manifest.mjs",
-    why: "update-notes.mjs and update-signing.mjs import its checks, and update-signing.mjs runs sandbox copies of " +
-      "it as children",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/signer/git.mjs",
-    why: "tools/signer/plan.mjs imports it, and couplings.mjs, served-set.mjs and signer-run.mjs import that",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/signer/key-window.mjs",
-    why: "tools/served-set/served-vs-signed.mjs imports it, and tools/signer/run.mjs imports that module, in the " +
-      "runner and in each `--step` child of the signer",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/signer/pages.mjs",
-    why: "tools/signer/run.mjs imports it, in the runner and in each `--step` child of the signer",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/signer/plan.mjs",
-    why: "couplings.mjs, served-set.mjs and signer-run.mjs import it for the signer's plan, its serial counts and " +
-      "the files it signs",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/signer/run.mjs",
-    why: "couplings.mjs and signer-run.mjs import it, and rehearsal-r2.mjs runs it as `--step sign` children",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/testkeys/make-rehearsal-r2.mjs",
-    why: "rehearsal-r2.mjs imports its document list and runs it as a child with `--check`",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/testkeys/regenerate.mjs",
-    why: "couplings.mjs, index-signature.mjs, rehearsal-r2.mjs and revocations.mjs import `loadTestRoot` from it, " +
-      "index-signature.mjs runs it with `--check`, and bot/sign-index.mjs imports it in every child that signs",
-    waits: ITEM_19,
-  },
-  {
-    module: "tools/testkeys/sign-trust.mjs",
-    why: "tools/testkeys/make-rehearsal-r2.mjs runs it as a child, under rehearsal-r2.mjs's `--check`, to sign the " +
-      "rehearsal's trust documents",
-    waits: ITEM_19,
-  },
-];
+export const RESIDUAL = [];
 
 const RESIDUAL_KEYS = ["module", "why", "waits"];
 

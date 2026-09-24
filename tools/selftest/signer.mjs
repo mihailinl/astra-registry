@@ -29,8 +29,8 @@ import {
   REVOCATIONS_SCHEMA, TRUST_SCHEMA, indexSignersFromEnv, publicKeyFromBase64, signerList, verifyEnvelope,
 } from "../../bot/lib/sign.mjs";
 import {
-  DOCUMENT_DOMAINS, INDEX_KEY_WINDOW_HOURS, WINDOW_EXEMPT_KEY_IDS, delegationTimes, keyPlan,
-  readDelegationTimes, refusesDroppedKey,
+  DOCUMENT_DOMAINS, INDEX_KEY_WINDOW_HOURS, RETIREMENTS_PATH, RETIREMENTS_SCHEMA, WINDOW_EXEMPT_KEY_IDS,
+  delegationTimes, keyPlan, readDelegationTimes, refusesDroppedKey,
 } from "../signer/key-window.mjs";
 import {
   RESIGN_AFTER_HOURS, SIGNED_FILES, catalogueGate, contentOf, decideDocument, fetchSignedHead,
@@ -410,6 +410,81 @@ export async function run() {
       "",
       "the catalogue re-signed by the incoming key was refused",
     );
+  });
+
+  await test("a planned retirement is not compromise mode, and a dropped key without a retirement record is", () => {
+    // D10, decided 2026-09-23 (contract 0.38.0's SERVE-30): a compromised key is
+    // dropped and the catalogue re-signed at once; the overlap is for a PLANNED
+    // retirement only. Both end with a trust.json that drops a key the head
+    // delegated, and until 0.38.0 this module read both as a compromise — so
+    // R9b's retirement, on a day the catalogue was red, blocked the whole
+    // commit and the withdrawal list with it (ops couplings entry 20).
+    //
+    // The shape is R9b's: the head delegates the outgoing and the incoming key,
+    // the incoming one long past its seven hours, and the candidate drops the
+    // outgoing one. Only the record decides which kind of drop it is, and every
+    // way of not having one — none, the wrong key, a time not yet reached, a
+    // malformed file, a file that does not parse, a second drop it does not
+    // name — is a compromise.
+    const headTrust = trustDelegating([KEY_A, KEY_B]);
+    const candidateTrust = trustDelegating([KEY_B], 2);
+    const delegatedAt = new Map([[KEY_A, "2026-01-01T00:00:00Z"], [KEY_B, "2026-06-01T00:00:00Z"]]);
+    const now = "2026-09-19T00:00:00Z";
+    const record = (rows, extra = {}) => ({ schema: RETIREMENTS_SCHEMA, retirements: rows, ...extra });
+    const plan = (retirements, trusts = { headTrust, candidateTrust }) =>
+      keyPlan({ ...trusts, delegatedAt, available: [signerFor(KEY_B)], now, retirements });
+
+    const planned = plan({ record: record([{ key_id: KEY_A, retired_from: "2026-09-18T00:00:00Z" }]), problem: null });
+    assertEqual(planned.mode, "retirement", "a drop the record names from a time already reached is still a compromise");
+    assertEqual(planned.dropped.join(","), KEY_A, "the dropped key");
+    assertEqual(planned.retired.join(","), KEY_A, "the retired key");
+    assertEqual(planned.carryCatalogueAllowed, true, "a planned retirement may not carry a failing catalogue");
+    assertEqual(keyIdsOf(planned.index.signers), KEY_B, "the key that remains does not sign the catalogue");
+    assert(planned.notes.some((n) => n.includes("planned retirement") && n.includes(RETIREMENTS_PATH)),
+      `the run has to say it read the drop as a retirement, and from what: ${JSON.stringify(planned.notes)}`);
+    // Exactly the time: `retired_from` equal to `now` has been reached.
+    assertEqual(plan({ record: record([{ key_id: KEY_A, retired_from: now }]), problem: null }).mode, "retirement",
+      "a retirement is not in effect at the instant it names");
+
+    const compromises = [
+      ["no record at all", { record: null, problem: null }],
+      ["a record naming the other key", { record: record([{ key_id: KEY_B, retired_from: "2026-09-18T00:00:00Z" }]), problem: null }],
+      ["a retirement planned for a later time", { record: record([{ key_id: KEY_A, retired_from: "2026-09-19T00:00:01Z" }]), problem: null }],
+      ["a record under another schema", { record: { schema: "astra.registry.index-key-retirement/1", retirements: [{ key_id: KEY_A, retired_from: "2026-09-18T00:00:00Z" }] }, problem: null }],
+      ["a record with a member no record has", { record: record([{ key_id: KEY_A, retired_from: "2026-09-18T00:00:00Z" }], { reason: "planned" }), problem: null }],
+      ["a row with a member no row has", { record: record([{ key_id: KEY_A, retired_from: "2026-09-18T00:00:00Z", by: "operator" }]), problem: null }],
+      ["a time that is not §0.7's", { record: record([{ key_id: KEY_A, retired_from: "2026-02-30T00:00:00Z" }]), problem: null }],
+      ["a malformed row beside a good one", { record: record([{ key_id: KEY_A, retired_from: "2026-09-18T00:00:00Z" }, { retired_from: "2026-09-18T00:00:00Z" }]), problem: null }],
+      ["a record that does not parse", { record: undefined, problem: `${RETIREMENTS_PATH} at 000000000000 is not JSON (Unexpected end of JSON input)` }],
+    ];
+    for (const [what, retirements] of compromises) {
+      const p = plan(retirements);
+      assertEqual(p.mode, "compromise", `${what} read as ${p.mode}`);
+      assertEqual(p.carryCatalogueAllowed, false, `${what}: a compromise may carry a catalogue`);
+      assertEqual(p.retired.join(","), "", `${what}: a retired key was named`);
+    }
+    const malformed = plan(compromises[4][1]);
+    assert(malformed.notes.some((n) => n.includes("names nothing") && n.includes("reason")),
+      `a malformed record has to be named, not ignored: ${JSON.stringify(malformed.notes)}`);
+    // An unparseable record is a compromise by construction — it names no key —
+    // so the mode alone cannot show the run noticed it. The note is the proof.
+    const unparsed = plan(compromises[8][1]);
+    assert(unparsed.notes.some((n) => n.includes("names nothing") && n.includes("is not JSON")),
+      `a record that does not parse has to be named, not read as absent: ${JSON.stringify(unparsed.notes)}`);
+
+    // Two keys dropped, one planned: the other is a compromise, and one is enough.
+    const stranger = { key_id: "TEST-ONLY-DO-NOT-TRUST-stranger", public_key: testKeys[KEY_A].publicKeyB64 };
+    const three = { ...headTrust, signed: { ...headTrust.signed, index_keys: [...headTrust.signed.index_keys, stranger] } };
+    const both = plan({ record: record([{ key_id: KEY_A, retired_from: "2026-09-18T00:00:00Z" }]), problem: null },
+      { headTrust: three, candidateTrust });
+    assertEqual(both.mode, "compromise", "a second drop the record does not name was read as planned");
+    assertEqual(both.dropped.join(","), `${KEY_A},${stranger.key_id}`, "the dropped keys");
+
+    // And a record read on a day nothing is dropped changes nothing, but says
+    // so when it is malformed — the day of the retirement is too late to find out.
+    const quiet = plan(compromises[4][1], { headTrust: candidateTrust, candidateTrust });
+    assertEqual(quiet.mode, "normal", "a record with nothing dropped changed the mode");
+    assert(quiet.notes.some((n) => n.includes("names nothing")), "a malformed record was silent until the day it matters");
   });
 
   await test("one signer or two, and never both spellings at once", () => {

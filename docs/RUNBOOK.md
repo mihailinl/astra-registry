@@ -502,11 +502,13 @@ load-bearing rather than a courtesy: its window never started, because there
 was no `signed` branch when it was delegated.
 
 **The outgoing key keeps signing until R9b**, which now follows R5
-(OPEN-OWNER-27). Do not drop it earlier to tidy up: the trust.json that drops a
-key the head delegated is what `key-window.mjs` reads as compromise mode, and in
-that mode a catalogue whose gates fail is blocked rather than carried — which
-also withholds that run's withdrawal list, because one commit holds all four
-documents.
+(OPEN-OWNER-27). Do not drop it earlier to tidy up. A trust.json that drops a
+key the head delegated is read by `key-window.mjs` as **compromise mode** unless
+`policy/index-key-retirements.json` at the same commit records that key's
+planned retirement from a time already reached (§5.2 step 4; D10, decided
+2026-09-23). In compromise mode a catalogue whose gates fail is blocked rather
+than carried — which also withholds that run's withdrawal list, because one
+commit holds all four documents.
 
 ### 5.2 The planned rotation, step by step
 
@@ -530,9 +532,18 @@ documents.
 3. Commit the new `trust.json` to `main`. The next signer run publishes it and
    the dual signing above starts by itself.
 4. After the overlap, and **not before R9b**, a second root ceremony publishes a
-   `trust.json`, serial +1, with the outgoing key removed. Then remove
-   `ASTRA_INDEX_SIGNING_KEY_NEXT`/`_NEXT_ID` and promote the incoming seed into
-   `ASTRA_INDEX_SIGNING_KEY`.
+   `trust.json`, serial +1, with the outgoing key removed. **Commit it together
+   with `policy/index-key-retirements.json`** naming the outgoing key — exactly
+   `{"schema": "astra.registry.index-key-retirements/1", "retirements":
+   [{"key_id": "<outgoing>", "retired_from": "<a §0.7 time, not later than the
+   commit>"}]}`, a row appended if the file exists. That record is what makes
+   the drop a planned retirement rather than a compromise: without it, or with
+   it malformed, the signer reads the drop as compromise mode (§5.5), and a red
+   catalogue that day blocks the whole commit. With it, a red catalogue is
+   carried like any other day's, and the carry must still verify under the new
+   trust.json — it does, because the head's catalogue is dual-signed by then.
+   Then remove `ASTRA_INDEX_SIGNING_KEY_NEXT`/`_NEXT_ID` and promote the
+   incoming seed into `ASTRA_INDEX_SIGNING_KEY`.
 
 ### 5.3 Changing a root key (SERVE-92), in three steps and this order
 
@@ -555,21 +566,24 @@ reserve root, run a debug-profile daemon that trusts the test roots, and confirm
 the document verifies end to end. A ceremony first performed during an incident
 is a ceremony whose first failure is discovered by users.
 
-### 5.5 On suspicion: the compromise procedure is a PROPOSAL, not a decision
+### 5.5 On suspicion: the compromise procedure (D10, decided)
 
-**Read this before following anything in it.** What `tools/signer/key-window.mjs`
-implements, and what `SECURITY.md` §5.1 describes, is **D10 — this plan's
-proposal**. **OPEN-OWNER-25's compromise half has not been decided**, and the
-owner's answer may rewrite the procedure; R1 cannot exit without it
-(RC-R1-10(c)). Do not read the steps below as settled, and do not tidy this
-paragraph away: a decision written down as its expected branch is false from the
-moment it is typed, and nothing that runs later can tell.
+What `tools/signer/key-window.mjs` implements, and what `SECURITY.md` §5.1
+describes, is **D10**. OPEN-OWNER-25's compromise half was decided on
+2026-09-23 — D10 as proposed, by the coordinator at the owner's delegation — and
+published as contract 0.38.0's SERVE-30: **a compromised index key is dropped
+and the catalogue re-signed at once; SERVE-30's overlap is for a planned
+retirement only** (§5.2). Until that day this section was headed *a PROPOSAL,
+not a decision*, and it said so because a decision written down as its expected
+branch is false from the moment it is typed.
 
-The proposal, as implemented:
+The procedure, as implemented:
 
 - a root ceremony publishes a `trust.json`, serial +1, that **drops** the
-  compromised key. Dropping a key the head delegated is how the signer detects
-  compromise mode — there is no flag;
+  compromised key. Dropping a key the head delegated, with no
+  `policy/index-key-retirements.json` row naming it, is how the signer detects
+  compromise mode — there is no flag. **Commit no retirement row for a
+  compromised key**: the row is what turns a drop into a planned retirement;
 - in that mode the list is signed by the delegated key **alone**: there is no
   outgoing key to go first, because the outgoing key is the compromised one;
 - the seven-hour window is **waived**, and the catalogue is re-signed in the
@@ -581,11 +595,14 @@ The proposal, as implemented:
 - then follow `SECURITY.md` §5.1 — rotation alone undoes nothing already
   published.
 
-**A planned retirement has the same shape as a compromise**, and the detector
-cannot tell them apart: R9b's trust.json also drops a key the head delegated. On
-that day a catalogue whose gates fail is blocked rather than carried. This is
-left as it is on purpose, because narrowing it now would answer the owner's
-question on his behalf.
+**A planned retirement has the same shape as a compromise**, and until 0.38.0
+the detector could not tell them apart: R9b's trust.json also drops a key the
+head delegated, and on that day a catalogue whose gates failed would have been
+blocked rather than carried. It was left that way while D10 was a proposal,
+because narrowing it would have answered the owner's question on his behalf.
+Now the record in §5.2 step 4 tells them apart, and the default — no record,
+a record naming another key, a time not yet reached, a malformed file — is the
+compromise, because that is the direction whose mistake is loud.
 
 ### 5.6 Renewal, 2027 (ROLL-45)
 

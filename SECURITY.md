@@ -212,7 +212,11 @@ exists for.
    Dropping the key IS the cut-off, and its speed is the client's refresh
    interval — within 6 hours — not a date in a document.
    *Do not* give the compromised key an overlap window. Overlaps are for planned
-   rotations.
+   rotations — and *do not* name it in `policy/index-key-retirements.json`,
+   which is what tells the signer a drop is a planned retirement. Without a row
+   there, the signer reads the drop as a compromise and re-signs the catalogue
+   in the same run, with no seven-hour wait and no carry (D10, decided
+   2026-09-23; `docs/RUNBOOK.md` §5.5).
 
    This sentence used to say daemons stop "after its `not_after`", which was a
    cut-off nobody could have performed: there was no such field to move. The
