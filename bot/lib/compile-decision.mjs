@@ -453,9 +453,9 @@ export function nextAdvisoryId({ root = REPO_ROOT, year } = {}) {
  * SCOPE-7's fixed registry reason for an `A_*` code, out of the token file.
  *
  * `null` when the file carries `fixed_reasons: null`, which is where `main`
- * stands today: the token file's own `pending` record says the two strings land
- * with contract version ops.15, and §1.3 row 8.5 makes minice-be's half due at
- * R4a "before the first author yank".
+ * stood until contract 2.3.0 published the two strings (ops.15); §1.3 row 8.5
+ * makes minice-be's half due at R4a "before the first author yank". On `main`
+ * today a null means a token file that lost them.
  *
  * The caller must not turn that null into `reason_refused`. See
  * `compileDecision`: an unpublished string is a registry that does not yet know

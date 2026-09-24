@@ -24,9 +24,9 @@
 //
 // ── AND WHY `fixed_reasons` IS IN THE FIXTURES AND NOT ON `main` ───────────
 //
-// `schema/contract-tokens-v1.json` carries `fixed_reasons: null` until contract
-// version ops.15, so every fixture here writes the two strings and one test
-// asserts the other direction against the real repository.
+// `schema/contract-tokens-v1.json` carried `fixed_reasons: null` until contract
+// 2.3.0 (ops.15). Every fixture here writes its own two strings, so no test
+// here depends on `main`'s; `compile-decision.test.mjs` reads `main`'s.
 
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
