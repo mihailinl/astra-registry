@@ -96,9 +96,9 @@ function pagesFrom(dir, branch = "signed") {
 const okJudge = () => ({ ok: true, detail: "a stub" });
 
 /** One run of the command line, with the day's URLs sent to local bares. */
-async function push(argv, { to = {}, gitConfig = [], fetchImpl = null, judge = okJudge } = {}) {
+async function push(argv, { to = {}, gitConfig = [], fetchImpl = null, judge = okJudge, at = "2026-09-26T10:00:00Z" } = {}) {
   const lines = [];
-  let now = Date.parse("2026-09-26T10:00:00Z");
+  let now = Date.parse(at);
   const code = await main(argv, {
     gitConfig: [...redirect(to), ...gitConfig],
     fetchImpl,
@@ -290,6 +290,18 @@ export async function run() {
     assert(r.out.includes(`\`signed\`: step 1 (rotation/01-delegate) ${sha(1)}`), `status does not name step 1:\n${r.out}`);
     assert(/5 {2}rotation\/05-after-root +pending {2}TRUST-3 holds/.test(r.out), `status does not ask TRUST-3 of step 5:\n${r.out}`);
     assert(/Pages: serving step 1/.test(r.out), `status does not name the Pages step:\n${r.out}`);
+  });
+
+  await test("a step whose list has expired is refused before anything is pushed (SERVE-22; the hard end, 2026-09-29)", async () => {
+    const fresh = canary();
+    const late = await push(["--step", "0", "--skip-pages"], { to: { [CANARY_URL]: fresh }, at: "2026-09-29T00:00:00Z" });
+    assertEqual(late.code, 1, `at the list's expiry\n${late.out}`);
+    assert(/registry\/v1\/revocations\.json expired at 2026-09-29T00:00:00Z/.test(late.out), `the refusal does not name the list:\n${late.out}`);
+    assertEqual(refOf(fresh, "refs/heads/signed"), null, "an expired step was pushed");
+    const inTime = await push(["--step", "0", "--skip-pages"], { to: { [CANARY_URL]: fresh }, at: "2026-09-28T23:59:59Z" });
+    assertEqual(inTime.code, 0, `a second before the expiry\n${inTime.out}`);
+    const status = await push(["--status"], { to: { [CANARY_URL]: fresh }, at: "2026-09-30T00:00:00Z" });
+    assert(/hard end: .* 2026-09-29T00:00:00Z — PASSED/.test(status.out), `--status does not say the hard end passed:\n${status.out}`);
   });
 
   await test("the command line refuses what it cannot parse, with exit 2", async () => {

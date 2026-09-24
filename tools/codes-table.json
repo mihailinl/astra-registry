@@ -10,6 +10,11 @@
     "bot/lib/policy/constants.mjs"
   ],
   "codes": [
+    "A_STOP",
+    "A_WITHDRAW",
+    "A_YANK",
+    "B_ACCOUNT_INELIGIBLE",
+    "B_BINDING_INVALID",
     "B_BINDING_MALFORMED",
     "B_BINDING_UNUSABLE",
     "B_OWNER_CHANGED",
@@ -101,6 +106,9 @@
     "E_VERSION_INCONSISTENT",
     "E_VERSION_NOT_NEW",
     "E_WORKFLOW_NOT_ALLOWED",
+    "M_APPEAL",
+    "M_APPROVE",
+    "M_REJECT",
     "N_HOST_RPC_SCAN_SCOPE",
     "N_LISTING_LANGUAGE_EXEMPT",
     "P_APPROVAL_STALE",
@@ -119,9 +127,11 @@
     "P_SLA",
     "P_TRUSTED_AUTHOR",
     "P_UNKNOWN_PERMISSION",
+    "R_BINDING_CHANGED",
     "R_CHECK_HELD",
     "R_DISPLAY_NAME_COLLISION",
     "R_DISPLAY_NAME_MIXED_SCRIPT",
+    "R_FIRST_BINDING",
     "R_FIRST_LISTING",
     "R_HOST_RPC_IN_VENDOR_DIR",
     "R_IDENTITY_CHANGED",
@@ -136,16 +146,23 @@
     "W_LISTING_NAME_NOT_LATIN",
     "W_LOCALE_NO_CARD_TEXT",
     "W_LOCALE_STALE",
-    "W_MANIFEST_MODE_MISMATCH"
+    "W_MANIFEST_MODE_MISMATCH",
+    "W_REGISTRY_UNACKNOWLEDGED"
   ],
   "codes_owed": {
-    "owed_by": "reg.61a (registry plan B-T3.3b), which writes these codes' author-facing sentences into docs/POLICY.md",
-    "why": "FLOW-13 requires a title and a remedy per entry. These codes carry a level in `bot/lib/policy/constants.mjs`'s `BOUND_WORLD_CODES` and no title and no remedy anywhere in this repository. `policyCodeDef` synthesises `See docs/POLICY.md.` for them at emit time, which is the right answer in a comment and the wrong one in a published table three estates compile against.",
+    "owed_by": "a contract sentence per code (each reason below); raised by lane S10 on 2026-09-24",
+    "why": "FLOW-13 requires one full entry per reason code, and `fix` is a closed list naming what clears the code. For these the contract states no `fix`, or states that the table carries no row, so a row here would be this repository's answer to a contract question.",
     "codes": [
-      "B_BINDING_INVALID",
-      "B_ACCOUNT_INELIGIBLE",
-      "R_FIRST_BINDING",
-      "R_BINDING_CHANGED",
+      "A_BINDING_REVOKE",
+      "A_REMOVAL_REQUEST",
+      "M_YANK",
+      "M_DELIST",
+      "M_RELIST",
+      "M_DEPRECATE",
+      "M_REVOKE",
+      "M_UNREVOKE",
+      "M_BINDING_REVOKE",
+      "M_IDENTITY_RESET",
       "W_LEASE_EXPIRED",
       "W_ELIGIBILITY_UNREADABLE",
       "W_NOTICE_PENDING",
@@ -153,19 +170,75 @@
       "W_SERVICE_UNREACHABLE",
       "W_MODERATION_HOLD",
       "W_ALERT_UNDELIVERED",
-      "W_OPERATOR_WINDOW",
-      "W_REGISTRY_UNACKNOWLEDGED",
-      "M_APPROVE",
-      "M_REJECT",
-      "M_APPEAL",
-      "A_STOP",
-      "A_WITHDRAW",
-      "A_BINDING_REVOKE",
-      "A_REMOVAL_REQUEST",
-      "A_YANK"
-    ]
+      "W_OPERATOR_WINDOW"
+    ],
+    "each": {
+      "A_BINDING_REVOKE": "An act on a binding token, not on a release (ID-21; ID-61). The release it affects is answered `B_BINDING_UNUSABLE` (`new_tag`) or, under a new line, `R_BINDING_CHANGED` (`moderator`); no clause says what clears the revocation itself (proposed: level note, fix none)",
+      "A_REMOVAL_REQUEST": "FLOW-28 delists the listing; no clause says what brings it back. M_RELIST's categories (error, appeal_reversed, path_test) do not cover an author's own removal, and MIG-27 says a release cannot lift `unlisted` (proposed: level note, fix none; `moderator` if an author may ask for a relist)",
+      "M_YANK": "§7.2's listing action, a reason code in the token file (B.7: \"§7.2's other codes\") that no clause gives a `fix`; it acts on a listing rather than ending a submission (proposed: fix none — there is no un-yank, B.3)",
+      "M_DELIST": "§7.2's listing action, a reason code in the token file (B.7: \"§7.2's other codes\") that no clause gives a `fix`; it acts on a listing rather than ending a submission (proposed: fix moderator — an M_RELIST, MIG-27)",
+      "M_RELIST": "§7.2's listing action, a reason code in the token file (B.7: \"§7.2's other codes\") that no clause gives a `fix`; it acts on a listing rather than ending a submission (proposed: fix none)",
+      "M_DEPRECATE": "§7.2's listing action, a reason code in the token file (B.7: \"§7.2's other codes\") that no clause gives a `fix`; it acts on a listing rather than ending a submission (proposed: fix moderator — an M_UNREVOKE)",
+      "M_REVOKE": "§7.2's listing action, a reason code in the token file (B.7: \"§7.2's other codes\") that no clause gives a `fix`; it acts on a listing rather than ending a submission (proposed: fix moderator — an M_UNREVOKE)",
+      "M_UNREVOKE": "§7.2's listing action, a reason code in the token file (B.7: \"§7.2's other codes\") that no clause gives a `fix`; it acts on a listing rather than ending a submission (proposed: fix none)",
+      "M_BINDING_REVOKE": "§7.2's listing action, a reason code in the token file (B.7: \"§7.2's other codes\") that no clause gives a `fix`; it acts on a listing rather than ending a submission; §7.2: the next release gets `B_BINDING_UNUSABLE` (proposed: fix none on this code)",
+      "M_IDENTITY_RESET": "§7.2's listing action, a reason code in the token file (B.7: \"§7.2's other codes\") that no clause gives a `fix`; it acts on a listing rather than ending a submission; it clears `B_REPOSITORY_RECYCLED` and is cleared by nothing (proposed: fix none)",
+      "W_LEASE_EXPIRED": "B.7: FLOW-13's table lists \"the codes … and the waits only the service shows\"; this wait the bot reports in a result's `wait` or answers with no record (FLOW-72), and FLOW-10 shows every wait by its start, cause and earliest retry, never from the table. Whether it carries a row, and which `fix` a wait that clears itself would take, is a contract sentence (proposed: no row)",
+      "W_ELIGIBILITY_UNREADABLE": "B.7: FLOW-13's table lists \"the codes … and the waits only the service shows\"; this wait the bot reports in a result's `wait` or answers with no record (FLOW-72), and FLOW-10 shows every wait by its start, cause and earliest retry, never from the table. Whether it carries a row, and which `fix` a wait that clears itself would take, is a contract sentence (proposed: no row)",
+      "W_NOTICE_PENDING": "B.7: FLOW-13's table lists \"the codes … and the waits only the service shows\"; this wait the bot reports in a result's `wait` or answers with no record (FLOW-72), and FLOW-10 shows every wait by its start, cause and earliest retry, never from the table. Whether it carries a row, and which `fix` a wait that clears itself would take, is a contract sentence (proposed: no row)",
+      "W_GITHUB_RATE_LIMITED": "B.7: FLOW-13's table lists \"the codes … and the waits only the service shows\"; this wait the bot reports in a result's `wait` or answers with no record (FLOW-72), and FLOW-10 shows every wait by its start, cause and earliest retry, never from the table. Whether it carries a row, and which `fix` a wait that clears itself would take, is a contract sentence (proposed: no row)",
+      "W_SERVICE_UNREACHABLE": "B.7: FLOW-13's table lists \"the codes … and the waits only the service shows\"; this wait the bot reports in a result's `wait` or answers with no record (FLOW-72), and FLOW-10 shows every wait by its start, cause and earliest retry, never from the table. Whether it carries a row, and which `fix` a wait that clears itself would take, is a contract sentence (proposed: no row)",
+      "W_MODERATION_HOLD": "B.7: FLOW-13's table lists \"the codes … and the waits only the service shows\"; this wait the bot reports in a result's `wait` or answers with no record (FLOW-72), and FLOW-10 shows every wait by its start, cause and earliest retry, never from the table. Whether it carries a row, and which `fix` a wait that clears itself would take, is a contract sentence (proposed: no row)",
+      "W_ALERT_UNDELIVERED": "B.7: FLOW-13's table lists \"the codes … and the waits only the service shows\"; this wait the bot reports in a result's `wait` or answers with no record (FLOW-72), and FLOW-10 shows every wait by its start, cause and earliest retry, never from the table. Whether it carries a row, and which `fix` a wait that clears itself would take, is a contract sentence (proposed: no row)",
+      "W_OPERATOR_WINDOW": "B.7: FLOW-13's table lists \"the codes … and the waits only the service shows\"; this wait the bot reports in a result's `wait` or answers with no record (FLOW-72), and FLOW-10 shows every wait by its start, cause and earliest retry, never from the table. Whether it carries a row, and which `fix` a wait that clears itself would take, is a contract sentence (proposed: no row)"
+    }
   },
   "flow13_table": [
+    {
+      "code": "A_STOP",
+      "level": "error",
+      "stage": "policy",
+      "fix": "new_tag",
+      "panel_only": false,
+      "title": "Stopped by its author",
+      "remedy": "A stop was confirmed from this submission's notice link (TRUST-34), so none of its fingerprints publishes. A stop cannot be lifted, and this tag cannot be submitted again (FLOW-26): publish the release under a new tag."
+    },
+    {
+      "code": "A_WITHDRAW",
+      "level": "error",
+      "stage": "policy",
+      "fix": "new_tag",
+      "panel_only": false,
+      "title": "Withdrawn before it was checked",
+      "remedy": "The submission was withdrawn while it was `received` (FLOW-22), so nothing was checked or published. This tag cannot be submitted again (FLOW-26): publish the release under a new tag."
+    },
+    {
+      "code": "A_YANK",
+      "level": "note",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "Yanked at its author's own request",
+      "remedy": "The listing's bound account yanked these versions from the Astra plugins panel (FLOW-79). A yank cannot be undone by anyone, and installed copies keep running. A new version is listed as usual."
+    },
+    {
+      "code": "B_ACCOUNT_INELIGIBLE",
+      "level": "error",
+      "stage": "ownership",
+      "fix": "recheck",
+      "panel_only": true,
+      "title": "The account holding the binding token is not eligible to bind",
+      "remedy": "Shown only to the token's owner and to moderators; everyone else sees `B_BINDING_UNUSABLE` (ID-9). The token is sound and the Minice account that holds it is not eligible (DEC-11). The account's own eligibility clears it: once the account is eligible again, a Recheck of the same tag reads it afresh."
+    },
+    {
+      "code": "B_BINDING_INVALID",
+      "level": "error",
+      "stage": "ownership",
+      "fix": "new_tag",
+      "panel_only": true,
+      "title": "The binding token cannot be used for this repository",
+      "remedy": "Shown only to the token's owner and to moderators; everyone else sees `B_BINDING_UNUSABLE` (ID-9). The token on the tagged commit is unknown, revoked, expired or superseded, or was minted for another repository. Mint a fresh token for this repository in the Astra plugins panel, commit its line and push a new tag: the line is read at the attested commit (ID-22), so this tag cannot change."
+    },
     {
       "code": "B_BINDING_MALFORMED",
       "level": "error",
@@ -986,6 +1059,33 @@
       "remedy": "Call the Astra reusable release workflow and pin it by commit SHA (`uses: mihailinl/AstraPlugins/.github/workflows/plugin-release.yml@<sha>`). Verifying an attestation without pinning which workflow produced it proves only that GitHub built something. The allowed SHAs live in the root-signed `trust.json`; adding one is a root-key ceremony, not a pull request."
     },
     {
+      "code": "M_APPEAL",
+      "level": "note",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "An appeal was decided",
+      "remedy": "The outcome, `stands` or `reversed`, is recorded with the moderator's public reason and never the appeal's own text (MOD-32; MOD-33). A `reversed` appeal becomes a new decision; the one appealed stays in the log."
+    },
+    {
+      "code": "M_APPROVE",
+      "level": "pass",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "A moderator approved this submission",
+      "remedy": "Nothing to do. An approval clears holds and nothing else: every check runs again in the run that acts on it, and it never shortens a publication delay, a stop or a pending notice (DEC-6)."
+    },
+    {
+      "code": "M_REJECT",
+      "level": "error",
+      "stage": "policy",
+      "fix": "moderator",
+      "panel_only": false,
+      "title": "A moderator rejected this submission",
+      "remedy": "A Recheck does not reopen a rejection (FLOW-18). You can appeal it from the Astra plugins panel; if a moderator reverses the rejection on appeal, exactly one Recheck of this submission is opened (MOD-33)."
+    },
+    {
       "code": "N_HOST_RPC_SCAN_SCOPE",
       "level": "note",
       "stage": "rpc-scan",
@@ -1148,6 +1248,15 @@
       "remedy": "Check the spelling against POLICY.md's permission table. An unknown key grants nothing — the daemon default-denies — so it is reported rather than blocked, but a permission nobody can name is also a permission no consent sheet can describe."
     },
     {
+      "code": "R_BINDING_CHANGED",
+      "level": "review",
+      "stage": "policy",
+      "fix": "moderator",
+      "panel_only": false,
+      "title": "The binding token changed since this listing was bound",
+      "remedy": "The `astra-binding:` line at the tagged commit carries a different token from the one this listing's identity record holds (ID-41 row 6). The account that held the previous binding is told, and a moderator's approval publishes it only once the author objection window has passed since that account was told, or since its binding was revoked (ID-60; ID-61)."
+    },
+    {
       "code": "R_CHECK_HELD",
       "level": "review",
       "stage": "policy",
@@ -1173,6 +1282,15 @@
       "panel_only": false,
       "title": "The display name mixes alphabets",
       "remedy": "Held for a human. Write the name in one alphabet. A name that borrows a single Cyrillic or Greek letter for its Latin shape renders as a name it does not contain, and the id charset cannot catch it because the id is not the string on the card."
+    },
+    {
+      "code": "R_FIRST_BINDING",
+      "level": "review",
+      "stage": "policy",
+      "fix": "moderator",
+      "panel_only": false,
+      "title": "First binding line on a published listing — a moderator approves it once",
+      "remedy": "This listing was published before it had an identity record, and this release is the first to carry an `astra-binding:` line (MIG-10). A moderator approves it once; the approval then waits the operator's objection window like every approval (DEC-6). Once a release under this binding is published, later releases are not held for this again."
     },
     {
       "code": "R_FIRST_LISTING",
@@ -1308,6 +1426,15 @@
       "panel_only": false,
       "title": "A file's recorded mode differs from the archive's",
       "remedy": "The daemon applies the manifest's mode and refuses the mismatch, so this lists and then does not install. Rebuild."
+    },
+    {
+      "code": "W_REGISTRY_UNACKNOWLEDGED",
+      "level": "wait",
+      "stage": "shadow",
+      "fix": "registry",
+      "panel_only": true,
+      "title": "Awaiting an operator acknowledgement",
+      "remedy": "The registry changed its bot, and until an operator acknowledges that change the plugins service holds the bot's calls (TRUST-45). Nothing about this submission has been decided and nothing is lost; it continues once the change is acknowledged, with nothing for you to do."
     }
   ]
 }

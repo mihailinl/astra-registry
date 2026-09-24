@@ -1882,7 +1882,10 @@ const servesRemoteTree = (doc) => async (url) => {
   const found = Object.entries(doc.repositories).find(([slug, x]) => x.tree === "remote" && slug.toLowerCase() === asked);
   if (!found) return { kind: "unreachable", why: `${url}: no remote repository in the file is ${asked}` };
   const [, r] = found;
-  const jobs = Object.keys(r.environments).map((name, i) =>
+  // An environment the file says no workflow names gets no job here either:
+  // the canary's github-pages is deployed by GitHub's own Pages run, and a job
+  // naming it would be the SETTINGS_ENV_REASON_STALE the file's reason denies.
+  const jobs = Object.keys(r.environments).filter((name) => !r.environments[name].named_by_no_workflow).map((name, i) =>
     `  job${i}:\n    runs-on: ubuntu-24.04\n    environment: ${name}\n    steps:\n      - run: echo\n`).join("");
   return { kind: "files", branch: r.default_branch, files: [{ path: ".github/workflows/release.yml", text: `name: release\non: push\njobs:\n${jobs}` }] };
 };
@@ -1973,6 +1976,28 @@ test("repo-settings: BOT-88's test repository is read at its own `remote`, and A
   const red = await settingsRule({ get: servesSettings(widened), readRemote: serve });
   assert.deepEqual(red.codes, ["SETTINGS_ENV_DRIFT"], red.detail.join("\n"));
   assert.match(red.detail.join("\n"), /mihailinl\/astra-registry-canary: environment `canary-tag` branch_policies/);
+});
+
+test("repo-settings: the canary's Pages environment admits `signed` alone and no workflow names it (ROLL-60's rehearsal)", async () => {
+  // Pages on BOT-88's test repository serves the rehearsal's `signed` branch
+  // (tools/testkeys/rehearsal-push.mjs). Enabling it makes GitHub hold an
+  // environment `github-pages`; the file records it before that, so the
+  // canary names a drift instead of an unexpected environment.
+  const doc = settingsDoc();
+  const pages = doc.repositories["mihailinl/astra-registry-canary"].environments["github-pages"];
+  assert.ok(pages, "the canary's github-pages is not in the expectation");
+  assert.equal(pages.deployment_branch_policy, "custom");
+  assert.deepEqual(pages.branch_policies, [{ name: "signed", type: "branch" }], "the rehearsal's Pages admits more than `signed`");
+  assert.ok(pages.named_by_no_workflow, "the file does not say why no workflow names the canary's github-pages");
+  const r = await settingsRule({});
+  assert.equal(r.status, "green", r.detail.join("\n"));
+
+  // Watched: the policy widened on GitHub is red, naming the environment.
+  const widened = structuredClone(doc);
+  widened.repositories["mihailinl/astra-registry-canary"].environments["github-pages"].branch_policies = [{ name: "*", type: "branch" }];
+  const red = await settingsRule({ get: servesSettings(widened) });
+  assert.deepEqual(red.codes, ["SETTINGS_ENV_DRIFT"], red.detail.join("\n"));
+  assert.match(red.detail.join("\n"), /mihailinl\/astra-registry-canary: environment `github-pages` branch_policies/);
 });
 
 test("repo-settings: one wrong value in the file is red, naming it", async () => {

@@ -161,6 +161,30 @@ export const POLICY_CODES = {
       "clears it. Only a moderator's identity reset (`M_IDENTITY_RESET`) does, after which the next release is " +
       "reviewed as a first binding.",
   },
+  // The bound world's two holds (contract B.7; MIG-10; ID-41 row 6). They moved
+  // here from BOUND_WORLD_CODES below on 2026-09-24 with their FLOW-13 rows:
+  // B.7 makes every `R_*` a hold until approved (DEC-6), so `moderator`, and
+  // FLOW-11 reports every `R_*` at stage `policy`. Until then `decide()` folded
+  // them into `R_CHECK_HELD` in the legacy comment, and the published table
+  // owed them a title.
+  R_FIRST_BINDING: {
+    level: "review", stage: "policy", fix: "moderator",
+    title: "First binding line on a published listing — a moderator approves it once",
+    remedy:
+      "This listing was published before it had an identity record, and this release is the first to carry an " +
+      "`astra-binding:` line (MIG-10). A moderator approves it once; the approval then waits the operator's " +
+      "objection window like every approval (DEC-6). Once a release under this binding is published, later " +
+      "releases are not held for this again.",
+  },
+  R_BINDING_CHANGED: {
+    level: "review", stage: "policy", fix: "moderator",
+    title: "The binding token changed since this listing was bound",
+    remedy:
+      "The `astra-binding:` line at the tagged commit carries a different token from the one this listing's " +
+      "identity record holds (ID-41 row 6). The account that held the previous binding is told, and a " +
+      "moderator's approval publishes it only once the author objection window has passed since that account " +
+      "was told, or since its binding was revoked (ID-60; ID-61).",
+  },
   R_FIRST_LISTING: {
     level: "review", stage: "policy", fix: "moderator",
     title: "First listing — a person reads it, once, ever",
@@ -286,6 +310,69 @@ export const POLICY_CODES = {
     title: "What happens next, and by when",
     remedy: "See docs/POLICY.md. If this passes the stated deadline, say so on this issue — a missed SLA is a bug in the policy, not in your release.",
   },
+
+  // ── the decisions a moderator or an author makes through the panel ──────────
+  //
+  // Contract B.7's `M_*` and `A_*` codes that end or clear a SUBMISSION, and
+  // the author's yank, each of which the bot writes into a decision record's
+  // `reasons` (BOT-30; BOT-34; DEC-7) and the panel shows with FLOW-13's row.
+  // Stage `policy`, which is what `bot/lib/service-decide.mjs`'s `stageOf`
+  // reports for them in a result's reason (FLOW-11 fixes a stage only for `R_*`
+  // and `P_*`, and the bot falls back to `policy`), so the row the panel reads
+  // and the reason the bot reports name one stage. Each `fix` is the
+  // clause that says what clears it: an approval blocks nothing (DEC-6); a
+  // rejection is reopened only by a reversed appeal, a moderator's decision
+  // (FLOW-18; MOD-33); an appeal's outcome is final (MOD-32); a stop or a
+  // withdrawal ends its (`repository_id`, tag) for good, so only a new tag is
+  // judged again (FLOW-26; MOD-10 refuses to lift a stop); and a yank "cannot
+  // be undone by anyone" (FLOW-79; B.3). `A_BINDING_REVOKE`,
+  // `A_REMOVAL_REQUEST` and §7.2's listing actions are not here: the contract
+  // states no `fix` for them, so tools/gen-codes-table.mjs records them as
+  // owed, each with its reason.
+  M_APPROVE: {
+    level: "pass", stage: "policy", fix: "none",
+    title: "A moderator approved this submission",
+    remedy:
+      "Nothing to do. An approval clears holds and nothing else: every check runs again in the run that acts on " +
+      "it, and it never shortens a publication delay, a stop or a pending notice (DEC-6).",
+  },
+  M_REJECT: {
+    level: "error", stage: "policy", fix: "moderator",
+    title: "A moderator rejected this submission",
+    remedy:
+      "A Recheck does not reopen a rejection (FLOW-18). You can appeal it from the Astra plugins panel; if a " +
+      "moderator reverses the rejection on appeal, exactly one Recheck of this submission is opened (MOD-33).",
+  },
+  M_APPEAL: {
+    level: "note", stage: "policy", fix: "none",
+    title: "An appeal was decided",
+    remedy:
+      "The outcome, `stands` or `reversed`, is recorded with the moderator's public reason and never the " +
+      "appeal's own text (MOD-32; MOD-33). A `reversed` appeal becomes a new decision; the one appealed stays " +
+      "in the log.",
+  },
+  A_STOP: {
+    level: "error", stage: "policy", fix: "new_tag",
+    title: "Stopped by its author",
+    remedy:
+      "A stop was confirmed from this submission's notice link (TRUST-34), so none of its fingerprints " +
+      "publishes. A stop cannot be lifted, and this tag cannot be submitted again (FLOW-26): publish the " +
+      "release under a new tag.",
+  },
+  A_WITHDRAW: {
+    level: "error", stage: "policy", fix: "new_tag",
+    title: "Withdrawn before it was checked",
+    remedy:
+      "The submission was withdrawn while it was `received` (FLOW-22), so nothing was checked or published. " +
+      "This tag cannot be submitted again (FLOW-26): publish the release under a new tag.",
+  },
+  A_YANK: {
+    level: "note", stage: "policy", fix: "none",
+    title: "Yanked at its author's own request",
+    remedy:
+      "The listing's bound account yanked these versions from the Astra plugins panel (FLOW-79). A yank cannot " +
+      "be undone by anyone, and installed copies keep running. A new version is listed as usual.",
+  },
 };
 
 // ── the bound world's codes, declared for their LEVEL and nothing else ──────
@@ -355,11 +442,10 @@ const BOUND_WORLD_CODES = {
   B_OWNER_CHANGED: { level: "error" },
   B_REPOSITORY_RECYCLED: { level: "error" },
 
-  // The bound world's two holds. `R_IDENTITY_CHANGED` is NOT here: it is
-  // already a documented `POLICY_CODES` key, and a second declaration is a
-  // second answer to what its level is.
-  R_FIRST_BINDING: { level: "review" },
-  R_BINDING_CHANGED: { level: "review" },
+  // The bound world's two holds, `R_FIRST_BINDING` and `R_BINDING_CHANGED`,
+  // are documented `POLICY_CODES` keys since 2026-09-24, as
+  // `R_IDENTITY_CHANGED` always was, so they are not declared here: a second
+  // declaration is a second answer to what their level is.
 };
 
 /**
