@@ -64,7 +64,7 @@ Each is a mechanism that already exists; none is behaviour invented for the log.
 | **deprecate** | an advisory with `"action": "warn"` | yes | Badged, and the user is told. Nothing is blocked and nothing is stopped. |
 | **revoke** | an advisory with `"action": "block_install"` or `"disable"` | yes | `block_install`: new installs and updates refused, a running copy left alone. `disable`: also stopped, and it will not start again. |
 
-Three give it back, or record that somebody asked for it back (MOD-47). They
+Four give it back, or record that somebody asked for it back (MOD-47). They
 are in **this** log rather than a second one because a log that records only the
 taking overstates the estate's severity for ever: a reader who finds the delist
 and not the relist reads a listed plugin as withdrawn.
@@ -73,6 +73,7 @@ and not the relist reads a listed plugin as withdrawn.
 |---|---|---|
 | **relist** | `unlisted` removed — MOD-52's revert, or `M_RELIST` | `reverses` |
 | **unrevoke** | the advisory file deleted, and the effect lifted at a higher serial | `advisory`, `reverses` |
+| **reset** | `M_IDENTITY_RESET`, released from MOD-9's hold: DEC-7's voiding record, and `plugins/<id>/identity.json` deleted where it exists (ID-40), in one commit under `Service-Decision:` | `category` `identity_reset`, `service_decision_id`, and **no versions** |
 | **appeal** | nothing in the catalogue. It records a decided appeal (`M_APPEAL`; MOD-33) | `appeal_of`, `outcome`, and **no category** |
 
 An `appeal` entry never carries the appellant's text. PRIV-2 keeps report and
@@ -111,6 +112,7 @@ One per `M_*` decision, except `M_APPEAL`, which has none. `bot/lib/moderation.m
 | `deprecate` | privacy, broken, security_defect, licence, legal, path_test |
 | `revoke` | malicious, account_compromise, account_sanction, privacy, impersonation, security_defect, legal |
 | `relist`, `unrevoke` | error, appeal_reversed, path_test |
+| `reset` | identity_reset |
 | `appeal` | — |
 
 `author_request` on a `yank` is FLOW-79's: an author's own yank, taken in the
