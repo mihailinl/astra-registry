@@ -3,6 +3,8 @@
 //
 //     node tools/served-set/check.mjs --job main-vs-signed      # SERVE-85
 //     node tools/served-set/check.mjs --job served-vs-signed    # SERVE-39, SERVE-90
+//     node tools/served-set/check.mjs --job host-vs-signed      # SERVE-39, SERVE-52, INV-40
+//     node tools/served-set/check.mjs --job trust-runway        # ROLL-45
 //
 // This file reads the world and hands it to the decision modules beside it. It
 // holds no rule of its own, which is the split the rest of this estate uses
@@ -28,6 +30,7 @@ import { SIGNED_FILES, fetchSignedHead } from "../signer/plan.mjs";
 import { emit, finding, verdict } from "./report.mjs";
 import { SIGNER_WORKFLOW, gather, serve85 } from "./main-vs-signed.mjs";
 import { fetchServed, serve39 } from "./served-vs-signed.mjs";
+import { artifactNameFrom, extraPathVerdict, fetchHost, probeExtraPaths, probePaths, serve39Host } from "./host-vs-signed.mjs";
 import { runwayVerdict } from "./runway.mjs";
 import { actionsRunLookup, gitAncestry, provenance, runsInScope, signedCommits } from "./provenance.mjs";
 import fs from "node:fs";
@@ -129,6 +132,32 @@ async function servedVsSigned({ root, now, repo, token }) {
 }
 
 /**
+ * SERVE-39's catalogue-host half, and SERVE-52's and INV-40's path probes
+ * (RC-R2-3, commit (i)). Its own job rather than a second base handed to the
+ * Pages comparison, because the host has no latch and an expired list is one
+ * it must NOT serve; and it holds no token at all, which the Pages job cannot
+ * say, since SERVE-90's fallback needs `actions: read`.
+ *
+ * A refusal from `probeExtraPaths` — a base other than the host, a path that
+ * resolves elsewhere — is thrown rather than reported, and `main` turns it into
+ * `E_CHECK_CRASHED`: a list pointed at the origin is a defect in this code, and
+ * red is the only honest answer to it.
+ */
+async function hostVsSigned({ root, now }) {
+  const head = fetchSignedHead({ root });
+  const headClock = head.present ? gitText(["log", "-1", "--format=%cI", head.sha], { root }) : null;
+  const documents = serve39Host({ head, headClock, served: await fetchHost(), now });
+  const probes = await probeExtraPaths({ paths: probePaths(artifactNameFrom(head.documents?.index)) });
+  const paths = extraPathVerdict({ probes });
+  return verdict({
+    findings: [...documents.findings, ...paths.findings],
+    waiting: documents.waiting,
+    hexes: documents.hexes,
+    notes: [...documents.notes, ...paths.notes],
+  });
+}
+
+/**
  * ROLL-45's runway, on every trust document this estate can be asked for.
  *
  * Two copies, because they can differ and the difference is the interesting
@@ -185,6 +214,7 @@ async function trustRunway({ root, now }) {
 export const JOBS = {
   "main-vs-signed": mainVsSigned,
   "served-vs-signed": servedVsSigned,
+  "host-vs-signed": hostVsSigned,
   "trust-runway": trustRunway,
 };
 

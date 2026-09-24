@@ -1929,7 +1929,7 @@ const FLOORS = new Map(Object.entries({
   "signer.mjs": 26,
   "signer-run.mjs": 8,
   "rehearsal-r2.mjs": 14,
-  "served-set.mjs": 35,
+  "served-set.mjs": 41,
   "revocations.mjs": 24,
   "cli.mjs": 13,
   "root-delegation.mjs": 6,
