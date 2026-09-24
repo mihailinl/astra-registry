@@ -507,6 +507,7 @@ export function run({
   trailer = "",
   skipChecks = false,
   push = true,
+  dryRun = false,
   log = console.log,
 } = {}) {
   const abs = (p) => (path.isAbsolute(p) ? p : path.resolve(root, p));
@@ -591,6 +592,17 @@ export function run({
       return { outcome: "committed", attempts: attempt, touchedIds: [...state.touchedIds], queued: queued(), refusals };
     }
 
+    // `DRY_RUN` (registry plan B-T3.6 step 1): everything a publication does
+    // — the allow-list, the version rules, the five registry checks, the
+    // commit — and then the path list instead of the push. It is a
+    // production mode, not `--no-push` (which is this file's own tests', and
+    // which no workflow may pass): the outcome says `dry-run`, so nothing
+    // downstream can read it as a commit that landed.
+    if (dryRun) {
+      for (const f of git(root, ["show", "--name-only", "--format=", "HEAD"]).split("\n").filter(Boolean)) log(`would push  ${f}`);
+      return { outcome: "dry-run", attempts: attempt, touchedIds: [...state.touchedIds], queued: queued(), refusals };
+    }
+
     try {
       git(root, ["push", remote, `HEAD:${branch}`], { stdio: "pipe" });
       log(`pushed on attempt ${attempt}`);
@@ -660,6 +672,7 @@ function parseArgv(argv) {
     const a = argv[i];
     if (a === "--skip-checks") opts.skipChecks = true;
     else if (a === "--no-push") opts.push = false;
+    else if (a === "--dry-run") opts.dryRun = true;
     else if (flags[a]) opts[flags[a]] = argv[++i];
     else throw new Refusal(`unknown argument ${a}`);
   }
@@ -692,6 +705,7 @@ function record(result) {
 /** Every outcome `run` can return, and what the process exits with for it. */
 export const OUTCOMES = {
   committed: EXIT.ok,
+  "dry-run": EXIT.ok,
   nothing: EXIT.ok,
   refused: EXIT.refused,
   "checks-failed": EXIT.refused,

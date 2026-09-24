@@ -1,0 +1,26 @@
+{
+  "schema": "astra.plugins.bot-result/1",
+  "submission_id": "0192f1c2-3b4a-7c5d-8e6f-1a2b3c4d5e6f",
+  "attempt": "att-1",
+  "state": "refused",
+  "reasons": [
+    {
+      "code": "E_LICENSE_NOT_ALLOWED",
+      "stage": "metadata",
+      "location": null,
+      "message": "That licence is not on the allowlist"
+    }
+  ],
+  "decision_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "main_commit": "7777777777777777777777777777777777777777",
+  "plugin_id": "dice-roller",
+  "version": "0.2.0",
+  "tag": "v0.2.0",
+  "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "artifact_digests": [
+    "linux-x64:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  ],
+  "fingerprint": "476e6975802d8801",
+  "repository_id": "1203676452",
+  "repository_owner_id": "193032699"
+}

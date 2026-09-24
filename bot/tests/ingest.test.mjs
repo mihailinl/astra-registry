@@ -2696,6 +2696,110 @@ await test("no code reaches a comment without a declaration behind it", () => {
   console.log(`        ${emitted.size}/${Object.keys(CODES).length} codes exercised; not yet provoked: ${unseen.join(", ") || "none"}`);
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+
+section("the service path's split: verify never unpacks, check never names (B-T3.2)");
+
+const { verifyFacts, checkFacts } = await import("../ingest.mjs");
+const SVC_SID = "0192f1c2-3b4a-7c5d-8e6f-1a2b3c4d5e6f";
+const svcLease = { submission_id: SVC_SID, repo: REPO, tag: TAG, trigger: "poll", claimed_from: "received" };
+
+/** One `verify` run against a world assembled from the arguments. */
+async function verifyRun({ assets, certRepo = null, repoIds = null, ghFail = null, ownerFile = null } = {}) {
+  const github = fakeGitHub({ repo: REPO, tag: TAG, assets });
+  const assetsDir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-assets-"));
+  scratch.push(assetsDir);
+  const v = await verifyFacts({ lease: svcLease, root: REPO_ROOT, assetsDir, trustFile: TRUST_FILE }, {
+    rootKeys: TEST_ROOT_KEYS,
+    fetchRelease: github.fetchRelease.bind(github),
+    headAsset: github.headAsset.bind(github),
+    downloadAsset: github.downloadAsset.bind(github),
+    ghRunner: (args) => fakeGh({
+      repo: REPO, signerDigest: ALLOWED_WORKFLOW_SHA, certRepo, fail: ghFail, tag: TAG,
+      subjectDigest: crypto.createHash("sha256").update(fs.readFileSync(args[2])).digest("hex"),
+    })(args),
+    fetchRepositoryIds: async () => repoIds ?? { status: "found", id: FIXTURE_REPOSITORY_ID, owner_id: FIXTURE_OWNER_ID, full_name: REPO },
+    binding: {
+      commitInRepository: async () => ({ status: "found", reason: "HTTP 200" }),
+      fileAtCommit: async () => (ownerFile === null ? { status: "not_found", reason: "HTTP 404" } : { status: "found", reason: "HTTP 200", content: ownerFile }),
+    },
+    lastCommitTouching: async () => ({ status: "found", reason: "HTTP 200", commit: "9".repeat(40) }),
+    pullsForCommit: async () => ({ status: "found", reason: "HTTP 200", pulls: [4] }),
+    workflowRun: async () => ({ status: "found", reason: "HTTP 200", triggering_actor_id: FIXTURE_OWNER_ID }),
+  });
+  return { v, assetsDir };
+}
+
+await test("verify: a conforming release yields every identity value from the certificate, and the bytes on disk", async () => {
+  const { v, assetsDir } = await verifyRun({ assets: [conformingAsset()] });
+  assertEqual(v.outcome, "ok", JSON.stringify(v.findings.filter((f) => f.level === "error")));
+  assertEqual(v.plugin_id, "dice-roller", "the id comes from the attested asset name");
+  assertEqual(v.version, "0.2.0", "and the version");
+  assertEqual(v.repository_id, FIXTURE_REPOSITORY_ID, ".15");
+  assertEqual(v.repository_owner_id, FIXTURE_OWNER_ID, ".17");
+  assertEqual(v.repo, REPO, ".12");
+  assertEqual(v.commit, "a".repeat(40), ".13");
+  assertEqual(v.binding.outcome, "none", "no owner file, no line");
+  assert(/^[0-9a-f]{16}$/.test(v.fingerprint), "a fingerprint");
+  const onDisk = fs.readdirSync(path.join(assetsDir, SVC_SID));
+  assert(onDisk.includes(bundleName()), `the verified bytes are left for check: ${onDisk.join(", ")}`);
+  assert(onDisk.includes("verify-outcome.txt"), "and the upload is never empty");
+});
+
+await test("verify: a certificate naming another repository id than the download's writes nothing and alerts (BOT-21)", async () => {
+  const { v } = await verifyRun({ assets: [conformingAsset()], repoIds: { status: "found", id: "999", owner_id: FIXTURE_OWNER_ID, full_name: REPO } });
+  assertEqual(v.outcome, "alert", JSON.stringify(v));
+  assertEqual(v.code, "E_ATTESTATION_REPO_MISMATCH", "the two repositories cannot both have produced one artifact");
+});
+
+await test("verify: agreeing ids under another name are a rename for the identity comparison, not a refusal", async () => {
+  const { v } = await verifyRun({ assets: [conformingAsset()], certRepo: "a-stranger/dice-roller-old" });
+  assertEqual(v.outcome, "ok", JSON.stringify(v.findings));
+  assertEqual(v.repo, "a-stranger/dice-roller-old", "`.12` is what the listing will be compared under (TRUST-23; ID-41)");
+});
+
+await test("verify: no attestation is a refusal; a transient id read is a wait (FLOW-72)", async () => {
+  const missing = await verifyRun({ assets: [conformingAsset()], ghFail: "HTTP 404: Not Found (no attestations found)" });
+  assertEqual(missing.v.outcome, "refuse", JSON.stringify(missing.v));
+  assertEqual(missing.v.code, "E_ATTESTATION_MISSING", "the author's fix, named");
+  const transient = await verifyRun({ assets: [conformingAsset()], repoIds: { status: "transient", reason: "HTTP 403 with rate-limit headers" } });
+  assertEqual(transient.v.outcome, "wait", JSON.stringify(transient.v));
+  assertEqual(transient.v.code, "W_GITHUB_RATE_LIMITED", "a read that did not happen is not a difference");
+});
+
+await test("verify: a binding line at the attested commit, with ID-63's and MIG-31's reads beside it", async () => {
+  const token = "Abcdefghijklmnopqrstuv0123";
+  const { v } = await verifyRun({ assets: [conformingAsset()], ownerFile: `astra-binding: ${token}\n` });
+  assertEqual(v.binding.outcome, "one", JSON.stringify(v.binding));
+  assertEqual(v.binding.token_hash, crypto.createHash("sha256").update(token).digest("hex").slice(0, 16), "§0.7's token_hash");
+  assertEqual(v.owner_file.commit, "9".repeat(40), "ID-63's owner-file commit");
+  assertEqual(v.owner_file.pull_request, true, "and whether a pull request carried it");
+  assertEqual(v.actor.triggering_actor_id, FIXTURE_OWNER_ID, "MIG-31's actor");
+});
+
+await test("check: the facts file carries codes and levels and nothing that names anything; the card is derived under `.12`", async () => {
+  const { v, assetsDir } = await verifyRun({ assets: [conformingAsset()] });
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-check-"));
+  scratch.push(out);
+  const { facts } = await checkFacts({ submissionId: SVC_SID, assetsDir: path.join(assetsDir, SVC_SID), verified: v, out, root: REPO_ROOT });
+  assertEqual(facts.findings.filter((f) => f.level === "error").length, 0, JSON.stringify(facts.findings));
+  for (const f of facts.findings) assertEqual(Object.keys(f).sort().join(","), "code,level", "no `where`, no `message`");
+  const written = JSON.parse(fs.readFileSync(path.join(out, "facts.json"), "utf8"));
+  assertEqual(written.plugin_id, "dice-roller", "facts.json on disk");
+  const plugin = JSON.parse(fs.readFileSync(path.join(out, "listing", "plugins", "dice-roller", "plugin.json"), "utf8"));
+  assertEqual(plugin.source.repo, REPO, "the card is derived under verify's name");
+});
+
+await test("check: a reserved id is refused on the service path too", async () => {
+  const asset = conformingAsset({ id: "moderation" });
+  const { v, assetsDir } = await verifyRun({ assets: [asset] });
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-check-"));
+  scratch.push(out);
+  const { facts } = await checkFacts({ submissionId: SVC_SID, assetsDir: path.join(assetsDir, SVC_SID), verified: v, out, root: REPO_ROOT });
+  assert(facts.findings.some((f) => f.level === "error" && f.code.startsWith("E_ID_RESERVED")), JSON.stringify(facts.findings));
+  assert(fs.existsSync(path.join(out, "listing")), "the listing upload still has its directory");
+});
+
 // ── result ──────────────────────────────────────────────────────────────────
 
 console.log();
