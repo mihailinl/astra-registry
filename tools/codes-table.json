@@ -3,13 +3,16 @@
     "FLOW-13's reason-code table, emitted by tools/gen-codes-table.mjs from the two files in `codes_source` and from nothing else.",
     "This file is an INTERMEDIATE and not the published interface. The published one is FLOW-13's table inside SCOPE-7's `schema/contract-tokens-v1.json`, where astra-plugins-ops `tools/contract-tokens.mjs --codes <this file>` merges it (0.13.0's n8).",
     "`codes` is the complete list of every code name those sources define. It is here so the merge can compare the table with the population in BOTH directions: without it a deleted row is indistinguishable from a code that does not exist, which was watched, and passed.",
-    "`codes_owed` names the B.7 codes this table cannot carry yet and who owes their title and remedy. An absent code is recorded, never silently dropped."
+    "`codes_owed` names the B.7 codes this table cannot carry yet and who owes their title and remedy. An absent code is recorded, never silently dropped.",
+    "`codes_absent` names the B.7 codes that have no row because the contract gives them none: the waits the bot reports, which FLOW-10 renders from the result and not from this table."
   ],
   "codes_source": [
     "bot/lib/codes.mjs",
     "bot/lib/policy/constants.mjs"
   ],
   "codes": [
+    "A_BINDING_REVOKE",
+    "A_REMOVAL_REQUEST",
     "A_STOP",
     "A_WITHDRAW",
     "A_YANK",
@@ -108,7 +111,15 @@
     "E_WORKFLOW_NOT_ALLOWED",
     "M_APPEAL",
     "M_APPROVE",
+    "M_BINDING_REVOKE",
+    "M_DELIST",
+    "M_DEPRECATE",
+    "M_IDENTITY_RESET",
     "M_REJECT",
+    "M_RELIST",
+    "M_REVOKE",
+    "M_UNREVOKE",
+    "M_YANK",
     "N_HOST_RPC_SCAN_SCOPE",
     "N_LISTING_LANGUAGE_EXEMPT",
     "P_APPROVAL_STALE",
@@ -150,19 +161,14 @@
     "W_REGISTRY_UNACKNOWLEDGED"
   ],
   "codes_owed": {
-    "owed_by": "a contract sentence per code (each reason below); raised by lane S10 on 2026-09-24",
-    "why": "FLOW-13 requires one full entry per reason code, and `fix` is a closed list naming what clears the code. For these the contract states no `fix`, or states that the table carries no row, so a row here would be this repository's answer to a contract question.",
+    "owed_by": "the contract sentence each code's reason names",
+    "why": "FLOW-13 requires one full entry per reason code, and `fix` is a closed list naming what clears the code. For an owed code the contract states no `fix`, so a row here would be this repository's answer to a contract question.",
+    "codes": [],
+    "each": {}
+  },
+  "codes_absent": {
+    "why": "B.7: FLOW-13's table lists \"the codes … and the waits only the service shows\". Each of these is a wait the bot reports, in a result's `wait` or by answering with no record (FLOW-72). FLOW-10 shows every wait by its start, cause and earliest retry, never from the table. So none of them carries a row, and each is recorded here so that it does not read as dropped.",
     "codes": [
-      "A_BINDING_REVOKE",
-      "A_REMOVAL_REQUEST",
-      "M_YANK",
-      "M_DELIST",
-      "M_RELIST",
-      "M_DEPRECATE",
-      "M_REVOKE",
-      "M_UNREVOKE",
-      "M_BINDING_REVOKE",
-      "M_IDENTITY_RESET",
       "W_LEASE_EXPIRED",
       "W_ELIGIBILITY_UNREADABLE",
       "W_NOTICE_PENDING",
@@ -173,27 +179,35 @@
       "W_OPERATOR_WINDOW"
     ],
     "each": {
-      "A_BINDING_REVOKE": "An act on a binding token, not on a release (ID-21; ID-61). The release it affects is answered `B_BINDING_UNUSABLE` (`new_tag`) or, under a new line, `R_BINDING_CHANGED` (`moderator`); no clause says what clears the revocation itself (proposed: level note, fix none)",
-      "A_REMOVAL_REQUEST": "FLOW-28 delists the listing; no clause says what brings it back. M_RELIST's categories (error, appeal_reversed, path_test) do not cover an author's own removal, and MIG-27 says a release cannot lift `unlisted` (proposed: level note, fix none; `moderator` if an author may ask for a relist)",
-      "M_YANK": "§7.2's listing action, a reason code in the token file (B.7: \"§7.2's other codes\") that no clause gives a `fix`; it acts on a listing rather than ending a submission (proposed: fix none — there is no un-yank, B.3)",
-      "M_DELIST": "§7.2's listing action, a reason code in the token file (B.7: \"§7.2's other codes\") that no clause gives a `fix`; it acts on a listing rather than ending a submission (proposed: fix moderator — an M_RELIST, MIG-27)",
-      "M_RELIST": "§7.2's listing action, a reason code in the token file (B.7: \"§7.2's other codes\") that no clause gives a `fix`; it acts on a listing rather than ending a submission (proposed: fix none)",
-      "M_DEPRECATE": "§7.2's listing action, a reason code in the token file (B.7: \"§7.2's other codes\") that no clause gives a `fix`; it acts on a listing rather than ending a submission (proposed: fix moderator — an M_UNREVOKE)",
-      "M_REVOKE": "§7.2's listing action, a reason code in the token file (B.7: \"§7.2's other codes\") that no clause gives a `fix`; it acts on a listing rather than ending a submission (proposed: fix moderator — an M_UNREVOKE)",
-      "M_UNREVOKE": "§7.2's listing action, a reason code in the token file (B.7: \"§7.2's other codes\") that no clause gives a `fix`; it acts on a listing rather than ending a submission (proposed: fix none)",
-      "M_BINDING_REVOKE": "§7.2's listing action, a reason code in the token file (B.7: \"§7.2's other codes\") that no clause gives a `fix`; it acts on a listing rather than ending a submission; §7.2: the next release gets `B_BINDING_UNUSABLE` (proposed: fix none on this code)",
-      "M_IDENTITY_RESET": "§7.2's listing action, a reason code in the token file (B.7: \"§7.2's other codes\") that no clause gives a `fix`; it acts on a listing rather than ending a submission; it clears `B_REPOSITORY_RECYCLED` and is cleared by nothing (proposed: fix none)",
-      "W_LEASE_EXPIRED": "B.7: FLOW-13's table lists \"the codes … and the waits only the service shows\"; this wait the bot reports in a result's `wait` or answers with no record (FLOW-72), and FLOW-10 shows every wait by its start, cause and earliest retry, never from the table. Whether it carries a row, and which `fix` a wait that clears itself would take, is a contract sentence (proposed: no row)",
-      "W_ELIGIBILITY_UNREADABLE": "B.7: FLOW-13's table lists \"the codes … and the waits only the service shows\"; this wait the bot reports in a result's `wait` or answers with no record (FLOW-72), and FLOW-10 shows every wait by its start, cause and earliest retry, never from the table. Whether it carries a row, and which `fix` a wait that clears itself would take, is a contract sentence (proposed: no row)",
-      "W_NOTICE_PENDING": "B.7: FLOW-13's table lists \"the codes … and the waits only the service shows\"; this wait the bot reports in a result's `wait` or answers with no record (FLOW-72), and FLOW-10 shows every wait by its start, cause and earliest retry, never from the table. Whether it carries a row, and which `fix` a wait that clears itself would take, is a contract sentence (proposed: no row)",
-      "W_GITHUB_RATE_LIMITED": "B.7: FLOW-13's table lists \"the codes … and the waits only the service shows\"; this wait the bot reports in a result's `wait` or answers with no record (FLOW-72), and FLOW-10 shows every wait by its start, cause and earliest retry, never from the table. Whether it carries a row, and which `fix` a wait that clears itself would take, is a contract sentence (proposed: no row)",
-      "W_SERVICE_UNREACHABLE": "B.7: FLOW-13's table lists \"the codes … and the waits only the service shows\"; this wait the bot reports in a result's `wait` or answers with no record (FLOW-72), and FLOW-10 shows every wait by its start, cause and earliest retry, never from the table. Whether it carries a row, and which `fix` a wait that clears itself would take, is a contract sentence (proposed: no row)",
-      "W_MODERATION_HOLD": "B.7: FLOW-13's table lists \"the codes … and the waits only the service shows\"; this wait the bot reports in a result's `wait` or answers with no record (FLOW-72), and FLOW-10 shows every wait by its start, cause and earliest retry, never from the table. Whether it carries a row, and which `fix` a wait that clears itself would take, is a contract sentence (proposed: no row)",
-      "W_ALERT_UNDELIVERED": "B.7: FLOW-13's table lists \"the codes … and the waits only the service shows\"; this wait the bot reports in a result's `wait` or answers with no record (FLOW-72), and FLOW-10 shows every wait by its start, cause and earliest retry, never from the table. Whether it carries a row, and which `fix` a wait that clears itself would take, is a contract sentence (proposed: no row)",
-      "W_OPERATOR_WINDOW": "B.7: FLOW-13's table lists \"the codes … and the waits only the service shows\"; this wait the bot reports in a result's `wait` or answers with no record (FLOW-72), and FLOW-10 shows every wait by its start, cause and earliest retry, never from the table. Whether it carries a row, and which `fix` a wait that clears itself would take, is a contract sentence (proposed: no row)"
+      "W_LEASE_EXPIRED": "FLOW-10 renders it; B.7 gives the table only service-only waits",
+      "W_ELIGIBILITY_UNREADABLE": "FLOW-10 renders it; B.7 gives the table only service-only waits",
+      "W_NOTICE_PENDING": "FLOW-10 renders it; B.7 gives the table only service-only waits",
+      "W_GITHUB_RATE_LIMITED": "FLOW-10 renders it; B.7 gives the table only service-only waits",
+      "W_SERVICE_UNREACHABLE": "FLOW-10 renders it; B.7 gives the table only service-only waits",
+      "W_MODERATION_HOLD": "FLOW-10 renders it; B.7 gives the table only service-only waits",
+      "W_ALERT_UNDELIVERED": "FLOW-10 renders it; B.7 gives the table only service-only waits",
+      "W_OPERATOR_WINDOW": "FLOW-10 renders it; B.7 gives the table only service-only waits"
     }
   },
   "flow13_table": [
+    {
+      "code": "A_BINDING_REVOKE",
+      "level": "note",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "Binding revoked by its bound account",
+      "remedy": "The listing's bound account revoked its binding token from the Astra plugins panel (ID-17). Nothing needs clearing. From the next verdict a release still carrying the old line is refused `B_BINDING_UNUSABLE`, and one carrying a fresh token's line is held for a moderator as a changed binding (`R_BINDING_CHANGED`)."
+    },
+    {
+      "code": "A_REMOVAL_REQUEST",
+      "level": "note",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "Removal requested by its author",
+      "remedy": "The listing's author asked from the Astra plugins panel for it to be removed (FLOW-28). From the bound account it is delisted at once: it leaves the catalogue and gets no updates, and installed copies are not removed. For a listing with no bound account the request is held, and a moderator decides it (MOD-9). Only a moderator lists a plugin again; to ask for that, send a report from the panel's report page."
+    },
     {
       "code": "A_STOP",
       "level": "error",
@@ -1077,6 +1091,42 @@
       "remedy": "Nothing to do. An approval clears holds and nothing else: every check runs again in the run that acts on it, and it never shortens a publication delay, a stop or a pending notice (DEC-6)."
     },
     {
+      "code": "M_BINDING_REVOKE",
+      "level": "warn",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "A moderator revoked this repository's binding token",
+      "remedy": "A moderator revoked the binding token this repository is bound with (ID-17). Listed versions are not touched. Nothing clears this code: the next release is refused `B_BINDING_UNUSABLE` (§7.2), and that code says what clears it."
+    },
+    {
+      "code": "M_DELIST",
+      "level": "error",
+      "stage": "policy",
+      "fix": "moderator",
+      "panel_only": false,
+      "title": "A moderator delisted this plugin",
+      "remedy": "The plugin leaves the catalogue and gets no updates, and installed copies keep running (§7.2). A new release does not list it again. You can appeal from the Astra plugins panel (MOD-31); only a moderator's relist (`M_RELIST`) brings it back."
+    },
+    {
+      "code": "M_DEPRECATE",
+      "level": "warn",
+      "stage": "policy",
+      "fix": "moderator",
+      "panel_only": false,
+      "title": "A moderator deprecated these versions",
+      "remedy": "A moderator published an advisory with action `warn` for these versions (§7.2). They stay listed and installable: Astra badges them and tells the user, and blocks and stops nothing. The advisory stands until a moderator lifts it (`M_UNREVOKE`). You can appeal from the Astra plugins panel (MOD-31)."
+    },
+    {
+      "code": "M_IDENTITY_RESET",
+      "level": "note",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "A moderator reset this listing's recorded identity",
+      "remedy": "A moderator voided every identity this plugin id had recorded, and deleted its identity record where it had one (§7.2; ID-40). Like every reversal, it was held and confirmed by the registry's operator before it applied (MOD-9). It clears `B_REPOSITORY_RECYCLED` for the identities it voided, and nothing clears it. The listing is now frozen: its next release needs a binding line, and is held for a moderator as a first binding."
+    },
+    {
       "code": "M_REJECT",
       "level": "error",
       "stage": "policy",
@@ -1084,6 +1134,42 @@
       "panel_only": false,
       "title": "A moderator rejected this submission",
       "remedy": "A Recheck does not reopen a rejection (FLOW-18). You can appeal it from the Astra plugins panel; if a moderator reverses the rejection on appeal, exactly one Recheck of this submission is opened (MOD-33)."
+    },
+    {
+      "code": "M_RELIST",
+      "level": "note",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "A moderator listed this plugin again",
+      "remedy": "A moderator lifted the plugin's delisting (§7.2). Like every reversal, it was held and confirmed by the registry's operator before it applied (MOD-9). The plugin is back in the catalogue and gets updates again. Nothing to do."
+    },
+    {
+      "code": "M_REVOKE",
+      "level": "error",
+      "stage": "policy",
+      "fix": "moderator",
+      "panel_only": false,
+      "title": "A moderator revoked these versions",
+      "remedy": "A moderator published an advisory for these versions (§7.2). With action `block_install`, Astra refuses new installs and updates and leaves a running copy alone; with `disable`, it also stops installed copies, and they do not start again. The advisory stands until a moderator lifts it (`M_UNREVOKE`). You can appeal from the Astra plugins panel (MOD-31)."
+    },
+    {
+      "code": "M_UNREVOKE",
+      "level": "note",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "A moderator lifted an advisory",
+      "remedy": "A moderator deleted the advisory that deprecated or revoked these versions (§7.2). Like every reversal, it was held and confirmed by the registry's operator before it applied (MOD-9). Its effect lifts on each machine at the withdrawal list's next higher serial. Nothing to do."
+    },
+    {
+      "code": "M_YANK",
+      "level": "error",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "A moderator yanked these versions",
+      "remedy": "These versions leave the catalogue and are no longer offered, and installed copies keep running (§7.2). A yank cannot be undone by anyone (B.3): an appeal is recorded, but no decision brings these versions back (MOD-10). A later release is judged like any other."
     },
     {
       "code": "N_HOST_RPC_SCAN_SCOPE",

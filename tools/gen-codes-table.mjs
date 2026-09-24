@@ -99,10 +99,50 @@ const B7_FIXES = {
   W_REGISTRY_UNACKNOWLEDGED: "registry",
 };
 
+// The level and `fix` decided for the ten codes the contract gives no `fix`.
+// The coordinator decided each `fix` under the owner's standing grant of
+// 2026-09-23, adopting lane S10's proposals. It also decided both `A_*` levels.
+// Lane S15 chose the `M_*` levels from `bot/lib/codes.mjs`'s own definitions,
+// on 2026-09-24:
+//   * `error` where the versions or the listing stop being offered (§7.2:
+//     `yanked`, `unlisted`; an advisory that refuses or stops);
+//   * `warn` where the listing stays listed and says so (an advisory `warn`,
+//     "badged"; a revoked token, whose next release answers with its own code);
+//   * `note` for a reversal or a reset, which report something done.
+// They are held apart from B7_FIXES because they are a decision, not a
+// contract sentence. The day a contract version states one, it moves to
+// B7_FIXES with its clause.
+const DECIDED = {
+  A_BINDING_REVOKE: { level: "note", fix: "none" },
+  A_REMOVAL_REQUEST: { level: "note", fix: "none" },
+  M_YANK: { level: "error", fix: "none" },
+  M_DELIST: { level: "error", fix: "moderator" },
+  M_RELIST: { level: "note", fix: "none" },
+  M_DEPRECATE: { level: "warn", fix: "moderator" },
+  M_REVOKE: { level: "error", fix: "moderator" },
+  M_UNREVOKE: { level: "note", fix: "none" },
+  M_BINDING_REVOKE: { level: "warn", fix: "none" },
+  M_IDENTITY_RESET: { level: "note", fix: "none" },
+};
+
+// One `warn` a moderator lifts. The rule in `build()` reads `warn` as a check
+// finding: it blocks nothing, so nothing clears it. §7.2's `M_DEPRECATE` is not
+// a finding. It writes an advisory `warn` ("badged"), and the daemon's
+// `RevocationAction::Warn` badges and does nothing else (contract 2.14.0), so
+// the listing stays listed, which is `warn`. That advisory stands until a
+// moderator's `M_UNREVOKE` deletes it (§7.2), which is `moderator`. The
+// selftest holds this list to the token file's §7.2 cells that write an
+// advisory `warn`, so a second entry needs a second such cell.
+const WARN_A_MODERATOR_LIFTS = ["M_DEPRECATE"];
+
 /** SCOPE-7's token file, read by the selftest alone for B.7's population. */
 const TOKEN_FILE = "schema/contract-tokens-v1.json";
 /** 38 reason codes and waits at contract 2.7.0. */
 const TOKEN_CODE_FLOOR = 30;
+/** The waits the token file gives the registry: eight at contract 2.14.0. */
+const REPORTED_WAIT_FLOOR = 8;
+/** The parties that mean "the bot reports it" in a token-file entry's `emitter`. */
+const OURS = ["registry", "bot"];
 
 // FLOW-15: a remedy on the service path may not tell an author to comment, to
 // `/recheck`, or to say anything "in the issue" — on that path there is no
@@ -112,66 +152,50 @@ const TOKEN_CODE_FLOOR = 30;
 // ROLL-44 by FLOW-15's own Check line.
 const CHANNEL = /\/recheck|comment|in the issue/i;
 
-// B.7 names codes this table cannot carry yet, and the absence is recorded
-// rather than left to be discovered: an owed code is listed by name, with its
-// own reason, and this program neither invents a row nor pretends the code does
-// not exist. The selftest reads the population from the token file, so a B.7
-// code that is neither a row nor owed is red.
+/** Why a wait the bot reports carries no row, verbatim for each (lane S15, 2026-09-24). */
+const WAIT_ABSENT_REASON = "FLOW-10 renders it; B.7 gives the table only service-only waits";
+
+// B.7 names codes this table might not carry, and each absence is recorded
+// rather than left to be discovered. The selftest reads the population from the
+// token file, so a B.7 code that is neither a row, nor owed, nor recorded absent
+// is red. There are two kinds of absence, kept apart:
+//
+//   * **owed**: the code needs a row, and a contract sentence it waits on is
+//     missing. Each owed code names its own reason.
+//   * **absent**: the code has no row, and the contract says so. The only such
+//     codes are B.7's waits that the bot reports.
 //
 // Until 2026-09-24 twenty-one codes were owed to reg.61a (registry plan
 // B-T3.3b), which landed as #271 and wrote none of them. Lane S10 wrote the
-// thirteen whose `fix` a contract clause states (`bot/lib/policy/constants.mjs`,
-// `PANEL_CODES` in `bot/lib/codes.mjs`, and docs/POLICY.md §6). What is still
-// owed is owed to a contract sentence, not to a writer: each reason says which.
-const WAIT_NO_ROW =
-  "B.7: FLOW-13's table lists \"the codes … and the waits only the service shows\"; this wait the bot " +
-  "reports in a result's `wait` or answers with no record (FLOW-72), and FLOW-10 shows every wait by its " +
-  "start, cause and earliest retry, never from the table. Whether it carries a row, and which `fix` a wait " +
-  "that clears itself would take, is a contract sentence (proposed: no row)";
-const LISTING_ACTION =
-  "§7.2's listing action, a reason code in the token file (B.7: \"§7.2's other codes\") that no clause gives " +
-  "a `fix`; it acts on a listing rather than ending a submission";
+// thirteen whose `fix` a contract clause states (#336). Lane S15 wrote the ten
+// whose level and `fix` are DECIDED above, and recorded the eight waits as
+// absent. Nothing is owed at this commit. The member stays, so that the next
+// code a contract version adds without a `fix` has a place that is not a row.
 const OWED = {
-  owed_by: "a contract sentence per code (each reason below); raised by lane S10 on 2026-09-24",
+  owed_by: "the contract sentence each code's reason names",
   why:
     "FLOW-13 requires one full entry per reason code, and `fix` is a closed list naming what clears the code. " +
-    "For these the contract states no `fix`, or states that the table carries no row, so a row here would be " +
-    "this repository's answer to a contract question.",
-  codes: [
-    "A_BINDING_REVOKE", "A_REMOVAL_REQUEST",
-    "M_YANK", "M_DELIST", "M_RELIST", "M_DEPRECATE", "M_REVOKE", "M_UNREVOKE", "M_BINDING_REVOKE",
-    "M_IDENTITY_RESET",
-    "W_LEASE_EXPIRED", "W_ELIGIBILITY_UNREADABLE", "W_NOTICE_PENDING", "W_GITHUB_RATE_LIMITED",
-    "W_SERVICE_UNREACHABLE", "W_MODERATION_HOLD", "W_ALERT_UNDELIVERED", "W_OPERATOR_WINDOW",
-  ],
-  each: {
-    A_BINDING_REVOKE:
-      "An act on a binding token, not on a release (ID-21; ID-61). The release it affects is answered " +
-      "`B_BINDING_UNUSABLE` (`new_tag`) or, under a new line, `R_BINDING_CHANGED` (`moderator`); no clause says " +
-      "what clears the revocation itself (proposed: level note, fix none)",
-    A_REMOVAL_REQUEST:
-      "FLOW-28 delists the listing; no clause says what brings it back. M_RELIST's categories (error, " +
-      "appeal_reversed, path_test) do not cover an author's own removal, and MIG-27 says a release cannot lift " +
-      "`unlisted` (proposed: level note, fix none; `moderator` if an author may ask for a relist)",
-    M_YANK: `${LISTING_ACTION} (proposed: fix none — there is no un-yank, B.3)`,
-    M_DELIST: `${LISTING_ACTION} (proposed: fix moderator — an M_RELIST, MIG-27)`,
-    M_RELIST: `${LISTING_ACTION} (proposed: fix none)`,
-    M_DEPRECATE: `${LISTING_ACTION} (proposed: fix moderator — an M_UNREVOKE)`,
-    M_REVOKE: `${LISTING_ACTION} (proposed: fix moderator — an M_UNREVOKE)`,
-    M_UNREVOKE: `${LISTING_ACTION} (proposed: fix none)`,
-    M_BINDING_REVOKE:
-      `${LISTING_ACTION}; §7.2: the next release gets \`B_BINDING_UNUSABLE\` (proposed: fix none on this code)`,
-    M_IDENTITY_RESET:
-      `${LISTING_ACTION}; it clears \`B_REPOSITORY_RECYCLED\` and is cleared by nothing (proposed: fix none)`,
-    W_LEASE_EXPIRED: WAIT_NO_ROW,
-    W_ELIGIBILITY_UNREADABLE: WAIT_NO_ROW,
-    W_NOTICE_PENDING: WAIT_NO_ROW,
-    W_GITHUB_RATE_LIMITED: WAIT_NO_ROW,
-    W_SERVICE_UNREACHABLE: WAIT_NO_ROW,
-    W_MODERATION_HOLD: WAIT_NO_ROW,
-    W_ALERT_UNDELIVERED: WAIT_NO_ROW,
-    W_OPERATOR_WINDOW: WAIT_NO_ROW,
-  },
+    "For an owed code the contract states no `fix`, so a row here would be this repository's answer to a " +
+    "contract question.",
+  codes: [],
+  each: {},
+};
+
+// B.7's waits that the bot reports: the token file gives each of them the
+// registry as emitter. W_REGISTRY_UNACKNOWLEDGED is not here, because only the
+// service shows it, and it has a panel-only row (`PANEL_CODES`).
+const ABSENT_WAITS = [
+  "W_LEASE_EXPIRED", "W_ELIGIBILITY_UNREADABLE", "W_NOTICE_PENDING", "W_GITHUB_RATE_LIMITED",
+  "W_SERVICE_UNREACHABLE", "W_MODERATION_HOLD", "W_ALERT_UNDELIVERED", "W_OPERATOR_WINDOW",
+];
+const ABSENT = {
+  why:
+    "B.7: FLOW-13's table lists \"the codes … and the waits only the service shows\". Each of these is a wait " +
+    "the bot reports, in a result's `wait` or by answering with no record (FLOW-72). FLOW-10 shows every wait by " +
+    "its start, cause and earliest retry, never from the table. So none of them carries a row, and each is " +
+    "recorded here so that it does not read as dropped.",
+  codes: ABSENT_WAITS,
+  each: Object.fromEntries(ABSENT_WAITS.map((c) => [c, WAIT_ABSENT_REASON])),
 };
 
 /** Floors. Below these the walk has failed, not the vocabulary shrunk. */
@@ -230,7 +254,8 @@ export function build() {
     if (def.level === "review" && def.fix !== "moderator") {
       p.fail(code, `is level review and fix ${JSON.stringify(def.fix)}; a review waits on a person, so it is cleared by \`moderator\``);
     }
-    if (["warn", "note", "pass"].includes(def.level) && def.fix !== "none") {
+    const liftedWarn = def.level === "warn" && def.fix === "moderator" && WARN_A_MODERATOR_LIFTS.includes(code);
+    if (["warn", "note", "pass"].includes(def.level) && def.fix !== "none" && !liftedWarn) {
       p.fail(code, `is level ${def.level} and fix ${JSON.stringify(def.fix)}; nothing is blocked, so nothing clears it`);
     }
     if (def.level === "error" && ATTESTED_STAGES.includes(def.stage) && def.fix === "recheck") {
@@ -307,10 +332,12 @@ export function build() {
       "This file is an INTERMEDIATE and not the published interface. The published one is FLOW-13's table inside SCOPE-7's `schema/contract-tokens-v1.json`, where astra-plugins-ops `tools/contract-tokens.mjs --codes <this file>` merges it (0.13.0's n8).",
       "`codes` is the complete list of every code name those sources define. It is here so the merge can compare the table with the population in BOTH directions: without it a deleted row is indistinguishable from a code that does not exist, which was watched, and passed.",
       "`codes_owed` names the B.7 codes this table cannot carry yet and who owes their title and remedy. An absent code is recorded, never silently dropped.",
+      "`codes_absent` names the B.7 codes that have no row because the contract gives them none: the waits the bot reports, which FLOW-10 renders from the result and not from this table.",
     ],
     codes_source: SOURCES,
     codes: rows.map((r) => r.code),
     codes_owed: OWED,
+    codes_absent: ABSENT,
     flow13_table: rows,
   };
 }
@@ -409,23 +436,95 @@ function selftest() {
   // were neither rows nor owed, and the check was green. It now reads the
   // population from the token file, whose `reason_code` and `wait` entries are
   // generated from B.7 by astra-plugins-ops and never from this program.
+  // The token file, read once, and the B.7 entries in it that are in force.
+  const token = JSON.parse(fs.readFileSync(path.join(REPO, TOKEN_FILE), "utf8"));
+  const tokenCodes = [...(token.entries ?? []), ...(token.service_only ?? [])]
+    .filter((e) => (e?.kind === "reason_code" || e?.kind === "wait") && e.state !== "retired");
+
   check("a code B.7 names and this table cannot carry is recorded, not dropped", () => {
-    const token = JSON.parse(fs.readFileSync(path.join(REPO, TOKEN_FILE), "utf8"));
-    const listed = [...(token.entries ?? []), ...(token.service_only ?? [])]
-      .filter((e) => (e?.kind === "reason_code" || e?.kind === "wait") && e.state !== "retired")
-      .map((e) => e.name);
+    const listed = tokenCodes.map((e) => e.name);
     assert(listed.length >= TOKEN_CODE_FLOOR, `${TOKEN_FILE} lists ${listed.length} reason codes and waits, under the ` +
       `floor of ${TOKEN_CODE_FLOOR}; a reader that finds fewer has stopped reading B.7`);
     const have = new Set(doc.codes);
     const owed = new Set(doc.codes_owed.codes);
-    const dropped = listed.filter((c) => !have.has(c) && !owed.has(c));
-    assert(dropped.length === 0, `${TOKEN_FILE} lists ${dropped.join(", ")}, which have no FLOW-13 row and are not owed`);
+    const absent = new Set(doc.codes_absent?.codes ?? []);
+    const dropped = listed.filter((c) => !have.has(c) && !owed.has(c) && !absent.has(c));
+    assert(dropped.length === 0,
+      `${TOKEN_FILE} lists ${dropped.join(", ")}, which have no FLOW-13 row and are neither owed nor recorded absent`);
     for (const c of owed) assert(!have.has(c), `${c} is both owed and emitted`);
+    for (const c of owed) assert(!absent.has(c), `${c} is both owed and recorded absent`);
     const each = doc.codes_owed.each ?? {};
     for (const c of owed) {
       assert(typeof each[c] === "string" && each[c].length > 0, `${c} is owed and \`codes_owed.each\` gives no reason for it`);
     }
     for (const c of Object.keys(each)) assert(owed.has(c), `\`codes_owed.each\` gives a reason for ${c}, which is not owed`);
+  });
+
+  // B.7 gives FLOW-13's table "the codes … and the waits only the service
+  // shows". The token file says which party emits each wait. So a wait it gives
+  // the registry is one the bot reports. That wait has no row: FLOW-10 renders
+  // it from the result, by its start, cause and earliest retry. It is recorded
+  // under `codes_absent` so that the check above can tell it from a dropped
+  // code. A wait only the service shows has a row, flagged panel-only. Only
+  // such a wait may be recorded absent. Otherwise a reason code parked there
+  // would pass as a wait, and nothing would ever write its row.
+  check("a wait the bot reports is recorded absent, and a wait only the service shows has a row (B.7)", () => {
+    const absent = doc.codes_absent;
+    assert(absent && Array.isArray(absent.codes) && absent.each && typeof absent.each === "object",
+      "the table carries no `codes_absent` record, so B.7's waits the bot reports are neither rows nor recorded");
+    const byCode = new Map(doc.flow13_table.map((r) => [r.code, r]));
+    const waits = tokenCodes.filter((e) => e.kind === "wait");
+    const reported = waits.filter((e) => (e.emitter ?? []).some((p) => OURS.includes(p))).map((e) => e.name);
+    const serviceOnly = waits.filter((e) => !(e.emitter ?? []).some((p) => OURS.includes(p))).map((e) => e.name);
+    assert(reported.length >= REPORTED_WAIT_FLOOR, `${TOKEN_FILE} gives the registry ${reported.length} wait(s), under ` +
+      `the floor of ${REPORTED_WAIT_FLOOR}; a reader that finds fewer has stopped reading B.7's waits`);
+    assert(serviceOnly.length >= 1, `${TOKEN_FILE} lists no wait only the service shows; W_REGISTRY_UNACKNOWLEDGED was one at 2.14.0`);
+    const set = new Set(absent.codes);
+    assert(set.size === absent.codes.length, "`codes_absent.codes` names one code twice");
+    for (const c of reported) {
+      assert(set.has(c), `${c} is a wait the bot reports (${TOKEN_FILE} gives it the registry) and is not recorded absent`);
+      assert(!byCode.has(c), `${c} is a wait the bot reports and carries a FLOW-13 row; B.7 gives the table only the waits the service alone shows`);
+      assert(absent.each[c] === WAIT_ABSENT_REASON,
+        `${c}'s absence gives ${JSON.stringify(absent.each[c])} as its reason, not ${JSON.stringify(WAIT_ABSENT_REASON)}`);
+    }
+    for (const c of serviceOnly) {
+      assert(byCode.has(c) && byCode.get(c).panel_only === true, `${c} is a wait only the service shows and has no panel-only row`);
+    }
+    for (const c of set) {
+      assert(reported.includes(c), `${c} is recorded absent and is not a wait ${TOKEN_FILE} gives the registry; only those have no row`);
+    }
+    for (const c of Object.keys(absent.each)) assert(set.has(c), `\`codes_absent.each\` gives a reason for ${c}, which is not recorded absent`);
+  });
+
+  // The ten codes the contract gives no `fix`. Their level and `fix` are a
+  // decision (DECIDED above), held here as B.7's are, because the token file
+  // carries only what this program emits.
+  check("the level and fix decided for a code the contract gives no fix are what its row carries", () => {
+    const byCode = new Map(doc.flow13_table.map((r) => [r.code, r]));
+    assert(Object.keys(DECIDED).length === 10, `DECIDED holds ${Object.keys(DECIDED).length} codes; the decision named ten`);
+    for (const [code, want] of Object.entries(DECIDED)) {
+      assert(!Object.hasOwn(B7_FIXES, code), `${code} is in DECIDED and in B7_FIXES; a code whose fix the contract states is not a decision`);
+      assert(byCode.has(code), `${code}'s level and fix are decided, and the table carries no row for it`);
+      const row = byCode.get(code);
+      assert(row.fix === want.fix, `${code}'s fix was decided as \`${want.fix}\`, and its row says \`${row.fix}\``);
+      assert(row.level === want.level, `${code}'s level was decided as \`${want.level}\`, and its row says \`${row.level}\``);
+    }
+  });
+
+  check("a warn a moderator lifts is exactly a §7.2 code that writes an advisory `warn`", () => {
+    const cells = tokenCodes
+      .filter((e) => e.kind === "reason_code" && typeof e.artefact === "string" && /^advisory `warn`/.test(e.artefact))
+      .map((e) => e.name).sort();
+    assert(cells.length >= 1, `${TOKEN_FILE} carries no §7.2 cell that writes an advisory \`warn\`; M_DEPRECATE's did at 2.14.0`);
+    assert(JSON.stringify([...WARN_A_MODERATOR_LIFTS].sort()) === JSON.stringify(cells),
+      `WARN_A_MODERATOR_LIFTS is ${JSON.stringify(WARN_A_MODERATOR_LIFTS)}, and the §7.2 cells that write an advisory \`warn\` ` +
+      `are ${JSON.stringify(cells)}`);
+    const byCode = new Map(doc.flow13_table.map((r) => [r.code, r]));
+    for (const c of WARN_A_MODERATOR_LIFTS) {
+      const row = byCode.get(c);
+      assert(row && row.level === "warn" && row.fix === "moderator",
+        `${c} is excepted as a warn a moderator lifts, and its row is ${row ? `${row.level}/${row.fix}` : "missing"}`);
+    }
   });
 
   check("the floors", () => {
@@ -448,7 +547,7 @@ function selftest() {
   });
 
   console.log(fails.length === 0
-    ? `PASS  ${pass} passed, 0 failed  (${doc.flow13_table.length} codes, ${doc.codes_owed.codes.length} owed)`
+    ? `PASS  ${pass} passed, 0 failed  (${doc.flow13_table.length} codes, ${doc.codes_owed.codes.length} owed, ${doc.codes_absent.codes.length} absent)`
     : `FAIL  ${pass} passed, ${fails.length} failed`);
   return fails.length === 0;
 }

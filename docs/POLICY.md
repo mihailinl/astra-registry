@@ -516,6 +516,23 @@ above (FLOW-13).
 | `B_BINDING_INVALID` | Shown only to the token's owner and moderators, behind `B_BINDING_UNUSABLE`: the token is unknown, revoked, expired or superseded, or was minted for another repository. | Only a new tag carrying a usable line. |
 | `B_ACCOUNT_INELIGIBLE` | Shown only to the token's owner and moderators, behind `B_BINDING_UNUSABLE`: the account holding the token is not eligible. | A Recheck of the same tag, once the account is eligible. |
 | `W_REGISTRY_UNACKNOWLEDGED` | The registry changed its bot and an operator has not yet acknowledged it, so the service holds the bot's calls. Nothing is decided and nothing is lost. | The registry's operator acknowledging the change. |
+| `A_BINDING_REVOKE` | The listing's bound account revoked its binding token. From the next verdict a release still carrying the old line is refused `B_BINDING_UNUSABLE`, and one carrying a fresh token's line is held for a moderator. | Nothing needs clearing. |
+| `A_REMOVAL_REQUEST` | The listing's author asked for it to be removed. From the bound account it is delisted at once; for a listing with no bound account, a moderator decides. Installed copies are not removed. | Nothing. Only a moderator lists it again, and the author asks for that with a report from the panel's report page. |
+| `M_YANK` | A moderator yanked versions. They leave the catalogue and installed copies keep running. No decision brings them back. | Nothing. |
+| `M_DELIST` | A moderator delisted the plugin. It leaves the catalogue and gets no updates, and installed copies keep running. A new release does not list it again. | A moderator's relist, which the author can ask for by appealing. |
+| `M_RELIST` | A moderator lifted a delisting, after its hold and an operator's confirmation. The plugin is back in the catalogue. | Nothing needs clearing. |
+| `M_DEPRECATE` | A moderator published an advisory with action `warn`. The versions stay listed and installable; Astra badges them and tells the user. | A moderator lifting the advisory, which the author can ask for by appealing. |
+| `M_REVOKE` | A moderator published an advisory with action `block_install` or `disable` (§9). | A moderator lifting the advisory, which the author can ask for by appealing. |
+| `M_UNREVOKE` | A moderator deleted an advisory, after its hold and an operator's confirmation. Its effect lifts at the withdrawal list's next higher serial. | Nothing needs clearing. |
+| `M_BINDING_REVOKE` | A moderator revoked the repository's binding token. Listed versions are not touched, and the next release is refused `B_BINDING_UNUSABLE`. | Nothing on this code. `B_BINDING_UNUSABLE` says what clears that refusal. |
+| `M_IDENTITY_RESET` | A moderator reset the listing's recorded identity (§9, **Reset**). It clears `B_REPOSITORY_RECYCLED` for the identities it voided. | Nothing. |
+
+The waits the bot reports are not in this table: `W_LEASE_EXPIRED`,
+`W_ELIGIBILITY_UNREADABLE`, `W_NOTICE_PENDING`, `W_GITHUB_RATE_LIMITED`,
+`W_SERVICE_UNREACHABLE`, `W_MODERATION_HOLD`, `W_ALERT_UNDELIVERED` and
+`W_OPERATOR_WINDOW`. The panel shows each one from the bot's result, with when
+it started, why, and the earliest retry (FLOW-10). Only
+`W_REGISTRY_UNACKNOWLEDGED`, which the service alone shows, has a row.
 
 ## 7. The publisher badge
 
