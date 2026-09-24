@@ -1396,7 +1396,16 @@ export async function run() {
     assert(otherTitle, `tools/selftest/${other} at HEAD has no check to point at`);
     const doc = (edit) => { const d = structuredClone(committed); d.pending = structuredClone(records); edit(d.pending, d); return d; };
     const at = (id) => (list) => list.find((p) => p.id === id);
-    const [a, b] = records.map((p) => p.id);
+    const [a] = records.map((p) => p.id);
+    // Another record's check: a second committed record's where the file
+    // carries one, else another row's. Contract 2.5.0 left one pending record
+    // (MOD-54's page was published), and the leg must not stop asking.
+    const otherRecordCheck = (l) => {
+      const b = records.map((p) => p.id).find((id) => id !== a);
+      if (b) return at(b)(l).asserted_by;
+      const row = Object.keys(PENDING_MEMBERS).find((id) => id !== a);
+      return `${ASSERTED_BY_THIS}${PENDING_MEMBERS[row].check}`;
+    };
     const legs = [
       { name: "every record naming its row's check", doc: doc(() => {}), red: [] },
       { name: "a record with no asserted_by", doc: doc((l) => { delete at(a)(l).asserted_by; }), red: [TOKEN_FILE, a, "no `asserted_by`"] },
@@ -1406,7 +1415,7 @@ export async function run() {
       { name: "a trailing space", doc: doc((l) => { at(a)(l).asserted_by += " "; }), red: [TOKEN_FILE, a, "not `astra-registry:"] },
       { name: "a module this repository does not commit", doc: doc((l) => { at(a)(l).asserted_by = `astra-registry:tools/selftest/unwritten.mjs#${PENDING_MEMBERS[a].check}`; }), red: [TOKEN_FILE, a, "tools/selftest/unwritten.mjs", "does not commit"] },
       { name: "a check name that matches nothing", doc: doc((l) => { at(a)(l).asserted_by += " (renamed)"; }), red: [TOKEN_FILE, a, "names no check"] },
-      { name: "another record's check", doc: doc((l) => { at(a)(l).asserted_by = at(b)(l).asserted_by; }), red: [TOKEN_FILE, a, "is not the check"] },
+      { name: "another record's check", doc: doc((l) => { at(a)(l).asserted_by = otherRecordCheck(l); }), red: [TOKEN_FILE, a, "is not the check"] },
       { name: "a real check in another module", doc: doc((l) => { at(a)(l).asserted_by = `astra-registry:tools/selftest/${other}#${otherTitle}`; }), red: [TOKEN_FILE, a, "is not the check"] },
       { name: "a record with no row, naming a real check", doc: doc((l) => { l.push({ ...at(a)(l), id: "synthetic_member", asserted_by: `astra-registry:tools/selftest/${other}#${otherTitle}` }); }), red: [] },
       { name: "a record with no row, naming nothing", doc: doc((l) => { l.push({ ...at(a)(l), id: "synthetic_member", asserted_by: `astra-registry:tools/selftest/${other}#no such check` }); }), red: [TOKEN_FILE, "synthetic_member", "names no check"] },

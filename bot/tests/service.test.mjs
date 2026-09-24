@@ -837,9 +837,11 @@ test("the file's membered entries are four buckets, none of which may empty", ()
   // twice and `next_cursor` three times.)
   assert.deepEqual(
     { entries: unreadEntries.length, members: countMembers(unreadEntries) },
-    { entries: 30, members: 104 },
+    { entries: 30, members: 105 },
     `${countMembers(unreadEntries)} published members over ${unreadEntries.length} entries are outside every ` +
-    `comparison in this suite; there were 104 over 30 at contract 0.33.0 and this file reads ` +
+    `comparison in this suite; there were 105 over 30 at contract 2.5.0, whose \`astra.registry.publisher/1\` ` +
+    "gained the optional `owner_ids` (read by the registry's badge join alone, TRUST-25, with no condition, " +
+    "because no sibling member decides whether a record needs it), 104 over 30 from 0.33.0, and this file reads " +
     `${tokenFile.contract_version}. Nothing in astra-registry composes or reads those bodies, so the number is ` +
     "allowed to move — but it moves by somebody reading the new members and finding them unconditioned, not by " +
     "a filter quietly widening. It was 83 over 25 at 0.29.0, and it moved because " +
@@ -1958,7 +1960,7 @@ import {
 } from "../lib/service-decide.mjs";
 import { askJob, claimJob, leaseProblems, reportJob, resultBytes, verdictOutcome } from "../lib/service-jobs.mjs";
 import { RESULT_KINDS, recordAgreement, resultBody } from "../lib/service-results.mjs";
-import { ALERT_SCHEMA, alertProblems, commitTrailers, composePublication, finalizeResults } from "../lib/service-publish.mjs";
+import { ALERT_MEMBERS, ALERT_SCHEMA, alertProblems, commitTrailers, composePublication, finalizeResults } from "../lib/service-publish.mjs";
 import { TRUST14_CODES, mergeAlerts } from "../lib/trust14.mjs";
 import { ACTED_OUTCOMES, VERDICT_VALUES, leaksIn, scanFiles } from "../lib/scan-verdict-leaks.mjs";
 import { submissionFingerprint } from "../lib/policy/release.mjs";
@@ -2333,6 +2335,10 @@ test("DEC-8 and TRUST-33: never before `publish_after`, and a deny record refuse
   assert.equal(early.wait.earliest_retry_at, "2026-09-27T00:00:00Z");
   const denied = decideWith({ git: git({ existing: existing(), records: [baseline()], denied: new Set([FP]) }) });
   assert.equal(denied.state, "refused");
+  // Contract 2.4.0: the deny is refused with its own code, whose `fix` is the
+  // registry's, never `P_REFUSED`, whose `recheck` says an author can clear it.
+  assert.deepEqual(denied.reasons.map((r) => r.code), ["P_OPERATOR_DENIED"]);
+  assert.deepEqual(denied.record.reasons, ["P_OPERATOR_DENIED"]);
 });
 
 test("ROLL-49: an approved first listing with a delay reason is delayed, never waved through", () => {
@@ -2657,6 +2663,55 @@ test("TRUST-14: the alert record lands with the delivery the channel reported, a
   } finally {
     t.cleanup();
     fs.rmSync(reports, { recursive: true, force: true });
+  }
+});
+
+test("TRUST-14: schema/alert-v1.json types exactly the record the composer writes, and tools/validate.mjs judges it (contract 2.4.0)", async () => {
+  const { loadSchemas, REPO_ROOT } = await import("../../tools/lib/sources.mjs");
+  const { validate } = await import("../../tools/lib/jsonschema.mjs");
+  const { runValidation } = await import("../../tools/validate.mjs");
+  const schema = loadSchemas(REPO_ROOT).alert;
+  assert.ok(schema, "schema/alert-v1.json is not loaded by loadSchemas");
+  assert.deepEqual([...schema.required].sort(), [...ALERT_MEMBERS].sort(), "the schema's required members are ALERT_MEMBERS");
+  assert.deepEqual(Object.keys(schema.properties).sort(), [...ALERT_MEMBERS].sort(), "and its properties are exactly them");
+  const good = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: "2026-09-26T11:00:00Z", delivered_at: "2026-09-26T12:00:05Z", run: "5/1" };
+  const cases = [
+    ["an approval", good],
+    ["an elapsed delay", { ...good, event: "delay_elapsed", approval_decided_at: null }],
+    ["a run with no attempt", { ...good, run: "5" }],
+    ["an unnamed member", { ...good, chat_id: "1234567" }],
+    ["no delivered_at", (({ delivered_at, ...rest }) => rest)(good)],
+    ["an event TRUST-14 does not raise", { ...good, event: "stop" }],
+    ["an approval with no decided_at", { ...good, approval_decided_at: null }],
+    ["an elapsed delay carrying a decided_at", { ...good, event: "delay_elapsed" }],
+    ["a fingerprint in capitals", { ...good, fingerprint: FP.toUpperCase() }],
+    ["a delivered_at with a fraction", { ...good, delivered_at: "2026-09-26T12:00:05.5Z" }],
+    ["a run that is not a run id", { ...good, run: "five" }],
+    ["another schema", { ...good, schema: "astra.registry.alert/2" }],
+  ];
+  for (const [what, doc] of cases) {
+    const bySchema = validate(schema, doc).length === 0;
+    const byComposer = alertProblems(doc).length === 0;
+    assert.equal(bySchema, byComposer, `${what}: the schema says ${bySchema ? "valid" : "invalid"} and alertProblems says ${byComposer ? "valid" : "invalid"}`);
+  }
+  assert.equal(cases.filter(([, d]) => alertProblems(d).length === 0).length, 3, "the table holds three valid records and nine refusals");
+  // The validator on a tree: the good record passes, an unnamed member and a
+  // day that does not exist are refused, each by name.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-alert-schema-"));
+  try {
+    fs.mkdirSync(path.join(dir, "state", "alerts"), { recursive: true });
+    const put = (fp, doc) => fs.writeFileSync(path.join(dir, "state", "alerts", `${fp}.json`), JSON.stringify(doc));
+    put(FP, good);
+    put("1".repeat(16), { ...good, fingerprint: "1".repeat(16), chat_id: "1234567" });
+    put("2".repeat(16), { ...good, fingerprint: "2".repeat(16), delivered_at: "2026-02-31T00:00:00Z" });
+    const { report } = await runValidation({ root: dir, allowStaging: true, allowDirect: false, online: false, artifactsDir: null, index: false });
+    const on = (fp) => report.errors.filter((e) => e.where === `state/alerts/${fp}.json`);
+    assert.equal(on(FP).length, 0, `a good alert record was refused: ${JSON.stringify(on(FP))}`);
+    assert.ok(on("1".repeat(16)).some((e) => /chat_id|additional/i.test(e.message)), `an unnamed member passed: ${JSON.stringify(on("1".repeat(16)))}`);
+    assert.ok(on("2".repeat(16)).length > 0, "a delivered_at on 31 February passed");
+    assert.ok(!report.items.some((i) => i.where === "state/alerts" && i.level === "note"), "the not-schema-checked note is gone with the gap");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
