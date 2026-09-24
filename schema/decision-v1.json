@@ -101,8 +101,8 @@
       }
     },
     "category": {
-      "$comment": "§7.2's categories, as the token file publishes them under `moderation categories`. FLOW-79's author yank carries `author_request`.",
-      "enum": ["review_passed", "malicious", "account_compromise", "account_sanction", "privacy", "impersonation", "broken", "security_defect", "licence", "naming", "legal", "author_request", "error", "appeal_reversed", "path_test"]
+      "$comment": "§7.2's categories, as the token file publishes them under `moderation categories`. FLOW-79's author yank carries `author_request`. `identity_reset` is contract 2.5.0's (OPEN-OWNER-15; registry plan B-T4.2): DEC-7's voiding record carries it, and no other record may. This file has no conditional to say so, so tools/validate.mjs refuses any record that carries this category, the state `identity_reset` or the code `M_IDENTITY_RESET` without being exactly DEC-7's voiding record (bot/lib/decisions.mjs, `refuseUncomposableVoidingRecord`).",
+      "enum": ["review_passed", "malicious", "account_compromise", "account_sanction", "privacy", "impersonation", "broken", "security_defect", "licence", "naming", "legal", "author_request", "error", "appeal_reversed", "path_test", "identity_reset"]
     },
     "appeal_of": {
       "$comment": "The `service_decision_id` or the `decision_id` appealed (MOD-33, and bot/moderation/README.md's table), so either §0.7's UUID or 32 lowercase hex.",

@@ -81,6 +81,15 @@
 //     from the hold entry" — so the plan puts the apply there and M-T3.1's own
 //     "Compiles" list names neither. What IS here is their three refusals,
 //     which must run before the hold.
+//   * `M_IDENTITY_RESET` (contract 2.5.0; B-T4.2) is held the same way — MOD-9
+//     names it a reversal — after MOD-10's refusal (`target_changed` for an id
+//     `main` holds no newer `B_REPOSITORY_RECYCLED` record for). Its release is
+//     the one M-T3.3 release this file DOES compose, `compileIdentityReset`,
+//     because the release commit is the whole of what the reset is: DEC-7's
+//     voiding record, the identity record deleted where one exists (ID-40's
+//     one exception), and the log entry `reset`, in one commit carrying
+//     `Service-Decision:`. It re-asks every question the compile asked before
+//     the hold, by calling the compile, against the tree the release writes.
 //   * MOD-33's decision record for an appealed refusal. The log entry is
 //     composed; the record is not, and it CANNOT be today: BOT-35 has four key
 //     domains and none of them is an appeal. `submission:<submission_id>` — the
@@ -93,8 +102,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { composeAuthorActions } from "./decisions.mjs";
+import { VOIDING_CATEGORY, VOIDING_CODE, composeAuthorActions, composeVoidingRecord } from "./decisions.mjs";
 import { holdKindFor } from "./holds.mjs";
+import { isVoidingRecord } from "./identity.mjs";
 import {
   CATEGORIES,
   checkEntry,
@@ -117,7 +127,7 @@ import {
   checkAdvisory,
   loadAdvisories,
 } from "../../tools/lib/revocations.mjs";
-import { REPO_ROOT } from "../../tools/lib/sources.mjs";
+import { REPO_ROOT, loadRecords } from "../../tools/lib/sources.mjs";
 import { compareSemver, parseSemver } from "../../tools/lib/semver.mjs";
 
 const ID_RE = new RegExp(ID_PATTERN);
@@ -309,6 +319,9 @@ const KNOWN_CODES = Object.freeze({
   M_APPEAL: "appeal",
   M_RELIST: "reversal",
   M_UNREVOKE: "reversal",
+  // MOD-9 names it a reversal (contract 2.5.0), so it is held unconditionally
+  // and its artefacts are composed at release (`compileIdentityReset`).
+  M_IDENTITY_RESET: "reversal",
   M_BINDING_REVOKE: "nothing",
   A_YANK: "yank",
   A_REMOVAL_REQUEST: "delist",
@@ -332,8 +345,12 @@ const LOG_ACTION = Object.freeze({
   M_REVOKE: "revoke",
   M_RELIST: "relist",
   M_UNREVOKE: "unrevoke",
+  M_IDENTITY_RESET: "reset",
   M_APPEAL: "appeal",
 });
+
+/** The refusal `M_IDENTITY_RESET` exists to lift (ID-41 row 1; TRUST-23). */
+export const RECYCLED_CODE = "B_REPOSITORY_RECYCLED";
 
 // ── reading the tree ────────────────────────────────────────────────────────
 
@@ -771,6 +788,26 @@ export function compileDecision(entry, { root = REPO_ROOT, overBound = false, ba
         `${JSON.stringify(d.severity)}; git holds no source for it, so an advisory cannot be derived (MOD-4; MOD-10)`);
     }
   }
+  if (code === VOIDING_CODE) {
+    // §7.2 allows `identity_reset` with IDENTITY_RESET and nothing else, and
+    // the category is not optional here as it is for a code the generic check
+    // below skips when absent: DEC-7's voiding record carries it, and a reset
+    // compiled without one would be a record the schema refuses at release.
+    if (d.category !== VOIDING_CATEGORY) {
+      return refuse(d, "kind_refused",
+        `an M_IDENTITY_RESET carries category \`${VOIDING_CATEGORY}\` and no other (§7.2), and this one carries ` +
+        `${JSON.stringify(d.category)}`);
+    }
+    // DEC-7's voiding record names the moderator who reset the id; BOT-80
+    // carries the handle for an `M_*` code. One arriving without it is a
+    // decision whose record cannot be written, and it is refused before it is
+    // held rather than failing the release 24 hours later.
+    if (typeof d.moderator !== "string" || d.moderator === "") {
+      return refuse(d, "kind_refused",
+        "an M_IDENTITY_RESET carries its `moderator` (BOT-80), which DEC-7's voiding record names, and this one " +
+        "carries none");
+    }
+  }
   if (code === "M_REVOKE" && !["block_install", "disable"].includes(d.action)) {
     return refuse(d, "kind_refused",
       `an M_REVOKE carries \`action\` (block_install, disable) and this one carries ${JSON.stringify(d.action)} ` +
@@ -874,6 +911,23 @@ export function compileDecision(entry, { root = REPO_ROOT, overBound = false, ba
     }
   }
 
+  // ── MOD-10's reset refusal, before the hold ──────────────────────────────
+  //
+  // "reset the identity of a `plugin_id` for which `main` holds no decision
+  // record whose `reasons` carry `B_REPOSITORY_RECYCLED` and that is newer
+  // than the id's newest voiding record" — refused `target_changed`. Before
+  // the hold, for the reason the relist refusals are: a held reset nothing
+  // can apply would wait 24 hours for an operator to confirm a no-op.
+  if (code === VOIDING_CODE) {
+    const target = resetTarget(root, listing.id);
+    if (!target.recycled) {
+      return refuse(d, "target_changed",
+        `\`main\` holds no decision record for ${listing.id} whose reasons carry ${RECYCLED_CODE}` +
+        (target.voidedAt ? ` newer than its newest voiding record (${target.voidedAt})` : "") +
+        ", so there is no permanent refusal for this reset to lift (MOD-10; ID-41)");
+    }
+  }
+
   // ── MOD-9's holds, after the refusals and before any artefact ────────────
   const kind = holdKindFor(d, { overBound, listingBound: listing.bound });
   if (kind) {
@@ -891,8 +945,8 @@ export function compileDecision(entry, { root = REPO_ROOT, overBound = false, ba
       // fallen through, because a silent fall-through here would compile a
       // relist that MOD-9 requires an operator for.
       throw new Error(
-        `\`${code}\` reached the compile with no hold kind. MOD-9 holds every M_RELIST and M_UNREVOKE, so this ` +
-        "is `holdKindFor` and this table disagreeing about the reversal codes",
+        `\`${code}\` reached the compile with no hold kind. MOD-9 holds every M_RELIST, M_UNREVOKE and ` +
+        "M_IDENTITY_RESET, so this is `holdKindFor` and this table disagreeing about the reversal codes",
       );
   }
 }
@@ -942,6 +996,117 @@ function containedRepo(listing) {
     if (CONTAINED_OWNERS.includes(owner(doc?.release?.repo))) return doc.release.repo;
   }
   return null;
+}
+
+/**
+ * MOD-10's question for a reset: does `main` hold a `B_REPOSITORY_RECYCLED`
+ * record for this id newer than the id's newest voiding record?
+ *
+ * Read from the decision log on the tree (`log/decisions/**`), by `plugin_id`,
+ * and compared by `decided_at` — §0.7's whole-second UTC strings, which order
+ * as text. "Newer than" is strict: a refusal recorded in the same second as a
+ * voiding record is one the reset already answered.
+ *
+ * A record the loader could not read, or filed under a name its directory
+ * refuses, THROWS rather than counting as absent. "No such refusal" settles the
+ * reset as `target_changed`, which is final (BOT-81), and a tree this run
+ * could not read is a fact about the run, not about the id.
+ *
+ * @returns {{recycled: object|null, voidedAt: string|null}} the newest
+ *   qualifying refusal record, and the newest voiding record's time.
+ */
+export function resetTarget(root, pluginId) {
+  const { decisions, errors } = loadRecords(root);
+  if (errors.length) {
+    throw new Error(
+      `the decision log cannot be read in full (${errors.map((e) => `${e.file}: ${e.message}`).join("; ")}), so ` +
+      "MOD-10's question for a reset — is there a newer `B_REPOSITORY_RECYCLED` record — has no answer, and " +
+      "`target_changed` would settle the reset for good on a tree this run could not read",
+    );
+  }
+  const mine = decisions.map((r) => r.doc).filter((doc) => doc && doc.plugin_id === pluginId);
+  const voidedAt = mine.filter(isVoidingRecord).map((r) => String(r.decided_at ?? "")).filter(Boolean).sort().at(-1) ?? null;
+  const recycled = mine
+    .filter((r) => Array.isArray(r.reasons) && r.reasons.includes(RECYCLED_CODE))
+    .filter((r) => typeof r.decided_at === "string" && (voidedAt === null || r.decided_at > voidedAt))
+    .sort((a, b) => a.decided_at.localeCompare(b.decided_at));
+  return { recycled: recycled.at(-1) ?? null, voidedAt };
+}
+
+/**
+ * `M_IDENTITY_RESET`'s release (MOD-9; §7.2; ID-40; DEC-7; MOD-47): what the one
+ * commit carrying `Service-Decision:` writes when the hold ends.
+ *
+ * **It re-asks every question by calling `compileDecision`.** The hold waited at
+ * least 24 hours, and the tree may have moved: another reset may have voided
+ * the id since, or the listing may be gone. A release composed from the hold
+ * entry without asking again would void an id nobody is refused under any more.
+ * So the entry is compiled again against the tree the release writes to, and
+ * only a compile that would HOLD it again as a reversal — every refusal passed —
+ * is released. Anything else is returned as it is, and the caller writes
+ * nothing for it.
+ *
+ * What the release writes, in both of B-T4.2's cases:
+ *
+ *   - DEC-7's voiding record, which ends every earlier baseline of the id
+ *     (MIG-20; `bot/lib/identity.mjs`'s `effectiveBaseline`), keyed by BOT-35's
+ *     `service-decision:<id>:<plugin_id>::identity_reset`;
+ *   - the log entry `reset`, category `identity_reset` (MOD-47; §7.2);
+ *   - for a listing WITH an identity record, also its deletion — ID-40's one
+ *     commit that changes an identity record without publishing. Without the
+ *     voiding record beside it, the deletion alone clears nothing: the later
+ *     publication records still carry the old ids, and TRUST-23 refuses
+ *     `B_REPOSITORY_RECYCLED` again (B-T4.2's "why the record is needed").
+ *
+ * The reset binds nothing and publishes nothing, so no version record, queue
+ * entry or `plugin.json` is touched. The listing reads `frozen` after it
+ * (ID-25: a listing that ever had an identity record is never `grandfathered`
+ * again), which `bot/lib/listing-state.mjs` reads from `identity.json`'s history.
+ *
+ * @param {object} entry  the held decision (a hold entry's `decision`).
+ * @returns {{outcome: "compiled"|"refused"|"held", ...}} `compiled` with the
+ *   artefacts, or the compile's own answer when it is anything but a
+ *   `reversal` hold — which the caller releases nothing for.
+ */
+export function compileIdentityReset(entry, { root = REPO_ROOT, batch = null } = {}) {
+  if (entry?.code !== VOIDING_CODE) {
+    throw new Error(`compileIdentityReset composes an ${VOIDING_CODE} and was handed ${JSON.stringify(entry?.code)}`);
+  }
+  const again = compileDecision(entry, { root, overBound: false, batch });
+  if (again.outcome !== "held" || again.held_for !== "reversal") return again;
+
+  const d = again.decision;
+  const decidedAt = wholeSeconds(d.decided_at);
+  const date = decidedAt.slice(0, 10);
+  const listing = readListing(root, d.plugin_id);
+
+  const log = logEntry(root, {
+    date,
+    action: "reset",
+    plugin: listing.id,
+    reason: d.reason,
+    category: VOIDING_CATEGORY,
+    service_decision_id: d.service_decision_id,
+    ...(d.declared_interest !== undefined ? { declared_interest: d.declared_interest } : {}),
+  }, batch);
+
+  return {
+    outcome: "compiled",
+    code: d.code,
+    service_decision_id: d.service_decision_id,
+    edits: listing.bound ? [{ op: "delete", file: `plugins/${listing.id}/identity.json` }] : [],
+    log: [log],
+    advisories: [],
+    records: [composeVoidingRecord({
+      service_decision_id: d.service_decision_id,
+      plugin_id: listing.id,
+      decided_at: decidedAt,
+      moderator: d.moderator,
+      ...(d.declared_interest !== undefined ? { declared_interest: d.declared_interest } : {}),
+    })],
+    alerts: [],
+    trailers: { "Service-Decision": d.service_decision_id, "Decided-At": decidedAt },
+  };
 }
 
 function holdWhy(kind, d, listing) {

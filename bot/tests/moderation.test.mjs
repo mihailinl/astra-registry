@@ -559,3 +559,36 @@ test("the backing check still catches an entry calling an advisory the wrong act
   assert.deepEqual(BACKING.revoke, ["block_install", "disable"]);
   assert.ok(!("unrevoke" in BACKING), "an unrevoke names an advisory that is gone on purpose; it is never backed");
 });
+
+// ── MOD-47's `reset` (contract 2.5.0; B-T4.2) ───────────────────────────────
+
+test("MOD-47's `reset` is an action, carries `identity_reset` alone, and names an id rather than versions", () => {
+  // Until contract 2.5.0's writer landed, `ACTIONS` had seven words and the log
+  // refused the entry §7.2's `M_IDENTITY_RESET` writes (ops couplings 154).
+  assert.ok(ACTIONS.includes("reset"), "ACTIONS is missing `reset`, so the log refuses the entry M_IDENTITY_RESET writes");
+  assert.ok(!ESCALATING_ACTIONS.includes("reset"), "a reset costs an installed copy nothing and is not in the escalation table");
+  assert.deepEqual(CATEGORIES.reset, ["identity_reset"], "§7.2: identity_reset | IDENTITY_RESET, and nothing else");
+  for (const [action, cats] of Object.entries(CATEGORIES)) {
+    if (action !== "reset") assert.ok(!cats.includes("identity_reset"), `${action} accepts identity_reset, which §7.2 gives the reset alone`);
+  }
+
+  const RESET = {
+    date: "2026-11-01", action: "reset", plugin: "alpha", reason: REASON,
+    category: "identity_reset", service_decision_id: "0192f3a4-5b6c-7d8e-9f01-234567890abc",
+  };
+  assert.deepEqual(checkEntry(RESET), [], "the entry compileIdentityReset writes is refused by the log");
+  assert.deepEqual(checkEntry({ ...RESET, declared_interest: true }), []);
+  for (const [what, doc, pattern] of [
+    ["versions", { ...RESET, versions: ["1.0.0"] }, /voids an id, not versions/],
+    ["an advisory", { ...RESET, advisory: "ASTRA-2026-0001" }, /may not name an advisory/],
+    ["another category", { ...RESET, category: "error" }, /not one a reset may carry/],
+    ["no category", (() => { const { category: _c, ...r } = RESET; return r; })(), /must carry its category/],
+    ["no service decision", (() => { const { service_decision_id: _s, ...r } = RESET; return r; })(), /service_decision_id/],
+    ["a reverses", { ...RESET, reverses: "0192f3a4-5b6c-7d8e-9f01-234567890abd" }, /reverses nothing/],
+  ]) {
+    const errs = checkEntry(doc);
+    assert.ok(errs.some((e) => pattern.test(e)), `a reset carrying ${what} was not refused for it: ${JSON.stringify(errs)}`);
+  }
+  assert.ok(checkEntry({ ...DELIST, category: "identity_reset" }).some((e) => /not one a delist may carry/.test(e)),
+    "a delist carried identity_reset");
+});

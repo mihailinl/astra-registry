@@ -76,6 +76,13 @@ import {
   allowlistedSubmission,
 } from "../lib/compile-decision.mjs";
 import { holdEntry, readHolds, resolveHold } from "../lib/holds.mjs";
+import { decisionId, recordPath } from "../lib/decisions.mjs";
+import { compareWithBaseline, identityFromCertificate } from "../lib/identity.mjs";
+import { baselineFor } from "../lib/service-decide.mjs";
+import { listingStateAt } from "../lib/listing-state.mjs";
+import { checkEntry } from "../lib/moderation.mjs";
+import { detect } from "../detectors.mjs";
+import { loadRecords } from "../../tools/lib/sources.mjs";
 // What ops entry 101 added, off the namespaces, so that this suite run against
 // modules without them is red test by test rather than at import.
 import * as holdsModule from "../lib/holds.mjs";
@@ -2934,4 +2941,232 @@ test("a batch that yanks a one-version listing, with another takedown: both appl
   const back = buildIndex({ root, serial: 1 }).signed.plugins.find((p) => p.id === "gizmos");
   assert.ok(back, "a new version did not bring the listing back");
   assert.equal(back.version, "1.1.0");
+});
+
+// ── the records a compiled result carries reach the commit ──────────────────
+//
+// `composeCommit` listed edits and log entries and never the decision records
+// the same result carries, so `applyCompiled` wrote an `A_YANK`'s BOT-34
+// records to the runner's tree and `git add --pathspec-from-file` never staged
+// them: the yank landed, the records stayed behind, and `tools/validate.mjs`'s
+// BOT-34 count went red on `main` after the push rather than before it.
+// B-T4.2's release depends on the same line — detector A9 excuses the deletion
+// of an identity record only beside the voiding record in the SAME commit.
+test("a compiled result's decision records are listed for the commit, at the path the writer puts them", () => {
+  const root = estate();
+  const { compiled } = compileAll(
+    [decision({ code: "A_YANK", versions: ["1.0.0", "1.1.0"], reason: FIXED_YANK })],
+    { root, overBound: false },
+  );
+  const written = applyCompiled(compiled, { root });
+  const records = written.filter((p) => p.startsWith("log/decisions/"));
+  assert.equal(records.length, 2, `the fixture wrote ${records.length} author-action records; this proves nothing without two`);
+  const commit = composeCommit({ compiled, run: "35502265394" });
+  for (const rel of records) {
+    assert.ok(commit.paths.includes(rel), `${rel} was written and is not in paths.txt, so it is never committed (BOT-34)`);
+  }
+});
+
+// ── B-T4.2: M_IDENTITY_RESET, walked to the end ─────────────────────────────
+//
+// The plan's canary, both cases, through `--job commit` and the workflow's own
+// `apply` step: a listing refused `B_REPOSITORY_RECYCLED` is reset; the reset
+// is held (MOD-9, a reversal), lands, waits out 24 hours from that commit AND
+// an operator's confirmation, and is released in ONE commit carrying
+// `Service-Decision:` — DEC-7's voiding record, the log entry `reset`, the hold
+// entry and its confirm record deleted, and in case (ii) the identity record
+// deleted too (ID-40). The next live run reads that commit as `applied`;
+// detector A9 is silent on it; the listing reads `frozen` (ID-25); and the new
+// owner's certificate is held `R_IDENTITY_CHANGED` against a voided baseline,
+// never refused `B_REPOSITORY_RECYCLED` again.
+
+const RESET_REASON = "The repository name was re-registered by its new owner after the old one deleted it.";
+const resetOf = (id = SDI) => decision({
+  service_decision_id: id, code: "M_IDENTITY_RESET", category: "identity_reset",
+  moderator: "amoderator", declared_interest: false, reason: RESET_REASON,
+});
+const OLD_IDS = { repository_id: "912345678", repository_owner_id: "4711" };
+/** A certificate for `acme/widgets`, the name the baseline recorded (TRUST-23 compares both ids and the name). */
+const CERT = {
+  job_workflow_ref: `https://github.com/mihailinl/AstraPlugins/.github/workflows/plugin-release.yml@${"c".repeat(40)}`,
+  job_workflow_sha: "c".repeat(40),
+  runner_environment: "github-hosted",
+  source_repository_uri: "https://github.com/acme/widgets",
+  sha: "a".repeat(40),
+  ref: "refs/tags/widgets-v2.0.0",
+  event_name: "push",
+  run: "https://github.com/acme/widgets/actions/runs/1/attempts/1",
+};
+const NEW_IDS = { repository_id: "2000000001", repository_owner_id: "2000000002" };
+
+/**
+ * A listing published by the old owner (its migration baseline and the
+ * baseline marker, which arms detector A9), then refused
+ * `B_REPOSITORY_RECYCLED` when the name's new owner released.
+ */
+function recycledEstate({ bound }) {
+  const root = estate({ bound, at: "2026-09-10T00:00:00Z" });
+  if (bound) {
+    // B.4's identity record: the file's own `identity()` carries a 64-hex hash.
+    writeAll(root, { "plugins/widgets/identity.json": { ...identity("widgets"), token_hash: "0123456789abcdef" } });
+  }
+  const source = sh(["rev-parse", "HEAD"], root).trim();
+  writeAll(root, {
+    "log/decisions/2026/09/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json": {
+      schema: "astra.registry.decision/1", decision_id: "a".repeat(32), decided_at: "2026-09-11T00:00:00Z",
+      actor: "system", trigger: "migration", plugin_id: "widgets", version: "1.2.0", repo: "acme/widgets",
+      tag: "widgets-v1.2.0", state: "published", ...OLD_IDS,
+    },
+    "log/baseline.json": {
+      schema: "astra.registry.baseline/1", written_at: "2026-09-11T00:00:00Z", source_commit: source,
+      version_count: 1, record_count: 1,
+    },
+  });
+  commitAt(root, "2026-09-11T00:00:00Z", "registry: the migration baseline");
+  writeAll(root, {
+    "log/decisions/2026/09/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.json": {
+      schema: "astra.registry.decision/1", decision_id: "b".repeat(32), decided_at: "2026-09-19T10:00:00Z",
+      actor: "bot", trigger: "panel", plugin_id: "widgets", repo: "acme/widgets", tag: "widgets-v2.0.0",
+      state: "refused", reasons: ["B_REPOSITORY_RECYCLED"], ...NEW_IDS,
+    },
+  });
+  commitAt(root, "2026-09-19T10:00:00Z", "registry: refused, the repository was re-created by another owner");
+  return withDocuments(root);
+}
+
+/** The reset entered and landed at 2026-09-20T12:45Z, as the workflow lands it. */
+async function heldReset({ bound }) {
+  const root = recycledEstate({ bound });
+  const origin = withRemote(root);
+  const job = await commitJob(root, { entries: [resetOf()], now: new Date("2026-09-20T12:30:00Z") });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.held.map((h) => h.held_for), ["reversal"], "MOD-9 holds an M_IDENTITY_RESET as a reversal");
+  assert.deepEqual(job.paths, [holdEntryPath(SDI)], `entering the hold wrote more than the hold: ${job.paths.join(" ")}`);
+  const step = runApply(root, dated("2026-09-20T12:45:00Z"));
+  assert.equal(step.status, 0, step.stderr);
+  return { root, origin };
+}
+
+const landedFiles = (root) => sh(["show", "--name-status", "--format=", "HEAD"], root).trim().split("\n").sort();
+
+test("B-T4.2 (ii): a bound listing's reset is held, released once in one commit, and never refused again", async () => {
+  const { root, origin } = await heldReset({ bound: true });
+
+  // Without a confirmation, however long it waits: nothing.
+  const unconfirmed = await commitJob(root, { entries: [], now: new Date("2026-09-22T12:00:00Z") });
+  assert.equal(unconfirmed.code, 0, unconfirmed.logs.join("\n"));
+  assert.deepEqual(unconfirmed.paths, [], "an unconfirmed reset wrote something");
+  assert.ok(fs.existsSync(path.join(root, "plugins/widgets/identity.json")));
+
+  // Confirmed at 13:00, and asked at 12:44 the next day — a minute inside the
+  // 24 hours that run from the commit that landed the entry: nothing.
+  writeAll(root, { [`state/holds/${SDI}.confirm.json`]: confirmOf(SDI, "2026-09-20T13:00:00Z") });
+  commitAt(root, "2026-09-20T13:00:00Z", "operator: confirm");
+  const early = await commitJob(root, { entries: [], now: new Date("2026-09-21T12:44:00Z") });
+  assert.deepEqual(early.paths, [], `a reset released before its 24 hours: ${early.paths.join(" ")}`);
+
+  // Due: the release, and nothing else.
+  const job = await commitJob(root, { entries: [], now: new Date("2026-09-21T12:46:00Z") });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.released_holds, [SDI]);
+  assert.ok(!job.logs.some((l) => l.includes("hold_end_not_built")), "the reset's release is built, and was refused as not built");
+  const voidingKey = `service-decision:${SDI}:widgets::identity_reset`;
+  const voidingPath = recordPath({ decision_id: decisionId(voidingKey), decided_at: "2026-09-20T12:00:00Z" });
+  for (const rel of [
+    "plugins/widgets/identity.json", "bot/moderation/2026-09-20-widgets-reset.json", voidingPath,
+    holdEntryPath(SDI), `state/holds/${SDI}.confirm.json`,
+  ]) {
+    assert.ok(job.paths.includes(rel), `the release commit does not list ${rel}: ${job.paths.join(" ")}`);
+  }
+  const step = runApply(root, dated("2026-09-21T12:50:00Z"));
+  assert.equal(step.status, 0, step.stderr);
+  const released = headOf(origin);
+  const files = landedFiles(root);
+  for (const want of [
+    "D\tplugins/widgets/identity.json", "A\tbot/moderation/2026-09-20-widgets-reset.json", `A\t${voidingPath}`,
+    `D\t${holdEntryPath(SDI)}`, `D\tstate/holds/${SDI}.confirm.json`,
+  ]) assert.ok(files.includes(want), `the landed release commit lacks ${want}: ${files.join(" | ")}`);
+  assert.match(sh(["log", "-1", "--format=%B", released], root), new RegExp(`^Service-Decision: ${SDI}$`, "m"));
+
+  // DEC-7's voiding record and MOD-47's entry, as `main` now holds them.
+  const record = JSON.parse(fs.readFileSync(path.join(root, voidingPath), "utf8"));
+  assert.deepEqual(
+    [record.actor, record.trigger, record.state, record.category, record.reasons, record.plugin_id],
+    ["moderator", "moderation", "identity_reset", "identity_reset", ["M_IDENTITY_RESET"], "widgets"],
+  );
+  const entry = JSON.parse(fs.readFileSync(path.join(root, "bot/moderation/2026-09-20-widgets-reset.json"), "utf8"));
+  assert.deepEqual(checkEntry(entry), [], "the log refuses the entry the release wrote");
+
+  // BOT-81 through history: the next live run reads the commit as `applied`.
+  const after = walkHolds({ root, now: new Date("2026-09-21T13:00:00Z"), shadow: false });
+  assert.deepEqual(after.pending, [{ service_decision_id: SDI, outcome: "applied", commit: released }]);
+  assert.deepEqual(after.released.map((r) => r.hand), [false], "the release commit read as a hand deletion");
+  const again = await commitJob(root, { entries: [], now: new Date("2026-09-22T13:00:00Z") });
+  assert.deepEqual(again.paths, [], "a released reset was released a second time");
+
+  // Detector A9 excuses the deletion because the voiding record is beside it.
+  const detected = detect({ root });
+  assert.ok(detected.ran.includes("A9") && detected.scanned.identity_commits >= 1,
+    `A9 did not read the release commit (ran ${detected.ran.join(", ")}; skipped ` +
+    `${JSON.stringify(detected.skipped)}), so its silence below would say nothing`);
+  assert.deepEqual(detected.findings.filter((f) => f.detector === "A9"), [],
+    "A9 alarmed on the reset's own release commit");
+
+  // ID-25: a listing that ever had an identity record is `frozen`, never
+  // `grandfathered` again, so a release with no binding line is `B_UNBOUND`.
+  assert.equal(listingStateAt(root, "widgets", { now: "2026-09-22T00:00:00Z", schemaRoot: REPO }).state, "frozen");
+
+  // TRUST-23 against what `main` now holds, through the service path's own
+  // baseline reader (`baselineFor`, bot/lib/service-decide.mjs): no baseline,
+  // so MIG-28 holds the new owner's release `R_IDENTITY_CHANGED` — and never
+  // refuses it `B_REPOSITORY_RECYCLED` again. Without the voiding record (the
+  // mutation the plan names), the old baseline stands and it is refused a
+  // second time.
+  const records = loadRecords(root).decisions.map((r) => r.doc);
+  const certificate = identityFromCertificate({ ...CERT, ...NEW_IDS });
+  const { baseline } = baselineFor({ records, pluginId: "widgets" });
+  assert.equal(baseline, null, "the voiding record did not end the old baseline");
+  assert.equal(compareWithBaseline({ identity: certificate, baseline }).code, "R_IDENTITY_CHANGED");
+  const withoutVoiding = baselineFor({ records: records.filter((r) => r.category !== "identity_reset"), pluginId: "widgets" });
+  assert.equal(compareWithBaseline({ identity: certificate, baseline: withoutVoiding.baseline }).code, "B_REPOSITORY_RECYCLED",
+    "the counterfactual is not the defect the voiding record exists to prevent, so the line above proves nothing");
+});
+
+test("B-T4.2 (i): an unbound listing's reset writes the voiding record and the entry, and deletes no identity record", async () => {
+  const { root, origin } = await heldReset({ bound: false });
+  writeAll(root, { [`state/holds/${SDI}.confirm.json`]: confirmOf(SDI, "2026-09-20T13:00:00Z") });
+  commitAt(root, "2026-09-20T13:00:00Z", "operator: confirm");
+  const job = await commitJob(root, { entries: [], now: new Date("2026-09-21T12:46:00Z") });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.released_holds, [SDI]);
+  assert.ok(!job.paths.some((p) => p.endsWith("identity.json")), "a release with no identity record touched one");
+  assert.equal(runApply(root, dated("2026-09-21T12:50:00Z")).status, 0);
+  const records = loadRecords(root).decisions.map((r) => r.doc);
+  assert.equal(records.filter((r) => r.category === "identity_reset").length, 1,
+    "no voiding record: deleting nothing and writing nothing would leave the refusal where it was");
+  const { baseline } = baselineFor({ records, pluginId: "widgets" });
+  assert.equal(compareWithBaseline({ identity: identityFromCertificate({ ...CERT, ...NEW_IDS }), baseline }).code, "R_IDENTITY_CHANGED");
+  assert.equal(walkHolds({ root, now: new Date("2026-09-21T13:00:00Z"), shadow: false }).pending[0]?.commit, headOf(origin));
+});
+
+test("B-T4.2: a due reset the tree moved under writes nothing and alerts by name, every run", async () => {
+  const { root } = await heldReset({ bound: true });
+  writeAll(root, { [`state/holds/${SDI}.confirm.json`]: confirmOf(SDI, "2026-09-20T13:00:00Z") });
+  commitAt(root, "2026-09-20T13:00:00Z", "operator: confirm");
+  // Another reset of the same refusal voided the id while this one waited.
+  writeAll(root, {
+    "log/decisions/2026/09/cccccccccccccccccccccccccccccccc.json": {
+      schema: "astra.registry.decision/1", decision_id: "c".repeat(32), decided_at: "2026-09-21T09:00:00Z",
+      actor: "moderator", moderator: "amoderator", trigger: "moderation", plugin_id: "widgets",
+      state: "identity_reset", reasons: ["M_IDENTITY_RESET"], category: "identity_reset",
+    },
+  });
+  commitAt(root, "2026-09-21T09:00:00Z", "moderation: an earlier reset of widgets");
+  const job = await commitJob(root, { entries: [], now: new Date("2026-09-21T12:46:00Z") });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.paths, [], `a reset MOD-10 now refuses was released: ${job.paths.join(" ")}`);
+  assert.ok(job.logs.some((l) => l.startsWith(`::error::hold_release_refused ${SDI}:`) && l.includes("target_changed")),
+    job.logs.join(" | "));
+  assert.ok(fs.existsSync(path.join(root, "plugins/widgets/identity.json")));
+  assert.ok(fs.existsSync(path.join(root, holdEntryPath(SDI))), "the entry left the tree without a commit that names it");
 });
