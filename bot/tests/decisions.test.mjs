@@ -126,8 +126,9 @@ test("the same tuple gives the same id, on both of BOT-35's tuples", () => {
   // (BOT-35's Why). A run that retried after a rebase and derived a second id
   // would write a second record for one decision, and BOT-36's dedupe — which
   // matches on the id — would not see it.
-  const first = submissionKey({ submission_id: SUBMISSION });
-  assert.equal(decisionId(first), decisionId(submissionKey({ submission_id: SUBMISSION })));
+  const tuple = { submission_id: SUBMISSION, fingerprint: "0123456789abcdef", state: "held" };
+  const first = submissionKey(tuple);
+  assert.equal(decisionId(first), decisionId(submissionKey({ ...tuple })));
 
   const second = serviceDecisionKey({
     service_decision_id: SERVICE_DECISION, plugin_id: "dice-roller", version: "1.0.0", state: "yanked",
@@ -164,12 +165,58 @@ test("the second tuple's four members each change the id", () => {
   }
 });
 
+test("one submission held and then published is two decisions, so BOT-35 derives two ids", () => {
+  // BOT-35 (registry plan notes): the id is derived over (`submission_id`, or
+  // `owner/name@tag` for the legacy and migration domains; fingerprint;
+  // state). The first writer of this module keyed the submission and legacy
+  // domains on the submission alone, so a submission's `held` record and its
+  // later `published` record derived ONE id — and BOT-36's dedupe, which
+  // matches on the id, dropped the publication record as "already at" the
+  // hold's path. An approval could never publish, and nothing went red,
+  // because a dropped write is reported as `written: false` and not thrown.
+  const fp = "0123456789abcdef";
+  const held = decisionId(submissionKey({ submission_id: SUBMISSION, fingerprint: fp, state: "held" }));
+  const published = decisionId(submissionKey({ submission_id: SUBMISSION, fingerprint: fp, state: "published" }));
+  assert.notEqual(held, published, "a hold and the publication it becomes derived one id; the second is dropped as a duplicate");
+  const reFingerprinted = decisionId(submissionKey({ submission_id: SUBMISSION, fingerprint: "fedcba9876543210", state: "held" }));
+  assert.notEqual(held, reFingerprinted, "a re-cut release (a new fingerprint) held again derived the same id as the first hold");
+
+  const repo = "teletemagame-dev/dice-roller";
+  const tag = "v1.0.0";
+  const lHeld = decisionId(legacyKey({ repo, tag, fingerprint: fp, state: "held" }));
+  const lPublished = decisionId(legacyKey({ repo, tag, fingerprint: fp, state: "published" }));
+  assert.notEqual(lHeld, lPublished, "the legacy path's hold and publication of one tag derived one id");
+
+  // Spelled out once, because it is the string a second derivation would have
+  // to match: the domain, then the tuple.
+  assert.equal(submissionKey({ submission_id: SUBMISSION, fingerprint: fp, state: "held" }),
+    `submission:${SUBMISSION}:${fp}:held`);
+  assert.equal(legacyKey({ repo, tag, fingerprint: fp, state: "published" }), `legacy:${repo}@${tag}:${fp}:published`);
+  // DEC-7 lets a record carry no fingerprint where none applies (`A_WITHDRAW`
+  // from `received`): the tuple member is then empty, never "null".
+  assert.equal(submissionKey({ submission_id: SUBMISSION, fingerprint: null, state: "withdrawn" }),
+    `submission:${SUBMISSION}::withdrawn`);
+});
+
+test("the tuple's fingerprint and state are refused when they are not the thing they claim to be", () => {
+  // A key derived over a malformed member hashes perfectly well and names a
+  // decision nothing can find again, so the tuple is held to DEC-7's grammar
+  // before it is hashed: 16 lowercase hex or none, and a state of the record's
+  // own shape (schema/decision-v1.json), required.
+  assert.throws(() => submissionKey({ submission_id: SUBMISSION, fingerprint: "0123456789ABCDEF", state: "held" }), /fingerprint/);
+  assert.throws(() => submissionKey({ submission_id: SUBMISSION, fingerprint: "0123", state: "held" }), /fingerprint/);
+  assert.throws(() => submissionKey({ submission_id: SUBMISSION, fingerprint: "0123456789abcdef" }), /`state`/);
+  assert.throws(() => submissionKey({ submission_id: SUBMISSION, fingerprint: "0123456789abcdef", state: "Held" }), /`state`/);
+  assert.throws(() => legacyKey({ repo: "you/x", tag: "v1.0.0", fingerprint: "0123456789abcdef", state: "" }), /`state`/);
+  assert.throws(() => legacyKey({ repo: "you/x", tag: "v1.0.0", fingerprint: 123, state: "held" }), /fingerprint/);
+});
+
 test("`legacy:`, `migration:` and `service-decision:` records for one tag differ", () => {
   const repo = "teletemagame-dev/dice-roller";
   const tag = "v1.0.0";
   const ids = [
     decisionId(migrationKey({ repo, tag })),
-    decisionId(legacyKey({ repo, tag })),
+    decisionId(legacyKey({ repo, tag, fingerprint: "0123456789abcdef", state: "published" })),
     decisionId(serviceDecisionKey({
       service_decision_id: SERVICE_DECISION, plugin_id: "dice-roller", version: "1.0.0", state: "yanked",
     })),
