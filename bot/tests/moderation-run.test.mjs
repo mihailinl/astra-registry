@@ -83,7 +83,7 @@ import * as moderationRun from "../moderation-run.mjs";
 // Ops entry 100's module, imported so that this suite, run against a tree
 // without it, is red test by test rather than at import.
 const settledLib = await import("../lib/settled.mjs").catch(() => null);
-import { CATEGORIES } from "../lib/moderation.mjs";
+import { CATEGORIES, TAKEDOWN_BOUND } from "../lib/moderation.mjs";
 import { BOT_AUDIENCE } from "../lib/oidc.mjs";
 import { BODIES } from "../lib/service.mjs";
 import { buildIndex } from "../../tools/build-index.mjs";
@@ -2535,4 +2535,190 @@ test("a moderation commit may write the settled record, and exactly that one fil
   for (const bad of [`${SETTLED_FILE_PATH}.bak`, `${SETTLED_FILE_PATH}x`, "state/moderation-settled/other.json", "state/releases-seen.json"]) {
     assert.equal(allowedPath(bad), false, `${bad} passes the allowlist because it begins like the record`);
   }
+});
+
+// ── TRUST-26's bound, measured by the commit job and spent entry by entry ────
+//
+// M-T3.4 × M-T3.2. Until this, the commit job read the bound from an input
+// nothing supplied (`ASTRA_OVER_BOUND`) and asked it ONCE per run: one boolean
+// for the whole batch. Two things were wrong with that, and a single-entry
+// fixture could show neither:
+//
+//   * a batch is not one takedown. With nothing withdrawn today and a bound of
+//     three, a list answer carrying four takedowns compiled all four against
+//     `overBound: false`, and four listed plugins left the catalogue in one
+//     commit — the day the bound exists for, arriving as a batch;
+//   * an environment variable that says "under the bound" is a switch that
+//     applies a takedown MOD-9 should have held, and a workflow step or a
+//     dispatch that set it would have been the whole of the bypass.
+//
+// So the job counts the window out of git itself (`countWindow`, M-T3.2's
+// counter) and each compiled takedown spends what it withdraws before the next
+// one is asked. These fixtures are real repositories with real history,
+// because the count is a comparison between commits.
+
+const PEERS = ["gadgets", "gizmos", "doohickeys"];
+const SDIS = ["…a1", "…a2", "…a3", "…a4", "…a5"].map((_, i) => `0192f3a4-5b6c-7d8e-9f01-2345678910${String(i + 10)}`);
+
+/** An estate with `widgets` and three more listed, bound plugins. */
+function crowd({ at = "2026-09-20T09:00:00Z" } = {}) {
+  const extra = {};
+  for (const id of PEERS) {
+    extra[`plugins/${id}/plugin.json`] = plugin(id);
+    extra[`plugins/${id}/versions/1.0.0.json`] = version(id, "1.0.0");
+    extra[`plugins/${id}/identity.json`] = identity(id);
+  }
+  return estate({ extra, at });
+}
+
+/** Commit, dated, what a hand withdrawal would leave on `main`. */
+function withdrawnInGit(root, ids, when) {
+  for (const id of ids) {
+    const file = path.join(root, "plugins", id, "plugin.json");
+    const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+    fs.writeFileSync(file, `${JSON.stringify({ ...doc, unlisted: true }, null, 2)}\n`);
+  }
+  sh(["add", "-A"], root);
+  sh(["commit", "-q", "-m", `hand delist of ${ids.join(", ")}\n\nModeration-Exempt: operator: fixture`], root, dated(when));
+}
+
+const takedownOf = (id, i) => decision({ service_decision_id: SDIS[i], plugin_id: id, code: "M_DELIST", category: "broken", moderator: "amoderator" });
+
+/** The commit job as the workflow runs it: no bound handed in from outside. */
+async function measuredJob(root, entries, { env = {}, now = new Date("2026-09-20T12:30:00Z") } = {}) {
+  return commitJob(root, { entries, now, env: { ASTRA_OVER_BOUND: "", ...env } });
+}
+
+test("M-T3.4: a batch of four takedowns under a bound of three, with none spent today, applies three and holds the fourth", async () => {
+  assert.equal(TAKEDOWN_BOUND, 3, "this fixture is written for the owner's bound of 3");
+  const root = crowd();
+  const entries = ["widgets", ...PEERS].map(takedownOf);
+  const { code, logs, results } = await measuredJob(root, entries);
+  assert.equal(code, 0, logs.join("\n"));
+  assert.deepEqual(results.compiled, SDIS.slice(0, 3),
+    "the first three takedowns of the batch are the ones the bound admits");
+  assert.deepEqual(results.held.map((h) => [h.service_decision_id, h.held_for]), [[SDIS[3], "bound"]],
+    "the fourth takedown in one batch went out unheld — four withdrawals in one commit under a bound of three");
+});
+
+test("M-T3.4: the bound counts what git already holds, and a full one is not lifted by the environment", async () => {
+  const root = crowd();
+  withdrawnInGit(root, ["gadgets", "gizmos"], "2026-09-20T11:30:00Z");
+  const two = await measuredJob(root, [takedownOf("widgets", 0), takedownOf("doohickeys", 1)]);
+  assert.equal(two.code, 0, two.logs.join("\n"));
+  assert.deepEqual(two.results.compiled, [SDIS[0]], "two withdrawn an hour ago leave one; the first takedown spends it");
+  assert.deepEqual(two.results.held.map((h) => h.held_for), ["bound"]);
+
+  const full = crowd();
+  withdrawnInGit(full, ["gadgets", "gizmos", "doohickeys"], "2026-09-20T11:30:00Z");
+  const forced = await measuredJob(full, [takedownOf("widgets", 0)], { env: { ASTRA_OVER_BOUND: "false" } });
+  assert.equal(forced.code, 0, forced.logs.join("\n"));
+  assert.deepEqual(forced.results.held.map((h) => h.held_for), ["bound"],
+    "ASTRA_OVER_BOUND=false applied a takedown past a full bound: an input that says `under` is the whole bypass");
+  assert.deepEqual(forced.results.compiled, []);
+
+  // And the window is a window: the same three, withdrawn 25 hours earlier, cost nothing now.
+  const old = crowd({ at: "2026-09-19T09:00:00Z" });
+  withdrawnInGit(old, ["gadgets", "gizmos", "doohickeys"], "2026-09-19T11:00:00Z");
+  const later = await measuredJob(old, [takedownOf("widgets", 0)]);
+  assert.deepEqual(later.results.compiled, [SDIS[0]], "a withdrawal older than 24 h still counted");
+});
+
+test("M-T3.4: a count the job cannot make holds every takedown, and says why", async () => {
+  const root = crowd();
+  // A `binary` advisory names a hash this registry records for no listing, so
+  // the listed ids it withdraws are unknown (M-T3.2) — and unknown is over.
+  writeAll(root, { "tools/revocations/ASTRA-2026-0001.json": {
+    id: "ASTRA-2026-0001", published: "2026-09-20", severity: "high", action: "block_install",
+    reason: "A test advisory whose binary entry no listing records.",
+    entries: [{ kind: "binary", value: "b".repeat(64) }, { kind: "id", value: "gizmos" }],
+  } });
+  sh(["add", "-A"], root);
+  sh(["commit", "-q", "-m", "hand advisory\n\nModeration-Exempt: operator: fixture"], root, dated("2026-09-20T11:00:00Z"));
+  const { code, logs, results } = await measuredJob(root, [takedownOf("widgets", 0)]);
+  assert.equal(code, 0, logs.join("\n"));
+  assert.deepEqual(results.held.map((h) => h.held_for), ["bound"], "an uncountable window applied a takedown");
+  assert.ok(logs.some((l) => /bound/.test(l) && /cannot be counted/.test(l)),
+    `the run did not say why it held: ${logs.join(" | ")}`);
+});
+
+test("M-T3.4: two revocations in one batch get two advisory ids, and neither overwrites the other", async () => {
+  const root = crowd();
+  const revoke = (id, i) => decision({
+    service_decision_id: SDIS[i], plugin_id: id, code: "M_REVOKE", category: "security_defect",
+    severity: "high", action: "block_install", moderator: "amoderator", versions: ["1.0.0"],
+  });
+  const { code, logs, results } = await measuredJob(root, [revoke("gadgets", 0), revoke("gizmos", 1)]);
+  assert.equal(code, 0, logs.join("\n"));
+  assert.deepEqual(results.compiled, [SDIS[0], SDIS[1]], logs.join("\n"));
+  const files = results.written.filter((p) => p.startsWith("tools/revocations/")).sort();
+  assert.deepEqual(files, ["tools/revocations/ASTRA-2026-0001.json", "tools/revocations/ASTRA-2026-0002.json"],
+    "two advisories compiled in one run took one id, and the second file overwrote the first: the first plugin's " +
+    "revocation was logged as done and never published");
+  const byPlugin = {};
+  for (const f of files) {
+    const doc = JSON.parse(fs.readFileSync(path.join(root, f), "utf8"));
+    byPlugin[doc.id] = doc.entries.filter((e) => e.kind === "id_version" || e.kind === "id" || e.kind === "version_range").map((e) => e.value)[0];
+  }
+  assert.deepEqual(Object.values(byPlugin).map((v) => String(v).split("@")[0]).sort(), ["gadgets", "gizmos"]);
+  const logFiles = results.written.filter((p) => p.startsWith("bot/moderation/"));
+  assert.equal(new Set(logFiles).size, 2, `two decisions, ${new Set(logFiles).size} log entr(y|ies)`);
+});
+
+test("M-T3.4: a second takedown of one plugin in the same batch is `target_changed`, and costs the bound nothing", async () => {
+  const root = crowd();
+  const { code, logs, results } = await measuredJob(root, [
+    takedownOf("widgets", 0), takedownOf("widgets", 1), takedownOf("gadgets", 2), takedownOf("gizmos", 3),
+  ]);
+  assert.equal(code, 0, logs.join("\n"));
+  assert.deepEqual(results.refused.map((r) => [r.service_decision_id, r.refusal]), [[SDIS[1], "target_changed"]],
+    "a second delist of a plugin this run already delisted compiled a second time, onto the same file and log entry");
+  assert.deepEqual(results.compiled, [SDIS[0], SDIS[2], SDIS[3]],
+    "one plugin taken away twice is one plugin: the bound still had room for the other two");
+  assert.deepEqual(results.held, []);
+});
+
+test("M-T3.4: a revocation spends the bound like a delist, and two of one plugin take two ids and two log names", async () => {
+  const root = crowd();
+  const revoke = (id, i) => decision({
+    service_decision_id: SDIS[i], plugin_id: id, code: "M_REVOKE", category: "security_defect",
+    severity: "high", action: "block_install", moderator: "amoderator", versions: ["1.0.0"],
+  });
+  const three = await measuredJob(root, [revoke("gadgets", 0), revoke("gizmos", 1), revoke("doohickeys", 2), takedownOf("widgets", 3)]);
+  assert.equal(three.code, 0, three.logs.join("\n"));
+  assert.deepEqual(three.results.held.map((h) => [h.service_decision_id, h.held_for]), [[SDIS[3], "bound"]],
+    "three revocations spent nothing, and a fourth takedown went out unheld");
+
+  const same = crowd();
+  const twice = await measuredJob(same, [revoke("gadgets", 0), revoke("gadgets", 1)]);
+  assert.equal(twice.code, 0, twice.logs.join("\n"));
+  assert.deepEqual(twice.results.compiled, [SDIS[0], SDIS[1]]);
+  const logs = twice.results.written.filter((p) => p.startsWith("bot/moderation/")).sort();
+  assert.equal(logs.length, 2, `two revocations of one plugin wrote ${logs.length} log entr(y|ies): ${logs.join(", ")}`);
+  assert.deepEqual(logs, ["bot/moderation/2026-09-20-gadgets-revoke-2.json", "bot/moderation/2026-09-20-gadgets-revoke.json"],
+    "the second revocation of a plugin in one run took the first one's log name and overwrote its entry (MOD-47)");
+});
+
+test("M-T3.4: the staging listing costs the batch nothing, as it costs the window nothing (MOD-16)", async () => {
+  const canary = "astra-withdrawal-canary";
+  const extra = {
+    "policy/reserved-ids.json": { staging_listing_id: canary },
+    [`plugins/${canary}/plugin.json`]: plugin(canary),
+    [`plugins/${canary}/versions/1.0.0.json`]: version(canary, "1.0.0"),
+    [`plugins/${canary}/identity.json`]: identity(canary),
+  };
+  for (const id of PEERS) {
+    extra[`plugins/${id}/plugin.json`] = plugin(id);
+    extra[`plugins/${id}/versions/1.0.0.json`] = version(id, "1.0.0");
+    extra[`plugins/${id}/identity.json`] = identity(id);
+  }
+  const root = estate({ extra, at: "2026-09-20T09:00:00Z" });
+  const pathTest = decision({
+    service_decision_id: SDIS[4], plugin_id: canary, code: "M_DEPRECATE", category: "path_test",
+    severity: "low", moderator: "amoderator", versions: ["1.0.0"],
+  });
+  const { code, logs, results } = await measuredJob(root, [pathTest, takedownOf("widgets", 0), takedownOf("gadgets", 1), takedownOf("gizmos", 2)]);
+  assert.equal(code, 0, logs.join("\n"));
+  assert.deepEqual(results.held, [], "the staging listing's path test spent the bound and held a real takedown");
+  assert.deepEqual(results.compiled, [SDIS[4], SDIS[0], SDIS[1], SDIS[2]]);
 });

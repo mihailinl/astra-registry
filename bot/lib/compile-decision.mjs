@@ -424,7 +424,7 @@ function historicRepos(root, listing) {
  * already published under a different year — legible to a person, and not to a
  * reader that parses the four digits.
  */
-export function nextAdvisoryId({ root = REPO_ROOT, year } = {}) {
+export function nextAdvisoryId({ root = REPO_ROOT, year, taken = null } = {}) {
   const out = git(
     ["log", "--diff-filter=A", "--name-only", "--format=", "--", `${REVOCATIONS_DIR}/`],
     { cwd: root, allowFailure: true },
@@ -438,6 +438,14 @@ export function nextAdvisoryId({ root = REPO_ROOT, year } = {}) {
     const m = ADVISORY_FILE.exec(line.trim());
     if (!m) continue;
     const serial = Number(m[1].slice(m[1].lastIndexOf("-") + 1));
+    if (Number.isSafeInteger(serial) && serial > highest) highest = serial;
+  }
+  // The ids this RUN has already given out and not yet committed (M-T3.4's
+  // batch). Git cannot see them, so without this the second advisory of a
+  // batch took the first one's id and its file overwrote the first: the first
+  // plugin's revocation was logged as done and never published.
+  for (const id of taken ?? []) {
+    const serial = Number(String(id).slice(String(id).lastIndexOf("-") + 1));
     if (Number.isSafeInteger(serial) && serial > highest) highest = serial;
   }
   const next = highest + 1;
@@ -544,7 +552,7 @@ export function allowlistedSubmission(entry) {
  * produce one and two readings of a directory a moment apart is how two entries
  * claim `-2`.
  */
-function logEntryFile(root, doc) {
+function logEntryFile(root, doc, takenFiles = null) {
   const { entries, files } = loadEntries({ root });
   // The suffixes actually TAKEN, read off the names, rather than a count of
   // matching entries. They are the same number while the directory is
@@ -558,13 +566,15 @@ function logEntryFile(root, doc) {
     const n = suffixOf(files[i], e);
     if (n !== null) taken.add(n);
   }
+  // And the names this run has already given out (M-T3.4's batch), which the
+  // directory does not hold yet.
   let n = 1;
-  while (taken.has(n)) n += 1;
+  while (taken.has(n) || takenFiles?.has(`${MODERATION_DIR}/${fileNameFor(doc, n)}`)) n += 1;
   return `${MODERATION_DIR}/${fileNameFor(doc, n)}`;
 }
 
 /** A composed log entry, refused here if the directory would refuse it. */
-function logEntry(root, doc) {
+function logEntry(root, doc, batch = null) {
   const problems = checkEntry(doc, "<compiled>", { cutoverAt: cutoverAt(root) });
   if (problems.length) {
     throw new Error(
@@ -572,7 +582,7 @@ function logEntry(root, doc) {
       "artefact and its log entry together, so an entry that cannot be written is an artefact that must not be",
     );
   }
-  return { file: logEntryFile(root, doc), doc };
+  return { file: logEntryFile(root, doc, batch?.logFiles), doc };
 }
 
 /** `plugins/<id>/versions/<v>.json` gains `"yanked": true`. */
@@ -678,6 +688,37 @@ const held = (d, held_for, why) => ({
 });
 
 /**
+ * What one moderation run has already compiled and not yet committed (M-T3.4).
+ *
+ * A run compiles a whole list answer and commits it once (BOT-73), so every
+ * decision after the first compiles against a tree that does not yet show the
+ * ones before it. Git can answer "what is the next advisory id", "is this
+ * listing listed" and "is this log name taken" only for what is committed, and
+ * three defects followed from asking it anyway: two advisories took one id and
+ * the second file overwrote the first; two log entries for one plugin, date and
+ * action took one name; and a second delist of a plugin compiled again, onto
+ * the same edit. `compileAll` in `bot/moderation-run.mjs` keeps one of these
+ * per run and records each compiled result into it.
+ */
+export function newBatch() {
+  return { advisoryIds: new Set(), logFiles: new Set(), unlisted: new Set(), yanked: new Set() };
+}
+
+/** Record one compiled result into the run's batch. */
+export function recordInBatch(batch, result) {
+  if (!batch || result?.outcome !== "compiled") return;
+  for (const a of result.advisories ?? []) if (a?.id) batch.advisoryIds.add(a.id);
+  for (const l of result.log ?? []) if (l?.file) batch.logFiles.add(l.file);
+  for (const e of result.edits ?? []) {
+    if (e?.op !== "set" || e.value !== true) continue;
+    const plugin = /^plugins\/([^/]+)\/plugin\.json$/.exec(String(e.file));
+    const version = /^plugins\/([^/]+)\/versions\/([^/]+)\.json$/.exec(String(e.file));
+    if (e.member === "unlisted" && plugin) batch.unlisted.add(plugin[1]);
+    if (e.member === "yanked" && version) batch.yanked.add(`${version[1]}@${version[2]}`);
+  }
+}
+
+/**
  * Compile one service decision.
  *
  * @param {object} entry   one BOT-80 service-decision entry, already checked
@@ -686,9 +727,11 @@ const held = (d, held_for, why) => ({
  * @param {string}  ctx.root        the `main` tree to read.
  * @param {boolean} ctx.overBound   TRUST-26's count is at or above the bound
  *                                  (M-T3.2 counts; this file only believes it).
+ * @param {object}  [ctx.batch]     what this run already compiled and has not committed
+ *                                  (`newBatch`); absent, the decision is compiled alone.
  * @returns {{outcome: "compiled"|"refused"|"held", ...}}
  */
-export function compileDecision(entry, { root = REPO_ROOT, overBound = false } = {}) {
+export function compileDecision(entry, { root = REPO_ROOT, overBound = false, batch = null } = {}) {
   const d = allowlisted(entry);
   const code = d.code;
 
@@ -785,7 +828,7 @@ export function compileDecision(entry, { root = REPO_ROOT, overBound = false } =
   // at all — while MOD-33 requires the log entry for every decided appeal and
   // FLOW-18 turns a reversed one into the estate's only Recheck. Nothing in
   // this branch reads the tree for the listing, so there is nothing to derive.
-  if (code === "M_APPEAL") return compileAppeal(root, d, { decidedAt, date, reason });
+  if (code === "M_APPEAL") return compileAppeal(root, d, { decidedAt, date, reason, batch });
 
   // ── target_not_in_registry ───────────────────────────────────────────────
   const listing = readListing(root, d.plugin_id);
@@ -834,9 +877,9 @@ export function compileDecision(entry, { root = REPO_ROOT, overBound = false } =
 
   // ── what is left compiles ────────────────────────────────────────────────
   switch (KNOWN_CODES[code]) {
-    case "yank": return compileYank(root, d, listing, { decidedAt, date, reason });
-    case "delist": return compileDelist(root, d, listing, { decidedAt, date, reason });
-    case "advisory": return compileAdvisory(root, d, listing, { decidedAt, date, reason });
+    case "yank": return compileYank(root, d, listing, { decidedAt, date, reason, batch });
+    case "delist": return compileDelist(root, d, listing, { decidedAt, date, reason, batch });
+    case "advisory": return compileAdvisory(root, d, listing, { decidedAt, date, reason, batch });
     default:
       // `reversal` with no hold cannot happen: `holdKindFor` returns "reversal"
       // for both reversal codes unconditionally. Said out loud rather than
@@ -920,7 +963,7 @@ function holdWhy(kind, d, listing) {
 }
 
 /** `M_YANK` and a bound `A_YANK` (§7.2; FLOW-79). */
-function compileYank(root, d, listing, { decidedAt, date, reason }) {
+function compileYank(root, d, listing, { decidedAt, date, reason, batch = null }) {
   const author = d.code === "A_YANK";
   const named = Array.isArray(d.versions) ? d.versions : [];
   if (named.length === 0) {
@@ -933,7 +976,10 @@ function compileYank(root, d, listing, { decidedAt, date, reason }) {
   const stuck = [];
   for (const version of named) {
     const record = listing.versions.find((v) => v.version === version);
-    if (!record || record.doc?.yanked === true || !listing.listed) stuck.push(version);
+    // An earlier decision in this run that delisted the listing, or yanked
+    // the version, moved the target as surely as a commit would have.
+    const gone = batch?.unlisted.has(listing.id) || batch?.yanked.has(`${listing.id}@${version}`);
+    if (!record || record.doc?.yanked === true || !listing.listed || gone) stuck.push(version);
     else movable.push(version);
   }
 
@@ -976,7 +1022,7 @@ function compileYank(root, d, listing, { decidedAt, date, reason }) {
     code: d.code,
     service_decision_id: d.service_decision_id,
     edits: movable.map((v) => yankEdit(listing.id, v)),
-    log: [logEntry(root, entry)],
+    log: [logEntry(root, entry, batch)],
     advisories: [],
     records,
     alerts: [],
@@ -989,10 +1035,15 @@ function compileYank(root, d, listing, { decidedAt, date, reason }) {
 }
 
 /** `M_DELIST` and a bound `A_REMOVAL_REQUEST` (§7.2; FLOW-28). */
-function compileDelist(root, d, listing, { decidedAt, date, reason }) {
+function compileDelist(root, d, listing, { decidedAt, date, reason, batch = null }) {
   if (!listing.listed) {
     return refuse(d, "target_changed",
       `${listing.id} is already unlisted on this tree, so there is nothing left for this decision to take away`);
+  }
+  if (batch?.unlisted.has(listing.id)) {
+    return refuse(d, "target_changed",
+      `${listing.id} is delisted by an earlier decision in this same run, so there is nothing left for this one ` +
+      "to take away; compiling it again would write the same listing edit and overwrite that decision's log entry");
   }
   const author = d.code === "A_REMOVAL_REQUEST";
   const entry = {
@@ -1011,7 +1062,7 @@ function compileDelist(root, d, listing, { decidedAt, date, reason }) {
     code: d.code,
     service_decision_id: d.service_decision_id,
     edits: [unlistEdit(listing.id)],
-    log: [logEntry(root, entry)],
+    log: [logEntry(root, entry, batch)],
     advisories: [],
     records: [],
     alerts: [],
@@ -1020,7 +1071,7 @@ function compileDelist(root, d, listing, { decidedAt, date, reason }) {
 }
 
 /** `M_DEPRECATE` and `M_REVOKE` (§7.2; MOD-4; MOD-13; MOD-19). */
-function compileAdvisory(root, d, listing, { decidedAt, date, reason }) {
+function compileAdvisory(root, d, listing, { decidedAt, date, reason, batch = null }) {
   // §7.2: a deprecate IS an advisory with action `warn`. The payload carries an
   // `action` only for `M_REVOKE` (MOD-10), so taking one from a deprecate would
   // be taking a field the contract says is not there.
@@ -1029,7 +1080,7 @@ function compileAdvisory(root, d, listing, { decidedAt, date, reason }) {
     return refuse(d, "kind_refused", `action ${JSON.stringify(action)} is not one a withdrawal list may carry`);
   }
 
-  const id = nextAdvisoryId({ root, year: date.slice(0, 4) });
+  const id = nextAdvisoryId({ root, year: date.slice(0, 4), taken: batch?.advisoryIds });
   const entries = advisoryEntries(listing, Array.isArray(d.versions) ? d.versions : []);
 
   if (ACCOUNT_LEVEL_CATEGORIES.includes(d.category)) {
@@ -1070,7 +1121,7 @@ function compileAdvisory(root, d, listing, { decidedAt, date, reason }) {
     code: d.code,
     service_decision_id: d.service_decision_id,
     edits: [{ op: "add", file: `${REVOCATIONS_DIR}/${id}.json`, doc: advisory }],
-    log: [logEntry(root, entry)],
+    log: [logEntry(root, entry, batch)],
     advisories: [advisory],
     records: [],
     // MOD-8: every advisory is alerted before the push, `warn` included. A
@@ -1087,7 +1138,7 @@ function compileAdvisory(root, d, listing, { decidedAt, date, reason }) {
  * one — so a compile that copied `category` through would be refused by the log
  * it was written for.
  */
-function compileAppeal(root, d, { decidedAt, date, reason }) {
+function compileAppeal(root, d, { decidedAt, date, reason, batch = null }) {
   const entry = {
     date,
     action: "appeal",
@@ -1105,7 +1156,7 @@ function compileAppeal(root, d, { decidedAt, date, reason }) {
     code: d.code,
     service_decision_id: d.service_decision_id,
     edits: [],
-    log: [logEntry(root, entry)],
+    log: [logEntry(root, entry, batch)],
     advisories: [],
     records: [],
     alerts: [],
