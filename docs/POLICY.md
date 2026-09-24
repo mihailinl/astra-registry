@@ -635,7 +635,7 @@ possible, or the only way to correct a mistake would be to delete files and hope
 
 ### Undoing one, and saying so
 
-Three more things go in the same public log, and they exist because a log that
+Four more things go in the same public log, and they exist because a log that
 records only the taking overstates what this estate has done, for ever: a reader
 who finds the delist and not the relist reads a listed plugin as withdrawn.
 
@@ -643,11 +643,20 @@ who finds the delist and not the relist reads a listed plugin as withdrawn.
 |---|---|---|
 | **Relist** | a delist. `unlisted` is removed. | the entry, naming the decision it reverses |
 | **Unrevoke** | a deprecate or a revoke. The advisory is deleted and the effect lifts at the next higher serial. | the entry, naming the advisory and the decision it reverses |
+| **Reset** | a permanent `B_REPOSITORY_RECYCLED`. A moderator's identity reset (`M_IDENTITY_RESET`), held 24 hours and confirmed by an operator like any reversal, voids every recorded identity of the plugin id and deletes its identity record if it has one. | the entry, category `identity_reset`, and a decision record saying the id's earlier identities no longer count |
 | **Appeal** | nothing by itself. It records that an appeal was decided, and how. | the outcome — `stands` or `reversed` — and the public reason, **never the appeal's text** |
 
-None of the three costs a user anything, which is why they are not in the
+None of the four costs a user anything, which is why they are not in the
 escalation table above: they are the other direction. An appeal that is
 `reversed` is followed by whichever of the first two it calls for.
+
+**A reset binds nothing and publishes nothing.** After it the listing is
+*frozen* — a listing that ever had an identity record is never grandfathered
+again — so the next release needs a binding line, or it is refused
+`B_UNBOUND`. A release that has one is held for a moderator as a first binding
+and as an identity change (`R_FIRST_BINDING`, `R_IDENTITY_CHANGED`), and it is
+never refused `B_REPOSITORY_RECYCLED` again against the identities the reset
+voided.
 
 A reverted delist, deprecate or revoke applies **at once** — unheld, and outside
 the takedown bound (root `POLICY.md` §7 states it and what counts toward it) —

@@ -55,6 +55,13 @@
 //              revoke). Carries `reverses` — a `service_decision_id`, or, for
 //              a hand advisory committed under `Moderation-Exempt:` with no
 //              service decision behind it, the `ASTRA-YYYY-NNNN` itself.
+//   reset      a moderator's identity reset (`M_IDENTITY_RESET`; contract
+//              2.5.0, OPEN-OWNER-15), released from MOD-9's hold. It lifts a
+//              permanent `B_REPOSITORY_RECYCLED`: the same commit writes DEC-7's
+//              voiding record and deletes `plugins/<id>/identity.json` where
+//              one exists (ID-40's one exception). Carries category
+//              `identity_reset` and its `service_decision_id`, and names no
+//              version and no advisory — it voids an id, not a release.
 //   appeal     a decided appeal (`M_APPEAL`; MOD-33). Never its text: the
 //              appellant's words are the one thing PRIV-2 keeps out of git.
 //              It carries `appeal_of`, `outcome` and the public reason, and it
@@ -89,7 +96,7 @@ export const SOURCE_DIR = "bot/moderation";
  * they reverse rather than in a block of their own, because the pair is the
  * unit a reader of `/transparency/` is looking for.
  */
-export const ACTIONS = ["yank", "delist", "relist", "deprecate", "revoke", "unrevoke", "appeal"];
+export const ACTIONS = ["yank", "delist", "relist", "deprecate", "revoke", "unrevoke", "reset", "appeal"];
 
 /**
  * The four whose cost `docs/POLICY.md` §9 tabulates.
@@ -126,6 +133,10 @@ export const CATEGORIES = {
   deprecate: ["privacy", "broken", "security_defect", "licence", "legal", "path_test"],
   revoke: ["malicious", "account_compromise", "account_sanction", "privacy", "impersonation", "security_defect", "legal"],
   unrevoke: ["error", "appeal_reversed", "path_test"],
+  // §7.2: "identity_reset (OPEN-OWNER-15) | IDENTITY_RESET", and nothing else
+  // carries it. `M_IDENTITY_RESET` is the one decision whose log action is
+  // `reset` (MOD-47, 2.5.0).
+  reset: ["identity_reset"],
   appeal: [],
 };
 
@@ -476,6 +487,22 @@ export function checkEntry(doc, where = "<entry>", { cutoverAt = null } = {}) {
         `reverses ${JSON.stringify(doc.reverses)} must be a service_decision_id (§0.7's UUID)` +
           (doc.action === "unrevoke" ? ", or the ASTRA-YYYY-NNNN of a hand advisory" : ""),
       );
+    }
+  }
+
+  // ── what a reset names ───────────────────────────────────────────────────
+  //
+  // A reset voids an ID (DEC-7's voiding record names `plugin_id` and no
+  // version), so an entry naming versions is claiming a narrower act than the
+  // one that happened. Its category and `service_decision_id` are required:
+  // there is no hand reset — the only commit that may delete an identity
+  // record is `M_IDENTITY_RESET`'s release (ID-40), and detector A9 finds it
+  // by the voiding record that same commit writes.
+  if (doc.action === "reset") {
+    if (doc.versions !== undefined) bad("a reset voids an id, not versions, so it may not carry versions (DEC-7)");
+    if (doc.category === undefined) bad("a reset must carry its category, identity_reset (§7.2)");
+    if (doc.service_decision_id === undefined) {
+      bad("a reset must carry the service_decision_id of the M_IDENTITY_RESET it applies (BOT-81; ID-40)");
     }
   }
 
