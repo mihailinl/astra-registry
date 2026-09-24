@@ -2432,3 +2432,41 @@ test("drain-age: a stale releases-seen is red before cutover and retired after i
   assert.equal(r.status, "red");
   assert.ok(r.codes.includes("DRAIN_CRON_UNROUTED"), r.codes.join(" "));
 });
+
+// ── MIG-20's marker, which lands under `log/` (registry plan B-T3.7b) ───────
+//
+// The baseline dispatch commits `log/baseline.json` beside its 43 records.
+// Walked by hand on 2026-09-24 (lane S11), on a local commit of that dispatch
+// over `fc50fad`: the privacy scan went red on it, E_PRIV_UNDECLARED_DOCUMENT,
+// because `log/**` is composed and no kind declared the marker. The records
+// were fine; `decision` is declared. So the one dispatch that cannot be
+// repeated would have put `Moderation coverage` red on `main`, paging every 15
+// minutes, and the scan's own remedy ("declare it ... in the commit that
+// introduces it") cannot be taken, because that commit is `log/` and nothing
+// else (BOT-73). The declaration has to be on `main` first.
+//
+// Watched failing: with the `baseline` kind removed from DOCUMENT_MEMBERS (and
+// its COMPOSED row), the first test is red with E_PRIV_UNDECLARED_DOCUMENT;
+// with `source_commit` dropped from its member list, both are red.
+test("B-T3.7b: the migration baseline marker is a declared composed document, and a member it does not carry is red", async () => {
+  const { marker } = await import("../baseline.mjs");
+  const doc = marker({ writtenAt: "2026-09-24T16:15:44Z", sourceCommit: "f".repeat(40), versionCount: 43, recordCount: 43 });
+  const f = fixture("baseline-marker").landTools();
+  f.write("log/baseline.json", doc).commit("baseline: MIG-20's migration records and marker");
+  assert.equal(priv(f.dir).status, "green", `MIG-20's marker, as bot/baseline.mjs composes it: ${codesOf(priv(f.dir))}`);
+  const g = fixture("baseline-marker-extra").landTools();
+  g.write("log/baseline.json", { ...doc, dispatched_by: "someone" }).commit("a marker with a member MIG-20's does not have");
+  const r = priv(g.dir);
+  assert.deepEqual([r.status, r.codes], ["red", ["E_PRIV_UNDECLARED_MEMBER"]],
+    `a marker carrying \`dispatched_by\` was not refused for that member: ${codesOf(r)}`);
+});
+
+test("B-T3.7b: the privacy scan's marker members are exactly the ones bot/baseline.mjs writes", async () => {
+  // Two lists of one document's members, in two files. The composer's is the
+  // one that runs; this holds the scan's to it, both ways, so a member the
+  // marker gains is declared in the same change or this is red.
+  const { marker } = await import("../baseline.mjs");
+  const written = Object.keys(marker({ writtenAt: "2026-09-24T16:15:44Z", sourceCommit: "f".repeat(40), versionCount: 1, recordCount: 1 })).sort();
+  assert.ok(written.length >= 5, `the marker has ${written.length} member(s); it had 5 when this was written`);
+  assert.deepEqual([...DOCUMENT_MEMBERS.baseline.members].sort(), written);
+});

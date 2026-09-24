@@ -160,6 +160,7 @@ const COMPOSED = [
   // same kind with the same member tables (B-T5.0 added `bot-state` this way).
   { re: /^log\/rollout\/R0-settings(?:-\d{4}-\d{2}-\d{2}(?:-\d+)?)?\.json$/, kind: "settings" },
   { re: /^log\/migration-notice-\d+\.json$/, kind: "migration-notice" },
+  { re: /^log\/baseline\.json$/, kind: "baseline" },
   { re: /^log\/.*\.json$/, kind: null },               // log/** with no declared kind
   { re: /^plugins\/[^/]+\/identity\.json$/, kind: "identity" },
   { re: /^state\/alerts\/[^/]+\.json$/, kind: "alert-record" },

@@ -201,10 +201,21 @@ jobs:
       # `log/baseline.json` on the tree — the step above refuses otherwise —
       # and BOT-73's one commit, holding every record and the marker, is to
       # follow it (header).
+      #
+      # **`--check`, as operator.yml's same step runs them.** Until 2026-09-24
+      # these ran in write mode, and each generator's default serial is a
+      # `git rev-list --count` over its sources — on this job's one-commit
+      # checkout, not main's history. So both documents changed, the next
+      # step's guard refused the commit ("the baseline commit is log/ and
+      # nothing else"), and the dispatch could never have taken the baseline.
+      # `--check` regenerates each at the serial its committed file claims and
+      # fails on any difference, which is BOT-71's question; the commit carries
+      # `log/` alone either way. `bot/tests/baseline.test.mjs` runs these lines
+      # over a one-commit copy of the tree.
       - name: The catalogue the records were composed beside
         run: |
-          node tools/build-index.mjs
-          node tools/build-revocations.mjs
+          node tools/build-index.mjs --check
+          node tools/build-revocations.mjs --check
           node tools/selftest.mjs
           node tools/validate.mjs --allow-staging
 
