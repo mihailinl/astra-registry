@@ -386,3 +386,114 @@ test("every state MIG-1 has was produced above, by a fixture rather than by a cl
     "a state this module can return that no fixture here reaches is a state nothing checks");
   assert.equal(LISTING_STATES.length, 3, "the floor: MIG-1's three derived states (`unlisted` is answered before them)");
 });
+
+// ── the desk commands around the two records (M-T5.2, M-T5.3, M-T5.4) ───────
+//
+// `tools/selftest/deadline.mjs` holds the rules these commands apply, pure.
+// These run the COMMANDS, as a person runs them, on real trees and real git
+// history: the read of a marker's history is guard n22's whole input, and a
+// command that wrote the deadline but not its POLICY.md line would pass every
+// pure test above it.
+
+const node = (script, args, cwd) => {
+  try {
+    return { status: 0, out: execFileSync(process.execPath, [path.join(REPO_ROOT, script), ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }) };
+  } catch (e) {
+    return { status: e.status, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+  }
+};
+
+test("M-T5.2: tools/binding-deadline.mjs writes the deadline and POLICY.md's line together, and refuses an earlier one", () => {
+  const root = tmp("astra-binding-deadline-");
+  fs.mkdirSync(path.join(root, "policy"));
+  fs.copyFileSync(path.join(REPO_ROOT, "POLICY.md"), path.join(root, "POLICY.md"));
+  const run = (...a) => node("tools/binding-deadline.mjs", [...a, "--root", root], root);
+
+  const dry = run("--cutover-estimate", "2026-09-27T00:00:00Z");
+  assert.equal(dry.status, 0, dry.out);
+  assert.equal(fs.existsSync(path.join(root, DEADLINE_FILE)), false, "a run without --write wrote the deadline");
+
+  const wrote = run("--cutover-estimate", "2026-09-27T00:00:00Z", "--round2-estimate", "2026-09-25T00:00:00Z", "--write");
+  assert.equal(wrote.status, 0, wrote.out);
+  assert.equal(readMarkers(root).deadline, "2026-11-26T00:00:00Z", "the bot's reader does not read the written deadline");
+  const policy = fs.readFileSync(path.join(root, "POLICY.md"), "utf8");
+  const line = policy.split("\n").filter((l) => l.startsWith("**Binding deadline:**"));
+  assert.equal(line.length, 1);
+  assert.match(line[0], /2026-11-26 \(`2026-11-26T00:00:00Z`\)/, "POLICY.md's line does not state the written deadline");
+
+  const before = [DEADLINE_FILE, "POLICY.md"].map((f) => fs.readFileSync(path.join(root, f), "utf8"));
+  const earlier = run("--cutover-estimate", "2026-09-20T00:00:00Z", "--write");
+  assert.equal(earlier.status, 1, earlier.out);
+  assert.match(earlier.out, /MIG-29/);
+  assert.deepEqual([DEADLINE_FILE, "POLICY.md"].map((f) => fs.readFileSync(path.join(root, f), "utf8")), before,
+    "a refused run changed a file");
+  const floor = run("--cutover-estimate", "2026-10-01T00:00:00Z", "--round2-estimate", "2026-10-05T00:00:00Z");
+  assert.equal(floor.status, 1, "a deadline under 60 days after the round-2 estimate was not refused");
+});
+
+/** A registry with two third-party accounts, as MIG-13's recipients see it. */
+function noticeEstate() {
+  const root = tmp("astra-notice-");
+  write(root, "publishers/team.json", { owner: "team", tier: "astra_team" });
+  write(root, "plugins/alpha/plugin.json", { id: "alpha", source: { repo: "stranger/alpha" }, added_at: "2026-08-01" });
+  write(root, "plugins/gamma/plugin.json", { id: "gamma", source: { repo: "other/gamma" }, added_at: "2026-08-02" });
+  write(root, "plugins/ours/plugin.json", { id: "ours", source: { repo: "team/ours" }, added_at: "2026-08-01" });
+  git(root, ["init", "--quiet", "-b", "main"]);
+  commit(root, "an estate");
+  return root;
+}
+
+test("M-T5.3: issue-paths stops the round for an account whose repository takes no issues, and names it for the owner", () => {
+  const root = noticeEstate();
+  const readings = path.join(root, "readings.json");
+  write(root, "readings.json", {
+    "stranger/alpha": { has_issues: true, archived: false, private: false },
+    "other/gamma": { has_issues: false, archived: false, private: false },
+  });
+  const r = node("tools/migration-notice.mjs", ["issue-paths", "--root", root, "--readings", readings], root);
+  assert.equal(r.status, 1, "a round with an unreachable account exited as if every account were reachable");
+  assert.match(r.out, /OWNER ITEM {2}other has no issue path \(other\/gamma: has_issues is false\); listings gamma/);
+  assert.match(r.out, /ok {4}stranger: an issue in stranger\/alpha reaches it/);
+  write(root, "readings.json", {
+    "stranger/alpha": { has_issues: true, archived: false, private: false },
+    "other/gamma": { has_issues: true, archived: false, private: false },
+  });
+  assert.equal(node("tools/migration-notice.mjs", ["issue-paths", "--root", root, "--readings", readings], root).status, 0);
+});
+
+test("M-T5.3 + M-T5.4: a re-send the command writes is one the watch passes, and an earlier date under the same sent_at is red", async () => {
+  const { verdictProblems } = await import("../lib/alert-verdict.mjs");
+  const root = noticeEstate();
+  const notice = (...a) => node("tools/migration-notice.mjs", [...a, "--root", root], root);
+  const watch = (now) => {
+    const out = path.join(root, "verdict.json");
+    const r = node("tools/deadline-watch.mjs", ["--root", root, "--now", now, "--no-banner", "--out", out], root);
+    assert.equal(r.status, 0, r.out);
+    const v = JSON.parse(fs.readFileSync(out, "utf8"));
+    fs.rmSync(out);
+    assert.deepEqual(verdictProblems(v), [], "the watch composed a verdict the alarm channel refuses");
+    return v;
+  };
+  fs.mkdirSync(path.join(root, "log"));
+  assert.equal(notice("round", "--round", "1", "--sent-at", "2026-09-24T00:00:00Z", "--write").status, 0);
+  commit(root, "round 1 sent");
+  assert.equal(notice("round", "--round", "2", "--sent-at", "2026-09-25T00:00:00Z", "--cutover", "2026-10-30T00:00:00Z", "--write").status, 0);
+  commit(root, "round 2 sent");
+  assert.equal(watch("2026-09-26T00:00:00Z").status, "green");
+
+  const later = notice("resend", "--cutover", "2026-11-15T00:00:00Z", "--at", "2026-09-28T00:00:00Z", "--write");
+  assert.equal(later.status, 0, later.out);
+  assert.match(later.out, /branch later/);
+  assert.match(later.out, /Moderation-Exempt: migration-notice: /, "a re-commit was written without the trailer that clears it");
+  commit(root, "re-send: later");
+  const two = JSON.parse(fs.readFileSync(path.join(root, "log/migration-notice-2.json"), "utf8"));
+  assert.deepEqual([two.sent_at, two.cutover_planned_at], ["2026-09-25T00:00:00Z", "2026-11-15T00:00:00Z"]);
+  assert.equal(watch("2026-09-29T00:00:00Z").status, "green", "the watch alarmed on the tree MIG-13's later branch leaves");
+
+  // The wrong turn, by hand: the date moved EARLIER and sent_at kept.
+  write(root, "log/migration-notice-2.json", { ...two, cutover_planned_at: "2026-10-20T00:00:00Z" });
+  commit(root, "an earlier date, committed the wrong way");
+  const v = watch("2026-09-30T00:00:00Z");
+  assert.deepEqual([v.status, v.codes], ["red", ["MARKER_EARLIER_SAME_SENT_AT"]],
+    "the watch did not read the marker's history, or did not refuse an earlier date under the same sent_at");
+});

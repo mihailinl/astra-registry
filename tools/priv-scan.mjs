@@ -155,6 +155,7 @@ const COMPOSED = [
   { re: /^log\/decisions\/.*\.json$/, kind: "decision" },
   { re: /^log\/cutover\.json$/, kind: "cutover" },
   { re: /^log\/rollout\/R0-settings\.json$/, kind: "settings" },
+  { re: /^log\/migration-notice-\d+\.json$/, kind: "migration-notice" },
   { re: /^log\/.*\.json$/, kind: null },               // log/** with no declared kind
   { re: /^plugins\/[^/]+\/identity\.json$/, kind: "identity" },
   { re: /^state\/alerts\/[^/]+\.json$/, kind: "alert-record" },
