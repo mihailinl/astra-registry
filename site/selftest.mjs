@@ -967,6 +967,29 @@ test("the committed R9a set is armed only with its evidence, and must be armed o
   assert.deepEqual(successors.armedSetProblems({ doc: successors.withSet(COMMITTED_REDIRECTS, "R9a", expected, { armed: record }), markerPresent: true, ...common }), []);
 });
 
+// ── RC-R9-3: no Pages deploy job once R9b has exited ───────────────────────
+
+test("RC-R9-3 — once R9b's marker is on the tree no workflow job deploys Pages, and the scan finds today's", () => {
+  const dir = path.join(REPO, ".github", "workflows");
+  const workflows = fs.readdirSync(dir).filter((n) => /\.ya?ml$/.test(n)).map((n) => ({ file: n, text: fs.readFileSync(path.join(dir, n), "utf8") }));
+  const deployers = successors.pagesDeployers(workflows);
+  const marker = fs.existsSync(path.join(REPO, successors.R9B_MARKER));
+  assert.deepEqual(successors.r9bProblems({ markerPresent: marker, deployers }), []);
+  // Before R9b the scan must find sign.yml's `pages` job, or it is a scan that
+  // would also find nothing after R9b for the wrong reason.
+  if (!marker) assert.ok(deployers.includes("sign.yml:pages"), `the scan found no Pages deploy job before R9b: ${JSON.stringify(deployers)}`);
+  // Watched: the same tree with the marker present is red, naming the job.
+  const red = successors.r9bProblems({ markerPresent: true, deployers });
+  assert.ok(marker || red.some((p) => p.startsWith("sign.yml:pages still deploys GitHub Pages")), red.join(" | "));
+  // Both spellings a job can deploy in, and a comment is not one.
+  const synth = [
+    { file: "a.yml", text: "jobs:\n  one:\n    steps:\n      - uses: actions/deploy-pages@v4\n" },
+    { file: "b.yml", text: "jobs:\n  two:\n    environment:\n      name: github-pages\n" },
+    { file: "c.yml", text: "jobs:\n  three:\n    steps:\n      # - uses: actions/deploy-pages@v4\n      - run: true\n" },
+  ];
+  assert.deepEqual(successors.pagesDeployers(synth), ["a.yml:one", "b.yml:two"]);
+});
+
 const asyncTests = [];
 const atest = (name, fn) => asyncTests.push([name, fn]);
 

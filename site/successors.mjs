@@ -238,6 +238,47 @@ export function allPathsProblems({ plain, redirected }) {
     .map((k) => `${k} is in neither set R4b nor set R9a, and RC-R9-1 moves every generated page before R9a's request`);
 }
 
+/** The registry marker R9b exits with (registry plan §2.10, landing order step 4). */
+export const R9B_MARKER = "log/rollout/R9b-exit.json";
+
+/**
+ * Every workflow job that deploys to GitHub Pages: a job in environment
+ * `github-pages`, or one that runs `actions/deploy-pages`. RC-R9-3's canary is
+ * that none is left once R9b's marker is on the tree. The owner disables Pages
+ * first (a setting) and `reg.100c` removes the `pages` job the same hour
+ * (ROLL-57); a deploy job still in a workflow after R9b is a job that fails
+ * every run, or one that re-enables what the owner switched off.
+ *
+ * @param {{file: string, text: string}[]} workflows
+ * @returns {string[]} `file:job`, sorted
+ */
+export function pagesDeployers(workflows) {
+  const out = [];
+  for (const { file, text } of workflows) {
+    const lines = text.split("\n");
+    const jobsAt = lines.findIndex((l) => /^jobs:\s*$/.test(l));
+    if (jobsAt < 0) continue;
+    let job = null;
+    for (let i = jobsAt + 1; i < lines.length; i++) {
+      const l = lines[i];
+      if (/^\S/.test(l)) break;
+      const m = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(l);
+      if (m) { job = m[1]; continue; }
+      if (!job || /^\s*#/.test(l)) continue;
+      if (/^\s+(?:-\s+)?uses:\s*actions\/deploy-pages@/.test(l) || /^\s+(environment|name):\s*github-pages\s*$/.test(l)) {
+        out.push(`${file}:${job}`);
+      }
+    }
+  }
+  return [...new Set(out)].sort();
+}
+
+/** RC-R9-3's canary: after R9b's marker, no job deploys Pages. */
+export function r9bProblems({ markerPresent, deployers }) {
+  if (!markerPresent) return [];
+  return deployers.map((d) => `${d} still deploys GitHub Pages, and ${R9B_MARKER} is on the tree: R9b switched Pages off (ROLL-57; RC-R9-3)`);
+}
+
 /** Every distinct URL a set of redirected pages points at, sorted. */
 export const targetsOf = (redirected) => [...new Set(redirected.map((r) => r.target))].sort();
 
