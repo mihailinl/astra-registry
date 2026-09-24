@@ -5,23 +5,35 @@
 # (DEC-12). Blank issues stay off, so this page is the whole of what a visitor
 # sees, and each link says where the thing they came for went.
 #
-# The first link is MOD-54's report action. Contract 0.12.0 gives its page path
-# only as "under /plugins/_/" (MBE-PENDING), so until a version names it the link
-# is the panel's plugin list, from which MOD-54 requires every plugin page to
-# link the report page. It names the vulnerability channel as MOD-45 requires:
-# security@minice.ai, its reader (the owner), "no encryption", and that a report
-# is not embargoed.
+# The first link is MOD-54's report page, in its bare form: this page knows
+# no plugin, so the reporter picks one there. With a plugin id the same page is
+# `/plugins/_/report?plugin=<plugin_id>`, which each plugin page in the panel
+# links. The path is the one minice-e4 gave on 2026-09-24, and the one
+# minice-be's panel document cites (registry plan §1.3 row 7); contract MOD-54
+# says only "under /plugins/_/", so the token file keeps its pending record
+# `mod54_report_page` until a contract version records the path. The link names
+# the vulnerability channel as MOD-45 requires: security@minice.ai, its reader
+# (the owner), "no encryption", and that a report is not embargoed.
+#
+# Appeals and listings are not reports, so they have their own link, to the
+# panel itself.
 blank_issues_enabled: false
 
 contact_links:
-  - name: Report a plugin, appeal a decision, or submit a listing — in Minice's panel
+  - name: Report a plugin — on Minice's report page
+    url: https://astra.minice.ai/plugins/_/report
+    about: >-
+      Sign in with a Minice account, pick the plugin, and say which version and
+      what you observed. A report is not embargoed, so put no vulnerability in
+      it. A vulnerability goes to security@minice.ai instead, which the project
+      owner reads. It is not encrypted, so say you have one before you send the
+      details. Issues here reach nobody.
+
+  - name: Appeal a decision, or submit a listing — in Minice's panel
     url: https://astra.minice.ai/plugins
     about: >-
-      Sign in with a Minice account. Report a listed plugin from its page (a
-      report is not embargoed, so put no vulnerability in it), appeal a refusal
-      or a moderation action, or submit a listing. Issues here reach nobody.
-      A vulnerability goes to security@minice.ai instead, which the project
-      owner reads — no encryption, so say you have one before sending details.
+      Sign in with a Minice account. Appeal a refusal or a moderation action, or
+      submit a listing. Issues here reach nobody.
 
   - name: How do I build, sign and release a plugin?
     url: https://github.com/mihailinl/AstraPlugins
