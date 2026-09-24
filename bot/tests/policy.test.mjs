@@ -4285,40 +4285,27 @@ await gap("ROLL-25 (4) — a `stopped` record for this tag is a terminal hit (BO
   },
 });
 
-await gap("ROLL-25 (2) — a re-run of the rejected json-tools 0.1.3 writes nothing (BOT-19's \"write nothing\")", {
-  blocker: "B-T3.3c (BOT-19): a terminal hit sets only `decision.record`, and `writeOutputs` still writes the listing " +
-    "whenever `publishes_now` is true",
-  standing: async () => {
-    // A real M_REJECT record carries the rejected bytes' fingerprint
-    // (bot/moderation-run.mjs's terminalSubmissionRecord), and BOT-19 matches
-    // a rejection by fingerprint alone since B-T3.9.
-    const fingerprint = (await run({ ...jsonTools("0.1.3"), root: walkTree() })).decision.fingerprint;
-    const root = walkTree();
-    walkRecord(root, { ...REJECTED_0_1_3, fingerprint });
-    const out = tmp("astra-walk-out-");
-    const r = await run({ ...jsonTools("0.1.3"), root });
-    writeOutputs(out, { repo: WALK_REPO, tag: REJECTED_0_1_3.tag, issue: null }, r);
-    return r.decision.reported === "refused" && r.decision.record?.write === false &&
-      fs.existsSync(path.join(out, "plugins", "json-tools", "versions", "0.1.3.json"));
-  },
-  walk: async () => {
-    // The control, asserted as the fixture's own premise (a plain throw, so a
-    // failure here is a broken fixture and never a gap): WITHOUT the record,
-    // the same run publishes. Otherwise "nothing was written" could be the
-    // fixture refusing for a reason of its own — which is exactly how this gap
-    // first read as closed, on a tree the validator refused.
-    const control = await run({ ...jsonTools("0.1.3"), root: walkTree() });
-    assertEqual(control.decision.outcome, "publish",
-      `the control run does not publish, so this gap cannot tell a stop from a broken fixture: ${JSON.stringify(codes(control))}`);
-    const root = walkTree();
-    walkRecord(root, { ...REJECTED_0_1_3, fingerprint: control.decision.fingerprint });
-    const out = tmp("astra-walk-out-");
-    const r = await run({ ...jsonTools("0.1.3"), root });
-    writeOutputs(out, { repo: WALK_REPO, tag: REJECTED_0_1_3.tag, issue: null }, r);
-    walkExpects(!fs.existsSync(path.join(out, "plugins", "json-tools", "versions", "0.1.3.json")),
-      "main records json-tools 0.1.3 as `refused` under M_REJECT, BOT-19 says a hit writes nothing, and the " +
-      "publish job's tree carries the rejected version's listing — the moderator's rejection is undone by a re-run");
-  },
+// Closed by lane s3a (bot/decide.mjs's writeOutputs writes nothing on a
+// BOT-19 or BOT-74 hit), and held here as a test, as the gap asked (B-T4.1).
+await test("ROLL-25 (2) — a re-run of the rejected json-tools 0.1.3 writes nothing (BOT-19's \"write nothing\")", async () => {
+  // The control, asserted as the fixture's own premise: WITHOUT the record,
+  // the same run publishes. Otherwise "nothing was written" could be the
+  // fixture refusing for a reason of its own.
+  const control = await run({ ...jsonTools("0.1.3"), root: walkTree() });
+  assertEqual(control.decision.outcome, "publish",
+    `the control run does not publish, so this cannot tell a stop from a broken fixture: ${JSON.stringify(codes(control))}`);
+  // A real M_REJECT record carries the rejected bytes' fingerprint
+  // (bot/moderation-run.mjs's terminalSubmissionRecord).
+  const root = walkTree();
+  walkRecord(root, { ...REJECTED_0_1_3, fingerprint: control.decision.fingerprint });
+  const out = tmp("astra-walk-out-");
+  const r = await run({ ...jsonTools("0.1.3"), root });
+  writeOutputs(out, { repo: WALK_REPO, tag: REJECTED_0_1_3.tag, issue: null }, r);
+  assertEqual(r.decision.reported, "refused", "BOT-19 did not find the rejection");
+  assert(!fs.existsSync(path.join(out, "plugins", "json-tools", "versions", "0.1.3.json")),
+    "main records json-tools 0.1.3 as `refused` under M_REJECT, BOT-19 says a hit writes nothing, and the " +
+    "publish job's tree carries the rejected version's listing — the moderator's rejection is undone by a re-run");
+  assertEqual(fs.readFileSync(path.join(out, "remove.txt"), "utf8"), "", "a hit removes nothing either");
 });
 
 // Closed by B-T3.9 (terminalOnMain names BOT-19's records exactly), and held

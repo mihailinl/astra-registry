@@ -648,6 +648,15 @@ export function writeOutputs(out, opts, result) {
 
   const removals = [];
 
+  // BOT-19 and BOT-74: a hit on `main` is REPORTED and writes nothing — no
+  // listing, no queue entry, no removal. `decideRelease` already withholds the
+  // record on a hit; the listing was still written whenever the policy said
+  // `publish`, so a re-run of a release a moderator had rejected (`M_REJECT`
+  // on main for these bytes) carried the rejected version into the publish
+  // job's tree, and the rejection was undone by a re-run (the canary walk
+  // ROLL-25 (2), B-T4.1).
+  const hit = typeof decision.reported === "string";
+
   // `writeListing`, rather than a second copy of it. There were two writers —
   // this one, and `ingest.mjs`'s, which lays out the tree the validator checks.
   // When a listing gained an icon and a README, only one of them learned to
@@ -656,11 +665,11 @@ export function writeOutputs(out, opts, result) {
   // own rule: `icon "icon.svg" is named here but the file is not in
   // plugins/dice-roller/`. That is the check working, on a document this
   // function had made wrong.
-  if (decision.publishes_now && derived) {
+  if (!hit && decision.publishes_now && derived) {
     writeListing(path.join(out, "plugins", derived.plugin.id), derived);
   }
 
-  if (decision.queue_entry) {
+  if (!hit && decision.queue_entry) {
     const rel = queueFile(decision.queue_entry.id, decision.queue_entry.version);
     fs.mkdirSync(path.dirname(path.join(out, rel)), { recursive: true });
     fs.writeFileSync(path.join(out, rel), `${JSON.stringify(decision.queue_entry, null, 2)}\n`);
@@ -682,7 +691,7 @@ export function writeOutputs(out, opts, result) {
   const holds = decision.reasons.filter((r) => r.level === "review");
   const onlyStale = holds.length > 0 && holds.every((r) => r.code === "P_APPROVAL_STALE");
   const handedToAPerson = decision.outcome === "review" && !onlyStale;
-  if (derived && (decision.drop_queue || decision.outcome === "refuse" || handedToAPerson)) {
+  if (!hit && derived && (decision.drop_queue || decision.outcome === "refuse" || handedToAPerson)) {
     removals.push(queueFile(derived.plugin.id, derived.version.version));
   }
   fs.writeFileSync(path.join(out, "remove.txt"), removals.map((r) => `${r}\n`).join(""));
