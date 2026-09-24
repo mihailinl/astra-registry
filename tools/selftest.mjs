@@ -1888,7 +1888,7 @@ const FLOORS = new Map(Object.entries({
   "validation.mjs": 17,
   "couplings.mjs": 18,
   "listings.mjs": 5,
-  "origins.mjs": 5,
+  "origins.mjs": 6,
   // 8, NOT the 41 this module reports, and it is the one number here that is
   // not its census. 33 of the 41 come from `registerSharedVectorTests` over the
   // VENDORED `tests/vectors/`, one test per vector, refreshed from AstraPlugins

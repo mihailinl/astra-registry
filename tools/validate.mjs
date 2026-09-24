@@ -456,9 +456,22 @@ function checkVersionDoc(plugin, version, ctx) {
   if (doc.id !== plugin.doc.id) {
     report.error(where, `id ${JSON.stringify(doc.id)} does not match plugins/${plugin.dir}/plugin.json (${JSON.stringify(plugin.doc.id)})`);
   }
-  if (doc.release?.repo && plugin.doc.source?.repo && doc.release.repo !== plugin.doc.source.repo) {
+  // A YANKED version is exempt, and only a yanked one (registry plan M-T6.3,
+  // OPEN-OWNER-10). A listing that moves repository — astra-chess, from the
+  // freed login KNICE-TECH to MINICE-AI, approved as an R_IDENTITY_CHANGED
+  // hold — gets a new `source.repo`, and every version published before the
+  // move still records the repository it was really built in. Those files are
+  // signed history and are never rewritten, so without this exemption the
+  // approved re-release could not publish: the tree would refuse its own past.
+  // A yanked version never reaches the index (tools/build-index.mjs skips it),
+  // so the pin a user takes at install can only ever come from a version whose
+  // release.repo IS the source repo, which is what this rule protects. Yanks
+  // are never undone, so the exemption cannot later re-admit such a version.
+  if (doc.release?.repo && plugin.doc.source?.repo && doc.release.repo !== plugin.doc.source.repo
+    && doc.yanked !== true) {
     report.error(where, `release.repo ${JSON.stringify(doc.release.repo)} is not the listing's source repo ${JSON.stringify(plugin.doc.source.repo)}`,
-      "The identity a user pins at install is the source repo. A release from anywhere else is a different author.");
+      "The identity a user pins at install is the source repo. A release from anywhere else is a different author. " +
+      "A version released from the listing's previous repository is accepted only once it is yanked (M-T6.3).");
   }
 
   // A `direct` release is expressible on purpose — a self-hosted or staging
