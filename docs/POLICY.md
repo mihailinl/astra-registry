@@ -610,9 +610,9 @@ escalation table above: they are the other direction. An appeal that is
 `reversed` is followed by whichever of the first two it calls for.
 
 A reverted delist, deprecate or revoke applies **at once** — unheld, and outside
-the takedown bound — because a correction that queues behind a bound designed to
-slow takedowns down is a correction that leaves a wrongly-withdrawn plugin
-withdrawn for longer.
+the takedown bound (root `POLICY.md` §7 states it and what counts toward it) —
+because a correction that queues behind a bound designed to slow takedowns down
+is a correction that leaves a wrongly-withdrawn plugin withdrawn for longer.
 
 ### How it reaches a machine, and how fast
 
