@@ -25,9 +25,9 @@
 //
 // ── THE FOUR KEY DOMAINS (BOT-35), AND WHICH ONE IS STILL AN EXTENSION ──────
 //
-//   submission:<submission_id>
+//   submission:<submission_id>:<fingerprint>:<state>
 //   migration:<owner/name>@<tag>                     B-T3.7b's baseline, M-T3.8
-//   legacy:<owner/name>@<tag>                        B-T3.7's legacy path
+//   legacy:<owner/name>@<tag>:<fingerprint>:<state>  B-T3.7's legacy path
 //   service-decision:<service_decision_id>:<plugin_id>:<version>:<state>
 //
 // The fourth is contract 0.13.0's own tuple, spelled with a domain in front of
@@ -119,6 +119,8 @@ const BASE10_RE = /^[0-9]{1,20}$/;
 /** §0.7: `submission_id` and `service_decision_id` are lowercase UUID v4 or v7. */
 const UUID_V47_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[47][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const DECISION_ID_RE = new RegExp(`^[0-9a-f]{${DECISION_ID_CHARS}}$`);
+/** bot/lib/policy/release.mjs's FINGERPRINT_CHARS: 16 lowercase hex. */
+const FINGERPRINT_RE = /^[0-9a-f]{16}$/;
 
 // ── BOT-35: one key, one hash, four domains ─────────────────────────────────
 
@@ -132,19 +134,28 @@ const DECISION_ID_RE = new RegExp(`^[0-9a-f]{${DECISION_ID_CHARS}}$`);
  */
 const DOMAINS = {
   submission: {
-    tuple: "(`submission_id`)",
-    build: ({ submission_id }) => {
+    tuple: "(`submission_id`, `fingerprint`, `state`)",
+    build: ({ submission_id, fingerprint, state }) => {
       if (typeof submission_id !== "string" || !UUID_V47_RE.test(submission_id)) {
         throw new Error(
           `\`submission_id\` ${JSON.stringify(submission_id)} is not §0.7's lowercase UUID v4 or v7, and a key ` +
           "derived over a malformed id is a decision nothing can ever find again",
         );
       }
-      return `submission:${submission_id}`;
+      return `submission:${submission_id}:${fingerprintPart(fingerprint)}:${statePart(state)}`;
     },
   },
+  // MIG-20's one record per version: unique by construction, because a
+  // version has one tag and one record. The plan notes spell this domain with
+  // `:<fingerprint>:<state>` too; the tree keeps the short form because every
+  // baseline record is `published` over its version's one fingerprint, so the
+  // two spellings separate exactly the same records — and the short form is
+  // the one `bot/baseline.mjs` and `bot/export-issues.mjs` already spell.
   migration: { tuple: "(`owner/name`, `tag`)", build: (f) => `migration:${repoTag(f)}` },
-  legacy: { tuple: "(`owner/name`, `tag`)", build: (f) => `legacy:${repoTag(f)}` },
+  legacy: {
+    tuple: "(`owner/name`, `tag`, `fingerprint`, `state`)",
+    build: (f) => `legacy:${repoTag(f)}:${fingerprintPart(f.fingerprint)}:${statePart(f.state)}`,
+  },
   "service-decision": {
     tuple: "(`service_decision_id`, `plugin_id`, `version`, `state`)",
     build: ({ service_decision_id, plugin_id, version, state }) => {
@@ -170,6 +181,54 @@ const DOMAINS = {
 
 /** Every domain BOT-35 knows, in the order the plan lists them. */
 export const KEY_DOMAINS = Object.freeze(Object.keys(DOMAINS));
+
+/**
+ * BOT-35's fingerprint member: 16 lowercase hex, or none.
+ *
+ * **Why the tuple carries it at all, and what its absence cost.** BOT-35
+ * derives the id over (`submission_id`, or `owner/name@tag`; fingerprint;
+ * state). This module first keyed the submission and legacy domains on the
+ * submission alone — so a submission's `held` record and the `published`
+ * record its approval produces derived ONE id, and BOT-36's dedupe below,
+ * which matches on the id, dropped the publication as "already at" the hold's
+ * path. Every approval would have published nothing, reported `written:
+ * false`, and thrown nothing. The same held for a delayed release draining:
+ * `delayed` and `published` were one id.
+ *
+ * DEC-7 lets a record carry no fingerprint where none applies — an
+ * `A_WITHDRAW` from `received` hashed no release — and the tuple member is
+ * then the EMPTY string, never "null": a key reading `…:null:…` would
+ * collide with nothing and be spelled by nobody else.
+ */
+function fingerprintPart(fingerprint) {
+  if (fingerprint === null || fingerprint === undefined) return "";
+  if (typeof fingerprint !== "string" || !FINGERPRINT_RE.test(fingerprint)) {
+    throw new Error(
+      `\`fingerprint\` ${JSON.stringify(fingerprint)} is not 16 lowercase hex (FINGERPRINT_CHARS), and BOT-35 ` +
+      "derives the id over it: a key over a malformed fingerprint names a decision nothing can find again",
+    );
+  }
+  return fingerprint;
+}
+
+/**
+ * BOT-35's state member: required, and the record's own shape.
+ *
+ * The shape is schema/decision-v1.json's `state` (lowercase letters and `_`,
+ * 1 to 32), not a closed list, for that schema's reason: DEC-7 covers
+ * decisions about submissions, fingerprints and versions and names no single
+ * list of its own. A missing state is refused rather than defaulted, because
+ * the state is exactly what separates a hold from the publication it becomes.
+ */
+function statePart(state) {
+  if (typeof state !== "string" || !/^[a-z][a-z_]{0,31}$/.test(state)) {
+    throw new Error(
+      `\`state\` ${JSON.stringify(state)} is not a decision record's state, and BOT-35 derives the id over it: ` +
+      "without it a submission's hold and its publication are one id, and BOT-36 drops the second",
+    );
+  }
+  return state;
+}
 
 function repoTag({ repo, tag }) {
   if (!safeRepo(repo)) {
@@ -198,11 +257,11 @@ export function decisionKey(domain, parts) {
   return entry.build(parts ?? {});
 }
 
-/** `submission:<submission_id>` (BOT-35, first tuple). */
+/** `submission:<submission_id>:<fingerprint>:<state>` (BOT-35, first tuple). */
 export const submissionKey = (parts) => decisionKey("submission", parts);
 /** `migration:<owner/name>@<tag>` — MIG-20's baseline and MIG-21's export. */
 export const migrationKey = (parts) => decisionKey("migration", parts);
-/** `legacy:<owner/name>@<tag>` — the one domain still extending BOT-35 (ops.22). */
+/** `legacy:<owner/name>@<tag>:<fingerprint>:<state>` — B-T3.7's legacy path (BOT-35; ops.22). */
 export const legacyKey = (parts) => decisionKey("legacy", parts);
 /** `service-decision:<service_decision_id>:<plugin_id>:<version>:<state>` (BOT-35, second tuple). */
 export const serviceDecisionKey = (parts) => decisionKey("service-decision", parts);
@@ -571,7 +630,12 @@ export function renderTrailers(t = {}) {
 export function decisionCommitMessage({ subject, body = "", ...trailers }) {
   if (!subject || /\n/.test(subject)) throw new Error("a commit subject is one non-empty line");
   const lines = renderTrailers(trailers);
-  const text = [subject, "", body, "", lines.join("\n")].filter((p, i) => i === 0 || p !== "").join("\n");
+  // Paragraphs joined by ONE BLANK LINE, and an absent body is dropped whole.
+  // This joined the parts with their blank separators filtered out, so git
+  // read the body's first paragraph as part of the subject and the trailer
+  // block as body text — `%(trailers)` printed nothing for a commit ending
+  // "Run: …". Measured by committing one (bot/tests/decisions.test.mjs).
+  const text = [subject, String(body ?? "").trim(), lines.join("\n")].filter((p) => p !== "").join("\n\n");
   const found = subjectIdFindings(text);
   if (found.length) {
     throw new Error(
