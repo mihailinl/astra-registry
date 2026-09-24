@@ -107,8 +107,14 @@ permissions: {}
 # is what OPEN-MBE-7 closed with, and nothing serves that path until the R2
 # deploy: a step calling it now would be a step that fails, or worse succeeds
 # against something else, on every run for a step gate away. RC-R2-3's commit
-# turns this to `on` in one line, once ops.19 has recorded the 202 and the
-# `{"schema":"astra.plugins.wake-ack/1"}` body (§1.3 row 8.4).
+# (ii) turns this to `"on"` in one line, once the release desk has read a 202
+# carrying exactly `{"schema":"astra.plugins.wake-ack/1"}` from that URL (§1.3
+# row 8.4), and that answer is committed here as `log/signed-wake-ack.json` in
+# the same commit or before it. ops.19 records it too, but ops is private and
+# nothing in this repository can read it: `tools/selftest/repo-rules.mjs`
+# ("sign.yml's wake hint is off, or on with the recorded 202 it rests on")
+# refuses `"on"` without the record, a record that does not say exactly that,
+# any value but `"off"` or `"on"`, and a wake step not gated on this value.
 #
 # `"off"` is deliberately not one of TRUST-31's hashed values: this is a
 # workflow env, not a bot call's, and flipping it returns nothing to shadow.

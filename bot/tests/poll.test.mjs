@@ -55,6 +55,7 @@ import { parseReleasesAtom, pollFeed } from "../lib/poll.mjs";
 // The OTHER tag predicate. Imported here so that the two are compared in one
 // place rather than each pinned alone; see the last test in this file.
 import { safeTag } from "../lib/intake.mjs";
+import { loadRecords, loadSources } from "../../tools/lib/sources.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..", "..");
 
@@ -90,7 +91,53 @@ function trackedModules() {
 // second copy is the only alternative to moving it (dev/couplings.md's whole
 // subject). It is exported and it is NOT in the barrel, which is the pair of
 // statements that keeps one copy without widening what five importers see.
-const POLL_SURFACE = ["isUsableTag", "parseReleasesAtom", "pollFeed"];
+// Three names from the cut, and B-T2.6's rules after it (2026-09-24): the poll,
+// the signed memory, the sweep and BOT-87's alarm. Every name is still pinned,
+// because the barrel rule above is unchanged: none of them may leak into
+// `bot/lib/notify.mjs`.
+// The three functions the cut MOVED here. The single-definition scan below is
+// about them; the constants and functions B-T2.6 wrote here afterwards were
+// never anywhere else.
+const MOVED = ["isUsableTag", "parseReleasesAtom", "pollFeed"];
+
+const POLL_SURFACE = [
+  "BOT_87_CODES",
+  "MEMORY_FILE",
+  "MEMORY_SCHEMA",
+  "POLL_INTERVAL_SECONDS",
+  "POLL_STALE_INTERVALS",
+  "SEAL_SCHEMA",
+  "STATE_ENVIRONMENT",
+  "STATE_KEY_ENV",
+  "STATE_KEY_MIN_BYTES",
+  "SWEEP_CHECK",
+  "TERMINAL_STATES",
+  "bot74Prefix",
+  "bot87Verdict",
+  "isUsableTag",
+  "loadMemory",
+  "lsRemoteTags",
+  "matchesPrefix",
+  "memoryProblem",
+  "newMemory",
+  "newestListedVersion",
+  "openMemory",
+  "parseLsRemoteTags",
+  "parseReleasesAtom",
+  "pollFeed",
+  "pollListing",
+  "pollableListings",
+  "rememberMemory",
+  "rememberPoll",
+  "runPoll",
+  "runSweep",
+  "sealMemory",
+  "seedFromReleasesSeen",
+  "staleListings",
+  "stateKey",
+  "sweepListing",
+  "tagVerdict",
+];
 
 // What `bot/lib/notify.mjs` exported at 8e4c0a1, the commit before B-T2.6,
 // read out of the module rather than off the plan. Twelve names; `notify.mjs`
@@ -201,7 +248,7 @@ test("the moved functions have exactly one definition each, and it is in bot/lib
     "rather than a smaller repository, and a scan over nothing finds no duplicate and passes");
   const OWNER = "bot/lib/poll.mjs";
   const problems = [];
-  for (const name of POLL_SURFACE) {
+  for (const name of MOVED) {
     const needle = new RegExp(`(?:^|\\s)(?:export\\s+)?(?:async\\s+)?function\\s+${name}\\s*\\(`);
     const sites = files.filter((rel) => needle.test(fs.readFileSync(path.join(REPO_ROOT, rel), "utf8")));
     if (sites.length !== 1 || sites[0] !== OWNER) {
@@ -641,4 +688,337 @@ test("a feed carrying the listed tag and a cli-v release dispatches nothing at a
   assert.equal(row.last_error, undefined, `the run was clean: ${JSON.stringify(row)}`);
 
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// B-T2.6's rules: the poll, the signed memory, the sweep, BOT-87's alarm
+// ───────────────────────────────────────────────────────────────────────────
+//
+// The plan's five canaries, each a test below, and each watched failing by a
+// mutation of `bot/lib/poll.mjs` recorded in the commit that added them:
+//
+//   1. a feed with the listed tag and a `cli-v1.2.0` registers nothing;
+//   2. an unregistered matching tag across two sweeps alerts;
+//   3. a pre-cutover tag never alerts;
+//   4. an unsigned cache entry is discarded;
+//   5. a failed register leaves the tag unseen.
+//
+// Plus BOT-87's other half (a feed that keeps failing alarms after three
+// intervals, B-T5.1's canary on logic written here), the key's one reader,
+// and MIG-30's "unlisted is never polled".
+
+const KEY_HEX = "a".repeat(64);
+const OTHER_KEY_HEX = "b".repeat(64);
+const keyEnv = (hex = KEY_HEX) => ({ [poll.STATE_KEY_ENV]: hex });
+const grandfathered = () => ({ state: "grandfathered", unlisted: false });
+const SHA = (n) => String(n).padStart(40, "0").replace(/^0/, "a");
+
+/** The pollable listings of a fixture tree, with every state decided as `grandfathered`. */
+function listingsOf(root, stateOf = grandfathered) {
+  const sources = loadSources(root);
+  return poll.pollableListings({ sources, records: loadRecords(root, sources), stateOf });
+}
+
+/** A fetch stub answering each call from a queue of responses, recording what it was sent. */
+function queueFetch(...responses) {
+  const calls = [];
+  return {
+    calls,
+    fetchImpl: async (url, init) => {
+      calls.push({ url, init });
+      const r = responses.shift();
+      if (!r) throw new Error(`unexpected fetch of ${url}`);
+      return r;
+    },
+  };
+}
+
+test("canary 1: a feed carrying the listed tag and a cli-v release registers nothing", async () => {
+  const root = registryTree();
+  const { listings } = listingsOf(root);
+  assert.equal(listings.length, 1, "the fixture listing is pollable");
+  assert.equal(listings[0].prefix, "v", "BOT-74's prefix is the newest listed tag minus its version");
+  const { fetchImpl } = queueFetch(ok(feed(
+    entry(tagUrl("cli-v1.2.0"), "2026-08-08T10:00:00Z"),
+    entry(tagUrl("v0.2.0"), "2026-01-01T10:00:00Z"),
+  )));
+  const out = await poll.runPoll({ listings, memory: poll.newMemory("2026-09-24T00:00:00Z"), now: new Date("2026-09-24T00:30:00Z"), fetchImpl });
+  const res = out.repos[REPO.toLowerCase()];
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.candidates, [], `nothing registers, and ${JSON.stringify(res.candidates)} would`);
+  const why = Object.fromEntries(res.skipped.map((s) => [s.tag, s.why]));
+  assert.match(why["cli-v1.2.0"], /prefix/, "the cli-v tag is skipped for its prefix (BOT-74)");
+  assert.match(why["v0.2.0"], /recorded by a listed version/, "and the listed tag because a version records it");
+
+  // The positive control, so that "registers nothing" is not a poll that
+  // registers nothing ever: a new matching tag in the same feed registers.
+  const again = queueFetch(ok(feed(entry(tagUrl("v0.3.0")), entry(tagUrl("cli-v1.2.0")))));
+  const out2 = await poll.runPoll({ listings, memory: poll.newMemory("2026-09-24T00:00:00Z"), fetchImpl: again.fetchImpl });
+  assert.deepEqual(out2.repos[REPO.toLowerCase()].candidates, ["v0.3.0"]);
+});
+
+test("BOT-74's prefix: a tag that does not end in its version admits every tag, and the newest non-yanked version decides", () => {
+  assert.equal(poll.bot74Prefix({ version: "0.2.0", tag: "v0.2.0" }), "v");
+  assert.equal(poll.bot74Prefix({ version: "0.2.0", tag: "telegram-client-v0.2.0" }), "telegram-client-v");
+  assert.equal(poll.bot74Prefix({ version: "0.2.0", tag: "0.2.0" }), "", "a bare-version tag has the empty prefix");
+  assert.equal(poll.bot74Prefix({ version: "0.2.0", tag: "release-2026-08" }), null, "does not end in its version");
+  assert.equal(poll.matchesPrefix(null, "anything/at-all"), true);
+  const newest = poll.newestListedVersion([
+    { version: "0.10.0", tag: "x-v0.10.0", yanked: true },
+    { version: "0.9.0", tag: "v0.9.0" },
+    { version: "0.2.0", tag: "v0.2.0" },
+  ]);
+  assert.deepEqual(newest, { version: "0.9.0", tag: "v0.9.0" },
+    "semver order, not string order, and a yanked version is not the newest LISTED one");
+  assert.equal(poll.newestListedVersion([{ version: "1.0.0", tag: "v1.0.0", yanked: true }]).tag, "v1.0.0",
+    "when every version is yanked, the recorded shape still decides");
+});
+
+test("a tag with a terminal record for this repository_id never registers, and one for another repository does", () => {
+  const root = registryTree({ repo: "someone/bound" });
+  fs.writeFileSync(path.join(root, "plugins", "quiet", "identity.json"), JSON.stringify({ repository_id: "111" }));
+  const dec = path.join(root, "log", "decisions", "2026", "09");
+  fs.mkdirSync(dec, { recursive: true });
+  fs.writeFileSync(path.join(dec, `${"1".repeat(32)}.json`), JSON.stringify({
+    decision_id: "1".repeat(32), state: "refused", tag: "v0.3.0", repo: "someone/bound", repository_id: "111",
+  }));
+  fs.writeFileSync(path.join(dec, `${"2".repeat(32)}.json`), JSON.stringify({
+    decision_id: "2".repeat(32), state: "refused", tag: "v0.4.0", repo: "someone/bound", repository_id: "999",
+  }));
+  const [listing] = listingsOf(root).listings;
+  assert.equal(listing.repository_id, "111");
+  assert.equal(poll.tagVerdict(listing, "v0.3.0").register, false, "refused for this repository_id: terminal");
+  assert.equal(poll.tagVerdict(listing, "v0.4.0").register, true,
+    "a record for another repository_id is about a repository that reused the name, not this one");
+});
+
+// BOT-19 and BOT-74 do NOT read one set, and this test used to say they did.
+// BOT-74 keeps the poll from registering a tag with a terminal record for its
+// repository — `refused`, `revoked`, `yanked`, `withdrawn`, `deprecated` —
+// which is `poll.TERMINAL_STATES`. BOT-19 is narrower and names its records
+// exactly (registry plan notes): a `published`, `stopped` or `M_REJECT`
+// `refused` record carrying this run's fingerprint, and a `stopped` record for
+// the same tag of the same repository; "a `held` or `delayed` record MUST NOT
+// stop the run", and neither does a bot refusal, which a `/recheck` exists to
+// re-decide. Held to one set, one old refusal of a plugin stopped every later
+// release of it for ever (B-T3.9). So this asserts the two rules apart.
+test("BOT-19's terminal records are its own, and BOT-74's terminal states are the poll's", async () => {
+  const { terminalOnMain } = await import("../decide.mjs");
+  const byTag = (state, reasons) => terminalOnMain({ records: [{ state, reasons, repo: "a/b", tag: "v1.0.0" }], fingerprint: null, repo: "a/b", tag: "v1.0.0" });
+  for (const state of [...poll.TERMINAL_STATES, "published", "held", "delayed"]) {
+    assert.equal(byTag(state), null, `a ${state} record for the tag is not BOT-19's; only a stop is`);
+  }
+  assert.notEqual(byTag("stopped"), null, "a stop of the same tag is BOT-19's (FLOW-26)");
+  const byFp = (state, reasons) => terminalOnMain({ records: [{ state, reasons, fingerprint: "0123456789abcdef" }], fingerprint: "0123456789abcdef", repo: "a/b", tag: "v2.0.0" });
+  assert.notEqual(byFp("published"), null);
+  assert.notEqual(byFp("refused", ["M_REJECT"]), null);
+  assert.equal(byFp("refused", ["E_LICENSE_NOT_ALLOWED"]), null, "a bot refusal is re-decided on a recheck");
+  assert.ok(poll.TERMINAL_STATES.includes("refused"), "BOT-74 still keeps a refused tag out of the poll");
+});
+
+test("MIG-30: an unlisted listing is never polled, and one whose state cannot be decided is skipped out loud", () => {
+  const a = registryTree({ id: "hidden" });
+  const doc = JSON.parse(fs.readFileSync(path.join(a, "plugins", "hidden", "plugin.json"), "utf8"));
+  fs.writeFileSync(path.join(a, "plugins", "hidden", "plugin.json"), JSON.stringify({ ...doc, unlisted: true }));
+  const r = listingsOf(a);
+  assert.equal(r.listings.length, 0);
+  assert.match(r.skipped[0].why, /MIG-30/);
+  const b = registryTree();
+  const s = listingsOf(b, () => { throw new Error("a shallow checkout"); });
+  assert.equal(s.listings.length, 0, "an undecidable state is not a default state");
+  assert.match(s.skipped[0].why, /shallow checkout/);
+  assert.throws(() => poll.pollableListings({ sources: loadSources(b) }), /stateOf/,
+    "which listings are polled is MIG-1's answer, and there is no default for it");
+});
+
+test("canary 5: a failed register leaves the tag unseen, and the feed's ETag does not move past it", async () => {
+  const root = registryTree();
+  const { listings } = listingsOf(root);
+  const key = REPO.toLowerCase();
+  let memory = poll.newMemory("2026-09-24T00:00:00Z");
+  memory.repos[key] = { etag: 'W/"old"', last_success_at: null, registered: [] };
+
+  const first = queueFetch(ok(feed(entry(tagUrl("v0.3.0"))), 'W/"new"'));
+  const polled = await poll.runPoll({ listings, memory, now: new Date("2026-09-24T00:30:00Z"), fetchImpl: first.fetchImpl });
+  assert.deepEqual(polled.repos[key].candidates, ["v0.3.0"]);
+
+  // claim failed: it registered nothing.
+  memory = poll.rememberPoll(memory, polled, []);
+  assert.deepEqual(memory.repos[key].registered, [], "a tag claim did not register is not remembered");
+  assert.equal(memory.repos[key].etag, 'W/"old"',
+    "the new ETag is not kept: kept, the next poll is answered 304 and the tag is never offered again");
+  assert.equal(memory.repos[key].last_success_at, "2026-09-24T00:30:00Z", "the POLL succeeded; claim did not");
+
+  const second = queueFetch(ok(feed(entry(tagUrl("v0.3.0"))), 'W/"new"'));
+  const again = await poll.runPoll({ listings, memory, fetchImpl: second.fetchImpl });
+  assert.equal(second.calls[0].init.headers["If-None-Match"], 'W/"old"', "the next poll asks with the old ETag");
+  assert.deepEqual(again.repos[key].candidates, ["v0.3.0"], "and the tag is offered again");
+
+  // claim succeeded this time.
+  memory = poll.rememberPoll(memory, again, [{ repo: REPO, tag: "v0.3.0" }]);
+  assert.deepEqual(memory.repos[key].registered, ["v0.3.0"]);
+  assert.equal(memory.repos[key].etag, 'W/"new"', "every tag the feed produced was registered, so the ETag moves");
+  const third = queueFetch(ok(feed(entry(tagUrl("v0.3.0")))));
+  const done = await poll.runPoll({ listings, memory, fetchImpl: third.fetchImpl });
+  assert.deepEqual(done.repos[key].candidates, [], "a registered tag is not registered twice");
+
+  // claim cannot make remember save a tag the poll never produced.
+  const forged = poll.rememberPoll(memory, again, [{ repo: REPO, tag: "v9.9.9" }]);
+  assert.ok(!forged.repos[key].registered.includes("v9.9.9"));
+});
+
+test("canary 4: an unsigned, altered or foreign-keyed cache entry is discarded, and a sealed one opens", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-poll-mem-"));
+  trees.push(dir);
+  const file = path.join(dir, "memory.json");
+  const now = new Date("2026-09-24T00:00:00Z");
+  const memory = poll.newMemory(now);
+  memory.repos["someone/quiet"] = { etag: null, last_success_at: null, registered: ["v0.2.0"] };
+
+  assert.deepEqual(poll.loadMemory({ file, env: keyEnv(), now }).discarded, null, "no file is the first run, not a discard");
+
+  poll.rememberMemory({ memory, file, env: keyEnv() });
+  const opened = poll.loadMemory({ file, env: keyEnv(), now });
+  assert.equal(opened.discarded, null);
+  assert.deepEqual(opened.memory, memory, "a sealed memory opens as it was saved");
+
+  const sealed = JSON.parse(fs.readFileSync(file, "utf8"));
+  const cases = {
+    "unsigned": { schema: poll.SEAL_SCHEMA, memory },
+    "altered after signing": { ...sealed, memory: { ...memory, repos: { "someone/quiet": { ...memory.repos["someone/quiet"], registered: ["v0.2.0", "v0.3.0"] } } } },
+    "signed with another key": poll.sealMemory(memory, Buffer.from(OTHER_KEY_HEX, "hex")),
+    "not an envelope": memory,
+  };
+  for (const [name, envelope] of Object.entries(cases)) {
+    fs.writeFileSync(file, JSON.stringify(envelope));
+    const r = poll.loadMemory({ file, env: keyEnv(), now });
+    assert.ok(r.discarded, `${name}: the entry was not discarded`);
+    assert.deepEqual(r.memory, poll.newMemory(now), `${name}: a discarded entry starts again, it is never repaired`);
+  }
+  fs.writeFileSync(file, "{not json");
+  assert.match(poll.loadMemory({ file, env: keyEnv(), now }).discarded, /not JSON/);
+
+  // A discard is paged: starting again re-seeds the sweep, and a tag that
+  // arrived in the gap is seeded rather than alarmed on.
+  const v = poll.bot87Verdict({ discarded: "the cache entry carries no signature" });
+  assert.deepEqual(v.codes, [poll.BOT_87_CODES.discarded]);
+  assert.equal(v.status, "red");
+});
+
+test("the key has one reader, refuses a short or missing one, and the poll and the sweep never touch it", () => {
+  assert.throws(() => poll.stateKey({}), /BOT_STATE_HMAC_KEY is not set.*bot-state/s);
+  assert.throws(() => poll.stateKey(keyEnv("ab".repeat(16 - 1))), /bytes, and the floor is 32/);
+  assert.throws(() => poll.stateKey(keyEnv("zz".repeat(32))), /not hex/);
+  assert.equal(poll.stateKey(keyEnv()).length, 32);
+  for (const fn of [poll.runPoll, poll.pollListing, poll.rememberPoll, poll.runSweep, poll.sweepListing, poll.staleListings]) {
+    const src = fn.toString();
+    for (const needle of ["stateKey", "STATE_KEY_ENV", "process.env", "loadMemory", "rememberMemory"]) {
+      assert.ok(!src.includes(needle), `${fn.name} reaches ${needle}; only load and remember hold the bot-state key`);
+    }
+  }
+});
+
+test("canary 2: a matching tag unregistered across two sweeps alerts, with its SHA and the plugin id", () => {
+  const root = registryTree();
+  const [listing] = listingsOf(root).listings;
+  let memory = poll.newMemory("2026-09-24T00:00:00Z");
+  const remote = [{ tag: "v0.2.0", sha: SHA(1) }, { tag: "cli-v1.0.0", sha: SHA(2) }];
+
+  let s = poll.runSweep({ memory, listings: [listing], lsRemote: () => remote });
+  assert.equal(s.seeded, true, "the first sweep ever seeds");
+  assert.deepEqual(s.alerts, []);
+  memory = s.memory;
+
+  const withNew = [...remote, { tag: "v0.3.0", sha: SHA(3) }, { tag: "cli-v1.1.0", sha: SHA(4) }];
+  s = poll.runSweep({ memory, listings: [listing], lsRemote: () => withNew });
+  assert.deepEqual(s.alerts, [], "a tag seen for the first time is not yet late: ls-remote has no dates, so age is counted in sweeps");
+  memory = s.memory;
+
+  s = poll.runSweep({ memory, listings: [listing], lsRemote: () => withNew });
+  assert.deepEqual(s.alerts.map((a) => a.tag), ["v0.3.0"],
+    "seen at the previous sweep, matching the prefix, and handled by nothing: that is BOT-87's alarm, and the " +
+    "cli-v tag next to it is not");
+  const v = poll.bot87Verdict({ unregistered: s.alerts });
+  assert.deepEqual(v, {
+    schema: "astra.registry.alert-verdict/1", check: "poll-and-sweep", status: "red",
+    codes: ["BOT_87_TAG_UNREGISTERED"], ids: ["quiet"], hexes: [SHA(3)],
+  }, "a stranger's tag never reaches the channel; the id and the SHA find it");
+
+  // Handled by the poll, or named by a decision record: no alarm.
+  const registered = structuredClone(memory);
+  registered.repos[REPO.toLowerCase()] = { etag: null, last_success_at: null, registered: ["v0.3.0"] };
+  assert.deepEqual(poll.runSweep({ memory: registered, listings: [listing], lsRemote: () => withNew }).alerts, [],
+    "a tag the poll registered is not missing");
+  const named = { ...listing, named_tags: ["v0.3.0"] };
+  assert.deepEqual(poll.runSweep({ memory, listings: [named], lsRemote: () => withNew }).alerts, [],
+    "a tag a decision record names is not missing either");
+});
+
+test("canary 3: a tag that existed when the sweep was seeded never alerts", () => {
+  const root = registryTree();
+  const [listing] = listingsOf(root).listings;
+  const remote = [{ tag: "v0.1.0", sha: SHA(5) }, { tag: "v0.2.0", sha: SHA(6) }];
+  let memory = poll.runSweep({ memory: poll.newMemory("2026-09-24T00:00:00Z"), listings: [listing], lsRemote: () => remote, seed: true }).memory;
+  for (let i = 0; i < 4; i++) {
+    const s = poll.runSweep({ memory, listings: [listing], lsRemote: () => remote });
+    assert.deepEqual(s.alerts, [], `sweep ${s.sweep}: v0.1.0 predates the cutover (MIG-23) and was never this poll's to register`);
+    memory = s.memory;
+  }
+  // And a repository swept for the first time later seeds too.
+  const late = { ...listing, id: "late", repo: "someone/late" };
+  const s = poll.runSweep({ memory, listings: [listing, late], lsRemote: (repo) => (repo === "someone/late" ? [{ tag: "v3.0.0", sha: SHA(7) }] : remote) });
+  const s2 = poll.runSweep({ memory: s.memory, listings: [listing, late], lsRemote: (repo) => (repo === "someone/late" ? [{ tag: "v3.0.0", sha: SHA(7) }] : remote) });
+  assert.deepEqual(s2.alerts, [], "a newly listed plugin's earlier releases are history, not a missed registration");
+});
+
+test("BOT-87: a listing whose last successful poll is older than three intervals alarms, and a failing feed gets there", async () => {
+  const root = registryTree();
+  const { listings } = listingsOf(root);
+  const key = REPO.toLowerCase();
+  const start = new Date("2026-09-24T00:00:00Z");
+  let memory = poll.newMemory(start);
+  const bound = poll.POLL_STALE_INTERVALS * poll.POLL_INTERVAL_SECONDS * 1000;
+  assert.equal(bound, 90 * 60 * 1000, "BOT-41's 30 minutes, three times (BOT-87)");
+  assert.deepEqual(poll.staleListings(memory, listings, new Date(start.getTime() + bound)), [],
+    "a fresh memory is measured from when it started, and 90 minutes exactly is not older than 90");
+
+  const failing = { status: 500, ok: false, headers: new Map(), text: async () => "" };
+  for (let i = 1; i <= 4; i++) {
+    const at = new Date(start.getTime() + i * poll.POLL_INTERVAL_SECONDS * 1000);
+    const out = await poll.runPoll({ listings, memory, now: at, fetchImpl: async () => failing });
+    assert.equal(out.repos[key].ok, false);
+    memory = poll.rememberPoll(memory, out, []);
+    const stale = poll.staleListings(memory, listings, at);
+    assert.equal(stale.length, i >= 4 ? 1 : 0,
+      `after ${i} failed interval(s) the listing is ${stale.length ? "" : "not "}stale; BOT-87 says more than 3`);
+  }
+  const v = poll.bot87Verdict({ stale: poll.staleListings(memory, listings, new Date(start.getTime() + 4 * 1800 * 1000)) });
+  assert.deepEqual(v.codes, ["BOT_87_POLL_STALE"]);
+  assert.deepEqual(v.ids, ["quiet"]);
+
+  // A successful poll resets it.
+  const okAt = new Date(start.getTime() + 5 * 1800 * 1000);
+  const out = await poll.runPoll({ listings, memory, now: okAt, fetchImpl: async () => ok(feed()) });
+  memory = poll.rememberPoll(memory, out, []);
+  assert.deepEqual(poll.staleListings(memory, listings, okAt), []);
+});
+
+test("`git ls-remote` output is read whole or refused, and the green verdict is one the channel accepts", () => {
+  const text = `${SHA(1)}\trefs/tags/v0.2.0\n${SHA(2)}\trefs/tags/cli-v1.0.0\n${SHA(3)}\trefs/tags/../evil\n`;
+  assert.deepEqual(poll.parseLsRemoteTags(text).map((t) => t.tag), ["v0.2.0", "cli-v1.0.0"],
+    "a tag BOT-74 could never register is not one the sweep can miss");
+  assert.throws(() => poll.parseLsRemoteTags("garbage\n"), /not a `git ls-remote/);
+  assert.throws(() => poll.parseLsRemoteTags(`${SHA(1)}\trefs/tags/v1^{}\n`), /peeled/);
+  assert.throws(() => poll.lsRemoteTags("not a repo"), /owner\/name/);
+  assert.deepEqual(poll.bot87Verdict({}), { schema: "astra.registry.alert-verdict/1", check: "poll-and-sweep", status: "green" });
+  const many = Array.from({ length: 50 }, (_, i) => ({ id: `plugin-${i}`, repo: "a/b", tag: `v${i}`, sha: SHA(100 + i) }));
+  assert.equal(poll.bot87Verdict({ unregistered: many }).ids.length, 40, "capped at the channel's 40, not refused");
+});
+
+test("MIG-23: the tag memory seeds from state/releases-seen.json, tags only", () => {
+  const seeded = poll.seedFromReleasesSeen(poll.newMemory("2026-09-24T00:00:00Z"), {
+    repos: { "Someone/Quiet": { etag: 'W/"legacy"', checked_tags: ["v0.1.0", "cli-v1.0.0"], last_seen_tag: "v0.2.0" } },
+  });
+  assert.deepEqual(seeded.repos["someone/quiet"], { etag: null, last_success_at: null, registered: ["v0.1.0", "cli-v1.0.0", "v0.2.0"] });
+  assert.equal(poll.memoryProblem(seeded), null);
 });
