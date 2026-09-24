@@ -36,9 +36,10 @@ import {
   run as coverage,
 } from "../../tools/moderation-coverage.mjs";
 import {
-  DOCUMENT_MEMBERS, HISTORY_FLOOR as PRIV_HISTORY_FLOOR, classify as privClassify, run as privScan, scanDocument,
-  withoutAuthorship,
+  DOCUMENT_MEMBERS, HISTORY_FLOOR as PRIV_HISTORY_FLOOR, ROLLOUT_MARKER_RE, classify as privClassify, run as privScan,
+  scanDocument, withoutAuthorship,
 } from "../../tools/priv-scan.mjs";
+import { isTime } from "../../tools/lib/time.mjs";
 import { ADVISORY_BASE, DOC as DOCS_DOC, run as docsRule } from "../../tools/coverage/docs-advisory-url.mjs";
 import { NAMED as ROLL47_NAMED, PROMISES as ROLL47_PROMISES, run as roll47Rule } from "../../tools/coverage/roll47-promises.mjs";
 import { KEEPALIVE, run as keepaliveRule } from "../../tools/coverage/keepalive-age.mjs";
@@ -470,12 +471,216 @@ test("PRIV-2: an author README with a contact address in it is never scanned", (
 });
 
 test("PRIV-2: a composed document nobody declared is red, naming what to do", () => {
+  // Until contract 2.11.0's rollout kind this example was `R3-exit.json`
+  // itself, which is now a declared marker. A misspelt marker is the case
+  // that stays undeclared, and the one worth watching: every reader keys on
+  // presence at an exact path, so a marker spelt any other way is one no
+  // reader sees, and the scan is where it is refused.
   const f = fixture("priv-undeclared").commit("seed").landTools();
-  f.write("log/rollout/R3-exit.json", { walked: true }).commit("record the R3 exit");
+  f.write("log/rollout/R3-walked.json", { walked: true }).commit("record the R3 exit");
   const r = priv(f.dir);
   assert.equal(r.status, "red");
   assert.match(codesOf(r), /E_PRIV_UNDECLARED_DOCUMENT/);
   assert.match(r.detail.join("\n"), /declare it there/);
+});
+
+// ── the rollout markers (contract B.4, 2.11.0; registry plan RC-R1-12) ──────
+//
+// `log/rollout/<step>-exit.json` for each step whose exit walk is recorded,
+// and `log/rollout/R4b-open.json` for R4b (`astra.registry.rollout/1`).
+// Every reader reads a marker's PRESENCE at a commit and none reads its
+// content, so the content is the registry's: one JSON object whose `schema`
+// is the name, with members that are dated and name-free — SHAs, §0.7 times
+// and counts, never a login and never the flag's `armed_at`. There is no
+// `R0-exit.json`: R0's marker is ROLL-7's record. Until the first marker the
+// privacy scan refused any `log/**` JSON of no declared kind, so the kind
+// lands before `R1-exit.json` does.
+
+/** A marker as RC-R1-12 writes one: every member the kind declares, each well-formed. */
+function sampleMarker() {
+  return {
+    schema: "astra.registry.rollout/1",
+    $comment: ["R1's exit marker. Name-free: SHAs, §0.7 times and counts. The walk is the note beside it."],
+    step: "R1",
+    marker: "exit",
+    walked_from: "2026-09-24T17:00:00Z",
+    walked_to: "2026-09-24T18:00:00Z",
+    registry_commit: "a".repeat(40),
+    ops_commit: "b".repeat(40),
+    astraplugins_commit: "c".repeat(40),
+    contract_version: "2.12.0",
+    note: "log/rollout/R1-exit-note.md",
+    exit_needs: { total: 5, met: 5 },
+    service_checks: { total: 4, armed: 1, waiting: 3 },
+    roll14: { equal_serial_resigns: 1, needed: 3, armed: false },
+  };
+}
+
+/**
+ * Why a marker file is not one this estate can read, as sentences. `rel` is
+ * its path, `text` its bytes as a string, `files` the tree's paths.
+ */
+function rolloutMarkerProblems(rel, text, files) {
+  const out = [];
+  const m = ROLLOUT_MARKER_RE.exec(rel);
+  if (!m) return [`${rel} is not a rollout marker's path (log/rollout/R<n>[ab]-exit.json, or R4b-open.json)`];
+  const step = m[1] ?? m[2];
+  const kind = m[1] ? "exit" : "open";
+  let doc;
+  try {
+    doc = JSON.parse(text);
+  } catch (e) {
+    return [`${rel} is not readable JSON (${e.message}); the cutover preflight parses R4b-open.json and would stop`];
+  }
+  if (doc === null || typeof doc !== "object" || Array.isArray(doc)) return [`${rel} is not one JSON object`];
+  if (doc.schema !== "astra.registry.rollout/1") {
+    out.push(`${rel} carries schema ${JSON.stringify(doc.schema)}, not astra.registry.rollout/1 (contract B.4)`);
+  }
+  if (doc.step !== step) out.push(`${rel} says step ${JSON.stringify(doc.step)} and its name says ${step}`);
+  if (doc.marker !== kind) out.push(`${rel} says marker ${JSON.stringify(doc.marker)} and its name says ${kind}`);
+  for (const k of ["walked_from", "walked_to"]) {
+    if (!isTime(doc[k])) out.push(`${rel}'s ${k} is ${JSON.stringify(doc[k])}, not a §0.7 time`);
+  }
+  if (isTime(doc.walked_from) && isTime(doc.walked_to) && doc.walked_from > doc.walked_to) {
+    out.push(`${rel} was walked from ${doc.walked_from} to ${doc.walked_to}, which ends before it starts`);
+  }
+  if (!/^[0-9a-f]{40}$/.test(doc.registry_commit ?? "")) {
+    out.push(`${rel}'s registry_commit is ${JSON.stringify(doc.registry_commit)}, not a 40-hex commit`);
+  }
+  for (const k of ["ops_commit", "astraplugins_commit"]) {
+    if (k in doc && !/^[0-9a-f]{40}$/.test(doc[k] ?? "")) out.push(`${rel}'s ${k} is ${JSON.stringify(doc[k])}, not a 40-hex commit`);
+  }
+  if ("contract_version" in doc && !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(doc.contract_version ?? "")) {
+    out.push(`${rel}'s contract_version is ${JSON.stringify(doc.contract_version)}, not a version`);
+  }
+  const note = `log/rollout/${step}-${kind}-note.md`;
+  if (doc.note !== note) out.push(`${rel}'s note is ${JSON.stringify(doc.note)}, and the note beside it is ${note}`);
+  else if (!files.includes(note)) out.push(`${rel} names its note ${note}, which is not on the tree`);
+  const count = (v) => Number.isInteger(v) && v >= 0;
+  if ("exit_needs" in doc) {
+    const n = doc.exit_needs;
+    if (!count(n?.total) || !count(n?.met)) out.push(`${rel}'s exit_needs are not two counts`);
+    else if (kind === "exit" && n.met !== n.total) {
+      out.push(`${rel} records ${n.met} of ${n.total} exit needs met; a step whose needs are not met has no marker (RC-R1-12)`);
+    }
+  }
+  if ("service_checks" in doc) {
+    const s = doc.service_checks;
+    if (![s?.total, s?.armed, s?.waiting].every(count)) out.push(`${rel}'s service_checks are not three counts`);
+    else if (s.armed + s.waiting !== s.total) out.push(`${rel}'s service_checks: ${s.armed} armed and ${s.waiting} waiting are not ${s.total}`);
+  }
+  if ("roll14" in doc) {
+    const r = doc.roll14;
+    if (!count(r?.equal_serial_resigns) || !count(r?.needed) || typeof r?.armed !== "boolean") {
+      out.push(`${rel}'s roll14 is not two counts and a boolean`);
+    }
+  }
+  return out;
+}
+
+test("PRIV-2: a rollout marker is its own kind, positional at every depth, and name-free", () => {
+  for (const rel of ["log/rollout/R1-exit.json", "log/rollout/R4b-open.json", "log/rollout/R9b-exit.json", "log/rollout/R10-exit.json"]) {
+    assert.equal(privClassify(rel).kind, "rollout", `${rel} is not scanned as a rollout marker`);
+  }
+  // Not markers, so not this kind: R0 has none (its marker is ROLL-7's
+  // record), only R4b opens, and a misspelling is not a marker.
+  for (const rel of ["log/rollout/R0-exit.json", "log/rollout/R1-open.json", "log/rollout/r1-exit.json",
+    "log/rollout/R1-exit.json.bak", "log/rollout/R01-exit.json"]) {
+    assert.notEqual(privClassify(rel).kind, "rollout", `${rel} is scanned as a rollout marker and is not one`);
+  }
+  assert.ok(DOCUMENT_MEMBERS.rollout?.nested, "the rollout kind declares no nested tables");
+  const good = sampleMarker();
+  assert.deepEqual(scanDocument(good, "rollout", new Set()), [], "a well-formed marker is not clean");
+  const f = fixture("priv-rollout").commit("seed").landTools();
+  f.write("log/rollout/R1-exit.json", good).commit("R1's exit marker");
+  assert.equal(priv(f.dir).status, "green", "a well-formed marker is red inside the walk");
+
+  const breaks = [
+    ["a login beside the step", (d) => { d.walked_by = "usr_a1b2c3"; }, "E_PRIV_UNDECLARED_MEMBER", "walked_by"],
+    ["the flag's armed_at repeated", (d) => { d.armed_at = "2026-09-24T12:00:00Z"; }, "E_PRIV_UNDECLARED_MEMBER", "armed_at"],
+    ["a member inside the needs", (d) => { d.exit_needs.walker = "usr_a1b2c3"; }, "E_PRIV_UNDECLARED_MEMBER", "exit_needs.walker"],
+    ["a list where the counts belong", (d) => { d.service_checks = [{ name: "x" }]; }, "E_PRIV_UNDECLARED_MEMBER", "service_checks"],
+    ["an address in the comment", (d) => { d.$comment.push("walked by someone.real@gmail.com"); }, "E_PRIV_EMAIL", "someone.real@gmail.com"],
+  ];
+  for (const [how, edit, code, words] of breaks) {
+    const d = structuredClone(good);
+    edit(d);
+    assert.notDeepEqual(d, good, `the break "${how}" changed nothing`);
+    const found = scanDocument(d, "rollout", new Set());
+    const said = found.map((x) => `${x.code} ${x.what}`).join("\n");
+    assert.ok(found.some((x) => x.code === code), `${how}: expected ${code}, got ${said || "nothing"}`);
+    assert.ok(said.includes(words), `${how}: red, but not naming ${JSON.stringify(words)}: ${said}`);
+  }
+});
+
+test("rollout markers: each committed marker is one object of astra.registry.rollout/1 whose members hold their grammar", () => {
+  const tree = execFileSync("git", ["-C", REPO, "ls-files", "log/rollout"], { encoding: "utf8", env: fixtureEnv(REPO) })
+    .split("\n").filter(Boolean);
+  // The proof's tree: this one, with the built marker's note beside it.
+  const files = [...new Set([...tree, "log/rollout/R1-exit-note.md"])];
+  const rel = "log/rollout/R1-exit.json";
+  const good = JSON.stringify(sampleMarker());
+  assert.deepEqual(rolloutMarkerProblems(rel, good, files), [], "a well-formed marker is refused");
+  const breaks = [
+    ["not JSON", () => "{ schema: rollout }", "not readable JSON"],
+    ["another schema", (d) => { d.schema = "astra.registry.settings/1"; }, "not astra.registry.rollout/1"],
+    ["the wrong step", (d) => { d.step = "R2"; }, "its name says R1"],
+    ["an open marker's word on an exit", (d) => { d.marker = "open"; }, "its name says exit"],
+    ["an offset time", (d) => { d.walked_to = "2026-09-24T18:00:00+00:00"; }, "walked_to"],
+    ["a walk that ends first", (d) => { d.walked_from = "2026-09-25T00:00:00Z"; }, "ends before it starts"],
+    ["a short SHA", (d) => { d.registry_commit = "abc1234"; }, "registry_commit"],
+    ["an uppercase SHA", (d) => { d.ops_commit = "B".repeat(40); }, "ops_commit"],
+    ["a version with a v", (d) => { d.contract_version = "v2.12.0"; }, "contract_version"],
+    ["another step's note", (d) => { d.note = "log/rollout/R0-exit-note.md"; }, "the note beside it"],
+    ["a need unmet", (d) => { d.exit_needs.met = 4; }, "has no marker"],
+    ["checks that do not add up", (d) => { d.service_checks.waiting = 2; }, "are not 4"],
+    ["a count that is a string", (d) => { d.roll14.equal_serial_resigns = "1"; }, "roll14"],
+  ];
+  for (const [how, edit, words] of breaks) {
+    let text;
+    if (edit.length === 0) text = edit();
+    else { const d = JSON.parse(good); edit(d); text = JSON.stringify(d); }
+    assert.notEqual(text, good, `the break "${how}" changed nothing`);
+    const said = rolloutMarkerProblems(rel, text, files).join("\n");
+    assert.ok(said.includes(words), `${how}: expected a problem naming ${JSON.stringify(words)}, got ${said || "none"}`);
+  }
+  // A note that is not on the tree.
+  assert.match(rolloutMarkerProblems(rel, good, files.filter((f) => !f.endsWith("R1-exit-note.md"))).join("\n"), /not on the tree/);
+
+  // Every marker on the tree, from git's index, held to this tree's files.
+  const markers = tree.filter((f) => ROLLOUT_MARKER_RE.test(f));
+  for (const m of markers) {
+    assert.deepEqual(rolloutMarkerProblems(m, fs.readFileSync(path.join(REPO, m), "utf8"), tree), [], `${m} is not a marker this estate can read`);
+    assert.deepEqual(scanDocument(JSON.parse(fs.readFileSync(path.join(REPO, m), "utf8")), "rollout", new Set()), [], `${m} is not clean`);
+  }
+  if (markers.length === 0) {
+    console.log("# no rollout marker is committed yet; the grammar was proven on a built marker and " +
+      `${breaks.length + 1} breaks of it, and holds each marker from the commit that adds the first`);
+  }
+});
+
+test("rollout markers: every reader that keys on one spells it in the kind's grammar", () => {
+  // Each reader spells its marker itself (B.4 lists them), and a marker
+  // spelt differently by writer and reader is invisible to that reader: the
+  // bot would stay on the legacy path at R3, the site would never show a
+  // successor. So each reader's literal is held to the privacy kind's path
+  // grammar, the one the writer's marker must also match to be committed.
+  const readers = {
+    "bot/lib/service-decide.mjs": ["log/rollout/R3-exit.json"],
+    "bot/triage.mjs": ["log/rollout/R3-exit.json"],
+    "site/successors.mjs": ["log/rollout/R5-exit.json", "log/rollout/R4b-open.json", "log/rollout/R9b-exit.json"],
+    "tools/cutover-preflight.mjs": ["log/rollout/R4b-open.json"],
+  };
+  for (const [file, expected] of Object.entries(readers)) {
+    const src = fs.readFileSync(path.join(REPO, file), "utf8");
+    const spelt = new Set();
+    for (const m of src.matchAll(/"log\/rollout\/([^"]+\.json)"/g)) spelt.add(`log/rollout/${m[1]}`);
+    for (const m of src.matchAll(/"log",\s*"rollout",\s*"([^"]+\.json)"/g)) spelt.add(`log/rollout/${m[1]}`);
+    assert.deepEqual([...spelt].sort(), [...expected].sort(),
+      `${file} spells its rollout markers as ${JSON.stringify([...spelt])}; this test expected ${JSON.stringify(expected)}. ` +
+      "A reader that moved is a reader this canary no longer holds, so update the table here in the same commit");
+    for (const p of spelt) assert.match(p, ROLLOUT_MARKER_RE, `${file} keys on ${p}, which no committed marker can be spelt as`);
+  }
 });
 
 test("PRIV-2: ROLL-7's settings file is declared, positional at every depth, and the committed one is clean", () => {
@@ -2099,11 +2304,12 @@ test("repo-settings: the token is sent, a token GitHub refuses is dropped for th
 //   - the EXPECTATION is the source. It exists, it is compared with GitHub, and
 //     it is read by no bot run, so it can change in a commit that says why.
 //     ROLL-7's file is a dated record that the service's pins are acknowledged
-//     from, and it does not exist yet: RC-R0-4 writes `log/rollout/R0-settings.json`
-//     at R0's exit, its schema still G3's (`MBE-PENDING`), and a lane that was
-//     asked to write it on 2026-09-20 correctly wrote nothing because the
-//     baseline was already stale. A canary reading a dated record would be
-//     comparing GitHub with a history;
+//     from: RC-R0-4 wrote `log/rollout/R0-settings.json` at R0's exit
+//     (`47ec3aa`), and each later pin is a dated amendment beside it. Its
+//     schema, `astra.registry.settings/1`, and its members are contract B.4's
+//     since 2.11.0. (On 2026-09-20 a lane asked to write it correctly wrote
+//     nothing, because the baseline was already stale.) A canary reading a
+//     dated record would be comparing GitHub with a history;
 //   - ROLL-7's rows are DERIVED from it: each environment's
 //     `deployment_branch_policy` and `branch_policies` in the expectation's
 //     own shape, copied from the checkout repository's entry at the commit the
@@ -2112,9 +2318,9 @@ test("repo-settings: the token is sent, a token GitHub refuses is dropped for th
 //     environment the expectation does not hold live, and a live environment
 //     with no row, which is an environment ROLL-7 would not pin.
 //
-// The file is not on this tree, so the predicate is proven on a file BUILT
-// from the committed expectation and broken one value at a time; the committed
-// file, once RC-R0-4 lands it, is compared with no edit here.
+// The predicate is proven on a file BUILT from the committed expectation and
+// broken one value at a time, and the newest committed file is compared with
+// it as well (below).
 const ROLL7_FILE = "log/rollout/R0-settings.json";
 
 // log/** is append-only (MOD-34), so a pin ROLL-7's file gains later is a NEW

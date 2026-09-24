@@ -142,7 +142,8 @@ export const DOCUMENT_MEMBERS = {
     source: "registry plan RC-R2-3 commit (ii); contract SERVE-94 and §4.2's `astra.plugins.wake-ack/1`",
   },
   // ROLL-7's file, `log/rollout/R0-settings.json` (registry plan RC-R0-4;
-  // contract ROLL-7; `astra.registry.settings/1`, MBE-PENDING G3). Name-free:
+  // contract ROLL-7; `astra.registry.settings/1`, published in contract B.4,
+  // 2.11.0, whose member list is these tables). Name-free:
   // repository coordinates, counts, dates, fixed words and GitHub's own
   // setting names. Every table is declared, at every depth.
   settings: {
@@ -190,6 +191,29 @@ export const DOCUMENT_MEMBERS = {
         nested: { no_credential: { scalars: true }, write_capable_session: { scalars: true } },
       },
       not_readable: { scalars: true },
+    },
+  },
+  // The rollout markers, `log/rollout/<step>-exit.json` and
+  // `log/rollout/R4b-open.json` (`astra.registry.rollout/1`; contract B.4,
+  // 2.11.0; registry plan RC-R1-12). Every reader reads a marker's presence and
+  // none its content, so the members beyond `schema` are this repository's,
+  // and B.4 says what they may be: dated and name-free — SHAs, §0.7 times and
+  // counts, never a login and never the flag's `armed_at`. Declared before the
+  // first marker lands, because until then this scan refused any `log/**`
+  // JSON of no declared kind, and positional at every depth, so a login
+  // tucked into a count object is refused like one at the top.
+  // `bot/tests/moderation-coverage.test.mjs` holds each member's grammar.
+  rollout: {
+    members: ["schema", "$comment", "step", "marker", "walked_from", "walked_to", "registry_commit",
+      "ops_commit", "astraplugins_commit", "contract_version", "note", "exit_needs", "service_checks", "roll14"],
+    uuidOk: [],
+    handleOk: [],
+    source: "contract B.4 (`astra.registry.rollout/1`, 2.11.0); registry plan RC-R1-12",
+    nested: {
+      $comment: { scalars: true },
+      exit_needs: { members: ["total", "met"] },
+      service_checks: { members: ["total", "armed", "waiting"] },
+      roll14: { members: ["equal_serial_resigns", "needed", "armed"] },
     },
   },
   // MIG-13's marker, `log/migration-notice-<n>.json`. Declared before the

@@ -35,6 +35,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { cleanEnv } from "../../tools/lib/git-env.mjs";
+import { ROLLOUT_MARKER_RE } from "../../tools/priv-scan.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -474,31 +475,43 @@ test("every entry resolves, or carries an excuse that expires", () => {
     );
   }
 
-  // The expiry has never fired, because no step has exited. That is a DERIVED
-  // state, and it is asserted rather than assumed, or the loop above is
-  // `if (true)` with a comment on it. Two instruments, because an absence is a
-  // claim about the tool: `git ls-tree` over HEAD, and the working directory.
+  // What `log/rollout/` may hold, asserted at every state and not only while
+  // no step has exited. Two instruments, because an absence is a claim about
+  // the tool: `git ls-files` over HEAD, and the working directory.
   //
   // R0 has a marker and no exit file: the plan makes `log/rollout/R0-settings.json`
-  // R0's marker (ROLL-7's file), with its note beside it, and nothing else in
-  // `log/rollout/` may be there while no step has exited. Named files, not a
-  // pattern, so an exit marker spelled wrongly still turns this red — with one
-  // exception that is a pattern and cannot be mistaken for an exit marker:
-  // ROLL-7's dated amendments, `R0-settings-<YYYY-MM-DD>[-<n>].json` (log/** is
+  // R0's marker (ROLL-7's file), with its note beside it. ROLL-7's dated
+  // amendments are `R0-settings-<YYYY-MM-DD>[-<n>].json` (log/** is
   // append-only, so a pin added later — `bot-state`, B-T5.0 — is a new file).
-  if (exited.size === 0) {
-    const R0_RECORDS = new Set(["log/rollout/R0-settings.json", "log/rollout/R0-exit-note.md"]);
-    const ROLL7_AMENDMENT = /^log\/rollout\/R0-settings-\d{4}-\d{2}-\d{2}(?:-\d+)?\.json$/;
-    const known = (f) => R0_RECORDS.has(f) || ROLL7_AMENDMENT.test(f);
-    assert.deepEqual(files.filter((f) => f.startsWith("log/rollout/") && !known(f)), []);
-    const dir = path.join(REPO, "log", "rollout");
-    const onDisk = fs.existsSync(dir) ? fs.readdirSync(dir).map((n) => `log/rollout/${n}`) : [];
-    assert.deepEqual(onDisk.filter((f) => !known(f)), []);
-    console.log(
-      `note  no rollout exit marker is on the tree, so ${UNRESOLVED_BY.size} excuse(s) have not expired: ` +
-        `${[...UNRESOLVED_BY].map(([e, r]) => `${e} until ${r.due}`).join(", ")}.`,
-    );
+  // From R1's exit on, the rollout markers, in the privacy kind's grammar
+  // (contract B.4, 2.11.0; `ROLLOUT_MARKER_RE` in `tools/priv-scan.mjs`), each
+  // with its note beside it.
+  //
+  // **Until 2.11.0's kind this leg ran only while no step had exited**
+  // (`if (exited.size === 0)`), so the first marker would have switched it off
+  // for good. A second marker spelt wrongly — `R3-exit.json` as `R3-Exit.json`
+  // — is then invisible to the expiry above, to the bot's service-path
+  // decision and to every other reader that keys on presence at an exact path,
+  // and nothing would have said so. It stays on, with the markers named by the
+  // same grammar the privacy scan declares them by.
+  const R0_RECORDS = new Set(["log/rollout/R0-settings.json", "log/rollout/R0-exit-note.md"]);
+  const ROLL7_AMENDMENT = /^log\/rollout\/R0-settings-\d{4}-\d{2}-\d{2}(?:-\d+)?\.json$/;
+  const MARKER_NOTE = /^(log\/rollout\/[A-Za-z0-9]+-(?:exit|open))-note\.md$/;
+  const known = (f) => R0_RECORDS.has(f) || ROLL7_AMENDMENT.test(f) || ROLLOUT_MARKER_RE.test(f) ||
+    (MARKER_NOTE.test(f) && ROLLOUT_MARKER_RE.test(`${MARKER_NOTE.exec(f)[1]}.json`));
+  assert.deepEqual(files.filter((f) => f.startsWith("log/rollout/") && !known(f)), [],
+    "log/rollout/ holds a file that is not R0's record, a ROLL-7 amendment, a rollout marker or a marker's note");
+  const dir = path.join(REPO, "log", "rollout");
+  const onDisk = fs.existsSync(dir) ? fs.readdirSync(dir).map((n) => `log/rollout/${n}`) : [];
+  assert.deepEqual(onDisk.filter((f) => !known(f)), []);
+  for (const step of exited) {
+    assert.ok(ROLLOUT_MARKER_RE.test(`log/rollout/${step}-exit.json`),
+      `${step} reads as exited, and log/rollout/${step}-exit.json is not a marker the privacy kind declares`);
   }
+  console.log(exited.size === 0
+    ? `note  no rollout exit marker is on the tree, so ${UNRESOLVED_BY.size} excuse(s) have not expired: ` +
+      `${[...UNRESOLVED_BY].map(([e, r]) => `${e} until ${r.due}`).join(", ")}.`
+    : `note  exited: ${[...exited].sort().join(", ")}; ${UNRESOLVED_BY.size} excuse(s) held against them.`);
 });
 
 test("an unresolved entry with no excuse is not a near-miss of a path that exists", () => {
