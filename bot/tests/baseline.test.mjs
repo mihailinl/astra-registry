@@ -869,3 +869,29 @@ console.log(JSON.stringify([{ verificationResult: { statement: { subject: [{ dig
   assert.equal(wrong.facts.facts[0].outcome, "unverified", "a digest that is not the recorded one verified anyway");
   assert.equal(wrong.facts.facts[0].repository_id, null);
 });
+
+test("a two-platform version is verified only if both assets are", async () => {
+  // Written after a mutation that verified the FIRST asset alone went green
+  // over every test above: the end-to-end fixture's two alpha assets both
+  // attest, so it could not tell one check from two. A release whose Windows
+  // bundle does not verify is not a release whose certificate covers what the
+  // listing serves on Windows.
+  const dir = tree();
+  const bin = path.join(dir, "bin");
+  const x = "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"; // sha256("x")
+  const y = "a1fce4363854ff888cff4b8e7875d600c2682390412a8cf79b37d0b11148b0fa"; // sha256("y")
+  fakeGh(bin, { [x]: ["111", "222"] }, { refuse: [y] });
+  write(dir, "population.json", { versions: [{
+    plugin_id: "alpha", version: "1.0.0", repo: "example/alpha", tag: "v1.0.0", commit: "a".repeat(40),
+    fingerprint: "0123456789abcdef",
+    artifacts: [
+      { platform: "linux-x64", url: "data:application/octet-stream;base64,eA==", sha256: x },
+      { platform: "windows-x64", url: "data:application/octet-stream;base64,eQ==", sha256: y },
+    ],
+  }] });
+  const r = await cli(["--verify", "--population-file", path.join(dir, "population.json"), "--out", path.join(dir, "facts.json")],
+    { PATH: `${bin}${path.delimiter}${process.env.PATH}`, RUNNER_TEMP: dir });
+  const facts = JSON.parse(fs.readFileSync(path.join(dir, "facts.json"), "utf8"));
+  assert.equal(facts.facts[0].outcome, "unverified", `one of two assets failed its attestation and the version verified:\n${r.out}`);
+  assert.equal(facts.facts[0].repository_id, null);
+});
