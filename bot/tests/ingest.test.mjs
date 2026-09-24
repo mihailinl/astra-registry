@@ -2801,6 +2801,8 @@ await test("verify: no attestation is a refusal; a transient id read is a wait (
   const transient = await verifyRun({ assets: [conformingAsset()], repoIds: { status: "transient", reason: "HTTP 403 with rate-limit headers" } });
   assertEqual(transient.v.outcome, "wait", JSON.stringify(transient.v));
   assertEqual(transient.v.code, "W_GITHUB_RATE_LIMITED", "a read that did not happen is not a difference");
+  const left = fs.readdirSync(path.join(missing.assetsDir, SVC_SID)).filter((n) => n.endsWith(".astraplugin"));
+  assertEqual(left.join(","), "", "no unverified bytes are left for the check job to open");
 });
 
 await test("verify: a binding line at the attested commit, with ID-63's and MIG-31's reads beside it", async () => {

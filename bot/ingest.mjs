@@ -898,6 +898,11 @@ export async function verifyFacts(opts, deps = {}) {
     // of the next lease's bytes is not failed by this one's absence.
     const dir = path.join(opts.assetsDir, lease.submission_id);
     fs.mkdirSync(dir, { recursive: true });
+    // Only VERIFIED bytes are handed to the check job. A lease this job
+    // refused, waited on or alerted about leaves nothing there to unpack.
+    if (outcome !== "ok") {
+      for (const n of fs.readdirSync(dir)) if (n.endsWith(".astraplugin")) fs.rmSync(path.join(dir, n));
+    }
     fs.writeFileSync(path.join(dir, "verify-outcome.txt"), `${outcome}\n`);
     return { submission_id: lease.submission_id, outcome, findings, ...extra };
   };
