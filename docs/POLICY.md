@@ -475,6 +475,8 @@ exists first; nothing downstream changes when it arrives.
 | `R_FIRST_LISTING` | First listing — a person reads it, once, ever. |
 | `R_NEW_HIGH_RISK` | A high-risk permission this plugin did not have before. |
 | `R_IDENTITY_CHANGED` | The repository this plugin is listed from changed. |
+| `R_FIRST_BINDING` | The first release of an already published listing to carry a binding line. A moderator approves it once; later releases under that binding are not held for it again. |
+| `R_BINDING_CHANGED` | The binding line carries a different token from the one the listing was bound with. The previously bound account is told, and a moderator can approve it only after that account's objection window. |
 | `R_CHECK_HELD` | A check handed the decision to a person; not one of the three, same SLA. |
 | `P_DELAY_HIGH_RISK` | Waiting, because the plugin holds a high-risk permission. |
 | `P_FIRST_LISTING_APPROVED` | Approved and published without waiting, because a first listing has no installed copies for a delay to protect. |
@@ -489,6 +491,24 @@ exists first; nothing downstream changes when it arrives.
 | `P_APPROVAL_STALE` | An `/approve` named a different submission from this one — the release changed after the comment it answered. Nothing published; the hold stands. |
 | `P_UNKNOWN_PERMISSION` | A permission name this registry cannot describe. Reported, never blocking — the daemon default-denies, so it grants nothing. |
 | `P_SLA` | What happens next, and by when. |
+
+### Codes the plugins panel shows
+
+On the plugins-service path the Astra plugins panel shows each of these with
+its title, what clears it, and what to do, from the same table as the codes
+above (FLOW-13).
+
+| Code | Meaning | What clears it |
+|---|---|---|
+| `M_APPROVE` | A moderator approved the submission. An approval clears holds only; it never shortens a delay, a stop or a pending notice. | Nothing needs clearing. |
+| `M_REJECT` | A moderator rejected the submission. A Recheck does not reopen it. | An appeal a moderator reverses, which opens exactly one Recheck. |
+| `M_APPEAL` | An appeal was decided, `stands` or `reversed`, with the moderator's public reason and never the appeal's text. | Nothing; the outcome is final. |
+| `A_STOP` | The submission was stopped from its notice link. A stop cannot be lifted. | Only a release under a new tag. |
+| `A_WITHDRAW` | The submission was withdrawn before it was checked. | Only a release under a new tag. |
+| `A_YANK` | The listing's bound account yanked versions from the panel. A yank cannot be undone by anyone, and installed copies keep running. | Nothing. |
+| `B_BINDING_INVALID` | Shown only to the token's owner and moderators, behind `B_BINDING_UNUSABLE`: the token is unknown, revoked, expired or superseded, or was minted for another repository. | Only a new tag carrying a usable line. |
+| `B_ACCOUNT_INELIGIBLE` | Shown only to the token's owner and moderators, behind `B_BINDING_UNUSABLE`: the account holding the token is not eligible. | A Recheck of the same tag, once the account is eligible. |
+| `W_REGISTRY_UNACKNOWLEDGED` | The registry changed its bot and an operator has not yet acknowledged it, so the service holds the bot's calls. Nothing is decided and nothing is lost. | The registry's operator acknowledging the change. |
 
 ## 7. The publisher badge
 
@@ -635,7 +655,7 @@ possible, or the only way to correct a mistake would be to delete files and hope
 
 ### Undoing one, and saying so
 
-Three more things go in the same public log, and they exist because a log that
+Four more things go in the same public log, and they exist because a log that
 records only the taking overstates what this estate has done, for ever: a reader
 who finds the delist and not the relist reads a listed plugin as withdrawn.
 
@@ -643,11 +663,20 @@ who finds the delist and not the relist reads a listed plugin as withdrawn.
 |---|---|---|
 | **Relist** | a delist. `unlisted` is removed. | the entry, naming the decision it reverses |
 | **Unrevoke** | a deprecate or a revoke. The advisory is deleted and the effect lifts at the next higher serial. | the entry, naming the advisory and the decision it reverses |
+| **Reset** | a permanent `B_REPOSITORY_RECYCLED`. A moderator's identity reset (`M_IDENTITY_RESET`), held 24 hours and confirmed by an operator like any reversal, voids every recorded identity of the plugin id and deletes its identity record if it has one. | the entry, category `identity_reset`, and a decision record saying the id's earlier identities no longer count |
 | **Appeal** | nothing by itself. It records that an appeal was decided, and how. | the outcome — `stands` or `reversed` — and the public reason, **never the appeal's text** |
 
-None of the three costs a user anything, which is why they are not in the
+None of the four costs a user anything, which is why they are not in the
 escalation table above: they are the other direction. An appeal that is
 `reversed` is followed by whichever of the first two it calls for.
+
+**A reset binds nothing and publishes nothing.** After it the listing is
+*frozen* — a listing that ever had an identity record is never grandfathered
+again — so the next release needs a binding line, or it is refused
+`B_UNBOUND`. A release that has one is held for a moderator as a first binding
+and as an identity change (`R_FIRST_BINDING`, `R_IDENTITY_CHANGED`), and it is
+never refused `B_REPOSITORY_RECYCLED` again against the identities the reset
+voided.
 
 A reverted delist, deprecate or revoke applies **at once** — unheld, and outside
 the takedown bound (root `POLICY.md` §7 states it and what counts toward it) —

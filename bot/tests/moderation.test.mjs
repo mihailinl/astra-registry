@@ -46,6 +46,7 @@ import {
   loadEntries, reasonProblems,
 } from "../lib/moderation.mjs";
 import { checkAdvisory, buildRevocations } from "../../tools/lib/revocations.mjs";
+import { LOG_ACTION } from "../lib/compile-decision.mjs";
 import { DOCUMENT_MEMBERS } from "../../tools/priv-scan.mjs";
 import { actionVocabulary, loadLog } from "../../tools/moderation-coverage.mjs";
 
@@ -558,4 +559,107 @@ test("the backing check still catches an entry calling an advisory the wrong act
   assert.deepEqual(BACKING.deprecate, ["warn"]);
   assert.deepEqual(BACKING.revoke, ["block_install", "disable"]);
   assert.ok(!("unrevoke" in BACKING), "an unrevoke names an advisory that is gone on purpose; it is never backed");
+});
+
+// ── MOD-47's `reset` (contract 2.5.0; B-T4.2) ───────────────────────────────
+
+test("MOD-47's `reset` is an action, carries `identity_reset` alone, and names an id rather than versions", () => {
+  // Until contract 2.5.0's writer landed, `ACTIONS` had seven words and the log
+  // refused the entry §7.2's `M_IDENTITY_RESET` writes (ops couplings 154).
+  assert.ok(ACTIONS.includes("reset"), "ACTIONS is missing `reset`, so the log refuses the entry M_IDENTITY_RESET writes");
+  assert.ok(!ESCALATING_ACTIONS.includes("reset"), "a reset costs an installed copy nothing and is not in the escalation table");
+  assert.deepEqual(CATEGORIES.reset, ["identity_reset"], "§7.2: identity_reset | IDENTITY_RESET, and nothing else");
+  for (const [action, cats] of Object.entries(CATEGORIES)) {
+    if (action !== "reset") assert.ok(!cats.includes("identity_reset"), `${action} accepts identity_reset, which §7.2 gives the reset alone`);
+  }
+
+  const RESET = {
+    date: "2026-11-01", action: "reset", plugin: "alpha", reason: REASON,
+    category: "identity_reset", service_decision_id: "0192f3a4-5b6c-7d8e-9f01-234567890abc",
+  };
+  assert.deepEqual(checkEntry(RESET), [], "the entry compileIdentityReset writes is refused by the log");
+  assert.deepEqual(checkEntry({ ...RESET, declared_interest: true }), []);
+  for (const [what, doc, pattern] of [
+    ["versions", { ...RESET, versions: ["1.0.0"] }, /voids an id, not versions/],
+    ["an advisory", { ...RESET, advisory: "ASTRA-2026-0001" }, /may not name an advisory/],
+    ["another category", { ...RESET, category: "error" }, /not one a reset may carry/],
+    ["no category", (() => { const { category: _c, ...r } = RESET; return r; })(), /must carry its category/],
+    ["no service decision", (() => { const { service_decision_id: _s, ...r } = RESET; return r; })(), /service_decision_id/],
+    ["a reverses", { ...RESET, reverses: "0192f3a4-5b6c-7d8e-9f01-234567890abd" }, /reverses nothing/],
+  ]) {
+    const errs = checkEntry(doc);
+    assert.ok(errs.some((e) => pattern.test(e)), `a reset carrying ${what} was not refused for it: ${JSON.stringify(errs)}`);
+  }
+  assert.ok(checkEntry({ ...DELIST, category: "identity_reset" }).some((e) => /not one a delist may carry/.test(e)),
+    "a delist carried identity_reset");
+});
+
+// ── ops couplings 154, the registry half: `ACTIONS` is the contract's list ───
+//
+// MOD-47 lists the actions the log gains; §7.2 says which `log <action>` each
+// code writes; Table 5-I lists the words the panel's read may carry, and
+// minice-e4's reader treats that list as CLOSED. ops `tools/check-contract.mjs`
+// (`mod47Leg`, ops c696aac) holds those three to one list on the page. Nothing
+// held THIS repository's `ACTIONS` to it, which is how 2.5.0 added `reset` to
+// the contract while the log here kept refusing the entry `M_IDENTITY_RESET`
+// writes.
+//
+// THE SOURCE, AND WHY. Table 5-I and MOD-47 are prose and in no machine-
+// readable artefact this repository pins. §7.2's code table IS: the token file
+// carries each §7.2 row's second cell as `artefact` ("`yanked`, log `yank`"),
+// generated from the contract at the version the file names. So the chain is:
+//
+//   token file `artefact` ──(this test)── compile-decision.mjs `LOG_ACTION`
+//                                          ──(this test)── moderation.mjs `ACTIONS`
+//
+// `LOG_ACTION` and not `bot/lib/policy/constants.mjs` as the middle link,
+// because it is the code that WRITES the log action, and the defect is a
+// writer and a reader disagreeing; constants.mjs carries codes' levels and
+// remedies and no log actions at all. The token file and not a literal list
+// here, because a literal would be a fourth copy of a list three documents
+// already disagree about.
+//
+// THE GAP THAT RETIRED. Until contract 2.10.0 the ops generator skipped a
+// §7.2 code that B.7 had already added, so M_IDENTITY_RESET, M_APPEAL, A_YANK
+// and A_REMOVAL_REQUEST carried no `artefact`, and this test declared their
+// log words by hand and required them to stay missing. 2.10.0's generator
+// merges the §7.2 cell into B.7's entry, so every code's cell is compared,
+// whichever section added the entry first (its `source` stays B.7).
+
+const logWords = (artefact) => [...String(artefact).matchAll(/log `([a-z_]+)`/g)].map((m) => m[1]);
+
+test("ACTIONS is exactly the log actions §7.2's codes write, as the token file publishes them (ops couplings 154)", () => {
+  const tokens = JSON.parse(fs.readFileSync(path.join(REPO, "schema/contract-tokens-v1.json"), "utf8"));
+  const byCode = new Map(tokens.entries.filter((e) => e?.kind === "reason_code").map((e) => [e.name, e]));
+  const published = tokens.entries.filter((e) => e?.kind === "reason_code" && typeof e.artefact === "string");
+  assert.ok(published.length >= 11,
+    `the token file (${tokens.contract_version}) carries ${published.length} §7.2 artefact cells; there were 11 at 2.10.0, ` +
+    "so a smaller number is a broken read and every comparison below would run over less than the table");
+
+  // (1) Every published cell against the writer, both ways: a cell naming a
+  //     log word the compiler writes differently, and one naming none (M_BINDING_REVOKE,
+  //     "none") that the compiler logs anyway.
+  for (const e of published) {
+    const words = logWords(e.artefact);
+    assert.ok(words.length <= 1, `${e.name}'s §7.2 cell names ${words.length} log actions: ${e.artefact}`);
+    assert.equal(LOG_ACTION[e.name], words[0],
+      `§7.2 publishes ${e.name} as ${JSON.stringify(e.artefact)}, and bot/lib/compile-decision.mjs writes ` +
+      `${JSON.stringify(LOG_ACTION[e.name])}`);
+  }
+
+  // (2) Every code the compiler logs has a published cell, so a
+  //     code added to LOG_ACTION alone cannot widen the list unseen.
+  for (const code of Object.keys(LOG_ACTION)) {
+    assert.ok(published.some((e) => e.name === code),
+      `bot/lib/compile-decision.mjs logs ${code} as ${LOG_ACTION[code]}, and no §7.2 cell in the token file ` +
+      "says it writes a log entry");
+  }
+
+  // (3) The reader equals the writer: every action the log accepts is one some
+  //     code writes, and every action a code writes the log accepts.
+  assert.deepEqual([...ACTIONS].sort(), [...new Set(Object.values(LOG_ACTION))].sort(),
+    "bot/lib/moderation.mjs's ACTIONS and the log actions §7.2's codes write have parted: an action a code writes " +
+    "and the log refuses is a takedown that throws at compile (MOD-3); one the log accepts and no code writes is a " +
+    "word minice-e4's closed Table 5-I reader may refuse (ops couplings 154)");
+  assert.ok(ACTIONS.length >= 8, `${ACTIONS.length} actions; §7.2 with MOD-47 names 8 at contract 2.9.0`);
 });

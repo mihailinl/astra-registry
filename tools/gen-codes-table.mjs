@@ -47,7 +47,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { CODES } from "../bot/lib/codes.mjs";
+import { CODES, PANEL_CODES } from "../bot/lib/codes.mjs";
 import { POLICY_CODES, policyCodeDef } from "../bot/lib/policy.mjs";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -58,8 +58,12 @@ const SOURCES = ["bot/lib/codes.mjs", "bot/lib/policy/constants.mjs"];
 /** FLOW-13's closed list. Nothing else may appear in a `fix`. */
 const FIXES = ["recheck", "new_tag", "moderator", "registry", "none"];
 
-/** The levels a code may carry (`bot/lib/codes.mjs`'s `Level`). */
-const LEVELS = ["error", "review", "warn", "note", "pass", "skip"];
+/**
+ * The levels a code may carry: `bot/lib/codes.mjs`'s `Level`, and `wait`, the
+ * level `bot/lib/policy/constants.mjs` gives B.7's waits and the one row that
+ * carries it, `W_REGISTRY_UNACKNOWLEDGED`.
+ */
+const LEVELS = ["error", "review", "warn", "note", "pass", "skip", "wait"];
 
 /** FLOW-13's six members, plus the code itself. */
 const MEMBERS = ["code", "level", "stage", "fix", "panel_only", "title", "remedy"];
@@ -79,6 +83,27 @@ const ATTESTED_STAGES = ["bundle", "manifest", "metadata", "version", "rpc-scan"
 // asserting that is what turns the flag from a claim into a measurement.
 const PANEL_ONLY = ["B_BINDING_INVALID", "B_ACCOUNT_INELIGIBLE", "W_REGISTRY_UNACKNOWLEDGED"];
 
+// The `fix` contract B.7 states by name (2.5.0): `new_tag` for the three
+// binding refusals and the token half of the panel-only detail, because the
+// line is read at the attested commit (ID-22); `recheck` for the account half,
+// which the account's own eligibility clears; `moderator` for the two identity
+// refusals (ID-41); `registry` for the one wait only the service shows.
+const B7_FIXES = {
+  B_UNBOUND: "new_tag",
+  B_BINDING_MALFORMED: "new_tag",
+  B_BINDING_UNUSABLE: "new_tag",
+  B_BINDING_INVALID: "new_tag",
+  B_ACCOUNT_INELIGIBLE: "recheck",
+  B_OWNER_CHANGED: "moderator",
+  B_REPOSITORY_RECYCLED: "moderator",
+  W_REGISTRY_UNACKNOWLEDGED: "registry",
+};
+
+/** SCOPE-7's token file, read by the selftest alone for B.7's population. */
+const TOKEN_FILE = "schema/contract-tokens-v1.json";
+/** 38 reason codes and waits at contract 2.7.0. */
+const TOKEN_CODE_FLOOR = 30;
+
 // FLOW-15: a remedy on the service path may not tell an author to comment, to
 // `/recheck`, or to say anything "in the issue" — on that path there is no
 // issue and there is no comment box. Applied to the codes the service turns
@@ -88,34 +113,65 @@ const PANEL_ONLY = ["B_BINDING_INVALID", "B_ACCOUNT_INELIGIBLE", "W_REGISTRY_UNA
 const CHANNEL = /\/recheck|comment|in the issue/i;
 
 // B.7 names codes this table cannot carry yet, and the absence is recorded
-// rather than left to be discovered. Their levels are declared
-// (`BOUND_WORLD_CODES` in `bot/lib/policy/constants.mjs`) and their titles and
-// remedies are not written anywhere in this repository — deliberately:
-// reg.61a (B-T3.3b) writes those author-facing sentences once, into
-// docs/POLICY.md, and a placeholder here would be a second one, and the second
-// one is the one that ships. So they are owed, by name, and this program
-// neither invents them nor pretends the codes do not exist.
+// rather than left to be discovered: an owed code is listed by name, with its
+// own reason, and this program neither invents a row nor pretends the code does
+// not exist. The selftest reads the population from the token file, so a B.7
+// code that is neither a row nor owed is red.
+//
+// Until 2026-09-24 twenty-one codes were owed to reg.61a (registry plan
+// B-T3.3b), which landed as #271 and wrote none of them. Lane S10 wrote the
+// thirteen whose `fix` a contract clause states (`bot/lib/policy/constants.mjs`,
+// `PANEL_CODES` in `bot/lib/codes.mjs`, and docs/POLICY.md §6). What is still
+// owed is owed to a contract sentence, not to a writer: each reason says which.
+const WAIT_NO_ROW =
+  "B.7: FLOW-13's table lists \"the codes … and the waits only the service shows\"; this wait the bot " +
+  "reports in a result's `wait` or answers with no record (FLOW-72), and FLOW-10 shows every wait by its " +
+  "start, cause and earliest retry, never from the table. Whether it carries a row, and which `fix` a wait " +
+  "that clears itself would take, is a contract sentence (proposed: no row)";
+const LISTING_ACTION =
+  "§7.2's listing action, a reason code in the token file (B.7: \"§7.2's other codes\") that no clause gives " +
+  "a `fix`; it acts on a listing rather than ending a submission";
 const OWED = {
-  owed_by: "reg.61a (registry plan B-T3.3b), which writes these codes' author-facing sentences into docs/POLICY.md",
+  owed_by: "a contract sentence per code (each reason below); raised by lane S10 on 2026-09-24",
   why:
-    "FLOW-13 requires a title and a remedy per entry. These codes carry a level in " +
-    "`bot/lib/policy/constants.mjs`'s `BOUND_WORLD_CODES` and no title and no remedy anywhere in this " +
-    "repository. `policyCodeDef` synthesises `See docs/POLICY.md.` for them at emit time, which is the " +
-    "right answer in a comment and the wrong one in a published table three estates compile against.",
-  // The five `B_*` codes the bot emits left this list with contract 2.5.0,
-  // which records their `fix` (lane S6); their rows come from
-  // `bot/lib/policy/constants.mjs`'s POLICY_CODES now. The two panel-only
-  // details stay owed: the bot never emits them, and their rows are the
-  // service's.
+    "FLOW-13 requires one full entry per reason code, and `fix` is a closed list naming what clears the code. " +
+    "For these the contract states no `fix`, or states that the table carries no row, so a row here would be " +
+    "this repository's answer to a contract question.",
   codes: [
-    "B_BINDING_INVALID", "B_ACCOUNT_INELIGIBLE",
-    "R_FIRST_BINDING", "R_BINDING_CHANGED",
+    "A_BINDING_REVOKE", "A_REMOVAL_REQUEST",
+    "M_YANK", "M_DELIST", "M_RELIST", "M_DEPRECATE", "M_REVOKE", "M_UNREVOKE", "M_BINDING_REVOKE",
+    "M_IDENTITY_RESET",
     "W_LEASE_EXPIRED", "W_ELIGIBILITY_UNREADABLE", "W_NOTICE_PENDING", "W_GITHUB_RATE_LIMITED",
     "W_SERVICE_UNREACHABLE", "W_MODERATION_HOLD", "W_ALERT_UNDELIVERED", "W_OPERATOR_WINDOW",
-    "W_REGISTRY_UNACKNOWLEDGED",
-    "M_APPROVE", "M_REJECT", "M_APPEAL",
-    "A_STOP", "A_WITHDRAW", "A_BINDING_REVOKE", "A_REMOVAL_REQUEST", "A_YANK",
   ],
+  each: {
+    A_BINDING_REVOKE:
+      "An act on a binding token, not on a release (ID-21; ID-61). The release it affects is answered " +
+      "`B_BINDING_UNUSABLE` (`new_tag`) or, under a new line, `R_BINDING_CHANGED` (`moderator`); no clause says " +
+      "what clears the revocation itself (proposed: level note, fix none)",
+    A_REMOVAL_REQUEST:
+      "FLOW-28 delists the listing; no clause says what brings it back. M_RELIST's categories (error, " +
+      "appeal_reversed, path_test) do not cover an author's own removal, and MIG-27 says a release cannot lift " +
+      "`unlisted` (proposed: level note, fix none; `moderator` if an author may ask for a relist)",
+    M_YANK: `${LISTING_ACTION} (proposed: fix none — there is no un-yank, B.3)`,
+    M_DELIST: `${LISTING_ACTION} (proposed: fix moderator — an M_RELIST, MIG-27)`,
+    M_RELIST: `${LISTING_ACTION} (proposed: fix none)`,
+    M_DEPRECATE: `${LISTING_ACTION} (proposed: fix moderator — an M_UNREVOKE)`,
+    M_REVOKE: `${LISTING_ACTION} (proposed: fix moderator — an M_UNREVOKE)`,
+    M_UNREVOKE: `${LISTING_ACTION} (proposed: fix none)`,
+    M_BINDING_REVOKE:
+      `${LISTING_ACTION}; §7.2: the next release gets \`B_BINDING_UNUSABLE\` (proposed: fix none on this code)`,
+    M_IDENTITY_RESET:
+      `${LISTING_ACTION}; it clears \`B_REPOSITORY_RECYCLED\` and is cleared by nothing (proposed: fix none)`,
+    W_LEASE_EXPIRED: WAIT_NO_ROW,
+    W_ELIGIBILITY_UNREADABLE: WAIT_NO_ROW,
+    W_NOTICE_PENDING: WAIT_NO_ROW,
+    W_GITHUB_RATE_LIMITED: WAIT_NO_ROW,
+    W_SERVICE_UNREACHABLE: WAIT_NO_ROW,
+    W_MODERATION_HOLD: WAIT_NO_ROW,
+    W_ALERT_UNDELIVERED: WAIT_NO_ROW,
+    W_OPERATOR_WINDOW: WAIT_NO_ROW,
+  },
 };
 
 /** Floors. Below these the walk has failed, not the vocabulary shrunk. */
@@ -138,7 +194,7 @@ export function build() {
   const rows = [];
   const seen = new Map();
 
-  const add = (code, def, source) => {
+  const add = (code, def, source, panel = false) => {
     const prior = seen.get(code);
     if (prior) {
       // Two tables declaring one code is allowed — `R_FIRST_LISTING` and
@@ -182,15 +238,21 @@ export function build() {
         `(FLOW-4) and reads the same attested bytes, so it reaches the same verdict for ever`);
     }
 
-    // `panel_only` is derived, not declared. Every code in these two tables is
-    // one the bot emits, which is exactly what panel-only denies. A source
-    // that ever declares one explicitly is honoured, and the assertion below
-    // then catches it if it is one of B.7's.
-    const panelOnly = def.panel_only === true;
-    if (panelOnly || PANEL_ONLY.includes(code)) {
+    // `panel_only` is derived, not declared: true for a row out of
+    // `PANEL_CODES` and false for every other. Every code in the two emitting
+    // tables is one the bot emits, which is exactly what panel-only denies, so
+    // one of B.7's panel-only codes declared there is refused; and a key in
+    // `PANEL_CODES` that B.7 does not make panel-only is refused too, because
+    // that table is the one place a row may exist without the bot emitting it.
+    const panelOnly = panel;
+    if (!panel && (def.panel_only === true || PANEL_ONLY.includes(code))) {
       p.fail(code, `is panel-only and is declared in ${source}. The panel-only flag marks B.7's ` +
         `panel-only details and the waits only the service shows; a bot module emitting one would ` +
         `publish what \`B_BINDING_UNUSABLE\` withholds (BOT-89)`);
+    }
+    if (panel && !PANEL_ONLY.includes(code)) {
+      p.fail(code, `is declared in ${source}, which holds B.7's panel-only codes alone ` +
+        `(${PANEL_ONLY.join(", ")}); a row there is one the bot never emits`);
     }
 
     // FLOW-15, on the path it binds.
@@ -217,6 +279,9 @@ export function build() {
   // itself gives when it reports one of those two codes.
   for (const [code, def] of Object.entries(POLICY_CODES)) add(code, def, "bot/lib/policy/constants.mjs");
   for (const [code, def] of Object.entries(CODES)) add(code, def, "bot/lib/codes.mjs");
+  // Last, so that a panel-only code also declared in an emitting table is
+  // refused there, under that table's name, rather than read here first.
+  for (const [code, def] of Object.entries(PANEL_CODES)) add(code, def, "bot/lib/codes.mjs (PANEL_CODES)", true);
 
   rows.sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
 
@@ -299,10 +364,34 @@ function selftest() {
     for (const c of have) assert(want.has(c), `${c} has a row and is not declared`);
   });
 
-  check("no code the bot emits is panel-only", () => {
-    const have = new Set(doc.flow13_table.map((r) => r.code));
-    for (const c of PANEL_ONLY) assert(!have.has(c), `${c} is panel-only and has a row in the bot's own table`);
-    for (const row of doc.flow13_table) assert(row.panel_only === false, `${row.code} is flagged panel-only`);
+  // FLOW-13's sixth member, both ways. B.7's panel-only details and the wait
+  // only the service shows each carry a row flagged panel-only, out of
+  // `PANEL_CODES` and never out of the two tables the bot emits from; every
+  // other row is flagged false. Until 2026-09-24 this read "no code the bot
+  // emits is panel-only" and asserted only the second half, so the table
+  // carried no panel-only row at all and the check was green for it.
+  check("B.7's panel-only codes, and only they, carry a row flagged panel-only", () => {
+    const byCode = new Map(doc.flow13_table.map((r) => [r.code, r]));
+    for (const c of PANEL_ONLY) {
+      assert(byCode.has(c), `${c} is one of B.7's panel-only codes and has no FLOW-13 row`);
+      assert(byCode.get(c).panel_only === true, `${c} is one of B.7's panel-only codes and its row is not flagged panel-only`);
+      assert(!Object.hasOwn(CODES, c) && !Object.hasOwn(POLICY_CODES, c),
+        `${c} is panel-only and is declared in a table the bot emits from (BOT-89)`);
+    }
+    for (const row of doc.flow13_table) {
+      if (row.panel_only) assert(PANEL_ONLY.includes(row.code), `${row.code} is flagged panel-only and B.7 does not make it so`);
+    }
+  });
+
+  // The `fix` values contract B.7 states outright (2.5.0), held here because
+  // the token file carries only the table this program emits, so nothing else
+  // can say the table has drifted from the sentence.
+  check("the fix B.7 states for a code is the fix its row carries", () => {
+    const byCode = new Map(doc.flow13_table.map((r) => [r.code, r]));
+    for (const [code, fix] of Object.entries(B7_FIXES)) {
+      assert(byCode.has(code), `B.7 states fix \`${fix}\` for ${code}, and the table carries no row for it`);
+      assert(byCode.get(code).fix === fix, `B.7 states fix \`${fix}\` for ${code}, and its row says \`${byCode.get(code).fix}\``);
+    }
   });
 
   check("no service-path wait tells the author to comment, /recheck or answer in the issue", () => {
@@ -314,11 +403,29 @@ function selftest() {
     }
   });
 
+  // The check's name was a claim until 2026-09-24: it asserted that the owed
+  // list was non-empty and disjoint from the rows, and never asked B.7. So
+  // §7.2's eight moderation codes, which the token file lists as reason codes,
+  // were neither rows nor owed, and the check was green. It now reads the
+  // population from the token file, whose `reason_code` and `wait` entries are
+  // generated from B.7 by astra-plugins-ops and never from this program.
   check("a code B.7 names and this table cannot carry is recorded, not dropped", () => {
-    assert(doc.codes_owed.codes.length > 0, "nothing is owed, on a tree where B.7's B_* codes carry no remedy");
+    const token = JSON.parse(fs.readFileSync(path.join(REPO, TOKEN_FILE), "utf8"));
+    const listed = [...(token.entries ?? []), ...(token.service_only ?? [])]
+      .filter((e) => (e?.kind === "reason_code" || e?.kind === "wait") && e.state !== "retired")
+      .map((e) => e.name);
+    assert(listed.length >= TOKEN_CODE_FLOOR, `${TOKEN_FILE} lists ${listed.length} reason codes and waits, under the ` +
+      `floor of ${TOKEN_CODE_FLOOR}; a reader that finds fewer has stopped reading B.7`);
     const have = new Set(doc.codes);
-    for (const c of doc.codes_owed.codes) assert(!have.has(c), `${c} is both owed and emitted`);
-    assert(/reg\.61a/.test(doc.codes_owed.owed_by), "the owed set does not name who owes it");
+    const owed = new Set(doc.codes_owed.codes);
+    const dropped = listed.filter((c) => !have.has(c) && !owed.has(c));
+    assert(dropped.length === 0, `${TOKEN_FILE} lists ${dropped.join(", ")}, which have no FLOW-13 row and are not owed`);
+    for (const c of owed) assert(!have.has(c), `${c} is both owed and emitted`);
+    const each = doc.codes_owed.each ?? {};
+    for (const c of owed) {
+      assert(typeof each[c] === "string" && each[c].length > 0, `${c} is owed and \`codes_owed.each\` gives no reason for it`);
+    }
+    for (const c of Object.keys(each)) assert(owed.has(c), `\`codes_owed.each\` gives a reason for ${c}, which is not owed`);
   });
 
   check("the floors", () => {

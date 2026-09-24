@@ -29,6 +29,8 @@
 //   migration:<owner/name>@<tag>                     B-T3.7b's baseline (MIG-20)
 //   legacy:<owner/name>@<tag>:<fingerprint>:<state>  B-T3.7's legacy path
 //   service-decision:<service_decision_id>:<plugin_id>:<version>:<state>
+//   service-decision:<service_decision_id>:<plugin_id>::identity_reset
+//                                                    DEC-7's voiding record (B-T4.2)
 //   history:<owner/name>@<tag>:<decided_at>:<state>  M-T3.8's export (MIG-21)
 //
 // The fifth is contract 2.5.0's (lane S3b's spelling). MIG-21 asks for one
@@ -175,6 +177,21 @@ const DOMAINS = {
       // numeric `plugin_id` of 123 matches the id pattern as "123".
       if (typeof plugin_id !== "string" || !ID_RE.test(plugin_id)) {
         throw new Error(`\`plugin_id\` ${JSON.stringify(plugin_id)} is not a plugin id`);
+      }
+      // DEC-7's voiding record (contract 2.5.0; B-T4.2) voids an ID, not a
+      // version, and BOT-35 spells its key with the version segment EMPTY:
+      // `service-decision:<service_decision_id>:<plugin_id>::identity_reset`,
+      // "whose empty version segment no semver can fill". Both directions are
+      // refused, because each is the other shape's key under the wrong state:
+      // a voiding key carrying a version, and a yank key carrying none.
+      if (state === VOIDING_STATE) {
+        if (version !== undefined && version !== null && version !== "") {
+          throw new Error(
+            `a voiding record's key carries no version (BOT-35: \`service-decision:<id>:<plugin_id>::${VOIDING_STATE}\`), ` +
+            `and this one carries ${JSON.stringify(version)}: a reset voids the id, every version of it`,
+          );
+        }
+        return `service-decision:${service_decision_id}:${plugin_id}::${VOIDING_STATE}`;
       }
       if (typeof version !== "string" || !SEMVER_RE.test(version)) {
         throw new Error(`\`version\` ${JSON.stringify(version)} is not a semver`);
@@ -492,6 +509,155 @@ export function refuseUncomposableAuthorAction(record) {
     );
   }
   return record;
+}
+
+// ── DEC-7's voiding record (M_IDENTITY_RESET; contract 2.5.0) ───────────────
+
+/**
+ * The state, category and code a voiding record carries, and no other record.
+ *
+ * Contract 2.5.0 added all three with `M_IDENTITY_RESET` (OPEN-OWNER-15's
+ * reset; registry plan B-T4.2). Until then `bot/lib/identity.mjs` could read a
+ * voiding record and nothing could write one, which is the state ID-41 asks
+ * for ("until a contract version adds one the refusal stands").
+ */
+export const VOIDING_STATE = "identity_reset";
+export const VOIDING_CATEGORY = "identity_reset";
+export const VOIDING_CODE = "M_IDENTITY_RESET";
+
+/**
+ * DEC-7's voiding-record members, in DEC-7's own order. Eleven, and two of them
+ * — `moderator` and `declared_interest` — are "absent where they do not apply":
+ * a reset is always a moderator's decision, so `moderator` is composed every
+ * time, and `declared_interest` is carried when BOT-80's entry carries it.
+ */
+export const VOIDING_MEMBERS = Object.freeze([
+  "schema", "decision_id", "decided_at", "actor", "moderator", "trigger", "plugin_id",
+  "state", "reasons", "category", "declared_interest",
+]);
+
+/**
+ * What a voiding record must NOT carry, named so the refusal can say why.
+ *
+ * DEC-7: "it carries no `submission_id`, `version`, `fingerprint`, `repo` or
+ * repository ids". The ids are the point: a voiding record that carried the
+ * old certificate's ids would be read by the next baseline reader as a
+ * baseline, which is the one thing the record exists to end (MIG-20).
+ */
+export const VOIDING_FORBIDDEN = Object.freeze([
+  "submission_id", "version", "fingerprint", "repo", "repository_id", "repository_owner_id",
+]);
+
+/** schema/decision-v1.json's `moderator`: a handle and nothing else (PRIV-2). */
+const HANDLE_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
+
+const VOIDING_GRAMMAR = {
+  decided_at: str(TIME),
+  actor: (v) => v === "moderator",
+  moderator: str(HANDLE_RE),
+  trigger: (v) => v === "moderation",
+  plugin_id: str(ID_RE),
+  state: (v) => v === VOIDING_STATE,
+  reasons: (v) => Array.isArray(v) && v.length === 1 && v[0] === VOIDING_CODE,
+  category: (v) => v === VOIDING_CATEGORY,
+  declared_interest: (v) => typeof v === "boolean",
+};
+
+/** The members a voiding record may not be without. `declared_interest` is the one optional member. */
+const VOIDING_REQUIRED = VOIDING_MEMBERS.filter((m) => !["schema", "decision_id", "declared_interest"].includes(m));
+
+/**
+ * Does this record claim to be a voiding record, by any of the three marks
+ * contract 2.5.0 gave only that record?
+ *
+ * Any one mark is enough, deliberately. `bot/lib/identity.mjs`'s
+ * `isVoidingRecord` ENDS A BASELINE on actor, trigger, category and id; a record
+ * that carries the category and is not a voiding record in every other member
+ * would end one all the same. So a record carrying the category, the state or
+ * the code is held to the whole shape, and a lookalike is refused before it is
+ * committed rather than believed after (MIG-20's tree check).
+ */
+export function claimsVoiding(doc) {
+  if (!doc || typeof doc !== "object") return false;
+  return doc.category === VOIDING_CATEGORY
+    || doc.state === VOIDING_STATE
+    || (Array.isArray(doc.reasons) && doc.reasons.includes(VOIDING_CODE));
+}
+
+/**
+ * The grammar half of the voiding-record refusal, before `schema`/`decision_id`
+ * are stamped. The same function the writer and `tools/validate.mjs` call, so
+ * the two cannot disagree about DEC-7's eleven members.
+ */
+export function refuseUncomposableVoidingRecord(record) {
+  for (const member of VOIDING_FORBIDDEN) {
+    if (Object.prototype.hasOwnProperty.call(record, member)) {
+      throw new Error(
+        `a voiding record carries no \`${member}\` (DEC-7): a reset voids the id and every baseline of it, and a ` +
+        "record naming a version, a submission, a repository or its ids is a record a baseline reader would take " +
+        "for a publication (MIG-20)",
+      );
+    }
+  }
+  for (const [member, value] of Object.entries(record)) {
+    const grammar = VOIDING_GRAMMAR[member];
+    if (!grammar) {
+      throw new Error(
+        `\`${member}\` is not one of DEC-7's voiding-record members, and DEC-7's sentence is "with only these ` +
+        `members": ${VOIDING_MEMBERS.join(", ")}`,
+      );
+    }
+    if (!grammar(value)) {
+      throw new Error(
+        `a voiding record's \`${member}\` is ${JSON.stringify(value)}, and DEC-7 fixes it ` +
+        "(actor `moderator`, trigger `moderation`, state and category `identity_reset`, reasons " +
+        "`[\"M_IDENTITY_RESET\"]`, a handle, a plugin id, a §0.7 time, a boolean)",
+      );
+    }
+  }
+  const missing = VOIDING_REQUIRED.filter((m) => !Object.prototype.hasOwnProperty.call(record, m));
+  if (missing.length) {
+    throw new Error(
+      `a voiding record is missing ${missing.join(", ")}. An \`M_IDENTITY_RESET\` is a moderator's decision about ` +
+      "one id at one time, and a record short of any of these says less than DEC-7 requires it to",
+    );
+  }
+  return record;
+}
+
+/**
+ * DEC-7's voiding record for one applied `M_IDENTITY_RESET`, with BOT-35's key.
+ *
+ * `decided_at` is the decision's own, as every record this compiler writes
+ * from a service decision carries (`compileYank`'s author-action records do
+ * the same): the record states when the moderator decided, and the commit
+ * that carries it states when the registry applied it.
+ *
+ * @param {{service_decision_id: string, plugin_id: string, decided_at: string,
+ *   moderator: string, declared_interest?: boolean}} act
+ * @returns {{key: string, record: object}}
+ */
+export function composeVoidingRecord(act) {
+  const record = {
+    decided_at: act?.decided_at,
+    actor: "moderator",
+    moderator: act?.moderator,
+    trigger: "moderation",
+    plugin_id: act?.plugin_id,
+    state: VOIDING_STATE,
+    reasons: [VOIDING_CODE],
+    category: VOIDING_CATEGORY,
+    ...(act?.declared_interest !== undefined ? { declared_interest: act.declared_interest } : {}),
+  };
+  refuseUncomposableVoidingRecord(record);
+  return {
+    key: serviceDecisionKey({
+      service_decision_id: act.service_decision_id,
+      plugin_id: act.plugin_id,
+      state: VOIDING_STATE,
+    }),
+    record,
+  };
 }
 
 // ── BOT-37's trailers ───────────────────────────────────────────────────────
@@ -918,12 +1084,31 @@ export function writeDecisionRecord({ key, record, root = REPO_ROOT, terminal = 
   const composed = { schema: RECORD_SCHEMA, decision_id, ...record };
 
   if (domain === "service-decision") {
+    // Two shapes share this domain, told apart by the KEY's state and never by
+    // the record's own members: a voiding key over an author-action record, or
+    // the reverse, is refused by whichever shape the key names.
     const { schema, decision_id: _id, ...rest } = composed;
-    refuseUncomposableAuthorAction(rest);
-    const extra = Object.keys(composed).filter((m) => !AUTHOR_ACTION_MEMBERS.includes(m));
-    if (extra.length) {
-      throw new Error(`\`${extra.join("`, `")}\` is not one of DEC-7's thirteen author-action members`);
+    if (String(key).endsWith(`::${VOIDING_STATE}`)) {
+      refuseUncomposableVoidingRecord(rest);
+      const extra = Object.keys(composed).filter((m) => !VOIDING_MEMBERS.includes(m));
+      if (extra.length) {
+        throw new Error(`\`${extra.join("`, `")}\` is not one of DEC-7's voiding-record members`);
+      }
+    } else {
+      refuseUncomposableAuthorAction(rest);
+      const extra = Object.keys(composed).filter((m) => !AUTHOR_ACTION_MEMBERS.includes(m));
+      if (extra.length) {
+        throw new Error(`\`${extra.join("`, `")}\` is not one of DEC-7's thirteen author-action members`);
+      }
     }
+  }
+  if (domain !== "service-decision" && claimsVoiding(composed)) {
+    throw new Error(
+      `a \`${domain}:\` record carries a mark contract 2.5.0 gives DEC-7's voiding record alone (the category or ` +
+      "state `identity_reset`, or the code `M_IDENTITY_RESET`). A voiding record is keyed " +
+      "`service-decision:<id>:<plugin_id>::identity_reset`, and one written under another domain would end a " +
+      "baseline under an id nothing else derives",
+    );
   }
 
   refusePrivate({ record: composed });

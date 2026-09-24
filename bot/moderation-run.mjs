@@ -101,13 +101,20 @@
 // leaves it to be posted again. `bot/lib/settled.mjs` carries the argument
 // and what a forged row costs.
 //
-// **The release commit itself is not built** (M-T3.3: "a release commit
-// applies the held decision from the hold entry, writes the log entry, deletes
-// the entry and its confirm record"). Nothing here applies a held decision or
-// deletes an entry, so a hold that is DUE is refused by name (`walkHolds`'s
-// `due`, alert `hold_end_not_built`) rather than reported `applied` or
-// `cancelled` against a commit that did neither — and it is not released, in
-// shadow or out of it (ops entry 99).
+// **The release commit is built for one code, `M_IDENTITY_RESET`** (contract
+// 2.5.0; registry plan B-T4.2), and for no other yet (M-T3.3: "a release
+// commit applies the held decision from the hold entry, writes the log entry,
+// deletes the entry and its confirm record"). A reset's whole effect IS its
+// release commit — DEC-7's voiding record, the identity record deleted where
+// one exists, the log entry `reset` — so `walkHolds` hands a due reset to
+// `releaseHolds`, which composes it with `compileIdentityReset` and deletes
+// the entry and its confirm record in the same commit, under
+// `Service-Decision:`. Its `applied` result is not posted by this run: the
+// next live run reads that commit through `holdDeletions`, as it reads any
+// hold that left the tree. Every other due hold is still refused by name
+// (`walkHolds`'s `due`, alert `hold_end_not_built`) rather than reported
+// `applied` or `cancelled` against a commit that did neither — and it is not
+// released, in shadow or out of it (ops entry 99).
 //
 // ── WHAT THIS FILE DOES NOT DO ─────────────────────────────────────────────
 //
@@ -145,12 +152,16 @@ import {
   REJECT_CODE,
   allowlistedSubmission,
   compileDecision,
+  compileIdentityReset,
   newBatch,
   recordInBatch,
 } from "./lib/compile-decision.mjs";
 import { CODES } from "./lib/codes.mjs";
 import {
+  VOIDING_CODE,
   decisionCommitMessage,
+  decisionId,
+  recordPath,
   recordsOnMain,
   submissionKey,
   trailerLine,
@@ -598,6 +609,26 @@ export function applyCompiled(compiled, { root = REPO_ROOT } = {}) {
   for (const result of compiled) {
     for (const edit of result.edits ?? []) {
       if (edit.op === "add") { write(edit.file, edit.doc); continue; }
+      if (edit.op === "delete") {
+        // ID-40's one deletion (an `M_IDENTITY_RESET` release) and a released
+        // hold's entry and confirm record. The file must be there: a delete
+        // compiled for a file this tree does not have is the same tree-moved
+        // case as a `set` below, and deleting nothing would commit a release
+        // that changed less than its log entry says.
+        if (!allowedPath(edit.file)) {
+          throw new Error(`a compiled deletion names ${edit.file}, which BOT-33's moderation allowlist does not carry`);
+        }
+        const full = path.join(root, ...edit.file.split("/"));
+        if (!fs.existsSync(full)) {
+          throw new Error(
+            `${edit.file} is not on this tree and a \`delete\` edit was compiled for it. The compiler derives its ` +
+            "edits from git, so this means the tree moved between the compile and the write",
+          );
+        }
+        fs.rmSync(full);
+        touched.push(edit.file);
+        continue;
+      }
       if (edit.op !== "set") throw new Error(`unknown edit op ${JSON.stringify(edit.op)}`);
       const full = path.join(root, ...edit.file.split("/"));
       const doc = readJson(full);
@@ -736,6 +767,19 @@ export function composeCommit({ compiled, held = [], submissions = [], documents
   for (const r of compiled) {
     for (const e of r.edits ?? []) paths.add(e.file);
     for (const l of r.log ?? []) paths.add(l.file);
+    // The decision records the result carries — an `A_YANK`'s author-action
+    // records, an `M_IDENTITY_RESET`'s voiding record. Their path is BOT-35's
+    // id under the record's own month (`recordPath`), the one `applyCompiled`
+    // writes to, so it is derived here rather than handed over. Until
+    // 2026-09-24 this loop listed edits and log entries only: `applyCompiled`
+    // wrote the records to the tree, `git add --pathspec-from-file` never
+    // staged them, and the commit landed a yank whose BOT-34 records were
+    // left behind on the runner.
+    for (const rec of r.records ?? []) {
+      const body = rec?.record ?? rec;
+      if (!rec?.key) continue;
+      paths.add(recordPath({ decision_id: decisionId(rec.key), decided_at: body?.decided_at }));
+    }
     decisions.push({
       service_decision_id: r.service_decision_id,
       decided_at: r.trailers?.["Decided-At"],
@@ -1132,7 +1176,9 @@ export function walkHolds({
   coverageRed = false,
   settled = new Set(),
 } = {}) {
-  const out = { released: [], cancelled: [], waiting: [], due: [], unclear: [], alerts: [], pending: [], settled: [] };
+  const out = {
+    released: [], cancelled: [], waiting: [], due: [], releasable: [], unclear: [], alerts: [], pending: [], settled: [],
+  };
   const onTree = readHolds(root);
   for (const hold of onTree) {
     // Where the entry landed: a reversal's 24 hours run from that commit, not
@@ -1146,6 +1192,13 @@ export function walkHolds({
     }
     if (verdict.act !== "release" && verdict.act !== "cancel") {
       throw new Error(`resolveHold answered ${verdict.act} for the hold entry of ${id}`);
+    }
+    // The one release this job builds (B-T4.2). Handed on rather than composed
+    // here: this walk reads and writes nothing, and the commit job composes
+    // the release against the tree it writes, with `releaseHolds`.
+    if (verdict.act === "release" && RELEASE_BUILT.includes(hold.entry?.decision?.code)) {
+      out.releasable.push({ service_decision_id: id, hold, reason: verdict.reason });
+      continue;
     }
     out.due.push({ service_decision_id: id, act: verdict.act, would_post: verdict.result, reason: verdict.reason });
     out.alerts.push({
@@ -1181,6 +1234,71 @@ export function walkHolds({
     if (c.hand) out.alerts.push({ kind: "hold_hand_cancelled", service_decision_id: gone.id, commit: gone.sha, why: c.reason });
     (c.act === "cancel" ? out.cancelled : out.released).push(row);
     out.pending.push({ service_decision_id: gone.id, outcome: c.result, commit: gone.sha });
+  }
+  return out;
+}
+
+/**
+ * The held codes whose release commit this job builds: `M_IDENTITY_RESET` alone
+ * (B-T4.2). A due hold of any other code is still `hold_end_not_built`.
+ */
+export const RELEASE_BUILT = Object.freeze([VOIDING_CODE]);
+
+/**
+ * Compose the release of each due, confirmed reset `walkHolds` handed on, as
+ * the one commit M-T3.3 describes: the held decision applied from the entry
+ * (`compileIdentityReset`: the voiding record, the log entry `reset`, the
+ * identity record deleted where one exists), and the hold entry and its
+ * confirm record deleted — all under the decision's `Service-Decision:`, which
+ * `composeCommit` writes for every compiled result.
+ *
+ * **A release the compile would now refuse writes nothing.** The hold waited
+ * at least 24 hours and the tree may have moved — another reset voided the id,
+ * the listing went — so `compileIdentityReset` asks every refusal again. One it
+ * refuses stays on the tree, due, and alerts `hold_release_refused` every run:
+ * BOT-81 gives a hold no `refused` end and no commit that could name one, so
+ * the entry is left for a person to cancel (MOD-52) rather than settled here.
+ *
+ * Committed in shadow too, as the header says of every release: the hold is
+ * not work a list answer names, and what releases it is the MOD-52 record in
+ * git. Its `applied` result is posted by the next live run, from the commit,
+ * through `holdDeletions` — never by this one.
+ *
+ * @returns {{compiled: object[], refused: object[], alerts: object[]}}
+ */
+export function releaseHolds(releasable, { root = REPO_ROOT } = {}) {
+  const out = { compiled: [], refused: [], alerts: [] };
+  const batch = newBatch();
+  for (const { service_decision_id: id, hold } of releasable ?? []) {
+    const decision = hold?.entry?.decision;
+    if (!RELEASE_BUILT.includes(decision?.code)) {
+      throw new Error(`releaseHolds was handed ${id}, an ${decision?.code}, and builds the release of ${RELEASE_BUILT.join(", ")} alone`);
+    }
+    const result = compileIdentityReset(decision, { root, batch });
+    if (result.outcome !== "compiled") {
+      const why = result.outcome === "refused"
+        ? `\`${result.refusal}\`: ${result.why}`
+        : `the compile would now hold it as ${result.held_for}, not as a reversal`;
+      out.refused.push({ service_decision_id: id, outcome: result.outcome, refusal: result.refusal ?? null, why });
+      out.alerts.push({
+        kind: "hold_release_refused",
+        service_decision_id: id,
+        commit: null,
+        why: `the hold is due and confirmed, and its release is refused on this tree (${why}). Nothing is written ` +
+          "and no result is posted; the entry stays for an operator to cancel (MOD-52)",
+      });
+      continue;
+    }
+    const released = {
+      ...result,
+      edits: [
+        ...result.edits,
+        { op: "delete", file: holdEntryPath(id) },
+        ...(hold.confirm ? [{ op: "delete", file: `${HOLDS_PREFIX}/${id}.confirm.json` }] : []),
+      ],
+    };
+    recordInBatch(batch, released);
+    out.compiled.push(released);
   }
   return out;
 }
@@ -1598,6 +1716,12 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     const record = readSettled(root);
     for (const p of record.problems) log.error(`::warning::settled_record_unreadable: ${p}`);
     const holds = walkHolds({ root, now, shadow, settled: record.keys });
+    // B-T4.2: the one release this job builds, written in shadow or out of it
+    // (a hold is not work the list answer names), after this run's own
+    // artefacts so its log name and the documents see them.
+    const releases = releaseHolds(holds.releasable, { root });
+    holds.alerts.push(...releases.alerts);
+    written.push(...applyCompiled(releases.compiled, { root }));
     const handed = parseSettled(env.ASTRA_SETTLED, log);
     let recorded = [];
     const refusedRows = [];
@@ -1622,7 +1746,7 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     }
     for (const p of refusedRows) log.error(`::warning::settled_row_refused: ${p}`);
     const composed = {
-      compiled: live ? compiledAll.compiled : [],
+      compiled: [...(live ? compiledAll.compiled : []), ...releases.compiled],
       held: holdsEntered.entered,
       submissions: terminal,
       settled: recorded,
@@ -1660,6 +1784,11 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
       held: live ? holdsEntered.results : [],
       holds_kept: holdsEntered.kept,
       holds,
+      // B-T4.2: the resets this commit releases. Not in `compiled`, so `report`
+      // posts no `applied` for them from this run; the next live run posts it
+      // from the commit (`holdDeletions`).
+      released_holds: releases.compiled.map((r) => r.service_decision_id),
+      release_refused: releases.refused,
       // Ops entry 100: what the record on this tree was, and the rows this
       // run added to it. `holds.settled` is what the walk passed over.
       settled: { record: record.state, recorded, problems: [...record.problems, ...refusedRows] },
@@ -1703,6 +1832,7 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     log.log(`ok    ${compiledAll.compiled.length} compiled, ${compiledAll.refused.length} refused, ` +
       `${compiledAll.held.length} held (${holdsEntered.written.length} entered, ${holdsEntered.kept.length} already on the tree), ` +
       `${holds.released.length} released, ${holds.cancelled.length} cancelled, ${holds.due.length} due and not built, ` +
+      `${releases.compiled.length} reset(s) released, ${releases.refused.length} release(s) refused, ` +
       `${holds.unclear.length} unclear, ${holds.settled.length} already settled, ${recorded.length} recorded as settled`);
     if (!live) {
       // The sentence is now true because the code above makes it true, and the

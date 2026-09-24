@@ -65,7 +65,11 @@ import {
   RECORD_SCHEMA,
   SUBJECT_ID_PATTERN,
   TRAILERS,
+  VOIDING_FORBIDDEN,
+  VOIDING_MEMBERS,
+  claimsVoiding,
   composeAuthorActions,
+  composeVoidingRecord,
   decisionCommitMessage,
   decisionId,
   decisionKey,
@@ -1022,4 +1026,80 @@ test("a decision commit's subject is its subject, and git reads its trailers as 
   assert.equal(git("log", "-1", "--format=%(trailers:key=Run,valueonly)"), "35502265394/2",
     "git does not read `Run:` as a trailer: the blank line before the block is missing");
   assert.equal(git("log", "-1", "--format=%(trailers:key=Decision,valueonly)"), "0".repeat(32));
+});
+
+// ── DEC-7's voiding record (M_IDENTITY_RESET; contract 2.5.0; B-T4.2) ───────
+
+const RESET = {
+  service_decision_id: SERVICE_DECISION,
+  plugin_id: "astra-chess",
+  decided_at: "2026-11-01T09:30:00Z",
+  moderator: "knice",
+  declared_interest: false,
+};
+
+test("a voiding record carries exactly DEC-7's members, under BOT-35's empty-version key, and validates", () => {
+  const root = tree();
+  const { key, record } = composeVoidingRecord(RESET);
+  assert.equal(key, `service-decision:${SERVICE_DECISION}:astra-chess::identity_reset`,
+    "BOT-35: `service-decision:<service_decision_id>:<plugin_id>::identity_reset`, whose empty version segment no semver can fill");
+  const out = writeDecisionRecord({ key, record, root });
+  const doc = read(root, out.path);
+  assert.deepEqual(Object.keys(doc).sort(), [...VOIDING_MEMBERS].sort(), "DEC-7: `with only these members`");
+  assert.equal(VOIDING_MEMBERS.length, 11, `DEC-7 lists eleven voiding-record members and this module has ${VOIDING_MEMBERS.length}`);
+  assert.deepEqual(
+    [doc.actor, doc.trigger, doc.state, doc.category, doc.reasons],
+    ["moderator", "moderation", "identity_reset", "identity_reset", ["M_IDENTITY_RESET"]],
+  );
+  for (const member of VOIDING_FORBIDDEN) assert.equal(member in doc, false, `DEC-7: a voiding record has no \`${member}\``);
+
+  const { present, full } = decisionSchema(REPO_ROOT);
+  assert.equal(present, true, "schema/decision-v1.json is not in this checkout, so the next assertion would judge nothing");
+  const schema = JSON.parse(fs.readFileSync(full, "utf8"));
+  assert.deepEqual(validateAgainstSchema(schema, doc, "$"), [],
+    "the voiding record the writer composes is refused by schema/decision-v1.json — the category `identity_reset` is " +
+    "contract 2.5.0's and the schema every other party reads the log by does not carry it");
+  // And `declared_interest` is optional: absent where BOT-80's entry carried none.
+  const { declared_interest: _di, ...bare } = RESET;
+  assert.equal("declared_interest" in composeVoidingRecord(bare).record, false);
+});
+
+test("a voiding record naming a version, a submission, a repository or its ids is refused, each by name", () => {
+  const { key, record } = composeVoidingRecord(RESET);
+  for (const [member, value] of [
+    ["version", "1.0.0"], ["submission_id", SUBMISSION], ["fingerprint", "a".repeat(16)],
+    ["repo", "KNICE-TECH/astra-chess"], ["repository_id", "1343092393"], ["repository_owner_id", "280318216"],
+  ]) {
+    assert.throws(() => writeDecisionRecord({ key, record: { ...record, [member]: value }, root: tree() }),
+      new RegExp(`a voiding record carries no \`${member}\``), member);
+  }
+  for (const [member, value] of [["actor", "bot"], ["trigger", "panel"], ["reasons", ["M_DELIST"]], ["moderator", "not a handle"]]) {
+    assert.throws(() => writeDecisionRecord({ key, record: { ...record, [member]: value }, root: tree() }),
+      new RegExp(`\`${member}\``), member);
+  }
+  const { moderator: _m, ...unsigned } = record;
+  assert.throws(() => writeDecisionRecord({ key, record: unsigned, root: tree() }), /missing moderator/);
+});
+
+test("the two service-decision shapes cannot borrow each other's key, and no other domain may carry a voiding mark", () => {
+  const { key, record } = composeVoidingRecord(RESET);
+  const [yank] = composeAuthorActions(YANK);
+  assert.throws(() => writeDecisionRecord({ key, record: yank.record, root: tree() }), /voiding record carries no `version`/,
+    "an author-action record under a voiding key was written");
+  assert.throws(() => writeDecisionRecord({ key: yank.key, record, root: tree() }), /does not match its own grammar/,
+    "a voiding record under an author-action key was written");
+  assert.throws(() => serviceDecisionKey({ service_decision_id: SERVICE_DECISION, plugin_id: "astra-chess", version: "1.0.0", state: "identity_reset" }),
+    /carries no version/);
+  assert.throws(() => serviceDecisionKey({ service_decision_id: SERVICE_DECISION, plugin_id: "astra-chess", state: "yanked" }),
+    /is not a semver/);
+  const submitted = submissionKey({ submission_id: SUBMISSION, fingerprint: "a".repeat(16), state: "refused" });
+  assert.throws(() => writeDecisionRecord({
+    key: submitted,
+    record: { decided_at: "2026-11-01T09:30:00Z", actor: "bot", trigger: "panel", submission_id: SUBMISSION, state: "refused", reasons: ["B_REPOSITORY_RECYCLED"], category: "identity_reset" },
+    root: tree(),
+  }), /voiding record alone/, "a submission record carrying the voiding category was written");
+  assert.equal(claimsVoiding({ reasons: ["B_REPOSITORY_RECYCLED"] }), false);
+  for (const mark of [{ category: "identity_reset" }, { state: "identity_reset" }, { reasons: ["X_Y", "M_IDENTITY_RESET"] }]) {
+    assert.equal(claimsVoiding(mark), true, JSON.stringify(mark));
+  }
 });
