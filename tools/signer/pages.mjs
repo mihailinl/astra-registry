@@ -34,13 +34,14 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { isTime } from "../lib/time.mjs";
 import { blobAt, gitMaybe } from "./git.mjs";
 import { SIGNED_FILES } from "./plan.mjs";
 
-/** The flag. Its content is `schema` and `armed_at`, exactly (G3, proposed). */
+/** The flag. Its content is `schema` and `armed_at`, a §0.7 time, exactly (contract B.4, since 2.11.0). */
 export const FLAG_PATH = "policy/pages-withdrawal-list.json";
 
-/** G3's proposed schema for the flag. `MBE-PENDING`: readers ignore it until a contract version records it. */
+/** The flag's schema, published in contract B.4 (2.11.0): `astra.registry.pages-withdrawal-list/1`. */
 export const FLAG_SCHEMA = "astra.registry.pages-withdrawal-list/1";
 
 /**
@@ -221,6 +222,19 @@ export function flagPermanenceProblems({ root, ref = "HEAD", flagPath = FLAG_PAT
   }
   if (flag.schema !== FLAG_SCHEMA) {
     problems.push(`${flagPath} carries schema ${JSON.stringify(flag.schema)} and no reader here knows it`);
+  }
+  // `armed_at` is a §0.7 time (contract B.4, 2.11.0): RFC 3339 UTC, whole
+  // seconds, `Z`, a real instant. No reader decides on it — the latch is the
+  // first add — but the file can never be edited once it is on `main`, so a
+  // malformed one that merged would be this suite's red for good. The suite
+  // runs on the flag's own pull request, which is the one place it can still
+  // be refused, so it is refused here and not left to a later reader.
+  if (!isTime(flag.armed_at)) {
+    problems.push(
+      `${flagPath} carries armed_at ${JSON.stringify(flag.armed_at)}, which is not a §0.7 time (RFC 3339 UTC, ` +
+      "whole seconds, ending in `Z`, a real instant; contract B.4). The file can never be edited once it is on " +
+      "main, so fix it in the arming commit before it merges.",
+    );
   }
   return { problems, notAsked, shallow, added, changed, present };
 }
