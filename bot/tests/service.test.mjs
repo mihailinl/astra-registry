@@ -2476,6 +2476,21 @@ test("claim: at most three leases, each held to §4.3's grammar; the answer's sh
   }
 });
 
+test("claim: an answer with no `shadow` is read as shadow and alerts (BOT-92; B-T3.6's canary)", async () => {
+  const s = await stub(() => ok({ schema: "astra.plugins.bot-leases/1", leases: [lease()] }));
+  try {
+    const c = client(s);
+    const out = await claimJob({ client: c, log: { log: () => {}, error: () => {} } });
+    assert.equal(out.shadow, true, "a missing marker is never read as a real answer");
+    assert.ok(out.alerts.length >= 1, "and it alerts");
+    // What BOT-92 then makes of it: the lease's plan is emptied, whatever DRY_RUN says.
+    const plan = decideWith({ shadow: out.shadow, git: git({ existing: existing(), records: [baseline()] }) });
+    assert.equal(plan.kind, "none");
+  } finally {
+    await s.close();
+  }
+});
+
 test("ask: ID-9 in four words, and no token state or eligibility value leaves the job (BOT-89)", async () => {
   const cases = [
     [{ token_state: "bound", minted_for_repository: true, eligibility: "eligible" }, "pass"],
