@@ -228,7 +228,34 @@ await test("every reversal is held, at or under the bound and over it", () => {
         `a ${code} is not held as a reversal (overBound ${overBound})`);
     }
   }
-  assertEqual(REVERSAL_CODES.length, 2, "there are two codes that give something back, and this list has moved");
+  // MOD-9's own list, by name, and not a count: a count stays green when one
+  // code is swapped for another. Contract 2.5.0 added `M_IDENTITY_RESET` to it.
+  assertEqual(REVERSAL_CODES.join(","), "M_RELIST,M_UNREVOKE,M_IDENTITY_RESET",
+    "MOD-9 names three reversals — `M_RELIST`, `M_UNREVOKE`, `M_IDENTITY_RESET` — and this list has moved");
+});
+
+await test("an M_IDENTITY_RESET is a reversal: 24 hours from its commit AND a confirmation, never one alone", () => {
+  // B-T4.2's canary, the hold half: "a reset before its hold period, or without
+  // a confirmation, writes nothing". What writes is the release; what decides
+  // whether there is one is this. The entry is the schema's (hold-v1.json's
+  // `code` enum gained the reset), so an enum that lost it refuses here.
+  const reset = moderatorDecision({
+    service_decision_id: "sd-reset-1", code: "M_IDENTITY_RESET", category: "identity_reset",
+    versions: undefined, reverses: undefined,
+  });
+  delete reset.versions;
+  delete reset.reverses;
+  assertEqual(holdKindFor(reset, { overBound: true, listingBound: false }), "reversal",
+    "an M_IDENTITY_RESET is not held as a reversal; MOD-9 names it one");
+  assert(!isTakedown(reset), "a reset counts as a takedown, so a full bound would hold the thing that lifts a permanent refusal");
+  const landed = { sha: "c".repeat(40), at: HELD_AT };
+  const confirm = record("confirm", "sd-reset-1");
+  const before = resolveHold(heldHold(reset, "reversal", { confirm }), { now: BEFORE, shadow: false, landed });
+  assertEqual(before.act, "wait", `a reset was ${before.act} before its 24 hours, with a confirmation: ${before.reason}`);
+  const unconfirmed = resolveHold(heldHold(reset, "reversal"), { now: AFTER, shadow: false, landed });
+  assertEqual(unconfirmed.act, "wait", `a reset was ${unconfirmed.act} after its 24 hours with no confirmation`);
+  const due = resolveHold(heldHold(reset, "reversal", { confirm }), { now: AFTER, shadow: false, landed });
+  assertEqual(`${due.act} ${due.result}`, "release applied", `a confirmed reset past its period was not due: ${due.reason}`);
 });
 
 await test("a reversal is never held for the bound, so a full bound cannot stall an un-breaking", () => {

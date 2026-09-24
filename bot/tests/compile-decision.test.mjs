@@ -44,15 +44,16 @@ import {
   MIG25_UNBOUND_EXCEPTION,
   REFUSALS,
   compileDecision,
+  compileIdentityReset,
   fixedReason,
   nextAdvisoryId,
   tokenAdvisoryBase,
 } from "../lib/compile-decision.mjs";
-import { decisionId, recordPath, RECORD_SCHEMA } from "../lib/decisions.mjs";
+import { decisionId, recordPath, RECORD_SCHEMA, writeDecisionRecord } from "../lib/decisions.mjs";
 import { HOLD_KINDS } from "../lib/holds.mjs";
 import { KINDS } from "../../tools/lib/revocations.mjs";
-import { REPO_ROOT, loadRecords, loadSources } from "../../tools/lib/sources.mjs";
-import { checkAuthorActionRecords } from "../../tools/validate.mjs";
+import { REPO_ROOT, loadRecords, loadSchemas, loadSources } from "../../tools/lib/sources.mjs";
+import { checkAuthorActionRecords, checkRecords } from "../../tools/validate.mjs";
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 
@@ -888,4 +889,179 @@ test("a yank naming no version is refused rather than passing a count of zero ag
   const report = runCount(root, { authorYankReason: FIXED_YANK });
   assert.equal(report.errors.length, 1, report.text());
   assert.match(report.errors[0].message, /naming no version/);
+});
+
+// ── M_IDENTITY_RESET (contract 2.5.0; registry plan B-T4.2) ─────────────────
+//
+// OPEN-OWNER-15 made `B_REPOSITORY_RECYCLED` permanent "which a moderator may
+// reset", and until contract 2.5.0 no code carried the reset, so ID-41's
+// refusal stood for good. These are the compile's half: MOD-10's refusal
+// (`target_changed` for an id with no newer `B_REPOSITORY_RECYCLED` record),
+// MOD-9's hold (a reversal), and the release `compileIdentityReset` composes —
+// DEC-7's voiding record, ID-40's one deletion of an identity record, and the
+// log entry `reset`. The walk through the commit job to `main` is
+// `bot/tests/moderation-run.test.mjs`'s.
+
+const RESET_REASON = "The repository name was re-registered by its new owner after the old one deleted it.";
+const reset = (over = {}) => entry({
+  code: "M_IDENTITY_RESET", category: "identity_reset", moderator: "knice", declared_interest: false,
+  reason: RESET_REASON, ...over,
+});
+
+/** A decision record on the tree, at the path its name and `decided_at` require. */
+const onMain = (hex, doc) => ({
+  [`log/decisions/${doc.decided_at.slice(0, 4)}/${doc.decided_at.slice(5, 7)}/${hex.repeat(32 / hex.length)}.json`]: {
+    schema: "astra.registry.decision/1", decision_id: hex.repeat(32 / hex.length), ...doc,
+  },
+});
+const recycledRefusal = (at, id = "widgets") => ({
+  decided_at: at, actor: "bot", trigger: "panel", plugin_id: id, repo: "acme/widgets", tag: "widgets-v2.0.0",
+  state: "refused", reasons: ["B_REPOSITORY_RECYCLED"],
+});
+const voiding = (at, id = "widgets") => ({
+  decided_at: at, actor: "moderator", moderator: "knice", trigger: "moderation", plugin_id: id,
+  state: "identity_reset", reasons: ["M_IDENTITY_RESET"], category: "identity_reset",
+});
+
+test("M_IDENTITY_RESET against a B_REPOSITORY_RECYCLED refusal is held `reversal`, and writes nothing yet (MOD-9)", () => {
+  for (const bound of [true, false]) {
+    const root = estate({ bound, extra: onMain("a", recycledRefusal("2026-09-19T10:00:00Z")) });
+    const r = compileDecision(reset(), { root });
+    assert.equal(r.outcome, "held", `bound ${bound}: ${r.outcome} ${r.refusal ?? ""} ${r.why ?? ""}`);
+    assert.equal(r.held_for, "reversal", "MOD-9 names M_IDENTITY_RESET a reversal: 24 hours and a confirmation");
+    assert.deepEqual([r.edits, r.log, r.advisories, r.records], [[], [], [], []],
+      "a held reset wrote an artefact; the reset is its release commit and nothing before it");
+    assert.ok(HOLD_KINDS.includes(r.held_for));
+  }
+});
+
+test("MOD-10: a reset with no B_REPOSITORY_RECYCLED record newer than the newest voiding record is `target_changed`", () => {
+  const cases = [
+    ["no refusal at all", {}],
+    ["a refusal for another id", onMain("b", recycledRefusal("2026-09-19T10:00:00Z", "gadgets"))],
+    ["a refusal the last reset already answered",
+      { ...onMain("c", recycledRefusal("2026-09-19T10:00:00Z")), ...onMain("d", voiding("2026-09-19T11:00:00Z")) }],
+    ["a refusal in the same second as the voiding record",
+      { ...onMain("e", recycledRefusal("2026-09-19T11:00:00Z")), ...onMain("f", voiding("2026-09-19T11:00:00Z")) }],
+    ["another refusal code", onMain("1", { ...recycledRefusal("2026-09-19T10:00:00Z"), reasons: ["B_OWNER_CHANGED"] })],
+  ];
+  for (const [what, extra] of cases) {
+    const r = compileDecision(reset(), { root: estate({ extra }) });
+    assert.equal(r.outcome, "refused", `${what}: ${r.outcome}`);
+    assert.equal(r.refusal, "target_changed", `${what}: ${r.refusal} — ${r.why}`);
+    assert.match(r.why, /B_REPOSITORY_RECYCLED/);
+  }
+  // And the satisfiable direction beside each: a refusal NEWER than the last
+  // reset is one the reset may lift.
+  const again = compileDecision(reset(), {
+    root: estate({ extra: { ...onMain("2", voiding("2026-09-19T11:00:00Z")), ...onMain("3", recycledRefusal("2026-09-19T12:00:00Z")) } }),
+  });
+  assert.equal(again.outcome, "held", `a refusal after the last reset was not resettable: ${again.why}`);
+});
+
+test("kind_refused: a reset under another category, or with no moderator for its record", () => {
+  const root = estate({ extra: onMain("a", recycledRefusal("2026-09-19T10:00:00Z")) });
+  for (const [what, over, pattern] of [
+    ["category error", { category: "error" }, /identity_reset/],
+    ["no category", { category: undefined }, /identity_reset/],
+    ["no moderator", { moderator: undefined }, /moderator/],
+  ]) {
+    const r = compileDecision(reset(over), { root });
+    assert.equal(r.refusal, "kind_refused", `${what}: ${r.outcome} ${r.refusal}`);
+    assert.match(r.why, pattern, what);
+  }
+  // `identity_reset` is §7.2's for IDENTITY_RESET alone: a delist carrying it is refused too.
+  const delist = compileDecision(entry({ code: "M_DELIST", category: "identity_reset", moderator: "knice" }), { root });
+  assert.equal(delist.refusal, "kind_refused", `a delist under identity_reset was ${delist.outcome}`);
+});
+
+test("target_not_in_registry: a reset of an id with no listing", () => {
+  const root = estate({ extra: onMain("a", recycledRefusal("2026-09-19T10:00:00Z", "gone")) });
+  const r = compileDecision(reset({ plugin_id: "gone" }), { root });
+  assert.equal(r.refusal, "target_not_in_registry");
+});
+
+test("the release, case (ii): the voiding record, the identity record deleted, the log entry `reset`, one trailer", () => {
+  const root = estate({ extra: onMain("a", recycledRefusal("2026-09-19T10:00:00Z")) });
+  const r = compileIdentityReset(reset(), { root });
+  assert.equal(r.outcome, "compiled", `${r.outcome} ${r.refusal ?? ""} ${r.why ?? ""}`);
+  assert.deepEqual(r.edits, [{ op: "delete", file: "plugins/widgets/identity.json" }],
+    "ID-40: the reset's release commit is the one non-publishing commit that deletes an identity record");
+  assert.equal(r.log.length, 1);
+  assert.deepEqual(r.log[0].doc, {
+    date: "2026-09-20", action: "reset", plugin: "widgets", reason: RESET_REASON, category: "identity_reset",
+    service_decision_id: SDI, declared_interest: false,
+  });
+  assert.equal(r.log[0].file, "bot/moderation/2026-09-20-widgets-reset.json");
+  assert.equal(r.records.length, 1, "DEC-7: one voiding record per applied M_IDENTITY_RESET");
+  const [{ key, record }] = r.records;
+  assert.equal(key, `service-decision:${SDI}:widgets::identity_reset`, "BOT-35's key for the voiding record");
+  assert.deepEqual(record, {
+    decided_at: "2026-09-20T12:00:00Z", actor: "moderator", moderator: "knice", trigger: "moderation",
+    plugin_id: "widgets", state: "identity_reset", reasons: ["M_IDENTITY_RESET"], category: "identity_reset",
+    declared_interest: false,
+  });
+  assert.deepEqual(r.trailers, { "Service-Decision": SDI, "Decided-At": "2026-09-20T12:00:00Z" });
+  assert.deepEqual([r.advisories, r.alerts], [[], []]);
+});
+
+test("the release, case (i): no identity record, so the voiding record and the log entry alone", () => {
+  const root = estate({ bound: false, extra: onMain("a", recycledRefusal("2026-09-19T10:00:00Z")) });
+  const r = compileIdentityReset(reset(), { root });
+  assert.equal(r.outcome, "compiled", `${r.outcome} ${r.refusal ?? ""} ${r.why ?? ""}`);
+  assert.deepEqual(r.edits, [], "a listing with no identity record has none to delete, and the release names no other file");
+  assert.equal(r.records.length, 1,
+    "the voiding record is written in BOTH cases: it is what ends the baseline, and deleting identity.json alone ends none");
+  assert.equal(r.log[0].doc.action, "reset");
+});
+
+test("a release the tree has moved under is not composed: another reset voided the id first", () => {
+  // The hold waited 24 hours. A second reset of the same refusal, released in
+  // between, voided the id: this one now lifts nothing, and the release asks
+  // MOD-10 again rather than trusting what it was told a day earlier.
+  const root = estate({
+    extra: { ...onMain("a", recycledRefusal("2026-09-19T10:00:00Z")), ...onMain("b", voiding("2026-09-20T11:00:00Z")) },
+  });
+  const r = compileIdentityReset(reset(), { root });
+  assert.equal(r.outcome, "refused");
+  assert.equal(r.refusal, "target_changed");
+  assert.deepEqual([r.edits, r.log, r.records], [[], [], []]);
+  assert.throws(() => compileIdentityReset(entry({ code: "M_RELIST" }), { root }), /composes an M_IDENTITY_RESET/);
+});
+
+test("MIG-20's tree check accepts the voiding record the writer composes, and nothing else that carries its marks", () => {
+  const root = estate({ extra: onMain("a", recycledRefusal("2026-09-19T10:00:00Z")) });
+  const { key, record } = compileIdentityReset(reset(), { root }).records[0];
+  writeDecisionRecord({ key, record, root });
+  const check = (tree) => {
+    const report = new Report();
+    const { plugins } = loadSources(tree);
+    checkRecords({ report, root: tree, schemas: loadSchemas(REPO_ROOT) }, { plugins }, loadRecords(tree, { plugins }));
+    return report;
+  };
+  // Judged on `log/decisions/` alone: this file's `identity()` fixture carries
+  // a 64-hex `token_hash` where B.4 says 16, which is the fixture's, not the
+  // record's, and not this test's subject.
+  const clean = check(root);
+  const records = clean.errors.filter((e) => e.where.startsWith("log/decisions/"));
+  assert.ok(clean.items.length >= 0 && fs.existsSync(path.join(root, recordPath({ decision_id: decisionId(key), decided_at: record.decided_at }))),
+    "the voiding record was not written, so the check below would judge nothing");
+  assert.equal(records.length, 0, `the composed voiding record is refused by tools/validate.mjs:\n${clean.text()}`);
+
+  const lookalikes = [
+    ["a version", { ...record, version: "1.0.0" }, /carries no `version`/],
+    ["the old ids", { ...record, repository_id: "912345678", repository_owner_id: "4711" }, /carries no `repository_id`/],
+    ["a bot's", { ...record, actor: "bot" }, /`actor`/],
+    ["the category on a delist", { ...record, state: "delisted", reasons: ["M_DELIST"] }, /`state`/],
+    ["the code under another category", { ...record, category: "error" }, /`category`/],
+    ["the state alone", { decided_at: "2026-09-20T12:00:00Z", actor: "bot", trigger: "panel", plugin_id: "widgets", state: "identity_reset" }, /`actor`|missing/],
+    ["no moderator", (() => { const { moderator: _m, ...rest } = record; return rest; })(), /missing moderator/],
+  ];
+  for (const [what, doc, pattern] of lookalikes) {
+    const tree = estate({ extra: onMain("9", doc) });
+    const report = check(tree);
+    const mine = report.errors.filter((e) => e.where.startsWith("log/decisions/"));
+    assert.equal(mine.length, 1, `${what}: ${report.text()}`);
+    assert.match(mine[0].message, pattern, what);
+  }
 });
