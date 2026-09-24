@@ -33,7 +33,7 @@ ROLL-7.
 | RC-R0-3(f): every environment admits only `main` | **holds, 5 of 5** | `alerts`, `github-pages`, `operator`, `plugins-service`, `publish`. `bot-state` is pending until R5 |
 | ROLL-7: the name-free file | **this commit** | `R0-settings.json`. Its environment rows are `policy/settings-expected.json`'s. `bot/tests/moderation-coverage.test.mjs` now compares the committed file both ways |
 | ROLL-8: five watches | **4 of 5** | Below |
-| ROLL-9: one correcting commit | **holds** | `3a47d90`. The grep of ROLL-9's three phrases matches only the suite's own search strings (`tools/selftest/repo-rules.mjs`); `revoke.yml` is gone |
+| ROLL-9: one correcting commit | **holds** | `3a47d90`. The grep of ROLL-9's three phrases matches only the suite's own search strings (`tools/selftest/repo-rules.mjs`), and the deleted withdrawal workflow is named nowhere: RC-R0-1's case 5, *nothing in this repository names the deleted withdrawal workflow*, is green |
 | ROLL-10: the `KNICE-TECH` containment registered as Checked | **holds** | ops `dev/couplings.md`, row *A freed organisation login is not first-party*, watched failing 2026-09-18. It was registered by ops `2ad96b9`, which names `3a47d90` |
 | SERVE-9: no catalogue-host or gcore credential | **holds** | 18 secret names in all: 16 in `alerts`, 2 in `publish`, 0 at repository level. None is a host or gcore credential |
 
