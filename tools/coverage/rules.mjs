@@ -7,7 +7,8 @@
 // belong to other tasks, landing across R1, R2, R3 and R6: M-T1.3's docs grep,
 // M-T5.7's mirror-staleness alarm, M-T2.1's examples rule, M-T5.8's badge
 // trailer, the ROLL-47 promise greps, RC-R1-9(b)'s keepalive age, and M-T6.2's
-// no-issue-channel rule. Six of the eight have landed; the seam below carries
+// no-issue-channel rule. Seven of the eight have landed (M-T6.2's on 2026-09-24,
+// armed by the cutover marker); the seam below carries
 // what is left. Eight steps in one job, each `if: always()` so one red
 // rule does not hide the next, is easy. The failure that shape permits is not:
 // a step that never ran — a typo in a path, a `continue-on-error` somebody
@@ -131,6 +132,15 @@ export const RULES = [
       "live with a custom branch policy, or pending creation and named only by jobs a literal `if: false` holds",
     network: true,
   },
+  {
+    name: "no-issue-channel",
+    owner: "M-T6.2 (DEC-12, ROLL-33)",
+    script: "tools/coverage/no-issue-channel.mjs",
+    what:
+      "once log/cutover.json is on the tree, no workflow starts on `issues`, `issue_comment` or " +
+      "`repository_dispatch` — green and naming today's triggers before it, so it needs no edit on cutover day",
+    network: false,
+  },
   // ── the seam. Each line below is one other task's, and lands with it. ─────
   //
   // Written here as a comment rather than as a disabled entry, because an
@@ -140,7 +150,6 @@ export const RULES = [
   // milestones is an alarm somebody switches off in month one (TRUST-45).
   //
   //   { name: "roll47-promises",     owner: "M-T4.2, M-T4.3, M-T6.2",  … }          R4a
-  //   { name: "no-issue-channel",    owner: "M-T6.2 (DEC-12)",         … }          R6
   //
   // M-T5.8's badge-withdrawal trailer is NOT a line here: the plan puts it
   // inside `tools/moderation-coverage.mjs`'s walk, beside the rules it is one
