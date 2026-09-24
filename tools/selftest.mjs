@@ -233,6 +233,15 @@ const MODULES = [
   // `baseline.mjs` stays after it. **This line, its FLOORS entry and the file are
   // one change**, for the reason written out at `regenerate.mjs` above.
   "migration-notice.mjs",
+  // Registry plan M-T5.2, M-T5.3 and M-T5.4 — the procedure around the two
+  // records B.4 fixes: the deadline's floors and its POLICY.md line, MIG-13's
+  // rounds and re-send branches, and ROLL-63's watch, each on fixture clocks
+  // and trees. It prints its own section header and sits between two modules
+  // that print theirs, so it moves no existing name under a header it does not
+  // belong to, and `baseline.mjs` stays after it. **This line, its FLOORS entry
+  // and the file are one change**, for the reason written out at
+  // `regenerate.mjs` above.
+  "deadline.mjs",
   // Contract 0.34.0 — §0.7's time, one statement in every reader: the grammar
   // in tools/lib/time.mjs, every schema pattern held to it byte for byte, every
   // code reader driven with second 60, and no private spelling. It prints its
@@ -1917,6 +1926,7 @@ const FLOORS = new Map(Object.entries({
   "contract-tokens.mjs": 28,
   "regenerate.mjs": 15,
   "migration-notice.mjs": 6,
+  "deadline.mjs": 11,
   "times.mjs": 4,
   "settings.mjs": 14,
   "git-env.mjs": 8,

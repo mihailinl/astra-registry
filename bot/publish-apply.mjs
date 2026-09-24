@@ -98,6 +98,48 @@ const QUEUE_FILE = /^state\/queue\/[^/]+\.json$/;
  */
 export const DECISION_RECORD_FILE = /^log\/decisions\/([0-9]{4})\/(0[1-9]|1[0-2])\/([0-9a-f]{32})\.json$/;
 
+/**
+ * The two record kinds the SERVICE path's publish job adds (registry plan
+ * B-T3.4), and only that job: `plugins-ingest.yml` passes `--service-path`,
+ * `ingest.yml` does not, so the legacy path can never write an identity
+ * record (BOT-77) or an alert record.
+ *
+ *   * `state/alerts/<fingerprint>.json` — TRUST-14's record, with the
+ *     delivery TRUST-32's window counts from. Its name is its fingerprint.
+ *   * `plugins/<id>/identity.json` — ID-15's record, written in a publishing
+ *     commit only (ID-40): an identity record in a report with no `published`
+ *     decision record beside it is refused.
+ */
+export const ALERT_FILE = /^state\/alerts\/([0-9a-f]{16})\.json$/;
+export const IDENTITY_FILE = /^plugins\/([^/]+)\/identity\.json$/;
+
+/** What is wrong with one service-path record in a report, before it is copied, or null. */
+export function serviceFileProblem(reportDir, rel) {
+  let doc;
+  try {
+    doc = JSON.parse(fs.readFileSync(path.join(reportDir, rel), "utf8"));
+  } catch (e) {
+    return `${rel} is not JSON (${e.message})`;
+  }
+  const alert = ALERT_FILE.exec(rel);
+  if (alert) {
+    if (doc?.schema !== "astra.registry.alert/1") return `${rel} is not an astra.registry.alert/1 record`;
+    if (doc.fingerprint !== alert[1]) return `${rel} names fingerprint ${doc.fingerprint}; an alert record's name is its fingerprint`;
+    return null;
+  }
+  const ident = IDENTITY_FILE.exec(rel);
+  if (ident) {
+    if (doc?.schema !== "astra.registry.identity/1") return `${rel} is not an astra.registry.identity/1 record`;
+    if (doc.plugin_id !== ident[1]) return `${rel} names plugin_id ${doc.plugin_id}`;
+    const members = Object.keys(doc).sort().join(",");
+    if (members !== "plugin_id,repo,repository_id,repository_owner_id,schema,token_hash") {
+      return `${rel} carries ${members}; an identity record has exactly B.4's six members`;
+    }
+    return null;
+  }
+  return `${rel} is not a service-path record`;
+}
+
 /** MIG-20's marker, whose presence turns BOT-34's commit rule on. */
 export const BASELINE_MARKER = "log/baseline.json";
 
@@ -409,6 +451,7 @@ export function refuseVersionRegressions(root, reportDir, rels) {
  * `path.relative` cannot produce that, which is half of why this is here.
  */
 export function applyReport(root, reportDir, state) {
+  const servicePath = state.servicePath === true;
   // Only `plugins/` and `state/` are copied, and that is not tidiness: the
   // artifact this reads is the whole of `bot/decide.mjs`'s output directory, so
   // it also carries `comment.md` and `decision.json` — which the `comment` job
@@ -450,6 +493,23 @@ export function applyReport(root, reportDir, state) {
       }
       continue;
     }
+    if (ALERT_FILE.test(rel) || IDENTITY_FILE.test(rel)) {
+      if (!servicePath) {
+        throw new Refusal(
+          `${rel} is a service-path record, and only the plugins-ingest publish job writes one ` +
+          "(the legacy path never binds a listing, BOT-77)",
+          { file: rel },
+        );
+      }
+      const problem = serviceFileProblem(reportDir, rel);
+      if (problem) throw new Refusal(problem, { file: rel });
+      const ident = IDENTITY_FILE.exec(rel);
+      if (ident) {
+        const bad = unsafePathComponent(ident[1]) ?? invalidId(ident[1]);
+        if (bad) throw new Refusal(`${rel}: ${bad}`, { file: rel });
+      }
+      continue;
+    }
     if (!LISTING_FILE.test(rel) && !QUEUE_FILE.test(rel)) {
       throw new Refusal(`${rel} is not a listing file, a queue entry or a decision record`, { file: rel });
     }
@@ -459,6 +519,20 @@ export function applyReport(root, reportDir, state) {
   }
 
   refuseVersionRegressions(root, reportDir, rels);
+  // ID-40: an identity record changes only in a publishing commit.
+  if (rels.some((r) => IDENTITY_FILE.test(r))) {
+    const published = rels.filter((r) => DECISION_RECORD_FILE.test(r)).some((r) => {
+      try {
+        return JSON.parse(fs.readFileSync(path.join(reportDir, r), "utf8"))?.state === "published";
+      } catch {
+        return false;
+      }
+    });
+    if (!published) {
+      const at = rels.find((r) => IDENTITY_FILE.test(r));
+      throw new Refusal(`${at} is written with no \`published\` decision record beside it; an identity record changes only in a publishing commit (ID-40)`, { file: at });
+    }
+  }
   const unrecorded = recordRequirementProblems({ root, reportDir, rels });
   if (unrecorded.length) throw new Refusal(unrecorded[0], { file: rels.find((r) => unrecorded[0].startsWith(r)) ?? null });
 
@@ -499,7 +573,7 @@ export function applyReport(root, reportDir, state) {
     }
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.copyFileSync(path.join(reportDir, rel), target);
-    state.touchedIds.add(idOfPath(rel));
+    if (!ALERT_FILE.test(rel)) state.touchedIds.add(idOfPath(rel));
     if (QUEUE_FILE.test(rel)) state.queued.push(rel);
     state.changed = true;
   }
@@ -544,7 +618,7 @@ export function compareReportNames(a, b) {
  * again, against the tree as it is at that moment, which is the point: the
  * version rules above are only true of the tree they were checked against.
  */
-export function applyAll(root, { reports, watchState, dropWatchState = false }) {
+export function applyAll(root, { reports, watchState, dropWatchState = false, servicePath = false }) {
   const state = {
     changed: false,
     touchedIds: new Set(),
@@ -553,6 +627,7 @@ export function applyAll(root, { reports, watchState, dropWatchState = false }) 
     records: [],
     refusals: [],
     watchState: false,
+    servicePath,
   };
 
   // The etag memory the backstop wrote. Not derived from anything a stranger
@@ -642,6 +717,8 @@ export function run({
   trailer = "",
   skipChecks = false,
   push = true,
+  dryRun = false,
+  servicePath = false,
   log = console.log,
 } = {}) {
   const abs = (p) => (path.isAbsolute(p) ? p : path.resolve(root, p));
@@ -670,6 +747,7 @@ export function run({
       reports: abs(reports),
       watchState: abs(watchState),
       dropWatchState,
+      servicePath,
     });
     // The queue entries this run is answerable for: the ones that are on disk
     // when it settles. `comment` promises an author "publishes itself at 14:00"
@@ -726,6 +804,17 @@ export function run({
 
     if (!push) {
       return { outcome: "committed", attempts: attempt, touchedIds: [...state.touchedIds], queued: queued(), refusals };
+    }
+
+    // `DRY_RUN` (registry plan B-T3.6 step 1): everything a publication does
+    // — the allow-list, the version rules, the five registry checks, the
+    // commit — and then the path list instead of the push. It is a
+    // production mode, not `--no-push` (which is this file's own tests', and
+    // which no workflow may pass): the outcome says `dry-run`, so nothing
+    // downstream can read it as a commit that landed.
+    if (dryRun) {
+      for (const f of git(root, ["show", "--name-only", "--format=", "HEAD"]).split("\n").filter(Boolean)) log(`would push  ${f}`);
+      return { outcome: "dry-run", attempts: attempt, touchedIds: [...state.touchedIds], queued: queued(), refusals };
     }
 
     try {
@@ -797,6 +886,8 @@ function parseArgv(argv) {
     const a = argv[i];
     if (a === "--skip-checks") opts.skipChecks = true;
     else if (a === "--no-push") opts.push = false;
+    else if (a === "--dry-run") opts.dryRun = true;
+    else if (a === "--service-path") opts.servicePath = true;
     else if (flags[a]) opts[flags[a]] = argv[++i];
     else throw new Refusal(`unknown argument ${a}`);
   }
@@ -829,6 +920,7 @@ function record(result) {
 /** Every outcome `run` can return, and what the process exits with for it. */
 export const OUTCOMES = {
   committed: EXIT.ok,
+  "dry-run": EXIT.ok,
   nothing: EXIT.ok,
   refused: EXIT.refused,
   "checks-failed": EXIT.refused,

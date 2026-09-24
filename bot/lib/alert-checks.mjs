@@ -336,8 +336,11 @@ export const CHECKS = [
   {
     name: "deadline-watch",
     party: "registry",
-    // Disarmed: no workflow posts here yet.
-    source: "M-T5.4 (ROLL-63)",
+    // Disarmed: `.github/workflows/deadline-watch.yml` posts here, and runs
+    // only on a dispatch until one dispatched run's heartbeat has armed this
+    // check. The commit that uncomments its cron records that heartbeat's
+    // time as `armed_at`, in the same change (the workflow's header).
+    source: "M-T5.4 (ROLL-63), .github/workflows/deadline-watch.yml",
     interval_seconds: 86400,
     created_disarmed: true,
     armed_at: null,

@@ -63,6 +63,11 @@ import {
 // re-exports it: that re-export is what keeps five importers unchanged, and a
 // test that stopped reading it would stop witnessing it.
 import { pollFeed } from "../lib/poll.mjs";
+// The canary walks (B-T4.1) run B-T3.3a's inputs through the modules that own
+// them, so a gap is judged against real readers rather than hand-made shapes.
+import { parseBindingFile } from "../lib/binding.mjs";
+import { bindingDecision } from "../lib/identity.mjs";
+import { listingState } from "../lib/listing-state.mjs";
 import { runDrain, runWatch } from "../watch.mjs";
 import { recordPermissionProbe, triage } from "../triage.mjs";
 import { makeBundle, fakeGitHub, fakeGh, fakeOwnership, FIXTURE_COMMIT } from "../fixtures/ingest/make.mjs";
@@ -217,6 +222,10 @@ async function run({
   assets = [conforming()], repo = REPO, tag = TAG, submitter = SUBMITTER, root,
   now = NOW, out = null, issue = null, approvedBy = null, approvedAt = null, approvedFor = null,
   publishNow = false, source = null,
+  // Which path the run came in on. `null` is the legacy path every caller
+  // above means; the canary walks at the end of this file ask the service
+  // path, which is where a bound listing is published (BOT-77).
+  via = null,
   // The commit the Release names and the commit the attestation names. Equal by
   // default, because in a healthy release they are the same commit; a test that
   // moves one and not the other is asking about `E_RELEASE_COMMIT_MISMATCH`.
@@ -226,6 +235,7 @@ async function run({
   return decideRelease(
     {
       repo, tag, submitter, root, issue, now, approvedBy, approvedAt, approvedFor, publishNow, source,
+      ...(via ? { path: via } : {}),
       trustFile: TRUST_FILE, signerWorkflow: DEFAULT_SIGNER_WORKFLOW,
       out,
     },
@@ -2964,6 +2974,62 @@ await test("MIG-3 — the deadline is in one place, and no document states one t
   }
 });
 
+// MIG-14, registry plan M-T5.3: what every notice to the authors of an
+// existing listing says, and what none may say. The texts are
+// `docs/migration-notice.md`'s three rounds, filled by
+// `tools/lib/migration-notice.mjs` — the same function the desk command sends
+// from — with fixture values, so "the deadline value" is asserted as a value
+// and not as a placeholder. ID-16's sentence is held to 0.14.0's test ("when
+// the rule is applied", never "at expiry" or "by then") and to 0.15.0's n25
+// consequent: committing the line is what KEEPS the token, so "an author who
+// commits the line and tags much later mints again" is the sentence that told
+// authors the opposite of the rule, and it is refused by name.
+await test("MIG-14 — every round of the migration notice says what a notice must, and nothing it must not", async () => {
+  const { NOTICE_DOC, renderRound } = await import("../../tools/lib/migration-notice.mjs");
+  const doc = fs.readFileSync(path.join(REPO_ROOT, NOTICE_DOC), "utf8");
+  const values = { deadline: "2031-05-06T07:08:09Z", cutover: "2031-03-04T05:06:07Z", listings: ["demo-listing"] };
+  for (const round of [1, 2, 3]) {
+    const text = renderRound(doc, round, values);
+    const where = `${NOTICE_DOC} round ${round}`;
+    const present = [
+      ["the deadline value", (t) => t.includes("2031-05-06") && t.includes(values.deadline)],
+      ["`astraUser`", (t) => t.includes("`astraUser`")],
+      ["a binding line", (t) => /binding line/.test(t) && t.includes("astra-binding: <your token>")],
+      ["a new tag", (t) => /\bnew tag\b/.test(t)],
+      ["one `R_FIRST_BINDING` review", (t) => /One `R_FIRST_BINDING` review/.test(t)],
+      ["what `frozen` does", (t) => /`frozen`: it stays listed[^.]*takes no new version until it is bound/.test(t)],
+      ["MIG-12's wait from cutover", (t) => /From the cutover\*\*, a delayed or reviewed release[^.]*waits until the listing is bound/.test(t)],
+      ["ID-16's expiry, tested when the rule is applied",
+        (t) => /expires 30 days after its mint unless a live submission names it or its line is on the repository's default branch when the rule is applied/.test(t)],
+      ["ID-16's consequent, the right way round (n25)",
+        (t) => /tags much later without the line on the default branch mints again, and one whose line is still on that branch when the rule is applied does not/.test(t)],
+      ["that the panel is the only place to act", (t) => /the panel is the only place to act/i.test(t)],
+      ["the listing it is about, with its page", (t) => t.includes("https://astra.minice.ai/plugins/demo-listing")],
+    ];
+    if (round >= 2) present.push(["the cutover date", (t) => t.includes("2031-03-04") && t.includes(values.cutover)]);
+    for (const [what, holds] of present) assert(holds(text), `${where} does not state ${what} (MIG-14)`);
+
+    const absent = [
+      ["\"at expiry\", 0.13.0's single test at the 30-day mark", /\bat expiry\b/i],
+      ["\"by then\", the same", /\bby then\b/i],
+      ["n25's inverted consequent", /commits? the line and tags? much later[^.]*mints? again/i],
+      ["a binding line carrying a token", /astra-binding[ \t]*:[ \t]*[A-Za-z0-9_-]{16,}/],
+      ["a string in §0.7's token grammar", /[A-Za-z0-9_-]{22,}/],
+      ["anything shaped like a Minice identifier", /\b\d{15,}\b/],
+      ["an address", /@/],
+      ["a request to reply", /\brepl(?:y|ies|ied|ying)\b/i],
+      ["an `issues/` link", /issues\//i],
+    ];
+    for (const [what, re] of absent) {
+      const hit = re.exec(text);
+      assert(!hit, `${where} carries ${what}: ${JSON.stringify(hit?.[0])} (MIG-14)`);
+    }
+  }
+  assert(/highest `round` present on\s+`main`/.test(doc),
+    `${NOTICE_DOC} does not state which marker is authoritative — the highest \`round\` present on \`main\` — which ` +
+    "two parties read and an outside reader of the markers needs (M-T5.3)");
+});
+
 // M-T3.2's half of reg.61a, written — like MIG-3 above — against the ABSENCE,
 // because the number is not published yet and inventing one here would be the
 // registry promising a blast-radius cap nobody can read.
@@ -3362,16 +3428,19 @@ await test("`decide()` passes the path to every level lookup", () => {
 });
 
 await test("BOT-19 — a terminal record on main is reported, and nothing is written", () => {
+  // Rewritten with BOT-19's own records: this case used to be a `revoked`
+  // record matched by plugin id, which is the over-match the B-T3.9 case
+  // below exists to refuse.
   const hit = terminalOnMain({
-    records: [{ plugin_id: "dice-roller", state: "revoked", decision_id: "d0" }],
-    pluginId: "dice-roller", repo: "you/dice-roller", tag: "v1.0.1",
+    records: [{ plugin_id: "dice-roller", repo: "you/dice-roller", tag: "v1.0.1", state: "stopped", decision_id: "d0" }],
+    fingerprint: "0123456789abcdef", repo: "you/dice-roller", tag: "v1.0.1",
   });
-  assertEqual(hit?.reported, "revoked", "a panel stop in git did not stop a ping");
+  assertEqual(hit?.reported, "stopped", "a panel stop in git did not stop a ping");
   assertEqual(hit.record.write, false, "a second record was written for a decision main already carries");
   assertEqual(hit.names, "d0", "the report names no existing record, so nobody can go and read it");
   // A non-terminal record does not stop anything.
   assertEqual(
-    terminalOnMain({ records: [{ plugin_id: "dice-roller", state: "published", decision_id: "d1" }], pluginId: "dice-roller", repo: "you/dice-roller", tag: "v1.0.1" }),
+    terminalOnMain({ records: [{ plugin_id: "dice-roller", fingerprint: "ffffffffffffffff", state: "published", decision_id: "d1" }], fingerprint: "0123456789abcdef", repo: "you/dice-roller", tag: "v1.0.1" }),
     null,
     "a published record was read as terminal, which stops every later release of a live plugin",
   );
@@ -3845,11 +3914,578 @@ await test("a legacy record is never composed with the `migration` trigger, even
   assertEqual(fs.existsSync(path.join(out, "log")), false, "the refusal came after the file was written");
 });
 
+// ── B-T3.9: the legacy path under the new records ───────────────────────────
+
+await test("BOT-74 — the backstop's recorded tags are every listing's that names the repository", async () => {
+  // A monorepo carries several listings under one `source.repo`, and a Map
+  // built from them one entry per listing keeps only the LAST listing's tags:
+  // the backstop then filtered every other plugin's releases out as a foreign
+  // prefix. `mihailinl/AstraPlugins` holds ten listings.
+  const { recordedTagsByRepo } = await import("../watch.mjs");
+  assert(typeof recordedTagsByRepo === "function", "there is no one derivation of a repository's recorded tags to share");
+  const sources = { plugins: [
+    { doc: { id: "json-tools", source: { repo: "Mono/Repo" } }, versions: [{ doc: { release: { tag: "json-tools-v0.1.2" } } }] },
+    { doc: { id: "text-utils", source: { repo: "mono/repo" } }, versions: [{ doc: { release: { tag: "text-utils-v0.1.0" } } }] },
+  ] };
+  const tags = recordedTagsByRepo(sources).get("mono/repo") ?? [];
+  assertEqual(JSON.stringify([...tags].sort()), JSON.stringify(["json-tools-v0.1.2", "text-utils-v0.1.0"]),
+    "one listing's recorded tags replaced another's under their shared repository");
+  assertEqual(bot74Filter({ tag: "json-tools-v0.1.3", listedTags: tags }).pass, true,
+    "the first listing's next release was filtered out as a foreign prefix");
+});
+
+await test("BOT-74 — a `cli-v` ping on a listed repository starts no ingest, so it records nothing", async () => {
+  // The filter was the backstop's alone; a `/release` ping for a CLI tag on
+  // a repository this registry lists ran the whole ingest, was refused
+  // E_NO_BUNDLE_ASSETS, and from the baseline on would have committed a
+  // durable `refused` record for a release that never was a plugin's.
+  const root = registryTree([{}]);
+  const cli = await triage({
+    event: "issues", labels: "", root,
+    ...bodies({ issue: `/release ${REPO} cli-v1.4.0` }),
+  }, releaseBy("the-author"));
+  assert(cli.mode !== "ping", `a cli-v ping on a listed repository was dispatched to an ingest: ${cli.why}`);
+  assert(/BOT-74/.test(cli.why), "and it does not say which rule held it back");
+  const plugin = await triage({
+    event: "issues", labels: "", root,
+    ...bodies({ issue: `/release ${REPO} v0.3.0` }),
+  }, releaseBy("the-author"));
+  assertEqual(plugin.mode, "ping", `the floor: a real release of the listing was held back too: ${plugin.why}`);
+});
+
+await test("BOT-19 — only a publication, a stop or a rejection of THESE bytes, or a stop of this tag, ends the run", () => {
+  // BOT-19 (registry plan notes) names three records and no others. The
+  // search matched any "terminal-looking" record of the PLUGIN ID, so one old
+  // refused version made every later release of that plugin `reported
+  // refused` with nothing written — the plugin could never publish again on
+  // the legacy path.
+  const fp = "0123456789abcdef";
+  const repo = "you/dice-roller";
+  const tag = "v1.0.1";
+  const oldRefusal = [{ plugin_id: "dice-roller", repo, tag: "v1.0.0", fingerprint: "ffffffffffffffff", state: "refused", reasons: ["E_ASSET_SIZE"], decision_id: "d0" }];
+  assertEqual(terminalOnMain({ records: oldRefusal, fingerprint: fp, repo, tag }), null,
+    "an old version's refusal stopped a new release of the same plugin");
+  const yanked = [{ plugin_id: "dice-roller", version: "1.0.0", state: "yanked", decision_id: "d9" }];
+  assertEqual(terminalOnMain({ records: yanked, fingerprint: fp, repo, tag }), null,
+    "a yank of an old version stopped a new release");
+  for (const [what, rec] of [
+    ["a publication of these bytes", { fingerprint: fp, state: "published", decision_id: "d1" }],
+    ["a stop of these bytes", { fingerprint: fp, state: "stopped", decision_id: "d2" }],
+    ["a moderator's rejection of these bytes", { fingerprint: fp, state: "refused", reasons: ["M_REJECT"], decision_id: "d3" }],
+    ["a stop of this tag", { repo, tag, state: "stopped", decision_id: "d4" }],
+  ]) {
+    const hit = terminalOnMain({ records: [rec], fingerprint: fp, repo, tag });
+    assert(hit, `${what} did not stop the run`);
+    assertEqual(hit.record.write, false, `${what}: a second record was written`);
+    assertEqual(hit.names, rec.decision_id, `${what}: the report names no existing record`);
+  }
+  for (const state of ["held", "delayed"]) {
+    assertEqual(terminalOnMain({ records: [{ fingerprint: fp, state, decision_id: "d5" }], fingerprint: fp, repo, tag }), null,
+      `a ${state} record stopped the run; BOT-19: "A held or delayed record MUST NOT stop the run"`);
+  }
+  assertEqual(terminalOnMain({ records: [{ fingerprint: fp, state: "refused", reasons: ["E_ASSET_SIZE"] }], fingerprint: fp, repo, tag }), null,
+    "a bot refusal of these bytes stopped a /recheck of them; only a moderator's M_REJECT does");
+});
+
+await test("BOT-74 — a re-submission of a listed tag with its published bytes is reported `published`, and writes nothing", async () => {
+  // Today's answer to a re-ping of a published tag is E_VERSION_NOT_NEW, a
+  // refusal — and from the baseline on, a durable `refused` record about a
+  // release this registry published. The published bytes' answer is the
+  // publication that already happened.
+  const root = registryTree([{}]);
+  fs.mkdirSync(path.join(root, "log"), { recursive: true });
+  fs.writeFileSync(path.join(root, "log", "baseline.json"), JSON.stringify({ schema: "astra.registry.baseline/1" }));
+  const first = await run({ root, source: "ping" });
+  assertEqual(first.decision.outcome, "publish", JSON.stringify(codes(first)));
+  const out = tmp("astra-b39-first-");
+  writeOutputs(out, { repo: REPO, tag: TAG, issue: null, root }, first);
+  // Land the publication in the tree the second run reads — the listing
+  // first, with no record: a version listed before the decision log carried
+  // one, which only BOT-74's digest comparison can recognise.
+  fs.cpSync(path.join(out, "plugins"), path.join(root, "plugins"), { recursive: true });
+  const unrecorded = await run({ root, source: "ping" });
+  assertEqual(unrecorded.decision.reported, "published",
+    `a re-ping of published bytes with no record on main was answered ${unrecorded.decision.outcome}`);
+  assertEqual(unrecorded.decision.record.write, false, "a re-ping of published bytes wrote a record");
+  // Then with its record, which BOT-19 finds first; the answer is the same.
+  fs.cpSync(path.join(out, "log"), path.join(root, "log"), { recursive: true });
+  const again = await run({ root, source: "ping" });
+  assertEqual(again.decision.reported, "published", `a re-ping of published bytes was answered ${again.decision.outcome}`);
+  assertEqual(again.decision.record.write, false, "a re-ping of published bytes wrote a record");
+  const out2 = tmp("astra-b39-again-");
+  writeOutputs(out2, { repo: REPO, tag: TAG, issue: null, root }, again);
+  assertEqual(listRecords(out2).length, 0, "a re-ping of published bytes wrote a record to disk");
+});
+
+await test("from R4a, a maintainer command for a bound listing is refused before it is dispatched", async () => {
+  // ROLL-49 / B-T3.9: once `log/rollout/R3-exit.json` is on main a listing can
+  // be bound, and a bound listing's releases are the service path's. BOT-77
+  // already stops the ingest; this stops the command, so a maintainer is told
+  // at the thread rather than by a hold nobody can clear.
+  const root = registryTree([{}]);
+  fs.writeFileSync(path.join(root, "plugins", "dice-roller", "identity.json"),
+    JSON.stringify({ schema: "astra.registry.identity/1", plugin_id: "dice-roller", repo: REPO, repository_id: "1", repository_owner_id: "2" }));
+  const ask = async () => triage({
+    event: "issue_comment", labels: "listing", root, commenter: "maint", issueAuthor: SUBMITTER,
+    ...bodies({ issue: FORM, comment: `/approve ${REPO}@${TAG} 0123456789abcdef` }),
+  }, releaseBy("the-author"), { proveMaintainer: async () => ({ ok: true, role: "admin", detail: "admin", answered: true }) });
+  const before = await ask();
+  assertEqual(before.mode, "approve", `the floor: before R3's exit the command was not dispatched: ${before.why}`);
+  fs.mkdirSync(path.join(root, "log", "rollout"), { recursive: true });
+  fs.writeFileSync(path.join(root, "log", "rollout", "R3-exit.json"), JSON.stringify({ schema: "astra.registry.rollout/1" }));
+  const after = await ask();
+  assertEqual(after.mode, "reply", `from R4a a command for a bound listing was dispatched: ${after.mode} ${after.why}`);
+  assert(/bound/.test(after.why), "and the refusal does not say the listing is bound");
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// The canary walks, the bot's half (registry plan B-T4.1 and M-T5.5).
+//
+// Contract ROLL-25 walks R4a on `mihailinl/AstraPlugins`, bound before any
+// third party, and ROLL-59 walks R4b's defences on a second account's staging
+// listing. Both are live acts — the owner's mint, his tags, a second GitHub
+// account, the plugins service — and none of them can be walked from a test.
+// B-T4.1 says what comes first: "the fixtures first; the live walks recorded
+// with run URLs". These are the fixtures.
+//
+// ── TWO KINDS OF ENTRY, AND THE DIFFERENCE IS THE POINT ─────────────────────
+//
+// `test()` is a walk step whose code is on `main`: it asserts the outcome the
+// contract names for that step, through the whole pipeline where the step is
+// a release, and each was watched failing on the mutation its comment names.
+//
+// `gap()` is a walk step whose code is NOT on `main`. It runs the step anyway,
+// against what is there, and asserts the walk's outcome — which fails today,
+// because the task that builds it has not landed. A gap is not a pass and is
+// not counted as one; the summary line names how many there are and each one
+// prints the task it is blocked on. It is strict in both directions:
+//
+//   * when the outcome starts to hold, the gap FAILS, saying the task has
+//     landed and the entry must move from `gap()` to `test()` — so the walk's
+//     fixture is held from the day its code exists, rather than remembered;
+//   * while it does not hold, `standing` asserts the blocker is still exactly
+//     the thing the gap names. If the code changes and the walk still does not
+//     pass, the gap FAILS too, because a gap re-pointed at nothing is a green
+//     that means nothing — the vacuous pass this file exists to refuse.
+//
+// A gap whose own fixture breaks (anything but a `walkExpects` failure) is a
+// FAIL, not a gap, for the same reason.
+//
+// The walk's world. `mihailinl/AstraPlugins` is ROLL-25's repository by name,
+// and the two listings are two of its ten (ID-64's count, which the
+// walk compares its binding commit with, is a ruling this file does not make). Both are BOUND: step (1)'s mint and binding commit
+// come before every step fixtured here, so each listing carries
+// `plugins/<id>/identity.json` and every release reaches the service path —
+// the legacy path holds a bound listing `R_CHECK_HELD` (BOT-77), which is the
+// thing walk (6)'s mutation below proves these runs are not on.
+// ═══════════════════════════════════════════════════════════════════════════
+
+class WalkUnmet extends Error {}
+/** The walk's own assertion, the only failure a `gap()` may count as a gap. */
+function walkExpects(cond, message) { if (!cond) throw new WalkUnmet(message); }
+
+const gaps = [];
+async function gap(name, { blocker, standing, walk }) {
+  const fail = (message) => {
+    failures.push({ group, name, error: new Error(message) });
+    console.log(`  FAIL  ${name}\n        ${message.split("\n").join("\n        ")}`);
+  };
+  let unmet = null;
+  try {
+    await walk();
+  } catch (e) {
+    if (!(e instanceof WalkUnmet)) {
+      fail(`this gap's fixture broke rather than meeting the gap it names (${e.message}). A gap may fail ` +
+        "only by the walk's own assertion, or a broken fixture would read as a known absence");
+      return;
+    }
+    unmet = e.message;
+  }
+  if (unmet === null) {
+    fail(`the gap has closed: ${blocker} — and this walk step now has the outcome the contract names. ` +
+      "Move it from gap() to test() in this file, so the outcome is held rather than remembered (B-T4.1)");
+    return;
+  }
+  let still = false;
+  try { still = (await standing()) === true; } catch { still = false; }
+  if (!still) {
+    fail(`the code this gap names has changed and the walk still does not pass. Blocked on: ${blocker}. ` +
+      "Re-point the gap at the interface that task actually landed, so it runs the walk against real code " +
+      `again; the walk's unmet assertion was: ${unmet}`);
+    return;
+  }
+  gaps.push({ group, name, blocker });
+  console.log(`  gap   ${name}\n        blocked on ${blocker}\n        unmet: ${unmet.split("\n")[0]}`);
+}
+
+section("the canary walks, the bot's half (B-T4.1, M-T5.5; ROLL-25, ROLL-59)");
+
+const WALK_REPO = "mihailinl/AstraPlugins";
+const WALK_NOW = new Date("2026-09-25T12:00:00Z");
+const walkTag = (id, v) => `${id}-v${v}`;
+
+/** The two bound listings, with MIG-20's marker so records are owed. */
+function walkTree() {
+  const root = registryTree([
+    {
+      id: "telegram-client", name: "Telegram Client", repo: WALK_REPO,
+      versions: [{ version: "0.3.0", staging: false, tag: walkTag("telegram-client", "0.3.0"), capabilities: ["tools", "dom_access"] }],
+    },
+    {
+      id: "json-tools", name: "JSON Tools", repo: WALK_REPO,
+      versions: [{ version: "0.1.2", staging: false, tag: walkTag("json-tools", "0.1.2"), capabilities: ["tools"] }],
+    },
+  ]);
+  for (const id of ["telegram-client", "json-tools"]) {
+    fs.writeFileSync(path.join(root, "plugins", id, "identity.json"), `${JSON.stringify({
+      schema: "astra.registry.identity/1",
+      plugin_id: id,
+      repository_id: "700000001",
+      repository_owner_id: "700000002",
+      repo: WALK_REPO,
+      token_hash: "c".repeat(16),
+    }, null, 2)}\n`);
+    // A monorepo tags `<id>-v<version>`, and `registryTree` writes each
+    // artifact under `v<version>`; the validator refuses a URL outside the
+    // declared release, so the walk's versions are pointed at their own tag.
+    const vdir = path.join(root, "plugins", id, "versions");
+    for (const name of fs.readdirSync(vdir)) {
+      const file = path.join(vdir, name);
+      const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+      for (const a of Object.values(doc.artifacts)) {
+        a.url = `https://github.com/${WALK_REPO}/releases/download/${doc.release.tag}/${a.filename}`;
+      }
+      fs.writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
+    }
+  }
+  fs.mkdirSync(path.join(root, "log"), { recursive: true });
+  fs.writeFileSync(path.join(root, "log", "baseline.json"),
+    JSON.stringify({ schema: "astra.registry.baseline/1", version_count: 2, record_count: 2 }));
+  return root;
+}
+
+/** A decision record on the tree's `main`, as B-T2.2's layout reads it. */
+function walkRecord(root, doc) {
+  const dir = path.join(root, "log", "decisions", "2026", "09");
+  fs.mkdirSync(dir, { recursive: true });
+  const full = {
+    schema: "astra.registry.decision/1", decided_at: "2026-09-25T10:00:00Z", repo: WALK_REPO, ...doc,
+  };
+  fs.writeFileSync(path.join(dir, `${doc.decision_id}.json`), `${JSON.stringify(full, null, 2)}\n`);
+  return full;
+}
+
+const telegram = (version) => ({
+  repo: WALK_REPO, tag: walkTag("telegram-client", version), via: "service", now: WALK_NOW,
+  assets: [conforming({ id: "telegram-client", name: "Telegram Client", version, capabilities: ["tools", "dom_access"] })],
+});
+const jsonTools = (version) => ({
+  repo: WALK_REPO, tag: walkTag("json-tools", version), via: "service", now: WALK_NOW,
+  assets: [conforming({ id: "json-tools", name: "JSON Tools", version, capabilities: ["tools"] })],
+});
+
+// ROLL-25 (2)'s record for json-tools 0.1.3 — `M_REJECT`, which BOT-19 makes
+// terminal for that submission and burns the version — and (4)'s stop of
+// telegram-client 0.4.0.
+const REJECTED_0_1_3 = {
+  decision_id: "a1".repeat(16), actor: "moderator", trigger: "approval", state: "refused",
+  plugin_id: "json-tools", version: "0.1.3", tag: walkTag("json-tools", "0.1.3"), reasons: ["M_REJECT"],
+};
+const STOPPED_0_4_0 = {
+  decision_id: "b2".repeat(16), actor: "author", trigger: "stop", state: "stopped",
+  plugin_id: "telegram-client", version: "0.4.0", tag: walkTag("telegram-client", "0.4.0"), reasons: ["A_STOP"],
+};
+
+// ── ROLL-25 (5): a new telegram-client tag waits out its delay and publishes ─
+//
+// Watched failing: with the `publishAfter <= now` comparison in
+// `bot/lib/policy/decision.mjs` made `<`-and-a-day (the drain never ripe), the
+// second half is red; with `P_DELAY_HIGH_RISK` never pushed, the first half
+// publishes at once and is red.
+await test("ROLL-25 (5) — a bound release holding dom_access waits out its delay, then publishes itself", async () => {
+  const root = walkTree();
+  const out = tmp("astra-walk-out-");
+  const first = await run({ ...telegram("0.4.1"), root });
+  assertEqual(first.decision.outcome, "delay",
+    `step (5) needs a delay to wait out, and ${WALK_REPO}'s telegram-client got ${first.decision.outcome}: ` +
+    JSON.stringify(codes(first)));
+  assert(codes(first).includes("P_DELAY_HIGH_RISK"), `the delay is not P_DELAY_HIGH_RISK: ${JSON.stringify(codes(first))}`);
+  assertEqual(hours(first.decision.publish_after, WALK_NOW), first.decision.track.delay_hours ?? DELAY_HOURS,
+    "the release waits the track record's delay, from this run");
+  writeOutputs(out, { repo: WALK_REPO, tag: telegram("0.4.1").tag, issue: null }, first);
+  assert(!fs.existsSync(path.join(out, "plugins")), "a delayed release published on its first run");
+
+  // The queue entry, committed as the publish job commits it, and the drain
+  // one minute after `publish_after`.
+  const qrel = queueFile("telegram-client", "0.4.1");
+  fs.mkdirSync(path.dirname(path.join(root, qrel)), { recursive: true });
+  fs.copyFileSync(path.join(out, qrel), path.join(root, qrel));
+  const ripe = new Date(new Date(first.decision.publish_after).getTime() + 60_000);
+  const out2 = tmp("astra-walk-out-");
+  const drained = await run({ ...telegram("0.4.1"), root, now: ripe });
+  assertEqual(drained.decision.outcome, "publish", `the delay was waited out and nothing published: ${JSON.stringify(codes(drained))}`);
+  assert(codes(drained).includes("P_DELAY_ELAPSED"), JSON.stringify(codes(drained)));
+  writeOutputs(out2, { repo: WALK_REPO, tag: telegram("0.4.1").tag, issue: null }, drained);
+  assert(fs.existsSync(path.join(out2, "plugins", "telegram-client", "versions", "0.4.1.json")),
+    "the drain decided to publish and the publish job's tree holds no version file");
+  assertEqual(fs.readFileSync(path.join(out2, "remove.txt"), "utf8"), `${qrel}\n`,
+    "the served delay leaves its queue entry behind, so the drain would publish it again");
+});
+
+// ── ROLL-25 (6): a new json-tools tag publishes unheld ──────────────────────
+//
+// Watched failing: with BOT-77's guard in `decide()` made to apply on both
+// paths (`path !== "service"` → `true`), this run is held `R_CHECK_HELD` —
+// which is what proves the walk runs on the service path and not the legacy
+// one, where a bound listing never publishes.
+await test("ROLL-25 (6) — a bound release with nothing to hold or delay publishes on the service path", async () => {
+  const root = walkTree();
+  const out = tmp("astra-walk-out-");
+  const r = await run({ ...jsonTools("0.1.4"), root });
+  assertEqual(r.decision.outcome, "publish", `step (6) did not publish unheld: ${JSON.stringify(r.decision.reasons)}`);
+  assert(r.decision.publishes_now, "and it publishes on this run");
+  assert(codes(r).includes("P_PUBLISHED"), JSON.stringify(codes(r)));
+  const held = r.decision.reasons.filter((x) => x.level === "review" || x.code.startsWith("P_DELAY"));
+  assertEqual(held.length, 0, `step (6) is an UNHELD publication and this carries ${JSON.stringify(held)}`);
+  writeOutputs(out, { repo: WALK_REPO, tag: jsonTools("0.1.4").tag, issue: null }, r);
+  assert(fs.existsSync(path.join(out, "plugins", "json-tools", "versions", "0.1.4.json")),
+    "the publish job's tree holds no version file for step (6)");
+});
+
+// ── ROLL-25 (4) → (5): a stop is about ONE submission ───────────────────────
+//
+// BOT-19 finds a stop "for the same tag of the same repository_id" (FLOW-26),
+// never for the plugin. Today `stopped` is not a terminal state at all (the
+// gap below), so this holds for the wrong reason; it is here for the day that
+// gap closes. Watched failing: add `"stopped"` to `terminalOnMain`'s set as
+// its matching stands — by `plugin_id` alone — and this is red, because
+// 0.4.0's stop would then stop 0.4.1, which is walk step (5) itself.
+await test("ROLL-25 (4)→(5) — the stop of telegram-client 0.4.0 does not stop 0.4.1", async () => {
+  const root = walkTree();
+  walkRecord(root, STOPPED_0_4_0);
+  assertEqual(
+    terminalOnMain({ records: [STOPPED_0_4_0], pluginId: "telegram-client", repo: WALK_REPO, tag: telegram("0.4.1").tag }),
+    null,
+    "a stop recorded for 0.4.0 is a hit for 0.4.1, so every later tag of a stopped plugin stops too — and ROLL-25 " +
+    "step (5) can never walk after step (4)",
+  );
+  const r = await run({ ...telegram("0.4.1"), root });
+  assertEqual(r.decision.outcome, "delay", `0.4.1 after 0.4.0's stop: ${JSON.stringify(codes(r))}`);
+  assertEqual(r.decision.record?.write, false,
+    "the service path's records are B-T3.4's; this run must not claim one from the legacy trigger map");
+});
+
+// ── the gaps: steps whose code is not on `main` ─────────────────────────────
+
+await gap("ROLL-25 (4) — a `stopped` record for this tag is a terminal hit (BOT-19; FLOW-26)", {
+  blocker: "B-T3.3c (BOT-19): `terminalOnMain` in bot/decide.mjs has no `stopped` in its terminal set",
+  standing: () =>
+    terminalOnMain({ records: [STOPPED_0_4_0], pluginId: "telegram-client", repo: WALK_REPO, tag: STOPPED_0_4_0.tag }) === null,
+  walk: () => {
+    const hit = terminalOnMain({ records: [STOPPED_0_4_0], pluginId: "telegram-client", repo: WALK_REPO, tag: STOPPED_0_4_0.tag });
+    walkExpects(hit?.reported === "stopped",
+      `a stop the author recorded for ${STOPPED_0_4_0.tag} is not found by the git fence, so a drain after a restore ` +
+      "publishes the release the author stopped (FLOW-26; SERVE-93)");
+  },
+});
+
+await gap("ROLL-25 (2) — a re-run of the rejected json-tools 0.1.3 writes nothing (BOT-19's \"write nothing\")", {
+  blocker: "B-T3.3c (BOT-19): a terminal hit sets only `decision.record`, and `writeOutputs` still writes the listing " +
+    "whenever `publishes_now` is true",
+  standing: async () => {
+    // A real M_REJECT record carries the rejected bytes' fingerprint
+    // (bot/moderation-run.mjs's terminalSubmissionRecord), and BOT-19 matches
+    // a rejection by fingerprint alone since B-T3.9.
+    const fingerprint = (await run({ ...jsonTools("0.1.3"), root: walkTree() })).decision.fingerprint;
+    const root = walkTree();
+    walkRecord(root, { ...REJECTED_0_1_3, fingerprint });
+    const out = tmp("astra-walk-out-");
+    const r = await run({ ...jsonTools("0.1.3"), root });
+    writeOutputs(out, { repo: WALK_REPO, tag: REJECTED_0_1_3.tag, issue: null }, r);
+    return r.decision.reported === "refused" && r.decision.record?.write === false &&
+      fs.existsSync(path.join(out, "plugins", "json-tools", "versions", "0.1.3.json"));
+  },
+  walk: async () => {
+    // The control, asserted as the fixture's own premise (a plain throw, so a
+    // failure here is a broken fixture and never a gap): WITHOUT the record,
+    // the same run publishes. Otherwise "nothing was written" could be the
+    // fixture refusing for a reason of its own — which is exactly how this gap
+    // first read as closed, on a tree the validator refused.
+    const control = await run({ ...jsonTools("0.1.3"), root: walkTree() });
+    assertEqual(control.decision.outcome, "publish",
+      `the control run does not publish, so this gap cannot tell a stop from a broken fixture: ${JSON.stringify(codes(control))}`);
+    const root = walkTree();
+    walkRecord(root, { ...REJECTED_0_1_3, fingerprint: control.decision.fingerprint });
+    const out = tmp("astra-walk-out-");
+    const r = await run({ ...jsonTools("0.1.3"), root });
+    writeOutputs(out, { repo: WALK_REPO, tag: REJECTED_0_1_3.tag, issue: null }, r);
+    walkExpects(!fs.existsSync(path.join(out, "plugins", "json-tools", "versions", "0.1.3.json")),
+      "main records json-tools 0.1.3 as `refused` under M_REJECT, BOT-19 says a hit writes nothing, and the " +
+      "publish job's tree carries the rejected version's listing — the moderator's rejection is undone by a re-run");
+  },
+});
+
+// Closed by B-T3.9 (terminalOnMain names BOT-19's records exactly), and held
+// here as a test, as the gap asked (B-T4.1).
+await test("ROLL-25 (2)→(6) — the rejection of 0.1.3 is not a hit for 0.1.4 (BOT-19 matches the submission)", async () => {
+  const fingerprint = (await run({ ...jsonTools("0.1.3"), root: walkTree() })).decision.fingerprint;
+  const hit = terminalOnMain({ records: [{ ...REJECTED_0_1_3, fingerprint }], fingerprint: "f".repeat(16), repo: WALK_REPO, tag: jsonTools("0.1.4").tag });
+  assert(hit === null,
+    `0.1.3's M_REJECT is a terminal hit for 0.1.4 (${hit?.reported}), so step (6)'s publication is written with ` +
+    "no decision record — and every later release of a plugin that was ever refused loses its record, which MIG-20 " +
+    "reads the next baseline from");
+});
+
+// A first binding on a `grandfathered` listing, with every input B-T3.3a's
+// refusal names present and each taken from the module that owns it.
+const firstBindingInputs = () => ({
+  listingState: listingState({
+    plugin_id: "json-tools", now: "2026-09-25T12:00:00Z", unlisted: false,
+    identity: null, ever_identity: false, deadline: null, cutover: null,
+  }),
+  bindingLine: parseBindingFile(`astra-binding: ${"T".repeat(32)}\n`),
+  verdict: { shadow: false, token_state: "seen", minted_for_repository: true, eligibility: "eligible" },
+  marker: { r3_exit: true, cutover: false },
+});
+const placeholderAnswer = (r) =>
+  r?.ok === true && r?.code === null && /every input a binding decision needs is present/.test(String(r?.reason));
+
+await gap("ROLL-25 (2)/(3) — a grandfathered listing's first binding line is held `R_FIRST_BINDING` (MIG-10)", {
+  blocker: "B-T3.3a (MIG-10; ID-41): `bindingDecision` in bot/lib/identity.mjs decides no row — with every input " +
+    "present it answers `code: null`",
+  standing: () => {
+    const inputs = firstBindingInputs();
+    return inputs.listingState.state === "grandfathered" && inputs.bindingLine.outcome === "one" &&
+      placeholderAnswer(bindingDecision(inputs));
+  },
+  walk: () => {
+    const r = bindingDecision(firstBindingInputs());
+    walkExpects(r.code === "R_FIRST_BINDING",
+      `a grandfathered listing's first binding line is answered ${JSON.stringify(r.code)}, not held R_FIRST_BINDING`);
+  },
+});
+
+// ROLL-59 (a), (c) and (d)'s bot half: the rows ID-41 decides WITH an
+// identity record. The members `identityRecord` and `identity` are the
+// contract's inputs (the record on `main`, and the certificate's ids and line
+// token), named as the plan names them; `bindingDecision` reads neither yet,
+// and `standing` is what makes the guess safe — the day it reads anything, each
+// of these fails until it is pointed at what B-T3.3a actually takes.
+const RECORD = { plugin_id: "json-tools", repository_id: "700000001", repository_owner_id: "700000002", repo: WALK_REPO, token_hash: "c".repeat(16) };
+const boundInputs = ({ verdict = {}, identity = {}, line = "T".repeat(32) } = {}) => ({
+  listingState: listingState({
+    plugin_id: "json-tools", now: "2026-09-25T12:00:00Z", unlisted: false,
+    identity: { ...RECORD }, ever_identity: true, deadline: null, cutover: null,
+  }),
+  bindingLine: parseBindingFile(`astra-binding: ${line}\n`),
+  verdict: { shadow: false, token_state: "bound", minted_for_repository: true, eligibility: "eligible", ...verdict },
+  marker: { r3_exit: true, cutover: false },
+  identityRecord: { ...RECORD },
+  identity: {
+    ok: true, repo: WALK_REPO, repository_id: RECORD.repository_id, repository_owner_id: RECORD.repository_owner_id, ...identity,
+  },
+});
+const boundRow = (label, inputs, code, why) => gap(label, {
+  blocker: "B-T3.3a (ID-41): `bindingDecision` decides no row, and reads no identity record",
+  standing: () => placeholderAnswer(bindingDecision(inputs())),
+  walk: () => {
+    const r = bindingDecision(inputs());
+    walkExpects(r.code === code, `${why}; answered ${JSON.stringify(r.code)}`);
+  },
+});
+
+// A different token hash under an unchanged repository: the second account's
+// own line (ID-41 row 6).
+await boundRow("ROLL-59 (a) — a second account's own line under a bound listing is held `R_BINDING_CHANGED`",
+  () => boundInputs({ line: "U".repeat(32), verdict: { token_state: "seen" } }), "R_BINDING_CHANGED",
+  "the line's token is not the recorded one, and the release was not held for the bound account's notice");
+// The owner id moved and the repository id did not: a transfer (ID-41).
+await boundRow("ROLL-59 (c) — after a transfer, a bound listing's release is refused `B_OWNER_CHANGED`",
+  () => boundInputs({ identity: { repository_owner_id: "700000999" } }), "B_OWNER_CHANGED",
+  "the certificate's owner id is not the identity record's, and the release was not refused B_OWNER_CHANGED");
+// The recorded token is `revoked` (A_BINDING_REVOKE) and the line still
+// carries it (ID-9).
+await boundRow("ROLL-59 (d) — after `A_BINDING_REVOKE`, a release still carrying the old line is `B_BINDING_UNUSABLE`",
+  () => boundInputs({ verdict: { token_state: "revoked" } }), "B_BINDING_UNUSABLE",
+  "the recorded token is revoked and the release carrying it was not refused B_BINDING_UNUSABLE");
+// A rebind: a new line after the revocation (ID-41 row 6), approved later.
+await boundRow("ROLL-59 (d) — after `A_BINDING_REVOKE`, a release carrying a new line is held `R_BINDING_CHANGED`",
+  () => boundInputs({ line: "V".repeat(32), verdict: { token_state: "seen" } }), "R_BINDING_CHANGED",
+  "a new line after the revocation was not held R_BINDING_CHANGED for review");
+
+// ROLL-25 (3): the approval of the text-utils hold. Contract 2.1.0 set
+// TRUST-27's first-binding period to 0 days (the owner's beta decision,
+// 2026-09-24), so what still stands between an approval and a publication is
+// DEC-6's operator window: TRUST-14's alert, and TRUST-32's 6 hours from its
+// reported delivery (`W_ALERT_UNDELIVERED` while none is reported). This
+// fixture has no alert record, so a day after the hold, with an approval
+// naming this exact submission, nothing may publish.
+const firstBindingHeld = (over = {}) => decide(publishable({
+  path: "service",
+  findings: [{ level: "review", code: "R_FIRST_BINDING", where: "binding", message: "a first binding line (MIG-10)" }],
+  now: new Date("2026-09-26T12:00:00Z"),
+  ...over,
+}));
+await gap("ROLL-25 (3) — an approved `R_FIRST_BINDING` hold publishes nothing while no alert is reported delivered (DEC-6; TRUST-32; TRUST-27 at 0 days since 2.1.0)", {
+  blocker: "B-T3.3b (TRUST-14, TRUST-32; TRUST-27): `decide()` lets an approval clear any `R_*` hold on the run it arrives in",
+  standing: () => {
+    const fingerprint = firstBindingHeld().fingerprint;
+    const d = firstBindingHeld({ approval: { by: "the-moderator", at: "2026-09-26T11:00:00Z", for: fingerprint } });
+    return d.outcome === "publish" && d.reasons.some((x) => x.code === "P_APPROVED");
+  },
+  walk: () => {
+    const fingerprint = firstBindingHeld().fingerprint;
+    walkExpects(typeof fingerprint === "string" && fingerprint.length > 0, "the held run names no fingerprint to approve");
+    const d = firstBindingHeld({ approval: { by: "the-moderator", at: "2026-09-26T11:00:00Z", for: fingerprint } });
+    walkExpects(d.outcome !== "publish" && !d.publishes_now,
+      `an R_FIRST_BINDING approval a day after the hold published (${JSON.stringify(d.reasons.map((x) => x.code))}); ` +
+      "with no alert reported delivered TRUST-32 publishes nothing (W_ALERT_UNDELIVERED), and after one it waits DEC-6's " +
+      "6-hour operator window; TRUST-27's period is 0 days since contract 2.1.0");
+  },
+});
+
+// ROLL-59 (f): a deny record withholds an approved fingerprint (TRUST-33).
+// The fingerprint is the one the maintainer's `/approve` names, copied out of
+// the held run's comment as `approveFromComment` copies it. The hold is
+// `collidingTree`'s display-name collision, the clean case for "an approval
+// clears the hold and the release publishes" — so the control, with no deny
+// record, publishes, and the gap can only close on the deny being read. It
+// first read as closed on a world whose approved release went on to a delay,
+// which is not a withheld fingerprint.
+async function approvedRun({ deny }) {
+  const root = collidingTree();
+  const world = { root, assets: [conforming()] };
+  const held = await run(world);
+  const line = /^\/approve (\S+)@(\S+) ([0-9a-f]{16})$/m.exec(held.comment);
+  assert(line !== null, "the held run printed no /approve line to approve or deny");
+  if (deny) {
+    fs.mkdirSync(path.join(root, "state", "deny"), { recursive: true });
+    fs.writeFileSync(path.join(root, "state", "deny", `${line[3]}.json`),
+      `${JSON.stringify({ fingerprint: line[3], reason: "operator objection inside the window" }, null, 2)}\n`);
+  }
+  return run({ ...world, approvedBy: "the-maintainer", approvedAt: "2026-08-10T11:59:00Z", approvedFor: line[3] });
+}
+await gap("ROLL-59 (f) — an operator deny record on main withholds an approved fingerprint (TRUST-33)", {
+  blocker: "B-T3.3b and M-T3.5 (TRUST-33): nothing reads `state/deny/`, and `operator.yml`, which writes it, is not on main",
+  standing: async () => (await approvedRun({ deny: true })).decision.outcome === "publish",
+  walk: async () => {
+    const control = await approvedRun({ deny: false });
+    assertEqual(control.decision.outcome, "publish",
+      `the control approval does not publish, so this gap cannot tell a deny from a broken fixture: ${JSON.stringify(codes(control))}`);
+    const r = await approvedRun({ deny: true });
+    walkExpects(r.decision.outcome !== "publish" && !r.decision.publishes_now && !r.decision.queue_entry,
+      `a fingerprint named by state/deny/ was published on its approval (${JSON.stringify(codes(r))})`);
+  },
+});
+
 // ── result ──────────────────────────────────────────────────────────────────
 
 console.log();
 if (failures.length) {
-  console.log(`FAIL  ${passed} passed, ${failures.length} failed`);
+  console.log(`FAIL  ${passed} passed, ${failures.length} failed${gaps.length ? `, ${gaps.length} walk gap(s) named` : ""}`);
   process.exit(1);
 }
-console.log(`PASS  ${passed} passed, 0 failed`);
+// A gap is neither a pass nor a failure, and the line says how many there
+// are so a reader of the run cannot mistake the walks for done (B-T4.1).
+const named = gaps.length ? `, ${gaps.length} walk gap(s) named, each blocked on its task` : "";
+console.log(`PASS  ${passed} passed, 0 failed${named}`);

@@ -607,6 +607,44 @@ test("every declared document kind lists members, a source and its exempt sets",
   }
 });
 
+// ── MIG-13's markers, which land under `log/` (registry plan M-T5.3) ────────
+//
+// Both canaries walk `log/`, and neither had met a migration-notice marker:
+// none has ever been committed. Measured on the tree before this: the privacy
+// scan refused the first marker as E_PRIV_UNDECLARED_DOCUMENT, and the
+// coverage walk refused every re-commit a MIG-13 re-send makes as an edit
+// under `log/` (MOD-34). The first was a declaration nobody had written; the
+// second is the rule working, and the re-send clears it on its own commit
+// with the trailer the desk command prints.
+
+test("M-T5.3: a migration-notice marker is a declared composed document, and a member B.4 does not list is red", async () => {
+  const { markerText } = await import("../../tools/lib/migration-notice.mjs");
+  const f = fixture("notice-marker").landTools();
+  f.write("log/migration-notice-1.json", markerText({ round: 1, sent_at: "2026-09-24T00:00:00Z" })).commit("round 1 sent");
+  assert.equal(priv(f.dir).status, "green", codesOf(priv(f.dir)));
+  f.write("log/migration-notice-2.json", { schema: "x", round: 2, sent_at: "2026-09-25T00:00:00Z", cutover_planned_at: "2026-10-30T00:00:00Z", accounts: ["someone"] })
+    .commit("round 2 sent, with a member no marker has");
+  const r = priv(f.dir);
+  assert.deepEqual([r.status, r.codes], ["red", ["E_PRIV_UNDECLARED_MEMBER"]],
+    `a marker carrying \`accounts\` was not refused for that member: ${codesOf(r)}`);
+});
+
+test("M-T5.3: a marker re-commit is red in the coverage walk without the re-send trailer, and green with it", async () => {
+  const { RECOMMIT_TRAILER, markerText } = await import("../../tools/lib/migration-notice.mjs");
+  const r2 = (cutover) => markerText({ round: 2, sent_at: "2026-09-25T00:00:00Z", cutover_planned_at: cutover });
+  const bare = fixture("notice-recommit-bare").landTools()
+    .write("log/migration-notice-2.json", r2("2026-10-30T00:00:00Z")).commit("round 2 sent");
+  bare.write("log/migration-notice-2.json", r2("2026-11-15T00:00:00Z")).commit("re-send: cutover moved later");
+  assert.match(codesOf(mod(bare.dir, { mode: "commits" })), /MOD_LOG_APPEND_ONLY/,
+    "a re-commit under log/ with no trailer was not refused; the trailer below would then be clearing nothing");
+
+  const cleared = fixture("notice-recommit-trailer").landTools()
+    .write("log/migration-notice-2.json", r2("2026-10-30T00:00:00Z")).commit("round 2 sent");
+  cleared.write("log/migration-notice-2.json", r2("2026-11-15T00:00:00Z"))
+    .commit(`re-send: cutover moved later\n\n${RECOMMIT_TRAILER}`);
+  assert.equal(mod(cleared.dir, { mode: "commits" }).status, "green", codesOf(mod(cleared.dir, { mode: "commits" })));
+});
+
 // ── gap 93: what a merge's own resolution wrote ────────────────────────────
 //
 // Both walks took `rev-list --no-merges`, which is right for "who wrote this
