@@ -2767,6 +2767,173 @@ test("`plugins-ingest.yml`'s publish job commits through publish-apply and not b
   );
 });
 
+// ── environment `bot-state` and its one secret (registry plan B-T5.0) ───────
+//
+// `bot-state` holds `BOT_STATE_HMAC_KEY`, the key that signs the poll and
+// sweep memory in the Actions cache (`bot/lib/poll.mjs`'s `STATE_KEY_ENV`,
+// B-T2.6). The whole of BOT-87 rests on that signature: a job that could read
+// the key could forge a memory in which an unregistered tag reads as seen, and
+// the only detector for a release that silently never reached the service
+// would never fire (registry plan B-T5.0, attack M-6). The environment's
+// main-only policy stops a BRANCH from reaching the key; this is the half that
+// stops a job on `main` from reaching it without anybody deciding it should.
+//
+// An environment secret is not ambient, so the statement is exact: the key
+// reaches a job only through an `environment: bot-state` job, and a line only
+// through `secrets.BOT_STATE_HMAC_KEY`. So:
+//
+//   1. only `plugins-ingest.yml`'s `load` and `remember` may name environment
+//      `bot-state` (`poll` reads a stranger's feed and must hold no key;
+//      `claim` holds a bot token, and the one-credential-per-job table in that
+//      file's header gives it nothing else);
+//   2. the key's name appears nowhere in `.github/` except inside a STEP of one
+//      of those two jobs, as that step's own `env:` mapping of exactly
+//      `${{ secrets.BOT_STATE_HMAC_KEY }}`. A job-level `env:` would hand it to
+//      `actions/checkout` and `actions/setup-node` too, and a mention in a
+//      `run:` is a key in a shell;
+//   3. none of this is vacuous: the two jobs exist and name the environment.
+//
+// Coordinator request of 2026-09-24, with the environment's creation.
+export const STATE_KEY = "BOT_STATE_HMAC_KEY";
+export const STATE_ENV = "bot-state";
+export const STATE_JOBS = ["plugins-ingest.yml:load", "plugins-ingest.yml:remember"];
+
+/**
+ * Every way a set of workflow and action sources lets the sweep-memory key, or
+ * its environment, reach something other than `load`'s and `remember`'s steps.
+ *
+ * @param {{file: string, text: string}[]} sources  `.github/workflows/*` and `.github/actions/**`
+ * @returns {string[]} sentences; empty when the key is where it may be
+ */
+export function stateKeyProblems(sources) {
+  const out = [];
+  const mapping = new RegExp(`^\\s+${STATE_KEY}:\\s*\\$\\{\\{\\s*secrets\\.${STATE_KEY}\\s*\\}\\}\\s*$`);
+  const seenJobs = new Set();
+  for (const { file, text } of sources) {
+    const lines = text.split("\n");
+    const jobsAt = lines.findIndex((l) => /^jobs:\s*$/.test(l));
+    // Job spans, as allJobs() computes them, for this one text.
+    const spans = [];
+    if (jobsAt >= 0) {
+      for (let i = jobsAt + 1; i < lines.length; i++) {
+        if (/^\S/.test(lines[i])) break;
+        const m = /^ {2}([A-Za-z0-9_-]+):\s*$/.exec(lines[i]);
+        if (m) spans.push({ job: m[1], start: i });
+      }
+      spans.forEach((s, k) => {
+        let end = k + 1 < spans.length ? spans[k + 1].start : lines.length;
+        for (let j = s.start + 1; j < end; j++) if (/^\S/.test(lines[j])) { end = j; break; }
+        s.end = end;
+      });
+    }
+    const jobAt = (i) => spans.find((s) => i > s.start && i < s.end) ?? null;
+    for (const s of spans) {
+      const body = lines.slice(s.start, s.end).filter((l) => !l.trim().startsWith("#"));
+      const inEnv = body.some((l, i) => new RegExp(`^\\s+environment:\\s*${STATE_ENV}\\s*$`).test(l)
+        || (/^\s+environment:\s*$/.test(l) && new RegExp(`^\\s+name:\\s*${STATE_ENV}\\s*$`).test(body[i + 1] ?? "")));
+      if (!inEnv) continue;
+      const id = `${file}:${s.job}`;
+      seenJobs.add(id);
+      if (!STATE_JOBS.includes(id)) {
+        out.push(`${file}:${s.start + 1} job \`${s.job}\` names environment \`${STATE_ENV}\`, so it can read ${STATE_KEY}; ` +
+          `only ${STATE_JOBS.join(" and ")} may`);
+      }
+    }
+    lines.forEach((line, i) => {
+      if (line.trim().startsWith("#") || !line.includes(STATE_KEY)) return;
+      const s = jobAt(i);
+      const id = s ? `${file}:${s.job}` : null;
+      const at = `${file}:${i + 1}`;
+      if (!s || !STATE_JOBS.includes(id)) {
+        out.push(`${at} names ${STATE_KEY} outside ${STATE_JOBS.join(" and ")}`);
+        return;
+      }
+      const stepsAt = lines.slice(s.start, s.end).findIndex((l) => /^\s{4}steps:\s*$/.test(l));
+      if (stepsAt < 0 || i <= s.start + stepsAt) {
+        out.push(`${at} names ${STATE_KEY} at job level in \`${s.job}\`; map it in the one step that uses it, so ` +
+          "checkout and setup-node never hold it");
+        return;
+      }
+      if (!mapping.test(line)) {
+        out.push(`${at} names ${STATE_KEY} other than as a step's \`env:\` mapping of \${{ secrets.${STATE_KEY} }}`);
+      }
+    });
+  }
+  for (const id of STATE_JOBS) {
+    if (!seenJobs.has(id)) out.push(`${id} does not name environment \`${STATE_ENV}\`, so the key has nowhere it may be read`);
+  }
+  return out;
+}
+
+function githubSources() {
+  const out = [];
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) { walk(full); continue; }
+      if (!/\.(ya?ml|mjs|js|sh)$/.test(e.name)) continue;
+      out.push({ file: path.relative(DIR, full).startsWith("..") ? path.relative(REPO, full) : path.basename(full), text: fs.readFileSync(full, "utf8") });
+    }
+  };
+  walk(DIR);
+  const actions = path.join(REPO, ".github", "actions");
+  if (fs.existsSync(actions)) walk(actions);
+  return out;
+}
+
+test("only `load` and `remember` reach BOT_STATE_HMAC_KEY, each in one step's env, through environment `bot-state`", () => {
+  const sources = githubSources();
+  assert.ok(sources.length >= 10, `read ${sources.length} file(s) under .github/; the walk stopped reading`);
+  assert.deepEqual(stateKeyProblems(sources), [],
+    "the sweep-memory key can reach a job or a line other than load's and remember's own steps");
+
+  // The predicate, watched saying no on the real file broken one way at a
+  // time. Each break is asserted to change the bytes, so a break that matched
+  // nothing cannot pass as a check that caught it.
+  const ingest = sources.find((s) => s.file === "plugins-ingest.yml");
+  assert.ok(ingest, "plugins-ingest.yml is not among the sources");
+  const mapLine = `          ${STATE_KEY}: \${{ secrets.${STATE_KEY} }}`;
+  const once = (text, anchor, replacement) => {
+    const n = text.split(anchor).length - 1;
+    assert.equal(n, 1, `the break's anchor ${JSON.stringify(anchor)} matched ${n} time(s)`);
+    return text.replace(anchor, replacement);
+  };
+  const job = (name) => {
+    const m = new RegExp(`^  ${name}:\\n`, "m").exec(ingest.text);
+    assert.ok(m, `plugins-ingest.yml has no job ${name}`);
+    return m;
+  };
+  job("poll"); job("load"); job("remember");
+  const withText = (text) => sources.map((s) => (s === ingest ? { ...s, text } : s));
+  const breaks = [
+    ["`poll` joins environment bot-state",
+      once(ingest.text, "\n  poll:\n", "\n  poll:\n    environment: bot-state\n"), ["`poll`", "only"]],
+    ["`load` loses environment bot-state",
+      ingest.text.replace(/(\n  load:\n(?:.*\n)*?)    environment: bot-state\n/, "$1"), ["load", "does not name environment"]],
+    ["the key mapped at job level",
+      once(ingest.text, "\n  poll:\n", `\n  poll:\n    env:\n      ${STATE_KEY}: \${{ secrets.${STATE_KEY} }}\n`), ["outside"]],
+    ["the key named in a workflow-level env",
+      once(ingest.text, "env:\n  DRY_RUN:", `env:\n  ${STATE_KEY}: \${{ secrets.${STATE_KEY} }}\n  DRY_RUN:`), ["outside"]],
+  ];
+  // A step-level mapping inside `load` is green, and the same line in a `run:`
+  // is not: built on whatever step `load` has today, placeholder or real.
+  const loadRun = /(\n  load:\n(?:.*\n)*?      - name: [^\n]*\n)/.exec(ingest.text);
+  assert.ok(loadRun, "plugins-ingest.yml's load job has no step to build the step-level cases on");
+  const stepEnv = ingest.text.replace(loadRun[1], `${loadRun[1]}        env:\n${mapLine}\n`);
+  assert.notEqual(stepEnv, ingest.text);
+  if (!ingest.text.includes(mapLine)) {
+    assert.deepEqual(stateKeyProblems(withText(stepEnv)), [], "a step-level mapping inside load was refused");
+  }
+  breaks.push(["the key echoed in a run script",
+    ingest.text.replace(loadRun[1], `${loadRun[1]}        run: echo "$${STATE_KEY}"\n`), ["other than as a step's"]]);
+  for (const [how, text, words] of breaks) {
+    assert.notEqual(text, ingest.text, `the break "${how}" changed nothing`);
+    const said = stateKeyProblems(withText(text)).join("\n");
+    assert.ok(said, `${how}: the key reached somewhere new and the lint was silent`);
+    for (const w of words) assert.ok(said.includes(w), `${how}: red, but not naming ${JSON.stringify(w)}: ${said}`);
+  }
+});
+
 // B-T3.6 step 1: R3 opens with `DRY_RUN: "true"` committed, and while it is
 // anything but "false" the publish job commits on the runner and never pushes.
 // The flag is read in ONE place — the apply step — and the direction a typo
