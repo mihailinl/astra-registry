@@ -3696,6 +3696,12 @@ await test("end to end — a drained publication with the marker on main carries
   const before = tmp("astra-b4-legacy-before-");
   writeOutputs(before, { repo: REPO, tag: TAG, issue: null, root: registryTree([{}]) }, beforeBaseline);
   assertEqual(fs.existsSync(path.join(before, "log")), false, "a record was written before MIG-20's baseline exists");
+  // And the writer asks the tree itself: a decision that says a record is
+  // owed, handed to it over a tree with no marker, still writes none.
+  const unmarked = tmp("astra-b4-legacy-unmarked-");
+  writeOutputs(unmarked, { repo: REPO, tag: TAG, issue: null, root: registryTree([{}]) }, drained);
+  assertEqual(fs.existsSync(path.join(unmarked, "log")), false,
+    "the writer wrote a record over a tree with no marker because the decision said one was owed");
 });
 
 await test("a legacy record is never composed with the `migration` trigger, even by a caller that forged one", () => {
