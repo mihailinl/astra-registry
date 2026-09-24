@@ -4,8 +4,9 @@ One JSON file per action taken against a **listed** plugin. Read by
 `bot/lib/moderation.mjs`, published as `/transparency/moderation-log.json` and
 rendered at `/transparency/`.
 
-A refusal is not in here. A submission that never got listed is a public issue
-with the failing check named; mixing the two would make the count meaningless.
+A refusal is not in here. Since the cutover (ROLL-33) a submission that never got
+listed is public in the decision log, `log/decisions/`, with the failing check
+named (MOD-40); mixing the two would make the count meaningless.
 
 ## The file
 
