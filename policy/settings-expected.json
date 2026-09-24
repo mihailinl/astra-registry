@@ -217,6 +217,21 @@
             "branch_policy"
           ],
           "can_admins_bypass": false
+        },
+        "github-pages": {
+          "because": "Created for Pages, so that ROLL-60's rehearsal can serve its `signed` branch (astra-plugins-ops runbooks/roll-60-rehearsal.md; registry tools/testkeys/rehearsal-push.mjs). It holds no secret. Its one branch policy admits `signed`, the branch the legacy Pages build deploys, and nothing else: a Pages build from any other ref would publish documents the rehearsal did not push. can_admins_bypass is GitHub's default for a Pages environment, as on this registry's own github-pages.",
+          "named_by_no_workflow": "GitHub's own `pages build and deployment` run deploys it, from branch `signed` with build_type legacy; no workflow file in this repository names the environment, and none may, because the rehearsal's Pages must serve only what rehearsal-push.mjs pushed.",
+          "deployment_branch_policy": "custom",
+          "branch_policies": [
+            {
+              "name": "signed",
+              "type": "branch"
+            }
+          ],
+          "protection_rules": [
+            "branch_policy"
+          ],
+          "can_admins_bypass": true
         }
       },
       "rulesets": {
