@@ -316,15 +316,152 @@ export async function run() {
     assert(stale.codes.includes(CODES.superseded), "round 2 announcing a date round 3 does not was not alarmed (n28)");
   });
 
-  await test("the banner cross-check: the served page must carry the authoritative marker's date", () => {
-    const base = { deadline: null, cutoverOnMain: false, markers: [m(R1), m(R2)], now: "2026-10-01T00:00:00Z" };
-    const banner = (status, body) => ({ id: "knowledge-graph", url: "https://astra.minice.ai/plugins/knowledge-graph", status, body });
-    assert(!judge({ ...base, banner: banner(200, "<p>Cutover on 2026-10-25.</p>") }).codes.length, "a banner carrying the date alarmed");
-    const differs = judge({ ...base, banner: banner(200, "<p>Cutover on 2026-10-15.</p>") });
-    assert(differs.codes.includes(CODES.bannerDiffers) && differs.ids.includes("knowledge-graph"),
-      "a banner serving a date the authoritative marker does not carry was not alarmed");
-    assert(judge({ ...base, banner: banner(404, null) }).codes.includes(CODES.bannerUnreachable), "a banner that did not load was not alarmed");
-    assert(!judge({ ...base, markers: [m(R1)], banner: banner(404, null) }).codes.length,
-      "the banner was judged before round 2, when MIG-13's banner shows no date");
+
+  // ── M-T5.4: the banner, by MIG-13's hooks (contract 2.7.0) ────────────────
+  //
+  // Until 2.7.0 MIG-13 gave the page no form for its dates, and the watch
+  // searched the HTML for the date's TEXT. Every page below also carries the
+  // authoritative date as text, twice, where a real Next.js page carries it:
+  // in the banner's visible sentence and in the flight payload's <script>. So
+  // a reader that finds the date anywhere passes every page here, and only a
+  // reader of the hook tells the good page from the bad ones.
+
+  const ANNOUNCED = R2.cutover_planned_at;
+  const ID = "knowledge-graph";
+  const banner = (status, body) => ({ id: ID, url: `https://astra.minice.ai/plugins/${ID}`, status, body });
+  const hook = (name, value) => (value === null ? "" : `<time hidden data-astra="${name}" datetime="${value}"></time>`);
+  /** The page as MIG-13 publishes it since 2.7.0, with each part replaceable. */
+  const page = ({ round = 2, cutover = ANNOUNCED, deadline = DEADLINE, bannerEl = true, extra = "" } = {}) => {
+    const r = round === null ? "" : ` data-astra-round="${round}"`;
+    const inner = `<p>Astra's new registry opens on ${ANNOUNCED.slice(0, 10)} (${ANNOUNCED}).</p>` +
+      `${hook("cutover-planned", cutover)}${hook("binding-deadline", deadline)}${extra}`;
+    const el = bannerEl ? `<div class="banner" data-astra="migration-banner"${r}>${inner}</div>` : inner;
+    const flight = `<script>self.__next_f.push([1,"[\\"$\\",\\"time\\",null,{\\"hidden\\":true,` +
+      `\\"data-astra\\":\\"cutover-planned\\",\\"dateTime\\":\\"${ANNOUNCED}\\"}]"])</script>`;
+    return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>${ID}</title></head>` +
+      `<body><main>${el}</main>${flight}</body></html>`;
+  };
+  const dated = { deadline: DEADLINE, cutoverOnMain: false, markers: [m(R1), m(R2)], now: "2026-10-01T00:00:00Z", r4bOpen: true };
+  const read = (body, over = {}) => judge({ ...dated, ...over, banner: banner(200, body) });
+  const codesOf = (r) => r.codes.join(",");
+
+  await test("the banner's cutover-planned hook is held to the authoritative marker's cutover_planned_at by exact equality", () => {
+    const ok = read(page());
+    assertEqual(codesOf(ok), "", `the page MIG-13 publishes alarmed: ${ok.detail.join(" | ")}`);
+    for (const [what, value] of [
+      ["another date", "2026-10-15T00:00:00Z"],
+      ["the same instant with an offset", "2026-10-25T03:00:00+03:00"],
+      ["the same instant with a fraction", "2026-10-25T00:00:00.000Z"],
+      ["the day alone", "2026-10-25"],
+      ["nothing", ""],
+    ]) {
+      const r = read(page({ cutover: value }));
+      assert(r.codes.includes(CODES.bannerDiffers) && r.ids.includes(ID),
+        `a cutover-planned hook carrying ${what} (${JSON.stringify(value)}) was taken for the announced ${ANNOUNCED}: ${r.detail.join(" | ")}`);
+    }
+    const none = read(page({ cutover: null }));
+    assert(none.codes.includes(CODES.bannerDiffers) && none.ids.includes(ID),
+      "a page with no cutover-planned hook while round 2's marker announces a date was not alarmed");
+    assert(none.detail.some((d) => d.startsWith(CODES.bannerDiffers) && d.includes("no cutover-planned hook")),
+      `a missing hook was reported with the reason for a different date, not its own: ${none.detail.join(" | ")}`);
+  });
+
+  await test("a hook is read only where the page renders one: never from text, a comment, a script or another attribute", () => {
+    const fake = `data-astra="cutover-planned" datetime="${ANNOUNCED}"`;
+    for (const [where, extra] of [
+      ["as text", `<p>${fake}</p>`],
+      ["as escaped markup", `<p>&lt;time hidden ${fake}&gt;</p>`],
+      ["in a comment", `<!-- <time hidden ${fake}></time> -->`],
+      ["in a comment that holds a '>'", `<!-- a > b <time hidden ${fake}></time> -->`],
+      ["in a script", `<script>document.write('<time hidden ${fake}></time>')</script>`],
+      ["in an upper-case script", `<SCRIPT type="text/x-template"><time hidden ${fake}></time></SCRIPT >`],
+      ["in a style", `<style>/* <time hidden ${fake}> */</style>`],
+      ["in a textarea", `<textarea><time hidden ${fake}></time></textarea>`],
+      ["in a title", `<title><time hidden ${fake}></time></title>`],
+      ["in another attribute's value", `<div title='<time hidden ${fake}>'></div>`],
+      ["in an end tag", `</div ${fake}>`],
+    ]) {
+      const r = read(page({ cutover: null, extra }));
+      assert(r.codes.includes(CODES.bannerDiffers),
+        `a cutover-planned hook ${where} was read as the banner's: a reader of the hook's TEXT, not of its element`);
+    }
+    for (const [how, extra] of [
+      ["single quotes", `<time hidden data-astra='cutover-planned' datetime='${ANNOUNCED}'></time>`],
+      ["no quotes", `<time hidden data-astra=cutover-planned datetime=${ANNOUNCED}></time>`],
+      ["upper-case names", `<TIME HIDDEN DATA-ASTRA="cutover-planned" DATETIME="${ANNOUNCED}"></TIME>`],
+      ["a '>' inside an earlier attribute's value", `<time title="a > b" hidden data-astra="cutover-planned" datetime="${ANNOUNCED}"></time>`],
+      ["attributes across lines and spaced '='", `<time\n  hidden\n  data-astra = "cutover-planned"\n  datetime="${ANNOUNCED}"\n/>`],
+      ["after an empty comment written '<!-->'", `<!--><time hidden data-astra="cutover-planned" datetime="${ANNOUNCED}"></time>`],
+      ["after a closed script", `<script>var t = "</scrip" + "t>";</script><time hidden data-astra="cutover-planned" datetime="${ANNOUNCED}"></time>`],
+    ]) {
+      const r = read(page({ cutover: null, extra }));
+      assertEqual(codesOf(r), "", `a real hook written with ${how} was not read: ${r.detail.join(" | ")}`);
+    }
+  });
+
+  await test("two hooks of one name make the page ambiguous, whatever they carry", () => {
+    const again = (name, value) => `<time hidden data-astra="${name}" datetime="${value}"></time>`;
+    for (const [what, body] of [
+      ["the announced date, then another", page({ extra: again("cutover-planned", "2026-10-15T00:00:00Z") })],
+      ["another date, then the announced one", page({ cutover: "2026-10-15T00:00:00Z", extra: again("cutover-planned", ANNOUNCED) })],
+      ["the announced date twice", page({ extra: again("cutover-planned", ANNOUNCED) })],
+      ["the deadline twice", page({ extra: again("binding-deadline", DEADLINE) })],
+      ["two banners", `${page()}<div data-astra="migration-banner" data-astra-round="2"></div>`],
+      ["cutover-planned on an element that is no <time>", page({ extra: `<span data-astra="cutover-planned" datetime="${ANNOUNCED}"></span>` })],
+      ["cutover-planned on a <span> and on nothing else", page({ cutover: null, extra: `<span data-astra="cutover-planned" datetime="${ANNOUNCED}"></span>` })],
+    ]) {
+      const r = read(body);
+      assert(r.codes.includes(CODES.bannerAmbiguous) && r.ids.includes(ID), `a page with ${what} was not refused as ambiguous: ${r.detail.join(" | ")}`);
+    }
+  });
+
+  await test("the banner's round and binding deadline are held to the highest marker and policy/binding-deadline.json", () => {
+    const has = (r, code, why) => assert(r.codes.includes(code) && r.ids.includes(ID), `${why}: ${r.detail.join(" | ")}`);
+    has(read(page({ deadline: "2026-11-27T00:00:00Z" })), CODES.bannerDeadline, "a binding-deadline hook with another deadline was not alarmed");
+    has(read(page({ deadline: null })), CODES.bannerDeadline, "a page with no binding-deadline hook while the deadline is committed was not alarmed");
+    has(read(page(), { deadline: null }), CODES.bannerDeadline, "a binding-deadline hook with no deadline committed was not alarmed");
+    has(read(page({ round: 1 })), CODES.bannerRound, "a banner on round 1 while round 2's marker is on main was not alarmed");
+    has(read(page({ round: "02" })), CODES.bannerRound, "a round that is not written as B.4's integer was taken for it");
+    has(read(page({ round: null })), CODES.bannerRound, "a banner with no round while round 2's marker is on main was not alarmed");
+    has(read(page({ bannerEl: false })), CODES.bannerRound, "a page with its dates and no migration-banner element was not alarmed");
+
+    // Before round 2 the banner shows no date, and one that does takes it from
+    // somewhere other than a marker (registry plan §1.3 row 8.9's knob).
+    // 67 days before the deadline, so ROLL-63 (a) is quiet without round 2.
+    const round1 = { markers: [m(R1)], now: "2026-09-20T00:00:00Z" };
+    assertEqual(codesOf(read(page({ round: 1, cutover: null }), round1)), "", "round 1's banner, as MIG-13 has it, alarmed");
+    const knob = read(page({ round: 1 }), round1);
+    assert(knob.codes.includes(CODES.bannerDiffers) && knob.detail.some((d) => d.includes("no marker carries a date")),
+      `a banner showing a cutover date before round 2's marker was not alarmed: ${knob.detail.join(" | ")}`);
+    // The deadline committed and no marker yet: no round, no date, the deadline.
+    const none = { markers: [], now: "2026-09-20T00:00:00Z" };
+    assertEqual(codesOf(read(page({ round: null, cutover: null }), none)), "", "the banner before round 1 alarmed");
+    has(read(page({ round: 1, cutover: null }), none), CODES.bannerRound, "a banner on round 1 with no marker on main was not alarmed");
+    // Markers that cannot be ordered: MARKER_UNREADABLE says so, and the
+    // banner's round and date are not compared against a guess.
+    const twoOf2 = [m(R1), m(R2), { ...m({ ...R2, sent_at: "2026-09-21T00:00:00Z" }), file: "log/migration-notice-2b.json" }];
+    const unordered = read(page({ round: 1, cutover: null }), { markers: twoOf2 });
+    assert(unordered.codes.includes(CODES.unreadable) && !unordered.codes.includes(CODES.bannerRound) && !unordered.codes.includes(CODES.bannerDiffers),
+      `with markers that cannot be ordered the banner was compared anyway: ${unordered.codes.join(",")}`);
+  });
+
+  await test("a 404 from the plugins zone is a note until R4b opens and BANNER_UNREACHABLE from then on; any other failure, always", () => {
+    // `dated` says R4b is open; the undefined case drops the member, so the
+    // judge's own default is what answers.
+    const { r4bOpen: _open, ...unsaid } = dated;
+    const at = (status, r4bOpen) => judge({ ...unsaid, ...(r4bOpen === undefined ? {} : { r4bOpen }), banner: banner(status, null) });
+    const dark = at(404, false);
+    assert(dark.status === "green" && dark.codes.length === 0 && dark.detail.some((d) => d.includes("not open yet")),
+      `a 404 before R4b was not a note: ${dark.status} ${dark.codes.join(",")} | ${dark.detail.join(" | ")}`);
+    const open = at(404, true);
+    assert(open.codes.includes(CODES.bannerUnreachable) && open.ids.includes(ID), "a 404 once R4b had opened was not BANNER_UNREACHABLE");
+    assert(at(404, undefined).codes.includes(CODES.bannerUnreachable),
+      "a caller that did not say whether R4b had opened got the quiet reading of a 404, not the loud one");
+    for (const status of [500, 503, 403, 410, 301, null]) {
+      for (const r4bOpen of [false, true]) {
+        assert(at(status, r4bOpen).codes.includes(CODES.bannerUnreachable),
+          `${status ?? "no answer"} was not BANNER_UNREACHABLE with R4b ${r4bOpen ? "open" : "not open"}`);
+      }
+    }
   });
 }

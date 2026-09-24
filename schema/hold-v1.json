@@ -43,10 +43,11 @@
         "$comment": { "type": "string" },
         "service_decision_id": { "type": "string", "minLength": 1, "maxLength": 200 },
         "code": {
-          "$comment": "The codes that can be held. `M_RELIST` and `M_UNREVOKE` are the reversals; `M_YANK`, `M_DELIST`, `M_DEPRECATE` and `M_REVOKE` are the takedowns the bound can hold; `A_REMOVAL_REQUEST` and `A_YANK` are the author actions. A code outside this list is not a thing MOD-9 holds.",
+          "$comment": "The codes that can be held. `M_RELIST`, `M_UNREVOKE` and `M_IDENTITY_RESET` are the reversals (MOD-9 names all three; the reset since contract 2.5.0, registry plan B-T4.2); `M_YANK`, `M_DELIST`, `M_DEPRECATE` and `M_REVOKE` are the takedowns the bound can hold; `A_REMOVAL_REQUEST` and `A_YANK` are the author actions. A code outside this list is not a thing MOD-9 holds.",
           "enum": [
             "M_RELIST",
             "M_UNREVOKE",
+            "M_IDENTITY_RESET",
             "M_YANK",
             "M_DELIST",
             "M_DEPRECATE",

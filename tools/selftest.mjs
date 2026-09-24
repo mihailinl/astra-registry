@@ -150,6 +150,14 @@ const MODULES = [
   // the file, turns the whole suite red — and bot/publish-apply.mjs runs this
   // suite as the last of five checks before it commits.
   "rehearsal-r2.mjs",
+  // ROLL-60's rehearsal one step on: that module judges the fixture series, and
+  // this one asks whether `tools/lib/rehearsal-push.mjs` serves it — each
+  // commit rebuilt to the signer's own sha, pushed one at a time, TRUST-3 and
+  // Pages asked, and `mihailinl/astra-registry` refused — against local bare
+  // remotes. It prints its own section header between two modules that print
+  // theirs, so it moves no existing name. **This line, its FLOORS entry and the
+  // file are one change**, for the reason written out at `regenerate.mjs`.
+  "rehearsal-push.mjs",
   // Beside signer.mjs for the reason signer.mjs is beside index-signature.mjs:
   // it is the same subject one step on. That module asks what the signer
   // decides to publish; this one asks whether what is published is what `main`
@@ -1929,6 +1937,7 @@ const FLOORS = new Map(Object.entries({
   "signer.mjs": 26,
   "signer-run.mjs": 10,
   "rehearsal-r2.mjs": 14,
+  "rehearsal-push.mjs": 13,
   "served-set.mjs": 35,
   "revocations.mjs": 24,
   "cli.mjs": 13,
@@ -1941,7 +1950,7 @@ const FLOORS = new Map(Object.entries({
   "contract-tokens.mjs": 28,
   "regenerate.mjs": 15,
   "migration-notice.mjs": 6,
-  "deadline.mjs": 11,
+  "deadline.mjs": 15,
   "times.mjs": 4,
   "settings.mjs": 14,
   "git-env.mjs": 8,

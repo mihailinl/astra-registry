@@ -298,7 +298,11 @@ export const CHECKS = [
   {
     name: "release-canary",
     party: "registry",
-    // Disarmed: `release-canary.yml` does not exist yet, so nothing posts here.
+    // Disarmed. `release-canary.yml` exists and its weekly cron is commented
+    // out, so only a dispatch posts here. As `deadline-watch` did: a dispatch
+    // on main posts the first heartbeat, which arms the receiver's check, and
+    // the commit that uncomments the cron records that post's `armed_at` here
+    // (`bot/tests/workflows.test.mjs` is red on a live cron until it does).
     source: "B-T1.6 (BOT-88), .github/workflows/release-canary.yml",
     interval_seconds: 604800,
     created_disarmed: true,
