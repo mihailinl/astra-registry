@@ -1,0 +1,180 @@
+# BOT-88's weekly release canary, the registry's half (registry plan B-T1.6,
+# reg.24).
+#
+# Every rule lives in `tools/release-canary.mjs`; this file only says when it
+# runs, with what it may touch, and where its verdict goes. Once a week
+# `mihailinl/astra-registry-canary` tags one release through each commit
+# trust.json allowlists (its `canary-tag.yml`, Mondays 06:17 UTC), and this
+# verifies the newest Release per commit: the attestation, every ID-28 field,
+# `.10` being THAT commit, `.13` being the tag's, the repository's two ids, the
+# owner file's binding line (ID-23), and that this week's tag has a Release at
+# all. It commits nothing. A failure is an alarm through BOT-46's channel and,
+# for a GitHub-side break in an allowlisted workflow, the start of
+# OPEN-OPS-17's emergency ceremony.
+#
+# ── the schedule is commented out until its receiver check is armed ────────
+#
+# `release-canary` is created DISARMED in the receiver (bot/lib/alert-checks.mjs;
+# the coordinator's rule of 2026-09-22, dev/couplings.md entry 25), and a
+# registry check with a live schedule and no arming recorded is red in
+# `bot/tests/workflows.test.mjs` — a poster that runs and fails before its first
+# post would never arm it. So this lands as `deadline-watch.yml` did: the cron
+# is commented, a dispatch on `main` posts the first heartbeat, and the commit
+# that uncomments the cron records that post's `armed_at` in the same change.
+#
+# ── the credential ─────────────────────────────────────────────────────────
+#
+# `verify` carries `github.token` at `contents: read` and nothing else. `gh`
+# will not run without a token (measured by B-T3.7b), and that one reads public
+# data and this repository and writes nowhere. The canary repository is public;
+# no secret of it, and no secret of this repository, is anywhere near the job
+# that downloads its bytes. The bytes are hashed and verified, never unpacked.
+
+name: Release canary
+
+on:
+  # The suite, on every change, so a pull request that breaks the canary is
+  # red before it merges. `verify` and `alert` never run on these.
+  pull_request:
+  push:
+    branches: [main]
+
+  # ── BOT-88's weekly verification, off until the receiver check is armed ──
+  #
+  # Mondays 12:17 UTC: six hours after the canary's 06:17 tag push, because a
+  # release takes about half an hour and GitHub has held this repository's
+  # schedules back by up to 13 hours (bot/lib/alert-checks.mjs). Off the hour.
+  #
+  # schedule:
+  #   - cron: '17 12 * * 1'
+
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-canary-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # The canary's own suite, against fixtures. On every event, and first: a
+  # verdict from a canary that fails its own tests means nothing.
+  suite:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: The canary, against a week built from measured material
+        run: node --test bot/tests/release-canary.test.mjs
+
+  verify:
+    needs: suite
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      status: ${{ steps.verify.outputs.status }}
+      codes: ${{ steps.verify.outputs.codes }}
+      hexes: ${{ steps.verify.outputs.hexes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: The newest canary Release through each allowlisted commit
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node tools/release-canary.mjs --verify
+
+  alert:
+    needs: [suite, verify]
+    if: always() && !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    environment: alerts
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+      ASTRA_DEADMAN_URL_RELEASE_CANARY: ${{ secrets.ASTRA_DEADMAN_URL_RELEASE_CANARY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert
+            bot/alert.mjs
+            bot/heartbeat.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+          sparse-checkout-cone-mode: false
+
+      # From job outputs, never an artifact. The codes are the canary's fixed
+      # vocabulary and the hexes are allowlisted commits; each is held to the
+      # verdict grammar here as well, so a value that is not one cannot become
+      # a line in the owner's chat.
+      - name: The verdict this run reached
+        env:
+          SUITE: ${{ needs.suite.result }}
+          VERIFY: ${{ needs.verify.result }}
+          STATUS: ${{ needs.verify.outputs.status }}
+          CODES: ${{ needs.verify.outputs.codes }}
+          HEXES: ${{ needs.verify.outputs.hexes }}
+        run: |
+          set -euo pipefail
+          codes=""
+          hexes=""
+          add() { codes="${codes:+$codes, }\"$1\""; }
+          [ "$SUITE" = success ] || add RELEASE_CANARY_SUITE_FAILED
+          [ "$VERIFY" = success ] || [ "$VERIFY" = failure ] || add RELEASE_CANARY_DID_NOT_RUN
+          for c in $CODES; do
+            [[ "$c" =~ ^[A-Z][A-Z0-9_]{0,47}$ ]] || { echo "::error::the canary reported a value that is not a code"; exit 1; }
+            add "$c"
+          done
+          for h in $HEXES; do
+            [[ "$h" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::the canary reported a value that is not a commit"; exit 1; }
+            hexes="${hexes:+$hexes, }\"$h\""
+          done
+          [ "$VERIFY" = failure ] && [ -z "$CODES" ] && add RELEASE_CANARY_RUN_FAILED
+          status=green
+          [ -n "$codes" ] && status=red
+          [ "$STATUS" = red ] && status=red
+          cat > verdict.json <<JSON
+          {
+            "schema": "astra.registry.alert-verdict/1",
+            "check": "release-canary",
+            "status": "$status",
+            "codes": [$codes],
+            "hexes": [$hexes],
+            "run": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          JSON
+          if [ -z "$codes" ]; then
+            grep -v '"codes": \[\]' verdict.json > verdict.tmp && mv verdict.tmp verdict.json
+          fi
+          if [ -z "$hexes" ]; then
+            grep -v '"hexes": \[\]' verdict.json > verdict.tmp && mv verdict.tmp verdict.json
+          fi
+          cat verdict.json
+
+      - uses: ./.github/actions/alert
+        with:
+          verdict: verdict.json
+          check: release-canary

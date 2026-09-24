@@ -500,3 +500,56 @@ test("M-T5.3 + M-T5.4: a re-send the command writes is one the watch passes, and
   assert.deepEqual([v.status, v.codes], ["red", ["MARKER_EARLIER_SAME_SENT_AT"]],
     "the watch did not read the marker's history, or did not refuse an earlier date under the same sent_at");
 });
+
+test("M-T5.4: the watch reads R4b's registry marker, so the plugins zone's 404 is a note before R4b and red from it", async () => {
+  // Three readers of one path: the R6 preflight (which the watch imports it
+  // from), the redirects' armed-set check, and this watch. If the two
+  // spellings drift apart, the watch sides with one of them silently.
+  const { R4B_MARKER } = await import("../../tools/cutover-preflight.mjs");
+  const successors = await import("../../site/successors.mjs");
+  assert.equal(successors.R4B_MARKER, R4B_MARKER,
+    "tools/cutover-preflight.mjs and site/successors.mjs name different R4b markers, and tools/deadline-watch.mjs reads the first");
+  const { deadlineText } = await import("../../tools/lib/binding-deadline.mjs");
+
+  const root = noticeEstate();
+  const html = path.join(root, "page.html");
+  const watch = (...banner) => {
+    const out = path.join(root, "verdict.json");
+    const r = node("tools/deadline-watch.mjs", ["--root", root, "--now", "2026-09-26T00:00:00Z", ...banner, "--out", out], root);
+    assert.equal(r.status, 0, r.out);
+    const v = JSON.parse(fs.readFileSync(out, "utf8"));
+    fs.rmSync(out);
+    return { ...v, out: r.out };
+  };
+
+  // The deadline alone is something the banner shows (MIG-13: its
+  // binding-deadline hook), so from its commit the watch reads the page.
+  write(root, DEADLINE_FILE, deadlineText("2026-11-26T00:00:00Z"));
+  commit(root, "the deadline");
+  let v = watch("--banner-status", "404");
+  assert.deepEqual([v.status, v.codes], ["green", []], v.out);
+  assert.match(v.out, /answered 404 before R4b opened: the plugins zone is not open yet/);
+  assert.match(v.out, /R4b has not opened: log\/rollout\/R4b-open\.json is not on this tree/);
+
+  write(root, R4B_MARKER, { opened_at: "2026-09-25T00:00:00Z" });
+  commit(root, "R4b opens");
+  v = watch("--banner-status", "404");
+  assert.deepEqual([v.status, v.codes, v.ids], ["red", ["BANNER_UNREACHABLE"], ["gamma"]],
+    "a 404 once R4b's marker is on the tree was not BANNER_UNREACHABLE, or the watch never read the marker");
+
+  fs.mkdirSync(path.join(root, "log"), { recursive: true });
+  assert.equal(node("tools/migration-notice.mjs", ["round", "--round", "1", "--sent-at", "2026-09-24T00:00:00Z", "--write", "--root", root], root).status, 0);
+  assert.equal(node("tools/migration-notice.mjs",
+    ["round", "--round", "2", "--sent-at", "2026-09-25T00:00:00Z", "--cutover", "2026-10-30T00:00:00Z", "--write", "--root", root], root).status, 0);
+  commit(root, "rounds 1 and 2 sent");
+  const page = (hooks) => `<!DOCTYPE html><html><body><div data-astra="migration-banner" data-astra-round="2">` +
+    `<p>Cutover: 2026-10-30.</p>${hooks}</div><script>self.__next_f.push([1,"2026-10-30T00:00:00Z"])</script></body></html>`;
+  fs.writeFileSync(html, page('<time hidden data-astra="cutover-planned" datetime="2026-10-30T00:00:00Z"></time>' +
+    '<time hidden data-astra="binding-deadline" datetime="2026-11-26T00:00:00Z"></time>'));
+  v = watch("--banner-body", html);
+  assert.deepEqual([v.status, v.codes], ["green", []], v.out);
+  fs.writeFileSync(html, page('<time hidden data-astra="binding-deadline" datetime="2026-11-26T00:00:00Z"></time>'));
+  v = watch("--banner-body", html);
+  assert.deepEqual([v.status, v.codes, v.ids], ["red", ["BANNER_DATE_DIFFERS"], ["gamma"]],
+    "a page carrying the announced date only as text passed the watch");
+});
