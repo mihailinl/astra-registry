@@ -44,12 +44,16 @@ and says which field and why.
 
 ### Leave `advisory_url` out
 
-The field is optional, and **a hand-written advisory omits it**. The registry
-compiles one advisory page per id on its own host and the bot sets the field
-from that base plus the id, ignoring any value a decision carries (MOD-13); the
-base is recorded once, in `tools/lib/revocations.mjs`, by the task that turns it
-into a refusal (M-T3.9). Until then, no URL written here is a URL anything
-checks.
+The field is optional, and **a hand-written advisory omits it**. The service
+serves one advisory page per id under one base,
+`https://astra.minice.ai/plugins/_/advisories/`, and the bot sets the field to
+that base plus the advisory's own id, ignoring any value a decision carries
+(MOD-13). The base is declared once, as `ADVISORY_URL_BASE` in
+`tools/lib/revocations.mjs`, and `node tools/build-revocations.mjs` refuses
+every other value (M-T3.9): a foreign host, the base with another advisory's id,
+or the right URL with a query, a fragment or a trailing slash. Each of those is
+a URL nobody compiled, signed into a document a user reads after their plugin
+was disabled.
 
 The example above used to carry
 `…/security/advisories/ASTRA-2026-0001` on `github.com`, and that link could not
