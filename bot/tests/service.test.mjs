@@ -514,6 +514,14 @@ const NOT_MEMBER_READERS = [
       "bucketed schema in doing so; the prover is not a reader under proof",
   },
   {
+    file: "tools/selftest/scope9.mjs",
+    reads: [],
+    why:
+      "RC-R3-2's SCOPE-9 half: it reads each entry's `name`, `kind`, `emitter`, `acceptor` and `state`, and " +
+      "the golden result bodies' `wait.code`, to compare the token file's PARTIES with what the bot sends. It " +
+      "reads no `members` table and evaluates no condition",
+  },
+  {
     file: "tools/gen-codes-table.mjs",
     reads: [],
     why:
