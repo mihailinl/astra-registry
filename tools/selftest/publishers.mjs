@@ -579,18 +579,27 @@ export async function run() {
       "policy/reserved-ids.json trusts the freed login KNICE-TECH as an owner again; anybody who registers it gets every astra- id");
     assert(reservedPrefixViolation("astra-anything", "KNICE-TECH/anything", real)?.prefix === "astra-",
       "a repository under the freed login KNICE-TECH was admitted to a reserved prefix");
-    const frozenPairs = (real.first_party_repos ?? []).filter((r) => r.toLowerCase().startsWith("knice-tech/"));
+    // The permanent form (M-T6.3 step 3). The frozen pair is gone from the
+    // policy: astra-chess moved to MINICE-AI. What stays true for good is that
+    // NO listed plugin has a source.repo under the freed login, whatever the
+    // policy lists — so knice-chess, the duplicate id still recorded there,
+    // stays unlisted, and a listing re-pointed at KNICE-TECH is red here.
+    assert((real.first_party_repos ?? []).every((r) => !r.toLowerCase().startsWith("knice-tech/")),
+      "policy/reserved-ids.json lists a KNICE-TECH repository as first-party again; M-T6.3 step 3 removed the last one");
     const pluginsRoot = path.join(REPO_ROOT, "plugins");
+    let underFreed = 0;
     for (const dir of fs.readdirSync(pluginsRoot)) {
       const file = path.join(pluginsRoot, dir, "plugin.json");
       if (!fs.existsSync(file)) continue;
       const doc = JSON.parse(fs.readFileSync(file, "utf8"));
-      const repo = String(doc.source?.repo ?? "").toLowerCase();
-      if (frozenPairs.some((r) => r.toLowerCase() === repo)) {
-        assert(doc.unlisted === true,
-          `plugins/${dir} is listed from ${doc.source.repo}, a repository under the freed login KNICE-TECH that policy/reserved-ids.json keeps only for a frozen listing`);
-      }
+      const owner = String(doc.source?.repo ?? "").split("/")[0].toLowerCase();
+      if (owner !== "knice-tech") continue;
+      underFreed++;
+      assert(doc.unlisted === true,
+        `plugins/${dir} is listed from ${doc.source.repo}, a repository under the freed login KNICE-TECH, which anybody can register`);
     }
+    // knice-chess is the one, and a guard over a set needs its floor.
+    assert(underFreed >= 1, "no listing under KNICE-TECH is on the tree, so the permanent guard is asserting about nothing; if knice-chess was deleted, delete this floor with it");
     assert(reservedPrefixViolation("astra-anything", "someone-else/x", real)?.prefix === "astra-",
       "policy/reserved-ids.json admits everybody; the prefix is no longer reserved");
     // MOD-16's staging repository (registry plan M-T2.1): the staging listing is

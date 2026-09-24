@@ -142,12 +142,12 @@ test("the floors are the numbers measured on the real repository, not zero", () 
   // These two constants are what stops a truncated checkout and a moved
   // `plugins/` directory from reading as a clean bill of health, and they are
   // exactly the kind of number that gets lowered to make a red run go away.
-  assert.ok(UNLISTED_FLOOR >= 6, `the unlisted floor is ${UNLISTED_FLOOR}; six listings were unlisted on 2026-09-19`);
+  assert.ok(UNLISTED_FLOOR >= 5, `the unlisted floor is ${UNLISTED_FLOOR}; five listings are unlisted since M-T6.3 step 3 relisted astra-chess (six on 2026-09-19)`);
   assert.ok(MOD_HISTORY_FLOOR >= 228, `the coverage history floor is ${MOD_HISTORY_FLOOR}; there were 228 commits on 2026-09-19`);
   assert.ok(PRIV_HISTORY_FLOOR >= 228, `the priv-scan history floor is ${PRIV_HISTORY_FLOOR}; there were 228 commits on 2026-09-19`);
 });
 
-test("the real repository still holds the six unlisted listings the floor counts", () => {
+test("the real repository still holds the unlisted listings the floor counts", () => {
   const dir = path.join(REPO, "plugins");
   const unlisted = fs.readdirSync(dir, { withFileTypes: true })
     .filter((e) => e.isDirectory())
