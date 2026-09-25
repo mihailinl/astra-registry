@@ -6,7 +6,7 @@
   "reasons": [
     {
       "code": "B_UNBOUND",
-      "stage": "binding",
+      "stage": "ownership",
       "location": null,
       "message": "FLOW-67: no listing names a-stranger/dice-roller at ffffffffffffffffffffffffffffffffffffffff and its binding line is absent. A panel submission has no thread to answer on, so a recorded refusal would be a durable statement about a stranger's repository made on one unsolicited call"
     }

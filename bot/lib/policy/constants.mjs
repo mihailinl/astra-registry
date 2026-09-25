@@ -72,10 +72,14 @@ export const REVIEW_SLA_HOURS = 48;
 export const SLA_BREACH_HOURS = REVIEW_SLA_HOURS * 2;
 
 /**
- * `stage` is `policy` for every entry here, and the contract says so rather
- * than this file: FLOW-11 requires a stage with every reason code and fixes it
- * at `policy` for `R_*` and `P_*`, which is all nineteen of these. It is
- * written out per entry rather than defaulted by the emitter, because FLOW-13's
+ * `stage` is `policy` for every `R_*`, `P_*`, `M_*` and `A_*` entry here, and
+ * the contract says so for the first two rather than this file: FLOW-11
+ * requires a stage with every reason code and fixes it at `policy` for `R_*`
+ * and `P_*`. The binding refusals (`B_*`) are at `ownership`, the stage of the
+ * file their line is read from (`.well-known/astra-plugin-owner`), beside
+ * `E_OWNERSHIP_UNPROVEN`. `bot/lib/service-decide.mjs`'s `stageOf` reads the
+ * stage from here, so a result reports the stage the FLOW-13 row publishes. It
+ * is written out per entry rather than defaulted by the emitter, because FLOW-13's
  * table is one entry per code with six members each, and a member a generator
  * supplies when the table omits it is a member that silently keeps the old
  * value after somebody adds a twentieth entry with a different stage.
@@ -316,19 +320,18 @@ export const POLICY_CODES = {
   // Contract B.7's `M_*` and `A_*` codes that end or clear a SUBMISSION, and
   // the author's yank, each of which the bot writes into a decision record's
   // `reasons` (BOT-30; BOT-34; DEC-7) and the panel shows with FLOW-13's row.
-  // Stage `policy`, which is what `bot/lib/service-decide.mjs`'s `stageOf`
-  // reports for them in a result's reason (FLOW-11 fixes a stage only for `R_*`
-  // and `P_*`, and the bot falls back to `policy`), so the row the panel reads
-  // and the reason the bot reports name one stage. Each `fix` is the
+  // Stage `policy`, which `bot/lib/service-decide.mjs`'s `stageOf` reads from
+  // here for a result's reason (FLOW-11 fixes a stage only for `R_*` and
+  // `P_*`), so the row the panel reads and the reason the bot reports name one
+  // stage. Each `fix` is the
   // clause that says what clears it: an approval blocks nothing (DEC-6); a
   // rejection is reopened only by a reversed appeal, a moderator's decision
   // (FLOW-18; MOD-33); an appeal's outcome is final (MOD-32); a stop or a
   // withdrawal ends its (`repository_id`, tag) for good, so only a new tag is
   // judged again (FLOW-26; MOD-10 refuses to lift a stop); and a yank "cannot
   // be undone by anyone" (FLOW-79; B.3). `A_BINDING_REVOKE`,
-  // `A_REMOVAL_REQUEST` and §7.2's listing actions are not here: the contract
-  // states no `fix` for them, so tools/gen-codes-table.mjs records them as
-  // owed, each with its reason.
+  // `A_REMOVAL_REQUEST` and §7.2's listing actions follow this block, because
+  // the contract states no `fix` for them.
   M_APPROVE: {
     level: "pass", stage: "policy", fix: "none",
     title: "A moderator approved this submission",
@@ -372,6 +375,111 @@ export const POLICY_CODES = {
     remedy:
       "The listing's bound account yanked these versions from the Astra plugins panel (FLOW-79). A yank cannot " +
       "be undone by anyone, and installed copies keep running. A new version is listed as usual.",
+  },
+
+  // ── the acts on a listing or a binding, which the contract gives no fix ─────
+  //
+  // §7.2's listing actions, and the author's two acts on a listing or a
+  // binding (B.7's `A_*`). The panel shows each with FLOW-13's row (FLOW-10).
+  // Until 2026-09-24 they had no row, so the panel could title none of them.
+  // The contract gives none of them a `fix`. Each `fix` and both `A_*` levels
+  // are the coordinator's decision under the owner's standing grant
+  // (2026-09-23), on lane S10's proposals. Lane S15 chose the `M_*` levels.
+  // tools/gen-codes-table.mjs holds all of them in `DECIDED`:
+  //   * `none` where nothing is left to clear: an author's own acts; a yank,
+  //     which nothing undoes (B.3; MOD-10); the reversals and the reset; and a
+  //     binding revocation, whose next release answers `B_BINDING_UNUSABLE`
+  //     with that code's own `fix` (§7.2).
+  //   * `moderator` for a delist, a deprecation and a revocation. The author
+  //     may appeal each one (MOD-31; MOD-32), and only a moderator's `M_RELIST`
+  //     or `M_UNREVOKE` undoes it (§7.2).
+  // A relist after an author's own removal is a moderator's act. The author
+  // asks for it through the panel's report page (MOD-54), not through
+  // `A_REMOVAL_REQUEST`, whose `fix` is therefore `none`.
+  A_BINDING_REVOKE: {
+    level: "note", stage: "policy", fix: "none",
+    title: "Binding revoked by its bound account",
+    remedy:
+      "The listing's bound account revoked its binding token from the Astra plugins panel (ID-17). Nothing " +
+      "needs clearing. From the next verdict a release still carrying the old line is refused " +
+      "`B_BINDING_UNUSABLE`, and one carrying a fresh token's line is held for a moderator as a changed " +
+      "binding (`R_BINDING_CHANGED`).",
+  },
+  A_REMOVAL_REQUEST: {
+    level: "note", stage: "policy", fix: "none",
+    title: "Removal requested by its author",
+    remedy:
+      "The listing's author asked from the Astra plugins panel for it to be removed (FLOW-28). From the bound " +
+      "account it is delisted at once: it leaves the catalogue and gets no updates, and installed copies are " +
+      "not removed. For a listing with no bound account the request is held, and a moderator decides it " +
+      "(MOD-9). Only a moderator lists a plugin again; to ask for that, send a report from the panel's report page.",
+  },
+  M_YANK: {
+    level: "error", stage: "policy", fix: "none",
+    title: "A moderator yanked these versions",
+    remedy:
+      "These versions leave the catalogue and are no longer offered, and installed copies keep running (§7.2). " +
+      "A yank cannot be undone by anyone (B.3): an appeal is recorded, but no decision brings these versions " +
+      "back (MOD-10). A later release is judged like any other.",
+  },
+  M_DELIST: {
+    level: "error", stage: "policy", fix: "moderator",
+    title: "A moderator delisted this plugin",
+    remedy:
+      "The plugin leaves the catalogue and gets no updates, and installed copies keep running (§7.2). A new " +
+      "release does not list it again. You can appeal from the Astra plugins panel (MOD-31); only a " +
+      "moderator's relist (`M_RELIST`) brings it back.",
+  },
+  M_RELIST: {
+    level: "note", stage: "policy", fix: "none",
+    title: "A moderator listed this plugin again",
+    remedy:
+      "A moderator lifted the plugin's delisting (§7.2). Like every reversal, it was held and confirmed by the " +
+      "registry's operator before it applied (MOD-9). The plugin is back in the catalogue and gets updates " +
+      "again. Nothing to do.",
+  },
+  M_DEPRECATE: {
+    level: "warn", stage: "policy", fix: "moderator",
+    title: "A moderator deprecated these versions",
+    remedy:
+      "A moderator published an advisory with action `warn` for these versions (§7.2). They stay listed and " +
+      "installable: Astra badges them and tells the user, and blocks and stops nothing. The advisory stands " +
+      "until a moderator lifts it (`M_UNREVOKE`). You can appeal from the Astra plugins panel (MOD-31).",
+  },
+  M_REVOKE: {
+    level: "error", stage: "policy", fix: "moderator",
+    title: "A moderator revoked these versions",
+    remedy:
+      "A moderator published an advisory for these versions (§7.2). With action `block_install`, Astra refuses " +
+      "new installs and updates and leaves a running copy alone; with `disable`, it also stops installed " +
+      "copies, and they do not start again. The advisory stands until a moderator lifts it (`M_UNREVOKE`). " +
+      "You can appeal from the Astra plugins panel (MOD-31).",
+  },
+  M_UNREVOKE: {
+    level: "note", stage: "policy", fix: "none",
+    title: "A moderator lifted an advisory",
+    remedy:
+      "A moderator deleted the advisory that deprecated or revoked these versions (§7.2). Like every reversal, " +
+      "it was held and confirmed by the registry's operator before it applied (MOD-9). Its effect lifts on each " +
+      "machine at the withdrawal list's next higher serial. Nothing to do.",
+  },
+  M_BINDING_REVOKE: {
+    level: "warn", stage: "policy", fix: "none",
+    title: "A moderator revoked this repository's binding token",
+    remedy:
+      "A moderator revoked the binding token this repository is bound with (ID-17). Listed versions are not " +
+      "touched. Nothing clears this code: the next release is refused `B_BINDING_UNUSABLE` (§7.2), and that " +
+      "code says what clears it.",
+  },
+  M_IDENTITY_RESET: {
+    level: "note", stage: "policy", fix: "none",
+    title: "A moderator reset this listing's recorded identity",
+    remedy:
+      "A moderator voided every identity this plugin id had recorded, and deleted its identity record where it " +
+      "had one (§7.2; ID-40). Like every reversal, it was held and confirmed by the registry's operator before " +
+      "it applied (MOD-9). It clears `B_REPOSITORY_RECYCLED` for the identities it voided, and nothing clears " +
+      "it. The listing is now frozen: its next release needs a binding line, and is held for a moderator as a " +
+      "first binding.",
   },
 };
 

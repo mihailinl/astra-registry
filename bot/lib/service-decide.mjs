@@ -155,14 +155,22 @@ export function reasonOf(code, { location = null, message = null } = {}) {
 }
 
 /**
- * FLOW-11's stage: the check's own for a check code (`bot/lib/codes.mjs`),
- * `policy` for every `R_*` and `P_*` (FLOW-11's words), and `binding` for the
- * bound world's `B_*`, whose FLOW-13 rows reg.61a has not written yet.
+ * FLOW-11's stage, which is the stage FLOW-13's row for the code publishes.
+ * That is the declared one, read from the two tables `tools/gen-codes-table.mjs`
+ * builds the rows from: `bot/lib/codes.mjs` for a check code, and
+ * `POLICY_CODES` for a policy, binding, moderation or author code. Anything
+ * undeclared is `policy`, FLOW-11's word for every `R_*` and `P_*`.
+ *
+ * Until 2026-09-24 this answered `binding` for every `B_*` absent from
+ * `CODES`. That was a placeholder for rows reg.61a had not written. The rows
+ * were then written at stage `ownership` (contract 2.5.0, lane S6), and the
+ * placeholder stayed. So the five binding refusals reached the panel with one
+ * stage in the result and another in the row (ops couplings 161).
+ * `bot/tests/service.test.mjs` now holds every row the bot reports to this.
  */
 export function stageOf(code) {
   if (Object.hasOwn(CODES, code)) return CODES[code].stage;
-  if (/^[PR]_/.test(code)) return "policy";
-  if (/^B_/.test(code)) return "binding";
+  if (Object.hasOwn(POLICY_CODES, code)) return POLICY_CODES[code].stage;
   return "policy";
 }
 
