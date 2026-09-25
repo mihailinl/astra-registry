@@ -1,6 +1,6 @@
 {
-  "contract_version": "2.14.0",
-  "source_commit": "aff46c11c90a11a7d73d3b31c33072484a16e083",
+  "contract_version": "2.15.0",
+  "source_commit": "77d6766ae878708270f57437e9ba91ae39b18469",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -5340,6 +5340,24 @@
   ],
   "flow13_table": [
     {
+      "code": "A_BINDING_REVOKE",
+      "level": "note",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "Binding revoked by its bound account",
+      "remedy": "The listing's bound account revoked its binding token from the Astra plugins panel (ID-17). Nothing needs clearing. From the next verdict a release still carrying the old line is refused `B_BINDING_UNUSABLE`, and one carrying a fresh token's line is held for a moderator as a changed binding (`R_BINDING_CHANGED`)."
+    },
+    {
+      "code": "A_REMOVAL_REQUEST",
+      "level": "note",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "Removal requested by its author",
+      "remedy": "The listing's author asked from the Astra plugins panel for it to be removed (FLOW-28). From the bound account it is delisted at once: it leaves the catalogue and gets no updates, and installed copies are not removed. For a listing with no bound account the request is held, and a moderator decides it (MOD-9). Only a moderator lists a plugin again; to ask for that, send a report from the panel's report page."
+    },
+    {
       "code": "A_STOP",
       "level": "error",
       "stage": "policy",
@@ -6222,6 +6240,42 @@
       "remedy": "Nothing to do. An approval clears holds and nothing else: every check runs again in the run that acts on it, and it never shortens a publication delay, a stop or a pending notice (DEC-6)."
     },
     {
+      "code": "M_BINDING_REVOKE",
+      "level": "warn",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "A moderator revoked this repository's binding token",
+      "remedy": "A moderator revoked the binding token this repository is bound with (ID-17). Listed versions are not touched. Nothing clears this code: the next release is refused `B_BINDING_UNUSABLE` (§7.2), and that code says what clears it."
+    },
+    {
+      "code": "M_DELIST",
+      "level": "error",
+      "stage": "policy",
+      "fix": "moderator",
+      "panel_only": false,
+      "title": "A moderator delisted this plugin",
+      "remedy": "The plugin leaves the catalogue and gets no updates, and installed copies keep running (§7.2). A new release does not list it again. You can appeal from the Astra plugins panel (MOD-31); only a moderator's relist (`M_RELIST`) brings it back."
+    },
+    {
+      "code": "M_DEPRECATE",
+      "level": "warn",
+      "stage": "policy",
+      "fix": "moderator",
+      "panel_only": false,
+      "title": "A moderator deprecated these versions",
+      "remedy": "A moderator published an advisory with action `warn` for these versions (§7.2). They stay listed and installable: Astra badges them and tells the user, and blocks and stops nothing. The advisory stands until a moderator lifts it (`M_UNREVOKE`). You can appeal from the Astra plugins panel (MOD-31)."
+    },
+    {
+      "code": "M_IDENTITY_RESET",
+      "level": "note",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "A moderator reset this listing's recorded identity",
+      "remedy": "A moderator voided every identity this plugin id had recorded, and deleted its identity record where it had one (§7.2; ID-40). Like every reversal, it was held and confirmed by the registry's operator before it applied (MOD-9). It clears `B_REPOSITORY_RECYCLED` for the identities it voided, and nothing clears it. The listing is now frozen: its next release needs a binding line, and is held for a moderator as a first binding."
+    },
+    {
       "code": "M_REJECT",
       "level": "error",
       "stage": "policy",
@@ -6229,6 +6283,42 @@
       "panel_only": false,
       "title": "A moderator rejected this submission",
       "remedy": "A Recheck does not reopen a rejection (FLOW-18). You can appeal it from the Astra plugins panel; if a moderator reverses the rejection on appeal, exactly one Recheck of this submission is opened (MOD-33)."
+    },
+    {
+      "code": "M_RELIST",
+      "level": "note",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "A moderator listed this plugin again",
+      "remedy": "A moderator lifted the plugin's delisting (§7.2). Like every reversal, it was held and confirmed by the registry's operator before it applied (MOD-9). The plugin is back in the catalogue and gets updates again. Nothing to do."
+    },
+    {
+      "code": "M_REVOKE",
+      "level": "error",
+      "stage": "policy",
+      "fix": "moderator",
+      "panel_only": false,
+      "title": "A moderator revoked these versions",
+      "remedy": "A moderator published an advisory for these versions (§7.2). With action `block_install`, Astra refuses new installs and updates and leaves a running copy alone; with `disable`, it also stops installed copies, and they do not start again. The advisory stands until a moderator lifts it (`M_UNREVOKE`). You can appeal from the Astra plugins panel (MOD-31)."
+    },
+    {
+      "code": "M_UNREVOKE",
+      "level": "note",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "A moderator lifted an advisory",
+      "remedy": "A moderator deleted the advisory that deprecated or revoked these versions (§7.2). Like every reversal, it was held and confirmed by the registry's operator before it applied (MOD-9). Its effect lifts on each machine at the withdrawal list's next higher serial. Nothing to do."
+    },
+    {
+      "code": "M_YANK",
+      "level": "error",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "A moderator yanked these versions",
+      "remedy": "These versions leave the catalogue and are no longer offered, and installed copies keep running (§7.2). A yank cannot be undone by anyone (B.3): an appeal is recorded, but no decision brings these versions back (MOD-10). A later release is judged like any other."
     },
     {
       "code": "N_HOST_RPC_SCAN_SCOPE",
@@ -6587,7 +6677,7 @@
       "bot/lib/codes.mjs",
       "bot/lib/policy/constants.mjs"
     ],
-    "codes": 138
+    "codes": 148
   },
   "fixed_reasons": {
     "A_YANK": "Yanked at its author's own request, made from the Astra plugins panel.",
