@@ -132,9 +132,9 @@ inputs:
     description: >-
       Why this alert job posts no BOT-85 heartbeat. §2.0 says every SCHEDULED
       check posts one, and most alert jobs are scheduled — but some are not,
-      and some are watched by another party. `ingest.yml` is the named case:
-      BOT-51's schedule is deliberately absent from BOT-85's list because the
-      plugins service's BOT-47 watches it, so an `alerts` job there would be
+      and some are watched by another party. `ingest.yml` was the named case
+      until cutover commit E deleted it (registry plan B-T5.2): its schedule
+      was absent from BOT-85's list, so an `alerts` job there would have been
       posting to a check nobody meant to create. The omission is written down
       with its reason rather than inferred from an empty input, because an
       absent heartbeat is invisible and a reason is not.

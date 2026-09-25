@@ -95,8 +95,9 @@ cargo build --release --manifest-path bot/manifest-probe/Cargo.toml
 ```
 
 `bot/manifest-probe/astra-plugins.pin` pins `ASTRA_PLUGINS_REF` to a commit SHA,
-and it is the only place that SHA is written — `ingest.yml`, `build-index.yml`
-and `bot-tests.yml` all read it out of there. Bumping it is a reviewed commit,
+and it is the only place that SHA is written — `build-index.yml` and
+`bot-tests.yml` read it out of there, as `ingest.yml` did until cutover commit E
+deleted it. Bumping it is a reviewed commit,
 because it changes the rules a stranger's listing is judged by; after R3 exits
 it also needs an operator acknowledgement, because the file is in TRUST-31's
 hashed set.
@@ -167,11 +168,11 @@ unauthenticated payload carrying nothing but `owner/repo/tag`: an attacker who
 forges one can at most cause a re-check of a listing that is already pinned to a
 repository identity.
 
-`.github/workflows/ingest.yml` enforces that split — `check` downloads a
-stranger's archive with `contents: read` and no secrets; `comment` has
-`issues: write` and runs no code from the submission at all, reading one markdown
-file out of an artifact. Stranger-controlled text never reaches a `run:` block
-through `${{ }}`.
+`.github/workflows/plugins-ingest.yml` enforces that split, as
+`.github/workflows/ingest.yml` did until cutover commit E deleted it: the job
+that downloads a stranger's archive has `contents: read` and no secrets, and
+the jobs that write run no code from the submission at all. Stranger-controlled
+text never reaches a `run:` block through `${{ }}`.
 
 ## Signing the catalogue
 
