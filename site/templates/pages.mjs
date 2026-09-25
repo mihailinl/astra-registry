@@ -206,22 +206,24 @@ a GitHub Release asset in <em>your</em> repository. The bytes users install are 
 release page; this registry never hosts them, and never gets a copy to swap.</p>
 
 <h2>3. Ask to be listed &mdash; once, ever</h2>
-<p>Open a listing issue with two fields: your repository and the tag.
-<a href="${href(`https://github.com/${repo}/issues/new?template=plugin-listing.yml`)}">The form is
-here.</a> A bot downloads the release asset, checks the attestation against a root-signed allowlist
-of build workflows, parses the manifest with the daemon&rsquo;s own parser, and either lists it or
-tells you exactly which check failed and in which file.</p>
-<p>You can rehearse all of that before you open anything:</p>
+<p>Since the cutover (ROLL-33) a listing is requested in Minice&rsquo;s panel, not through an issue
+here. Sign in at <a href="${href("https://astra.minice.ai/plugins")}">astra.minice.ai/plugins</a> with
+a Minice account holding <code>astraUser</code>, mint a binding token for your repository, commit the
+line it shows you &mdash; <code>astra-binding: &lt;token&gt;</code> &mdash; into
+<code>.well-known/astra-plugin-owner</code> on the commit you tag, and submit the repository and the
+tag. A bot downloads the release asset, checks the attestation against a root-signed allowlist of
+build workflows, parses the manifest with the daemon&rsquo;s own parser, and either lists it or tells
+you exactly which check failed and in which file, by a notice to your account.</p>
+<p>You can rehearse all of that before you submit anything:</p>
 <pre><code>astra-plugin publish --dry-run</code></pre>
 <p>It runs every check the registry runs that can be run locally, and names the ones only the
 registry can run.</p>
 
 <h2>4. Every release after that</h2>
-<p>Push a tag. That is the whole step. This registry finds out three ways &mdash; a ping from
-<code>astra-plugin publish --notify</code>, a <code>/release v0.2.0</code> comment on your listing
-issue, or a daily poll of your <code>releases.atom</code> with <code>If-None-Match</code> as a
-backstop &mdash; and all three end in the same verification from scratch. None of them is a claim
-the registry believes; they are all just a request to go and look.</p>
+<p>Push a tag with your listing&rsquo;s tag prefix, on a commit that carries your binding line. That
+is the whole step. This registry polls your release feed every 30 minutes and takes a new release up
+at its next run, every 10 minutes, and verifies it from scratch. A tag is a request to go and look,
+never a claim the registry believes.</p>
 <p>A routine release publishes itself with nobody in the loop. Exactly three things stop and wait
 for a person, and one thing adds a delay; <a href="../policy/">the policy</a> says which, how long,
 and what happens when the queue runs late.</p>
@@ -389,10 +391,12 @@ counts in the catalogue are <code>0</code> because nothing counts them.</li>
 </ul>
 
 <h2>How to make something appear here</h2>
-<p>Open an issue with the plugin id and what you observed. Behaviour reports beat every heuristic
-this registry has, and they are the mechanism it actually relies on. For anything that would let
-somebody ship code to a user, use the embargoed path on the <a href="../security/">security
-page</a> instead of a public issue.</p>
+<p>Report it from the plugin's page in Minice's panel, at
+<a href="${href("https://astra.minice.ai/plugins")}">astra.minice.ai/plugins</a>, signed in as an Astra
+owner, with the version and what you observed. Since the cutover (ROLL-33) an issue on this
+repository reaches nobody. Behaviour reports beat every heuristic this registry has, and they are
+the mechanism it actually relies on. For anything that would let somebody ship code to a user, use
+the path on the <a href="../security/">security page</a> instead.</p>
 `;
   return page({ title: "Transparency — Astra plugin registry", description: "Every moderation action this registry has taken.", depth: 1, active: "transparency", body });
 }
