@@ -2269,15 +2269,54 @@ test("repo-settings: TRUST-44's read of what ROLL-7 pins fits the 12 calls the c
 
 // ── M-T6.2: no issue channel from cutover on (DEC-12, ROLL-33) ──────────────
 //
-// Armed by `log/cutover.json`, so these fixtures are the whole proof until the
-// cutover commit: the real tree is not armed, and the rule says so and names
-// `ingest.yml`'s three triggers.
-
-const INGEST_REAL = fs.readFileSync(path.join(REPO, ".github", "workflows", "ingest.yml"), "utf8");
+// Armed by `log/cutover.json`, so these fixtures were the whole proof until the
+// cutover commit.
+//
+// Cutover commit E (registry plan B-T5.2) deleted `ingest.yml`, which these
+// fixtures were built from, so the file is written out below, as commits B to
+// D left it. It carries what each rule reads: the drain cron routed to
+// `bot/watch.mjs --drain`, a no-input dispatch, and a `comment` job. The real
+// `comment` job granted `issues: write`, which commit C exempted by name until
+// E; that grant is put back only where the test is about it (INGEST_WRITES).
+const INGEST_REAL = [
+  "name: Ingest",
+  "",
+  "on:",
+  "  schedule:",
+  "    - cron: '17 * * * *'",
+  "  workflow_dispatch:",
+  "",
+  "permissions: {}",
+  "",
+  "jobs:",
+  "  drain:",
+  "    runs-on: ubuntu-24.04",
+  "    permissions:",
+  "      contents: read",
+  "    steps:",
+  "      - name: Which queued releases are ripe",
+  "        env:",
+  "          SCHEDULE: ${{ github.event.schedule }}",
+  "        run: |",
+  '          case "$SCHEDULE" in',
+  "            '17 * * * *')",
+  "              node bot/watch.mjs --drain --out out",
+  "              ;;",
+  "            *)",
+  "              exit 1",
+  "              ;;",
+  "          esac",
+  "  comment:",
+  "    needs: drain",
+  "    runs-on: ubuntu-24.04",
+  "    permissions:",
+  "      contents: read",
+  "    steps: []",
+  "",
+].join("\n");
 // The three trigger blocks as ingest.yml carried them until the cutover commit
-// (ROLL-33) removed them. Before that commit the real file IS the pre-cutover
-// shape; from it on, that shape is the real file with these put back, so both
-// fixtures stay built from committed material on either side of the cutover.
+// (ROLL-33) removed them. The pre-cutover shape is the file above with these
+// put back.
 const ISSUE_TRIGGER_BLOCKS = [
   /\n {2}issues:\n {4}types: \[[^\]]*\]/,
   /\n {2}issue_comment:\n {4}types: \[[^\]]*\]/,
@@ -2288,6 +2327,10 @@ const INGEST_PRE = INGEST_HAS_TRIGGERS ? INGEST_REAL : INGEST_REAL.replace(/^on:
   "on:\n  issues:\n    types: [opened, edited, labeled]\n  issue_comment:\n    types: [created]\n" +
   "  repository_dispatch:\n    types: [plugin-release]\n");
 const INGEST_CUT = ISSUE_TRIGGER_BLOCKS.reduce((t, b) => t.replace(b, ""), INGEST_PRE);
+// The cut file with its `comment` job's grant back, as commits B to D ran it.
+const COMMENT_GRANT = "  comment:\n    needs: drain\n    runs-on: ubuntu-24.04\n    permissions:\n      contents: read\n";
+if (INGEST_CUT.split(COMMENT_GRANT).length !== 2) throw new Error("the legacy ingest.yml has no comment job to grant from");
+const INGEST_WRITES = INGEST_CUT.replace(COMMENT_GRANT, COMMENT_GRANT.replace("contents: read", "issues: write"));
 // Stamped now: ROLL-33 makes cutover_at the commit time, and the rule holds the
 // marker to the commit that brought it (the stamp leg, below).
 const nowStamp = () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -2328,7 +2371,7 @@ test("no-issue-channel: the cutover commit's own shape — triggers dropped, dra
     assert.equal((cut.match(new RegExp(block.source, "g")) ?? []).length, 1, `${block} did not match exactly once in ingest.yml`);
     cut = cut.replace(block, "");
   }
-  // From the cutover commit on, the real file is that shape.
+  // From the cutover commit until commit E, the file was that shape.
   if (!INGEST_HAS_TRIGGERS) assert.equal(INGEST_REAL, cut, "ingest.yml carries no issue trigger, but is not the cutover shape");
   assert.ok(nicTriggers(cut).some((t) => t.trigger === "schedule"), "the edit removed the schedule too");
   const r = nic(channelFixture("nic-cut", { ingest: cut, cutover: true }).dir);
@@ -2388,7 +2431,7 @@ test("no-issue-channel: the marker's cutover_at is the time main acquired it, wi
   assert.equal(m.status, "green", m.detail.join("\n"));
 });
 
-test("no-issue-channel: from cutover no workflow grants `issues: write`, except ingest.yml until commit E deletes it", () => {
+test("no-issue-channel: from cutover no workflow grants `issues: write`, ingest.yml included since commit E", () => {
   const writer = "name: w\non:\n  schedule:\n    - cron: '1 1 * * *'\njobs:\n  j:\n    runs-on: ubuntu-24.04\n    permissions:\n      contents: read\n      issues: write\n    steps: []\n";
   const armed = nic(channelFixture("nic-writer", { ingest: INGEST_CUT, extra: { "writer.yml": writer }, cutover: true }).dir);
   assert.equal(armed.status, "red");
@@ -2397,13 +2440,19 @@ test("no-issue-channel: from cutover no workflow grants `issues: write`, except 
   // Before cutover an issue writer is the live path, not a finding.
   const pre = nic(channelFixture("nic-writer-pre", { extra: { "writer.yml": writer } }).dir);
   assert.equal(pre.status, "green", pre.detail.join("\n"));
-  // ingest.yml's own grants are exempt by name until E deletes the file, and a
-  // commented grant is not a grant.
-  const ingestWrites = INGEST_CUT.includes("issues: write") ? INGEST_CUT : `${INGEST_CUT}\n# issues: write\n`;
-  const exempt = nic(channelFixture("nic-writer-exempt", {
-    ingest: ingestWrites, extra: { "quiet.yml": writer.replace("      issues: write\n", "      # issues: write\n") }, cutover: true,
+  // ingest.yml's own grants were exempt by name from commit C until E deleted
+  // the file. The exemption went with it: a workflow called ingest.yml after E
+  // is a new file, and its grant is red like any other.
+  assert.notEqual(INGEST_WRITES, INGEST_CUT, "the legacy file this proves on grants nothing");
+  const legacy = nic(channelFixture("nic-writer-legacy", { ingest: INGEST_WRITES, cutover: true }).dir);
+  assert.equal(legacy.status, "red", legacy.detail.join("\n"));
+  assert.match(legacy.detail.join("\n"), /ingest\.yml:\d+ grants `issues: write`/);
+  // A commented grant is not a grant.
+  const quiet = nic(channelFixture("nic-writer-commented", {
+    ingest: INGEST_WRITES.replace("      issues: write\n", "      # issues: write\n"),
+    extra: { "quiet.yml": writer.replace("      issues: write\n", "      # issues: write\n") }, cutover: true,
   }).dir);
-  assert.equal(exempt.status, "green", exempt.detail.join("\n"));
+  assert.equal(quiet.status, "green", quiet.detail.join("\n"));
 });
 
 // ── drain-age's leg 2 retires at cutover (M-T6.2 commit B, B-T5.1) ──────────
@@ -2447,6 +2496,41 @@ test("drain-age: a stale releases-seen is red before cutover and retired after i
   const r = drainAge(unrouted.dir, { now });
   assert.equal(r.status, "red");
   assert.ok(r.codes.includes("DRAIN_CRON_UNROUTED"), r.codes.join(" "));
+});
+
+// ── drain-age's leg 1 retires with commit E (B-T5.2) ────────────────────────
+//
+// E deletes ingest.yml after the drain's last run. With the cutover marker on
+// the tree and the queue empty that is the drain retired, and green. A queued
+// release with no drain left to publish it is red, and so is a missing file on
+// a tree the cutover never reached.
+function retiredDrainFixture(name, { cutover = true, queued = false } = {}) {
+  const f = fixture(name);
+  f.write("README.md", "a tree after commit E\n");
+  if (cutover) f.write(NIC_CUTOVER, CUTOVER_DOC);
+  if (queued) {
+    f.write("state/queue/dice-roller@0.3.0.json", {
+      id: "dice-roller", version: "0.3.0", repo: "someone/dice-roller", tag: "v0.3.0",
+      queued_at: "2026-09-27T00:00:00Z", publish_after: "2026-09-28T00:00:00Z", reason: "P_DELAY_HIGH_RISK",
+    });
+  }
+  return f.commit("fixture");
+}
+
+test("drain-age: after commit E the drain is retired, and a queued release with no drain is red", () => {
+  const now = new Date("2026-10-10T00:00:00Z");
+  const retired = drainAge(retiredDrainFixture("drain-e").dir, { now });
+  assert.equal(retired.status, "green", retired.detail.join("\n"));
+  assert.match(retired.detail.join("\n"), /leg 1 is retired/);
+
+  const stranded = drainAge(retiredDrainFixture("drain-e-queued", { queued: true }).dir, { now });
+  assert.equal(stranded.status, "red", stranded.detail.join("\n"));
+  assert.ok(stranded.codes.includes("DRAIN_WORKFLOW_ABSENT"), stranded.codes.join(" "));
+  assert.match(stranded.detail.join("\n"), /holds 1 release\(s\) waiting for it/);
+
+  const early = drainAge(retiredDrainFixture("drain-e-early", { cutover: false }).dir, { now });
+  assert.equal(early.status, "red", early.detail.join("\n"));
+  assert.ok(early.codes.includes("DRAIN_WORKFLOW_ABSENT"), early.codes.join(" "));
 });
 
 // ── MOD-54's report page, from commit C on (M-T6.2) ─────────────────────────

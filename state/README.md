@@ -20,10 +20,14 @@ the attestation re-verified, ownership re-proved. The entry's recorded digests
 exist so that a swapped asset **restarts** the clock rather than inheriting the
 time already served.
 
-The queue and `releases-seen.json` are written by
-`.github/workflows/ingest.yml`'s `publish` job, which runs no submitter code: it
-copies JSON out of an artifact, checks every path against the shape it is
-allowed to have, revalidates the tree with `tools/validate.mjs`, and commits.
+The queue and `releases-seen.json` were written by
+`.github/workflows/ingest.yml`'s `publish` job until the cutover. That job ran no
+submitter code: it copied JSON out of an artifact, checked every path against
+the shape it was allowed to have, revalidated the tree with
+`tools/validate.mjs`, and committed. Cutover commit E (registry plan B-T5.2)
+deleted `ingest.yml` once the queue was empty. The service path writes no queue
+entry, and removes a legacy one when it publishes that release; `drain-age` in
+the moderation-coverage canary is red if an entry appears with no drain left.
 
 ## `publishers-without-listing.json`, and why it is here
 

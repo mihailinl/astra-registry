@@ -112,7 +112,9 @@ on:
   # re-check` runs daily but writes only for a publisher whose tier is
   # `verified`, and both records here are `astra_team`.
   workflow_run:
-    workflows: ["Ingest", "Plugins ingest", "Plugins moderation", "publisher re-check"]
+    # `Ingest` left every list here with cutover commit E (registry plan
+    # B-T5.2), which deleted ingest.yml after the queue drain's last run.
+    workflows: ["Plugins ingest", "Plugins moderation", "publisher re-check"]
     types: [completed]
   # Hourly. THE BOT'S PUBLISH COMMIT DOES NOT TRIGGER THIS FILE by `push`:
   # `ingest.yml`'s publish job commits with the repository's own
