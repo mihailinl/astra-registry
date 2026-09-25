@@ -1,214 +1,34 @@
 #!/usr/bin/env node
-// The half of task 3.4 that runs when nobody pings, and the half of task 3.5
-// that runs when a delay ends.
+// The half of task 3.5 that runs when a delay ends: which releases waiting in
+// `state/queue/` have served their publication delay.
 //
-//   node bot/watch.mjs --watch --out out     poll the quiet listings
 //   node bot/watch.mjs --drain --out out     which delayed releases are ripe
-//   node bot/watch.mjs --sla issues.json     how late is the review queue
 //
-// All three produce `out/dispatch.json` — a list of `{repo, tag, submitter}`
-// the workflow turns into ingest runs — and nothing else. **This program never
-// decides anything.** It cannot: it has not downloaded a bundle, checked an
-// attestation or read a manifest. It answers one question, "is there something
-// here that has not been ingested", and hands the answer to the pipeline that
-// verifies from scratch. A backstop that took a shortcut because "we already
-// know this repository" would be a second, weaker path into the catalogue.
+// It produces `out/dispatch.json` — a list of `{repo, tag, submitter}` the
+// workflow turns into ingest runs — and nothing else. **This program never
+// decides anything.** It has not downloaded a bundle, checked an attestation
+// or read a manifest; it reads files this repository wrote and hands what is
+// ripe to the pipeline that verifies from scratch.
+//
+// It used to run two other modes. `--watch` was the daily release backstop,
+// which polled every quiet listing's releases feed and filtered what it found
+// by BOT-74's tag-prefix rule; the cutover (M-T6.2 commit B) paused it, and
+// `plugins-ingest.yml`'s poll replaced it (B-T5.1). `--sla` reported how late
+// the issue review queue was, for the `sla` job commit B removed. Commit D
+// (registry plan B-T5.2) deletes both, with `runWatch`, `bot74Filter` and
+// `recordedTagsByRepo`, which only the backstop and the issue path's
+// `/release` ping read. The drain stays until the queue has run dry; commit E
+// deletes this file with `ingest.yml`.
 
 import fs from "node:fs";
 import path from "node:path";
 
-import { loadSources, REPO_ROOT } from "../tools/lib/sources.mjs";
+import { REPO_ROOT } from "../tools/lib/sources.mjs";
 
-import { fetchRelease } from "./lib/github.mjs";
-import {
-  SEEN_FILE,
-  newReleases,
-  readSeen,
-  resolveSubmitter,
-  serialiseSeen,
-  watchPlan,
-} from "./lib/notify.mjs";
-import { readQueue, ripeQueueEntries, slaReport } from "./lib/policy.mjs";
-import { pollFeed } from "./lib/poll.mjs";
+import { readQueue, ripeQueueEntries } from "./lib/policy.mjs";
 
 /** At most this many ingests are started by one cron run. */
 const MAX_DISPATCH = 20;
-
-// ── BOT-74's filters, applied before anything is dispatched (B-T3.9) ───────
-//
-// A monorepo publishes tags this registry has no opinion about.
-// `mihailinl/AstraPlugins` alone tags `cli-v…`, `plugin-release/v…` and the
-// plugin's own `v…`, and the backstop's releases feed shows all of them. Every
-// one it dispatches costs a full ingest — a clone, an archive walk, an
-// attestation verification — and from R3 it also costs a decision RECORD, a
-// durable public statement that this registry refused `cli-v1.4.0` as a plugin
-// release. It never was one.
-//
-// Written as a property over the tags the listing has ALREADY recorded, and
-// not as a list of the prefixes this repository happens to use. A list is
-// wrong for the first monorepo that names its tags differently, and the way it
-// is wrong is silent: the tag passes the filter, the ingest runs, and the
-// refusal is recorded.
-
-/**
- * Every tag the listings naming each repository have recorded, keyed by the
- * lowercased `owner/name`.
- *
- * ONE entry per repository, holding the tags of EVERY listing that names it.
- * The first spelling built a Map from one entry per listing, and a Map keeps
- * the last value under a repeated key: `mihailinl/AstraPlugins` holds ten
- * listings, so the backstop filtered nine of them by the tenth's prefix and
- * dropped their releases as foreign tags. Shared with the `/release` ping
- * (`bot/triage.mjs`), so the two BOT-74 filters cannot disagree about what
- * a repository has recorded.
- */
-export function recordedTagsByRepo(sources) {
-  const out = new Map();
-  for (const p of sources?.plugins ?? []) {
-    const repo = p.doc?.source?.repo;
-    if (!repo) continue;
-    const key = String(repo).toLowerCase();
-    const tags = (p.versions ?? []).map((v) => v.doc?.release?.tag).filter(Boolean).map(String);
-    out.set(key, [...new Set([...(out.get(key) ?? []), ...tags])]);
-  }
-  return out;
-}
-
-/** Everything before the first digit: `cli-v1.4.0` → `cli-v`, `v0.2.0` → `v`. */
-const tagPrefix = (tag) => /^([^0-9]*)/.exec(String(tag ?? ""))?.[1] ?? "";
-
-/**
- * Should this tag be ingested at all?
- *
- * @param {{tag: string, listedTags: string[]}} opts `listedTags` are the tags
- *   the listing's own version documents record — the registry's evidence of
- *   what a release tag looks like for THIS plugin.
- * @returns {{pass: boolean, why: string}}
- */
-export function bot74Filter({ tag, listedTags = [] }) {
-  const recorded = listedTags.filter(Boolean).map(String);
-  if (recorded.some((t) => t === tag)) {
-    return { pass: false, why: `${tag} is already recorded on this listing, so there is nothing new to ingest` };
-  }
-  const prefixes = new Set(recorded.map(tagPrefix));
-  if (prefixes.size === 0) {
-    // A listing with no recorded tag has no evidence to filter by, and
-    // inventing one here would be this module deciding what a release tag
-    // looks like. It passes, and says why — a first listing is exactly the
-    // case a human reads anyway (R_FIRST_LISTING).
-    return { pass: true, why: `${tag}: this listing records no tag yet, so there is no prefix to compare against` };
-  }
-  const mine = tagPrefix(tag);
-  if (!prefixes.has(mine)) {
-    return {
-      pass: false,
-      why:
-        `${tag} has the prefix ${JSON.stringify(mine)} and every tag this listing records has one of ` +
-        `${[...prefixes].map((p) => JSON.stringify(p)).join(", ")}. A monorepo tags more than one thing, and ` +
-        "an ingest of the wrong one records a public refusal of a release that was never a plugin release",
-    };
-  }
-  return { pass: true, why: `${tag} matches the prefix this listing's recorded tags use` };
-}
-
-const iso = (d) => `${new Date(d).toISOString().slice(0, 19)}Z`;
-
-// `pollFeed` — the one conditional GET the whole backstop economy rests on —
-// moved to `./lib/poll.mjs` (B-T2.6), which is where the poll's memory, the
-// signed Actions cache and the `ls-remote` sweep are being written. It is
-// IMPORTED here rather than re-exported: this file is a CLI entry point, and a
-// re-export would leave a second door onto a function whose readers should be
-// naming the module that owns it. The only reader that took it from here was
-// `bot/tests/policy.test.mjs`, whose import moved with it, and
-// `bot/tests/poll.test.mjs` pins this file's three remaining exports by name so
-// a fourth cannot reappear unnoticed.
-
-/**
- * Poll every listing that has been quiet, and report what is new.
- *
- * @param {object} deps injection seam; production passes nothing
- */
-export async function runWatch({ root = REPO_ROOT, now = new Date(), deps = {} } = {}) {
-  const doFetch = deps.fetchImpl ?? fetch;
-  const release = deps.fetchRelease ?? fetchRelease;
-  const sources = loadSources(root);
-  const seen = readSeen(root);
-  const plan = watchPlan(sources, seen, now, deps.planOpts);
-
-  // Every tag each listing has recorded, for BOT-74's prefix filter. Read
-  // from `sources` here rather than added to `watchPlan`'s entry, because the
-  // plan's entry carries the NEWEST tag and the filter needs the set: one tag
-  // yields one prefix, and a listing that has ever changed its tag shape would
-  // then filter out its own releases.
-  const recordedTags = recordedTagsByRepo(sources);
-
-  const dispatch = [];
-  const log = [];
-  for (const entry of plan.poll) {
-    const key = entry.repo.toLowerCase();
-    const row = { ...(seen.repos[key] ?? {}) };
-    row.last_checked = iso(now);
-    try {
-      const feed = await pollFeed(entry.repo, entry.etag, doFetch);
-      if (!feed.changed) {
-        log.push(`  304  ${entry.repo} — unchanged since ${entry.last_checked ?? "the first poll"}`);
-        seen.repos[key] = row;
-        continue;
-      }
-      row.etag = feed.etag;
-      const fresh = newReleases(entry, feed.entries, row);
-      if (fresh.length === 0) {
-        log.push(`  200  ${entry.repo} — ${feed.entries.length} release(s), all of them already known`);
-      } else {
-        // BOT-74's filters, before a single ingest is started. A tag this
-        // listing would never have published is recorded as seen — so the
-        // backstop does not re-offer it tomorrow and every day after — and
-        // dispatched to nothing.
-        const listedTags = recordedTags.get(key) ?? [];
-        const wanted = [];
-        for (const f of fresh) {
-          const verdict = bot74Filter({ tag: f.tag, listedTags });
-          if (verdict.pass) wanted.push(f);
-          else log.push(`  skip ${entry.repo} — ${verdict.why}`);
-        }
-        // Every tag the feed showed is recorded — the filtered ones included,
-        // so a `cli-v` tag is skipped once rather than skipped daily for ever
-        // — and so a release this registry refuses is not re-dispatched
-        // tomorrow and every day after.
-        row.checked_tags = [...new Set([...(row.checked_tags ?? []), ...fresh.map((f) => f.tag)])].slice(-20);
-        if (wanted.length === 0) {
-          seen.repos[key] = row;
-          continue;
-        }
-        const newest = wanted[0];
-        row.last_seen_tag = newest.tag;
-        row.last_seen_at = newest.updated ?? iso(now);
-        if (dispatch.length < MAX_DISPATCH) {
-          try {
-            const submitter = await resolveSubmitter(entry.repo, newest.tag, release);
-            dispatch.push({ repo: entry.repo, tag: newest.tag, submitter, source: "backstop" });
-            log.push(`  NEW  ${entry.repo}@${newest.tag} — published by @${submitter}, ingesting`);
-          } catch (e) {
-            log.push(`  ??   ${entry.repo}@${newest.tag} — ${e.message}`);
-          }
-        } else {
-          log.push(`  NEW  ${entry.repo}@${newest.tag} — over this run's dispatch cap, next run takes it`);
-        }
-      }
-      seen.repos[key] = row;
-    } catch (e) {
-      // A repository that has been deleted, renamed or made private must not
-      // stop the walk. It is recorded and reported; the listing itself is a
-      // maintainer's problem, not the backstop's.
-      row.last_error = String(e.message).slice(0, 200);
-      seen.repos[key] = row;
-      log.push(`  ERR  ${entry.repo} — ${e.message}`);
-    }
-  }
-
-  seen.updated_at = iso(now);
-  return { plan, dispatch, seen, log };
-}
 
 /** Which delayed releases have served their time. */
 export function runDrain({ root = REPO_ROOT, now = new Date() } = {}) {
@@ -237,33 +57,18 @@ function writeDispatch(out, dispatch) {
 }
 
 async function main(argv) {
-  const opts = { mode: null, out: null, root: REPO_ROOT, sla: null, now: new Date() };
+  const opts = { mode: null, out: null, root: REPO_ROOT, now: new Date() };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--watch") opts.mode = "watch";
-    else if (a === "--drain") opts.mode = "drain";
-    else if (a === "--sla") { opts.mode = "sla"; opts.sla = argv[++i]; }
+    if (a === "--drain") opts.mode = "drain";
     else if (a === "--out") opts.out = path.resolve(argv[++i]);
     else if (a === "--registry-dir") opts.root = path.resolve(argv[++i]);
     else if (a === "--now") opts.now = new Date(argv[++i]);
-    else throw new Error(`unknown argument: ${a}`);
-  }
-
-  if (opts.mode === "watch") {
-    const { plan, dispatch, seen, log } = await runWatch({ root: opts.root, now: opts.now });
-    console.log(
-      `release backstop: ${plan.poll.length} polled, ${plan.quiet.length} skipped as recently released, ` +
-      `${plan.deferred.length} deferred to the next run`,
-    );
-    for (const line of log) console.log(line);
-    console.log(`${dispatch.length} ingest(s) to start`);
-    if (opts.out) {
-      writeDispatch(opts.out, dispatch);
-      const dest = path.join(opts.out, SEEN_FILE);
-      fs.mkdirSync(path.dirname(dest), { recursive: true });
-      fs.writeFileSync(dest, serialiseSeen(seen));
-    }
-    return 0;
+    // `--watch` and `--sla` are refused by name rather than as unknown words:
+    // a workflow still passing either is one commit D's deletions missed.
+    else if (a === "--watch" || a === "--sla") {
+      throw new Error(`${a} was deleted with the issue path (registry plan B-T5.2, commit D); only --drain remains`);
+    } else throw new Error(`unknown argument: ${a}`);
   }
 
   if (opts.mode === "drain") {
@@ -274,18 +79,7 @@ async function main(argv) {
     return 0;
   }
 
-  if (opts.mode === "sla") {
-    const text = opts.sla === "-" ? fs.readFileSync(0, "utf8") : fs.readFileSync(opts.sla, "utf8");
-    const report = slaReport(JSON.parse(text), opts.now);
-    console.log(`review queue: ${report.open} open, ${report.late} past SLA, ${report.breached} badly late — ${report.verdict}`);
-    for (const i of report.items) console.log(`  ${String(i.age_hours).padStart(5)} h  #${i.number}  ${i.title}`);
-    // A breach is reported, never thrown: a workflow step that failed here
-    // would page somebody for a decision that is not a decision to make at
-    // 3 a.m., and POLICY.md's answer to a breach is a policy change.
-    return 0;
-  }
-
-  throw new Error("one of --watch, --drain or --sla <file> is required");
+  throw new Error("--drain is required");
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

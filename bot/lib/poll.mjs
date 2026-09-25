@@ -195,8 +195,10 @@ export const BOT_87_CODES = Object.freeze({
  * One set, read by `bot/decide.mjs`'s `terminalOnMain` for BOT-19's search and
  * here for BOT-74's "no tag with a terminal record for its `repository_id`".
  * It lives in this module and not in `bot/lib/decisions.mjs` because
- * `decisions.mjs` imports `intake.mjs`, which imports `notify.mjs`, which
- * imports this file: the other direction is a cycle.
+ * `decisions.mjs` imported `intake.mjs`, which imported `notify.mjs`, which
+ * imports this file: the other direction was a cycle. Cutover commit D deleted
+ * `intake.mjs`, and `decisions.mjs` takes `safeRepo`/`safeTag` from
+ * `bot/lib/safe.mjs` since, so that cycle is gone.
  */
 export const TERMINAL_STATES = Object.freeze(["refused", "revoked", "yanked", "withdrawn", "deprecated"]);
 
