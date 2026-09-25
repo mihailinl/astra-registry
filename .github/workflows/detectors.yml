@@ -84,6 +84,11 @@ on:
   # and `Migration baseline`'s commit of `log/baseline.json` is the one that
   # arms four of the five detectors.
   workflow_run:
+    # `Ingest` has had no workflow behind it since cutover commit E (registry
+    # plan B-T5.2) deleted ingest.yml. It stays while sign.yml still names it,
+    # because detectors has to hear every name the signer hears
+    # (bot/tests/workflows.test.mjs); the edit that drops it from sign.yml is
+    # held for the coordinator, and this name goes with it.
     workflows: ["Ingest", "Plugins ingest", "Plugins moderation", "Operator", "Migration baseline", "publisher re-check", "Keepalive"]
     types: [completed]
 
