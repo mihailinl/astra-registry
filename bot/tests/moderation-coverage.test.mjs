@@ -667,7 +667,8 @@ test("rollout markers: every reader that keys on one spells it in the kind's gra
   // grammar, the one the writer's marker must also match to be committed.
   const readers = {
     "bot/lib/service-decide.mjs": ["log/rollout/R3-exit.json"],
-    "bot/triage.mjs": ["log/rollout/R3-exit.json"],
+    // `bot/triage.mjs` read R3's exit marker too, until cutover commit D
+    // deleted it with the issue path it routed (B-T5.2).
     "site/successors.mjs": ["log/rollout/R5-exit.json", "log/rollout/R4b-open.json", "log/rollout/R9b-exit.json"],
     "tools/cutover-preflight.mjs": ["log/rollout/R4b-open.json"],
   };

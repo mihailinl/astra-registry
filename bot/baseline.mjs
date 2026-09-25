@@ -122,7 +122,7 @@ import { resolveWriter } from "./export-issues.mjs";
 import { classifyVerifyFailure } from "./lib/attestation.mjs";
 import { decisionCommitMessage } from "./lib/decisions.mjs";
 import { artifactDigests, submissionFingerprint } from "./lib/policy/release.mjs";
-import { safeRepo, safeTag } from "./lib/intake.mjs";
+import { safeRepo, safeTag } from "./lib/safe.mjs";
 import { DEFAULT_SIGNER_WORKFLOW } from "./ingest.mjs";
 import { ID_PATTERN } from "../tools/lib/ids.mjs";
 import { SEMVER_PATTERN } from "../tools/lib/semver.mjs";
