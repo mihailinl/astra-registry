@@ -116,7 +116,11 @@ export const ENTRIES = [
   "bot/recheck-publishers.mjs",
   "bot/run-checks.mjs",
   "bot/sign-index.mjs",
-  "bot/triage.mjs",
+  // `bot/triage.mjs` stood here until cutover commit D deleted it (registry
+  // plan B-T5.2). Contract 2.5.0 took it and `bot/watch.mjs` out of TRUST-31's
+  // published set before either file went, so that neither deletion is found
+  // as a shadow transition; the registry's copy loses each in the commit that
+  // deletes the file. `bot/watch.mjs` goes with `ingest.yml` in commit E.
   "bot/watch.mjs",
   "bot/lib/",
   "bot/policy/",

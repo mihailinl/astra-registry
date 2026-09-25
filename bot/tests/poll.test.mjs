@@ -54,7 +54,7 @@ import * as watch from "../watch.mjs";
 import { parseReleasesAtom, pollFeed } from "../lib/poll.mjs";
 // The OTHER tag predicate. Imported here so that the two are compared in one
 // place rather than each pinned alone; see the last test in this file.
-import { safeTag } from "../lib/intake.mjs";
+import { safeTag } from "../lib/safe.mjs";
 import { loadRecords, loadSources } from "../../tools/lib/sources.mjs";
 // B-T5.0: the jobs' side of the same rules, and the relay that sends BOT-87's verdict.
 import * as run from "../lib/poll-run.mjs";
@@ -161,11 +161,13 @@ const NOTIFY_SURFACE = [
   "watchPlan",
 ];
 
-// And what `bot/watch.mjs` exports now: what it exported at that commit, minus
-// `pollFeed`. The removal is the one intended surface change in this task.
-// `recordedTagsByRepo` joined it with B-T3.9: the backstop and the `/release` ping
-// read one derivation of a repository's recorded tags (BOT-74), not two.
-const WATCH_SURFACE = ["bot74Filter", "recordedTagsByRepo", "runDrain", "runWatch"];
+// And what `bot/watch.mjs` exports now. B-T2.6 took `pollFeed` out;
+// `recordedTagsByRepo` joined with B-T3.9, so the backstop and the `/release`
+// ping read one derivation of a repository's recorded tags (BOT-74). Cutover
+// commit D (registry plan B-T5.2) deleted the backstop and the ping, and with
+// them `runWatch`, `bot74Filter` and `recordedTagsByRepo`: the drain is all
+// that is left, until commit E deletes the file.
+const WATCH_SURFACE = ["runDrain"];
 
 // ── the list that is identical across the cut ─────────────────────────────
 //
@@ -185,11 +187,13 @@ const WATCH_SURFACE = ["bot74Filter", "recordedTagsByRepo", "runDrain", "runWatc
 //
 // A name leaves this list when it is RETIRED on purpose, in the commit that
 // retires it, where a reviewer reads the removal as the decision it is.
+// Cutover commit D retired two: `runWatch`, the release backstop the cutover
+// paused and the poll replaced, and `bot74Filter`, its tag-prefix filter
+// (`bot/lib/poll.mjs` carries the poll's own, BOT-74).
 const SURFACE_BEFORE_THE_CUT = [
   "SEEN_FILE",
   "WATCH_AFTER_DAYS",
   "WATCH_BATCH",
-  "bot74Filter",
   "findListingByRepo",
   "firstWrittenLine",
   "newReleases",
@@ -199,7 +203,6 @@ const SURFACE_BEFORE_THE_CUT = [
   "readSeen",
   "resolveSubmitter",
   "runDrain",
-  "runWatch",
   "serialiseSeen",
   "watchPlan",
 ];
@@ -217,10 +220,10 @@ test("bot/lib/notify.mjs still exports exactly what it exported before the cut",
     "— isUsableTag is the candidate — leaked into a barrel five files read");
 });
 
-test("bot/watch.mjs exports exactly what it did, minus the function that moved", () => {
+test("bot/watch.mjs exports exactly the drain, and not pollFeed", () => {
   assert.equal(Object.keys(watch).sort().join(", "), WATCH_SURFACE.join(", "),
-    "bot/watch.mjs's surface is not the one B-T2.6 left. pollFeed is imported here now and deliberately not " +
-    "re-exported: a second door onto it is how two modules end up owning one function");
+    "bot/watch.mjs's surface is not the one cutover commit D left: the drain alone. A name back here is the " +
+    "backstop or the issue path returning, which commit D deleted");
   assert.ok(!Object.keys(watch).includes("pollFeed"),
     "bot/watch.mjs exports pollFeed again. The whole point of the move is that bot/lib/poll.mjs owns it");
 });
@@ -228,8 +231,9 @@ test("bot/watch.mjs exports exactly what it did, minus the function that moved",
 // The three pins above say which module holds each name today. This one says
 // that no name fell between them.
 test("every name that existed before the cut is still exported by one of the three modules", () => {
-  assert.equal(SURFACE_BEFORE_THE_CUT.length, 16,
-    `the pre-cut surface is ${SURFACE_BEFORE_THE_CUT.length} names and it was 16 on 2026-09-20. This list is not ` +
+  assert.equal(SURFACE_BEFORE_THE_CUT.length, 14,
+    `the pre-cut surface is ${SURFACE_BEFORE_THE_CUT.length} names: it was 16 on 2026-09-20, and cutover commit D ` +
+    "retired runWatch and bot74Filter with the backstop. This list is not " +
     "an inventory of today's exports — it is what the backstop exported before the split, and it shrinks only " +
     "when a name is retired on purpose");
   const after = new Set([...Object.keys(poll), ...Object.keys(notify), ...Object.keys(watch)]);
@@ -367,7 +371,7 @@ test("a tag that is a path traversal is refused at the door", () => {
 // ───────────────────────────────────────────────────────────────────────────
 //
 // This bot validates a tag in two places with two answers. `isUsableTag`
-// (above) guards the feed; `safeTag` (`bot/lib/intake.mjs`) parses the
+// (above) guards the feed; `safeTag` (`bot/lib/safe.mjs`) parses the
 // `/approve owner/repo@tag` a maintainer types. They share one charset —
 // `tools/lib/tags.mjs`'s `TAG_PATTERN`, which both import — and `isUsableTag`
 // refuses four shapes on top of it. That is deliberate and `safeTag`'s docblock
@@ -410,14 +414,14 @@ test("the four shapes `isUsableTag` refuses and `safeTag` accepts, one at a time
       `${JSON.stringify(tag)} was chosen as the witness for ${shape} alone, and now ${explains.length} ` +
       "shapes match it — it can no longer show that this shape is load-bearing");
 
-    const [intakeTakesIt, pollTakesIt] = bothVerdicts(tag);
-    assert.equal(intakeTakesIt, true,
-      `bot/lib/intake.mjs's safeTag now REFUSES ${JSON.stringify(tag)} (${shape}). If that was deliberate, it is a ` +
+    const [safeTakesIt, pollTakesIt] = bothVerdicts(tag);
+    assert.equal(safeTakesIt, true,
+      `bot/lib/safe.mjs's safeTag now REFUSES ${JSON.stringify(tag)} (${shape}). If that was deliberate, it is a ` +
       "change to what `/approve owner/repo@tag` accepts from a maintainer — an owner's call, per dev/couplings.md " +
       "26 — and bot/lib/poll.mjs's isUsableTag no longer has a difference to be the stricter half of");
     assert.equal(pollTakesIt, false,
       `bot/lib/poll.mjs's isUsableTag now ACCEPTS ${JSON.stringify(tag)} (${shape}). It is the hardened predicate ` +
-      "on the feed path; bot/lib/intake.mjs's safeTag is charset-only and did not change, so this shape now " +
+      "on the feed path; bot/lib/safe.mjs's safeTag is charset-only and did not change, so this shape now " +
       "reaches the ingest from a stranger's releases feed with nothing refusing it");
   }
 
@@ -460,8 +464,8 @@ test("and nothing else: the two predicates agree on every other tag", () => {
   // by isUsableTag" — the opposite of what had happened — while the assertion
   // that exists to say so was never reached.
   for (const tag of new Set(corpus)) {
-    const [intakeTakesIt, pollTakesIt] = bothVerdicts(tag);
-    if (intakeTakesIt === pollTakesIt) continue;
+    const [safeTakesIt, pollTakesIt] = bothVerdicts(tag);
+    if (safeTakesIt === pollTakesIt) continue;
     disagreements += 1;
     if (pollTakesIt) {
       backwards.push(tag);
@@ -479,12 +483,12 @@ test("and nothing else: the two predicates agree on every other tag", () => {
 
   assert.deepEqual(backwards, [],
     `${backwards.length} tag(s) are now ACCEPTED by bot/lib/poll.mjs's isUsableTag and REFUSED by ` +
-    "bot/lib/intake.mjs's safeTag. isUsableTag is supposed to be the stricter of the two in every case — it is " +
+    "bot/lib/safe.mjs's safeTag. isUsableTag is supposed to be the stricter of the two in every case — it is " +
     "safeTag's charset plus four refusals — so this means the charset the two share stopped being shared, and " +
     `safeTag's docblock now says something false. First few: ${JSON.stringify(backwards.slice(0, 8))}`);
 
   assert.deepEqual(unexplained, [],
-    `${unexplained.length} tag(s) are taken by bot/lib/intake.mjs's safeTag and refused by bot/lib/poll.mjs's ` +
+    `${unexplained.length} tag(s) are taken by bot/lib/safe.mjs's safeTag and refused by bot/lib/poll.mjs's ` +
     "isUsableTag for a reason that is none of the four shapes this coupling records — isUsableTag grew a fifth " +
     "rule. Write it into safeTag's docblock and into HARDENED_AGAINST above. First few: " +
     JSON.stringify(unexplained.slice(0, 8)));
@@ -510,12 +514,12 @@ test("the one difference that is not about strictness: a non-string", () => {
   // it, rather than putting the throw back.
   for (const notAString of [null, undefined, 123, ["v1.0.0"]]) {
     assert.equal(safeTag(notAString), null,
-      `bot/lib/intake.mjs's safeTag must refuse ${JSON.stringify(notAString) ?? String(notAString)} rather than ` +
+      `bot/lib/safe.mjs's safeTag must refuse ${JSON.stringify(notAString) ?? String(notAString)} rather than ` +
       "return it — it is the value echoed back into a public comment");
     assert.throws(() => poll.isUsableTag(notAString), TypeError,
       `bot/lib/poll.mjs's isUsableTag no longer throws on ${JSON.stringify(notAString) ?? String(notAString)}. ` +
       "If it now returns false, that is the fix — remove this assertion and the non-string paragraph of safeTag's " +
-      "docblock in bot/lib/intake.mjs, which currently tells readers the two differ here");
+      "docblock in bot/lib/safe.mjs, which currently tells readers the two differ here");
   }
 });
 
@@ -596,7 +600,7 @@ test("anything that is not a 200 or a 304 throws, naming the status and the URL"
   await assert.rejects(() => pollFeed(REPO, null, fetchImpl), (e) => {
     assert.match(e.message, /HTTP 404/);
     assert.match(e.message, /someone\/quiet\/releases\.atom/,
-      "a repository that has been deleted, renamed or made private is a listing-level problem, and runWatch " +
+      "a repository that has been deleted, renamed or made private is a listing-level problem, and the poll " +
       "records the message per repository — so the message has to say which repository");
     return true;
   });
@@ -638,61 +642,9 @@ function registryTree({ id = "quiet", repo = REPO, version = "0.2.0", tag = "v0.
   return dir;
 }
 
-// B-T2.6's first canary, and the one of its five the tree can answer today:
-// *a feed with the listed tag and a `cli-v1.2.0` registers nothing.* The other
-// four are about the sweep and the signed cache, neither of which exists yet.
-//
-// It is written through `runWatch` rather than through `bot74Filter`, which
-// already has its own test in policy.test.mjs, because the claim is about the
-// WHOLE path — the conditional GET, the parse, "which of these is new", and
-// the prefix filter — and after this task that path crosses three modules
-// where it used to cross two.
-test("a feed carrying the listed tag and a cli-v release dispatches nothing at all", async () => {
-  const root = registryTree();
-  const xml = feed(
-    entry(tagUrl("cli-v1.2.0"), "2026-08-08T10:00:00Z"),
-    entry(tagUrl("v0.2.0"), "2026-01-01T10:00:00Z"),
-  );
-  // The release lookup SUCCEEDS here, and that is the point. The first version
-  // of this test made it throw — "nothing here is worth an API call" — and
-  // removing the prefix filter from `runWatch` then produced an `ERR` log line
-  // and still no dispatch, so the assertion that matters stayed green and only
-  // the one about the log's wording went red. A stub that fails hides the
-  // failure it was meant to expose: the filter is what must stop this, not the
-  // stub. It records instead, and "no API call was made" becomes an assertion
-  // rather than a stub's side effect.
-  const lookups = [];
-  const { dispatch, seen, log } = await watch.runWatch({
-    root,
-    now: new Date("2026-08-10T12:00:00Z"),
-    deps: {
-      fetchImpl: async () => ok(xml),
-      fetchRelease: async (repo, tag) => {
-        lookups.push(`${repo}@${tag}`);
-        return { tag_name: tag, author: { login: "the-author" } };
-      },
-    },
-  });
-
-  assert.equal(dispatch.length, 0, `nothing should be ingested, and ${JSON.stringify(dispatch)} was: ${log.join("\n")}`);
-  assert.deepEqual(lookups, [],
-    "the filter runs BEFORE the release lookup, so a monorepo's `cli-v` tag costs this registry not one API call");
-  assert.ok(log.some((l) => l.includes("cli-v1.2.0") && l.includes("prefix")),
-    `the skip has to say why, and the log said:\n${log.join("\n")}`);
-
-  // And recorded once rather than skipped daily for ever. A `cli-v` tag that
-  // is not remembered is a tag the backstop re-offers on every run, which from
-  // R3 also means a public decision record refusing a release that was never a
-  // plugin release (BOT-74).
-  const row = seen.repos[REPO];
-  assert.deepEqual(row.checked_tags, ["cli-v1.2.0"],
-    "the filtered tag is remembered, so tomorrow's poll does not re-offer it");
-  assert.equal(row.last_seen_tag, undefined,
-    "and nothing was accepted, so there is no new newest tag");
-  assert.equal(row.last_error, undefined, `the run was clean: ${JSON.stringify(row)}`);
-
-  fs.rmSync(root, { recursive: true, force: true });
-});
+// B-T2.6's first canary used to be asserted here through the release backstop,
+// `runWatch`, as well as through the poll below. Cutover commit D deleted the
+// backstop; the poll's own "canary 1" is the one that stands.
 
 // ───────────────────────────────────────────────────────────────────────────
 // B-T2.6's rules: the poll, the signed memory, the sweep, BOT-87's alarm
