@@ -117,3 +117,24 @@ export function blobAt({ root, ref, path: p }) {
   const r = gitMaybe(["show", `${ref}:${p}`], { root });
   return r.ok ? r.out : null;
 }
+
+/**
+ * The same blob as a Buffer, undecoded, or `null`. For the one question a
+ * decoded string cannot answer: were the bytes UTF-8 at all? `blobAt` decodes
+ * leniently, as every reader above does, so a malformed sequence — a literal
+ * lone surrogate is `ED A0 80` — reaches its caller as U+FFFD and nothing
+ * downstream can tell it was ever there.
+ *
+ * @param {{root: string, ref: string, path: string}} opts
+ */
+export function blobRawAt({ root, ref, path: p }) {
+  try {
+    return execFileSync("git", ["-C", root, "show", `${ref}:${p}`], {
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: cleanEnv(),
+    });
+  } catch {
+    return null;
+  }
+}

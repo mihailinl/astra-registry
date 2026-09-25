@@ -54,6 +54,7 @@ import { signIndex } from "../../bot/sign-index.mjs";
 import { signRevocations } from "../sign-revocations.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
+import { recordStringProblems } from "../validate.mjs";
 // One spelling of the trailer grammar and of the receipt's name, shared with
 // the check that reads them. `tools/served-set/provenance.mjs` is where
 // SERVE-90 decides whether a `signed` commit was made by a signer run; a
@@ -63,7 +64,7 @@ import { REPO_ROOT } from "../lib/sources.mjs";
 // which reads as noise and gets switched off.
 import { receiptName, trailersOf } from "../served-set/provenance.mjs";
 import { PAGES_BASE, fetchServed } from "../served-set/served-vs-signed.mjs";
-import { blobAt, gitMaybe, gitText } from "./git.mjs";
+import { blobAt, blobRawAt, gitMaybe, gitText } from "./git.mjs";
 import {
   DOCUMENT_DOMAINS, keyPlan, readDelegationTimes, refusesDroppedKey, retirementRecordAt, trustAtCommit,
 } from "./key-window.mjs";
@@ -80,6 +81,7 @@ export const CODES = {
   carry: { index: "SIGNER_CARRIED_INDEX", revocations: "SIGNER_CARRIED_REVOCATIONS" },
   blocked: "SIGNER_BLOCKED",
   droppedKey: "SIGNER_TRUST_REFUSED_DOCUMENT",
+  notIJson: "SIGNER_DOCUMENT_NOT_IJSON",
   noKey: "SIGNER_NO_INDEX_KEY",
   pushRace: "SIGNER_PUSH_RACE",
   siteRender: "SIGNER_SITE_RENDER_FAILED",
@@ -268,7 +270,38 @@ export async function signRun({
       );
       continue;
     }
-    documents[name] = { decision: "copied", serial: null, bytes, doc: null };
+    documents[name] = {
+      decision: "copied", serial: null, bytes, doc: null,
+      raw: blobRawAt({ root, ref: sourceCommit, path: SIGNED_FILES[name] }),
+    };
+  }
+
+  // Contract §0.7 (since 2.16.0), over all four documents exactly as they
+  // would be committed: bytes that are UTF-8, text that is JSON, and every
+  // member name and string value valid I-JSON (RFC 7493 §2.1) — no unpaired
+  // surrogate, no noncharacter. RFC 8785 is defined over I-JSON, and Astra's
+  // daemon parses each of these documents WHOLE with serde_json before it
+  // reads a single entry (`trust.rs` `parse_json_strict`), so one such string
+  // is not one bad listing: it is a catalogue no client can read, or a
+  // withdrawal list none can refresh until every install is blocked seven days
+  // later. The two documents this run generates cannot carry one — the
+  // generators and `stableStringify` refuse it — but trust.json and root.json
+  // are byte copies of `main`, and a carry is a byte copy of `signed`, and
+  // neither went near a generator. Refused the way SERVE-95 is, below: the run
+  // commits NOTHING, because a `signed` commit holds all four (D2) and the
+  // previous bytes, still served, are bytes every client can read.
+  for (const name of ["index", "revocations", "trust", "root"]) {
+    const d = documents[name];
+    if (typeof d?.bytes !== "string") continue;
+    const problems = recordStringProblems(d.raw ?? Buffer.from(d.bytes, "utf8"));
+    if (!problems.length) continue;
+    codes.push(CODES.notIJson);
+    for (const p of problems.slice(0, 8)) {
+      refusals.push(
+        `BLOCKED ${SIGNED_FILES[name]}: ${p.path} carries ${p.problem} (contract §0.7). Every client parses this ` +
+        "document whole, so committing it would make it unreadable to all of them; the run commits nothing.",
+      );
+    }
   }
 
   // SERVE-95, over everything about to be committed and not only over what

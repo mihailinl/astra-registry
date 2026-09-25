@@ -39,7 +39,16 @@ const BINARY = Buffer.from("#!/usr/bin/env node\nprocess.exit(0);\n", "utf8");
  *          description?: string, author?: string, capabilities?: string[],
  *          permissions?: object, os?: string, arch?: string,
  *          extraFiles?: {name: string, data: Buffer|string, mode?: number}[],
- *          command?: string}} spec
+ *          command?: string, permissionsHash?: string,
+ *          manifestBytes?: (bytes: Buffer) => Buffer}} spec
+ *
+ * `permissionsHash` and `manifestBytes` are the two ways to build a manifest
+ * no packer writes: a hand-made one, whose author computed the hash over
+ * whatever canonical form they liked, and one whose bytes were edited after it
+ * was serialised. The first is how a `\ud800` escape in a permission reason
+ * arrives with a matching hash; the second is how a literal lone surrogate
+ * (`ED A0 80`) arrives at all, since encoding a JavaScript string never writes
+ * those bytes.
  */
 export function makeBundle(spec = {}) {
   const id = spec.id ?? "dice-roller";
@@ -92,7 +101,7 @@ export function makeBundle(spec = {}) {
     min_astra_version: "",
     capabilities,
     permissions,
-    permissions_hash: permissionsHash(permissions),
+    permissions_hash: spec.permissionsHash ?? permissionsHash(permissions),
     entry: { command, args: [] },
     files: payload.map((f) => {
       const data = Buffer.isBuffer(f.data) ? f.data : Buffer.from(f.data, "utf8");
@@ -112,7 +121,8 @@ export function makeBundle(spec = {}) {
   // deriving normalises it rather than passing the absence through.
   if (spec.omitPermissionsMember) delete manifest.permissions;
 
-  const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  const serialised = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  const manifestBytes = spec.manifestBytes ? spec.manifestBytes(serialised) : serialised;
   return writeZip([{ name: "MANIFEST.json", data: manifestBytes, mode: 0o644 }, ...payload]);
 }
 

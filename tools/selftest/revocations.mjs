@@ -592,6 +592,31 @@ export async function run() {
     }
     assert(threw, "an advisory the daemon could not act on was built into a deployable document");
   });
+  // Contract §0.7 (since 2.16.0), on the generator's own output. The daemon
+  // parses the withdrawal list WHOLE, like the catalogue, and a list it cannot
+  // parse is a list it cannot refresh: seven days later every shipped client
+  // blocks every install with REVOCATIONS_STALE. `checkAdvisory` already
+  // refuses an unpaired surrogate in a reason (it is display text), so the
+  // case the source rules let through is a NONCHARACTER — valid Unicode, and
+  // outside I-JSON, which RFC 8785 is defined over. Asked first, so the
+  // refusal below is the generator's and not the loader's.
+  await test("the generator does not emit a withdrawal list carrying a string that is not I-JSON, and names the advisory", () => {
+    const dir = path.join(tmp, "revnonchar");
+    fs.mkdirSync(path.join(dir, "tools/revocations"), { recursive: true });
+    const doc = { ...GOOD_ADVISORY, reason: "Exfiltrates the clipboard to a third-party host.￿" };
+    assertEqual(checkAdvisory(doc).join("; "), "",
+      "the advisory rules refuse the fixture themselves, so the generator's refusal below would be unreachable");
+    fs.writeFileSync(path.join(dir, "tools/revocations/ASTRA-2026-0001.json"), JSON.stringify(doc));
+    let thrown = null;
+    try {
+      buildRevocations({ root: dir, serial: 1 });
+    } catch (e) {
+      thrown = String(e.message);
+    }
+    assert(thrown !== null && thrown.includes("not valid Unicode") && thrown.includes("(ASTRA-2026-0001)") &&
+      thrown.includes("noncharacter U+FFFF"),
+      `a withdrawal list carrying a noncharacter was generated, or refused without naming it: ${thrown ?? "it built"}`);
+  });
 
   // ── entry 69: the hand path, regenerated before its commit ────────────────
   //

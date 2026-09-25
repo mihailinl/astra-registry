@@ -31,7 +31,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { ingest, renderComment, GITHUB_COMMENT_MAX, DEFAULT_SIGNER_WORKFLOW } from "../ingest.mjs";
+import { ingest, renderComment, unholdableStrings, GITHUB_COMMENT_MAX, DEFAULT_SIGNER_WORKFLOW } from "../ingest.mjs";
 import { CODES, codeDef } from "../lib/codes.mjs";
 import { LOCALE_CODES, deriveLocaleText, localeSignature, readLocales } from "../lib/locales.mjs";
 import { summarise } from "../lib/derive.mjs";
@@ -1363,6 +1363,80 @@ await test("E_PLATFORM_UNSUPPORTED — a host Astra ships no daemon for", async 
   assertBlockedWith(r, "E_PLATFORM_UNSUPPORTED");
 });
 
+// Contract §0.7 since 2.16.0: every string of every record is valid Unicode.
+//
+// The fixture is the one minice-e4's review found, built the way an author
+// would have to build it: a hand-made MANIFEST.json whose permission reason
+// carries the six characters `\ud800`, with a `permissions_hash` computed over
+// the canonical form this registry's own `jcs` produced for it until 2.16.0 —
+// JSON.stringify's, which writes the escape. **Measured on main d8effae, the
+// bot refused it, and only by accident**: the JS reader admitted the escape as
+// one lone UTF-16 unit and the hash matched, and the Rust manifest probe, whose
+// serde_json calls it a syntax error, said `E_MANIFEST_INVALID: MANIFEST.json is
+// not valid JSON: unexpected end of hex escape`. The same string in a record
+// that never meets the probe — a hand-written listing, a curator's edit — passed
+// `schema/version-v1.json`, `displayStrings` (which did not look at
+// permissions) and the generator, and reached the signed catalogue that every
+// Astra client parses whole with serde_json. And with `jcs` refusing it now,
+// this reader has to refuse it FIRST: `permissionsHash` would otherwise throw
+// before the probe is ever asked.
+const LONE_REASON = { dom_access: { reason: "Draws the cat over the window \ud800" } };
+const handMadeHash = (permissions) =>
+  `sha256:${crypto.createHash("sha256").update(JSON.stringify(permissions)).digest("hex")}`;
+
+await test("E_MANIFEST_INVALID — a lone surrogate in a permission reason is refused before anything is derived from it", async () => {
+  const r = await run({
+    assets: [conformingAsset({ permissions: LONE_REASON, permissionsHash: handMadeHash(LONE_REASON) })],
+    root: registryWith({}),
+  });
+  assertBlockedWith(r, "E_MANIFEST_INVALID");
+  const finding = r.findings.find((i) => i.code === "E_MANIFEST_INVALID");
+  assert(finding.message.includes("MANIFEST.permissions.dom_access.reason") && finding.message.includes("unpaired surrogate U+D800"),
+    `the refusal does not say which string, or what is wrong with it: ${finding.message}`);
+  assertEqual(r.derived, null, "a listing was derived from a manifest carrying a string no client can parse");
+  assert(!/\p{Cs}/u.test(r.comment), "the comment a stranger reads carries the lone surrogate it refuses");
+});
+
+// The literal is the one main ADMITTED (measured on d8effae): both readers
+// decoded the three bytes as U+FFFD, the probe's serde_json parsed that happily,
+// and the listing was derived with a reason that is in no bundle — for a bundle
+// the daemon, which parses MANIFEST.json from its bytes, refuses to install.
+await test("E_MANIFEST_INVALID — a literal lone surrogate, three bytes that are not UTF-8, is refused and not read as U+FFFD", async () => {
+  const permissions = { dom_access: { reason: "Draws the cat LONE" } };
+  const r = await run({
+    assets: [conformingAsset({
+      permissions,
+      manifestBytes: (bytes) => {
+        const at = bytes.indexOf("LONE");
+        assert(at > 0, "the fixture's placeholder is not in the manifest");
+        return Buffer.concat([bytes.subarray(0, at), Buffer.from([0xed, 0xa0, 0x80]), bytes.subarray(at + 4)]);
+      },
+    })],
+    root: registryWith({}),
+  });
+  assertBlockedWith(r, "E_MANIFEST_INVALID");
+  assert(r.findings.some((i) => i.code === "E_MANIFEST_INVALID" && i.message.includes("not valid UTF-8")),
+    `refused for another reason: ${JSON.stringify(r.findings.filter((i) => i.level === "error"))}`);
+  assertEqual(r.derived, null, "a listing was derived from a manifest that is not UTF-8");
+});
+
+await test("E_MANIFEST_INVALID — the derived records are walked too, whatever file a string came out of", () => {
+  // The general half. MANIFEST.json is refused above; this is the walk over
+  // the two records as derived, which is what stands behind a string that
+  // arrives any other way (a locale file's card name, a future member), and
+  // which runs on the path where `validateDerived` is skipped.
+  const clean = { plugin: { id: "dice-roller", name: "Dice Roller", i18n: { ru: { name: "Кубики" } } },
+    version: { permissions: { dom_access: { reason: "Draws" } } } };
+  assertEqual(unholdableStrings(clean).length, 0, "a clean listing was refused");
+  const found = unholdableStrings({
+    plugin: { ...clean.plugin, i18n: { ru: { name: "Кубики \udc00" } } },
+    version: { permissions: { dom_access: { reason: "Draws ￿" } } },
+  });
+  assertEqual(found.map((f) => `${f.code} ${f.message.split(" carries ")[0]}`).join(" | "),
+    "E_MANIFEST_INVALID the derived plugin.json.i18n.ru.name | E_MANIFEST_INVALID the derived the version record.permissions.dom_access.reason",
+    "the walk over the derived records missed one, or named it by another code");
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 
 section("the card, in more than one language");
@@ -1388,6 +1462,26 @@ const RU_CARD = {
   "listing.name": "Бросок костей",
   "listing.description": "Бросает кости, когда вы попросите.",
 };
+
+// Contract §0.7 (2.16.0), the general half at ingest. MANIFEST.json's own
+// strings are refused in bot/lib/bundle.mjs; a locale file is another way a
+// string reaches the derived records, and a NONCHARACTER is the one no display
+// rule refuses — it is valid Unicode, and outside the I-JSON that RFC 8785 and
+// the signer hold every document to. So this is the case only the walk over the
+// derived records can see, and it is what holds `unholdableStrings`' call site.
+await test("E_MANIFEST_INVALID — a noncharacter that reaches the derived card from a locale file is refused by the walk over the derived records", async () => {
+  const r = await run({
+    assets: [conformingAsset({
+      extraFiles: [locale("en", EN_CARD), locale("ru", { ...RU_CARD, "listing.name": "Бросок костей ￿" })],
+    })],
+    root: registryWith({}),
+  });
+  assertBlockedWith(r, "E_MANIFEST_INVALID");
+  const finding = r.findings.find((i) => i.code === "E_MANIFEST_INVALID");
+  assert(finding.where === "derive" && finding.message.includes("plugin.json.i18n.ru.name") &&
+    finding.message.includes("noncharacter U+FFFF"),
+    `refused, but not by the walk over the derived records: ${JSON.stringify(finding)}`);
+});
 
 await test("a bundle's Russian card reaches the listing, and it is the only thing read out of locales/", async () => {
   const r = await run({
@@ -2836,6 +2930,33 @@ await test("check: a reserved id is refused on the service path too", async () =
   const { facts } = await checkFacts({ submissionId: SVC_SID, assetsDir: path.join(assetsDir, SVC_SID), verified: v, out, root: REPO_ROOT });
   assert(facts.findings.some((f) => f.level === "error" && f.code.startsWith("E_ID_RESERVED")), JSON.stringify(facts.findings));
   assert(fs.existsSync(path.join(out, "listing")), "the listing upload still has its directory");
+});
+
+// Contract §0.7 (2.16.0) on the service path. The check job writes the listing
+// the publish job commits, so a listing whose derived records carry a string no
+// client can parse is refused there and NOT WRITTEN: the upload holds the
+// NO-LISTING marker instead. Both halves: the manifest's own string, refused
+// by bot/lib/bundle.mjs, and a locale file's noncharacter, which only the walk
+// over the derived records can see.
+await test("check: a string that is not I-JSON is refused on the service path, and no listing is written for the publish job", async () => {
+  const cases = [
+    ["a lone surrogate in MANIFEST.json's permission reason",
+      conformingAsset({ permissions: LONE_REASON, permissionsHash: handMadeHash(LONE_REASON) })],
+    ["a noncharacter in a locale file's card name",
+      conformingAsset({ extraFiles: [locale("en", EN_CARD), locale("ru", { ...RU_CARD, "listing.name": "Бросок ￿" })] })],
+  ];
+  for (const [what, asset] of cases) {
+    const { v, assetsDir } = await verifyRun({ assets: [asset] });
+    assertEqual(v.outcome, "ok", `verify never unpacks, so it cannot refuse ${what}: ${JSON.stringify(v.findings)}`);
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-check-"));
+    scratch.push(out);
+    const { facts } = await checkFacts({ submissionId: SVC_SID, assetsDir: path.join(assetsDir, SVC_SID), verified: v, out, root: REPO_ROOT });
+    assert(facts.findings.some((x) => x.level === "error" && x.code === "E_MANIFEST_INVALID"),
+      `${what} was not refused E_MANIFEST_INVALID: ${JSON.stringify(facts.findings)}`);
+    assert(!fs.existsSync(path.join(out, "listing", "plugins")),
+      `a listing carrying ${what} was written for the publish job to commit`);
+    assert(fs.existsSync(path.join(out, "listing", "NO-LISTING")), "the upload lost its marker");
+  }
 });
 
 // ── result ──────────────────────────────────────────────────────────────────
