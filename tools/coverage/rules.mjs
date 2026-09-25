@@ -192,12 +192,15 @@ export const PENDING_OWNER_ACTS = [
     act:
       "OWNER APPROVAL: a fixture repository for the live run — a new one, or the reuse of BOT-88's test " +
       "repository (registry plan §2.13, ext.6). The run is: this workflow, in that repository, with a " +
-      "workflow there pushing an uncovered `yanked` commit under GITHUB_TOKEN; the scheduled run finds it " +
-      "within 15 minutes, the alarm arrives, and a `Moderation-Exempt: <sha>: …` commit clears it. Until it " +
+      "workflow there pushing an uncovered `yanked` commit under GITHUB_TOKEN; a `workflow_run` or scheduled " +
+      "run finds it, the alarm arrives, and a `Moderation-Exempt: <sha>: …` commit clears it. No minute bound: " +
+      "GitHub left 110 to 421 minutes between this workflow's `*/15` runs when lane S16 measured it (2026-09-25), " +
+      "and the `workflow_run` trigger is what finds a bot commit promptly. Until it " +
       "is done, the one thing this canary has never been watched doing is finding a real uncovered commit " +
       "that a real token push put on a real branch — which is the only part of it that GITHUB_TOKEN's " +
       "no-recursion rule can break without any fixture noticing. Record it in " +
-      "`state/coverage-live-run.json` (`{run, at, fixture_repo, alarm_delivered_at}`) and under ROLL-1.",
+      "`state/coverage-live-run.json` (`run`, `at`, `fixture_repo`, `alarm_delivered_at` and the members " +
+      "`liveRunProblems` in bot/tests/moderation-coverage.test.mjs names) and under ROLL-1.",
   },
   {
     id: "ingest-schedule-receiver",
