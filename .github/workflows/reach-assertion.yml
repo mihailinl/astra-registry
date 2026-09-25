@@ -1,0 +1,106 @@
+# RC-R1-0's reach assertion, the registry's half (registry plan RC-R1-0's
+# canary; ops runbooks/registry-alerts.md §6 (iii)): no ping credential the
+# registry holds resolves a check the plugins service posts to (attack M-5).
+#
+# Dispatched by hand at each exit walk, never scheduled. `tools/reach-assertion.mjs`
+# says what it asks and why the healthy answer is `400 invalid url format`
+# and not the plan's first 404; `bot/tests/alert.test.mjs` holds it to that.
+#
+# **Where the credentials are, and where they are not.** This is the one job in
+# the repository that holds every registry ping URL at once, because checking
+# each one is the job. So they are mapped on the ONE step that runs the
+# committed script, and not on the job: `actions/checkout` and the alert action
+# run without them. The job itself maps only the channel's secrets, which the
+# alert action needs to page when this is red. It prints fingerprints and never
+# a URL.
+#
+# It posts no heartbeat: it is not a schedule, and nothing is silent when it
+# does not run.
+
+name: Reach assertion
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: reach-assertion
+  cancel-in-progress: false
+
+jobs:
+  reach:
+    runs-on: ubuntu-24.04
+    environment: alerts
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    env:
+      ASTRA_ALERT_TELEGRAM_TOKEN: ${{ secrets.ASTRA_ALERT_TELEGRAM_TOKEN }}
+      ASTRA_ALERT_CHAT_ID: ${{ secrets.ASTRA_ALERT_CHAT_ID }}
+      ASTRA_ALERT_COPY_CHAT_ID: ${{ secrets.ASTRA_ALERT_COPY_CHAT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/alert
+            bot/alert.mjs
+            bot/heartbeat.mjs
+            bot/lib/alert-verdict.mjs
+            bot/lib/alert-checks.mjs
+            tools/lib/ids.mjs
+            tools/reach-assertion.mjs
+          sparse-checkout-cone-mode: false
+
+      # Every ping URL the table requires, here and nowhere else in the job.
+      # `bot/tests/alert.test.mjs` compares this block with `credentials()` in
+      # both directions, so a check added to the table and not here is red in
+      # the suite, not silently unasked here.
+      - name: No registry credential resolves a service check
+        id: reach
+        env:
+          ASTRA_DEADMAN_URL_DETECTORS: ${{ secrets.ASTRA_DEADMAN_URL_DETECTORS }}
+          ASTRA_DEADMAN_URL_MODERATION_RUN: ${{ secrets.ASTRA_DEADMAN_URL_MODERATION_RUN }}
+          ASTRA_DEADMAN_URL_SIGNER: ${{ secrets.ASTRA_DEADMAN_URL_SIGNER }}
+          ASTRA_DEADMAN_URL_SERVED_SET: ${{ secrets.ASTRA_DEADMAN_URL_SERVED_SET }}
+          ASTRA_DEADMAN_URL_COVERAGE_CANARY: ${{ secrets.ASTRA_DEADMAN_URL_COVERAGE_CANARY }}
+          ASTRA_DEADMAN_URL_KEEPALIVE: ${{ secrets.ASTRA_DEADMAN_URL_KEEPALIVE }}
+          ASTRA_DEADMAN_URL_ALARM_DRILL: ${{ secrets.ASTRA_DEADMAN_URL_ALARM_DRILL }}
+          ASTRA_DEADMAN_URL_ALARM_ACK: ${{ secrets.ASTRA_DEADMAN_URL_ALARM_ACK }}
+          ASTRA_DEADMAN_URL_ALARM_ACK_START: ${{ secrets.ASTRA_DEADMAN_URL_ALARM_ACK_START }}
+          ASTRA_DEADMAN_URL_RELEASE_CANARY: ${{ secrets.ASTRA_DEADMAN_URL_RELEASE_CANARY }}
+          ASTRA_DEADMAN_URL_CONFORMANCE: ${{ secrets.ASTRA_DEADMAN_URL_CONFORMANCE }}
+          ASTRA_DEADMAN_URL_POLL_AND_SWEEP: ${{ secrets.ASTRA_DEADMAN_URL_POLL_AND_SWEEP }}
+          ASTRA_DEADMAN_URL_DEADLINE_WATCH: ${{ secrets.ASTRA_DEADMAN_URL_DEADLINE_WATCH }}
+          ASTRA_DEADMAN_URL_BASELINE_NAMES: ${{ secrets.ASTRA_DEADMAN_URL_BASELINE_NAMES }}
+        run: node tools/reach-assertion.mjs --out verdict.json
+
+      # A script that died before writing its verdict is its own alarm, not a
+      # reason to say nothing.
+      - name: The verdict the step wrote, or the alarm that it wrote none
+        if: always() && !cancelled()
+        run: |
+          set -euo pipefail
+          if [ ! -s verdict.json ]; then
+            cat > verdict.json <<JSON
+          {
+            "schema": "astra.registry.alert-verdict/1",
+            "check": "reach-assertion",
+            "status": "red",
+            "codes": ["E_CHECK_DID_NOT_REPORT"],
+            "run": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          JSON
+            echo "::warning::the reach step wrote no verdict; alarming about that instead"
+          fi
+
+      - uses: ./.github/actions/alert
+        if: always() && !cancelled()
+        with:
+          verdict: verdict.json
+          no-heartbeat-because: >-
+            dispatched by hand at each exit walk and never scheduled, so its
+            silence means nothing; alarm-drill's weekly run is what notices a
+            channel that stopped
