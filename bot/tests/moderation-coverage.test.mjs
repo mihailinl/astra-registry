@@ -2009,6 +2009,88 @@ test("the live run is still owed, and cannot stop being printed without being do
     assert.match(live.act, /OWNER APPROVAL/);
     assert.match(live.act, /fixture repository/);
   }
+  if (recorded) assert.deepEqual(liveRunProblems(JSON.parse(fs.readFileSync(path.join(REPO, "state", "coverage-live-run.json"), "utf8"))), []);
+});
+
+// The record that retires the notice has to say the walk happened, or any file
+// at that path would retire it. So it names the fixture repository, the run
+// there that found the token push (`run`, started at `at`, by `workflow_run`
+// or `schedule` and never by `push`, which a GITHUB_TOKEN push does not start),
+// the commit it found, the run that pushed it, the alarm's delivery time, and
+// the commit and run that cleared it. Every run URL is in the fixture
+// repository, and the times run forward.
+const LIVE_RUN_MEMBERS = [
+  "fixture_repo", "fixture_source_commit", "pushed_commit", "pushed_by_run", "push_runs_for_pushed_commit",
+  "run", "found_by", "at", "alarm_delivered_at", "cleared_by_commit", "cleared_run",
+];
+
+/** @returns {string[]} what is wrong with a live-run record; empty when nothing is */
+function liveRunProblems(doc) {
+  const problems = [];
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) return ["the record is not a JSON object"];
+  const keys = Object.keys(doc);
+  for (const k of LIVE_RUN_MEMBERS) if (!keys.includes(k)) problems.push(`member ${k} is missing`);
+  for (const k of keys) if (!LIVE_RUN_MEMBERS.includes(k)) problems.push(`member ${k} is not one this record has`);
+  if (problems.length) return problems;
+  const repo = doc.fixture_repo;
+  if (typeof repo !== "string" || !/^mihailinl\/[A-Za-z0-9_.-]+$/.test(repo) || repo === "mihailinl/astra-registry") {
+    problems.push(`fixture_repo ${JSON.stringify(repo)} is not a fixture repository of this estate`);
+  }
+  const runOf = (url) => typeof url === "string" && url.startsWith(`https://github.com/${repo}/actions/runs/`)
+    && /^[0-9]{1,20}$/.test(url.slice(`https://github.com/${repo}/actions/runs/`.length));
+  for (const k of ["run", "pushed_by_run", "cleared_run"]) {
+    if (!runOf(doc[k])) problems.push(`${k} ${JSON.stringify(doc[k])} is not a run URL in ${repo}`);
+  }
+  for (const k of ["fixture_source_commit", "pushed_commit", "cleared_by_commit"]) {
+    if (typeof doc[k] !== "string" || !/^[0-9a-f]{40}$/.test(doc[k])) problems.push(`${k} is not a 40-hex commit`);
+  }
+  if (doc.pushed_commit === doc.cleared_by_commit) problems.push("the clearing commit is the pushed one");
+  if (doc.push_runs_for_pushed_commit !== 0) {
+    problems.push("push_runs_for_pushed_commit is not 0: a push run for the commit means it was not a GITHUB_TOKEN push");
+  }
+  if (!["workflow_run", "schedule"].includes(doc.found_by)) {
+    problems.push(`found_by ${JSON.stringify(doc.found_by)} is neither workflow_run nor schedule`);
+  }
+  for (const k of ["at", "alarm_delivered_at"]) if (!isTime(doc[k])) problems.push(`${k} is not a §0.7 time`);
+  if (isTime(doc.at) && isTime(doc.alarm_delivered_at) && doc.alarm_delivered_at < doc.at) {
+    problems.push("the alarm was delivered before the run that sent it started");
+  }
+  return problems;
+}
+
+test("a live-run record that does not say the walk happened is refused", () => {
+  const good = {
+    fixture_repo: "mihailinl/astra-registry-coverage-fixture",
+    fixture_source_commit: "a".repeat(40),
+    pushed_commit: "b".repeat(40),
+    pushed_by_run: "https://github.com/mihailinl/astra-registry-coverage-fixture/actions/runs/1",
+    push_runs_for_pushed_commit: 0,
+    run: "https://github.com/mihailinl/astra-registry-coverage-fixture/actions/runs/2",
+    found_by: "workflow_run",
+    at: "2026-09-25T00:53:45Z",
+    alarm_delivered_at: "2026-09-25T00:54:03Z",
+    cleared_by_commit: "c".repeat(40),
+    cleared_run: "https://github.com/mihailinl/astra-registry-coverage-fixture/actions/runs/3",
+  };
+  assert.deepEqual(liveRunProblems(good), []);
+  const bad = [
+    ["no delivery time", (d) => { delete d.alarm_delivered_at; }, "member alarm_delivered_at is missing"],
+    ["a member nobody defined", (d) => { d.note = "x"; }, "member note is not one"],
+    ["the registry itself as the fixture", (d) => { d.fixture_repo = "mihailinl/astra-registry"; }, "not a fixture repository"],
+    ["a run in another repository", (d) => { d.run = "https://github.com/mihailinl/astra-registry/actions/runs/2"; }, "run \"https://github.com/mihailinl/astra-registry/"],
+    ["found by a push run", (d) => { d.found_by = "push"; }, "found_by \"push\""],
+    ["a push run for the pushed commit", (d) => { d.push_runs_for_pushed_commit = 1; }, "push_runs_for_pushed_commit is not 0"],
+    ["a delivery before the run", (d) => { d.alarm_delivered_at = "2026-09-25T00:50:00Z"; }, "delivered before"],
+    ["a short commit", (d) => { d.pushed_commit = "b".repeat(7); }, "pushed_commit is not a 40-hex commit"],
+    ["cleared by itself", (d) => { d.cleared_by_commit = d.pushed_commit; }, "the clearing commit is the pushed one"],
+  ];
+  for (const [what, mutate, says] of bad) {
+    const doc = structuredClone(good);
+    mutate(doc);
+    const problems = liveRunProblems(doc);
+    assert.ok(problems.some((p) => p.includes(says)),
+      `a record with ${what} was not refused for it (${JSON.stringify(says)}): ${JSON.stringify(problems)}`);
+  }
 });
 
 // ── repo-settings: the settings GitHub serves, against the committed file ───

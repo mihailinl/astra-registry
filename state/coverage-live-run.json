@@ -1,0 +1,13 @@
+{
+  "fixture_repo": "mihailinl/astra-registry-coverage-fixture",
+  "fixture_source_commit": "48b463836cc5aa1d4f429c7dac3f9fa162d9bdf7",
+  "pushed_commit": "70f5328b69fd8694d74e51883a9e53f2e176cb5d",
+  "pushed_by_run": "https://github.com/mihailinl/astra-registry-coverage-fixture/actions/runs/36079598308",
+  "push_runs_for_pushed_commit": 0,
+  "run": "https://github.com/mihailinl/astra-registry-coverage-fixture/actions/runs/36079610649",
+  "found_by": "workflow_run",
+  "at": "2026-09-25T00:53:45Z",
+  "alarm_delivered_at": "2026-09-25T00:54:03Z",
+  "cleared_by_commit": "1fb7a7bb554b040761112bc39e300055add58042",
+  "cleared_run": "https://github.com/mihailinl/astra-registry-coverage-fixture/actions/runs/36079687775"
+}

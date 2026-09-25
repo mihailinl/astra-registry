@@ -34,6 +34,16 @@ import {
   runAlert,
 } from "../alert.mjs";
 import { postHeartbeat } from "../heartbeat.mjs";
+import {
+  CREDENTIAL_FLOOR,
+  HEALTHY,
+  SERVICE_NAME_FLOOR,
+  credentials,
+  fingerprint,
+  reach,
+  serviceNames,
+  verdictOf,
+} from "../../tools/reach-assertion.mjs";
 import { renderVerdict, verdictProblems, runUrl, VERDICT_SCHEMA } from "../lib/alert-verdict.mjs";
 import {
   CHECKS,
@@ -431,13 +441,20 @@ await test("the entry point itself exits non-zero with no credentials", () => {
 
 console.log("\nbot/heartbeat.mjs — one whole URL per check, and no base anywhere\n");
 
-function recorder(answer = { ok: true, status: 200 }) {
+/**
+ * A receiver that records what it was asked and answers as healthchecks.io
+ * does. `body` is the text of the answer — `OK` for a ping a check took —
+ * or a function, called when the script reads it, so that a body which cannot
+ * be read can be one.
+ */
+function recorder(answer = { ok: true, status: 200, body: "OK" }) {
   const calls = [];
   return {
     calls,
     fetchImpl: async (url, init) => {
       calls.push({ url, init });
-      return { ok: answer.ok, status: answer.status };
+      const body = answer.body;
+      return { ok: answer.ok, status: answer.status, text: async () => (typeof body === "function" ? body() : body) };
     },
   };
 }
@@ -532,6 +549,64 @@ await test("a receiver that answers non-2xx fails the step", async () => {
     "silence at the receiver and red in the run have to agree; a swallowed 503 is the receiver paging about a " +
     "job whose own log says it succeeded");
   assert.match(out.problems.join(""), /HTTP 503/);
+});
+
+// ── what counts as a post (ops dev/couplings.md: the heartbeat's success test) ──
+//
+// healthchecks.io, the receiver SERVE-104a records, answers a UUID ping URL
+// with 200 whatever it did with it. The body says which: `OK` when a check
+// took the ping, `OK (not found)` when no check has that UUID, and `OK (rate
+// limited)` when the ping was dropped (its pinging API page, read 2026-09-25;
+// lane S16 measured `OK (not found)` on a random UUID the same day). Until
+// this test, every one of those was a green step: a secret still holding the
+// URL of a check that was deleted, or re-created under a new UUID, posted
+// "ok" every run while the receiver watched nothing.
+
+await test("a 200 whose body is `OK (not found)` fails the step: no check took the ping", async () => {
+  const r = recorder({ ok: true, status: 200, body: "OK (not found)" });
+  const out = await postHeartbeat({
+    check: "detectors", env: { ASTRA_DEADMAN_URL_DETECTORS: "https://receiver.example/ping/deleted-uuid" },
+    fetchImpl: r.fetchImpl, log: quiet,
+  });
+  assert.equal(r.calls.length, 1, "the ping was never sent, so this asked nothing about the answer");
+  assert.equal(out.code, 1,
+    "a ping URL that no check owns was counted as a post: the step is green and the receiver watches nothing");
+  assert.match(out.problems.join(""), /"OK \(not found\)"/, "the refusal does not say what the receiver answered");
+  assert.doesNotMatch(out.problems.join(""), /receiver\.example/, "the refusal printed the ping URL, which is a credential");
+});
+
+await test("a 200 whose body is `OK (rate limited)` fails the step: the ping was dropped", async () => {
+  const r = recorder({ ok: true, status: 200, body: "OK (rate limited)" });
+  const out = await postHeartbeat({
+    check: "detectors", env: { ASTRA_DEADMAN_URL_DETECTORS: "https://receiver.example/ping/x" },
+    fetchImpl: r.fetchImpl, log: quiet,
+  });
+  assert.equal(out.code, 1, "a ping the receiver ignored was counted as a post");
+});
+
+await test("any other 2xx body fails the step, and so does one that cannot be read", async () => {
+  for (const [what, body] of [
+    ["an empty body", ""],
+    ["a body that only starts with OK", "OKAY"],
+    ["an auto-provisioning answer, which a UUID URL never gets", "Created"],
+    ["a body that cannot be read", () => { throw new Error("connection reset while reading"); }],
+  ]) {
+    const r = recorder({ ok: true, status: 200, body });
+    const out = await postHeartbeat({
+      check: "detectors", env: { ASTRA_DEADMAN_URL_DETECTORS: "https://receiver.example/ping/x" },
+      fetchImpl: r.fetchImpl, log: quiet,
+    });
+    assert.equal(out.code, 1, `${what} was counted as a post`);
+  }
+});
+
+await test("`OK` with surrounding white space is a post", async () => {
+  const r = recorder({ ok: true, status: 200, body: "OK\n" });
+  const out = await postHeartbeat({
+    check: "detectors", env: { ASTRA_DEADMAN_URL_DETECTORS: "https://receiver.example/ping/x" },
+    fetchImpl: r.fetchImpl, log: quiet,
+  });
+  assert.equal(out.code, 0, `a ping the receiver took was refused: ${out.problems.join("; ")}`);
 });
 
 await test("the start signal is its own secret and not a suffix on the success one", async () => {
@@ -884,7 +959,7 @@ await test("the heartbeat dials the secret's bytes, and composes nothing onto th
     const res = await postHeartbeat({
       check: "served-set",
       env: { ASTRA_DEADMAN_URL_SERVED_SET: secret },
-      fetchImpl: async (u) => { dialled = u; return { ok: true, status: 200 }; },
+      fetchImpl: async (u) => { dialled = u; return { ok: true, status: 200, text: async () => "OK" }; },
       log: { log() {}, error() {} },
     });
     assert.equal(res.code, 0, `${what}: ${res.problems.join("; ")}`);
@@ -907,6 +982,168 @@ await test("the check-name grammar is one pattern in the table and in the verdic
   for (const c of CHECKS) if (c.name !== null) assert.ok(re.test(c.name), `${c.name} is refused by the grammar`);
   assert.ok(re.test("minice-plugins-evaluator-operator"));
   assert.ok(!re.test("a".repeat(41)), "41 characters is past the cap");
+});
+
+// ── RC-R1-0's reach assertion (tools/reach-assertion.mjs) ─────────────────────
+//
+// The plan's method was "POST each registry credential at each service check
+// name and record the 404". Lane S16 measured the receiver on 2026-09-25: a
+// healthy whole-UUID credential answers `400 invalid url format`, and 404 is
+// the LEAKED PING KEY's answer. So these hold the tool to the measured answer,
+// and to the two things the POST cannot see for itself: the shape of each
+// credential, checked before anything is sent, and a fingerprint per
+// credential, printed for the comparison only the owner's desk can make.
+
+console.log("\ntools/reach-assertion.mjs — no registry credential resolves a service check\n");
+
+/** One distinct, well-formed UUID per credential; `alarm-ack`'s start shares its success's. */
+function reachEnv(over = {}) {
+  const env = {};
+  const uuids = new Map();
+  for (const c of credentials()) {
+    if (!uuids.has(c.check)) {
+      const n = uuids.size + 1;
+      uuids.set(c.check, `${n.toString(16).padStart(8, "0")}-0000-4000-8000-${(n * 7919).toString(16).padStart(12, "0")}`);
+    }
+    env[c.secret] = `https://hc-ping.com/${uuids.get(c.check)}${c.signal === "start" ? "/start" : ""}`;
+  }
+  return { env: { ...env, ...over }, uuids };
+}
+
+/** A receiver answering every POST with `answer(url)`: {status, body}. */
+function reachReceiver(answer = () => HEALTHY) {
+  const calls = [];
+  return {
+    calls,
+    fetchImpl: async (url, init) => {
+      calls.push({ url, method: init?.method });
+      const a = answer(url);
+      if (a === "throw") throw new Error("network down");
+      return { status: a.status, ok: a.status >= 200 && a.status < 300, text: async () => a.body };
+    },
+  };
+}
+
+const printedNoCredential = (out, env) => {
+  const text = out.lines.join("\n");
+  for (const [name, value] of Object.entries(env)) {
+    if (name.startsWith("ASTRA_DEADMAN_URL_") && value) {
+      assert.ok(!text.includes(value), `the output carries ${name}'s value`);
+    }
+  }
+  assert.doesNotMatch(text, /hc-ping\.com\/[0-9a-f]{8}-/, "the output carries a ping URL");
+};
+
+await test("a healthy estate: every credential POSTed at every service name, each answered 400, a fingerprint each", async () => {
+  const { env, uuids } = reachEnv();
+  const r = reachReceiver();
+  const out = await reach({ env, fetchImpl: r.fetchImpl });
+  assert.equal(out.status, "green", out.lines.join("\n"));
+  const creds = credentials();
+  const service = serviceNames();
+  assert.ok(creds.length >= CREDENTIAL_FLOOR && service.length >= SERVICE_NAME_FLOOR,
+    `the committed table is under the tool's floors (${creds.length}, ${service.length})`);
+  assert.equal(r.calls.length, creds.length * service.length, "not every credential was POSTed at every name");
+  assert.deepEqual(new Set(r.calls.map((c) => c.url)),
+    new Set(creds.flatMap((c) => service.map((s) => `${env[c.secret]}/${s}`))), "a POST went somewhere else");
+  assert.ok(r.calls.every((c) => c.method === "POST"));
+  assert.deepEqual(out.fingerprints.map((f) => [f.secret, f.fingerprint]),
+    creds.map((c) => [c.secret, fingerprint(uuids.get(c.check))]), "a fingerprint is not its own credential's");
+  printedNoCredential(out, env);
+  assert.deepEqual(verdictProblems(verdictOf(out, {})), [], "the green verdict is not one the channel accepts");
+});
+
+await test("the plan's literal 404 is a failure: it is what a leaked ping key answers", async () => {
+  const { env } = reachEnv();
+  const out = await reach({ env, fetchImpl: reachReceiver(() => ({ status: 404, body: "not found" })).fetchImpl });
+  assert.equal(out.status, "red", "a 404 was recorded as the pass, which is the plan's first wording");
+  assert.deepEqual(out.codes, ["REACH_ANSWERED_404"]);
+  assert.deepEqual(verdictProblems(verdictOf(out, {})), [], "the red verdict is not one the channel accepts");
+});
+
+await test("any 2xx is a failure: the receiver took the POST as a ping", async () => {
+  for (const body of ["OK", "OK (not found)", "Created"]) {
+    const { env } = reachEnv();
+    const out = await reach({ env, fetchImpl: reachReceiver(() => ({ status: body === "Created" ? 201 : 200, body })).fetchImpl });
+    assert.deepEqual([out.status, out.codes], ["red", ["REACH_SERVICE_CHECK_RESOLVED"]], `a 2xx ${JSON.stringify(body)} passed`);
+  }
+});
+
+await test("any other answer, or none, is a failure", async () => {
+  for (const answer of [{ status: 400, body: "something else" }, { status: 500, body: "" }, "throw"]) {
+    const { env } = reachEnv();
+    const out = await reach({ env, fetchImpl: reachReceiver(() => answer).fetchImpl });
+    assert.deepEqual([out.status, out.codes], ["red", ["REACH_UNEXPECTED_ANSWER"]], `${JSON.stringify(answer)} passed`);
+  }
+});
+
+await test("a credential that is not one check's whole UUID URL is refused, and then NOTHING is posted", async () => {
+  // A ping-key base: POSTing `<key>/<name>` would ping, and arm, a service
+  // check that had that slug. So a bad shape stops every POST, not only its own.
+  const bad = [
+    ["a ping-key base URL", { ASTRA_DEADMAN_URL_SIGNER: "https://hc-ping.com/abcdefghijklmnopqrstuv" }],
+    ["a key and a slug", { ASTRA_DEADMAN_URL_SIGNER: "https://hc-ping.com/abcdefghijklmnopqrstuv/signer" }],
+    ["another receiver", { ASTRA_DEADMAN_URL_SIGNER: "https://receiver.example/00000001-0000-4000-8000-000000001eef" }],
+    ["http", { ASTRA_DEADMAN_URL_SIGNER: "http://hc-ping.com/00000003-0000-4000-8000-000000005cd5" }],
+    ["unset", { ASTRA_DEADMAN_URL_SIGNER: "" }],
+    ["/start on a success secret", { ASTRA_DEADMAN_URL_SIGNER: "https://hc-ping.com/00000003-0000-4000-8000-000000005cd5/start" }],
+    ["no /start on a start secret", { ASTRA_DEADMAN_URL_ALARM_ACK_START: reachEnv().env.ASTRA_DEADMAN_URL_ALARM_ACK }],
+  ];
+  for (const [what, over] of bad) {
+    const { env } = reachEnv(over);
+    const r = reachReceiver();
+    const out = await reach({ env, fetchImpl: r.fetchImpl });
+    assert.equal(out.status, "red", `${what} passed`);
+    assert.ok(out.codes.includes("REACH_CREDENTIAL_NOT_ONE_CHECK"), `${what}: ${out.codes}`);
+    assert.equal(r.calls.length, 0, `${what}: ${r.calls.length} POST(s) went out beside a refused credential`);
+    printedNoCredential(out, env);
+  }
+});
+
+await test("one UUID behind two checks' secrets is red, and so is a start that is not its own check's", async () => {
+  const shared = reachEnv();
+  const out = await reach({
+    env: { ...shared.env, ASTRA_DEADMAN_URL_DETECTORS: shared.env.ASTRA_DEADMAN_URL_SIGNER },
+    fetchImpl: reachReceiver().fetchImpl,
+  });
+  assert.ok(out.codes.includes("REACH_CREDENTIAL_SHARED"), `two checks sharing one URL passed: ${out.codes}`);
+
+  const elsewhere = reachEnv();
+  const moved = await reach({
+    env: { ...elsewhere.env, ASTRA_DEADMAN_URL_ALARM_ACK_START: `${elsewhere.env.ASTRA_DEADMAN_URL_SIGNER}/start` },
+    fetchImpl: reachReceiver().fetchImpl,
+  });
+  assert.ok(moved.codes.includes("REACH_START_ELSEWHERE"), `alarm-ack's start on another check passed: ${moved.codes}`);
+});
+
+await test("the floors: a table short of service names or credentials is red, and a signal-word name posts nothing", async () => {
+  const fewer = CHECKS.filter((c) => c.name !== serviceNames()[0]);
+  const { env } = reachEnv();
+  assert.ok((await reach({ env, fetchImpl: reachReceiver().fetchImpl, checks: fewer })).codes.includes("REACH_FLOOR_SERVICE_NAMES"));
+  const noRegistry = CHECKS.filter((c) => c.name !== "signer");
+  assert.ok((await reach({ env, fetchImpl: reachReceiver().fetchImpl, checks: noRegistry })).codes.includes("REACH_FLOOR_CREDENTIALS"));
+  const signalWord = CHECKS.map((c) => (c.name === serviceNames()[0] ? { ...c, name: "start" } : c));
+  const r = reachReceiver();
+  const out = await reach({ env, fetchImpl: r.fetchImpl, checks: signalWord });
+  assert.ok(out.codes.includes("REACH_SERVICE_NAME_IS_A_SIGNAL"), `${out.codes}`);
+  assert.equal(r.calls.length, 0, "a POST to <uuid>/start went out: that is a start signal to a registry check");
+});
+
+await test("the workflow maps exactly the table's credentials, on the reach step alone", () => {
+  const yml = fs.readFileSync(path.join(REPO, ".github", "workflows", "reach-assertion.yml"), "utf8");
+  const jobEnv = yml.match(/^ {4}env:\n((?: {6}.*\n)+) {4}steps:\n/m);
+  assert.ok(jobEnv, "reach-assertion.yml has no job-level env block this test can read");
+  assert.doesNotMatch(jobEnv[1], /ASTRA_DEADMAN_URL_/,
+    "a ping URL is mapped on the job, so actions/checkout and the alert action run holding it");
+  const step = [...yml.matchAll(/^ {8}id: reach\n {8}env:\n((?: {10}.*\n)+) {8}run: node tools\/reach-assertion\.mjs --out verdict\.json\n/gm)];
+  assert.equal(step.length, 1, "reach-assertion.yml's reach step, its env block and its run line are not where this test reads them");
+  const mapped = [...step[0][1].matchAll(/^ {10}([A-Z0-9_]+): \$\{\{ secrets\.([A-Z0-9_]+) \}\}$/gm)];
+  assert.ok(mapped.every((m) => m[1] === m[2]), "a step env name is not the secret it maps");
+  const want = credentials().map((c) => c.secret).sort();
+  assert.deepEqual(mapped.map((m) => m[1]).sort(), want,
+    "the reach step's credentials are not the table's: a check added to bot/lib/alert-checks.mjs and not to the " +
+    "workflow is a credential nobody asks about, and one the table dropped is a secret the job still holds");
+  assert.equal([...yml.matchAll(/secrets\.ASTRA_DEADMAN_URL_/g)].length, want.length, "a ping URL is mapped outside the reach step");
 });
 
 console.log(`\n${failures === 0 ? "PASS" : "FAIL"}  bot/tests/alert.test.mjs, ${failures} failed`);
