@@ -145,10 +145,13 @@ test("the publish path asks ids.mjs, wherever it lives", () => {
     /from "\.\.\/tools\/lib\/ids\.mjs"/,
     "bot/publish-apply.mjs no longer asks the one id predicate what an id is",
   );
+  // `ingest.yml` was the workflow this asked about until cutover commit E
+  // deleted it (registry plan B-T5.2); the service path's publish job is the
+  // one that commits a listing now.
   assert.match(
-    read("ingest.yml"),
+    read("plugins-ingest.yml"),
     /node bot\/publish-apply\.mjs/,
-    "ingest.yml's publish job no longer goes through publish-apply.mjs",
+    "plugins-ingest.yml's publish job no longer goes through publish-apply.mjs",
   );
 });
 
@@ -158,28 +161,19 @@ test("the publish path asks ids.mjs, wherever it lives", () => {
 // group. Racing publishes are handled in `publish-apply.mjs` now; a group here
 // would bring the hazard back with nothing saying so.
 test("the publish job serialises nothing", () => {
-  const lines = read("ingest.yml").split("\n");
+  // Asked of `plugins-ingest.yml` since cutover commit E deleted `ingest.yml`,
+  // whose publish job it was written for; the hazard is the same one.
+  const lines = read("plugins-ingest.yml").split("\n");
   const at = lines.findIndex((l) => /^  publish:/.test(l));
-  assert.ok(at >= 0, "ingest.yml has no publish job");
+  assert.ok(at >= 0, "plugins-ingest.yml has no publish job");
   let end = at + 1;
   while (end < lines.length && !/^  \S/.test(lines[end])) end++;
   const offenders = lines
     .slice(at, end)
     .map((l, i) => [l, at + i + 1])
     .filter(([l]) => /^\s+concurrency:/.test(l))
-    .map(([, n]) => `ingest.yml:${n}`);
+    .map(([, n]) => `plugins-ingest.yml:${n}`);
   assert.equal(offenders.join(", "), "", "the publish job is in a concurrency group again");
-});
-
-// The promise "publishes itself at 14:00" is made by `comment` and made true by
-// `publish`. While they ran side by side, an author could be told a time by a
-// run whose queue entry never reached the repository, and nothing retried it.
-test("comment waits for publish", () => {
-  const lines = read("ingest.yml").split("\n");
-  const at = lines.findIndex((l) => /^  comment:/.test(l));
-  assert.ok(at >= 0, "ingest.yml has no comment job");
-  const needs = lines.slice(at, at + 12).find((l) => /^\s+needs:/.test(l));
-  assert.match(needs ?? "", /publish/, "comment no longer waits for the job that makes its promise true");
 });
 
 // B-T1.5 (BOT-7). `ingest.yml`'s first job compares the published root.json
@@ -203,14 +197,15 @@ test("comment waits for publish", () => {
 test("every job in a workflow that has a roots check waits for it", () => {
   const withRoots = files.filter((f) => allJobs().some((j) => j.file === f && j.job === "roots"));
   // The floor. Two on 2026-09-20 — `ingest.yml` and `plugins-ingest.yml` — and
-  // without it a renamed job leaves this test looping over nothing and green.
+  // one since cutover commit E deleted `ingest.yml` (registry plan B-T5.2).
+  // Without it a renamed job leaves this test looping over nothing and green.
   assert.ok(
-    withRoots.length >= 2,
-    `only ${withRoots.length} workflow(s) have a roots job (${withRoots.join(", ") || "none"}); there were 2 on ` +
-    `2026-09-20. A file that lost its roots job lost the edge this rule is about, silently`,
+    withRoots.length >= 1,
+    `only ${withRoots.length} workflow(s) have a roots job (${withRoots.join(", ") || "none"}); there has been ` +
+    `one since cutover commit E. A file that lost its roots job lost the edge this rule is about, silently`,
   );
-  assert.ok(withRoots.includes("ingest.yml") && withRoots.includes("plugins-ingest.yml"),
-    `the two files this rule was written for are ${withRoots.join(", ")}; one of them no longer has a roots job`);
+  assert.ok(withRoots.includes("plugins-ingest.yml"),
+    `the file this rule is held to is plugins-ingest.yml, and the files with a roots job are ${withRoots.join(", ")}`);
 
   const jobs = allJobs().filter((j) => withRoots.includes(j.file));
   for (const file of withRoots) {
@@ -259,11 +254,11 @@ test("every job in a workflow that has a roots check waits for it", () => {
 // action says this in its own first step for its own five files; these two
 // jobs run scripts of their own, and this is the same assertion for those.
 //
-// Scoped to `ingest.yml` on purpose. The rule is general — every job with a
-// sparse checkout owes it — but the other workflows that will have one belong
-// to tasks that are still being written, and a test that went red on their
-// branches before they were finished would be a test they worked around.
-test("ingest.yml's sparse checkouts hold everything the scripts they run import", () => {
+// Scoped to one file on purpose. The rule is general — every job with a sparse
+// checkout owes it — and it was written for `ingest.yml`; cutover commit E
+// deleted that file (registry plan B-T5.2), so it is held to
+// `plugins-ingest.yml`, the service path's, whose sparse jobs run the bot too.
+test("plugins-ingest.yml's sparse checkouts hold everything the scripts they run import", () => {
   const REPO_FILE = /^(?:\.\.\/|\.\/)/;
   const closure = (entry) => {
     const seen = new Set();
@@ -283,7 +278,7 @@ test("ingest.yml's sparse checkouts hold everything the scripts they run import"
 
   const problems = [];
   let checked = 0;
-  for (const job of allJobs().filter((j) => j.file === "ingest.yml")) {
+  for (const job of allJobs().filter((j) => j.file === "plugins-ingest.yml")) {
     const body = code(job).join("\n");
     if (!/sparse-checkout-cone-mode:\s*false/.test(body)) continue;
     const listed = new Set(
@@ -304,7 +299,7 @@ test("ingest.yml's sparse checkouts hold everything the scripts they run import"
       }
     }
   }
-  assert.ok(checked >= 2, `only ${checked} script(s) checked; ingest.yml's sparse jobs run more than that`);
+  assert.ok(checked >= 2, `only ${checked} script(s) checked; plugins-ingest.yml's sparse jobs run more than that`);
   assert.equal(problems.join("\n"), "", "a job will die on a module its checkout did not fetch");
 });
 
@@ -463,30 +458,17 @@ test("every step output the workflow reads is one publish-apply writes", () => {
   );
   assert.ok(written.size >= 4, `record() writes ${written.size} keys; this suite would prove little`);
 
-  const ingest = read("ingest.yml");
+  // `plugins-ingest.yml` since cutover commit E deleted `ingest.yml`, the file
+  // this was written against.
+  const ingest = read("plugins-ingest.yml");
   const readKeys = new Set([...ingest.matchAll(/steps\.apply\.outputs\.([a-z_]+)/g)].map((m) => m[1]));
-  assert.ok(readKeys.size >= 3, `ingest.yml reads ${readKeys.size} of them; the publish job lost its outputs`);
+  assert.ok(readKeys.size >= 3, `plugins-ingest.yml reads ${readKeys.size} of them; the publish job lost its outputs`);
 
   const missing = [...readKeys].filter((k) => !written.has(k));
   assert.equal(
     missing.join(", "),
     "",
-    "ingest.yml reads a step output publish-apply.mjs never writes; it will always be empty",
-  );
-});
-
-test("ingest's manual dispatch takes no inputs", () => {
-  const ingest = read("ingest.yml").split("\n");
-  const at = ingest.findIndex((l) => /^\s{2}workflow_dispatch:/.test(l));
-  assert.ok(at >= 0, "ingest.yml has no workflow_dispatch trigger");
-  // Everything indented under the trigger, up to the next two-space key.
-  let end = at + 1;
-  while (end < ingest.length && (ingest[end].trim() === "" || /^\s{4}/.test(ingest[end]))) end++;
-  const body = ingest.slice(at + 1, end).filter((l) => l.trim() && !l.trim().startsWith("#"));
-  assert.equal(
-    body.join("\n"),
-    "",
-    "a no-input dispatch runs the drain and the backstop; inputs let a caller aim one run at one release",
+    "plugins-ingest.yml reads a step output publish-apply.mjs never writes; it will always be empty",
   );
 });
 
@@ -1042,9 +1024,10 @@ test("the signer hears every workflow that commits, by the name in the file", ()
   // over sign.yml's text rather than over the workflows, because the two R3
   // names have nothing behind them yet. The floor below — how many COMMITTING
   // workflows the signer actually hears — is the half that cannot rise until
-  // they land. Watched by removing `Operator` from sign.yml's list, and by
-  // removing `Ingest`.
-  for (const name of ["Ingest", "Plugins ingest", "Plugins moderation", "Operator"]) {
+  // they land. Watched by removing `Operator` from sign.yml's list. `Ingest`
+  // was the fourth name until cutover commit E deleted `ingest.yml` (registry
+  // plan B-T5.2); B-T5.2 asks that this list keep its floor of 3 after E.
+  for (const name of ["Plugins ingest", "Plugins moderation", "Operator"]) {
     assert.ok(heard.includes(name), `sign.yml's workflow_run list does not name ${JSON.stringify(name)} (D1, RC-R3-3)`);
   }
 
@@ -1202,12 +1185,14 @@ test("detectors hears every workflow that commits to main, and every name the si
   }
   // The floor, so a broken read of the YAML cannot pass by finding nothing to
   // ask about: seven committing workflows on 2026-09-22, six of them pushing
-  // to main, all six heard.
+  // to main, all six heard. Five since cutover commit E deleted `ingest.yml`,
+  // one of the six (registry plan B-T5.2): the repository did get smaller, by
+  // exactly that file, and the floor says so rather than going quiet.
   const heardCommitters = committerNames.filter((n) => heard.includes(n));
   assert.ok(
-    heardCommitters.length >= 6,
-    `detectors.yml hears ${heardCommitters.length} of this repository's committing workflows and heard 6 on ` +
-    `2026-09-22; this is a broken read or a dropped name, not a smaller repository`,
+    heardCommitters.length >= 5,
+    `detectors.yml hears ${heardCommitters.length} of this repository's committing workflows and heard 5 after ` +
+    `cutover commit E; this is a broken read or a dropped name, not a smaller repository`,
   );
   assert.equal(problems.join("\n"), "", "a workflow commits to main and detectors will not hear it");
 });

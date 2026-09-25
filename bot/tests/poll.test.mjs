@@ -50,7 +50,6 @@ import test from "node:test";
 
 import * as poll from "../lib/poll.mjs";
 import * as notify from "../lib/notify.mjs";
-import * as watch from "../watch.mjs";
 import { parseReleasesAtom, pollFeed } from "../lib/poll.mjs";
 // The OTHER tag predicate. Imported here so that the two are compared in one
 // place rather than each pinned alone; see the last test in this file.
@@ -161,13 +160,9 @@ const NOTIFY_SURFACE = [
   "watchPlan",
 ];
 
-// And what `bot/watch.mjs` exports now. B-T2.6 took `pollFeed` out;
-// `recordedTagsByRepo` joined with B-T3.9, so the backstop and the `/release`
-// ping read one derivation of a repository's recorded tags (BOT-74). Cutover
-// commit D (registry plan B-T5.2) deleted the backstop and the ping, and with
-// them `runWatch`, `bot74Filter` and `recordedTagsByRepo`: the drain is all
-// that is left, until commit E deletes the file.
-const WATCH_SURFACE = ["runDrain"];
+// `bot/watch.mjs` had its own pin here: B-T2.6 took `pollFeed` out, and
+// cutover commit D left it the drain alone. Commit E (registry plan B-T5.2)
+// deleted the file with `ingest.yml`, so the pin went too.
 
 // ── the list that is identical across the cut ─────────────────────────────
 //
@@ -189,7 +184,8 @@ const WATCH_SURFACE = ["runDrain"];
 // retires it, where a reviewer reads the removal as the decision it is.
 // Cutover commit D retired two: `runWatch`, the release backstop the cutover
 // paused and the poll replaced, and `bot74Filter`, its tag-prefix filter
-// (`bot/lib/poll.mjs` carries the poll's own, BOT-74).
+// (`bot/lib/poll.mjs` carries the poll's own, BOT-74). Commit E retired
+// `runDrain` with `bot/watch.mjs`, after the queue drain's last run.
 const SURFACE_BEFORE_THE_CUT = [
   "SEEN_FILE",
   "WATCH_AFTER_DAYS",
@@ -202,7 +198,6 @@ const SURFACE_BEFORE_THE_CUT = [
   "pollFeed",
   "readSeen",
   "resolveSubmitter",
-  "runDrain",
   "serialiseSeen",
   "watchPlan",
 ];
@@ -220,27 +215,19 @@ test("bot/lib/notify.mjs still exports exactly what it exported before the cut",
     "— isUsableTag is the candidate — leaked into a barrel five files read");
 });
 
-test("bot/watch.mjs exports exactly the drain, and not pollFeed", () => {
-  assert.equal(Object.keys(watch).sort().join(", "), WATCH_SURFACE.join(", "),
-    "bot/watch.mjs's surface is not the one cutover commit D left: the drain alone. A name back here is the " +
-    "backstop or the issue path returning, which commit D deleted");
-  assert.ok(!Object.keys(watch).includes("pollFeed"),
-    "bot/watch.mjs exports pollFeed again. The whole point of the move is that bot/lib/poll.mjs owns it");
-});
-
-// The three pins above say which module holds each name today. This one says
+// The two pins above say which module holds each name today. This one says
 // that no name fell between them.
-test("every name that existed before the cut is still exported by one of the three modules", () => {
-  assert.equal(SURFACE_BEFORE_THE_CUT.length, 14,
-    `the pre-cut surface is ${SURFACE_BEFORE_THE_CUT.length} names: it was 16 on 2026-09-20, and cutover commit D ` +
-    "retired runWatch and bot74Filter with the backstop. This list is not " +
+test("every name that existed before the cut is still exported by one of the two modules", () => {
+  assert.equal(SURFACE_BEFORE_THE_CUT.length, 13,
+    `the pre-cut surface is ${SURFACE_BEFORE_THE_CUT.length} names: it was 16 on 2026-09-20, cutover commit D ` +
+    "retired runWatch and bot74Filter with the backstop, and commit E runDrain with bot/watch.mjs. This list is not " +
     "an inventory of today's exports — it is what the backstop exported before the split, and it shrinks only " +
     "when a name is retired on purpose");
-  const after = new Set([...Object.keys(poll), ...Object.keys(notify), ...Object.keys(watch)]);
+  const after = new Set([...Object.keys(poll), ...Object.keys(notify)]);
   const lost = SURFACE_BEFORE_THE_CUT.filter((n) => !after.has(n));
   assert.equal(lost.join(", "), "",
-    "a name the backstop exported before B-T2.6 is exported by none of bot/lib/poll.mjs, bot/lib/notify.mjs or " +
-    "bot/watch.mjs. It did not move between them, it went");
+    "a name the backstop exported before B-T2.6 is exported by neither bot/lib/poll.mjs nor bot/lib/notify.mjs. " +
+    "It did not move between them, it went");
 });
 
 // Moved, not copied. The needles are BUILT from the names rather than written

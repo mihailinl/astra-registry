@@ -97,9 +97,11 @@ export const RULES = [
     owner: "M-T1.5 for the alarm, PRODUCTION_PLAN 3.4/3.5 (BOT-33, BOT-38) for the schedule it watches",
     script: "tools/coverage/drain-age.mjs",
     what:
-      "ingest.yml still routes a live cron to `bot/watch.mjs --drain`, state/releases-seen.json is under 72 h " +
-      "old, and no queue entry is more than 24 h past its own publish_after — a stopped drain and a drain that " +
-      "runs and publishes nothing are different faults and only the second has any other symptom",
+      "until cutover commit E, ingest.yml still routes a live cron to `bot/watch.mjs --drain`, and from E the " +
+      "file is gone only with the cutover marker on the tree and state/queue/ empty; state/releases-seen.json " +
+      "is under 72 h old until the cutover; and no queue entry is more than 24 h past its own publish_after — a " +
+      "stopped drain and a drain that runs and publishes nothing are different faults and only the second has " +
+      "any other symptom",
     network: false,
   },
   {

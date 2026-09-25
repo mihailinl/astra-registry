@@ -54,8 +54,8 @@ import {
   parseReleasesAtom,
   watchPlan,
 } from "../lib/notify.mjs";
-// `pollFeed` moved to `bot/lib/poll.mjs` with B-T2.6, and `watch.mjs` imports
-// it rather than re-exporting it, so this import follows the function. The
+// `pollFeed` moved to `bot/lib/poll.mjs` with B-T2.6, and `watch.mjs` (deleted by
+// cutover commit E) imported it rather than re-exporting it, so this import follows the function. The
 // `parseReleasesAtom` above deliberately still comes from `notify.mjs`, which
 // re-exports it: that re-export is what keeps five importers unchanged, and a
 // test that stopped reading it would stop witnessing it.
@@ -65,7 +65,6 @@ import { pollFeed } from "../lib/poll.mjs";
 import { parseBindingFile } from "../lib/binding.mjs";
 import { bindingDecision } from "../lib/identity.mjs";
 import { listingState } from "../lib/listing-state.mjs";
-import { runDrain } from "../watch.mjs";
 import { makeBundle, fakeGitHub, fakeGh, fakeOwnership, FIXTURE_COMMIT } from "../fixtures/ingest/make.mjs";
 import { loadSources } from "../../tools/lib/sources.mjs";
 
@@ -994,26 +993,10 @@ await test("a release already listed, or already tried, is not re-ingested", () 
 });
 
 
-section("the drain");
+// `section("the drain")` tested `runDrain` until cutover commit E deleted
+// `bot/watch.mjs` with `ingest.yml` (registry plan B-T5.2); the queue it drained
+// is empty, and drain-age's leg 1 is red if an entry appears with no drain.
 
-await test("only a ripe queue entry is dispatched, and the rest are reported", () => {
-  const root = tmp("astra-policy-queue-");
-  fs.mkdirSync(path.join(root, "state", "queue"), { recursive: true });
-  const write = (id, version, publishAfter) =>
-    fs.writeFileSync(path.join(root, queueFile(id, version)), `${JSON.stringify({
-      id, version, repo: `someone/${id}`, tag: `v${version}`, submitter: "someone",
-      queued_at: "2026-08-09T12:00:00Z", publish_after: publishAfter, reason: "P_DELAY_HIGH_RISK",
-    })}\n`);
-  write("ripe-one", "1.0.0", "2026-08-10T11:00:00Z");
-  write("still-waiting", "2.0.0", "2026-08-11T11:00:00Z");
-
-  assertEqual(readQueue(root).length, 2, "both are visible to a maintainer");
-  const { dispatch, log } = runDrain({ root, now: NOW });
-  assertEqual(dispatch.length, 1, JSON.stringify(dispatch));
-  assertEqual(dispatch[0].repo, "someone/ripe-one", "");
-  assertEqual(dispatch[0].submitter, "someone", "whose ownership is proved again on the way in");
-  assert(log.some((l) => l.includes("wait") && l.includes("still-waiting")), log.join("\n"));
-});
 
 section("no workflow or bot file reads author_association (B-T0.4b; B-T5.2)");
 
@@ -1434,8 +1417,6 @@ section("what the workflow may cancel, and what it may never");
 // Asserted against the file rather than argued in prose, because the argument
 // is only as good as the two lines it is about.
 
-const ingestWorkflow = fs.readFileSync(
-  path.join(REPO_ROOT, ".github", "workflows", "ingest.yml"), "utf8");
 
 /** The top-level block of a workflow file: column 0 key, indented body. */
 function topLevelBlock(yaml, key) {
@@ -1610,14 +1591,9 @@ await test("build-index.yml hears every workflow that commits, by the name in th
   assert(named, `no \`workflows:\` list under workflow_run:\n${on}`);
   const heard = [...named[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
 
-  // The assertion this test grew out of, kept by name: `ingest.yml` is the one
-  // committer that is live today, and it is the one whose rename would cost
-  // something the same afternoon.
-  const ingestName = /^name:\s*(.+)$/m.exec(ingestWorkflow)?.[1]?.trim().replace(/^["']|["']$/g, "");
-  assert(ingestName, "ingest.yml has no top-level `name:`");
-  assert(heard.includes(ingestName),
-    `build-index.yml waits on ${JSON.stringify(heard)} and ingest.yml is called ` +
-    `"${ingestName}" — the trigger will never fire`);
+  // This test grew out of one assertion, kept by name until cutover commit E
+  // deleted the file it named: `ingest.yml`, then the one live committer. The
+  // loop below holds every committer that is left to the same rule.
 
   const committers = workflowFiles.filter((f) => f !== "build-index.yml" && commitsAnything(f));
   const problems = [];
@@ -1700,282 +1676,6 @@ await test("build-index.yml hears every workflow that commits, by the name in th
       `The assertions above are over the workflow files and ran in full; it is the trigger's run-time effect ` +
       `that is inert, until reg.52 uncomments the schedule and M-T3.2 lands the takedown bound.`);
   }
-});
-
-await test("no event can cancel an ingest that is already running", async () => {
-  const block = topLevelBlock(ingestWorkflow, "concurrency");
-  assert(block, "the workflow has no top-level concurrency block at all");
-  const flag = /cancel-in-progress:\s*(.+)/.exec(block);
-  assert(flag, block);
-  assertEqual(flag[1].trim(), "false",
-    "an expression here is a run that cancels a publish for some value of github.event_name");
-  // The spending argument the cancellation was there for survives: a group with
-  // cancel-in-progress false still serialises, and a newer event replaces the
-  // *pending* run rather than the in-flight one.
-  assert(/group:/.test(block), block);
-});
-
-await test("a maintainer's decision gets its own lane; everything else shares the issue's", async () => {
-  // Read the two sentences this replaces before changing it back, because this
-  // assertion has now been inverted twice and each inversion was right at the
-  // time.
-  //
-  // It first said a comment must key on ITSELF (`comment-<id>`). That was wrong
-  // in a way `cancel-in-progress: false` hides: GitHub keeps one running and one
-  // PENDING run per group, and a third arrival replaces the pending one. A
-  // per-comment key did not remove that — it turned every comment into its own
-  // run, and all of those runs' `publish` jobs then queued on the single
-  // repo-wide `registry-publish` group, where the same rule applies BETWEEN
-  // AUTHORS. `/release <listed-repo> <tag>` requires no authority at all, so a
-  // stranger could drop somebody else's pending publish at will.
-  //
-  // It then said everything on one issue must share one key, which was right
-  // for exactly as long as that repo-wide lane existed.
-  //
-  // The lane is gone (registry plan B-T0.3): `publish` has no `concurrency:`,
-  // because `bot/publish-apply.mjs` makes two publishes racing a survivable
-  // event. So the premise of the second sentence is gone with it, and the
-  // decision commands take their own key — `/approve`, `/publish` and `/reject`
-  // are SPENT comments that GitHub will not redeliver, so a run replaced while
-  // pending takes the decision with it and nobody is told. Everything else still
-  // shares the issue's key, so an edit storm is still bounded.
-  const block = topLevelBlock(ingestWorkflow, "concurrency");
-  assert(/github\.event\.comment\.id/.test(block),
-    `a spent /approve must not share a lane with the next event on the issue:\n${block}`);
-  assert(/github\.event\.issue\.number/.test(block),
-    `every other event on an issue has to share one lane:\n${block}`);
-  for (const command of ["/approve", "/publish", "/reject"]) {
-    assert(block.includes(command),
-      `the per-comment key must be gated on the decision commands; ${command} is not named:\n${block}`);
-  }
-  // And the gate is what keeps a stranger's `/release` ping out of its own lane:
-  // a key nobody can aim is the whole reason the per-comment key is safe now.
-  assert(!block.includes("/release"),
-    `a ping that needs no authority must not get its own lane:\n${block}`);
-});
-
-await test("the job that commits queues behind nobody, and handles the race itself", async () => {
-  // This asserted the opposite until B-T0.3: `group: registry-publish,
-  // cancel-in-progress: false`, the only job that writes to the catalogue,
-  // serialised. Its own comment named what that did not promise — a pending
-  // `publish` could still be replaced by a newer one — and said the durable fix
-  // was recovery rather than a key. This is that fix: the lane is gone, and two
-  // publishes racing to push now end in a re-apply or a refusal, in
-  // `bot/publish-apply.mjs`, instead of one of them never starting.
-  //
-  // `bot/tests/workflows.test.mjs` asserts the same absence by scanning the
-  // publish job's block. The overlap is deliberate and small: that suite runs
-  // only in `bot-tests.yml`, and this one also runs inside `ingest.yml` before
-  // every ingest, which is the run where being wrong about this costs a
-  // publication.
-  // Comment lines are skipped, and not as a convenience: the job's own comment
-  // names the group it used to have, so that somebody reading the YAML learns
-  // why it is absent. A scan of the raw file would make that explanation
-  // indistinguishable from the thing it explains — the same trap that caught
-  // `tools/selftest.mjs`'s signer rule and `workflows.test.mjs`'s submitter
-  // rule, both of which now skip comments for this reason.
-  const lane = ingestWorkflow
-    .split("\n")
-    .filter((l) => !l.trim().startsWith("#"))
-    .filter((l) => /group:\s*registry-publish/.test(l));
-  assertEqual(lane.join(" | "), "",
-    "the repo-wide publish lane is back; a stranger's ping can drop another author's pending publish");
-  assert(/node bot\/publish-apply\.mjs/.test(ingestWorkflow),
-    "the publish job no longer goes through the file that makes a racing push survivable");
-});
-
-// ── the close on a publication ──────────────────────────────────────────────
-//
-// The one job in this workflow whose effect is invisible until a stranger
-// publishes something: it closes the submission issue. Asserting its YAML is
-// not enough — the interesting parts are in the script, and a script that
-// closed the wrong thread, or closed one whose publication never landed, would
-// look exactly like a correct one in a diff. So it is EXTRACTED and RUN here,
-// against a fake `github` and a fake filesystem.
-
-/** The `script: |` body of a named job in a workflow file, dedented. */
-function jobScript(yaml, job) {
-  const lines = yaml.split("\n");
-  const start = lines.findIndex((l) => l === `  ${job}:`);
-  if (start < 0) return null;
-  let end = lines.length;
-  for (let i = start + 1; i < lines.length; i++) {
-    if (/^  \S/.test(lines[i])) { end = i; break; }
-  }
-  const body = lines.slice(start, end);
-  const at = body.findIndex((l) => /^\s*script:\s*\|\s*$/.test(l));
-  if (at < 0) return null;
-  const indent = /^(\s*)/.exec(body[at + 1])[1];
-  const out = [];
-  for (let i = at + 1; i < body.length; i++) {
-    if (body[i].trim() !== "" && !body[i].startsWith(indent)) break;
-    out.push(body[i].slice(indent.length));
-  }
-  return out.join("\n");
-}
-
-const CLOSE_SCRIPT = jobScript(ingestWorkflow, "close");
-
-/**
- * Runs the extracted script over `reports`, a map of directory name to
- * decision, and returns every call it made.
- */
-async function runClose(reports, { issue = "", refused = "", failOn = [] } = {}) {
-  const calls = [];
-  const warnings = [];
-  const fakeFs = {
-    readdirSync: (dir) => {
-      if (dir !== "reports") throw new Error(`ENOENT: ${dir}`);
-      return Object.keys(reports);
-    },
-    readFileSync: (file) => {
-      const m = /^reports\/([^/]+)\/decision\.json$/.exec(file);
-      if (!m || !(m[1] in reports)) throw new Error(`ENOENT: ${file}`);
-      return JSON.stringify(reports[m[1]]);
-    },
-  };
-  const github = {
-    rest: {
-      issues: {
-        update: async (args) => {
-          if (failOn.includes(args.issue_number)) throw new Error(`#${args.issue_number} is locked`);
-          calls.push(args);
-        },
-      },
-    },
-  };
-  const core = { warning: (m) => warnings.push(m) };
-  const context = { repo: { owner: "mihailinl", repo: "astra-registry" } };
-  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  const fn = new AsyncFunction("github", "context", "core", "require", "process", CLOSE_SCRIPT);
-  await fn(github, context, core, (m) => (m === "node:fs" ? fakeFs : require(m)), {
-    env: { ISSUE: issue, REFUSED: refused },
-  });
-  return { calls, warnings };
-}
-
-await test("the close job's script was found, so the tests below are about something", async () => {
-  // The extraction is the whole rest of this section's premise. A rename in the
-  // workflow that made `jobScript` return null would otherwise turn every test
-  // below into a test of an empty string that passes.
-  assert(CLOSE_SCRIPT, "no `script: |` under a `close:` job in ingest.yml");
-  assert(/state_reason/.test(CLOSE_SCRIPT), CLOSE_SCRIPT);
-  assert(CLOSE_SCRIPT.split("\n").length > 10, CLOSE_SCRIPT);
-});
-
-await test("a publication closes its issue, as completed", async () => {
-  const { calls } = await runClose({ "ingest-report-1": { outcome: "publish", issue: 5 } }, { issue: "5" });
-  assertEqual(calls.length, 1, JSON.stringify(calls));
-  assertEqual(calls[0].issue_number, 5, "the thread that asked");
-  assertEqual(calls[0].state, "closed", "");
-  assertEqual(calls[0].state_reason, "completed",
-    "`not_planned` is what a rejection uses; this request got what it asked for");
-});
-
-await test("nothing that did not publish closes anything", async () => {
-  for (const outcome of ["delay", "review", "refuse"]) {
-    const { calls } = await runClose({ "ingest-report-1": { outcome, issue: 5 } }, { issue: "5" });
-    assertEqual(calls.length, 0, `${outcome} closed the issue: ${JSON.stringify(calls)}`);
-  }
-});
-
-await test("a drained release closes the thread the queue entry remembered", async () => {
-  // The cron path: no event, so no ISSUE in the environment. The number comes
-  // out of the decision, which got it from the queue entry.
-  const { calls } = await runClose({ "ingest-report-1": { outcome: "publish", issue: 12 } }, { issue: "" });
-  assertEqual(calls.length, 1, JSON.stringify(calls));
-  assertEqual(calls[0].issue_number, 12, "recovered with no event to read");
-});
-
-await test("a publication with no thread behind it closes nothing", async () => {
-  // A release ping or the backstop. There is no issue; §0's answer to that is
-  // the [notice] the comment job opens, not a close.
-  const { calls } = await runClose({ "ingest-report-1": { outcome: "publish", issue: null } }, { issue: "" });
-  assertEqual(calls.length, 0, JSON.stringify(calls));
-});
-
-await test("one issue carrying two releases is closed once", async () => {
-  const { calls } = await runClose({
-    "ingest-report-1": { outcome: "publish", issue: 5 },
-    "ingest-report-2": { outcome: "publish", issue: 5 },
-  }, { issue: "5" });
-  assertEqual(calls.length, 1, JSON.stringify(calls));
-});
-
-await test("an unreadable report is skipped rather than fatal", async () => {
-  const { calls } = await runClose({
-    "ingest-report-1": undefined,
-    "ingest-report-2": { outcome: "publish", issue: 5 },
-  }, { issue: "5" });
-  assertEqual(calls.length, 1, "the readable one still closed");
-});
-
-await test("a report that was refused does not get its issue closed", async () => {
-  // The gate above says the RUN committed. It does not say every release in it
-  // did: one report's refusal is one release's refusal now, and the run carries
-  // on. Closing that author's thread would tell them to stop watching for a
-  // listing this registry refused.
-  const { calls } = await runClose(
-    {
-      "ingest-report-0": { outcome: "publish", issue: 7 },
-      "ingest-report-1": { outcome: "publish", issue: 8 },
-    },
-    { refused: "ingest-report-0" },
-  );
-  assertEqual(calls.map((c) => c.issue_number).join(","), "8",
-    `only the release that landed may be closed: ${JSON.stringify(calls)}`);
-});
-
-await test("one unclosable issue does not strand every other author in the run", async () => {
-  // `comment` learned this the expensive way — one oversized report threw out of
-  // the step and every other submission in the run got no answer at all — and
-  // the same loop in `close` was left without the same guard. A close is worse:
-  // nothing tries it again, so the thread stays open for ever over a listing
-  // that is in the catalogue.
-  const { calls, warnings } = await runClose(
-    {
-      "ingest-report-0": { outcome: "publish", issue: 11 },
-      "ingest-report-1": { outcome: "publish", issue: 12 },
-      "ingest-report-2": { outcome: "publish", issue: 13 },
-    },
-    { failOn: [12] },
-  );
-  assertEqual(calls.map((c) => c.issue_number).join(","), "11,13",
-    `the other two authors' threads still close: ${JSON.stringify(calls)}`);
-  assertEqual(warnings.length, 1, `the failure has to be said out loud: ${JSON.stringify(warnings)}`);
-  assert(/#12/.test(warnings[0]), warnings[0]);
-});
-
-await test("the close waits for the commit, and for the comment", async () => {
-  // Two orderings, both load-bearing, both expressed in YAML rather than in the
-  // script — so they are asserted separately from the run above.
-  const lines = ingestWorkflow.split("\n");
-  const start = lines.findIndex((l) => l === "  close:");
-  assert(start > 0, "no close job");
-  const head = lines.slice(start, start + 6).join("\n");
-
-  assert(/needs:.*\bpublish\b/.test(head),
-    `the close must depend on the job that lands the commit:\n${head}`);
-  assert(/needs:.*\bcomment\b/.test(head),
-    `a close that races the comment is the silent close §0 forbids:\n${head}`);
-  const cond = /if:\s*(.+)/.exec(head);
-  assert(cond, head);
-  // This asserted `needs.publish.result == 'success'` until B-T0.3, and the
-  // reason it gave — "an outcome of \"publish\" is a decision, not a commit" —
-  // is the same reason it now asserts something stronger. `result` is `success`
-  // whenever publish-apply exited 0, and it exits 0 for `outcome=nothing` too:
-  // a run that applied nothing, which happens whenever both artifact downloads
-  // fail. So the job result stopped being the fact this gate needs on the day
-  // the publish job gained an outcome that says what landed.
-  assert(/needs\.publish\.outputs\.outcome\s*==\s*'committed'/.test(cond[1]),
-    `the close must gate on what LANDED, not on the job exiting 0:\n${cond[1]}`);
-  assert(!/needs\.publish\.result/.test(cond[1]),
-    `the job result is success for a run that committed nothing:\n${cond[1]}`);
-  assert(!/decision\.outcome/.test(cond[1]),
-    `an outcome of "publish" is a decision, not a commit:\n${cond[1]}`);
-  // `always()` here would run the close even when the comment or the publish
-  // failed, which is exactly the pair of failures it must not survive.
-  assert(!/always\(\)/.test(cond[1]), cond[1]);
 });
 
 
@@ -2856,7 +2556,8 @@ await test("end to end — a drained publication with the marker on main carries
   // The thing itself, run the way the drain runs it: a real bundle, the real
   // archive walk, the real manifest probe, the real derivation and the real
   // policy — with `log/baseline.json` on the tree and `--source queue`, which
-  // is what `bot/watch.mjs --drain` puts on every dispatch entry.
+  // is what `bot/watch.mjs --drain` put on every dispatch entry until cutover
+  // commit E deleted it. `bot/decide.mjs` still maps the source.
   const root = registryTree([{}]);
   fs.mkdirSync(path.join(root, "log"), { recursive: true });
   fs.writeFileSync(path.join(root, "log", "baseline.json"),

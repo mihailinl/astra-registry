@@ -83,7 +83,9 @@ on:
   # and `Migration baseline`'s commit of `log/baseline.json` is the one that
   # arms four of the five detectors.
   workflow_run:
-    workflows: ["Ingest", "Plugins ingest", "Plugins moderation", "Operator", "Migration baseline", "publisher re-check", "Keepalive"]
+    # `Ingest` left every list here with cutover commit E (registry plan
+    # B-T5.2), which deleted ingest.yml after the queue drain's last run.
+    workflows: ["Plugins ingest", "Plugins moderation", "Operator", "Migration baseline", "publisher re-check", "Keepalive"]
     types: [completed]
 
   schedule:

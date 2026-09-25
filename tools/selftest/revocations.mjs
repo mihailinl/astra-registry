@@ -520,9 +520,10 @@ export async function run() {
       neverAsk(real.notAsked,
         "a checkout with its whole history asks it: the runner prints the live lanes that reach this suite " +
         "with it under the totals and goes red when there are none (`node tools/selftest.mjs --lanes`). " +
-        "ingest.yml's `selftest` job is left at depth 1 on purpose — its run's `publish` job asks the same " +
-        "commit with the whole history before anything commits, and a breach is permanent, so asking it " +
-        "there too would add an outage and no detection; the comment above this check has the measurement");
+        "ingest.yml's `selftest` job was left at depth 1 on purpose until cutover commit E deleted it — its " +
+        "run's `publish` job asked the same commit with the whole history before anything committed, and a " +
+        "breach is permanent, so asking it there too would have added an outage and no detection; the " +
+        "comment above this check has the measurement");
     }
   });
   await test("the generator flattens an advisory into one entry per key, carrying the advisory", () => {

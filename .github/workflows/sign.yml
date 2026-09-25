@@ -76,7 +76,9 @@ on:
   # a renamed workflow that still commits would otherwise wait an hour for the
   # cron with nothing red anywhere.
   workflow_run:
-    workflows: ["Ingest", "Plugins ingest", "Plugins moderation", "Operator"]
+    # `Ingest` left every list here with cutover commit E (registry plan
+    # B-T5.2), which deleted ingest.yml after the queue drain's last run.
+    workflows: ["Plugins ingest", "Plugins moderation", "Operator"]
     types: [completed]
 
   # Hourly, for the reason D4 gives: the documents expire whether or not
