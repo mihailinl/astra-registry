@@ -9,7 +9,7 @@ import { syncBuiltinESMExports } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { stableStringify, jcs } from "../lib/canonical.mjs";
+import { ijsonProblems, stableStringify, jcs } from "../lib/canonical.mjs";
 import { KNOWN, validate as validateSchema } from "../lib/jsonschema.mjs";
 import { ID_PATTERN, invalidId, unsafePathComponent, foldId, unsafeDisplayText } from "../lib/ids.mjs";
 import { compareSemver } from "../lib/semver.mjs";
@@ -146,6 +146,60 @@ export async function run() {
     let threw = false;
     try { stableStringify({ x: 1.5 }); } catch { threw = true; }
     assert(threw, "1.5 was accepted; RFC 8785 number canonicalisation is not implemented");
+  });
+  // Contract §0.7 since 2.16.0, and RFC 8785's own precondition: I-JSON strings
+  // (RFC 7493 §2.1). Until 2.16.0 both shapes wrote a lone surrogate as a
+  // `\udXXX` escape, because that is what `JSON.stringify` does, and serde_json
+  // refuses the escape — so the catalogue, the withdrawal list and trust.json,
+  // all serialised and signed through this one function, could each be made
+  // unreadable to every client by one string in them. Each clause below is its
+  // own case: a value, a member name, a surrogate of either half, and a
+  // noncharacter, because each is a separate line of the check and can be
+  // deleted without the others.
+  await test("I-JSON strings only (contract §0.7, 2.16.0): an unpaired surrogate or a noncharacter is refused as a value and as a member name, by both shapes, in a sentence that does not carry it, and a paired surrogate is written", () => {
+    const cases = [
+      ["a high surrogate with nothing after it", { reason: "Reads your chat \ud800" }],
+      ["a low surrogate with nothing before it", { reason: "\udc00 comes first" }],
+      ["half an emoji, the way a cut makes one", { name: "Dice \ud83c" }],
+      ["a member name", { permissions: { ["dom\ud800access"]: {} } }],
+      ["a string deep in an array", { a: [{ b: ["fine", "\udfff"] }] }],
+      ["a noncharacter in the BMP", { reason: "\ufffe" }],
+      ["U+FDD0, the first of the contiguous block", { reason: "x\ufdd0" }],
+      ["a noncharacter in the last plane", { reason: "\u{10ffff}" }],
+    ];
+    const wrong = [];
+    for (const [what, value] of cases) {
+      for (const [shape, fn] of [["stableStringify", stableStringify], ["jcs", jcs]]) {
+        let message = null;
+        try {
+          fn(value);
+        } catch (e) {
+          message = String(e.message);
+        }
+        if (message === null) wrong.push(`${shape} wrote ${what}`);
+        else if (/\p{Cs}|\p{Noncharacter_Code_Point}/u.test(message)) wrong.push(`${shape}'s refusal of ${what} quotes what it refuses`);
+        else if (!/unpaired surrogate|noncharacter/.test(message)) wrong.push(`${shape} refused ${what} for another reason: ${message}`);
+      }
+    }
+    assertEqual(wrong.join("\n"), "", "the canonical serialiser writes a string no Rust reader can hold");
+    // And the other direction: a PAIRED surrogate is one astral character and
+    // is written unchanged, as is any other code point, U+FFFD included.
+    const ok = { emoji: "\ud83c\udfb2 dice", scripts: "é ü ё 中文 ا", replacement: "\ufffd" };
+    const back = JSON.parse(jcs(ok));
+    for (const k of Object.keys(ok)) assertEqual(back[k], ok[k], `the well-formed string ${k} did not round-trip`);
+  });
+  await test("ijsonProblems names every member name and string value that is not I-JSON, by an ASCII path", () => {
+    const found = ijsonProblems({
+      ok: "fine",
+      permissions: { dom_access: { reason: "x\ud800", types: ["a", "\udc00"] } },
+      ["k\udc00"]: ["\ufffe"],
+    });
+    assertEqual(found.map((f) => f.path).join(" | "),
+      '$.permissions.dom_access.reason | $.permissions.dom_access.types[1] | $["k\\udc00"] (the member name) | $["k\\udc00"][0]',
+      "the walk missed a string, or named it by a path a reader cannot follow");
+    assert(found.every((f) => /^[\x20-\x7e]*$/.test(`${f.path} ${f.problem}`)),
+      `a path or a problem is not ASCII, so it carries the string it names: ${JSON.stringify(found)}`);
+    assertEqual(ijsonProblems({ a: ["\ud83c\udfb2", { b: "ok" }] }).length, 0, "a paired surrogate was reported");
   });
 
   // ── RFC 8785's own vectors ──────────────────────────────────────────────────

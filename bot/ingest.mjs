@@ -47,6 +47,7 @@ import { loadSources, loadPolicy, REPO_ROOT } from "../tools/lib/sources.mjs";
 import { compareSemver, parseSemver } from "../tools/lib/semver.mjs";
 import { SUPPORTED_KEYS } from "../tools/lib/platform.mjs";
 import { TAG_PATTERN } from "../tools/lib/tags.mjs";
+import { ijsonProblems } from "../tools/lib/canonical.mjs";
 
 import { inspectBundle } from "./lib/bundle.mjs";
 import { CODES, LEVEL_GLYPH, codeDef } from "./lib/codes.mjs";
@@ -125,6 +126,36 @@ class Findings {
 }
 
 const sha256 = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
+
+/**
+ * Contract §0.7 (since 2.16.0), over the two records this run would propose:
+ * every member name and string value is valid Unicode, with no unpaired
+ * surrogate and no noncharacter.
+ *
+ * `bot/lib/bundle.mjs` already refuses MANIFEST.json's own strings, which is
+ * where an author's `permissions.<id>.reason` comes from. This is the general
+ * half, over the records as derived — whatever file a string came out of, the
+ * card's locale texts included — and it runs on every path, including the one
+ * where `validateDerived` is skipped because the repository changed.
+ * `E_MANIFEST_INVALID` because the string is the bundle's and the fix is a
+ * new tag; the message names the record and the member.
+ *
+ * @returns {{level: string, code: string, where: string, message: string}[]}
+ */
+export function unholdableStrings(derived) {
+  const found = [
+    ...(derived?.plugin ? ijsonProblems(derived.plugin, "plugin.json") : []),
+    ...(derived?.version ? ijsonProblems(derived.version, "the version record") : []),
+  ];
+  return found.slice(0, 8).map((u) => ({
+    level: "error",
+    code: "E_MANIFEST_INVALID",
+    where: "derive",
+    message:
+      `the derived ${u.path} carries ${u.problem}. serde_json refuses it, so no Astra client could read a ` +
+      "catalogue that listed it (contract §0.7: every string is valid Unicode). Rebuild from sources that do not carry it.",
+  }));
+}
 
 /**
  * @param {{repo: string, tag: string, submitter: string|null, root?: string,
@@ -543,6 +574,9 @@ export async function ingest(opts, deps = {}) {
       derived.version = applied.derived.version;
     }
   }
+
+  // ── every string of the two records, before anything else reads them ─────
+  f.absorb(unholdableStrings(derived), "derive");
 
   // ── the name rules, once per language the card is drawn in ────────────────
   //
@@ -1213,6 +1247,13 @@ export async function checkFacts(opts, deps = {}) {
     artifacts, files: first.files, ownershipMethod: null, existingPlugin: existing?.doc ?? null, policy,
   });
   f.absorb(derived.findings, "metadata");
+  // Contract §0.7 (since 2.16.0). A listing that carries such a string is not
+  // written at all: the listing artifact is what the publish job commits.
+  const unholdable = unholdableStrings(derived);
+  if (unholdable.length) {
+    f.absorb(unholdable, "derive");
+    return write(null);
+  }
   for (const [code, block] of Object.entries(derived.plugin?.i18n ?? {})) {
     f.absorb(checkDisplayName({ id: facts.id, name: block.name, repoOwner, locale: code }, catalogue, { trademarks }), `locales/${code}.json`);
   }

@@ -9,9 +9,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { fixtureEnv } from "../lib/git-env.mjs";
+import { cleanEnv, fixtureEnv } from "../lib/git-env.mjs";
 
-import { runValidation } from "../validate.mjs";
+import { RECORD_ROOTS, displayStrings, recordFiles, recordStringProblems, runValidation } from "../validate.mjs";
 import { buildIndex } from "../build-index.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
 import { compareSemver } from "../lib/semver.mjs";
@@ -800,6 +800,173 @@ export async function run() {
       `the committed tree publishes a listing from the staging repository that is not the staging listing ` +
       `(how: ${real.how})`);
     console.log(`        (committed tree: ${real.note ?? `${real.checked} sibling(s) checked, via ${real.how}`})`);
+  });
+
+  // ── contract §0.7 since 2.16.0: every string of every record ────────────
+  //
+  // minice-e4's review of its mirror writer (2026-09-25) found the hole, and
+  // the client lane measured what it costs: a lone-surrogate escape in one
+  // author's `permissions.<id>.reason` passed `schema/version-v1.json`, was
+  // copied verbatim into the version record, and reached the signed catalogue,
+  // which every Astra client parses WHOLE with serde_json before it reads an
+  // entry. serde_json refuses the escape. So one manifest froze every client's
+  // catalogue — and a record on `main` is write-once. Two holes, two checks,
+  // two tests: `displayStrings` did not reach `permissions` (a), and nothing
+  // walked the strings nobody renders (b).
+
+  // What may be tracked as `*.json` and NOT walked by `checkRecordStrings`:
+  // test data, some of it malformed on purpose, and two canary configuration
+  // files. None is committed by a bot run or served. Named here rather than in
+  // tools/validate.mjs, because a path that module names is a gate input by
+  // TRUST-31's leg (c), and these are the opposite of one.
+  const NOT_RECORDS = ["tests", "tools/testkeys", "tools/selftest", "bot/fixtures", "bot/tests"];
+  const NOT_RECORD_FILES = {
+    "bot/security-contact.json":
+      "the privacy canary's role addresses, read by tools/priv-scan.mjs and kept off every bot run (couplings entry 104)",
+    "tools/coverage/priv-scan-exempt.json": "the privacy canary's exemption list, read only by its own history walk",
+  };
+
+  const cleanListing = (name) => {
+    const dir = path.join(tmp, name);
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.cpSync(path.join(REPO_ROOT, "tests/fixtures/id-collision/plugins/dice-roller"),
+      path.join(dir, "plugins", "dice-roller"), { recursive: true });
+    return dir;
+  };
+  const versionFile = (dir) => path.join(dir, "plugins", "dice-roller", "versions", "1.0.0.json");
+  const editVersion = (dir, edit) => {
+    const doc = JSON.parse(fs.readFileSync(versionFile(dir), "utf8"));
+    edit(doc);
+    // `JSON.stringify`, not the canonical serialiser: since ES2019 it writes a
+    // lone surrogate as the six-character escape an author's MANIFEST.json
+    // carries, and `stableStringify` now refuses to write one at all.
+    fs.writeFileSync(versionFile(dir), JSON.stringify(doc, null, 2));
+  };
+
+  await test("(a) displayStrings holds a permission's words — every string under a version record's permissions and under each catalogue release's — and the validator refuses a bidi override in a reason", async () => {
+    const fields = (doc) => displayStrings(doc).map(([f]) => f).join(",");
+    assertEqual(
+      fields({ permissions: { fire_trigger: {}, dom_access: { reason: "Draws", types: ["a"], scopes: ["session"] } } }),
+      "permissions.dom_access.reason,permissions.dom_access.scopes[0],permissions.dom_access.types[0]",
+      "a version record's permission strings are not all display strings");
+    assertEqual(
+      fields({ name: "Dice", releases: [{ permissions: { client: { reason: "Chats" } } }, { permissions: {} }] }),
+      "name,releases[0].permissions.client.reason",
+      "a catalogue entry's release permissions are not display strings, so the deploy candidate is not scanned for them");
+
+    // On a tree, with the one character only this clause can see: U+202E is
+    // valid Unicode, so no string walk refuses it, and it is how a consent
+    // sheet shows one sentence while the record holds another.
+    const control = cleanListing("perm-display-control");
+    editVersion(control, (d) => { d.permissions = { dom_access: { reason: "Draws the cat over the window" } }; });
+    const ok = await validateTree(control);
+    assertEqual(ok.report.errors.map((e) => `${e.where} ${e.message}`).join("; "), "",
+      "the fixture listing with an ordinary permission reason does not validate");
+    const dir = cleanListing("perm-display-bidi");
+    editVersion(dir, (d) => { d.permissions = { dom_access: { reason: "Draws the cat ‮over the window" } }; });
+    const { report } = await validateTree(dir);
+    assertEqual(errorsMatching(report, "permissions.dom_access.reason contains a zero-width or bidirectional").length, 1,
+      `a bidi override in a permission reason was not refused:\n${report.errors.map((e) => `${e.where} ${e.message}`).join("\n")}`);
+  });
+
+  await test("(b) every record under the root is walked, and a string that is not valid I-JSON is refused wherever it is — catalogue, version, listing, publisher, decision, log, state, moderation entry, advisory — as an escape, as a literal and as a member name, while test data and foreign checkouts are not walked", async () => {
+    const dir = cleanListing("record-strings");
+    const put = (rel, text) => {
+      const file = path.join(dir, rel);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, text);
+    };
+    const LONE = "\ud800";
+    // Each in a member that `displayStrings` does not take, so this clause is
+    // the only one that can see it.
+    editVersion(dir, (d) => { d.$comment = `derived ${LONE}`; });
+    const listing = JSON.parse(fs.readFileSync(path.join(dir, "plugins/dice-roller/plugin.json"), "utf8"));
+    put("plugins/dice-roller/plugin.json", JSON.stringify({ ...listing, $comment: `hand-edited \udc00` }, null, 2));
+    const expected = {
+      "registry/v1/index.json": JSON.stringify({ signed: { schema: "astra.registry.index/1", serial: 1, plugins: [], note: LONE } }),
+      "publishers/someone.json": JSON.stringify({ schema: "astra.registry.publisher/1", owner: "someone", display_name: `Some ${LONE}` }),
+      "log/decisions/2026/0123456789abcdef0123456789abcdef.json": JSON.stringify({ schema: "astra.registry.decision/1", reason: `r ${LONE}` }),
+      "log/rollout/R9-fixture.json": JSON.stringify({ note: [`fine`, `not ${LONE}`] }),
+      "state/keepalive-fixture.json": JSON.stringify({ at: LONE }),
+      "bot/moderation/2026-01-01-fixture-delist.json": JSON.stringify({ reason: `x ${LONE}` }),
+      "tools/revocations/ASTRA-2026-0999.json": JSON.stringify({ id: "ASTRA-2026-0999", reason: `y ${LONE}` }),
+      "state/member-name.json": JSON.stringify({ [`k${LONE}`]: 1 }),
+      "log/rollout/noncharacter.json": JSON.stringify({ a: "￾" }),
+    };
+    for (const [rel, text] of Object.entries(expected)) put(rel, text);
+    // The literal: a lone surrogate written as the three bytes it would be in
+    // UTF-8, which no decoder admits and `readFileSync(…, "utf8")` quietly
+    // turns into three U+FFFD.
+    put("state/literal.json", Buffer.concat([Buffer.from('{"a":"'), Buffer.from([0xed, 0xa0, 0x80]), Buffer.from('"}')]));
+    // Test data, which is not a record and is not walked — and what CI checks
+    // out INTO the root, which is another repository's test data:
+    // `build-index.yml`'s `_astra-plugins/` and `link-deps.sh`'s `_deps/`.
+    for (const t of NOT_RECORDS) put(`${t}/fixture-with-a-lone-surrogate.json`, JSON.stringify({ a: LONE }));
+    put(".github/fixture-with-a-lone-surrogate.json", JSON.stringify({ a: LONE }));
+    put("_astra-plugins/testdata/locales/fixture-with-a-lone-surrogate.json", JSON.stringify({ a: LONE }));
+    put("bot/manifest-probe/_deps/AstraPlugins/fixture-with-a-lone-surrogate.json", JSON.stringify({ a: LONE }));
+
+    const { report } = await validateTree(dir);
+    const walked = (rel) => report.errors.filter((e) => e.where === rel && / carries /.test(e.message));
+    const missed = [
+      ...Object.keys(expected),
+      "plugins/dice-roller/versions/1.0.0.json",
+      "plugins/dice-roller/plugin.json",
+      "state/literal.json",
+    ].filter((rel) => walked(rel).length === 0);
+    assertEqual(missed.join(", "), "", "a record carrying a string no Rust reader can hold was not refused");
+    assert(walked("state/literal.json")[0].message.includes("not valid UTF-8"),
+      `the literal is refused for another reason: ${walked("state/literal.json")[0].message}`);
+    assert(walked("state/member-name.json")[0].message.includes("(the member name)"),
+      `a member name is not reported as one: ${walked("state/member-name.json")[0].message}`);
+    assert(walked("log/rollout/noncharacter.json")[0].message.includes("noncharacter U+FFFE"),
+      `a noncharacter is not reported as one: ${walked("log/rollout/noncharacter.json")[0].message}`);
+    const overreach = report.errors.filter((e) => e.where.includes("fixture-with-a-lone-surrogate"));
+    assertEqual(overreach.map((e) => e.where).join(", "), "", "test data or a foreign checkout was walked as if it were a record");
+    const quoted = report.errors.filter((e) => /\p{Cs}|\p{Noncharacter_Code_Point}/u.test(`${e.where} ${e.message}`));
+    assertEqual(quoted.length, 0, "a refusal carries the string it refuses, which makes the report itself unparseable");
+  });
+
+  await test("(b) on this tree the walk reads every kind of record there is, every tracked JSON file is a record or test data, and it finds nothing", () => {
+    const files = recordFiles(REPO_ROOT);
+    // The canary that keeps RECORD_ROOTS from going stale: the list is closed,
+    // so a record directory added tomorrow is unwalked unless something says
+    // so. This says so, on the day its first file is committed.
+    const tracked = execFileSync("git", ["-C", REPO_ROOT, "ls-files", "-z", "--", "*.json"],
+      { encoding: "utf8", env: cleanEnv(), maxBuffer: 64 * 1024 * 1024 }).split("\0").filter(Boolean);
+    assert(tracked.length >= 150, `git ls-files listed ${tracked.length} JSON file(s); a list that short is not this tree`);
+    const walkedSet = new Set(files);
+    const unaccounted = tracked.filter((f) =>
+      !walkedSet.has(f) && !NOT_RECORDS.some((t) => f.startsWith(`${t}/`)) && !(f in NOT_RECORD_FILES));
+    assertEqual(unaccounted.join(", "), "",
+      "a tracked JSON file is neither under tools/validate.mjs's RECORD_ROOTS nor test data nor a declared canary " +
+      "file, so contract §0.7's string rule does not reach it. Add its directory to RECORD_ROOTS if a bot commits " +
+      "it or the registry serves it; otherwise to NOT_RECORDS here, with the reason");
+    const staleNot = Object.keys(NOT_RECORD_FILES).filter((f) => !tracked.includes(f) || walkedSet.has(f));
+    assertEqual(staleNot.join(", "), "", "a declared canary file is gone, or is walked after all, so its declaration excuses nothing");
+    const phantom = RECORD_ROOTS.filter((r) => !fs.existsSync(path.join(REPO_ROOT, r)));
+    assertEqual(phantom.join(", "), "", "RECORD_ROOTS names a path this tree does not have");
+    assert(files.length >= 100, `the walk read ${files.length} file(s); a walk that short is not this tree`);
+    const kinds = {
+      catalogue: /^registry\/v1\/index\.json$/,
+      "withdrawal list": /^registry\/v1\/revocations\.json$/,
+      "trust document": /^registry\/v1\/trust\.json$/,
+      "root document": /^registry\/v1\/root\.json$/,
+      listing: /^plugins\/[^/]+\/plugin\.json$/,
+      version: /^plugins\/[^/]+\/versions\/[^/]+\.json$/,
+      publisher: /^publishers\/[^/]+\.json$/,
+      "rollout log": /^log\/rollout\/[^/]+\.json$/,
+      state: /^state\/[^/]+\.json$/,
+      "moderation entry": /^bot\/moderation\/[^/]+\.json$/,
+    };
+    const absent = Object.entries(kinds).filter(([, re]) => !files.some((f) => re.test(f))).map(([k]) => k);
+    assertEqual(absent.join(", "), "", "the walk does not reach a kind of record this tree holds");
+    const inTestData = files.filter((f) => NOT_RECORDS.some((t) => f.startsWith(`${t}/`)));
+    assertEqual(inTestData.join(", "), "", "the walk read test data");
+    const found = files.flatMap((f) => recordStringProblems(fs.readFileSync(path.join(REPO_ROOT, f)))
+      .map((p) => `${f} ${p.path}: ${p.problem}`));
+    assertEqual(found.join("\n"), "", "a record on this tree carries a string no Rust reader can hold");
+    console.log(`        (${files.length} record file(s) walked)`);
   });
 }
 

@@ -59,7 +59,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { cleanEnv } from "./lib/git-env.mjs";
 
-import { stableStringify } from "./lib/canonical.mjs";
+import { ijsonProblems, stableStringify } from "./lib/canonical.mjs";
 import { compareSemver } from "./lib/semver.mjs";
 import { loadIdentities, loadPublishers, loadSources, REPO_ROOT } from "./lib/sources.mjs";
 import { INDEX_SCHEMA } from "../bot/lib/sign.mjs";
@@ -571,6 +571,26 @@ export function buildIndex({ root = REPO_ROOT, serial } = {}) {
   const keyProblems = publisherKeyProblems(doc, publishers);
   if (keyProblems.length) {
     throw new Error(`cannot generate the index, its publisher keys break ID-51:\n${keyProblems.map((p) => `  ${p}`).join("\n")}`);
+  }
+  // Contract §0.7 (since 2.16.0), asked of the document itself, as the last
+  // thing the generator does: every string in it is valid Unicode. This is the
+  // document every client parses WHOLE before it reads an entry, so one lone
+  // surrogate anywhere in it — one author's permission reason was the measured
+  // way in — is not one bad listing but no catalogue at all, on every client,
+  // until a good one replaces it. The records it came from are refused by
+  // `tools/validate.mjs` and at ingest; this is the line that holds when a path
+  // round those did not, because nothing downstream of it can repair a signed
+  // document. `stableStringify` refuses the same strings by throwing, and this
+  // says which listing carried one.
+  const unholdable = ijsonProblems(doc).map((u) => {
+    const m = /^\$\.signed\.plugins\[(\d+)\]/.exec(u.path);
+    return `  ${u.path}${m ? ` (${entries[Number(m[1])]?.id})` : ""}: ${u.problem}`;
+  });
+  if (unholdable.length) {
+    throw new Error(
+      `cannot generate the index, ${unholdable.length} string(s) in it are not valid Unicode, and a client that ` +
+      `meets one refuses the whole catalogue (contract §0.7):\n${unholdable.join("\n")}`,
+    );
   }
   return doc;
 }

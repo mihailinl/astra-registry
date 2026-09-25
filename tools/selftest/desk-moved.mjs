@@ -80,7 +80,17 @@ export const READS_THE_DESK = Object.freeze([
 export const VENDORED_AT = "d44f0cf6b2f737199a995879f3d670284a9de567";
 export const VENDORED_BY_ASTRA = Object.freeze({
   "bot/lib/sign.mjs": "7934b01b55ba76c9ba7249ded19c47cfcc5543fc2b55a66e13588a376ae83003",
-  "tools/lib/canonical.mjs": "aa2b27ca90f78270bb81f4208c5a1531656986f17ddbd6fffb0e4b142b030dd8",
+  // Moved by contract 2.16.0 (lane S18), and the answer is ASTRA RE-VENDORS:
+  // this file now refuses a string that is not I-JSON — an unpaired
+  // surrogate or a noncharacter — instead of escaping it, because RFC 8785 is
+  // defined over I-JSON and serde_json refuses the escape. The update manifest
+  // Astra's moved signer writes is JCS-signed with this file's copy and read by
+  // the daemon (`updates/manifest.rs`, Rust; not read from this lane), so if
+  // that reader is serde_json, as the catalogue's is, a lone surrogate in its
+  // release notes is the same whole-document refusal. Until Astra re-vendors at or
+  // after this commit, its copy escapes one the way this file did; this digest
+  // is the new bytes, and VENDORED_AT still names the commit Astra vendored.
+  "tools/lib/canonical.mjs": "58debc90215fab34c9f8a6c3d7496345cb7931e65c953441a093ecca9abc98b8",
   "tools/lib/semver.mjs": "e922da978ed78d09879dd83139a8a5a25843239237d1699dba21c0696fd5a8ac",
 });
 

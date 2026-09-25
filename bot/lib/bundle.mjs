@@ -13,7 +13,7 @@ import crypto from "node:crypto";
 
 import { readZip, readEntry, S_IFMT, S_IFLNK, S_IFDIR } from "../../tools/lib/zip.mjs";
 import { platformKeyFromManifest } from "../../tools/lib/platform.mjs";
-import { jcs } from "../../tools/lib/canonical.mjs";
+import { ijsonProblems, jcs } from "../../tools/lib/canonical.mjs";
 
 const SHELLS = new Set([
   "sh", "bash", "zsh", "fish", "dash", "csh", "ksh",
@@ -283,11 +283,43 @@ export function inspectBundle(buf, expected, limits) {
       "the daemon reads the local header, so the manifest checked here is not the manifest enforced there");
   }
 
+  // UTF-8, decoded STRICTLY, and I-JSON strings (contract §0.7 since 2.16.0).
+  //
+  // `toString("utf8")` replaces a malformed sequence with U+FFFD and carries
+  // on, so a literal lone surrogate (`ED A0 80`) was read here as three
+  // replacement characters while the daemon, which parses these bytes with
+  // serde_json, refuses them — measured on main d8effae, that bundle LISTED,
+  // with a reason that is in no bundle. And `JSON.parse` ADMITS a `\ud800`
+  // escape, as one lone UTF-16 unit: every check in this file passed it, and it
+  // was refused only later and by accident, by the Rust manifest probe, whose
+  // serde_json calls it a syntax error. `bot/lib/derive.mjs` copies the member
+  // verbatim into the version record, and from there it reaches the signed
+  // catalogue, which every client parses whole. Refused here, first, because
+  // nothing below may canonicalise these strings: `permissionsHash` runs them
+  // through `jcs`, which now refuses them by throwing.
+  let manifestText;
+  try {
+    // `ignoreBOM` keeps a byte-order mark as U+FEFF, so JSON.parse still refuses
+    // it as it did, and as serde_json does; the default would strip it silently.
+    manifestText = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(centralBytes);
+  } catch {
+    err("E_MANIFEST_INVALID", "MANIFEST.json is not valid UTF-8, which every Astra reader requires");
+    return done();
+  }
   let manifest;
   try {
-    manifest = JSON.parse(centralBytes.toString("utf8"));
+    manifest = JSON.parse(manifestText);
   } catch (e) {
     err("E_MANIFEST_INVALID", `MANIFEST.json is not valid JSON: ${e.message}`);
+    return done();
+  }
+  const unholdable = ijsonProblems(manifest, "MANIFEST");
+  if (unholdable.length) {
+    for (const u of unholdable.slice(0, 8)) {
+      err("E_MANIFEST_INVALID",
+        `${u.path} carries ${u.problem}. serde_json refuses it, so no Astra client can read a catalogue that ` +
+        "lists it (contract §0.7: every string is valid Unicode)");
+    }
     return done();
   }
 

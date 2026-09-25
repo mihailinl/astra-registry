@@ -86,8 +86,52 @@ export async function run() {
       "a lone surrogate escape is in the catalogue; serde_json refuses the whole document, not the listing");
     const corrupted = JSON.parse(JSON.stringify(doc));
     corrupted.signed.plugins[0].name += "\ud83c";
-    assert(lone.test(stableStringify(corrupted)),
+    // `JSON.stringify` writes the escape the predicate is looking for, so the
+    // predicate can see one. `stableStringify` no longer writes it at all
+    // (contract §0.7, 2.16.0): it refuses the document, which is stronger than
+    // the assertion above and is asked in tools/selftest/primitives.mjs.
+    assert(lone.test(JSON.stringify(corrupted)),
       "the predicate cannot see a lone surrogate at all, so the assertion above was decoration");
+    let refused = null;
+    try { stableStringify(corrupted); } catch (e) { refused = String(e.message); }
+    assert(refused !== null && refused.includes("unpaired surrogate"),
+      `the canonical serialiser wrote a catalogue carrying half a character: ${refused ?? "it wrote it"}`);
+  });
+
+  // (c) of contract 2.16.0: the generator of the signed catalogue does not
+  // emit a document that carries a string no client can parse. The measured
+  // way in was an author's permission reason, copied verbatim into the version
+  // record and from there into `releases[].permissions`; the validator and the
+  // bot refuse it earlier (tools/selftest/validation.mjs, bot/tests/ingest.test.mjs),
+  // and this is the line that holds when a path round both of them did not,
+  // because nothing after it can repair a signed document.
+  await test("(c) the generator refuses to emit a catalogue carrying a string that is not valid Unicode, and names the listing", () => {
+    const dir = path.join(tmp, "catalogue-lone-surrogate");
+    const mk = (reason) => {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.cpSync(path.join(REPO_ROOT, "tests/fixtures/id-collision/plugins/dice-roller"),
+        path.join(dir, "plugins", "dice-roller"), { recursive: true });
+      const file = path.join(dir, "plugins", "dice-roller", "versions", "1.0.0.json");
+      const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+      doc.permissions = { dom_access: { reason } };
+      fs.writeFileSync(file, JSON.stringify(doc, null, 2));
+    };
+    mk("Draws the cat over the window");
+    const good = buildIndex({ root: dir, serial: 1 });
+    assertEqual(good.signed.plugins[0].releases[0].permissions.dom_access.reason, "Draws the cat over the window",
+      "the fixture's permission reason does not reach the catalogue, so refusing it below would prove nothing");
+    for (const [what, reason] of [["an unpaired surrogate", "Draws \ud800"], ["a noncharacter", "Draws ￿"]]) {
+      mk(reason);
+      let thrown = null;
+      try {
+        buildIndex({ root: dir, serial: 1 });
+      } catch (e) {
+        thrown = String(e.message);
+      }
+      assert(thrown !== null && thrown.includes("not valid Unicode") && thrown.includes("(dice-roller)") &&
+        thrown.includes("permissions.dom_access.reason"),
+        `the generator emitted a catalogue carrying ${what}, or refused it without naming where: ${thrown ?? "it generated"}`);
+    }
   });
   await test("index.json validates against schema/index-v1.json", () => {
     const schema = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "schema/index-v1.json"), "utf8"));

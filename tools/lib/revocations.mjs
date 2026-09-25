@@ -52,6 +52,7 @@ import { REVOCATIONS_SCHEMA } from "../../bot/lib/sign.mjs";
 // `tests/moderation-reasons.json` is the corpus both are run against.
 import { reasonProblems } from "../../bot/lib/moderation.mjs";
 import { REPO_ROOT } from "./sources.mjs";
+import { ijsonProblems } from "./canonical.mjs";
 import { ADVISORY_ID_GRAMMAR, ADVISORY_ID_PATTERN, ID_PATTERN } from "./ids.mjs";
 import { parseSemver } from "./semver.mjs";
 
@@ -681,7 +682,7 @@ export function buildRevocations({ root = REPO_ROOT, serial } = {}) {
   }
   revocations.sort((a, b) => (a.kind === b.kind ? (a.value < b.value ? -1 : a.value > b.value ? 1 : 0) : a.kind < b.kind ? -1 : 1));
 
-  return {
+  const doc = {
     $comment: BANNER,
     signatures: [],
     signed: {
@@ -690,4 +691,20 @@ export function buildRevocations({ root = REPO_ROOT, serial } = {}) {
       revocations,
     },
   };
+  // Contract §0.7 (since 2.16.0): every string in the list is valid Unicode.
+  // The daemon parses this document whole, like the catalogue, and a list it
+  // cannot parse is a list it cannot refresh: seven days later every shipped
+  // client blocks every install with REVOCATIONS_STALE. So the generator does
+  // not emit one, and says which advisory's string it was.
+  const unholdable = ijsonProblems(doc).map((u) => {
+    const m = /^\$\.signed\.revocations\[(\d+)\]/.exec(u.path);
+    return `  ${u.path}${m ? ` (${revocations[Number(m[1])]?.id})` : ""}: ${u.problem}`;
+  });
+  if (unholdable.length) {
+    throw new Error(
+      `refusing to build a withdrawal list that carries ${unholdable.length} string(s) that are not valid ` +
+      `Unicode (contract §0.7):\n${unholdable.join("\n")}`,
+    );
+  }
+  return doc;
 }
