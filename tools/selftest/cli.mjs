@@ -27,9 +27,11 @@ import { TEST_INDEX_KEY } from "./fixtures.mjs";
 // action passes, out of a copy of exactly the files the action's own first
 // step says its sparse checkout holds.
 //
-// No network: a preload replaces `fetch` with a recorder that answers 200, so
-// "posted" means the recorder saw one POST to the secret's bytes, and
-// "refused" means it saw none.
+// No network: a preload replaces `fetch` with a recorder that answers 200 and
+// the body healthchecks.io gives a ping a check took, `OK`, so "posted" means
+// the recorder saw one POST to the secret's bytes, and "refused" means it saw
+// none. The body is an argument, because a 200 whose body is not `OK` is the
+// receiver saying no check took the ping.
 
 const ACTION = path.join(REPO_ROOT, ".github", "actions", "alert", "action.yml");
 
@@ -75,14 +77,14 @@ function alertCheckout(name, tail = "") {
   return dir;
 }
 
-/** `node bot/heartbeat.mjs <args>` in `cwd`, with one whole ping URL in its environment and a recorder for `fetch`. */
-function heartbeat(cwd, args, secret, url) {
+/** `node bot/heartbeat.mjs <args>` in `cwd`, with one whole ping URL in its environment and a recorder for `fetch` answering 200 with `body`. */
+function heartbeat(cwd, args, secret, url, body = "OK") {
   const recorder = path.join(tmp, "heartbeat-receiver.mjs");
   fs.writeFileSync(
     recorder,
     "globalThis.fetch = async (url, init = {}) => {\n" +
     "  process.stdout.write(`receiver ${init.method ?? \"GET\"} ${url}\\n`);\n" +
-    "  return { ok: true, status: 200 };\n" +
+    `  return { ok: true, status: 200, text: async () => ${JSON.stringify(body)} };\n` +
     "};\n",
   );
   const r = spawnSync(
@@ -181,7 +183,7 @@ function drill(name, secrets) {
     "    return { ok: true, status: 200, json: async () => ({ ok: true, result: { message_id: 1, date: 1789000000 } }) };\n" +
     "  }\n" +
     "  process.stdout.write(`receiver ${init.method ?? \"GET\"} ${u}\\n`);\n" +
-    "  return { ok: true, status: 200 };\n" +
+    "  return { ok: true, status: 200, text: async () => \"OK\" };\n" +
     "};\n",
   );
   const output = path.join(dir, "github-output");
@@ -313,6 +315,24 @@ export async function run() {
       assertEqual(start.status, 0, `--check alarm-ack --signal start failed in ${where}; stderr: ${start.stderr}`);
       assertEqual(start.posts.join("\n"), "receiver POST https://ping.example/alarm-ack/start",
         `--check alarm-ack --signal start in ${where}`);
+    }
+  });
+
+  await test("`heartbeat.mjs`, run as the alert action runs it, is red when the receiver answers 200 `OK (not found)`", () => {
+    // What healthchecks.io answers a UUID ping URL that no check owns: a secret
+    // left holding the URL of a check that was deleted, or re-created under a
+    // new UUID (lane S16, measured 2026-09-25). Until the heartbeat read the
+    // body, that was "ok … posted" and a green step, while the receiver watched
+    // nothing. Run in the action's sparse checkout, so the refusal is the
+    // command's and not only the function's.
+    for (const [where, dir] of [["the committed tree", REPO_ROOT], ["the action's sparse checkout", alertCheckout("not-found")]]) {
+      const ran = heartbeat(dir, ["--check", "signer"], "ASTRA_DEADMAN_URL_SIGNER", "https://ping.example/signer",
+        "OK (not found)");
+      assertEqual(ran.posts.join("\n"), "receiver POST https://ping.example/signer",
+        `--check signer in ${where} never reached the receiver, so its answer was not asked about`);
+      assertEqual(ran.status, 1, `a 200 "OK (not found)" was a green heartbeat in ${where}; stderr: ${ran.stderr}`);
+      assert(ran.stderr.includes('"OK (not found)"'), `the refusal in ${where} does not quote the answer; stderr: ${ran.stderr}`);
+      assert(!ran.stderr.includes("ping.example"), `the refusal in ${where} printed the ping URL; stderr: ${ran.stderr}`);
     }
   });
 

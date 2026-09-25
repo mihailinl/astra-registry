@@ -191,6 +191,37 @@ export async function postHeartbeat({
   }
   if (!res.ok) return fail([`the receiver answered HTTP ${res.status} for check ${check}`]);
 
+  // **A 2xx is not a post; `OK` is** (ops dev/couplings.md: the heartbeat's
+  // success test). The receiver is healthchecks.io (SERVE-104a), and it answers
+  // a UUID ping URL with 200 whatever it did with the ping. The body says
+  // which: `OK` when a check took it, `OK (not found)` when no check has that
+  // UUID, `OK (rate limited)` when it was dropped — its pinging API page, read
+  // 2026-09-25, and `OK (not found)` measured by lane S16 on a random UUID the
+  // same day. Until then this line was `res.ok` alone, so a secret still
+  // holding the URL of a check that was deleted, or re-created under a new
+  // UUID, printed "ok … posted" and stayed green on every run while the
+  // receiver watched nothing: the one state this file is written against.
+  //
+  // So the body must be exactly `OK`, white space aside. Nothing else a UUID
+  // URL can be answered means the ping was recorded (`Created`, 201, is the
+  // answer to a slug URL with auto-provisioning, which one whole UUID URL per
+  // check never is). The answer is quoted, cut short, because it is the
+  // receiver's text and never the URL; a body that cannot be read is a post
+  // nobody can confirm, and fails the same way.
+  let answer;
+  try {
+    answer = String(await res.text());
+  } catch (e) {
+    return fail([`the receiver's answer for check ${check} could not be read: ${String(e?.message ?? e)}`]);
+  }
+  if (answer.trim() !== "OK") {
+    return fail([
+      `the receiver answered HTTP ${res.status} ${JSON.stringify(answer.trim().slice(0, 64))} for check ${check}, ` +
+      `not "OK": no check took this ping. "OK (not found)" means ${secretName(check, signal)} holds the URL of a ` +
+      `check that was deleted or re-created under a new UUID, and the receiver is watching nothing for it.`,
+    ]);
+  }
+
   log.log(`ok    ${signal} posted for receiver check ${check}`);
   return { code: 0, url, problems: [] };
 }
