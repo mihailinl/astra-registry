@@ -1161,7 +1161,7 @@
           "ui_contributions"
         ],
         "description": "Pause timer with a Home-screen countdown widget. At zero it presses the media play/pause key (optionally activating a chosen window first), shuts the PC down, or puts it to sleep.",
-        "download_url": "https://github.com/Voltur792/SPT/releases/download/v0.2.6/sleep-pause-timer-0.2.6-noarch.astraplugin",
+        "download_url": "https://github.com/Voltur792/SPT/releases/download/v0.4.0/sleep-pause-timer-0.4.0-noarch.astraplugin",
         "downloads": 0,
         "i18n": {
           "ru": {
@@ -1174,12 +1174,36 @@
         "license": "MIT",
         "name": "Sleep Pause Timer",
         "platform_downloads": {
-          "linux-x64": "https://github.com/Voltur792/SPT/releases/download/v0.2.6/sleep-pause-timer-0.2.6-noarch.astraplugin",
-          "noarch": "https://github.com/Voltur792/SPT/releases/download/v0.2.6/sleep-pause-timer-0.2.6-noarch.astraplugin",
-          "windows-x64": "https://github.com/Voltur792/SPT/releases/download/v0.2.6/sleep-pause-timer-0.2.6-noarch.astraplugin"
+          "linux-x64": "https://github.com/Voltur792/SPT/releases/download/v0.4.0/sleep-pause-timer-0.4.0-noarch.astraplugin",
+          "noarch": "https://github.com/Voltur792/SPT/releases/download/v0.4.0/sleep-pause-timer-0.4.0-noarch.astraplugin",
+          "windows-x64": "https://github.com/Voltur792/SPT/releases/download/v0.4.0/sleep-pause-timer-0.4.0-noarch.astraplugin"
         },
-        "readme": "# Sleep Pause Timer\n\nПлагин [Astra](https://github.com/mihailinl/AstraPlugins) от **Voltur** (лицензия MIT) —\nпортирование автономной программы «Таймер паузы» (`sleep_pause.py`).\n\n## Что умеет\n\n- **Обратный отсчёт** с паузой, продолжением и отменой — управляется голосом\n  или текстом через Астру.\n- **Будильник** на заданное время с воспроизведением локального аудиофайла\n  (MP3, WAV, WMA, M4A, AAC, MIDI). Однократный или ежедневный.\n- **Действие по завершении таймера** (как в оригинальной программе):\n  - `playpause` — нажать медиа-клавишу play/pause (пауза видео/музыки);\n  - `shutdown` — выключить ПК;\n  - `sleep` — усыпить ПК.\n- **Активация окна** перед нажатием клавиши: по подстроке заголовка или по\n  номеру `#N` из списка окон (поддержка Chromium-браузеров — Яндекс.Браузер,\n  Chrome, Edge — как в оригинале).\n- **Виджеты на главном экране** Astra (слот `home.widgets`), одного размера:\n  - Таймер: отсчёт, прогресс, кнопки «пауза/продолжить» и «отмена».\n  - Будильник: отсчёт до звонка, время и мелодия, «отмена»; во время звонка —\n    «стоп» (заглушить) и «отмена». Время и мелодия ставятся инструментами\n    (`set_alarm`, `choose_alarm_sound`) или в настройках плагина.\n  Оба прозрачные, следуют теме Astra.\n\n## Инструменты для Астры\n\n| Инструмент | Что делает |\n|---|---|\n| `start_timer` | Запустить отсчёт: `hours`, `minutes`, `seconds`, `action`, `window` |\n| `pause_timer` | Пауза |\n| `resume_timer` | Продолжить |\n| `cancel_timer` | Отменить (действие не выполняется) |\n| `timer_status` | Сколько осталось и что будет по завершении |\n| `list_windows` | Нумерованный список открытых окон для выбора цели |\n| `set_alarm` | Установить будильник: `time` (`ЧЧ:ММ`), `sound_path`, `repeat`, `interval` |\n| `set_alarm_sound` | Задать мелодию будильника (путь к файлу) |\n| `alarm_status` | Статус будильника: время, повтор, мелодия |\n| `cancel_alarm` | Отменить будильник |\n| `stop_alarm_sound` | Остановить воспроизведение будильника |\n| `choose_alarm_sound` | Открыть системный диалог выбора аудиофайла |\n\nПримеры: *«поставь таймер на 5 минут, потом нажми play в YouTube»*,\n*«таймер на полчаса и выключи компьютер»*, *«сколько осталось?»*,\n*«разбуди меня в 7:30 под мою мелодию»*, *«отмени будильник»*.\n\n## Настройки\n\nВ настройках плагина (Астра рисует форму сама): действие по умолчанию и окно\nпо умолчанию для таймера — тогда `start_timer` можно звать без этих аргументов.\n\nНастройки будильника (мелодия, повтор) задаются инструментами Астры или в\nнастройках плагина.\n\n## Разрешения\n\nПлагин **не запрашивает ни одного разрешения**: виджеты сами опрашивают плагин,\nинструменты вызывает Астра, наружные вызовы демону не нужны.\n\n## Установка (режим разработчика)\n\n1. В Astra: **Settings → Privacy** → включить **«Allow unsigned plugins»**.\n2. **Plugins → Dev** → вставить путь к папке в поле **«Load a plugin»** → нажать загрузку.\n3. После перезапуска Astra плагин из папки возвращается **выключенным** —\n   включите его во вкладке Installed.\n\nСобственное виртуальное окружение (`.venv`) лежит внутри папки плагина —\nсистемный Python не используется.\n\n## Отличия от оригинальной программы\n\n- Не нужны pyautogui/pygetwindow/win32gui/pystray — всё на чистом `ctypes`.\n- Исправлен спящий режим: `SetSuspendState` вызывается из `PowrProf.dll`\n  (в оригинале вызов через `kernel32` падал с `AttributeError`).\n- GUI на Tkinter заменён виджетами в окне Astra; трей не нужен — управляет Астра.\n\n## Development\n\nLanguage: python\n\n```bash\nastra-plugin dev .\n```\n\n## Build\n\n```bash\nastra-plugin build\n```\n\nThis produces a `.astraplugin` file for distribution.\n\n## Лицензия\n\nMIT © Voltur\n\n## Поддержать автора\n\nЕсли плагин оказался полезным, можно поддержать разработку:\n\n**[boosty.to/voltur/donate](https://boosty.to/voltur/donate)**\n",
+        "readme": "# Sleep Pause Timer\n\nПлагин [Astra](https://github.com/mihailinl/AstraPlugins) от **Voltur** (лицензия MIT) —\nпортирование автономной программы «Таймер паузы» (`sleep_pause.py`).\n\n## Что умеет\n\n- **Обратный отсчёт** с паузой, продолжением и отменой — управляется голосом\n  или текстом через Астру.\n- **Будильник** на заданное время с воспроизведением локального аудиофайла\n  (MP3, WAV, WMA, M4A, AAC, MIDI). Однократный или по выбранным дням недели.\n- **Календарь будильников** — разовые сигналы на любые даты ближайших месяцев;\n  расписание сохраняется локально.\n- **Отслеживание бездействия Windows** с настраиваемым порогом и действием.\n- **Действие по завершении таймера** (как в оригинальной программе):\n  - `playpause` — нажать медиа-клавишу play/pause (пауза видео/музыки);\n  - `shutdown` — выключить ПК;\n  - `sleep` — усыпить ПК.\n- **Активация окна** перед нажатием клавиши: по подстроке заголовка или по\n  номеру `#N` из списка окон (поддержка Chromium-браузеров — Яндекс.Браузер,\n  Chrome, Edge — как в оригинале).\n- **Виджеты на главном экране** Astra (слот `home.widgets`), одного размера:\n  - Таймер: отсчёт, прогресс, кнопки «пауза/продолжить» и «отмена».\n  - Будильник: отсчёт до звонка, время и мелодия, «отмена»; во время звонка —\n    «стоп» (заглушить) и «отмена». Время и мелодия ставятся инструментами\n    (`set_alarm`, `choose_alarm_sound`) или в настройках плагина.\n  Оба прозрачные, следуют теме Astra.\n- Отдельная страница **«Таймер паузы»** в навигации Astra: таймер, расписание,\n  календарь, окна и локальные настройки.\n\n## Инструменты для Астры\n\n| Инструмент | Что делает |\n|---|---|\n| `start_timer` | Запустить отсчёт: `hours`, `minutes`, `seconds`, `action`, `window` |\n| `pause_timer` | Пауза |\n| `resume_timer` | Продолжить |\n| `cancel_timer` | Отменить (действие не выполняется) |\n| `timer_status` | Сколько осталось и что будет по завершении |\n| `list_windows` | Нумерованный список открытых окон для выбора цели |\n| `set_alarm` | Установить будильник: `time` (`ЧЧ:ММ`), `sound_path`, `repeat`, `interval`, `days_of_week` (0=Пн … 6=Вс) |\n| `set_alarm_sound` | Задать мелодию будильника (путь к файлу) |\n| `alarm_status` | Статус будильника: время, повтор, мелодия |\n| `cancel_alarm` | Отменить будильник |\n| `stop_alarm_sound` | Остановить воспроизведение будильника |\n| `choose_alarm_sound` | Открыть системный диалог выбора аудиофайла |\n| `set_monthly_alarm` / `cancel_monthly_alarm` | Добавить или удалить разовый сигнал на дату `ГГГГ-ММ-ДД` |\n| `calendar_alarm_status` | Показать предстоящие сигналы календаря |\n| `start_idle_monitor` / `resume_idle_monitor` / `stop_idle_monitor` / `idle_status` | Запуск, перезапуск отсчёта с текущего момента, остановка и проверка бездействия |\n\nПримеры: *«поставь таймер на 5 минут, потом нажми play в YouTube»*,\n*«таймер на полчаса и выключи компьютер»*, *«сколько осталось?»*,\n*«разбуди меня в 7:30 под мою мелодию»*, *«отмени будильник»*.\n\n## Настройки\n\nДействие по умолчанию, окно и параметры бездействия задаются во вкладке\nплагина и сохраняются в `%APPDATA%\\sleep-pause-timer\\settings.json`.\nБудильник хранится в `alarm.json`, календарь — в `calendar.json` в этой папке.\n\n## Разрешения\n\nПлагин **не запрашивает ни одного разрешения**: виджеты сами опрашивают плагин,\nинструменты вызывает Астра, наружные вызовы демону не нужны.\n\n## Установка (режим разработчика)\n\n1. В Astra: **Settings → Privacy** → включить **«Allow unsigned plugins»**.\n2. **Plugins → Dev** → вставить путь к папке в поле **«Load a plugin»** → нажать загрузку.\n3. После перезапуска Astra плагин из папки возвращается **выключенным** —\n   включите его во вкладке Installed.\n\nСобственное виртуальное окружение (`.venv`) лежит внутри папки плагина —\nсистемный Python не используется.\n\n## Отличия от оригинальной программы\n\n- Не нужны pyautogui/pygetwindow/win32gui/pystray — всё на чистом `ctypes`.\n- Исправлен спящий режим: `SetSuspendState` вызывается из `PowrProf.dll`\n  (в оригинале вызов через `kernel32` падал с `AttributeError`).\n- GUI на Tkinter заменён виджетами в окне Astra; трей не нужен — управляет Астра.\n\n## Development\n\nLanguage: python\n\n```bash\nastra-plugin dev .\n```\n\n## Build\n\n```bash\nastra-plugin build\n```\n\nThis produces a `.astraplugin` file for distribution.\n\n## Лицензия\n\nMIT © Voltur\n\n## Поддержать автора\n\nЕсли плагин оказался полезным, можно поддержать разработку:\n\n**[boosty.to/voltur/donate](https://boosty.to/voltur/donate)**\n",
         "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "sleep-pause-timer-0.4.0-noarch.astraplugin",
+                "sha256": "8f23e213fbb2fac49648ba95137ad669724730a9e6aad7eb91a35fb550c782ed",
+                "size": 122731,
+                "url": "https://github.com/Voltur792/SPT/releases/download/v0.4.0/sleep-pause-timer-0.4.0-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {},
+            "protocol": 1,
+            "published_at": "2026-09-25T05:39:54Z",
+            "release": {
+              "commit": "5a71d8b9640d3272676c9ba35e0ba49641c9a85c",
+              "kind": "github_release",
+              "repo": "Voltur792/SPT",
+              "tag": "v0.4.0"
+            },
+            "version": "0.4.0"
+          },
           {
             "artifacts": {
               "noarch": {
@@ -1259,8 +1283,8 @@
           "repo": "Voltur792/SPT"
         },
         "stars": 0,
-        "updated_at": "2026-09-20T10:12:47Z",
-        "version": "0.2.6"
+        "updated_at": "2026-09-25T05:39:54Z",
+        "version": "0.4.0"
       },
       {
         "added_at": "2026-08-20",
@@ -1934,6 +1958,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 54
+    "serial": 55
   }
 }
