@@ -139,57 +139,24 @@ hashed set.
    code CI applies to every hand-written listing. The bot's output is held to the
    rules its input would have been.
 
-## Before any of that: who is answered, and who may decide
+## Before any of that: who was answered, and who could decide
 
-`bot/triage.mjs` runs first, on every issue and comment event. It downloads
-nothing and decides nothing about a release. It answers one question — *does
-this event ask for an ingest, and of what* — and it now has two more answers
-than it used to, because both of its old silences were bugs somebody hit.
+Until the cutover, `bot/triage.mjs` ran first on every issue and comment event,
+`bot/lib/intake.mjs` held the recognisers and the replies for a listing request
+nobody had labelled, and `bot/lib/maintainer.mjs` proved a maintainer's
+`/approve` or `/reject` against the collaborator-permission endpoint of **this**
+repository. The cutover (registry plan M-T6.2, commit B) removed the `issues`,
+`issue_comment` and `repository_dispatch` triggers; commit D (B-T5.2) deleted
+the three modules, the release backstop in `bot/watch.mjs`, and their tests.
+What they did is in git history, with the two defects that shaped them: a
+listing request answered with silence, and a hold with no next move.
 
-**`mode: reply` — the submission that was answered with nothing.** Two listing
-requests arrived carrying the rendered form and **zero labels**: there was no
-`.github/ISSUE_TEMPLATE/config.yml`, blank issues were on, and they bypassed the
-template that applies the label. The bot only acts on a labelled issue, so it
-answered `none`, `targets=[]`, every later job was skipped, and the run went
-green. It had succeeded at deciding to do nothing, and neither author was told.
-
-`bot/lib/intake.mjs` holds the recognisers and the replies. Two independent
-signals identify a listing request — the `[listing]` title the template sets,
-and the form's own field headings in the body — either of which is enough,
-because the two ways a submission loses its label leave different remains.
-
-**It replies rather than auto-labelling, and that is the load-bearing choice.**
-In this repository the `listing` label is an *authority token*, not a category:
-a labelled issue may drive an ingest of a repository this registry has never
-seen, while an unlabelled `/release` may only ask for a re-check of a listing
-that already exists. A bot that minted that label from the shape of a body would
-hand that exemption to anybody who can copy a form — and the check that would
-eventually refuse it (ownership) runs *after* the archive is fetched, so the
-refusal is not the point; the spending is. The label stays a person's decision,
-one click, which the reply names. What the bot must never do is go quiet.
-
-**`mode: approve` / `mode: reject` — the hold that had no next move.**
-`bot/lib/policy.mjs` returns `outcome: "review"` for three events, the ingest
-exits 3, and until now nothing implemented what the maintainer does about it.
-
-- `bot/lib/maintainer.mjs` proves the permission against
-  `GET /repos/{owner}/{repo}/collaborators/{login}/permission` on **this**
-  repository, requiring `admin` or `maintain` — the same bar
-  `bot/lib/ownership.mjs` sets for a submitter, asked about the registry instead
-  of about the plugin. `collaboratorRole` is shared between the two so they
-  cannot come to different conclusions about what `maintain` means. The
-  comment's `author_association` is deliberately not consulted: it is not a
-  permission, `COLLABORATOR` is true for a `triage` role that cannot push a
-  byte, and `CONTRIBUTOR` never expires.
-- Unlike `proveOwnership`, it **fails closed**. There, a missing answer falls
-  through to weaker proofs, because refusing every organisation that has not
-  installed an app would make third-party publishing theoretical. Here there is
-  one repository, this bot's own token, and the cost of being wrong is a
-  published listing rather than a refused one.
-- **An approval clears the hold and nothing else.** It is a name and a moment on
-  a target; `bot/decide.mjs` runs the entire ingest again before the policy sees
-  it. It cannot clear a failed check, and it does not waive the publication
-  delay. `bot/lib/policy.mjs` carries the argument in full.
+Two things they settled outlive them. A comment's `author_association` was never
+a permission — `COLLABORATOR` is true for a `triage` role that cannot push a
+byte, and `CONTRIBUTOR` never expires — and a canary in
+`bot/tests/policy.test.mjs` fails on the field in any workflow or `bot/` file.
+And `collaboratorRole` stays in `bot/lib/ownership.mjs`, where the submitter's
+proof and M-T3.5 read it.
 
 ## What it is allowed to do
 
@@ -205,13 +172,6 @@ stranger's archive with `contents: read` and no secrets; `comment` has
 `issues: write` and runs no code from the submission at all, reading one markdown
 file out of an artifact. Stranger-controlled text never reaches a `run:` block
 through `${{ }}`.
-
-`respond` is the same split applied to the intake reply: `triage` composes the
-markdown with no write access anywhere and writes it to a file; `respond` reads
-that one file out of an artifact, posts it, and closes the issue when the mode
-was `reject`. The instruction to close travels as a *job output*, never inside
-the text — the job that can write to an issue parses no submission, and the job
-that parses a submission can write nothing.
 
 ## Signing the catalogue
 
@@ -320,14 +280,8 @@ once, which is exactly the coordination that file exists to force.
 Everything else is one test per failure class, each asserting the fixed code, and
 the run ends by printing which declared codes no test provoked.
 
-`bot/tests/policy.test.mjs` carries three sections about the intake and the
-maintainer's commands. Two of them are regression tests for things that
-happened: an unlabelled listing request producing no reply, and `outcome:
-"review"` having no next move. The first runs `mihailinl/astra-registry#14`'s
-real body — embedded verbatim rather than fetched, because a suite that needs
-GitHub to be up goes quiet on the day the network is the problem — through
-triage with an empty label set, and asserts it no longer decides `none`. The
-third proves the four properties an approval has to have: it publishes what
-*this* run hashed, it cannot clear a failed check, it does not waive the
-publication delay, and it does not survive a swap of the assets it was recorded
-against.
+`bot/tests/policy.test.mjs` carried three sections about the intake and the
+maintainer's commands until cutover commit D deleted the code they tested. What
+stays is the decide layer's half of the third: an approval publishes what *this*
+run hashed, it cannot clear a failed check, it does not waive the publication
+delay, and it does not survive a swap of the assets it was recorded against.

@@ -37,7 +37,7 @@ import { pathToFileURL } from "node:url";
 
 import { ServiceRunFailure, W_SERVICE_UNREACHABLE, composeBody, createClient } from "./service.mjs";
 import { CLAIMED_FROM, VERDICT_OUTCOMES } from "./service-decide.mjs";
-import { safeRepo, safeTag } from "./intake.mjs";
+import { safeRepo, safeTag } from "./safe.mjs";
 import { isUsableTag } from "./poll.mjs";
 import { isTime } from "../../tools/lib/time.mjs";
 

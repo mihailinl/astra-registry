@@ -29,9 +29,7 @@ import { markerOnMain, readDecisionRecords } from "../baseline.mjs";
 import { validate as validateJsonSchema } from "../../tools/lib/jsonschema.mjs";
 import { LEGACY_TRIGGERS, alreadyPublished, decideRelease, legacyTrigger, noListingNoBinding, readIdentityRecord, terminalOnMain, writeOutputs } from "../decide.mjs";
 import { recordCommitRefusal } from "../publish-apply.mjs";
-import { bot74Filter } from "../watch.mjs";
 import { DEFAULT_SIGNER_WORKFLOW } from "../ingest.mjs";
-import { BOT_AUTHOR, decidableThread, parseMaintainerCommand, safeLogin } from "../lib/intake.mjs";
 import {
   CLEAN_RELEASES_FOR_TRUSTED,
   DELAY_HOURS,
@@ -48,7 +46,6 @@ import {
   trackRecord,
 } from "../lib/policy.mjs";
 import { loadRootKeys } from "../lib/attestation.mjs";
-import { proveMaintainer } from "../lib/maintainer.mjs";
 import {
   WATCH_AFTER_DAYS,
   findListingByRepo,
@@ -68,8 +65,7 @@ import { pollFeed } from "../lib/poll.mjs";
 import { parseBindingFile } from "../lib/binding.mjs";
 import { bindingDecision } from "../lib/identity.mjs";
 import { listingState } from "../lib/listing-state.mjs";
-import { runDrain, runWatch } from "../watch.mjs";
-import { recordPermissionProbe, triage } from "../triage.mjs";
+import { runDrain } from "../watch.mjs";
 import { makeBundle, fakeGitHub, fakeGh, fakeOwnership, FIXTURE_COMMIT } from "../fixtures/ingest/make.mjs";
 import { loadSources } from "../../tools/lib/sources.mjs";
 
@@ -361,44 +357,6 @@ await test("/publish does not stand in for an approval", async () => {
     "a waiver nobody approved must not appear");
 });
 
-// An instruction is checked by RUNNING it, not by reading it. Both lines the
-// bot prints are fed back to the parser that will receive them, so a comment
-// that tells a maintainer to type something the bot cannot understand fails
-// here rather than in front of them.
-await test("the lines the bot prints are lines the bot accepts", async () => {
-  const held = await run({ root: registryTree([{ id: "something-else" }]) });
-  assertEqual(held.decision.outcome, "review", JSON.stringify(codes(held)));
-
-  for (const verb of ["approve", "publish"]) {
-    const line = new RegExp(`^/${verb} \\S+@\\S+ [0-9a-f]{16}$`, "m").exec(held.comment);
-    assert(line, `the hold comment offers no ready-made /${verb} line:\n${held.comment.slice(0, 400)}`);
-    const parsed = parseMaintainerCommand(line[0]);
-    assert(parsed, `/${verb} line does not parse: ${line[0]}`);
-    assertEqual(parsed.command, verb, line[0]);
-    assertEqual(parsed.fingerprint, held.decision.fingerprint, "and it names this submission");
-    assertEqual(parsed.repo, held.decision.repo, line[0]);
-    assertEqual(parsed.tag, held.decision.tag, line[0]);
-  }
-});
-
-// The state our owner was in: approved, waiting, and no command in front of
-// them. The waiver was documented as editing a file from a machine with a
-// checkout.
-await test("a delayed release offers the line that publishes it now", async () => {
-  const tree = registryTree([{ versions: [{ version: "0.1.0", capabilities: ["tools", "client"] }] }]);
-  const first = await run({ root: tree, assets: [conforming({ capabilities: ["tools", "client"] })] });
-  const delayed = await run({
-    root: tree, assets: [conforming({ capabilities: ["tools", "client"] })],
-    approvedBy: "maint", approvedAt: NOW.toISOString(), approvedFor: first.decision.fingerprint,
-  });
-  assertEqual(delayed.decision.outcome, "delay", JSON.stringify(codes(delayed)));
-
-  const line = /^\/publish \S+@\S+ [0-9a-f]{16}$/m.exec(delayed.comment);
-  assert(line, `a waiting release offers no /publish line:\n${delayed.comment.slice(-600)}`);
-  const parsed = parseMaintainerCommand(line[0]);
-  assertEqual(parsed?.command, "publish", line[0]);
-  assertEqual(parsed?.fingerprint, delayed.decision.fingerprint, "bound to these bytes");
-});
 
 section("the three events that block on a person, and nothing else");
 
@@ -550,48 +508,6 @@ await test("the issue number survives the queue, so the drain knows which thread
   assertEqual(second.decision.issue, 41, "recovered from the queue entry with no event to read");
 });
 
-await test("the permission check says what the endpoint did, and the probe line names no one", async () => {
-  // B-T0.4a. Two fields out of `proveMaintainer`, and a summary line that is
-  // about the token rather than about a person.
-  const silent = await proveMaintainer({
-    repo: "mihailinl/astra-registry",
-    login: "someone",
-    fetchImpl: async () => ({ ok: false, status: 404, json: async () => ({}) }),
-  });
-  assertEqual(silent.answered, false, "a 404 is GitHub declining to say");
-  assert(String(silent.outcome).length > 0, "and the outcome token says which silence it was");
-
-  const answered = await proveMaintainer({
-    repo: "mihailinl/astra-registry",
-    login: "someone",
-    fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ permission: "admin" }) }),
-  });
-  assertEqual(answered.answered, true, "an answer is an answer");
-  assertEqual(answered.ok, true, "and admin may decide");
-
-  const lines = [];
-  const logged = [];
-  const wrote = recordPermissionProbe(answered, { GITHUB_STEP_SUMMARY: "/dev/null" }, (_p, l) => lines.push(l), (l) => logged.push(l));
-  assertEqual(wrote, true, "the line is written when a summary exists");
-  assertEqual(lines.length, 1, "one line");
-  assert(lines[0].startsWith("collaborator-permission: answered=true outcome="), lines[0]);
-  assert(!lines[0].includes("someone"), "the summary is public, so it carries no login");
-
-  // The measurement has to reach the thing that asks for it. A step summary is
-  // reachable by no API — not on the job object, not in the run's artifacts,
-  // not in the logs — so for three weeks R0's answer existed only on a web
-  // page, and the runbook told the owner to read it off that page by eye.
-  // Measured 2026-09-20 on run 35485336476: the line was written, and nothing
-  // but a browser could retrieve it.
-  assertEqual(logged.length, 1, "and the same line goes to the log, which an API can read");
-  assertEqual(logged[0], lines[0].trimEnd(), "the two copies are one line, not two spellings of it");
-  assert(!logged[0].includes("someone"), "the log is public too");
-
-  const outsideActions = [];
-  assertEqual(recordPermissionProbe(answered, {}, () => {}, (l) => outsideActions.push(l)), false,
-    "and nothing is written to a summary outside Actions");
-  assertEqual(outsideActions.length, 1, "but the line is still logged, because a local run is a measurement too");
-});
 
 await test("and the file the publish job reads carries that recovered number, not the empty one", async () => {
   // The decision knowing the thread is not enough: `publish.yml` reads
@@ -1077,41 +993,6 @@ await test("a release already listed, or already tried, is not re-ingested", () 
     "a release this registry refused is not retried every hour for ever");
 });
 
-await test("the backstop finds a missed release and hands it to the pipeline", async () => {
-  const root = registryTree([
-    { id: "quiet", repo: "someone/quiet", versions: [{ version: "0.2.0", tag: "v0.2.0", published_at: "2026-01-01T00:00:00Z" }] },
-  ]);
-  const { dispatch, seen, log } = await runWatch({
-    root,
-    now: NOW,
-    deps: {
-      fetchImpl: async () => ({
-        status: 200, ok: true,
-        headers: new Map([["etag", 'W/"new"']]),
-        text: async () => ATOM,
-      }),
-      fetchRelease: async (repo, tag) => ({ tag_name: tag, author: { login: "the-author" } }),
-    },
-  });
-  assertEqual(dispatch.length, 1, JSON.stringify(log));
-  assertEqual(dispatch[0].repo, "someone/quiet", "");
-  assertEqual(dispatch[0].tag, "v0.3.0", "");
-  assertEqual(dispatch[0].submitter, "the-author",
-    "the ownership that gets proved is the release author's, never the pinger's");
-  assertEqual(seen.repos["someone/quiet"].last_seen_tag, "v0.3.0", "and it is remembered");
-});
-
-await test("a repository that has gone away is recorded, not fatal", async () => {
-  const root = registryTree([
-    { id: "quiet", repo: "someone/quiet", versions: [{ version: "0.2.0", published_at: "2026-01-01T00:00:00Z" }] },
-  ]);
-  const { dispatch, seen } = await runWatch({
-    root, now: NOW,
-    deps: { fetchImpl: async () => ({ status: 404, ok: false, headers: new Map(), text: async () => "" }) },
-  });
-  assertEqual(dispatch.length, 0, "");
-  assert(seen.repos["someone/quiet"].last_error.includes("404"), JSON.stringify(seen.repos));
-});
 
 section("the drain");
 
@@ -1134,808 +1015,51 @@ await test("only a ripe queue entry is dispatched, and the rest are reported", (
   assert(log.some((l) => l.includes("wait") && l.includes("still-waiting")), log.join("\n"));
 });
 
-section("what the workflow asks before it spends anything");
+section("no workflow or bot file reads author_association (B-T0.4b; B-T5.2)");
 
-/** Write two bodies to files, the way `.github/workflows/ingest.yml` does. */
-function bodies({ issue = "", comment = "" }) {
-  const dir = tmp("astra-policy-body-");
-  fs.writeFileSync(path.join(dir, "issue.md"), issue);
-  fs.writeFileSync(path.join(dir, "comment.md"), comment);
-  return { issueBody: path.join(dir, "issue.md"), commentBody: path.join(dir, "comment.md") };
-}
+// The issue path's intake, its replies and a maintainer's `/approve` and
+// `/reject` lived here until cutover commit D (registry plan B-T5.2) deleted
+// `bot/triage.mjs`, `bot/lib/intake.mjs` and `bot/lib/maintainer.mjs`. Their
+// tests went with them; the decide layer's half of an approval stays below.
 
-const FORM = [
-  "### Source repository", "", REPO, "",
-  "### Release tag carrying the .astraplugin assets", "", TAG, "",
-  "### Confirmations", "",
-  "- [X] I own or maintain this repository.",
-].join("\n");
-
-const releaseBy = (login) => async (repo, tag) => ({ tag_name: tag, author: { login } });
-
-await test("a labelled listing issue is still the submission form's", async () => {
-  const out = await triage({
-    event: "issues", labels: "listing,needs-triage", root: registryTree([{}]),
-    ...bodies({ issue: FORM }),
-  }, releaseBy("a-stranger"));
-  assertEqual(out.mode, "form", out.why);
-});
-
-await test("`/release v0.2.0` on a listing issue takes the repository from the issue", async () => {
-  const out = await triage({
-    event: "issue_comment", labels: "listing", root: registryTree([{}]),
-    ...bodies({ issue: FORM, comment: "/release v0.3.0" }),
-  }, releaseBy("the-author"));
-  assertEqual(out.mode, "ping", out.why);
-  assertEqual(out.repo, REPO, "named by the issue, not by whoever commented");
-  assertEqual(out.tag, "v0.3.0", "");
-  assertEqual(out.submitter, "the-author", "the release author, never the pinger");
-});
-
-await test("an unlabelled ping is honoured only for a listing that already exists", async () => {
-  const root = registryTree([{}]);
-  const listed = await triage({
-    event: "issues", labels: "", root,
-    ...bodies({ issue: `/release ${REPO} v0.3.0\n\nnew release!` }),
-  }, releaseBy("the-author"));
-  assertEqual(listed.mode, "ping", listed.why);
-
-  const stranger = await triage({
-    event: "issues", labels: "", root,
-    ...bodies({ issue: "/release somebody/brand-new v1.0.0" }),
-  }, releaseBy("the-author"));
-  // `none` until the intake fix: a stranger's ping for an unlisted repository
-  // still starts nothing — that restriction is what makes a ping safe to accept
-  // without a token — but it is now a `reply` rather than a silence, and the
-  // reply is what points at the form a first listing actually goes through.
-  assertEqual(stranger.mode, "reply", "a first listing is not reachable this way");
-  assert(stranger.why.includes("template"), stranger.why);
-  assert(stranger.reply.includes("already listed"), stranger.reply);
-  assert(!stranger.repo && !stranger.tag, "and nothing is queued for verification");
-});
-
-await test("a release ping survives being rendered by an issue form", async () => {
-  // `.github/ISSUE_TEMPLATE/config.yml` turned blank issues off, so the
-  // ping-as-a-new-issue path docs/POLICY.md §5 promises now goes through
-  // `release-ping.yml` — and GitHub renders every form as `### <label>`, a
-  // blank line, then the value. Under the old first-line-only rule the command
-  // was never on line 1 again and the path stopped working the day the form
-  // became mandatory.
-  const rendered = "### The command\n\n/release " + REPO + " v0.3.0\n";
-  const out = await triage({
-    event: "issues", labels: "", root: registryTree([{}]),
-    ...bodies({ issue: rendered }),
-  }, releaseBy("the-author"));
-  assertEqual(out.mode, "ping", out.why);
-  assertEqual(out.tag, "v0.3.0", "");
-
-  // And the relaxation is exactly two things — a blank line and a heading.
-  // Prose above the command still hides it, which is what stops a quoted reply
-  // from re-triggering an ingest.
-  const prose = await triage({
-    event: "issues", labels: "", root: registryTree([{}]),
-    ...bodies({ issue: `here you go\n\n/release ${REPO} v0.3.0` }),
-  }, releaseBy("the-author"));
-  assert(prose.mode !== "ping", `prose above the command must not run it: ${prose.mode}`);
-});
-
-await test("/recheck still means recheck, and prose still means nothing", async () => {
-  const root = registryTree([{}]);
-  assertEqual((await triage({
-    event: "issue_comment", labels: "listing", root, ...bodies({ issue: FORM, comment: "/recheck" }),
-  }, releaseBy("x"))).mode, "form", "");
-  assertEqual((await triage({
-    event: "issue_comment", labels: "listing", root,
-    ...bodies({ issue: FORM, comment: "any news on this? maybe /release it" }),
-  }, releaseBy("x"))).mode, "none", "");
-});
-
-await test("a ping for a tag that has no release is dropped, not ingested", async () => {
-  const out = await triage({
-    event: "issues", labels: "", root: registryTree([{}]),
-    ...bodies({ issue: `/release ${REPO} v9.9.9` }),
-  }, async () => { throw new Error("no release tagged v9.9.9 (404)"); });
-  assertEqual(out.mode, "none", out.why);
-  assert(out.why.includes("404"), out.why);
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// Defect 1: a submission that reached this registry and was answered with
-// nothing at all. Two of them, `#13` and `#14`. Both carried the rendered form
-// and zero labels, because there was no `.github/ISSUE_TEMPLATE/config.yml` and
-// blank issues were on, so they bypassed the template that applies the label.
-// `triage` answered `none`, `targets=[]`, every later job was skipped, and the
-// run went green — it had succeeded at deciding to do nothing.
-
-section("no listing request is answered with silence");
-
-/** The two facts, both boxes, and nothing else — a form GitHub has rendered. */
-const form = ({ repo = REPO, tag = TAG, boxes = 2, headings = true } = {}) => [
-  ...(headings ? ["### Source repository", "", repo, ""] : [repo, ""]),
-  ...(headings ? ["### Release tag carrying the .astraplugin assets", "", tag, ""] : [tag, ""]),
-  "### Confirmations", "",
-  `- [${boxes >= 1 ? "x" : " "}] I own or maintain this repository.`,
-  `- [${boxes >= 2 ? "x" : " "}] I have read POLICY.md, including the data-handling section.`,
-].join("\n");
-
-/**
- * `mihailinl/astra-registry#14`, verbatim, as `gh issue view 14 --json body`
- * returned it on 2026-08-12 — trimmed only of the prose paragraph, which the
- * bot never reads.
- *
- * Embedded rather than fetched: this suite touches no network, and a regression
- * test that needs GitHub to be up is a regression test that goes quiet on the
- * day the network is the problem. The title and the empty label array are the
- * two facts that mattered.
- */
-const ISSUE_14 = {
-  title: "[listing] Rel0d1x/command-intent-guard",
-  labels: "",
-  body: [
-    "### Source repository", "", "Rel0d1x/command-intent-guard", "",
-    "### Release tag carrying the .astraplugin assets", "", "v0.1.0", "",
-    "### What does it do, and why should it be listed?", "",
-    "Adds a `tools` capability that tells a spoken command apart from a question.", "",
-    "### Confirmations", "",
-    "- [x] I own or maintain this repository.",
-    "- [x] I have read POLICY.md, including the data-handling section.",
-  ].join("\n"),
-};
-
-/** The three files the workflow writes, plus the arguments it passes with them. */
-function intake({ issue = "", comment = "", title = "", labels = "", action = "opened", event = "issues", root, ...rest }) {
-  const dir = tmp("astra-policy-intake-");
-  fs.writeFileSync(path.join(dir, "issue.md"), issue);
-  fs.writeFileSync(path.join(dir, "comment.md"), comment);
-  fs.writeFileSync(path.join(dir, "title.md"), title);
-  return {
-    event, action, labels, root: root ?? registryTree([{}]),
-    registry: "mihailinl/astra-registry",
-    issueBody: path.join(dir, "issue.md"),
-    commentBody: path.join(dir, "comment.md"),
-    issueTitle: path.join(dir, "title.md"),
-    ...rest,
-  };
-}
-
-await test("the real #14 — the form, no labels — no longer decides `none`", async () => {
-  const out = await triage(intake({
-    issue: ISSUE_14.body, title: ISSUE_14.title, labels: ISSUE_14.labels,
-    root: registryTree([{ id: "something-else" }]),
-  }), releaseBy("Rel0d1x"));
-  assertEqual(out.mode, "reply", out.why);
-  assert(out.reply.includes("Rel0d1x/command-intent-guard"),
-    "the reply has to name the repository the author asked about");
-  assert(out.reply.includes("v0.1.0"), "and the tag");
-});
-
-await test("the reply names the label, the one click, and why the bot will not click it", async () => {
-  const out = await triage(intake({ issue: form(), title: "[listing] a-stranger/dice-roller" }),
-    releaseBy("a-stranger"));
-  assertEqual(out.mode, "reply", out.why);
-  assert(out.reply.includes("`listing` label"), "the missing thing has a name");
-  assert(/one click/i.test(out.reply), "and a fix that is one action, not a resubmission");
-  assert(out.reply.includes("authority token"),
-    "an author told to go and ask somebody, with no reason, assumes the bot is broken");
-  // The whole argument for replying instead of auto-labelling: the label is an
-  // exemption from the already-listed rule, so minting it from the shape of a
-  // body would let a stranger choose which repositories this registry
-  // downloads archives from.
-  assertEqual(out.mode !== "form", true, "and nothing was verified for a repository nobody proved");
-});
-
-await test("either signal alone is enough: a rewritten title, or a rewritten body", async () => {
-  const titleOnly = await triage(intake({ issue: "please list my plugin, thanks", title: "[listing] me/mine" }),
-    releaseBy("me"));
-  assertEqual(titleOnly.mode, "reply", titleOnly.why);
-
-  const bodyOnly = await triage(intake({ issue: form(), title: "can you add this one" }), releaseBy("me"));
-  assertEqual(bodyOnly.mode, "reply", bodyOnly.why);
-});
-
-await test("an ordinary issue is still free, and still silent", async () => {
-  const out = await triage(intake({ issue: "the website is down", title: "site 500s" }), releaseBy("x"));
-  assertEqual(out.mode, "none", out.why);
-  assertEqual(out.reply, undefined, "no comment, no API call, no noise");
-});
-
-await test("the bot does not answer its own notices, or the other three forms", async () => {
-  for (const title of [
-    "[notice] dice-roller 0.2.0 publishes itself at 2026-08-11T12:00:00Z",
-    "[appeal] dice-roller",
-    "[report] dice-roller",
-  ]) {
-    const out = await triage(intake({ issue: form(), title }), releaseBy("x"));
-    assertEqual(out.mode, "none", `${title} → ${out.why}`);
-  }
-});
-
-await test("the intake comment is posted once, not on every edit", async () => {
-  const opened = await triage(intake({ issue: form(), title: "[listing] x/y", action: "opened" }), releaseBy("x"));
-  assertEqual(opened.mode, "reply", opened.why);
-  const edited = await triage(intake({ issue: form(), title: "[listing] x/y", action: "edited" }), releaseBy("x"));
-  assertEqual(edited.mode, "none", "a bot that repeats itself on every edit is a bot people mute");
-});
-
-await test("a labelled form the bot cannot read gets a comment, not a red X", async () => {
-  // `bot/read-submission.mjs` exits 2 on an unticked confirmation, and the
-  // workflow step runs under `set -e`. That killed the step: no target, no
-  // comment job, and a submitter who ticked one box instead of two got a red X
-  // and silence. Triage now answers the same question with the same parser
-  // first.
-  const out = await triage(intake({ issue: form({ boxes: 1 }), title: "[listing] x/y", labels: "listing" }),
-    releaseBy("x"));
-  assertEqual(out.mode, "reply", out.why);
-  assert(out.reply.includes("POLICY.md"), "and it names the box that is not ticked");
-  assert(out.reply.includes("Edit this issue"), "with a fix that is not 'open a new one'");
-});
-
-await test("the release-ping form with a broken command is answered too", async () => {
-  const out = await triage(intake({
-    issue: "### The command\n\n/release i-forgot-the-tag\n",
-    title: "[release] owner/repo v0.0.0",
-  }), releaseBy("x"));
-  assertEqual(out.mode, "reply", out.why);
-  assert(out.reply.includes("/release owner/repo v0.2.0"), "and shows the shape that works");
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// Defect 2: `outcome: "review"` was a terminus. The bot said "held for a
-// maintainer", `decide.mjs` exited 3, and nothing in this repository
-// implemented the maintainer's next move — `git grep -nE "/approve|approved-by"`
-// over `bot/`, `docs/` and `.github/` returned nothing.
-
-section("the maintainer's two commands");
-
-/** `bot/lib/maintainer.mjs`, answered from a table instead of from GitHub. */
-const roles = (table) => async ({ repo, login }) => {
-  const role = table[login];
-  if (role === undefined) {
-    return {
-      ok: false,
-      role: null,
-      detail: `GitHub would not say what @${login} has on ${repo} (HTTP 403 — not visible to the bot), so the command is refused.`,
-    };
-  }
-  if (role === "admin" || role === "maintain") {
-    return { ok: true, role, detail: `GitHub reports @${login} has \`${role}\` on ${repo}` };
-  }
-  return {
-    ok: false,
-    role,
-    detail: `GitHub reports @${login} has \`${role}\` on ${repo}, which is neither \`admin\` nor \`maintain\`.`,
-  };
-};
-
-const MAINTAINERS = roles({ "the-maintainer": "admin", "a-second-pair-of-eyes": "maintain", "a-stranger": "read", "a-triager": "triage" });
-
-const command = (text, commenter, extra = {}) => triage(
-  intake({
-    event: "issue_comment", action: "created", labels: "listing",
-    issue: form(), title: "[listing] a-stranger/dice-roller",
-    comment: text, commenter, issueAuthor: SUBMITTER, now: NOW, ...extra,
-  }),
-  releaseBy(SUBMITTER),
-  { proveMaintainer: extra.prove ?? MAINTAINERS },
-);
-
-await test("/approve from somebody with no write access is refused, and told why", async () => {
-  const out = await command("/approve", "a-stranger");
-  assertEqual(out.mode, "reply", out.why);
-  assert(out.reply.includes("`/approve` is refused"), out.reply);
-  assert(out.reply.includes("`read`"), "the role GitHub actually reported, not a shrug");
-  assert(out.reply.includes("author_association"),
-    "and the reason the obvious cheaper check was not the one used");
-  assert(!out.repo && !out.tag, "and no target — nothing was verified and nothing published");
-});
-
-await test("a `triage` collaborator is not a maintainer either", async () => {
-  // The exact case `author_association` gets wrong: the event payload calls
-  // this account `COLLABORATOR`, and it cannot push a byte to this repository.
-  const out = await command("/approve", "a-triager");
-  assertEqual(out.mode, "reply", out.why);
-  assert(out.reply.includes("`triage`"), out.reply);
-});
-
-await test("when GitHub will not answer, the command fails closed", async () => {
-  const out = await command("/approve", "somebody-unknown");
-  assertEqual(out.mode, "reply", out.why);
-  assert(out.reply.includes("would not say"), out.reply);
-  // `proveOwnership` treats a missing answer as "no answer" and falls through
-  // to weaker proofs, because refusing every organisation that has not
-  // installed an app would make third-party publishing theoretical. There is no
-  // equivalent argument here: one repository, this bot's own token, and the
-  // cost of being wrong is a published listing rather than a refused one.
-  assert(!out.repo, "and no target is emitted on a permission nobody could read");
-});
-
-// The real `proveMaintainer`, against a stubbed `fetch`. Every test above
-// injects a stub for it, which is exactly why the endpoint's own behaviour went
-// unexercised for so long: `GET /collaborators/{login}/permission` is
-// documented as requiring push access, the triage job's `GITHUB_TOKEN` holds
-// `contents: read`, and `administration` is not a scope a workflow token can
-// request — so from here a 403 was entirely plausible, and no stubbed test
-// could tell. It took a live run to find out. Registry issue #93, run
-// 35487527105, 2026-09-20: `collaborator-permission: answered=true outcome=role
-// is 'admin'`. B-T0.4a is that measurement, B-T0.4b is the deletion it
-// authorised, and the three tests below are what the deletion changed.
-const respond = (status, body) => async () => ({
-  ok: status >= 200 && status < 300,
-  status,
-  json: async () => body ?? {},
-});
-
-await test("a silent permission endpoint refuses everybody, the repository's owner included", async () => {
-  // What the `OWNER` fallback used to do here: return `ok: true, role: "owner"`
-  // for a 403 plus `author_association: OWNER`. It was a happy path for a
-  // silence that the measurement says does not happen — so what is left is the
-  // fail-closed refusal this module always gave everybody else, and the module
-  // no longer has a second way to say yes.
-  const denied = await proveMaintainer({
-    repo: REGISTRY_REPO, login: "the-maintainer", fetchImpl: respond(403),
-  });
-  assertEqual(denied.ok, false, denied.detail);
-  assertEqual(denied.role, null, "and no role is invented out of a silence");
-  assertEqual(denied.answered, false, "the probe still reports which it was");
-  assert(denied.detail.includes("would not say"), denied.detail);
-  // A refusal, not a crash and not a bare `false`: whoever reads it has to be
-  // able to tell an unreadable endpoint from a `read` role, because the two
-  // have different fixes.
-  assert(/re-run|pull request/i.test(denied.detail),
-    `a refusal on an outage has to name the way round it: ${denied.detail}`);
-});
-
-await test("no `author_association` value is a permission any more, `OWNER` included", async () => {
-  // The floor matters: `association` is no longer a parameter, so a loop that
-  // passed nothing would pass vacuously. Every value the payload can carry is
-  // enumerated, `OWNER` first, and each is handed in the way the caller used
-  // to hand it in.
-  const values = ["OWNER", "COLLABORATOR", "MEMBER", "CONTRIBUTOR", "NONE", "", null];
-  assert(values.includes("OWNER") && values.length === 7,
-    "the enumeration is what this test is; shrinking it silently is the failure mode");
-  for (const association of values) {
-    const silent = await proveMaintainer({
-      repo: REGISTRY_REPO, login: "the-maintainer", association, fetchImpl: respond(403),
-    });
-    assertEqual(silent.ok, false, `${association} must not stand in for a permission`);
-    assertEqual(silent.role, null, `${association}`);
-
-    // And it does not subtract either: an answered `admin` is still an
-    // approval, whatever the payload said about the commenter.
-    const answered = await proveMaintainer({
-      repo: REGISTRY_REPO, login: "the-maintainer", association,
-      fetchImpl: respond(200, { role_name: "admin" }),
-    });
-    assertEqual(answered.ok, true, `${association}: ${answered.detail}`);
-    assertEqual(answered.role, "admin", `${association}`);
-  }
-});
-
-await test("an answered `read` is still a denial, which is what it always was", async () => {
-  const out = await proveMaintainer({
-    repo: REGISTRY_REPO, login: "a-stranger", fetchImpl: respond(200, { role_name: "read" }),
-  });
-  assertEqual(out.ok, false, out.detail);
-  assertEqual(out.role, "read", "");
-});
-
-await test("no workflow reads `author_association`, and the scan has a floor", () => {
-  // B-T0.4b's second canary. The plan puts it in `workflows.test.mjs`; that
-  // file belongs to another lane this wave, so it lives here until it can be
-  // moved, and moving it is a cut-and-paste — it imports nothing from this
-  // suite.
+await test("no workflow or bot/ file reads `author_association`, and the scan has a floor", () => {
+  // B-T0.4b's second canary, widened by cutover commit D to what registry plan
+  // B-T5.2 asks: "a grep canary fails on `author_association` in any workflow
+  // or `bot/` file". The field was never a permission — `COLLABORATOR` is true
+  // for a `triage` role that cannot push a byte, and `CONTRIBUTOR` never
+  // expires — and the code that once read it is gone. A line that reads it
+  // again is either dead YAML or the first half of somebody reintroducing it.
   //
-  // The coupling it guards: `bot/lib/maintainer.mjs` no longer accepts an
-  // `association`, and `bot/triage.mjs` no longer parses
-  // `--commenter-association`. A workflow that still exported
-  // `github.event.comment.author_association` would either be dead YAML or,
-  // worse, the first half of somebody reintroducing the fallback.
-  const dir = path.join(REPO_ROOT, ".github", "workflows");
-  const files = fs.readdirSync(dir).filter((n) => n.endsWith(".yml") || n.endsWith(".yaml"));
+  // Code and data, not prose: `bot/README.md` names the field to say why it is
+  // not used, and `bot/tests/` names it to test for it. Comment lines are
+  // skipped in both kinds of file, as they always were in the workflows.
+  const tracked = (spec) => execFileSync("git", ["ls-files", spec], { cwd: REPO_ROOT, encoding: "utf8", env: cleanEnv() })
+    .split("\n").filter(Boolean);
 
-  // The floor, written before the assertion and measured against what git
+  // The floors, written before the assertion and measured against what git
   // actually tracks — a `readdirSync` of a renamed directory returns [] and an
   // empty scan reads exactly like a pass.
-  const tracked = execFileSync("git", ["ls-files", ".github/workflows"], { cwd: REPO_ROOT, encoding: "utf8", env: cleanEnv() })
-    .split("\n").filter((l) => /\.ya?ml$/.test(l));
-  assertEqual(files.length, tracked.length,
-    `scanned ${files.length} workflow file(s), git tracks ${tracked.length} — the scan is reading the wrong place`);
-  assert(files.length >= 8, `only ${files.length} workflow(s) found; this scan has stopped covering the estate`);
+  const dir = path.join(REPO_ROOT, ".github", "workflows");
+  const workflows = fs.readdirSync(dir).filter((n) => n.endsWith(".yml") || n.endsWith(".yaml"));
+  const trackedWorkflows = tracked(".github/workflows").filter((l) => /\.ya?ml$/.test(l));
+  assertEqual(workflows.length, trackedWorkflows.length,
+    `scanned ${workflows.length} workflow file(s), git tracks ${trackedWorkflows.length} — the scan is reading the wrong place`);
+  assert(workflows.length >= 8, `only ${workflows.length} workflow(s) found; this scan has stopped covering the estate`);
+  const botFiles = tracked("bot").filter((l) => /\.(mjs|js|json|ya?ml)$/.test(l) && !l.startsWith("bot/tests/"));
+  assert(botFiles.length >= 40, `only ${botFiles.length} bot/ file(s) found; this scan has stopped covering the bot`);
 
-  for (const name of files) {
-    const body = fs.readFileSync(path.join(dir, name), "utf8");
+  const scan = (rel, isComment) => {
+    const body = fs.readFileSync(path.join(REPO_ROOT, rel), "utf8");
     for (const [i, line] of body.split("\n").entries()) {
-      if (line.trim().startsWith("#")) continue;
+      if (isComment(line.trim())) continue;
       assert(!line.includes("author_association"),
-        `${name}:${i + 1} reads author_association, which B-T0.4b removed from this pipeline:\n  ${line.trim()}`);
+        `${rel}:${i + 1} reads author_association, which is not a permission (B-T0.4b; B-T5.2):\n  ${line.trim()}`);
       assert(!line.includes("--commenter-association"),
-        `${name}:${i + 1} passes --commenter-association, an argument bot/triage.mjs no longer accepts:\n  ${line.trim()}`);
+        `${rel}:${i + 1} passes --commenter-association, an argument nothing has accepted since B-T0.4b:\n  ${line.trim()}`);
     }
-  }
-});
-
-/** A fingerprint of the right shape. Whether it names these bytes is decided later. */
-const FP = "0123456789abcdef";
-
-await test("/approve from a maintainer emits a target carrying the approval, and nothing else", async () => {
-  const out = await command(`/approve ${REPO}@${TAG} ${FP}`, "the-maintainer");
-  assertEqual(out.mode, "approve", out.why);
-  assertEqual(out.repo, REPO, "");
-  assertEqual(out.tag, TAG, "");
-  assertEqual(out.submitter, SUBMITTER, "the issue author, whose ownership is proved again downstream");
-  assertEqual(out.approvedBy, "the-maintainer", "");
-  assertEqual(out.approvedFor, FP, "and what it is an approval OF");
-  assert(/^2026-/.test(out.approvedAt), out.approvedAt);
-  // The property the whole design rests on: an approval is a name, a moment, and
-  // the name of a submission. No verdict, no digest, no listing — so there is no
-  // second, shorter route into the catalogue for a release somebody said yes to.
-  assert(!("findings" in out) && !("derived" in out) && !("decision" in out),
-    `an approval must carry no verification with it: ${Object.keys(out).join(", ")}`);
-});
-
-// ── an approval is bound to the submission it approves ──────────────────────
-//
-// The hole: `decideCommand` re-parses the issue body at the moment the
-// `/approve` comment is processed, and the author owns that body. Hold the
-// submission, wait for the maintainer to read it, edit the two form fields, and
-// the yes lands on a release nobody looked at. Nothing downstream could catch
-// it — every check would then pass, honestly, against the substituted
-// repository, and the audit record would name a maintainer who never saw it.
-
-await test("a bare /approve no longer approves whatever the issue says today", async () => {
-  const out = await command("/approve", "the-maintainer");
-  assertEqual(out.mode, "reply", out.why);
-  assert(!out.repo && !out.tag, "and emits no target at all");
-  assert(out.reply.includes("has to name what it is approving"), out.reply);
-  assert(out.reply.includes("the issue body belongs to the author"),
-    "and says why the bare word stopped being enough");
-});
-
-await test("an approval for a submission this issue no longer describes is refused, loudly", async () => {
-  // The whole defect in one call: the maintainer read `a-stranger/dice-roller
-  // v0.2.0` and typed a command naming it; by the time the comment is processed
-  // the form says something else entirely.
-  const out = await command(`/approve ${REPO}@${TAG} ${FP}`, "the-maintainer", {
-    issue: form({ repo: "someone-else/not-what-you-read", tag: "v9.9.9" }),
-  });
-  assertEqual(out.mode, "reply", out.why);
-  assert(!out.repo && !out.tag,
-    "no target: an approval that cannot be matched to a submission must not start an ingest");
-  assert(out.reply.includes("no longer describes what you approved"), out.reply);
-  assert(out.reply.includes(REPO) && out.reply.includes("someone-else/not-what-you-read"),
-    "and shows both, because which of the two is the surprise is the maintainer's call");
-});
-
-/**
- * A queue entry, written where `readQueue` looks for it.
- *
- * A real file rather than a stubbed dependency: the thing under test is
- * "does a maintainer's line match something this registry is holding", and a
- * stub would have asserted that the code calls a function rather than that the
- * two halves agree about where the queue lives.
- */
-function queued(root, { repo = REPO, tag = "v0.3.2", id = "dice-roller", version = "0.3.2" } = {}) {
-  const dir = path.join(root, "state", "queue");
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, `${id}@${version}.json`), JSON.stringify({
-    id, version, repo, tag,
-    submitter: SUBMITTER,
-    queued_at: "2026-08-20T17:26:42Z",
-    publish_after: "2026-08-21T17:26:42Z",
-    delay_hours: 24,
-    reason: "P_DELAY_HIGH_RISK",
-  }));
-  return root;
-}
-
-await test("/publish works for an UPDATE, whose tag the issue body never names", async () => {
-  // The defect this exists to stop, end to end: a listed plugin's second
-  // release arrives as a `/release` ping, is verified, is queued for the delay,
-  // and the bot posts the line to publish it now. The issue body still names
-  // the tag of the FIRST listing, because nothing ever rewrites it — so the
-  // line the bot printed was refused for describing "something this issue no
-  // longer describes", every time, for every plugin, for every release after
-  // the first.
-  const root = queued(registryTree([{}]));
-  const out = await command(`/publish ${REPO}@v0.3.2 ${FP}`, "the-maintainer", { root });
-  assertEqual(out.mode, "approve", out.why);
-  assertEqual(out.tag, "v0.3.2", "the target is the tag the maintainer named, not the body's");
-  assertEqual(out.publishNow, true, "and /publish still waives the delay");
-  assertEqual(out.approvedFor, FP, "and still carries the fingerprint the bytes are checked against");
-});
-
-await test("a queue entry for a DIFFERENT tag does not let the command through", async () => {
-  // The relaxation is "this exact release is one we are holding", not "this
-  // repository has something in the queue". Without this the fix would turn one
-  // pending release into a skeleton key for any tag of the same repository.
-  const root = queued(registryTree([{}]), { tag: "v0.3.2" });
-  const out = await command(`/publish ${REPO}@v9.9.9 ${FP}`, "the-maintainer", { root });
-  assertEqual(out.mode, "reply", out.why);
-  assert(out.reply.includes("no longer describes"), out.reply);
-  assert(!out.repo && !out.tag, "and no target");
-});
-
-await test("an empty queue still refuses a tag the issue does not name", async () => {
-  // The original guard, unchanged. Constructed rather than assumed: with no
-  // queue directory at all, `readQueue` returns [] and the refusal is reached
-  // by the same path it always was.
-  const out = await command(`/publish ${REPO}@v0.3.2 ${FP}`, "the-maintainer", {
-    root: registryTree([{}]),
-  });
-  assertEqual(out.mode, "reply", out.why);
-  assert(out.reply.includes("no longer describes"), out.reply);
-});
-
-await test("a tag edited under a hold is caught too, not just a repository", async () => {
-  const out = await command(`/approve ${REPO}@${TAG} ${FP}`, "the-maintainer", {
-    issue: form({ tag: "v0.3.0" }),
-  });
-  assertEqual(out.mode, "reply", out.why);
-  assert(out.reply.includes("no longer describes"), out.reply);
-});
-
-await test("a line that is nearly the command is not the command", async () => {
-  for (const line of [
-    `/approve ${REPO} ${FP}`,             // no tag
-    `/approve ${REPO}@${TAG}`,            // no fingerprint
-    `/approve ${REPO}@${TAG} not-a-hash`, // not a fingerprint
-    `/approve ${REPO}@${TAG} ${FP} and also ship it`,
-  ]) {
-    const out = await command(line, "the-maintainer");
-    assertEqual(out.mode, "reply", `${line} → ${out.why}`);
-    assert(out.reply.includes("has to name what it is approving"), line);
-  }
-});
-
-await test("the permission is still asked first, so a stranger learns nothing from the shape", async () => {
-  // Ordering matters for the same reason it did before: an account that may not
-  // decide must get the same answer whatever it typed, or the bot becomes an
-  // oracle for what a well-formed command looks like.
-  const out = await command("/approve", "a-stranger");
-  assert(out.reply.includes("`/approve` is refused"), out.reply);
-  assert(!out.reply.includes("has to name what it is approving"), out.reply);
-});
-
-await test("/reject with no reason changes nothing and says so", async () => {
-  const out = await command("/reject", "the-maintainer");
-  assertEqual(out.mode, "reply", out.why);
-  assert(out.reply.includes("needs a reason"), out.reply);
-  assert(out.reply.includes("Nothing has been closed"), out.reply);
-});
-
-await test("/reject closes the loop for the author: the reason, and what to do next", async () => {
-  const out = await command("/reject the licence is not one this registry allows", "a-second-pair-of-eyes");
-  assertEqual(out.mode, "reject", out.why);
-  assertEqual(out.close, true, "the issue leaves the review queue");
-  assertEqual(out.by, "a-second-pair-of-eyes", "");
-  assert(out.reply.includes("the licence is not one this registry allows"),
-    "the reason is quoted back on the thread, which is the whole point of the command");
-  assert(out.reply.includes("open a fresh listing request"), "a rejection is not permanent");
-  assert(!out.repo, "and nothing is ingested");
-});
-
-await test("a command on an issue with nothing to decide about says so", async () => {
-  const out = await command("/approve", "the-maintainer", {
-    issue: "the website is down", title: "site 500s", labels: "",
-  });
-  assertEqual(out.mode, "reply", out.why);
-  assert(out.reply.includes("nothing to act on"), out.reply);
-});
-
-await test("prose that mentions the command is not the command", async () => {
-  const out = await command("I think we should /approve this one", "the-maintainer");
-  assert(out.mode !== "approve", `${out.mode}: ${out.why}`);
-});
-
-await test("a quoted reply does not re-run the command", async () => {
-  const out = await command("> /approve\n\nno, not yet", "the-maintainer");
-  assert(out.mode !== "approve", `${out.mode}: ${out.why}`);
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// B-T0.2 stage 1: a hold raised OFF the listing issue.
-//
-// Every test above goes through `command()`, which hardcodes
-// `labels: "listing"` and `title: "[listing] a-stranger/dice-roller"` — so the
-// whole of the section above proves only that the commands work on the one
-// thread shape they were written for. That is why the defect survived: a
-// listed plugin's second release is held on a `[notice]` issue the bot opens
-// itself, with no label and a title `looksLikeListing` excludes by name, and
-// `decideCommand`'s `!labelled && !shape.shaped` early return answered the
-// copy-paste line the same bot had just printed with "an issue that is not a
-// listing request". Reproduced before it was fixed, on a tree where
-// `a-stranger/dice-roller` is listed and the commenter proves `admin`:
-//
-//     { "mode": "reply", "why": "/approve on an issue that is not a listing request" }
-//
-// and live, where issue #74 prints
-// `/approve dwertyfa288/dwertyfa-astra-tg@v0.1.15 be6bc6b4f4139c5d` on a
-// thread nothing would ever have read it off.
-//
-// `command()` stays as it is — it is the listing-issue path, and that path did
-// not change. These use a sibling that names the thread instead.
-
-section("a hold raised off the listing issue (B-T0.2)");
-
-/** The bot's own `[notice]` title, in the shape `bot/comment.mjs` writes it. */
-const NOTICE_TITLE = "[notice] dice-roller 0.2.0 publishes itself at 2026-08-11T12:00:00Z";
-
-/**
- * `command()`'s sibling, for threads that are not listing requests.
- *
- * No `listing` label and no `[listing]` title, because those are the two things
- * a `[notice]` does not have; the body is the bot's notice rather than a form,
- * for the same reason. Everything else — the permission stub, the clock, the
- * release — is the same, so a difference in the result is a difference in the
- * thread and nothing else.
- */
-const onThread = (text, commenter, { title = NOTICE_TITLE, issueAuthor = BOT_AUTHOR, ...extra } = {}) => triage(
-  intake({
-    event: "issue_comment", action: "created", labels: "",
-    issue: "`a-stranger/dice-roller@v0.2.0` reached the registry without a submission issue.\n",
-    title,
-    comment: text, commenter, issueAuthor, now: NOW, ...extra,
-  }),
-  releaseBy(SUBMITTER),
-  { proveMaintainer: extra.prove ?? MAINTAINERS },
-);
-
-await test("canary 1 — /approve on a bot-authored [notice] for a LISTED repository approves", async () => {
-  const out = await onThread(`/approve ${REPO}@${TAG} ${FP}`, "the-maintainer");
-  assertEqual(out.mode, "approve", out.why);
-  assertEqual(out.repo, REPO, "the target is the one the maintainer's line named");
-  assertEqual(out.tag, TAG, "");
-  assertEqual(out.approvedBy, "the-maintainer", "");
-  assertEqual(out.approvedFor, FP, "and it still carries what it is an approval OF");
-  // The submitter cannot be the issue author here: the issue author is the bot,
-  // and `github-actions[bot]` is not even a login the charset admits. It comes
-  // from the release, exactly as a ping's does.
-  assertEqual(out.submitter, SUBMITTER, "resolved from the release author, not from the thread");
-  assert(!("findings" in out) && !("decision" in out),
-    `an approval carries no verification with it: ${Object.keys(out).join(", ")}`);
-});
-
-await test("canary 1b — /publish too, and it still waives the delay", async () => {
-  const out = await onThread(`/publish ${REPO}@${TAG} ${FP}`, "the-maintainer");
-  assertEqual(out.mode, "approve", out.why);
-  assertEqual(out.publishNow, true, "`/publish` is `/approve` plus the waiver, on every thread");
-});
-
-await test("canary 2 — an UNLISTED repository gets a reply, and no target", async () => {
-  // The rule that makes an unlabelled thread safe at all, and it is the same
-  // one that makes an unauthenticated `/release` ping safe: off a listing issue
-  // nobody applied the label, so the only thing standing in for a person's
-  // decision is a pin that already exists. A first listing is not reachable
-  // through a command.
-  const out = await onThread(`/approve a-stranger/never-listed@${TAG} ${FP}`, "the-maintainer");
-  assertEqual(out.mode, "reply", out.why);
-  assert(!out.repo && !out.tag, "and emits no target: nothing is fetched for a repository with no pin");
-  assert(out.reply.includes("is not listed"), out.reply);
-  assert(out.reply.includes("a-stranger/never-listed"), "the reply names what was refused");
-});
-
-await test("a [release] thread qualifies whoever opened it, because the other three checks do the work", async () => {
-  // The release-ping form is a stranger's door by design. What keeps this safe
-  // is not the author: it is `admin`/`maintain` on THIS registry, an already
-  // listed repository, and `bot/decide.mjs` re-hashing the release.
-  const out = await onThread(`/approve ${REPO}@${TAG} ${FP}`, "the-maintainer", {
-    title: `[release] ${REPO} ${TAG}`, issueAuthor: "a-stranger",
-  });
-  assertEqual(out.mode, "approve", out.why);
-
-  // And the authority is unchanged on it — the stranger who opened it cannot
-  // answer their own thread.
-  const refused = await onThread(`/approve ${REPO}@${TAG} ${FP}`, "a-stranger", {
-    title: `[release] ${REPO} ${TAG}`, issueAuthor: "a-stranger",
-  });
-  assertEqual(refused.mode, "reply", refused.why);
-  assert(refused.reply.includes("`/approve` is refused"), refused.reply);
-});
-
-await test("a [notice] somebody else opened is not one of the bot's, and is refused", async () => {
-  // A human-authored `[notice]` is an imitation of the thread this registry
-  // prints copy-paste commands on. Not a wall — anyone can retitle an issue
-  // `[release]` and meet the other three checks instead — but a maintainer who
-  // copies a line out of a fake notice gets a refusal rather than a publication.
-  const out = await onThread(`/approve ${REPO}@${TAG} ${FP}`, "the-maintainer", {
-    issueAuthor: "a-stranger",
-  });
-  assertEqual(out.mode, "reply", out.why);
-  assert(!out.repo, "and no target");
-  assert(out.reply.includes("nothing to act on"), out.reply);
-  assert(out.why.includes(BOT_AUTHOR), out.why);
-});
-
-await test("a bare /approve on a [notice] has nothing to fall back on, and says so", async () => {
-  // On a listing issue a bare `/approve` is refused because the form it would
-  // have read is the author's to edit. Here there is no form at all, so the
-  // command line is the only thing that names a release — and the reply is the
-  // same one, because the fix is the same: name what you are approving.
-  for (const line of ["/approve", `/approve ${REPO}`, `/approve ${REPO}@${TAG}`]) {
-    const out = await onThread(line, "the-maintainer");
-    assertEqual(out.mode, "reply", `${line} → ${out.why}`);
-    assert(out.reply.includes("has to name what it is approving"), line);
-    assert(!out.repo, `${line} emitted a target`);
-  }
-});
-
-await test("/reject stays a listing-issue command, because it can never name a release", async () => {
-  // B-T0.2 admits a command to these threads only when it names
-  // `owner/repo@tag <fingerprint>`, and `parseMaintainerCommand` gives
-  // `/reject` a sentence instead — by construction, because a rejection is
-  // something said to a submitter about a submission under review. A `[notice]`
-  // belongs to the bot; there is nothing on it to close and nobody to close it
-  // for. Refusing is the point: an unbindable command on an unlabelled thread
-  // is the exact shape this task exists to stop.
-  const out = await onThread("/reject this one is not ready", "the-maintainer");
-  assertEqual(out.mode, "reply", out.why);
-  assertEqual(out.close, undefined, "and nothing is closed");
-  assert(out.reply.includes("nothing to act on"), out.reply);
-
-  // Unchanged where it belongs.
-  const onListing = await command("/reject the licence is not one this registry allows", "the-maintainer");
-  assertEqual(onListing.mode, "reject", onListing.why);
-});
-
-await test("the permission is still asked first on these threads too", async () => {
-  // Ordering, for the same reason as on a listing issue: an account that may
-  // not decide gets the same answer whatever it typed, or the bot becomes an
-  // oracle for which threads are decidable and which repositories are listed.
-  const out = await onThread(`/approve a-stranger/never-listed@${TAG} ${FP}`, "a-stranger");
-  assert(out.reply.includes("`/approve` is refused"), out.reply);
-  assert(!out.reply.includes("is not listed"),
-    "a stranger must not learn from the refusal whether that repository is listed");
-});
-
-await test("an ordinary issue is still not decidable, which is the half that must not widen", async () => {
-  // The floor under all of the above. `decidableThread` admits two title
-  // prefixes and nothing else; if it ever admitted "any issue with no form"
-  // then every one of this registry's issues would be a command surface, and
-  // every test above would still pass.
-  for (const [title, issueAuthor] of [
-    ["site 500s", BOT_AUTHOR],
-    ["[appeal] dice-roller", BOT_AUTHOR],
-    ["[report] dice-roller", BOT_AUTHOR],
-    ["", BOT_AUTHOR],
-  ]) {
-    const out = await onThread(`/approve ${REPO}@${TAG} ${FP}`, "the-maintainer", { title, issueAuthor });
-    assertEqual(out.mode, "reply", `${JSON.stringify(title)} → ${out.why}`);
-    assert(!out.repo, `${JSON.stringify(title)} emitted a target`);
-    assert(out.reply.includes("nothing to act on"), out.reply);
-  }
-});
-
-await test("B-T0.2's admissible threads are exactly two, and the list is asserted, not described", () => {
-  // The rule as a table rather than as four calls, so that widening it is an
-  // edit to something a reviewer can count. `decidableThread` is pure, so this
-  // costs nothing and covers the cases the calls above do not.
-  const cases = [
-    [NOTICE_TITLE, BOT_AUTHOR, "notice"],
-    ["[NOTICE] shouting is still a notice", BOT_AUTHOR, "notice"],
-    [NOTICE_TITLE, "a-stranger", null],
-    [NOTICE_TITLE, "", null],
-    [NOTICE_TITLE, "github-actions", null],
-    [`[release] ${REPO} ${TAG}`, "a-stranger", "release"],
-    [`[release] ${REPO} ${TAG}`, BOT_AUTHOR, "release"],
-    ["[listing] a-stranger/dice-roller", BOT_AUTHOR, null],
-    ["[appeal] dice-roller", BOT_AUTHOR, null],
-    ["[report] dice-roller", BOT_AUTHOR, null],
-    ["site 500s", BOT_AUTHOR, null],
-    ["", BOT_AUTHOR, null],
-    [null, null, null],
-  ];
-  assertEqual(cases.length, 13, "the enumeration IS the test; shrinking it silently is the failure mode");
-  for (const [title, issueAuthor, kind] of cases) {
-    assertEqual(decidableThread({ title, issueAuthor }).kind, kind,
-      `${JSON.stringify(title)} by ${JSON.stringify(issueAuthor)}`);
-  }
-  // `github-actions[bot]` is not a login GitHub's charset admits, which is what
-  // makes it unregisterable and therefore worth comparing against. If this ever
-  // starts passing `safeLogin`, the author check above has become forgeable.
-  assertEqual(safeLogin(BOT_AUTHOR), null, "the bot's name must stay outside the login charset");
+  };
+  for (const name of workflows) scan(path.join(".github", "workflows", name), (l) => l.startsWith("#"));
+  for (const rel of botFiles) scan(rel, (l) => l.startsWith("//") || l.startsWith("*") || l.startsWith("/*") || l.startsWith("#"));
 });
 
 section("an approval clears the hold, and only the hold");
@@ -2072,10 +1196,10 @@ await test("swapping the assets mid-window takes the approval with the clock", a
 
 section("an approval names what it approves, and only that");
 
-// The layer below `bot/triage.mjs`. Triage refuses a command whose repository
-// and tag disagree with the issue in front of it — but triage has no bytes, so
-// it cannot see a tag moved onto a different commit or a release asset replaced
-// in place. Both of those are §5.5's timed swap aimed at the review queue
+// The decide layer's half of an approval. The issue path refused a command
+// whose repository and tag disagreed with the issue in front of it (until
+// cutover commit D deleted it) — but it had no bytes, so it could not see a tag
+// moved onto a different commit or a release asset replaced in place. Both of those are §5.5's timed swap aimed at the review queue
 // instead of at the publication delay, and this is where they are caught.
 
 await test("an approval is refused when the release changed after the hold", async () => {
@@ -2854,18 +1978,6 @@ await test("the close waits for the commit, and for the comment", async () => {
   assert(!/always\(\)/.test(cond[1]), cond[1]);
 });
 
-await test("the approval's binding is wired from triage's target to decide's flag", async () => {
-  // Three names for one field, in three files, and a typo in any of them makes
-  // the approval unbound rather than loud: `triage.mjs` writes `approved_for`
-  // into the target, the matrix carries it, and `decide.mjs` reads
-  // `--approved-for`.
-  const triageSrc = fs.readFileSync(path.join(REPO_ROOT, "bot", "triage.mjs"), "utf8");
-  assert(/approved_for: out\.approvedFor/.test(triageSrc), "triage must put it on the target");
-  assert(/APPROVED_FOR: \$\{\{ matrix\.approved_for \}\}/.test(ingestWorkflow),
-    "the matrix entry has to reach the check job");
-  assert(/--approved-for "\$APPROVED_FOR"/.test(ingestWorkflow),
-    "and the check job has to pass it to decide.mjs");
-});
 
 section("the document and the code say the same thing");
 
@@ -3561,27 +2673,6 @@ await test("BOT-77 does not bind the service path, which is the path that holds 
     "BOT-77 stopped the service path too, which would leave a bound listing publishable by nothing at all");
 });
 
-await test("BOT-74 — a `cli-v` ping gives no ingest, and so no record", () => {
-  const listedTags = ["v0.1.0", "v0.2.0"];
-  assertEqual(bot74Filter({ tag: "cli-v1.4.0", listedTags }).pass, false,
-    "a monorepo's CLI tag was dispatched as a plugin release, and from R3 the refusal is a public record");
-  assertEqual(bot74Filter({ tag: "v0.3.0", listedTags }).pass, true,
-    "the listing's own next release was filtered out, which stops the backstop working at all");
-  assertEqual(bot74Filter({ tag: "v0.2.0", listedTags }).pass, false,
-    "a tag already recorded on the listing was re-ingested");
-  // The prefix set is read from the recorded tags, so a listing that uses a
-  // prefix nothing in this repository uses still works. This is the property,
-  // not a list of `v` and `cli-v`.
-  assertEqual(bot74Filter({ tag: "release-2026.3", listedTags: ["release-2026.1", "release-2026.2"] }).pass, true,
-    "the filter has a hard-coded idea of what a release tag looks like, and this listing does not share it");
-  assertEqual(bot74Filter({ tag: "nightly-2026.3", listedTags: ["release-2026.1"] }).pass, false,
-    "a second tag shape on a listing that only ever used one was dispatched");
-  // A first listing has no evidence to filter by, and inventing some here
-  // would be this module deciding what a release tag is.
-  assertEqual(bot74Filter({ tag: "anything", listedTags: [] }).pass, true,
-    "a listing with no recorded tag cannot be filtered, and a filter that refuses everything there " +
-    "silently turns the backstop off for every new listing");
-});
 
 await test("B-T3.7 — the legacy path writes no record until the baseline marker is on main", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "b4-marker-"));
@@ -3615,68 +2706,6 @@ await test("an unreadable identity.json is not an absent one", () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-});
-
-
-await test("B-T0.2 stage 2 — /approve is refused when no `held` record on main carries its fingerprint", async () => {
-  const fp = "a".repeat(16);
-  const line = `/approve ${REPO}@${TAG} ${fp}`;
-
-  // Before the baseline marker there are no records at all, and the rule is
-  // OFF. Ungated, it would refuse every approval this registry has ever
-  // accepted — the gate is the condition under which the thing being checked
-  // exists, not a softening of it.
-  const noMarker = await command(line, "the-maintainer");
-  assertEqual(noMarker.mode, "approve",
-    "the held-record rule fired before any record could exist, so every /approve is refused at once");
-
-  // With the marker on main and no matching `held` record, it is refused.
-  const root = registryTree([{}]);
-  fs.mkdirSync(path.join(root, "log"), { recursive: true });
-  fs.writeFileSync(path.join(root, "log", "baseline.json"),
-    JSON.stringify({ schema: "astra.registry.baseline/1", version_count: 1, record_count: 1 }));
-  const unrecorded = await command(line, "the-maintainer", { root });
-  assertEqual(unrecorded.mode, "reply", unrecorded.why);
-  assert(unrecorded.reply.includes(fp), "the refusal does not name the fingerprint it could not find");
-
-  // And accepted once the record is there. Without this the assertion above
-  // passes for a rule that refuses everything.
-  fs.mkdirSync(path.join(root, "log", "decisions", "2026", "09"), { recursive: true });
-  fs.writeFileSync(path.join(root, "log", "decisions", "2026", "09", "held1.json"),
-    JSON.stringify({ schema: "astra.registry.decision/1", decision_id: "held1", state: "held", fingerprint: fp }));
-  const recorded = await command(line, "the-maintainer", { root });
-  assertEqual(recorded.mode, "approve", recorded.why);
-
-  // A `held` record for SOME OTHER fingerprint does not do. This is the case
-  // the rule exists for: a fingerprint copied out of a comment on another
-  // thread reads exactly like a valid one until it is compared.
-  fs.rmSync(path.join(root, "log", "decisions", "2026", "09", "held1.json"));
-  fs.writeFileSync(path.join(root, "log", "decisions", "2026", "09", "held2.json"),
-    JSON.stringify({ schema: "astra.registry.decision/1", decision_id: "held2", state: "held", fingerprint: "b".repeat(16) }));
-  assertEqual((await command(line, "the-maintainer", { root })).mode, "reply",
-    "an approval bound to somebody else's hold");
-
-  // A record that is not `held` is not a hold. A `published` record naming the
-  // same fingerprint is the ordinary aftermath of the hold being cleared, and
-  // reading it as a hold would make every approval replayable for ever.
-  fs.rmSync(path.join(root, "log", "decisions", "2026", "09", "held2.json"));
-  fs.writeFileSync(path.join(root, "log", "decisions", "2026", "09", "pub.json"),
-    JSON.stringify({ schema: "astra.registry.decision/1", decision_id: "pub", state: "published", fingerprint: fp }));
-  assertEqual((await command(line, "the-maintainer", { root })).mode, "reply",
-    "a published record was read as a standing hold, which makes every cleared approval replayable");
-
-  // And the same on a `[notice]` thread, which is where stage 1 opened a second
-  // way in. Stage 2's bind is the durable one and it is shared code — asserted
-  // rather than assumed, because "it is the same code path" is exactly the
-  // sentence that stops being true one refactor later, and a second route into
-  // `mode: approve` that skipped this would be a second set of rules.
-  assertEqual((await onThread(line, "the-maintainer", { root })).mode, "reply",
-    "a hold raised off the listing issue bypassed the held-record bind");
-  fs.rmSync(path.join(root, "log", "decisions", "2026", "09", "pub.json"));
-  fs.writeFileSync(path.join(root, "log", "decisions", "2026", "09", "held3.json"),
-    JSON.stringify({ schema: "astra.registry.decision/1", decision_id: "held3", state: "held", fingerprint: fp }));
-  assertEqual((await onThread(line, "the-maintainer", { root })).mode, "approve",
-    "and with the record there it goes through, so the assertion above is not passing for a rule that refuses everything");
 });
 
 
@@ -3915,42 +2944,6 @@ await test("a legacy record is never composed with the `migration` trigger, even
 
 // ── B-T3.9: the legacy path under the new records ───────────────────────────
 
-await test("BOT-74 — the backstop's recorded tags are every listing's that names the repository", async () => {
-  // A monorepo carries several listings under one `source.repo`, and a Map
-  // built from them one entry per listing keeps only the LAST listing's tags:
-  // the backstop then filtered every other plugin's releases out as a foreign
-  // prefix. `mihailinl/AstraPlugins` holds ten listings.
-  const { recordedTagsByRepo } = await import("../watch.mjs");
-  assert(typeof recordedTagsByRepo === "function", "there is no one derivation of a repository's recorded tags to share");
-  const sources = { plugins: [
-    { doc: { id: "json-tools", source: { repo: "Mono/Repo" } }, versions: [{ doc: { release: { tag: "json-tools-v0.1.2" } } }] },
-    { doc: { id: "text-utils", source: { repo: "mono/repo" } }, versions: [{ doc: { release: { tag: "text-utils-v0.1.0" } } }] },
-  ] };
-  const tags = recordedTagsByRepo(sources).get("mono/repo") ?? [];
-  assertEqual(JSON.stringify([...tags].sort()), JSON.stringify(["json-tools-v0.1.2", "text-utils-v0.1.0"]),
-    "one listing's recorded tags replaced another's under their shared repository");
-  assertEqual(bot74Filter({ tag: "json-tools-v0.1.3", listedTags: tags }).pass, true,
-    "the first listing's next release was filtered out as a foreign prefix");
-});
-
-await test("BOT-74 — a `cli-v` ping on a listed repository starts no ingest, so it records nothing", async () => {
-  // The filter was the backstop's alone; a `/release` ping for a CLI tag on
-  // a repository this registry lists ran the whole ingest, was refused
-  // E_NO_BUNDLE_ASSETS, and from the baseline on would have committed a
-  // durable `refused` record for a release that never was a plugin's.
-  const root = registryTree([{}]);
-  const cli = await triage({
-    event: "issues", labels: "", root,
-    ...bodies({ issue: `/release ${REPO} cli-v1.4.0` }),
-  }, releaseBy("the-author"));
-  assert(cli.mode !== "ping", `a cli-v ping on a listed repository was dispatched to an ingest: ${cli.why}`);
-  assert(/BOT-74/.test(cli.why), "and it does not say which rule held it back");
-  const plugin = await triage({
-    event: "issues", labels: "", root,
-    ...bodies({ issue: `/release ${REPO} v0.3.0` }),
-  }, releaseBy("the-author"));
-  assertEqual(plugin.mode, "ping", `the floor: a real release of the listing was held back too: ${plugin.why}`);
-});
 
 await test("BOT-19 — only a publication, a stop or a rejection of THESE bytes, or a stop of this tag, ends the run", () => {
   // BOT-19 (registry plan notes) names three records and no others. The
@@ -4014,27 +3007,6 @@ await test("BOT-74 — a re-submission of a listed tag with its published bytes 
   const out2 = tmp("astra-b39-again-");
   writeOutputs(out2, { repo: REPO, tag: TAG, issue: null, root }, again);
   assertEqual(listRecords(out2).length, 0, "a re-ping of published bytes wrote a record to disk");
-});
-
-await test("from R4a, a maintainer command for a bound listing is refused before it is dispatched", async () => {
-  // ROLL-49 / B-T3.9: once `log/rollout/R3-exit.json` is on main a listing can
-  // be bound, and a bound listing's releases are the service path's. BOT-77
-  // already stops the ingest; this stops the command, so a maintainer is told
-  // at the thread rather than by a hold nobody can clear.
-  const root = registryTree([{}]);
-  fs.writeFileSync(path.join(root, "plugins", "dice-roller", "identity.json"),
-    JSON.stringify({ schema: "astra.registry.identity/1", plugin_id: "dice-roller", repo: REPO, repository_id: "1", repository_owner_id: "2" }));
-  const ask = async () => triage({
-    event: "issue_comment", labels: "listing", root, commenter: "maint", issueAuthor: SUBMITTER,
-    ...bodies({ issue: FORM, comment: `/approve ${REPO}@${TAG} 0123456789abcdef` }),
-  }, releaseBy("the-author"), { proveMaintainer: async () => ({ ok: true, role: "admin", detail: "admin", answered: true }) });
-  const before = await ask();
-  assertEqual(before.mode, "approve", `the floor: before R3's exit the command was not dispatched: ${before.why}`);
-  fs.mkdirSync(path.join(root, "log", "rollout"), { recursive: true });
-  fs.writeFileSync(path.join(root, "log", "rollout", "R3-exit.json"), JSON.stringify({ schema: "astra.registry.rollout/1" }));
-  const after = await ask();
-  assertEqual(after.mode, "reply", `from R4a a command for a bound listing was dispatched: ${after.mode} ${after.why}`);
-  assert(/bound/.test(after.why), "and the refusal does not say the listing is bound");
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

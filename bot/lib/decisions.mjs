@@ -72,7 +72,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { safeRepo, safeTag } from "./intake.mjs";
+import { safeRepo, safeTag } from "./safe.mjs";
 import { ID_PATTERN } from "../../tools/lib/ids.mjs";
 import { SEMVER_PATTERN } from "../../tools/lib/semver.mjs";
 import { stableStringify } from "../../tools/lib/canonical.mjs";

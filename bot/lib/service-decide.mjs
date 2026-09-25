@@ -71,7 +71,7 @@ import { HOUR_MS, iso } from "./policy/time.mjs";
 import { CODES } from "./codes.mjs";
 import { POLICY_CODES } from "./policy/constants.mjs";
 import { applyIdentity, compareWithBaseline, effectiveBaseline } from "./identity.mjs";
-import { safeRepo, safeTag } from "./intake.mjs";
+import { safeRepo, safeTag } from "./safe.mjs";
 import { execFileSync } from "node:child_process";
 import { trackRecord } from "./policy/track-record.mjs";
 import { listingStateAt } from "./listing-state.mjs";
