@@ -16,7 +16,8 @@ because a policy you cannot tell apart from a wish is not a policy.
 Astra checks that a plugin's bytes are the bytes its author released, and that
 nobody swapped them in transit. That is all any registry can check. It is not a
 safety review, it is not a code audit, and being listed here is not an
-endorsement.
+endorsement. Neither is a version marked *reviewed*: that says an Astra
+moderator read that version, and nothing more (§8).
 
 Nothing else in this document should be read as softening that.
 
@@ -108,7 +109,10 @@ trailing dot or space.
 Two ids that a person cannot tell apart cannot both exist. `validate.mjs` folds
 each id (NFKC, lowercase, strip separators, fold digit/letter confusables such
 as `0`→`o`, `rn`→`m`) and **rejects** an exact collision; ids within one edit of
-each other are **flagged for a human**, not rejected.
+each other are **flagged for a human**, not rejected. On the issue path, until
+the cutover, the flag holds the release for a maintainer. Through the plugins
+service it holds nothing: the release publishes at once, marked not reviewed,
+and moderators read it first (`docs/POLICY.md` §2.1; amended 2026-09-26).
 
 **This is a heuristic that catches accidents and lazy impersonation. It does not
 stop a determined attacker,** and no amount of Unicode folding will. Report a
@@ -199,9 +203,12 @@ suggest otherwise.
 ## 6. Versions
 
 - Versions are semver, and a new listing must be strictly greater than the last.
-- A version file is **immutable once merged**. Fixing a published release means
-  publishing a new version, never editing a digest in place: the digest is the
-  whole promise, and a mutable one is not a promise.
+- A version file is **immutable once merged**, but for two fields: `yanked`
+  (below), and the review mark `review`, which only a moderator's review
+  changes, once, from `unreviewed` to `reviewed` (§8; `docs/POLICY.md` §2.1).
+  Fixing a published release means publishing a new version, never editing a
+  digest in place: the digest is the whole promise, and a mutable one is not a
+  promise.
 - An author may **yank** a version (`"yanked": true`). It leaves the index and
   stays in git. Yanking is the author's tool for "do not use this one"; it is
   not a security control, it does not touch installs, and it is not revocation.
@@ -217,11 +224,13 @@ A listing first published before the cutover to the plugins service, and never
 bound to a Minice account, is `grandfathered` until the later of the binding
 deadline below and the cutover, and `frozen` after it until it is bound: it
 stays listed and installable, and takes no new version. From the cutover, a
-delayed or reviewed release of a `grandfathered` listing also waits until the
-listing is bound (contract MIG-12). Binding needs a Minice account holding
-`astraUser`, a binding line in the repository, a new tag, and one
-`R_FIRST_BINDING` review; a bound release unfreezes the listing, with no
-penalty (MIG-1, MIG-10). What the authors of these listings are told, and
+release of a `grandfathered` listing that was held and approved also waits
+until the listing is bound (contract MIG-12). A release of it that nothing
+holds is published at once, marked not reviewed by moderators, as on any
+listing (§8). Binding needs a Minice account holding `astraUser`, a binding
+line in the repository, a new tag, and one `R_FIRST_BINDING` hold that a
+moderator approves; a bound release unfreezes the listing, with no penalty
+(MIG-1, MIG-10). What the authors of these listings are told, and
 when, is `docs/migration-notice.md`. Enforced by
 the bot, which reads the deadline from `policy/binding-deadline.json` and from
 nowhere else (MIG-3).
@@ -278,33 +287,52 @@ day it is already full.
 
 ## 8. Review, and how long it takes
 
-**Exactly three events take blocking human review**, and the SLA on those three
-is **48 hours**: a first listing, a newly requested high-risk permission
-(`client`, `dom_access`, `send_chat_message`, `set_theme_contribution`), and an
-identity or repository change.
+*Amended 2026-09-26 (contract 3.0.0, DEC-19).* The owner asked for a release to
+be published when its publisher publishes it, with a warning for users rather
+than a block. Until the cutover there are two paths into this catalogue, and
+they wait for different things.
 
-Everything else publishes itself with nobody in the loop — immediately for a
+**Through the plugins service, a release that passes every automatic check
+publishes at once**, marked *not reviewed by Astra moderators*. Nobody approves
+it and nothing delays it. A moderator may read a version afterwards and mark it
+reviewed. The mark belongs to that version alone, and the next version starts
+not reviewed again. `reviewed` says that a moderator read that version: it is
+not a safety review, a code audit or an endorsement (§0). From the Astra
+release that shows the mark, a user is warned before installing a version that
+is not reviewed, and asked before such an update is applied. Astra 0.2.x, and
+every release before the one that adds the mark, shows none.
+
+**Only a change of hands on a listing that already exists waits for a person
+there**: a changed repository or identity, a binding line with a different
+token, and the first release of an existing listing to carry a binding line.
+Each waits for a moderator's approval and then the windows below. An approved
+one still publishes marked not reviewed, because an approval is not a review.
+
+**Through an issue here, until the cutover removes that path**, three events
+wait for a maintainer, with an SLA of **48 hours**: a first listing, a newly
+requested high-risk permission (`client`, `dom_access`, `send_chat_message`,
+`set_theme_contribution`), and an identity or repository change. Everything
+else on that path publishes itself with nobody in the loop — immediately for a
 routine release, and after a 24-hour delay (6 hours for an author with a clean
 release history here) when the permission set grew or when the plugin holds any
-high-risk permission at all.
+high-risk permission at all. That number is a commitment about three events
+precisely because it is three events.
 
-That number is a commitment about three events precisely because it is three
-events. **`docs/POLICY.md` is the whole publication policy**: every outcome the
-bot can post, what each delay is for and what it honestly buys, how a release
-notification reaches this registry without the author holding any credential for
-it, and — stated there rather than left to be discovered — what happens when the
-SLA slips, which is that auto-publication widens rather than the queue rotting.
+**`docs/POLICY.md` is the whole publication policy**: every outcome the bot can
+post, what the review mark says and does not say, what each delay on the issue
+path is for and what it honestly buys, how a release notification reaches this
+registry without the author holding any credential for it, and — stated there
+rather than left to be discovered — what happens when the SLA slips, which is
+that auto-publication widens rather than the queue rotting.
 
-**Two more numbers apply on the plugins-service path**, when a release reaches
-this registry through the plugins service rather than through an issue here, and
-both are the owner's (2026-09-13). A maintainer's **approval is honoured for 7
-days** from the moment it was given; past that the release stays held until it
-is approved again. And an **approved update waits 6 hours** after the plugins
-service reports that its notice to the author was accepted, so that an author
-can stop a release they did not make before it reaches anybody — unless it
-already carries a publication delay of its own, which it waits instead. An
-approved first listing has no such wait: it has no installs for a hijacked build
-to reach.
+**Two more numbers apply on the plugins-service path**, and both are the
+owner's (2026-09-13). A maintainer's **approval is honoured for 7 days** from
+the moment it was given; past that the release stays held until it is approved
+again. And an **approved update waits 6 hours** after the plugins service
+reports that its notice to the author was accepted, so that an author can stop
+a release they did not make before it reaches anybody. On that path every
+approved release is a change of hands, which is always an update, and nothing
+there carries a publication delay.
 
 **And here is what that apparatus buys, and exactly where it stops.** Every rule
 above is keyed on what a plugin *declares*, and a declaration is now enforced at
