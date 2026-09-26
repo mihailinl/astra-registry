@@ -1576,6 +1576,11 @@ export async function run() {
   // would pass the pathspec test below.
   const NOT_THE_CATALOGUE = new Map(Object.entries({
     "bot/lib/takedown-bound.mjs › countWindow": [1, "main's first-parent line with timestamps and no pathspec, the takedown bound's window"],
+    // Contract 3.0.0's §4.8 row 11 (detector A11): `firstParentLine`, HEAD's
+    // first-parent line with no pathspec, and `touching`, the commits that
+    // changed a version record — lists of commits A11 judges one by one, never
+    // counted into a serial.
+    "bot/detectors.mjs › gitReader": [2, "detector A11's commit lists: HEAD's first-parent line, and the commits that changed a version record"],
     "tools/coverage/git.mjs › historyCount": [1, "the depth of the whole history, no pathspec"],
     "tools/coverage/git.mjs › commitsAfter": [1, "the commits after one, no pathspec"],
     "tools/coverage/git.mjs › mergesAfter": [1, "the merges after one, no pathspec"],

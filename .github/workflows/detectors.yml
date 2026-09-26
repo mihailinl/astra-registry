@@ -1,7 +1,8 @@
 # Detector A (BOT-43): the reconciliation that reads only public git.
 #
-# Five of contract §4.8's nine rows are this side's — A1, A3, A5, A7 and A9 —
-# and detector B answers the same questions inside the plugins service, from a
+# Six of contract §4.8's eleven rows are this side's — A1, A3, A5, A7, A9 and
+# A11 (3.0.0's review mark) — and detector B answers the same questions inside
+# the plugins service, from a
 # store that shares no code with this one. **Neither repairs.** This workflow
 # alarms with codes, ids and commits, and a person resolves the disagreement
 # through a `system` decision record or an audited service correction.

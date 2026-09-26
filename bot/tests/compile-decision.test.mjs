@@ -36,6 +36,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import * as compiler from "../lib/compile-decision.mjs";
 import {
   ACCOUNT_LEVEL_CATEGORIES,
   ADVISORY_KINDS,
@@ -46,11 +47,15 @@ import {
   compileDecision,
   compileIdentityReset,
   fixedReason,
+  newBatch,
   nextAdvisoryId,
+  recordInBatch,
   tokenAdvisoryBase,
 } from "../lib/compile-decision.mjs";
 import { decisionId, recordPath, RECORD_SCHEMA, writeDecisionRecord } from "../lib/decisions.mjs";
-import { HOLD_KINDS } from "../lib/holds.mjs";
+import { HOLD_KINDS, holdKindFor, isTakedown } from "../lib/holds.mjs";
+import { checkEntry } from "../lib/moderation.mjs";
+import { headListing, withdrawnBy } from "../lib/takedown-bound.mjs";
 import { KINDS } from "../../tools/lib/revocations.mjs";
 import { REPO_ROOT, loadRecords, loadSchemas, loadSources } from "../../tools/lib/sources.mjs";
 import { checkAuthorActionRecords, checkRecords } from "../../tools/validate.mjs";
@@ -225,10 +230,13 @@ test("an entry carrying a member BOT-80 does not name compiles normally, and the
 // equally invisible, and adding the missing lines without this test would have
 // left the next branch free to omit it again.
 //
-// THE CODE LIST IS DERIVED, NOT COPIED. `KNOWN_CODES` is not exported, and its
-// refusal prints every key it knows; this reads the list out of that message,
-// so a code added to the module is covered here without anybody editing this
-// file. The floor is what stops the loop passing by reaching nothing.
+// THE CODE LIST IS DERIVED, NOT COPIED. The compiler's refusal prints every key
+// `KNOWN_CODES` holds, and this reads the list out of that message, so a code
+// added to the module is covered here without anybody editing this file. (The
+// table itself is exported since contract 3.0.0, for the moderation run's
+// canary that holds it equal to the work schema's code enum; reading it from
+// the message here also keeps the message honest.) The floor is what stops
+// the loop passing by reaching nothing.
 test("every compiled decision carries a Decided-At beside its Service-Decision", () => {
   const root = estate();
 
@@ -252,6 +260,10 @@ test("every compiled decision carries a Decided-At beside its Service-Decision",
     M_DEPRECATE: { category: "broken", moderator: "knice", advisory: { kind: "id" } },
     M_REVOKE: { category: "broken", moderator: "knice", advisory: { kind: "id" } },
     M_APPEAL: { category: "broken", moderator: "knice", outcome: "stands" },
+    // Contract 3.0.0 (MOD-56): a review carries `review_passed` and nothing
+    // else, so the default shape below would be refused and the branch never
+    // reached.
+    M_REVIEW: { category: "review_passed", versions: ["1.1.0"], moderator: "knice" },
   };
 
   const compiled = [];
@@ -1064,4 +1076,207 @@ test("MIG-20's tree check accepts the voiding record the writer composes, and no
     assert.equal(mine.length, 1, `${what}: ${report.text()}`);
     assert.match(mine[0].message, pattern, what);
   }
+});
+
+// ── M_REVIEW (contract 3.0.0; MOD-56) ───────────────────────────────────────
+//
+// The one service decision that ADDS trust. A release publishes at once,
+// marked `review: "unreviewed"` in its version record (B.4; DEC-19), and a
+// moderator's `M_REVIEW` is the only thing that moves a version to
+// `reviewed`. MOD-56 is the whole rule, and every clause of it is a test here:
+//
+//   * it sets `review` to `reviewed` on each named version that is listed,
+//     not yanked and not already `reviewed` on `main`;
+//   * in one commit carrying `Service-Decision:`, with one moderation-log
+//     entry `review` naming the versions it moved;
+//   * `target_changed` when no named version can move;
+//   * never held (MOD-9), never counted toward the takedown bound (TRUST-26).
+//
+// Its partial apply is `M_YANK`'s and not `A_YANK`'s, for the reason MOD-56
+// states: a moderator naming a set in which one version was reviewed a minute
+// earlier is ordinary, and nothing is lost by marking the rest. What is NOT
+// ordinary is a decision that moves nothing, and that is refused rather than
+// committed as an empty log entry, which detector A's row 11 would then read as
+// a review naming no version.
+
+const REVIEW_REASON = "A moderator read this version's manifest, permissions and bundle and found nothing wrong.";
+
+/** A version record with a review mark, or with none (`undefined`: published before 3.0.0). */
+const marked = (id, v, mark, opts = {}) => ({ ...version(id, v, opts), ...(mark === undefined ? {} : { review: mark }) });
+
+const review = (over) => entry({
+  code: "M_REVIEW", category: "review_passed", moderator: "knice", reason: REVIEW_REASON, ...over,
+});
+
+/** widgets: 1.0.0 reviewed, 1.1.0 unreviewed, 1.2.0 yanked, 1.3.0 published before 3.0.0 (no mark). */
+function reviewEstate({ extra = {}, ...opts } = {}) {
+  return estate({
+    versions: [],
+    ...opts,
+    extra: {
+      "plugins/widgets/versions/1.0.0.json": marked("widgets", "1.0.0", "reviewed"),
+      "plugins/widgets/versions/1.1.0.json": marked("widgets", "1.1.0", "unreviewed"),
+      "plugins/widgets/versions/1.2.0.json": marked("widgets", "1.2.0", "unreviewed", { yanked: true }),
+      "plugins/widgets/versions/1.3.0.json": marked("widgets", "1.3.0", undefined),
+      ...extra,
+    },
+  });
+}
+
+test("M_REVIEW is a code the compiler knows, and its log action is `review` (§7.2; MOD-47)", () => {
+  assert.equal(compiler.KNOWN_CODES?.M_REVIEW, "review",
+    "bot/lib/compile-decision.mjs has no answer for M_REVIEW, so a moderator's review THROWS the whole run");
+  assert.equal(compiler.LOG_ACTION.M_REVIEW, "review", "§7.2: `M_REVIEW` → log `review`");
+});
+
+test("M_REVIEW marks the versions that can move, in one log entry naming them, under its two trailers (MOD-56)", () => {
+  const root = reviewEstate();
+  const r = compileDecision(review({ versions: ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "9.9.9"] }), { root });
+  assert.equal(r.outcome, "compiled", JSON.stringify(r.why ?? r));
+  // 1.0.0 is already reviewed, 1.2.0 is yanked, 9.9.9 is not on the tree; 1.3.0
+  // carries no mark (published before 3.0.0), which is not `reviewed`, so it moves.
+  assert.deepEqual(r.edits, [
+    { op: "set", file: "plugins/widgets/versions/1.1.0.json", member: "review", value: "reviewed" },
+    { op: "set", file: "plugins/widgets/versions/1.3.0.json", member: "review", value: "reviewed" },
+  ]);
+  assert.equal(r.log.length, 1, "MOD-56: ONE moderation-log entry per review");
+  assert.equal(r.log[0].file, "bot/moderation/2026-09-20-widgets-review.json");
+  assert.deepEqual(r.log[0].doc, {
+    date: "2026-09-20",
+    action: "review",
+    plugin: "widgets",
+    versions: ["1.1.0", "1.3.0"],
+    reason: REVIEW_REASON,
+    category: "review_passed",
+    service_decision_id: SDI,
+  }, "the entry names the versions it MOVED, and no other: detector A's row 11 reads a mark by this list");
+  assert.deepEqual(checkEntry(r.log[0].doc), [], "the log refuses the entry the compiler wrote");
+  assert.ok(!JSON.stringify(r).includes("knice"), "a moderator's handle reached a composed artefact (PRIV-2)");
+  assert.deepEqual([r.advisories, r.records, r.alerts], [[], [], []],
+    "a review withdraws nothing, writes no decision record and alerts nobody (MOD-56: no notice.moderated)");
+  assert.deepEqual(r.trailers, { "Service-Decision": SDI, "Decided-At": "2026-09-20T12:00:00Z" });
+});
+
+test("M_REVIEW that can move nothing is `target_changed`, and composes nothing (MOD-56)", () => {
+  const root = reviewEstate();
+  const unlisted = reviewEstate({ extra: { "plugins/widgets/plugin.json": plugin("widgets", { unlisted: true }) } });
+  for (const [what, over, tree] of [
+    ["an already-reviewed version", { versions: ["1.0.0"] }, root],
+    ["a yanked version", { versions: ["1.2.0"] }, root],
+    ["a version not on this tree", { versions: ["9.9.9"] }, root],
+    ["all three at once", { versions: ["1.0.0", "1.2.0", "9.9.9"] }, root],
+    ["no version at all", { versions: [] }, root],
+    ["no `versions` member", { versions: undefined }, root],
+    ["an unmarked version of a listing that is not listed", { versions: ["1.1.0", "1.3.0"] }, unlisted],
+  ]) {
+    const r = compileDecision(review(over), { root: tree });
+    assert.equal(r.outcome, "refused", `${what}: ${JSON.stringify(r)}`);
+    assert.equal(r.refusal, "target_changed", what);
+    assert.deepEqual([r.edits, r.log, r.records], [[], [], []], `${what} composed an artefact`);
+  }
+});
+
+test("a version named twice moves once, and a mark this registry does not know is not `reviewed`", () => {
+  const root = reviewEstate({ extra: { "plugins/widgets/versions/1.4.0.json": marked("widgets", "1.4.0", "pending") } });
+  const r = compileDecision(review({ versions: ["1.1.0", "1.1.0", "1.4.0"] }), { root });
+  assert.deepEqual(r.edits.map((e) => e.file),
+    ["plugins/widgets/versions/1.1.0.json", "plugins/widgets/versions/1.4.0.json"]);
+  assert.deepEqual(r.log[0].doc.versions, ["1.1.0", "1.4.0"]);
+});
+
+test("M_REVIEW carries `review_passed` and no other category, and `review_passed` rides on nothing else (§7.2)", () => {
+  const root = reviewEstate();
+  for (const category of ["broken", "error", "author_request", undefined]) {
+    const r = compileDecision(review({ versions: ["1.1.0"], category }), { root });
+    assert.equal(r.refusal, "kind_refused", `M_REVIEW under ${JSON.stringify(category)} was not refused`);
+  }
+  for (const code of ["M_YANK", "M_DELIST", "M_DEPRECATE", "M_REVOKE"]) {
+    const r = compileDecision(entry({
+      code, category: "review_passed", versions: ["1.1.0"], moderator: "knice", severity: "low", action: "block_install",
+    }), { root, overBound: false });
+    assert.equal(r.refusal, "kind_refused", `${code} under review_passed was not refused`);
+  }
+});
+
+test("M_REVIEW's reason is a moderator's, held to MOD-41, and its target must be a listing (TRUST-26)", () => {
+  const root = reviewEstate();
+  const link = compileDecision(review({
+    versions: ["1.1.0"], reason: "Reviewed; see https://example.invalid/notes for what was read.",
+  }), { root });
+  assert.equal(link.refusal, "reason_refused");
+  const nowhere = compileDecision(review({ plugin_id: "nothing-here", versions: ["1.0.0"] }), { root });
+  assert.equal(nowhere.refusal, "target_not_in_registry");
+});
+
+test("M_REVIEW is never held: not over the bound, not for an unbound listing (MOD-9)", () => {
+  for (const bound of [true, false]) {
+    for (const overBound of [false, true]) {
+      const r = compileDecision(review({ versions: ["1.1.0"] }), { root: reviewEstate({ bound }), overBound });
+      assert.equal(r.outcome, "compiled", `a review was ${r.outcome} (bound ${bound}, over the bound ${overBound})`);
+    }
+  }
+  // The two predicates `compileDecision` asks, asked directly, so a later edit
+  // that adds the code to either list is red here by name.
+  assert.equal(holdKindFor({ code: "M_REVIEW" }, { overBound: true, listingBound: false }), null);
+  assert.equal(isTakedown({ code: "M_REVIEW" }), false, "a review takes nothing away, so it is not a takedown");
+});
+
+test("M_REVIEW costs the takedown bound nothing, where a yank of the same version costs one (TRUST-26)", () => {
+  const root = reviewEstate();
+  const head = headListing(root);
+  const r = compileDecision(review({ versions: ["1.1.0"] }), { root });
+  assert.deepEqual(withdrawnBy(r, head), { ids: [], unresolved: [] }, "a review was counted as a withdrawal");
+  const yank = compileDecision(entry({ code: "M_YANK", category: "broken", versions: ["1.1.0"], moderator: "knice" }), { root });
+  assert.deepEqual(withdrawnBy(yank, head).ids, ["widgets"], "the counter is not counting anything, so the line above proves nothing");
+});
+
+test("within one run, a version an earlier decision reviewed, yanked or delisted does not move again", () => {
+  const root = reviewEstate();
+
+  const once = newBatch();
+  const first = compileDecision(review({ versions: ["1.1.0"] }), { root, batch: once });
+  recordInBatch(once, first);
+  const again = compileDecision(review({ service_decision_id: SDI2, versions: ["1.1.0"] }), { root, batch: once });
+  assert.equal(again.refusal, "target_changed",
+    "a second review of the same version in one run compiled again: two log entries for one mark");
+  const other = compileDecision(review({ service_decision_id: SDI2, versions: ["1.1.0", "1.3.0"] }), { root, batch: once });
+  assert.deepEqual(other.edits.map((e) => e.file), ["plugins/widgets/versions/1.3.0.json"]);
+  assert.equal(other.log[0].file, "bot/moderation/2026-09-20-widgets-review-2.json",
+    "the second review of the day took the first one's log name (MOD-47)");
+
+  const yanked = newBatch();
+  recordInBatch(yanked, compileDecision(entry({
+    code: "M_YANK", category: "broken", versions: ["1.1.0"], moderator: "knice",
+  }), { root, batch: yanked }));
+  assert.equal(compileDecision(review({ service_decision_id: SDI2, versions: ["1.1.0"] }), { root, batch: yanked }).refusal,
+    "target_changed", "a version this run yanked was marked reviewed in the same commit");
+
+  const delisted = newBatch();
+  recordInBatch(delisted, compileDecision(entry({ code: "M_DELIST", category: "broken", moderator: "knice" }), { root, batch: delisted }));
+  assert.equal(compileDecision(review({ service_decision_id: SDI2, versions: ["1.1.0"] }), { root, batch: delisted }).refusal,
+    "target_changed", "a listing this run delisted had a version marked reviewed in the same commit");
+});
+
+test("a grandfathered or frozen listing's version is reviewable, and an `unlisted` listing's is not (MOD-56 at 3.0.0)", () => {
+  // MOD-56 names the listing RECORD: "whose listing record is not `unlisted`
+  // (`grandfathered` and `frozen` listings included)". B.3's listing state
+  // `listed` is a different word — a listing with an identity record — and
+  // reading it here would make every legacy plugin unreviewable, the sixteen
+  // on `main` today among them.
+  const grandfathered = reviewEstate({ bound: false });
+  const r = compileDecision(review({ versions: ["1.1.0"] }), { root: grandfathered });
+  assert.equal(r.outcome, "compiled", `a grandfathered listing's version was not reviewable: ${JSON.stringify(r)}`);
+  assert.deepEqual(r.edits.map((e) => e.file), ["plugins/widgets/versions/1.1.0.json"]);
+
+  // Frozen: it had an identity record once, and has none now (ID-25).
+  const frozen = reviewEstate({ bound: true });
+  fs.rmSync(path.join(frozen, "plugins/widgets/identity.json"));
+  sh(["add", "-A"], frozen);
+  sh(["commit", "-q", "-m", "an identity reset deleted the record"], frozen);
+  const f = compileDecision(review({ versions: ["1.3.0"] }), { root: frozen });
+  assert.equal(f.outcome, "compiled", `a frozen listing's version was not reviewable: ${JSON.stringify(f)}`);
+
+  const unlisted = reviewEstate({ bound: false, extra: { "plugins/widgets/plugin.json": plugin("widgets", { unlisted: true }) } });
+  const u = compileDecision(review({ versions: ["1.1.0"] }), { root: unlisted });
+  assert.equal(u.refusal, "target_changed", "an `unlisted` listing's version was marked reviewed");
 });

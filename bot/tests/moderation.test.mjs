@@ -594,6 +594,58 @@ test("MOD-47's `reset` is an action, carries `identity_reset` alone, and names a
     "a delist carried identity_reset");
 });
 
+// ── MOD-47's `review` (contract 3.0.0; MOD-56) ──────────────────────────────
+
+test("MOD-47's `review` is an action, carries `review_passed` alone, and names the versions it marked", () => {
+  // Until contract 3.0.0 `review_passed` existed only for `M_APPROVE`, which
+  // writes no log entry, so no action accepted it. `M_REVIEW` is the one code
+  // whose log action is `review`, and detector A's row 11 reads a mark on a
+  // version record by the entry that names that version: an entry naming no
+  // version, or naming no decision, is a review nobody can check.
+  assert.ok(ACTIONS.includes("review"), "ACTIONS is missing `review`, so the log refuses the entry M_REVIEW writes");
+  assert.ok(!ESCALATING_ACTIONS.includes("review"), "a review takes nothing away and is not in the escalation table");
+  assert.deepEqual(CATEGORIES.review, ["review_passed"], "§7.2: review_passed | APPROVE, REVIEW — and APPROVE logs nothing");
+  for (const [action, cats] of Object.entries(CATEGORIES)) {
+    if (action !== "review") assert.ok(!cats.includes("review_passed"), `${action} accepts review_passed, which §7.2 gives no takedown`);
+  }
+
+  const REVIEW = {
+    date: "2026-11-01", action: "review", plugin: "alpha", versions: ["1.0.0", "1.1.0"], reason: REASON,
+    category: "review_passed", service_decision_id: "0192f3a4-5b6c-7d8e-9f01-234567890abc",
+  };
+  assert.deepEqual(checkEntry(REVIEW), [], "the entry compileReview writes is refused by the log");
+  assert.deepEqual(checkEntry({ ...REVIEW, declared_interest: true }), [], "MOD-12's flag rides on a review as on any M_*");
+  for (const [what, doc, pattern] of [
+    ["no versions", (() => { const { versions: _v, ...r } = REVIEW; return r; })(), /must name the versions it marked/],
+    ["an empty versions list", { ...REVIEW, versions: [] }, /non-empty array/],
+    ["an advisory", { ...REVIEW, advisory: "ASTRA-2026-0001" }, /may not name an advisory/],
+    ["another category", { ...REVIEW, category: "broken" }, /not one a review may carry/],
+    ["no category", (() => { const { category: _c, ...r } = REVIEW; return r; })(), /must carry its category/],
+    ["no service decision", (() => { const { service_decision_id: _s, ...r } = REVIEW; return r; })(), /service_decision_id/],
+    ["a reverses", { ...REVIEW, reverses: "0192f3a4-5b6c-7d8e-9f01-234567890abd" }, /reverses nothing/],
+    ["an outcome", { ...REVIEW, outcome: "stands" }, /not an appeal/],
+  ]) {
+    const errs = checkEntry(doc);
+    assert.ok(errs.some((e) => pattern.test(e)), `a review carrying ${what} was not refused for it: ${JSON.stringify(errs)}`);
+  }
+  assert.ok(checkEntry({ ...DELIST, category: "review_passed" }).some((e) => /not one a delist may carry/.test(e)),
+    "a delist carried review_passed");
+});
+
+test("a review entry is published in the log as it was written, and claims no signed effect", () => {
+  const dir = root();
+  put(dir, {
+    date: "2026-11-01", action: "review", plugin: "alpha", versions: ["1.0.0"], reason: REASON,
+    category: "review_passed", service_decision_id: "0192f3a4-5b6c-7d8e-9f01-234567890abc",
+  });
+  const log = buildModerationLog({ root: dir, revocations: [] });
+  assert.equal(log.entries.length, 1);
+  assert.deepEqual(log.entries[0], {
+    date: "2026-11-01", action: "review", plugin: "alpha", versions: ["1.0.0"], reason: REASON,
+    category: "review_passed", service_decision_id: "0192f3a4-5b6c-7d8e-9f01-234567890abc", backed: false,
+  });
+});
+
 // ── ops couplings 154, the registry half: `ACTIONS` is the contract's list ───
 //
 // MOD-47 lists the actions the log gains; §7.2 says which `log <action>` each

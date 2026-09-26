@@ -116,6 +116,16 @@
 // `applied` or `cancelled` against a commit that did neither — and it is not
 // released, in shadow or out of it (ops entry 99).
 //
+// **`M_REVIEW` (contract 3.0.0; MOD-56) needs nothing of its own here.** It
+// is listed, checked and compiled like any service decision, and its compiled
+// result — the version records' `review` set to `reviewed`, one log entry
+// `review`, a `Service-Decision:` trailer — is written, listed and committed by
+// the same functions as a yank's. What it does NOT reach is the part of this
+// file that is about taking things away: it is never held (MOD-9), so it
+// enters no hold entry; it is no takedown (`isTakedown`), so it spends nothing
+// of the ledger and a batch of reviews alone needs no bound measured; and it
+// has no release commit, because nothing reverses it.
+//
 // ── WHAT THIS FILE DOES NOT DO ─────────────────────────────────────────────
 //
 //   * It does not take TRUST-26's bound from anyone. The `commit` job counts
@@ -531,9 +541,18 @@ export function listSummary(checked) {
 
 // ── the commit job ──────────────────────────────────────────────────────────
 
-/** Does this batch hold anything TRUST-26's bound could hold? */
+/**
+ * Does this batch hold anything TRUST-26's bound could hold?
+ *
+ * `isTakedown` from `bot/lib/holds.mjs`, the list `holdKindFor` asks, and not
+ * a second copy of it: until contract 3.0.0 this function carried its own six
+ * codes, and the two lists were one edit away from disagreeing about which
+ * decisions need the bound measured. `M_REVIEW` is on neither — it takes
+ * nothing away (MOD-56) — so a batch of reviews alone needs no bound, and a
+ * review beside a takedown is compiled whatever the takedown's ledger says.
+ */
 export function hasTakedown(entries) {
-  return entries.some((e) => ["M_YANK", "M_DELIST", "M_DEPRECATE", "M_REVOKE", "A_YANK", "A_REMOVAL_REQUEST"].includes(e?.code));
+  return entries.some((e) => isTakedown(e));
 }
 
 /**
