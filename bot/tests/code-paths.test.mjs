@@ -34,10 +34,11 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cleanEnv } from "../../tools/lib/git-env.mjs";
+import { cleanEnv, fixtureEnv } from "../../tools/lib/git-env.mjs";
 import { ROLLOUT_MARKER_RE } from "../../tools/priv-scan.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
@@ -1171,6 +1172,95 @@ test("(d) every module a set entry statically imports is in the set", () => {
     "entry does without the bot returning to shadow (ops couplings entry 126). Put the module in the set by a " +
     "contract MINOR, or take the import out");
   console.log(`note  (d) ${code.length} code file(s) in the set, ${edges} static import(s) among them, all inside.`);
+});
+
+// ── what may sit at or under an entry (contract 2.21.0) ─────────────────────
+//
+// TRUST-31: every path at or beneath an entry is a regular file or a
+// directory. A tree id covers a symlink's target PATH, never the file it points
+// to, and a checkout and Node both follow links. So
+// `bot/lib/x.mjs -> ../../log/x.mjs` runs code from outside the set while the
+// set sees only the link. Measured on a throwaway clone of 99d1768:
+//   * an edit to the link's target moved neither `bot/lib/`'s tree id nor the
+//     set hash below;
+//   * `node` loaded the edited file;
+//   * all 12 tests in this file passed.
+// A submodule (`160000`) is the same hole: its content is not in the tree.
+// The plugins service refuses such a commit as a version. This test is what
+// makes an accidental one red before it merges. It does not bind a writer, who
+// can push to `main` past every check (ROLL-5); the service's refusal does.
+
+const FILE_MODES = new Set(["100644", "100755"]);
+
+/**
+ * Every path at or under `entries` at `treeish` whose mode is not a regular
+ * file's, as `{path, mode}`, and how many paths were listed. `-r` enters every
+ * directory and lists a symlink as `120000` and a submodule as `160000`
+ * without entering it, and `-z` keeps a path with a newline or a tab one row.
+ */
+function notFilesUnder(run, treeish, entries) {
+  const listed = run("ls-tree", "-r", "-z", "--full-tree", treeish, "--", ...entries.map((e) => e.replace(/\/$/, "")))
+    .split("\0").filter(Boolean).map((row) => {
+      const tab = row.indexOf("\t");
+      return { path: row.slice(tab + 1), mode: row.slice(0, tab).split(" ")[0] };
+    });
+  return { rows: listed.length, bad: listed.filter((r) => !FILE_MODES.has(r.mode)) };
+}
+
+test("no path at or under a TRUST-31 entry is a symlink or a submodule (contract 2.21.0)", () => {
+  const { rows, bad } = notFilesUnder(git, "HEAD", ENTRIES);
+  assert.ok(rows >= 100,
+    `git ls-tree listed ${rows} path(s) under the set's ${ENTRIES.length} entries, and there were 192 at 99d1768. ` +
+    "A listing of nothing refuses nothing, so this is a broken read, not a smaller set");
+  assert.deepEqual(bad, [],
+    "TRUST-31 (contract 2.21.0): every path at or beneath an entry is a regular file or a directory. " +
+    `${bad.map((b) => `${b.path} (${b.mode})`).join(", ")} is not, so the plugins service will refuse this commit as ` +
+    "a version and bot calls stay in shadow. Commit the file itself, not a link or a submodule");
+});
+
+test("the rule sees a link under a directory entry, a link that is an entry, and a submodule, and nothing outside", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-trust31-modes-"));
+  try {
+    const g = (...args) =>
+      execFileSync("git", ["-C", dir, ...args], { encoding: "utf8", env: fixtureEnv(dir), stdio: ["ignore", "pipe", "pipe"] });
+    g("init", "-q", "-b", "main");
+    g("config", "user.name", "Fixture");
+    g("config", "user.email", "fixture@example.invalid");
+    g("config", "commit.gpgsign", "false");
+    g("config", "core.symlinks", "true");
+    const write = (rel, text) => {
+      fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+      fs.writeFileSync(path.join(dir, rel), text);
+    };
+    write("bot/lib/ok.mjs", "export const ok = 1;\n");
+    write("bot/lib/tool.sh", "#!/bin/sh\n");
+    fs.chmodSync(path.join(dir, "bot/lib/tool.sh"), 0o755);
+    write("log/x.mjs", "export const x = 1;\n");
+    write("tools/real.mjs", "export const real = 1;\n");
+    // Inside the set: a link under a directory entry, and a file entry that is itself a link.
+    fs.symlinkSync("../../log/x.mjs", path.join(dir, "bot/lib/link.mjs"));
+    fs.symlinkSync("real.mjs", path.join(dir, "tools/validate.mjs"));
+    // Outside the set: a link nobody hashes, which the rule must not name.
+    fs.symlinkSync("x.mjs", path.join(dir, "log/y.mjs"));
+    g("add", "-A");
+    g("update-index", "--add", "--cacheinfo", `160000,${"1".repeat(40)},bot/lib/sub`);
+    g("commit", "-q", "-m", "fixture");
+
+    const entries = ["bot/lib/", "tools/validate.mjs"];
+    const { rows, bad } = notFilesUnder(g, "HEAD", entries);
+    assert.deepEqual(bad.map((b) => `${b.path} ${b.mode}`).sort(),
+      ["bot/lib/link.mjs 120000", "bot/lib/sub 160000", "tools/validate.mjs 120000"],
+      "the rule must name each link and the submodule at or under the entries, and nothing else");
+    assert.equal(rows, 5, "bot/lib/ holds ok.mjs, tool.sh, link.mjs and sub, and tools/validate.mjs is one more");
+
+    // The control: the same entries once the three are gone read clean, an
+    // executable file included.
+    g("rm", "-q", "--cached", "bot/lib/link.mjs", "bot/lib/sub", "tools/validate.mjs");
+    g("commit", "-q", "-m", "control");
+    assert.deepEqual(notFilesUnder(g, "HEAD", entries).bad, [], "a tree of regular files, one executable, is clean");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // ── the value an acknowledgement names ──────────────────────────────────────
