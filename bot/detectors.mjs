@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 // Detector A (BOT-43): the reconciliation that reads only public git.
 //
-// Detector A and detector B answer the same nine questions from two stores
+// Detector A and detector B answer the same eleven questions from two stores
 // that share no code (contract §4.8). **Neither repairs.** Each alarms with
 // codes, ids and commits, and a person resolves the disagreement through a
 // `system` decision record or an audited service correction. Everything in this
 // file therefore RETURNS findings; nothing here writes anything anywhere.
 //
-// Five of the nine rows are this side's: A1, A3, A5, A7 and A9. Row 6 — work
-// not taken — is BOT-85's heartbeat and belongs to the receiver, not here.
+// Six of the eleven rows are this side's: A1, A3, A5, A7, A9 and A11 (contract
+// 3.0.0's review mark). Row 6 — work not taken — is BOT-85's heartbeat and
+// belongs to the receiver, not here; rows 2, 4, 8 and 10 are detector B's
+// alone.
 //
 // ── skipping, and why it is loud rather than green ─────────────────────────
 //
@@ -50,6 +52,7 @@ import { execFileSync } from "node:child_process";
 import { cleanEnv } from "../tools/lib/git-env.mjs";
 
 import { readDecisionRecords } from "./baseline.mjs";
+import { mergeOwnChanges } from "../tools/coverage/git.mjs";
 import { isVoidingRecord } from "./lib/identity.mjs";
 import { VERDICT_SCHEMA, runUrl } from "./lib/alert-verdict.mjs";
 import {
@@ -62,7 +65,7 @@ import { SOURCE_PATHSPEC as REVOCATIONS_PATHSPEC } from "../tools/lib/revocation
 import { CATALOGUE_PATHSPEC } from "../tools/build-index.mjs";
 import { GRACE_MINUTES, minutesSince, withinGrace } from "../tools/served-set/report.mjs";
 
-export const DETECTORS = ["A1", "A3", "A5", "A7", "A9"];
+export const DETECTORS = ["A1", "A3", "A5", "A7", "A9", "A11"];
 
 /**
  * §4.8 row 7's two bounds, in minutes: how long `main` may hold a change that
@@ -189,6 +192,61 @@ export function gitReader(root) {
     /** A file's bytes at a commit, or null when it is not in that tree. */
     blobAt(sha, file) {
       return git(["show", `${sha}:${file}`], true);
+    },
+    /** Is this checkout shallow? A walk of a shallow history reads a partial one as whole. */
+    isShallow() {
+      return git(["rev-parse", "--is-shallow-repository"]) === "true";
+    },
+    /** HEAD's first-parent line, OLDEST first. Not allowed to fail: an empty line reads as no history. */
+    firstParentLine() {
+      return git(["rev-list", "--first-parent", "--reverse", "HEAD"]).split("\n").filter(Boolean);
+    },
+    /**
+     * The commits on HEAD's first-parent line that changed a pathspec against
+     * their FIRST parent, oldest first — for a merge, what `main` acquired by it.
+     */
+    firstParentTouching(pathspec) {
+      return git(["log", "--first-parent", "--reverse", "--format=%H", "HEAD", "--", pathspec]).split("\n").filter(Boolean);
+    },
+    /**
+     * Every commit reachable from HEAD that changed a pathspec, merged branches
+     * included, oldest first: non-merges against their parent, or, with
+     * `merges`, the merges that differ from at least one parent there — the
+     * superset of the merges whose own resolution could have changed it. With
+     * `--full-history`, because git's default simplification drops a side
+     * branch whose merge is TREESAME to its first parent, and a change made and
+     * undone on a branch is still a change somebody made.
+     */
+    touching(pathspec, { merges = false } = {}) {
+      return git(["rev-list", "--full-history", "--reverse", merges ? "--merges" : "--no-merges", "HEAD", "--", pathspec])
+        .split("\n").filter(Boolean);
+    },
+    /** A commit's parents, first parent first; empty for a root commit. */
+    parents(sha) {
+      return git(["show", "-s", "--format=%P", sha]).split(/\s+/).filter(Boolean);
+    },
+    /**
+     * What a commit changed against its FIRST parent — the empty tree for a
+     * root commit — as `{status, path}`. Not allowed to fail, for
+     * `unsignedTouching`'s reason.
+     */
+    changes(sha) {
+      const [first] = this.parents(sha);
+      const out = first
+        ? git(["diff-tree", "-r", "-z", "--no-renames", "--name-status", first, sha])
+        : git(["diff-tree", "-r", "-z", "--no-renames", "--name-status", "--no-commit-id", "--root", sha]);
+      const fields = out.split("\0").filter((f) => f !== "");
+      const changes = [];
+      for (let i = 0; i + 1 < fields.length; i += 2) changes.push({ status: fields[i][0], path: fields[i + 1] });
+      return changes;
+    },
+    /**
+     * What a merge's resolution changed ITSELF, against the tree git would have
+     * written for its parents (`tools/coverage/git.mjs`'s `mergeOwnChanges`,
+     * the one definition the coverage walks use).
+     */
+    mergeOwn(sha) {
+      return mergeOwnChanges(sha, root);
     },
   };
 }
@@ -757,6 +815,259 @@ function sourceChangedIn(git, sha, file) {
   return JSON.stringify(after?.source ?? null) !== JSON.stringify(before?.source ?? null);
 }
 
+// ── A11 · review marked without a decision (contract 3.0.0) ─────────────────
+
+/**
+ * §4.8's row 11, detector A's cell, three clauses:
+ *
+ *   1. a version record whose `review` became `reviewed` in a commit that adds
+ *      no moderation-log `review` entry naming that version, or that carries
+ *      no `Service-Decision:` trailer — `A11_REVIEWED_NO_DECISION`;
+ *   2. any other change to a committed `review` — `A11_REVIEW_CHANGED`;
+ *   3. a version record added at or after 3.0.0's landing commit whose
+ *      `review` is absent or not `unreviewed` — `A11_ADDED_NOT_UNREVIEWED`.
+ *
+ * **Clauses 1 and 2 are judged per commit, on what that commit changed
+ * itself,** because the row asks what a COMMIT adds and carries. A non-merge
+ * is read against its parent; a merge only on its own resolution
+ * (`mergeOwnChanges`, the definition `tools/moderation-coverage.mjs` walks
+ * merges by since gap 93). Read on its first-parent diff instead, a merge
+ * carrying a review made on a branch would show the mark move with no trailer
+ * of its own, and every review a pull request brought in would alarm; and the
+ * branch commit that set the mark is judged anyway, merged branches included,
+ * as BOT-44 has detector 9 read every commit reachable from `main`'s head.
+ * They need no marker and no landing commit: before 3.0.0 no commit may write
+ * a mark at all, and one that did is exactly what clause 1 names.
+ *
+ * **"Any other change" is read on the member, present or not.** B.4: only the
+ * commit applying an `M_REVIEW` changes a mark, to `reviewed`, and no commit
+ * changes it in any other direction. So `reviewed` → `unreviewed`, a mark
+ * removed, a value nobody writes, a mark back-filled onto a record published
+ * before 3.0.0 (which the coordinator's D4 leaves unmarked, so no warning
+ * shows), and a deleted record that carried one all count. A change to a
+ * record's other members — a yank of a reviewed version — does not.
+ *
+ * **Clause 3 is judged where `main` acquired the record**: on HEAD's
+ * first-parent line from the landing commit on, each commit against its first
+ * parent. B.4 says every record "added on `main`" from that commit carries the
+ * mark, and a branch forked before 3.0.0 that adds a record without one lands
+ * it on `main` at its merge — which is after the landing commit, whatever the
+ * branch commit's own date. The landing commit is the first on that line whose
+ * `schema/version-v1.json` declares `review` (B.4's review-mark paragraph,
+ * `reviewLandingCommit`). Until one exists the clause has nothing to count from
+ * and SKIPS, by clause, loudly, with what lifts it.
+ *
+ * A shallow checkout is a finding and not a walk: the commits it cannot see
+ * are exactly the ones a green answer would vouch for.
+ */
+export function a11({ git }, findings, skipped, scanned) {
+  if (git.isShallow()) {
+    findings.push({
+      detector: "A11",
+      code: "A11_HISTORY_SHALLOW",
+      message: "this checkout is shallow, so the commits that changed a version record's `review` cannot all be " +
+        "read; `detectors.yml` checks out with `fetch-depth: 0`",
+    });
+    return;
+  }
+
+  let examined = 0;
+  for (const sha of git.touching(VERSION_GLOB)) {
+    examined++;
+    const [parent] = git.parents(sha);
+    const changes = git.changes(sha);
+    const entries = addedLogEntries(git, sha, changes);
+    for (const { status, path: file } of changes) {
+      if (!VERSION_RE.test(file)) continue;
+      const before = parent ? versionAt(git, parent, file) : ABSENT;
+      judgeReview(git, { sha, file, status, before, after: versionAt(git, sha, file), entries }, findings);
+    }
+  }
+  for (const sha of git.touching(VERSION_GLOB, { merges: true })) {
+    examined++;
+    const own = git.mergeOwn(sha);
+    if (!own.judged) {
+      findings.push({
+        detector: "A11",
+        code: "A11_MERGE_UNJUDGED",
+        message: `${sha.slice(0, 12)} is a merge of ${own.parents.length} parents, which has no two-sided resolution ` +
+          "to read, and it changed a version record",
+        hex: sha,
+      });
+      continue;
+    }
+    const entries = addedLogEntries(git, sha, own.changes);
+    for (const { status, path: file } of own.changes) {
+      if (!VERSION_RE.test(file)) continue;
+      const after = versionAt(git, sha, file);
+      let before;
+      if (own.conflicted.has(file)) {
+        // Git could not write the file, so the remerged tree holds conflict
+        // markers. A mark some parent already had is that side's act, judged
+        // on that side's commit; one no parent had is the resolution's own.
+        const sides = own.parents.map((p) => versionAt(git, p, file));
+        if (!after.bad && sides.some((side) => !side.bad && sameMark(markOf(side), markOf(after)))) continue;
+        before = sides[0];
+      } else {
+        before = versionAt(git, own.tree, file);
+      }
+      judgeReview(git, { sha, file, status, before, after, entries }, findings);
+    }
+  }
+  scanned.review_commits = examined;
+
+  const landing = reviewLandingCommit(git);
+  scanned.review_landing_commit = landing;
+  if (!landing) {
+    skipped.push({
+      detector: "A11",
+      clause: 3,
+      why: `row 11's third clause counts from 3.0.0's landing commit, the first on HEAD's first-parent line whose ` +
+        `${VERSION_SCHEMA_FILE} declares \`review\`, and there is none`,
+      lifted_by: "the registry commit that lands contract 3.0.0's version schema",
+    });
+    return;
+  }
+  const line = git.firstParentLine();
+  const from = line.indexOf(landing);
+  const acquired = new Set(git.firstParentTouching(VERSION_GLOB));
+  let added = 0;
+  for (const sha of line.slice(from)) {
+    if (!acquired.has(sha)) continue;
+    for (const { status, path: file } of git.changes(sha)) {
+      if (status !== "A" || !VERSION_RE.test(file)) continue;
+      added++;
+      const record = versionAt(git, sha, file);
+      const id = VERSION_RE.exec(file)[1];
+      if (record.bad) {
+        findings.push({ detector: "A11", code: "A11_RECORD_UNREADABLE", message: `${file} is not readable JSON at ${sha.slice(0, 12)}, so its review mark cannot be read`, plugin_id: id, hex: sha });
+        continue;
+      }
+      const mark = markOf(record);
+      if (mark.has && mark.value === UNREVIEWED) continue;
+      findings.push({
+        detector: "A11",
+        code: "A11_ADDED_NOT_UNREVIEWED",
+        message: `${sha.slice(0, 12)} added ${file} to main at or after 3.0.0's landing commit ` +
+          `${landing.slice(0, 12)}, and its review is ${mark.has ? JSON.stringify(mark.value) : "absent"}, not ` +
+          `"${UNREVIEWED}" (B.4)`,
+        plugin_id: id,
+        hex: sha,
+      });
+    }
+  }
+  scanned.review_records_added = added;
+}
+
+/** B.4's review mark, and the version schema whose history says when it began. */
+export const VERSION_SCHEMA_FILE = "schema/version-v1.json";
+export const REVIEWED = "reviewed";
+export const UNREVIEWED = "unreviewed";
+const VERSION_RE = /^plugins\/([^/]+)\/versions\/([^/]+)\.json$/;
+const LOG_ENTRY_RE = /^bot\/moderation\/[^/]+\.json$/;
+// §0.7's service decision id, as the bot's own trailer grammar writes it, on a
+// line of its own: a mention of the trailer inside a sentence is not one.
+const SERVICE_DECISION_TRAILER = /^Service-Decision:[ \t]*[0-9a-f]{8}-[0-9a-f]{4}-[47][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}[ \t]*$/m;
+const ABSENT = Object.freeze({ present: false, doc: null, bad: false });
+
+/**
+ * B.4's landing commit: the first commit on HEAD's first-parent line whose
+ * version schema declares the member `review`, found by walking that file's
+ * first-parent history oldest first — B.4's own recipe — or null.
+ */
+export function reviewLandingCommit(git) {
+  for (const sha of git.firstParentTouching(VERSION_SCHEMA_FILE)) {
+    const doc = readJsonAt(git, sha, VERSION_SCHEMA_FILE);
+    const props = doc?.properties;
+    if (props && typeof props === "object" && !Array.isArray(props) && Object.hasOwn(props, "review")) return sha;
+  }
+  return null;
+}
+
+/** A version record at a commit (or tree): absent, unreadable, or its object. */
+function versionAt(git, sha, file) {
+  const text = git.blobAt(sha, file);
+  if (text === null) return ABSENT;
+  try {
+    const doc = JSON.parse(text);
+    if (!doc || typeof doc !== "object" || Array.isArray(doc)) return { present: true, doc: null, bad: true };
+    return { present: true, doc, bad: false };
+  } catch {
+    return { present: true, doc: null, bad: true };
+  }
+}
+
+const markOf = (read) => (read.doc && Object.hasOwn(read.doc, "review")
+  ? { has: true, value: read.doc.review }
+  : { has: false, value: undefined });
+const sameMark = (a, b) => a.has === b.has && (!a.has || JSON.stringify(a.value) === JSON.stringify(b.value));
+const describeMark = (m) => (m.has ? JSON.stringify(m.value) : "absent");
+
+/** The moderation-log entries a commit adds — its own additions, for a merge. */
+function addedLogEntries(git, sha, changes) {
+  return changes
+    .filter((c) => c.status === "A" && LOG_ENTRY_RE.test(c.path))
+    .map((c) => readJsonAt(git, sha, c.path))
+    .filter((doc) => doc && typeof doc === "object");
+}
+
+/** Clauses 1 and 2 over one changed version record. An addition is clause 3's, on `main`'s line. */
+function judgeReview(git, { sha, file, status, before, after, entries }, findings) {
+  if (status === "A") return;
+  const [, id, version] = VERSION_RE.exec(file);
+  if (before.bad || after.bad) {
+    findings.push({
+      detector: "A11",
+      code: "A11_RECORD_UNREADABLE",
+      message: `${sha.slice(0, 12)} changed ${file}, which is not readable JSON on one side, so whether its review ` +
+        "mark moved cannot be read",
+      plugin_id: id,
+      hex: sha,
+    });
+    return;
+  }
+  const was = markOf(before);
+  const now = after.present ? markOf(after) : { has: false, value: undefined };
+  if (!after.present) {
+    if (!was.has) return;
+    findings.push({
+      detector: "A11",
+      code: "A11_REVIEW_CHANGED",
+      message: `${sha.slice(0, 12)} deleted ${file}, which carried review ${describeMark(was)}; no commit changes a ` +
+        "committed review but an M_REVIEW's, and that one only to reviewed (B.4)",
+      plugin_id: id,
+      hex: sha,
+    });
+    return;
+  }
+  if (sameMark(was, now)) return;
+  if (now.has && now.value === REVIEWED) {
+    const named = entries.some((e) => e.action === "review" && e.plugin === id
+      && Array.isArray(e.versions) && e.versions.includes(version));
+    const trailer = SERVICE_DECISION_TRAILER.test(git.message(sha) ?? "");
+    if (named && trailer) return;
+    findings.push({
+      detector: "A11",
+      code: "A11_REVIEWED_NO_DECISION",
+      message: `${sha.slice(0, 12)} marked ${file} reviewed (from ${describeMark(was)}) and ` +
+        [named ? null : `adds no moderation-log \`review\` entry naming ${version}`,
+          trailer ? null : "carries no `Service-Decision:` trailer"].filter(Boolean).join(" and ") +
+        " (MOD-56)",
+      plugin_id: id,
+      hex: sha,
+    });
+    return;
+  }
+  findings.push({
+    detector: "A11",
+    code: "A11_REVIEW_CHANGED",
+    message: `${sha.slice(0, 12)} changed ${file}'s review from ${describeMark(was)} to ${describeMark(now)}; only an ` +
+      "M_REVIEW changes a mark, and only to reviewed (B.4)",
+    plugin_id: id,
+    hex: sha,
+  });
+}
+
 // ── the run ─────────────────────────────────────────────────────────────────
 
 export function detect(opts = {}) {
@@ -770,7 +1081,16 @@ export function detect(opts = {}) {
   a5(ctx, findings, skipped, scanned);
   a7(ctx, findings, skipped, scanned);
   a9(ctx, findings, skipped, scanned);
-  return { findings, skipped, scanned, ran: DETECTORS.filter((d) => !skipped.some((s) => s.detector === d)) };
+  a11(ctx, findings, skipped, scanned);
+  // A skip that names a `clause` is one clause of a detector that otherwise
+  // ran, and the detector is counted as run; the skip is still printed, with
+  // what lifts it, on every run.
+  return {
+    findings,
+    skipped,
+    scanned,
+    ran: DETECTORS.filter((d) => !skipped.some((s) => s.detector === d && s.clause === undefined)),
+  };
 }
 
 /**

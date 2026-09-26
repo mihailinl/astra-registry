@@ -138,16 +138,24 @@ function baseline(dir, { versions = [["alpha", "1.0.0"]], marker = {} } = {}) {
 }
 
 const codes = (r) => r.findings.map((f) => f.code).sort();
-const skipped = (r) => r.skipped.map((s) => s.detector).sort();
+// The detectors skipped WHOLE. A skip that names a `clause` is one clause of a
+// detector that otherwise ran (A11's third, before contract 3.0.0's landing
+// commit exists), and it is read by `clauseSkips`.
+const skipped = (r) => r.skipped.filter((s) => s.clause === undefined).map((s) => s.detector).sort();
+const clauseSkips = (r) => r.skipped.filter((s) => s.clause !== undefined).map((s) => `${s.detector}.${s.clause}`).sort();
 
 // ── skipping, and that it is derived ────────────────────────────────────────
 
-test("with no marker and no `signed`, every detector skips and nothing alarms", () => {
+test("with no marker and no `signed`, every detector that needs one skips and nothing alarms", () => {
+  // A11 needs neither. Its first two clauses read every commit that changed a
+  // version record, whatever the marker says; its third needs contract 3.0.0's
+  // landing commit, which this tree does not have, and says so by clause.
   const dir = estate();
   const r = detect({ root: dir });
-  assert.deepEqual(skipped(r), [...DETECTORS].sort(), "a detector ran with its input absent");
+  assert.deepEqual(skipped(r), DETECTORS.filter((d) => d !== "A11").sort(), "a detector ran with its input absent");
+  assert.deepEqual(clauseSkips(r), ["A11.3"], "A11's third clause ran with no landing commit to count from");
   assert.deepEqual(codes(r), [], "a skipped detector produced a finding");
-  assert.equal(r.ran.length, 0);
+  assert.deepEqual(r.ran, ["A11"]);
 });
 
 test("the skip is derived from the marker, not written down: with one, four detectors run", () => {
@@ -158,7 +166,7 @@ test("the skip is derived from the marker, not written down: with one, four dete
   baseline(dir);
   const r = detect({ root: dir });
   assert.deepEqual(skipped(r), ["A7"], "a detector still skipped with a baseline on the tree");
-  assert.deepEqual(r.ran.sort(), ["A1", "A3", "A5", "A9"]);
+  assert.deepEqual(r.ran.sort(), ["A1", "A11", "A3", "A5", "A9"]);
 });
 
 test("a marker naming a source_commit that is not an ancestor of its own commit is a finding, not a skip", () => {
@@ -1045,4 +1053,307 @@ test("the records a baseline counted are a floor: fewer on the tree is a finding
   commit(dir, "a record goes missing", "2026-01-03T00:00:00Z");
   const found = codes(detect({ root: dir }));
   assert.ok(found.includes("A1_RECORDS_BELOW_MARKER"), `found ${found.join(", ")}`);
+});
+
+// ── A11 · review marked without a decision (contract 3.0.0; §4.8 row 11) ────
+//
+// Three clauses, and one fixture shape each:
+//
+//   1. a version record whose `review` BECAME `reviewed` in a commit that adds
+//      no moderation-log `review` entry naming that version, or that carries no
+//      `Service-Decision:` trailer;
+//   2. any other change to a committed `review`;
+//   3. a version record added at or after 3.0.0's landing commit — the first
+//      commit on the first-parent line whose `schema/version-v1.json` declares
+//      `review` (B.4) — whose `review` is absent or not `unreviewed`.
+//
+// Clauses 1 and 2 are judged per commit, on what that commit changed itself:
+// a merge is judged on its own resolution only, so a review made on a branch is
+// read on the branch commit that made it, and a merge carrying it in is not a
+// second, trailer-less change. Clause 3 is judged where `main` acquired the
+// record, which for a branch merged with a merge commit is the merge.
+
+const SDI = "0192f3a4-5b6c-7d8e-9f01-234567890abc";
+const REVIEW_REASON = "A moderator read this version's manifest, permissions and bundle and found nothing wrong.";
+const TRAILER = `Service-Decision: ${SDI}`;
+const a11 = (r) => r.findings.filter((f) => f.detector === "A11").map((f) => f.code).sort();
+
+/** Contract 3.0.0's landing commit: the version schema starts declaring `review`. */
+function landReview(dir, when = "2026-02-01T00:00:00Z") {
+  write(dir, "schema/version-v1.json", { properties: { review: { enum: ["unreviewed", "reviewed"] } } });
+  return commit(dir, "registry: the version schema declares `review` (contract 3.0.0)", when);
+}
+
+/** Set, change or (with `undefined`) remove a version record's mark, on the working tree. */
+function mark(dir, id, version, review) {
+  const file = path.join(dir, `plugins/${id}/versions/${version}.json`);
+  const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (review === undefined) delete doc.review;
+  else doc.review = review;
+  write(dir, `plugins/${id}/versions/${version}.json`, doc);
+}
+
+/** MOD-47's entry for a review, as `compileReview` writes it. */
+function reviewEntry(dir, id, versions, { n = "", over = {} } = {}) {
+  write(dir, `bot/moderation/2026-02-02-${id}-review${n}.json`, {
+    date: "2026-02-02", action: "review", plugin: id, versions, reason: REVIEW_REASON,
+    category: "review_passed", service_decision_id: SDI, ...over,
+  });
+}
+
+/** A landed tree with alpha 1.1.0 published `unreviewed` after the landing commit. */
+function reviewable() {
+  const dir = estate();
+  landReview(dir);
+  version_(dir, "alpha", "1.1.0", { version: { review: "unreviewed" } });
+  commit(dir, "registry: publish alpha 1.1.0", "2026-02-01T01:00:00Z");
+  return dir;
+}
+
+test("A11: a mark set with its log entry and its Service-Decision trailer is silent", () => {
+  const dir = reviewable();
+  mark(dir, "alpha", "1.1.0", "reviewed");
+  reviewEntry(dir, "alpha", ["1.1.0"]);
+  commit(dir, `registry: moderation (1 decision(s))\n\n${TRAILER}\nDecided-At: 2026-02-02T00:00:00Z`, "2026-02-02T00:00:00Z");
+  const r = detect({ root: dir });
+  assert.deepEqual(a11(r), [], JSON.stringify(r.findings));
+  assert.ok(r.ran.includes("A11"));
+  assert.ok(r.scanned.review_commits >= 2, `A11 examined ${r.scanned.review_commits} commit(s)`);
+  assert.equal(r.scanned.review_records_added, 1, "clause 3 read the one record added after the landing commit");
+});
+
+test("A11 clause 1: a mark set without the entry naming that version, or without the trailer, alarms", () => {
+  const cases = [
+    ["no trailer", { trailer: false }],
+    ["no log entry", { entry: false }],
+    ["an entry naming another version", { entry: ["1.0.0"] }],
+    ["an entry naming the version of another plugin", { entryOver: { plugin: "beta" } }],
+    ["an entry that is not a review", { entryOver: { action: "yank", category: "broken" } }],
+    ["an entry that names no versions", { entryOver: { versions: undefined } }],
+    ["a trailer that names no decision", { trailerText: "Service-Decision: forged" }],
+    ["a trailer only mentioned in a sentence", { trailerText: `this commit is not a ${TRAILER}` }],
+  ];
+  for (const [what, { trailer = true, entry = ["1.1.0"], entryOver = {}, trailerText = TRAILER }] of cases) {
+    const dir = reviewable();
+    mark(dir, "alpha", "1.1.0", "reviewed");
+    if (entry) reviewEntry(dir, "alpha", entry, { over: entryOver });
+    const sha = commit(dir, `registry: moderation${trailer ? `\n\n${trailerText}` : ""}`, "2026-02-02T00:00:00Z");
+    const r = detect({ root: dir });
+    assert.deepEqual(a11(r), ["A11_REVIEWED_NO_DECISION"], `${what}: ${JSON.stringify(r.findings)}`);
+    const f = r.findings.find((x) => x.code === "A11_REVIEWED_NO_DECISION");
+    assert.equal(f.hex, sha, `${what}: the finding does not name the commit that set the mark`);
+    assert.equal(f.plugin_id, "alpha");
+  }
+
+  // The entry has to be the commit's own: one written a commit earlier is a
+  // log that claims a review no commit of its own carried.
+  const dir = reviewable();
+  reviewEntry(dir, "alpha", ["1.1.0"]);
+  commit(dir, "registry: a log entry alone", "2026-02-02T00:00:00Z");
+  mark(dir, "alpha", "1.1.0", "reviewed");
+  commit(dir, `registry: the mark alone\n\n${TRAILER}`, "2026-02-02T00:01:00Z");
+  assert.deepEqual(a11(detect({ root: dir })), ["A11_REVIEWED_NO_DECISION"]);
+
+  // And ADDED, not edited: the log is append-only (MOD-47), so an older review
+  // entry widened to name one more version is not a review of it.
+  const edited = reviewable();
+  version_(edited, "alpha", "1.2.0", { version: { review: "unreviewed" } });
+  commit(edited, "registry: publish alpha 1.2.0", "2026-02-01T02:00:00Z");
+  mark(edited, "alpha", "1.1.0", "reviewed");
+  reviewEntry(edited, "alpha", ["1.1.0"]);
+  commit(edited, `registry: moderation\n\n${TRAILER}`, "2026-02-02T00:00:00Z");
+  mark(edited, "alpha", "1.2.0", "reviewed");
+  reviewEntry(edited, "alpha", ["1.1.0", "1.2.0"]);
+  commit(edited, `a hand edit of an old entry\n\n${TRAILER}`, "2026-02-03T00:00:00Z");
+  assert.deepEqual(a11(detect({ root: edited })), ["A11_REVIEWED_NO_DECISION"], "an edited entry was read as the commit's own");
+});
+
+test("A11 clause 2: every other change to a committed review alarms, and a change beside it does not", () => {
+  const changed = [
+    ["reviewed back to unreviewed", "reviewed", "unreviewed"],
+    ["reviewed removed", "reviewed", undefined],
+    ["unreviewed removed", "unreviewed", undefined],
+    ["unreviewed to a value nobody wrote", "unreviewed", "pending"],
+  ];
+  for (const [what, from, to] of changed) {
+    const dir = reviewable();
+    if (from === "reviewed") {
+      mark(dir, "alpha", "1.1.0", "reviewed");
+      reviewEntry(dir, "alpha", ["1.1.0"]);
+      commit(dir, `registry: moderation\n\n${TRAILER}`, "2026-02-02T00:00:00Z");
+    }
+    mark(dir, "alpha", "1.1.0", to);
+    commit(dir, "a hand edit", "2026-02-03T00:00:00Z");
+    assert.deepEqual(a11(detect({ root: dir })), ["A11_REVIEW_CHANGED"], what);
+  }
+
+  // A record published before the landing commit carries no mark (B.4), and
+  // back-filling one is a change to it too: it puts a warning on a legacy
+  // version the coordinator's D4 leaves unmarked.
+  const legacy = reviewable();
+  mark(legacy, "alpha", "1.0.0", "unreviewed");
+  commit(legacy, "a back-fill", "2026-02-03T00:00:00Z");
+  assert.deepEqual(a11(detect({ root: legacy })), ["A11_REVIEW_CHANGED"], "a back-filled mark on a legacy record");
+
+  // A deleted record takes its mark with it.
+  const gone = reviewable();
+  fs.rmSync(path.join(gone, "plugins/alpha/versions/1.1.0.json"));
+  commit(gone, "a record deleted", "2026-02-03T00:00:00Z");
+  assert.deepEqual(a11(detect({ root: gone })), ["A11_REVIEW_CHANGED"], "a deleted record carrying a mark");
+
+  // A yank of a reviewed version changes the record and not the mark.
+  const yanked = reviewable();
+  mark(yanked, "alpha", "1.1.0", "reviewed");
+  reviewEntry(yanked, "alpha", ["1.1.0"]);
+  commit(yanked, `registry: moderation\n\n${TRAILER}`, "2026-02-02T00:00:00Z");
+  const doc = JSON.parse(fs.readFileSync(path.join(yanked, "plugins/alpha/versions/1.1.0.json"), "utf8"));
+  fs.writeFileSync(path.join(yanked, "plugins/alpha/versions/1.1.0.json"), JSON.stringify({ ...doc, yanked: true }));
+  commit(yanked, "registry: yank, reformatted", "2026-02-03T00:00:00Z");
+  assert.deepEqual(a11(detect({ root: yanked })), [], "a yank of a reviewed version is not a change to its mark");
+});
+
+test("A11 clause 3: a record added at or after the landing commit carries `unreviewed`, and one added before needs none", () => {
+  for (const [what, extra, want] of [
+    ["no mark", {}, ["A11_ADDED_NOT_UNREVIEWED"]],
+    ["born reviewed", { review: "reviewed" }, ["A11_ADDED_NOT_UNREVIEWED"]],
+    ["a value nobody wrote", { review: "pending" }, ["A11_ADDED_NOT_UNREVIEWED"]],
+    ["unreviewed", { review: "unreviewed" }, []],
+  ]) {
+    const dir = estate();
+    landReview(dir);
+    version_(dir, "alpha", "1.1.0", { version: extra });
+    const sha = commit(dir, "registry: publish", "2026-02-01T01:00:00Z");
+    const r = detect({ root: dir });
+    assert.deepEqual(a11(r), want, `${what}: ${JSON.stringify(r.findings)}`);
+    if (want.length) assert.equal(r.findings.find((f) => f.detector === "A11").hex, sha);
+  }
+
+  // At or after: the landing commit's own additions are judged.
+  const same = estate();
+  write(same, "schema/version-v1.json", { properties: { review: {} } });
+  version_(same, "alpha", "1.1.0");
+  const landing = commit(same, "the schema and a record in one commit", "2026-02-01T00:00:00Z");
+  const r = detect({ root: same });
+  assert.equal(r.scanned.review_landing_commit, landing);
+  assert.deepEqual(a11(r), ["A11_ADDED_NOT_UNREVIEWED"]);
+
+  // The landing commit is the first whose schema DECLARES the member: an
+  // earlier edit of the schema that does not is not it, and records added
+  // after that edit and before the landing need no mark.
+  const early = estate();
+  write(early, "schema/version-v1.json", { properties: { yanked: {} } });
+  commit(early, "a schema edit that is not 3.0.0's", "2026-01-10T00:00:00Z");
+  version_(early, "alpha", "1.1.0");
+  commit(early, "published before 3.0.0", "2026-01-11T00:00:00Z");
+  const land = landReview(early);
+  const e = detect({ root: early });
+  assert.equal(e.scanned.review_landing_commit, land);
+  assert.deepEqual(a11(e), [], JSON.stringify(e.findings));
+});
+
+test("A11: with no landing commit, clause 3 skips loudly and by derivation, and clauses 1 and 2 still run", () => {
+  const dir = estate();
+  version_(dir, "alpha", "1.1.0");
+  commit(dir, "published before 3.0.0", "2026-01-02T00:00:00Z");
+  const before = detect({ root: dir });
+  assert.deepEqual(clauseSkips(before), ["A11.3"]);
+  const skip = before.skipped.find((s) => s.detector === "A11");
+  assert.match(skip.why, /landing commit/);
+  assert.ok(skip.lifted_by, "a skip names what lifts it");
+  assert.deepEqual(a11(before), []);
+  assert.ok(before.ran.includes("A11"), "A11's first two clauses need no landing commit");
+
+  // Clause 1 reads a hand-set mark whatever the schema says.
+  mark(dir, "alpha", "1.1.0", "reviewed");
+  commit(dir, "a hand-set mark, before 3.0.0", "2026-01-03T00:00:00Z");
+  assert.deepEqual(a11(detect({ root: dir })), ["A11_REVIEWED_NO_DECISION"]);
+
+  // And the skip is the landing commit's absence, not a literal.
+  landReview(dir);
+  const after = detect({ root: dir });
+  assert.deepEqual(clauseSkips(after), [], "clause 3 still skipped with a landing commit on the tree");
+  assert.ok(after.scanned.review_landing_commit, "no landing commit was read");
+});
+
+test("A11 and merges: a branch's change is judged on its commit, a merge on its own resolution, clause 3 where main acquired it", () => {
+  // (a) A hand-set mark on a branch, merged with a merge commit: one finding,
+  //     naming the branch commit — not the merge, which only carried it.
+  const a = reviewable();
+  git(a, ["checkout", "--quiet", "-b", "side"]);
+  mark(a, "alpha", "1.1.0", "reviewed");
+  const hand = commit(a, "a hand-set mark on a branch", "2026-02-02T00:00:00Z");
+  git(a, ["checkout", "--quiet", "main"]);
+  git(a, ["merge", "--quiet", "--no-ff", "-m", "Merge branch side", "side"], AT("2026-02-02T01:00:00Z"));
+  const ra = detect({ root: a });
+  assert.deepEqual(a11(ra), ["A11_REVIEWED_NO_DECISION"], JSON.stringify(ra.findings));
+  assert.equal(ra.findings.find((f) => f.detector === "A11").hex, hand);
+
+  // (b) A review made with its entry and trailer on a branch, merged: silent.
+  //     The merge's first-parent diff shows the mark move and its message has
+  //     no trailer; read that way, every review a pull request carried alarms.
+  const b = reviewable();
+  git(b, ["checkout", "--quiet", "-b", "side"]);
+  mark(b, "alpha", "1.1.0", "reviewed");
+  reviewEntry(b, "alpha", ["1.1.0"]);
+  commit(b, `registry: moderation\n\n${TRAILER}`, "2026-02-02T00:00:00Z");
+  git(b, ["checkout", "--quiet", "main"]);
+  git(b, ["merge", "--quiet", "--no-ff", "-m", "Merge branch side", "side"], AT("2026-02-02T01:00:00Z"));
+  assert.deepEqual(a11(detect({ root: b })), [], "a merge that carried a decided review was read as the review");
+
+  // (c) A merge whose own resolution sets the mark: its own change, and it has
+  //     neither the entry nor the trailer.
+  const c = reviewable();
+  git(c, ["checkout", "--quiet", "-b", "side"]);
+  write(c, "README.md", "side\n");
+  commit(c, "an unrelated branch", "2026-02-02T00:00:00Z");
+  git(c, ["checkout", "--quiet", "main"]);
+  git(c, ["merge", "--quiet", "--no-ff", "--no-commit", "side"]);
+  mark(c, "alpha", "1.1.0", "reviewed");
+  git(c, ["add", "-A"]);
+  git(c, ["commit", "--quiet", "-m", "Merge branch side"], AT("2026-02-02T01:00:00Z"));
+  const evil = git(c, ["rev-parse", "HEAD"]);
+  const rc = detect({ root: c });
+  assert.deepEqual(a11(rc), ["A11_REVIEWED_NO_DECISION"], JSON.stringify(rc.findings));
+  assert.equal(rc.findings.find((f) => f.detector === "A11").hex, evil);
+
+  // (d) Clause 3 through a merge: a branch forked before 3.0.0 adds a record
+  //     with no mark, and lands after the landing commit. `main` acquired the
+  //     record at the merge, after 3.0.0, so the merge is the finding.
+  const d = estate();
+  git(d, ["checkout", "--quiet", "-b", "old"]);
+  version_(d, "alpha", "1.1.0");
+  commit(d, "a record with no mark, on a branch from before 3.0.0", "2026-01-15T00:00:00Z");
+  git(d, ["checkout", "--quiet", "main"]);
+  landReview(d);
+  git(d, ["merge", "--quiet", "--no-ff", "-m", "Merge branch old", "old"], AT("2026-02-01T01:00:00Z"));
+  const merge = git(d, ["rev-parse", "HEAD"]);
+  const rd = detect({ root: d });
+  assert.deepEqual(a11(rd), ["A11_ADDED_NOT_UNREVIEWED"], JSON.stringify(rd.findings));
+  assert.equal(rd.findings.find((f) => f.detector === "A11").hex, merge);
+});
+
+test("A11: a shallow checkout is a finding, never a green walk", () => {
+  const dir = reviewable();
+  const shallow = fs.mkdtempSync(path.join(os.tmpdir(), "astra-detectors-shallow-"));
+  trash.push(shallow);
+  execFileSync("git", ["clone", "--quiet", "--depth", "1", `file://${dir}`, shallow], { env: fixtureEnv(shallow), stdio: "ignore" });
+  const r = detect({ root: shallow });
+  assert.deepEqual(a11(r), ["A11_HISTORY_SHALLOW"], JSON.stringify(r.findings));
+  assert.deepEqual(verdictProblems(verdict(r, {})), [], "an A11 code the alarm channel would refuse");
+});
+
+test("A11: a mark set and taken back on a branch is still read, whatever the merge nets out to", () => {
+  // `--full-history`: git's default simplification follows only the first
+  // parent of a merge that is TREESAME to it, so a branch that set a mark by
+  // hand and then undid it before merging would be walked by nobody. Both of
+  // its commits are on `main`'s history, and both changed a committed mark.
+  const dir = reviewable();
+  git(dir, ["checkout", "--quiet", "-b", "side"]);
+  mark(dir, "alpha", "1.1.0", "reviewed");
+  commit(dir, "a hand-set mark", "2026-02-02T00:00:00Z");
+  mark(dir, "alpha", "1.1.0", "unreviewed");
+  commit(dir, "and back", "2026-02-02T00:01:00Z");
+  git(dir, ["checkout", "--quiet", "main"]);
+  git(dir, ["merge", "--quiet", "--no-ff", "-m", "Merge branch side", "side"], AT("2026-02-02T01:00:00Z"));
+  assert.deepEqual(a11(detect({ root: dir })), ["A11_REVIEWED_NO_DECISION", "A11_REVIEW_CHANGED"]);
 });
