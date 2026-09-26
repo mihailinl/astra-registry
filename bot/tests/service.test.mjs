@@ -865,7 +865,7 @@ test("the file's membered entries are four buckets, none of which may empty", ()
     `${countMembers(unreadEntries)} published members over ${unreadEntries.length} entries are outside every ` +
     `comparison in this suite; there were 109 over 31 at contract 2.17.0, whose seventh guest-read body \`astra.plugins.reason-codes/1\` ` +
     "(Table 5-M: `schema`, `contract_version`, `registry_commit`, `codes`, each `true`; the plugins service emits it and the panel " +
-    "reads it, and nothing here composes or reads it) added 4 over 1; 105 over 30 at contract 2.5.0, whose \`astra.registry.publisher/1\` ` +
+    `reads it, and nothing here composes or reads it) added 4 over 1; 105 over 30 at contract 2.5.0, whose \`astra.registry.publisher/1\` ` +
     "gained the optional `owner_ids` (read by the registry's badge join alone, TRUST-25, with no condition, " +
     "because no sibling member decides whether a record needs it), 104 over 30 from 0.33.0, and this file reads " +
     `${tokenFile.contract_version}. Nothing in astra-registry composes or reads those bodies, so the number is ` +
