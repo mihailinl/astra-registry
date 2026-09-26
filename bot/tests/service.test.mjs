@@ -852,11 +852,20 @@ test("the file's membered entries are four buckets, none of which may empty", ()
   // with a why saying why no condition is published. (0.33.0's first draft had
   // 19; its revision on the acceptor's answers added `moderation`, `omits`
   // twice and `next_cursor` three times.)
+  //
+  // Moved at contract 2.17.0, from 105 over 30, by exactly the seventh guest-read
+  // body, `astra.plugins.reason-codes/1` (Table 5-M): 4 top-level members over one
+  // entry, `schema`, `contract_version`, `registry_commit` and `codes`, all
+  // required with no condition. Read on arrival: the plugins service emits it, the
+  // panel reads it through `service-only:reason-codes`, and nothing in this
+  // repository composes or reads it, so it belongs in this bucket.
   assert.deepEqual(
     { entries: unreadEntries.length, members: countMembers(unreadEntries) },
-    { entries: 30, members: 105 },
+    { entries: 31, members: 109 },
     `${countMembers(unreadEntries)} published members over ${unreadEntries.length} entries are outside every ` +
-    `comparison in this suite; there were 105 over 30 at contract 2.5.0, whose \`astra.registry.publisher/1\` ` +
+    `comparison in this suite; there were 109 over 31 at contract 2.17.0, whose seventh guest-read body \`astra.plugins.reason-codes/1\` ` +
+    "(Table 5-M: `schema`, `contract_version`, `registry_commit`, `codes`, each `true`; the plugins service emits it and the panel " +
+    "reads it, and nothing here composes or reads it) added 4 over 1; 105 over 30 at contract 2.5.0, whose \`astra.registry.publisher/1\` ` +
     "gained the optional `owner_ids` (read by the registry's badge join alone, TRUST-25, with no condition, " +
     "because no sibling member decides whether a record needs it), 104 over 30 from 0.33.0, and this file reads " +
     `${tokenFile.contract_version}. Nothing in astra-registry composes or reads those bodies, so the number is ` +
