@@ -1,0 +1,25 @@
+{
+  "$comment": "GENERATED FILE — DO NOT EDIT. Source of truth: tools/revocations/<ADVISORY-ID>.json. Regenerate with `node tools/build-revocations.mjs`. Only the `signed` member is covered by the signatures below; nothing outside it is authenticated and nothing may be read out of it.",
+  "signatures": [
+    {
+      "key_id": "astra-index-2026a",
+      "sig": "Q0m/KGFbih0DxdJ0rii4QHmXuAHEVC5ESLumkLlnqOFbCC+NJBnxAI6qX71QF1WUvvW/8M6g7XIriDuvbQvvDw=="
+    }
+  ],
+  "signed": {
+    "expires_at": "2026-10-03T00:00:00Z",
+    "issued_at": "2026-09-26T00:00:00Z",
+    "revocations": [
+      {
+        "action": "block_install",
+        "id": "ASTRA-2026-0001",
+        "kind": "id",
+        "reason": "A fixture advisory, long enough to be a sentence a user could act on.",
+        "severity": "high",
+        "value": "dice-roller"
+      }
+    ],
+    "schema": "astra.registry.revocations/1",
+    "serial": 2
+  }
+}
