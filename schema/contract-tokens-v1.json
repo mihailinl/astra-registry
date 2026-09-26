@@ -1,6 +1,6 @@
 {
-  "contract_version": "2.20.1",
-  "source_commit": "66e8cea45a6f2aa0bc32f9bf006198d7db2cd2b5",
+  "contract_version": "2.21.0",
+  "source_commit": "86692b244345b3af150f8ea29d57a5fe44a40b80",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -15,7 +15,8 @@
     "The list's own entry carries the same members in the same shape and names the schema and member that carries its values, so that a reader holding the list entry can evaluate the condition without knowing to go looking two entries away. **The two statements MUST agree, and something MUST compare them**: two hand-kept spellings of one fact in one document is the coupling that has gone wrong here twice, and the generator refuses a run in which §0.8 and §4.2 bind a member to different values, or in which either statement is gone while the other stands.",
     "A `schema_path` carries types and nothing else: which members an entry publishes, and whether each is required, optional or conditional, is the entry's, and where B.4 names only the members other parties read — the listing, version, publisher and queue records — the schema also types members that are the registry's alone and outside SCOPE-8's test.",
     "`presence_paths` lists each registry-only git path a party other than the registry reads for whether a file is there, and for nothing else; each record's `rule` is B.4's own sentence saying so. A path's one `<identifier>` placeholder takes §0.7's format for that identifier.",
-    "`pending` is what SCOPE-7 says this file carries and the contract does not yet record. Each record names what is missing, who owes it, the version that lands it and what the floor asserts until then. The generator refuses to run once the contract records one of them and no extractor has been written."
+    "`pending` is what SCOPE-7 says this file carries and the contract does not yet record. Each record names what is missing, who owes it, the version that lands it and what the floor asserts until then. The generator refuses to run once the contract records one of them and no extractor has been written.",
+    "`trust31_tracked_set_sha256` is TRUST-31's `tracked_set_sha256` for this contract version's set: the SHA-256 of each entry of TRUST-31's fenced block followed by a newline, in byte order. The generator computes it from the block, and no party writes it by hand. A party compiling the set holds its copy's digest equal to it."
   ],
   "parties": [
     "client",
@@ -6799,6 +6800,7 @@
     "tools/testkeys/vectors/signed-set-v1.json",
     "tests/results/"
   ],
+  "trust31_tracked_set_sha256": "5ef6c0cc3244768b95334eb7a1964058d1c2a7aeef6f3bcdc13d7a19ae7233e1",
   "pending": [
     {
       "id": "report_outcome_codes",
