@@ -189,6 +189,23 @@ function releaseRecord(doc) {
     ...(doc.changelog_url !== undefined ? { changelog_url: doc.changelog_url } : {}),
     ...(doc.staging === true ? { staging: true } : {}),
     ...(doc.staging === true && doc.staging_reason ? { staging_reason: doc.staging_reason } : {}),
+    // The review mark (contract 3.0.0, B.4; DEC-19), byte for byte and only
+    // where the version record carries one. Its absence is a statement of its
+    // own ("published before 3.0.0"), so it is never defaulted here: a
+    // generator that wrote `unreviewed` for a record with no member would put
+    // a warning on every listing published before the mark existed, which is
+    // the reading decision D4 refused, and a generator that wrote `reviewed`
+    // would silence one nobody gave.
+    //
+    // **This copy lands before anything writes the member** (B.4, "the
+    // generator learns the member first"). DEC-9 counts only commits under
+    // `plugins/`, so a generator taught the member AFTER records carried it
+    // would change `signed.plugins` at an unchanged serial, and TRUST-28 would
+    // hold that catalogue, the withdrawal list with it, until an
+    // acknowledgement named it. Taught first, it changes nothing until the
+    // first record that carries the member, and that record's commit is under
+    // `plugins/`, so it moves the serial itself.
+    ...(doc.review !== undefined ? { review: doc.review } : {}),
     // Field by field, and each one only when the source carries it. `repo`/`tag`
     // belong to a github_release and `base_url` to a direct one; writing an
     // absent key as `undefined` would drop out of the JSON silently and take

@@ -399,4 +399,92 @@ export async function run() {
     assertEqual(remote.length, 0,
       `a signed store card fetches its picture from a host the author chose:\n${remote.join("\n")}`);
   });
+
+  // ── the review mark (contract 3.0.0: B.4's review-mark paragraph; DEC-19) ──
+  //
+  // The catalogue is where clients and the panel read the mark, and the copy
+  // has to exist before anything writes one: B.4's "the generator learns the
+  // member first". A generator that dropped the member would publish every
+  // release as though it predated 3.0.0, which reads as "no warning" (decision
+  // D4), and the release a warning exists for would ship without one. So the
+  // copy is held here against a tree carrying all three states, absent
+  // included, and the absent one is held to STAY absent: a default written by
+  // the generator would warn on every listing published before the mark
+  // existed, or silence one nobody gave.
+  //
+  // Watched: deleting the `review` spread in `releaseRecord` turns the first
+  // assertion red; replacing it with `review: doc.review ?? "unreviewed"` turns
+  // the absent-stays-absent one red; deleting `review` from
+  // schema/index-v1.json's release turns the schema one red.
+  await test("the generator copies each version record's review mark into releases[] byte for byte, and writes none where the record has none (B.4)", () => {
+    const dir = path.join(tmp, "review-mark-copy");
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.cpSync(path.join(REPO_ROOT, "tests/fixtures/id-collision/plugins/dice-roller"),
+      path.join(dir, "plugins", "dice-roller"), { recursive: true });
+    const versions = path.join(dir, "plugins", "dice-roller", "versions");
+    const base = JSON.parse(fs.readFileSync(path.join(versions, "1.0.0.json"), "utf8"));
+    const at = (v, review) => {
+      const doc = JSON.parse(JSON.stringify(base).replaceAll("1.0.0", v));
+      if (review !== undefined) doc.review = review;
+      fs.writeFileSync(path.join(versions, `${v}.json`), stableStringify(doc));
+    };
+    at("1.1.0", "unreviewed");
+    at("1.2.0", "reviewed");
+
+    const entry = buildIndex({ root: dir, serial: 1 }).signed.plugins.find((p) => p.id === "dice-roller");
+    assert(entry, "the fixture listing is not in its own catalogue");
+    const marks = Object.fromEntries(entry.releases.map((r) => [r.version, Object.hasOwn(r, "review") ? r.review : "<absent>"]));
+    assertEqual(JSON.stringify(marks), JSON.stringify({ "1.2.0": "reviewed", "1.1.0": "unreviewed", "1.0.0": "<absent>" }),
+      "the catalogue's releases do not carry each version record's review mark as the record has it");
+
+    const schema = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "schema/index-v1.json"), "utf8"));
+    const doc = buildIndex({ root: dir, serial: 1 });
+    const errs = validateSchema(schema, doc);
+    assert(errs.length === 0, `schema/index-v1.json refuses a catalogue whose releases carry the mark:\n` +
+      errs.map((e) => `${e.path} ${e.message}`).join("\n"));
+    // And the member is DECLARED, not merely tolerated: a value this registry
+    // never writes is refused, so the schema is the writer's statement.
+    doc.signed.plugins.find((p) => p.id === "dice-roller").releases[0].review = "approved";
+    assert(validateSchema(schema, doc).length > 0,
+      "schema/index-v1.json accepts a review mark outside the two this registry writes, so it does not declare the member");
+  });
+
+  // Client session, relayed by the coordinator on 2026-09-26 (C1): the mark is
+  // a member INSIDE `astra.registry.index/1`, and the catalogue's schema value
+  // does not move. That value is the only catalogue schema a shipped 0.2.x
+  // client accepts, and it is the signature domain: SHA-256(value ‖ 0x00 ‖
+  // JCS(signed)). A new value — `/2`, or a renamed title the generator then
+  // copied — would refuse the whole catalogue on every shipped client at
+  // once. Nothing held the four places the value is written to one another.
+  //
+  // Watched: changing `INDEX_SCHEMA` in bot/lib/sign.mjs to
+  // `astra.registry.index/2` turns the first assertion red; changing the
+  // schema file's `const` or its `title` turns the second or third red.
+  await test("the catalogue's schema value, and so its signing domain, is astra.registry.index/1 in every place it is written", async () => {
+    const WANT = "astra.registry.index/1";
+    const { INDEX_SCHEMA } = await import("../../bot/lib/sign.mjs");
+    assertEqual(INDEX_SCHEMA, WANT,
+      "bot/lib/sign.mjs's INDEX_SCHEMA moved. It is the catalogue's schema value and its signature domain, and a " +
+      "shipped client accepts one value only");
+    const schema = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "schema/index-v1.json"), "utf8"));
+    assertEqual(schema.$defs?.signed?.properties?.schema?.const, WANT,
+      "schema/index-v1.json's `signed.schema` const is not the value shipped clients accept");
+    assertEqual(schema.title, WANT, "schema/index-v1.json's title is not the catalogue's schema value");
+    assertEqual(buildIndex({ serial: 1 }).signed.schema, WANT, "the generator writes another schema value");
+    const committed = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "registry/v1/index.json"), "utf8"));
+    assertEqual(committed.signed.schema, WANT, "the committed catalogue carries another schema value");
+  });
+
+  // The two schema files name one list. The token file's `list:review` is the
+  // third copy, held to these two in tools/selftest/contract-tokens.mjs once a
+  // contract version publishes it.
+  await test("schema/version-v1.json and schema/index-v1.json declare one list of review marks", () => {
+    const read = (rel) => JSON.parse(fs.readFileSync(path.join(REPO_ROOT, rel), "utf8"));
+    const version = read("schema/version-v1.json").properties?.review?.enum;
+    const release = read("schema/index-v1.json").$defs?.release?.properties?.review?.enum;
+    assert(Array.isArray(version) && version.length >= 2, "schema/version-v1.json declares no review enum");
+    assertEqual(JSON.stringify(release), JSON.stringify(version),
+      "the catalogue's release review enum is not the version record's, so the generator can copy a value the " +
+      "catalogue schema refuses, or the reverse");
+  });
 }

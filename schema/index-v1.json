@@ -332,6 +332,13 @@
         "staging_reason": {
           "type": "string"
         },
+        "review": {
+          "enum": [
+            "unreviewed",
+            "reviewed"
+          ],
+          "description": "The version record's review mark, copied byte for byte by tools/build-index.mjs wherever the record carries one, and absent wherever it does not (contract 3.0.0, B.4; DEC-19). OPTIONAL, and a member of `astra.registry.index/1` itself: the catalogue's `schema` value, and with it the signature domain, do not move, because shipped clients accept that one value and sign over JCS of the parsed `signed` member, so they carry this member inside the signature and ignore it. Absent means published before 3.0.0, neither reviewed nor not. The enum is what this registry writes; a reader reads any value other than `reviewed` as not reviewed and never refuses the entry or the document for it (CLIENT-97; §0.8)."
+        },
         "release": {
           "type": "object",
           "additionalProperties": false,

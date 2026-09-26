@@ -107,6 +107,10 @@
       "type": "boolean",
       "description": "Author withdrew this version. It stays in git and leaves the index. Not a revocation — a revocation is signed, lives in revocations.json, and arrives in Phase 3."
     },
+    "review": {
+      "enum": ["unreviewed", "reviewed"],
+      "description": "The review mark (contract 3.0.0, B.4's review-mark paragraph; DEC-19). Whether Astra moderators have reviewed THIS version: a review is a reading of bytes, so every new version starts `unreviewed` whatever its predecessors' marks. Optional in `/1`, and the absence has one meaning: the record was added before 3.0.0's landing commit, the first commit on main's first-parent line whose copy of this file declares this member, and a reader treats it as neither unreviewed nor reviewed. Every version record added from that commit on carries `unreviewed`, written by the publishing path and never taken from the job that unpacked the bundle (BOT-21); only the commit that applies an `M_REVIEW` changes it, to `reviewed`, with a moderation-log `review` entry naming the version and a `Service-Decision:` trailer (MOD-56); no commit changes it in any other direction. tools/validate.mjs holds all three, because no per-record schema can say which commit added a file. The enum is what THIS registry writes. A reader is lenient in the other direction: any value other than `reviewed` reads as not reviewed and never refuses the record (§0.8). tools/build-index.mjs copies it into the catalogue's `releases[].review` byte for byte."
+    },
     "staging": {
       "type": "boolean",
       "description": "Bootstrap only: the release does not exist yet, so there is no digest to pin. tools/validate.mjs REJECTS a staging entry unless --allow-staging is passed. See README.md §The staging entries."
