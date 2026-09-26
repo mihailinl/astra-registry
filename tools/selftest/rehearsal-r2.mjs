@@ -49,13 +49,18 @@ import {
 } from "../../bot/lib/sign.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
 import { TEST_KEYS, loadTestRoot } from "../testkeys/regenerate.mjs";
-import { DOCUMENTS, OUTGOING_KEY_ID, INCOMING_KEY_ID } from "../testkeys/make-rehearsal-r2.mjs";
+import { DOCUMENTS, OUTGOING_KEY_ID, INCOMING_KEY_ID, REHEARSALS, fixtureDirOf } from "../testkeys/make-rehearsal-r2.mjs";
 import { INDEX_KEY_WINDOW_HOURS } from "../signer/key-window.mjs";
-import { test, assert, assertEqual } from "./harness.mjs";
-
-const FIXTURES = path.join(REPO_ROOT, "tools", "testkeys", "fixtures", "rehearsal-r2");
+import { test as harnessTest, assert, assertEqual } from "./harness.mjs";
 
 const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
+
+// Every check below that reads fixtures reads ONE CUT of the series
+// (`REHEARSALS`: rehearsal-r2 at T0 2026-09-22, rehearsal-r2b at T0
+// 2026-09-26), and `run()` asks each of them of every cut, by name. A cut the
+// staging service is shown is a cut this judge has passed whole; the first
+// cut's passing says nothing about the second's bytes.
+let FIXTURES = null;
 const stepDir = (id) => path.join(FIXTURES, ...id.split("/"));
 const docOf = (id, name) => readJson(path.join(stepDir(id), "registry", "v1", name));
 
@@ -101,11 +106,41 @@ function judge(id) {
 
 const hoursBetween = (from, to) => (Date.parse(to) - Date.parse(from)) / 3_600_000;
 
+const DAY_MS = 24 * 3_600_000;
+
 export async function run() {
   console.log("\nthe ROLL-60 rehearsal fixtures (RC-R2-5)");
+  for (const cut of Object.keys(REHEARSALS)) await judgeCut(cut);
+  await acrossCuts();
+}
 
+/** Every check that reads one cut's bytes, asked of `cut` and named by it. */
+async function judgeCut(cut) {
+  FIXTURES = fixtureDirOf(cut);
   const manifest = readJson(path.join(FIXTURES, "manifest.json"));
   const withDocuments = manifest.steps.filter((s) => s.documents_present !== false);
+  // The harness may run a check after the next cut has begun; each check
+  // therefore pins the directory it was written for before it reads.
+  const dir = FIXTURES;
+  const test = (name, fn) => harnessTest(`${cut}: ${name}`, () => { FIXTURES = dir; return fn(); });
+
+  await test("T0 is the generator's, and every list expires seven days after its step: the cut's hard end is T0 + 7 days", () => {
+    // The hard end the runbook and rehearsal-push print is read off the
+    // lists' `expires_at`; the T0 a cut is filed under is the generator's
+    // table. Both are one number only while this holds. Watched failing by
+    // moving rehearsal-r2b's T0 in REHEARSALS without regenerating.
+    const t0 = REHEARSALS[cut].t0;
+    assertEqual(manifest.t0, t0, "the manifest's T0 and REHEARSALS'");
+    const base = manifest.steps.find((s) => s.id === "rotation/00-baseline");
+    assertEqual(base?.now, t0, "the step that creates `signed` does not run at T0");
+    for (const step of withDocuments) {
+      const list = docOf(step.id, "revocations.json");
+      assertEqual(Date.parse(list.signed.expires_at) - Date.parse(step.now), 7 * DAY_MS,
+        `${step.id}'s list expires at ${list.signed.expires_at}, not seven days after its run at ${step.now}`);
+    }
+    const first = withDocuments.map((s) => Date.parse(docOf(s.id, "revocations.json").signed.expires_at)).sort((a, b) => a - b)[0];
+    assertEqual(new Date(first).toISOString(), new Date(Date.parse(t0) + 7 * DAY_MS).toISOString(), "the cut's hard end");
+  });
 
   await test("the manifest and the fixture tree are one set, and every step holds D2's four documents", () => {
     // A step on disk that the manifest does not name is a step nothing below
@@ -391,48 +426,6 @@ export async function run() {
     }
   });
 
-  await test("`--test-key` refuses the three ways it could publish something a daemon would reject", () => {
-    // The flag that makes this whole directory possible also puts a
-    // throwaway key into the program that publishes the real catalogue, so
-    // each of its guards is exercised rather than trusted. The third is the
-    // one that matters: the failure it is for is not a fixture author's, it is
-    // `--test-key` reaching `sign.yml`, where the run would hold the real key,
-    // ignore it, and publish a `signed` commit every daemon refuses — green,
-    // with a warning in a log nobody reads.
-    const refuses = (args, env = {}) => {
-      let status = 0;
-      let stderr = "";
-      try {
-        execFileSync("node", ["tools/signer/run.mjs", "--step", "sign", ...args], {
-          cwd: REPO_ROOT,
-          env: { ...process.env, ...env },
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-      } catch (e) {
-        status = e.status;
-        stderr = String(e.stderr);
-      }
-      return { status, stderr };
-    };
-    const testKey = "TEST-ONLY-DO-NOT-TRUST-index-2026a";
-
-    const beside = refuses(["--test-key", testKey, "--out", path.join(REPO_ROOT, "dist", "never")],
-      { ASTRA_INDEX_SIGNING_KEY: "irrelevant", ASTRA_INDEX_SIGNING_KEY_ID: "irrelevant" });
-    assertEqual(beside.status, 2, `a real key beside --test-key exited ${beside.status}`);
-    assert(beside.stderr.includes("also holds ASTRA_INDEX_SIGNING_KEY"), beside.stderr);
-
-    const intoRegistry = refuses(["--test-key", testKey, "--out", path.join(REPO_ROOT, "registry", "v1")]);
-    assertEqual(intoRegistry.status, 2, `writing into registry/ exited ${intoRegistry.status}`);
-    assert(intoRegistry.stderr.includes("refusing to write TEST-key signatures"), intoRegistry.stderr);
-
-    const twice = refuses(["--test-key", testKey, "--test-key", `second=${testKey}`,
-      "--out", path.join(REPO_ROOT, "dist", "never")]);
-    assertEqual(twice.status, 2, `one key under two names exited ${twice.status}`);
-    assert(twice.stderr.includes("are not a rotation"), twice.stderr);
-
-    assert(!fs.existsSync(path.join(REPO_ROOT, "dist", "never")), "a refused run still wrote a tree");
-  });
-
   await test("the cost of OPEN-OWNER-25's answer is measured from these bytes, not stated", () => {
     // The owner's page said a different answer to OPEN-OWNER-25's compromise
     // half re-cuts "exactly one of five rehearsal fixtures". That number is
@@ -476,6 +469,84 @@ export async function run() {
         `the manifest says a catalogue carried from ${forkId} would ${claimed ? "be refused" : "verify"} ` +
         `under the compromise trust.json, and it ${carried.ok ? "verifies" : "is refused"}`);
     }
+  });
+}
+
+/** The checks that are about the cuts together, or about no cut. */
+async function acrossCuts() {
+  const test = harnessTest;
+
+  await test("the cuts are one series: the same steps at the same hours after T0, the same serials, signers and decisions, the same trust.json and root.json", () => {
+    // What makes a later cut a rehearsal of the same thing, and not a new
+    // fixture nobody has reasoned about: everything but the clock is equal.
+    // trust.json and root.json are equal byte for byte because their dates
+    // are fixed, not offsets from T0 — the second cut's README says so, and
+    // the service's compiled root sets rest on it. Watched failing by making
+    // TRUST_ISSUED an offset from T0.
+    const cuts = Object.keys(REHEARSALS);
+    const shape = (cut) => {
+      const m = readJson(path.join(fixtureDirOf(cut), "manifest.json"));
+      return m.steps.map((s) => stableStringify({
+        id: s.id, hours: (Date.parse(s.now) - Date.parse(m.t0)) / 3_600_000, key_mode: s.key_mode, dropped: s.dropped_keys,
+        committed: s.committed, serials: s.serials,
+        index: [s.documents?.index?.decision, s.documents?.index?.signed_by],
+        list: [s.documents?.revocations?.decision, s.documents?.revocations?.signed_by],
+      }));
+    };
+    const [first, ...rest] = cuts;
+    for (const cut of rest) {
+      assertEqual(shape(cut).join("\n"), shape(first).join("\n"), `${cut} is not ${first}'s series at another T0`);
+      const m = readJson(path.join(fixtureDirOf(cut), "manifest.json"));
+      for (const step of m.steps.filter((s) => s.documents_present !== false)) {
+        for (const file of ["trust.json", "root.json"]) {
+          const a = fs.readFileSync(path.join(fixtureDirOf(first), ...step.id.split("/"), "registry", "v1", file));
+          const b = fs.readFileSync(path.join(fixtureDirOf(cut), ...step.id.split("/"), "registry", "v1", file));
+          assert(a.equals(b), `${cut} ${step.id}'s ${file} differs from ${first}'s`);
+        }
+      }
+    }
+  });
+
+  await test("`--test-key` refuses the three ways it could publish something a daemon would reject", () => {
+    // The flag that makes this whole directory possible also puts a
+    // throwaway key into the program that publishes the real catalogue, so
+    // each of its guards is exercised rather than trusted. The third is the
+    // one that matters: the failure it is for is not a fixture author's, it is
+    // `--test-key` reaching `sign.yml`, where the run would hold the real key,
+    // ignore it, and publish a `signed` commit every daemon refuses — green,
+    // with a warning in a log nobody reads.
+    const refuses = (args, env = {}) => {
+      let status = 0;
+      let stderr = "";
+      try {
+        execFileSync("node", ["tools/signer/run.mjs", "--step", "sign", ...args], {
+          cwd: REPO_ROOT,
+          env: { ...process.env, ...env },
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      } catch (e) {
+        status = e.status;
+        stderr = String(e.stderr);
+      }
+      return { status, stderr };
+    };
+    const testKey = "TEST-ONLY-DO-NOT-TRUST-index-2026a";
+
+    const beside = refuses(["--test-key", testKey, "--out", path.join(REPO_ROOT, "dist", "never")],
+      { ASTRA_INDEX_SIGNING_KEY: "irrelevant", ASTRA_INDEX_SIGNING_KEY_ID: "irrelevant" });
+    assertEqual(beside.status, 2, `a real key beside --test-key exited ${beside.status}`);
+    assert(beside.stderr.includes("also holds ASTRA_INDEX_SIGNING_KEY"), beside.stderr);
+
+    const intoRegistry = refuses(["--test-key", testKey, "--out", path.join(REPO_ROOT, "registry", "v1")]);
+    assertEqual(intoRegistry.status, 2, `writing into registry/ exited ${intoRegistry.status}`);
+    assert(intoRegistry.stderr.includes("refusing to write TEST-key signatures"), intoRegistry.stderr);
+
+    const twice = refuses(["--test-key", testKey, "--test-key", `second=${testKey}`,
+      "--out", path.join(REPO_ROOT, "dist", "never")]);
+    assertEqual(twice.status, 2, `one key under two names exited ${twice.status}`);
+    assert(twice.stderr.includes("are not a rotation"), twice.stderr);
+
+    assert(!fs.existsSync(path.join(REPO_ROOT, "dist", "never")), "a refused run still wrote a tree");
   });
 
   await test("the committed fixtures are what the real signer produces today", () => {

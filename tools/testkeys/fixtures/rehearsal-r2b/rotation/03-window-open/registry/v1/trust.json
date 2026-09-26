@@ -1,0 +1,30 @@
+{
+  "$banner": "TEST-ONLY REHEARSAL FIXTURE (RC-R2-5 / ROLL-60). Signed with the throwaway keys in tools/testkeys/, whose private halves are published in this repository. No production daemon trusts these roots and nothing a user installs may be signed with them.",
+  "signatures": [
+    {
+      "key_id": "TEST-ONLY-DO-NOT-TRUST-root-a",
+      "sig": "A1DIA2uWmLQnKk5Svd66lxJvNz0BkR4P+BfeiiJANbEXPvcGGBFgZIlMcL7hyqqyTBux+Uisd8CG/WOqNzk9Cw=="
+    }
+  ],
+  "signed": {
+    "expires_at": "2027-09-01T00:00:00Z",
+    "index_keys": [
+      {
+        "key_id": "astra-index-2026a",
+        "not_before": "2026-09-01T00:00:00Z",
+        "public_key": "U8/3Y8Zz1qd2TQ+JECdqODTMhWolfxvQFmXRySVd41o="
+      },
+      {
+        "key_id": "TEST-ONLY-DO-NOT-TRUST-index-2026b",
+        "not_before": "2026-09-01T00:00:00Z",
+        "public_key": "selbz5cJXSydRAAxGZsrsDpL1mKNRUn5eo8p0h2H8lc="
+      }
+    ],
+    "issued_at": "2026-09-01T00:00:00Z",
+    "reusable_workflow_shas": [
+      "e3329df252a46d747676cb540ae4b986af68a3ad"
+    ],
+    "schema": "astra.registry.trust/1",
+    "serial": 3
+  }
+}

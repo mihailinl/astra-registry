@@ -74,10 +74,11 @@ TEST-ONLY-DO-NOT-TRUST-root-b.pub.json
 TEST-ONLY-DO-NOT-TRUST-root-b.SECRET-TEST-KEY.json
 regenerate.mjs                                   rederives all four from the phrases
 sign-trust.mjs                                   signs a trust.json `signed` block
-make-rehearsal-r2.mjs                            builds fixtures/rehearsal-r2/ — see below
-rehearsal-push.mjs                               serves it on mihailinl/astra-registry-canary, one step at a time
+make-rehearsal-r2.mjs                            builds fixtures/rehearsal-r2/ and fixtures/rehearsal-r2b/ — see below
+rehearsal-push.mjs                               serves each on its own canary, one step at a time
 fixtures/                                        signed documents the daemon tests read
-fixtures/rehearsal-r2/                           the ROLL-60 rehearsal series — see its README
+fixtures/rehearsal-r2/                           the ROLL-60 rehearsal series, T0 2026-09-22 — see its README
+fixtures/rehearsal-r2b/                          the same series, T0 2026-09-26
 vectors/                                         the signed-set corpus — see vectors/README.md
 ```
 
@@ -92,9 +93,14 @@ and it exists because minice-be's staging service and the debug 0.2.x daemon
 that together meet ROLL-60 have nothing to accept without it.
 
 ```sh
-node tools/testkeys/make-rehearsal-r2.mjs          # rewrite it
-node tools/testkeys/make-rehearsal-r2.mjs --check  # verify the committed bytes
+node tools/testkeys/make-rehearsal-r2.mjs          # rewrite every cut
+node tools/testkeys/make-rehearsal-r2.mjs --check  # verify the committed bytes of every cut
 ```
+
+The series is cut at more than one T0 (`REHEARSALS` in the generator), because
+its lists expire seven days after T0 and a `signed` branch that has served a
+step can never be rewound. `fixtures/rehearsal-r2b/` is the same series three
+days after `fixtures/rehearsal-r2/`, for a walk that slipped past 2026-09-29.
 
 Unlike the fixtures above it, **none of it is assembled here.** Every document
 comes out of `tools/signer/run.mjs --step sign --test-key …`, the same program
@@ -108,7 +114,10 @@ series, the borrowed key id and why it is borrowed, and how to replay it.
 
 `rehearsal-push.mjs --step N` serves it: step N's commit, rebuilt from those
 bytes and pushed only if it is the sha the signer committed, one step at a
-time onto BOT-88's test repository and nowhere else. `--list`, `--status` and
+time. The first cut goes onto BOT-88's test repository,
+`mihailinl/astra-registry-canary`. The second goes onto
+`mihailinl/astra-registry-canary-2`, the default. Each is refused on the other,
+and both are refused anywhere else. `--list`, `--status` and
 `--dry-run` say what it would do; astra-plugins-ops
 `runbooks/roll-60-rehearsal.md` is the day it is run on.
 

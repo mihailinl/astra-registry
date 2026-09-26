@@ -1,9 +1,26 @@
 #!/usr/bin/env node
 // The ROLL-60 rehearsal series (RC-R2-5), produced by the real signer.
 //
-//   node tools/testkeys/make-rehearsal-r2.mjs          # rewrite fixtures/rehearsal-r2/
-//   node tools/testkeys/make-rehearsal-r2.mjs --check  # rebuild in a temp tree, compare, write nothing
+//   node tools/testkeys/make-rehearsal-r2.mjs          # rewrite every cut: fixtures/rehearsal-r2/, fixtures/rehearsal-r2b/
+//   node tools/testkeys/make-rehearsal-r2.mjs --check  # rebuild each in a temp tree, compare, write nothing
 //   node tools/testkeys/make-rehearsal-r2.mjs --print-commands   # the commands, without running them
+//   … --fixtures rehearsal-r2b                         # any of the above, for one cut only
+//
+// ── one series, cut at more than one T0 ─────────────────────────────────────
+//
+// Every list in the series expires seven days after its step's `now`, and a
+// branch that has served a step can never be rewound (SERVE-18). So a
+// rehearsal that slips past T0 + 7 days needs the same series cut again at a
+// later T0 and served from a `signed` that has never carried the old one — a
+// new repository, because the plugins service compiles the branch name
+// `signed` in. `REHEARSALS` below is the list of cuts, each with its T0, and
+// each is its own directory under `fixtures/`, named as the table names it.
+//
+// A directory per cut, and not one manifest holding both, because the first
+// cut is a record: the canary's `signed` carries its step 0, and the runbook's
+// shas are its shas. Left in its own directory it stays byte for byte what it
+// was — `git diff` on it is empty — and `--check` keeps proving it. The name is
+// also the `--fixtures` value `rehearsal-push.mjs` takes, so a cut has one name.
 //
 // ── what this is for ────────────────────────────────────────────────────────
 //
@@ -74,8 +91,29 @@ import { loadTestRoot } from "./regenerate.mjs";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..", "..");
 
-export const FIXTURE_DIR = path.join(HERE, "fixtures", "rehearsal-r2");
-export const MANIFEST_FILE = path.join(FIXTURE_DIR, "manifest.json");
+/**
+ * The cuts of the series: name (its directory under `fixtures/`) → T0.
+ *
+ * `rehearsal-r2` is the first, served on `mihailinl/astra-registry-canary`
+ * from 2026-09-24; its lists expire from 2026-09-29T00:00Z. `rehearsal-r2b` is
+ * the same series three days later, for a walk that slipped past that date;
+ * its lists expire from 2026-10-03T00:00Z. Which repository serves which cut
+ * is `tools/lib/rehearsal-push.mjs`'s `CANARIES`, and it refuses the other.
+ * Adding a cut is a line here, a regeneration, and a line there.
+ */
+export const REHEARSALS = Object.freeze({
+  "rehearsal-r2": Object.freeze({ t0: "2026-09-22T00:00:00Z" }),
+  "rehearsal-r2b": Object.freeze({ t0: "2026-09-26T00:00:00Z" }),
+});
+
+/** A cut's directory, and its manifest. */
+export const fixtureDirOf = (name) => {
+  if (!Object.hasOwn(REHEARSALS, name)) {
+    throw new Error(`no rehearsal cut ${JSON.stringify(name)}; there are ${Object.keys(REHEARSALS).join(" and ")}`);
+  }
+  return path.join(HERE, "fixtures", name);
+};
+export const manifestFileOf = (name) => path.join(fixtureDirOf(name), "manifest.json");
 
 /** The four files D2 puts in every `signed` commit, relative to a step directory. */
 export const DOCUMENTS = [
@@ -109,10 +147,11 @@ const BANNER =
 
 // ── the clock, and the commit identities ────────────────────────────────────
 
-/** T0. Every `--now` and every commit date below is an offset from it. */
-export const T0 = "2026-09-22T00:00:00Z";
+// T0 is the cut's (`REHEARSALS`). Every `--now` and every commit date below is
+// an offset from it, and so is the date the fixture advisories are published:
+// for the first cut that is the literal "2026-09-22" it always was.
 const HOUR_MS = 3600 * 1000;
-const at = (hours) => new Date(Date.parse(T0) + hours * HOUR_MS).toISOString().replace(/\.\d{3}Z$/, "Z");
+const clockAt = (t0) => (hours) => new Date(Date.parse(t0) + hours * HOUR_MS).toISOString().replace(/\.\d{3}Z$/, "Z");
 
 const MAIN_IDENTITY = { name: "rehearsal fixture", email: "rehearsal@users.noreply.invalid" };
 
@@ -153,9 +192,9 @@ const release = (id, version) => ({
   },
 });
 
-const advisory = (id, pluginId, reason) => ({
+const advisoryOn = (published) => (id, pluginId, reason) => ({
   id,
-  published: "2026-09-22",
+  published,
   severity: "high",
   action: "block_install",
   reason,
@@ -410,7 +449,14 @@ function signerNotes(notes) {
  * because a generator that quietly produced the wrong shape would write a
  * fixture the selftest then judged against the same wrong shape.
  */
-export function buildSeries({ outDir, work }) {
+export function buildSeries({ outDir, work, t0 }) {
+  // No default T0: a caller that forgot to say which cut it wanted would get
+  // the first one, whose lists may already have expired, and no error.
+  if (typeof t0 !== "string" || !/^\d{4}-\d{2}-\d{2}T00:00:00Z$/.test(t0)) {
+    throw new Error(`rehearsal fixture: buildSeries needs a T0 at midnight UTC, not ${JSON.stringify(t0)}`);
+  }
+  const at = clockAt(t0);
+  const advisory = advisoryOn(t0.slice(0, 10));
   commands.length = 0;
   // Longest first, so a path that is a prefix of the other cannot eat it.
   redactions = [[path.resolve(work), "$WORK"], [path.resolve(outDir), "$OUT"]]
@@ -691,7 +737,7 @@ export function buildSeries({ outDir, work }) {
     generated_by: "tools/testkeys/make-rehearsal-r2.mjs",
     task: "RC-R2-5",
     exit_condition: "ROLL-60",
-    t0: T0,
+    t0,
     keys: {
       roots: { active_at_start: ROOT_A, active_after_root_change: ROOT_B },
       index: {
@@ -796,14 +842,14 @@ function writeManifest(dir, manifest) {
   fs.writeFileSync(path.join(dir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
-function main(argv) {
-  const check = argv.includes("--check");
-  const printOnly = argv.includes("--print-commands");
-
+/** One cut: rewrite its directory, check it against a fresh build, or print its commands. Returns an exit code. */
+function one(name, { check, printOnly }) {
+  const fixtureDir = fixtureDirOf(name);
+  const { t0 } = REHEARSALS[name];
   const work = fs.mkdtempSync(path.join(os.tmpdir(), "rehearsal-r2-"));
   const outDir = check || printOnly
     ? fs.mkdtempSync(path.join(os.tmpdir(), "rehearsal-r2-out-"))
-    : FIXTURE_DIR;
+    : fixtureDir;
 
   try {
     if (!check && !printOnly) {
@@ -811,47 +857,63 @@ function main(argv) {
       // not eat it. Everything else goes, because a step that stops being
       // generated must stop being served — a stale directory left behind is a
       // commit the staging service would replay and nothing would judge.
-      const readme = path.join(FIXTURE_DIR, "README.md");
+      const readme = path.join(fixtureDir, "README.md");
       const kept = fs.existsSync(readme) ? fs.readFileSync(readme) : null;
-      fs.rmSync(FIXTURE_DIR, { recursive: true, force: true });
-      fs.mkdirSync(FIXTURE_DIR, { recursive: true });
+      fs.rmSync(fixtureDir, { recursive: true, force: true });
+      fs.mkdirSync(fixtureDir, { recursive: true });
       if (kept) fs.writeFileSync(readme, kept);
     }
     fs.mkdirSync(outDir, { recursive: true });
-    const manifest = buildSeries({ outDir, work });
+    const manifest = buildSeries({ outDir, work, t0 });
     writeManifest(outDir, manifest);
 
     if (printOnly) {
+      console.log(`# ${name} (T0 ${t0})`);
       for (const c of manifest.commands) console.log(c.command);
       return 0;
     }
 
     if (!check) {
-      console.error(`wrote ${path.relative(REPO, FIXTURE_DIR)}: ${treeOf(FIXTURE_DIR).length} files, ${manifest.steps.length} steps`);
+      console.error(`wrote ${path.relative(REPO, fixtureDir)}: ${treeOf(fixtureDir).length} files, ${manifest.steps.length} steps, T0 ${t0}`);
       return 0;
     }
 
     const fresh = treeOf(outDir);
-    const committed = treeOf(FIXTURE_DIR).filter((f) => f !== "README.md");
+    const committed = treeOf(fixtureDir).filter((f) => f !== "README.md");
     const problems = [];
     for (const rel of new Set([...fresh, ...committed])) {
-      const a = path.join(FIXTURE_DIR, rel);
+      const a = path.join(fixtureDir, rel);
       const b = path.join(outDir, rel);
       if (!fs.existsSync(a)) problems.push(`${rel} is not committed; a fresh build produces it`);
       else if (!fs.existsSync(b)) problems.push(`${rel} is committed and a fresh build does not produce it`);
       else if (!fs.readFileSync(a).equals(fs.readFileSync(b))) problems.push(`${rel} differs from a fresh build`);
     }
     if (problems.length) {
-      console.error("FAIL  the committed rehearsal fixtures are not what this generator produces:");
+      console.error(`FAIL  ${name}: the committed rehearsal fixtures are not what this generator produces at T0 ${t0}:`);
       for (const p of problems) console.error(`      - ${p}`);
       return 1;
     }
-    console.error(`ok    ${committed.length} committed files match a fresh build`);
+    console.error(`ok    ${name}: ${committed.length} committed files match a fresh build at T0 ${t0}`);
     return 0;
   } finally {
     fs.rmSync(work, { recursive: true, force: true });
-    if (outDir !== FIXTURE_DIR) fs.rmSync(outDir, { recursive: true, force: true });
+    if (outDir !== fixtureDir) fs.rmSync(outDir, { recursive: true, force: true });
   }
+}
+
+function main(argv) {
+  const check = argv.includes("--check");
+  const printOnly = argv.includes("--print-commands");
+  const at = argv.indexOf("--fixtures");
+  const names = at === -1 ? Object.keys(REHEARSALS) : [argv[at + 1]];
+  for (const name of names) {
+    if (!Object.hasOwn(REHEARSALS, name ?? "")) {
+      console.error(`usage: --fixtures takes one of ${Object.keys(REHEARSALS).join(", ")}, not ${JSON.stringify(name)}`);
+      return 2;
+    }
+  }
+  // Every cut is asked even after one fails, so a red names all that are red.
+  return names.map((name) => one(name, { check, printOnly })).reduce((worst, code) => Math.max(worst, code), 0);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

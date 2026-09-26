@@ -1,12 +1,13 @@
 // ROLL-60's rehearsal, served one step at a time: the fixture series RC-R2-5
 // committed, pushed as the `signed` commits it already is, to the one
-// repository it may go to. The command line is `tools/testkeys/rehearsal-push.mjs`;
+// repository that cut may go to. The command line is `tools/testkeys/rehearsal-push.mjs`;
 // everything that decides anything is here, where the selftest can run it
 // against a local bare remote (`tools/selftest/rehearsal-push.mjs`).
 //
 // ── what it pushes, and why it builds nothing ───────────────────────────────
 //
-// `tools/testkeys/fixtures/rehearsal-r2/` holds, per step, the four documents a
+// Each cut of the series (`tools/testkeys/fixtures/rehearsal-r2/`, T0
+// 2026-09-22; `…/rehearsal-r2b/`, T0 2026-09-26) holds, per step, the four documents a
 // `signed` commit carried and that commit's message, and `manifest.json` holds
 // the sha the real signer gave the commit. The commit is a function of those
 // bytes, its parent, the signer's identity and the step's `now`, so it is
@@ -17,15 +18,20 @@
 //
 // ── where it may go ─────────────────────────────────────────────────────────
 //
-// `mihailinl/astra-registry-canary`, BOT-88's test repository, and nowhere
-// else. The push URL is DERIVED from `--repo` — so the refusal below is the
-// only thing between a typo and `mihailinl/astra-registry`'s `signed` branch,
-// which every Astra installation reads, and it is watched failing by making it
-// accept that name. The URL git would really use, after any
-// `url.<base>.insteadOf` or `pushInsteadOf` in the operator's config, is asked
-// of git and must be the canary's own or a local path (the selftest's bare
-// remote). No force, ever: git refuses a non-fast-forward without it, and
-// SERVE-18 means a service would refuse to follow one anyway.
+// Two canaries, each serving one cut and nothing else (`CANARIES`):
+// `mihailinl/astra-registry-canary`, BOT-88's test repository, the first cut;
+// `mihailinl/astra-registry-canary-2`, a static source made for the second,
+// because a `signed` that has carried one cut can never carry another (SERVE-18)
+// and the plugins service compiles the branch name `signed` in. The push URL is
+// DERIVED from `--repo` — so the refusal below is the only thing between a typo
+// and `mihailinl/astra-registry`'s `signed` branch, which every Astra
+// installation reads, and it is watched failing by making it accept that name.
+// A cut named for the other canary is refused the same way, before the
+// network. The URL git would really use, after any `url.<base>.insteadOf` or
+// `pushInsteadOf` in the operator's config, is asked of git and must be that
+// canary's own or a local path (the selftest's bare remote). No force, ever:
+// git refuses a non-fast-forward without it, and SERVE-18 means a service
+// would refuse to follow one anyway.
 //
 // ── the order a step does things in ─────────────────────────────────────────
 //
@@ -56,16 +62,32 @@ import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 
 import { fixtureEnv } from "./git-env.mjs";
-import { DOCUMENTS, FIXTURE_DIR, MANIFEST_FILE, buildSeries } from "../testkeys/make-rehearsal-r2.mjs";
+import { DOCUMENTS, REHEARSALS, buildSeries, fixtureDirOf, manifestFileOf } from "../testkeys/make-rehearsal-r2.mjs";
 
-/** The one repository this may push to. */
-export const CANARY_SLUG = "mihailinl/astra-registry-canary";
+/**
+ * The repositories this may push to, each with the one cut it serves (a name
+ * in `REHEARSALS`). A cut and its canary are one decision: the first canary's
+ * `signed` carries the first cut's step 0 and can carry nothing else, and
+ * canary-2 was made empty for the second.
+ */
+export const CANARIES = Object.freeze({
+  "mihailinl/astra-registry-canary": Object.freeze({ fixtures: "rehearsal-r2" }),
+  "mihailinl/astra-registry-canary-2": Object.freeze({ fixtures: "rehearsal-r2b" }),
+});
+/** The canary with no `--repo` and no `--fixtures`: the one the day's walk reads. */
+export const DEFAULT_CANARY = "mihailinl/astra-registry-canary-2";
 /** The production registry, named so its refusal can say what it would have cost. */
 export const PRODUCTION_SLUG = "mihailinl/astra-registry";
 /** What the push URL is, for a slug. Derived, so the refusal is load-bearing. */
 export const githubUrl = (slug) => `https://github.com/${slug}.git`;
-/** Where Pages serves the canary. Project Pages, no custom domain. */
-export const PAGES_BASE = "https://mihailinl.github.io/astra-registry-canary/";
+/** Where Pages serves a canary: project Pages, no custom domain. Derived, so it cannot name the other one. */
+export const pagesBaseOf = (slug) => {
+  const [owner, name] = slug.split("/");
+  return `https://${owner}.github.io/${name}/`;
+};
+/** The canary that serves a cut. */
+const canaryOf = (fixtures) => Object.keys(CANARIES).find((slug) => CANARIES[slug].fixtures === fixtures) ?? null;
+const canaryList = () => Object.keys(CANARIES).join(" and ");
 
 /**
  * The signer's commit identity (tools/signer/run.mjs, `buildSignedCommit`).
@@ -148,16 +170,33 @@ export function repoSlug(spec) {
   return `${m[1]}/${m[2]}`.toLowerCase();
 }
 
-/** Null when `spec` names the canary; otherwise the sentence the refusal prints. */
+/** Null when `spec` names one of the canaries; otherwise the sentence the refusal prints. */
 export function targetProblem(spec) {
   const slug = repoSlug(spec);
   if (slug === null) return `${JSON.stringify(spec)} is not a GitHub repository this tool can name`;
-  if (slug === CANARY_SLUG) return null;
+  if (Object.hasOwn(CANARIES, slug)) return null;
   if (slug === PRODUCTION_SLUG) {
     return `${slug} is the production registry. Its \`signed\` branch is what every Astra installation reads, and these ` +
-      "commits are signed with keys whose private halves are public. This tool pushes to " + CANARY_SLUG + " and nowhere else";
+      `commits are signed with keys whose private halves are public. This tool pushes to ${canaryList()} and nowhere else`;
   }
-  return `${slug} is not ${CANARY_SLUG}, the one repository ROLL-60's rehearsal is served from`;
+  return `${slug} is not one of ${canaryList()}, the repositories ROLL-60's rehearsal is served from`;
+}
+
+/**
+ * Null when `fixtures` is the cut `slug` serves; otherwise the sentence the
+ * refusal prints. `slug` has passed `targetProblem`. A cut pushed to the other
+ * canary would leave that canary's `signed` on a commit its own cut can never
+ * follow, and the day it was made for would have nothing to serve.
+ */
+export function fixturesProblem(slug, fixtures) {
+  if (!Object.hasOwn(REHEARSALS, fixtures)) {
+    return `${JSON.stringify(fixtures)} is no cut of the series; there are ${Object.keys(REHEARSALS).join(" and ")}`;
+  }
+  const own = canaryOf(fixtures);
+  if (CANARIES[slug]?.fixtures === fixtures) return null;
+  return `${fixtures} (T0 ${REHEARSALS[fixtures].t0}) is served on ${own} only, and ${slug} serves ` +
+    `${CANARIES[slug]?.fixtures} (T0 ${REHEARSALS[CANARIES[slug]?.fixtures]?.t0}). A cut on the other canary's \`signed\` ` +
+    "is a head that canary's own cut can never follow (SERVE-18)";
 }
 
 const isLocal = (url) => url.startsWith("/") || url.startsWith("file://");
@@ -208,17 +247,31 @@ export function gitAt(dir, config = []) {
 const sha256 = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
 
 /**
- * One series, read from the committed fixtures: per step its four documents,
- * its message, the sha the signer gave it and the parent it had.
+ * One line of one cut, read from the committed fixtures: per step its four
+ * documents, its message, the sha the signer gave it and the parent it had.
+ *
+ * The manifest's `t0` must be the cut's T0 in the generator's `REHEARSALS`:
+ * the two are written by one program, and a directory regenerated under one
+ * name and committed under the other would otherwise be pushed with the
+ * wrong expiry believed of it.
  */
-export function loadSeries(name, { fixtureDir = FIXTURE_DIR, manifestFile = MANIFEST_FILE } = {}) {
+export function loadSeries(name, { fixtures = CANARIES[DEFAULT_CANARY].fixtures, fixtureDir, manifestFile } = {}) {
   const series = SERIES[name];
   if (!series) throw new Refusal("USAGE", `no series ${JSON.stringify(name)}; there are ${Object.keys(SERIES).join(" and ")}`, 2);
+  if (!Object.hasOwn(REHEARSALS, fixtures)) {
+    throw new Refusal("USAGE", `no cut ${JSON.stringify(fixtures)}; there are ${Object.keys(REHEARSALS).join(" and ")}`, 2);
+  }
+  fixtureDir ??= fixtureDirOf(fixtures);
+  manifestFile ??= manifestFileOf(fixtures);
   const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
+  if (manifest.t0 !== REHEARSALS[fixtures].t0) {
+    throw new Refusal("FIXTURE", `${path.basename(manifestFile)} of ${fixtures} says T0 ${manifest.t0}, and the generator's ` +
+      `REHEARSALS says ${REHEARSALS[fixtures].t0}. Regenerate it with \`node tools/testkeys/make-rehearsal-r2.mjs --fixtures ${fixtures}\``);
+  }
   const byId = new Map((manifest.steps ?? []).map((s) => [s.id, s]));
   return series.steps.map((id, n) => {
     const m = byId.get(id);
-    if (!m) throw new Refusal("FIXTURE", `${id} is not in ${path.basename(manifestFile)}`);
+    if (!m) throw new Refusal("FIXTURE", `${id} is not in ${fixtures}'s ${path.basename(manifestFile)}`);
     if (!m.committed || !/^[0-9a-f]{40}$/.test(m.signed_sha ?? "")) {
       throw new Refusal("FIXTURE", `${id} made no \`signed\` commit, so there is nothing to serve`);
     }
@@ -312,8 +365,8 @@ export function buildCommits(git, steps) {
  * The step's documents whose `expires_at` has passed at `now`. SERVE-22
  * refuses a changed document already past it, and a daemon refuses an
  * expired list, so a step with one is a step nobody will accept. The series'
- * lists run out seven days after T0 (2026-09-29 for T0 2026-09-22), and that
- * date is the rehearsal's hard end.
+ * lists run out seven days after T0 (2026-09-29 for rehearsal-r2, 2026-10-03
+ * for rehearsal-r2b), and that date is the cut's hard end.
  */
 export function expiredDocuments(step, now) {
   return Object.entries(step.expires)
@@ -387,22 +440,30 @@ export function sourceCheck(git, step, mainRef) {
  * canary's `main` with `-s ours` makes TRUST-3 hold without changing one byte
  * of `main`'s tree.
  */
-export function exportSource(into, { gitConfig = [] } = {}) {
+export function exportSource(into, { gitConfig = [], fixtures = CANARIES[DEFAULT_CANARY].fixtures } = {}) {
+  if (!Object.hasOwn(REHEARSALS, fixtures)) {
+    throw new Refusal("USAGE", `no cut ${JSON.stringify(fixtures)}; there are ${Object.keys(REHEARSALS).join(" and ")}`, 2);
+  }
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "rehearsal-source-"));
   try {
     const work = path.join(tmp, "registry");
     const out = path.join(tmp, "out");
     fs.mkdirSync(out);
-    const manifest = buildSeries({ outDir: out, work });
+    const manifest = buildSeries({ outDir: out, work, t0: REHEARSALS[fixtures].t0 });
     const src = gitAt(work, gitConfig);
     const heads = {
       rotation: src(["rev-parse", "refs/heads/main"]).out,
       compromise: src(["rev-parse", "refs/heads/compromise-source"]).out,
     };
-    for (const step of manifest.steps.filter((s) => s.committed)) {
+    // The COMMITTED manifest's Source-Commits, which are the ones the pushed
+    // commits name, as well as the fresh build's: the two agree whenever the
+    // cut's `--check` does, and when they do not, this says so here rather
+    // than as a TRUST-3 refusal on the day.
+    const committed = JSON.parse(fs.readFileSync(manifestFileOf(fixtures), "utf8"));
+    for (const step of [...manifest.steps, ...(committed.steps ?? [])].filter((s) => s.committed)) {
       const line = step.id.startsWith("compromise/") ? "compromise" : "rotation";
       if (!src(["merge-base", "--is-ancestor", step.source_commit, heads[line]], { allowFail: true }).ok) {
-        throw new Refusal("FIXTURE", `${step.id}'s Source-Commit ${step.source_commit} is not in the rebuilt ${line} history`);
+        throw new Refusal("FIXTURE", `${fixtures}: ${step.id}'s Source-Commit ${step.source_commit} is not in the rebuilt ${line} history`);
       }
     }
     const dst = gitAt(into, gitConfig);
@@ -421,7 +482,8 @@ export function exportSource(into, { gitConfig = [] } = {}) {
  * the step whose four documents it matches, if any. A query string defeats the
  * CDN's ten-minute cache, so a new deployment is seen when it is live.
  */
-export async function pagesState(fetchImpl, steps, { base = PAGES_BASE } = {}) {
+export async function pagesState(fetchImpl, steps, { base } = {}) {
+  if (typeof base !== "string") throw new Error("pagesState needs the canary's Pages base (pagesBaseOf)");
   const served = {};
   for (const rel of DOCUMENTS) {
     try {
@@ -451,14 +513,16 @@ export async function waitPages(fetchImpl, steps, n, { timeoutMs, intervalMs = 1
 // ── the command line ────────────────────────────────────────────────────────
 
 export const USAGE = `usage: node tools/testkeys/rehearsal-push.mjs --step N [--series rotation|compromise] [--dry-run]
-         [--repo owner/name] [--skip-pages] [--pages-timeout SECONDS]
+         [--repo owner/name] [--fixtures ${Object.keys(REHEARSALS).join("|")}] [--skip-pages] [--pages-timeout SECONDS]
          [--allow-source-off-main REASON] [--evidence FILE]
-       node tools/testkeys/rehearsal-push.mjs --status [--series …]
-       node tools/testkeys/rehearsal-push.mjs --list [--series …]
-       node tools/testkeys/rehearsal-push.mjs --export-source <git repository>`;
+       node tools/testkeys/rehearsal-push.mjs --status [--series …] [--repo …] [--fixtures …]
+       node tools/testkeys/rehearsal-push.mjs --list [--series …] [--repo …] [--fixtures …]
+       node tools/testkeys/rehearsal-push.mjs --export-source <git repository> [--repo …] [--fixtures …]
+     --repo and --fixtures name one pair: ${Object.entries(CANARIES).map(([s, c]) => `${s} serves ${c.fixtures}`).join(", ")}.
+     Either alone names the other; neither is ${DEFAULT_CANARY}; the two naming different pairs is refused.`;
 
 export function parseArgs(argv) {
-  const a = { step: null, series: "rotation", repo: CANARY_SLUG, dryRun: false, status: false, list: false,
+  const a = { step: null, series: "rotation", repo: null, fixtures: null, dryRun: false, status: false, list: false,
     skipPages: false, pagesTimeout: 600, allowSourceOffMain: null, evidence: null, exportSource: null };
   const value = (i, flag) => {
     const v = argv[i];
@@ -473,6 +537,7 @@ export function parseArgs(argv) {
       a.step = Number(v);
     } else if (f === "--series") a.series = value(++i, f);
     else if (f === "--repo") a.repo = value(++i, f);
+    else if (f === "--fixtures") a.fixtures = value(++i, f);
     else if (f === "--dry-run") a.dryRun = true;
     else if (f === "--status") a.status = true;
     else if (f === "--list") a.list = true;
@@ -486,7 +551,27 @@ export function parseArgs(argv) {
   const modes = [a.step !== null, a.status, a.list, a.exportSource !== null].filter(Boolean).length;
   if (modes !== 1) throw new Refusal("USAGE", `name exactly one of --step, --status, --list, --export-source\n${USAGE}`, 2);
   if (!(a.pagesTimeout >= 0)) throw new Refusal("USAGE", "--pages-timeout takes seconds", 2);
+  if (a.fixtures !== null && !Object.hasOwn(REHEARSALS, a.fixtures)) {
+    throw new Refusal("USAGE", `--fixtures takes ${Object.keys(REHEARSALS).join(" or ")}, not ${JSON.stringify(a.fixtures)}`, 2);
+  }
   return a;
+}
+
+/**
+ * The canary and the cut a run is for, or a Refusal (exit 2) before anything
+ * touches the network or the fixtures. Either flag alone names the pair; with
+ * neither, the pair is `DEFAULT_CANARY`'s. The target is judged first, so
+ * `mihailinl/astra-registry` is refused as what it is whatever cut is named.
+ */
+export function resolvePair(a) {
+  const spec = a.repo ?? (a.fixtures !== null ? canaryOf(a.fixtures) : DEFAULT_CANARY);
+  const problem = targetProblem(spec);
+  if (problem) throw new Refusal("TARGET", problem, 2);
+  const slug = repoSlug(spec);
+  const fixtures = a.fixtures ?? CANARIES[slug].fixtures;
+  const mismatch = fixturesProblem(slug, fixtures);
+  if (mismatch) throw new Refusal("FIXTURES", mismatch, 2);
+  return { slug, fixtures, t0: REHEARSALS[fixtures].t0 };
 }
 
 const describe = (s) =>
@@ -497,8 +582,8 @@ const describe = (s) =>
 
 /**
  * The whole run. Returns the exit code: 0 done (or already done), 1 a check
- * did not hold, 2 refused before anything was asked (a usage error, or a
- * target that is not the canary).
+ * did not hold, 2 refused before anything was asked (a usage error, a target
+ * that is not a canary, or a cut that is not the target's).
  *
  * @param {string[]} argv
  * @param {{fetchImpl?: Function, judge?: () => {ok: boolean, detail: string}, gitConfig?: string[],
@@ -524,24 +609,26 @@ export async function main(argv, deps = {}) {
 async function run(argv, { fetchImpl, judge, gitConfig = [], log, sleep, clock, pagesBase, fixtureDir, manifestFile, tmp }) {
   const a = parseArgs(argv);
 
-  // 1. The target, before anything reads the network or the fixtures.
-  const problem = targetProblem(a.repo);
-  if (problem) throw new Refusal("TARGET", problem, 2);
-  const url = githubUrl(repoSlug(a.repo));
+  // 1. The target and its cut, before anything reads the network or the fixtures.
+  const { slug, fixtures, t0 } = resolvePair(a);
+  const url = githubUrl(slug);
+  pagesBase ??= pagesBaseOf(slug);
+  const pair = `${slug}, fixtures ${fixtures} (T0 ${t0})`;
 
   if (a.exportSource) {
-    const heads = exportSource(path.resolve(a.exportSource), { gitConfig });
-    log(`ok    wrote refs/rehearsal-source/rotation (${heads.rotation}) and refs/rehearsal-source/compromise ` +
+    const heads = exportSource(path.resolve(a.exportSource), { gitConfig, fixtures });
+    log(`ok    wrote ${fixtures}'s refs/rehearsal-source/rotation (${heads.rotation}) and refs/rehearsal-source/compromise ` +
       `(${heads.compromise}) into ${a.exportSource}`);
-    log("      to make TRUST-3 hold on the canary, merge both into its main with the tree unchanged:");
+    log(`      to make TRUST-3 hold on ${slug}, merge both into its main with the tree unchanged:`);
     log("        git merge -s ours --no-ff --allow-unrelated-histories refs/rehearsal-source/rotation refs/rehearsal-source/compromise");
     return 0;
   }
 
   const series = SERIES[a.series];
-  const steps = loadSeries(a.series, { fixtureDir, manifestFile });
+  const steps = loadSeries(a.series, { fixtures, fixtureDir, manifestFile });
   if (a.list) {
-    log(`series ${a.series}, branch \`${series.branch}\`${series.pages ? ", served on Pages" : ""}`);
+    log(pair);
+    log(`series ${a.series}, branch \`${series.branch}\`${series.pages ? `, served on Pages at ${pagesBase}` : ""}`);
     for (const s of steps) log(`  ${s.n}  ${s.sha.slice(0, 12)}  ${s.id}\n       ${s.clause}\n       ${describe(s)}`);
     return 0;
   }
@@ -583,6 +670,7 @@ async function run(argv, { fetchImpl, judge, gitConfig = [], log, sleep, clock, 
   const nowMs = (clock ?? Date.now)();
   const firstExpiry = steps.map((s) => s.expires["registry/v1/revocations.json"]).filter(Boolean).sort()[0];
   if (a.status) {
+    log(pair);
     log(`hard end: the series' first list expires at ${firstExpiry}${Date.parse(firstExpiry) <= nowMs ? " — PASSED; the service and the daemon will refuse it" : ""}`);
     log(`\`${series.branch}\`: ${head === null ? "absent" : at === null ? `${head}, NOT a commit of this series` : `step ${at} (${steps[at].id}) ${head}`}`);
     for (const s of steps) {
@@ -601,10 +689,11 @@ async function run(argv, { fetchImpl, judge, gitConfig = [], log, sleep, clock, 
   const expired = expiredDocuments(target, nowMs);
   if (expired.length) {
     throw new Refusal("EXPIRED", `step ${n} (${target.id}) cannot be accepted any more: ${expired.join("; ")}. SERVE-22 refuses a changed ` +
-      "document past its expires_at and a daemon refuses an expired list. The rehearsal's hard end has passed: regenerate the " +
-      "series at a later T0 (tools/testkeys/make-rehearsal-r2.mjs) and serve it on new branches");
+      "document past its expires_at and a daemon refuses an expired list. The hard end of ${fixtures} has passed: cut the series " +
+      "again at a later T0 (REHEARSALS in tools/testkeys/make-rehearsal-r2.mjs) and serve it from a repository whose `signed` " +
+      "has never carried another cut (CANARIES here)");
   }
-  log(`step ${n}: ${target.id} → \`${series.branch}\` at ${target.sha}`);
+  log(`step ${n}: ${target.id} → ${slug} \`${series.branch}\` at ${target.sha}`);
   log(`      ${target.clause}`);
   log(`      ${describe(target)}`);
   const plan = planStep(steps, n, head, series.branch);
@@ -659,7 +748,8 @@ async function run(argv, { fetchImpl, judge, gitConfig = [], log, sleep, clock, 
 
   if (a.evidence && !a.dryRun) {
     const record = {
-      schema: "astra.registry.rehearsal-push/1", at: new Date((clock ?? Date.now)()).toISOString(), series: a.series,
+      schema: "astra.registry.rehearsal-push/1", at: new Date((clock ?? Date.now)()).toISOString(), repo: slug, fixtures, t0,
+      series: a.series,
       branch: series.branch, step: n, id: target.id, action, signed_sha: target.sha, parent: head,
       source_commit: target.sourceCommit, trust3: src.ok ? "holds" : `fails: ${src.why}`,
       allow_source_off_main: a.allowSourceOffMain, documents_sha256: target.sha256, facts: target.facts,

@@ -82,7 +82,8 @@ none).
 | `rotation/04-root-change` | T0+10h | normal | serial 3, re-signed by root-b | both | both |
 | `rotation/05-after-root` | T0+11h | normal | serial 3 | both | both |
 
-T0 is `2026-09-22T00:00:00Z`. Each step directory holds D2's four documents
+T0 is `2026-09-22T00:00:00Z` in this cut. [`../rehearsal-r2b/`](../rehearsal-r2b/README.md)
+is the same series at T0 `2026-09-26T00:00:00Z`. Each step directory holds D2's four documents
 under `registry/v1/`, the `commit-message.txt` that step's `signed` commit
 carried, and `record.json`, the signer's own account of the run.
 
@@ -156,8 +157,10 @@ node tools/testkeys/rehearsal-push.mjs --step N        # serve step N on the can
 `tools/testkeys/rehearsal-push.mjs` rebuilds each step's commit from this
 directory — the four documents, `commit-message.txt` plus the newline the save
 trimmed, the signer's identity, the step's `now` — and pushes it only if it is
-the sha `manifest.json` says the signer committed. It pushes to
-`mihailinl/astra-registry-canary` and refuses every other repository. The
+the sha `manifest.json` says the signer committed. It pushes this cut to
+`mihailinl/astra-registry-canary` (`--repo mihailinl/astra-registry-canary`),
+and `../rehearsal-r2b/` to `mihailinl/astra-registry-canary-2`. It refuses
+either cut on the other's canary, and every other repository. The
 rotation line goes to `signed`, which the canary's Pages serves; the compromise
 line (`rotation/00`–`02`, then `compromise/00-drop-2026a`) goes to
 `signed-compromise`, because it forks from step 2 and cannot share a branch with
@@ -184,8 +187,9 @@ signed. A service or daemon that looks for index keys in root.json finds none.
 
 **The withdrawal lists expire on 2026-09-29** (T0 + 7 days, 00:00Z for step 0
 to 11:00Z for step 5), and SERVE-22 refuses a changed document already past its
-`expires_at`. A rehearsal on these bytes has to finish before then; after it,
-the series must be regenerated at a later T0.
+`expires_at`. A rehearsal on these bytes has to finish before then. After that,
+it needs a later cut: `../rehearsal-r2b/` is one, and its lists expire on
+2026-10-03.
 
 **SERVE-92's order is the service's, not this directory's.** Before
 `rotation/04-root-change` is served, the service build must already compile

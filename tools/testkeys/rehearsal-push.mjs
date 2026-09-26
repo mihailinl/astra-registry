@@ -1,10 +1,15 @@
 #!/usr/bin/env node
-// ROLL-60's rehearsal, one step at a time, onto BOT-88's test repository.
+// ROLL-60's rehearsal, one step at a time, onto a rehearsal canary.
 //
 //   node tools/testkeys/rehearsal-push.mjs --list                  # the steps, and what each carries
 //   node tools/testkeys/rehearsal-push.mjs --status                # where the canary's `signed` and Pages are
 //   node tools/testkeys/rehearsal-push.mjs --step 1 --dry-run      # everything but the push
 //   node tools/testkeys/rehearsal-push.mjs --step 1 --evidence roll60.jsonl
+//
+// With no `--repo` it serves the cut at T0 2026-09-26 (fixtures/rehearsal-r2b/)
+// on `mihailinl/astra-registry-canary-2`. `--repo mihailinl/astra-registry-canary`
+// serves the first cut (fixtures/rehearsal-r2/, T0 2026-09-22) there. Each
+// canary is refused the other's cut.
 //
 // Run it from a fresh clone of astra-registry `main`, never from the shared
 // checkout: it runs the fixtures' judge, which reads this tree. The runbook is
@@ -30,8 +35,12 @@ import { main } from "../lib/rehearsal-push.mjs";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..", "..");
 
-/** `tools/selftest.mjs`'s FLOORS entry for `rehearsal-r2.mjs`. A judge that passed fewer checked less. */
-const JUDGE_FLOOR = 14;
+/**
+ * `tools/selftest.mjs`'s FLOORS entry for `rehearsal-r2.mjs`. A judge that passed fewer checked less.
+ * The two are held equal by `tools/selftest/rehearsal-push.mjs`. The judge
+ * judges every cut, so a push of either cut needs both to pass.
+ */
+const JUDGE_FLOOR = 29;
 const MARK = "REHEARSAL-JUDGE ";
 
 function judge() {

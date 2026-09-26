@@ -1,0 +1,59 @@
+{
+  "schema": "astra.registry.signer-run/1",
+  "step": "sign",
+  "now": "2026-09-26T00:00:00Z",
+  "source_commit": "6d6eba66158a3a0128a7068010694a9862198a30",
+  "index_source_commit": "6d6eba66158a3a0128a7068010694a9862198a30",
+  "parent": null,
+  "branch": "signed",
+  "serials": {
+    "index": 1,
+    "revocations": 2
+  },
+  "key_mode": "normal",
+  "dropped_keys": [],
+  "documents": {
+    "index": {
+      "decision": "changed",
+      "serial": 1,
+      "signed_by": [
+        "astra-index-2026a"
+      ]
+    },
+    "revocations": {
+      "decision": "changed",
+      "serial": 2,
+      "signed_by": [
+        "astra-index-2026a"
+      ]
+    },
+    "trust": {
+      "decision": "copied",
+      "serial": null,
+      "signed_by": null
+    },
+    "root": {
+      "decision": "copied",
+      "serial": null,
+      "signed_by": null
+    }
+  },
+  "files": [
+    "registry/v1/index.json",
+    "registry/v1/revocations.json",
+    "registry/v1/root.json",
+    "registry/v1/trust.json"
+  ],
+  "alerts": [],
+  "refusals": [],
+  "notes": [],
+  "codes": [],
+  "hexes": [
+    "6d6eba66158a3a0128a7068010694a9862198a30"
+  ],
+  "status": "green",
+  "commit": true,
+  "$command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 6d6eba66158a3a0128a7068010694a9862198a30 --now 2026-09-26T00:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --out $WORK/.dist-signed --record $WORK/.record-rotation-00-baseline.json",
+  "$signed_sha": "45da22f4d9f962635b90f7d15ae3c56d102af7b0",
+  "$commit_message": "signed: catalogue 1, withdrawal list 2 at 6d6eba66158a\n\nregistry/v1/index.json: changed at serial 1\nregistry/v1/revocations.json: changed at serial 2\n\nSource-Commit: 6d6eba66158a3a0128a7068010694a9862198a30\nRun: https://github.com/mihailinl/astra-registry/actions/runs/0\nSigner: sign.yml\nIndex-Source-Commit: 6d6eba66158a3a0128a7068010694a9862198a30"
+}
