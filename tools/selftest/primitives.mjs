@@ -12,7 +12,8 @@ import { fileURLToPath } from "node:url";
 import { ijsonProblems, stableStringify, jcs } from "../lib/canonical.mjs";
 import { KNOWN, validate as validateSchema } from "../lib/jsonschema.mjs";
 import { ID_PATTERN, invalidId, unsafePathComponent, foldId, unsafeDisplayText } from "../lib/ids.mjs";
-import { compareSemver } from "../lib/semver.mjs";
+import * as semver from "../lib/semver.mjs";
+import { SEMVER_PATTERN, compareSemver, parseSemver } from "../lib/semver.mjs";
 import { readZip, readEntry } from "../lib/zip.mjs";
 import { REPO_ROOT } from "../lib/sources.mjs";
 import { makeFixtures } from "../make-fixtures.mjs";
@@ -726,6 +727,47 @@ export async function run() {
       assertEqual(compareSemver(chain[i], chain[i + 1]), -1, `${chain[i]} must precede ${chain[i + 1]} (semver.org §11.4)`);
       assertEqual(compareSemver(chain[i + 1], chain[i]), 1, `${chain[i + 1]} must follow ${chain[i]} (semver.org §11.4)`);
     }
+  });
+  // Contract §0.7 since 2.16.0: a version is at most 256 characters, its
+  // pre-release and build included. The plugins service refuses `len() > 256`
+  // before it splits, and a record on `main` is write-once, so a longer
+  // version would be a record its mirror can never hold. semver.org sets no
+  // length, and until this test the grammar admitted any. The number is
+  // written here as the contract's, not read from semver.mjs, so a wrong
+  // constant there cannot carry the test with it.
+  //
+  // SEMVER_PATTERN is asked as well as parseSemver: four bot modules
+  // (baseline, export-issues, decisions, service-decide) compile the pattern
+  // themselves and never call the function.
+  await test("a version is at most 256 characters, pre-release and build included: parseSemver and SEMVER_PATTERN admit 256 and refuse 257 wherever the length sits, and compareSemver will not order 257 (contract §0.7, 2.16.0)", () => {
+    const CONTRACT = 256;
+    const re = new RegExp(SEMVER_PATTERN);
+    // Where the length sits must not matter: the service counts the whole
+    // string, so a bound on one part would be a different rule.
+    const cases = [
+      ["pre-release and build", `1.0.0-${"a".repeat(125)}+${"b".repeat(124)}`, "b"],
+      ["pre-release only", `1.0.0-${"a".repeat(250)}`, "a"],
+      ["build only", `1.0.0+${"b".repeat(250)}`, "b"],
+      ["a bare patch number", `1.0.${"9".repeat(252)}`, "9"],
+    ];
+    const wrong = [];
+    for (const [what, at256, more] of cases) {
+      const at257 = at256 + more;
+      assertEqual(at256.length, CONTRACT, `the ${what} fixture is not ${CONTRACT} characters`);
+      if (parseSemver(at256) === null) wrong.push(`parseSemver refused 256 (${what})`);
+      if (!re.test(at256)) wrong.push(`SEMVER_PATTERN refused 256 (${what})`);
+      if (parseSemver(at257) !== null) wrong.push(`parseSemver admitted 257 (${what})`);
+      if (re.test(at257)) wrong.push(`SEMVER_PATTERN admitted 257 (${what})`);
+    }
+    assertEqual(wrong.join("; "), "", "the 256-character bound is not where contract §0.7 puts it");
+    // Admitted means parsed as the version it is, not merely matched.
+    const full = parseSemver(cases[0][1]);
+    assertEqual(full?.prerelease?.[0]?.length, 125, "the 256-character version's pre-release parsed wrong");
+    assertEqual(full?.build?.length, 124, "the 256-character version's build parsed wrong");
+    let threw = false;
+    try { compareSemver(`${cases[0][1]}b`, "1.0.0"); } catch { threw = true; }
+    assert(threw, "compareSemver ordered a 257-character version, which no party can hold");
+    assertEqual(semver.SEMVER_MAX_LENGTH, CONTRACT, "tools/lib/semver.mjs does not export contract §0.7's bound as SEMVER_MAX_LENGTH");
   });
 
   console.log("\nzip reader/writer");

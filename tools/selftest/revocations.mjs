@@ -103,6 +103,28 @@ export async function run() {
     const errs = checkAdvisory({ ...GOOD_ADVISORY, entries: [{ kind: "author", value: "someone" }] });
     assert(errs.some((e) => e.includes("not one the daemon reads")), errs.join("; "));
   });
+  // Contract §0.7 since 2.16.0: a version is at most 256 characters, pre-release
+  // and build included. An advisory names versions in two places, an
+  // `id_version` value and a `version_range` window, and both reach the signed
+  // withdrawal list, which the plugins service mirrors and every client reads.
+  // A version the service cannot hold there is a list it cannot mirror.
+  await test("an advisory's versions are at most 256 characters: an id_version value and a version_range window admit 256 and refuse 257 (contract §0.7, 2.16.0)", () => {
+    const v256 = `1.0.0-${"a".repeat(125)}+${"b".repeat(124)}`;
+    const v257 = `${v256}b`;
+    assertEqual(v256.length, 256, "the fixture is not 256 characters");
+    const withEntry = (entry) => checkAdvisory({ ...GOOD_ADVISORY, entries: [{ kind: "digest", value: "a".repeat(64) }, entry] });
+    const idVersion = (v) => withEntry({ kind: "id_version", value: `dice-roller@${v}` });
+    // `fixed` is 2.0.0 so the window stays forward whichever bound is long.
+    const introduced = (v) => withEntry({ kind: "version_range", value: "dice-roller", versions: { introduced: v, fixed: "2.0.0" } });
+    const fixed = (v) => withEntry({ kind: "version_range", value: "dice-roller", versions: { introduced: "0.1.0", fixed: v.replace(/^1/, "3") } });
+    const wrong = [];
+    for (const [what, check] of [["id_version", idVersion], ["versions.introduced", introduced], ["versions.fixed", fixed]]) {
+      const at256 = check(v256);
+      if (at256.length) wrong.push(`${what} refused 256: ${at256.join("; ")}`);
+      if (check(v257).length === 0) wrong.push(`${what} admitted 257`);
+    }
+    assertEqual(wrong.join("\n"), "", "an advisory does not hold its versions to contract §0.7's bound");
+  });
 
   // ── the kind vocabulary, and the two legs that do not exist ────────────────
   //
