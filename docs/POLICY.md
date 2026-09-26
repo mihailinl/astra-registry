@@ -14,6 +14,19 @@ promise cannot drift from the code that keeps it. A published SLA that has
 quietly stopped being true is worse than no SLA, because it teaches people the
 document is decoration.
 
+**Two paths, and they do not wait for the same things.** *Amended 2026-09-26
+(contract 3.0.0, DEC-19).* Until the cutover, a release reaches this registry
+either through an issue here, **the issue path**, or through the Astra plugins
+panel, **the service path**. The owner asked for publication when the publisher
+publishes, with a warning for users rather than a block, so the two now differ:
+
+- **On the service path, a release that passes every automatic check publishes
+  at once**, marked *not reviewed by Astra moderators*. A moderator may mark a
+  version reviewed later (§2.1). Nothing on this path is delayed, and only a
+  change of hands on a listing that already exists waits for a moderator (§3).
+- **The issue path keeps its holds and delays until the cutover removes it.**
+  Where a section below describes only one path, it says which.
+
 ---
 
 ## 0. You always get an answer
@@ -86,7 +99,9 @@ take:
   file update and no form, and also why editing the file does not revoke
   anybody's ability to ship a release of a plugin that is already listed.
 
-## 1. The four outcomes
+## 1. The outcomes
+
+On the issue path, until the cutover:
 
 | Outcome | What it means | Who is involved |
 |---|---|---|
@@ -108,9 +123,30 @@ A **delayed** release closes its issue the same way, when it drains — which ca
 be a day after the last thing anybody said on it. Until then the issue stays
 open on purpose: it is where you object.
 
+**On the service path there are three outcomes, and none of them is a delay.**
+
+| Outcome | What it means | Who is involved |
+|---|---|---|
+| **Published** | Every check passed. It is committed in the run that checked it, marked not reviewed by Astra moderators (§2.1). | Nobody. A moderator may review it later. |
+| **Held** | A change of hands on a listing that already exists (§3). | A moderator, and then the windows in §3.2. |
+| **Refused** | A check failed. The policy never got a say. | The author, who fixes what the code names. |
+
+The author is told through the plugins service, not on an issue.
+
 ## 2. When a release publishes itself
 
-All five of these, and it goes live with no human:
+**On the service path**, a release publishes itself in the run that checks it
+when every check in `docs/BOT-CHECKS.md` is green and it is not a change of
+hands (§3). A first listing, a newly requested high-risk permission, a wider
+permission set and a name a check flags all publish at once. Each of those
+carries `P_REVIEW_PRIORITY` beside `P_PUBLISHED`, so that moderators read it
+first. An operator's deny record still withholds one exact build
+(`P_OPERATOR_DENIED`). A release also waits, with no verdict, while a fact the
+checks need cannot be read — GitHub rate-limits the bot, or the plugins service
+does not answer — because that is a missing fact, not a review.
+
+**On the issue path, until the cutover**, all five of these, and it goes live
+with no human:
 
 - the repository it comes from is the one already listed for that plugin;
 - every check in `docs/BOT-CHECKS.md` is green;
@@ -121,9 +157,89 @@ All five of these, and it goes live with no human:
 
 Drop the last condition and it still publishes itself — after a delay.
 
-## 3. The three events that need a person
+### 2.1 Reviewed and not reviewed
 
-Exactly three, and this list does not grow without a change to this document:
+*New 2026-09-26 (contract 3.0.0, DEC-19).* Every version record added since
+`schema/version-v1.json` gained the member carries a **review mark**, `review`,
+whichever path published it, and the signed catalogue carries it for each
+release as `releases[].review`. It has two values:
+
+| Mark | What it says |
+|---|---|
+| `unreviewed` | No Astra moderator has marked this version reviewed. Every version starts here when it is published. |
+| `reviewed` | An Astra moderator read this version and marked it reviewed. |
+
+**The mark belongs to one version.** A new version starts `unreviewed`, however
+its earlier versions are marked. A review is a reading of bytes, and the update
+a hijacked author account ships is exactly the release a carried-over mark
+would hide. A change of hands a moderator approved (§3) also starts
+`unreviewed`: **an approval is not a review.** A version published before this
+rule carries no mark at all, which means neither.
+
+**What `reviewed` claims, and what it does not.** It claims that an Astra
+moderator read that version and marked it. It is not a security review, not a
+code audit, not an endorsement, and not a sandbox: a plugin is still a native
+program with the user's full privileges (root `POLICY.md` §0). A later
+advisory, yank or delist always wins over it.
+
+**Who sets it.** Only a moderator's review, `M_REVIEW`, in the plugins panel,
+which the moderator confirms through a separate channel. The bot applies it in
+one commit with a moderation-log entry `review`, and nothing else changes a
+mark: it moves once, to `reviewed`, and never back. A review is never held and
+does not count toward the takedown bound (root `POLICY.md` §7). A review found
+wrong is answered by a withdrawal (§9), not by undoing the mark.
+
+**Which versions can be reviewed.** Any version of a listed plugin: its
+listing is not `unlisted`, and its version record exists and is not yanked.
+That includes a version published before this rule, which carries no mark and
+then carries `reviewed`, and a version of a `grandfathered` or `frozen` listing
+(root `POLICY.md` §6.1).
+
+**What users see.** The plugins panel shows the mark beside each release on a
+plugin's page. From the Astra release that adds the mark:
+
+- Astra warns before it installs a version that is not reviewed, on the screen
+  where the user confirms the install.
+- An install that Astra's AI tools ask for shows the same warning on its
+  confirmation. Where Astra's settings show no confirmation for that tool, the
+  install is refused, and the user is sent to the plugins page.
+- Astra warns wherever the user starts an update to a version that is not
+  reviewed: the plugin's card, the update list, and before "update all". It
+  applies such an update only with the user's acknowledgement of that warning.
+
+Astra 0.2.x, and every Astra release before the one that adds the mark, shows no
+mark and no warning. A version with no mark shows no warning anywhere.
+
+**What moderators read first.** A release that would have been held or delayed
+before contract 3.0.0 — a first listing, a newly requested high-risk permission,
+a wider permission set, a name a check flags — carries `P_REVIEW_PRIORITY`, so
+that moderators read it first.
+
+## 3. What waits for a person
+
+**On the service path, one kind of release waits: a change of hands on a
+listing that already exists.** *Amended 2026-09-26 (contract 3.0.0, DEC-19).*
+
+| Event | Code | Why a person |
+|---|---|---|
+| The repository or identity changed | `R_IDENTITY_CHANGED` | Every installed copy carries a pin to the old repository. A repository change is an author change until somebody says otherwise. |
+| The first release of a published listing to carry a binding line | `R_FIRST_BINDING` | It makes the account whose line it carries the listing's bound account, which can delist it and yank its versions at once, for everybody already running it. |
+| A binding line with a different token from the one the listing is bound with | `R_BINDING_CHANGED` | Control of the listing moves to another account. The previously bound account is told first. |
+
+Each of these ships another party's code, or another party's control, as an
+update to people who already trust the listing, and a warning on an update is
+the one a user is least likely to read. So each still waits for a moderator's
+approval, and then for every window in §3.2. `P_APPROVAL_STALE` can stand
+beside them. The approved release still publishes marked `unreviewed` (§2.1).
+
+Everything else that used to wait for a person on this path publishes at once,
+with `P_REVIEW_PRIORITY`: a first listing, a newly requested high-risk
+permission, and a check's own flag — a name one edit away from a listed plugin,
+a display name that collides with one or mixes scripts, a high-risk host RPC
+named inside a vendored directory.
+
+**On the issue path, until the cutover**, these three events wait for a
+maintainer, and this list does not grow without a change to this document:
 
 | Event | Code | Why a person |
 |---|---|---|
@@ -143,9 +259,10 @@ and each is refused outright to an unverified local import (PRODUCTION_PLAN
 section a manifest declares them in is not the point, the authority requested is.
 
 `push_to_ui` is high-risk on the *consent sheet* (§5.6) and is deliberately not
-in the set above. A consent checkbox costs a user one read; blocking review costs
-an author days. `push_to_ui` draws inside a panel the plugin already owns, so a
-first request for it is a widening — see below — not a review.
+in the set above. A consent checkbox costs a user one read; blocking review, on
+the issue path, costs an author days. `push_to_ui` draws inside a panel the
+plugin already owns, so a first request for it is a widening — see below — not
+a review.
 
 **What a declaration is worth now that Phase 4 has landed.** A declaration is
 enforced at run time. `require_permission` runs at the top of every host RPC
@@ -177,6 +294,10 @@ as "what the daemon will permit", and root `POLICY.md` §0 for the part no
 permission model reaches.
 
 ### 3.1 What happens to a held submission
+
+This subsection is the issue path's, until the cutover. On the service path a
+moderator decides in the plugins panel, and §3.2 says what an approval there
+waits for.
 
 A maintainer answers on the issue with one of two commands. You will see it.
 
@@ -248,10 +369,10 @@ and the registry did not honour it" is a thing the thread has to be able to say.
 
 ### The SLA, and what happens when it slips
 
-**48 h** for all four review codes, measured from the moment the bot posts the
-comment. There is one maintainer, and that number is a commitment about *those
-three events only* — which is the reason the list is three items long and not
-thirty.
+On the issue path, **48 h** for all four review codes, measured from the moment
+the bot posts the comment. There is one maintainer, and that number is a
+commitment about *those three events only* — which is the reason the list is
+three items long and not thirty.
 
 When the queue starts running past it, the answer is **to make fewer things need
 review — not to review harder.** Concretely: if listings sit past 96 h, the
@@ -261,6 +382,10 @@ paragraph. Letting the queue rot is not an available option, and the reason is
 not politeness: an author who cannot ship routes around the registry, and a
 release that auto-published after 24 h is safer for everybody than one that
 shipped through a side channel, because at least the registry saw it.
+
+On the service path that answer has been taken in full: since contract 3.0.0
+only a change of hands waits for a person there (§3), and everything else
+publishes at once, marked not reviewed (§2.1).
 
 The cron job prints the queue's age on every run (`node bot/watch.mjs --sla`) so
 a breach is loud rather than something a maintainer has to go and look for.
@@ -272,23 +397,24 @@ From R3 a submission can also reach this registry through the plugins service
 issue. On that path a moderator's approval arrives from the service, and five
 numbers bound what it can do. The first four are the owner's answers of
 2026-09-13, as contract 0.12.0 and 0.20.0 record them; the fifth is contract
-MIG-31's. `bot/lib/service-decide.mjs` enforces exactly these:
+MIG-31's. Since contract 3.0.0 an approval there clears only a change of hands
+(§3), because nothing else is held on that path and nothing on it is delayed.
+`bot/lib/service-decide.mjs` enforces exactly these:
 
 - **An approval older than 7 days is not honoured.** The bot re-runs every
   check in the run that acts on an approval, and it honours the approval only
   when a record on `main` shows the release held under exactly that
   fingerprint, nothing is blocking, and the approval was given within the last
   **7 days** (BOT-26).
-- **An approved update waits 6 hours after its author notice.** An approval
-  clears a hold and never a delay. An approved update with no delay reason is
-  published only once the service reports the author's notice was accepted at
-  least **6 hours** earlier; an approved first listing with no delay reason
-  waits for the notice and no longer; a release with a delay reason waits its
-  §4 delay as always (BOT-28).
-- **Every approval, and every delayed release reaching its time, is shown to an
-  operator first, and waits 6 hours after that.** The alert goes out in the run
-  that first reads the event, and the release is published only once the
-  channel has reported the alert delivered and **6 hours** have passed since;
+- **An approved change of hands waits 6 hours after its author notice.** A
+  change of hands is always an update, because it happens to a listing that
+  already exists. It is published only once the service reports the author's
+  notice was accepted at least **6 hours** earlier (BOT-28). An approval clears
+  a hold and nothing else.
+- **Every approval is shown to an operator first, and waits 6 hours after
+  that.** The alert goes out in the run that first reads the event, and the
+  release is published only once the channel has reported the alert delivered
+  and **6 hours** have passed since;
   a waiting author sees `W_OPERATOR_WINDOW` with the window's end, or
   `W_ALERT_UNDELIVERED` while no delivery is reported (TRUST-14, TRUST-32).
 - **A first binding waits 7 days after its hold.** An approval of
@@ -303,12 +429,18 @@ MIG-31's. `bot/lib/service-decide.mjs` enforces exactly these:
   deferred, not lost: the 7-day age above counts from the end of those 14 days
   (MIG-31).
 
-There is no `/publish` on that path, and an approved first listing that carries
-a delay reason waits out its delay like any other release (ROLL-49).
+There is no `/publish` on that path, and since contract 3.0.0 no first listing
+on it is held or delayed: it publishes at once, marked not reviewed (§2.1).
 
 ## 4. The publication delay
 
-Some releases publish themselves, but not immediately.
+**This section is the issue path's, until the cutover.** *Amended 2026-09-26
+(contract 3.0.0, DEC-19).* On the service path nothing is delayed: a release
+that would have waited here publishes at once, marked not reviewed (§2.1), with
+`P_REVIEW_PRIORITY`. **What the service path has instead**, below, says what
+stands in the delay's place there, and what that buys.
+
+On the issue path, some releases publish themselves, but not immediately.
 
 | Situation | Code | Delay |
 |---|---|---|
@@ -393,6 +525,18 @@ one of those permissions rather than only on changes. §5.5's realistic takeover
 case is a malicious version shipping with **identical** permissions, and a delay
 that only fired on a change would never fire on the case it exists for.
 
+**What the service path has instead, and what it honestly buys.** No window.
+A release from a hijacked author account publishes at once there, like any
+other, and the account bound to the listing is told after it has published. What
+stands in the delay's place is the review mark. The release is published
+`unreviewed`, and every new version starts `unreviewed` whatever its
+predecessors were (§2.1). From the Astra release that adds the mark, Astra
+warns before installing such a version and where the user starts an update to
+one, and applies that update only with the user's acknowledgement of the
+warning. That is less than a delay against an attacker nobody is
+watching, and it is nothing at all on Astra 0.2.x, which shows no mark. This
+registry does not claim otherwise.
+
 **The clock is pinned to the bytes.** The queue entry records the sha256 of every
 artifact it is waiting on. Replace an asset mid-window and `P_DELAY_BYTES_CHANGED`
 restarts the clock — otherwise the window is a schedule an attacker can publish
@@ -471,7 +615,8 @@ exists first; nothing downstream changes when it arrives.
 
 | Code | Meaning |
 |---|---|
-| `P_PUBLISHED` | Live, nobody in the loop. What a routine release looks like. |
+| `P_PUBLISHED` | Live, nobody in the loop. What a routine release looks like. On the service path it is published marked not reviewed (§2.1). |
+| `P_REVIEW_PRIORITY` | Published at once on the service path, marked not reviewed, and read first by moderators: before contract 3.0.0 this release would have waited for a person or a delay, and the message says which. Nothing to do. |
 | `P_REFUSED` | A check failed; the policy never ran. The reason is above it in the same comment. |
 | `P_OPERATOR_DENIED` | The registry's operator withheld this exact build with a deny record. Only the operator can lift it; a new tag is judged afresh. |
 | `B_UNBOUND` | No binding line where one is needed: a first listing from cutover, or a frozen listing's next release. Commit the line and tag again. |
@@ -479,7 +624,7 @@ exists first; nothing downstream changes when it arrives.
 | `B_BINDING_UNUSABLE` | The binding token on the tagged commit cannot bind this repository. The panel tells the token's owner why; tag again with a usable line. |
 | `B_OWNER_CHANGED` | The repository's owner changed since it was bound. A moderator decides. |
 | `B_REPOSITORY_RECYCLED` | The repository was re-created by another owner. Permanent, until a moderator resets the listing's identity. |
-| `R_FIRST_LISTING` | First listing — a person reads it, once, ever. |
+| `R_FIRST_LISTING` | First listing, on the issue path — a person reads it, once, ever. On the service path a first listing publishes at once instead, with `P_REVIEW_PRIORITY`. |
 | `R_NEW_HIGH_RISK` | A high-risk permission this plugin did not have before. |
 | `R_IDENTITY_CHANGED` | The repository this plugin is listed from changed. |
 | `R_FIRST_BINDING` | The first release of an already published listing to carry a binding line. A moderator approves it once; later releases under that binding are not held for it again. |
@@ -499,6 +644,11 @@ exists first; nothing downstream changes when it arrives.
 | `P_UNKNOWN_PERMISSION` | A permission name this registry cannot describe. Reported, never blocking — the daemon default-denies, so it grants nothing. |
 | `P_SLA` | What happens next, and by when. |
 
+Since contract 3.0.0, `R_FIRST_LISTING`, `R_NEW_HIGH_RISK`, `R_CHECK_HELD`,
+`P_FIRST_LISTING_APPROVED`, `P_TRUSTED_AUTHOR` and every `P_DELAY_` code arise
+on the issue path alone, until the cutover removes it. The service path holds
+only a change of hands (§3) and delays nothing.
+
 ### Codes the plugins panel shows
 
 On the plugins-service path the Astra plugins panel shows each of these with
@@ -507,7 +657,7 @@ above (FLOW-13).
 
 | Code | Meaning | What clears it |
 |---|---|---|
-| `M_APPROVE` | A moderator approved the submission. An approval clears holds only; it never shortens a delay, a stop or a pending notice. | Nothing needs clearing. |
+| `M_APPROVE` | A moderator approved the submission. An approval clears holds only; it never shortens a delay, a stop or a pending notice. On this path only a change of hands is held, and an approved one still publishes not reviewed (§2.1). | Nothing needs clearing. |
 | `M_REJECT` | A moderator rejected the submission. A Recheck does not reopen it. | An appeal a moderator reverses, which opens exactly one Recheck. |
 | `M_APPEAL` | An appeal was decided, `stands` or `reversed`, with the moderator's public reason and never the appeal's text. | Nothing; the outcome is final. |
 | `A_STOP` | The submission was stopped from its notice link. A stop cannot be lifted. | Only a release under a new tag. |
@@ -526,6 +676,7 @@ above (FLOW-13).
 | `M_UNREVOKE` | A moderator deleted an advisory, after its hold and an operator's confirmation. Its effect lifts at the withdrawal list's next higher serial. | Nothing needs clearing. |
 | `M_BINDING_REVOKE` | A moderator revoked the repository's binding token. Listed versions are not touched, and the next release is refused `B_BINDING_UNUSABLE`. | Nothing on this code. `B_BINDING_UNUSABLE` says what clears that refusal. |
 | `M_IDENTITY_RESET` | A moderator reset the listing's recorded identity (§9, **Reset**). It clears `B_REPOSITORY_RECYCLED` for the identities it voided. | Nothing. |
+| `M_REVIEW` | A moderator marked these versions reviewed (§2.1): a moderator read each of them. It is one person's reading, not a safety guarantee, and a later advisory, yank or delist overrides it. The next version starts not reviewed. | Nothing needs clearing. |
 
 The waits the bot reports are not in this table: `W_LEASE_EXPIRED`,
 `W_ELIGIBILITY_UNREADABLE`, `W_NOTICE_PENDING`, `W_GITHUB_RATE_LIMITED`,
@@ -641,10 +792,12 @@ unrecognised tier is not a badge.
 
 Auto-publication is not a safety review, and neither is human review — a
 maintainer reading a listing issue is checking a name, a repository and a
-permission request, not auditing a compiled binary. Being in this catalogue means
-the bytes are the bytes CI built from a repository somebody proved they control,
-and that this document's rules were applied to the result. Root POLICY.md §0 says
-the rest, and it is the sentence this policy cannot get around.
+permission request, not auditing a compiled binary. Nor is a review mark:
+`reviewed` says that an Astra moderator read that version, and nothing more
+(§2.1). Being in this catalogue means the bytes are the bytes CI built from a
+repository somebody proved they control, and that this document's rules were
+applied to the result. Root POLICY.md §0 says the rest, and it is the sentence
+this policy cannot get around.
 
 ---
 
@@ -693,6 +846,12 @@ who finds the delist and not the relist reads a listed plugin as withdrawn.
 None of the four costs a user anything, which is why they are not in the
 escalation table above: they are the other direction. An appeal that is
 `reversed` is followed by whichever of the first two it calls for.
+
+**Review** goes in the same log, and costs nobody anything either. A
+moderator's `M_REVIEW` marks versions reviewed (§2.1), and its entry, category
+`review_passed`, names the versions it marked. It undoes nothing, and nothing
+undoes it: a review found wrong is answered by one of the four actions at the
+top of this section.
 
 **A reset binds nothing and publishes nothing.** After it the listing is
 *frozen* — a listing that ever had an identity record is never grandfathered
