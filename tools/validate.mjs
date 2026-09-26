@@ -27,7 +27,7 @@ import crypto from "node:crypto";
 
 import { validate as validateSchema } from "./lib/jsonschema.mjs";
 import { POSITIVE_INTEGER_LITERAL, topLevelMembers } from "./lib/json-literal.mjs";
-import { stableStringify } from "./lib/canonical.mjs";
+import { ijsonProblems, pathSegment, stableStringify } from "./lib/canonical.mjs";
 import { compareSemver, parseSemver } from "./lib/semver.mjs";
 import { reservedPrefixViolation, stagingListingId } from "./lib/reserved.mjs";
 import {
@@ -192,6 +192,28 @@ export function displayStrings(doc) {
       for (const key of Object.keys(block).sort()) take(`i18n.${code}.${key}`, block[key]);
     }
   }
+  // `permissions.<id>.*`: the reason, and every other string the member holds
+  // (`types`, `scopes`, and whatever a later manifest adds). The consent sheet
+  // renders the reason before anything is downloaded, so it is a display string
+  // by any definition — and until 2.16.0 this walk did not reach it: measured
+  // on main d8effae, a version record whose reason carried a lone-surrogate
+  // escape passed `schema/version-v1.json` and this validator with 0 errors,
+  // and the generator wrote it into the catalogue every client parses whole.
+  // (The bot's own path was closed only by the Rust manifest probe, whose
+  // serde_json calls the escape a syntax error.) Taken from a
+  // version record's own `permissions` and from each of an index entry's
+  // `releases[]`, so the same walk holds the source and the deploy candidate.
+  const permissions = (member, prefix) => {
+    if (!member || typeof member !== "object" || Array.isArray(member)) return;
+    const leaves = (field, v) => {
+      if (typeof v === "string") take(field, v);
+      else if (Array.isArray(v)) v.forEach((x, i) => leaves(`${field}[${i}]`, x));
+      else if (v && typeof v === "object") for (const k of Object.keys(v).sort()) leaves(`${field}${pathSegment(k)}`, v[k]);
+    };
+    for (const id of Object.keys(member).sort()) leaves(`${prefix}permissions${pathSegment(id)}`, member[id]);
+  };
+  permissions(doc?.permissions, "");
+  if (Array.isArray(doc?.releases)) doc.releases.forEach((r, i) => permissions(r?.permissions, `releases[${i}].`));
   return out;
 }
 
@@ -450,6 +472,16 @@ function checkVersionDoc(plugin, version, ctx) {
 
   for (const e of validateSchema(schemas.version, doc)) {
     report.error(where, `${e.path} ${e.message}`);
+  }
+  // The permission words, which are the version record's display strings: the
+  // consent sheet shows them before the user has agreed to anything.
+  for (const [field, value] of displayStrings(doc)) {
+    const trick = unsafeDisplayText(value);
+    if (trick) {
+      report.error(where, `${field} ${trick}`,
+        "A permission's reason is rendered on Astra's consent sheet before anything is installed. Invisible " +
+        "characters there are a spoofing tool, and an unpaired surrogate makes the catalogue unreadable to every client.");
+    }
   }
   if (typeof doc.version !== "string" || !parseSemver(doc.version)) return;
 
@@ -2648,6 +2680,134 @@ export function checkPublisherRecords(ctx, loaded = loadPublishers(ctx.root)) {
   }
 }
 
+// ── every string of every record ────────────────────────────────────────────
+
+/**
+ * Where the registry keeps what it commits and serves: every `*.json` at or
+ * under one of these is a record `checkRecordStrings` holds — the listings
+ * and versions, the publishers, the catalogue and the other three signed
+ * documents, `log/` with its decisions and rollout records, `state/`, the
+ * moderation entries, the advisories, the policy files, the schemas, the
+ * site's redirects and the codes table.
+ *
+ * **A list of what to INCLUDE, and why that is not the usual mistake.** The
+ * obvious alternative, the whole root minus test data, walks what CI checks
+ * out INTO the root: `build-index.yml` puts AstraPlugins' locale corpus at
+ * `_astra-plugins/`, and `bot/manifest-probe/link-deps.sh` clones it under
+ * `_deps/`, and that corpus is malformed on purpose. So this list is closed,
+ * and what keeps it from going stale is `tools/selftest/validation.mjs`: every
+ * tracked `*.json` must be under one of these, or be test data or one of two
+ * canary configuration files that the selftest names with its reason, so a new
+ * record directory is red the day its first file is committed, not silently
+ * unwalked. (Those exclusions live in the selftest and not here because a path
+ * this module names is a gate input by TRUST-31's leg (c), and neither is one.)
+ */
+export const RECORD_ROOTS = Object.freeze([
+  "plugins",
+  "publishers",
+  "registry",
+  "log",
+  "state",
+  "bot/moderation",
+  "bot/policy",
+  "tools/revocations",
+  "policy",
+  "schema",
+  "site",
+  "tools/codes-table.json",
+]);
+
+/** Every `*.json` under `root` that `checkRecordStrings` holds, repository-relative, sorted. */
+export function recordFiles(root) {
+  const out = [];
+  const walk = (rel) => {
+    let st;
+    try {
+      st = fs.statSync(path.join(root, rel));
+    } catch {
+      return;
+    }
+    if (st.isFile()) {
+      if (rel.endsWith(".json")) out.push(rel);
+      return;
+    }
+    if (!st.isDirectory()) return;
+    for (const d of fs.readdirSync(path.join(root, rel), { withFileTypes: true })) {
+      // Never a record: a dot-directory, a package tree, a Rust build tree.
+      if (d.isDirectory() && (d.name.startsWith(".") || d.name === "node_modules" || d.name === "target")) continue;
+      if (d.isDirectory() || (d.isFile() && d.name.endsWith(".json"))) walk(`${rel}/${d.name}`);
+    }
+  };
+  for (const r of RECORD_ROOTS) walk(r);
+  return [...new Set(out)].sort();
+}
+
+/**
+ * What stops a record's bytes from being a document every party can hold:
+ * bytes that are not UTF-8 (a literal lone surrogate is `ED A0 80`, which no
+ * UTF-8 decoder accepts and `readFileSync(…, "utf8")` silently turns into three
+ * U+FFFD), text that is not JSON, and any member name or string value that is
+ * not an I-JSON string — which is where a `\ud800` ESCAPE lands, because
+ * `JSON.parse` admits it as one lone UTF-16 unit.
+ *
+ * @param {Buffer} bytes
+ * @returns {{path: string, problem: string}[]}
+ */
+export function recordStringProblems(bytes) {
+  let text;
+  try {
+    // `ignoreBOM` keeps a byte-order mark, so JSON.parse refuses it below as it
+    // refuses it everywhere else, and as serde_json does.
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    return [{ path: "$", problem: "bytes that are not valid UTF-8" }];
+  }
+  let doc;
+  try {
+    doc = JSON.parse(text);
+  } catch (e) {
+    return [{ path: "$", problem: `text that is not JSON (${e.message})` }];
+  }
+  return ijsonProblems(doc);
+}
+
+/**
+ * Contract §0.7, since 2.16.0: every string member of every record the
+ * registry commits or serves is valid Unicode, with no unpaired surrogate —
+ * and, because RFC 8785 is defined over I-JSON and the signer canonicalises
+ * with it, no noncharacter either.
+ *
+ * **Why a walk of the whole tree and not of the fields somebody thought of.**
+ * Records here are write-once: a record on `main` that a consumer cannot hold
+ * freezes that consumer and never leaves the tree. `displayStrings` knows
+ * which strings a person reads; this knows nothing about any record and needs
+ * to, which is the point — `serde_json` refuses a lone surrogate in a member
+ * nobody renders exactly as firmly as in one everybody does.
+ *
+ * It runs wherever this validator runs, which is before every commit a bot
+ * makes: `bot/ingest.mjs` holds its derived listing to it (`validateDerived`),
+ * `bot/publish-apply.mjs` runs this file as the first of its five checks, and
+ * the moderation commit job runs it before it pushes.
+ */
+export function checkRecordStrings(ctx) {
+  const { report, root } = ctx;
+  for (const rel of recordFiles(root)) {
+    let bytes;
+    try {
+      bytes = fs.readFileSync(path.join(root, rel));
+    } catch (e) {
+      report.error(rel, `cannot be read (${e.code ?? e.message})`);
+      continue;
+    }
+    for (const p of recordStringProblems(bytes)) {
+      report.error(rel, `${p.path} carries ${p.problem}`,
+        "Contract §0.7 (since 2.16.0): every string in every record is valid Unicode. serde_json refuses this " +
+        "one, and a record on main is write-once, so a reader that cannot hold it is frozen for good. Refuse the " +
+        "source it came from; never commit it.");
+    }
+  }
+}
+
 // ── driver ──────────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
@@ -2715,6 +2875,7 @@ export async function runValidation(opts) {
   checkBaselineMarker(usable, ctx);
   checkMigrationMarkers(ctx);
   checkNoticeMarkers(ctx);
+  checkRecordStrings(ctx);
 
   // B.4's other record trees, walked once and handed to both checks: the
   // second one counts author-action records against the yanks a moderation

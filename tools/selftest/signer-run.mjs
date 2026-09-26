@@ -271,6 +271,48 @@ export async function run() {
     }
   });
 
+  // Contract §0.7 (since 2.16.0) at the last line: nothing the signer commits
+  // carries a string no client can parse. The catalogue and the list are
+  // generated, and their generators and `stableStringify` refuse such a
+  // string; trust.json and root.json are BYTE COPIES of `main` (D2), and
+  // until this check nothing between `main` and `signed` read their strings at
+  // all. Every client parses each document whole with serde_json, so one lone
+  // surrogate in root.json is four documents nobody can read. Two shapes, one
+  // run each: the `\\ud800` escape JSON.parse admits, and the literal three
+  // bytes that the signer's own git reader decodes to U+FFFD and forgets.
+  await test("a trust.json or root.json that is not valid I-JSON is refused, escape or literal, and the run commits nothing", async () => {
+    const cases = [
+      ["root", "an escaped lone surrogate", (t) => t.write(SIGNED_FILES.root,
+        '{\n  "roots": [],\n  "schema": "astra.registry.root/1",\n  "note": "\\ud800"\n}\n'), "unpaired surrogate U+D800"],
+      ["trust", "a literal lone surrogate", (t) => {
+        const text = stableStringify({ ...trustDelegating([BOOTSTRAP]), $comment: "LONE" });
+        const [before, after] = text.split("LONE");
+        fs.writeFileSync(path.join(t.dir, SIGNED_FILES.trust),
+          Buffer.concat([Buffer.from(before), Buffer.from([0xed, 0xa0, 0x80]), Buffer.from(after)]));
+      }, "not valid UTF-8"],
+    ];
+    for (const [name, what, spoil, says] of cases) {
+      const t = makeTree(`not-ijson-${name}`, { trustKeys: [BOOTSTRAP] });
+      t.addListing("dice-roller");
+      spoil(t);
+      const sourceCommit = t.commit(`a listing, and a ${SIGNED_FILES[name]} carrying ${what}`);
+      const record = await signRun({
+        root: t.dir, sourceCommit, head: { present: false }, now: "2026-09-19T00:00:00Z",
+        available: [signerFor(BOOTSTRAP)],
+      });
+      assertEqual(record.commit, false, `the run committed a ${SIGNED_FILES[name]} carrying ${what}`);
+      assert(record.codes.includes("SIGNER_DOCUMENT_NOT_IJSON"),
+        `${what} in ${SIGNED_FILES[name]} is not reported by the signer's own check: ${record.codes.join(" ")}`);
+      // The catalogue gate refuses too — `tools/validate.mjs` walks the same file
+      // at the Source-Commit — and that refusal names the catalogue. This one is
+      // the signer's own, over the document it would have copied.
+      const mine = record.refusals.filter((r) => r.startsWith(`BLOCKED ${SIGNED_FILES[name]}: `) && r.includes(says));
+      assertEqual(mine.length, 1, `the refusal has to name the document and what it carries: ${record.refusals.join(" | ")}`);
+      assert(!/\p{Cs}/u.test(record.refusals.join(" ")), "a refusal carries the lone surrogate it refuses");
+      assertEqual(record.status, "red", "a run that publishes nothing reported green");
+    }
+  });
+
   await test("a catalogue no key may sign yet is carried, and the withdrawal list still publishes", async () => {
     // SERVE-30's seven hours, inside a real run. The incoming key may sign the
     // LIST from the delegating commit — that is what carries it into
