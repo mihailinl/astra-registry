@@ -33,6 +33,16 @@ import { loadRevocations, trackRecord } from "./track-record.mjs";
 import { queueFile, readQueueEntry, ripeQueueEntries } from "./queue.mjs";
 import { HOUR_MS, iso } from "./time.mjs";
 
+/**
+ * DEC-19's three change-of-hands holds: the only `R_*` the service path holds
+ * on since contract 3.0.0 (decision D3 keeps `R_FIRST_BINDING` among them).
+ * Module-private on purpose: `bot/lib/policy.mjs` re-exports this module, and
+ * its export surface is held to the names it had (`tools/selftest/
+ * repo-rules.mjs`). `bot/lib/service-decide.mjs` reads the classification off
+ * the decision's own reasons instead of keeping a second copy of the list.
+ */
+const CHANGE_OF_HANDS = new Set(["R_IDENTITY_CHANGED", "R_BINDING_CHANGED", "R_FIRST_BINDING"]);
+
 
 /**
  * Decide what happens to one ingested release.
@@ -333,12 +343,36 @@ export function decide(input) {
   // R_FIRST_LISTING and R_IDENTITY_CHANGED are raised by the ingest checks
   // (they are facts about the submission); this module adds the third and
   // states all three in one place so POLICY.md has one table to quote.
+  //
+  // **The service path, since contract 3.0.0 (DEC-19).** There only a change
+  // of hands on a listing that already exists holds — `R_IDENTITY_CHANGED`,
+  // `R_BINDING_CHANGED`, `R_FIRST_BINDING` — with `P_APPROVAL_STALE` beside
+  // them, and every window each approval waits today (DEC-6, decision D2).
+  // Everything else that held or delayed a release under 2.22.0 — a first
+  // listing, a check's flag for a person, a newly requested high-risk
+  // permission, and below, every delay reason — is not a hold there: the
+  // release publishes in this run, its record marked `unreviewed`, and it
+  // carries `P_REVIEW_PRIORITY`, whose message says which of those it met so
+  // that moderators read it first. The legacy issue path is untouched and
+  // keeps every hold and delay until R6 removes it (decision D1).
+  const onService = path === "service";
+  const priority = [];
   const held = levelled.filter((f) => f.level === "review");
+  const flagged = [];
   for (const f of held) {
+    if (onService && !CHANGE_OF_HANDS.has(f.code)) {
+      // R_FIRST_LISTING is reported by the `!existing` line below rather than
+      // as a check's flag: it is the policy's fact, raised by the check job.
+      if (f.code !== "R_FIRST_LISTING") flagged.push(f.code);
+      continue;
+    }
     const code = Object.hasOwn(POLICY_CODES, f.code) ? f.code : "R_CHECK_HELD";
     add(code, f.message);
   }
-  if (newHighRisk.length && !held.some((f) => f.code === "R_FIRST_LISTING")) {
+  if (onService) {
+    if (!existing || held.some((f) => f.code === "R_FIRST_LISTING")) priority.push("a first listing");
+    if (flagged.length) priority.push(`a check's flag for a person (${[...new Set(flagged)].join(", ")})`);
+  } else if (newHighRisk.length && !held.some((f) => f.code === "R_FIRST_LISTING")) {
     // A first listing already blocks, and saying "and also it wants dom_access"
     // twice does not make the human read it twice.
     add("R_NEW_HIGH_RISK", `this release adds ${newHighRisk.join(", ")}, which the listed ${previous?.version ?? "previous version"} did not have`);
@@ -395,6 +429,25 @@ export function decide(input) {
     delayReasons.push({
       code: "P_DELAY_WIDENED",
       message: `it asks for ${added.join(", ")}, which ${previous.version} did not`,
+    });
+  }
+
+  // DEC-19: no delay on the service path. A reason that delayed a release
+  // under 2.22.0 is one more thing moderators should read first.
+  if (onService) {
+    if (heldHighRisk.length) priority.push(`a high-risk permission held (${heldHighRisk.join(", ")})`);
+    if (previous && added.length) priority.push(`a widened permission set (${added.join(", ")}, which ${previous.version} did not ask for)`);
+    add("P_PUBLISHED", priority.length
+      ? "published in the run that checked it, marked not reviewed by moderators (DEC-19): every check green, version strictly greater"
+      : "identity unchanged, permissions unchanged, every check green, version strictly greater");
+    if (priority.length) {
+      add("P_REVIEW_PRIORITY",
+        `under the rules before contract 3.0.0 this release would have waited for a person or a delay: ${priority.join("; ")}. ` +
+        "It is published now, marked unreviewed, and moderators read it first");
+    }
+    return finish({
+      outcome: "publish", reasons, track, now, artifact_digests: digests, approval,
+      refused: refusedApproval, repo, tag: input.tag, fingerprint,
     });
   }
 

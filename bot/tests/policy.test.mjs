@@ -3433,6 +3433,88 @@ await test("`decide()` passes the path to every level lookup", () => {
     "and FLOW-72's whole distinction is inert");
 });
 
+// ── DEC-19 (contract 3.0.0): the service path publishes; only a change of hands holds ──
+//
+// The owner's direction of 2026-09-26 (OD-21): a release publishes when its
+// author publishes it, marked unreviewed. On the service path each hold and
+// delay 2.22.0 had — a first listing, a check's flag for a person, a newly
+// requested high-risk permission, a high-risk permission held, a widened set —
+// publishes in the run that checks it, with `P_REVIEW_PRIORITY` beside
+// `P_PUBLISHED`, whose message says which. The legacy issue path keeps every
+// one of them until R6 (decision D1), so each case is asked of both paths and
+// the legacy answer is the one it always gave.
+//
+// Watched failing: with the `onService` branches in bot/lib/policy/decision.mjs
+// removed, every service-path row below holds or delays as its legacy twin
+// does; with `CHANGE_OF_HANDS` emptied, the second test's holds publish.
+const withCaps = (base, caps, previous = ["tools"]) => ({
+  ...base,
+  derived: { ...base.derived, version: { ...base.derived.version, capabilities: caps } },
+  existing: { versions: [{ doc: { version: "0.1.17", capabilities: previous } }] },
+});
+const DEC19_CASES = [
+  ["a first listing", () => publishable({ findings: [{ level: "review", code: "R_FIRST_LISTING", where: "version", message: "never listed" }] }),
+    { legacy: "review", legacyCode: "R_FIRST_LISTING", hint: /a first listing/ }],
+  ["a check's flag for a person", () => ({ ...cleanRelease(), findings: [{ level: "review", code: "R_TYPOSQUAT_NEAR", where: "names", message: "one edit from a listed id" }] }),
+    { legacy: "review", legacyCode: "R_CHECK_HELD", hint: /a check's flag for a person \(R_TYPOSQUAT_NEAR\)/ }],
+  ["a newly requested high-risk permission", () => withCaps(cleanRelease(), ["tools", "dom_access"]),
+    { legacy: "review", legacyCode: "R_NEW_HIGH_RISK", hint: /a high-risk permission held \(dom_access\).*a widened permission set \(dom_access/ }],
+  ["a high-risk permission held", () => withCaps(cleanRelease(), ["tools", "dom_access"], ["tools", "dom_access"]),
+    { legacy: "delay", legacyCode: "P_DELAY_HIGH_RISK", hint: /a high-risk permission held \(dom_access\)/ }],
+  ["a widened permission set", () => withCaps(cleanRelease(), ["tools", "tts"]),
+    { legacy: "delay", legacyCode: "P_DELAY_WIDENED", hint: /a widened permission set \(tts, which 0\.1\.17 did not ask for\)/ }],
+];
+
+await test("DEC-19 — each of 2.22.0's holds and delays publishes on the service path with P_REVIEW_PRIORITY, and still holds or delays on the legacy path (D1)", () => {
+  for (const [what, input, want] of DEC19_CASES) {
+    const service = decide({ ...input(), path: "service" });
+    const codesOf = service.reasons.map((r) => r.code);
+    assertEqual(service.outcome, "publish", `${what}, service path: ${JSON.stringify(service.reasons)}`);
+    assert(service.publishes_now, `${what}: the service path's publication is not this run's`);
+    assertEqual(service.queue_entry, null, `${what}: the service path queued the release`);
+    assertEqual(service.publish_after, null, `${what}: the service path set a publication time`);
+    assert(!service.reasons.some((r) => r.level === "review"), `${what}: a hold reached the service path's reasons: ${JSON.stringify(codesOf)}`);
+    assert(!codesOf.some((c) => /^P_DELAY_|^P_TRUSTED_AUTHOR$/.test(c)), `${what}: a delay code reached the service path: ${JSON.stringify(codesOf)}`);
+    assert(codesOf.includes("P_PUBLISHED") && codesOf.includes("P_REVIEW_PRIORITY"),
+      `${what}: not published with P_REVIEW_PRIORITY beside P_PUBLISHED: ${JSON.stringify(codesOf)}`);
+    assertEqual(policyCodeDef("P_REVIEW_PRIORITY").level, "note", "P_REVIEW_PRIORITY is not declared a note, so it would read as an error");
+    assert(want.hint.test(service.reasons.find((r) => r.code === "P_REVIEW_PRIORITY").message),
+      `${what}: the hint does not say which trigger it met: ${service.reasons.find((r) => r.code === "P_REVIEW_PRIORITY").message}`);
+
+    const legacy = decide(input());
+    assertEqual(legacy.outcome, want.legacy, `${what}, legacy path: ${JSON.stringify(legacy.reasons.map((r) => r.code))}`);
+    assert(legacy.reasons.some((r) => r.code === want.legacyCode), `${what}, legacy path: no ${want.legacyCode}`);
+    assert(!legacy.reasons.some((r) => r.code === "P_REVIEW_PRIORITY"), `${what}: the legacy path carries the service path's hint`);
+  }
+  // A routine update meets none of them, on either path.
+  const routine = decide({ ...cleanRelease(), path: "service" });
+  assertEqual(JSON.stringify(routine.reasons.map((r) => r.code)), JSON.stringify(["P_PUBLISHED"]), "a routine update carries a hint");
+});
+
+await test("DEC-19 — a change of hands still holds on the service path, and its approval publishes it with no delay", () => {
+  for (const code of ["R_IDENTITY_CHANGED", "R_BINDING_CHANGED", "R_FIRST_BINDING"]) {
+    // High-risk and widened on purpose: under 2.22.0 the approval of this
+    // hold fell through into a 24 h delay.
+    const base = { ...withCaps(cleanRelease(), ["tools", "dom_access"]), path: "service",
+      findings: [{ level: "review", code, where: null, message: `${code} happened` }] };
+    const held = decide(base);
+    assertEqual(held.outcome, "review", `${code} did not hold on the service path: ${JSON.stringify(held.reasons.map((r) => r.code))}`);
+    assert(held.reasons.some((r) => r.code === code && r.level === "review"), `${code}: the hold does not carry its own code`);
+
+    const approved = decide({ ...base, approval: { by: "mod-7", at: "2026-08-10T11:00:00Z", for: held.fingerprint } });
+    const codesOf = approved.reasons.map((r) => r.code);
+    assertEqual(approved.outcome, "publish", `${code}, approved: ${JSON.stringify(codesOf)}`);
+    assert(codesOf.includes("P_APPROVED") && codesOf.includes("P_PUBLISHED") && codesOf.includes("P_REVIEW_PRIORITY"),
+      `${code}, approved: ${JSON.stringify(codesOf)}`);
+    assert(!codesOf.some((c) => /^P_DELAY_/.test(c)), `${code}: an approved change of hands was delayed: ${JSON.stringify(codesOf)}`);
+
+    // P_APPROVAL_STALE still holds beside it (DEC-6).
+    const stale = decide({ ...base, approval: { by: "mod-7", at: "2026-08-10T11:00:00Z", for: "0".repeat(16) } });
+    assertEqual(stale.outcome, "review", `${code}: an approval naming other bytes cleared the hold`);
+    assert(stale.reasons.some((r) => r.code === "P_APPROVAL_STALE"), `${code}: no P_APPROVAL_STALE`);
+  }
+});
+
 await test("BOT-19 — a terminal record on main is reported, and nothing is written", () => {
   // Rewritten with BOT-19's own records: this case used to be a `revoked`
   // record matched by plugin id, which is the over-match the B-T3.9 case
@@ -4202,40 +4284,36 @@ const STOPPED_0_4_0 = {
   plugin_id: "telegram-client", version: "0.4.0", tag: walkTag("telegram-client", "0.4.0"), reasons: ["A_STOP"],
 };
 
-// ── ROLL-25 (5): a new telegram-client tag waits out its delay and publishes ─
+// ── ROLL-25 (5): a new telegram-client tag publishes at once, unreviewed ───
 //
-// Watched failing: with the `publishAfter <= now` comparison in
-// `bot/lib/policy/decision.mjs` made `<`-and-a-day (the drain never ripe), the
-// second half is red; with `P_DELAY_HIGH_RISK` never pushed, the first half
-// publishes at once and is red.
-await test("ROLL-25 (5) — a bound release holding dom_access waits out its delay, then publishes itself", async () => {
+// Contract 3.0.0 (DEC-19; ROLL-25 as amended): "a new telegram-client tag,
+// holding high-risk permissions, published at once with `review` `unreviewed`
+// and `P_REVIEW_PRIORITY`". Until 3.0.0 this step waited out 24 h of
+// `P_DELAY_HIGH_RISK` and then drained; nothing on the service path is
+// delayed now. The step's second half — a moderator's `M_REVIEW` marking it
+// `reviewed` — is the moderation run's (lane AP2), not this module's.
+//
+// Watched failing: with decide()'s service-path branch removed, this run is
+// `delay` with `P_DELAY_HIGH_RISK` again.
+await test("ROLL-25 (5) — a bound release holding dom_access publishes at once, unreviewed, first in the moderators' queue (DEC-19)", async () => {
   const root = walkTree();
   const out = tmp("astra-walk-out-");
   const first = await run({ ...telegram("0.4.1"), root });
-  assertEqual(first.decision.outcome, "delay",
-    `step (5) needs a delay to wait out, and ${WALK_REPO}'s telegram-client got ${first.decision.outcome}: ` +
+  assertEqual(first.decision.outcome, "publish",
+    `step (5) publishes in the run that checks it, and ${WALK_REPO}'s telegram-client got ${first.decision.outcome}: ` +
     JSON.stringify(codes(first)));
-  assert(codes(first).includes("P_DELAY_HIGH_RISK"), `the delay is not P_DELAY_HIGH_RISK: ${JSON.stringify(codes(first))}`);
-  assertEqual(hours(first.decision.publish_after, WALK_NOW), first.decision.track.delay_hours ?? DELAY_HOURS,
-    "the release waits the track record's delay, from this run");
+  assert(codes(first).includes("P_PUBLISHED") && codes(first).includes("P_REVIEW_PRIORITY"),
+    `the release is not published with P_REVIEW_PRIORITY beside P_PUBLISHED: ${JSON.stringify(codes(first))}`);
+  assert(!codes(first).some((c) => c.startsWith("P_DELAY_") || c === "P_TRUSTED_AUTHOR"),
+    `a delay code reached a service-path release: ${JSON.stringify(codes(first))}`);
+  assert(/a high-risk permission held \(dom_access\)/.test(first.decision.reasons.find((r) => r.code === "P_REVIEW_PRIORITY").message),
+    "the hint does not say it was the high-risk permission");
+  assertEqual(first.decision.queue_entry, null, "a service-path release was queued");
   writeOutputs(out, { repo: WALK_REPO, tag: telegram("0.4.1").tag, issue: null }, first);
-  assert(!fs.existsSync(path.join(out, "plugins")), "a delayed release published on its first run");
-
-  // The queue entry, committed as the publish job commits it, and the drain
-  // one minute after `publish_after`.
-  const qrel = queueFile("telegram-client", "0.4.1");
-  fs.mkdirSync(path.dirname(path.join(root, qrel)), { recursive: true });
-  fs.copyFileSync(path.join(out, qrel), path.join(root, qrel));
-  const ripe = new Date(new Date(first.decision.publish_after).getTime() + 60_000);
-  const out2 = tmp("astra-walk-out-");
-  const drained = await run({ ...telegram("0.4.1"), root, now: ripe });
-  assertEqual(drained.decision.outcome, "publish", `the delay was waited out and nothing published: ${JSON.stringify(codes(drained))}`);
-  assert(codes(drained).includes("P_DELAY_ELAPSED"), JSON.stringify(codes(drained)));
-  writeOutputs(out2, { repo: WALK_REPO, tag: telegram("0.4.1").tag, issue: null }, drained);
-  assert(fs.existsSync(path.join(out2, "plugins", "telegram-client", "versions", "0.4.1.json")),
-    "the drain decided to publish and the publish job's tree holds no version file");
-  assertEqual(fs.readFileSync(path.join(out2, "remove.txt"), "utf8"), `${qrel}\n`,
-    "the served delay leaves its queue entry behind, so the drain would publish it again");
+  const written = path.join(out, "plugins", "telegram-client", "versions", "0.4.1.json");
+  assert(fs.existsSync(written), "the publish job's tree holds no version file for step (5)");
+  assertEqual(JSON.parse(fs.readFileSync(written, "utf8")).review, "unreviewed", "step (5)'s version record is not marked unreviewed");
+  assert(!fs.existsSync(path.join(out, queueFile("telegram-client", "0.4.1"))), "a queue entry was written for step (5)");
 });
 
 // ── ROLL-25 (6): a new json-tools tag publishes unheld ──────────────────────
@@ -4276,9 +4354,9 @@ await test("ROLL-25 (4)→(5) — the stop of telegram-client 0.4.0 does not sto
     "step (5) can never walk after step (4)",
   );
   const r = await run({ ...telegram("0.4.1"), root });
-  assertEqual(r.decision.outcome, "delay", `0.4.1 after 0.4.0's stop: ${JSON.stringify(codes(r))}`);
-  assertEqual(r.decision.record?.write, false,
-    "the service path's records are B-T3.4's; this run must not claim one from the legacy trigger map");
+  // Contract 3.0.0 (DEC-19): step (5) publishes at once; until then it was
+  // delayed, and a stop of 0.4.0 must not stop it either way.
+  assertEqual(r.decision.outcome, "publish", `0.4.1 after 0.4.0's stop: ${JSON.stringify(codes(r))}`);
 });
 
 // Closed by lane s3a (bot/decide.mjs's writeOutputs writes nothing on a
@@ -4712,48 +4790,62 @@ await test("ROLL-25 (3) — text-utils held `R_FIRST_BINDING`, approved, publish
   }
 });
 
-// ── ROLL-25 (4): a delayed telegram-client release, stopped ─────────────────
+// ── ROLL-25 (4): a telegram-client release held `R_FIRST_BINDING`, stopped ──
+//
+// Contract 3.0.0 (ROLL-25 as amended): "(4) before (3) publishes, a
+// telegram-client tag carrying the same line, held `R_FIRST_BINDING`, stopped
+// without sign-in from `notice.held`'s link, `A_STOP`, nothing published".
+// Until 3.0.0 step (4) walked a DELAYED release; nothing on the service path is
+// delayed now (DEC-19), and a stop still reaches `held` and `approved`
+// (FLOW-22). So the walk is a first binding on the unbound world, stopped while
+// held, and a restore that loses the stop meets it on main when the approval's
+// claim comes round.
 //
 // Watched failing: with `terminalOnMain`'s tag clause made `false`, the
 // re-registration of the moved tag is red; with `decideSubmission`'s BOT-19
-// step (`if (terminal)`) made `false`, the drain after the restore is red too.
-await test("ROLL-25 (4) — a delayed telegram-client release stopped by its author stays stopped after a restore, for the same submission and for its tag moved to other bytes (BOT-19; FLOW-26; SERVE-93)", () => {
-  const root = serviceWorld({ bound: true });
+// step (`if (terminal)`) made `false`, the approved claim after the restore is
+// red too.
+await test("ROLL-25 (4) — a telegram-client release held R_FIRST_BINDING and stopped by its author stays stopped after a restore, for the same submission and for its tag moved to other bytes (BOT-19; FLOW-26; SERVE-93)", () => {
+  const root = serviceWorld();
   const sub = svcSubmission({ id: "telegram-client", version: "0.4.0", line: LINE_OWNER });
-  const first = svcDecide(root, sub, { ask: svcAsk(sub, { tokenState: "bound" }), now: T0 });
-  assertEqual(first.plan.state, "delayed", `step (4) needs a delayed release: ${said(first.plan)}`);
+  const first = svcDecide(root, sub, { ask: svcAsk(sub), now: T0 });
+  assertEqual(first.plan.state, "held", `step (4) needs a held first binding: ${said(first.plan)}`);
+  assert(first.plan.record.reasons.includes("R_FIRST_BINDING"), `step (4) is held for something else: ${said(first.plan)}`);
   const landed = svcLand(root, first);
-  assert(landed.changed.includes("state/queue/telegram-client@0.4.0.json"), `the delay queued nothing: ${landed.changed.join(", ")}`);
+  assert(!landed.changed.some((f) => f.startsWith("plugins/")), `a hold wrote under plugins/: ${landed.changed.join(", ")}`);
 
-  // The author stops it from the notice, without signing in; this run's gates
-  // say so, and the decide job writes and posts nothing for it.
-  const stopping = svcDecide(root, sub, { ask: svcAsk(sub, { tokenState: "bound", stop: "stopped" }), now: at(T0, 30), claimedFrom: "delayed" });
+  // The author stops it from `notice.held`'s link, without signing in; the
+  // approved claim's gates say so, and the decide job writes and posts nothing.
+  const approvedAt = at(T0, (FIRST_BINDING_WAIT_DAYS + 1) * 24 * 60);
+  const decisions = [{ code: "M_APPROVE", category: "review_passed", decided_at: approvedAt, moderator: "the-owner", declared_interest: false }];
+  const later = at(approvedAt, 10);
+  const stopping = svcDecide(root, sub, { ask: svcAsk(sub, { stop: "stopped", decisions }), now: later, claimedFrom: "approved" });
   assertEqual(stopping.plan.kind, "none", `a stopped submission was decided: ${said(stopping.plan)}`);
   assertEqual(svcLand(root, stopping).changed.length, 0, "the decide job wrote something for a stopped submission");
   // The moderation run records the stop (BOT-30), with the lease's repository id.
   terminalSubmissionRecord({
     code: "A_STOP", submission_id: sub.sid, repo: WALK_REPO, tag: sub.tag, trigger: "poll",
     service_repository_id: SVC_RID, stop_status: "stopped", fingerprints: [sub.fingerprint],
-  }, { root, now: new Date(at(T0, 31)) });
+  }, { root, now: new Date(at(later, 1)) });
   svcCommit(root, "moderation: A_STOP telegram-client 0.4.0");
 
-  const due = at(first.plan.publish_after, 1);
-  // The control: without the stop on main, the drain is decided, not answered.
-  const control = serviceWorld({ bound: true });
-  svcLand(control, svcDecide(control, sub, { ask: svcAsk(sub, { tokenState: "bound" }), now: T0 }));
-  const unstopped = svcDecide(control, sub, { ask: svcAsk(sub, { tokenState: "bound" }), now: due, claimedFrom: "delayed" });
-  assert(unstopped.plan.kind !== "reported", `the control drain is answered from main with no stop on it: ${said(unstopped.plan)}`);
+  const due = at(later, 60);
+  // The control: without the stop on main, the approved claim is decided, not answered.
+  const control = serviceWorld();
+  svcLand(control, svcDecide(control, sub, { ask: svcAsk(sub), now: T0 }));
+  const unstopped = svcDecide(control, sub, { ask: svcAsk(sub, { decisions }), now: due, claimedFrom: "approved" });
+  assert(unstopped.plan.kind !== "reported", `the control claim is answered from main with no stop on it: ${said(unstopped.plan)}`);
 
-  // After a restore the service has lost the stop (SERVE-93) and drains it.
-  const drained = svcDecide(root, sub, { ask: svcAsk(sub, { tokenState: "bound" }), now: due, claimedFrom: "delayed" });
-  assertEqual(`${drained.plan.kind} ${drained.plan.state}`, "reported stopped",
-    `a drain after a restore does not find the author's stop on main: ${said(drained.plan)}`);
-  assertEqual(svcLand(root, drained).changed.length, 0, "a drain of a stopped submission wrote something");
+  // After a restore the service has lost the stop (SERVE-93) and claims the approval.
+  const restored = svcDecide(root, sub, { ask: svcAsk(sub, { decisions }), now: due, claimedFrom: "approved" });
+  assertEqual(`${restored.plan.kind} ${restored.plan.state}`, "reported stopped",
+    `an approved claim after a restore does not find the author's stop on main: ${said(restored.plan)}`);
+  assertEqual(svcLand(root, restored).changed.length, 0, "a claim of a stopped submission wrote something");
   // And the same tag, moved to other bytes, registered again: a stop is for
   // the tag of the repository, not for one set of bytes (FLOW-26).
   const moved = svcSubmission({ id: "telegram-client", version: "0.4.0", line: LINE_OWNER, salt: " moved" });
   assert(moved.fingerprint !== sub.fingerprint, "the moved tag's bytes did not move");
-  const again = svcDecide(root, moved, { ask: svcAsk(moved, { tokenState: "bound" }), now: due });
+  const again = svcDecide(root, moved, { ask: svcAsk(moved), now: due });
   assertEqual(`${again.plan.kind} ${again.plan.state}`, "reported stopped",
     `the stopped tag, moved and registered again, is not stopped: ${said(again.plan)}`);
 });

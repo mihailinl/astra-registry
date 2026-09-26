@@ -859,11 +859,23 @@ test("the file's membered entries are four buckets, none of which may empty", ()
   // required with no condition. Read on arrival: the plugins service emits it, the
   // panel reads it through `service-only:reason-codes`, and nothing in this
   // repository composes or reads it, so it belongs in this bucket.
+  //
+  // Moved at contract 3.0.0, from 109 over 31, by exactly one member:
+  // `astra.registry.version/1` gained the optional `review` (B.4's review-mark
+  // paragraph; DEC-19). Read on arrival: the registry writes it and the
+  // service reads it, and it publishes no condition because its absence
+  // depends on WHICH COMMIT added the record — before 3.0.0's landing commit
+  // or after it — which no sibling member can name. That rule is held where a
+  // commit can be seen, in tools/lib/review-mark.mjs, run by tools/validate.mjs
+  // (tools/selftest/validation.mjs's "review mark" cases).
   assert.deepEqual(
     { entries: unreadEntries.length, members: countMembers(unreadEntries) },
-    { entries: 31, members: 109 },
+    { entries: 31, members: 110 },
     `${countMembers(unreadEntries)} published members over ${unreadEntries.length} entries are outside every ` +
-    `comparison in this suite; there were 109 over 31 at contract 2.17.0, whose seventh guest-read body \`astra.plugins.reason-codes/1\` ` +
+    "comparison in this suite; there were 110 over 31 at contract 3.0.0, whose `astra.registry.version/1` gained the " +
+    "optional `review` (B.4; unconditioned, because its absence depends on the commit that added the record, which " +
+    "tools/lib/review-mark.mjs holds); " +
+    `109 over 31 at contract 2.17.0, whose seventh guest-read body \`astra.plugins.reason-codes/1\` ` +
     "(Table 5-M: `schema`, `contract_version`, `registry_commit`, `codes`, each `true`; the plugins service emits it and the panel " +
     `reads it, and nothing here composes or reads it) added 4 over 1; 105 over 30 at contract 2.5.0, whose \`astra.registry.publisher/1\` ` +
     "gained the optional `owner_ids` (read by the registry's badge join alone, TRUST-25, with no condition, " +
@@ -1976,6 +1988,7 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
+  ALERT_EVENTS,
   APPROVAL_MAX_DAYS,
   FIRST_BINDING_WAIT_DAYS,
   OPERATOR_WINDOW_HOURS,
@@ -2067,11 +2080,19 @@ const codes = (plan) => plan.record?.reasons ?? [];
 
 // ── B-T3.3a: identity and binding ───────────────────────────────────────────
 
-test("B-T3.3a: a first listing with no line is held R_FIRST_LISTING before R3's exit marker", () => {
+// Contract 3.0.0 (DEC-19): a first listing is no longer held. Before R3's exit
+// marker it needs no line (B-T3.3a), and it publishes in the run that checks
+// it, marked `unreviewed`, with `P_REVIEW_PRIORITY` beside `P_PUBLISHED` so
+// that moderators read it first. Until 3.0.0 this case was held
+// `R_FIRST_LISTING`, and that code no longer reaches the record or the result.
+test("B-T3.3a / DEC-19: a first listing with no line publishes at once before R3's exit marker, unreviewed and first in the queue", () => {
   const plan = decideWith({ lease: { trigger: "poll" } });
   assert.equal(plan.kind, "state");
-  assert.equal(plan.state, "held");
-  assert.ok(codes(plan).includes("R_FIRST_LISTING"), JSON.stringify(codes(plan)));
+  assert.equal(plan.state, "published", JSON.stringify(plan.reasons.map((r) => r.code)));
+  assert.deepEqual(codes(plan), ["P_PUBLISHED", "P_REVIEW_PRIORITY"]);
+  assert.ok(!plan.reasons.some((r) => r.code === "R_FIRST_LISTING"), "the result carries the hint, not the old hold");
+  assert.match(plan.reasons.find((r) => r.code === "P_REVIEW_PRIORITY").message, /a first listing/);
+  assert.equal(plan.listing.version.review, "unreviewed");
 });
 
 test("B-T3.3a: `B_UNBOUND` applies on the far side of `log/rollout/R3-exit.json` and not before", () => {
@@ -2081,7 +2102,7 @@ test("B-T3.3a: `B_UNBOUND` applies on the far side of `log/rollout/R3-exit.json`
   assert.equal(after.state, "refused");
   assert.ok(codes(after).includes("B_UNBOUND"));
   const before = decideWith({ git: git({ markers: { r3_exit: false, cutover: false, baseline: true } }) });
-  assert.equal(before.state, "held");
+  assert.equal(before.state, "published", "before the marker a first listing needs no line, and nothing holds it (DEC-19)");
   const cutover = decideWith({ lease: { trigger: "poll" }, git: git({ markers: { r3_exit: false, cutover: true, baseline: true } }) });
   assert.ok(codes(cutover).includes("B_UNBOUND"), "any first listing from cutover needs a line");
 });
@@ -2295,12 +2316,20 @@ test("SERVE-93: an `unavailable` stop status waits for that submission alone; `s
   assert.equal(decideWith({ ask: ask({ gates: null }) }).kind, "wait", "no stop status read is no \"no stop\"");
 });
 
-const heldRecord = (over = {}) => ({ submission_id: P.sid, fingerprint: FP, state: "held", reasons: ["R_FIRST_LISTING"], decided_at: "2026-09-25T00:00:00Z", decision_id: "1".repeat(32), ...over });
+// Since contract 3.0.0 an approval clears only a change of hands (DEC-6;
+// DEC-19), so the approved runs below are a TRANSFER: the listing exists, and
+// MIG-20's baseline names another owner id for the same repository id, which
+// TRUST-23 holds `R_IDENTITY_CHANGED`. Until 3.0.0 they were an approved first
+// listing, which no longer holds and so is no longer approved. The notice was
+// accepted more than BOT-28's update window before `P.now`, so the notice gate
+// is not what these runs wait on unless a test says so.
+const transfer = baseline({ repository_owner_id: "2" });
+const heldRecord = (over = {}) => ({ submission_id: P.sid, fingerprint: FP, state: "held", reasons: ["R_IDENTITY_CHANGED"], decided_at: "2026-09-25T00:00:00Z", decision_id: "1".repeat(32), ...over });
 const approval = (over = {}) => ({ code: "M_APPROVE", category: "review_passed", decided_at: "2026-09-26T08:00:00Z", moderator: "mod-7", declared_interest: false, ...over });
 const approvedRun = (over = {}) => decideWith({
   lease: { claimed_from: "approved" },
-  ask: ask({ gates: { stop_status: "no_stop", decisions: [approval(over.approval)] }, notice: over.notice === undefined ? { kind: "approved", status: "sent", accepted_at: "2026-09-26T09:00:00Z" } : over.notice }),
-  git: git({ records: [heldRecord(over.held)], alerts: over.alerts ?? new Map(), denied: over.denied ?? new Set() }),
+  ask: ask({ gates: { stop_status: "no_stop", decisions: [approval(over.approval)] }, notice: over.notice === undefined ? { kind: "approved", status: "sent", accepted_at: "2026-09-26T05:00:00Z" } : over.notice }),
+  git: git({ existing: existing(), records: [transfer, heldRecord(over.held)], alerts: over.alerts ?? new Map(), denied: over.denied ?? new Set(), ...(over.git ?? {}) }),
   now: over.now,
 });
 
@@ -2317,6 +2346,9 @@ test("TRUST-14/TRUST-32: the three-run sequence — alert only, then the window,
   assert.equal(third.state, "published", JSON.stringify(third.wait ?? third.reasons));
   assert.equal(third.record.trigger, "approval");
   assert.equal(third.record.moderator, "mod-7");
+  // DEC-19 and INV-1: an approval is not a review. The approved change of
+  // hands publishes `unreviewed` like every other release.
+  assert.equal(third.listing.version.review, "unreviewed");
   // An undelivered alert waits: a record with no delivery is W_ALERT_UNDELIVERED.
   const undelivered = approvedRun({ alerts: new Map([[FP, { ...rec, delivered_at: null }]]) });
   assert.equal(undelivered.wait.code, "W_ALERT_UNDELIVERED");
@@ -2324,12 +2356,40 @@ test("TRUST-14/TRUST-32: the three-run sequence — alert only, then the window,
 
 test("BOT-26: no held record, a stale approval, and a first binding under 7 days are each not honoured", () => {
   const rec = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: approval().decided_at, delivered_at: "2026-09-20T00:00:00Z", run: "1/1" };
-  const noHold = decideWith({ lease: { claimed_from: "approved" }, ask: ask({ gates: { stop_status: "no_stop", decisions: [approval()] }, notice: { kind: "approved", status: "sent", accepted_at: "2026-09-20T00:00:00Z" } }) });
+  const noHold = approvedRun({ git: { records: [transfer] }, alerts: new Map([[FP, rec]]) });
   assert.equal(noHold.state, "held", "(1): an approval with no `held` record on main clears nothing");
   const stale = approvedRun({ approval: { decided_at: hoursBefore(P.now, APPROVAL_MAX_DAYS * 24 + 1) }, alerts: new Map([[FP, rec]]) });
   assert.equal(stale.state, "held", `(4): older than ${APPROVAL_MAX_DAYS} days`);
-  const binding = approvedRun({ held: { reasons: ["R_FIRST_BINDING"], decided_at: hoursBefore(P.now, 24) }, alerts: new Map([[FP, rec]]) });
+  const line = { outcome: "one", token: "t".repeat(24), token_hash: "2".repeat(16), code: null, alert: false, reason: null };
+  const binding = decideWith({
+    lease: { claimed_from: "approved" },
+    verified: verified({ binding: line, owner_file: { commit: "9".repeat(40), pull_request: false } }),
+    ask: ask({ verdict: "pass", gates: { stop_status: "no_stop", decisions: [approval()] }, notice: { kind: "approved", status: "sent", accepted_at: "2026-09-20T00:00:00Z" } }),
+    git: git({ existing: existing(), records: [baseline(), heldRecord({ reasons: ["R_FIRST_BINDING"], decided_at: hoursBefore(P.now, 24) })], alerts: new Map([[FP, rec]]) }),
+  });
   assert.equal(binding.state, "held", `TRUST-27: ${FIRST_BINDING_WAIT_DAYS} days from the held record`);
+  assert.ok(codes(binding).includes("R_FIRST_BINDING"), JSON.stringify(codes(binding)));
+});
+
+// Contract 3.0.0 (DEC-19): an approval clears a hold THIS run raises, and
+// since 3.0.0 only a change of hands raises one. A first listing held under
+// 2.22.0 and approved after 3.0.0 landed is held by nothing any more, so the
+// approval clears nothing and no window stands before it: it publishes in the
+// run that claims it, with no approval members in its record.
+//
+// Watched: with `approved = Boolean(honoured.approval)` (the rule before
+// 3.0.0), the release below waits `W_ALERT_UNDELIVERED` for an alert about an
+// approval nothing needed.
+test("DEC-19: an approval of a release nothing holds any more clears nothing, and nothing waits on it", () => {
+  const plan = decideWith({
+    lease: { claimed_from: "approved" },
+    ask: ask({ gates: { stop_status: "no_stop", decisions: [approval()] }, notice: { kind: "approved", status: "pending" } }),
+    git: git({ records: [heldRecord({ reasons: ["R_FIRST_LISTING"] })] }),
+  });
+  assert.equal(plan.state, "published", `${plan.kind} ${plan.wait?.code ?? ""}`);
+  assert.deepEqual(codes(plan), ["P_PUBLISHED", "P_REVIEW_PRIORITY"]);
+  assert.equal(plan.alert, null, "no TRUST-14 alert for an approval nothing needed");
+  assert.ok(!("moderator" in plan.record), "the record names no moderator: no approval cleared anything");
 });
 
 test("BOT-28: `pending`, `none_unbound`, and a notice younger than the window each wait `W_NOTICE_PENDING`", () => {
@@ -2339,35 +2399,34 @@ test("BOT-28: `pending`, `none_unbound`, and a notice younger than the window ea
     { kind: "approved", status: "previous_ended", ended_at: P.now },
     null,
   ]) {
-    const plan = decideWith({
-      lease: { claimed_from: "approved" },
-      ask: ask({ gates: { stop_status: "no_stop", decisions: [approval()] }, notice }),
-      git: git({ records: [heldRecord(), baseline()], existing: existing() }),
-    });
+    const plan = approvedRun({ notice });
     assert.equal(plan.kind, "wait", `${JSON.stringify(notice)}`);
     assert.equal(plan.wait.code, "W_NOTICE_PENDING");
     // BOT-29 by name: `none_unbound` is `pending`, not "a status with no time".
     if (notice?.status === "none_unbound") assert.match(plan.wait.cause, /BOT-29/);
   }
-  // An approved UPDATE with no delay reason waits the update window.
-  const young = decideWith({
-    lease: { claimed_from: "approved" },
-    ask: ask({ gates: { stop_status: "no_stop", decisions: [approval()] }, notice: { kind: "approved", status: "sent", accepted_at: hoursBefore(P.now, UPDATE_WINDOW_HOURS - 1) } }),
-    git: git({ records: [heldRecord({ reasons: ["R_NEW_HIGH_RISK"] }), baseline()], existing: existing() }),
+  // An approved change of hands waits the update window (BOT-28, 3.0.0),
+  // whatever the plugin holds: the window is no longer a delay's length.
+  const young = approvedRun({ notice: { kind: "approved", status: "sent", accepted_at: hoursBefore(P.now, UPDATE_WINDOW_HOURS - 1) } });
+  assert.equal(young.wait?.code, "W_NOTICE_PENDING", `${UPDATE_WINDOW_HOURS} h for an approved change of hands`);
+  const hiRisk = listing({ version: { ...listing().version, capabilities: ["dom_access"] } });
+  const riskyYoung = decideWith({
+    lease: { claimed_from: "approved" }, listing: hiRisk,
+    ask: ask({ gates: { stop_status: "no_stop", decisions: [approval()] }, notice: { kind: "approved", status: "sent", accepted_at: hoursBefore(P.now, UPDATE_WINDOW_HOURS + 1) } }),
+    git: git({ existing: existing(), records: [transfer, heldRecord()] }),
   });
-  assert.equal(young.wait?.code, "W_NOTICE_PENDING", `${UPDATE_WINDOW_HOURS} h for an approved update`);
+  assert.notEqual(riskyYoung.wait?.code, "W_NOTICE_PENDING",
+    "a high-risk plugin's approved change of hands waited more than the update window: the window is not a delay any more");
 });
 
-test("MIG-12: after cutover a grandfathered listing's drained release waits, whatever the notice says", () => {
+// MIG-12 at 3.0.0: "the bot MUST NOT publish an approved release of it (a
+// `delayed` one before 3.0.0)". The delayed half went with the service path's
+// delay (DEC-19); the approved half is a change of hands, and it waits.
+test("MIG-12: after cutover a grandfathered listing's approved change of hands waits, whatever the notice says", () => {
   for (const status of ["sent", "previous_sent"]) {
-    const plan = decideWith({
-      lease: { claimed_from: "delayed" },
-      ask: ask({ notice: { kind: "delayed", status, accepted_at: "2026-09-01T00:00:00Z" } }),
-      git: git({
-        existing: existing(), records: [baseline()], listingState: { state: "grandfathered" },
-        markers: { r3_exit: true, cutover: true, baseline: true },
-        queueEntry: { id: P.id, version: P.version, repo: P.repo, tag: P.tag, fingerprint: FP, queued_at: "2026-09-25T00:00:00Z", publish_after: "2026-09-26T00:00:00Z", delay_hours: 24, artifact_digests: DIGESTS },
-      }),
+    const plan = approvedRun({
+      notice: { kind: "approved", status, accepted_at: "2026-09-01T00:00:00Z" },
+      git: { listingState: { state: "grandfathered" }, markers: { r3_exit: true, cutover: true, baseline: true } },
     });
     assert.equal(plan.kind, "wait", status);
     assert.equal(plan.wait.code, "W_NOTICE_PENDING");
@@ -2390,17 +2449,40 @@ test("DEC-8 and TRUST-33: never before `publish_after`, and a deny record refuse
   assert.deepEqual(denied.record.reasons, ["P_OPERATOR_DENIED"]);
 });
 
-test("ROLL-49: an approved first listing with a delay reason is delayed, never waved through", () => {
-  const listingHi = listing({ version: { ...listing().version, capabilities: ["dom_access"] } });
-  const plan = decideSubmission({
-    lease: lease({ claimed_from: "approved" }), shadow: false, verified: verified(), facts: facts(), listing: listingHi,
-    ask: ask({ gates: { stop_status: "no_stop", decisions: [approval()] } }), git: git({ records: [heldRecord()] }),
-    now: P.now, startedAt: P.now, readCommit: "f".repeat(40),
-  });
-  assert.equal(plan.state, "delayed", `${plan.kind} ${plan.state}`);
-  assert.equal(plan.queue_entry.submission_id, P.sid);
-  assert.equal(plan.queue_entry.schema, "astra.registry.queue/1");
-  assert.ok(!("submitter" in plan.queue_entry) && !("issue" in plan.queue_entry), "BOT-38: no login, no issue");
+// Until contract 3.0.0: "an approved first listing with a delay reason is
+// delayed, never waved through" (ROLL-49). Since 3.0.0 nothing on the service
+// path is delayed or held for these reasons (DEC-19): each of 2.22.0's four
+// triggers publishes at once, `unreviewed`, with `P_REVIEW_PRIORITY`, whose
+// message names what the release met. ROLL-49's half that survives is the
+// guard: no legacy shortcut code and no queue entry ever comes out of this path.
+//
+// Watched: with decide()'s service branch removed, the first case is held
+// `R_FIRST_LISTING` and the third delayed `P_DELAY_WIDENED`.
+test("DEC-19: each of 2.22.0's four triggers publishes at once with `P_REVIEW_PRIORITY`, and its message says which", () => {
+  const withCaps = (capabilities) => listing({ version: { ...listing().version, capabilities } });
+  const cases = [
+    ["a first listing holding a high-risk permission", { listing: withCaps(["dom_access"]) }, [/a first listing/, /a high-risk permission held \(dom_access\)/]],
+    ["an update adding a high-risk permission", { listing: withCaps(["tools", "dom_access"]), git: git({ existing: existing(), records: [baseline()] }) },
+      [/a high-risk permission held \(dom_access\)/, /a widened permission set \(dom_access, which 0\.1\.0/]],
+    ["an update widening outside the high-risk set", { listing: withCaps(["tools", "tts"]), git: git({ existing: existing(), records: [baseline()] }) },
+      [/a widened permission set \(tts, which 0\.1\.0/]],
+    ["a check's flag for a person", { facts: facts({ findings: [{ code: "E_DERIVED_LISTING_INVALID", level: "pass" }, { code: "R_TYPOSQUAT_NEAR", level: "review" }] }), git: git({ existing: existing(), records: [baseline()] }) },
+      [/a check's flag for a person \(R_TYPOSQUAT_NEAR\)/]],
+  ];
+  for (const [what, over, messages] of cases) {
+    const plan = decideWith(over);
+    assert.equal(plan.state, "published", `${what}: ${plan.kind} ${plan.state} ${JSON.stringify(plan.reasons.map((r) => r.code))}`);
+    assert.deepEqual(codes(plan), ["P_PUBLISHED", "P_REVIEW_PRIORITY"], what);
+    assert.deepEqual(plan.reasons.map((r) => r.code).filter((c) => /^R_|^P_DELAY_|^P_FIRST_LISTING|^P_TRUSTED/.test(c)), [],
+      `${what}: a hold, a delay or a legacy shortcut code reached the result`);
+    const hint = plan.reasons.find((r) => r.code === "P_REVIEW_PRIORITY").message;
+    for (const m of messages) assert.match(hint, m, `${what}: the message does not say which trigger it met`);
+    assert.equal(plan.queue_entry, null, `${what}: a queue entry was composed`);
+    assert.equal(plan.listing.version.review, "unreviewed", what);
+  }
+  // A routine update meets none of them: no hint, and nothing for moderators to put first.
+  const routine = decideWith({ git: git({ existing: existing(), records: [baseline()] }) });
+  assert.deepEqual(codes(routine), ["P_PUBLISHED"]);
 });
 
 // ── BOT-92: shadow ──────────────────────────────────────────────────────────
@@ -2431,7 +2513,9 @@ function goldenPlans() {
   const ident = { repo: P.repo, repository_id: P.rid, repository_owner_id: P.oid, token_hash: "1".repeat(16) };
   const plans = {
     published: decideWith({ git: git({ existing: existing(), records: [baseline()] }) }),
-    held: decideWith({}),
+    // Since contract 3.0.0 only a change of hands holds (DEC-19): a transfer.
+    // Until then this golden was a first listing held `R_FIRST_LISTING`.
+    held: decideWith({ git: git({ existing: existing(), records: [transfer] }) }),
     "held-first-binding": decideWith({
       verified: verified({ binding: line, owner_file: { commit: "9".repeat(40), pull_request: false }, actor: { triggering_actor_id: P.oid } }),
       ask: ask({ verdict: "pass" }), git: git({ existing: existing(), records: [baseline()], listingState: { state: "grandfathered" } }),
@@ -2440,23 +2524,44 @@ function goldenPlans() {
       verified: verified({ binding: line, owner_file: { commit: "9".repeat(40), pull_request: true } }),
       ask: ask({ verdict: "pass" }), git: git({ existing: existing({ identity: ident }), records: [baseline()] }),
     }),
-    delayed: decideSubmission({
-      lease: lease(), shadow: false, verified: verified(), facts: facts(),
-      // A widening that is not high-risk: P_DELAY_WIDENED, and no hold.
-      listing: listing({ version: { ...listing().version, capabilities: ["tools", "tts"] } }),
-      ask: ask(), git: git({ existing: existing(), records: [baseline()] }), now: P.now, startedAt: P.now, readCommit: "f".repeat(40),
-    }),
+    // The service path makes no `delayed` since contract 3.0.0 (DEC-19), so
+    // no fixture of `decideSubmission` can build this plan any more. The kind
+    // stays: B.3 keeps the state (FLOW-76's canary lives in it), §4.4 keeps
+    // its shape, and `tests/results/` is a shared vector the service vendors
+    // (SCOPE-7's `shared_vector_paths`). So the plan is written out as the
+    // one this module built for a widening before 3.0.0, and the golden's
+    // bytes do not move: what is still asserted is the renderer.
+    delayed: delayedPlan(),
     refused: decideWith({ facts: facts({ findings: [{ code: "E_LICENSE_NOT_ALLOWED", level: "error" }] }) }),
     "refused-flow67": decideWith({ lease: { trigger: "panel" }, git: git({ listingNamesRepo: false }) }),
     reported: decideWith({ git: git({ records: [mReject] }) }),
-    // A wait that carries reasons, so the golden holds `location` on one.
-    wait: decideWith({
-      lease: { claimed_from: "approved" },
-      ask: ask({ gates: { stop_status: "no_stop", decisions: [approval()] }, notice: { kind: "approved", status: "pending" } }),
-      git: git({ records: [heldRecord()] }),
-    }),
+    // A wait that carries reasons, so the golden holds `location` on one: an
+    // approved change of hands whose notice is pending (BOT-28). Until 3.0.0
+    // it was an approved first listing, which no longer holds (DEC-19).
+    wait: approvedRun({ notice: { kind: "approved", status: "pending" } }),
   };
   return plans;
+}
+
+/** The `delayed` plan `decideSubmission` built before contract 3.0.0, for the golden's renderer. */
+function delayedPlan() {
+  const publishAfter = "2026-09-27T12:00:00Z";
+  const reasons = [
+    reasonOf("P_DELAY_WIDENED", { message: "it asks for tts, which 0.1.0 did not" }),
+    reasonOf("P_DELAY_WAITING", { message: `it publishes itself at ${publishAfter} — 24 h after ${P.now} — with nobody touching it` }),
+  ];
+  const derived = {
+    plugin_id: P.id, version: P.version, tag: P.tag, commit: P.commit, artifact_digests: DIGESTS, fingerprint: FP,
+    repository_id: P.rid, repository_owner_id: P.oid,
+  };
+  return {
+    submission_id: P.sid, attempt: "att-1", kind: "state", state: "delayed", reasons, derived, publish_after: publishAfter,
+    record: {
+      submission_id: P.sid, actor: "bot", trigger: "poll", ...derived, repo: P.repo, decided_at: P.now, state: "delayed",
+      reasons: reasons.map((r) => r.code), publish_after: publishAfter,
+    },
+    result_extra: {}, listing: null, queue_entry: null, identity_records: [], shadow: false, decided_at: P.now,
+  };
 }
 
 const goldenBody = (kind, plan) => resultBody(plan, {
@@ -2758,7 +2863,9 @@ test("TRUST-14: schema/alert-v1.json types exactly the record the composer write
   const good = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: "2026-09-26T11:00:00Z", delivered_at: "2026-09-26T12:00:05Z", run: "5/1" };
   const cases = [
     ["an approval", good],
-    ["an elapsed delay", { ...good, event: "delay_elapsed", approval_decided_at: null }],
+    // Contract 3.0.0 (DEC-19): nothing on the service path is delayed, so the
+    // second event went, and a record naming it is refused by both.
+    ["an elapsed delay, the event 3.0.0 removed", { ...good, event: "delay_elapsed", approval_decided_at: null }],
     ["a run with no attempt", { ...good, run: "5" }],
     ["an unnamed member", { ...good, chat_id: "1234567" }],
     ["no delivered_at", (({ delivered_at, ...rest }) => rest)(good)],
@@ -2775,7 +2882,7 @@ test("TRUST-14: schema/alert-v1.json types exactly the record the composer write
     const byComposer = alertProblems(doc).length === 0;
     assert.equal(bySchema, byComposer, `${what}: the schema says ${bySchema ? "valid" : "invalid"} and alertProblems says ${byComposer ? "valid" : "invalid"}`);
   }
-  assert.equal(cases.filter(([, d]) => alertProblems(d).length === 0).length, 3, "the table holds three valid records and nine refusals");
+  assert.equal(cases.filter(([, d]) => alertProblems(d).length === 0).length, 2, "the table holds two valid records and ten refusals");
   // The validator on a tree: the good record passes, an unnamed member and a
   // day that does not exist are refused, each by name.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-alert-schema-"));
@@ -2820,6 +2927,14 @@ test("TRUST-14's composer turns decide's names into the one verdict the channel 
   assert.deepEqual(merged.codes, ["BOT15_FACTS_DISAGREE", TRUST14_CODES.approval].sort());
   assert.deepEqual(merged.hexes, [FP]);
   assert.throws(() => mergeAlerts(roots, { trust14: [{ fingerprint: FP, event: "whim" }] }));
+  // Contract 3.0.0 (DEC-19): nothing on the service path is delayed, so the
+  // drained-delay event is gone from both ends. A `decide` that named one is a
+  // defect, refused here rather than paged; and `decide` names none. Watched:
+  // `delay_elapsed` put back in TRUST14_CODES or ALERT_EVENTS.
+  assert.throws(() => mergeAlerts(roots, { trust14: [{ fingerprint: FP, event: "delay_elapsed" }] }),
+    /no code for/, "the channel still has a code for a drained delay");
+  assert.deepEqual(Object.keys(TRUST14_CODES), ["approval"]);
+  assert.deepEqual([...ALERT_EVENTS], ["approval"], "decide still names a drained delay as a TRUST-14 event");
 });
 
 test("BOT-89's scan fails on each planted value, and not on the four outcomes or the decoys", () => {
