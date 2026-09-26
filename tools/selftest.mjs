@@ -1915,10 +1915,10 @@ const FLOORS = new Map(Object.entries({
   // `node tools/selftest.mjs --census` prints this block. MODULES order, so the
   // diff of a re-census is readable and a module's line sits where its entry in
   // the list above does.
-  "primitives.mjs": 18,
+  "primitives.mjs": 19,
   "catalogue.mjs": 10,
   "publishers.mjs": 21,
-  "validation.mjs": 21,
+  "validation.mjs": 23,
   "couplings.mjs": 18,
   "listings.mjs": 5,
   "origins.mjs": 6,
@@ -1939,7 +1939,7 @@ const FLOORS = new Map(Object.entries({
   "rehearsal-r2.mjs": 14,
   "rehearsal-push.mjs": 14,
   "served-set.mjs": 35,
-  "revocations.mjs": 26,
+  "revocations.mjs": 27,
   "cli.mjs": 14,
   "root-delegation.mjs": 6,
   "roots.mjs": 3,

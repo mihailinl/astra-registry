@@ -59,8 +59,9 @@
         "category": { "type": "string", "minLength": 1, "maxLength": 64 },
         "plugin_id": { "type": "string", "minLength": 1, "maxLength": 64 },
         "versions": {
+          "$comment": "At most 256 characters each, contract §0.7's bound on a version since 2.16.0. It was 64, and a version the registry lists can be longer, so a decision on one could not have been held.",
           "type": "array",
-          "items": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "items": { "type": "string", "minLength": 1, "maxLength": 256 },
           "maxItems": 500
         },
         "decided_at": {

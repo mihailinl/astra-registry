@@ -41,8 +41,9 @@
       "pattern": "^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])$"
     },
     "version": {
-      "$comment": "A SINGLE semver, and that is load-bearing: an `A_YANK` names versions plural, so a yank of three versions is three records, not one record with a joined `version`. tools/lib/semver.mjs's SEMVER_PATTERN.",
+      "$comment": "A SINGLE semver, and that is load-bearing: an `A_YANK` names versions plural, so a yank of three versions is three records, not one record with a joined `version`. tools/lib/semver.mjs's SEMVER_PATTERN, and its 256-character bound (contract §0.7 since 2.16.0) as maxLength.",
       "type": "string",
+      "maxLength": 256,
       "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
     },
     "repo": {
