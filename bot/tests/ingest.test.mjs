@@ -3054,7 +3054,12 @@ await test(`the bound is GitHub's: a ${255}-byte name verifies, a 256-byte one i
   assertEqual(over.v.code, "E_ASSET_FILENAME", `a 256-byte name, which GitHub refuses, was not refused: ${JSON.stringify(over.v).slice(0, 200)}`);
 });
 
-await test("verify-facts: one submission that fails fails alone, and the batch keeps every other verdict", async () => {
+/**
+ * `--verify-facts` over four leases: two that verify, one with an over-long
+ * asset name, and one whose by-id read throws where nothing inside
+ * `verifyFacts` catches it.
+ */
+async function batchWithAThrow() {
   const SIDS = {
     first: "0192f1c2-3b4a-7c5d-8e6f-000000000001",
     long: "0192f1c2-3b4a-7c5d-8e6f-000000000002",
@@ -3099,6 +3104,11 @@ await test("verify-facts: one submission that fails fails alone, and the batch k
   } catch (e) {
     throw new Error(`the batch threw, so no submission in it has a verdict: ${e.code ?? e.name} ${String(e.message).slice(0, 80)}`);
   }
+  return { SIDS, leases, verified, lines, assetsDir };
+}
+
+await test("verify-facts: one submission that fails fails alone, and the batch keeps every other verdict", async () => {
+  const { SIDS, verified, lines, assetsDir } = await batchWithAThrow();
   assertEqual(Object.keys(verified).sort().join(","), Object.values(SIDS).sort().join(","), "a submission has no entry");
   assertEqual(verified[SIDS.first].outcome, "ok", `the first verdict: ${JSON.stringify(verified[SIDS.first]).slice(0, 160)}`);
   assertEqual(verified[SIDS.last].outcome, "ok", `the verdict after the failures: ${JSON.stringify(verified[SIDS.last]).slice(0, 160)}`);
@@ -3113,6 +3123,69 @@ await test("verify-facts: one submission that fails fails alone, and the batch k
   assertEqual(thrown.join(","), "verify-outcome.txt", "the failed submission left unverified bytes for check, or no file for its upload");
   assertEqual(fs.readFileSync(path.join(assetsDir, SIDS.throws, "verify-outcome.txt"), "utf8"), "alert\n", "its outcome file");
   assert(lines.some((l) => l.startsWith(`${SIDS.throws}: alert BOT21_VERIFY_THREW`)), `the log does not say which submission threw: ${lines.join(" | ")}`);
+});
+
+// ── the throw, carried to the channel ───────────────────────────────────────
+//
+// The test above pins `BOT21_VERIFY_THREW` where verify writes it, and nothing
+// pinned it anywhere else. The code travels three more hops before anybody is
+// paged: decide copies it into the plan's `operator_alert`
+// (`bot/lib/service-decide.mjs`), the decide job's `alerts` output carries it
+// as JSON, and the alert job's `node bot/lib/trust14.mjs --merge` THROWS on a
+// code outside the channel's grammar (`^[A-Z][A-Z0-9_]{0,47}$`). So a rename
+// the grammar refuses — a hyphen, a lower-case letter, a 49th character —
+// passes the test above once its literal is renamed with it, and fails in
+// production at the merge step of the very run that owes the page, which then
+// sends nothing (lane S23).
+//
+// So this one never names the code. It takes whatever verify wrote, drives it
+// through `decideJob` as the decide step calls it, through the job output's
+// JSON, and through the alert job's two steps as `plugins-ingest.yml` runs
+// them, and asks that the verdict the channel sends is red and carries it.
+
+const { decideJob } = await import("../lib/service-decide.mjs");
+const { checkRoots } = await import("../check-roots.mjs");
+const { renderVerdict, verdictProblems } = await import("../lib/alert-verdict.mjs");
+const { spawnSync } = await import("node:child_process");
+
+await test("verify → decide → the alert job: a thrown verify pages under a code the channel sends (BOT-21, TRUST-14)", async () => {
+  const { SIDS, leases, verified } = await batchWithAThrow();
+  const sid = SIDS.throws;
+  const code = verified[sid].code;
+  assertEqual(verified[sid].outcome, "alert", `verify did not alert on the throw: ${JSON.stringify(verified[sid]).slice(0, 160)}`);
+
+  // decide, as `--decide` calls it, over the committed tree. The thrown lease
+  // alone: the others would need check's artifacts, and are other tests'.
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-throw-"));
+  scratch.push(work);
+  const now = "2026-09-25T12:00:00Z";
+  const decided = decideJob({
+    root: REPO_ROOT, submissions: [sid], leases: { [sid]: leases[sid] }, claimShadow: false,
+    verified: { [sid]: verified[sid] }, outcome: {}, factsDir: path.join(work, "facts"), listingsDir: path.join(work, "listings"),
+    now, startedAt: now, readCommit: "0".repeat(40),
+  });
+  const plan = decided.plans[0];
+  assertEqual(plan.kind, "none", `decide wrote or waited on a lease whose verification threw: ${plan.kind} ${plan.why ?? ""}`);
+  assertEqual(plan.operator_alert?.code, code, "decide pages under another code than the one verify wrote");
+
+  // The job output, as the decide step writes it and the alert job's env reads it.
+  const output = JSON.stringify(decided.alerts);
+  assertEqual((JSON.parse(output).operator ?? []).map((o) => o.code).join(","), code, `the alerts output: ${output}`);
+
+  // The alert job's two steps, as `plugins-ingest.yml` runs them.
+  const verdictFile = path.join(work, "verdict.json");
+  const step = (args, env) => spawnSync(process.execPath, args, { cwd: REPO_ROOT, encoding: "utf8", env: { PATH: process.env.PATH, ...env } });
+  const relay = step(["bot/check-roots.mjs", "--relay", "--out", verdictFile], { ASTRA_ROOTS_VERDICT: JSON.stringify(checkRoots({ env: {} }).verdict) });
+  assertEqual(relay.status, 0, `the relay step failed: ${relay.stderr.trim()}`);
+  const merge = step(["bot/lib/trust14.mjs", "--merge", "--verdict", verdictFile], { ASTRA_DECIDE_ALERTS: output });
+  assertEqual(merge.status, 0, `the merge step failed, so the page this run owes is never sent:\n${merge.stderr.trim()}`);
+
+  const sent = JSON.parse(fs.readFileSync(verdictFile, "utf8"));
+  assertEqual(sent.status, "red", "the merged verdict is not red, so `alert.mjs --if-red` sends nothing");
+  assert((sent.codes ?? []).includes(code), `the merged verdict does not carry ${code}: ${JSON.stringify(sent.codes)}`);
+  assertEqual(verdictProblems(sent).join("; "), "", "the channel refuses the merged verdict");
+  assert(renderVerdict(sent).split("\n").some((l) => l.startsWith("codes: ") && l.split(" ").includes(code)),
+    `the message the owner reads does not name ${code}`);
 });
 
 await test("neither job writes a stranger's bundle under the asset's name, and check finds each bundle by its digest", async () => {
