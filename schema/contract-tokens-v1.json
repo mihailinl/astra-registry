@@ -1,6 +1,6 @@
 {
-  "contract_version": "2.16.0",
-  "source_commit": "bebf2115b4ec86ad000123bb9def2ba6a8be8943",
+  "contract_version": "2.17.0",
+  "source_commit": "fe673558852f14b522cd8f423858492d03428053",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -3290,6 +3290,84 @@
       ]
     },
     {
+      "id": "schema:astra.plugins.reason-codes/1",
+      "kind": "schema",
+      "name": "astra.plugins.reason-codes/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true,
+          "source": "SCOPE-3"
+        },
+        {
+          "name": "contract_version",
+          "required": true,
+          "source": "SCOPE-1; the acceptor's proposal (2.17.0)"
+        },
+        {
+          "name": "registry_commit",
+          "required": true,
+          "source": "SCOPE-8; the acceptor's proposal (2.17.0)"
+        },
+        {
+          "name": "codes",
+          "required": true,
+          "source": "FLOW-13",
+          "of": [
+            {
+              "name": "code",
+              "required": true,
+              "source": "FLOW-13"
+            },
+            {
+              "name": "level",
+              "required": true,
+              "source": "FLOW-13"
+            },
+            {
+              "name": "stage",
+              "required": true,
+              "source": "FLOW-13; FLOW-11"
+            },
+            {
+              "name": "fix",
+              "required": true,
+              "source": "FLOW-13; §0.8"
+            },
+            {
+              "name": "panel_only",
+              "required": true,
+              "source": "FLOW-13; B.7"
+            },
+            {
+              "name": "title",
+              "required": true,
+              "source": "FLOW-13"
+            },
+            {
+              "name": "remedy",
+              "required": true,
+              "source": "FLOW-13"
+            }
+          ]
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "source": "§5.8, Table 5-M",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
       "id": "schema:astra.plugins.report-list/1",
       "kind": "schema",
       "name": "astra.plugins.report-list/1",
@@ -3389,7 +3467,12 @@
         },
         {
           "name": "install_source",
-          "required": true
+          "required": true,
+          "of": [
+            "artifact_sha256",
+            "identity",
+            "catalogue_serial"
+          ]
         },
         {
           "name": "astra_version",
@@ -5330,6 +5413,23 @@
       "state": "service-only",
       "method": "GET",
       "path": "transparency/served",
+      "path_base": "the service API base (DEC-18)",
+      "source": "§0.8's named `service-only` paths",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "service-only:reason-codes",
+      "kind": "service_only",
+      "name": "reason-codes",
+      "members": [],
+      "emitter": [],
+      "acceptor": [],
+      "state": "service-only",
+      "method": "GET",
+      "path": "reason-codes",
       "path_base": "the service API base (DEC-18)",
       "source": "§0.8's named `service-only` paths",
       "requirements": [
