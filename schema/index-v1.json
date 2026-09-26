@@ -155,6 +155,7 @@
         },
         "version": {
           "type": "string",
+          "maxLength": 256,
           "description": "The latest listed release. Compatibility projection of releases[0].version."
         },
         "description": {
@@ -295,7 +296,8 @@
       ],
       "properties": {
         "version": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 256
         },
         "published_at": {
           "type": "string",

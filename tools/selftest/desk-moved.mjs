@@ -77,21 +77,23 @@ export const READS_THE_DESK = Object.freeze([
  * Astra re-vendors, the two copies may differ from now on, or the change should
  * not be made. Updating the digest here, in the same commit, is saying it.
  */
-export const VENDORED_AT = "d44f0cf6b2f737199a995879f3d670284a9de567";
+// 7b09033 is #358's merge. Astra re-vendored all three files there: its
+// VENDORED-FROM names that commit, with canonical.mjs at the digest below
+// (Astra main 81b11f8, read 2026-09-26).
+export const VENDORED_AT = "7b090339594b60b74056ff5cc1bba5b25ecb686a";
 export const VENDORED_BY_ASTRA = Object.freeze({
   "bot/lib/sign.mjs": "7934b01b55ba76c9ba7249ded19c47cfcc5543fc2b55a66e13588a376ae83003",
-  // Moved by contract 2.16.0 (lane S18), and the answer is ASTRA RE-VENDORS:
-  // this file now refuses a string that is not I-JSON — an unpaired
-  // surrogate or a noncharacter — instead of escaping it, because RFC 8785 is
-  // defined over I-JSON and serde_json refuses the escape. The update manifest
-  // Astra's moved signer writes is JCS-signed with this file's copy and read by
-  // the daemon (`updates/manifest.rs`, Rust; not read from this lane), so if
-  // that reader is serde_json, as the catalogue's is, a lone surrogate in its
-  // release notes is the same whole-document refusal. Until Astra re-vendors at or
-  // after this commit, its copy escapes one the way this file did; this digest
-  // is the new bytes, and VENDORED_AT still names the commit Astra vendored.
+  // Moved by contract 2.16.0 (lane S18): it refuses a string that is not
+  // I-JSON instead of escaping it. Astra re-vendored it at VENDORED_AT.
   "tools/lib/canonical.mjs": "58debc90215fab34c9f8a6c3d7496345cb7931e65c953441a093ecca9abc98b8",
-  "tools/lib/semver.mjs": "e922da978ed78d09879dd83139a8a5a25843239237d1699dba21c0696fd5a8ac",
+  // Moved by contract 2.16.0 (lane S21), and the answer is ASTRA RE-VENDORS:
+  // a version is at most 256 characters, in parseSemver and in SEMVER_PATTERN.
+  // Astra's moved signer orders its own desktop release versions with this
+  // file, and they are nowhere near 256, so until it re-vendors its copy
+  // answers every question it is asked the same way. Re-vendoring keeps one
+  // grammar in both places. This digest is the new bytes; VENDORED_AT still
+  // names the commit Astra vendored.
+  "tools/lib/semver.mjs": "81aeadd6f2bbf8ecd9796c986e010077db63e9a8cf26f10317720aeb5e7aa0d7",
 });
 
 const tracked = () =>

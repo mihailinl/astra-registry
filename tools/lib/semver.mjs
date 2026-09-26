@@ -1,10 +1,34 @@
 // Just enough semver to order releases and reject nonsense. No dependency.
-// Grammar per semver.org 2.0.0.
+// Grammar per semver.org 2.0.0, plus one rule semver.org does not have: a
+// length (contract §0.7, since 2.16.0).
 
-const RE =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/;
+const GRAMMAR =
+  /(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?/
+    .source;
 
-export const SEMVER_PATTERN = RE.source;
+/**
+ * The longest version this registry admits, pre-release and build included.
+ *
+ * Contract §0.7's version row, since 2.16.0. The plugins service refuses
+ * `len() > 256` before it splits a version (minice-e4, 2026-09-25), and a
+ * record on `main` is write-once, so a version one character longer would be
+ * a record the service could never mirror, for good. The grammar is ASCII, so
+ * characters, UTF-16 units and bytes are one count here.
+ */
+export const SEMVER_MAX_LENGTH = 256;
+
+/**
+ * The grammar with the bound in front of it, as one pattern. The bound is a
+ * lookahead inside the pattern, not a length test beside it, because four bot
+ * modules (`bot/baseline.mjs`, `bot/export-issues.mjs`, `bot/lib/decisions.mjs`,
+ * `bot/lib/service-decide.mjs`) compile this string themselves and never call
+ * parseSemver. A bound in the function alone would reach none of them. The
+ * schemas say the same bound as `maxLength`, and tools/selftest/validation.mjs
+ * finds every schema member that carries a version and holds it to 256.
+ */
+export const SEMVER_PATTERN = `^(?=.{0,${SEMVER_MAX_LENGTH}}$)${GRAMMAR}$`;
+
+const RE = new RegExp(SEMVER_PATTERN);
 
 export function parseSemver(v) {
   const m = typeof v === "string" ? RE.exec(v) : null;

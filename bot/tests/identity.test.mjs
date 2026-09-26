@@ -93,6 +93,34 @@ test("BOT-21: the id and version come from the attested asset name", () => {
   assert.equal(idAndVersionFromAssetName("../../etc/passwd").ok, false);
 });
 
+// Contract §0.7 since 2.16.0: a version is at most 256 characters, pre-release
+// and build included. On the service path this split is where the bot takes a
+// version from a release (BOT-21), so the bound has to hold here: a
+// 257-character version would reach `verify`'s facts, and from them a version
+// record the plugins service could never mirror. A later split cannot land a
+// longer version either: every split past the version's start puts the
+// version's dots into the id, which the id pattern refuses.
+test("BOT-21's split holds contract §0.7's bound: a 256-character version splits out of an asset name, 257 does not", () => {
+  const v256 = `1.0.0-${"a".repeat(125)}+${"b".repeat(124)}`;
+  // Hyphens in the pre-release, so the split has many places to try.
+  const hyphened = `1.0.0-${"a-".repeat(60)}+`.padEnd(256, "b");
+  for (const v of [v256, hyphened]) {
+    assert.equal(v.length, 256);
+    for (const key of ["linux-x64", "noarch"]) {
+      assert.deepEqual(
+        idAndVersionFromAssetName(`astra-chess-${v}-${key}.astraplugin`),
+        { ok: true, id: "astra-chess", version: v, platformKey: key },
+        "a 256-character version did not split out of an asset name",
+      );
+      assert.deepEqual(
+        idAndVersionFromAssetName(`astra-chess-${v}b-${key}.astraplugin`),
+        { ok: false, id: null, version: null, platformKey: null },
+        "a 257-character version split out of an asset name",
+      );
+    }
+  }
+});
+
 test(".15 against the repository the assets were downloaded from", () => {
   const identity = identityFromCertificate(CHESS_FIELDS);
 

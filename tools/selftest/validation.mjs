@@ -15,6 +15,7 @@ import { RECORD_ROOTS, displayStrings, recordFiles, recordStringProblems, runVal
 import { buildIndex } from "../build-index.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
 import { compareSemver } from "../lib/semver.mjs";
+import { validate as validateSchema } from "../lib/jsonschema.mjs";
 import { REPO_ROOT, loadSources } from "../lib/sources.mjs";
 import { stagingListingId } from "../lib/reserved.mjs";
 import { RESERVED_KEYS, SUPPORTED_KEYS, platformKeyFromManifest } from "../lib/platform.mjs";
@@ -967,6 +968,95 @@ export async function run() {
       .map((p) => `${f} ${p.path}: ${p.problem}`));
     assertEqual(found.join("\n"), "", "a record on this tree carries a string no Rust reader can hold");
     console.log(`        (${files.length} record file(s) walked)`);
+  });
+
+  // ── contract §0.7 since 2.16.0: a version is at most 256 characters ───────
+  //
+  // With its pre-release and build. The plugins service refuses `len() > 256`
+  // before it splits, and records on `main` are write-once, so a longer version
+  // in any record the service mirrors would stop its mirror for good. The
+  // number is the contract's, written here, not read from tools/lib/semver.mjs.
+  const VERSION_MAX = 256;
+  const V256 = `1.0.0-${"a".repeat(125)}+${"b".repeat(124)}`;
+  const V257 = `${V256}b`;
+
+  // The schemas say the bound as `maxLength`, a keyword every JSON Schema
+  // reader speaks. The members are FOUND, by name and by the grammar in their
+  // pattern, rather than listed, so a schema that gains a version member
+  // tomorrow is asked on the day it does. `min_astra_version` is Astra's
+  // version, not a plugin's, and §0.7's row is not about it.
+  await test("every schema member that carries a plugin's version says contract §0.7's 256 characters as maxLength, admits a 256-character version and refuses 257 (2.16.0)", () => {
+    const dir = path.join(REPO_ROOT, "schema");
+    const GRAMMAR_TAIL = String.raw`(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`;
+    const found = new Map();
+    const spelled = [];
+    const walk = (node, at, file) => {
+      if (Array.isArray(node)) { node.forEach((x, i) => walk(x, `${at}/${i}`, file)); return; }
+      if (!node || typeof node !== "object") return;
+      if (typeof node.pattern === "string" && node.pattern.endsWith(GRAMMAR_TAIL)) spelled.push(`${file} ${at}`);
+      for (const [k, v] of Object.entries(node)) {
+        const here = `${at}/${k}`;
+        if (k === "properties" && v && typeof v === "object") {
+          if (v.version && typeof v.version === "object") found.set(`${file} ${here}/version`, v.version);
+          if (v.versions?.items && typeof v.versions.items === "object") found.set(`${file} ${here}/versions/items`, v.versions.items);
+        }
+        walk(v, here, file);
+      }
+    };
+    const files = fs.readdirSync(dir).filter((f) => f.endsWith(".json")).sort();
+    assert(files.length >= 10, `schema/ holds ${files.length} JSON file(s); a directory that small is not this tree`);
+    for (const f of files) walk(JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")), "", `schema/${f}`);
+
+    // Measured on main df41596: these six. A walk that stops finding one has
+    // broken, or the member moved and this list says where it went.
+    const expected = [
+      "schema/decision-v1.json /properties/version",
+      "schema/hold-v1.json /properties/decision/properties/versions/items",
+      "schema/index-v1.json /$defs/plugin/properties/version",
+      "schema/index-v1.json /$defs/release/properties/version",
+      "schema/moderation-work-v1.json /$defs/serviceDecision/properties/versions/items",
+      "schema/version-v1.json /properties/version",
+    ];
+    const missing = expected.filter((k) => !found.has(k));
+    assertEqual(missing.join("; "), "", "the walk no longer finds a schema member that carries a version");
+    const unnamed = spelled.filter((k) => ![...found.keys()].includes(k));
+    assertEqual(unnamed.join("; "), "",
+      "a schema member spells the semver grammar under a name the walk does not treat as a version, so nothing asks it for the bound");
+
+    const wrong = [];
+    for (const [where, member] of found) {
+      if (member.maxLength !== VERSION_MAX) wrong.push(`${where} has maxLength ${member.maxLength}`);
+      const at256 = validateSchema(member, V256).map((e) => e.message);
+      if (at256.length) wrong.push(`${where} refuses a 256-character version: ${at256.join(", ")}`);
+      if (!validateSchema(member, V257).some((e) => e.message === `longer than ${VERSION_MAX} characters`)) {
+        wrong.push(`${where} does not refuse a 257-character version for its length`);
+      }
+    }
+    assertEqual(wrong.join("\n"), "", "a schema does not hold a version to contract §0.7's 256 characters");
+    console.log(`        (${found.size} version member(s) in ${files.length} schema(s))`);
+  });
+
+  // tools/validate.mjs over a tree. The record stays `1.0.0.json` because a
+  // version record is named after its version and no filesystem this runs on
+  // stores a 261-byte name (Linux NAME_MAX is 255): the longest version a
+  // record FILE can carry is 250, and `artifacts.*.filename` holds it far below
+  // that. So this is a record whose name and version disagree, and what is asked
+  // is only whether the LENGTH is refused, and only the length.
+  await test("tools/validate.mjs refuses a version record whose version is 257 characters for its length, and does not refuse one of 256 for its length (contract §0.7, 2.16.0)", async () => {
+    const lengthErrors = async (name, v) => {
+      const dir = cleanListing(name);
+      editVersion(dir, (d) => { d.version = v; });
+      const { report } = await validateTree(dir);
+      return {
+        length: errorsMatching(report, `$.version longer than ${VERSION_MAX} characters`)
+          .filter((e) => e.where === "plugins/dice-roller/versions/1.0.0.json"),
+        all: report.errors.map((e) => `${e.where} ${e.message}`).join("\n"),
+      };
+    };
+    const long = await lengthErrors("version-257", V257);
+    assertEqual(long.length.length, 1, `a 257-character version was not refused for its length:\n${long.all}`);
+    const edge = await lengthErrors("version-256", V256);
+    assertEqual(edge.length.length, 0, `a 256-character version was refused for its length:\n${edge.all}`);
   });
 }
 
