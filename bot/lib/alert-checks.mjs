@@ -146,11 +146,34 @@ export const GITHUB_SCHEDULED_PARTIES = ["registry", "test-repository"];
 // that has never been pinged. This field is the record of that post
 // (SERVE-104a: "The post that arms a check is recorded as its armed_at in
 // CHECKS"). Arming is recorded or it did not happen.
+//
+// ── `workflow`: which file may hold a registry check's ping URL ─────────────
+//
+// **Added 2026-09-25 (sprint lane S19).** On a registry row only: the file in
+// `.github/workflows/` whose alert job posts to the check, and so the one
+// workflow whose alert job may map the check's ping URL, meaning its
+// `secretName()` for each of its `signals`. Another party's row has none,
+// because nothing here posts to it and no workflow here may hold its URL
+// (attack M-5).
+//
+// Why a field, and not `source` or the job's own `check:`. `source` names the
+// file in prose, and on `keepalive` not at all (2026-09-25), and a sentence is
+// not a key a test should parse. The job's `check:` cannot be the answer either: an
+// ownership read off the job moves with the job, so a poster re-pointed at
+// another workflow's check, with that check's URL mapped beside it, would
+// prove its own case. So this row and the workflow are two statements of
+// who posts where. `bot/tests/workflows.test.mjs` holds them to agree both
+// ways. Every post is to a row naming the posting file. Every registry row
+// names a file that exists and posts to it. Each alert job maps the channel
+// and the ping URLs of the rows it posts to and nothing else. The one job that
+// maps more is RC-R1-0's reach step, which `bot/tests/alert.test.mjs` holds to
+// exactly `credentials()`.
 
 export const CHECKS = [
   {
     name: "detectors",
     party: "registry",
+    workflow: "detectors.yml",
     source: "B-T3.8 (BOT-43), .github/workflows/detectors.yml",
     interval_seconds: 3600,
     created_disarmed: false,
@@ -160,6 +183,7 @@ export const CHECKS = [
   {
     name: "moderation-run",
     party: "registry",
+    workflow: "plugins-moderation.yml",
     // 600 s is a contract MUST since A6, recorded in the token file and in
     // ROLL-7's file; a cron edit waits for a contract MINOR (SCOPE-1). So this
     // interval is pinned rather than guessed. 3 × 600 s is 30 minutes, under
@@ -180,6 +204,7 @@ export const CHECKS = [
   {
     name: "signer",
     party: "registry",
+    workflow: "sign.yml",
     // ROLL-62's row in RC-R1-0's own table reads "the signer, RC-R1-2", and
     // this is it. One check for the whole workflow and not one per job:
     // `publish` and `pages` sit behind one `alert` job, as `served-set`'s two
@@ -202,6 +227,7 @@ export const CHECKS = [
   {
     name: "served-set",
     party: "registry",
+    workflow: "served-set.yml",
     // SERVE-85 and SERVE-39 are two jobs of one workflow behind one `alert`
     // job (RC-R1-5: "Same `alert` job"), so they are one heartbeat and one
     // check. Two checks here would page twice for one silence and would need a
@@ -215,6 +241,7 @@ export const CHECKS = [
   {
     name: "coverage-canary",
     party: "registry",
+    workflow: "moderation-coverage.yml",
     source: "M-T1.5 (MOD-39), .github/workflows/moderation-coverage.yml",
     interval_seconds: 900,
     created_disarmed: false,
@@ -251,6 +278,7 @@ export const CHECKS = [
   {
     name: "keepalive",
     party: "registry",
+    workflow: "keepalive.yml",
     // ROLL-62's monthly keepalive, which is what keeps every other schedule in
     // this repository from lapsing. 30 days.
     source: "RC-R1-9(b) (ROLL-62)",
@@ -262,6 +290,7 @@ export const CHECKS = [
   {
     name: "alarm-drill",
     party: "registry",
+    workflow: "alarm-drill.yml",
     // Not in RC-R1-0's own table, and it belongs there: §2.0 says "every
     // scheduled check posts a BOT-85 heartbeat from such a job", and the weekly
     // alarm is a scheduled check. Without it the one workflow whose whole
@@ -278,6 +307,7 @@ export const CHECKS = [
   {
     name: "alarm-ack",
     party: "registry",
+    workflow: "alarm-drill.yml",
     // BOT-86's escalation, and the one check here that is not a heartbeat.
     // It is measured PER ALARM: `alarm-drill.yml` sends `start` in the step
     // that posts the weekly alarm, the acknowledgement link in that message
@@ -313,6 +343,7 @@ export const CHECKS = [
   {
     name: "release-canary",
     party: "registry",
+    workflow: "release-canary.yml",
     // Disarmed. `release-canary.yml` exists and its weekly cron is commented
     // out, so only a dispatch posts here. As `deadline-watch` did: a dispatch
     // on main posts the first heartbeat, which arms the receiver's check, and
@@ -327,6 +358,7 @@ export const CHECKS = [
   {
     name: "conformance",
     party: "registry",
+    workflow: "service-conformance.yml",
     // BOT-90. B-T3.11 fixed the schedule: hourly, `29 * * * *` in
     // `service-conformance.yml`, whose `alert` job posts here. That schedule
     // lands COMMENTED OUT, because the plugins service does not answer yet
@@ -343,6 +375,7 @@ export const CHECKS = [
   {
     name: "poll-and-sweep",
     party: "registry",
+    workflow: "plugins-ingest.yml",
     // BOT-87. B-T5.0 fixed the interval: `plugins-ingest.yml`'s `poll-alert`
     // posts on every run in which `load` ran, which is BOT-51's 600 s once
     // that workflow's schedule is live; the poll inside it runs every third
@@ -370,6 +403,7 @@ export const CHECKS = [
   {
     name: "deadline-watch",
     party: "registry",
+    workflow: "deadline-watch.yml",
     // Created disarmed, and armed by its first heartbeat: dispatched run
     // 35963496422 on main posted it at 2026-09-24T06:15:47Z, and the commit
     // that uncommented `.github/workflows/deadline-watch.yml`'s daily cron
@@ -383,6 +417,7 @@ export const CHECKS = [
   {
     name: "baseline-names",
     party: "registry",
+    workflow: "baseline.yml",
     // **Not in RC-R1-0's table, and it is owed one.** `baseline.yml` has a
     // daily `names` job: for every baseline `repository_id` it asks GitHub
     // what that repository is called today and compares the answer with

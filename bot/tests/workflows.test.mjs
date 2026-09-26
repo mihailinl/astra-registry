@@ -534,6 +534,74 @@ test("every job in environment `alerts` can do nothing but alert", () => {
   assert.equal(offenders.join("\n"), "", "a job holding the alarm channel's credential can do more than alert");
 });
 
+// ── Which ping URLs an alert job may map ────────────────────────────────────
+//
+// **Its own, and the table says whose each one is (sprint lane S19,
+// 2026-09-25).** Until then the test below had this title and checked only
+// that each secret a job mapped was one environment `alerts` holds. Every
+// registry ping URL is one, so the "not its own" half asked nothing. Lane S17
+// mapped `ASTRA_DEADMAN_URL_SIGNER` into the coverage canary's alert job on
+// 2026-09-25 and the test stayed green.
+//
+// "Own" is the `workflow` key on each registry row of `CHECKS`
+// (bot/lib/alert-checks.mjs), and not the job's own `check:`. Ownership read
+// off the job moves with the job. A poster re-pointed at another workflow's
+// check, with that check's URL mapped beside it, would then be its own
+// evidence, and every test in this section would pass it. So the row and the
+// workflow are two statements of who posts where, and the two tests below hold
+// them to agree in both directions.
+//
+// An alert job maps exactly: the channel's secrets, and, for each check it
+// posts to through the alert action (`check:`, `ack-check:`) whose row names
+// its file, that row's secret for each of its `signals` (so `_START` where the
+// row has one). A job in the same workflow that posts nothing maps no ping URL.
+// It has no use for one, and one mapped there is reach and nothing else.
+//
+// The one exception is RC-R1-0's reach step in `reach-assertion.yml`, which
+// maps every registry ping URL because checking each one is its job.
+// `bot/tests/alert.test.mjs` holds that step to exactly `credentials()` and the
+// rest of its file to none. Here the exception is that step and nothing more:
+// found by the anchor that test reads, in that file only, so the same step
+// copied into another workflow is not exempt. Inside it every other clause
+// still applies.
+//
+// Two ways past a regex over `secrets.NAME` are closed here too. GitHub
+// resolves a secret's name case-insensitively ("Are case insensitive when
+// referenced", its secrets reference, read 2026-09-25), so
+// `secrets.astra_deadman_url_signer` is the signer's URL and is read as that.
+// And `secrets['NAME']` (documented index syntax) or `toJSON(secrets)` names
+// no secret this test can read, so in an alert job it is refused outright.
+
+/** The one workflow holding the one step allowed every registry ping URL. */
+const REACH_WORKFLOW = "reach-assertion.yml";
+
+/**
+ * The indexes into `job.body` of RC-R1-0's reach step, or an empty set. The
+ * step is the list item that carries `id: reach` and runs `node
+ * tools/reach-assertion.mjs --out verdict.json` (the anchor
+ * `bot/tests/alert.test.mjs` reads), from its `- ` line to the next line
+ * indented no deeper than that dash. Empty for every job outside
+ * `REACH_WORKFLOW`.
+ */
+function reachStepLines(job) {
+  const out = new Set();
+  if (job.file !== REACH_WORKFLOW) return out;
+  for (let i = 0; i < job.body.length; i++) {
+    const dash = /^( +)- /.exec(job.body[i]);
+    if (!dash) continue;
+    const indent = dash[1].length;
+    let end = i + 1;
+    while (end < job.body.length && (job.body[end].trim() === "" || job.body[end].search(/\S/) > indent)) end++;
+    const step = job.body.slice(i, end);
+    const key = (k, v) => new RegExp(`^ {${indent + 2}}${k}:\\s*${v}\\s*$`);
+    if (step.some((l) => key("id", "reach").test(l)) &&
+      step.some((l) => key("run", "node tools/reach-assertion\\.mjs --out verdict\\.json").test(l))) {
+      for (let k = i; k < end; k++) out.add(k);
+    }
+  }
+  return out;
+}
+
 test("an `alerts` job maps the channel's secrets and no ping URL that is not its own", () => {
   // An environment secret is not ambient: a job reads one only where it names
   // it. That makes the `env:` block of an alert job an exact statement of what
@@ -551,9 +619,71 @@ test("an `alerts` job maps the channel's secrets and no ping URL that is not its
   assert.ok(CHANNEL_SECRETS.length >= 3 && CHANNEL_SECRETS.every((s) => known.has(s)),
     `bot/alert.mjs names channel secrets (${CHANNEL_SECRETS.join(", ")}) that bot/lib/alert-checks.mjs does not ` +
     "list as required or optional, so this test would refuse the env: block that maps them");
+
+  /** Every registry ping URL: its secret → the row and the signal it addresses. */
+  const pingUrls = new Map();
+  for (const row of CHECKS) {
+    if (row.party !== "registry") continue;
+    for (const signal of row.signals) pingUrls.set(secretName(row.name, signal), { row, signal });
+  }
+  assert.ok(pingUrls.size >= 10, `only ${pingUrls.size} registry ping URL(s); the table this reads has shrunk`);
+
   const problems = [];
+  let reachSteps = 0;
+  let ownMapped = 0;
   for (const job of allJobs().filter(inAlerts)) {
-    const named = new Set([...code(job).join("\n").matchAll(/secrets\.([A-Z0-9_]+)/g)].map((m) => m[1]));
+    const reach = reachStepLines(job);
+    if (reach.size > 0) reachSteps++;
+
+    // The ping URLs this job may map: the rows it posts to that name its file.
+    const posts = alertPosts(job);
+    const mine = new Set();
+    for (const name of posts ? [...posts.main, ...posts.ack] : []) {
+      const row = CHECKS.find((c) => c.name === name);
+      // A post to no registry row is the next test's to name.
+      if (!row || row.party !== "registry") continue;
+      if (row.workflow !== job.file) {
+        problems.push(
+          `${where(job)} posts to ${name}, and its row in bot/lib/alert-checks.mjs says ` +
+          `${row.workflow ? `.github/workflows/${row.workflow}` : "no workflow"} does. A job may post to, and map the ` +
+          `URL of, only a check whose row names its own file; change the row with the poster, in the same commit, ` +
+          `or post to this workflow's own check`,
+        );
+        continue;
+      }
+      for (const signal of row.signals) mine.add(secretName(name, signal));
+    }
+
+    const named = new Set();
+    job.body.forEach((line, i) => {
+      if (line.trim().startsWith("#")) return;
+      const at = `${job.file}:${job.line + i} (job ${job.job})`;
+      for (const [, expr] of line.matchAll(/\$\{\{(.*?)\}\}/g)) {
+        if (/\bsecrets\b(?!\.[A-Za-z0-9_])/.test(expr)) {
+          problems.push(
+            `${at} reads \`secrets\` other than as secrets.NAME (\`\${{${expr}}}\`). An index or the whole object ` +
+            `names no secret this test can read, and in environment \`alerts\` the whole object is every ping URL`,
+          );
+        }
+      }
+      for (const [, raw] of line.matchAll(/\bsecrets\.([A-Za-z0-9_]+)/g)) {
+        const secret = raw.toUpperCase();
+        named.add(secret);
+        const ping = pingUrls.get(secret);
+        if (!ping) continue;
+        if (mine.has(secret)) { ownMapped++; continue; }
+        if (reach.has(i)) continue;
+        const what = ping.signal === "success" ? ping.row.name : `${ping.row.name}'s ${ping.signal} signal`;
+        problems.push(ping.row.workflow === job.file
+          ? `${at} maps ${secret}, the ping URL of ${what}, a check of this workflow that this job does not post ` +
+            `to. It has no use for the URL, and holding it is the reach to silence that check`
+          : `${at} maps ${secret}, the ping URL of ${what}, which ` +
+            `${ping.row.workflow ? `.github/workflows/${ping.row.workflow}` : "no workflow"} posts to ` +
+            `(bot/lib/alert-checks.mjs). A compromise of this job could post it and silence a check this job never ` +
+            `posts to: attack M-5, one level down`);
+      }
+    });
+
     for (const secret of CHANNEL_SECRETS) {
       if (!named.has(secret)) {
         // This used to be caught twice — here, and by every run of the job
@@ -577,7 +707,76 @@ test("an `alerts` job maps the channel's secrets and no ping URL that is not its
       }
     }
   }
+  // Floors, written before the mutations. The exception is found by an
+  // anchor, which must match exactly once, and it is asked first: a step that
+  // moved, or a file that was renamed, is named as that rather than as every
+  // registry URL reported foreign. The vacuity floor is asked last, so a table
+  // that lost every `workflow` is reported row by row.
+  assert.equal(reachSteps, 1,
+    `RC-R1-0's reach step was found in ${reachSteps} alert job(s) of ${REACH_WORKFLOW}, not exactly one. ` +
+    "bot/tests/alert.test.mjs reads the same anchor; move REACH_WORKFLOW and this anchor with the step");
   assert.equal(problems.join("\n"), "", "an alert job's credentials are not the ones it needs, or are more");
+  assert.ok(ownMapped >= 1, "no alert job maps a ping URL of its own; this rule would be read off nothing");
+});
+
+test("every registry check names the workflow that posts to it, and no other party's check names one", () => {
+  // The other half of the agreement above. That test holds every post and
+  // every mapped URL to the row's `workflow`; this one holds the row to the
+  // workflows, so a row naming the wrong file is red here even where no job
+  // has moved. `null` is a registry row whose poster has not landed: nothing
+  // may post to it or map its URL but the reach step, which is the state the
+  // table's other rules already allow such a row.
+  const posters = new Map();
+  for (const job of allJobs()) {
+    const posts = alertPosts(job);
+    if (!posts) continue;
+    for (const name of [...posts.main, ...posts.ack]) {
+      if (!posters.has(name)) posters.set(name, []);
+      posters.get(name).push(job);
+    }
+  }
+  const problems = [];
+  let named = 0;
+  for (const row of CHECKS) {
+    if (row.party !== "registry") {
+      if (Object.hasOwn(row, "workflow")) {
+        problems.push(
+          `${row.name} is posted to by ${row.party}, not by this repository, and names workflow ` +
+          `${JSON.stringify(row.workflow)}. No workflow here may hold its URL (attack M-5), so none is its own`,
+        );
+      }
+      continue;
+    }
+    if (!Object.hasOwn(row, "workflow")) {
+      problems.push(`${row.name} is a registry check and names no \`workflow\`, so no alert job may map its ping URL`);
+      continue;
+    }
+    const found = posters.get(row.name) ?? [];
+    if (row.workflow === null) {
+      if (found.length) problems.push(`${row.name} names no workflow, and ${found.map(where).join(", ")} posts to it`);
+      continue;
+    }
+    if (typeof row.workflow !== "string" || !files.includes(row.workflow)) {
+      problems.push(`${row.name} names workflow ${JSON.stringify(row.workflow)}, which is not a file in .github/workflows/`);
+      continue;
+    }
+    named++;
+    if (!found.some((job) => job.file === row.workflow)) {
+      problems.push(
+        `${row.name} names ${row.workflow}, and nothing in it posts to ${row.name}` +
+        (found.length ? `; ${found.map(where).join(", ")} does` : ""),
+      );
+    }
+    // The row's prose says who posts too, on every row but one. A key and a
+    // sentence in one row that disagree are a row nobody can trust either half of.
+    for (const [, file] of String(row.source ?? "").matchAll(/\.github\/workflows\/([A-Za-z0-9._-]+\.ya?ml)/g)) {
+      if (file !== row.workflow) {
+        problems.push(`${row.name}'s source names .github/workflows/${file}, and its \`workflow\` is ${row.workflow}`);
+      }
+    }
+  }
+  assert.equal(problems.join("\n"), "", "the table and the workflows disagree about who posts to a registry check");
+  assert.ok(named >= 10, `only ${named} registry check(s) name a workflow; the table this reads has shrunk`);
 });
 
 /**
