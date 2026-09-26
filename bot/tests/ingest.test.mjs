@@ -43,9 +43,10 @@ import { scriptsUsed } from "../../tools/lib/ids.mjs";
 import { extractSignerFacts, loadRootKeys, loadWorkflowAllowlist } from "../lib/attestation.mjs";
 import * as gh from "../lib/github.mjs";
 import { certificateIds } from "../lib/certificate.mjs";
-import { applyIdentity } from "../lib/identity.mjs";
+import { applyIdentity, idAndVersionFromAssetName } from "../lib/identity.mjs";
 import { proveOwnership } from "../lib/ownership.mjs";
 import { isRecheckCommand, parseIssueForm } from "../lib/issue.mjs";
+import { verifiedProblems } from "../lib/service-decide.mjs";
 import { findProbe, runProbe } from "../lib/probe.mjs";
 import { makeBundle, fakeGitHub, fakeGh, fakeOwnership, FIXTURE_SIGNER_WORKFLOW, FIXTURE_REPOSITORY_ID, FIXTURE_OWNER_ID } from "../fixtures/ingest/make.mjs";
 
@@ -152,24 +153,35 @@ async function run({
   cert = {},
   /** Per-bundle certificates, by asset name: the cross-bundle canary. */
   certByAsset = null,
+  /** `{ downloads: [], ghFiles: [] }` to record what was fetched and what `gh` was handed. */
+  spy = null,
 } = {}) {
   const github = fakeGitHub({ repo, tag, assets });
+  // The bundle a file on disk holds, by its bytes. `gh` is handed a file under
+  // a name the bot chose, never under the asset's, so the fake finds which
+  // asset it is looking at the way `gh` does: by digest.
+  const nameByDigest = new Map(assets.map((a) => [crypto.createHash("sha256").update(a.bytes).digest("hex"), a.name]));
   const result = await ingest(
     { repo, tag, submitter, root, trustFile, signerWorkflow },
     {
       rootKeys,
       fetchRelease: github.fetchRelease.bind(github),
       headAsset: github.headAsset.bind(github),
-      downloadAsset: github.downloadAsset.bind(github),
+      downloadAsset: async (url, max) => {
+        spy?.downloads.push(url);
+        return github.downloadAsset(url, max);
+      },
       proveOwnership: fakeOwnership(ownershipOk),
       ghRunner: (args) => {
         // The digest `gh` is asked about is the digest of the file on disk, so
         // the fake computes it the same way the real one would: from the bytes
         // it was handed.
         const file = args[2];
+        spy?.ghFiles.push(path.basename(file));
         const bytes = fs.readFileSync(file);
-        const digest = subjectOverride ?? crypto.createHash("sha256").update(bytes).digest("hex");
-        const perAsset = certByAsset?.[path.basename(file)] ?? {};
+        const onDisk = crypto.createHash("sha256").update(bytes).digest("hex");
+        const digest = subjectOverride ?? onDisk;
+        const perAsset = certByAsset?.[nameByDigest.get(onDisk)] ?? {};
         return fakeGh({
           repo: attestRepo, signerDigest, subjectDigest: digest, signerUri, certRepo, fail: ghFail,
           // The tag is handed to the stub because `.14` is `refs/tags/<tag>`
@@ -2835,7 +2847,7 @@ const SVC_SID = "0192f1c2-3b4a-7c5d-8e6f-1a2b3c4d5e6f";
 const svcLease = { submission_id: SVC_SID, repo: REPO, tag: TAG, trigger: "poll", claimed_from: "received" };
 
 /** One `verify` run against a world assembled from the arguments. */
-async function verifyRun({ assets, certRepo = null, repoIds = null, ghFail = null, ownerFile = null } = {}) {
+async function verifyRun({ assets, certRepo = null, repoIds = null, ghFail = null, ownerFile = null, spy = null } = {}) {
   const github = fakeGitHub({ repo: REPO, tag: TAG, assets });
   const assetsDir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-assets-"));
   scratch.push(assetsDir);
@@ -2843,11 +2855,17 @@ async function verifyRun({ assets, certRepo = null, repoIds = null, ghFail = nul
     rootKeys: TEST_ROOT_KEYS,
     fetchRelease: github.fetchRelease.bind(github),
     headAsset: github.headAsset.bind(github),
-    downloadAsset: github.downloadAsset.bind(github),
-    ghRunner: (args) => fakeGh({
-      repo: REPO, signerDigest: ALLOWED_WORKFLOW_SHA, certRepo, fail: ghFail, tag: TAG,
-      subjectDigest: crypto.createHash("sha256").update(fs.readFileSync(args[2])).digest("hex"),
-    })(args),
+    downloadAsset: async (url, max) => {
+      spy?.downloads.push(url);
+      return github.downloadAsset(url, max);
+    },
+    ghRunner: (args) => {
+      spy?.ghFiles.push(path.basename(args[2]));
+      return fakeGh({
+        repo: REPO, signerDigest: ALLOWED_WORKFLOW_SHA, certRepo, fail: ghFail, tag: TAG,
+        subjectDigest: crypto.createHash("sha256").update(fs.readFileSync(args[2])).digest("hex"),
+      })(args);
+    },
     fetchRepositoryIds: async () => repoIds ?? { status: "found", id: FIXTURE_REPOSITORY_ID, owner_id: FIXTURE_OWNER_ID, full_name: REPO },
     binding: {
       commitInRepository: async () => ({ status: "found", reason: "HTTP 200" }),
@@ -2872,7 +2890,8 @@ await test("verify: a conforming release yields every identity value from the ce
   assertEqual(v.binding.outcome, "none", "no owner file, no line");
   assert(/^[0-9a-f]{16}$/.test(v.fingerprint), "a fingerprint");
   const onDisk = fs.readdirSync(path.join(assetsDir, SVC_SID));
-  assert(onDisk.includes(bundleName()), `the verified bytes are left for check: ${onDisk.join(", ")}`);
+  const digest = crypto.createHash("sha256").update(makeBundle()).digest("hex");
+  assert(onDisk.includes(`${digest}.astraplugin`), `the verified bytes are left for check, under their digest: ${onDisk.join(", ")}`);
   assert(onDisk.includes("verify-outcome.txt"), "and the upload is never empty");
 });
 
@@ -2957,6 +2976,188 @@ await test("check: a string that is not I-JSON is refused on the service path, a
       `a listing carrying ${what} was written for the publish job to commit`);
     assert(fs.existsSync(path.join(out, "listing", "NO-LISTING")), "the upload lost its marker");
   }
+});
+
+// ── an asset name no release can carry, and the names the bot writes under ──
+//
+// Found by lane S21 on 2026-09-26, on main 3a06401. Both jobs wrote a
+// stranger's bundle to disk under the asset's own name, so a name past what a
+// filesystem holds (255 bytes, on tmpfs and on ext4) THREW `ENAMETOOLONG` out
+// of `ingest()` and out of `verifyFacts()` instead of refusing. On the service
+// path the throw left `--verify-facts`'s loop, so every other submission in the
+// batch lost its verdict with it: one author's long name, everyone's run.
+//
+// The fixture is legal in every part but its length — a 44-character id (the
+// bound is 64) and a 233-character version (the bound is 256, contract §0.7
+// since 2.16.0) — so BOT-21's split accepts it and only the length refuses it.
+
+const { verifyBatch, ASSET_NAME_MAX_BYTES } = await import("../ingest.mjs");
+const LONG_ID = `dice-roller-${"x".repeat(32)}`;
+const nameAround = (version) => `${LONG_ID}-${version}-linux-x64.astraplugin`;
+/** A version that makes `nameAround` exactly `bytes` long. */
+const versionFor = (bytes) => `1.0.0-${"a".repeat(bytes - nameAround("1.0.0-").length)}`;
+const LONG_VERSION = versionFor(300);
+const longAsset = (bytes = 300) => ({
+  name: nameAround(versionFor(bytes)),
+  bytes: makeBundle({ id: LONG_ID, version: versionFor(bytes) }),
+});
+const newSpy = () => ({ downloads: [], ghFiles: [] });
+const sha256hex = (b) => crypto.createHash("sha256").update(b).digest("hex");
+
+await test("the 300-byte fixture is legal in every part but its length", () => {
+  const { name } = longAsset();
+  assertEqual(Buffer.byteLength(name, "utf8"), 300, "the fixture's length");
+  assert(LONG_ID.length <= 64 && LONG_VERSION.length <= 256, `id ${LONG_ID.length}, version ${LONG_VERSION.length}`);
+  const split = idAndVersionFromAssetName(name);
+  assert(split.ok && split.id === LONG_ID && split.version === LONG_VERSION,
+    `BOT-21's split refuses the fixture, so a test using it would prove the grammar and not the bound: ${JSON.stringify(split).slice(0, 120)}`);
+});
+
+await test("E_ASSET_FILENAME — ingest refuses a 300-byte asset name as a verdict, before it fetches or writes a byte", async () => {
+  const spy = newSpy();
+  let r;
+  try {
+    r = await run({ assets: [longAsset()], root: registryWith({}), spy });
+  } catch (e) {
+    throw new Error(`ingest threw instead of refusing: ${e.code ?? e.name} ${String(e.message).slice(0, 80)}`);
+  }
+  assertBlockedWith(r, "E_ASSET_FILENAME");
+  const finding = r.findings.find((x) => x.code === "E_ASSET_FILENAME" && x.level === "error");
+  assert(finding.message.includes("300 bytes") && finding.message.includes(`${ASSET_NAME_MAX_BYTES}`),
+    `the refusal does not say how long the name is and what the bound is: ${finding.message}`);
+  assertEqual(spy.downloads.length, 0, "the over-long asset was downloaded before it was refused");
+  assertEqual(spy.ghFiles.length, 0, "the over-long asset reached the disk for gh before it was refused");
+});
+
+await test("E_ASSET_FILENAME — verify refuses a release carrying a 300-byte asset name, before it fetches or writes a byte of any asset", async () => {
+  const spy = newSpy();
+  let got;
+  try {
+    got = await verifyRun({ assets: [conformingAsset(), longAsset()], spy });
+  } catch (e) {
+    throw new Error(`verify threw instead of refusing: ${e.code ?? e.name} ${String(e.message).slice(0, 80)}`);
+  }
+  const { v, assetsDir } = got;
+  assertEqual(v.outcome, "refuse", JSON.stringify(v).slice(0, 200));
+  assertEqual(v.code, "E_ASSET_FILENAME", "refused for another reason");
+  assertEqual(spy.downloads.length, 0, `an asset was downloaded before the release was refused: ${spy.downloads.length}`);
+  assertEqual(spy.ghFiles.length, 0, "a bundle reached the disk for gh before the release was refused");
+  assertEqual(fs.readdirSync(path.join(assetsDir, SVC_SID)).sort().join(","), "verify-outcome.txt",
+    "the refused submission's upload holds anything but its outcome");
+});
+
+await test(`the bound is GitHub's: a ${255}-byte name verifies, a 256-byte one is refused`, async () => {
+  assertEqual(ASSET_NAME_MAX_BYTES, 255, "the bound moved; GitHub refused a 256-character asset name when it was measured");
+  const at = await verifyRun({ assets: [longAsset(255)] });
+  assertEqual(at.v.outcome, "ok", `a 255-byte name, which GitHub stores, was not verified: ${JSON.stringify(at.v).slice(0, 200)}`);
+  const over = await verifyRun({ assets: [longAsset(256)] });
+  assertEqual(over.v.code, "E_ASSET_FILENAME", `a 256-byte name, which GitHub refuses, was not refused: ${JSON.stringify(over.v).slice(0, 200)}`);
+});
+
+await test("verify-facts: one submission that fails fails alone, and the batch keeps every other verdict", async () => {
+  const SIDS = {
+    first: "0192f1c2-3b4a-7c5d-8e6f-000000000001",
+    long: "0192f1c2-3b4a-7c5d-8e6f-000000000002",
+    throws: "0192f1c2-3b4a-7c5d-8e6f-000000000003",
+    last: "0192f1c2-3b4a-7c5d-8e6f-000000000004",
+  };
+  const REPOS = {
+    first: "a-stranger/dice-roller", long: "a-stranger/long-name", throws: "a-stranger/unlucky", last: "b-stranger/dice-roller",
+  };
+  const worlds = Object.fromEntries(Object.entries(REPOS).map(([k, repo]) =>
+    [repo, fakeGitHub({ repo, tag: TAG, assets: [k === "long" ? longAsset() : conformingAsset()] })]));
+  const worldOf = (url) => Object.entries(worlds).find(([repo]) => url.startsWith(`https://github.com/${repo}/`))?.[1];
+  const leases = Object.fromEntries(Object.entries(SIDS).map(([k, sid]) =>
+    [sid, { submission_id: sid, repo: REPOS[k], tag: TAG, trigger: "poll", claimed_from: "received" }]));
+  const assetsDir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-batch-"));
+  scratch.push(assetsDir);
+  const lines = [];
+  let verified;
+  try {
+    verified = await verifyBatch({
+      ids: Object.values(SIDS), leases, root: REPO_ROOT, assetsDir, trustFile: TRUST_FILE, log: (l) => lines.push(l),
+    }, {
+      rootKeys: TEST_ROOT_KEYS,
+      fetchRelease: async (r, t) => worlds[r].fetchRelease(r, t),
+      headAsset: async (url) => worldOf(url).headAsset(url),
+      downloadAsset: async (url, max) => worldOf(url).downloadAsset(url, max),
+      ghRunner: (args) => fakeGh({
+        repo: args[4], signerDigest: ALLOWED_WORKFLOW_SHA, tag: TAG,
+        subjectDigest: sha256hex(fs.readFileSync(args[2])),
+      })(args),
+      // A throw nothing inside verifyFacts catches: the by-id read, after the
+      // bytes are already on disk and attested.
+      fetchRepositoryIds: async (repo) => {
+        if (repo === REPOS.throws) throw new Error("socket hang up");
+        return { status: "found", id: FIXTURE_REPOSITORY_ID, owner_id: FIXTURE_OWNER_ID, full_name: repo };
+      },
+      binding: {
+        commitInRepository: async () => ({ status: "found", reason: "HTTP 200" }),
+        fileAtCommit: async () => ({ status: "not_found", reason: "HTTP 404" }),
+      },
+    });
+  } catch (e) {
+    throw new Error(`the batch threw, so no submission in it has a verdict: ${e.code ?? e.name} ${String(e.message).slice(0, 80)}`);
+  }
+  assertEqual(Object.keys(verified).sort().join(","), Object.values(SIDS).sort().join(","), "a submission has no entry");
+  assertEqual(verified[SIDS.first].outcome, "ok", `the first verdict: ${JSON.stringify(verified[SIDS.first]).slice(0, 160)}`);
+  assertEqual(verified[SIDS.last].outcome, "ok", `the verdict after the failures: ${JSON.stringify(verified[SIDS.last]).slice(0, 160)}`);
+  assertEqual(`${verified[SIDS.long].outcome} ${verified[SIDS.long].code}`, "refuse E_ASSET_FILENAME", "the over-long name");
+  // The bot's own failure is nobody's refusal: nothing is recorded against the
+  // author, an operator is paged, and the lease expires under BOT-15.
+  assertEqual(`${verified[SIDS.throws].outcome} ${verified[SIDS.throws].code}`, "alert BOT21_VERIFY_THREW", "the throw");
+  for (const [sid, v] of Object.entries(verified)) {
+    assertEqual(verifiedProblems(v).join("; "), "", `decide would not read ${sid}'s entry`);
+  }
+  const thrown = fs.readdirSync(path.join(assetsDir, SIDS.throws)).sort();
+  assertEqual(thrown.join(","), "verify-outcome.txt", "the failed submission left unverified bytes for check, or no file for its upload");
+  assertEqual(fs.readFileSync(path.join(assetsDir, SIDS.throws, "verify-outcome.txt"), "utf8"), "alert\n", "its outcome file");
+  assert(lines.some((l) => l.startsWith(`${SIDS.throws}: alert BOT21_VERIFY_THREW`)), `the log does not say which submission threw: ${lines.join(" | ")}`);
+});
+
+await test("neither job writes a stranger's bundle under the asset's name, and check finds each bundle by its digest", async () => {
+  const linux = conformingAsset();
+  const windows = conformingAsset({ os: "windows", arch: "x86_64" });
+  const spy = newSpy();
+  await run({ assets: [linux, windows], root: registryWith({}), spy });
+  assertEqual(spy.ghFiles.length, 2, `gh was not handed both bundles: ${spy.ghFiles.join(", ")}`);
+  assert(spy.ghFiles.every((n) => n !== linux.name && n !== windows.name), `ingest wrote a bundle under its asset name: ${spy.ghFiles.join(", ")}`);
+  assertEqual(new Set(spy.ghFiles).size, 1, `ingest's name for the file it hands gh is not fixed: ${spy.ghFiles.join(", ")}`);
+
+  const vspy = newSpy();
+  const { v, assetsDir } = await verifyRun({ assets: [linux], spy: vspy });
+  assertEqual(v.outcome, "ok", JSON.stringify(v.findings));
+  const want = `${sha256hex(linux.bytes)}.astraplugin`;
+  assertEqual(vspy.ghFiles.join(","), want, "verify handed gh a file under a name it did not choose");
+  const onDisk = fs.readdirSync(path.join(assetsDir, SVC_SID)).filter((n) => n.endsWith(".astraplugin"));
+  assertEqual(onDisk.join(","), want, "verify left the bytes for check under a name it did not choose");
+
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-check-"));
+  scratch.push(out);
+  const { facts } = await checkFacts({ submissionId: SVC_SID, assetsDir: path.join(assetsDir, SVC_SID), verified: v, out, root: REPO_ROOT });
+  assertEqual(facts.findings.filter((f) => f.level === "error").map((f) => f.code).join(","), "", "check refused a verified bundle");
+  const record = JSON.parse(fs.readFileSync(path.join(out, "listing", "plugins", "dice-roller", "versions", "0.2.0.json"), "utf8"));
+  assertEqual(record.artifacts["linux-x64"].filename, linux.name, "the listing's filename is not the name verify attested (BOT-21)");
+});
+
+await test("check: bytes verify did not verify are refused and never listed", async () => {
+  const { v, assetsDir } = await verifyRun({ assets: [conformingAsset()] });
+  const stranger = conformingAsset({ os: "windows", arch: "x86_64" });
+  fs.writeFileSync(path.join(assetsDir, SVC_SID, `${sha256hex(stranger.bytes)}.astraplugin`), stranger.bytes);
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-check-"));
+  scratch.push(out);
+  const { facts } = await checkFacts({ submissionId: SVC_SID, assetsDir: path.join(assetsDir, SVC_SID), verified: v, out, root: REPO_ROOT });
+  assert(facts.findings.some((f) => f.level === "error" && f.code === "E_DIGEST_MISMATCH"),
+    `a bundle verify never saw was not refused E_DIGEST_MISMATCH: ${JSON.stringify(facts.findings.filter((f) => f.level === "error"))}`);
+  assert(!fs.existsSync(path.join(out, "listing", "plugins")), "a listing was written beside bytes nobody verified");
+});
+
+await test("verify: one bundle under two names is refused, not left for check as one file standing for two", async () => {
+  const bytes = makeBundle();
+  const { v, assetsDir } = await verifyRun({ assets: [{ name: bundleName(), bytes }, { name: bundleName({ os: "windows" }), bytes }] });
+  assertEqual(`${v.outcome} ${v.code}`, "refuse E_MANIFEST_PLATFORM_MISMATCH", JSON.stringify(v).slice(0, 200));
+  const left = fs.readdirSync(path.join(assetsDir, SVC_SID)).filter((n) => n.endsWith(".astraplugin"));
+  assertEqual(left.join(","), "", "bytes were left for check");
 });
 
 // ── result ──────────────────────────────────────────────────────────────────

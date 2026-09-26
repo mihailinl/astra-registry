@@ -128,6 +128,52 @@ class Findings {
 const sha256 = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
 
 /**
+ * The longest asset name either job reads, in UTF-8 bytes. A longer one is
+ * refused E_ASSET_FILENAME — the code this loop already gives any name that is
+ * not `<id>-<version>-<key>.astraplugin` — before a byte of it is fetched.
+ *
+ * **It is GitHub's bound, measured** (lane S22, 2026-09-26, on a draft release
+ * of `mihailinl/astra-registry-coverage-fixture`, deleted afterwards): the
+ * Releases API stored a 255-character asset name and refused 256 with `name is
+ * too long (maximum is 255 characters)`, and a non-ASCII name was stored as the
+ * ASCII it transliterates to. The grammar alone would admit more — a
+ * 64-character id and a 256-character version (§0.7; the version since 2.16.0)
+ * around `windows-x64` make 345 bytes — so the 256-to-345 names are legal and
+ * no release carries one; a release that appears to has not been read right.
+ *
+ * **It is not what keeps the disk safe any more.** Until S22 both jobs wrote
+ * the bundle under the asset's own name, so a name past 255 bytes threw
+ * `ENAMETOOLONG` instead of refusing, and on the service path that throw lost
+ * the verdict of every submission in the batch. Nothing here writes under an
+ * author's name now (`spill`, `verifyFacts`); this bound keeps the refusal a
+ * verdict about one asset rather than a property of whatever disk the run has.
+ * It does still bound the paths built later from the id and the version that
+ * both jobs read out of this name: inside 255 bytes the two together are at most
+ * 235 characters (`noarch` is the shortest key), so `versions/<version>.json`
+ * and `state/queue/<id>@<version>.json` stay under 255 bytes too. A bound
+ * raised toward the grammar's 345 would move them past it.
+ *
+ * Bytes rather than characters, because a name that is not ASCII is refused
+ * anyway — by BOT-21's split on the service path, by the expected-name check on
+ * the legacy one — so the unit changes nothing a legal name can reach. A name
+ * past 140 characters can never be LISTED either (`schema/version-v1.json`'s
+ * `filename`), but that is the listing's rule, refused with its own code once
+ * the bytes are checked; this one says only what no release can carry.
+ */
+export const ASSET_NAME_MAX_BYTES = 255;
+
+/** Why an asset name is refused before anything is fetched, or null. Never echoes a refused name whole. */
+function assetNameTooLong(name) {
+  const bytes = Buffer.byteLength(name, "utf8");
+  if (bytes <= ASSET_NAME_MAX_BYTES) return null;
+  return `the asset's name is ${bytes} bytes, and GitHub stores no asset name past ${ASSET_NAME_MAX_BYTES}, so no ` +
+    "release carries this one; `astra-plugin build` names each bundle `<id>-<version>-<target>.astraplugin`";
+}
+
+/** A refused over-long name, cut to something a report row can hold. */
+const clippedName = (name) => `${[...name].slice(0, 40).join("")}…`;
+
+/**
  * Contract §0.7 (since 2.16.0), over the two records this run would propose:
  * every member name and string value is valid Unicode, with no unpaired
  * surrogate and no noncharacter.
@@ -270,6 +316,12 @@ export async function ingest(opts, deps = {}) {
     const where = asset.name;
     const url = asset.browser_download_url;
 
+    const tooLong = assetNameTooLong(asset.name);
+    if (tooLong) {
+      f.error("E_ASSET_FILENAME", clippedName(asset.name), tooLong);
+      continue;
+    }
+
     // The URL belongs to the repository being listed. This is the check the
     // daemon repeats locally against its TOFU pin (§5.3-A.6), so a listing that
     // fails it here would fail there — with the difference that here nobody has
@@ -308,7 +360,7 @@ export async function ingest(opts, deps = {}) {
     const digest = sha256(bytes);
 
     // ── the attestation, before anything is read out of the archive ─────────
-    const spilled = spill(bytes, asset.name);
+    const spilled = spill(bytes);
     let att;
     try {
       att = await attest({
@@ -687,13 +739,19 @@ async function validateDerived(root, derived, opts) {
  *
  * `gh attestation verify` takes a path, not bytes, so this is the one moment a
  * stranger's archive reaches a filesystem. It is written whole, into a
- * `mkdtemp` directory created with the process umask, under its own name, and
- * **nothing is ever extracted from it** — no entry of the archive is written
- * anywhere, here or in any other file in bot/.
+ * `mkdtemp` directory created with the process umask, and **nothing is ever
+ * extracted from it** — no entry of the archive is written anywhere, here or in
+ * any other file in bot/.
+ *
+ * **Under a fixed name, never the asset's.** It was written under the asset's
+ * own name until S22, and a name past 255 bytes threw `ENAMETOOLONG` out of the
+ * whole run instead of refusing that asset. `gh` matches an attestation by the
+ * digest of the file's bytes and never by its name, and the directory is this
+ * call's own, so one name serves every bundle and no author chooses it.
  */
-function spill(bytes, name) {
+function spill(bytes) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-bundle-"));
-  const file = path.join(dir, path.basename(name));
+  const file = path.join(dir, "bundle.astraplugin");
   fs.writeFileSync(file, bytes);
   return { file, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
@@ -902,6 +960,80 @@ export function renderComment(f, derived, opts) {
 // different name is (TRUST-23; ID-41).
 
 /**
+ * What one lease leaves in `<assetsDir>/<submission_id>` for its upload.
+ *
+ * `assets-<submission_id>` is uploaded with `if-no-files-found: error`; a lease
+ * this job refused, waited on, alerted about or failed on still leaves one
+ * file, so the upload of the next lease's bytes is not failed by this one's
+ * absence. Only VERIFIED bytes are handed to the check job: any other outcome
+ * leaves nothing there to unpack.
+ */
+function leaveOutcome(assetsDir, submissionId, outcome) {
+  const dir = path.join(assetsDir, submissionId);
+  fs.mkdirSync(dir, { recursive: true });
+  if (outcome !== "ok") {
+    for (const n of fs.readdirSync(dir)) if (n.endsWith(".astraplugin")) fs.rmSync(path.join(dir, n));
+  }
+  fs.writeFileSync(path.join(dir, "verify-outcome.txt"), `${outcome}\n`);
+}
+
+/** A thrown error as one printable line: its code or name, and a clipped message. */
+function describeThrow(e) {
+  const what = e?.code ?? e?.name ?? "Error";
+  const message = String(e?.message ?? e).replace(/[^\x20-\x7e]/g, "?").slice(0, 160);
+  return `${what}: ${message}`;
+}
+
+/**
+ * `--verify-facts`'s loop: every lease gets its own verdict, and a throw is one
+ * lease's.
+ *
+ * It used to be the bare loop in `serviceMain`, and one throw anywhere in
+ * `verifyFacts` left it, so the step exited 2 and wrote no `verified` output
+ * for ANY lease in the batch — lane S21 found that an asset name past 255 bytes
+ * did exactly that (`ENAMETOOLONG`), so one author's release decided every
+ * other author's run. Now a throw becomes that lease's `alert`,
+ * `BOT21_VERIFY_THREW`: nothing is recorded against its author (the fault is
+ * this bot's until an operator says otherwise), decide pages an operator and
+ * writes nothing, and the lease expires under BOT-15 — while every other lease
+ * keeps the verdict it earned. Not `wait`: a throw that recurs on every run
+ * would be retried silently for ever, and a wait pages nobody.
+ *
+ * A lease `claim` named and did not hand on still throws: that is the claim
+ * job's output being wrong, not one submission failing, and decide refuses the
+ * same batch for the same reason.
+ *
+ * @param {{ids: string[], leases: object, assetsDir: string, root?: string, trustFile?: string,
+ *   signerWorkflow?: string, log?: (line: string) => void}} opts
+ * @param {object} deps the seam `verifyFacts` takes
+ */
+export async function verifyBatch(opts, deps = {}) {
+  const log = opts.log ?? ((line) => console.log(line));
+  const verified = {};
+  for (const id of opts.ids) {
+    const lease = opts.leases?.[id];
+    if (!lease) throw new Error(`claim reported ${id} and handed on no lease for it`);
+    try {
+      verified[id] = await verifyFacts({
+        lease, root: opts.root, assetsDir: opts.assetsDir, trustFile: opts.trustFile, signerWorkflow: opts.signerWorkflow,
+      }, deps);
+    } catch (e) {
+      // Cleared of any bytes the throw left behind before anything is said:
+      // `check` must never be handed bytes this job did not finish verifying.
+      // If even that fails, the run fails — loudly, rather than handing them on.
+      leaveOutcome(opts.assetsDir, lease.submission_id, "alert");
+      verified[id] = {
+        submission_id: lease.submission_id, outcome: "alert", findings: [],
+        code: "BOT21_VERIFY_THREW", reason: `verify threw ${describeThrow(e)}`,
+      };
+    }
+    const v = verified[id];
+    log(`${id}: ${v.outcome}${v.code ? ` ${v.code}` : ""}${v.code === "BOT21_VERIFY_THREW" ? ` — ${v.reason}` : ""}`);
+  }
+  return verified;
+}
+
+/**
  * `verify`'s answer for one lease: every identity value, or why there is none.
  *
  * `outcome` is `ok` (every value below is the verification's), `wait` (a read
@@ -927,17 +1059,7 @@ export async function verifyFacts(opts, deps = {}) {
   const repoIds = deps.fetchRepositoryIds ?? gh.fetchRepositoryIds;
   const findings = [];
   const out = (outcome, extra = {}) => {
-    // `assets-<submission_id>` is uploaded with `if-no-files-found: error`; a
-    // lease this job refused or waited on still leaves one file, so the upload
-    // of the next lease's bytes is not failed by this one's absence.
-    const dir = path.join(opts.assetsDir, lease.submission_id);
-    fs.mkdirSync(dir, { recursive: true });
-    // Only VERIFIED bytes are handed to the check job. A lease this job
-    // refused, waited on or alerted about leaves nothing there to unpack.
-    if (outcome !== "ok") {
-      for (const n of fs.readdirSync(dir)) if (n.endsWith(".astraplugin")) fs.rmSync(path.join(dir, n));
-    }
-    fs.writeFileSync(path.join(dir, "verify-outcome.txt"), `${outcome}\n`);
+    leaveOutcome(opts.assetsDir, lease.submission_id, outcome);
     return { submission_id: lease.submission_id, outcome, findings, ...extra };
   };
   const refuse = (code, where, message) => {
@@ -968,12 +1090,20 @@ export async function verifyFacts(opts, deps = {}) {
   }
   const bundles = (release.assets ?? []).filter((a) => typeof a?.name === "string" && a.name.endsWith(".astraplugin"));
   if (bundles.length === 0) return refuse("E_NO_BUNDLE_ASSETS", "release", `${lease.repo}@${lease.tag} carries no .astraplugin asset`);
+  // Every name, before any asset is fetched: this job refuses a release whole
+  // at its first refusal, so a name no release can carry is decided before a
+  // byte of any bundle beside it reaches the disk.
+  for (const asset of bundles) {
+    const tooLong = assetNameTooLong(asset.name);
+    if (tooLong) return refuse("E_ASSET_FILENAME", clippedName(asset.name), tooLong);
+  }
 
   const releasePrefix = `https://github.com/${lease.repo}/releases/download/${lease.tag}/`;
   const dir = path.join(opts.assetsDir, lease.submission_id);
   fs.mkdirSync(dir, { recursive: true });
   const assets = [];
   const certificates = [];
+  const nameOfDigest = new Map();
   let sourceDigest = null;
   let certRepoMismatch = false;
 
@@ -1006,10 +1136,23 @@ export async function verifyFacts(opts, deps = {}) {
       return refuse("E_ASSET_SIZE", where, `the release API says ${asset.size} bytes, the download is ${bytes.length}`);
     }
     const digest = sha256(bytes);
-    // The one place a stranger's archive reaches this job's disk: whole, under
-    // its own name, for `gh` and for the `check` job's download. Nothing is
-    // extracted from it here or anywhere in this job.
-    const file = path.join(dir, path.basename(asset.name));
+    // The file below is named by its digest, so two assets carrying one bundle
+    // would be one file standing for two names, and `check` would list one
+    // platform where this job verified two. The same bundle cannot be two
+    // targets' build, so it is refused here with the code the legacy path
+    // gives the same release.
+    if (nameOfDigest.has(digest)) {
+      return refuse("E_MANIFEST_PLATFORM_MISMATCH", where,
+        `${where} carries the same bytes as ${nameOfDigest.get(digest)} (sha256 ${digest.slice(0, 16)}…); one bundle cannot be two targets' build`);
+    }
+    nameOfDigest.set(digest, where);
+    // The one place a stranger's archive reaches this job's disk: whole, for
+    // `gh` and for the `check` job's download, and nothing is extracted from it
+    // here or anywhere in this job. **Under its digest, never its name**: the
+    // name is the author's, and until S22 a long one threw `ENAMETOOLONG` out
+    // of `--verify-facts` and lost the batch. `check` finds each bundle's name
+    // in `verified.assets` by this same digest.
+    const file = path.join(dir, `${digest}.astraplugin`);
     fs.writeFileSync(file, bytes);
 
     const att = await attest({
@@ -1142,8 +1285,10 @@ export async function verifyFacts(opts, deps = {}) {
  * derive the card, and write exactly two things — a facts file of codes and
  * levels, and the listing files.
  *
- * It takes `verified` for the name the card is derived under (BOT-21: never
- * the lease's, never a name this job read) and reads nothing else from it; the
+ * It takes `verified` for the names the card is derived under (BOT-21: never
+ * the lease's, never a name this job read) — the repository, and each bundle's
+ * attested asset name, found by the digest of the bytes it was handed, since
+ * `verify` writes them under that digest and never under the author's name; the
  * decide job compares everything this writes against `verified` again, because
  * this is the job to assume exploited.
  *
@@ -1158,13 +1303,32 @@ export async function checkFacts(opts, deps = {}) {
   const probe = deps.runProbe ?? runProbe;
   const v = opts.verified ?? {};
   const files = fs.existsSync(opts.assetsDir)
-    ? fs.readdirSync(opts.assetsDir).filter((n) => n.endsWith(".astraplugin")).sort()
+    ? fs.readdirSync(opts.assetsDir).filter((n) => n.endsWith(".astraplugin"))
     : [];
   const perBundle = [];
   const artifacts = {};
 
-  for (const name of files) {
-    const bytes = fs.readFileSync(path.join(opts.assetsDir, name));
+  // Each bundle's name is the one `verify` attested, found by the digest of the
+  // bytes this job was handed — never the file's name, which `verify` chose
+  // (its digest) so that no author's name ever reached a disk. Bytes whose
+  // digest `verify` did not verify are refused unopened.
+  const verifiedByDigest = new Map((v.assets ?? [])
+    .filter((a) => typeof a?.sha256 === "string" && typeof a?.name === "string")
+    .map((a) => [a.sha256, a]));
+  const handed = [];
+  for (const file of files) {
+    const bytes = fs.readFileSync(path.join(opts.assetsDir, file));
+    const digest = sha256(bytes);
+    const asset = verifiedByDigest.get(digest);
+    if (!asset) {
+      f.error("E_DIGEST_MISMATCH", "check", `a bundle of sha256 ${digest.slice(0, 16)}… is not one the verify job verified`);
+      continue;
+    }
+    handed.push({ name: asset.name, bytes, asset });
+  }
+  handed.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+
+  for (const { name, bytes, asset } of handed) {
     const inspected = inspectBundle(bytes, { id: null, version: null, platformKey: null }, policy.limits);
     f.absorb(inspected.findings, name);
     if (!inspected.manifest || inspected.findings.some((x) => x.level === "error")) continue;
@@ -1180,8 +1344,7 @@ export async function checkFacts(opts, deps = {}) {
     const key = inspected.platformKey;
     const expected = `${probed.manifest.id}-${probed.manifest.version}-${key}.astraplugin`;
     if (name !== expected) { f.error("E_ASSET_FILENAME", name, `the bundle declares ${expected}`); continue; }
-    const asset = (v.assets ?? []).find((a) => a.name === name);
-    artifacts[key] = { url: asset?.url ?? null, filename: name, sha256: sha256(bytes), size: bytes.length };
+    artifacts[key] = { url: asset.url ?? null, filename: name, sha256: sha256(bytes), size: bytes.length };
     perBundle.push({ where: name, facts: probed.manifest, manifest: inspected.manifest, files: inspected.files });
   }
 
@@ -1346,13 +1509,7 @@ async function serviceMain(argv) {
     const leases = jsonInput(opts.leases, "--leases") ?? {};
     const ids = jsonInput(opts.submissions, "--submissions") ?? Object.keys(leases);
     if (!opts.assetsDir) throw new Error("--verify-facts needs --assets-dir");
-    const verified = {};
-    for (const id of ids) {
-      const lease = leases[id];
-      if (!lease) throw new Error(`claim reported ${id} and handed on no lease for it`);
-      verified[id] = await verifyFacts({ lease, root: opts.root, assetsDir: opts.assetsDir });
-      console.log(`${id}: ${verified[id].outcome}${verified[id].code ? ` ${verified[id].code}` : ""}`);
-    }
+    const verified = await verifyBatch({ ids, leases, root: opts.root, assetsDir: opts.assetsDir });
     const text = JSON.stringify(verified);
     if (opts.out) fs.writeFileSync(opts.out, `${text}\n`);
     if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `verified=${text}\n`);
