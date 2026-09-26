@@ -185,16 +185,30 @@ advisory, yank or delist always wins over it.
 **Who sets it.** Only a moderator's review, `M_REVIEW`, in the plugins panel,
 which the moderator confirms through a separate channel. The bot applies it in
 one commit with a moderation-log entry `review`, and nothing else changes a
-mark: it moves once, from `unreviewed` to `reviewed`, and never back. A review is
-never held and does not count toward the takedown bound (root `POLICY.md` §7).
-A review found wrong is answered by a withdrawal (§9), not by undoing the mark.
+mark: it moves once, to `reviewed`, and never back. A review is never held and
+does not count toward the takedown bound (root `POLICY.md` §7). A review found
+wrong is answered by a withdrawal (§9), not by undoing the mark.
+
+**Which versions can be reviewed.** Any version of a listed plugin: its
+listing is not `unlisted`, and its version record exists and is not yanked.
+That includes a version published before this rule, which carries no mark and
+then carries `reviewed`, and a version of a `grandfathered` or `frozen` listing
+(root `POLICY.md` §6.1).
 
 **What users see.** The plugins panel shows the mark beside each release on a
-plugin's page. From the Astra release that adds the mark, Astra warns the user
-before installing a version that is not reviewed, and does not apply such an
-update until the user accepts it on a screen that showed the warning. Astra
-0.2.x, and every Astra release before the one that adds it, shows no mark and
-no warning. A version with no mark shows no warning anywhere.
+plugin's page. From the Astra release that adds the mark:
+
+- Astra warns before it installs a version that is not reviewed, on the screen
+  where the user confirms the install.
+- An install that Astra's AI tools ask for shows the same warning on its
+  confirmation. Where Astra's settings show no confirmation for that tool, the
+  install is refused, and the user is sent to the plugins page.
+- Astra warns wherever the user starts an update to a version that is not
+  reviewed: the plugin's card, the update list, and before "update all". It
+  applies such an update only with the user's acknowledgement of that warning.
+
+Astra 0.2.x, and every Astra release before the one that adds the mark, shows no
+mark and no warning. A version with no mark shows no warning anywhere.
 
 **What moderators read first.** A release that would have been held or delayed
 before contract 3.0.0 — a first listing, a newly requested high-risk permission,
@@ -517,8 +531,9 @@ other, and the account bound to the listing is told after it has published. What
 stands in the delay's place is the review mark. The release is published
 `unreviewed`, and every new version starts `unreviewed` whatever its
 predecessors were (§2.1). From the Astra release that adds the mark, Astra
-warns before installing such a version, and does not apply such an update until
-the user accepts it. That is less than a delay against an attacker nobody is
+warns before installing such a version and where the user starts an update to
+one, and applies that update only with the user's acknowledgement of the
+warning. That is less than a delay against an attacker nobody is
 watching, and it is nothing at all on Astra 0.2.x, which shows no mark. This
 registry does not claim otherwise.
 

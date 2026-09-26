@@ -205,7 +205,7 @@ suggest otherwise.
 - Versions are semver, and a new listing must be strictly greater than the last.
 - A version file is **immutable once merged**, but for two fields: `yanked`
   (below), and the review mark `review`, which only a moderator's review
-  changes, once, from `unreviewed` to `reviewed` (§8; `docs/POLICY.md` §2.1).
+  changes, once, to `reviewed` (§8; `docs/POLICY.md` §2.1).
   Fixing a published release means publishing a new version, never editing a
   digest in place: the digest is the whole promise, and a mutable one is not a
   promise.
@@ -295,12 +295,15 @@ they wait for different things.
 **Through the plugins service, a release that passes every automatic check
 publishes at once**, marked *not reviewed by Astra moderators*. Nobody approves
 it and nothing delays it. A moderator may read a version afterwards and mark it
-reviewed. The mark belongs to that version alone, and the next version starts
-not reviewed again. `reviewed` says that a moderator read that version: it is
-not a safety review, a code audit or an endorsement (§0). From the Astra
-release that shows the mark, a user is warned before installing a version that
-is not reviewed, and asked before such an update is applied. Astra 0.2.x, and
-every release before the one that adds the mark, shows none.
+reviewed. Any version of a listed plugin can be marked reviewed, including one
+published before this rule and one of a listing not yet bound. The mark belongs
+to that version alone, and the next version starts not reviewed again.
+`reviewed` says that a moderator read that version: it is not a safety review,
+a code audit or an endorsement (§0). From the Astra release that shows the
+mark, a user is warned before installing a version that is not reviewed and
+wherever they start an update to one, and such an update is applied only with
+their acknowledgement. Astra 0.2.x, and every release before the one that adds
+the mark, shows none.
 
 **Only a change of hands on a listing that already exists waits for a person
 there**: a changed repository or identity, a binding line with a different
