@@ -331,6 +331,16 @@ await test("an update to an already-listed plugin ingests with zero human action
 // it was written, and not one of them asked what came out the other end.
 // A fixture whose default is the failing input is not coverage.
 
+// Contract 3.0.0 (B.4; DEC-19): every version record added from the landing
+// commit carries `review: "unreviewed"`, whichever path published it, and this
+// legacy path keeps its holds and delays (decision D1) but writes the mark.
+// Watched: deleting the member from `deriveListing`'s version literal.
+await test("a derived version record carries `review: \"unreviewed\"` (B.4; DEC-19)", async () => {
+  const r = await run({ assets: [conformingAsset()], root: registryWith({}) });
+  assert(!r.blocked, `blocked: ${JSON.stringify(r.findings.filter((i) => i.level === "error"))}`);
+  assertEqual(r.derived.version.review, "unreviewed", "the legacy path's version record does not carry the review mark");
+});
+
 await test("a plugin that asks for nothing derives `permissions: {}`, not a missing key", async () => {
   const r = await run({ assets: [conformingAsset()], root: registryWith({}) });
   assert(!r.blocked, `blocked: ${JSON.stringify(r.findings.filter((i) => i.level === "error"))}`);

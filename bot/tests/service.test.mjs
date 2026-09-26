@@ -2210,6 +2210,28 @@ test("BOT-21: the committed listing's identity comes from the verification, neve
   // Watched: copying `source` from the artifact leaves `placeholder/placeholder` here.
 });
 
+// Contract 3.0.0 (B.4; DEC-19; design couplings line 6): the publishing commit
+// writes `review: "unreviewed"`, and never the value the check job's listing
+// carried. That job opened a stranger's archive (BOT-21), so a listing that
+// arrives already `reviewed` is the attack: a compromised check job silencing
+// the warning a new client shows for an unreviewed release. Absent and an
+// unknown value are overwritten the same way.
+//
+// Watched: removing the stamp in `composeDerived` commits `reviewed` for the
+// first case and no member for the second.
+test("DEC-19: the committed version record is `unreviewed` whatever the check job's listing said", () => {
+  const withMark = (review) => {
+    const l = listing();
+    if (review !== undefined) l.version = { ...l.version, review };
+    return decideWith({ listing: l, git: git({ existing: existing(), records: [baseline()] }) });
+  };
+  for (const [what, review] of [["`reviewed`", "reviewed"], ["no mark", undefined], ["an unknown value", "approved"]]) {
+    const plan = withMark(review);
+    assert.equal(plan.state, "published", `${what}: ${JSON.stringify(plan.reasons.map((r) => r.code))}`);
+    assert.equal(plan.listing.version.review, "unreviewed", `a check-job listing carrying ${what} was committed as ${JSON.stringify(plan.listing.version.review)}`);
+  }
+});
+
 test("verify's alert, wait and refusal each keep their own shape", () => {
   const alert = decideWith({ verified: { submission_id: P.sid, outcome: "alert", code: "E_ATTESTATION_REPO_MISMATCH", reason: "x", findings: [] } });
   assert.equal(alert.kind, "none");

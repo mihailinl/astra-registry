@@ -1278,6 +1278,13 @@ export function composeDerived(listing, verified) {
     commit: verified.commit,
   };
   if (isTime(verified.published_at)) version.published_at = verified.published_at;
+  // DEC-19 / B.4: the publishing commit writes `unreviewed`, whatever the
+  // check job's listing said. That job opened a stranger's archive (BOT-21's
+  // second bullet), so a listing arriving with `reviewed` — or with no member,
+  // or with a value nobody defined — is overwritten here like every identity
+  // member above, and never compared or carried. Only an applied `M_REVIEW`
+  // moves it afterwards (MOD-56).
+  version.review = "unreviewed";
   const artifacts = {};
   for (const a of verified.assets) {
     artifacts[a.platform] = {

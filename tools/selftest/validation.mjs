@@ -1058,6 +1058,189 @@ export async function run() {
     const edge = await lengthErrors("version-256", V256);
     assertEqual(edge.length.length, 0, `a 256-character version was refused for its length:\n${edge.all}`);
   });
+
+  // ── the review mark's three rules (contract 3.0.0: B.4; DEC-19; MOD-56) ────
+  //
+  // Each rule is a statement about the COMMIT that added or changed a version
+  // record, so each is asked of a real repository with real commits: a pre-
+  // landing listing, the landing commit (the first whose schema declares
+  // `review`), then one change per case. A stub would be the description of
+  // the answer. Every case is also asked of the WORKING TREE, which is where
+  // `bot/publish-apply.mjs` and the moderation commit job run the validator,
+  // before their commit exists.
+  //
+  // Watched, each by one edit to tools/lib/review-mark.mjs, every other case
+  // staying green:
+  //   - `after !== UNREVIEWED` → `after === REVIEWED` in the committed half:
+  //     "a record added after the landing commit without the mark" goes red;
+  //   - the same in the working-tree half: its working-tree twin goes red;
+  //   - `namesReview` returning true: "... with no moderation-log entry" red;
+  //   - the trailer condition dropped from judgeMove: "... no trailer" red;
+  //   - `serviceDecisionOk` returning true: "... a trailer that names nothing"
+  //     red;
+  //   - `before === undefined ||` dropped from judgeMove: "a pre-landing
+  //     record reviewed with both" red (absent → reviewed is allowed);
+  //   - `landingCommit` returning its LAST declaring commit rather than its
+  //     first: "... added between two schema edits" red.
+  const reviewCase = reviewMarkRepo;
+  const marks = async (dir) => {
+    const { report } = await validateTree(dir);
+    return {
+      errors: report.errors.filter((e) => /review mark|marks .* `reviewed`/.test(e.message)),
+      all: report.errors.map((e) => `${e.where} ${e.message}`).join("\n"),
+      notes: report.notes.filter((n) => n.where === "review marks").map((n) => n.message),
+    };
+  };
+  const clean = (r, what) => assertEqual(r.errors.map((e) => `${e.where}: ${e.message}`).join("\n"), "", what);
+  const refused = (r, file, needle, what) => {
+    const hit = r.errors.filter((e) => e.where === file && e.message.includes(needle));
+    assert(hit.length === 1, `${what}\n  wanted one error on ${file} containing ${JSON.stringify(needle)}; got:\n${r.all || "(none)"}`);
+  };
+  const V = (v) => `plugins/dice-roller/versions/${v}.json`;
+
+  await test("review mark (B.4): a record added from the landing commit on carries `unreviewed`; one added before it needs none", async () => {
+    const r = reviewCase("rm-added");
+    r.addVersion("1.1.0", "unreviewed");
+    r.commit("publish 1.1.0, marked");
+    clean(await marks(r.dir), "a record added after the landing commit WITH the mark, and one added before it without, were refused");
+
+    r.addVersion("1.2.0", undefined);
+    r.commit("publish 1.2.0, unmarked");
+    refused(await marks(r.dir), V("1.2.0"), "at or after 3.0.0's landing commit",
+      "a record added after the landing commit without the mark was not refused");
+
+    const w = reviewCase("rm-added-reviewed");
+    w.addVersion("1.1.0", "reviewed");
+    w.commit("publish 1.1.0, marked reviewed at birth");
+    refused(await marks(w.dir), V("1.1.0"), "at or after 3.0.0's landing commit",
+      "a record added already `reviewed` was not refused; the publishing commit writes `unreviewed`");
+  });
+
+  await test("review mark (B.4): the landing commit is the FIRST first-parent commit whose schema declares the member", async () => {
+    // A second schema edit after the landing commit must not move the landing
+    // commit forward: a record added between the two is after the landing.
+    const r = reviewCase("rm-first-landing");
+    r.addVersion("1.1.0", undefined);
+    r.commit("publish 1.1.0, unmarked, between two schema edits");
+    r.editSchema((s) => { s.description = `${s.description} (edited again)`; });
+    r.commit("edit the schema again");
+    refused(await marks(r.dir), V("1.1.0"), "at or after 3.0.0's landing commit",
+      "a record added between the landing commit and a later schema edit was read as added before the landing");
+  });
+
+  await test("review mark (MOD-56): a move to `reviewed` needs a moderation-log review entry naming the version AND a Service-Decision trailer", async () => {
+    const ok = reviewCase("rm-move-ok");
+    ok.addVersion("1.1.0", "unreviewed");
+    ok.commit("publish 1.1.0");
+    ok.setMark("1.1.0", "reviewed");
+    ok.addLog({ versions: ["1.1.0"] });
+    ok.commit("moderation: review dice-roller 1.1.0", { serviceDecision: true });
+    clean(await marks(ok.dir), "an M_REVIEW commit with its log entry and its trailer was refused");
+
+    const noLog = reviewCase("rm-move-nolog");
+    noLog.addVersion("1.1.0", "unreviewed");
+    noLog.commit("publish 1.1.0");
+    noLog.setMark("1.1.0", "reviewed");
+    noLog.commit("moderation: review with no log entry", { serviceDecision: true });
+    refused(await marks(noLog.dir), V("1.1.0"), "adds no moderation-log `review` entry",
+      "a move to `reviewed` with no moderation-log entry was not refused");
+
+    const otherVersion = reviewCase("rm-move-otherlog");
+    otherVersion.addVersion("1.1.0", "unreviewed");
+    otherVersion.commit("publish 1.1.0");
+    otherVersion.setMark("1.1.0", "reviewed");
+    otherVersion.addLog({ versions: ["1.0.0"] });
+    otherVersion.commit("moderation: review naming another version", { serviceDecision: true });
+    refused(await marks(otherVersion.dir), V("1.1.0"), "adds no moderation-log `review` entry",
+      "a move to `reviewed` whose log entry names another version was not refused");
+
+    const noTrailer = reviewCase("rm-move-notrailer");
+    noTrailer.addVersion("1.1.0", "unreviewed");
+    noTrailer.commit("publish 1.1.0");
+    noTrailer.setMark("1.1.0", "reviewed");
+    noTrailer.addLog({ versions: ["1.1.0"] });
+    noTrailer.commit("moderation: review with no trailer");
+    refused(await marks(noTrailer.dir), V("1.1.0"), "no `Service-Decision:` trailer",
+      "a move to `reviewed` in a commit with no Service-Decision trailer was not refused");
+
+    // A trailer is correlation, and its value has BOT-37's grammar: a
+    // decision id nobody can look up names no decision.
+    const badTrailer = reviewCase("rm-move-badtrailer");
+    badTrailer.addVersion("1.1.0", "unreviewed");
+    badTrailer.commit("publish 1.1.0");
+    badTrailer.setMark("1.1.0", "reviewed");
+    badTrailer.addLog({ versions: ["1.1.0"] });
+    badTrailer.commit("moderation: review with a trailer that names nothing", { serviceDecision: "moderator-said-so" });
+    refused(await marks(badTrailer.dir), V("1.1.0"), "no `Service-Decision:` trailer",
+      "a move to `reviewed` whose Service-Decision trailer is not a decision id was not refused");
+  });
+
+  await test("review mark (B.4): a pre-landing record may be reviewed (absent → reviewed), and no commit moves the mark any other way", async () => {
+    const pre = reviewCase("rm-pre-reviewed");
+    pre.setMark("1.0.0", "reviewed");
+    pre.addLog({ versions: ["1.0.0"] });
+    pre.commit("moderation: review a version published before 3.0.0", { serviceDecision: true });
+    clean(await marks(pre.dir), "an M_REVIEW of a version published before 3.0.0 (absent → reviewed) was refused");
+
+    const back = reviewCase("rm-unreview");
+    back.addVersion("1.1.0", "unreviewed");
+    back.commit("publish 1.1.0");
+    back.setMark("1.1.0", "reviewed");
+    back.addLog({ versions: ["1.1.0"] });
+    back.commit("moderation: review", { serviceDecision: true });
+    back.setMark("1.1.0", "unreviewed");
+    back.commit("undo the review", { serviceDecision: true });
+    refused(await marks(back.dir), V("1.1.0"), "from \"reviewed\" to \"unreviewed\"",
+      "a move from `reviewed` back to `unreviewed` was not refused; no decision reverses a review");
+
+    const stamped = reviewCase("rm-backfill");
+    stamped.setMark("1.0.0", "unreviewed");
+    stamped.commit("backfill the mark onto a pre-3.0.0 version");
+    refused(await marks(stamped.dir), V("1.0.0"), "from absent to \"unreviewed\"",
+      "a pre-3.0.0 record given `unreviewed` afterwards was not refused; absence means published before the mark");
+
+    const dropped = reviewCase("rm-drop");
+    dropped.addVersion("1.1.0", "unreviewed");
+    dropped.commit("publish 1.1.0");
+    dropped.setMark("1.1.0", undefined);
+    dropped.commit("drop the mark");
+    refused(await marks(dropped.dir), V("1.1.0"), "to absent",
+      "a record whose mark was removed was not refused");
+  });
+
+  await test("review mark: the working tree is held to the same rules, which is where the publish and moderation jobs validate", async () => {
+    const r = reviewCase("rm-worktree");
+    r.addVersion("1.1.0", undefined);
+    refused(await marks(r.dir), V("1.1.0"), "is added by this change",
+      "an uncommitted record added after the landing commit without the mark was not refused");
+    r.addVersion("1.1.0", "unreviewed");
+    clean(await marks(r.dir), "an uncommitted record added with the mark was refused");
+    r.commit("publish 1.1.0");
+
+    r.setMark("1.1.0", "reviewed");
+    refused(await marks(r.dir), V("1.1.0"), "adds no moderation-log `review` entry",
+      "an uncommitted move to `reviewed` with no log entry beside it was not refused");
+    r.addLog({ versions: ["1.1.0"] });
+    clean(await marks(r.dir), "an uncommitted move to `reviewed` with its log entry was refused (the trailer is the commit's)");
+  });
+
+  await test("review mark: before the landing commit nothing is held to it, and a tree with no git of its own says the rules were not asked", async () => {
+    const r = reviewCase("rm-prelanding", { land: false });
+    r.addVersion("1.1.0", undefined);
+    r.commit("publish 1.1.0 before 3.0.0 lands");
+    const before = await marks(r.dir);
+    clean(before, "a record added before the landing commit, without the mark, was refused");
+    assert(before.notes.some((n) => n.includes("landing commit is not on this line")),
+      `the run did not say the tree is before the landing commit: ${JSON.stringify(before.notes)}`);
+
+    const plain = path.join(tmp, "rm-no-git");
+    fs.rmSync(plain, { recursive: true, force: true });
+    fs.cpSync(path.join(REPO_ROOT, "tests/fixtures/id-collision/plugins/dice-roller"), path.join(plain, "plugins", "dice-roller"), { recursive: true });
+    const none = await marks(plain);
+    clean(none, "a fixture directory with no git was refused over review marks");
+    assert(none.notes.some((n) => n.startsWith("not asked:")),
+      `a tree with no git of its own did not say the review-mark rules were not asked: ${JSON.stringify(none.notes)}`);
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1285,4 +1468,78 @@ function stagingRepoFixture(name, id, { alsoPublish }) {
     commit("a second listing from the staging repository");
   }
   return dir;
+}
+
+/**
+ * A repository for the review mark's rules: the id-collision fixture's
+ * `dice-roller` listing at 1.0.0 with no mark, committed with a
+ * schema/version-v1.json that does not declare `review`; then, unless
+ * `land: false`, the landing commit, whose schema does. The schema is this
+ * repository's own file with the member removed and restored, so the
+ * landing commit is found by B.4's recipe and not by a flag.
+ */
+function reviewMarkRepo(name, { land = true } = {}) {
+  const dir = path.join(tmp, name);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  gitIn(dir, ["init", "-q", "-b", "main"]);
+  gitIn(dir, ["config", "user.email", "selftest@example.invalid"]);
+  gitIn(dir, ["config", "user.name", "selftest"]);
+  gitIn(dir, ["config", "commit.gpgsign", "false"]);
+  fs.cpSync(path.join(REPO_ROOT, "tests/fixtures/id-collision/plugins/dice-roller"),
+    path.join(dir, "plugins", "dice-roller"), { recursive: true });
+  const schemaFile = path.join(dir, "schema", "version-v1.json");
+  const full = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "schema/version-v1.json"), "utf8"));
+  const writeSchema = (doc) => {
+    fs.mkdirSync(path.dirname(schemaFile), { recursive: true });
+    fs.writeFileSync(schemaFile, `${JSON.stringify(doc, null, 2)}\n`);
+  };
+  const pre = structuredClone(full);
+  delete pre.properties.review;
+  writeSchema(pre);
+  const versions = path.join(dir, "plugins", "dice-roller", "versions");
+  const base = JSON.parse(fs.readFileSync(path.join(versions, "1.0.0.json"), "utf8"));
+  let logs = 0;
+  const r = {
+    dir,
+    commit(message, { serviceDecision = false } = {}) {
+      gitIn(dir, ["add", "-A"]);
+      const value = typeof serviceDecision === "string" ? serviceDecision : "01923456-7890-7abc-8def-0123456789ab";
+      const body = serviceDecision ? ["-m", `Service-Decision: ${value}`] : [];
+      gitIn(dir, ["commit", "-q", "--allow-empty", "-m", message, ...body]);
+    },
+    addVersion(v, review) {
+      const doc = JSON.parse(JSON.stringify(base).replaceAll("1.0.0", v));
+      if (review !== undefined) doc.review = review;
+      fs.writeFileSync(path.join(versions, `${v}.json`), stableStringify(doc));
+    },
+    setMark(v, review) {
+      const file = path.join(versions, `${v}.json`);
+      const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+      if (review === undefined) delete doc.review;
+      else doc.review = review;
+      fs.writeFileSync(file, stableStringify(doc));
+    },
+    addLog({ versions: named }) {
+      logs += 1;
+      const at = path.join(dir, "bot", "moderation");
+      fs.mkdirSync(at, { recursive: true });
+      fs.writeFileSync(path.join(at, `2026-09-27-dice-roller-review${logs > 1 ? `-${logs}` : ""}.json`), stableStringify({
+        date: "2026-09-27", action: "review", plugin: "dice-roller", versions: named,
+        reason: "A moderator read these versions' code and found nothing to act on.",
+        category: "review_passed", service_decision_id: "01923456-7890-7abc-8def-0123456789ab",
+      }));
+    },
+    editSchema(fn) {
+      const doc = JSON.parse(fs.readFileSync(schemaFile, "utf8"));
+      fn(doc);
+      writeSchema(doc);
+    },
+  };
+  r.commit("a listing published before 3.0.0");
+  if (land) {
+    writeSchema(full);
+    r.commit("3.0.0's landing commit: the schema declares review");
+  }
+  return r;
 }

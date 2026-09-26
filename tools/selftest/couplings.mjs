@@ -1580,6 +1580,9 @@ export async function run() {
     "tools/coverage/git.mjs › commitsAfter": [1, "the commits after one, no pathspec"],
     "tools/coverage/git.mjs › mergesAfter": [1, "the merges after one, no pathspec"],
     "tools/lib/revocations.mjs › resolveSerial": [1, "the withdrawal list's serial, over SERIAL_PATHSPEC with SERIAL_FLAGS — entry 117's list check holds it"],
+    // Contract 3.0.0 (B.4's review mark): the commits the review-mark rules
+    // judge, walked on main's first-parent line from the landing commit.
+    "tools/lib/review-mark.mjs › committedHalf": [1, "the first-parent commits from 3.0.0's landing commit to HEAD, no pathspec, which the review-mark rules walk"],
     "tools/moderation-coverage.mjs › commitMode": [1, "a message quoting the depth of the whole history"],
     "tools/priv-scan.mjs › run": [1, "a message quoting the depth of the whole history"],
   }));

@@ -346,6 +346,16 @@ export function deriveListing(input) {
     id: facts.id,
     version: facts.version,
     published_at: publishedAt,
+    // The review mark (contract 3.0.0: B.4; DEC-19). Every version record
+    // added from 3.0.0's landing commit carries it, WHICHEVER path published
+    // it — this legacy path keeps its holds and delays until R6 (decision D1),
+    // and a release a maintainer approved here is still not one a moderator
+    // reviewed. A constant, and nothing from the bundle reaches it: the bundle
+    // is written by the author, and the mark is the registry's statement about
+    // the author's bytes. This job opens the bundle, so the value is also held
+    // where it is committed: `tools/validate.mjs` refuses an added record whose
+    // mark is anything else, in the publish job, before the commit exists.
+    review: "unreviewed",
     release: { kind: "github_release", repo, tag, ...(commit ? { commit } : {}) },
     artifacts,
   };
