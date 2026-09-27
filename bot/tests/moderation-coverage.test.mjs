@@ -1355,7 +1355,13 @@ const RETIRED_TEXT = {
     "owner of `source.repo`, because that is what the ownership check binds to, so\n" +
     "that is what carries a tier.\n\n" +
     "the machine, because there is no sandbox: a plugin is a native process with the\n" +
-    "user's full privileges, and Phase 7 is where that changes. Read the table above\n",
+    "user's full privileges, and Phase 7 is where that changes. Read the table above\n\n" +
+    // Row E1 (contract 3.0.0), docs/POLICY.md's heading as it stood at b27c237.
+    "## 3. The three events that need a person\n",
+  // Row E1 (contract 3.0.0), POLICY.md §8 as it stood at b27c237.
+  "POLICY.md":
+    "**Exactly three events take blocking human review**, and the SLA on those three\n" +
+    "is **48 hours**: a first listing, a newly requested high-risk permission\n",
   "site/templates/pages.mjs":
     "released from. There are no registry accounts, no passwords and nothing to sign in to: the identity\n",
 };
@@ -1385,9 +1391,10 @@ test("M-T4.2: the pre-amend tree is red, once per sentence, naming the file", ()
   assert.equal(r.status, "red");
   const said = r.detail.join("\n");
   for (const rel of Object.keys(RETIRED_TEXT)) assert.match(said, new RegExp(`^${rel.replace(/[.]/g, "\\.")} says`, "m"));
-  // Two A1 sentences, one A2, one sandbox: four findings, and none merged into another.
+  // Two A1 sentences, one A2, one sandbox and two E1: six findings, and none
+  // merged into another.
   assert.deepEqual([...new Set(r.codes)], ["ROLL47_PROMISE_RESTATED"]);
-  assert.equal(r.detail.filter((d) => / says "/.test(d)).length, 4);
+  assert.equal(r.detail.filter((d) => / says "/.test(d)).length, 6);
   for (const p of ROLL47_PROMISES) assert.match(said, new RegExp(`row ${p.row}\\b`), `row ${p.row} did not fire`);
 });
 

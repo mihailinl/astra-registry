@@ -3004,7 +3004,7 @@ await test("MIG-14 — every round of the migration notice says what a notice mu
       ["a new tag", (t) => /\bnew tag\b/.test(t)],
       ["one `R_FIRST_BINDING` review", (t) => /One `R_FIRST_BINDING` review/.test(t)],
       ["what `frozen` does", (t) => /`frozen`: it stays listed[^.]*takes no new version until it is bound/.test(t)],
-      ["MIG-12's wait from cutover", (t) => /From the cutover\*\*, a delayed or reviewed release[^.]*waits until the listing is bound/.test(t)],
+      ["MIG-12's wait from cutover, and DEC-19's publication at once", (t) => /From the cutover\*\*, a held release[^.]*waits until the listing is bound[^.]*\. Every other release is published at once, marked as not reviewed by Astra moderators/.test(t)],
       ["ID-16's expiry, tested when the rule is applied",
         (t) => /expires 30 days after its mint unless a live submission names it or its line is on the repository's default branch when the rule is applied/.test(t)],
       ["ID-16's consequent, the right way round (n25)",

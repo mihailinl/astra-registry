@@ -123,7 +123,7 @@ This issue only notifies you. Nothing written on it reaches the registry, and it
 
 **What `frozen` means.** A listing not bound by the later of the deadline and the cutover becomes `frozen`: it stays listed and installed copies keep working, but it takes no new version until it is bound. A bound release unfreezes it, with no penalty.
 
-**From the cutover**, a delayed or reviewed release of a listing that is not bound yet waits until the listing is bound.
+**From the cutover**, a held release of a listing that is not bound yet waits until the listing is bound, even once a moderator approves it. Every other release is published at once, marked as not reviewed by Astra moderators.
 
 **The panel is the only place to act:** https://astra.minice.ai/plugins. Binding, releases and questions all go through it, and nothing written on GitHub changes anything.
 <!-- /notice:round-1 -->
@@ -151,7 +151,7 @@ Your listing is `grandfathered` until the later of the two.
 
 **What `frozen` means.** A listing not bound by the later of the deadline and the cutover becomes `frozen`: it stays listed and installed copies keep working, but it takes no new version until it is bound. A bound release unfreezes it, with no penalty.
 
-**From the cutover**, a delayed or reviewed release of a listing that is not bound yet waits until the listing is bound.
+**From the cutover**, a held release of a listing that is not bound yet waits until the listing is bound, even once a moderator approves it. Every other release is published at once, marked as not reviewed by Astra moderators.
 
 **The panel is the only place to act:** https://astra.minice.ai/plugins. Binding, releases and questions all go through it, and nothing written on GitHub changes anything.
 <!-- /notice:round-2 -->
@@ -177,7 +177,7 @@ This is the last notice from the Astra plugin registry, at least 14 days before 
 
 **What `frozen` means.** A listing not bound by the later of the deadline and the cutover becomes `frozen`: it stays listed and installed copies keep working, but it takes no new version until it is bound. A bound release unfreezes it, with no penalty.
 
-**From the cutover**, a delayed or reviewed release of a listing that is not bound yet waits until the listing is bound.
+**From the cutover**, a held release of a listing that is not bound yet waits until the listing is bound, even once a moderator approves it. Every other release is published at once, marked as not reviewed by Astra moderators.
 
 **The panel is the only place to act:** https://astra.minice.ai/plugins. Binding, releases and questions all go through it, and nothing written on GitHub changes anything.
 <!-- /notice:round-3 -->

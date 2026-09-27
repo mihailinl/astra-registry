@@ -165,8 +165,8 @@ ingested. <em>Amended 2026-09-24:</em> binding a repository to its listing also 
 holding <code>astraUser</code>, at astra.minice.ai. That account is told about each release, and it
 is never shown on this page.</p>
 <p>Astra pins that identity on first install. A later release from a <em>different</em> repository
-is not a routine update &mdash; it is an identity change, one of the three events that stop and wait
-for a person (<a href="../../policy/#3-the-three-events-that-need-a-person">policy</a>). What the app
+is not a routine update &mdash; it is an identity change, a change of hands, which stops and waits
+for a person (<a href="../../policy/#3-what-waits-for-a-person">policy</a>). What the app
 can honestly say about a subsequent release is &ldquo;same author as before&rdquo;, and that is what
 it says.</p>
 </section>

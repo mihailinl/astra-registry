@@ -189,12 +189,15 @@ export const POLICY_CODES = {
       "moderator's approval publishes it only once the author objection window has passed since that account " +
       "was told, or since its binding was revoked (ID-60; ID-61).",
   },
+  // Held on the legacy issue path only since contract 3.0.0 (DEC-19; decision
+  // D1): on the service path a first listing publishes at once with
+  // `P_REVIEW_PRIORITY`. The panel shows this row, so its remedy says so.
   R_FIRST_LISTING: {
     level: "review", stage: "policy", fix: "moderator",
     title: "First listing — a person reads it, once, ever",
     remedy:
-      "Nothing to do but wait. This is one of exactly three events that block on a human, and it " +
-      "happens once per plugin: every later release from the same repository is zero-touch.",
+      "Nothing to do but wait (the issue path only, until cutover). This is one of exactly three events that " +
+      "block on a human, and it happens once per plugin: every later release from the same repository is zero-touch.",
   },
   R_IDENTITY_CHANGED: {
     level: "review", stage: "policy", fix: "moderator",
