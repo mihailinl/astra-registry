@@ -1,13 +1,13 @@
 {
-  "contract_version": "3.0.0",
-  "source_commit": "6ee496a8779ab266a92ad06ba79af53df80d3949",
+  "contract_version": "3.1.0",
+  "source_commit": "abf263011d7b463bccc41c7bc6bf48a8847462c5",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
     "SCOPE-7's token file. Generated from the contract and from nothing else; no value here was invented.",
     "People read the contract, tests read this file: the plugins service, the registry (SCOPE-9) and a new client (SCOPE-10) each fail their tests on a value this file does not list for them, and on one it lists for them that they do not handle and that is neither `reserved` nor `retired` (SCOPE-8).",
     "`emitter` and `acceptor` are arrays of party strings from `parties`; §0.8's Callers letters map onto them as C client, P panel, B bot, G guest. `registry` covers the bot and the signer where an entry is not the bot's alone.",
-    "A `service-only` entry is listed with no members and for no party: it is outside SCOPE-8's two-way test, and neither the registry's scan nor the client's expects or forbids one.",
+    "A `service-only` entry is outside SCOPE-8's two-way test, and neither the registry's scan nor the client's expects or forbids one, except for the `members` it lists: an entry lists members, with its body's `schema`, only where the contract publishes them from a `service-only` path, and those members alone are inside the test, for the parties the entry names. The rest of that path's body stays outside. Every other `service-only` entry is listed with no members and for no party.",
     "A `service-only` entry says this path is **routed by the plugins service and outside SCOPE-8's two-way test**. It does not say a handler answers it.",
     "A member's requiredness is `true`, `false` or `conditional`. `true` is carried by every entry of its kind; `false` is permitted, and **says only that this contract publishes no condition on it, never that none exists**; `conditional` is carried exactly under the condition the member's `when` states, and **a member that is `conditional` and states no `when`, or states a `when` a reader cannot evaluate, makes the file malformed: a reader MUST refuse it, or refuse every entry of that schema, and MUST NOT read the member as unconditioned** — reading it as unconditioned is the looser direction, and the looser direction is the one this field exists to close.",
     "A `when` is `{\"iff\": <predicate>}` or `{\"if\": <predicate>}`, **never both and never neither, and which of the two applies is decided per condition and never defaulted**: `if` requires the member where the predicate holds and says nothing where it does not; `iff` also forbids it where the predicate does not hold. A field that can only say *when* reproduces the defect it is fixing, because *if this code then this member* leaves the member unconstrained for every other code, which is the looser reading of any condition whose reverse the contract states. A predicate names one sibling member and the values it may take — `{\"code\": [\"M_APPEAL\"]}`, or `{\"code\": {\"not\": [\"M_APPEAL\"]}}` for their complement — and every value it names is one this contract already lists for that member; where the contract names no member that decides, the predicate is `{\"wait\": \"absent\"}`, which holds exactly when that sibling is not carried, and `absent` is the only word with that meaning. A `conditional` member also carries `why`, the sentence a reader meets first on the day the condition is inconvenient, because **a condition whose reason is not written down is relaxed rather than investigated**; a `false` member may carry one to say why no condition is published for it.",
@@ -5138,6 +5138,7 @@
         "panel"
       ],
       "acceptor": [
+        "client",
         "guest"
       ],
       "state": "live",
@@ -5377,17 +5378,29 @@
       "id": "service-only:health",
       "kind": "service_only",
       "name": "health",
-      "members": [],
-      "emitter": [],
-      "acceptor": [],
+      "schema": "astra.plugins.health/1",
+      "members": [
+        {
+          "name": "accepts.reports",
+          "required": true,
+          "source": "MOD-54"
+        }
+      ],
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "client"
+      ],
       "state": "service-only",
       "method": "GET",
       "path": "health",
       "path_base": "the service API base (DEC-18)",
-      "source": "SCOPE-8; §0.8's named `service-only` paths",
+      "source": "SCOPE-8; §0.8's named `service-only` paths; MOD-54",
       "requirements": [
         "SCOPE-7",
-        "SCOPE-8"
+        "SCOPE-8",
+        "MOD-54"
       ]
     },
     {
@@ -6074,7 +6087,7 @@
       "fix": "new_tag",
       "panel_only": false,
       "title": "A locale file is named for a language Astra cannot be set to",
-      "remedy": "The ten codes are in `AstraPlugins/spec/locales.yaml`. Matching is exact string equality and there are no region tags anywhere in this system — Chinese is `zh`, never `zh-CN` — so a file named anything else is packed, digested, signed, installed, and read by nothing."
+      "remedy": "The codes are in `AstraPlugins/spec/locales.yaml`. Matching is exact string equality and there are no region tags anywhere in this system — Chinese is `zh`, never `zh-CN` — so a file named anything else is packed, digested, signed, installed, and read by nothing."
     },
     {
       "code": "E_MANIFEST_COMPRESSED",
