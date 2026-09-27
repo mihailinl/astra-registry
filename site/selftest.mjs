@@ -1086,6 +1086,29 @@ atest("--arm writes the set only when every successor answers 200 and ROLL-54's 
 
 // ── the markdown subset ─────────────────────────────────────────────────────
 
+// Every `policy/#<anchor>` a template links resolves to a heading the policy
+// page renders (both documents, as build.mjs renders them into one page).
+// Contract 3.0.0 renamed docs/POLICY.md's §3, and two links had already gone
+// dead in silence: `#3-the-three-events-that-need-a-person` and
+// `#10-appeals` (Appeals is §11). Watched: either old anchor put back is red.
+test("every policy anchor a template links is a heading the policy page renders", () => {
+  const ids = new Set();
+  for (const f of ["POLICY.md", "docs/POLICY.md"]) {
+    const html = markdown(fs.readFileSync(path.join(SITE_DIR, "..", f), "utf8"));
+    for (const m of html.matchAll(/<h[1-6] id="([^"]+)"/g)) ids.add(m[1]);
+  }
+  assert.ok(ids.size >= 20, `the policy page rendered ${ids.size} heading anchors; a broken read resolves nothing`);
+  const links = [];
+  const dir = path.join(SITE_DIR, "templates");
+  for (const name of fs.readdirSync(dir).filter((n) => n.endsWith(".mjs"))) {
+    const text = fs.readFileSync(path.join(dir, name), "utf8");
+    for (const m of text.matchAll(/policy\/#([A-Za-z0-9_-]+)/g)) links.push({ name, anchor: m[1] });
+  }
+  assert.ok(links.length >= 2, `found ${links.length} policy anchor link(s) in site/templates; there were 2 at contract 3.0.0`);
+  const dead = links.filter((l) => !ids.has(l.anchor)).map((l) => `${l.name}: #${l.anchor}`);
+  assert.deepEqual(dead, [], "a template links a policy anchor the page does not render");
+});
+
 test("markdown escapes, and does not invent markup", () => {
   assert.equal(markdown("plain <b>text</b>"), "<p>plain &lt;b&gt;text&lt;/b&gt;</p>");
   assert.ok(markdown("# Heading one").startsWith('<h1 id="heading-one">'));

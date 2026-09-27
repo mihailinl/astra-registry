@@ -1,6 +1,6 @@
 {
-  "contract_version": "2.22.0",
-  "source_commit": "65fc8ab3951f7105338eff9a353165104e138742",
+  "contract_version": "3.0.0",
+  "source_commit": "6ee496a8779ab266a92ad06ba79af53df80d3949",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -815,6 +815,26 @@
       ]
     },
     {
+      "id": "code:P_REVIEW_PRIORITY",
+      "kind": "reason_code",
+      "name": "P_REVIEW_PRIORITY",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
       "id": "code:P_DELAY_WAIVED_BY_COMMAND",
       "kind": "reason_code",
       "name": "P_DELAY_WAIVED_BY_COMMAND",
@@ -1592,6 +1612,26 @@
       ]
     },
     {
+      "id": "code:M_REVIEW",
+      "kind": "reason_code",
+      "name": "M_REVIEW",
+      "artefact": "`review` set to `reviewed` on each named version, log `review` (MOD-56); none",
+      "emitter": [
+        "panel"
+      ],
+      "acceptor": [
+        "service",
+        "registry"
+      ],
+      "state": "live",
+      "source": "§7.2",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
       "id": "code:M_BINDING_REVOKE",
       "kind": "reason_code",
       "name": "M_BINDING_REVOKE",
@@ -2027,6 +2067,49 @@
       ],
       "acceptor": [
         "service"
+      ],
+      "state": "live",
+      "source": "§0.8, other closed lists",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "list:review",
+      "kind": "closed_list",
+      "name": "review",
+      "values": [
+        "unreviewed",
+        "reviewed"
+      ],
+      "accepts_unlisted": [
+        {
+          "party": "service",
+          "grammar": "^[a-z][a-z0-9_]{0,31}$",
+          "source": "DEC-19",
+          "why": "a mark reads as reviewed only when it is `reviewed`, so an unknown value warns rather than hides a warning, and refusing it would freeze every catalogue or record that carries it"
+        },
+        {
+          "party": "panel",
+          "grammar": "^[a-z][a-z0-9_]{0,31}$",
+          "source": "DEC-19",
+          "why": "a mark reads as reviewed only when it is `reviewed`, so an unknown value warns rather than hides a warning, and refusing it would freeze every catalogue or record that carries it"
+        },
+        {
+          "party": "client",
+          "grammar": "^[a-z][a-z0-9_]{0,31}$",
+          "source": "DEC-19",
+          "why": "a mark reads as reviewed only when it is `reviewed`, so an unknown value warns rather than hides a warning, and refusing it would freeze every catalogue or record that carries it"
+        }
+      ],
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel",
+        "client"
       ],
       "state": "live",
       "source": "§0.8, other closed lists",
@@ -4493,6 +4576,10 @@
           "required": false
         },
         {
+          "name": "review",
+          "required": false
+        },
+        {
           "name": "release.repo",
           "required": true
         },
@@ -6395,6 +6482,15 @@
       "remedy": "A moderator lifted the plugin's delisting (§7.2). Like every reversal, it was held and confirmed by the registry's operator before it applied (MOD-9). The plugin is back in the catalogue and gets updates again. Nothing to do."
     },
     {
+      "code": "M_REVIEW",
+      "level": "pass",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "A moderator reviewed these versions",
+      "remedy": "A moderator read these versions and marked them reviewed (§7.2), so Astra stops showing the \"not reviewed\" warning for them. A review is one person's reading, not a security audit or a guarantee (INV-1), and a later advisory, yank or delist overrides it. The next version starts unreviewed. Nothing to do."
+    },
+    {
       "code": "M_REVOKE",
       "level": "error",
       "stage": "policy",
@@ -6557,6 +6653,15 @@
       "remedy": "Fix the blocking findings above and comment `/recheck`. The policy did not reject this; a check did."
     },
     {
+      "code": "P_REVIEW_PRIORITY",
+      "level": "note",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "Published unreviewed, and first in the moderators' queue",
+      "remedy": "Nothing to do. This release was published at once and marked as not reviewed by Astra moderators, as every release is (DEC-19). Under the rules before contract 3.0.0 it would have waited for a person or a delay, as the message above says, so moderators read it first. New Astra clients show a \"not reviewed\" warning for this version until a moderator reviews it."
+    },
+    {
       "code": "P_SLA",
       "level": "note",
       "stage": "policy",
@@ -6635,7 +6740,7 @@
       "fix": "moderator",
       "panel_only": false,
       "title": "First listing — a person reads it, once, ever",
-      "remedy": "Nothing to do but wait. This is one of exactly three events that block on a human, and it happens once per plugin: every later release from the same repository is zero-touch."
+      "remedy": "Nothing to do but wait (the issue path only, until cutover). This is one of exactly three events that block on a human, and it happens once per plugin: every later release from the same repository is zero-touch."
     },
     {
       "code": "R_HOST_RPC_IN_VENDOR_DIR",
@@ -6778,7 +6883,7 @@
       "bot/lib/codes.mjs",
       "bot/lib/policy/constants.mjs"
     ],
-    "codes": 148
+    "codes": 150
   },
   "fixed_reasons": {
     "A_YANK": "Yanked at its author's own request, made from the Astra plugins panel.",

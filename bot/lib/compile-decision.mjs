@@ -74,6 +74,30 @@
 // §7 calls unsafe, because only a withdrawal reaches a machine that already has
 // the plugin on it.
 //
+// ── M_REVIEW ADDS TRUST, SO NOTHING ABOUT IT IS A TAKEDOWN (contract 3.0.0) ─
+//
+// From contract 3.0.0 a release publishes at once, its version record marked
+// `review: "unreviewed"` (B.4; DEC-19), and a moderator's `M_REVIEW` is the one
+// thing that moves a version to `reviewed`. MOD-56 is the whole rule:
+// `compileReview` sets the mark on each named version whose listing record is
+// not `unlisted` — `grandfathered` and `frozen` listings included, which is
+// the listing RECORD and never B.3's state `listed` — whose version record
+// exists and is not yanked, and whose mark is not already `reviewed`; in one
+// commit carrying `Service-Decision:`, with one log entry `review` naming the
+// versions it moved; and it is `target_changed` when none can move. It takes
+// `M_YANK`'s side of the asymmetry above and for the same reason: nothing
+// pre-filters a moderator's list against a mark set a minute earlier, and
+// nothing is lost by marking the rest.
+//
+// Three things it is NOT, each enforced somewhere other than this branch and
+// each held by a test that names it: it is never held (`holdKindFor` answers
+// null for it at any bound, because `isTakedown` does not list it); it spends
+// nothing of TRUST-26's bound (`bot/lib/takedown-bound.mjs` counts a listing
+// turned `unlisted`, a version turned `yanked` and an advisory, and a mark is
+// none of them); and it is never reversed — a review found wrong is answered
+// by a withdrawal, which clients show over the mark, so the only direction a
+// mark ever moves is the one detector A's row 11 can check every other against.
+//
 // ── WHAT THIS FILE DOES NOT COMPILE, WRITTEN DOWN RATHER THAN DISCOVERED ────
 //
 //   * `M_RELIST` and `M_UNREVOKE` have no compile branch. MOD-9 holds both
@@ -311,7 +335,7 @@ export const AUTHOR_CODES = Object.freeze(["A_REMOVAL_REQUEST", "A_YANK"]);
  * not know what it was asked, and settling that as a refusal is how a takedown
  * disappears quietly.
  */
-const KNOWN_CODES = Object.freeze({
+export const KNOWN_CODES = Object.freeze({
   M_YANK: "yank",
   M_DELIST: "delist",
   M_DEPRECATE: "advisory",
@@ -323,6 +347,9 @@ const KNOWN_CODES = Object.freeze({
   // and its artefacts are composed at release (`compileIdentityReset`).
   M_IDENTITY_RESET: "reversal",
   M_BINDING_REVOKE: "nothing",
+  // Contract 3.0.0 (MOD-56): the one decision that adds trust. Compiled by
+  // `compileReview`; never held, never counted, never reversed.
+  M_REVIEW: "review",
   A_YANK: "yank",
   A_REMOVAL_REQUEST: "delist",
 });
@@ -349,8 +376,16 @@ export const LOG_ACTION = Object.freeze({
   M_RELIST: "relist",
   M_UNREVOKE: "unrevoke",
   M_IDENTITY_RESET: "reset",
+  M_REVIEW: "review",
   M_APPEAL: "appeal",
 });
+
+/** B.4's review mark (contract 3.0.0): the value `M_REVIEW` writes, and the member it writes it to. */
+export const REVIEW_MEMBER = "review";
+export const REVIEWED = "reviewed";
+
+/** §7.2's one category for `M_REVIEW`, which it carries and which no takedown may. */
+export const REVIEW_CATEGORY = "review_passed";
 
 /** The refusal `M_IDENTITY_RESET` exists to lift (ID-41 row 1; TRUST-23). */
 export const RECYCLED_CODE = "B_REPOSITORY_RECYCLED";
@@ -615,6 +650,11 @@ const yankEdit = (id, version) => ({
   op: "set", file: `plugins/${id}/versions/${version}.json`, member: "yanked", value: true,
 });
 
+/** `plugins/<id>/versions/<v>.json`'s `review` becomes `"reviewed"` (MOD-56). */
+const reviewEdit = (id, version) => ({
+  op: "set", file: `plugins/${id}/versions/${version}.json`, member: REVIEW_MEMBER, value: REVIEWED,
+});
+
 /** `plugins/<id>/plugin.json` gains `"unlisted": true`. */
 const unlistEdit = (id) => ({
   op: "set", file: `plugins/${id}/plugin.json`, member: "unlisted", value: true,
@@ -726,7 +766,7 @@ const held = (d, held_for, why) => ({
  * per run and records each compiled result into it.
  */
 export function newBatch() {
-  return { advisoryIds: new Set(), logFiles: new Set(), unlisted: new Set(), yanked: new Set() };
+  return { advisoryIds: new Set(), logFiles: new Set(), unlisted: new Set(), yanked: new Set(), reviewed: new Set() };
 }
 
 /** Record one compiled result into the run's batch. */
@@ -735,11 +775,14 @@ export function recordInBatch(batch, result) {
   for (const a of result.advisories ?? []) if (a?.id) batch.advisoryIds.add(a.id);
   for (const l of result.log ?? []) if (l?.file) batch.logFiles.add(l.file);
   for (const e of result.edits ?? []) {
-    if (e?.op !== "set" || e.value !== true) continue;
+    if (e?.op !== "set") continue;
     const plugin = /^plugins\/([^/]+)\/plugin\.json$/.exec(String(e.file));
     const version = /^plugins\/([^/]+)\/versions\/([^/]+)\.json$/.exec(String(e.file));
-    if (e.member === "unlisted" && plugin) batch.unlisted.add(plugin[1]);
-    if (e.member === "yanked" && version) batch.yanked.add(`${version[1]}@${version[2]}`);
+    if (e.member === "unlisted" && e.value === true && plugin) batch.unlisted.add(plugin[1]);
+    if (e.member === "yanked" && e.value === true && version) batch.yanked.add(`${version[1]}@${version[2]}`);
+    // A mark this run already set: a second review of the version in the same
+    // batch would write the same edit and a second log entry for one mark.
+    if (e.member === REVIEW_MEMBER && e.value === REVIEWED && version) batch.reviewed.add(`${version[1]}@${version[2]}`);
   }
 }
 
@@ -810,6 +853,14 @@ export function compileDecision(entry, { root = REPO_ROOT, overBound = false, ba
         "an M_IDENTITY_RESET carries its `moderator` (BOT-80), which DEC-7's voiding record names, and this one " +
         "carries none");
     }
+  }
+  if (code === "M_REVIEW" && d.category !== REVIEW_CATEGORY) {
+    // Required, as the reset's is, and for the same reason: the generic check
+    // below skips an absent category, and the log refuses a `review` entry
+    // without one — which would THROW at compile and take the batch with it.
+    return refuse(d, "kind_refused",
+      `an M_REVIEW carries category \`${REVIEW_CATEGORY}\` and no other (§7.2; MOD-56), and this one carries ` +
+      `${JSON.stringify(d.category)}`);
   }
   if (code === "M_REVOKE" && !["block_install", "disable"].includes(d.action)) {
     return refuse(d, "kind_refused",
@@ -942,6 +993,7 @@ export function compileDecision(entry, { root = REPO_ROOT, overBound = false, ba
     case "yank": return compileYank(root, d, listing, { decidedAt, date, reason, batch });
     case "delist": return compileDelist(root, d, listing, { decidedAt, date, reason, batch });
     case "advisory": return compileAdvisory(root, d, listing, { decidedAt, date, reason, batch });
+    case "review": return compileReview(root, d, listing, { decidedAt, date, reason, batch });
     default:
       // `reversal` with no hold cannot happen: `holdKindFor` returns "reversal"
       // for both reversal codes unconditionally. Said out loud rather than
@@ -1203,6 +1255,82 @@ function compileYank(root, d, listing, { decidedAt, date, reason, batch = null }
     // no `submission_id` — by its commit's `Service-Decision:` trailer, so a
     // yank committed without one reads to the service as a record with no
     // service outcome.
+    trailers: { "Service-Decision": d.service_decision_id, "Decided-At": decidedAt },
+  };
+}
+
+/**
+ * `M_REVIEW` (§7.2; MOD-56; contract 3.0.0): each named version that can move
+ * takes `review: "reviewed"`, and one log entry `review` names the ones that did.
+ *
+ * "Can move" is MOD-56's three conditions and nothing else. The listing record
+ * is not `unlisted` — read off `plugin.json`, so a `grandfathered` or `frozen`
+ * listing's versions are reviewable, as MOD-56 says in as many words; B.3's
+ * state `listed` would exclude every legacy plugin. The version record exists
+ * and is not yanked. Its mark is not already `reviewed` — a record with no
+ * mark (published before 3.0.0) or with a value this registry does not write
+ * is not reviewed, so it moves. And what this run's earlier decisions already
+ * delisted, yanked or reviewed has moved as surely as a commit would have.
+ *
+ * A version named twice moves once: two identical edits would be harmless on
+ * the tree and a lie in the log entry, which would name one version twice.
+ */
+function compileReview(root, d, listing, { decidedAt, date, reason, batch = null }) {
+  const named = [...new Set(Array.isArray(d.versions) ? d.versions : [])];
+  if (named.length === 0) {
+    return refuse(d, "target_changed",
+      "a review names at least one version, and this decision names none. MOD-56's log entry names the versions " +
+      "a review moved, and detector A's row 11 reads a mark by that list, so an entry naming none is a review " +
+      "nobody can check");
+  }
+
+  const movable = [];
+  const stuck = [];
+  for (const version of named) {
+    const record = listing.versions.find((v) => v.version === version);
+    const key = `${listing.id}@${version}`;
+    const gone = batch?.unlisted.has(listing.id) || batch?.yanked.has(key) || batch?.reviewed.has(key);
+    if (!record || !listing.listed || record.doc?.yanked === true || record.doc?.[REVIEW_MEMBER] === REVIEWED || gone) {
+      stuck.push(version);
+    } else {
+      movable.push(version);
+    }
+  }
+
+  if (movable.length === 0) {
+    return refuse(d, "target_changed",
+      `${stuck.join(", ")} of ${listing.id} ${stuck.length === 1 ? "is" : "are"} not on this tree, yanked, already ` +
+      "reviewed, or of a listing whose record is `unlisted`, so this review can move no version (MOD-56). The " +
+      "service refuses the same at the served catalogue's `Index-Source-Commit` (MOD-10), so one reaching the " +
+      "bot means the tree moved between the service's read and this run");
+  }
+
+  const entry = {
+    date,
+    action: "review",
+    plugin: listing.id,
+    versions: movable,
+    reason,
+    category: REVIEW_CATEGORY,
+    service_decision_id: d.service_decision_id,
+    ...(d.declared_interest !== undefined ? { declared_interest: d.declared_interest } : {}),
+  };
+
+  return {
+    outcome: "compiled",
+    code: d.code,
+    service_decision_id: d.service_decision_id,
+    edits: movable.map((v) => reviewEdit(listing.id, v)),
+    log: [logEntry(root, entry, batch)],
+    // Nothing is withdrawn, no decision record is owed (DEC-7 records
+    // publications, refusals and withdrawals, and a mark is none of them), and
+    // MOD-8's alerts are for holds and advisories. MOD-56: no `notice.moderated`
+    // either, which is the service's to send and which it reads from the code.
+    advisories: [],
+    records: [],
+    alerts: [],
+    // The trailer is half of what detector A's row 11 reads a mark by; the log
+    // entry naming the version is the other half.
     trailers: { "Service-Decision": d.service_decision_id, "Decided-At": decidedAt },
   };
 }

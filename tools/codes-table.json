@@ -117,6 +117,7 @@
     "M_IDENTITY_RESET",
     "M_REJECT",
     "M_RELIST",
+    "M_REVIEW",
     "M_REVOKE",
     "M_UNREVOKE",
     "M_YANK",
@@ -135,6 +136,7 @@
     "P_OPERATOR_DENIED",
     "P_PUBLISHED",
     "P_REFUSED",
+    "P_REVIEW_PRIORITY",
     "P_SLA",
     "P_TRUSTED_AUTHOR",
     "P_UNKNOWN_PERMISSION",
@@ -1145,6 +1147,15 @@
       "remedy": "A moderator lifted the plugin's delisting (§7.2). Like every reversal, it was held and confirmed by the registry's operator before it applied (MOD-9). The plugin is back in the catalogue and gets updates again. Nothing to do."
     },
     {
+      "code": "M_REVIEW",
+      "level": "pass",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "A moderator reviewed these versions",
+      "remedy": "A moderator read these versions and marked them reviewed (§7.2), so Astra stops showing the \"not reviewed\" warning for them. A review is one person's reading, not a security audit or a guarantee (INV-1), and a later advisory, yank or delist overrides it. The next version starts unreviewed. Nothing to do."
+    },
+    {
       "code": "M_REVOKE",
       "level": "error",
       "stage": "policy",
@@ -1307,6 +1318,15 @@
       "remedy": "Fix the blocking findings above and comment `/recheck`. The policy did not reject this; a check did."
     },
     {
+      "code": "P_REVIEW_PRIORITY",
+      "level": "note",
+      "stage": "policy",
+      "fix": "none",
+      "panel_only": false,
+      "title": "Published unreviewed, and first in the moderators' queue",
+      "remedy": "Nothing to do. This release was published at once and marked as not reviewed by Astra moderators, as every release is (DEC-19). Under the rules before contract 3.0.0 it would have waited for a person or a delay, as the message above says, so moderators read it first. New Astra clients show a \"not reviewed\" warning for this version until a moderator reviews it."
+    },
+    {
       "code": "P_SLA",
       "level": "note",
       "stage": "policy",
@@ -1385,7 +1405,7 @@
       "fix": "moderator",
       "panel_only": false,
       "title": "First listing — a person reads it, once, ever",
-      "remedy": "Nothing to do but wait. This is one of exactly three events that block on a human, and it happens once per plugin: every later release from the same repository is zero-touch."
+      "remedy": "Nothing to do but wait (the issue path only, until cutover). This is one of exactly three events that block on a human, and it happens once per plugin: every later release from the same repository is zero-touch."
     },
     {
       "code": "R_HOST_RPC_IN_VENDOR_DIR",

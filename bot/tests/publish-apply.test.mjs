@@ -669,6 +669,100 @@ test("an identity record needs a publication beside it, and each record is what 
   }
 });
 
+// ── contract 3.0.0's landing commit, under contention (B.4's review mark) ───
+//
+// B.4: every version record added on main from 3.0.0's landing commit — the
+// first first-parent commit whose schema/version-v1.json declares `review` —
+// carries `review: "unreviewed"`. A publication run that checked out main
+// BEFORE that commit derived its record with code that knows no mark. If the
+// landing commit reaches main while the run is between its checkout and its
+// push, the run's push is refused (non-fast-forward), and `run()` fetches,
+// resets to the new main and re-applies. The question is what stops the
+// re-applied, unmarked record from landing after the landing commit.
+//
+// The answer this asserts: the re-applied attempt runs `registryChecks` from
+// the tree it was RESET to, so it runs the landing commit's validator, not the
+// one the run started with — and that validator refuses an added record with
+// no mark. So the run ends ChecksFailed and nothing of it lands; its next run
+// derives the record with the mark. No rebase, no retry from the stale tree.
+//
+// Real commits, a real bare remote and the real rule: the toy tree's
+// `tools/validate.mjs` is a stub before the landing commit (exit 0, as a
+// validator that knows no mark) and, from the landing commit, a shim that runs
+// tools/lib/review-mark.mjs — the module `tools/validate.mjs` runs — over the
+// checkout. The generator and the selftest are stubs throughout; this tree
+// has no catalogue for them to judge.
+//
+// Watched: with the shim's rule call removed (the landing commit's validator
+// knowing no mark), the unmarked record lands on the second attempt and the
+// first assertion fails; the control shows a marked record from the same
+// race lands, so the refusal is about the mark and not about the race.
+const REVIEW_MARK_LIB = new URL("../../tools/lib/review-mark.mjs", import.meta.url).href;
+
+function landingRace(dir, one, two, { mark }) {
+  const stub = "process.exit(0);\n";
+  write(two, "tools/build-index.mjs", stub);
+  write(two, "tools/selftest.mjs", stub);
+  write(two, "tools/validate.mjs", stub);
+  write(two, "schema/version-v1.json", `${JSON.stringify({ properties: { version: {} } }, null, 2)}\n`);
+  git(two, "add", "-A");
+  git(two, "commit", "-m", "a registry before 3.0.0 lands");
+  git(two, "push", "origin", "HEAD:main");
+  // The publication run checks out main here, before the landing commit.
+  git(one, "pull", "--quiet", "--ff-only", "origin", "main");
+  const base = git(one, "rev-parse", "HEAD");
+
+  // 3.0.0's landing commit reaches main while that run is working.
+  write(two, "schema/version-v1.json", `${JSON.stringify({ properties: { version: {}, review: {} } }, null, 2)}\n`);
+  write(two, "tools/validate.mjs",
+    `import { reviewMarkFindings } from ${JSON.stringify(REVIEW_MARK_LIB)};\n` +
+    "const { errors } = reviewMarkFindings(process.cwd());\n" +
+    "for (const e of errors) console.error(`ERROR ${e.file}: ${e.message}`);\n" +
+    "process.exit(errors.length ? 1 : 0);\n");
+  git(two, "add", "-A");
+  git(two, "commit", "-m", "3.0.0's landing commit");
+  git(two, "push", "origin", "HEAD:main");
+  const landing = git(two, "rev-parse", "HEAD");
+
+  const reports = report(dir, "ingest-report-0", {
+    id: "alpha", version: "0.1.0",
+  });
+  if (mark !== undefined) {
+    write(path.join(reports, "ingest-report-0"), "plugins/alpha/versions/0.1.0.json",
+      `${JSON.stringify({ version: "0.1.0", review: mark })}\n`);
+  }
+  return { base, landing, reports };
+}
+
+test("a run that checked out main before 3.0.0's landing commit cannot land an unmarked record after it (B.4)", () => {
+  const { dir, one, two, bare } = estate();
+  const { base, landing, reports } = landingRace(dir, one, two, { mark: undefined });
+
+  let err = null;
+  let result = null;
+  try {
+    result = run({ root: one, reports, watchState: path.join(dir, "none"), base, log: quiet });
+  } catch (e) {
+    err = e;
+  }
+  assert.ok(err && err.name === "ChecksFailed",
+    `the re-applied, unmarked record was not refused by the landing commit's validator: ${err ? err.message : JSON.stringify(result)}`);
+  assert.equal(git(bare, "rev-parse", "main"), landing, "main moved past the landing commit");
+  assert.equal(git(bare, "ls-tree", "--name-only", "main", "plugins/alpha/versions/0.1.0.json"), "",
+    "the unmarked record reached main after the landing commit");
+});
+
+test("control: the same race with a marked record lands on the second attempt", () => {
+  const { dir, one, two, bare } = estate();
+  const { base, landing, reports } = landingRace(dir, one, two, { mark: "unreviewed" });
+
+  const result = run({ root: one, reports, watchState: path.join(dir, "none"), base, log: quiet });
+  assert.equal(result.outcome, "committed");
+  assert.equal(result.attempts, 2, "the first push is refused by the landing commit, and the re-applied one lands");
+  assert.equal(git(bare, "rev-parse", "main^"), landing);
+  assert.equal(git(bare, "show", "main:plugins/alpha/versions/0.1.0.json"), '{"version":"0.1.0","review":"unreviewed"}');
+});
+
 test("DRY_RUN commits on the runner, pushes nothing, and says `dry-run`", () => {
   const { dir, one, bare } = estate();
   const reports = report(dir, "ingest-report-0", { id: "alpha", version: "0.1.0" });

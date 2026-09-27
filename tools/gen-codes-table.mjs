@@ -99,7 +99,7 @@ const B7_FIXES = {
   W_REGISTRY_UNACKNOWLEDGED: "registry",
 };
 
-// The level and `fix` decided for the ten codes the contract gives no `fix`.
+// The level and `fix` decided for the eleven codes the contract gives no `fix`.
 // The coordinator decided each `fix` under the owner's standing grant of
 // 2026-09-23, adopting lane S10's proposals. It also decided both `A_*` levels.
 // Lane S15 chose the `M_*` levels from `bot/lib/codes.mjs`'s own definitions,
@@ -123,6 +123,11 @@ const DECIDED = {
   M_UNREVOKE: { level: "note", fix: "none" },
   M_BINDING_REVOKE: { level: "warn", fix: "none" },
   M_IDENTITY_RESET: { level: "note", fix: "none" },
+  // Contract 3.0.0 (§7.2; MOD-56). The coordinator's decision of 2026-09-26,
+  // under the owner's standing grant, as auto-publish-design §6.3 drew the
+  // row: a mark that only adds trust withdraws nothing, so `pass`, and
+  // nothing is left to clear, so `none`.
+  M_REVIEW: { level: "pass", fix: "none" },
 };
 
 // One `warn` a moderator lifts. The rule in `build()` reads `warn` as a check
@@ -496,12 +501,13 @@ function selftest() {
     for (const c of Object.keys(absent.each)) assert(set.has(c), `\`codes_absent.each\` gives a reason for ${c}, which is not recorded absent`);
   });
 
-  // The ten codes the contract gives no `fix`. Their level and `fix` are a
+  // The eleven codes the contract gives no `fix`. Their level and `fix` are a
   // decision (DECIDED above), held here as B.7's are, because the token file
   // carries only what this program emits.
   check("the level and fix decided for a code the contract gives no fix are what its row carries", () => {
     const byCode = new Map(doc.flow13_table.map((r) => [r.code, r]));
-    assert(Object.keys(DECIDED).length === 10, `DECIDED holds ${Object.keys(DECIDED).length} codes; the decision named ten`);
+    assert(Object.keys(DECIDED).length === 11, `DECIDED holds ${Object.keys(DECIDED).length} codes; the decisions named ` +
+      "eleven: ten on 2026-09-24, and M_REVIEW with contract 3.0.0");
     for (const [code, want] of Object.entries(DECIDED)) {
       assert(!Object.hasOwn(B7_FIXES, code), `${code} is in DECIDED and in B7_FIXES; a code whose fix the contract states is not a decision`);
       assert(byCode.has(code), `${code}'s level and fix are decided, and the table carries no row for it`);

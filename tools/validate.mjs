@@ -95,6 +95,7 @@ import {
 import { buildIndex, indexContent, publisherKeyProblems } from "./build-index.mjs";
 import { RESERVED_KEYS, SUPPORTED_KEYS } from "./lib/platform.mjs";
 import { isTime } from "./lib/time.mjs";
+import { reviewMarkFindings } from "./lib/review-mark.mjs";
 
 // `tools/lib/platform.mjs`'s table, not a copy of it. Until 2026-09-22 these
 // were two literals of this file's own, and platform.mjs's RESERVED_KEYS was
@@ -2638,6 +2639,23 @@ export function checkAuthorActionRecords(ctx, sources, records = loadRecords(ctx
  * Each record is judged once, not once per login it covers: `publisherRecords`
  * and not the map's values, which yield a `covers` record under every key.
  */
+/**
+ * The review mark's three rules (contract 3.0.0: B.4; DEC-19; MOD-56; §4.8
+ * row 11), which are rules about the COMMIT that added or changed a version
+ * record and so read git: every record added from 3.0.0's landing commit
+ * carries `unreviewed`; a move to `reviewed` comes only with a moderation-log
+ * `review` entry naming the version and a `Service-Decision:` trailer; nothing
+ * else moves it. `tools/lib/review-mark.mjs` holds the rules and says why they
+ * are there and not in the tree walk above. Over a tree that is not the top of
+ * its own git work tree — every fixture — they are not asked, and the note
+ * says so rather than the run reading as though they passed.
+ */
+export function checkReviewMarks(ctx) {
+  const { errors, notes } = reviewMarkFindings(ctx.root);
+  for (const e of errors) ctx.report.error(e.file, e.message);
+  for (const n of notes) ctx.report.note("review marks", n);
+}
+
 export function checkPublisherRecords(ctx, loaded = loadPublishers(ctx.root)) {
   const { report, schemas } = ctx;
   for (const e of loaded.errors) report.error(e.file, e.message);
@@ -2885,6 +2903,7 @@ export async function runValidation(opts) {
   checkRecords(ctx, { plugins: usable }, records);
   checkAuthorActionRecords(ctx, { plugins: usable }, records);
   checkPublisherRecords(ctx);
+  checkReviewMarks(ctx);
 
   let hashed = 0;
   if (opts.artifactsDir) hashed += checkLocalArtifacts(usable, ctx);

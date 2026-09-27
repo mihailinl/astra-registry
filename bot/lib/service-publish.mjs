@@ -62,8 +62,11 @@ export function alertProblems(doc) {
   for (const k of Object.keys(doc)) if (!ALERT_MEMBERS.includes(k)) p.push(`an unnamed member \`${k}\``);
   if (doc.schema !== ALERT_SCHEMA) p.push(`schema ${JSON.stringify(doc.schema)}`);
   if (!/^[0-9a-f]{16}$/.test(String(doc.fingerprint))) p.push("fingerprint");
-  if (!["approval", "delay_elapsed"].includes(doc.event)) p.push("event");
-  if (doc.event === "approval" ? !isTime(doc.approval_decided_at) : doc.approval_decided_at !== null) p.push("approval_decided_at");
+  // One event since contract 3.0.0 (DEC-19): nothing on the service path is
+  // delayed, so no alert is raised for a drained delay, and a record claiming
+  // one names an event TRUST-14 no longer raises.
+  if (doc.event !== "approval") p.push("event");
+  if (!isTime(doc.approval_decided_at)) p.push("approval_decided_at");
   if (!isTime(doc.delivered_at)) p.push("delivered_at");
   if (!RUN_RE.test(String(doc.run))) p.push("run");
   return p;

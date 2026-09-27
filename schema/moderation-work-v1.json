@@ -116,10 +116,11 @@
         "$comment": { "type": "string" },
         "service_decision_id": { "$ref": "#/$defs/uuid" },
         "code": {
-          "$comment": "Every code the compiler has an answer for. A code OUTSIDE this list is refused `kind_refused` at the schema, which is the one place that refusal is right: `bot/lib/compile-decision.mjs` THROWS on an unknown code rather than refusing it, because settling a decision the registry did not understand as a final result is how a takedown disappears quietly. Here the registry has judged the value against a published list, which is a different statement.",
+          "$comment": "Every code the compiler has an answer for. A code OUTSIDE this list is refused `kind_refused` at the schema, which is the one place that refusal is right: `bot/lib/compile-decision.mjs` THROWS on an unknown code rather than refusing it, because settling a decision the registry did not understand as a final result is how a takedown disappears quietly. Here the registry has judged the value against a published list, which is a different statement. The list is `bot/lib/compile-decision.mjs`'s KNOWN_CODES and §7.2's codes in the token file, and `bot/tests/moderation-run.test.mjs` holds the three equal: `M_REVIEW` joined all three at contract 3.0.0 (MOD-56), and a code in this enum the compiler cannot compile would throw every run that listed it.",
           "enum": [
             "M_YANK", "M_DELIST", "M_DEPRECATE", "M_REVOKE", "M_APPEAL",
             "M_RELIST", "M_UNREVOKE", "M_BINDING_REVOKE", "M_IDENTITY_RESET",
+            "M_REVIEW",
             "A_YANK", "A_REMOVAL_REQUEST"
           ]
         },

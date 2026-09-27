@@ -80,9 +80,13 @@ you are looking for the rule that keeps a built-in running, it is in the daemon
 | \`warn\` | Listed anyway, and said out loud. |
 | \`note\` | Something the bot did **not** decide. Printed on every run, passing or not. |
 
-The three events that take a human are the first listing of a plugin, a
-repository change, and (from task 3.5) a newly requested high-risk permission.
-Everything else about a conforming release is zero-touch.
+On the issue path, until cutover, the three events that take a human are the
+first listing of a plugin, a repository change, and (from task 3.5) a newly
+requested high-risk permission. Everything else about a conforming release is
+zero-touch. On the service path (contract 3.0.0, DEC-19) only a change of hands
+on a listing that already exists waits for a person — a repository change, a
+first binding line, or a changed binding — and every other release that passes
+these checks is published at once, marked as not reviewed by Astra moderators.
 
 ## Exit codes
 

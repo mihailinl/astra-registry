@@ -104,6 +104,33 @@ export const PROMISES = [
       "sandboxed and will not be (settled); a sentence promising the phase in which that changes is a promise " +
       "the estate has refused to keep",
   },
+  // Contract 3.0.0's ROLL-47 row E1, amended by the policy rewrite (design
+  // R12, lane AP3) in the change that lands DEC-19. Both said a first listing
+  // is always read by a person before it publishes. On the service path it no
+  // longer is: it publishes at once, marked unreviewed, and only a change of
+  // hands waits (DEC-19). The section heading keeps its "3. " so the literal
+  // names the heading and not a sentence that happens to count to three.
+  {
+    row: "E1",
+    task: "R12",
+    literal: "Exactly three events take blocking human review",
+    amended: "2026-09-26",
+    why:
+      "since contract 3.0.0 the service path holds only a change of hands on a listing that already exists " +
+      "(DEC-19); a first listing, a check's flag and a new high-risk permission publish at once, marked not " +
+      "reviewed by Astra moderators, and are read afterwards. The issue path keeps its holds until R6, and says so " +
+      "as the issue path's",
+  },
+  {
+    row: "E1",
+    task: "R12",
+    literal: "3. The three events that need a person",
+    amended: "2026-09-26",
+    why:
+      "the section that listed three events blocking on a person, the first listing among them, is \"What waits " +
+      "for a person\" since contract 3.0.0: on the service path only a change of hands waits (DEC-19), and every " +
+      "other release publishes at once, marked unreviewed",
+  },
 ];
 
 /**

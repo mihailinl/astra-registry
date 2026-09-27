@@ -291,6 +291,35 @@ export async function run() {
     }
   });
 
+  // Contract 3.0.0 (§0.8's review marks; B.4; design couplings line 1). The
+  // registry emits the mark and the service, the panel and the client accept
+  // it, each from the token file's `list:review`. The registry's own two
+  // schemas are the writer's statement of the same list, and nothing held the
+  // three together: a value added to one schema and not the token file is a
+  // mark the registry writes and every acceptor reads as "not reviewed" —
+  // safe for the warning, and a silent disagreement nonetheless.
+  //
+  // Watched: `reviewed` renamed in schema/index-v1.json's release, and a third
+  // value added to schema/version-v1.json, each red here (and the second in
+  // tools/selftest/catalogue.mjs's one-list test too).
+  await test("the token file's review marks are the list both registry schemas write (3.0.0)", () => {
+    const doc = JSON.parse(fs.readFileSync(tokenPath, "utf8"));
+    const entry = (doc.entries ?? []).find((e) => e.id === "list:review");
+    assert(entry && Array.isArray(entry.values) && entry.values.length >= 2,
+      `${TOKEN_FILE} carries no \`list:review\` with values, and contract 3.0.0 publishes one (§0.8)`);
+    assert((entry.emitter ?? []).includes("registry"), `\`list:review\` names emitter ${JSON.stringify(entry.emitter)}, and the registry writes the mark`);
+    const read = (rel) => JSON.parse(fs.readFileSync(path.join(REPO_ROOT, rel), "utf8"));
+    const sorted = (a) => JSON.stringify([...(a ?? [])].sort());
+    assertEqual(sorted(read("schema/version-v1.json").properties?.review?.enum), sorted(entry.values),
+      "schema/version-v1.json's review enum is not the token file's list:review");
+    assertEqual(sorted(read("schema/index-v1.json").$defs?.release?.properties?.review?.enum), sorted(entry.values),
+      "schema/index-v1.json's release review enum is not the token file's list:review");
+    const version = (doc.entries ?? []).find((e) => e.id === "schema:astra.registry.version/1");
+    const member = (version?.members ?? []).find((m) => m.name === "review");
+    assert(member && member.required === false,
+      `${TOKEN_FILE}'s astra.registry.version/1 does not publish \`review\` as optional: ${JSON.stringify(member)}`);
+  });
+
   // ── the rule the generator cannot ask about itself ────────────────────────
   await test("the token file's tokens did not move without contract_version moving", () => {
     const here = showOrNull("HEAD", TOKEN_FILE);

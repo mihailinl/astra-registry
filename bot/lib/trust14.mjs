@@ -2,9 +2,9 @@
 //
 //   node bot/lib/trust14.mjs --merge --verdict verdict.json    (ASTRA_DECIDE_ALERTS in env)
 //
-// Registry plan B-T3.3b. `decide` names every approval and every delayed
-// fingerprint past its `publish_after` that lacks a `state/alerts/` record for
-// that event, and every disagreement it refused to write anything over
+// Registry plan B-T3.3b. `decide` names every approval that lacks a
+// `state/alerts/` record for that event (since contract 3.0.0 no delayed
+// fingerprint exists on the service path, DEC-19), and every disagreement it refused to write anything over
 // (BOT-15, BOT-21). This composes those names into the ONE verdict the alert
 // job sends, beside what the roots check relayed, so a run pages once. The
 // `publish` job then writes the alert record with the `delivered_at` the
@@ -23,8 +23,14 @@ import { pathToFileURL } from "node:url";
 
 import { verdictProblems } from "./alert-verdict.mjs";
 
-/** The two TRUST-14 events, as channel codes. */
-export const TRUST14_CODES = Object.freeze({ approval: "TRUST14_APPROVAL", delay_elapsed: "TRUST14_DELAY_ELAPSED" });
+/**
+ * TRUST-14's event, as a channel code. One since contract 3.0.0: an approval,
+ * which exists only for a change-of-hands hold (DEC-6; decision D2). The
+ * second, a delayed fingerprint past its `publish_after`, went with the
+ * service path's delay (DEC-19), and a `decide` that named one now fails here
+ * rather than paging an operator about a wait the contract no longer has.
+ */
+export const TRUST14_CODES = Object.freeze({ approval: "TRUST14_APPROVAL" });
 
 const CODE_RE = /^[A-Z][A-Z0-9_]{0,47}$/;
 const FP_RE = /^[0-9a-f]{16}$/;

@@ -1,4 +1,4 @@
-// The moderation log: the seven actions, their source files, and the one place
+// The moderation log: the nine actions, their source files, and the one place
 // their rules are checked.
 //
 // PRODUCTION_PLAN task 6.6. Rendered at `/transparency/` and published as
@@ -42,8 +42,8 @@
 //              running copy alone; `disable` also stops what is already there
 //              (`RevocationAction::stops_installed()` is true only for it).
 //
-// Three of them give something back, or record that somebody asked for it
-// back. They are MOD-47's addition, and the reason they are in the SAME log
+// The rest give something back, record that somebody asked for it back, or —
+// `review` alone — add trust. They are MOD-47's addition, and the reason they are in the SAME log
 // rather than in a second one is that a log which records only the taking is a
 // log that overstates the estate's severity for ever: a reader who finds the
 // delist and not the relist reads a plugin as withdrawn when it is listed.
@@ -62,6 +62,12 @@
 //              one exists (ID-40's one exception). Carries category
 //              `identity_reset` and its `service_decision_id`, and names no
 //              version and no advisory — it voids an id, not a release.
+//   review     a moderator's review (`M_REVIEW`; contract 3.0.0, MOD-56). It
+//              takes nothing away and gives nothing back: it marks the
+//              versions it names `review: "reviewed"`, which is the one
+//              direction that mark ever moves. Carries category
+//              `review_passed`, the versions it marked and its
+//              `service_decision_id`, and names no advisory.
 //   appeal     a decided appeal (`M_APPEAL`; MOD-33). Never its text: the
 //              appellant's words are the one thing PRIV-2 keeps out of git.
 //              It carries `appeal_of`, `outcome` and the public reason, and it
@@ -96,7 +102,7 @@ export const SOURCE_DIR = "bot/moderation";
  * they reverse rather than in a block of their own, because the pair is the
  * unit a reader of `/transparency/` is looking for.
  */
-export const ACTIONS = ["yank", "delist", "relist", "deprecate", "revoke", "unrevoke", "reset", "appeal"];
+export const ACTIONS = ["yank", "delist", "relist", "deprecate", "revoke", "unrevoke", "reset", "review", "appeal"];
 
 /**
  * The four whose cost `docs/POLICY.md` §9 tabulates.
@@ -115,9 +121,10 @@ export const ESCALATING_ACTIONS = ["yank", "delist", "deprecate", "revoke"];
  * Transcribed from contract §7.2 ("Category | Allowed with"), with the two
  * translations that table's own column needs:
  *
- *   - REJECT, APPROVE and BINDING_REVOKE produce no log entry at all, so the
- *     categories that exist only for them (`review_passed`) appear nowhere
- *     below;
+ *   - REJECT, APPROVE and BINDING_REVOKE produce no log entry at all. Until
+ *     contract 3.0.0 that left `review_passed` on no action; since then §7.2
+ *     reads "review_passed | APPROVE, REVIEW", and `M_REVIEW`'s action is
+ *     `review`, so the category is that row's and no other's;
  *   - "revert" is MOD-52's, and a revert is logged as `relist` or `unrevoke`,
  *     so `error`, `appeal_reversed` and `path_test` reach those two actions.
  *
@@ -137,6 +144,9 @@ export const CATEGORIES = {
   // carries it. `M_IDENTITY_RESET` is the one decision whose log action is
   // `reset` (MOD-47, 2.5.0).
   reset: ["identity_reset"],
+  // §7.2 at contract 3.0.0: "review_passed | APPROVE, REVIEW". APPROVE logs
+  // nothing, so this is the category's only action.
+  review: ["review_passed"],
   appeal: [],
 };
 
@@ -506,6 +516,23 @@ export function checkEntry(doc, where = "<entry>", { cutoverAt = null } = {}) {
     }
   }
 
+  // ── what a review names ──────────────────────────────────────────────────
+  //
+  // A review marks VERSIONS (MOD-56: "one moderation-log entry `review` naming
+  // the versions it moved"), and detector A's row 11 accepts a mark on a
+  // version record only beside an entry that names that version, so an entry
+  // naming none is a review nobody can check. Its category and its
+  // `service_decision_id` are required for the reset's reason: there is no
+  // hand review — the one commit that may set `reviewed` is `M_REVIEW`'s, and
+  // it carries `Service-Decision:` naming the decision this entry names.
+  if (doc.action === "review") {
+    if (doc.versions === undefined) bad("a review must name the versions it marked, as versions (MOD-56)");
+    if (doc.category === undefined) bad("a review must carry its category, review_passed (§7.2)");
+    if (doc.service_decision_id === undefined) {
+      bad("a review must carry the service_decision_id of the M_REVIEW it applies (MOD-56; BOT-81)");
+    }
+  }
+
   const isAppeal = doc.action === "appeal";
   if (isAppeal) {
     if (doc.appeal_of === undefined) bad("an appeal must name what was appealed, as appeal_of (MOD-33)");
@@ -805,8 +832,8 @@ export function buildModerationLog({ root = REPO_ROOT, revocations = null, revoc
       "GENERATED FILE — DO NOT EDIT. Source of truth: bot/moderation/<date>-<plugin>-<action>[-<n>].json. " +
       "THIS DOCUMENT IS NOT SIGNED. The signed statement that produces the deprecate/revoke effects " +
       "is registry/v1/revocations.json; this is the human record beside it, and it also covers yank, " +
-      "delist and relist, which are catalogue edits and produce no signed document at all, and appeal, " +
-      "which records a decision about one.",
+      "delist and relist, which are catalogue edits and produce no signed document at all, review, which " +
+      "marks versions a moderator read, and appeal, which records a decision about one.",
     schema: SCHEMA,
     ...(revocationsSerial !== undefined ? { revocations_serial: revocationsSerial } : {}),
     entries: out,

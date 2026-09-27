@@ -87,6 +87,9 @@ import { loadRecords } from "../../tools/lib/sources.mjs";
 // modules without them is red test by test rather than at import.
 import * as holdsModule from "../lib/holds.mjs";
 import * as moderationRun from "../moderation-run.mjs";
+// Contract 3.0.0's (MOD-56), off the namespaces for the same reason.
+import * as compiler from "../lib/compile-decision.mjs";
+import { countWindow } from "../lib/takedown-bound.mjs";
 // Ops entry 100's module, imported so that this suite, run against a tree
 // without it, is red test by test rather than at import.
 const settledLib = await import("../lib/settled.mjs").catch(() => null);
@@ -3173,4 +3176,159 @@ test("B-T4.2: a due reset the tree moved under writes nothing and alerts by name
     job.logs.join(" | "));
   assert.ok(fs.existsSync(path.join(root, "plugins/widgets/identity.json")));
   assert.ok(fs.existsSync(path.join(root, holdEntryPath(SDI))), "the entry left the tree without a commit that names it");
+});
+
+// ── M_REVIEW through the run (contract 3.0.0; MOD-56) ───────────────────────
+//
+// The one service decision that adds trust, end to end on the path the
+// workflow runs: the list job's schema, the compile, the commit job's files,
+// the workflow's own `apply` lines pushing to a real `origin`, and detector A's
+// row 11 reading what landed. MOD-56's Check is the second test, clause for
+// clause: "a review naming two versions, one already reviewed, moves one and
+// logs one entry; a review that can move none is refused `target_changed`".
+
+const REVIEW_REASON = "A moderator read this version's manifest, permissions and bundle and found nothing wrong.";
+const reviewOf = (id, versions) => decision({
+  service_decision_id: id, code: "M_REVIEW", category: "review_passed", moderator: "amoderator",
+  versions, reason: REVIEW_REASON,
+});
+/** B.4's landing commit is the first whose version schema declares `review`; the fixture's declares it and nothing else. */
+const VERSION_SCHEMA_FIXTURE = {
+  $comment: "fixture: contract 3.0.0's member alone, so detector A's row 11 finds its landing commit here",
+  properties: { review: { enum: ["unreviewed", "reviewed"] } },
+};
+const markedVersion = (v, review, opts) => ({ ...version("widgets", v, opts), review });
+
+test("the codes the schema admits, the codes the compiler knows and §7.2's codes in the token file are one list", () => {
+  // The design's coupling 4. Three lists of one thing: `schema/moderation-work-v1.json`
+  // decides what the `list` job accepts, `KNOWN_CODES` what the compile has an
+  // answer for, and the token file's §7.2 cells what the contract says each code
+  // writes. A code in the schema and not the compiler throws the whole run on
+  // the first such decision; one in the compiler and not the schema is refused
+  // `kind_refused`, finally (BOT-81), before the compile ever sees it.
+  const schemaCodes = [...workSchema(REPO).$defs.serviceDecision.properties.code.enum].sort();
+  const known = Object.keys(compiler.KNOWN_CODES ?? {}).sort();
+  assert.ok(schemaCodes.includes("M_REVIEW"), `${SCHEMA_FILE} does not admit M_REVIEW, so the list job refuses every review`);
+  assert.deepEqual(schemaCodes, known,
+    `${SCHEMA_FILE}'s code enum and bot/lib/compile-decision.mjs's KNOWN_CODES have parted`);
+  const tokens = JSON.parse(read("schema/contract-tokens-v1.json"));
+  const published = tokens.entries
+    .filter((e) => e?.kind === "reason_code" && typeof e.artefact === "string").map((e) => e.name).sort();
+  assert.deepEqual(schemaCodes, published,
+    `${SCHEMA_FILE}'s code enum and the §7.2 codes the token file (${tokens.contract_version}) publishes have parted`);
+  assert.ok(schemaCodes.length >= 12, `${schemaCodes.length} codes; §7.2 names 12 service decisions at contract 3.0.0`);
+  // And the comparison can fail: the enum one code short is not the list.
+  assert.notDeepEqual(schemaCodes.filter((c) => c !== "M_REVIEW"), known);
+
+  assert.deepEqual(checkServiceDecision(reviewOf(SDI, ["1.0.0"]), { root: REPO }), { ok: true },
+    "the list job refuses a well-formed M_REVIEW");
+});
+
+test("M_REVIEW end to end: one commit on main moves what can move, logs it once, and detector A's row 11 reads it as a decision", async () => {
+  const root = withDocuments(estate({
+    versions: [],
+    at: "2026-09-20T09:00:00Z",
+    extra: {
+      "schema/version-v1.json": VERSION_SCHEMA_FIXTURE,
+      "plugins/widgets/versions/1.0.0.json": markedVersion("1.0.0", "unreviewed"),
+      "plugins/widgets/versions/1.1.0.json": markedVersion("1.1.0", "unreviewed"),
+      "plugins/widgets/versions/1.2.0.json": markedVersion("1.2.0", "unreviewed", { yanked: true }),
+    },
+  }));
+  const origin = withRemote(root);
+  const markOf = (v) => JSON.parse(fs.readFileSync(path.join(root, `plugins/widgets/versions/${v}.json`), "utf8")).review;
+
+  // A first review, of 1.0.0.
+  const first = await commitJob(root, { entries: [reviewOf(SDI, ["1.0.0"])], now: new Date("2026-09-20T12:30:00Z") });
+  assert.equal(first.code, 0, first.logs.join("\n"));
+  assert.deepEqual(first.results.compiled, [SDI], JSON.stringify(first.results));
+  assert.equal(runApply(root, dated("2026-09-20T12:45:00Z")).status, 0);
+
+  // MOD-56's Check: a review naming 1.0.0 (already reviewed), 1.1.0 and 1.2.0
+  // (yanked) moves 1.1.0 alone, in one entry.
+  const job = await commitJob(root, {
+    entries: [reviewOf(SDI2, ["1.0.0", "1.1.0", "1.2.0"])], now: new Date("2026-09-20T13:30:00Z"),
+  });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual([job.results.compiled, job.results.refused, job.results.held], [[SDI2], [], []],
+    "MOD-9: a review is never held, and one that can move a version is not refused");
+  assert.ok(job.paths.includes("plugins/widgets/versions/1.1.0.json"), job.paths.join(" "));
+  assert.ok(job.paths.includes("bot/moderation/2026-09-20-widgets-review-2.json"),
+    `the day's second review did not take MOD-47's -2: ${job.paths.join(" ")}`);
+  for (const stuck of ["1.0.0", "1.2.0"]) {
+    assert.ok(!job.paths.includes(`plugins/widgets/versions/${stuck}.json`), `${stuck} cannot move and was written`);
+  }
+  assert.ok(!job.paths.some((p) => p.startsWith("state/holds/") || p.startsWith("tools/revocations/") || p.startsWith("log/decisions/")),
+    `a review wrote a hold, an advisory or a decision record: ${job.paths.join(" ")}`);
+  const step = runApply(root, dated("2026-09-20T13:45:00Z"));
+  assert.equal(step.status, 0, step.stderr);
+  const landed = headOf(origin);
+  assert.match(sh(["log", "-1", "--format=%B", landed], root), new RegExp(`^Service-Decision: ${SDI2}$`, "m"));
+  assert.deepEqual(["1.0.0", "1.1.0", "1.2.0"].map(markOf), ["reviewed", "reviewed", "unreviewed"]);
+  const entry = JSON.parse(fs.readFileSync(path.join(root, "bot/moderation/2026-09-20-widgets-review-2.json"), "utf8"));
+  assert.deepEqual([entry.action, entry.versions, entry.category, entry.service_decision_id],
+    ["review", ["1.1.0"], "review_passed", SDI2], "the entry names the versions the commit moved, and no other");
+  assert.deepEqual(checkEntry(entry), []);
+
+  // A review that can move none is refused `target_changed`, and writes nothing.
+  const none = await commitJob(root, { entries: [reviewOf(SDI3, ["1.0.0", "1.2.0"])], now: new Date("2026-09-20T14:30:00Z") });
+  assert.equal(none.code, 0, none.logs.join("\n"));
+  assert.deepEqual(none.results.refused, [{ service_decision_id: SDI3, refusal: "target_changed" }]);
+  assert.deepEqual(none.paths, []);
+
+  // Detector A's row 11 reads both review commits, and finds each a decision.
+  const detected = detect({ root });
+  assert.ok(detected.ran.includes("A11"), `A11 did not run: ${JSON.stringify(detected.skipped)}`);
+  assert.ok(detected.scanned.review_commits >= 2,
+    `A11 examined ${detected.scanned.review_commits} commit(s), so its silence below says nothing`);
+  assert.equal(detected.scanned.review_landing_commit, sh(["rev-list", "--max-parents=0", "HEAD"], root).trim(),
+    "the landing commit is the first whose version schema declares `review`, which is this fixture's first");
+  assert.deepEqual(detected.findings.filter((f) => f.detector === "A11"), [],
+    "row 11 alarmed on the bot's own review commits");
+
+  // The same commit without its trailer is the forgery row 11 exists for.
+  const message = sh(["log", "-1", "--format=%B", "HEAD"], root).split("\n")
+    .filter((l) => !l.startsWith("Service-Decision:")).join("\n");
+  sh(["commit", "--amend", "-q", "-m", message], root);
+  const forged = detect({ root }).findings.filter((f) => f.detector === "A11");
+  assert.deepEqual(forged.map((f) => f.code), ["A11_REVIEWED_NO_DECISION"], JSON.stringify(forged));
+  assert.match(forged[0].message, /widgets\/versions\/1\.1\.0\.json/);
+});
+
+test("M_REVIEW over a full takedown bound is applied, the takedown beside it is held, and the review costs the window nothing", async () => {
+  // MOD-9 and TRUST-26, at the level the run asks them: a ledger that is
+  // already full, and a batch holding a review and a takedown.
+  const root = crowd();
+  withdrawnInGit(root, PEERS, "2026-09-20T11:30:00Z");
+  withRemote(root);
+  assert.equal(countWindow(root, { now: new Date("2026-09-20T12:30:00Z") }).count, TAKEDOWN_BOUND,
+    "the fixture's bound is not full, so the hold below is not the bound's");
+
+  const job = await measuredJob(root, [reviewOf(SDIS[0], ["1.0.0"]), takedownOf("widgets", 1)]);
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.compiled, [SDIS[0]], "a review waited behind a full takedown bound");
+  assert.deepEqual(job.results.held.map((h) => [h.service_decision_id, h.held_for]), [[SDIS[1], "bound"]],
+    "the takedown beside it was not held, so this batch is not over the bound and proves nothing");
+  assert.equal(runApply(root, dated("2026-09-20T12:45:00Z")).status, 0);
+
+  const after = countWindow(root, { now: new Date("2026-09-20T13:00:00Z") });
+  assert.equal(after.count, TAKEDOWN_BOUND, `the review commit changed the count: ${after.detail.join(" | ")}`);
+  assert.ok(!after.ids.some((x) => x.id === "widgets"), "a review was counted as withdrawing its listing");
+  assert.ok(sh(["show", "--name-only", "--format=", "HEAD"], root).includes("plugins/widgets/versions/1.0.0.json"),
+    "the landed commit carries no review, so the count above did not read one");
+
+  // And the ledger's side: with room for ONE more withdrawal, a review ahead of
+  // a takedown in the same batch leaves the room to the takedown. A review
+  // that spent it would hold the takedown behind a withdrawal nobody made.
+  const room = crowd();
+  withdrawnInGit(room, ["gadgets", "gizmos"], "2026-09-20T11:30:00Z");
+  const both = await measuredJob(room, [reviewOf(SDIS[0], ["1.0.0"]), takedownOf("doohickeys", 1)]);
+  assert.equal(both.code, 0, both.logs.join("\n"));
+  assert.deepEqual(both.results.compiled, [SDIS[0], SDIS[1]],
+    `a review spent the bound's last place, and the takedown after it was held: ${JSON.stringify(both.results.held)}`);
+
+  // A batch of reviews alone is not a takedown batch: no bound is needed for it.
+  assert.equal(moderationRun.hasTakedown([reviewOf(SDI, ["1.1.0"])]), false);
+  const alone = compileAll([reviewOf(SDI, ["1.1.0"])], { root });
+  assert.deepEqual([alone.compiled.length, alone.held.length, alone.refused.length], [1, 0, 0]);
 });

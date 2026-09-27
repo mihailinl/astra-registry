@@ -189,12 +189,15 @@ export const POLICY_CODES = {
       "moderator's approval publishes it only once the author objection window has passed since that account " +
       "was told, or since its binding was revoked (ID-60; ID-61).",
   },
+  // Held on the legacy issue path only since contract 3.0.0 (DEC-19; decision
+  // D1): on the service path a first listing publishes at once with
+  // `P_REVIEW_PRIORITY`. The panel shows this row, so its remedy says so.
   R_FIRST_LISTING: {
     level: "review", stage: "policy", fix: "moderator",
     title: "First listing — a person reads it, once, ever",
     remedy:
-      "Nothing to do but wait. This is one of exactly three events that block on a human, and it " +
-      "happens once per plugin: every later release from the same repository is zero-touch.",
+      "Nothing to do but wait (the issue path only, until cutover). This is one of exactly three events that " +
+      "block on a human, and it happens once per plugin: every later release from the same repository is zero-touch.",
   },
   R_IDENTITY_CHANGED: {
     level: "review", stage: "policy", fix: "moderator",
@@ -313,6 +316,22 @@ export const POLICY_CODES = {
     level: "note", stage: "policy", fix: "none",
     title: "What happens next, and by when",
     remedy: "See docs/POLICY.md. If this passes the stated deadline, say so on this issue — a missed SLA is a bug in the policy, not in your release.",
+  },
+  // Contract 3.0.0 (DEC-19; B.7). On the service path a release that the
+  // rules of 2.22.0 would have held or delayed — a first listing, a high-risk
+  // permission held, a widened permission set, or a check's flag for a person
+  // — publishes at once with this beside `P_PUBLISHED`, and the result's
+  // message says which, so moderators read it first. One code rather than
+  // four (decision D7): the detail rides in the message, which never enters
+  // git (DEC-7). `note`, and so `none`: it blocks nothing.
+  P_REVIEW_PRIORITY: {
+    level: "note", stage: "policy", fix: "none",
+    title: "Published unreviewed, and first in the moderators' queue",
+    remedy:
+      "Nothing to do. This release was published at once and marked as not reviewed by Astra moderators, as every " +
+      "release is (DEC-19). Under the rules before contract 3.0.0 it would have waited for a person or a delay, as " +
+      "the message above says, so moderators read it first. New Astra clients show a \"not reviewed\" warning for " +
+      "this version until a moderator reviews it.",
   },
 
   // ── the decisions a moderator or an author makes through the panel ──────────
@@ -480,6 +499,19 @@ export const POLICY_CODES = {
       "it applied (MOD-9). It clears `B_REPOSITORY_RECYCLED` for the identities it voided, and nothing clears " +
       "it. The listing is now frozen: its next release needs a binding line, and is held for a moderator as a " +
       "first binding.",
+  },
+  // Contract 3.0.0 (§7.2; MOD-56). A service decision that sets `review` to
+  // `reviewed` on the versions it names. Its level and `fix` are the
+  // coordinator's decision (tools/gen-codes-table.mjs `DECIDED`), as the other
+  // `M_*` codes' are: `pass`, because it adds trust and takes nothing away, so
+  // nothing is left to clear.
+  M_REVIEW: {
+    level: "pass", stage: "policy", fix: "none",
+    title: "A moderator reviewed these versions",
+    remedy:
+      "A moderator read these versions and marked them reviewed (§7.2), so Astra stops showing the \"not reviewed\" " +
+      "warning for them. A review is one person's reading, not a security audit or a guarantee (INV-1), and a later " +
+      "advisory, yank or delist overrides it. The next version starts unreviewed. Nothing to do.",
   },
 };
 

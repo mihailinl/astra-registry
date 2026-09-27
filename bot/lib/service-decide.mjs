@@ -38,8 +38,9 @@
 //
 // One plan per submission, of one of five kinds:
 //
-//   state     a record is committed (held, delayed, published, refused) and
-//             the result names it;
+//   state     a record is committed (held, published, refused) and the
+//             result names it; `delayed` since contract 3.0.0 never, because
+//             nothing on this path is delayed (DEC-19);
 //   wait      nothing is committed; a `wait` result is posted (FLOW-72);
 //   reported  `main` already carries the answer (BOT-19, BOT-74): nothing is
 //             committed, and the result names the record that is there;
@@ -66,7 +67,6 @@ import { decide } from "./policy/decision.mjs";
 import { alreadyPublished, noListingNoBinding, terminalOnMain } from "../decide.mjs";
 import { CHECK_FACTS_SCHEMA } from "../ingest.mjs";
 import { artifactDigests, submissionFingerprint } from "./policy/release.mjs";
-import { DELAY_HOURS } from "./policy/constants.mjs";
 import { HOUR_MS, iso } from "./policy/time.mjs";
 import { CODES } from "./codes.mjs";
 import { POLICY_CODES } from "./policy/constants.mjs";
@@ -101,7 +101,7 @@ const DIGEST_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*:[0-9a-f]{64}$/;
 
 /** BOT-26 (4): an approval older than this is not honoured (OPEN-OWNER-5). */
 export const APPROVAL_MAX_DAYS = 7;
-/** BOT-28: the author objection window for an approved update with no delay reason (OPEN-OWNER-6). */
+/** BOT-28: the author objection window for an approved change of hands (OPEN-OWNER-6; DEC-19 since 3.0.0). */
 export const UPDATE_WINDOW_HOURS = 6;
 /** TRUST-32 / DEC-6: the operator objection window, counted from reported delivery. */
 export const OPERATOR_WINDOW_HOURS = 6;
@@ -123,8 +123,13 @@ export const CLAIMED_FROM = Object.freeze(["received", "approved", "delayed"]);
 /** BOT-89's four, and what `ask` may carry for a submission it did not ask about. */
 export const VERDICT_OUTCOMES = Object.freeze(["pass", "B_BINDING_UNUSABLE", "W_ELIGIBILITY_UNREADABLE", "shadow"]);
 
-/** TRUST-14's two events. */
-export const ALERT_EVENTS = Object.freeze(["approval", "delay_elapsed"]);
+/**
+ * TRUST-14's events. One since contract 3.0.0: an approval, which now exists
+ * only for a change-of-hands hold (DEC-6; decision D2). The second event, a
+ * delayed fingerprint past its `publish_after`, went with the service path's
+ * delay (DEC-19): nothing there is delayed, so nothing is drained.
+ */
+export const ALERT_EVENTS = Object.freeze(["approval"]);
 
 // ── small grammar helpers ───────────────────────────────────────────────────
 
@@ -916,8 +921,10 @@ export function decideSubmission(input) {
       findings.push({ level: "error", code: "B_UNBOUND", where: null, message: "ID-25: a `frozen` listing publishes only a bound release" });
     }
   } else {
-    // A first listing (ID-74: nothing held the id before this release).
-    heldCodes.push("R_FIRST_LISTING");
+    // A first listing (ID-74: nothing held the id before this release). Not a
+    // hold since contract 3.0.0 (DEC-19): `decide()` publishes it at once with
+    // `P_REVIEW_PRIORITY`, reading "a first listing" off `existing` itself, so
+    // nothing is pushed here. The binding rule below is unchanged.
     const serviceFirst = ["panel", "ci", "poll"].includes(lease.trigger) && git.markers?.r3_exit === true;
     const anyFirstAfterCutover = git.markers?.cutover === true;
     if (binding.outcome === "none" && (serviceFirst || anyFirstAfterCutover)) {
@@ -989,7 +996,16 @@ export function decideSubmission(input) {
     seen.add(key);
     reasons.push(reasonOf(code, opts));
   };
-  const blocking = findings.filter((f) => f.level === "error" || f.level === "review");
+  // What held is what `decide()` held, read off its reasons rather than off
+  // the findings: since contract 3.0.0 a review-level finding holds on this
+  // path only when it is one of DEC-19's three changes of hands, and
+  // `decide()` is the one place that list is written. A finding it did not
+  // hold — a first listing, a check's flag — reaches the result as the
+  // `P_REVIEW_PRIORITY` hint, never as its own `R_*` (BOT-23: the result's
+  // codes are the record's).
+  const heldHere = new Set(decision.reasons.filter((r) => r.level === "review").map((r) => r.code));
+  const holding = (f) => f.level === "review" && heldHere.has(f.code);
+  const blocking = findings.filter((f) => f.level === "error" || holding(f));
   for (const f of blocking) push(f.code, { location: f.where ?? null, message: f.message });
   if (recycled) push("B_REPOSITORY_RECYCLED", { message: recycled });
   for (const r of decision.reasons) {
@@ -1011,14 +1027,18 @@ export function decideSubmission(input) {
       ...(recycled ? ["B_REPOSITORY_RECYCLED"] : []),
     ];
     const holds = [
-      ...findings.filter((f) => f.level === "review").map((f) => f.code),
+      ...findings.filter(holding).map((f) => f.code),
       ...decision.reasons.filter((r) => r.level === "review" && r.code !== "R_CHECK_HELD").map((r) => r.code),
     ];
     const pick = {
       refuse: errors.length ? errors : ["P_REFUSED"],
       review: holds.length ? holds : ["R_CHECK_HELD"],
-      delay: decision.reasons.filter((r) => /^P_DELAY_/.test(r.code)).map((r) => r.code),
-      publish: decision.reasons.filter((r) => r.level === "pass" && /^P_/.test(r.code)).map((r) => r.code),
+      // DEC-19: `P_REVIEW_PRIORITY` is a `note`, and it is written beside
+      // `P_PUBLISHED` in the record, so moderators can find these releases
+      // from git as well as from the result.
+      publish: decision.reasons
+        .filter((r) => (r.level === "pass" && /^P_/.test(r.code)) || r.code === "P_REVIEW_PRIORITY")
+        .map((r) => r.code),
     }[outcome] ?? [];
     const out = [...new Set(pick.filter((c) => /^[A-Z]_[A-Z0-9]+(?:_[A-Z0-9]+)*$/.test(c)))];
     return out.length ? out : [outcome === "publish" ? "P_PUBLISHED" : "P_REFUSED"];
@@ -1054,7 +1074,7 @@ export function decideSubmission(input) {
     const extras = {};
     if (heldBy.includes("R_BINDING_CHANGED")) {
       // ID-61: the service learns the window only from here.
-      extras.objection_window = windowSeconds({ queued, existing, reasons: decision.reasons, approved: false });
+      extras.objection_window = UPDATE_WINDOW_HOURS * 3600;
     }
     if (heldBy.includes("R_FIRST_BINDING") || heldBy.includes("R_BINDING_CHANGED")) {
       if (verified.owner_file?.commit) extras.owner_file_commit = verified.owner_file.commit;
@@ -1078,43 +1098,27 @@ export function decideSubmission(input) {
   }
 
   if (decision.outcome === "delay") {
-    const entry = decision.queue_entry;
-    return plan("state", {
-      state: "delayed",
-      reasons,
-      derived: derivedFacts,
-      publish_after: decision.publish_after,
-      record: {
-        ...baseRecord,
-        decided_at: startedAt,
-        state: "delayed",
-        reasons: codesOf("delay"),
-        publish_after: decision.publish_after,
-        ...approvalMembers(honoured.decision, honoured.approval),
-      },
-      queue_entry: {
-        schema: "astra.registry.queue/1",
-        submission_id: sid,
-        // `decision_id` is stamped by the composer, which derives it once.
-        publish_after: decision.publish_after,
-        id: verified.plugin_id,
-        version: verified.version,
-        repo: verified.repo,
-        tag: verified.tag,
-        fingerprint: verified.fingerprint,
-        queued_at: entry?.queued_at ?? startedAt,
-        delay_hours: entry?.delay_hours ?? DELAY_HOURS,
-        reason: entry?.reason ?? "",
-        artifact_digests: derivedFacts.artifact_digests,
-        approved_by: entry?.approved_by ?? null,
-        approved_at: entry?.approved_at ?? null,
-      },
-    });
+    // DEC-19 (3.0.0): nothing on the service path is delayed, and `decide()`
+    // returns before its delay rules there. A `delay` here is a defect in that
+    // module, and a loud job failure is the right size for it: a queue entry
+    // and a `delayed` record written by this path would be a promise to wait
+    // that the contract no longer makes. B.3's `delayed` state stays in the
+    // vocabulary (FLOW-76's canary lives in it); this path never enters it.
+    throw new Error(
+      "decide() answered `delay` on the service path; since contract 3.0.0 (DEC-19) nothing there is delayed, " +
+      "so this is a defect in bot/lib/policy/decision.mjs's service-path branch",
+    );
   }
 
   // decision.outcome === "publish": B-T3.3b's gates, in order.
-  const approved = Boolean(honoured.approval);
-  const drained = Boolean(queued) && lease.claimed_from === "delayed";
+  //
+  // Approved means an approval cleared a hold THIS run raised, which since
+  // contract 3.0.0 is a change of hands (DEC-6; DEC-19). An approval that
+  // arrives for a release nothing holds any more — a first listing held under
+  // 2.22.0 and approved after 3.0.0 landed — clears nothing, and the release
+  // publishes at once like any other: no window stands between the checks and
+  // a release nothing holds.
+  const approved = Boolean(honoured.approval) && decision.reasons.some((r) => r.code === "P_APPROVED");
 
   // TRUST-33 — an operator deny record withholds, whatever else is true.
   if (git.denied?.has(verified.fingerprint)) {
@@ -1134,15 +1138,16 @@ export function decideSubmission(input) {
     });
   }
 
-  if (approved || drained) {
+  if (approved) {
     // MIG-12 — evaluated before the notice read, and ignoring it.
     if (git.markers?.cutover === true && listingState?.state === "grandfathered" && binding.outcome === "none") {
-      return waitPlan("W_NOTICE_PENDING", "MIG-12: a grandfathered listing publishes a delayed or approved release only once it is bound", {
+      return waitPlan("W_NOTICE_PENDING", "MIG-12: a grandfathered listing publishes an approved release only once it is bound", {
         reasons, derived: derivedFacts,
       });
     }
-    // BOT-28 / ID-60 — the author objection window, from the service's time.
-    const window = windowSeconds({ queued: drained ? queued : null, existing, reasons: decision.reasons, approved });
+    // BOT-28 / ID-60 — the author objection window, from the service's time:
+    // for an approved change of hands, the POLICY.md number (DEC-19).
+    const window = UPDATE_WINDOW_HOURS * 3600;
     const n = noticeElapsed({
       notice: ask?.notice ?? null,
       windowSeconds: window,
@@ -1152,8 +1157,8 @@ export function decideSubmission(input) {
     if (!n.ok) {
       return waitPlan("W_NOTICE_PENDING", `BOT-28: ${n.why}`, { earliest: n.earliest, reasons, derived: derivedFacts });
     }
-    // TRUST-14 / TRUST-32 — the operator alert and its window.
-    const event = approved ? "approval" : "delay_elapsed";
+    // TRUST-14 / TRUST-32 — the operator alert and its window (decision D2).
+    const event = "approval";
     const w = operatorWindow({
       record: git.alerts?.get(verified.fingerprint) ?? null,
       fingerprint: verified.fingerprint,
@@ -1207,7 +1212,7 @@ export function decideSubmission(input) {
       decided_at: startedAt,
       state: "published",
       reasons: codesOf("publish"),
-      ...approvalMembers(honoured.decision, honoured.approval),
+      ...(approved ? approvalMembers(honoured.decision, honoured.approval) : {}),
     },
     drop_queue: Boolean(queued),
   });
@@ -1223,19 +1228,6 @@ function approvalMembers(decision, approval) {
   if (typeof decision.category === "string") out.category = decision.category;
   if (typeof decision.declared_interest === "boolean") out.declared_interest = decision.declared_interest;
   return out;
-}
-
-/**
- * BOT-28's window: `delay_hours` for a delayed fingerprint, 0 for an approved
- * first listing with no delay reason, and the update window for an approved
- * update with no delay reason.
- */
-function windowSeconds({ queued, existing, reasons, approved }) {
-  if (queued && Number.isFinite(queued.delay_hours)) return Math.round(queued.delay_hours * 3600);
-  const delayed = (reasons ?? []).some((r) => /^P_DELAY_(HIGH_RISK|WIDENED)$/.test(r.code));
-  if (delayed) return DELAY_HOURS * 3600;
-  if (approved && !existing) return 0;
-  return UPDATE_WINDOW_HOURS * 3600;
 }
 
 /**
@@ -1278,6 +1270,13 @@ export function composeDerived(listing, verified) {
     commit: verified.commit,
   };
   if (isTime(verified.published_at)) version.published_at = verified.published_at;
+  // DEC-19 / B.4: the publishing commit writes `unreviewed`, whatever the
+  // check job's listing said. That job opened a stranger's archive (BOT-21's
+  // second bullet), so a listing arriving with `reviewed` — or with no member,
+  // or with a value nobody defined — is overwritten here like every identity
+  // member above, and never compared or carried. Only an applied `M_REVIEW`
+  // moves it afterwards (MOD-56).
+  version.review = "unreviewed";
   const artifacts = {};
   for (const a of verified.assets) {
     artifacts[a.platform] = {

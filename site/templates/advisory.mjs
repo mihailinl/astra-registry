@@ -156,7 +156,7 @@ ${escalationTable()}
 
 <h2>If you think this is wrong</h2>
 <p>Appeal it. The template and what happens next are in
-<a href="../../policy/#10-appeals">the policy</a>; an advisory withdrawn in error is undone by
+<a href="../../policy/#11-appeals">the policy</a>; an advisory withdrawn in error is undone by
 publishing a higher serial without it, which is deliberately possible.</p>
 </article>
 `;

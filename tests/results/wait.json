@@ -10,10 +10,10 @@
   },
   "reasons": [
     {
-      "code": "R_FIRST_LISTING",
+      "code": "R_IDENTITY_CHANGED",
       "stage": "policy",
       "location": null,
-      "message": "First listing for this plugin"
+      "message": "This plugin was listed from a different repository"
     },
     {
       "code": "P_APPROVED",
