@@ -169,6 +169,45 @@ env:
 # R3 has not exited (no `log/rollout/*-exit.json` is on the tree; the code-paths
 # canary prints so on every run), so the operator acknowledgement this file
 # requires AFTER R3 does not apply to this bump.
+#
+# Bumped to `8beebf4` for Kazakh. Astra main accepts `kk`, and AstraPlugins
+# took its half in #74 (merge `104ee3b`): `spec/locales.yaml` gained the row,
+# the CLI's `LOCALE_CODES` and the plural tables with it. At `5291f29` this
+# repository could not see any of that, so an author's `locales/kk.json` was
+# refused as E_LOCALE_UNKNOWN_CODE while Astra itself offered Kazakh — and C15
+# stayed green, because it compared LOCALE_CODES with a spec file from before
+# the row existed. Moving this line is what makes that comparison see the row.
+# Measured both ways, at this commit and before the readers follow:
+#
+#   $ ASTRA_PLUGINS_DIR=<AstraPlugins@5291f29> node tools/validate.mjs --allow-staging
+#   PASS  22 plugin(s), 0 error(s)
+#   $ ASTRA_PLUGINS_DIR=<AstraPlugins@8beebf4> node tools/validate.mjs --allow-staging
+#   ERROR bot/lib/locales.mjs: LOCALE_CODES is [en ru uk de fr es pt ja zh ko]
+#         but spec/locales.yaml declares [en ru uk de fr es pt ja zh ko kk]  FAIL
+#
+# That red is C15 doing its job, and it is why this bump and the commit that
+# adds `kk` to LOCALE_CODES and both schema enums land in one pull request:
+# the pin moves first, alone, so the reader that follows is judged against the
+# file it claims to mirror (R12 step 9).
+#
+# `8beebf4` rather than `104ee3b`: both are merges on master, and
+# `git diff --stat 104ee3b 8beebf4` touches only `commands/publish.rs` and
+# `docs/*/publishing.md`, nothing this repository reads. The tip costs nothing
+# and leaves the next bump three commits shorter.
+#
+# Safe to move, checked on the paths every earlier bump asked about:
+# `.github/workflows/plugin-release.yml`, `spec/reserved-ids.yaml`,
+# `testdata/locales/` and `astra-plugin-manifest/src` are BYTE-IDENTICAL
+# between `5291f29` and `8beebf4` (`git diff --stat` empty for all four). The
+# manifest crate's `Cargo.toml` gains crates.io metadata and comments only —
+# no dependency, feature or version change — so no manifest is judged
+# differently. `proto/plugin.proto` gains two settings messages and no rpc, so
+# HOST_RPCS has nothing new to search for. `spec/hooks.yaml` moves 37
+# `daemon_calls` lines for Astra's `manager.rs` split and changes no
+# `permission`. `spec/listing-limits.yaml` and `spec/icon-formats.yaml` change
+# in comments only, so C20 and the icon coupling compare the same numbers.
+#
+# R3 still has not exited, so no operator acknowledgement applies here either.
 
-ASTRA_PLUGINS_REF=5291f29a22c337fb330cdbe880b6ed000d7fc216
+ASTRA_PLUGINS_REF=8beebf4a78475e728df3bb53aefc0d538e2eb0fe
 ASTRA_PLUGINS_URL=https://github.com/mihailinl/AstraPlugins.git

@@ -190,7 +190,7 @@ export function trademarkClaim(candidate, trademarks, scope = "both") {
     if (idClaims && scope !== "name") {
       return `the id "${id}" is, or begins with, the mark "${mark}"`;
     }
-    // Two tests, because one of them cannot see three of the ten languages.
+    // Two tests, because one of them cannot see Japanese, Chinese or Korean.
     // `leadingToken` is the Latin-spacing one and stays as it is; `leadsWithMark`
     // is what makes the rule reach a name written without spaces at all.
     if (scope !== "id" && (leadingToken(name) === m || leadsWithMark(name, m))) {
@@ -363,6 +363,40 @@ export function checkDisplayName(candidate, existing, opts) {
 }
 
 /**
+ * The alphabet each locale NOT written in Latin is written in, as `scriptOf`
+ * names scripts. `honestlyMixed` below is the reader.
+ *
+ * **Every code in `LOCALE_CODES` is in exactly one of this table and
+ * `LATIN_SCRIPT_LOCALES`**, and `bot/tests/ingest.test.mjs` asserts it. The
+ * table is a per-locale fact kept outside `bot/lib/locales.mjs`, so a new code
+ * added there and forgotten here is not an error anywhere — it is a Cyrillic
+ * or Hangul card that mentions a Latin brand, which is what every honest
+ * translation of a third-party client's name does, landing in a review queue
+ * as R_DISPLAY_NAME_MIXED_SCRIPT. That is the state `kk` would have arrived in: R12 names the list
+ * and both schema enums, and nothing named this.
+ */
+export const LOCALE_OWN_SCRIPTS = Object.freeze({
+  ru: ["Cyrillic"],
+  uk: ["Cyrillic"],
+  ja: ["Han", "Hiragana", "Katakana"],
+  zh: ["Han"],
+  ko: ["Hangul", "Han"],
+  // Kazakh is written in Cyrillic today. Kazakhstan has decreed a move to a
+  // Latin alphabet; a card written in that is Latin alone, one script, which
+  // this rule never asks about. The row matters for Cyrillic mixed with Latin,
+  // which is what an honest Kazakh name for a Latin brand is (`Chat көпірі`).
+  kk: ["Cyrillic"],
+});
+
+/**
+ * The locales written in the Latin script, which need no entry above: an honest
+ * name in one of them is one script, so a mixture there is the homoglyph case
+ * this rule exists for. Listed rather than implied, so that "Latin" is a
+ * decision somebody made about a code and not the default a forgotten one gets.
+ */
+export const LATIN_SCRIPT_LOCALES = Object.freeze(["en", "de", "fr", "es", "pt"]);
+
+/**
  * Is this mixture of scripts what an honest name in this language looks like?
  *
  * `Клиент Telegram` is what a Russian name for a third-party client is, and
@@ -398,13 +432,7 @@ export function checkDisplayName(candidate, existing, opts) {
  * one trademark shape `leadsWithMark` deliberately cannot judge.
  */
 function honestlyMixed(scripts, locale) {
-  const own = {
-    ru: ["Cyrillic"],
-    uk: ["Cyrillic"],
-    ja: ["Han", "Hiragana", "Katakana"],
-    zh: ["Han"],
-    ko: ["Hangul", "Han"],
-  }[locale ?? ""];
+  const own = Object.hasOwn(LOCALE_OWN_SCRIPTS, locale ?? "") ? LOCALE_OWN_SCRIPTS[locale] : undefined;
   if (own === undefined) return false;
   const allowed = new Set([...own, "Latin"]);
   // Not vacuous on a one-script name: `scripts.length > 1` is what got us here.

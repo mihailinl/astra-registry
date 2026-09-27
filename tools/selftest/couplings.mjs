@@ -107,7 +107,7 @@ export async function run() {
   }
 
   const LOCALES_YAML = "en   English\nru   Русский\nuk   Українська\nde   Deutsch\nfr   Français\n" +
-    "es   Español\npt   Português\nja   日本語\nzh   中文\nko   한국어\n";
+    "es   Español\npt   Português\nja   日本語\nzh   中文\nko   한국어\nkk   Қазақша\n";
 
   await test("C15 — the bot's locale list and both schema enums are one vocabulary", () => {
     // The in-repository half, which needs no checkout at all. A bot that emits a
@@ -133,7 +133,7 @@ export async function run() {
       "`en` as an i18n key is the drift that looks harmless: it duplicates the untranslated card");
 
     // And the reach of the check itself. Rename the member and this reader must
-    // say so, rather than comparing nine codes against nothing and reporting a
+    // say so, rather than comparing every code against nothing and reporting a
     // clean bill of health for a schema it never opened.
     const moved = JSON.parse(JSON.stringify(schemas.plugin));
     delete moved.properties.i18n;
