@@ -739,7 +739,7 @@
       "fix": "new_tag",
       "panel_only": false,
       "title": "A locale file is named for a language Astra cannot be set to",
-      "remedy": "The ten codes are in `AstraPlugins/spec/locales.yaml`. Matching is exact string equality and there are no region tags anywhere in this system — Chinese is `zh`, never `zh-CN` — so a file named anything else is packed, digested, signed, installed, and read by nothing."
+      "remedy": "The codes are in `AstraPlugins/spec/locales.yaml`. Matching is exact string equality and there are no region tags anywhere in this system — Chinese is `zh`, never `zh-CN` — so a file named anything else is packed, digested, signed, installed, and read by nothing."
     },
     {
       "code": "E_MANIFEST_COMPRESSED",
