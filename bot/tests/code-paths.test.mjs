@@ -1207,6 +1207,30 @@ function notFilesUnder(run, treeish, entries) {
   return { rows: listed.length, bad: listed.filter((r) => !FILE_MODES.has(r.mode)) };
 }
 
+/**
+ * Every directory on the path TO an entry at `treeish` that is not a tree, as
+ * `{path, mode}`. `notFilesUnder` cannot see these: when `tools` is a link,
+ * the pathspec `tools/validate.mjs` matches nothing, so the entry silently
+ * leaves the listing instead of showing up as a bad row. The link takes the
+ * entry with it, since the tree id then covers the link's target path and not
+ * the file (TRUST-31 (f): "at, beneath, or on the path to" a tracked entry).
+ */
+function ancestorsNotTrees(run, treeish, entries) {
+  const prefixes = new Set();
+  for (const e of entries) {
+    const parts = e.replace(/\/$/, "").split("/");
+    for (let i = 1; i < parts.length; i++) prefixes.add(parts.slice(0, i).join("/"));
+  }
+  const bad = [];
+  for (const prefix of [...prefixes].sort()) {
+    const row = run("ls-tree", "-z", "--full-tree", treeish, "--", prefix).split("\0").filter(Boolean)
+      .map((r) => ({ path: r.slice(r.indexOf("\t") + 1), mode: r.slice(0, r.indexOf("\t")).split(" ")[0] }))
+      .find((r) => r.path === prefix);
+    if (row && row.mode !== "040000") bad.push(row);
+  }
+  return bad;
+}
+
 test("no path at or under a TRUST-31 entry is a symlink or a submodule (contract 2.21.0)", () => {
   const { rows, bad } = notFilesUnder(git, "HEAD", ENTRIES);
   assert.ok(rows >= 100,
@@ -1216,6 +1240,11 @@ test("no path at or under a TRUST-31 entry is a symlink or a submodule (contract
     "TRUST-31 (contract 2.21.0): every path at or beneath an entry is a regular file or a directory. " +
     `${bad.map((b) => `${b.path} (${b.mode})`).join(", ")} is not, so the plugins service will refuse this commit as ` +
     "a version and bot calls stay in shadow. Commit the file itself, not a link or a submodule");
+  const above = ancestorsNotTrees(git, "HEAD", ENTRIES);
+  assert.deepEqual(above, [],
+    "TRUST-31 (f): a directory on the path to an entry is a tree. " +
+    `${above.map((b) => `${b.path} (${b.mode})`).join(", ")} is not, so every entry beneath it is hashed as a link ` +
+    "target, not as the file, and the listing above never sees it. Commit the directory itself");
 });
 
 test("the rule sees a link under a directory entry, a link that is an entry, and a submodule, and nothing outside", () => {
@@ -1253,11 +1282,25 @@ test("the rule sees a link under a directory entry, a link that is an entry, and
       "the rule must name each link and the submodule at or under the entries, and nothing else");
     assert.equal(rows, 5, "bot/lib/ holds ok.mjs, tool.sh, link.mjs and sub, and tools/validate.mjs is one more");
 
+    assert.deepEqual(ancestorsNotTrees(g, "HEAD", entries), [], "no directory above these entries is a link yet");
     // The control: the same entries once the three are gone read clean, an
     // executable file included.
     g("rm", "-q", "--cached", "bot/lib/link.mjs", "bot/lib/sub", "tools/validate.mjs");
     g("commit", "-q", "-m", "control");
     assert.deepEqual(notFilesUnder(g, "HEAD", entries).bad, [], "a tree of regular files, one executable, is clean");
+
+    // An ancestor link: `policy` becomes a link to a real directory, so the
+    // entry `policy/rules.json` is reached through it. The listing below the
+    // entry reads nothing at all, and only the ancestor check names the link.
+    write("real-policy/rules.json", "{}\n");
+    fs.symlinkSync("real-policy", path.join(dir, "policy"));
+    g("add", "-A");
+    g("commit", "-q", "-m", "ancestor link");
+    const deep = ["bot/lib/", "policy/rules.json"];
+    assert.deepEqual(notFilesUnder(g, "HEAD", ["policy/rules.json"]), { rows: 0, bad: [] },
+      "the entry under a linked directory is invisible to the listing, which is why the ancestor check exists");
+    assert.deepEqual(ancestorsNotTrees(g, "HEAD", deep).map((b) => `${b.path} ${b.mode}`), ["policy 120000"],
+      "the ancestor check names the linked directory and nothing else");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
