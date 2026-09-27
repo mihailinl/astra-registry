@@ -428,7 +428,7 @@ export const CODES = {
     level: "error", stage: "metadata", fix: "new_tag",
     title: "A locale file is named for a language Astra cannot be set to",
     remedy:
-      "The ten codes are in `AstraPlugins/spec/locales.yaml`. Matching is exact string equality and " +
+      "The codes are in `AstraPlugins/spec/locales.yaml`. Matching is exact string equality and " +
       "there are no region tags anywhere in this system — Chinese is `zh`, never `zh-CN` — so a " +
       "file named anything else is packed, digested, signed, installed, and read by nothing.",
   },
