@@ -58,7 +58,15 @@ import { unsafeDisplayText } from "../../tools/lib/ids.mjs";
  *     listing, not for the plugin that shipped it.
  *   * `tools/validate.mjs` compares it against `spec/locales.yaml` when an
  *     AstraPlugins checkout is reachable, and says out loud that it did not
- *     when one is not.
+ *     when one is not. In CI that checkout is the commit
+ *     `bot/manifest-probe/astra-plugins.pin` names, so a code AstraPlugins
+ *     gains is invisible here until that pin moves: `kk` sat refused as
+ *     E_LOCALE_UNKNOWN_CODE, with C15 green, for exactly that long.
+ *
+ * One more per-locale fact lives outside this file: which alphabet a locale is
+ * written in, `LOCALE_OWN_SCRIPTS` / `LATIN_SCRIPT_LOCALES` in
+ * `bot/lib/names.mjs`. A code added here needs a row there too, and
+ * `bot/tests/ingest.test.mjs` fails until it has one.
  *
  * Bare ISO-639-1. NO REGION TAGS EXIST ANYWHERE IN THIS SYSTEM: `zh`, never
  * `zh-CN`. Matching is exact string equality in the daemon and in all three
@@ -66,10 +74,10 @@ import { unsafeDisplayText } from "../../tools/lib/ids.mjs";
  * and read by nothing — which is why an unknown code is an error here rather
  * than a shrug.
  */
-export const LOCALE_CODES = ["en", "ru", "uk", "de", "fr", "es", "pt", "ja", "zh", "ko"];
+export const LOCALE_CODES = ["en", "ru", "uk", "de", "fr", "es", "pt", "ja", "zh", "ko", "kk"];
 
 /**
- * The codes an `i18n` block may be keyed on: the ten above, minus English.
+ * The codes an `i18n` block may be keyed on: every code above, minus English.
  *
  * `en` is deliberately NOT a key. The flat `name`/`summary`/`description` on a
  * listing ARE the English, they are never removed, and a document that carried
@@ -545,7 +553,7 @@ export function deriveLocaleText({ files = [], facts = {}, limits = {}, summaris
   //
   // So `add` bounds itself, per code: the first `MAX_PER_CODE` of a rule are
   // reported in full — which is every honest bundle, since a plugin has at
-  // most ten locale files — and the rest collapse into one finding naming a
+  // most one locale file per code in LOCALE_CODES — and the rest collapse into one finding naming a
   // count and a `preview()` of the files. Doing it HERE rather than in each
   // loop is deliberate: a rule added next year is bounded without its author
   // having to remember, and forgetting is what this failure was.

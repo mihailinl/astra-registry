@@ -38,8 +38,8 @@ A plugin is listed when all of the following hold.
 | **The store card carries English text.** Covers the summary and the description; the **name** is a warning only, because product names are legitimately not English. | `astra-plugin check` and `astra-plugin build` before the tag; `E_LISTING_NOT_ENGLISH` in `bot/lib/locales.mjs` at ingest; `validate.mjs` over the committed tree. Exemptions live in `policy/listing-language-exemptions.json`, keyed on `source.repo` |
 | It does something a user asked for, described honestly. | maintainer |
 
-A card may also carry its name and summary in any of the other nine languages
-Astra can be set to. Those come out of the bundle — `locales/<code>.json`, under
+A card may also carry its name and summary in any other language Astra can be
+set to. Those come out of the bundle — `locales/<code>.json`, under
 the reserved keys `listing.name` and `listing.description` — and never out of a
 form, so they are covered by the same build attestation as everything else in a
 listing, and they are re-derived on every release rather than carried forward.

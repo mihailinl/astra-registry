@@ -33,12 +33,12 @@ import { fileURLToPath } from "node:url";
 
 import { ingest, renderComment, unholdableStrings, GITHUB_COMMENT_MAX, DEFAULT_SIGNER_WORKFLOW } from "../ingest.mjs";
 import { CODES, codeDef } from "../lib/codes.mjs";
-import { LOCALE_CODES, deriveLocaleText, localeSignature, readLocales } from "../lib/locales.mjs";
+import { CARD_LOCALE_CODES, LOCALE_CODES, deriveLocaleText, localeSignature, readLocales } from "../lib/locales.mjs";
 import { summarise } from "../lib/derive.mjs";
 import { loadPolicy } from "../../tools/lib/sources.mjs";
 import { stagingListingId } from "../../tools/lib/reserved.mjs";
 import { classifyFile, scanHostRpcs } from "../lib/rpcscan.mjs";
-import { checkDisplayName, checkNames, foldDisplayName, loadTrademarks } from "../lib/names.mjs";
+import { LATIN_SCRIPT_LOCALES, LOCALE_OWN_SCRIPTS, checkDisplayName, checkNames, foldDisplayName, loadTrademarks } from "../lib/names.mjs";
 import { scriptsUsed } from "../../tools/lib/ids.mjs";
 import { extractSignerFacts, loadRootKeys, loadWorkflowAllowlist } from "../lib/attestation.mjs";
 import * as gh from "../lib/github.mjs";
@@ -1484,6 +1484,14 @@ const RU_CARD = {
   "listing.name": "Бросок костей",
   "listing.description": "Бросает кости, когда вы попросите.",
 };
+/**
+ * Kazakh, in five letters Russian does not have — ү, ұ, қ, ғ, ң — so a
+ * rule that had quietly become "Russian Cyrillic" rather than "Cyrillic" shows.
+ */
+const KK_CARD = {
+  "listing.name": "Сүйек лақтыру",
+  "listing.description": "Сұрағаныңызда сүйек лақтырады.",
+};
 
 // Contract §0.7 (2.16.0), the general half at ingest. MANIFEST.json's own
 // strings are refused in bot/lib/bundle.mjs; a locale file is another way a
@@ -1536,6 +1544,49 @@ await test("a bundle's Russian card reaches the listing, and it is the only thin
     "English reached the i18n member as a second, disagreeing copy of the card it is supposed to be");
   assertEqual(JSON.stringify(Object.keys(r.derived.plugin.i18n.ru).sort()), '["name","summary"]',
     "the interface strings (action.roll.label) are the daemon's business, not the card's");
+});
+
+await test("a bundle's Kazakh card reaches the listing, because Astra can be set to `kk`", async () => {
+  // Astra main added Kazakh to SUPPORTED_LANGUAGES, and AstraPlugins #74 taught
+  // `astra-plugin` to pack `locales/kk.json`. Until this repository followed,
+  // that file was refused here as E_LOCALE_UNKNOWN_CODE: an author passed every
+  // gate they could see and was refused after the tag, in a repository they had
+  // never opened, for a language the app itself lets a user pick.
+  //
+  // Through the whole pipeline and not through `deriveLocaleText` alone,
+  // because the derived record is validated against schema/plugin-v1.json on
+  // the way out. A code the bot accepts and that schema's enum does not is not
+  // one refused listing; it is a deploy candidate that fails for every listing
+  // (C15), and this is the test that sees the two halves disagree end to end.
+  const r = await run({
+    assets: [conformingAsset({ extraFiles: [locale("en", EN_CARD), locale("kk", KK_CARD)] })],
+    root: registryWith({}),
+  });
+  assert(!r.blocked, `a Kazakh card was refused: ${JSON.stringify(errorCodes(r))}`);
+  assertEqual(r.derived.plugin.i18n?.kk?.name, KK_CARD["listing.name"], "the Kazakh card name was not derived");
+  assertEqual(r.derived.plugin.i18n.kk.summary, KK_CARD["listing.description"], "nor the summary");
+});
+
+await test("E_LOCALE_UNKNOWN_CODE — Kazakh's two near-misses are still refused, and `kk` is not", async () => {
+  // `kz` is Kazakhstan's country code and its domain, which makes it the
+  // likeliest wrong name for this file; `kk-KZ` is what a translation tool
+  // exports. Neither can reach a plugin — matching is exact string equality and
+  // Astra can be set to `kk` and nothing else — so accepting Kazakh must not
+  // have widened the rule to "anything that looks like Kazakh".
+  const r = await run({
+    assets: [conformingAsset({
+      extraFiles: [
+        locale("en", EN_CARD),
+        locale("kk", KK_CARD),
+        locale("kz", KK_CARD),
+        locale("kk-KZ", KK_CARD),
+      ],
+    })],
+  });
+  assertBlockedWith(r, "E_LOCALE_UNKNOWN_CODE");
+  const refused = r.findings.filter((i) => i.code === "E_LOCALE_UNKNOWN_CODE").map((i) => i.where).sort();
+  assertEqual(JSON.stringify(refused), JSON.stringify(["locales/kk-KZ.json", "locales/kz.json"]),
+    "each near-miss must be refused by the file the author has to rename, and the real code must not be");
 });
 
 await test("a locale block is never half a block — the missing half comes from English", async () => {
@@ -1779,6 +1830,48 @@ await test("a Cyrillic name that borrows a Latin brand is not a homoglyph attack
     `an honest Russian name was held for a human: ${JSON.stringify(codes(r))}`);
 });
 
+await test("…and neither is a Kazakh one, which is Cyrillic too", async () => {
+  // The name rules keep their own per-locale table of alphabets
+  // (`LOCALE_OWN_SCRIPTS`), outside the vocabulary R12 names. A code added to
+  // LOCALE_CODES and forgotten there is accepted, derived, and then held for a
+  // human over exactly the name above, in Kazakh.
+  const r = await run({
+    assets: [conformingAsset({
+      id: "chat-bridge",
+      name: "Chat Bridge",
+      extraFiles: [
+        locale("en", { "listing.name": "Chat Bridge", "listing.description": "Rolls dice when you ask it to." }),
+        locale("kk", { "listing.name": "Chat көпірі", "listing.description": KK_CARD["listing.description"] }),
+      ],
+    })],
+    root: registryWith({}),
+  });
+  // First that the Kazakh card was read at all: a `kk.json` refused as an
+  // unknown code never reaches the name rules, and the assertion after this one
+  // would then pass for the wrong reason.
+  assertEqual(r.derived?.plugin?.i18n?.kk?.name, "Chat көпірі",
+    `the Kazakh card was not derived, so the name rules never saw it: ${JSON.stringify(codes(r))}`);
+  assert(!codes(r).includes("R_DISPLAY_NAME_MIXED_SCRIPT"),
+    `an honest Kazakh name was held for a human: ${JSON.stringify(codes(r))}`);
+});
+
+await test("every locale Astra can be set to has a decided alphabet for the name rules", () => {
+  // `LOCALE_OWN_SCRIPTS` and `LATIN_SCRIPT_LOCALES` in bot/lib/names.mjs are a
+  // per-locale fact kept outside bot/lib/locales.mjs, and a code missing from
+  // both is not an error anywhere: it silently gets the Latin rule, so every
+  // honest card in it that mentions a Latin brand is held for a human. That is
+  // the state `kk` would have shipped in. Exactly one of the two, for every
+  // code, and nothing in either that Astra cannot be set to.
+  const own = Object.keys(LOCALE_OWN_SCRIPTS);
+  const both = own.filter((c) => LATIN_SCRIPT_LOCALES.includes(c));
+  assertEqual(both.join(" "), "", "a locale is declared both Latin and written in another alphabet");
+  const undecided = LOCALE_CODES.filter((c) => !own.includes(c) && !LATIN_SCRIPT_LOCALES.includes(c));
+  assertEqual(undecided.join(" "), "",
+    "these codes are in LOCALE_CODES and in neither LOCALE_OWN_SCRIPTS nor LATIN_SCRIPT_LOCALES (bot/lib/names.mjs)");
+  const stray = [...own, ...LATIN_SCRIPT_LOCALES].filter((c) => !LOCALE_CODES.includes(c));
+  assertEqual(stray.join(" "), "", "bot/lib/names.mjs decides an alphabet for a code Astra cannot be set to");
+});
+
 await test("W_LOCALE_STALE — a translation of English that has since been rewritten", async () => {
   // Debian's Description-md5, as a derived value: the lock records a digest of
   // the English each translation was made against. When it stops matching, the
@@ -1894,19 +1987,39 @@ await test("a plugin that ships no locales/ is not asked about any of this", asy
 
 await test("E_LOCALE_CARD_TOO_LARGE and the exemption note, at the unit they are decided in", async () => {
   // Two codes with no end-to-end fixture, and they are here rather than absent.
-  // The budget needs nine locales of maximum-length CJK, which is a bundle
+  // The budget needs every locale of maximum-length text, which is a bundle
   // fixture testing arithmetic and nothing else; the exemption needs an entry in
   // the real policy/listing-language-exemptions.json, and a test that edits the
   // shipped policy file in order to prove the shipped policy file is read is a
   // test that can pass for the wrong reason.
   const limits = loadPolicy(REPO_ROOT).limits;
   const files = [{ name: "locales/en.json", bytes: Buffer.from(JSON.stringify(EN_CARD), "utf8") }];
-  for (const code of ["ru", "uk", "de", "fr", "es", "pt", "ja", "zh", "ko"]) {
+  // **The worst case a CORRECT listing reaches, built from the vocabulary.**
+  // Every card's name at 64 characters of three-byte text, because a brand keeps
+  // its own script in every language; every summary at 200 characters of the
+  // widest letter in that language's own alphabet, because a summary is prose.
+  //
+  // This used to be nine hand-typed codes with every card in CJK, a stand-in
+  // that was an upper bound for nine and is not for ten: ten all-CJK cards come
+  // to 8,221 bytes against 8,192. Kazakh made the tenth, and a Kazakh summary is
+  // Cyrillic. Hand-typed, the list also stopped describing the vocabulary the
+  // day `kk` joined it, and this assertion went on passing about nine.
+  const WIDEST_LETTER = { Latin: "é", Cyrillic: "Қ", Han: "説", Hiragana: "な", Katakana: "ナ", Hangul: "한" };
+  const summaryLetter = (code) => {
+    const scripts = LOCALE_OWN_SCRIPTS[code] ?? (LATIN_SCRIPT_LOCALES.includes(code) ? ["Latin"] : undefined);
+    assert(scripts, `${code} has no decided alphabet in bot/lib/names.mjs, so its worst case cannot be built`);
+    const letters = scripts.map((s) => {
+      assert(WIDEST_LETTER[s], `no widest letter is recorded here for the ${s} script`);
+      return WIDEST_LETTER[s];
+    });
+    return letters.sort((a, b) => Buffer.byteLength(b, "utf8") - Buffer.byteLength(a, "utf8"))[0];
+  };
+  for (const code of CARD_LOCALE_CODES) {
     files.push({
       name: `locales/${code}.json`,
       bytes: Buffer.from(JSON.stringify({
         "listing.name": "名".repeat(64),
-        "listing.description": "説".repeat(200),
+        "listing.description": summaryLetter(code).repeat(200),
       }), "utf8"),
     });
   }
@@ -1924,14 +2037,16 @@ await test("E_LOCALE_CARD_TOO_LARGE and the exemption note, at the unit they are
   // And the shipped number, from the other side. **This is the assertion that
   // matters more**, because the way this ceiling goes wrong is not that it
   // fails to fire — it is that somebody lowers it and every honest CJK listing
-  // starts losing its translations with a message about a budget. Nine locales
-  // at the schema's own caps, in three-byte characters, is the worst case a
-  // listing can legitimately reach.
+  // starts losing its translations with a message about a budget. Every locale
+  // at the schema's own caps, as built above, is the worst case a correct
+  // listing can reach.
   const worst = deriveLocaleText({ files, facts, limits, summarise });
   assert(!codesOf(worst).includes("E_LOCALE_CARD_TOO_LARGE"),
-    "nine locales at 64 + 200 characters each satisfies every per-string cap and must not be refused by the total: " +
-    `${Buffer.byteLength(JSON.stringify(worst.i18n ?? {}), "utf8")} bytes against a ceiling of ${limits.max_listing_i18n_bytes}`);
-  assertEqual(Object.keys(worst.i18n ?? {}).length, 9, "the worst case must actually have been built");
+    `${CARD_LOCALE_CODES.length} locales at 64 + 200 characters each satisfies every per-string cap and must not ` +
+    `be refused by the total: ${Buffer.byteLength(JSON.stringify(worst.i18n ?? {}), "utf8")} bytes against a ` +
+    `ceiling of ${limits.max_listing_i18n_bytes}`);
+  assertEqual(Object.keys(worst.i18n ?? {}).join(" "), CARD_LOCALE_CODES.join(" "),
+    "the worst case must actually have been built, one card for every code Astra can be set to");
 
   const exempt = deriveLocaleText({
     files: [],

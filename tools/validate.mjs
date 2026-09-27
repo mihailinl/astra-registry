@@ -1113,7 +1113,7 @@ function astraPluginsFile(rel) {
 }
 
 /**
- * **C15** — the ten locale codes, in three places on this side alone.
+ * **C15** — the locale codes, in three places on this side alone.
  *
  * `bot/lib/locales.mjs` decides which locale blocks the bot EMITS and the two
  * schemas decide which ones this repository ACCEPTS. Disagreement is silent
@@ -1155,7 +1155,7 @@ export function checkLocaleVocabulary(ctx) {
   }
   // One row per line: the code, the endonym, and an optional trailing
   // `maintained`. Only the first field is read here — `maintained` is a
-  // different subset of the same ten codes and conflating the two is how an
+  // different subset of the same codes and conflating the two is how an
   // unselectable locale file gets shipped.
   const declared = fs.readFileSync(specFile, "utf8")
     .split("\n")
@@ -1163,7 +1163,7 @@ export function checkLocaleVocabulary(ctx) {
     .filter((l) => l && !l.startsWith("#"))
     .map((l) => l.split(/\s+/)[0]);
   // The floor, before the comparison: a reader that matched nothing would
-  // otherwise compare ten codes against an empty list and report the drift
+  // otherwise compare every code against an empty list and report the drift
   // backwards, naming every code as missing upstream.
   if (declared.length < 5) {
     ctx.report.error(where, `${specFile} yielded ${declared.length} locale row(s), which cannot be right`,
