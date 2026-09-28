@@ -1301,6 +1301,31 @@ test("the rule sees a link under a directory entry, a link that is an entry, and
       "the entry under a linked directory is invisible to the listing, which is why the ancestor check exists");
     assert.deepEqual(ancestorsNotTrees(g, "HEAD", deep).map((b) => `${b.path} ${b.mode}`), ["policy 120000"],
       "the ancestor check names the linked directory and nothing else");
+
+    // A non-canonical mode: `bot` spelled 140000. git's canon_mode reads any
+    // mode that is not a file, a link or a directory as a gitlink, so
+    // ls-tree shows it as `160000 commit` and a clone checks it out EMPTY,
+    // while a reader that classifies by type bits (gix 0.64, minice-e4's 0050
+    // review, 2026-09-27) sees a tree. GitHub's push-side fsck accepts this
+    // shape (measured 2026-09-27 on a scratch repository: `badFilemode` was
+    // pushed, `duplicateEntries` was refused), so it is reachable on origin.
+    const ok = g("rev-parse", "HEAD:bot/lib/ok.mjs").trim();
+    const raw = (entries) => {
+      const body = Buffer.concat(entries.map(([mode, name, sha]) =>
+        Buffer.concat([Buffer.from(`${mode} ${name}\0`), Buffer.from(sha, "hex")])));
+      return execFileSync("git", ["-C", dir, "hash-object", "-t", "tree", "-w", "--literally", "--stdin"],
+        { input: body, encoding: "utf8", env: fixtureEnv(dir) }).trim();
+    };
+    const lib = raw([["100644", "ok.mjs", ok]]);
+    const botTree = raw([["40000", "lib", lib]]);
+    const top = raw([["140000", "bot", botTree]]);
+    const commit = g("commit-tree", top, "-m", "non-canonical bot").trim();
+    assert.deepEqual(notFilesUnder(g, commit, ["bot/lib/"]), { rows: 0, bad: [] },
+      "under a gitlink-spelled `bot` the listing sees nothing, which is why the ancestor check must hold");
+    assert.deepEqual(ancestorsNotTrees(g, commit, ["bot/lib/"]).map((b) => `${b.path} ${b.mode}`), ["bot 160000"],
+      "a directory spelled 140000 is read the way git reads it, as a gitlink, and named");
+    assert.deepEqual(notFilesUnder(g, commit, ["bot/"]).bad.map((b) => `${b.path} ${b.mode}`), ["bot 160000"],
+      "and an entry that IS the non-canonical directory is named by the listing itself");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
