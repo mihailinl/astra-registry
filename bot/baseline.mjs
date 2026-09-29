@@ -61,13 +61,17 @@
 // paragraph above is prose and stays out of its reach — which is exactly why
 // they lasted.
 //
-// @absent log/baseline.json (MIG-20)
-//
-// That marker is the one absence here a machine can hold. `--write` refuses
-// when `log/baseline.json` already exists and `log/` is untracked today; the
-// day it is not, the marker goes red — which is the day "it is meant to run
-// ONCE" and "four things wait on that marker" both need re-reading, by whoever
-// is running the R3 ceremony rather than by whoever finds this file next.
+// This paragraph carried the one absence here a machine could hold, an
+// `@absent` marker on `log/baseline.json` (MIG-20), and the baseline dispatch
+// filled it: `git log --diff-filter=A -- log/baseline.json` names the commit.
+// The marker went red on that commit as it was written to, and this is the
+// re-reading it asked for. "It is meant to run ONCE" still holds, and is now
+// enforced rather than intended: every later dispatch's `--write` refuses on
+// the marker, before a record is composed. "Four things wait on that marker"
+// is now "four things read it": B-T3.7's legacy decision writer writes from
+// this commit on, detector A1 ignores the history the marker makes
+// reachable, MIG-28 holds only ids with no baseline, and B-T3.6 step 0's
+// shadow lease has a non-staging listing with a baseline to name.
 //
 // That is not a tidying note. Two sentences a few lines down — "unreachable
 // until B-T1.1 lands" over `verifyOne`, and the refusals that "stand in for
