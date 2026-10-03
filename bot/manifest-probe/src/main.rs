@@ -651,6 +651,120 @@ id = "sink-panel"
         );
     }
 
+    // ── the capability vocabulary, and the registry's two copies of it ──────
+    //
+    // The registry names `[capabilities]` keys in exactly two places, and
+    // neither can import this crate: `schema/version-v1.json`'s capability
+    // enum, which every version record is validated against, and the
+    // capability half of `KNOWN_AUTHORITY` in `bot/lib/policy/constants.mjs`,
+    // which the policy reads to describe a store card. Nothing compared either
+    // with the daemon's list, and the cost of that was found the day the
+    // daemon grew an eleventh key (`wakeword`, Astra 5cd994cc, AstraPlugins
+    // 05b4c28): at a pin carrying it, this probe accepts a manifest that
+    // declares it, the bot writes `"wakeword"` into the derived version
+    // record, and `validateDerived` in bot/ingest.mjs runs that record past
+    // tools/validate.mjs and this enum — so the author's correct listing is
+    // refused E_DERIVED_LISTING_INVALID, whose remedy reads "A bug in this
+    // registry, not in your plugin". Which is true, and is the only place the
+    // bug would ever have been reported. And the policy files the key under
+    // P_UNKNOWN_PERMISSION, telling the author a capability the daemon
+    // grants is a permission nobody knows.
+    //
+    // Both directions are asserted. A key the registry knows and the daemon
+    // does not is the `ui_panels` failure arriving through the catalogue: a
+    // schema that admits a name the daemon refuses to parse.
+    //
+    // Here, in Rust, for the reason the permission test above gives: this is
+    // where the vocabulary lives, at the commit `astra-plugins.pin` names, so
+    // moving the pin is what makes this test see a new key. That is the order
+    // recipe R4 needs — the pin first, alone, then the readers this fails on.
+
+    /// The two registry copies, read as text and as JSON rather than restated.
+    const VERSION_SCHEMA: &str = include_str!("../../../schema/version-v1.json");
+    const POLICY_CONSTANTS_MJS: &str = include_str!("../../lib/policy/constants.mjs");
+
+    /// `{a} - {b}` and `{b} - {a}`, sorted, for a message that names the key.
+    fn both_ways<'a>(
+        a: &std::collections::BTreeSet<&'a str>,
+        b: &std::collections::BTreeSet<&'a str>,
+    ) -> (Vec<&'a str>, Vec<&'a str>) {
+        (a.difference(b).copied().collect(), b.difference(a).copied().collect())
+    }
+
+    #[test]
+    fn the_registrys_two_capability_lists_are_the_daemons() {
+        use std::collections::BTreeSet;
+        let daemon: BTreeSet<&str> = CAPABILITY_NAMES.iter().copied().collect();
+
+        // schema/version-v1.json: $.properties.capabilities.items.enum
+        let schema: serde_json::Value =
+            serde_json::from_str(VERSION_SCHEMA).expect("schema/version-v1.json parses");
+        let enum_values = schema["properties"]["capabilities"]["items"]["enum"]
+            .as_array()
+            .expect(
+                "schema/version-v1.json has no $.properties.capabilities.items.enum — the \
+                 capability list moved, and this test must move with it rather than pass",
+            );
+        let schema_set: BTreeSet<&str> = enum_values
+            .iter()
+            .map(|v| v.as_str().expect("every capability in the enum is a string"))
+            .collect();
+
+        // bot/lib/policy/constants.mjs: KNOWN_AUTHORITY's `// [capabilities]`
+        // half, which ends where its `// [permissions]` half begins.
+        let known = POLICY_CONSTANTS_MJS
+            .split("export const KNOWN_AUTHORITY = [")
+            .nth(1)
+            .and_then(|rest| rest.split("];").next())
+            .expect("KNOWN_AUTHORITY must still be exported from bot/lib/policy/constants.mjs");
+        // Both markers, or a broken read said as one. Without the second, the
+        // permission half would be read as capabilities and the failure would
+        // name seven "capabilities" the daemon has never had.
+        let caps_half = known
+            .split_once("// [capabilities]")
+            .and_then(|(_, rest)| rest.split_once("// [permissions]"))
+            .map(|(caps, _)| caps)
+            .expect(
+                "KNOWN_AUTHORITY no longer marks its halves with `// [capabilities]` and \
+                 `// [permissions]`; this test reads the capability half by those markers, \
+                 so put them back or re-point it",
+            );
+        let authority_set: BTreeSet<&str> =
+            caps_half.split('"').skip(1).step_by(2).collect();
+
+        // Vacuity guards, before any comparison: a parse that stopped matching
+        // the files' shape would otherwise compare two empty sets and pass.
+        assert!(daemon.len() >= 10, "the crate exports only {} capability names", daemon.len());
+        assert!(
+            schema_set.len() >= 10,
+            "only {} capabilities parsed out of schema/version-v1.json — the read is broken",
+            schema_set.len()
+        );
+        assert!(
+            authority_set.len() >= 10,
+            "only {} capabilities parsed out of KNOWN_AUTHORITY — the read is broken",
+            authority_set.len()
+        );
+
+        let (unknown, missing) = both_ways(&schema_set, &daemon);
+        assert!(
+            unknown.is_empty() && missing.is_empty(),
+            "schema/version-v1.json's capability enum is not the daemon's CAPABILITY_NAMES at \
+             astra-plugins.pin's commit. Missing from the enum: {missing:?} — a listing \
+             declaring one passes this probe and is then refused at ingest as \
+             E_DERIVED_LISTING_INVALID, a registry bug reported to the author. In the enum \
+             and not the daemon's: {unknown:?} — a name the daemon refuses to parse."
+        );
+        let (unknown, missing) = both_ways(&authority_set, &daemon);
+        assert!(
+            unknown.is_empty() && missing.is_empty(),
+            "KNOWN_AUTHORITY's capability half (bot/lib/policy/constants.mjs) is not the \
+             daemon's CAPABILITY_NAMES at astra-plugins.pin's commit. Missing: {missing:?} — \
+             the policy reports each as P_UNKNOWN_PERMISSION, a capability filed as a \
+             permission nobody knows. Not the daemon's: {unknown:?}."
+        );
+    }
+
     // ── `HOST_RPCS`, and the proto it is a copy of ──────────────────────────
     //
     // The test above pins `RPC_RULES`'s permission **ids** to the daemon's

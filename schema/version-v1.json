@@ -65,11 +65,11 @@
     "capabilities": {
       "type": "array",
       "uniqueItems": true,
-      "description": "The daemon's vocabulary, verbatim (Astra astra-daemon/src/plugins/manifest.rs `Capabilities`). Ten names, no synonyms — `ui_panels` is not one of them.",
+      "description": "The daemon's vocabulary, verbatim: `CAPABILITY_NAMES` in the `astra-plugin-manifest` crate, which Astra's astra-daemon/src/plugins/manifest.rs re-exports, at the AstraPlugins commit bot/manifest-probe/astra-plugins.pin names. Eleven names, no synonyms — `ui_panels` is not one of them. bot/manifest-probe's `the_registrys_two_capability_lists_are_the_daemons` holds this enum to that list in both directions.",
       "items": {
         "enum": [
           "actions", "ai_provider", "client", "dom_access", "event_handlers",
-          "stt", "tools", "triggers", "tts", "ui_contributions"
+          "stt", "tools", "triggers", "tts", "ui_contributions", "wakeword"
         ]
       }
     },

@@ -630,14 +630,17 @@ export function policyCodeDef(code, opts = {}) {
  * Every authority name this registry can describe on a store card.
  *
  * The capability half is the daemon's vocabulary (`astra-plugin-manifest`'s
- * `CAPABILITY_NAMES`); the permission half is PRODUCTION_PLAN §5.6's host-RPC
- * set. It is a list to *describe* by, not a list to reject by — see
+ * `CAPABILITY_NAMES`), held to that list in both directions by
+ * `the_registrys_two_capability_lists_are_the_daemons` in bot/manifest-probe,
+ * which reads it between the `// [capabilities]` and `// [permissions]`
+ * markers below — keep both; the permission half is PRODUCTION_PLAN §5.6's
+ * host-RPC set. It is a list to *describe* by, not a list to reject by — see
  * `P_UNKNOWN_PERMISSION`.
  */
 export const KNOWN_AUTHORITY = [
   // [capabilities]
-  "tools", "tts", "stt", "ai_provider", "client", "actions", "triggers",
-  "ui_contributions", "event_handlers", "dom_access",
+  "tools", "tts", "stt", "wakeword", "ai_provider", "client", "actions",
+  "triggers", "ui_contributions", "event_handlers", "dom_access",
   // [permissions] (§5.6)
   "fire_trigger", "subscribe_events", "set_variable", "get_config",
   "send_chat_message", "push_to_ui", "set_theme_contribution",

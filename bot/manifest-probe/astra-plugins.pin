@@ -208,6 +208,46 @@ env:
 # in comments only, so C20 and the icon coupling compare the same numbers.
 #
 # R3 still has not exited, so no operator acknowledgement applies here either.
+#
+# Bumped to `4d1aec9` for `wakeword`. Unlike every bump recorded above, this
+# one is MEANT to change how a manifest is judged. Astra 5cd994cc
+# added `wakeword` to `astra-plugin-manifest`'s `CAPABILITY_NAMES` — the daemon
+# drives such a plugin as the Voice page's wake-word detector through
+# `CallFromUi` `status` / `reset-audio` / `process-audio` — and AstraPlugins
+# re-vendored it in 05b4c28 and made master green on it in #80 (merge
+# `4d1aec9`). At `8beebf4` this probe parses with a crate that refuses
+# `[capabilities] wakeword = true` as E_CAPABILITY_UNKNOWN, so the catalogue
+# refused, as a typo, a plugin the daemon it serves would have run.
+#
+# The change in judgement is exactly that, measured rather than assumed:
+# `git diff 8beebf4 4d1aec9 -- astra-plugin-cli/vendor/astra-plugin-manifest`
+# is `src/capabilities.rs` alone, +6 lines — the field, its name in
+# CAPABILITY_NAMES and its `as_list` arm. `lib.rs`, `manifest.rs`,
+# `permissions.rs`, `platform.rs`, `README.md` and `Cargo.toml` are
+# byte-identical, so no permission, platform, entry or section rule moves.
+# The other paths this repository reads at the pin: `spec/listing-limits.yaml`,
+# `spec/icon-formats.yaml`, `spec/locales.yaml`, `spec/reserved-ids.yaml` and
+# `testdata/locales/` are byte-identical. `spec/hooks.yaml` gains `wakeword` in
+# its `capabilities:` vocabulary line, a comment and `CallFromUi`'s summary, and
+# changes no PluginHostService row and no `permission`. `proto/plugin.proto`'s
+# `PluginHostService` block is byte-identical (10 rpcs), so HOST_RPCS has
+# nothing new to search for; its seven new rpcs are VoiceService's and its
+# `UpdatePlugin` change is PluginService's. `plugin-release.yml` moves its own
+# `ASTRA_TOOLING_REF` (f5c99ec -> 8beebf4, AstraPlugins #77, Kazakh), which
+# reaches this registry through an author's bundle and never through this pin,
+# for the reason the `6d6861f` note above gives. And `tools/validate.mjs
+# --allow-staging` prints byte-identical output against the two trees.
+#
+# The readers follow in the next commit, and they cannot land first: the test
+# that commit adds, `the_registrys_two_capability_lists_are_the_daemons`, is red
+# at this commit with them unchanged ("Missing from the enum: [\"wakeword\"]"),
+# and red the other way with them ahead of the pin. Without them a version
+# record carrying `wakeword` fails `schema/version-v1.json`
+# (`$.capabilities[n] must be one of …`), which `validateDerived` reports to
+# the author as E_DERIVED_LISTING_INVALID, "a bug in this registry".
+#
+# `4d1aec9` is a merge commit on AstraPlugins master. R3 still has not exited,
+# so no operator acknowledgement applies.
 
-ASTRA_PLUGINS_REF=8beebf4a78475e728df3bb53aefc0d538e2eb0fe
+ASTRA_PLUGINS_REF=4d1aec9baa754a6a660d621ec9ebbb63856583d5
 ASTRA_PLUGINS_URL=https://github.com/mihailinl/AstraPlugins.git
