@@ -287,10 +287,12 @@ export async function run() {
     const target = canary4();
     const g = rp.gitAt(target);
     const s0 = step0();
+    // An identity of the fixture's own: a runner has none configured.
+    const who = { name: "t", email: "t@users.noreply.invalid", date: "2026-10-03T15:00:00Z" };
     const empty = g(["mktree"], { input: "" }).out;
     const top = g(["ls-tree", s0.sha]).out;
     const withEmpty = g(["mktree"], { input: `${top}\n040000 tree ${empty}\tjunk\n` }).out;
-    const head = g(["commit-tree", withEmpty, "-p", s0.sha], { input: "a re-sign that is not one\n" }).out;
+    const head = g(["commit-tree", withEmpty, "-p", s0.sha], { input: "a re-sign that is not one\n", who }).out;
     const why = lineageProblem(g, s0, head);
     assert(why !== null && /junk: an empty directory/.test(why), `a commit carrying an empty directory read as a re-sign: ${why}`);
 
@@ -302,7 +304,7 @@ export async function run() {
     }).out;
     const registry = g(["mktree"], { input: `040000 tree ${linked}\tv1\n` }).out;
     const rootTree = g(["mktree"], { input: `040000 tree ${registry}\tregistry\n` }).out;
-    const head2 = g(["commit-tree", rootTree, "-p", s0.sha], { input: "a document as a link\n" }).out;
+    const head2 = g(["commit-tree", rootTree, "-p", s0.sha], { input: "a document as a link\n", who }).out;
     const why2 = lineageProblem(g, s0, head2);
     assert(why2 !== null && /registry\/v1\/index\.json: a symbolic link, git mode 120000/.test(why2),
       `a commit holding a document as a link was not refused by name and mode: ${why2}`);
