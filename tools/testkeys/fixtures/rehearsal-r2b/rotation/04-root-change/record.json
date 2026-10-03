@@ -49,6 +49,7 @@
   "alerts": [],
   "refusals": [],
   "notes": [],
+  "warnings": [],
   "codes": [],
   "hexes": [
     "e90f5d161c7cebf517611597e731ef959d1e6067"

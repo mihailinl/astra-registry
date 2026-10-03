@@ -26,6 +26,8 @@
 // able to turn a catalogue listing into script execution. So the bytes are
 // cleaned here as well.
 
+import { createHash } from "node:crypto";
+
 /**
  * The icon formats, in the order they are preferred when a bundle ships more
  * than one, with the media type each is inlined under and the signature each
@@ -56,15 +58,24 @@ export const ICON_NAMES = ICON_FORMATS.map((f) => f.name);
 export const README_NAME = "README.md";
 
 /**
- * 128 KiB.
+ * 128 KiB: the CEILING, and no longer the cap a new icon meets.
  *
- * A store card draws this at somewhere around 48–64 CSS pixels, so the honest
- * size is single-digit kilobytes and every icon in the catalogue today is under
- * 3 KB. The cap is set well above that because the file an author actually has
- * is usually whatever their designer exported — a 512×512 PNG straight out of
- * Figma — and refusing that over a number they did not choose is a bad first
- * experience for a decorative file. It still bounds the index: this is inlined,
- * so the cap is also the per-listing cost of carrying it.
+ * The cap a release's icon meets is `policy/limits.json`'s `max_icon_bytes`
+ * (8 KiB), which `bot/lib/derive.mjs` passes to `checkIcon`. This number is
+ * what is left of the old cap, and it now bounds exactly one thing: the icons
+ * committed before `max_icon_bytes` existed, named with their SHA-256 in
+ * `max_icon_bytes_grandfathered`, which `tools/validate.mjs` allows up to here
+ * until each listing's next release. It is also `checkIcon`'s default, so a
+ * caller that forgets to pass the cap is bounded by the old rule rather than by
+ * none; `bot/tests/presentation.test.mjs` holds derive to passing it.
+ *
+ * Why the cap came down. This comment used to say every icon in the catalogue
+ * was under 3 KB and that 128 KiB was generosity toward a designer's
+ * 512×512 export. By serial 55 the export was the catalogue: 470,508 of its
+ * 649,005 signed bytes were inlined icons, one listing's 110 KB icon among
+ * them, against a 1 MiB document every install fetches whole. The generosity was
+ * paid by every user of every plugin, which is what `max_icon_bytes_note` says
+ * in numbers.
  */
 export const MAX_ICON_BYTES = 128 * 1024;
 /**
@@ -154,16 +165,22 @@ function formatOf(name) {
 }
 
 /**
- * Is this actually the image its filename claims?
+ * Is this actually the image its filename claims, and small enough to carry?
  *
  * A `.png` that is really an SVG would be written to the registry, inlined with
  * an `image/png` media type, and then sniffed as SVG by the renderer — which is
  * how a "PNG" comes to hold a script. Checked by content, never by extension.
  *
+ * `maxBytes` is the cap this icon meets. A release's icon meets
+ * `policy/limits.json`'s `max_icon_bytes`, passed by `bot/lib/derive.mjs`; a
+ * committed icon meets the same, or MAX_ICON_BYTES when it is one of the
+ * grandfathered ones (`iconCapFor`). The default is the ceiling, never the cap.
+ *
  * @param {{name: string, bytes: Buffer}} icon
+ * @param {{maxBytes?: number}} [opts]
  * @returns {{level: string, code: string, message: string}[]}
  */
-export function checkIcon(icon) {
+export function checkIcon(icon, { maxBytes = MAX_ICON_BYTES } = {}) {
   const findings = [];
   const err = (message) => findings.push({ level: "error", code: "E_ICON_UNUSABLE", message });
 
@@ -171,8 +188,17 @@ export function checkIcon(icon) {
     err(`${icon.name} is empty`);
     return findings;
   }
-  if (icon.bytes.length > MAX_ICON_BYTES) {
-    err(`${icon.name} is ${icon.bytes.length} bytes, over the ${MAX_ICON_BYTES}-byte cap for an icon`);
+  if (icon.bytes.length > maxBytes) {
+    // The message is the author's whole instruction: from contract 3.0.0 a
+    // listing publishes with nobody reading it first, so there is no moderator
+    // to explain what "over the cap" wants them to do.
+    err(
+      `${icon.name} is ${icon.bytes.length} bytes, over the ${maxBytes}-byte cap for an icon ` +
+      "(astra-registry policy/limits.json max_icon_bytes). The store draws it at about 64 pixels, so " +
+      "re-export it at 128x128: as WebP at quality 80 every raster icon in the catalogue came to " +
+      "1-7 KB, and a flat design as an SVG or a 256-colour PNG is usually smaller still. " +
+      "Release again with the smaller file and the card gets its picture back.",
+    );
   }
 
   const format = formatOf(icon.name);
@@ -215,6 +241,43 @@ export function checkIcon(icon) {
     }
   }
   return findings;
+}
+
+/**
+ * The cap a COMMITTED icon meets: `max_icon_bytes`, or MAX_ICON_BYTES for an
+ * icon that is byte for byte the one `max_icon_bytes_grandfathered` names for
+ * this listing. Keyed on the id AND the digest, so the allowance is for that
+ * file on that listing and moves with neither: a new icon on a grandfathered
+ * listing, or the same bytes under another id, meets the cap like any other.
+ *
+ * `tools/validate.mjs` alone asks this. A release never does: its icon comes
+ * from the bundle and meets `max_icon_bytes`, which is what "keeps its icon
+ * until its next release" means.
+ *
+ * @param {object} limits  policy/limits.json
+ * @param {string} id
+ * @param {Buffer} bytes
+ * @returns {{maxBytes: number, grandfathered: boolean}}
+ */
+export function iconCapFor(limits, id, bytes) {
+  const cap = limits?.max_icon_bytes;
+  if (!Number.isSafeInteger(cap) || cap <= 0) {
+    throw new Error(`policy/limits.json max_icon_bytes is ${JSON.stringify(cap)}, not a positive integer`);
+  }
+  const pinned = limits?.max_icon_bytes_grandfathered?.[id];
+  if (typeof pinned === "string" && bytes.length > cap && sha256Hex(bytes) === pinned) {
+    return { maxBytes: MAX_ICON_BYTES, grandfathered: true };
+  }
+  return { maxBytes: cap, grandfathered: false };
+}
+
+/** The listings `max_icon_bytes_grandfathered` names, `$comment` aside. */
+export function grandfatheredIcons(limits) {
+  return Object.entries(limits?.max_icon_bytes_grandfathered ?? {}).filter(([k]) => k !== "$comment");
+}
+
+export function sha256Hex(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 /**

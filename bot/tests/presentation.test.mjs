@@ -736,6 +736,92 @@ await test("a listing naming a README that is not there fails the build rather t
     `a missing README became an entry with no readme at all: ${message}`);
 });
 
+// ── the icon cap a release meets, and the icons committed before it ─────────
+//
+// `policy/limits.json` `max_icon_bytes` (8 KiB since 2026-09-27). A release's
+// icon comes out of the bundle and meets it; over it, the icon is dropped and
+// the release still publishes. An icon committed before the cap is allowed by
+// the validator only byte for byte, on its own listing, until that listing's
+// next release (`max_icon_bytes_grandfathered`).
+
+/** A PNG of exactly `size` bytes: the signature, then filler. */
+const pngOf = (size) => Buffer.concat([PNG.subarray(0, 8), Buffer.alloc(size - 8, 0x42)]);
+const ICON_CAP = policy.limits.max_icon_bytes;
+
+await test("the cap a release's icon meets is policy/limits.json's max_icon_bytes, 8 KiB", () => {
+  assertEqual(ICON_CAP, 8192, "max_icon_bytes moved; AstraPlugins/spec/listing-limits.yaml mirrors it (C20)");
+  assert(ICON_CAP < MAX_ICON_BYTES, "the release cap is not below the grandfathered ceiling");
+});
+
+await test("a release's icon one byte over max_icon_bytes is dropped, the release is not, and the author is told what to do", () => {
+  const derived = deriveListing({ ...baseInput, files: [{ name: "icon.png", bytes: pngOf(ICON_CAP + 1) }] });
+  assertEqual(derived.plugin.icon, undefined, "an icon over the cap was carried into the listing");
+  assert(!derived.assets.some((a) => a.path === "icon.png"), "an icon over the cap was committed");
+  assert(!derived.findings.some((f) => f.level === "error"), "an icon over the cap refused the release");
+  const dropped = derived.findings.find((f) => f.code === "W_ICON_DROPPED");
+  assert(dropped && dropped.level === "warn", `no W_ICON_DROPPED warning: ${JSON.stringify(derived.findings)}`);
+  for (const want of [String(ICON_CAP + 1), `${ICON_CAP}-byte cap`, "max_icon_bytes", "128x128", "WebP"]) {
+    assert(dropped.message.includes(want), `the message does not say ${JSON.stringify(want)}: ${dropped.message}`);
+  }
+});
+
+await test("a release's icon exactly at max_icon_bytes is carried", () => {
+  const derived = deriveListing({ ...baseInput, files: [{ name: "icon.png", bytes: pngOf(ICON_CAP) }] });
+  assertEqual(derived.plugin.icon, "icon.png", `an icon at the cap was dropped: ${JSON.stringify(derived.findings)}`);
+});
+
+await test("a grandfathered listing's next release meets the cap too, even with the very same icon", () => {
+  // "Keeps its icon until its next release": the next release derives its icon
+  // from the bundle, and the bundle's icon meets the cap whatever the list says.
+  const bytes = fs.readFileSync(path.join(REPO_ROOT, "plugins", "voice-text-input", "icon.png"));
+  assert(bytes.length > ICON_CAP, "the fixture is not over the cap");
+  const derived = deriveListing({
+    ...baseInput,
+    facts: { ...baseInput.facts, id: "voice-text-input" },
+    files: [{ name: "icon.png", bytes }],
+    existingPlugin: JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "plugins", "voice-text-input", "plugin.json"), "utf8")),
+  });
+  assertEqual(derived.plugin.icon, undefined, "the grandfathered icon was carried into a new release");
+  assert(derived.findings.some((f) => f.code === "W_ICON_DROPPED"), "and the author was not told");
+});
+
+const iconErrors = async (root, name = "icon.png") =>
+  (await errorsFor(root)).filter((e) => (e.file ?? e.where ?? "").endsWith(name) || /icon/.test(e.message));
+
+await test("a committed icon over max_icon_bytes is an error unless it is the grandfathered file on its own listing", async () => {
+  const theirs = fs.readFileSync(path.join(REPO_ROOT, "plugins", "voice-text-input", "icon.png"));
+  const own = await iconErrors(treeWith({ "icon.png": theirs }, { icon: "icon.png" }, { id: "voice-text-input" }));
+  assertEqual(own.length, 0, `the grandfathered icon on its own listing was refused: ${JSON.stringify(own)}`);
+
+  const moved = await iconErrors(treeWith({ "icon.png": theirs }, { icon: "icon.png" }));
+  assert(moved.some((e) => e.message.includes(`${ICON_CAP}-byte cap`)),
+    `the same bytes under another listing were allowed: ${JSON.stringify(moved)}`);
+
+  const replaced = await iconErrors(treeWith({ "icon.png": pngOf(ICON_CAP + 1) }, { icon: "icon.png" }, { id: "voice-text-input" }));
+  assert(replaced.some((e) => e.message.includes(`${ICON_CAP}-byte cap`)),
+    `a new oversized icon on a grandfathered listing was allowed: ${JSON.stringify(replaced)}`);
+
+  const small = await iconErrors(treeWith({ "icon.png": pngOf(ICON_CAP) }, { icon: "icon.png" }));
+  assertEqual(small.length, 0, `an icon at the cap was refused: ${JSON.stringify(small)}`);
+});
+
+await test("the grandfathered icons are named on every run, and an entry that stopped matching is named as stale", async () => {
+  const notesFor = async (root) => {
+    const { report } = await runValidation({
+      root, allowStaging: true, allowDirect: false, online: false, artifactsDir: null, index: false,
+    });
+    return report.items.filter((i) => i.level === "note").map((i) => `${i.where ?? ""} ${i.message}`);
+  };
+  const theirs = fs.readFileSync(path.join(REPO_ROOT, "plugins", "voice-text-input", "icon.png"));
+  const carried = await notesFor(treeWith({ "icon.png": theirs }, { icon: "icon.png" }, { id: "voice-text-input" }));
+  assert(carried.some((n) => n.includes("voice-text-input") && n.includes(String(theirs.length)) && /next release/.test(n)),
+    `the grandfathered icon was not named: ${JSON.stringify(carried)}`);
+
+  const released = await notesFor(treeWith({ "icon.png": pngOf(2000) }, { icon: "icon.png" }, { id: "voice-text-input" }));
+  assert(released.some((n) => n.includes("voice-text-input") && /stale/.test(n)),
+    `an entry whose listing no longer carries that file was not named as stale: ${JSON.stringify(released)}`);
+});
+
 // ── result ──────────────────────────────────────────────────────────────────
 
 console.log();
