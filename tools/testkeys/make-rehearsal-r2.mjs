@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // The ROLL-60 rehearsal series (RC-R2-5), produced by the real signer.
 //
-//   node tools/testkeys/make-rehearsal-r2.mjs          # rewrite every cut: fixtures/rehearsal-r2/, fixtures/rehearsal-r2b/
+//   node tools/testkeys/make-rehearsal-r2.mjs          # rewrite every cut: fixtures/rehearsal-r2/, -r2b/, -r2c/
 //   node tools/testkeys/make-rehearsal-r2.mjs --check  # rebuild each in a temp tree, compare, write nothing
 //   node tools/testkeys/make-rehearsal-r2.mjs --print-commands   # the commands, without running them
-//   … --fixtures rehearsal-r2b                         # any of the above, for one cut only
+//   … --fixtures rehearsal-r2c                         # any of the above, for one cut only
 //
 // ── one series, cut at more than one T0 ─────────────────────────────────────
 //
@@ -92,18 +92,36 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..", "..");
 
 /**
- * The cuts of the series: name (its directory under `fixtures/`) → T0.
+ * The cuts of the series: name (its directory under `fixtures/`) → T0, and
+ * the hard end the cut was made to reach.
  *
  * `rehearsal-r2` is the first, served on `mihailinl/astra-registry-canary`
  * from 2026-09-24; its lists expire from 2026-09-29T00:00Z. `rehearsal-r2b` is
  * the same series three days later, for a walk that slipped past that date;
- * its lists expire from 2026-10-03T00:00Z. Which repository serves which cut
- * is `tools/lib/rehearsal-push.mjs`'s `CANARIES`, and it refuses the other.
- * Adding a cut is a line here, a regeneration, and a line there.
+ * its lists expire from 2026-10-03T00:00Z. `rehearsal-r2c` is the same series
+ * again for the plugins service's first serve of step 0 (ROLL-60's R2 half),
+ * which is no earlier than 2026-10-06 and asked for a step 0 that still serves
+ * on 2026-10-31T00:00Z.
+ *
+ * **`hard_end` is the promise, and T0 is how it is kept.** The signer gives a
+ * list `REVOCATION_TTL_DAYS` (7) from its run's `now`, and that number is
+ * production policy (the contract's "7-day expiry", duplicated in the
+ * daemon), so this file does not get to stretch it. A later hard end can only
+ * come from a later T0. rehearsal-r2c's T0 is therefore 2026-10-24, and if it
+ * is served before then, every document in it is dated after the day it is
+ * served. The contract bounds `expires_at` (SERVE-22) and says nothing about
+ * an `issued_at` ahead of the reader's clock; whether the plugins service
+ * accepts one is its to say, and the runbook asks. The judge holds each cut's
+ * first list expiry to its `hard_end`.
+ *
+ * Which repository serves which cut is `tools/lib/rehearsal-push.mjs`'s
+ * `CANARIES`, and it refuses every other. Adding a cut is a line here, a
+ * regeneration, and a line there.
  */
 export const REHEARSALS = Object.freeze({
-  "rehearsal-r2": Object.freeze({ t0: "2026-09-22T00:00:00Z" }),
-  "rehearsal-r2b": Object.freeze({ t0: "2026-09-26T00:00:00Z" }),
+  "rehearsal-r2": Object.freeze({ t0: "2026-09-22T00:00:00Z", hard_end: "2026-09-29T00:00:00Z" }),
+  "rehearsal-r2b": Object.freeze({ t0: "2026-09-26T00:00:00Z", hard_end: "2026-10-03T00:00:00Z" }),
+  "rehearsal-r2c": Object.freeze({ t0: "2026-10-24T00:00:00Z", hard_end: "2026-10-31T00:00:00Z" }),
 });
 
 /** A cut's directory, and its manifest. */

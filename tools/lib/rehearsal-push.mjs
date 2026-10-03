@@ -7,7 +7,8 @@
 // ── what it pushes, and why it builds nothing ───────────────────────────────
 //
 // Each cut of the series (`tools/testkeys/fixtures/rehearsal-r2/`, T0
-// 2026-09-22; `…/rehearsal-r2b/`, T0 2026-09-26) holds, per step, the four documents a
+// 2026-09-22; `…/rehearsal-r2b/`, T0 2026-09-26; `…/rehearsal-r2c/`, T0
+// 2026-10-24) holds, per step, the four documents a
 // `signed` commit carried and that commit's message, and `manifest.json` holds
 // the sha the real signer gave the commit. The commit is a function of those
 // bytes, its parent, the signer's identity and the step's `now`, so it is
@@ -18,15 +19,16 @@
 //
 // ── where it may go ─────────────────────────────────────────────────────────
 //
-// Two canaries, each serving one cut and nothing else (`CANARIES`):
+// Three canaries, each serving one cut and nothing else (`CANARIES`):
 // `mihailinl/astra-registry-canary`, BOT-88's test repository, the first cut;
-// `mihailinl/astra-registry-canary-2`, a static source made for the second,
-// because a `signed` that has carried one cut can never carry another (SERVE-18)
-// and the plugins service compiles the branch name `signed` in. The push URL is
+// `mihailinl/astra-registry-canary-2` and `-canary-3`, static sources made for
+// the second and the third, because a `signed` that has carried one cut can
+// never carry another (SERVE-18) and the plugins service compiles the branch
+// name `signed` in. The push URL is
 // DERIVED from `--repo` — so the refusal below is the only thing between a typo
 // and `mihailinl/astra-registry`'s `signed` branch, which every Astra
 // installation reads, and it is watched failing by making it accept that name.
-// A cut named for the other canary is refused the same way, before the
+// A cut named for another canary is refused the same way, before the
 // network. The URL git would really use, after any `url.<base>.insteadOf` or
 // `pushInsteadOf` in the operator's config, is asked of git and must be that
 // canary's own or a local path (the selftest's bare remote). No force, ever:
@@ -67,15 +69,21 @@ import { DOCUMENTS, REHEARSALS, buildSeries, fixtureDirOf, manifestFileOf } from
 /**
  * The repositories this may push to, each with the one cut it serves (a name
  * in `REHEARSALS`). A cut and its canary are one decision: the first canary's
- * `signed` carries the first cut's step 0 and can carry nothing else, and
- * canary-2 was made empty for the second.
+ * `signed` carries the first cut's step 0 and can carry nothing else, canary-2
+ * was made empty for the second, and canary-3 for the third (2026-10-03, after
+ * the second's hard end, for the plugins service's first serve of a fresh T0).
  */
 export const CANARIES = Object.freeze({
   "mihailinl/astra-registry-canary": Object.freeze({ fixtures: "rehearsal-r2" }),
   "mihailinl/astra-registry-canary-2": Object.freeze({ fixtures: "rehearsal-r2b" }),
+  "mihailinl/astra-registry-canary-3": Object.freeze({ fixtures: "rehearsal-r2c" }),
 });
-/** The canary with no `--repo` and no `--fixtures`: the one the day's walk reads. */
-export const DEFAULT_CANARY = "mihailinl/astra-registry-canary-2";
+/**
+ * The canary with no `--repo` and no `--fixtures`: the one the day's walk
+ * reads, and the one whose cut ends last. The runbook's commands carry no
+ * `--repo`, so a default left on a passed hard end refuses every step.
+ */
+export const DEFAULT_CANARY = "mihailinl/astra-registry-canary-3";
 /** The production registry, named so its refusal can say what it would have cost. */
 export const PRODUCTION_SLUG = "mihailinl/astra-registry";
 /** What the push URL is, for a slug. Derived, so the refusal is load-bearing. */
@@ -366,7 +374,8 @@ export function buildCommits(git, steps) {
  * refuses a changed document already past it, and a daemon refuses an
  * expired list, so a step with one is a step nobody will accept. The series'
  * lists run out seven days after T0 (2026-09-29 for rehearsal-r2, 2026-10-03
- * for rehearsal-r2b), and that date is the cut's hard end.
+ * for rehearsal-r2b, 2026-10-31 for rehearsal-r2c), and that date is the cut's
+ * hard end (`REHEARSALS`' `hard_end`, which the judge holds the lists to).
  */
 export function expiredDocuments(step, now) {
   return Object.entries(step.expires)

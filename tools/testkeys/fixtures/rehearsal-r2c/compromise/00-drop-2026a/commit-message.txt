@@ -1,0 +1,9 @@
+signed: catalogue 4, withdrawal list 5 at 8b9a0802fefc
+
+registry/v1/index.json: changed at serial 4
+registry/v1/revocations.json: changed at serial 5
+
+Source-Commit: 8b9a0802fefc573781e64a2bf3acd190fe8bd6ae
+Run: https://github.com/mihailinl/astra-registry/actions/runs/0
+Signer: sign.yml
+Index-Source-Commit: 8b9a0802fefc573781e64a2bf3acd190fe8bd6ae
