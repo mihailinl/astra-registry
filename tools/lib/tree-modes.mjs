@@ -138,7 +138,7 @@ export function treeModeProblems(rows, at = "HEAD") {
         path: r.path,
         mode: r.mode,
         message: `an empty directory, git mode 040000 with no file beneath it, in the tree at ${at}: ` +
-          "`git rev-list -- <path>`, git's diff and a checkout all skip it while a reader that walks trees sees it, " +
+          "git's path-limited history, its diff and a checkout all skip it while a reader that walks trees sees it, " +
           "so the two disagree about whether the commit that added it changed anything",
       });
     }
