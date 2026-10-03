@@ -68,7 +68,9 @@ import {
 } from "../bot/lib/decisions.mjs";
 import { SOURCE_DIR as MODERATION_DIR, loadEntries as loadModerationEntries } from "../bot/lib/moderation.mjs";
 import { fixedReason } from "../bot/lib/compile-decision.mjs";
-import { ALLOWED_IMAGE_HOSTS, ICON_NAMES, MAX_README_BYTES, checkIcon } from "../bot/lib/assets.mjs";
+import {
+  ALLOWED_IMAGE_HOSTS, ICON_NAMES, MAX_README_BYTES, checkIcon, grandfatheredIcons, iconCapFor, sha256Hex,
+} from "../bot/lib/assets.mjs";
 import {
   CUTOVER_FILE,
   CUTOVER_SCHEMA,
@@ -339,9 +341,18 @@ function checkPresentationFiles(plugin, ctx) {
       report.error(where, `icon ${JSON.stringify(icon)} is named here but the file is not in plugins/${plugin.dir}/`,
         "The bytes are committed beside the listing; the index inlines them at build time.");
     } else {
-      for (const f of checkIcon({ name: icon, bytes: fs.readFileSync(file) })) {
+      // `max_icon_bytes`, the cap a release's icon meets — or the old 128 KiB
+      // ceiling for the one file `max_icon_bytes_grandfathered` names for this
+      // listing, byte for byte, until its next release (bot/lib/assets.mjs
+      // iconCapFor). The same rule the bot derives by, so what it publishes this
+      // cannot refuse; the list is the only difference, and it only shrinks.
+      const bytes = fs.readFileSync(file);
+      const { maxBytes } = iconCapFor(ctx.policy.limits, plugin.doc.id, bytes);
+      for (const f of checkIcon({ name: icon, bytes }, { maxBytes })) {
         report.error(`plugins/${plugin.dir}/${icon}`, f.message,
-          "An icon is rendered before the user has agreed to anything. See bot/lib/assets.mjs.");
+          "An icon is rendered before the user has agreed to anything, and every byte of it is inlined into " +
+          "the one catalogue every install fetches whole. See bot/lib/assets.mjs and policy/limits.json " +
+          "max_icon_bytes_note.");
       }
     }
   }
@@ -1179,6 +1190,60 @@ export function checkLocaleVocabulary(ctx) {
 }
 
 /** The four siblings a cap in `policy/limits.json` may carry, exactly one of. */
+/**
+ * The icons committed before `max_icon_bytes` that are still over it, named on
+ * every run, and the entries of `max_icon_bytes_grandfathered` that stopped
+ * matching, named as stale.
+ *
+ * Named rather than counted, for the reason `_unmirrored` caps are: the list is
+ * debt, each entry costs every install bytes on every catalogue fetch, and a
+ * count lets one entry quietly become another. Stale is a NOTE and not an
+ * error on purpose: the commit that makes an entry stale is the bot's own —
+ * the listing's next release, whose icon met the cap or was dropped — and an
+ * error there would turn `main` red on a correct publish.
+ *
+ * A listing this tree does not hold says nothing about its entry: a fixture
+ * tree, or `--registry-dir` over another checkout, is not evidence that the
+ * listing was deleted.
+ */
+export function checkGrandfatheredIcons(ctx, plugins) {
+  const where = "policy/limits.json";
+  const limits = ctx.policy.limits ?? ctx.policy;
+  const cap = limits.max_icon_bytes;
+  const carried = [];
+  const stale = [];
+  for (const [id, digest] of grandfatheredIcons(limits)) {
+    if (typeof digest !== "string" || !/^[0-9a-f]{64}$/.test(digest)) {
+      ctx.report.error(where, `max_icon_bytes_grandfathered.${id} is ${JSON.stringify(digest)}, not a lowercase SHA-256`,
+        "Each entry is the digest of the exact committed icon it allows; anything else allows nothing and reads " +
+        "as though it did.");
+      continue;
+    }
+    const plugin = plugins.find((p) => p.doc?.id === id);
+    if (!plugin) continue;
+    const icon = plugin.doc.icon;
+    const file = typeof icon === "string" ? path.join(ctx.root, "plugins", plugin.dir, icon) : null;
+    const bytes = file && fs.existsSync(file) ? fs.readFileSync(file) : null;
+    if (bytes && bytes.length > cap && sha256Hex(bytes) === digest) carried.push(`${id} ${bytes.length}`);
+    else stale.push(id);
+  }
+  if (carried.length) {
+    ctx.report.note(where,
+      `${carried.length} icon(s) over max_icon_bytes (${cap}) are carried until each listing's next release: ` +
+      `${carried.join(", ")} bytes`,
+      "Grandfathered by max_icon_bytes_grandfathered. Each listing's next release derives its icon from the " +
+      "bundle and meets the cap, or publishes without one; an author can get there sooner by re-exporting at " +
+      "128x128. See policy/limits.json max_icon_bytes_note.");
+  }
+  if (stale.length) {
+    ctx.report.note(where,
+      `max_icon_bytes_grandfathered names ${stale.length} listing(s) whose committed icon is no longer that file: ` +
+      `${stale.join(", ")} (stale)`,
+      "The listing released since, so its icon now meets max_icon_bytes or it has none. Delete the entry; the " +
+      "list only shrinks.");
+  }
+}
+
 const CAP_DECLARATIONS = ["_mirrors", "_mirrored_by", "_not_author_facing", "_unmirrored"];
 
 /** Where a `_mirrored_by` sibling is allowed to point. One file, today. */
@@ -2881,6 +2946,7 @@ export async function runValidation(opts) {
   for (const e of errors) report.error(e.file, e.message);
 
   const usable = plugins.filter((p) => p.doc && typeof p.doc === "object");
+  checkGrandfatheredIcons(ctx, usable);
   for (const plugin of usable) {
     checkPluginDoc(plugin, ctx);
     checkPluginVersions(plugin, ctx);

@@ -112,15 +112,29 @@ export function checkMetadata(fields, limits) {
  * @returns {{assets: {path: string, bytes: Buffer}[], icon: string|null,
  *            readme: string|null, findings: object[]}}
  */
-function derivePresentation(files, { repo, commit }) {
+function derivePresentation(files, { repo, commit, limits }) {
   const findings = [];
   const assets = [];
   let icon = null;
   let readme = null;
 
+  // `max_icon_bytes`, the cap a RELEASE's icon meets (policy/limits.json). Read
+  // here and passed, never defaulted: `checkIcon`'s own default is the old
+  // 128 KiB ceiling, and a derivation that forgot the cap would go on inlining
+  // 110 KB icons into a catalogue that every install fetches whole. A policy
+  // with no cap is this repository's bug, so it throws rather than guessing.
+  const maxIconBytes = limits?.max_icon_bytes;
+  if (!Number.isSafeInteger(maxIconBytes) || maxIconBytes <= 0) {
+    throw new Error(`policy/limits.json max_icon_bytes is ${JSON.stringify(maxIconBytes)}, not a positive integer`);
+  }
+
   const found = pickIcon(files);
   if (found) {
-    const problems = checkIcon(found);
+    // No grandfathering here, on purpose: a release's icon comes from its
+    // bundle, so a listing whose committed icon predates the cap meets it at
+    // its next release like every other (policy/limits.json
+    // max_icon_bytes_grandfathered, which only tools/validate.mjs reads).
+    const problems = checkIcon(found, { maxBytes: maxIconBytes });
     if (problems.length === 0) {
       assets.push({ path: found.name, bytes: found.bytes });
       icon = found.name;
@@ -248,7 +262,7 @@ export function deriveListing(input) {
   // committed next to this document, so a reviewer sees the actual picture in
   // the pull request rather than a base64 blob, and nothing outside the
   // repository is named. `tools/build-index.mjs` inlines them at build time.
-  const presentation = derivePresentation(files, { repo, commit });
+  const presentation = derivePresentation(files, { repo, commit, limits: policy.limits });
   findings.push(...presentation.findings);
   if (presentation.icon) plugin.icon = presentation.icon;
   if (presentation.readme) plugin.readme = presentation.readme;
