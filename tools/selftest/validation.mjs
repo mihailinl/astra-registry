@@ -11,7 +11,8 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { cleanEnv, fixtureEnv } from "../lib/git-env.mjs";
 
-import { RECORD_ROOTS, displayStrings, recordFiles, recordStringProblems, runValidation } from "../validate.mjs";
+import { RECORD_ROOTS, checkTreeModes, displayStrings, recordFiles, recordStringProblems, runValidation } from "../validate.mjs";
+import { readTree, treeModeProblems, unaskableRoot } from "../lib/tree-modes.mjs";
 import { buildIndex } from "../build-index.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
 import { compareSemver } from "../lib/semver.mjs";
@@ -1241,6 +1242,181 @@ export async function run() {
     assert(none.notes.some((n) => n.startsWith("not asked:")),
       `a tree with no git of its own did not say the review-mark rules were not asked: ${JSON.stringify(none.notes)}`);
   });
+
+  // ── the tree rule (tools/lib/tree-modes.mjs) ──────────────────────────────
+  //
+  // Each fixture is written straight into a fresh repository's object store
+  // with `git hash-object --literally`, one raw tree at a time, and the branch
+  // is pointed at the commit with NOTHING checked out. The working tree is
+  // empty on purpose: the rule reads git's tree, so a rule that read the
+  // filesystem instead would find nothing here to refuse, and every case below
+  // would go red. The links are the plugins service's own examples from its
+  // mirror_index review (2026-10-03).
+
+  await test("tree rule: a link under plugins/<id>/ is refused by path and mode, and so is the link its target climbs through", async () => {
+    const dir = treeFixture("tm-plugin-link", {
+      plugins: { alpha: {
+        "plugin.json": "{}\n",
+        "identity.json": { link: "sub/../x.json" },
+        sub: { link: "elsewhere" },
+        "x.json": "{}\n",
+      } },
+    });
+    assertEqual(await refusedIn(dir), ["plugins/alpha/identity.json 120000", "plugins/alpha/sub 120000"].join("\n"),
+      "tools/validate.mjs must name each link under plugins/<id>/ by path and mode, and neither file beside them");
+  });
+
+  await test("tree rule: a link at policy/ is refused, and the record reached through it is never even listed", async () => {
+    const dir = treeFixture("tm-policy-link", {
+      policy: { link: "real-policy" },
+      "real-policy": { "binding-deadline.json": "{}\n" },
+      log: { up: { link: "../policy" } },
+      publishers: { "someone.json": { link: "x/" } },
+    });
+    assertEqual(await refusedIn(dir), ["log/up 120000", "policy 120000", "publishers/someone.json 120000"].join("\n"),
+      "the link at policy/, the one a log/ path climbs `..` through, and the one ending in `x/` must each be named");
+    assert(!readTree(dir).rows.some((r) => r.path.startsWith("policy/")),
+      "git listed a path beneath a link, so the fixture is not the shape the service found");
+  });
+
+  await test("tree rule: a directory spelled 140000 under log/ is read the way git reads it, as a gitlink, and a checkout of it is empty", async () => {
+    const dir = treeFixture("tm-log-140000", {
+      log: {
+        "baseline.json": "{}\n",
+        cutover: { mode: "140000", tree: { "cutover.json": "{}\n" } },
+      },
+    });
+    assertEqual(await refusedIn(dir), "log/cutover 160000",
+      "a raw 140000 directory is a gitlink to git, and the rule must name it as one");
+    // What a reader of the filesystem would have seen instead: a directory,
+    // empty, which no walk of a checkout can tell from an honest one.
+    gitIn(dir, ["read-tree", "-u", "--reset", "HEAD"]);
+    const cut = path.join(dir, "log", "cutover");
+    assert(fs.lstatSync(cut).isDirectory() && fs.readdirSync(cut).length === 0,
+      "the checkout was expected to hold log/cutover as an empty directory; the case no longer shows why the rule reads git");
+  });
+
+  await test("tree rule: a linked directory with a file reached through it is named once, at the link", async () => {
+    const dir = treeFixture("tm-link-dir", {
+      plugins: { alpha: { "plugin.json": "{}\n" }, beta: { link: "../elsewhere/beta" } },
+      elsewhere: { beta: { "plugin.json": "{}\n" } },
+    });
+    assertEqual(await refusedIn(dir), "plugins/beta 120000",
+      "the link must be named, and nothing beneath it, since git holds nothing beneath a link");
+  });
+
+  await test("tree rule: an empty directory, and one holding only empty ones, are refused; `git rev-list -- <path>` never counts the commit that adds them", async () => {
+    const base = { queue: { "a@1.0.0.json": "{}\n" } };
+    const dir = treeFixture("tm-empty", { state: base, bot: { moderation: { "entry.json": "{}\n" } } });
+    commitTree(dir, {
+      state: { ...base, holds: {} },
+      bot: { moderation: { "entry.json": "{}\n", outer: { inner: {} } } },
+    }, "adds only empty trees");
+    assertEqual(gitIn(dir, ["rev-list", "--count", "--full-history", "HEAD", "--", "state", "bot/moderation"]).trim(), "1",
+      "git's path-limited count saw the commit that adds only empty trees; the hole this rule closes is not the one measured");
+    assertEqual(await refusedIn(dir), ["bot/moderation/outer 040000", "state/holds 040000"].join("\n"),
+      "each empty directory must be named once, at its outermost: `outer` holds only the empty `inner`, so it is the entry");
+  });
+
+  await test("tree rule: files, an executable, directories and a name with a tab in it pass, and every entry is read", async () => {
+    const dir = treeFixture("tm-clean", {
+      plugins: { alpha: { "plugin.json": "{}\n", versions: { "1.0.0.json": "{}\n" } } },
+      tools: { "run.sh": { exec: "#!/bin/sh\n" } },
+      docs: { "a\tb.md": "x\n" },
+    });
+    assertEqual(await refusedIn(dir), "", "a tree of files and directories was refused");
+    const { rows } = readTree(dir);
+    assertEqual(rows.length, 9, `expected 9 entries, five of them directories: ${JSON.stringify(rows.map((r) => r.path))}`);
+    assert(rows.some((r) => r.path === "docs/a\tb.md" && r.mode === "100644"), "the name with a tab was not read as one row");
+    assert(rows.some((r) => r.path === "tools/run.sh" && r.mode === "100755"), "the executable was not read with its mode");
+    assertEqual(treeModeProblems([{ mode: "100664", type: "blob", object: "0".repeat(40), path: "x" }]).map((p) => p.mode).join(), "100664",
+      "a mode git never prints must still be refused by its number, not let through for being unknown");
+  });
+
+  await test("tree rule: this repository's own HEAD holds only files and directories, and the rule read all of it", () => {
+    // Every lane that runs this suite runs it in a checkout, so a root the
+    // rule cannot ask is a broken lane, not an environment to skip in.
+    assertEqual(unaskableRoot(REPO_ROOT), null, "this repository's own root is not a git work tree with a HEAD");
+    const items = [];
+    const report = { error: (where, message) => items.push({ level: "error", where, message }),
+      note: (where, message) => items.push({ level: "note", where, message }) };
+    checkTreeModes({ report, root: REPO_ROOT });
+    assertEqual(items.map((i) => `${i.where}: ${i.message}`).join("\n"), "",
+      "HEAD holds an entry that is not a regular file or a non-empty directory, or the rule could not read it");
+    const { rows } = readTree(REPO_ROOT);
+    // 917 entries at e85403b (702 files, 5 executables, 210 directories). Half
+    // of it, so an honest deletion is not red and an empty listing is.
+    assert(rows.length >= 450, `git ls-tree listed only ${rows.length} entries at HEAD; this is a broken read`);
+  });
+
+  await test("tree rule: a directory that is not the top of a git work tree says the rule was not asked, and never that it passed", async () => {
+    const plain = path.join(tmp, "tm-no-git");
+    fs.rmSync(plain, { recursive: true, force: true });
+    fs.mkdirSync(path.join(plain, "plugins"), { recursive: true });
+    for (const root of [plain, path.join(REPO_ROOT, "tests", "fixtures", "id-collision")]) {
+      const { report } = await validateTree(root);
+      assertEqual(treeErrors(report).join("\n"), "", `${root}: the tree rule refused something in a tree it cannot read`);
+      assert(report.notes.some((n) => n.where === "tree modes" && n.message.startsWith("not asked:")),
+        `${root}: the run did not say the tree rule was not asked: ${JSON.stringify(report.notes)}`);
+    }
+  });
+}
+
+/** The tree rule's refusals in a report, as `<path> <mode>`, sorted. */
+function treeErrors(report) {
+  return report.errors.filter((e) => /, git mode \d{6}[ ,]/.test(e.message))
+    .map((e) => `${e.where} ${/, git mode (\d{6})/.exec(e.message)[1]}`).sort();
+}
+
+/** What `tools/validate.mjs`, run whole over `dir`, refuses under the tree rule: one `<path> <mode>` a line. */
+async function refusedIn(dir) {
+  return treeErrors((await validateTree(dir)).report).join("\n");
+}
+
+/**
+ * One raw tree for `spec`, written with `hash-object --literally` so that a
+ * mode git would never write itself can be, and its id. A string is a file,
+ * `{exec}` an executable, `{link}` a symlink to that target, `{mode, tree}` a
+ * directory under a raw mode of the caller's, and any other object a
+ * directory. Entries are in git's order, a directory sorting as its name and a
+ * slash.
+ */
+function rawTree(dir, spec) {
+  const put = (type, body) => execFileSync("git", ["-C", dir, "hash-object", "-t", type, "-w", "--literally", "--stdin"],
+    { input: body, encoding: "utf8", env: fixtureEnv(dir) }).trim();
+  const entries = Object.entries(spec).map(([name, v]) => {
+    if (typeof v === "string") return { name, mode: "100644", sha: put("blob", v) };
+    if (v.exec !== undefined) return { name, mode: "100755", sha: put("blob", v.exec) };
+    if (v.link !== undefined) return { name, mode: "120000", sha: put("blob", v.link) };
+    if (v.mode !== undefined) return { name, mode: v.mode, sha: rawTree(dir, v.tree), dir: true };
+    return { name, mode: "40000", sha: rawTree(dir, v), dir: true };
+  });
+  const key = (e) => (e.mode === "40000" ? `${e.name}/` : e.name);
+  entries.sort((a, b) => (Buffer.compare(Buffer.from(key(a)), Buffer.from(key(b)))));
+  return put("tree", Buffer.concat(entries.map((e) =>
+    Buffer.concat([Buffer.from(`${e.mode} ${e.name}\0`), Buffer.from(e.sha, "hex")]))));
+}
+
+/** Commit `spec` on top of HEAD (or as the first commit) and move `main` to it. Nothing is checked out. */
+function commitTree(dir, spec, message) {
+  const tree = rawTree(dir, spec);
+  const parent = gitMaybe(dir, ["rev-parse", "--verify", "--quiet", "HEAD"])?.trim();
+  const commit = gitIn(dir, ["commit-tree", tree, ...(parent ? ["-p", parent] : []), "-m", message]).trim();
+  gitIn(dir, ["update-ref", "refs/heads/main", commit]);
+  return commit;
+}
+
+/** A fresh repository whose `main` is one commit of `spec`, with an empty working tree. */
+function treeFixture(name, spec) {
+  const dir = path.join(tmp, name);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  gitIn(dir, ["init", "-q", "-b", "main"]);
+  gitIn(dir, ["config", "user.name", "Fixture"]);
+  gitIn(dir, ["config", "user.email", "fixture@example.invalid"]);
+  gitIn(dir, ["config", "commit.gpgsign", "false"]);
+  commitTree(dir, spec, name);
+  return dir;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

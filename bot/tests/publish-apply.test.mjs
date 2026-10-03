@@ -773,6 +773,37 @@ test("DRY_RUN commits on the runner, pushes nothing, and says `dry-run`", () => 
   assert.ok(lines.some((l) => l.includes("would push  plugins/alpha/versions/0.1.0.json")), lines.join("\n"));
 });
 
+// ── the tree rule, on the commit this file makes (tools/lib/tree-modes.mjs) ──
+//
+// `git add -A plugins state log/decisions …` takes whatever stands under those
+// paths, and the validator that ran before it read the commit the run started
+// from. So a link left in the runner's checkout — by an earlier step, a cache
+// restore, anything — is committed beside a genuine publication unless the
+// commit itself is asked. `skipChecks` is passed, as everywhere in this file:
+// the rule does not hide behind it.
+
+test("a link in the checkout is swept into the bot's commit, and the tree rule refuses that commit before it is pushed", () => {
+  const { dir, one, bare } = estate();
+  const reports = report(dir, "ingest-report-0", { id: "alpha", version: "0.1.0" });
+  const base = git(one, "rev-parse", "HEAD");
+  fs.mkdirSync(path.join(one, "plugins", "alpha"), { recursive: true });
+  fs.symlinkSync("../../README.md", path.join(one, "plugins", "alpha", "identity.json"));
+
+  let err = null;
+  let result = null;
+  try {
+    result = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, log: quiet });
+  } catch (e) {
+    err = e;
+  }
+  assert.ok(err && err.name === "ChecksFailed",
+    `a commit carrying a link was not refused: ${err ? err.message : JSON.stringify(result)}`);
+  assert.match(err.message, /plugins\/alpha\/identity\.json: a symbolic link, git mode 120000,/);
+  assert.equal(git(bare, "rev-list", "--count", "main"), "1", "the commit carrying the link reached the remote");
+  assert.equal(git(one, "rev-parse", "HEAD"), base, "the refused commit was left on the runner's branch");
+  assert.ok(!fs.existsSync(path.join(one, "plugins")), "the attempt was not undone: plugins/ is still in the checkout");
+});
+
 // ── this file, from outside ──────────────────────────────────────────────────
 //
 // The `exit` handler above is invisible from inside the process it runs in:
