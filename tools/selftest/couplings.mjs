@@ -187,6 +187,7 @@ export async function run() {
       "# mirrors: astra-registry/policy/limits.json max_locale_bytes\nmax_locale_bytes: 262144\n" +
       "# mirrors: astra-registry/policy/limits.json max_locale_keys\nmax_locale_keys: 5000\n" +
       "# mirrors: astra-registry/policy/limits.json max_listing_i18n_bytes\nmax_listing_i18n_bytes: 8192\n" +
+      "# mirrors: astra-registry/policy/limits.json max_icon_bytes\nmax_icon_bytes: 8192\n" +
       "# mirrors: astra-registry/policy/limits.json max_artifact_bytes\nmax_artifact_bytes: 268435456\n";
 
     const ok = withFakeCheckout("fake-ap-listing-ok", { "spec/listing-limits.yaml": mirrors(64) },
@@ -214,6 +215,26 @@ export async function run() {
     // The repair that greens the check by destroying it.
     assert(gone.hint.includes("Do NOT fix it by deleting"),
       "the fastest green here is deleting the `_mirrored_by` sibling, so the message has to refuse it by name");
+
+    // ── debt that has been paid, still on the books ────────────────────────
+    // An `_unmirrored` cap whose copy the pinned file now carries. Constructed
+    // as it really arrived: `max_icon_bytes` sat `_unmirrored` while the pin
+    // moved to AstraPlugins d15c896, which carries its row, and validate.mjs
+    // went on printing that nothing local checked it. Red, naming the flip.
+    const paid = withFakeCheckout("fake-ap-listing-paid", { "spec/listing-limits.yaml": mirrors(64) },
+      (ctx) => checkMirroredListingLimits({
+        ...ctx,
+        policy: {
+          ...ctx.policy,
+          limits: Object.fromEntries(Object.entries(ctx.policy.limits).map(([k, v]) =>
+            k === "max_icon_bytes_mirrored_by" ? ["max_icon_bytes_unmirrored", "debt, recorded"] : [k, v])),
+        },
+      }));
+    const stale = paid.find((f) => f.level === "error" && f.message.includes("is declared `_unmirrored`"));
+    assert(stale?.message.includes("max_icon_bytes"),
+      `an _unmirrored cap whose row the pinned file carries passed: ${JSON.stringify(paid)}`);
+    assert(stale.hint.includes("max_icon_bytes_mirrored_by"),
+      "the message must name the sibling to write, not only the one that is wrong");
 
     // And its floor: declarations deleted wholesale is the same green as a reader
     // that stopped matching them, and they need opposite fixes.
