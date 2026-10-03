@@ -59,6 +59,7 @@ import path from "node:path";
 
 import { compareSemver, parseSemver } from "../tools/lib/semver.mjs";
 import { invalidId, unsafePathComponent } from "../tools/lib/ids.mjs";
+import { readTree, treeModeProblems } from "../tools/lib/tree-modes.mjs";
 
 export const EXIT = { ok: 0, refused: 1, broke: 2, conflict: 3 };
 
@@ -801,6 +802,35 @@ export function run({
       return { outcome: "nothing", attempts: attempt, touchedIds: [...state.touchedIds], queued: queued(), refusals };
     }
     git(root, ["commit", "-m", message, ...(trailer ? ["-m", trailer] : [])], { stdio: "pipe" });
+
+    // The tree rule, asked of THIS commit before anything leaves the runner
+    // (tools/lib/tree-modes.mjs). `registryChecks` ran `tools/validate.mjs`
+    // before anything was staged: its tree rule read the commit this run
+    // started from, and its loaders walked the files, refusing a link in some
+    // places and reading straight through one in others
+    // (`plugins/<id>/plugin.json`, `identity.json`). `git add -A` above then
+    // takes whatever stands under the pathspecs, an untracked symlink
+    // included, and only the commit says what was taken. So a bot commit can
+    // never carry a link, a gitlink or an empty directory to `main`: the
+    // attempt is undone as a failed check, whose outcome the author's comment
+    // already explains.
+    //
+    // Not behind `skipChecks`. That flag exists because this file's own toy
+    // repositories hold no listings for the validator to judge; every
+    // repository has a tree, and this rule needs nothing else.
+    let swept = [];
+    try {
+      const made = readTree(root, "HEAD");
+      swept = treeModeProblems(made.rows, made.at.slice(0, 12));
+    } catch (err) {
+      attemptFailed(err);
+    }
+    if (swept.length > 0) {
+      attemptFailed(new ChecksFailed(
+        "the commit this run made holds what the registry's tree may not: " +
+        swept.map((p) => `${p.path}: ${p.message}`).join("; "),
+      ));
+    }
 
     if (!push) {
       return { outcome: "committed", attempts: attempt, touchedIds: [...state.touchedIds], queued: queued(), refusals };

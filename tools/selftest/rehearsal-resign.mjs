@@ -276,6 +276,40 @@ export async function run() {
     assert(/Push step 0 with rehearsal-push first/.test(r3.out), `the refusal does not say what to run:\n${r3.out}`);
   });
 
+  // A commit that carries step 0's four documents byte for byte and an empty
+  // directory beside them. Every leaf-reading question below it — `diff
+  // --name-only`, `ls-tree -r` — sees the four documents and nothing else, so
+  // until 2026-10-03 this read as a line of re-signs, while a reader of trees
+  // sees a fifth entry on `signed` (the plugins service's empty-tree finding).
+  // A document committed as a link passed the same way: its path is one of
+  // the four.
+  await test("a commit on step 0 that adds only an empty directory, or holds a document as a link, is not a re-sign", async () => {
+    const target = canary4();
+    const g = rp.gitAt(target);
+    const s0 = step0();
+    // An identity of the fixture's own: a runner has none configured.
+    const who = { name: "t", email: "t@users.noreply.invalid", date: "2026-10-03T15:00:00Z" };
+    const empty = g(["mktree"], { input: "" }).out;
+    const top = g(["ls-tree", s0.sha]).out;
+    const withEmpty = g(["mktree"], { input: `${top}\n040000 tree ${empty}\tjunk\n` }).out;
+    const head = g(["commit-tree", withEmpty, "-p", s0.sha], { input: "a re-sign that is not one\n", who }).out;
+    const why = lineageProblem(g, s0, head);
+    assert(why !== null && /junk: an empty directory/.test(why), `a commit carrying an empty directory read as a re-sign: ${why}`);
+
+    const v1 = g(["rev-parse", `${s0.sha}:registry/v1`]).out;
+    const rows = g(["ls-tree", v1]).out.split("\n");
+    const pointee = g(["hash-object", "-w", "--stdin"], { input: "trust.json" }).out;
+    const linked = g(["mktree"], {
+      input: `${rows.map((r) => (r.endsWith("\tindex.json") ? `120000 blob ${pointee}\tindex.json` : r)).join("\n")}\n`,
+    }).out;
+    const registry = g(["mktree"], { input: `040000 tree ${linked}\tv1\n` }).out;
+    const rootTree = g(["mktree"], { input: `040000 tree ${registry}\tregistry\n` }).out;
+    const head2 = g(["commit-tree", rootTree, "-p", s0.sha], { input: "a document as a link\n", who }).out;
+    const why2 = lineageProblem(g, s0, head2);
+    assert(why2 !== null && /registry\/v1\/index\.json: a symbolic link, git mode 120000/.test(why2),
+      `a commit holding a document as a link was not refused by name and mode: ${why2}`);
+  });
+
   await test("TRUST-3: a canary whose main lacks the cut's sources is refused before anything is signed", async () => {
     const target = canary4({ main: "bare-main" });
     const r = await resign(["--event", "schedule"], { to: { [URL_4]: target }, when: at(30) });

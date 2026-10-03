@@ -98,6 +98,7 @@ import { buildIndex, indexContent, publisherKeyProblems } from "./build-index.mj
 import { RESERVED_KEYS, SUPPORTED_KEYS } from "./lib/platform.mjs";
 import { isTime } from "./lib/time.mjs";
 import { reviewMarkFindings } from "./lib/review-mark.mjs";
+import { TREE_MODE_HINT, readTree, treeModeProblems, unaskableRoot } from "./lib/tree-modes.mjs";
 
 // `tools/lib/platform.mjs`'s table, not a copy of it. Until 2026-09-22 these
 // were two literals of this file's own, and platform.mjs's RESERVED_KEYS was
@@ -2913,6 +2914,42 @@ export function checkRecordStrings(ctx) {
   }
 }
 
+/**
+ * Every entry in the tree at HEAD is a regular file (`100644`, `100755`) or a
+ * non-empty directory (`040000`), as git's canonical modes read it — the whole
+ * repository, B.4's record roots and TRUST-31's set among it.
+ * `tools/lib/tree-modes.mjs` says why, and why from git and never from the
+ * filesystem.
+ *
+ * **HEAD, so what it judges is a commit.** In CI that is the pull request's
+ * merge commit, and in the signer's catalogue gate it is the Source-Commit, so
+ * a link that reached `main` anyway holds the catalogue at `signed`'s head.
+ * Where a writer validates BEFORE it commits — `bot/publish-apply.mjs`, the
+ * moderation and operator jobs — this reads the commit the writer starts from,
+ * and the writer's own commit is a second question: `bot/publish-apply.mjs`
+ * asks it of the commit it made, before it pushes.
+ *
+ * Over a directory that is not the top of a git work tree — every fixture
+ * under `tests/fixtures/`, and the copy `bot/ingest.mjs` validates a derived
+ * listing in — there is no commit to read, and the note says so rather than
+ * the run reading as though the rule passed.
+ */
+export function checkTreeModes(ctx) {
+  const { report, root } = ctx;
+  const unaskable = unaskableRoot(root);
+  if (unaskable) {
+    report.note("tree modes", `not asked: ${unaskable}`);
+    return;
+  }
+  const { at, rows } = readTree(root, "HEAD");
+  if (rows.length === 0) {
+    report.error("tree modes", `git ls-tree listed nothing at ${at}; a listing of nothing refuses nothing, so this is ` +
+      "a broken read, not a clean tree");
+    return;
+  }
+  for (const p of treeModeProblems(rows, at.slice(0, 12))) report.error(p.path, p.message, TREE_MODE_HINT);
+}
+
 // ── driver ──────────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
@@ -2981,6 +3018,7 @@ export async function runValidation(opts) {
   checkBaselineMarker(usable, ctx);
   checkMigrationMarkers(ctx);
   checkNoticeMarkers(ctx);
+  checkTreeModes(ctx);
   checkRecordStrings(ctx);
 
   // B.4's other record trees, walked once and handed to both checks: the
