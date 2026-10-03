@@ -57,7 +57,8 @@ const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
 
 // Every check below that reads fixtures reads ONE CUT of the series
 // (`REHEARSALS`: rehearsal-r2 at T0 2026-09-22, rehearsal-r2b at T0
-// 2026-09-26, rehearsal-r2c at T0 2026-10-24), and `run()` asks each of them
+// 2026-09-26, rehearsal-r2c at T0 2026-10-24, rehearsal-r2d at T0 2026-10-03),
+// and `run()` asks each of them
 // of every cut, by name. A cut the staging service is shown is a cut this
 // judge has passed whole; one cut's passing says nothing about another's bytes.
 let FIXTURES = null;

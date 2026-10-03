@@ -1590,6 +1590,10 @@ export async function run() {
     "tools/lib/review-mark.mjs › committedHalf": [1, "the first-parent commits from 3.0.0's landing commit to HEAD, no pathspec, which the review-mark rules walk"],
     "tools/moderation-coverage.mjs › commitMode": [1, "a message quoting the depth of the whole history"],
     "tools/priv-scan.mjs › run": [1, "a message quoting the depth of the whole history"],
+    // ROLL-60's rolling re-sign (2026-10-03): a rehearsal canary's `signed`,
+    // never this repository's, from the fixture's step 0 to its head.
+    "tools/lib/rehearsal-resign.mjs › lineageProblem": [1, "the re-signs between a rehearsal canary's step 0 and its head, each judged one by one, no pathspec"],
+    "tools/lib/rehearsal-resign.mjs › run": [1, "how many re-signs a rehearsal canary's head is past its step 0, printed, never a serial"],
   }));
 
   await test("entry 128 — every catalogue-serial count under tools/, bot/ and .github/ is one the head check above asks at a merge, and every other `rev-list` there is declared as counting something else", () => {

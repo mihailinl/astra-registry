@@ -42,7 +42,7 @@ const REPO = path.resolve(HERE, "..", "..");
  * The two are held equal by `tools/selftest/rehearsal-push.mjs`. The judge
  * judges every cut, so a push of any cut needs every cut to pass.
  */
-const JUDGE_FLOOR = 45;
+const JUDGE_FLOOR = 59;
 const MARK = "REHEARSAL-JUDGE ";
 
 function judge() {
