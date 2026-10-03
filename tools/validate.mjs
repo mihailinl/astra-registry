@@ -1512,6 +1512,28 @@ export function checkMirroredListingLimits(ctx) {
       "Do NOT fix it by deleting the `_mirrored_by` sibling: that greens both halves of C20 in one keystroke, " +
       "leaves the cap enforced here exactly as it was, and puts the number back to being a copy nobody compares.");
   }
+
+  // ── debt that has been paid, still on the books ──────────────────────────
+  // `_unmirrored` says "an author can trip this and nothing local checks it",
+  // and checkEveryCapDeclaresItsAuthorSide prints that sentence on every run.
+  // Nothing made it stop being printed once the copy existed. With the pin at
+  // AstraPlugins d15c896 this registry went on saying `max_icon_bytes` had no
+  // local check while `astra-plugin build` warned over it — true at the
+  // previous pin, false at this one, and green either way. The loop above
+  // enumerates `_mirrored_by` declarations; this one enumerates the
+  // `_unmirrored` ones and asks the same file the opposite question. The fix
+  // is the flip the sentence promises, never deleting the row upstream.
+  const paid = Object.keys(limits)
+    .filter((k) => k.endsWith("_unmirrored"))
+    .map((k) => k.slice(0, -"_unmirrored".length))
+    .filter((name) => present.has(name));
+  for (const name of paid) {
+    ctx.report.error("policy/limits.json",
+      `${name} is declared \`_unmirrored\`, and ${where} at this repository's AstraPlugins pin carries a \`${name}\` row`,
+      `The debt that sibling records has been paid: replace \`${name}_unmirrored\` with ` +
+      `\`"${name}_mirrored_by": "${MIRRORED_BY_FILE} ${name}"\`, so the copy is compared in both directions ` +
+      "from now on (here, and by C20 in AstraPlugins) and this registry stops telling authors nothing checks it.");
+  }
 }
 
 /**
