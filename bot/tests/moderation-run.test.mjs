@@ -1650,6 +1650,20 @@ function readOutputs(file) {
 }
 
 /**
+ * The step runs `node tools/lib/tree-modes.mjs HEAD` from the checkout before
+ * it pushes (ops couplings 216), so the fixture needs the module where a
+ * checkout has it. Copied beside the tree and excluded from it, so that no
+ * fixture commit carries it and every path list asserted here stays the one
+ * the case wrote. `bot/tests/publish-apply.test.mjs` holds the rule's line to
+ * refusing a bad commit; here it only has to pass a good one.
+ */
+function withTreeRule(root) {
+  if (fs.existsSync(path.join(root, "tools", "lib", "tree-modes.mjs"))) return;
+  fs.cpSync(path.join(REPO, "tools", "lib"), path.join(root, "tools", "lib"), { recursive: true });
+  fs.appendFileSync(path.join(root, ".git", "info", "exclude"), "/tools/lib/\n");
+}
+
+/**
  * The step, under `bash -e` as a runner starts a `run:` block, in the checkout,
  * with a `$GITHUB_OUTPUT` of its own — which is what the job's `outputs:` block
  * reads, and so what `report` and `settled` are handed.
@@ -1657,6 +1671,7 @@ function readOutputs(file) {
 function runApply(root, env = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-step-"));
   tmpRoots.push(dir);
+  withTreeRule(root);
   const file = path.join(dir, "apply.sh");
   const output = path.join(dir, "github-output");
   fs.writeFileSync(file, applyStep());

@@ -33,6 +33,7 @@ import {
   newestVersionInTree,
   run,
 } from "../publish-apply.mjs";
+import { readTree, treeModeProblems } from "../../tools/lib/tree-modes.mjs";
 
 const git = (cwd, ...args) =>
   execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: fixtureEnv(cwd) }).trim();
@@ -802,6 +803,379 @@ test("a link in the checkout is swept into the bot's commit, and the tree rule r
   assert.equal(git(bare, "rev-list", "--count", "main"), "1", "the commit carrying the link reached the remote");
   assert.equal(git(one, "rev-parse", "HEAD"), base, "the refused commit was left on the runner's branch");
   assert.ok(!fs.existsSync(path.join(one, "plugins")), "the attempt was not undone: plugins/ is still in the checkout");
+});
+
+// ── the tree rule, on the commit every OTHER writer makes (ops couplings 216) ──
+//
+// This file's own commit has been asked the rule since registry #392. Five
+// writers commit and push from a workflow's shell instead: the moderation
+// commit job, the operator job, baseline, keepalive and the publisher
+// re-check. Each validated the commit it STARTED from, if it validated at all
+// (keepalive and the re-check never did), so the commit it made met the rule
+// only after the push, in Registry index and the Signer's gate — by which time
+// it was `main`. So each now runs `node tools/lib/tree-modes.mjs HEAD` after
+// its last `git commit` and before every `git push`, and a refusal ends the
+// shell under `set -e` with nothing pushed.
+//
+// Each case below runs the writer's own steps, read out of its workflow, in a
+// clone with a bare `origin`, over a commit that holds a link or an empty
+// directory under a record root, and holds the remote to where it was. Then it
+// runs the same steps with the rule's line deleted and holds the remote to
+// having taken that commit: the fixture is a real bad commit, and the line is
+// the only thing that stops it.
+//
+// **How each bad entry gets into a writer's commit.** A link: by `git add` of a
+// path the writer stages, which takes a link as readily as a file. An empty
+// directory: never by `git add`, which cannot stage one. It rides in a tree
+// git carries over unchanged — a base that held one, checked out by a
+// `reset --hard` (which primes the index's cache of trees from the commit), and
+// a writer whose change is in another directory. That is the only way it
+// reaches these writers, so it is the way the fixture makes it; a `checkout`
+// rebuilds the cache from the index and drops it, which is why the estate
+// resets rather than checks out.
+
+const REPO = path.resolve(import.meta.dirname, "..", "..");
+const WORKFLOWS = path.join(REPO, ".github", "workflows");
+
+/** The line every writer runs, exactly: the rule, on HEAD, from the checkout. The census and the mutation both read it. */
+const TREE_CHECK = /^\s*node\s+tools\/lib\/tree-modes\.mjs\s+HEAD\s*$/;
+
+const gitInput = (cwd, input, ...args) =>
+  execFileSync("git", args, { cwd, input, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], env: fixtureEnv(cwd) }).trim();
+
+/**
+ * The `run: |` block of the step named `name` in `workflow`, verbatim and
+ * dedented: what the runner hands bash. Throws unless the step is found
+ * exactly once and has a block.
+ */
+function stepScript(workflow, name) {
+  const lines = fs.readFileSync(path.join(WORKFLOWS, workflow), "utf8").split("\n");
+  const at = lines.flatMap((l, i) => {
+    const m = /^(\s*)- name:\s*(.+?)\s*$/.exec(l);
+    return m && m[2].replace(/^(["'])(.*)\1$/, "$2") === name ? [i] : [];
+  });
+  assert.equal(at.length, 1, `${workflow} has ${at.length} step(s) named ${JSON.stringify(name)}; this reads exactly one`);
+  const dash = lines[at[0]].indexOf("-");
+  let run = -1;
+  for (let j = at[0] + 1; j < lines.length; j++) {
+    if (lines[j].trim() === "") continue;
+    const n = lines[j].search(/\S/);
+    if (n <= dash) break;
+    if (n === dash + 2 && /^\s*run: \|\s*$/.test(lines[j])) { run = j; break; }
+  }
+  assert.ok(run > 0, `${workflow}'s step ${JSON.stringify(name)} has no \`run: |\` block`);
+  const body = [];
+  let indent = null;
+  for (let j = run + 1; j < lines.length; j++) {
+    const l = lines[j];
+    if (l.trim() === "") { body.push(""); continue; }
+    const n = l.search(/\S/);
+    if (indent === null) indent = n;
+    if (n < indent) break;
+    body.push(l.slice(indent));
+  }
+  return `${body.join("\n").trimEnd()}\n`;
+}
+
+/** A commit on HEAD whose tree adds an empty directory at `rel`, made from trees because nothing else can make one. */
+function withEmptyDirectory(work, rel) {
+  const empty = gitInput(work, "", "mktree");
+  const build = (tree, [name, ...rest]) => {
+    const rows = tree ? git(work, "ls-tree", "-z", tree).split("\0").filter(Boolean) : [];
+    const named = (r) => r.slice(r.indexOf("\t") + 1) === name;
+    const had = rows.find(named);
+    const child = rest.length === 0 ? empty : build(had ? had.split(/\s/)[2] : null, rest);
+    return gitInput(work, [...rows.filter((r) => !named(r)), `040000 tree ${child}\t${name}`].map((r) => `${r}\0`).join(""),
+      "mktree", "-z");
+  };
+  return git(work, "commit-tree", build(git(work, "rev-parse", "HEAD^{tree}"), rel.split("/")), "-p", "HEAD",
+    "-m", `an empty directory at ${rel}`);
+}
+
+/**
+ * A bare `origin` holding `w.base` (and, with `ghost`, an empty directory at
+ * `w.ghost`), and the clone a workflow's checkout would be. The rule's module
+ * is copied in beside the tree and excluded from it: the step runs it from the
+ * checkout, as the runner does, and the fixture's commits stay what the case
+ * says they are.
+ */
+function writerEstate(w, { ghost = false } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-writer-tree-"));
+  estates.push(dir);
+  const bare = path.join(dir, "remote.git");
+  git(dir, "init", "--quiet", "--bare", "--initial-branch=main", bare);
+  const work = path.join(dir, "work");
+  git(dir, "clone", "--quiet", bare, work);
+  git(work, "config", "user.email", "test@example.invalid");
+  git(work, "config", "user.name", "test");
+  git(work, "config", "commit.gpgsign", "false");
+  write(work, "README.md", "a registry\n");
+  for (const [rel, body] of Object.entries(w.base)) write(work, rel, body);
+  git(work, "add", "-A");
+  git(work, "commit", "--quiet", "-m", "seed");
+  if (ghost) git(work, "reset", "--quiet", "--hard", withEmptyDirectory(work, w.ghost));
+  git(work, "push", "--quiet", "-u", "origin", "HEAD:main");
+  fs.cpSync(path.join(REPO, "tools", "lib"), path.join(work, "tools", "lib"), { recursive: true });
+  fs.appendFileSync(path.join(work, ".git", "info", "exclude"), "/tools/lib/\n");
+  const temp = path.join(dir, "runner-temp");
+  fs.mkdirSync(temp);
+  return { dir, bare, work, temp, base: git(work, "rev-parse", "HEAD") };
+}
+
+/** `w.steps`, in order, under `bash -e` as a runner starts a `run:` block; the first failure ends the job. */
+function runWriter(w, e, { withoutCheck = false } = {}) {
+  const output = path.join(e.dir, "github-output");
+  fs.writeFileSync(output, "");
+  let out = "";
+  for (const name of w.steps) {
+    let script = stepScript(w.workflow, name);
+    if (withoutCheck) script = script.split("\n").filter((l) => !TREE_CHECK.test(l)).join("\n");
+    const file = path.join(e.dir, "step.sh");
+    fs.writeFileSync(file, script);
+    const r = spawnSync("bash", ["-e", file], {
+      cwd: e.work,
+      encoding: "utf8",
+      env: { ...fixtureEnv(e.work), ...(w.env?.(e) ?? {}), GITHUB_OUTPUT: output, RUNNER_TEMP: e.temp },
+    });
+    out += `${r.stdout}${r.stderr}`;
+    if (r.status !== 0) return { status: r.status, out };
+  }
+  return { status: 0, out };
+}
+
+const link = (work, rel, target) => {
+  fs.rmSync(path.join(work, rel), { force: true });
+  fs.mkdirSync(path.dirname(path.join(work, rel)), { recursive: true });
+  fs.symlinkSync(target, path.join(work, rel));
+};
+const escape = (s) => s.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+
+const KEEPALIVE_FILE = `${JSON.stringify({ $comment: "the keepalive", month: "2000-01", at: "2000-01-01T00:00:00+00:00", by: "hand", run: null }, null, 2)}\n`;
+
+/**
+ * The five, each with the steps that commit and push, a base, the path its
+ * link case leaves a link at, the directory its empty case carries, and what
+ * the job before the steps leaves on the runner.
+ */
+const WRITERS = {
+  moderation: {
+    name: "the moderation commit job",
+    workflow: "plugins-moderation.yml",
+    steps: ["Commit once, with a Service-Decision: trailer per decision, and push"],
+    base: { "plugins/alpha/plugin.json": '{"id":"alpha"}\n', "publishers/pub.json": '{"login":"pub"}\n' },
+    link: "plugins/alpha/identity.json",
+    ghost: "publishers/ghost",
+    prepare(e, { bad }) {
+      const listed = bad ? this.link : "plugins/alpha/plugin.json";
+      if (bad) link(e.work, this.link, "plugin.json");
+      else write(e.work, listed, '{"id":"alpha","unlisted":true}\n');
+      write(e.work, "moderation/paths.txt", `${listed}\n`);
+      write(e.work, "moderation/commit-message.txt", "registry: moderation (1 decision(s))\n");
+      write(e.work, "moderation/results.json", "{}\n");
+    },
+  },
+  operator: {
+    name: "the operator job",
+    workflow: "operator.yml",
+    steps: ["Commit once, and push"],
+    base: { "plugins/alpha/plugin.json": '{"id":"alpha"}\n' },
+    link: "state/holds/alpha.json",
+    ghost: "plugins/ghost",
+    prepare(e, { bad }) {
+      if (bad) link(e.work, this.link, "../../README.md");
+      else write(e.work, this.link, '{"hold":"alpha"}\n');
+      write(e.work, "operator/paths.txt", `${this.link}\n`);
+      write(e.work, "operator/commit-message.txt", "operator: confirm\n");
+    },
+  },
+  baseline: {
+    name: "baseline",
+    workflow: "baseline.yml",
+    steps: ["One commit holding every record and the marker, pushed, and read back"],
+    base: { "plugins/alpha/plugin.json": '{"id":"alpha"}\n' },
+    link: "log/decisions/alpha.json",
+    ghost: "plugins/ghost",
+    prepare(e, { bad }) {
+      write(e.work, "log/baseline.json", '{"marker":true}\n');
+      if (bad) link(e.work, this.link, "../baseline.json");
+      else write(e.work, this.link, '{"kind":"migration"}\n');
+      write(e.work, "baseline-commit.txt", "baseline: MIG-20\n");
+    },
+  },
+  keepalive: {
+    name: "keepalive",
+    workflow: "keepalive.yml",
+    steps: ["The month, committed, and nothing else with it", "The push, which starts no workflow run and is not meant to"],
+    base: {
+      "plugins/alpha/plugin.json": '{"id":"alpha"}\n',
+      "state/keepalive.json": KEEPALIVE_FILE,
+      "state/elsewhere.json": KEEPALIVE_FILE,
+    },
+    link: "state/keepalive.json",
+    ghost: "plugins/ghost",
+    prepare(e, { bad }) {
+      if (bad) link(e.work, this.link, "elsewhere.json");
+    },
+    // The month step's outputs. TZ=UTC so git stamps the commit in the month
+    // the clock gave, as the runner does.
+    env() {
+      const at = new Date().toISOString().replace(/\.\d+Z$/, "+00:00");
+      return { TZ: "UTC", NEEDED: "true", AT: at, MONTH: at.slice(0, 7), RUN_URL: "https://example.invalid/run/1" };
+    },
+  },
+  recheck: {
+    name: "the publisher re-check",
+    workflow: "publisher-recheck.yml",
+    steps: ["Commit whatever moved"],
+    base: {
+      "plugins/alpha/plugin.json": '{"id":"alpha"}\n',
+      "publishers/pub.json": '{"login":"pub"}\n',
+      "state/publishers-without-listing.json": '{"declarations":[]}\n',
+    },
+    link: "publishers/pub.json",
+    ghost: "plugins/ghost",
+    prepare(e, { bad }) {
+      if (bad) link(e.work, this.link, "../README.md");
+      else write(e.work, this.link, '{"login":"pub","last_confirmed_at":"2026-10-03"}\n');
+      fs.writeFileSync(path.join(e.temp, "recheck.log"), "ok    pub: confirmed\n");
+    },
+  },
+};
+
+/**
+ * Both cases for one writer, each as written (refused) and with the rule's
+ * line deleted (pushed). Both are run whatever the first one says, so a red
+ * names every case that is red.
+ */
+function judgeWriter(w) {
+  const failures = [];
+  for (const ghost of [false, true]) {
+    try {
+      judgeCase(w, ghost);
+    } catch (err) {
+      failures.push(err.message);
+    }
+  }
+  assert.equal(failures.length, 0, failures.join("\n\n"));
+}
+
+function judgeCase(w, ghost) {
+  const what = ghost ? `an empty directory at ${w.ghost}` : `a link at ${w.link}`;
+  const said = ghost
+    ? new RegExp(`${escape(w.ghost)}: an empty directory, git mode 040000 with no file beneath it, in the tree at ([0-9a-f]{12})`)
+    : new RegExp(`${escape(w.link)}: a symbolic link, git mode 120000, in the tree at ([0-9a-f]{12})`);
+
+  const e = writerEstate(w, { ghost });
+  w.prepare(e, { bad: !ghost });
+  const r = runWriter(w, e);
+  assert.notEqual(r.status, 0, `${w.name} pushed a commit holding ${what}:\n${r.out}`);
+  assert.equal(git(e.bare, "rev-parse", "main"), e.base, `${w.name}: the commit holding ${what} reached the remote`);
+  const head = git(e.work, "rev-parse", "HEAD");
+  assert.notEqual(head, e.base, `${w.name} stopped before it committed, so the rule was never asked of its commit:\n${r.out}`);
+  const named = said.exec(r.out);
+  assert.ok(named, `${w.name} was refused, but not by the tree rule naming ${what}:\n${r.out}`);
+  assert.equal(named[1], head.slice(0, 12), `the rule judged ${named[1]}, not the commit ${w.name} made`);
+
+  const m = writerEstate(w, { ghost });
+  w.prepare(m, { bad: !ghost });
+  const mr = runWriter(w, m, { withoutCheck: true });
+  assert.equal(mr.status, 0, `${w.name}, with the rule's line deleted, failed for another reason, so the case proves nothing:\n${mr.out}`);
+  const landed = git(m.bare, "rev-parse", "main");
+  assert.notEqual(landed, m.base, `${w.name}, with the rule's line deleted, pushed nothing`);
+  const { rows } = readTree(m.bare, landed);
+  assert.deepEqual(treeModeProblems(rows).map((p) => p.path), [ghost ? w.ghost : w.link],
+    `${w.name}, with the rule's line deleted, pushed a commit that does not hold ${what} and nothing else`);
+}
+
+test("the moderation commit job's own commit, holding a link or an empty directory, is refused before the push", () => {
+  judgeWriter(WRITERS.moderation);
+});
+
+test("the operator job's own commit, holding a link or an empty directory, is refused before the push", () => {
+  judgeWriter(WRITERS.operator);
+});
+
+test("baseline's own commit, holding a link or an empty directory, is refused before the push", () => {
+  judgeWriter(WRITERS.baseline);
+});
+
+test("keepalive's own commit, holding a link or an empty directory, is refused before the push", () => {
+  judgeWriter(WRITERS.keepalive);
+});
+
+test("the publisher re-check's own commit, holding a link or an empty directory, is refused before the push", () => {
+  judgeWriter(WRITERS.recheck);
+});
+
+// Keepalive retries a refused push by rebasing onto what `main` holds now, so
+// the commit it pushes on the second attempt is not the one it made: it carries
+// whatever `main` moved to. The rule is asked on every attempt, and this is the
+// case that tells "every attempt" from "once, before the loop".
+test("keepalive asks the rule again of the commit a rebase made, before the push after it", () => {
+  const w = WRITERS.keepalive;
+  const moveMain = (e) => {
+    const other = path.join(e.dir, "other");
+    git(e.dir, "clone", "--quiet", e.bare, other);
+    git(other, "config", "user.email", "other@example.invalid");
+    git(other, "config", "user.name", "other");
+    git(other, "config", "commit.gpgsign", "false");
+    link(other, "plugins/alpha/up", "../..");
+    git(other, "add", "-A");
+    git(other, "commit", "--quiet", "-m", "a writer that asks nothing lands a link");
+    git(other, "push", "--quiet", "origin", "HEAD:main");
+    return git(e.bare, "rev-parse", "main");
+  };
+
+  const e = writerEstate(w);
+  const moved = moveMain(e);
+  const r = runWriter(w, e);
+  assert.notEqual(r.status, 0, `keepalive pushed its rebased commit over a main holding a link:\n${r.out}`);
+  assert.match(r.out, /push refused on attempt 1/, `the first push was not the one refused, so the rebase never ran:\n${r.out}`);
+  assert.match(r.out, /plugins\/alpha\/up: a symbolic link, git mode 120000/, r.out);
+  assert.equal(git(e.bare, "rev-parse", "main"), moved, "keepalive's rebased commit reached the remote");
+
+  const m = writerEstate(w);
+  const movedToo = moveMain(m);
+  const mr = runWriter(w, m, { withoutCheck: true });
+  assert.equal(mr.status, 0, `with the rule's line deleted, keepalive failed for another reason:\n${mr.out}`);
+  assert.match(mr.out, /pushed on attempt 2/, mr.out);
+  assert.notEqual(git(m.bare, "rev-parse", "main"), movedToo);
+});
+
+// The census, so that a sixth writer cannot arrive without the line: every
+// uncommented workflow line that runs `git push` has the rule on HEAD before
+// it, in its job, after the last line that makes or moves a commit. It reads
+// lines and not shells, so it is the floor under the cases above and not a
+// substitute for them: it cannot see a loop, which the rebase case can.
+test("every workflow line that pushes has the tree rule on HEAD before it, after the last line that makes a commit", () => {
+  const moves = /\bgit\s+(commit|commit-tree|rebase|merge|cherry-pick|am|pull|reset|revert|update-ref|checkout|switch)\b/;
+  const pushes = [];
+  const problems = [];
+  for (const file of fs.readdirSync(WORKFLOWS).filter((n) => /\.ya?ml$/.test(n)).sort()) {
+    const lines = fs.readFileSync(path.join(WORKFLOWS, file), "utf8").split("\n");
+    lines.forEach((line, i) => {
+      if (/^\s*#/.test(line) || !/\bgit\s+push\b/.test(line)) return;
+      pushes.push(`${file}:${i + 1}`);
+      for (let k = i - 1; ; k--) {
+        if (k < 0 || /^\S/.test(lines[k]) || /^ {2}[A-Za-z0-9_-]+:\s*$/.test(lines[k])) {
+          problems.push(`${file}:${i + 1} pushes, and nothing in its job runs \`node tools/lib/tree-modes.mjs HEAD\` before it`);
+          break;
+        }
+        if (/^\s*#/.test(lines[k])) continue;
+        if (TREE_CHECK.test(lines[k])) break;
+        const moved = moves.exec(lines[k]);
+        if (moved) {
+          problems.push(`${file}:${i + 1} pushes after \`git ${moved[1]}\` at line ${k + 1}, and runs no ` +
+            "`node tools/lib/tree-modes.mjs HEAD` between them, so its own commit meets the tree rule only on main");
+          break;
+        }
+      }
+    });
+  }
+  // The floor, counted 2026-10-03: baseline, keepalive, operator,
+  // plugins-moderation and publisher-recheck, one push line each.
+  assert.ok(pushes.length >= 5, `found ${pushes.length} workflow line(s) that push, and there were 5 on 2026-10-03: ${pushes.join(", ")}`);
+  assert.deepEqual(problems, [], "a workflow pushes a commit the tree rule has not been asked about");
 });
 
 // ── this file, from outside ──────────────────────────────────────────────────

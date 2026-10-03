@@ -102,6 +102,10 @@ jobs:
             fi
           } > "$RUNNER_TEMP/commit-message.txt"
           git commit -F "$RUNNER_TEMP/commit-message.txt"
+          # The tree rule on the commit just made, before the push (ops
+          # couplings 216). This job runs no validator, and staging
+          # `publishers/` takes a link standing there as readily as a record.
+          node tools/lib/tree-modes.mjs HEAD
           git push
 
       # A withdrawal is the one outcome a person has to hear about, and the
