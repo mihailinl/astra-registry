@@ -1,0 +1,63 @@
+{
+  "schema": "astra.registry.signer-run/1",
+  "step": "sign",
+  "now": "2026-10-03T04:00:00Z",
+  "source_commit": "2600a2dbda23dadf4fc86d1e5fec1c3fe05a6ad8",
+  "index_source_commit": "2600a2dbda23dadf4fc86d1e5fec1c3fe05a6ad8",
+  "parent": "db1c656e89c70c19ab12158afdec34d47c528226",
+  "branch": "signed",
+  "serials": {
+    "index": 3,
+    "revocations": 4
+  },
+  "key_mode": "normal",
+  "dropped_keys": [],
+  "documents": {
+    "index": {
+      "decision": "changed",
+      "serial": 3,
+      "signed_by": [
+        "astra-index-2026a"
+      ]
+    },
+    "revocations": {
+      "decision": "changed",
+      "serial": 4,
+      "signed_by": [
+        "astra-index-2026a",
+        "TEST-ONLY-DO-NOT-TRUST-index-2026b"
+      ]
+    },
+    "trust": {
+      "decision": "copied",
+      "serial": null,
+      "signed_by": null
+    },
+    "root": {
+      "decision": "copied",
+      "serial": null,
+      "signed_by": null
+    }
+  },
+  "files": [
+    "registry/v1/index.json",
+    "registry/v1/revocations.json",
+    "registry/v1/root.json",
+    "registry/v1/trust.json"
+  ],
+  "alerts": [],
+  "refusals": [],
+  "notes": [
+    "TEST-ONLY-DO-NOT-TRUST-index-2026b was first delegated at 2026-10-03T01:00:00Z, 3.00 h ago; it may sign the catalogue after 7 h"
+  ],
+  "warnings": [],
+  "codes": [],
+  "hexes": [
+    "2600a2dbda23dadf4fc86d1e5fec1c3fe05a6ad8"
+  ],
+  "status": "green",
+  "commit": true,
+  "$command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 2600a2dbda23dadf4fc86d1e5fec1c3fe05a6ad8 --now 2026-10-03T04:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-02-mid-window.json",
+  "$signed_sha": "52a5e9e5ae98af8ada639a94690d5097104e88a4",
+  "$commit_message": "signed: catalogue 3, withdrawal list 4 at 2600a2dbda23\n\nregistry/v1/index.json: changed at serial 3\nregistry/v1/revocations.json: changed at serial 4\n\nSource-Commit: 2600a2dbda23dadf4fc86d1e5fec1c3fe05a6ad8\nRun: https://github.com/mihailinl/astra-registry/actions/runs/0\nSigner: sign.yml\nIndex-Source-Commit: 2600a2dbda23dadf4fc86d1e5fec1c3fe05a6ad8"
+}

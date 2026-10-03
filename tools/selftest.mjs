@@ -158,6 +158,12 @@ const MODULES = [
   // theirs, so it moves no existing name. **This line, its FLOORS entry and the
   // file are one change**, for the reason written out at `regenerate.mjs`.
   "rehearsal-push.mjs",
+  // And one step further: canary-4's step 0 kept fresh by the real signer, at
+  // equal serials, on a fake clock against local bare remotes — a re-sign
+  // keeps the serials, a served list is never older than its window, and
+  // neither the tool nor canary-4's workflow can reach production. It prints
+  // its own header. **This line, its FLOORS entry and the file are one change.**
+  "rehearsal-resign.mjs",
   // Beside signer.mjs for the reason signer.mjs is beside index-signature.mjs:
   // it is the same subject one step on. That module asks what the signer
   // decides to publish; this one asks whether what is published is what `main`
@@ -1936,8 +1942,9 @@ const FLOORS = new Map(Object.entries({
   "index-signature.mjs": 21,
   "signer.mjs": 26,
   "signer-run.mjs": 11,
-  "rehearsal-r2.mjs": 45,
+  "rehearsal-r2.mjs": 59,
   "rehearsal-push.mjs": 18,
+  "rehearsal-resign.mjs": 13,
   "served-set.mjs": 35,
   "revocations.mjs": 27,
   "cli.mjs": 14,

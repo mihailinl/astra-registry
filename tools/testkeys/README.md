@@ -74,12 +74,15 @@ TEST-ONLY-DO-NOT-TRUST-root-b.pub.json
 TEST-ONLY-DO-NOT-TRUST-root-b.SECRET-TEST-KEY.json
 regenerate.mjs                                   rederives all four from the phrases
 sign-trust.mjs                                   signs a trust.json `signed` block
-make-rehearsal-r2.mjs                            builds fixtures/rehearsal-r2/, -r2b/ and -r2c/ — see below
+make-rehearsal-r2.mjs                            builds fixtures/rehearsal-r2/, -r2b/, -r2c/ and -r2d/ — see below
 rehearsal-push.mjs                               serves each on its own canary, one step at a time
+rehearsal-resign.mjs                             keeps canary-4's step 0 fresh, re-signed by the real signer
+rehearsal-resign.yml                             the template of canary-4's hourly workflow that runs it
 fixtures/                                        signed documents the daemon tests read
 fixtures/rehearsal-r2/                           the ROLL-60 rehearsal series, T0 2026-09-22 — see its README
 fixtures/rehearsal-r2b/                          the same series, T0 2026-09-26
-fixtures/rehearsal-r2c/                          the same series, T0 2026-10-24 (hard end 2026-10-31)
+fixtures/rehearsal-r2c/                          the same series, T0 2026-10-24 (canary-3, abandoned)
+fixtures/rehearsal-r2d/                          the same series, T0 2026-10-03 (canary-4, step 0 re-signed)
 vectors/                                         the signed-set corpus — see vectors/README.md
 ```
 
@@ -103,7 +106,12 @@ its lists expire seven days after T0 and a `signed` branch that has served a
 step can never be rewound. `fixtures/rehearsal-r2b/` is the same series three
 days after `fixtures/rehearsal-r2/`, for a walk that slipped past 2026-09-29.
 `fixtures/rehearsal-r2c/` is the same series at T0 2026-10-24, so that its
-step 0 still serves on 2026-10-31, the date the plugins service asked for.
+step 0 still serves on 2026-10-31, the date the plugins service asked for. The
+service refuses it, because a list may not pass `min(issued_at, judged_at) + 8
+days`, and canary-3 is abandoned. `fixtures/rehearsal-r2d/` is the same series
+at T0 2026-10-03 on canary-4. There `rehearsal-resign.mjs` keeps step 0 fresh,
+re-signing it at equal serials with the real signer once it is 20 hours old,
+as production does.
 
 Unlike the fixtures above it, **none of it is assembled here.** Every document
 comes out of `tools/signer/run.mjs --step sign --test-key …`, the same program
@@ -119,9 +127,11 @@ series, the borrowed key id and why it is borrowed, and how to replay it.
 bytes and pushed only if it is the sha the signer committed, one step at a
 time. The first cut goes onto BOT-88's test repository,
 `mihailinl/astra-registry-canary`. The second goes onto
-`mihailinl/astra-registry-canary-2`, and the third onto
-`mihailinl/astra-registry-canary-3`, the default. Each is refused on every
-other, and all are refused anywhere else. `--list`, `--status` and
+`mihailinl/astra-registry-canary-2`, the third onto
+`mihailinl/astra-registry-canary-3` (abandoned: nothing is pushed there
+again), and the fourth onto `mihailinl/astra-registry-canary-4`, the default,
+step 0 only. Each is refused on every other, and all are refused anywhere
+else. `--list`, `--status` and
 `--dry-run` say what it would do; astra-plugins-ops
 `runbooks/roll-60-rehearsal.md` is the day it is run on.
 

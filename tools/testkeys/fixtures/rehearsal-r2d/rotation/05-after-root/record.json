@@ -1,0 +1,62 @@
+{
+  "schema": "astra.registry.signer-run/1",
+  "step": "sign",
+  "now": "2026-10-03T11:00:00Z",
+  "source_commit": "0f215cbd96a921dc327ea854ebf9765310b4b0fd",
+  "index_source_commit": "0f215cbd96a921dc327ea854ebf9765310b4b0fd",
+  "parent": "f1f087fb87730403e163c704b3cd639dd456e8c5",
+  "branch": "signed",
+  "serials": {
+    "index": 6,
+    "revocations": 7
+  },
+  "key_mode": "normal",
+  "dropped_keys": [],
+  "documents": {
+    "index": {
+      "decision": "changed",
+      "serial": 6,
+      "signed_by": [
+        "astra-index-2026a",
+        "TEST-ONLY-DO-NOT-TRUST-index-2026b"
+      ]
+    },
+    "revocations": {
+      "decision": "changed",
+      "serial": 7,
+      "signed_by": [
+        "astra-index-2026a",
+        "TEST-ONLY-DO-NOT-TRUST-index-2026b"
+      ]
+    },
+    "trust": {
+      "decision": "copied",
+      "serial": null,
+      "signed_by": null
+    },
+    "root": {
+      "decision": "copied",
+      "serial": null,
+      "signed_by": null
+    }
+  },
+  "files": [
+    "registry/v1/index.json",
+    "registry/v1/revocations.json",
+    "registry/v1/root.json",
+    "registry/v1/trust.json"
+  ],
+  "alerts": [],
+  "refusals": [],
+  "notes": [],
+  "warnings": [],
+  "codes": [],
+  "hexes": [
+    "0f215cbd96a921dc327ea854ebf9765310b4b0fd"
+  ],
+  "status": "green",
+  "commit": true,
+  "$command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit 0f215cbd96a921dc327ea854ebf9765310b4b0fd --now 2026-10-03T11:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-05-after-root.json",
+  "$signed_sha": "47c0335e3c938fe2ad65017d4e932bd2d26b9fab",
+  "$commit_message": "signed: catalogue 6, withdrawal list 7 at 0f215cbd96a9\n\nregistry/v1/index.json: changed at serial 6\nregistry/v1/revocations.json: changed at serial 7\n\nSource-Commit: 0f215cbd96a921dc327ea854ebf9765310b4b0fd\nRun: https://github.com/mihailinl/astra-registry/actions/runs/0\nSigner: sign.yml\nIndex-Source-Commit: 0f215cbd96a921dc327ea854ebf9765310b4b0fd"
+}

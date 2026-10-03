@@ -1,6 +1,6 @@
 // ROLL-60's rehearsal, pushed: `tools/lib/rehearsal-push.mjs`, driven the way
 // the operator's `tools/testkeys/rehearsal-push.mjs --step N` drives it, against
-// local bare repositories standing in for the three canaries and for the
+// local bare repositories standing in for the four canaries and for the
 // production registry. git is pointed at them with `url.<bare>.insteadOf` for
 // the real GitHub URLs, so the code under test builds, checks and pushes to
 // exactly the URL it would on the day, and nothing here reaches the network:
@@ -39,14 +39,18 @@ const ROOT = path.join(tmp, "rehearsal-push");
 const CANARY_1 = "mihailinl/astra-registry-canary";
 /** The second, which serves the cut at T0 2026-09-26 (hard end 2026-10-03). */
 const CANARY_2 = "mihailinl/astra-registry-canary-2";
-/** The third, which serves the cut at T0 2026-10-24 (hard end 2026-10-31): the default. */
+/** The third, which carries the cut at T0 2026-10-24 and is abandoned: nothing may push to it again. */
 const CANARY_3 = "mihailinl/astra-registry-canary-3";
+/** The fourth, which serves the cut at T0 2026-10-03, step 0 only, re-signed by rehearsal-resign: the default. */
+const CANARY_4 = "mihailinl/astra-registry-canary-4";
 const OLD = "rehearsal-r2";
 const MID = "rehearsal-r2b";
-const NEW = "rehearsal-r2c";
+const C3 = "rehearsal-r2c";
+const NEW = "rehearsal-r2d";
 const URL_1 = `https://github.com/${CANARY_1}.git`;
 const URL_2 = `https://github.com/${CANARY_2}.git`;
 const URL_3 = `https://github.com/${CANARY_3}.git`;
+const URL_4 = `https://github.com/${CANARY_4}.git`;
 const PRODUCTION_URL = "https://github.com/mihailinl/astra-registry.git";
 const PAGES = "https://pages.invalid/astra-registry-canary/";
 
@@ -166,7 +170,7 @@ export async function run() {
     }
     // And the run itself, for every canary, with nothing redirected: refused
     // before git fetches, because the URL git would use is not the canary's.
-    for (const extra of [[], ["--repo", CANARY_1], ["--repo", CANARY_2], ["--repo", CANARY_3]]) {
+    for (const extra of [[], ["--repo", CANARY_1], ["--repo", CANARY_2], ["--repo", CANARY_4]]) {
       const r = await push(["--step", "0", "--skip-pages", ...extra], { to: {} });
       assertEqual(r.code, 2, `--step 0 ${extra.join(" ")} with nothing redirected: exit code\n${r.out}`);
       assert(r.out.includes("github.invalid"), `the refusal does not name where git was sent:\n${r.out}`);
@@ -174,10 +178,14 @@ export async function run() {
   });
 
   const cut = (fixtures) => ({ rotation: loadSeries("rotation", { fixtures }), compromise: loadSeries("compromise", { fixtures }) });
-  const cuts = { [OLD]: cut(OLD), [MID]: cut(MID), [NEW]: cut(NEW) };
-  const rotation = cuts[NEW].rotation;
-  const compromise = cuts[NEW].compromise;
+  const cuts = { [OLD]: cut(OLD), [MID]: cut(MID), [C3]: cut(C3), [NEW]: cut(NEW) };
+  // The steps after 0 are walked on canary-2's stand-in: canary-4 takes step 0
+  // only, and canary-3 nothing. The suite's clock (2026-09-26) is inside the
+  // second cut's week.
+  const rotation = cuts[MID].rotation;
+  const compromise = cuts[MID].compromise;
   const sha = (i) => rotation[i].sha;
+  const walk = (argv, opts) => push([...argv, "--repo", CANARY_2], opts);
 
   await test("every commit of both lines of every cut rebuilds to the sha the real signer committed (manifest.json)", () => {
     for (const [fixtures, lines] of Object.entries(cuts)) {
@@ -192,6 +200,7 @@ export async function run() {
     // The first two cuts are records: each canary's `signed` carries its step 0.
     assertEqual(cuts[OLD].rotation[0].sha, "753cf52cc5a56817b519684bfbc1dc0466a13113", "the first cut's step 0 moved");
     assertEqual(cuts[MID].rotation[0].sha, "45da22f4d9f962635b90f7d15ae3c56d102af7b0", "the second cut's step 0 moved");
+    assertEqual(cuts[C3].rotation[0].sha, "07383f4719603c1d23d103339332ea1ff6674202", "the third cut's step 0 moved");
     // A manifest whose T0 is not the generator's is refused, so a cut and its directory cannot drift apart.
     const drifted = path.join(ROOT, "drifted-manifest.json");
     fs.mkdirSync(ROOT, { recursive: true });
@@ -207,8 +216,9 @@ export async function run() {
     const production = canary();
     const one = canary("merged-main", OLD);
     const two = canary("merged-main", MID);
-    const three = canary();
-    const to = { [URL_1]: one, [URL_2]: two, [URL_3]: three, [PRODUCTION_URL]: production };
+    const three = canary("merged-main", C3);
+    const four = canary();
+    const to = { [URL_1]: one, [URL_2]: two, [URL_3]: three, [URL_4]: four, [PRODUCTION_URL]: production };
     const spellings = [
       "mihailinl/astra-registry", "Mihailinl/Astra-Registry", "MIHAILINL/ASTRA-REGISTRY", "mihailinl/astra-registry.git",
       "https://github.com/mihailinl/astra-registry.git", "https://github.com/mihailinl/astra-registry",
@@ -217,51 +227,52 @@ export async function run() {
       " mihailinl/astra-registry ",
     ];
     for (const spelling of spellings) {
-      for (const extra of [[], ["--fixtures", OLD], ["--fixtures", MID], ["--fixtures", NEW]]) {
+      for (const extra of [[], ["--fixtures", OLD], ["--fixtures", MID], ["--fixtures", C3], ["--fixtures", NEW]]) {
         const r = await push(["--step", "0", "--repo", spelling, ...extra, "--skip-pages"], { to });
         assertEqual(r.code, 2, `--repo ${JSON.stringify(spelling)} ${extra.join(" ")}: exit code\n${r.out}`);
         assert(/REFUSED .*production registry/.test(r.out), `--repo ${JSON.stringify(spelling)} was not refused as the production registry:\n${r.out}`);
       }
     }
-    for (const other of ["mihailinl/AstraPlugins", "mihailinl/astra-registry-canary-4", "someone/astra-registry-canary-3",
+    for (const other of ["mihailinl/AstraPlugins", "mihailinl/astra-registry-canary-5", "someone/astra-registry-canary-4",
       "mihailinl/astra-registry-canary-3-old", "mihailinl/astra-registry-canary3", "mihailinl/astra-registry-canary-2-old",
       "mihailinl/astra-registry-canary2"]) {
       const r = await push(["--step", "0", "--repo", other, "--skip-pages"], { to });
       assertEqual(r.code, 2, `--repo ${other}: exit code\n${r.out}`);
       assert(/REFUSED .*not one of/.test(r.out), `--repo ${other} was not refused as a stranger:\n${r.out}`);
     }
-    for (const dir of [production, one, two, three]) assertEqual(refOf(dir, "refs/heads/signed"), null, `a refused run pushed to ${dir}`);
+    for (const dir of [production, one, two, three, four]) assertEqual(refOf(dir, "refs/heads/signed"), null, `a refused run pushed to ${dir}`);
     assertEqual(targetProblem(CANARY_1), null, "the first canary itself is refused");
     assertEqual(targetProblem(CANARY_2), null, "the second canary itself is refused");
     assertEqual(targetProblem(CANARY_3), null, "the third canary itself is refused");
+    assertEqual(targetProblem(CANARY_4), null, "the fourth canary itself is refused");
     assert(targetProblem(PRODUCTION_SLUG) !== null, "the production registry is accepted");
   });
 
-  await test("a cut is served on its own canary only: every cut on every other canary is refused, pushing nothing", async () => {
+  await test("a cut is served on its own canary only: every cut on every other canary is refused, pushing nothing; the abandoned canary takes nothing, and the re-sign canary step 0 only", async () => {
     // CANARIES is the one table, and it is a bijection with the generator's cuts.
-    assertEqual(Object.keys(CANARIES).sort().join(" "), [CANARY_1, CANARY_2, CANARY_3].sort().join(" "), "the canaries");
+    assertEqual(Object.keys(CANARIES).sort().join(" "), [CANARY_1, CANARY_2, CANARY_3, CANARY_4].sort().join(" "), "the canaries");
     assertEqual(Object.values(CANARIES).map((c) => c.fixtures).sort().join(" "), Object.keys(REHEARSALS).sort().join(" "),
       "every cut has exactly one canary");
-    assertEqual(CANARIES[CANARY_1].fixtures, OLD, "the first canary's cut");
-    assertEqual(CANARIES[CANARY_2].fixtures, MID, "canary-2's cut");
-    assertEqual(CANARIES[CANARY_3].fixtures, NEW, "canary-3's cut");
-    // The default is the canary whose cut ends last. A default left on a cut
-    // whose hard end has passed sends every bare `--step N` to a refusal, and
-    // the runbook's commands carry no `--repo`.
-    const latest = Object.keys(REHEARSALS).sort((a, b) => Date.parse(REHEARSALS[b].t0) - Date.parse(REHEARSALS[a].t0))[0];
-    assertEqual(CANARIES[DEFAULT_CANARY].fixtures, latest, "the default canary does not serve the cut that ends last");
-    assertEqual(DEFAULT_CANARY, CANARY_3, "the default canary is the one the day's walk reads");
-    for (const [repo, fixtures] of [[CANARY_1, OLD], [CANARY_2, MID], [CANARY_3, NEW]]) {
-      assertEqual(fixturesProblem(repo, fixtures), null, `${fixtures} on its own canary ${repo}`);
-    }
+    const owner = { [OLD]: CANARY_1, [MID]: CANARY_2, [C3]: CANARY_3, [NEW]: CANARY_4 };
+    for (const [fixtures, repo] of Object.entries(owner)) assertEqual(CANARIES[repo].fixtures, fixtures, `${repo}'s cut`);
+    assert(CANARIES[CANARY_3].abandoned && !CANARIES[CANARY_3].resign, "canary-3 is not marked abandoned");
+    assert(CANARIES[CANARY_4].resign && !CANARIES[CANARY_4].abandoned, "canary-4 is not marked the re-sign canary");
+    // The default is the canary, not abandoned, whose cut ends last. A default
+    // left on a passed hard end or an abandoned canary sends every bare
+    // `--step N` to a refusal, and the runbook's commands carry no `--repo`.
+    const live = Object.keys(CANARIES).filter((slug) => !CANARIES[slug].abandoned).map((slug) => CANARIES[slug].fixtures);
+    const latest = live.sort((a, b) => Date.parse(REHEARSALS[b].t0) - Date.parse(REHEARSALS[a].t0))[0];
+    assertEqual(CANARIES[DEFAULT_CANARY].fixtures, latest, "the default canary does not serve the live cut that ends last");
+    assertEqual(DEFAULT_CANARY, CANARY_4, "the default canary is the one the day's serve reads");
+    for (const [fixtures, repo] of Object.entries(owner)) assertEqual(fixturesProblem(repo, fixtures), null, `${fixtures} on its own canary ${repo}`);
 
     const one = canary("merged-main", OLD);
     const two = canary("merged-main", MID);
-    const three = canary();
-    const to = { [URL_1]: one, [URL_2]: two, [URL_3]: three };
-    const owner = { [OLD]: CANARY_1, [MID]: CANARY_2, [NEW]: CANARY_3 };
-    for (const repo of [CANARY_1, CANARY_2, CANARY_3]) {
-      for (const fixtures of [OLD, MID, NEW]) {
+    const three = canary("merged-main", C3);
+    const four = canary();
+    const to = { [URL_1]: one, [URL_2]: two, [URL_3]: three, [URL_4]: four };
+    for (const repo of [CANARY_1, CANARY_2, CANARY_3, CANARY_4]) {
+      for (const fixtures of [OLD, MID, C3, NEW]) {
         if (owner[fixtures] === repo) continue;
         const own = owner[fixtures];
         assert(fixturesProblem(repo, fixtures) !== null, `${fixtures} is accepted on ${repo}`);
@@ -273,15 +284,29 @@ export async function run() {
         }
       }
     }
-    for (const [dir, name] of [[one, "the first canary"], [two, "canary-2"], [three, "canary-3"]]) {
-      assertEqual(refOf(dir, "refs/heads/signed"), null, `another cut reached ${name}`);
+    // The abandoned canary: no step, dry or not, and its record still answers.
+    for (const mode of [["--step", "0", "--skip-pages"], ["--step", "0", "--dry-run", "--skip-pages"], ["--step", "1", "--skip-pages"]]) {
+      const r = await push([...mode, "--repo", CANARY_3], { to, at: "2026-10-25T00:00:00Z" });
+      assertEqual(r.code, 2, `${mode.join(" ")} on the abandoned canary-3: exit code\n${r.out}`);
+      assert(/REFUSED .*canary-3 is abandoned/.test(r.out), `the refusal does not say canary-3 is abandoned:\n${r.out}`);
+    }
+    const record = await push(["--status", "--repo", CANARY_3], { to, at: "2026-10-25T00:00:00Z" });
+    assertEqual(record.code, 0, `--status on the abandoned canary-3\n${record.out}`);
+    // The re-sign canary: step 0 of the rotation, and nothing else.
+    for (const mode of [["--step", "1"], ["--step", "0", "--series", "compromise"]]) {
+      const r = await push([...mode, "--skip-pages"], { to });
+      assertEqual(r.code, 2, `${mode.join(" ")} on canary-4: exit code\n${r.out}`);
+      assert(/serves step 0 of the rotation only/.test(r.out), `the refusal does not say canary-4 takes step 0 only:\n${r.out}`);
+    }
+    for (const [dir, name] of [[one, "the first canary"], [two, "canary-2"], [three, "canary-3"], [four, "canary-4"]]) {
+      assertEqual(refOf(dir, "refs/heads/signed"), null, `a refused run reached ${name}`);
     }
 
-    // Either knob alone names the pair: no --repo is canary-3 with the newest
-    // cut; --repo alone derives the cut, and --fixtures alone derives the canary.
-    const byDefault = await push(["--step", "0", "--skip-pages"], { to });
+    // Either knob alone names the pair: no --repo is canary-4 with the newest
+    // live cut; --repo alone derives the cut, and --fixtures alone derives the canary.
+    const byDefault = await push(["--step", "0", "--skip-pages"], { to, at: "2026-10-03T16:00:00Z" });
     assertEqual(byDefault.code, 0, `the default\n${byDefault.out}`);
-    assertEqual(refOf(three, "refs/heads/signed"), cuts[NEW].rotation[0].sha, "the default pushed something other than the newest cut to canary-3");
+    assertEqual(refOf(four, "refs/heads/signed"), cuts[NEW].rotation[0].sha, "the default pushed something other than the newest cut to canary-4");
     const byRepo = await push(["--step", "0", "--repo", CANARY_1, "--skip-pages"], { to });
     assertEqual(byRepo.code, 0, `--repo ${CANARY_1}\n${byRepo.out}`);
     assertEqual(refOf(one, "refs/heads/signed"), cuts[OLD].rotation[0].sha, "--repo alone did not serve the old cut");
@@ -303,103 +328,103 @@ export async function run() {
         assertEqual(shared.join(" "), "", `a commit is in both ${names[i]} and ${names[j]}`);
       }
     }
-    // canary-3 with the second cut's step 0 on `signed`, as a push that got
+    // canary-2 with the first cut's step 0 on `signed`, as a push that got
     // past the refusal above would have left it: the next step is refused, not stacked.
-    const three = canary();
-    buildCommits(gitAt(three), cuts[MID].rotation.slice(0, 1));
-    gitIn(three)("update-ref", "refs/heads/signed", cuts[MID].rotation[0].sha);
-    const r = await push(["--step", "1", "--skip-pages"], { to: { [URL_3]: three } });
-    assertEqual(r.code, 1, `the newest cut on top of another's head\n${r.out}`);
+    const two = canary("merged-main", MID);
+    buildCommits(gitAt(two), cuts[OLD].rotation.slice(0, 1));
+    gitIn(two)("update-ref", "refs/heads/signed", cuts[OLD].rotation[0].sha);
+    const r = await walk(["--step", "1", "--skip-pages"], { to: { [URL_2]: two } });
+    assertEqual(r.code, 1, `the second cut on top of another's head\n${r.out}`);
     assert(/no commit of this series/.test(r.out), `the refusal does not say the head is foreign:\n${r.out}`);
-    assertEqual(refOf(three, "refs/heads/signed"), cuts[MID].rotation[0].sha, "a foreign head was moved");
+    assertEqual(refOf(two, "refs/heads/signed"), cuts[OLD].rotation[0].sha, "a foreign head was moved");
   });
 
   await test("an insteadOf or pushInsteadOf that sends a canary's URL elsewhere, the other canary included, is refused before git fetches or pushes", async () => {
-    assertEqual(effectiveUrlProblem(URL_3, URL_3, "push"), null, "canary-3's own URL");
-    assertEqual(effectiveUrlProblem("/tmp/x.git", URL_3, "push"), null, "a local bare");
-    assert(effectiveUrlProblem(PRODUCTION_URL, URL_3, "push") !== null, "the production URL passed as canary-3's");
-    assert(effectiveUrlProblem(URL_1, URL_3, "push") !== null, "the first canary's URL passed as canary-3's");
-    assert(effectiveUrlProblem(URL_2, URL_3, "push") !== null, "canary-2's URL passed as canary-3's");
-    assert(effectiveUrlProblem("git@github.com:mihailinl/astra-registry.git", URL_3, "fetch") !== null, "an ssh rewrite passed");
+    assertEqual(effectiveUrlProblem(URL_4, URL_4, "push"), null, "canary-4's own URL");
+    assertEqual(effectiveUrlProblem("/tmp/x.git", URL_4, "push"), null, "a local bare");
+    assert(effectiveUrlProblem(PRODUCTION_URL, URL_4, "push") !== null, "the production URL passed as canary-4's");
+    assert(effectiveUrlProblem(URL_1, URL_4, "push") !== null, "the first canary's URL passed as canary-4's");
+    assert(effectiveUrlProblem(URL_3, URL_4, "push") !== null, "canary-3's URL passed as canary-4's");
+    assert(effectiveUrlProblem("git@github.com:mihailinl/astra-registry.git", URL_4, "fetch") !== null, "an ssh rewrite passed");
     const target = canary();
-    const fetchAway = await push(["--step", "0", "--skip-pages"], { to: { [URL_3]: "https://github.invalid/mihailinl/astra-registry.git" } });
+    const fetchAway = await push(["--step", "0", "--skip-pages"], { to: { [URL_4]: "https://github.invalid/mihailinl/astra-registry.git" } });
     assertEqual(fetchAway.code, 2, `insteadOf to another host: exit code\n${fetchAway.out}`);
     assert(/insteadOf/.test(fetchAway.out), `the refusal does not name the rewrite:\n${fetchAway.out}`);
     const pushAway = await push(["--step", "0", "--skip-pages"], {
-      to: { [URL_3]: target },
-      gitConfig: [`url.https://github.invalid/mihailinl/astra-registry.git.pushInsteadOf=${URL_3}`],
+      to: { [URL_4]: target },
+      gitConfig: [`url.https://github.invalid/mihailinl/astra-registry.git.pushInsteadOf=${URL_4}`],
     });
     assertEqual(pushAway.code, 2, `pushInsteadOf to another host: exit code\n${pushAway.out}`);
     const two = canary("merged-main", MID);
     const crossed = await push(["--step", "0", "--skip-pages"], {
-      to: { [URL_2]: two, [URL_3]: target },
-      gitConfig: [`url.${URL_2}.pushInsteadOf=${URL_3}`],
+      to: { [URL_2]: two, [URL_4]: target },
+      gitConfig: [`url.${URL_2}.pushInsteadOf=${URL_4}`],
     });
-    assertEqual(crossed.code, 2, `canary-3's push rewritten to canary-2: exit code\n${crossed.out}`);
+    assertEqual(crossed.code, 2, `canary-4's push rewritten to canary-2: exit code\n${crossed.out}`);
     assertEqual(refOf(target, "refs/heads/signed"), null, "a refused run pushed");
     assertEqual(refOf(two, "refs/heads/signed"), null, "a refused run pushed the newest cut to canary-2");
   });
 
-  const day = canary();
-  const to = { [URL_3]: day };
+  const day = canary("merged-main", MID);
+  const to = { [URL_2]: day };
 
   await test("step 0 creates `signed` at the signer's own commit, and running it again pushes nothing", async () => {
-    const first = await push(["--step", "0", "--skip-pages"], { to });
+    const first = await walk(["--step", "0", "--skip-pages"], { to });
     assertEqual(first.code, 0, `first run\n${first.out}`);
     assertEqual(refOf(day, "refs/heads/signed"), sha(0), "`signed` after step 0");
     assert(/TRUST-3: Source-Commit/.test(first.out), `TRUST-3 was not asked:\n${first.out}`);
-    const again = await push(["--step", "0", "--skip-pages"], { to });
+    const again = await walk(["--step", "0", "--skip-pages"], { to });
     assertEqual(again.code, 0, `second run\n${again.out}`);
     assert(/already at step 0.*nothing pushed/.test(again.out), `the second run did not say it pushed nothing:\n${again.out}`);
     assertEqual(refOf(day, "refs/heads/signed"), sha(0), "`signed` after step 0 twice");
   });
 
   await test("one commit per step: a skipped step, a passed step and a foreign head are refused and move nothing", async () => {
-    const skipped = await push(["--step", "2", "--skip-pages"], { to });
+    const skipped = await walk(["--step", "2", "--skip-pages"], { to });
     assertEqual(skipped.code, 1, `step 2 from step 0\n${skipped.out}`);
     assert(/run `--step 1` first/.test(skipped.out), `the refusal does not say what to run:\n${skipped.out}`);
     assertEqual(refOf(day, "refs/heads/signed"), sha(0), "a skipped step moved `signed`");
 
-    const one = await push(["--step", "1", "--skip-pages"], { to });
+    const one = await walk(["--step", "1", "--skip-pages"], { to });
     assertEqual(one.code, 0, `step 1\n${one.out}`);
     assertEqual(refOf(day, "refs/heads/signed"), sha(1), "`signed` after step 1");
     assertEqual(gitIn(day)("rev-list", "--count", `${sha(0)}..${sha(1)}`), "1", "step 1 is one commit on step 0");
 
-    const back = await push(["--step", "0", "--skip-pages"], { to });
+    const back = await walk(["--step", "0", "--skip-pages"], { to });
     assertEqual(back.code, 1, `step 0 from step 1\n${back.out}`);
     assert(/past step 0/.test(back.out), `the refusal does not say the step was passed:\n${back.out}`);
     assertEqual(refOf(day, "refs/heads/signed"), sha(1), "a passed step moved `signed`");
 
-    const foreign = canary();
+    const foreign = canary("merged-main", MID);
     gitIn(foreign)("update-ref", "refs/heads/signed", refOf(foreign, "refs/heads/main"));
-    const r = await push(["--step", "1", "--skip-pages"], { to: { [URL_3]: foreign } });
+    const r = await walk(["--step", "1", "--skip-pages"], { to: { [URL_2]: foreign } });
     assertEqual(r.code, 1, `a foreign head\n${r.out}`);
     assert(/no commit of this series/.test(r.out), `the refusal does not say the head is foreign:\n${r.out}`);
   });
 
   await test("--dry-run pushes nothing and names the commit a real run would push", async () => {
-    const fresh = canary();
-    const r = await push(["--step", "0", "--dry-run", "--skip-pages"], { to: { [URL_3]: fresh } });
+    const fresh = canary("merged-main", MID);
+    const r = await walk(["--step", "0", "--dry-run", "--skip-pages"], { to: { [URL_2]: fresh } });
     assertEqual(r.code, 0, `dry run\n${r.out}`);
     assert(r.out.includes(`would push ${sha(0)}`), `the dry run does not name the commit:\n${r.out}`);
     assertEqual(refOf(fresh, "refs/heads/signed"), null, "a dry run pushed");
   });
 
   await test("TRUST-3: a Source-Commit the canary's main does not reach is refused, the other cut's merge included; --allow-source-off-main says why it went on", async () => {
-    const before = canary("bot88-main");
-    const refused = await push(["--step", "0", "--skip-pages"], { to: { [URL_3]: before } });
+    const before = canary("bot88-main", MID);
+    const refused = await walk(["--step", "0", "--skip-pages"], { to: { [URL_2]: before } });
     assertEqual(refused.code, 1, `off main\n${refused.out}`);
     assert(/TRUST-3: Source-Commit .* not reachable/.test(refused.out), `the refusal is not TRUST-3's:\n${refused.out}`);
     assertEqual(refOf(before, "refs/heads/signed"), null, "a TRUST-3 refusal pushed");
     // A main that merged ANOTHER cut's sources: a regenerated series needs its own -s ours merge.
-    const wrongMerge = canary("merged-main", MID);
-    const other = await push(["--step", "0", "--skip-pages"], { to: { [URL_3]: wrongMerge } });
+    const wrongMerge = canary("merged-main", OLD);
+    const other = await walk(["--step", "0", "--skip-pages"], { to: { [URL_2]: wrongMerge } });
     assertEqual(other.code, 1, `a main carrying the old cut's sources\n${other.out}`);
     assert(/TRUST-3: Source-Commit .* not reachable/.test(other.out), `the refusal is not TRUST-3's:\n${other.out}`);
-    const dry = await push(["--step", "0", "--dry-run", "--skip-pages"], { to: { [URL_3]: before } });
+    const dry = await walk(["--step", "0", "--dry-run", "--skip-pages"], { to: { [URL_2]: before } });
     assertEqual(dry.code, 1, `a dry run that the real run would refuse exits 1\n${dry.out}`);
-    const allowed = await push(["--step", "0", "--skip-pages", "--allow-source-off-main", "the service applies no TRUST-3"],
-      { to: { [URL_3]: before } });
+    const allowed = await walk(["--step", "0", "--skip-pages", "--allow-source-off-main", "the service applies no TRUST-3"],
+      { to: { [URL_2]: before } });
     assertEqual(allowed.code, 0, `allowed\n${allowed.out}`);
     assert(/going on because: the service applies no TRUST-3/.test(allowed.out), `the reason was not printed:\n${allowed.out}`);
     // The byte-identity half, on committed material: step 1's trust.json at step 0's Source-Commit is not step 1's.
@@ -412,37 +437,38 @@ export async function run() {
 
   await test("a judge that fails, or no judge at all, stops the run before git is asked anything", async () => {
     const fresh = canary();
-    const failing = await push(["--step", "0", "--skip-pages"], { to: { [URL_3]: fresh }, judge: () => ({ ok: false, detail: "1 failed" }) });
+    const failing = await push(["--step", "0", "--skip-pages"], { to: { [URL_4]: fresh }, judge: () => ({ ok: false, detail: "1 failed" }) });
     assertEqual(failing.code, 1, `a failing judge\n${failing.out}`);
     assert(/did not pass their judge: 1 failed/.test(failing.out), `the judge's verdict was not printed:\n${failing.out}`);
-    const none = await push(["--step", "0", "--skip-pages"], { to: { [URL_3]: fresh }, judge: null });
+    const none = await push(["--step", "0", "--skip-pages"], { to: { [URL_4]: fresh }, judge: null });
     assertEqual(none.code, 1, `no judge\n${none.out}`);
     assertEqual(refOf(fresh, "refs/heads/signed"), null, "a run with a failing judge pushed");
   });
 
   await test("Pages: a step is done only when the canary's own Pages serves its four documents byte for byte", async () => {
+    assertEqual(pagesBaseOf(CANARY_4), "https://mihailinl.github.io/astra-registry-canary-4/", "canary-4's Pages");
     assertEqual(pagesBaseOf(CANARY_3), "https://mihailinl.github.io/astra-registry-canary-3/", "canary-3's Pages");
     assertEqual(pagesBaseOf(CANARY_2), "https://mihailinl.github.io/astra-registry-canary-2/", "canary-2's Pages");
     assertEqual(pagesBaseOf(CANARY_1), "https://mihailinl.github.io/astra-registry-canary/", "the first canary's Pages");
     // With no override, the URLs asked are the canary's own project Pages.
     const asked = [];
     const recorder = async (url) => { asked.push(url); return { status: 404, arrayBuffer: async () => new ArrayBuffer(0) }; };
-    await push(["--status"], { to, fetchImpl: recorder, pagesBase: null });
-    assert(asked.length === 4 && asked.every((u) => u.startsWith("https://mihailinl.github.io/astra-registry-canary-3/registry/v1/")),
+    await push(["--status"], { to: { [URL_4]: canary() }, fetchImpl: recorder, pagesBase: null });
+    assert(asked.length === 4 && asked.every((u) => u.startsWith("https://mihailinl.github.io/astra-registry-canary-4/registry/v1/")),
       `--status asked Pages somewhere else: ${asked.join(" ")}`);
 
-    const served = await push(["--step", "1"], { to, fetchImpl: pagesFrom(day) });
+    const served = await walk(["--step", "1"], { to, fetchImpl: pagesFrom(day) });
     assertEqual(served.code, 0, `Pages from \`signed\`\n${served.out}`);
     assert(/Pages serves step 1's four documents/.test(served.out), `Pages was not checked:\n${served.out}`);
     const notFound = async () => ({ status: 404, arrayBuffer: async () => new ArrayBuffer(0) });
-    const absent = await push(["--step", "1", "--pages-timeout", "60"], { to, fetchImpl: notFound });
+    const absent = await walk(["--step", "1", "--pages-timeout", "60"], { to, fetchImpl: notFound });
     assertEqual(absent.code, 1, `Pages not enabled\n${absent.out}`);
     assert(/404: is Pages enabled on branch `signed`\?/.test(absent.out), `the failure does not say Pages is absent:\n${absent.out}`);
     const stepZero = async (url) => {
       const b = rotation[0].docs[url.slice(PAGES.length).split("?")[0]];
       return { status: 200, arrayBuffer: async () => b.buffer.slice(b.byteOffset, b.byteOffset + b.length) };
     };
-    const stale = await push(["--step", "1", "--pages-timeout", "60"], { to, fetchImpl: stepZero });
+    const stale = await walk(["--step", "1", "--pages-timeout", "60"], { to, fetchImpl: stepZero });
     assertEqual(stale.code, 1, `Pages still serving step 0\n${stale.out}`);
     assert(/Pages serves step 0, not step 1/.test(stale.out), `the failure does not name the step Pages serves:\n${stale.out}`);
     // A build that lands on the third poll is waited for, and the wait is reported.
@@ -455,9 +481,9 @@ export async function run() {
   });
 
   await test("the compromise line goes to `signed-compromise`, never `signed`, and ends at the compromise commit", async () => {
-    const fresh = canary();
+    const fresh = canary("merged-main", MID);
     for (let n = 0; n < compromise.length; n++) {
-      const r = await push(["--series", "compromise", "--step", String(n)], { to: { [URL_3]: fresh } });
+      const r = await walk(["--series", "compromise", "--step", String(n)], { to: { [URL_2]: fresh } });
       assertEqual(r.code, 0, `compromise step ${n}\n${r.out}`);
     }
     assertEqual(refOf(fresh, "refs/heads/signed-compromise"), compromise[3].sha, "`signed-compromise` after its last step");
@@ -465,7 +491,7 @@ export async function run() {
   });
 
   await test("--export-source writes every Source-Commit each cut's manifest names, on the line it belongs to", () => {
-    for (const fixtures of [OLD, NEW]) {
+    for (const fixtures of [OLD, MID, C3, NEW]) {
       const dir = sourceHistory(fixtures);
       const g = gitIn(dir);
       for (const s of [...cuts[fixtures].rotation, cuts[fixtures].compromise[3]]) {
@@ -479,16 +505,18 @@ export async function run() {
   });
 
   await test("--status names the canary, the cut, the step each branch is at and whether TRUST-3 holds for every step", async () => {
-    const r = await push(["--status"], { to, fetchImpl: pagesFrom(day) });
+    const r = await walk(["--status"], { to, fetchImpl: pagesFrom(day) });
     assertEqual(r.code, 0, `status\n${r.out}`);
-    assert(r.out.includes(`${CANARY_3}, fixtures ${NEW} (T0 2026-10-24T00:00:00Z)`), `status does not name the canary and the cut:\n${r.out}`);
-    assert(r.out.includes("hard end: the series' first list expires at 2026-10-31T00:00:00Z"), `status does not print canary-3's hard end:\n${r.out}`);
+    assert(r.out.includes(`${CANARY_2}, fixtures ${MID} (T0 2026-09-26T00:00:00Z)`), `status does not name the canary and the cut:\n${r.out}`);
+    assert(r.out.includes("hard end: the series' first list expires at 2026-10-03T00:00:00Z"), `status does not print canary-2's hard end:\n${r.out}`);
+    const byDefault = await push(["--status"], { to: { [URL_4]: canary() } });
+    assert(byDefault.out.includes(`${CANARY_4}, fixtures ${NEW} (T0 2026-10-03T00:00:00Z)`), `the default status does not name canary-4 and its cut:\n${byDefault.out}`);
     assert(r.out.includes(`\`signed\`: step 1 (rotation/01-delegate) ${sha(1)}`), `status does not name step 1:\n${r.out}`);
     assert(/5 {2}rotation\/05-after-root +pending {2}TRUST-3 holds/.test(r.out), `status does not ask TRUST-3 of step 5:\n${r.out}`);
     assert(/Pages: serving step 1/.test(r.out), `status does not name the Pages step:\n${r.out}`);
   });
 
-  await test("a step whose list has expired is refused before anything is pushed (SERVE-22; hard ends 2026-09-29, 2026-10-03 and 2026-10-31)", async () => {
+  await test("a step whose list has expired is refused before anything is pushed (SERVE-22; hard ends 2026-09-29, 2026-10-03, 2026-10-10 and 2026-10-31)", async () => {
     // The first cut, on the first canary.
     const one = canary("merged-main", OLD);
     const late1 = await push(["--step", "0", "--repo", CANARY_1, "--skip-pages"], { to: { [URL_1]: one }, at: "2026-09-29T00:00:00Z" });
@@ -509,19 +537,22 @@ export async function run() {
     const inTime2 = await push(["--step", "0", "--repo", CANARY_2, "--skip-pages"], { to: { [URL_2]: two }, at: "2026-10-02T23:59:59Z" });
     assertEqual(inTime2.code, 0, `the second cut a second before its expiry\n${inTime2.out}`);
 
-    // The third cut, on canary-3, the default: alive past the second hard end
-    // and through the service's serve (no earlier than 2026-10-06), refused at its own.
-    const three = canary();
-    const pastSecond = await push(["--step", "0", "--dry-run", "--skip-pages"], { to: { [URL_3]: three }, at: "2026-10-03T00:00:00Z" });
-    assertEqual(pastSecond.code, 0, `the third cut at the second cut's hard end\n${pastSecond.out}`);
-    const late3 = await push(["--step", "0", "--skip-pages"], { to: { [URL_3]: three }, at: "2026-10-31T00:00:00Z" });
-    assertEqual(late3.code, 1, `the third cut at its list's expiry\n${late3.out}`);
-    assert(/registry\/v1\/revocations\.json expired at 2026-10-31T00:00:00Z/.test(late3.out), `the refusal does not name the list:\n${late3.out}`);
-    assertEqual(refOf(three, "refs/heads/signed"), null, "an expired step was pushed to canary-3");
-    const inTime3 = await push(["--step", "0", "--skip-pages"], { to: { [URL_3]: three }, at: "2026-10-30T23:59:59Z" });
-    assertEqual(inTime3.code, 0, `the third cut a second before its expiry\n${inTime3.out}`);
+    // The fourth cut, on canary-4, the default: alive at the second's hard
+    // end, refused at its own. (The third, canary-3's, is abandoned: no step is pushed there.)
+    const four = canary();
+    const pastSecond = await push(["--step", "0", "--dry-run", "--skip-pages"], { to: { [URL_4]: four }, at: "2026-10-03T00:00:00Z" });
+    assertEqual(pastSecond.code, 0, `the fourth cut at the second cut's hard end\n${pastSecond.out}`);
+    const late4 = await push(["--step", "0", "--skip-pages"], { to: { [URL_4]: four }, at: "2026-10-10T00:00:00Z" });
+    assertEqual(late4.code, 1, `the fourth cut at its list's expiry\n${late4.out}`);
+    assert(/registry\/v1\/revocations\.json expired at 2026-10-10T00:00:00Z/.test(late4.out), `the refusal does not name the list:\n${late4.out}`);
+    assertEqual(refOf(four, "refs/heads/signed"), null, "an expired step was pushed to canary-4");
+    const inTime4 = await push(["--step", "0", "--skip-pages"], { to: { [URL_4]: four }, at: "2026-10-09T23:59:59Z" });
+    assertEqual(inTime4.code, 0, `the fourth cut a second before its expiry\n${inTime4.out}`);
 
-    const status3 = await push(["--status"], { to: { [URL_3]: three }, at: "2026-11-01T00:00:00Z" });
+    const status4 = await push(["--status"], { to: { [URL_4]: four }, at: "2026-10-11T00:00:00Z" });
+    assert(/hard end: .* 2026-10-10T00:00:00Z — PASSED/.test(status4.out), `--status does not say the fourth hard end passed:\n${status4.out}`);
+    const three = canary("merged-main", C3);
+    const status3 = await push(["--status", "--repo", CANARY_3], { to: { [URL_3]: three }, at: "2026-11-01T00:00:00Z" });
     assert(/hard end: .* 2026-10-31T00:00:00Z — PASSED/.test(status3.out), `--status does not say the third hard end passed:\n${status3.out}`);
     const status2 = await push(["--status", "--repo", CANARY_2], { to: { [URL_2]: two }, at: "2026-10-04T00:00:00Z" });
     assert(/hard end: .* 2026-10-03T00:00:00Z — PASSED/.test(status2.out), `--status does not say the second hard end passed:\n${status2.out}`);
@@ -531,7 +562,7 @@ export async function run() {
 
   await test("the command line refuses what it cannot parse, with exit 2", async () => {
     for (const argv of [[], ["--step", "1", "--status"], ["--step", "one"], ["--step", "6"], ["--series", "other", "--list"], ["--push"],
-      ["--fixtures"], ["--fixtures", "rehearsal-r3", "--list"], ["--fixtures", "rehearsal-r2d", "--list"], ["--fixtures", "--list"]]) {
+      ["--fixtures"], ["--fixtures", "rehearsal-r3", "--list"], ["--fixtures", "rehearsal-r2e", "--list"], ["--fixtures", "--list"]]) {
       const r = await push(argv, { to });
       assertEqual(r.code, 2, `${JSON.stringify(argv)}\n${r.out}`);
     }

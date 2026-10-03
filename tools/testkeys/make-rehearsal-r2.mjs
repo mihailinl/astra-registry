@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // The ROLL-60 rehearsal series (RC-R2-5), produced by the real signer.
 //
-//   node tools/testkeys/make-rehearsal-r2.mjs          # rewrite every cut: fixtures/rehearsal-r2/, -r2b/, -r2c/
+//   node tools/testkeys/make-rehearsal-r2.mjs          # rewrite every cut: fixtures/rehearsal-r2/, -r2b/, -r2c/, -r2d/
 //   node tools/testkeys/make-rehearsal-r2.mjs --check  # rebuild each in a temp tree, compare, write nothing
 //   node tools/testkeys/make-rehearsal-r2.mjs --print-commands   # the commands, without running them
 //   … --fixtures rehearsal-r2c                         # any of the above, for one cut only
@@ -101,7 +101,14 @@ const REPO = path.resolve(HERE, "..", "..");
  * its lists expire from 2026-10-03T00:00Z. `rehearsal-r2c` is the same series
  * again for the plugins service's first serve of step 0 (ROLL-60's R2 half),
  * which is no earlier than 2026-10-06 and asked for a step 0 that still serves
- * on 2026-10-31T00:00Z.
+ * on 2026-10-31T00:00Z. The service's publisher then refused it, on purpose:
+ * it bounds a list by `min(issued_at, judged_at) + 8 days`, so a list dated
+ * after the day it is read is refused, and so is a longer one. canary-3 is
+ * abandoned. `rehearsal-r2d` is the same series at T0 2026-10-03 for canary-4,
+ * whose step 0 is kept fresh by a rolling re-sign
+ * (`tools/lib/rehearsal-resign.mjs`): the real signer re-signs it at equal
+ * serials once it is 20 hours old, as production's does. Its `hard_end` is
+ * step 0's own list's, which the first re-sign moves on.
  *
  * **`hard_end` is the promise, and T0 is how it is kept.** The signer gives a
  * list `REVOCATION_TTL_DAYS` (7) from its run's `now`, and that number is
@@ -122,6 +129,7 @@ export const REHEARSALS = Object.freeze({
   "rehearsal-r2": Object.freeze({ t0: "2026-09-22T00:00:00Z", hard_end: "2026-09-29T00:00:00Z" }),
   "rehearsal-r2b": Object.freeze({ t0: "2026-09-26T00:00:00Z", hard_end: "2026-10-03T00:00:00Z" }),
   "rehearsal-r2c": Object.freeze({ t0: "2026-10-24T00:00:00Z", hard_end: "2026-10-31T00:00:00Z" }),
+  "rehearsal-r2d": Object.freeze({ t0: "2026-10-03T00:00:00Z", hard_end: "2026-10-10T00:00:00Z" }),
 });
 
 /** A cut's directory, and its manifest. */
@@ -155,7 +163,8 @@ const ROOT_B = "TEST-ONLY-DO-NOT-TRUST-root-b";
 
 /** `--test-key` specs, in the order the environment would hold them: outgoing first. */
 const BOTH_KEYS = [`${OUTGOING_KEY_ID}=${OUTGOING_TEST_KEY}`, `${INCOMING_KEY_ID}=${INCOMING_TEST_KEY}`];
-const OUTGOING_ONLY = [`${OUTGOING_KEY_ID}=${OUTGOING_TEST_KEY}`];
+/** Step 0's one key, which is also all the rolling re-sign of step 0 may sign with. */
+export const OUTGOING_ONLY = Object.freeze([`${OUTGOING_KEY_ID}=${OUTGOING_TEST_KEY}`]);
 const INCOMING_ONLY = [`${INCOMING_KEY_ID}=${INCOMING_TEST_KEY}`];
 
 const BANNER =
@@ -173,12 +182,18 @@ const clockAt = (t0) => (hours) => new Date(Date.parse(t0) + hours * HOUR_MS).to
 
 const MAIN_IDENTITY = { name: "rehearsal fixture", email: "rehearsal@users.noreply.invalid" };
 
-/** The run URL the D2 commit message carries. Fixed, so the message is a fixture. */
-const RUN_ENV = {
+/**
+ * The run URL the D2 commit message carries. Fixed, so the message is a
+ * fixture. The rolling re-sign (`tools/lib/rehearsal-resign.mjs`) passes the
+ * same three, so that every commit a rehearsal `signed` carries has the one
+ * `Run:` shape the plugins service was built against, and records the real
+ * Actions run in its evidence instead.
+ */
+export const RUN_ENV = Object.freeze({
   GITHUB_SERVER_URL: "https://github.com",
   GITHUB_REPOSITORY: "mihailinl/astra-registry",
   GITHUB_RUN_ID: "0",
-};
+});
 
 // ── the throwaway registry's contents ───────────────────────────────────────
 

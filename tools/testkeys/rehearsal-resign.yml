@@ -1,0 +1,104 @@
+# ROLL-60's step 0 on this canary, kept fresh: TEST-ONLY.
+#
+# The template of `.github/workflows/rehearsal-resign.yml` in
+# mihailinl/astra-registry-canary-4. It lives in mihailinl/astra-registry at
+# tools/testkeys/rehearsal-resign.yml, and the deployed copy is that file with
+# @REGISTRY_SHA@ replaced by the registry commit it runs. The first step after
+# the fetch checks that, so this workflow cannot drift from the reviewed one.
+#
+# Every hour, as production's signer workflow does, it runs the registry's real
+# signer against this repository's `signed` with the throwaway keys in
+# tools/testkeys/. The signer decides: once step 0's catalogue and list are 20
+# hours old it re-signs both at their serials, with a fresh issued_at and
+# expires_at (SERVE-41; D4), and the tool pushes that one commit, fast-forward.
+# Otherwise it does nothing. Pages then serves the new head, which the last
+# step waits for and judges again as served.
+#
+# It holds no secret. Its token can write this repository and ask for a Pages
+# build, and nothing else; a copy anywhere else does nothing (the job guard).
+name: Rehearsal re-sign (TEST-ONLY)
+
+on:
+  schedule:
+    - cron: "41 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Sign and judge, push nothing"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pages: write
+
+concurrency:
+  group: rehearsal-resign
+  cancel-in-progress: false
+
+env:
+  REGISTRY_SHA: "@REGISTRY_SHA@"
+
+jobs:
+  resign:
+    if: github.repository == 'mihailinl/astra-registry-canary-4'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Fetch the registry at the pinned commit (public, read-only, no credential)
+        run: |
+          git init -q registry
+          git -C registry fetch -q --depth 1 https://github.com/mihailinl/astra-registry.git "$REGISTRY_SHA"
+          git -C registry checkout -q --detach FETCH_HEAD
+          test "$(git -C registry rev-parse HEAD)" = "$REGISTRY_SHA"
+
+      - name: Fetch this workflow as it runs
+        run: |
+          git init -q canary
+          git -C canary fetch -q --depth 1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+          git -C canary checkout -q --detach FETCH_HEAD
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: This workflow is the registry's template, pinned to the commit it runs
+        working-directory: registry
+        run: node tools/testkeys/rehearsal-resign.mjs --audit-workflow ../canary/.github/workflows/rehearsal-resign.yml --registry-sha "$REGISTRY_SHA"
+
+      - name: A push credential for this repository's URL only
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          b64=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+          echo "::add-mask::$b64"
+          git config --global "http.https://github.com/${GITHUB_REPOSITORY}.git.extraheader" "AUTHORIZATION: basic $b64"
+
+      - name: Re-sign step 0 if the signer says it is due
+        id: resign
+        working-directory: registry
+        env:
+          DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+        run: node tools/testkeys/rehearsal-resign.mjs --repo "$GITHUB_REPOSITORY" --event "$GITHUB_EVENT_NAME" --evidence "$RUNNER_TEMP/evidence.jsonl" $DRY_RUN
+
+      - name: Ask Pages to build the new head
+        if: steps.resign.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X POST "repos/${GITHUB_REPOSITORY}/pages/builds" --jq '.status'
+
+      - name: Pages serves the head, every signature verifies, and the list is fresh
+        working-directory: registry
+        run: node tools/testkeys/rehearsal-resign.mjs --wait-pages --repo "$GITHUB_REPOSITORY" --evidence "$RUNNER_TEMP/evidence.jsonl"
+
+      - name: The evidence
+        if: always()
+        run: |
+          {
+            echo '### Rehearsal re-sign evidence'
+            echo
+            echo '```json'
+            cat "$RUNNER_TEMP/evidence.jsonl" 2>/dev/null || echo '(none written)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/evidence.jsonl" 2>/dev/null || true
