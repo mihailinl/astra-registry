@@ -1296,6 +1296,14 @@ function runRecheckCommit(f, log) {
   try { f.git("remote", "add", "origin", bare); } catch { /* already there */ }
   f.git("push", "-q", "-u", "origin", "HEAD:main");
   fs.writeFileSync(path.join(temp, "recheck.log"), log);
+  // The step runs `node tools/lib/tree-modes.mjs HEAD` from the checkout
+  // before it pushes (ops couplings 216). The module is copied where a
+  // checkout has it and excluded from the tree, so no fixture commit — and so
+  // nothing the canary walks — carries it.
+  if (!fs.existsSync(path.join(f.dir, "tools", "lib", "tree-modes.mjs"))) {
+    fs.cpSync(path.join(REPO, "tools", "lib"), path.join(f.dir, "tools", "lib"), { recursive: true });
+    fs.appendFileSync(path.join(f.dir, ".git", "info", "exclude"), "/tools/lib/\n");
+  }
   execFileSync("bash", ["-c", recheckCommitStep()], {
     cwd: f.dir, encoding: "utf8", stdio: "pipe", env: { ...fixtureEnv(f.dir), RUNNER_TEMP: temp },
   });

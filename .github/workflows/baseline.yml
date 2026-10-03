@@ -250,6 +250,11 @@ jobs:
             exit 1
           fi
           git commit -q -F baseline-commit.txt
+          # The tree rule on this commit, before anything else is asked of it
+          # (ops couplings 216). The validator in the step above read the
+          # commit the baseline was computed over, and `git add -- log/decisions`
+          # takes a link standing there as readily as a record.
+          node tools/lib/tree-modes.mjs HEAD
           # One commit on top of the main it was computed over, and nothing
           # else: a dispatch on another ref (workflow_dispatch takes one) must
           # not carry that ref's commits to main in the same push. This is a

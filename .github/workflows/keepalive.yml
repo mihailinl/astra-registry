@@ -258,6 +258,10 @@ jobs:
           # from the ingest publisher and from people, and losing a month's
           # keepalive to one non-fast-forward is losing the month.
           for attempt in 1 2 3; do
+            # The tree rule on what this attempt pushes (ops couplings 216),
+            # asked again after every rebase: a rebased commit carries whatever
+            # main moved to, and this job runs no validator of its own.
+            node tools/lib/tree-modes.mjs HEAD
             if git push origin HEAD:main; then
               echo "ok    pushed on attempt $attempt"
               exit 0

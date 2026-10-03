@@ -51,6 +51,7 @@
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import { pathToFileURL } from "node:url";
 
 import { cleanEnv } from "./git-env.mjs";
 
@@ -184,4 +185,70 @@ export function unaskableRoot(root) {
     return `${root} has no commit at HEAD, so there is no tree to read`;
   }
   return null;
+}
+
+// ── the rule on one commit, from a writer's shell ────────────────────────────
+//
+//   node tools/lib/tree-modes.mjs HEAD
+//
+// For the writers that commit and push from a workflow's shell (ops
+// `dev/couplings.md` entry 216): the moderation commit job, the operator job,
+// baseline, keepalive and the publisher re-check. Each ran `tools/validate.mjs`
+// over the commit it STARTED from, if it validated at all — keepalive and the
+// re-check never did — so the commit it made met this rule only after the
+// push, in Registry index and the Signer's gate, by which time it was `main`.
+// `bot/publish-apply.mjs` asks the rule of its own commit in-process; these
+// five run this line after their last `git commit` (and after every rebase)
+// and before each `git push`. A refusal exits 1, and the step's `set -e` ends
+// the shell with nothing pushed. `bot/tests/publish-apply.test.mjs` runs each
+// writer's own steps over a commit holding a link and one holding an empty
+// directory, and holds every workflow line that pushes to having this line
+// before it.
+//
+// Asked from the top of the checkout, as `tools/validate.mjs` asks it: a
+// directory that is not the top of a work tree of its own would have git
+// answer for whatever repository encloses it.
+
+/**
+ * The rule over `argv[0]` in the repository `root` is the top of. Returns the
+ * exit code: 0 clean, 1 refused or unreadable, 2 misused. Everything it says
+ * goes to stdout, where the runner reads `::error::`.
+ */
+export function main(argv, { root = process.cwd(), say = console.log } = {}) {
+  if (argv.length !== 1 || argv[0].startsWith("-")) {
+    say("usage: node tools/lib/tree-modes.mjs <commit>   (a writer passes HEAD, after its commit and before its push)");
+    return 2;
+  }
+  const unaskable = unaskableRoot(root);
+  if (unaskable) {
+    say(`::error::the tree rule was not asked, so nothing may be pushed: ${unaskable}`);
+    return 1;
+  }
+  let made;
+  try {
+    made = readTree(root, argv[0]);
+  } catch (err) {
+    say(`::error::git could not list the tree at ${argv[0]}, so nothing may be pushed: ` +
+      `${String(err?.stderr || err?.message || err).trim().split("\n")[0]}`);
+    return 1;
+  }
+  const at = made.at.slice(0, 12);
+  if (made.rows.length === 0) {
+    say(`::error::git ls-tree listed nothing at ${at}; a listing of nothing refuses nothing, so this is a broken ` +
+      "read, not a clean tree, and nothing may be pushed");
+    return 1;
+  }
+  const problems = treeModeProblems(made.rows, at);
+  if (problems.length === 0) {
+    say(`ok    the tree at ${at}: ${made.rows.length} entries, each a regular file or a directory with a file beneath it`);
+    return 0;
+  }
+  for (const p of problems) say(`::error::${p.path}: ${p.message}`);
+  say(`::error::the commit at ${at} holds ${problems.length} entr${problems.length === 1 ? "y" : "ies"} the registry's ` +
+    `tree may not, and it is not pushed. ${TREE_MODE_HINT}`);
+  return 1;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = main(process.argv.slice(2));
 }

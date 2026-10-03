@@ -2925,9 +2925,11 @@ export function checkRecordStrings(ctx) {
  * merge commit, and in the signer's catalogue gate it is the Source-Commit, so
  * a link that reached `main` anyway holds the catalogue at `signed`'s head.
  * Where a writer validates BEFORE it commits — `bot/publish-apply.mjs`, the
- * moderation and operator jobs — this reads the commit the writer starts from,
- * and the writer's own commit is a second question: `bot/publish-apply.mjs`
- * asks it of the commit it made, before it pushes.
+ * moderation and operator jobs, baseline — this reads the commit the writer
+ * starts from, and the writer's own commit is a second question, which every
+ * writer asks before it pushes: `bot/publish-apply.mjs` in-process, and the
+ * moderation, operator, baseline, keepalive and publisher re-check workflows
+ * by `node tools/lib/tree-modes.mjs HEAD` (ops couplings 216).
  *
  * Over a directory that is not the top of a git work tree — every fixture
  * under `tests/fixtures/`, and the copy `bot/ingest.mjs` validates a derived

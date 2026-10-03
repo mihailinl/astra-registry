@@ -121,6 +121,11 @@ jobs:
           git config user.email "bot@users.noreply.github.com"
           git add --all --pathspec-from-file=operator/paths.txt
           git commit --file=operator/commit-message.txt
+          # The tree rule on the commit just made, before the push (ops
+          # couplings 216). The validator above read the commit this act
+          # started from, and `git add --all` takes whatever stands at a listed
+          # path, a link included; a refusal ends the step here.
+          node tools/lib/tree-modes.mjs HEAD
           git push origin HEAD:main
 
   # A refused or failed act is the case worth a page: somebody who can dispatch
