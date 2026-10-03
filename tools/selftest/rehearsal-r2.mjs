@@ -57,9 +57,9 @@ const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
 
 // Every check below that reads fixtures reads ONE CUT of the series
 // (`REHEARSALS`: rehearsal-r2 at T0 2026-09-22, rehearsal-r2b at T0
-// 2026-09-26), and `run()` asks each of them of every cut, by name. A cut the
-// staging service is shown is a cut this judge has passed whole; the first
-// cut's passing says nothing about the second's bytes.
+// 2026-09-26, rehearsal-r2c at T0 2026-10-24), and `run()` asks each of them
+// of every cut, by name. A cut the staging service is shown is a cut this
+// judge has passed whole; one cut's passing says nothing about another's bytes.
 let FIXTURES = null;
 const stepDir = (id) => path.join(FIXTURES, ...id.split("/"));
 const docOf = (id, name) => readJson(path.join(stepDir(id), "registry", "v1", name));
@@ -140,6 +140,22 @@ async function judgeCut(cut) {
     }
     const first = withDocuments.map((s) => Date.parse(docOf(s.id, "revocations.json").signed.expires_at)).sort((a, b) => a - b)[0];
     assertEqual(new Date(first).toISOString(), new Date(Date.parse(t0) + 7 * DAY_MS).toISOString(), "the cut's hard end");
+  });
+
+  await test("the cut's hard end is the one REHEARSALS declares for it, the date its readers were promised", () => {
+    // A cut is made for a date somebody else plans around: rehearsal-r2c's is
+    // 2026-10-31T00:00Z, because the plugins service asked for a step 0 that
+    // still serves then (its serve is no earlier than 2026-10-06). The check
+    // above ties the hard end to T0; this one ties it to the promise, so a T0
+    // moved and regenerated — which every other check here passes — goes red
+    // here, by name, before the runbook's date is a date nothing serves until.
+    // Watched failing by moving rehearsal-r2c's T0 a day earlier and
+    // regenerating.
+    const declared = REHEARSALS[cut].hard_end;
+    assert(typeof declared === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(declared),
+      `REHEARSALS gives ${cut} no hard_end, so nothing says which date its lists were cut to reach`);
+    const first = withDocuments.map((s) => docOf(s.id, "revocations.json").signed.expires_at).sort()[0];
+    assertEqual(first, declared, `${cut}'s first list expires at ${first}, and REHEARSALS promises ${declared}`);
   });
 
   await test("the manifest and the fixture tree are one set, and every step holds D2's four documents", () => {

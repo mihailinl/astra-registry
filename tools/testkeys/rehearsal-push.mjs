@@ -6,10 +6,12 @@
 //   node tools/testkeys/rehearsal-push.mjs --step 1 --dry-run      # everything but the push
 //   node tools/testkeys/rehearsal-push.mjs --step 1 --evidence roll60.jsonl
 //
-// With no `--repo` it serves the cut at T0 2026-09-26 (fixtures/rehearsal-r2b/)
-// on `mihailinl/astra-registry-canary-2`. `--repo mihailinl/astra-registry-canary`
-// serves the first cut (fixtures/rehearsal-r2/, T0 2026-09-22) there. Each
-// canary is refused the other's cut.
+// With no `--repo` it serves the cut at T0 2026-10-24 (fixtures/rehearsal-r2c/,
+// hard end 2026-10-31) on `mihailinl/astra-registry-canary-3`.
+// `--repo mihailinl/astra-registry-canary-2` serves the second cut
+// (fixtures/rehearsal-r2b/, T0 2026-09-26) there, and
+// `--repo mihailinl/astra-registry-canary` the first (fixtures/rehearsal-r2/,
+// T0 2026-09-22). Each canary is refused every other's cut.
 //
 // Run it from a fresh clone of astra-registry `main`, never from the shared
 // checkout: it runs the fixtures' judge, which reads this tree. The runbook is
@@ -38,9 +40,9 @@ const REPO = path.resolve(HERE, "..", "..");
 /**
  * `tools/selftest.mjs`'s FLOORS entry for `rehearsal-r2.mjs`. A judge that passed fewer checked less.
  * The two are held equal by `tools/selftest/rehearsal-push.mjs`. The judge
- * judges every cut, so a push of either cut needs both to pass.
+ * judges every cut, so a push of any cut needs every cut to pass.
  */
-const JUDGE_FLOOR = 29;
+const JUDGE_FLOOR = 45;
 const MARK = "REHEARSAL-JUDGE ";
 
 function judge() {
