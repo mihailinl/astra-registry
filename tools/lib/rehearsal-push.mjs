@@ -8,7 +8,7 @@
 //
 // Each cut of the series (`tools/testkeys/fixtures/rehearsal-r2/`, T0
 // 2026-09-22; `…/rehearsal-r2b/`, T0 2026-09-26; `…/rehearsal-r2c/`, T0
-// 2026-10-24) holds, per step, the four documents a
+// 2026-10-24; `…/rehearsal-r2d/`, T0 2026-10-03) holds, per step, the four documents a
 // `signed` commit carried and that commit's message, and `manifest.json` holds
 // the sha the real signer gave the commit. The commit is a function of those
 // bytes, its parent, the signer's identity and the step's `now`, so it is
@@ -19,12 +19,13 @@
 //
 // ── where it may go ─────────────────────────────────────────────────────────
 //
-// Three canaries, each serving one cut and nothing else (`CANARIES`):
+// Four canaries, each serving one cut and nothing else (`CANARIES`):
 // `mihailinl/astra-registry-canary`, BOT-88's test repository, the first cut;
-// `mihailinl/astra-registry-canary-2` and `-canary-3`, static sources made for
-// the second and the third, because a `signed` that has carried one cut can
-// never carry another (SERVE-18) and the plugins service compiles the branch
-// name `signed` in. The push URL is
+// `mihailinl/astra-registry-canary-2`, `-3` and `-4`, made for the second,
+// third and fourth, because a `signed` that has carried one cut can never
+// carry another (SERVE-18) and the plugins service compiles the branch name
+// `signed` in. canary-3 is abandoned, and canary-4's step 0 is re-signed by
+// `tools/lib/rehearsal-resign.mjs`. The push URL is
 // DERIVED from `--repo` — so the refusal below is the only thing between a typo
 // and `mihailinl/astra-registry`'s `signed` branch, which every Astra
 // installation reads, and it is watched failing by making it accept that name.
@@ -70,20 +71,38 @@ import { DOCUMENTS, REHEARSALS, buildSeries, fixtureDirOf, manifestFileOf } from
  * The repositories this may push to, each with the one cut it serves (a name
  * in `REHEARSALS`). A cut and its canary are one decision: the first canary's
  * `signed` carries the first cut's step 0 and can carry nothing else, canary-2
- * was made empty for the second, and canary-3 for the third (2026-10-03, after
- * the second's hard end, for the plugins service's first serve of a fresh T0).
+ * was made empty for the second, canary-3 for the third, and canary-4 for the
+ * fourth.
+ *
+ * `abandoned` is a canary nothing may push to again, with the reason. Its
+ * `--status` and `--list` still answer, because its `signed` is a record.
+ * canary-3's step 0 is dated 2026-10-24, and the plugins service's publisher
+ * refuses a list whose `expires_at` passes `min(issued_at, judged_at) + 8
+ * days`, so it will never read it.
+ *
+ * `resign` marks the canary whose step 0 the rolling re-sign keeps fresh
+ * (`tools/lib/rehearsal-resign.mjs`). This tool pushes its step 0 once and no
+ * later step: a re-signed head is past the fixture's step 0, and every
+ * rotation step's parent is that step 0 (SERVE-18).
  */
 export const CANARIES = Object.freeze({
   "mihailinl/astra-registry-canary": Object.freeze({ fixtures: "rehearsal-r2" }),
   "mihailinl/astra-registry-canary-2": Object.freeze({ fixtures: "rehearsal-r2b" }),
-  "mihailinl/astra-registry-canary-3": Object.freeze({ fixtures: "rehearsal-r2c" }),
+  "mihailinl/astra-registry-canary-3": Object.freeze({
+    fixtures: "rehearsal-r2c",
+    abandoned: "canary-3 is abandoned (2026-10-03): its documents are dated 2026-10-24, and the plugins service's " +
+      "publisher refuses a list whose expires_at passes min(issued_at, judged_at) + 8 days, so nothing will read it. " +
+      "Its `signed` stays as it is, append-only and unread; canary-4 replaces it",
+  }),
+  "mihailinl/astra-registry-canary-4": Object.freeze({ fixtures: "rehearsal-r2d", resign: true }),
 });
 /**
  * The canary with no `--repo` and no `--fixtures`: the one the day's walk
- * reads, and the one whose cut ends last. The runbook's commands carry no
- * `--repo`, so a default left on a passed hard end refuses every step.
+ * reads, the one whose cut ends last among those not abandoned. The runbook's
+ * commands carry no `--repo`, so a default left on a passed hard end, or on
+ * an abandoned canary, refuses every step.
  */
-export const DEFAULT_CANARY = "mihailinl/astra-registry-canary-3";
+export const DEFAULT_CANARY = "mihailinl/astra-registry-canary-4";
 /** The production registry, named so its refusal can say what it would have cost. */
 export const PRODUCTION_SLUG = "mihailinl/astra-registry";
 /** What the push URL is, for a slug. Derived, so the refusal is load-bearing. */
@@ -374,7 +393,8 @@ export function buildCommits(git, steps) {
  * refuses a changed document already past it, and a daemon refuses an
  * expired list, so a step with one is a step nobody will accept. The series'
  * lists run out seven days after T0 (2026-09-29 for rehearsal-r2, 2026-10-03
- * for rehearsal-r2b, 2026-10-31 for rehearsal-r2c), and that date is the cut's
+ * for rehearsal-r2b, 2026-10-31 for rehearsal-r2c, 2026-10-10 for
+ * rehearsal-r2d before its first re-sign), and that date is the cut's
  * hard end (`REHEARSALS`' `hard_end`, which the judge holds the lists to).
  */
 export function expiredDocuments(step, now) {
@@ -631,6 +651,14 @@ async function run(argv, { fetchImpl, judge, gitConfig = [], log, sleep, clock, 
     log(`      to make TRUST-3 hold on ${slug}, merge both into its main with the tree unchanged:`);
     log("        git merge -s ours --no-ff --allow-unrelated-histories refs/rehearsal-source/rotation refs/rehearsal-source/compromise");
     return 0;
+  }
+
+  // A canary nothing may push to again, and the re-sign canary past its step 0.
+  if (a.step !== null && CANARIES[slug].abandoned) throw new Refusal("ABANDONED", `${slug}: ${CANARIES[slug].abandoned}`, 2);
+  if (a.step !== null && CANARIES[slug].resign && (a.step !== 0 || a.series !== "rotation")) {
+    throw new Refusal("RESIGN_CANARY", `${slug} serves step 0 of the rotation only, and tools/lib/rehearsal-resign.mjs keeps it ` +
+      "fresh. A re-signed head is past the fixture's step 0, and every later step's parent is that step 0, so the service " +
+      "would refuse it (SERVE-18)", 2);
   }
 
   const series = SERIES[a.series];

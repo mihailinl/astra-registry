@@ -1,0 +1,63 @@
+{
+  "schema": "astra.registry.signer-run/1",
+  "step": "sign",
+  "now": "2026-10-03T01:00:00Z",
+  "source_commit": "fa210b585134997d67caa9129775c4391b751808",
+  "index_source_commit": "fa210b585134997d67caa9129775c4391b751808",
+  "parent": "0284ece6c93ac8a8e4b18bc870affc7d6d88ad58",
+  "branch": "signed",
+  "serials": {
+    "index": 2,
+    "revocations": 3
+  },
+  "key_mode": "normal",
+  "dropped_keys": [],
+  "documents": {
+    "index": {
+      "decision": "changed",
+      "serial": 2,
+      "signed_by": [
+        "astra-index-2026a"
+      ]
+    },
+    "revocations": {
+      "decision": "changed",
+      "serial": 3,
+      "signed_by": [
+        "astra-index-2026a",
+        "TEST-ONLY-DO-NOT-TRUST-index-2026b"
+      ]
+    },
+    "trust": {
+      "decision": "copied",
+      "serial": null,
+      "signed_by": null
+    },
+    "root": {
+      "decision": "copied",
+      "serial": null,
+      "signed_by": null
+    }
+  },
+  "files": [
+    "registry/v1/index.json",
+    "registry/v1/revocations.json",
+    "registry/v1/root.json",
+    "registry/v1/trust.json"
+  ],
+  "alerts": [],
+  "refusals": [],
+  "notes": [
+    "TEST-ONLY-DO-NOT-TRUST-index-2026b was first delegated by this run, 0.00 h ago; it may sign the catalogue after 7 h"
+  ],
+  "warnings": [],
+  "codes": [],
+  "hexes": [
+    "fa210b585134997d67caa9129775c4391b751808"
+  ],
+  "status": "green",
+  "commit": true,
+  "$command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit fa210b585134997d67caa9129775c4391b751808 --now 2026-10-03T01:00:00Z --test-key astra-index-2026a=TEST-ONLY-DO-NOT-TRUST-index-2026a --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-rotation-01-delegate.json",
+  "$signed_sha": "db1c656e89c70c19ab12158afdec34d47c528226",
+  "$commit_message": "signed: catalogue 2, withdrawal list 3 at fa210b585134\n\nregistry/v1/index.json: changed at serial 2\nregistry/v1/revocations.json: changed at serial 3\n\nSource-Commit: fa210b585134997d67caa9129775c4391b751808\nRun: https://github.com/mihailinl/astra-registry/actions/runs/0\nSigner: sign.yml\nIndex-Source-Commit: fa210b585134997d67caa9129775c4391b751808"
+}

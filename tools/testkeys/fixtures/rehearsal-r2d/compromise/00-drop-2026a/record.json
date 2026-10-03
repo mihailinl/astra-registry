@@ -1,0 +1,64 @@
+{
+  "schema": "astra.registry.signer-run/1",
+  "step": "sign",
+  "now": "2026-10-03T05:00:00Z",
+  "source_commit": "af34a47d56a8ba755afabb80a9b50510d2452bed",
+  "index_source_commit": "af34a47d56a8ba755afabb80a9b50510d2452bed",
+  "parent": "52a5e9e5ae98af8ada639a94690d5097104e88a4",
+  "branch": "signed",
+  "serials": {
+    "index": 4,
+    "revocations": 5
+  },
+  "key_mode": "compromise",
+  "dropped_keys": [
+    "astra-index-2026a"
+  ],
+  "documents": {
+    "index": {
+      "decision": "changed",
+      "serial": 4,
+      "signed_by": [
+        "TEST-ONLY-DO-NOT-TRUST-index-2026b"
+      ]
+    },
+    "revocations": {
+      "decision": "changed",
+      "serial": 5,
+      "signed_by": [
+        "TEST-ONLY-DO-NOT-TRUST-index-2026b"
+      ]
+    },
+    "trust": {
+      "decision": "copied",
+      "serial": null,
+      "signed_by": null
+    },
+    "root": {
+      "decision": "copied",
+      "serial": null,
+      "signed_by": null
+    }
+  },
+  "files": [
+    "registry/v1/index.json",
+    "registry/v1/revocations.json",
+    "registry/v1/root.json",
+    "registry/v1/trust.json"
+  ],
+  "alerts": [],
+  "refusals": [],
+  "notes": [
+    "compromise mode (D10): the Source-Commit's trust.json drops astra-index-2026a, which signed the head, and policy/index-key-retirements.json records no planned retirement of it from a time already reached. The seven-hour window is waived and the catalogue may not be carried."
+  ],
+  "warnings": [],
+  "codes": [],
+  "hexes": [
+    "af34a47d56a8ba755afabb80a9b50510d2452bed"
+  ],
+  "status": "green",
+  "commit": true,
+  "$command": "node tools/signer/run.mjs --step sign --root $WORK --source-commit af34a47d56a8ba755afabb80a9b50510d2452bed --now 2026-10-03T05:00:00Z --test-key TEST-ONLY-DO-NOT-TRUST-index-2026b=TEST-ONLY-DO-NOT-TRUST-index-2026b --out $WORK/.dist-signed --record $WORK/.record-compromise-00-drop-2026a.json",
+  "$signed_sha": "7cd43d5fa0434b0905f32f68af903fd26642f514",
+  "$commit_message": "signed: catalogue 4, withdrawal list 5 at af34a47d56a8\n\nregistry/v1/index.json: changed at serial 4\nregistry/v1/revocations.json: changed at serial 5\n\nSource-Commit: af34a47d56a8ba755afabb80a9b50510d2452bed\nRun: https://github.com/mihailinl/astra-registry/actions/runs/0\nSigner: sign.yml\nIndex-Source-Commit: af34a47d56a8ba755afabb80a9b50510d2452bed"
+}
