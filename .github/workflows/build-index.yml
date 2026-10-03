@@ -396,6 +396,37 @@ jobs:
           fi
           echo "index: $bytes / $ceiling bytes ($(( bytes * 100 / ceiling ))%)"
 
+      # The word before the wall above. From contract 3.0.0 a listing publishes
+      # with no moderator reading it first, so the first person to see a 110 KB
+      # icon would otherwise be whoever reads the signer's carry alarm, after the
+      # catalogue has stopped moving. At 75% of max_index_bytes this annotates
+      # the run with the three heaviest listings and what their icons cost. It
+      # never fails the job: the gate above is the failure, and the signer pages
+      # on the same line over the signed bytes (tools/signer/run.mjs,
+      # SIGNER_INDEX_NEAR_CAP). It runs when the gate failed too, because over
+      # the cap is when the names are most needed. The rule is
+      # tools/lib/index-budget.mjs; bot/tests/workflows.test.mjs runs this block.
+      - name: The catalogue's early warning, at 75% of max_index_bytes
+        if: ${{ !cancelled() && steps.serial.conclusion == 'success' }}
+        env:
+          ASTRA_CANDIDATE: dist/index.json
+        run: |
+          set -euo pipefail
+          if [ ! -f "$ASTRA_CANDIDATE" ]; then
+            echo "no deploy candidate at $ASTRA_CANDIDATE; the step that writes it failed before it did"
+            exit 0
+          fi
+          node -e '
+            const fs = require("node:fs");
+            const raw = fs.readFileSync(process.argv[1]);
+            const cap = JSON.parse(fs.readFileSync("policy/limits.json", "utf8")).max_index_bytes;
+            import("./tools/lib/index-budget.mjs").then(({ indexBudget, budgetLine, budgetWarning }) => {
+              const b = indexBudget({ bytes: raw.length, cap, doc: JSON.parse(raw) });
+              console.log(budgetLine(b, "the unsigned deploy candidate"));
+              if (b.near) console.log(`::warning::${budgetWarning(b, "the unsigned deploy candidate")}`);
+            });
+          ' "$ASTRA_CANDIDATE"
+
       - name: Validate the deploy candidate against schema/index-v1.json
         if: ${{ !cancelled() && steps.candidate.conclusion == 'success' }}
         run: |

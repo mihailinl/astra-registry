@@ -72,6 +72,7 @@ import {
   SIGNED_BRANCH, SIGNED_FILES, carryAlert, fetchSignedHead, indexSizeVerdict, maxIndexBytes, planRun, resignAfterHoursFor,
 } from "./plan.mjs";
 import { armingState, pagesRegistryFiles, pagesTree } from "./pages.mjs";
+import { budgetLine, budgetWarning, indexBudget } from "../lib/index-budget.mjs";
 
 /** D2's four trailers, in the order they are written. */
 export const SIGNER_TRAILER = "sign.yml";
@@ -85,6 +86,11 @@ export const CODES = {
   noKey: "SIGNER_NO_INDEX_KEY",
   pushRace: "SIGNER_PUSH_RACE",
   siteRender: "SIGNER_SITE_RENDER_FAILED",
+  // The catalogue this run published GREW and is past 75% of max_index_bytes
+  // (tools/lib/index-budget.mjs). A page, because from contract 3.0.0 no
+  // moderator reads a listing before it is signed, and SERVE-49's carry is the
+  // next thing anybody would otherwise hear.
+  nearCap: "SIGNER_INDEX_NEAR_CAP",
 };
 
 const rfc3339 = (d) => new Date(d).toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -276,6 +282,31 @@ export async function signRun({
     };
   }
 
+  // The early word before SERVE-49 (tools/lib/index-budget.mjs), over the
+  // catalogue this run leaves served, whatever its decision: signed now,
+  // carried, or unchanged. A note every run, so the number is in every log; a
+  // warning every run while it is past the line; and a page only when the
+  // served catalogue GREW against `signed`'s head, in signed bytes. That one
+  // comparison is the whole rule: a carry and an `unchanged` re-commit are the
+  // head's own bytes and can never page, and a release that shrinks a listing
+  // is the fix working — paging for any of them, every hour, would teach the
+  // reader that the page means nothing.
+  const warnings = [];
+  const served = documents.index;
+  if (typeof served?.bytes === "string" && served.doc) {
+    const budget = indexBudget({ bytes: Buffer.byteLength(served.bytes, "utf8"), cap, doc: served.doc });
+    notes.push(budgetLine(budget, "the signed catalogue"));
+    if (budget.near) {
+      warnings.push(budgetWarning(budget, "the signed catalogue"));
+      const headBytes = head?.present && typeof head.bytes?.index === "string"
+        ? Buffer.byteLength(head.bytes.index, "utf8")
+        : null;
+      if (headBytes === null || budget.bytes > headBytes) {
+        codes.push(CODES.nearCap);
+      }
+    }
+  }
+
   // Contract §0.7 (since 2.16.0), over all four documents exactly as they
   // would be committed: bytes that are UTF-8, text that is JSON, and every
   // member name and string value valid I-JSON (RFC 7493 §2.1) — no unpaired
@@ -362,9 +393,10 @@ export async function signRun({
     alerts,
     refusals,
     notes,
+    warnings,
     codes: [...new Set(codes)],
     hexes: [sourceCommit],
-    status: alerts.length || refusals.length ? "red" : "green",
+    status: alerts.length || refusals.length || codes.includes(CODES.nearCap) ? "red" : "green",
     commit,
   };
 }
@@ -650,6 +682,7 @@ async function stepSign(args) {
 
   for (const note of record.notes) console.log(`note  ${note}`);
   for (const alert of record.alerts) console.log(`::warning::${alert}`);
+  for (const warning of record.warnings) console.log(`::warning::${warning}`);
   for (const refusal of record.refusals) console.error(`::error::${refusal}`);
   console.log(
     `ok    ${record.key_mode} mode, catalogue ${record.serials.index} (${record.documents.index?.decision}), ` +

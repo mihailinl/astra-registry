@@ -703,4 +703,128 @@ export async function run() {
       `the refusal has to name the rule and the signed size: ${record.refusals.join(" | ")}`);
     assertEqual(record.status, "red", "a blocked run reported green");
   });
+
+  // ── the early word before SERVE-49 (tools/lib/index-budget.mjs) ──────────
+  //
+  // Three listings with icons of known sizes, a head carrying two of them, and
+  // a Source-Commit adding the third. The cap is chosen per case, from the
+  // signed size this fixture measures, so each case sits on the side of the
+  // 75% line it claims to.
+  const budgetFixture = (name) => {
+    const t = makeTree(name, { trustKeys: [KEY_A] });
+    const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const withIcon = (id, size) => {
+      t.write(`plugins/${id}/plugin.json`, { ...listing(id), icon: "icon.png" });
+      t.write(`plugins/${id}/versions/1.0.0.json`, release(id));
+      fs.writeFileSync(path.join(t.dir, "plugins", id, "icon.png"), Buffer.concat([PNG, Buffer.alloc(size - PNG.length, 1)]));
+    };
+    withIcon("small-icon", 900);
+    withIcon("big-icon", 6000);
+    t.commit("two listings");
+    const headCatalogue = signIndex(buildIndex({ root: t.dir, serial: 1 }), {
+      signer: signerFor(KEY_A), issuedAt: new Date("2026-09-19T00:00:00Z"),
+    });
+    const head = headFrom({
+      index: headCatalogue,
+      revocations: signRevocations(
+        { signed: { schema: REVOCATIONS_SCHEMA, serial: 1, revocations: [] } },
+        { signer: signerFor(KEY_A), issuedAt: new Date("2026-09-19T00:00:00Z") },
+      ),
+      trust: trustDelegating([KEY_A]),
+      sha: t.head(),
+    });
+    withIcon("medium-icon", 3000);
+    const sourceCommit = t.commit("a third listing, with a 3,000-byte icon");
+    const now = "2026-09-20T00:00:00Z";
+    const serial = serialsAt({ root: t.dir, sha: sourceCommit }).index;
+    const served = Buffer.byteLength(stableStringify(signIndex(buildIndex({ root: t.dir, serial }), {
+      signer: signerFor(KEY_A), issuedAt: new Date(now),
+    })), "utf8");
+    const run = ({ limit, headOverride = head, at = now }) => signRun({
+      root: t.dir, sourceCommit, head: headOverride, now: at, limit,
+      available: [signerFor(KEY_A)],
+      delegatedAt: new Map([[KEY_A, "2026-09-01T00:00:00Z"]]),
+    });
+    return { t, head, sourceCommit, now, serial, served, run };
+  };
+
+  await test("a catalogue that grows past 75% of the cap is published and pages, naming its three largest listings", async () => {
+    const f = budgetFixture("budget-grew-near");
+    // 80% of the cap: over the line, under the wall.
+    const limit = Math.ceil((f.served * 100) / 80);
+    const record = await f.run({ limit });
+    assertEqual(record.documents.index.decision, "changed", "a catalogue under the cap was not published");
+    assertEqual(record.codes.includes("SIGNER_INDEX_NEAR_CAP"), true, `no page: ${record.codes.join(" ")}`);
+    assertEqual(record.status, "red", "the early warning did not reach the alarm");
+    assertEqual(record.warnings.length, 1, `one warning: ${JSON.stringify(record.warnings)}`);
+    const w = record.warnings[0];
+    for (const want of ["big-icon", "icon 6,000 bytes image/png", "medium-icon", "icon 3,000 bytes", "small-icon", "icon 900 bytes", String(limit).replace(/\B(?=(\d{3})+(?!\d))/g, ",")]) {
+      assert(w.includes(want), `the warning does not say ${JSON.stringify(want)}: ${w}`);
+    }
+    assert(w.indexOf("big-icon") < w.indexOf("medium-icon") && w.indexOf("medium-icon") < w.indexOf("small-icon"),
+      `heaviest first: ${w}`);
+    assertEqual(record.alerts.length, 0, "the early warning is not a carry and must not read as one in the commit message");
+    const percent = `${Math.floor((f.served * 1000) / limit) / 10}%`;
+    assert(record.notes.some((note) => note.startsWith("the signed catalogue is ") && note.includes(percent)),
+      `the budget line is missing from the notes: ${record.notes.join(" | ")}`);
+  });
+
+  await test("under 75% of the cap there is a note and nothing else", async () => {
+    const f = budgetFixture("budget-under");
+    const limit = f.served * 2;
+    const record = await f.run({ limit });
+    assertEqual(record.documents.index.decision, "changed", "the catalogue was not published");
+    assertEqual(record.codes.includes("SIGNER_INDEX_NEAR_CAP"), false, `paged at 50%: ${record.codes.join(" ")}`);
+    assertEqual(record.warnings.length, 0, `warned at 50%: ${JSON.stringify(record.warnings)}`);
+    assertEqual(record.status, "green", "a catalogue at half the cap reported red");
+    assert(record.notes.some((note) => note.startsWith("the signed catalogue is ")),
+      `the budget line is missing from the notes: ${record.notes.join(" | ")}`);
+  });
+
+  await test("an unchanged catalogue over the line warns in the log every run and does not page again", async () => {
+    // The page is about GROWTH. Once the catalogue that crossed the line is
+    // `signed`'s head, the hourly run that finds nothing new re-commits it as
+    // `unchanged` — and a page every hour about a state nobody changed is how
+    // an alarm channel gets muted. The warning stays, in the log.
+    const f = budgetFixture("budget-unchanged");
+    const limit = Math.ceil((f.served * 100) / 80);
+    const first = await f.run({ limit });
+    assertEqual(first.codes.includes("SIGNER_INDEX_NEAR_CAP"), true, "the fixture's first run did not page");
+    const published = first.files;
+    const again = headFrom({
+      index: JSON.parse(published[SIGNED_FILES.index]),
+      revocations: JSON.parse(published[SIGNED_FILES.revocations]),
+      trust: trustDelegating([KEY_A]),
+      sha: f.t.head(),
+    });
+    const record = await f.run({ limit, headOverride: again, at: "2026-09-20T01:00:00Z" });
+    assertEqual(record.documents.index.decision, "unchanged", "the fixture does not reach the unchanged case");
+    assertEqual(record.codes.includes("SIGNER_INDEX_NEAR_CAP"), false, `paged again for the same catalogue: ${record.codes.join(" ")}`);
+    assertEqual(record.warnings.length, 1, "the log stopped saying the catalogue is near its cap");
+    assertEqual(record.status, "green", "an unchanged catalogue reported red");
+  });
+
+  await test("a catalogue that shrinks while still over the line warns and does not page", async () => {
+    // A release that drops an oversized icon is the fix working. Paging for it
+    // would teach the reader that the page means nothing.
+    const f = budgetFixture("budget-shrank");
+    const limit = Math.ceil((f.served * 100) / 80);
+    // A head one listing heavier than the Source-Commit: its catalogue, with a
+    // fourth listing's worth of icon carried in `small-icon`'s place.
+    const heavier = JSON.parse(stableStringify(signIndex(buildIndex({ root: f.t.dir, serial: f.serial - 1 }), {
+      signer: signerFor(KEY_A), issuedAt: new Date("2026-09-19T00:00:00Z"),
+    })));
+    heavier.signed.plugins.push({ ...heavier.signed.plugins[0], id: "gone-listing" });
+    const head = headFrom({
+      index: heavier,
+      revocations: JSON.parse(f.head.bytes.revocations),
+      trust: trustDelegating([KEY_A]),
+      sha: f.head.sha,
+    });
+    assert(Buffer.byteLength(head.bytes.index, "utf8") > f.served, "the fixture's head is not heavier than the new catalogue");
+    const record = await f.run({ limit, headOverride: head });
+    assertEqual(record.documents.index.decision, "changed", "the catalogue was not published");
+    assertEqual(record.codes.includes("SIGNER_INDEX_NEAR_CAP"), false, `paged for a catalogue that shrank: ${record.codes.join(" ")}`);
+    assertEqual(record.warnings.length, 1, "the log stopped saying the catalogue is near its cap");
+  });
 }

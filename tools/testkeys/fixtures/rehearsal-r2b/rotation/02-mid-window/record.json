@@ -50,6 +50,7 @@
   "notes": [
     "TEST-ONLY-DO-NOT-TRUST-index-2026b was first delegated at 2026-09-26T01:00:00Z, 3.00 h ago; it may sign the catalogue after 7 h"
   ],
+  "warnings": [],
   "codes": [],
   "hexes": [
     "0ca50ceff79b587cf918d2b8c638d1e310b269dc"

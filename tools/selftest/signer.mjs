@@ -38,6 +38,7 @@ import {
   gateVerdict, indexSizeVerdict, listGate, maxIndexBytes, planRun, resignAfterHoursFor, serialsAt,
 } from "../signer/plan.mjs";
 import { armingState, pagesRegistryFiles, pagesTree } from "../signer/pages.mjs";
+import { budgetWarning, indexBudget, warnLine } from "../lib/index-budget.mjs";
 import { test, assert, assertEqual, neverAsk, tmp } from "./harness.mjs";
 
 const KEY_A = "TEST-ONLY-DO-NOT-TRUST-index-2026a";
@@ -569,6 +570,48 @@ export async function run() {
     assertEqual(over.ok, false, "1,048,577 bytes was accepted");
     assert(over.message.includes("SERVE-49") && over.message.includes(String(limit + 1)),
       `the refusal has to name the size and the rule: ${over.message}`);
+  });
+
+  await test("the catalogue's early warning is at 75% of max_index_bytes, and not one byte before", () => {
+    // The word before SERVE-49's wall (tools/lib/index-budget.mjs). Asked at
+    // the real cap as well as a small one, because the line is a rounding and
+    // a rounding is where `>` and `>=`, or floor and ceil, quietly swap.
+    const cap = maxIndexBytes();
+    assertEqual(warnLine(cap), 786432, "75% of 1 MiB is 786,432 bytes");
+    const doc = { signed: { plugins: [] } };
+    assertEqual(indexBudget({ bytes: 786431, cap, doc }).near, false, "one byte under three quarters was called near");
+    assertEqual(indexBudget({ bytes: 786432, cap, doc }).near, true, "exactly three quarters was not called near");
+    assertEqual(indexBudget({ bytes: cap, cap, doc }).over, false, "the cap itself is inside it (SERVE-49 refuses OVER)");
+    assertEqual(indexBudget({ bytes: cap + 1, cap, doc }).over, true, "one byte over the cap was not over");
+    // 75% of 10 is 7.5; the line is 8, so 7 bytes is under it on a cap where
+    // rounding down would call it near.
+    assertEqual(warnLine(10), 8, "the line rounds up");
+    assertEqual(indexBudget({ bytes: 7, cap: 10, doc }).near, false, "7 of 10 is under 75%");
+  });
+
+  await test("the early warning names the three heaviest listings and what their icons cost", () => {
+    const png = (size) => `data:image/png;base64,${Buffer.alloc(size, 7).toString("base64")}`;
+    const doc = {
+      signed: {
+        plugins: [
+          { id: "light", name: "l", icon_url: png(10) },
+          { id: "heaviest", name: "h", icon_url: png(3000), readme: "r".repeat(40) },
+          { id: "middle", name: "m", icon_url: png(2000) },
+          { id: "svg-one", name: "s", icon_url: `data:image/svg+xml;base64,${Buffer.from("<svg/>".repeat(200)).toString("base64")}` },
+          { id: "no-icon", name: "n", icon_url: "", readme: "x".repeat(50) },
+        ],
+      },
+    };
+    const b = indexBudget({ bytes: 900000, cap: 1048576, doc });
+    assertEqual(b.largest.map((l) => l.id).join(" "), "heaviest middle svg-one", "the wrong three, or the wrong order");
+    assertEqual(b.largest[0].icon_bytes, 3000, "the icon's decoded size");
+    assertEqual(b.largest[0].icon_media, "image/png", "the icon's media type");
+    assertEqual(b.largest[2].icon_bytes, 1200, "an SVG icon's decoded size");
+    const w = budgetWarning(b);
+    for (const want of ["heaviest", "icon 3,000 bytes image/png", "middle", "icon 2,000 bytes", "svg-one", "900,000", "85.8%", "786,432"]) {
+      assert(w.includes(want), `the warning does not say ${JSON.stringify(want)}: ${w}`);
+    }
+    assert(!w.includes("light") && !w.includes("no-icon"), `the warning named more than three: ${w}`);
   });
 
   await test("a lower serial than `signed`'s head is refused", async () => {

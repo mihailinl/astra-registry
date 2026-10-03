@@ -3228,3 +3228,64 @@ test("only `plugins-ingest.yml` hands publish-apply `--service-path`", () => {
   const passing = files.filter((f) => read(f).split("\n").some((l) => !l.trim().startsWith("#") && l.includes("--service-path")));
   assert.deepEqual(passing, [INGEST], "a workflow other than the service path's publish job may write identity records");
 });
+
+// The catalogue's early warning (tools/lib/index-budget.mjs) as `build-index.yml`
+// runs it: the step's own `run:` block, executed with bash from the repository
+// root against two candidates on either side of the line. A rule inside a
+// workflow step is a rule with no test, so the rule lives in the module and this
+// holds the step to calling it: a renamed export, a misspelt member or a
+// `::warning::` that went to stderr would all leave the job green and the
+// annotation missing, which is exactly the silence the step exists to end.
+// Watched failing by testing `b.over` instead of `b.near` in the step.
+test("`build-index.yml`'s early-warning step annotates a candidate past 75% of the cap and names its heaviest listings", () => {
+  const lines = read("build-index.yml").split("\n");
+  const step = stepsOf(lines).find((s) => /^\s+- name: The catalogue's early warning/.test(s.body[0]));
+  assert.ok(step, "build-index.yml has no early-warning step");
+  const at = step.body.findIndex((l) => /^\s+run: \|\s*$/.test(l));
+  assert.ok(at >= 0, "the early-warning step has no `run: |` block");
+  const indent = /^(\s*)/.exec(step.body[at + 1])[1].length;
+  const script = step.body.slice(at + 1).map((l) => l.slice(indent)).join("\n");
+  const cap = JSON.parse(fs.readFileSync(path.join(REPO, "policy", "limits.json"), "utf8")).max_index_bytes;
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "early-warning-"));
+  const png = (size) => `data:image/png;base64,${Buffer.alloc(size, 3).toString("base64")}`;
+  const candidate = (heavy) => {
+    const doc = {
+      signed: {
+        schema: "astra.registry.index/1",
+        serial: 1,
+        plugins: [
+          { id: "heavy-one", icon_url: png(heavy) },
+          { id: "heavy-two", icon_url: png(Math.floor(heavy / 2)) },
+          { id: "heavy-three", icon_url: png(Math.floor(heavy / 3)), readme: "r".repeat(100) },
+          { id: "light-four", icon_url: png(100) },
+        ],
+      },
+    };
+    const file = path.join(dir, `index-${heavy}.json`);
+    fs.writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
+    return { file, bytes: fs.statSync(file).size };
+  };
+  const runStep = (file) => spawnSync("bash", ["-c", script], {
+    cwd: REPO, encoding: "utf8", env: { ...cleanEnv(), ASTRA_CANDIDATE: file },
+  });
+
+  const near = candidate(Math.ceil((cap * 0.8 * 3) / 4 / (1 + 1 / 2 + 1 / 3)));
+  assert.ok(near.bytes >= Math.ceil(cap * 0.75) && near.bytes <= cap, `the near fixture is ${near.bytes} bytes, not in the band`);
+  const r = runStep(near.file);
+  assert.equal(r.status, 0, `the step failed: ${r.stderr}`);
+  const warning = r.stdout.split("\n").find((l) => l.startsWith("::warning::"));
+  assert.ok(warning, `no ::warning:: annotation at ${near.bytes} of ${cap} bytes:\n${r.stdout}`);
+  for (const id of ["heavy-one", "heavy-two", "heavy-three"]) assert.ok(warning.includes(id), `the annotation does not name ${id}`);
+  assert.ok(!warning.includes("light-four"), "the annotation named a fourth listing");
+
+  const under = candidate(1000);
+  const quiet = runStep(under.file);
+  assert.equal(quiet.status, 0, `the step failed: ${quiet.stderr}`);
+  assert.ok(!quiet.stdout.includes("::warning::"), `a ${under.bytes}-byte candidate was annotated:\n${quiet.stdout}`);
+  assert.match(quiet.stdout, /the unsigned deploy candidate is [0-9,]+ of [0-9,]+ bytes/, "the budget line is missing");
+
+  const gone = runStep(path.join(dir, "absent.json"));
+  assert.equal(gone.status, 0, "a missing candidate failed the step; the gate before it is what fails the job");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
