@@ -248,6 +248,22 @@ env:
 #
 # `4d1aec9` is a merge commit on AstraPlugins master. R3 still has not exited,
 # so no operator acknowledgement applies.
+#
+# Bumped to `d15c896` (AstraPlugins #79's merge) for `max_icon_bytes`, the
+# E19 / `max_artifact_bytes` pairing once more: policy/limits.json declared
+# that cap `_unmirrored` until a master commit carried its row, with a
+# sentence saying this line would move first. The diff `4d1aec9..d15c896`, on
+# every path read here, is the row and its comment block in
+# `spec/listing-limits.yaml` and nothing else: the manifest crate,
+# `proto/plugin.proto`, `spec/hooks.yaml`, `spec/icon-formats.yaml`,
+# `spec/locales.yaml`, `spec/reserved-ids.yaml`, `testdata/locales/` and
+# `plugin-release.yml` are byte-identical, so no manifest is judged
+# differently. The row's value is this repository's 8192, so the forward
+# direction of checkMirroredListingLimits compares equal at once; the flip to
+# `_mirrored_by` follows in the next commit, with the check that refuses an
+# `_unmirrored` cap whose copy is already there.
+#
+# `d15c896` is a merge commit on AstraPlugins master. R3 still has not exited.
 
-ASTRA_PLUGINS_REF=4d1aec9baa754a6a660d621ec9ebbb63856583d5
+ASTRA_PLUGINS_REF=d15c8960a90a961fd5c83ead6f3d01e89f5f60f6
 ASTRA_PLUGINS_URL=https://github.com/mihailinl/AstraPlugins.git
