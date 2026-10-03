@@ -1,6 +1,6 @@
 {
-  "contract_version": "3.3.0",
-  "source_commit": "9fe1f3cc47f5f4b05eb9866cf701e705e60b3488",
+  "contract_version": "3.4.0",
+  "source_commit": "117fafaf2968312f18f409928a770a02cae77ae6",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
