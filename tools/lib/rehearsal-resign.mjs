@@ -55,6 +55,7 @@ import { fileURLToPath } from "node:url";
 
 import { cleanEnv, fixtureEnv } from "./git-env.mjs";
 import { stableStringify } from "./canonical.mjs";
+import { LS_TREE, parseLsTree, treeModeProblems } from "./tree-modes.mjs";
 import {
   CATALOG_TTL_DAYS, INDEX_SCHEMA, REVOCATION_TTL_DAYS, REVOCATIONS_SCHEMA, TRUST_SCHEMA,
   publicKeyFromBase64, signingDigest, verifyEnvelope,
@@ -229,8 +230,15 @@ export function lineageProblem(git, step0, head) {
     const changed = git(["diff", "--name-only", parents[0], sha]).out.split("\n").filter(Boolean);
     const stray = changed.filter((f) => !DOCUMENTS.includes(f));
     if (stray.length) return `${sha} on \`signed\` changes ${stray.join(", ")}, which no re-sign writes`;
-    const files = git(["ls-tree", "-r", "--name-only", sha]).out.split("\n").filter(Boolean).sort();
+    // The tree as the registry's tree rule lists it (tools/lib/tree-modes.mjs),
+    // directories included. `ls-tree -r` alone lists leaves, so a commit that
+    // carried the four documents and an empty directory beside them, or a
+    // document as a link, read here as "D2's four documents".
+    const rows = parseLsTree(git([...LS_TREE, sha]).out);
+    const files = rows.filter((r) => r.mode !== "040000").map((r) => r.path).sort();
     if (files.join(" ") !== [...DOCUMENTS].sort().join(" ")) return `${sha} on \`signed\` holds ${files.join(", ")}, not D2's four documents`;
+    const odd = treeModeProblems(rows, sha.slice(0, 12));
+    if (odd.length) return `${sha} on \`signed\` holds ${odd.map((p) => `${p.path}: ${p.message}`).join("; ")}`;
     for (const rel of ["registry/v1/trust.json", "registry/v1/root.json"]) {
       if (git(["rev-parse", `${sha}:${rel}`]).out !== git(["rev-parse", `${step0.sha}:${rel}`]).out) {
         return `${sha} on \`signed\` carries a ${rel} that is not step 0's`;
