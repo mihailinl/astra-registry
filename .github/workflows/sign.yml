@@ -103,7 +103,7 @@ concurrency:
 
 permissions: {}
 
-# SERVE-94's wake hint, off. `POST https://api.minice.ai/plugins/v1/signed/wake`
+# SERVE-94's wake hint, on (RC-R2-3 commit (ii)). `POST https://api.minice.ai/plugins/v1/signed/wake`
 # is what OPEN-MBE-7 closed with, and nothing serves that path until the R2
 # deploy: a step calling it now would be a step that fails, or worse succeeds
 # against something else, on every run for a step gate away. RC-R2-3's commit
@@ -119,7 +119,7 @@ permissions: {}
 # `"off"` is deliberately not one of TRUST-31's hashed values: this is a
 # workflow env, not a bot call's, and flipping it returns nothing to shadow.
 env:
-  WAKE_HINT: "off"
+  WAKE_HINT: "on"
 
 jobs:
   # ── publish ───────────────────────────────────────────────────────────────
@@ -262,7 +262,7 @@ jobs:
       # polls anyway (DEC-11), so a failed hint costs a poll interval and a
       # failed JOB would cost the commit above its green tick.
       #
-      # Off until RC-R2-3 (see `WAKE_HINT` at the top of this file).
+      # On since RC-R2-3 commit (ii) (see `WAKE_HINT` at the top of this file).
       - name: Tell the service a new `signed` head exists
         if: ${{ always() && env.WAKE_HINT == 'on' && steps.commit.outputs.committed == 'true' }}
         continue-on-error: true
