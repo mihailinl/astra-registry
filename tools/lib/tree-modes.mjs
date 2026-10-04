@@ -48,12 +48,44 @@
 // pending count, detector A, TRUST-31's set hash), so each of them reads such
 // a commit as no change at all while the service's mirror reads a change.
 // Refusing the tree is what makes the two answers one.
+//
+// **Two bounds, and the schemas' patterns** (ops `dev/couplings.md` entry
+// 215, asked for by the plugins service, minice-e4, 2026-10-03). The service
+// reads every commit on `main` and fails closed on what it cannot hold: its
+// serial reader refuses a tree object over 8 MiB, after which `rev_list_count`
+// cannot be asked at that commit or any later one, and its mirror counts a
+// listing's whole subtree against a 400,000-entry cap. A refusal there is
+// correct and permanent, because `main` is never rewritten, so one commit past
+// either bound freezes the service's reading of every commit after it. So the
+// rule refuses, well short of both, a tree object over `max_tree_object_bytes`
+// (1 MiB) as git stores it, `git cat-file -s`, for EVERY tree at the commit,
+// the root tree included, which no `ls-tree` row lists; and more than
+// `max_listing_tree_entries` (2,000) entries beneath any `plugins/<id>/`, as
+// `LS_TREE` lists them, files and directories at every depth. Both numbers
+// live in policy/limits.json, and because the service relies on them the
+// contract names them too (B.4, from the version after 3.4.0);
+// `tools/selftest/validation.mjs` holds the file to them. On `main` at 8837648 the widest
+// tree object anywhere is `bot/lib` at 1,785 bytes, the widest under a B.4
+// record root is `plugins` at 869, and the largest listing holds 9 entries;
+// none of `main`'s history comes nearer either bound.
+//
+// And it reads every `schema/**/*.json` at the commit, the bytes the service
+// compiles, and refuses a pattern that asks for more repetition than
+// tools/lib/schema-patterns.mjs allows: each reader of a record compiles the
+// patterns of the schema that types it, and a count of 100,000 cost a
+// validation 16.6 s here and about 60 s there.
+//
+// One function, `treeProblems`, asks all of it, and every place the rule runs
+// asks that: `tools/validate.mjs` (CI and the Signer's catalogue gate),
+// `bot/publish-apply.mjs` on its own commit, and the five workflow writers'
+// `node tools/lib/tree-modes.mjs HEAD` before their push.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { cleanEnv } from "./git-env.mjs";
+import { MAX_PATTERN_REPETITION, SCHEMA_PATTERN_HINT, schemaPatternProblems } from "./schema-patterns.mjs";
 
 /** The modes an entry may have, as `git ls-tree` prints them, and what each is. */
 export const ACCEPTED_MODES = Object.freeze({
@@ -82,6 +114,60 @@ const git = (root, args) =>
     env: { ...cleanEnv(), GIT_PAGER: "cat", GIT_OPTIONAL_LOCKS: "0" },
     stdio: ["ignore", "pipe", "pipe"],
   });
+
+/** `git cat-file <mode>` over `ids`, one per line on stdin, as raw bytes. */
+const catFile = (root, mode, ids) =>
+  execFileSync("git", ["-C", root, "cat-file", mode], {
+    input: ids.map((id) => `${id}\n`).join(""),
+    maxBuffer: 256 * 1024 * 1024,
+    env: { ...cleanEnv(), GIT_PAGER: "cat", GIT_OPTIONAL_LOCKS: "0" },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+/** The top-level directory every listing stands in, compared with a path's first segment. */
+const LISTINGS_ROOT = "plugins";
+
+/** The top-level directory of the schemas the lint reads, compared the same way. */
+const SCHEMAS_ROOT = "schema";
+
+/** What a refusal calls the root tree, which no `ls-tree` row lists. */
+export const ROOT_TREE = "(the root tree)";
+
+/** The two bounds, as `policy/limits.json` names them. */
+export const TREE_BOUND_KEYS = Object.freeze({
+  treeObjectBytes: "max_tree_object_bytes",
+  listingEntries: "max_listing_tree_entries",
+});
+
+/**
+ * This repository's `policy/limits.json`, read from beside this module: the
+ * rule's bounds are this repository's policy, never the tree under test's,
+ * as `tools/validate.mjs` takes its own (`loadPolicy(REPO_ROOT)`). Read when
+ * asked, not at import, so a module that imports this one for its pure parts
+ * needs no policy beside it.
+ */
+export function loadLimits() {
+  return JSON.parse(fs.readFileSync(new URL("../../policy/limits.json", import.meta.url), "utf8"));
+}
+
+/**
+ * The bounds out of `limits`, each a positive integer, or a throw naming the
+ * key: a bound the rule cannot read is not a bound it may skip.
+ *
+ * @returns {{treeObjectBytes: number, listingEntries: number}}
+ */
+export function treeBounds(limits) {
+  const out = {};
+  for (const [name, key] of Object.entries(TREE_BOUND_KEYS)) {
+    const v = limits?.[key];
+    if (!Number.isSafeInteger(v) || v <= 0) {
+      throw new Error(`policy/limits.json ${key} is ${JSON.stringify(v)}, not a positive integer, so the tree rule ` +
+        "has no bound to hold the tree to");
+    }
+    out[name] = v;
+  }
+  return out;
+}
 
 /**
  * `git ls-tree -z` output as rows. A row is `<mode> SP <type> SP <object> TAB
@@ -154,12 +240,125 @@ export const TREE_MODE_HINT =
   "Commit the file or the directory itself, or remove the entry.";
 
 /**
- * The tree at `treeish` in `root`, as rows, with the commit it was read at.
- * Throws when git cannot list it; the caller decides what that means.
+ * Every tree object over its bound, and every listing over its bound,
+ * in `made` (what `readTree` read), as `{path, mode, message}` like
+ * `treeModeProblems`'s. The root tree is named `ROOT_TREE`; a listing is named
+ * at `plugins/<id>`. A tree whose size was not read is refused, never passed.
+ *
+ *   docs/wide: a tree object of 1048577 bytes as git stores it, git mode 040000, over max_tree_object_bytes (1048576) …
+ *   plugins/big: a listing whose tree holds 2001 entries beneath it, files and directories at every depth, git mode 040000, over …
+ *
+ * Pure. `bounds` is `treeBounds(limits)`.
+ */
+export function treeBoundProblems({ tree, rows, sizes }, bounds, at = "HEAD") {
+  const problems = [];
+  for (const t of [{ path: ROOT_TREE, object: tree }, ...rows.filter((r) => r.type === "tree")]) {
+    const size = sizes?.get(t.object);
+    if (size === undefined || size > bounds.treeObjectBytes) {
+      problems.push({
+        path: t.path,
+        mode: "040000",
+        message: (size === undefined ? `a tree object whose size was never read, git mode 040000,` :
+          `a tree object of ${size} bytes as git stores it, git mode 040000,`) +
+          ` over max_tree_object_bytes (${bounds.treeObjectBytes}) in policy/limits.json, in the tree at ${at}: the ` +
+          "plugins service refuses a tree object past its own larger bound and then cannot count history at this " +
+          "commit or any later one, so the registry refuses one well short of it",
+      });
+    }
+  }
+  // Every row beneath `plugins/<id>/` counts once for <id>, a directory as
+  // much as a file, at every depth: what the service's mirror counts.
+  const beneath = new Map();
+  for (const r of rows) {
+    const parts = r.path.split("/");
+    if (parts.length > 2 && parts[0] === LISTINGS_ROOT) beneath.set(parts[1], (beneath.get(parts[1]) ?? 0) + 1);
+  }
+  for (const r of rows) {
+    const parts = r.path.split("/");
+    if (r.mode !== "040000" || parts.length !== 2 || parts[0] !== LISTINGS_ROOT) continue;
+    const n = beneath.get(parts[1]) ?? 0;
+    if (n > bounds.listingEntries) {
+      problems.push({
+        path: r.path,
+        mode: r.mode,
+        message: `a listing whose tree holds ${n} entries beneath it, files and directories at every depth, git mode ` +
+          `040000, over max_listing_tree_entries (${bounds.listingEntries}) in policy/limits.json, in the tree at ` +
+          `${at}: the plugins service's mirror counts a listing's whole subtree against a cap of its own and refuses ` +
+          "past it, so the registry refuses well short of it",
+      });
+    }
+  }
+  return problems;
+}
+
+/** What to do about a tree past a bound; one sentence, so it can be a hint. */
+export const TREE_BOUND_HINT =
+  "A listing holds its records, its icon and its README, and a directory a few hundred names: split what grew, " +
+  "or remove it. Raising a bound is a contract change first, because the plugins service relies on it (B.4).";
+
+/**
+ * Everything the registry's tree may not hold at `made`, each problem with
+ * the `hint` for its kind: `treeModeProblems`, `treeBoundProblems` against
+ * `limits` (this repository's `policy/limits.json` unless given), and the
+ * schema lint over every `schema/**\/*.json` `readTree` read. The one question
+ * every place the rule runs asks. Throws only when the bounds cannot be read.
+ *
+ * @param {{at: string, tree: string, rows: object[], sizes: Map<string, number>, schemas: object[]}} made
+ * @returns {{path: string, mode: string, message: string, hint: string}[]}
+ */
+export function treeProblems(made, { limits = loadLimits() } = {}) {
+  const bounds = treeBounds(limits);
+  const at = made.at.slice(0, 12);
+  return [
+    ...treeModeProblems(made.rows, at).map((p) => ({ ...p, hint: TREE_MODE_HINT })),
+    ...treeBoundProblems(made, bounds, at).map((p) => ({ ...p, hint: TREE_BOUND_HINT })),
+    ...(made.schemas ?? []).flatMap((f) => schemaPatternProblems(f.text).map((p) => ({
+      path: f.path,
+      mode: f.mode,
+      message: `${p.message} (in the tree at ${at})`,
+      hint: SCHEMA_PATTERN_HINT,
+    }))),
+  ];
+}
+
+/**
+ * The tree at `treeish` in `root`: its rows, the commit and root tree it was
+ * read at, the size of every tree object in it as git stores it, and the text
+ * of every `schema/**\/*.json` file. Throws when git cannot list it or read an
+ * object it listed; the caller decides what that means.
+ *
+ * @returns {{at: string, tree: string, rows: object[], sizes: Map<string, number>,
+ *   schemas: {path: string, mode: string, text: string}[]}}
  */
 export function readTree(root, treeish = "HEAD") {
   const at = git(root, ["rev-parse", "--verify", "--quiet", `${treeish}^{commit}`]).trim();
-  return { at, rows: parseLsTree(git(root, [...LS_TREE, at])) };
+  const rows = parseLsTree(git(root, [...LS_TREE, at]));
+  const tree = git(root, ["rev-parse", "--verify", "--quiet", `${at}^{tree}`]).trim();
+
+  const sizes = new Map();
+  const trees = [...new Set([tree, ...rows.filter((r) => r.type === "tree").map((r) => r.object)])];
+  for (const line of catFile(root, "--batch-check", trees).toString("utf8").split("\n").filter(Boolean)) {
+    const [object, type, size] = line.split(" ");
+    if (type !== "tree") throw new Error(`git listed ${object} as a tree and cat-file reads it as ${type}`);
+    sizes.set(object, Number(size));
+  }
+
+  const files = rows.filter((r) => (r.mode === "100644" || r.mode === "100755") &&
+    r.path.split("/")[0] === SCHEMAS_ROOT && r.path.endsWith(".json"));
+  const texts = new Map();
+  if (files.length > 0) {
+    // `--batch`: `<id> <type> <size>\n`, the object's bytes, then `\n`.
+    const out = catFile(root, "--batch", [...new Set(files.map((r) => r.object))]);
+    for (let i = 0; i < out.length;) {
+      const eol = out.indexOf(10, i);
+      const [object, type, size] = out.subarray(i, eol).toString("utf8").split(" ");
+      if (type !== "blob") throw new Error(`git listed ${object} as a blob and cat-file reads it as ${type}`);
+      texts.set(object, out.subarray(eol + 1, eol + 1 + Number(size)).toString("utf8"));
+      i = eol + 1 + Number(size) + 1;
+    }
+  }
+  const schemas = files.map((r) => ({ path: r.path, mode: r.mode, text: texts.get(r.object) }));
+  return { at, tree, rows, sizes, schemas };
 }
 
 /**
@@ -203,7 +402,8 @@ export function unaskableRoot(root) {
 // the shell with nothing pushed. `bot/tests/publish-apply.test.mjs` runs each
 // writer's own steps over a commit holding a link and one holding an empty
 // directory, and holds every workflow line that pushes to having this line
-// before it.
+// before it. Since entry 215 the line asks `treeProblems`, the two bounds and
+// the schema lint with the modes, so no writer needed an edit to ask them.
 //
 // Asked from the top of the checkout, as `tools/validate.mjs` asks it: a
 // directory that is not the top of a work tree of its own would have git
@@ -238,14 +438,25 @@ export function main(argv, { root = process.cwd(), say = console.log } = {}) {
       "read, not a clean tree, and nothing may be pushed");
     return 1;
   }
-  const problems = treeModeProblems(made.rows, at);
+  let problems;
+  let bounds;
+  try {
+    const limits = loadLimits();
+    bounds = treeBounds(limits);
+    problems = treeProblems(made, { limits });
+  } catch (err) {
+    say(`::error::the tree rule's bounds could not be read, so nothing may be pushed: ${err?.message ?? err}`);
+    return 1;
+  }
   if (problems.length === 0) {
-    say(`ok    the tree at ${at}: ${made.rows.length} entries, each a regular file or a directory with a file beneath it`);
+    say(`ok    the tree at ${at}: ${made.rows.length} entries, each a regular file or a directory with a file beneath it; ` +
+      `every tree object at most ${bounds.treeObjectBytes} bytes, every listing at most ${bounds.listingEntries} ` +
+      `entries, and ${made.schemas.length} schema file(s) asking no pattern for more than ${MAX_PATTERN_REPETITION} copies`);
     return 0;
   }
   for (const p of problems) say(`::error::${p.path}: ${p.message}`);
   say(`::error::the commit at ${at} holds ${problems.length} entr${problems.length === 1 ? "y" : "ies"} the registry's ` +
-    `tree may not, and it is not pushed. ${TREE_MODE_HINT}`);
+    `tree may not, and it is not pushed. ${[...new Set(problems.map((p) => p.hint))].join(" ")}`);
   return 1;
 }
 
