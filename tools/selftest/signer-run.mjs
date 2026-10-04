@@ -461,6 +461,87 @@ export async function run() {
       "the carry is not in the commit message, so `git log signed` cannot say why a document stopped moving");
   });
 
+  // ── the lineage guard (TRUST-43a, contract 3.5.0) ──────────────────────────
+  //
+  // The plugins service holds a `signed` commit whose Index-Source-Commit
+  // neither equals nor descends from the served one's: at an equal serial
+  // under 3.5.0's rule, at a higher one under bullet 4. A changed or re-signed
+  // catalogue names this run's Source-Commit, so the signer refuses a run whose
+  // Source-Commit does not equal or descend from `signed`'s Index-Source-Commit.
+  // sign.yml always passes main's head, which does. The guard is for every
+  // other caller: a shell, a rehearsal generator, a workflow edited later. The
+  // first case is the commit TRUST-43a exists to refuse: a side branch forked
+  // before the served trailer, at the same DEC-9 count.
+
+  await test("a run whose Source-Commit does not descend from `signed`'s Index-Source-Commit is refused, a side branch at the same count included, and one that does commits", async () => {
+    const t = makeTree("lineage-guard");
+    t.addListing("dice-roller");
+    const m0 = t.commit("a listing");
+    const available = [signerFor(KEY_A)];
+    const delegatedAt = new Map([[KEY_A, "2026-09-01T00:00:00Z"]]);
+    const RUN_URL = "https://github.com/mihailinl/astra-registry/actions/runs/43";
+    const run = (sourceCommit, head, now) => signRun({ root: t.dir, sourceCommit, head, now, available, delegatedAt });
+    // `signed`'s head as the signer reads it: a real commit, with its trailers.
+    const commitAsHead = (record, parent) => headFrom({
+      index: JSON.parse(record.files[SIGNED_FILES.index]),
+      revocations: JSON.parse(record.files[SIGNED_FILES.revocations]),
+      trust: JSON.parse(record.files[SIGNED_FILES.trust]),
+      sha: buildSignedCommit({ root: t.dir, files: record.files, parent, message: commitMessage(record, RUN_URL) }),
+    });
+
+    const s0 = commitAsHead(await run(m0, { present: false }, "2026-09-19T00:00:00Z"), null);
+    t.write("docs/notes.md", "a note\n");
+    const m1 = t.commit("a note, outside plugins/");
+    const second = await run(m1, s0, "2026-09-20T00:00:00Z");
+    assertEqual(`${second.documents.index.decision} ${second.commit} ${second.index_source_commit === m1}`, "resign true true",
+      "the fixture's head is not a re-sign naming m1, so the served Index-Source-Commit is not the one the cases assume");
+    const head = commitAsHead(second, s0.sha);
+
+    t.git("checkout", "-q", "-b", "side", m0);
+    t.write("docs/side.md", "from a branch forked before the served Index-Source-Commit\n");
+    const side = t.commit("a side branch, forked before the served Index-Source-Commit");
+    assertEqual(serialsAt({ root: t.dir, sha: side }).index, serialsAt({ root: t.dir, sha: m1 }).index,
+      "the side branch is not at the served catalogue's serial, so it is not the commit TRUST-43a's equal-serial rule refuses");
+
+    // 25 hours after the head: a re-sign, which would name the Source-Commit.
+    const LATER = "2026-09-21T01:00:00Z";
+    for (const [what, sourceCommit] of [["a side branch forked before it, at the same count", side], ["an older commit of main", m0]]) {
+      t.git("checkout", "-q", "--detach", sourceCommit);
+      const record = await run(sourceCommit, head, LATER);
+      assertEqual(record.commit, false,
+        `${what}: the run would commit a catalogue naming ${sourceCommit.slice(0, 12)}, which does not descend from the ` +
+        `served Index-Source-Commit ${m1.slice(0, 12)}, and the plugins service holds that commit (TRUST-43a)`);
+      assert(record.codes.includes("SIGNER_BLOCKED"), `${what}: the refusal is not reported as a block: ${record.codes.join(" ")}`);
+      assert(record.refusals.some((r) => r.includes("TRUST-43a") && r.includes(m1.slice(0, 12)) && r.includes(sourceCommit.slice(0, 12))),
+        `${what}: the refusal has to name the rule, the served Index-Source-Commit and this Source-Commit: ${record.refusals.join(" | ")}`);
+      assertEqual(record.status, "red", `${what}: a run that publishes nothing reported green`);
+    }
+
+    t.git("checkout", "-q", "main");
+    t.git("merge", "-q", "--no-ff", "-m", "merge the side branch", "side");
+    const merge = t.head();
+    for (const [what, sourceCommit] of [["the served Index-Source-Commit itself", m1], ["a merge of that side branch, which descends from it", merge]]) {
+      t.git("checkout", "-q", "--detach", sourceCommit);
+      const record = await run(sourceCommit, head, LATER);
+      assertEqual(`${record.commit} ${record.refusals.join(" | ")}`, "true ", `${what}: the run was refused`);
+      assertEqual(record.index_source_commit, sourceCommit, `${what}: the re-sign does not name this run's Source-Commit`);
+    }
+    t.git("checkout", "-q", "main");
+  });
+
+  await test("the lineage guard asks nothing of the first run, which has no `signed` head to descend from", async () => {
+    const t = makeTree("lineage-guard-first");
+    t.addListing("dice-roller");
+    const m0 = t.commit("a listing");
+    const record = await signRun({
+      root: t.dir, sourceCommit: m0, head: { present: false }, now: "2026-09-19T00:00:00Z",
+      available: [signerFor(KEY_A)], delegatedAt: new Map([[KEY_A, "2026-09-01T00:00:00Z"]]),
+    });
+    assertEqual(`${record.commit} ${record.refusals.join(" | ")}`, "true ",
+      "the run that creates `signed` was refused, and with no head there is no Index-Source-Commit to descend from");
+    assertEqual(record.index_source_commit, m0, "the first catalogue does not name its own Source-Commit");
+  });
+
   await test("the first `signed` commit is an orphan, the next is its child, and neither touches the working tree", async () => {
     // Plumbing, and never `git checkout signed`. The working tree in the
     // publish job is `main` at the Source-Commit — the tree the documents were
