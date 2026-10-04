@@ -22,6 +22,7 @@ import { REPO_ROOT, loadSources } from "../lib/sources.mjs";
 import { stagingListingId } from "../lib/reserved.mjs";
 import { RESERVED_KEYS, SUPPORTED_KEYS, platformKeyFromManifest } from "../lib/platform.mjs";
 import { CODES } from "../../bot/lib/codes.mjs";
+import { ICON_NAMES } from "../../bot/lib/assets.mjs";
 import { makeFixtures } from "../make-fixtures.mjs";
 import { test, assert, assertEqual, neverAsk, tmp, validateTree, errorsMatching } from "./harness.mjs";
 import { withFakeAstraPlugins } from "./fixtures.mjs";
@@ -1389,6 +1390,15 @@ export async function run() {
       "max_tree_object_bytes moved; the plugins service relies on it through B.4, so the contract moves first");
     assertEqual(limits.max_listing_tree_entries, B4_LISTING_ENTRIES,
       "max_listing_tree_entries moved; the plugins service relies on it through B.4, so the contract moves first");
+    // A listing at max_versions_per_plugin must still fit: its records, plus
+    // plugin.json, identity.json, README.md, versions/ and every icon name
+    // bot/lib/assets.mjs packs. Otherwise raising the version cap would have
+    // the tree rule refuse a listing the version rule allows, naming a bound
+    // its author has never heard of.
+    const fullest = limits.max_versions_per_plugin + 4 + ICON_NAMES.length;
+    assert(fullest <= limits.max_listing_tree_entries,
+      `a listing at max_versions_per_plugin (${limits.max_versions_per_plugin}) holds up to ${fullest} entries, over ` +
+      `max_listing_tree_entries (${limits.max_listing_tree_entries}); raise the entry bound with the contract, or keep the version cap`);
   });
 
   await test("tree rule: a tree object one byte over max_tree_object_bytes, as git stores it, is refused at its path, and one at the bound is not", async () => {
