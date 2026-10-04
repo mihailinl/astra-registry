@@ -34,12 +34,13 @@ import { fixtureEnv } from "../lib/git-env.mjs";
 
 import { buildIndex } from "../build-index.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
+import { REPO_ROOT } from "../lib/sources.mjs";
 import { loadTestRoot } from "../testkeys/regenerate.mjs";
 import { signIndex } from "../../bot/sign-index.mjs";
 import { signRevocations } from "../sign-revocations.mjs";
 import { REVOCATIONS_SCHEMA, TRUST_SCHEMA } from "../../bot/lib/sign.mjs";
 import { RETIREMENTS_PATH, RETIREMENTS_SCHEMA, WINDOW_EXEMPT_KEY_IDS } from "../signer/key-window.mjs";
-import { SIGNED_FILES, planRun, serialsAt } from "../signer/plan.mjs";
+import { RESIGN_AFTER_HOURS, SIGNED_FILES, fetchSignedHead, planRun, serialsAt } from "../signer/plan.mjs";
 import { trailersOf } from "../served-set/provenance.mjs";
 import { buildSignedCommit, commitMessage, pushSigned, signRun, writeTree } from "../signer/run.mjs";
 import { test, assert, assertEqual, tmp } from "./harness.mjs";
@@ -827,4 +828,194 @@ export async function run() {
     assertEqual(record.codes.includes("SIGNER_INDEX_NEAR_CAP"), false, `paged for a catalogue that shrank: ${record.codes.join(" ")}`);
     assertEqual(record.warnings.length, 1, "the log stopped saying the catalogue is near its cap");
   });
+
+  // ── TRUST-43a's equal-serial rule (contract 3.5.0), the signer's half ──────
+  //
+  // minice-e4's words (2026-10-03): "A `signed` commit whose catalogue serial
+  // equals the served one's is held unless its `Index-Source-Commit` equals,
+  // or descends from, the served one's." Bullet 4 already holds a RISING
+  // serial to strict descent. An equal one was open: a writer to `signed`
+  // could name a side-branch commit with the same DEC-9 count after the
+  // served catalogue's source was flagged. The plugins service enforces the
+  // rule. This is the check that our own signer never trips it, because a
+  // re-sign the service holds is a catalogue that stops refreshing — the
+  // unattended re-sign ROLL-14 counts, then the catalogue's expiry — with
+  // nothing red on this side.
+  //
+  // Two facts make it true, one in each of two files:
+  //   * `signRun` (tools/signer/run.mjs) names either the head's own trailer
+  //     (an `unchanged` or `carry` catalogue) or this run's Source-Commit (a
+  //     `changed` or `resign` one), and nothing else;
+  //   * the Source-Commit is main's head when the run starts (sign.yml's
+  //     `ref: main` checkout, the second test below), runs are serialised
+  //     (repo-rules.mjs, "every publishing job is serialised"), and `main` is
+  //     never rewritten (ROLL-5), so each run's Source-Commit descends from
+  //     the last run's, and that from the trailer the last run wrote.
+  // `signRun` does not check the second fact itself. Handed a Source-Commit
+  // that does not descend from the head's trailer, it would write it, and
+  // sign.yml never hands it one.
+  //
+  // So this runs the signer as sign.yml does, over a `main` that moves in
+  // three ways. A commit outside plugins/: the re-sign at 20 h names the new
+  // head. An advisory: the list publishes, and the catalogue is `unchanged` and
+  // keeps the head's trailer. A merge of a branch forked BEFORE the served
+  // trailer: its tip has the same DEC-9 count and does not descend from that
+  // trailer, which makes it exactly the commit the rule exists to refuse.
+  // Then it walks the fixture's `signed` pair by pair, as the service would.
+  // The same walk over the real `signed` on 2026-10-04 (aa1db24, 27 commits)
+  // found 20 pairs at an equal serial, 8 with the same trailer and 12
+  // descending, and none breaking the rule.
+
+  await test("TRUST-43a (3.5.0): at an equal catalogue serial the signer's Index-Source-Commit equals or descends from the previous `signed` head's, through a commit outside plugins/, an advisory and a merge", async () => {
+    const t = makeTree("equal-serial-lineage");
+    t.addListing("dice-roller");
+    const m0 = t.commit("a listing");
+    const available = [signerFor(KEY_A)];
+    const delegatedAt = new Map([[KEY_A, "2026-09-01T00:00:00Z"]]);
+    const ref = "refs/astra-signer/signed";
+    const RUN_URL = "https://github.com/mihailinl/astra-registry/actions/runs/435";
+    const isAncestor = (a, b) =>
+      spawnSync("git", ["-C", t.dir, "merge-base", "--is-ancestor", a, b], { env: fixtureEnv(t.dir) }).status === 0;
+    let clock = Date.parse("2026-09-19T00:00:00Z");
+
+    // One run as sign.yml makes it: main's head as the Source-Commit with the
+    // working tree at it (the gate validates and generates from the checkout),
+    // `signed`'s head read the way the signer reads it, the commit made with
+    // its trailers, and the branch moved.
+    const runAt = async (hours, what) => {
+      clock += hours * 3600 * 1000;
+      const now = new Date(clock).toISOString().replace(/\.\d{3}Z$/, "Z");
+      const head = fetchSignedHead({ root: t.dir, fetch: false, ref });
+      const record = await signRun({ root: t.dir, sourceCommit: t.head(), head, now, available, delegatedAt });
+      assertEqual(`${record.commit} ${record.refusals.join(" | ")}`, "true ", `${what}: the run did not commit`);
+      const sha = buildSignedCommit({
+        root: t.dir, files: record.files, parent: head.present ? head.sha : null, message: commitMessage(record, RUN_URL),
+      });
+      t.git("update-ref", ref, sha);
+      return record;
+    };
+
+    const first = await runAt(0, "the first run");
+    assertEqual(first.documents.index.decision, "changed", "the first run did not generate the catalogue");
+
+    t.write("docs/notes.md", "a note\n");
+    const m1 = t.commit("a note, outside plugins/");
+    const resigned = await runAt(RESIGN_AFTER_HOURS + 1, "a re-sign after a commit outside plugins/");
+    assertEqual(resigned.documents.index.decision, "resign",
+      "the catalogue was not re-signed at its serial, so the first equal-serial pair is not a re-sign");
+
+    t.write("tools/revocations/ASTRA-2026-0001.json", advisory());
+    t.commit("an advisory");
+    const listed = await runAt(1, "a withdrawal list over an unchanged catalogue");
+    assertEqual(`${listed.documents.index.decision} ${listed.documents.revocations.decision}`, "unchanged changed",
+      "the advisory did not publish the list over an unchanged catalogue, so the head's trailer was never kept");
+
+    // A branch forked at m0, BEFORE the served trailer m1, merged into main.
+    t.git("checkout", "-q", "-b", "side", m0);
+    t.write("docs/side.md", "from a branch forked before the served Index-Source-Commit\n");
+    const side = t.commit("a side branch, forked before the served Index-Source-Commit");
+    t.git("checkout", "-q", "main");
+    t.write("docs/main.md", "main, meanwhile\n");
+    t.commit("main moves on");
+    t.git("merge", "-q", "--no-ff", "-m", "merge the side branch", "side");
+    const merge = t.head();
+    assertEqual(serialsAt({ root: t.dir, sha: side }).index, serialsAt({ root: t.dir, sha: merge }).index,
+      "the side branch's tip does not share the merge's catalogue serial, so it is not the commit the rule refuses");
+    assert(!isAncestor(m1, side), "the side branch descends from the served trailer, so naming it would break nothing");
+    const merged = await runAt(RESIGN_AFTER_HOURS + 1, "a re-sign at a merge");
+    assertEqual(merged.documents.index.decision, "resign", "the catalogue was not re-signed at the merge");
+
+    t.addListing("second-plugin");
+    t.commit("a second listing");
+    const rose = await runAt(1, "a changed catalogue");
+    assertEqual(rose.documents.index.decision, "changed", "the second listing did not change the catalogue");
+
+    // The walk, over every consecutive pair on the fixture's `signed`.
+    const TRUST43A =
+      "TRUST-43a (contract 3.5.0) holds a `signed` commit whose catalogue serial equals the served one's unless its " +
+      "Index-Source-Commit equals or descends from the served one's, and bullet 4 holds a higher serial to strict " +
+      "descent. The plugins service would hold this commit, and every re-sign after it, until a TRUST-42 " +
+      "acknowledgement: the catalogue would stop refreshing with nothing red here. Repair signRun's choice of " +
+      "Index-Source-Commit (tools/signer/run.mjs); do not edit this check to match";
+    const chain = t.git("rev-list", "--reverse", "--first-parent", ref).split("\n");
+    const read = (sha) => ({
+      sha,
+      serial: JSON.parse(t.git("show", `${sha}:${SIGNED_FILES.index}`)).signed.serial,
+      isc: trailersOf(t.git("log", "-1", "--format=%B", sha))["Index-Source-Commit"],
+    });
+    const seen = { same: 0, descends: 0, rises: 0 };
+    const broken = [];
+    for (let i = 1; i < chain.length; i++) {
+      const [prev, next] = [read(chain[i - 1]), read(chain[i])];
+      const names = `${next.sha.slice(0, 12)} at serial ${next.serial} names ${String(next.isc).slice(0, 12)}, after ` +
+        `${prev.sha.slice(0, 12)} at serial ${prev.serial} named ${String(prev.isc).slice(0, 12)}`;
+      if (next.serial === prev.serial) {
+        if (next.isc === prev.isc) seen.same++;
+        else if (isAncestor(prev.isc, next.isc)) seen.descends++;
+        else broken.push(`${names}, which it neither is nor descends from`);
+      } else if (next.serial > prev.serial && next.isc !== prev.isc && isAncestor(prev.isc, next.isc)) {
+        seen.rises++;
+      } else {
+        broken.push(`${names}, and a higher serial must strictly descend`);
+      }
+    }
+    assertEqual(broken.join("\n"), "", TRUST43A);
+    assertEqual(`${seen.same} same, ${seen.descends} descending, ${seen.rises} rising`, "1 same, 2 descending, 1 rising",
+      "the fixture's `signed` does not hold the pairs this case was built for, so the walk above asked less than it says");
+  });
+
+  await test("the Source-Commit sign.yml hands the signer is main's head at run start, which the equal-serial lineage above rests on", () => {
+    // `signRun` writes this run's Source-Commit as a re-signed catalogue's
+    // Index-Source-Commit, so the lineage holds only while that commit
+    // descends from the last run's. `ref: main` is what makes it so; the
+    // workflow's own comment says why `github.sha` is not used (on a
+    // `workflow_run` it is the head the TRIGGERING run saw), and nothing held
+    // that comment to the file until this.
+    const text = fs.readFileSync(path.join(REPO_ROOT, ".github", "workflows", "sign.yml"), "utf8");
+    assertEqual(sourceCommitProblems(text).join("; "), "",
+      "sign.yml's publish job no longer signs at main's head, so a re-sign can name a commit that does not descend " +
+      "from the served Index-Source-Commit, which TRUST-43a (3.5.0) holds");
+    // And the check refuses the two ways it could stop being true.
+    const doctored = [
+      ["a checkout of the event's commit", text.replace(/(\n\s+ref:\s*)main(\s*\n)/, "$1${{ github.sha }}$2")],
+      ["a Source-Commit from the triggering run",
+        text.replace('--source-commit "${{ steps.source.outputs.sha }}"', '--source-commit "${{ github.event.workflow_run.head_sha }}"')],
+    ];
+    for (const [what, copy] of doctored) {
+      assert(copy !== text, `the doctored copy with ${what} is sign.yml unchanged, so the refusal below proves nothing`);
+      assert(sourceCommitProblems(copy).length > 0, `the check passed a sign.yml with ${what}`);
+    }
+  });
+}
+
+/**
+ * Why sign.yml's `publish` job would sign at something other than main's head
+ * at run start, or nothing: one checkout, of `ref: main`; a `source` step
+ * after it that reads `git rev-parse HEAD`; and that step's output as the only
+ * `--source-commit`.
+ */
+function sourceCommitProblems(src) {
+  const start = src.search(/^ {2}publish:\s*$/m);
+  if (start < 0) return ["sign.yml has no `publish` job"];
+  const rest = src.slice(start + 1);
+  const end = rest.search(/^ {2}[A-Za-z0-9_-]+:\s*$/m);
+  const job = end < 0 ? rest : rest.slice(0, end);
+  const steps = job.split(/\n(?= {6}- )/).slice(1);
+  const problems = [];
+  const checkouts = steps.filter((s) => /^ {6}- uses:\s*actions\/checkout@/.test(s));
+  if (checkouts.length !== 1) problems.push(`the publish job has ${checkouts.length} checkout step(s), not one`);
+  else if (!/^\s+ref:\s*main\s*$/m.test(checkouts[0])) problems.push("its checkout is not `ref: main`");
+  const source = steps.find((s) => /^\s+id:\s*source\s*$/m.test(s));
+  if (!source) problems.push("no step has `id: source`");
+  else {
+    if (!/^\s+sha=\$\(git rev-parse HEAD\)\s*$/m.test(source)) problems.push("the `source` step does not read `git rev-parse HEAD`");
+    if (checkouts.length === 1 && steps.indexOf(source) < steps.indexOf(checkouts[0])) {
+      problems.push("the `source` step runs before the checkout");
+    }
+  }
+  const passed = [...job.matchAll(/--source-commit\s+("[^"\n]*"|\S+)/g)].map((m) => m[1]);
+  if (passed.join(" ") !== '"${{ steps.source.outputs.sha }}"') {
+    problems.push(`the publish job passes --source-commit ${passed.join(", ") || "nowhere"}, not the \`source\` step's sha alone`);
+  }
+  return problems;
 }
