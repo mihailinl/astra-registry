@@ -35,6 +35,9 @@ import { SERIAL_PATHSPEC } from "../lib/revocations.mjs";
 import { GRACE_MINUTES, emit, finding, minutesSince, verdict } from "../served-set/report.mjs";
 import { gather, serve85, sourceOf } from "../served-set/main-vs-signed.mjs";
 import { serve39 } from "../served-set/served-vs-signed.mjs";
+import {
+  EXTRA_PATHS, EXTRA_PATHS_FLOOR, HOST, HOST_BASE, artifactNameFrom, extraPathVerdict, probeExtraPaths, probePaths, serve39Host,
+} from "../served-set/host-vs-signed.mjs";
 // PROVENANCE_WINDOW_DAYS is deliberately NOT imported. Both fixtures that used
 // to compute an age from it could not see it move (2026-09-22: 7 → 1, nothing
 // red anywhere in the suite), and they now write the window's two edges as
@@ -755,6 +758,136 @@ export async function run() {
       now: minutesAgo(HEAD_CLOCK, 31),
     });
     assertEqual(codesOf(v), "SERVE_39_PAGES_UNREACHABLE", "a 404 read as `nothing differs`");
+  });
+
+  // ── SERVE-39's catalogue-host half, SERVE-52 and INV-40 (RC-R2-3 (i)) ──────
+  console.log("\nSERVE-39 on the catalogue host, and SERVE-52's and INV-40's named paths");
+
+  const HOST_LIST_EXPIRES = "2026-09-26T12:00:00Z";
+  const hostHead = () => headFrom({
+    revocations: {
+      signatures: [],
+      signed: { schema: REVOCATIONS_SCHEMA, serial: 2, revocations: [], issued_at: HEAD_CLOCK, expires_at: HOST_LIST_EXPIRES },
+    },
+  });
+  const hostDown = (name) => ({ ok: false, url: `${HOST_BASE}${SIGNED_FILES[name]}`, status: null, body: null, error: "getaddrinfo ENOTFOUND" });
+
+  await test("a catalogue host copy held back 31 minutes fails, and at 29 it does not", () => {
+    // RC-R2-3's "a deliberately stale fixture host fails", for each of the four
+    // documents, the withdrawal list included: the host has no latch.
+    const head = hostHead();
+    for (const name of Object.keys(SIGNED_FILES)) {
+      const stale = servedFrom(head, { [name]: { ok: true, url: `${HOST_BASE}${SIGNED_FILES[name]}`, status: 200, body: "{\"old\":true}\n", error: null } });
+      const args = { head, headClock: HEAD_CLOCK, served: stale };
+      const within = serve39Host({ ...args, now: minutesAgo(HEAD_CLOCK, 29) });
+      assertEqual(within.status, "green", `${name} 29 minutes behind on the host paged: ${codesOf(within)}`);
+      const over = serve39Host({ ...args, now: minutesAgo(HEAD_CLOCK, 31) });
+      assertEqual(codesOf(over), "SERVE_39_HOST_DRIFT", `${name} 31 minutes behind on the host is a split view`);
+    }
+    const same = serve39Host({ head, headClock: HEAD_CLOCK, served: servedFrom(head), now: minutesAgo(HEAD_CLOCK, 600) });
+    assertEqual(same.status, "green", `a host serving signed's four documents byte for byte paged: ${codesOf(same)}`);
+  });
+
+  await test("a catalogue host that cannot be read, or that redirects, is reported, not skipped", () => {
+    const head = hostHead();
+    const down = serve39Host({ head, headClock: HEAD_CLOCK, served: servedFrom(head, { index: hostDown("index") }), now: minutesAgo(HEAD_CLOCK, 5) });
+    assertEqual(codesOf(down), "SERVE_39_HOST_UNREACHABLE", "an unreachable host has no grace: a client reading now gets nothing");
+    const moved = servedFrom(head, { trust: { ok: false, url: `${HOST_BASE}${SIGNED_FILES.trust}`, status: 302, body: null, error: "HTTP 302" } });
+    assertEqual(codesOf(serve39Host({ head, headClock: HEAD_CLOCK, served: moved, now: minutesAgo(HEAD_CLOCK, 5) })),
+      "SERVE_39_HOST_REDIRECT", "a 3xx is the host sending a reader somewhere else (INV-26), not a document");
+    const none = serve39Host({ head: { present: false, reason: "no signed", sha: null, bytes: {}, documents: {} }, headClock: null, served: servedFrom(head), now: HEAD_CLOCK });
+    assertEqual(codesOf(none), "SERVE_39_NO_SIGNED_BRANCH", "no signed branch is a finding here, not a wait");
+  });
+
+  await test("an expired withdrawal list the host still serves is TRUST-38's breach, and not serving it is correct", () => {
+    const head = hostHead();
+    const after = minutesAgo(HOST_LIST_EXPIRES, 1);
+    const serving = serve39Host({ head, headClock: HEAD_CLOCK, served: servedFrom(head), now: after });
+    assertEqual(codesOf(serving), "SERVE_39_HOST_EXPIRED_LIST", "the host served signed's list past its expires_at");
+    const gone = servedFrom(head, { revocations: { ok: false, url: `${HOST_BASE}${SIGNED_FILES.revocations}`, status: 404, body: null, error: "HTTP 404" } });
+    assertEqual(serve39Host({ head, headClock: HEAD_CLOCK, served: gone, now: after }).status, "green",
+      "an expired list the host does not serve is what TRUST-38 asks for");
+    const before = serve39Host({ head, headClock: HEAD_CLOCK, served: gone, now: minutesAgo(HOST_LIST_EXPIRES, -60) });
+    assertEqual(codesOf(before), "SERVE_39_HOST_UNREACHABLE", "a list not yet expired that the host does not serve is an outage");
+  });
+
+  // The path probes, through a `fetchImpl` answering from a fixture map: the
+  // base is never a fixture's, because the base is exactly what M-12 fixes.
+  const fixtureHost = (servedPaths) => {
+    const asked = [];
+    const fetchImpl = async (url, init) => {
+      asked.push({ url, init });
+      const u = new URL(url);
+      const p = u.pathname.slice(1);
+      if (servedPaths[p]) return { status: servedPaths[p], ok: servedPaths[p] < 300, headers: new Map(), text: async () => "x" };
+      return { status: 404, ok: false, headers: new Map(), text: async () => "" };
+    };
+    return { asked, fetchImpl };
+  };
+
+  await test("SERVE-52's list holds eleven or more distinct names, and a real artifact's name at four prefixes", () => {
+    assert(new Set(EXTRA_PATHS).size === EXTRA_PATHS.length, "EXTRA_PATHS repeats a name");
+    assert(EXTRA_PATHS.length >= EXTRA_PATHS_FLOOR && EXTRA_PATHS_FLOOR >= 11,
+      `EXTRA_PATHS holds ${EXTRA_PATHS.length} names and the plan's floor is eleven`);
+    assert(EXTRA_PATHS.filter((p) => p.startsWith("registry/v1/")).length >= 5, "SERVE-52's half of the list is thin");
+    assert(EXTRA_PATHS.filter((p) => p.endsWith(".astraplugin")).length >= 4, "INV-40's half of the list is thin");
+    const index = { signed: { plugins: [
+      { id: "b", releases: [{ artifacts: { "linux-x64": { filename: "b-1.0.0-linux-x64.astraplugin" } } }] },
+      { id: "a", releases: [{ artifacts: { "linux-x64": { filename: "../evil.astraplugin" }, "windows-x64": { filename: "a-1.0.0-windows-x64.astraplugin" } } }] },
+    ] } };
+    assertEqual(artifactNameFrom(index), "a-1.0.0-windows-x64.astraplugin",
+      "the first plain bundle name, sorted; a name with a slash is the catalogue's text and is never a path here");
+    const paths = probePaths(artifactNameFrom(index));
+    for (const prefix of ["", "plugins/", "download/", "releases/"]) {
+      assert(paths.includes(`${prefix}a-1.0.0-windows-x64.astraplugin`), `the artifact name is not probed under /${prefix}`);
+    }
+    assertEqual(probePaths("../evil.astraplugin").length, EXTRA_PATHS.length, "a traversal name was added to the probes");
+    assertEqual(artifactNameFrom({ signed: { plugins: [] } }), null, "an empty catalogue yields a name");
+  });
+
+  await test("a fixture host serving registry/v1/extra.json, or an .astraplugin, fails naming the path", async () => {
+    const paths = probePaths("a-1.0.0-linux-x64.astraplugin");
+    const clean = fixtureHost({});
+    const ok = await probeExtraPaths({ paths, fetchImpl: clean.fetchImpl });
+    assertEqual(extraPathVerdict({ probes: ok }).status, "green", "a host serving none of the names paged");
+    assertEqual(clean.asked.length, paths.length, "not every name was asked");
+    assert(clean.asked.every((a) => new URL(a.url).hostname === HOST && a.init.redirect === "manual"),
+      "a probe went somewhere other than the catalogue host, or followed a redirect");
+
+    const extra = await probeExtraPaths({ paths, fetchImpl: fixtureHost({ "registry/v1/extra.json": 200 }).fetchImpl });
+    const v1 = extraPathVerdict({ probes: extra });
+    assertEqual(codesOf(v1), "SERVE_52_HOST_SERVES_EXTRA", "an extra document under registry/v1/ went unseen");
+    assert(v1.findings[0].message.includes("registry/v1/extra.json"), "the finding does not name the path");
+
+    const bundle = await probeExtraPaths({ paths, fetchImpl: fixtureHost({ "download/a-1.0.0-linux-x64.astraplugin": 200 }).fetchImpl });
+    assertEqual(codesOf(extraPathVerdict({ probes: bundle })), "INV_40_HOST_SERVES_ARTIFACT", "a mirrored bundle went unseen");
+    const pointed = await probeExtraPaths({ paths, fetchImpl: fixtureHost({ "plugin.astraplugin": 302 }).fetchImpl });
+    assertEqual(codesOf(extraPathVerdict({ probes: pointed })), "INV_40_HOST_SERVES_ARTIFACT",
+      "a redirect to a bundle is the host pointing at it, and INV-40 says serve or mirror");
+  });
+
+  await test("the path list refuses every target but registry.minice.ai through the CDN", async () => {
+    // Watched failing by deleting the base check in probeExtraPaths: this
+    // call then sends all seventeen names to the fixture origin.
+    const origin = fixtureHost({});
+    for (const base of ["http://127.0.0.1:8080/", "https://203.0.113.7/", "https://registry.minice.ai.evil.invalid/", "http://registry.minice.ai/"]) {
+      let refused = null;
+      try {
+        await probeExtraPaths({ paths: EXTRA_PATHS, base, fetchImpl: origin.fetchImpl });
+      } catch (e) {
+        refused = e;
+      }
+      assert(refused && /M-12/.test(refused.message), `the list ran against ${base}`);
+    }
+    assertEqual(origin.asked.length, 0, `${origin.asked.length} probe(s) reached a refused target before the refusal`);
+    let steered = null;
+    try {
+      await probeExtraPaths({ paths: ["//127.0.0.1/x.astraplugin"], fetchImpl: origin.fetchImpl });
+    } catch (e) {
+      steered = e;
+    }
+    assert(steered && /refusing/.test(steered.message), "a path that resolves to another host was sent");
+    assertEqual(origin.asked.length, 0, "a steered path reached the fixture");
   });
 
   // ── SERVE-90 ───────────────────────────────────────────────────────────────

@@ -1,8 +1,8 @@
 # Is what we serve what we signed, is what we signed what `main` says, and how
 # long has the document under all of it got left?
 #
-# Three checks and one alarm (registry plan RC-R1-4, RC-R1-5, RC-R1-6). They are
-# one workflow because they are one receiver check: `bot/lib/alert-checks.mjs`
+# Four checks and one alarm (registry plan RC-R1-4, RC-R1-5, RC-R1-6, RC-R2-3).
+# They are one workflow because they are one receiver check: `bot/lib/alert-checks.mjs`
 # gives `served-set` a single BOT-85 heartbeat, since two checks would page
 # twice for one silence and would need a second poster that does not exist.
 #
@@ -15,6 +15,14 @@
 #                     provenance fallback — every `signed` commit younger than
 #                     7 days, and always the head, shown to have been pushed by
 #                     a run of sign.yml that holds its receipt.
+#
+#   host-vs-signed    SERVE-39's catalogue-host half, from the day
+#                     `registry.minice.ai` first answers (RC-R2-3 commit (i)):
+#                     all four documents against `signed`'s head, with no latch
+#                     and with TRUST-38's expired list as one it must NOT serve;
+#                     and SERVE-52's and INV-40's named-path probes, sent to
+#                     that host through the CDN and to nothing else (attack
+#                     M-12). It holds no token at all.
 #
 #   trust-runway      ROLL-45. How many days `registry/v1/trust.json` has left,
 #                     on main's copy and on the one `signed` publishes, and the
@@ -152,6 +160,36 @@ jobs:
           echo "::error::served-vs-signed reported ${{ steps.check.outputs.status || 'nothing at all' }}"
           exit 1
 
+  host-vs-signed:
+    runs-on: ubuntu-24.04
+    # No token of any kind: the host and `signed` are both public, and this job
+    # needs neither the Actions API nor a write. SERVE-39's "holds no secret".
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    outputs:
+      status: ${{ steps.check.outputs.status }}
+      codes: ${{ steps.check.outputs.codes }}
+      hexes: ${{ steps.check.outputs.hexes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: SERVE-39, SERVE-52 and INV-40 — what the catalogue host serves
+        id: check
+        run: node tools/served-set/check.mjs --job host-vs-signed
+
+      - name: A red comparison is a red run
+        if: steps.check.outputs.status != 'green'
+        run: |
+          echo "::error::host-vs-signed reported ${{ steps.check.outputs.status || 'nothing at all' }}"
+          exit 1
+
   trust-runway:
     runs-on: ubuntu-24.04
     permissions:
@@ -186,7 +224,7 @@ jobs:
           exit 1
 
   alert:
-    needs: [main-vs-signed, served-vs-signed, trust-runway]
+    needs: [main-vs-signed, served-vs-signed, host-vs-signed, trust-runway]
     # `always()` so a red comparison still pages — the jobs above fail on
     # purpose — and `!cancelled()` so a cancelled run does not send an alarm
     # about a comparison that never finished.
@@ -230,7 +268,7 @@ jobs:
       # that did not report, which is red.
       - name: The verdict, from what the two comparisons reported
         env:
-          ASTRA_SERVED_SET_JOBS: main-vs-signed served-vs-signed trust-runway
+          ASTRA_SERVED_SET_JOBS: main-vs-signed served-vs-signed host-vs-signed trust-runway
           MAIN_VS_SIGNED_RESULT: ${{ needs.main-vs-signed.result }}
           MAIN_VS_SIGNED_STATUS: ${{ needs.main-vs-signed.outputs.status }}
           MAIN_VS_SIGNED_CODES: ${{ needs.main-vs-signed.outputs.codes }}
@@ -239,6 +277,10 @@ jobs:
           SERVED_VS_SIGNED_STATUS: ${{ needs.served-vs-signed.outputs.status }}
           SERVED_VS_SIGNED_CODES: ${{ needs.served-vs-signed.outputs.codes }}
           SERVED_VS_SIGNED_HEXES: ${{ needs.served-vs-signed.outputs.hexes }}
+          HOST_VS_SIGNED_RESULT: ${{ needs.host-vs-signed.result }}
+          HOST_VS_SIGNED_STATUS: ${{ needs.host-vs-signed.outputs.status }}
+          HOST_VS_SIGNED_CODES: ${{ needs.host-vs-signed.outputs.codes }}
+          HOST_VS_SIGNED_HEXES: ${{ needs.host-vs-signed.outputs.hexes }}
           TRUST_RUNWAY_RESULT: ${{ needs.trust-runway.result }}
           TRUST_RUNWAY_STATUS: ${{ needs.trust-runway.outputs.status }}
           TRUST_RUNWAY_CODES: ${{ needs.trust-runway.outputs.codes }}

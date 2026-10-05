@@ -1945,7 +1945,7 @@ const FLOORS = new Map(Object.entries({
   "rehearsal-r2.mjs": 59,
   "rehearsal-push.mjs": 18,
   "rehearsal-resign.mjs": 13,
-  "served-set.mjs": 35,
+  "served-set.mjs": 41,
   "revocations.mjs": 27,
   "cli.mjs": 14,
   "root-delegation.mjs": 6,
