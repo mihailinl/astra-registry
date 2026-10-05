@@ -13,6 +13,7 @@ import { cleanEnv, fixtureEnv } from "../lib/git-env.mjs";
 
 import { RECORD_ROOTS, checkTreeModes, displayStrings, recordFiles, recordStringProblems, runValidation } from "../validate.mjs";
 import { readTree, treeModeProblems, unaskableRoot } from "../lib/tree-modes.mjs";
+import { MAX_PATTERN_REPETITION, patternRepetition, schemaPatterns } from "../lib/schema-patterns.mjs";
 import { buildIndex } from "../build-index.mjs";
 import { stableStringify } from "../lib/canonical.mjs";
 import { compareSemver } from "../lib/semver.mjs";
@@ -21,6 +22,7 @@ import { REPO_ROOT, loadSources } from "../lib/sources.mjs";
 import { stagingListingId } from "../lib/reserved.mjs";
 import { RESERVED_KEYS, SUPPORTED_KEYS, platformKeyFromManifest } from "../lib/platform.mjs";
 import { CODES } from "../../bot/lib/codes.mjs";
+import { ICON_NAMES } from "../../bot/lib/assets.mjs";
 import { makeFixtures } from "../make-fixtures.mjs";
 import { test, assert, assertEqual, neverAsk, tmp, validateTree, errorsMatching } from "./harness.mjs";
 import { withFakeAstraPlugins } from "./fixtures.mjs";
@@ -1360,6 +1362,247 @@ export async function run() {
         `${root}: the run did not say the tree rule was not asked: ${JSON.stringify(report.notes)}`);
     }
   });
+
+  // ── the tree rule's two bounds, and the schema lint (ops couplings 215) ──
+  //
+  // The plugins service reads every commit on `main` and fails closed on what
+  // it cannot hold: its serial reader refuses a tree object over 8 MiB, and
+  // from that commit on cannot count any path's history, and its mirror counts
+  // a listing's whole subtree against a 400,000-entry cap. One commit past
+  // either freezes its reading of that commit and every later one, so the
+  // registry refuses well short of both, and B.4 names the two numbers.
+  //
+  // Each bound is held at the byte and at the entry: a tree at the bound
+  // passes and one past it is refused. The wide trees are written in one
+  // `hash-object --literally` each (`flatTree`), not one blob per entry, and
+  // nothing is checked out, as above.
+
+  // The numbers the contract names for the plugins service (B.4, from the
+  // version after 3.4.0). They live in policy/limits.json and nowhere else in
+  // this repository; this is the canary that a change there is a change to
+  // what B.4 promises.
+  const B4_TREE_OBJECT_BYTES = 1048576;
+  const B4_LISTING_ENTRIES = 2000;
+
+  await test("tree rule: policy/limits.json holds the two bounds B.4 names for the plugins service, 1 MiB per tree object and 2,000 entries per listing", () => {
+    const limits = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "policy", "limits.json"), "utf8"));
+    assertEqual(limits.max_tree_object_bytes, B4_TREE_OBJECT_BYTES,
+      "max_tree_object_bytes moved; the plugins service relies on it through B.4, so the contract moves first");
+    assertEqual(limits.max_listing_tree_entries, B4_LISTING_ENTRIES,
+      "max_listing_tree_entries moved; the plugins service relies on it through B.4, so the contract moves first");
+    // A listing at max_versions_per_plugin must still fit: its records, plus
+    // plugin.json, identity.json, README.md, versions/ and every icon name
+    // bot/lib/assets.mjs packs. Otherwise raising the version cap would have
+    // the tree rule refuse a listing the version rule allows, naming a bound
+    // its author has never heard of.
+    const fullest = limits.max_versions_per_plugin + 4 + ICON_NAMES.length;
+    assert(fullest <= limits.max_listing_tree_entries,
+      `a listing at max_versions_per_plugin (${limits.max_versions_per_plugin}) holds up to ${fullest} entries, over ` +
+      `max_listing_tree_entries (${limits.max_listing_tree_entries}); raise the entry bound with the contract, or keep the version cap`);
+  });
+
+  await test("tree rule: a tree object one byte over max_tree_object_bytes, as git stores it, is refused at its path, and one at the bound is not", async () => {
+    const dir = treeFixture("tm-wide", { "README.md": "x\n" });
+    const atBound = flatTree(dir, namesFilling(256, B4_TREE_OBJECT_BYTES));
+    const over = flatTree(dir, namesFilling(256, B4_TREE_OBJECT_BYTES + 1));
+    assertEqual(gitIn(dir, ["cat-file", "-s", atBound]).trim(), String(B4_TREE_OBJECT_BYTES),
+      "the fixture's tree at the bound is not the size the case needs");
+    assertEqual(gitIn(dir, ["cat-file", "-s", over]).trim(), String(B4_TREE_OBJECT_BYTES + 1),
+      "the fixture's tree past the bound is not the size the case needs");
+    commitTree(dir, {
+      plugins: { alpha: { "plugin.json": "{}\n" } },
+      docs: { "at-the-bound": { raw: atBound }, over: { raw: over } },
+    }, "two wide trees");
+    assertEqual(await refusedIn(dir), "docs/over 040000",
+      "the tree one byte past the bound must be named, and the one at it must not");
+  });
+
+  await test("tree rule: the root tree is a tree object too, and one byte over max_tree_object_bytes refuses the commit", async () => {
+    const dir = treeFixture("tm-wide-root", { "README.md": "x\n" });
+    const root = flatTree(dir, namesFilling(256, B4_TREE_OBJECT_BYTES + 1));
+    const commit = gitIn(dir, ["commit-tree", root, "-p", "HEAD", "-m", "a root tree one byte too wide"]).trim();
+    gitIn(dir, ["update-ref", "refs/heads/main", commit]);
+    assertEqual(await refusedIn(dir), "(the root tree) 040000",
+      "the root tree is listed by no `ls-tree` row, and the rule must read its size all the same");
+  });
+
+  await test("tree rule: a listing holding one entry more than max_listing_tree_entries, every depth and every directory counted, is refused at plugins/<id>, and one at the bound is not", async () => {
+    const dir = treeFixture("tm-entries", { "README.md": "x\n" });
+    const files = flatTree(dir, Array.from({ length: B4_LISTING_ENTRIES - 2 }, (_, i) => `${String(i).padStart(4, "0")}.json`));
+    commitTree(dir, {
+      plugins: {
+        // plugin.json, versions/ and 1,998 files: 2,000 entries.
+        "at-the-bound": { "plugin.json": "{}\n", versions: { raw: files } },
+        // plugin.json, versions/, versions/deep/ and the same 1,998 files:
+        // 2,001 entries, only 1,999 of them files, and two at the top.
+        over: { "plugin.json": "{}\n", versions: { deep: { raw: files } } },
+      },
+    }, "two listings, one entry apart");
+    const beneath = (id) => gitIn(dir, ["ls-tree", "-r", "-t", "-z", "--name-only", "HEAD", "--", `plugins/${id}/`])
+      .split("\0").filter((p) => p.startsWith(`plugins/${id}/`)).length;
+    assertEqual(beneath("at-the-bound"), B4_LISTING_ENTRIES, "the listing at the bound is not the size the case needs");
+    assertEqual(beneath("over"), B4_LISTING_ENTRIES + 1, "the listing past the bound is not the size the case needs");
+    assertEqual(await refusedIn(dir), "plugins/over 040000",
+      "the listing one entry past the bound must be named at plugins/<id>, and nothing else: not the one at the " +
+      "bound, and not `plugins`, whose 4,003 entries are two listings' and no one listing's");
+  });
+
+  // ── a tree that names an entry twice, or out of git's order ───────────────
+  //
+  // The plugins service holds a TRUST-31 entry whose tree "names an entry
+  // twice or out of order" (its formal (f) line), and its mirror reads trees
+  // whole. git's own readers do not agree with each other about such a tree:
+  // `ls-tree` lists every entry in the order the bytes hold them, while a path
+  // lookup (`<commit>:<path>`, which `git show`, `cat-file` and the signer's
+  // `blobAt` all use) walks the entries in order, stops at the first name past
+  // the one it wants, and takes the first match. So each case below shows the
+  // disagreement on the fixture before it asks the rule. An array in a spec is
+  // written in its own order, duplicates and all (`rawTree`); nothing git
+  // writes itself looks like this, so `hash-object --literally` is the only
+  // way to make one.
+
+  await test("tree rule: a tree that names an entry twice is refused at that tree, and git's path lookup reads only the first of the two", async () => {
+    const dir = treeFixture("to-dup", {
+      plugins: { alpha: [["plugin.json", "{\"first\":1}\n"], ["plugin.json", "{\"second\":2}\n"], ["versions", { "1.0.0.json": "{}\n" }]] },
+    });
+    const listed = gitIn(dir, ["ls-tree", "-z", "HEAD:plugins/alpha"]).split("\0").filter((r) => r.endsWith("\tplugin.json"));
+    assertEqual(listed.length, 2, "the fixture's tree does not name plugin.json twice");
+    assertEqual(gitIn(dir, ["cat-file", "blob", "HEAD:plugins/alpha/plugin.json"]), "{\"first\":1}\n",
+      "git's path lookup no longer reads the first of two entries; the case no longer shows two readers disagreeing");
+    assertEqual(await refusedIn(dir), "plugins/alpha 040000",
+      "a tree that names plugin.json twice must be refused at the tree that holds both, and nothing else");
+  });
+
+  await test("tree rule: a name held twice in git's order, a file `foo` and a directory `foo` with `foo.bar` between them, is refused too", async () => {
+    // git sorts a directory as its name and a slash, so `foo`, `foo.bar`,
+    // `foo/` is git's order and the two `foo`s are not neighbours: a check
+    // that compares each entry with the one before it alone sees nothing.
+    const dir = treeFixture("to-dup-apart", {
+      docs: [["foo", "a file\n"], ["foo.bar", "x\n"], ["foo", { "x.md": "beneath the directory\n" }]],
+    });
+    const rows = readTree(dir).rows.map((r) => r.path);
+    assert(rows.includes("docs/foo/x.md"), "ls-tree no longer lists the file beneath the second `foo`");
+    assertEqual(gitMaybe(dir, ["rev-parse", "--verify", "--quiet", "HEAD:docs/foo/x.md"]), null,
+      "git's path lookup found docs/foo/x.md, so the case no longer shows it stopping at the file `foo`");
+    assertEqual(await refusedIn(dir), "docs 040000",
+      "a tree that holds `foo` twice, as a file and as a directory, must be refused even though its entries are in git's order");
+  });
+
+  await test("tree rule: a root tree out of git's order is refused, and an entry git's path lookup cannot find is listed by ls-tree", async () => {
+    const dir = treeFixture("to-unsorted-root", [
+      ["README.md", "x\n"],
+      ["plugins", { alpha: { "plugin.json": "{}\n" } }],
+      ["log", { "baseline.json": "{}\n" }],
+    ]);
+    assert(readTree(dir).rows.some((r) => r.path === "log/baseline.json"), "ls-tree no longer lists log/baseline.json");
+    assertEqual(gitMaybe(dir, ["rev-parse", "--verify", "--quiet", "HEAD:log/baseline.json"]), null,
+      "git's path lookup found log/baseline.json past `plugins`, so the case no longer shows it stopping early");
+    assertEqual(await refusedIn(dir), "(the root tree) 040000",
+      "a root tree with `plugins` before `log` must be refused, at the root tree, which no ls-tree row lists");
+  });
+
+  await test("tree rule: git's order compares a directory as its name and a slash, so `a.txt` before the directory `a` passes and the reverse is refused", async () => {
+    // Byte order alone says the opposite of git's for both trees: `a` < `a.txt`,
+    // but `a/` > `a.txt`, because `.` is 0x2e and `/` 0x2f.
+    const dir = treeFixture("to-slash", {
+      docs: [["a", { "x.md": "x\n" }], ["a.txt", "y\n"]],
+      site: [["a.txt", "y\n"], ["a", { "x.md": "x\n" }]],
+    });
+    assertEqual(gitMaybe(dir, ["rev-parse", "--verify", "--quiet", "HEAD:site/a/x.md"]) === null, false,
+      "git cannot find site/a/x.md, so `site` is not in git's order and is not the control it is meant to be");
+    assertEqual(await refusedIn(dir), "docs 040000",
+      "the directory `a` before the file `a.txt` is out of git's order and must be refused; the reverse is git's order and must pass");
+  });
+
+  await test("tree rule: order and duplicates are asked of every tree at every depth, not the root's alone", async () => {
+    const dir = treeFixture("to-deep", {
+      plugins: { alpha: { "plugin.json": "{}\n", versions: [["1.1.0.json", "{}\n"], ["1.0.0.json", "{}\n"]] } },
+      bot: { moderation: { queue: [["entry.json", "{}\n"], ["entry.json", "{}\n"]] } },
+    });
+    assertEqual(await refusedIn(dir), ["bot/moderation/queue 040000", "plugins/alpha/versions 040000"].join("\n"),
+      "a tree three levels down that is out of order, and one that names an entry twice, must each be named at its own path");
+  });
+
+  await test("schema lint: a pattern under schema/ that repeats one atom more than 1,000 times, by one count or nested ones, is refused by file and pointer", async () => {
+    const dir = treeFixture("sp-schemas", {
+      schema: {
+        // The case the service measured: about 60 s a validation there.
+        "heavy.json": JSON.stringify({ properties: { x: { not: { pattern: "a{100000}" } } } }),
+        // At 1,000 exactly, by one count and by a product; and braces that
+        // are not counts: escaped, in a class, a code point and a property.
+        "fine.json": JSON.stringify({
+          properties: {
+            y: { pattern: "^[a-z]{0,1000}$" },
+            z: { pattern: "^\\{1001\\}[{}0-9]{2}\\u{10000}\\p{L}{3}$" },
+          },
+          patternProperties: { "^(?:[0-9]{10}){100}$": {} },
+        }),
+        nested: {
+          // 10 x 101: no count above 1,000, and 1,010 copies of [0-9].
+          "props.json": JSON.stringify({ patternProperties: { "^(?:[0-9]{10}){101}$": {} } }),
+          // An open count is its lower bound in copies.
+          "open.json": JSON.stringify({ items: { pattern: "^b{1001,}$" } }),
+        },
+        // Not JSON Schema's to compile, so not read.
+        "notes.txt": "a{100000}\n",
+      },
+    });
+    const { report } = await validateTree(dir);
+    const got = report.errors.filter((e) => e.where.startsWith("schema/"))
+      .map((e) => `${e.where} ${(/ at (\/\S*)/.exec(e.message) ?? [])[1]}`).sort();
+    assertEqual(got.join("\n"), [
+      "schema/heavy.json /properties/x/not/pattern",
+      "schema/nested/open.json /items/pattern",
+      "schema/nested/props.json /patternProperties/^(?:[0-9]{10}){101}$",
+    ].join("\n"), "each heavy pattern must be named by its file and its JSON pointer, and no other");
+  });
+
+  await test("schema lint: a count is read through escapes, classes and group prefixes, and multiplied through the groups it nests in", () => {
+    // [pattern, copies, largest single count]
+    const cases = [
+      ["a{100000}", 100000, 100000],
+      ["^[a-z]{0,1000}$", 1000, 1000],
+      ["^b{1001,}$", 1001, 1001],
+      ["^(?:[0-9]{10}){101}$", 1010, 101],
+      ["((a{10}){10}){11}", 1100, 11],
+      ["(a{10}|b{20}){30}", 600, 30],
+      ["(?<year>[0-9]{4})-(?<=x{5})(?!y{6})z{2}?", 6, 6],
+      ["^\\{1001\\}[{}0-9]{2}\\u{10000}\\p{L}{3}$", 3, 3],
+      ["[\\]{]{7}", 7, 7],
+      ["a*b+c?(d{4})*", 4, 4],
+      ["^https://", 1, 0],
+    ];
+    const wrong = cases.filter(([p, copies, count]) => {
+      const r = patternRepetition(p);
+      return r.copies !== copies || r.count !== count;
+    }).map(([p, copies, count]) => `${p}: expected ${copies} copies, largest ${count}; read ${JSON.stringify(patternRepetition(p))}`);
+    assertEqual(wrong.join("\n"), "", "the scanner read a pattern's repetition wrong");
+    assertEqual(MAX_PATTERN_REPETITION, 1000, "the schema lint's bound moved; tools/lib/schema-patterns.mjs says why it is 1,000");
+  });
+
+  await test("schema lint: this repository's own schemas are read at HEAD, every one, and none asks for more than the bound", () => {
+    const { schemas } = readTree(REPO_ROOT);
+    const tracked = gitIn(REPO_ROOT, ["ls-files", "-z", "--", "schema"]).split("\0").filter((f) => f.endsWith(".json"));
+    assertEqual(schemas.length, tracked.length, `the lint read ${schemas.length} schema file(s) at HEAD and git tracks ${tracked.length} under schema/`);
+    const found = schemas.flatMap((f) => schemaPatterns(JSON.parse(f.text)).map((p) => ({ ...p, ...patternRepetition(p.pattern) })));
+    // 98 patterns in 15 files at 8837648, the largest count 128. Half, so an
+    // honest deletion is not red and a read that finds none is.
+    assert(found.length >= 49, `the lint found only ${found.length} pattern(s) in this repository's schemas; this is a broken read`);
+    const heavy = found.filter((p) => Math.max(p.copies, p.count) > MAX_PATTERN_REPETITION);
+    assertEqual(heavy.map((p) => `${p.pointer} ${p.pattern}`).join("\n"), "", "a schema here asks for more than the bound");
+  });
+
+  await test("schema lint: a pattern that does not compile as tools/lib/jsonschema.mjs compiles it, and a schema that is not JSON, are refused", async () => {
+    const dir = treeFixture("sp-broken", {
+      schema: {
+        "reversed.json": JSON.stringify({ pattern: "^a{2,1}$" }),
+        "torn.json": "{\"pattern\": ",
+      },
+    });
+    const { report } = await validateTree(dir);
+    assertEqual(report.errors.filter((e) => e.where.startsWith("schema/")).map((e) => e.where).sort().join("\n"),
+      "schema/reversed.json\nschema/torn.json", "a pattern nothing can read and a file nothing can parse must both be refused");
+  });
 }
 
 /** The tree rule's refusals in a report, as `<path> <mode>`, sorted. */
@@ -1377,22 +1620,27 @@ async function refusedIn(dir) {
  * One raw tree for `spec`, written with `hash-object --literally` so that a
  * mode git would never write itself can be, and its id. A string is a file,
  * `{exec}` an executable, `{link}` a symlink to that target, `{mode, tree}` a
- * directory under a raw mode of the caller's, and any other object a
+ * directory under a raw mode of the caller's, `{raw}` a directory that is the
+ * tree object already written under that id, and any other object a
  * directory. Entries are in git's order, a directory sorting as its name and a
- * slash.
+ * slash — except where `spec` is an ARRAY of `[name, value]` pairs, which is
+ * written in exactly its own order, a name repeated if it is repeated: the
+ * tree git never writes, for the order and duplicate cases.
  */
 function rawTree(dir, spec) {
   const put = (type, body) => execFileSync("git", ["-C", dir, "hash-object", "-t", type, "-w", "--literally", "--stdin"],
     { input: body, encoding: "utf8", env: fixtureEnv(dir) }).trim();
-  const entries = Object.entries(spec).map(([name, v]) => {
+  const asWritten = Array.isArray(spec);
+  const entries = (asWritten ? spec : Object.entries(spec)).map(([name, v]) => {
     if (typeof v === "string") return { name, mode: "100644", sha: put("blob", v) };
     if (v.exec !== undefined) return { name, mode: "100755", sha: put("blob", v.exec) };
     if (v.link !== undefined) return { name, mode: "120000", sha: put("blob", v.link) };
+    if (v.raw !== undefined) return { name, mode: "40000", sha: v.raw, dir: true };
     if (v.mode !== undefined) return { name, mode: v.mode, sha: rawTree(dir, v.tree), dir: true };
     return { name, mode: "40000", sha: rawTree(dir, v), dir: true };
   });
   const key = (e) => (e.mode === "40000" ? `${e.name}/` : e.name);
-  entries.sort((a, b) => (Buffer.compare(Buffer.from(key(a)), Buffer.from(key(b)))));
+  if (!asWritten) entries.sort((a, b) => (Buffer.compare(Buffer.from(key(a)), Buffer.from(key(b)))));
   return put("tree", Buffer.concat(entries.map((e) =>
     Buffer.concat([Buffer.from(`${e.mode} ${e.name}\0`), Buffer.from(e.sha, "hex")]))));
 }
@@ -1417,6 +1665,33 @@ function treeFixture(name, spec) {
   gitIn(dir, ["config", "commit.gpgsign", "false"]);
   commitTree(dir, spec, name);
   return dir;
+}
+
+/**
+ * One tree of files named `names`, every one the same blob, written in a single
+ * `hash-object --literally`, and its id: the thousands of entries the bounds'
+ * cases need without a spawn per entry.
+ */
+function flatTree(dir, names) {
+  const put = (type, body) => execFileSync("git", ["-C", dir, "hash-object", "-t", type, "-w", "--literally", "--stdin"],
+    { input: body, encoding: "utf8", env: fixtureEnv(dir) }).trim();
+  const blob = Buffer.from(put("blob", "{}\n"), "hex");
+  const sorted = [...names].sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
+  return put("tree", Buffer.concat(sorted.map((n) => Buffer.concat([Buffer.from(`100644 ${n}\0`), blob]))));
+}
+
+/**
+ * `n` distinct file names whose tree entries come to exactly `total` bytes as
+ * git stores the tree: an entry is `100644 <name>\0` and a 20-byte id, so its
+ * name's length plus 28.
+ */
+function namesFilling(n, total) {
+  const letters = total - 28 * n;
+  const base = Math.floor(letters / n);
+  return Array.from({ length: n }, (_, i) => {
+    const len = base + (i < letters % n ? 1 : 0);
+    return `${String(i).padStart(4, "0")}.`.padEnd(len, "x");
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
