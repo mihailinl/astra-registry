@@ -203,6 +203,57 @@ test("one submission held and then published is two decisions, so BOT-35 derives
     `submission:${SUBMISSION}::withdrawn`);
 });
 
+test("a hold an aged approval sends back is a second entry into `held`, keyed after that approval; a first hold's key does not move", () => {
+  // BOT-34: one record per ENTRY into a state, a re-entry included. Since
+  // contract 3.7.0 BOT-26 (4) re-holds a submission whose approval aged, and
+  // that hold has the same submission, fingerprint and state as the first
+  // one, so the first tuple derived the FIRST hold's id for it. BOT-36 then
+  // found that record on `main` and wrote nothing, the result named the old
+  // record with the old codes and no `P_APPROVAL_STALE`, and the service,
+  // which treats a result naming a record it has already applied as a repeat
+  // (BOT-17), would have suppressed the hold and parked the submission.
+  //
+  // The approval is named by its `decided_at`: §4.3 gives a pending decision
+  // `{code, category, decided_at}` and nothing else that identifies it, B.2
+  // says an approval is not a service decision and so has no
+  // `service_decision_id`, and TRUST-14's alert record already names an
+  // approval the same way (`approval_decided_at`).
+  //
+  // Watched red: with `after` ignored by the builder, the re-entry key is the
+  // first key and every assertion below that tells them apart fails; with
+  // the first key spelled any other way, the literal id fails.
+  const fp = "0123456789abcdef";
+  const first = submissionKey({ submission_id: SUBMISSION, fingerprint: fp, state: "held" });
+  assert.equal(first, `submission:${SUBMISSION}:${fp}:held`, "a first hold keeps today's key, byte for byte");
+  // The id main's writer derived for this tuple before re-entries existed
+  // (measured at astra-registry b59c3b9). Records already on `main` keep it.
+  assert.equal(decisionId(first), "9171e9b6683a476446314ffaf99ae6e8");
+  assert.equal(submissionKey({ submission_id: SUBMISSION, fingerprint: fp, state: "held", after: null }), first,
+    "no overridden approval is a first entry, whatever the caller passes for none");
+  assert.equal(submissionKey({ submission_id: SUBMISSION, fingerprint: fp, state: "held", after: undefined }), first);
+
+  const approvedAt = "2026-09-11T12:00:00Z";
+  const reentry = submissionKey({ submission_id: SUBMISSION, fingerprint: fp, state: "held", after: approvedAt });
+  assert.equal(reentry, `submission:${SUBMISSION}:${fp}:held:after:${approvedAt}`);
+  assert.equal(keyDomain(reentry), "submission", "a variant of the first domain, not a sixth (BOT-35: exactly five)");
+  assert.notEqual(decisionId(reentry), decisionId(first), "the re-hold derived the first hold's id, so BOT-36 drops it");
+  assert.equal(decisionId(reentry), decisionId(submissionKey({ submission_id: SUBMISSION, fingerprint: fp, state: "held", after: approvedAt })),
+    "a re-run of the same re-hold derives the same id, so BOT-36 still drops the second write");
+  const again = submissionKey({ submission_id: SUBMISSION, fingerprint: fp, state: "held", after: "2026-09-20T09:30:00Z" });
+  assert.notEqual(decisionId(again), decisionId(reentry), "a second approval, aged in its turn, is a third entry and a third record");
+  assert.notEqual(decisionId(again), decisionId(first));
+
+  // Only `held` is re-entered (an approval is the one act that takes a
+  // submission out of a state the bot can put it back in), and the approval
+  // is named by a §0.7 time or not at all: a key over anything else is one no
+  // later run derives again.
+  assert.throws(() => submissionKey({ submission_id: SUBMISSION, fingerprint: fp, state: "published", after: approvedAt }), /re-entry/);
+  for (const bad of ["2026-09-11", "2026-09-11T12:00:00.5Z", "2026-09-11T12:00:00+00:00", 1757592000, "mod-7"]) {
+    assert.throws(() => submissionKey({ submission_id: SUBMISSION, fingerprint: fp, state: "held", after: bad }), /§0\.7 time/,
+      `\`after\` ${JSON.stringify(bad)} was accepted`);
+  }
+});
+
 test("the tuple's fingerprint and state are refused when they are not the thing they claim to be", () => {
   // A key derived over a malformed member hashes perfectly well and names a
   // decision nothing can find again, so the tuple is held to DEC-7's grammar

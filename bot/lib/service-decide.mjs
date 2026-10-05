@@ -78,6 +78,7 @@ import { listingStateAt } from "./listing-state.mjs";
 import { loadSources } from "../../tools/lib/sources.mjs";
 import { cleanEnv } from "../../tools/lib/git-env.mjs";
 import { isTime } from "../../tools/lib/time.mjs";
+import { decisionId, submissionKey } from "./decisions.mjs";
 import { ID_PATTERN } from "../../tools/lib/ids.mjs";
 import { SEMVER_PATTERN } from "../../tools/lib/semver.mjs";
 
@@ -957,7 +958,17 @@ export function decideSubmission(input) {
   }
 
   // 9 ── B-T3.3b: the approval, before the policy is asked ─────────────────
-  const heldRecord = [...records].reverse().find((r) => r?.fingerprint === verified.fingerprint && r?.state === "held") ?? null;
+  // The hold an approval clears, and the one TRUST-27's wait and MIG-31's
+  // floor count from: this submission's FIRST entry into `held`, found by the
+  // id BOT-35 derives for it. Since a hold an aged approval sends back writes
+  // a record of its own (BOT-34), `main` can hold several `held` records for
+  // one fingerprint, and the newest is the re-hold: counting from it would
+  // restart a 14-day floor that has already run, every time an approval aged.
+  // A tree with no such record (a hold written before this submission had an
+  // id of its own, or a test's) falls back to main's earlier reading.
+  const firstHoldId = decisionId(submissionKey({ submission_id: sid, fingerprint: verified.fingerprint, state: "held" }));
+  const heldRecord = records.find((r) => r?.decision_id === firstHoldId && r?.state === "held")
+    ?? [...records].reverse().find((r) => r?.fingerprint === verified.fingerprint && r?.state === "held") ?? null;
   const honoured = honourApproval({
     decisions: gates?.decisions ?? [],
     fingerprint: verified.fingerprint,
@@ -1117,6 +1128,13 @@ export function decideSubmission(input) {
       reasons,
       derived: derivedFacts,
       record: { ...baseRecord, decided_at: startedAt, state: "held", reasons: heldBy },
+      // BOT-34: a hold an aged approval sends back is a second entry into
+      // `held`, and its record is keyed after that approval (BOT-35), so it is
+      // not the first hold's id that BOT-36 would find and drop. The approval
+      // is the one `honourApproval` judged, named by its `decided_at`: the
+      // same value on every re-run of this re-hold, and a new one for the next
+      // approval. Every other hold is a first entry and keeps the first key.
+      reentry: honoured.aged ? { after: honoured.decision.decided_at } : null,
       result_extra: extras,
       // A hold stops the queue clock for these bytes (bot/decide.mjs's rule).
       drop_queue: Boolean(queued),
@@ -1334,6 +1352,7 @@ function finishPlan(p, { shadowed, startedAt }) {
     operator_alert: null,
     result_extra: {},
     identity_records: [],
+    reentry: null,
     ...p,
     decided_at: startedAt,
     shadow: shadowed,
