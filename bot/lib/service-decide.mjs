@@ -115,6 +115,33 @@ export const WAIT_CAUSE_MAX = 512;
 
 const DAY_MS = 24 * HOUR_MS;
 
+/**
+ * §4.4 (contract 3.12.0): a wait's `earliest_retry_at` is at most this many
+ * days after the service receives the result, MIG-31's 14-day floor plus a
+ * day. The bot counts from its run's start, which is earlier than receipt, so
+ * holding itself to the same number never sends what the service refuses.
+ */
+export const MAX_WAIT_DAYS = 15;
+
+/**
+ * The earliest retry a wait may carry. Past §4.4's bound the service refuses
+ * the whole result as `invalid`. A value that far out would also leave the
+ * submission unclaimable (BOT-60) with no alarm, since FLOW-31 exempts the
+ * deferral and the operator window until it. So a defect that computes one
+ * fails this run loudly instead: the lease runs out, and BOT-15 counts it.
+ */
+export function boundedEarliest(startedAt, earliest) {
+  const bound = new Date(startedAt).getTime() + MAX_WAIT_DAYS * DAY_MS;
+  const at = new Date(earliest).getTime();
+  if (!Number.isFinite(at) || at > bound) {
+    throw new Error(
+      `§4.4: a wait's earliest retry (${earliest}) must be a time at most ${MAX_WAIT_DAYS} days after this run's start ` +
+      `(${startedAt}); the service refuses a later one as \`invalid\` (contract 3.12.0)`,
+    );
+  }
+  return earliest;
+}
+
 /** The five plan kinds, and only these. */
 export const PLAN_KINDS = Object.freeze(["state", "wait", "reported", "norecord", "none"]);
 
@@ -721,7 +748,7 @@ export function decideSubmission(input) {
   const nextRun = () => plusMs(startedAt, NEXT_RUN_SECONDS * 1000);
   const waitPlan = (code, cause, { earliest = null, reasons = [], derived = null, operatorAlert = null } = {}) =>
     plan("wait", {
-      wait: { code, started_at: startedAt, cause: clip(cause), earliest_retry_at: earliest ?? nextRun() },
+      wait: { code, started_at: startedAt, cause: clip(cause), earliest_retry_at: boundedEarliest(startedAt, earliest ?? nextRun()) },
       reasons,
       derived,
       operator_alert: operatorAlert,

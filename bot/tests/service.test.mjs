@@ -3550,3 +3550,43 @@ test("end to end, in shadow: the same lease commits nothing and posts nothing", 
     r.cleanup();
   }
 });
+
+// ── §4.4's bound on a wait's earliest retry (contract 3.12.0) ───────────────
+
+import {
+  ACTOR_MISMATCH_FLOOR_DAYS as FLOOR_DAYS_FOR_BOUND,
+} from "../lib/identity.mjs";
+import {
+  FIRST_BINDING_WAIT_DAYS as TRUST27_DAYS_FOR_BOUND,
+  MAX_WAIT_DAYS,
+  boundedEarliest,
+} from "../lib/service-decide.mjs";
+
+test("§4.4: a wait's earliest retry is at most 15 days after the run's start, and past it the run fails", () => {
+  const start = "2026-10-05T12:00:00Z";
+  assert.equal(boundedEarliest(start, "2026-10-19T12:00:00Z"), "2026-10-19T12:00:00Z", "MIG-31's 14 days pass");
+  assert.equal(boundedEarliest(start, "2026-10-20T12:00:00Z"), "2026-10-20T12:00:00Z", "exactly 15 days passes");
+  assert.throws(() => boundedEarliest(start, "2026-10-20T12:00:01Z"), /at most 15 days/, "one second past refuses");
+  assert.throws(() => boundedEarliest(start, "2027-10-05T12:00:00Z"), /at most 15 days/, "a year out refuses");
+  assert.throws(() => boundedEarliest(start, "not a time"), /at most 15 days/, "an unreadable time refuses");
+});
+
+test("§4.4's 15 days is MIG-31's floor plus a day, and covers TRUST-27's wait", () => {
+  // The contract states the bound as the floor plus a day; if either number
+  // moves, the bound must be re-read with it, so this fails first.
+  assert.equal(MAX_WAIT_DAYS, FLOOR_DAYS_FOR_BOUND + 1);
+  assert.ok(TRUST27_DAYS_FOR_BOUND < MAX_WAIT_DAYS);
+});
+
+import { resultBody as resultBodyForBound } from "../lib/service-results.mjs";
+
+test("§4.4: the result composer refuses to post a wait past the bound, whatever moved its time", () => {
+  const plan = {
+    kind: "wait", submission_id: "01J9Z3W5Q8R2T4V6X8Z0A2C4E6", attempt: 1, reasons: [], derived: null,
+    wait: { code: "W_APPROVAL_DEFERRED", started_at: "2026-10-05T12:00:00Z", cause: "x", earliest_retry_at: "2026-10-19T12:00:00Z" },
+  };
+  assert.equal(resultBodyForBound(plan).wait.earliest_retry_at, "2026-10-19T12:00:00Z");
+  assert.throws(() => resultBodyForBound({ ...plan, wait: { ...plan.wait, earliest_retry_at: "2026-10-21T12:00:00Z" } }), /at most 15 days/);
+  // The operator window's time is the composer's own, from the reported delivery.
+  assert.throws(() => resultBodyForBound({ ...plan, alert: true }, { deliveredAt: "2026-10-25T12:00:00Z" }), /at most 15 days/);
+});
