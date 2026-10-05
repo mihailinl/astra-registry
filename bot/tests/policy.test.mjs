@@ -4973,10 +4973,13 @@ await test("ROLL-59 (h) — a non-owner's grandfathered first binding is not app
   const inside = nonOwnerFirstBinding();
   assertEqual(inside.held.plan.result_extra.triggering_actor_is_owner, false,
     "MIG-31: the hold did not report that the build's triggering actor is not the owner");
-  assertEqual(inside.final.plan.state, "held",
+  // Deferred is a wait, not a hold (contract 3.10.0): a `held` result here
+  // took the approval back under BOT-17, and the bot never claims `held`.
+  assertEqual(inside.final.plan.kind === "wait" ? inside.final.plan.wait.code : inside.final.plan.state, "W_APPROVAL_DEFERRED",
     `a non-owner's first binding approved ${FIRST_BINDING_WAIT_DAYS + 1} day(s) after its hold was served: ${said(inside.final.plan)}`);
-  assert(inside.final.plan.reasons.some((r) => r.code === "P_APPROVAL_STALE" && /MIG-31/.test(r.message) && /deferred, not lost/.test(r.message)),
-    `the deferral does not say why, or when: ${JSON.stringify(inside.final.plan.reasons.map((r) => [r.code, r.message]))}`);
+  assertEqual(inside.final.plan.record, null, "a deferred approval wrote a record");
+  assert(/^MIG-31\b/.test(inside.final.plan.wait.cause) && inside.final.plan.wait.cause.includes(inside.final.plan.wait.earliest_retry_at),
+    `the deferral does not say why, or when: ${JSON.stringify(inside.final.plan.wait)}`);
 
   // The same approval, still the newest, read again after the 14 days: it
   // was deferred, not lost, and the walk's remaining gates run from there.
@@ -4991,7 +4994,7 @@ await test("ROLL-59 (h) — a non-owner's grandfathered first binding is not app
   const sub = svcSubmission({ id: "json-tools", version: "0.2.0", line: LINE_OWNER });
   sub.verified.actor = null;
   const unread = approvalWalk(serviceWorld(), sub);
-  assertEqual(unread.final.plan.state, "held",
+  assertEqual(unread.final.plan.kind === "wait" ? unread.final.plan.wait.code : unread.final.plan.state, "W_APPROVAL_DEFERRED",
     `a first binding whose build nobody could attribute was approved inside MIG-31's 14 days: ${said(unread.final.plan)}`);
 });
 

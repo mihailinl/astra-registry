@@ -1,6 +1,6 @@
 {
-  "contract_version": "3.9.0",
-  "source_commit": "09cba347ae7ce1c020a2cb77a9d171096ed1e849",
+  "contract_version": "3.11.0",
+  "source_commit": "d1fd442de1ff8e02c0e12fd7a7cb569f2ccb21ca",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -1362,6 +1362,26 @@
       "id": "wait:W_OPERATOR_WINDOW",
       "kind": "wait",
       "name": "W_OPERATOR_WINDOW",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "never_in_git": true,
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "wait:W_APPROVAL_DEFERRED",
+      "kind": "wait",
+      "name": "W_APPROVAL_DEFERRED",
       "emitter": [
         "registry"
       ],
@@ -6554,8 +6574,8 @@
       "stage": "policy",
       "fix": "moderator",
       "panel_only": false,
-      "title": "The approval named a different submission from this one",
-      "remedy": "Nothing published and nothing was lost. An `/approve` carries the fingerprint printed in the comment it answers, and this run's fingerprint is different — the repository, the tag, the version or the release assets changed after that comment was written. Read the table above as it stands now and, if it is still a yes, copy the `/approve` line out of **this** comment. An approval has to be about something a person actually read."
+      "title": "The approval does not clear this hold: it named a different submission, or it is older than the maximum",
+      "remedy": "Nothing published and nothing was lost. Either the release changed after the approval was given (the repository, tag, version or assets), or the approval is older than the POLICY.md maximum of 7 days. The message names which, and when the approval was given. Read the release as it stands now and, if it is still a yes, approve it again."
     },
     {
       "code": "P_APPROVED",

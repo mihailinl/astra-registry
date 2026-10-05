@@ -107,7 +107,15 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
     if (plan.kind === "state") {
       const { record } = plan;
       const out = writeDecisionRecord({
-        key: submissionKey({ submission_id: record.submission_id, fingerprint: record.fingerprint ?? null, state: record.state }),
+        // BOT-34/BOT-35: a hold an aged approval sends back carries the
+        // approval it overrides (`plan.reentry`), and is keyed after it; every
+        // other record is a first entry and keeps the first key.
+        key: submissionKey({
+          submission_id: record.submission_id,
+          fingerprint: record.fingerprint ?? null,
+          state: record.state,
+          after: plan.reentry?.after ?? null,
+        }),
         record: { ...record, run },
         root: dir,
         existing,

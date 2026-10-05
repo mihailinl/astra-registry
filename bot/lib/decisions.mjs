@@ -26,12 +26,31 @@
 // ── THE FIVE KEY DOMAINS (BOT-35), AND WHICH ONE IS STILL AN EXTENSION ──────
 //
 //   submission:<submission_id>:<fingerprint>:<state>
+//   submission:<submission_id>:<fingerprint>:held:after:<approval decided_at>
+//                                                    a re-entry into `held` (BOT-34)
 //   migration:<owner/name>@<tag>                     B-T3.7b's baseline (MIG-20)
 //   legacy:<owner/name>@<tag>:<fingerprint>:<state>  B-T3.7's legacy path
 //   service-decision:<service_decision_id>:<plugin_id>:<version>:<state>
 //   service-decision:<service_decision_id>:<plugin_id>::identity_reset
 //                                                    DEC-7's voiding record (B-T4.2)
 //   history:<owner/name>@<tag>:<decided_at>:<state>  M-T3.8's export (MIG-21)
+//
+// **The second `submission:` line is one domain's second shape, not a sixth
+// domain.** BOT-34 asks for a record for EVERY entry into `held`, and since
+// contract 3.7.0 BOT-26 (4) sends a submission back into `held` when the
+// approval that took it out has aged. That hold has the first hold's
+// submission, fingerprint and state, so under the first shape it derived the
+// first hold's id, BOT-36 found that record on `main` and dropped the write,
+// and the result named the first hold — its codes, without `P_APPROVAL_STALE`
+// — which the service then took for a repeat of an application it had
+// already made (BOT-17). The re-entry is keyed after the approval it
+// overrides, named by that approval's `decided_at`: §4.3 carries a pending
+// decision as `{code, category, decided_at}` and no id, an approval is not a
+// service decision (B.2) and so has no `service_decision_id`, and TRUST-14's
+// alert record already names an approval the same way. A first entry keeps
+// the first shape, byte for byte, so no record already on `main` moves; a
+// re-run of one re-hold derives one id; a second approval that ages too is a
+// third entry and a third record.
 //
 // The fifth is contract 2.5.0's (lane S3b's spelling). MIG-21 asks for one
 // record per historic decision. This registry decided some versions more than
@@ -143,15 +162,18 @@ const FINGERPRINT_RE = /^[0-9a-f]{16}$/;
  */
 const DOMAINS = {
   submission: {
-    tuple: "(`submission_id`, `fingerprint`, `state`)",
-    build: ({ submission_id, fingerprint, state }) => {
+    tuple: "(`submission_id`, `fingerprint`, `state`), and for a re-entry into `held` the overridden approval's `decided_at`",
+    build: ({ submission_id, fingerprint, state, after }) => {
       if (typeof submission_id !== "string" || !UUID_V47_RE.test(submission_id)) {
         throw new Error(
           `\`submission_id\` ${JSON.stringify(submission_id)} is not §0.7's lowercase UUID v4 or v7, and a key ` +
           "derived over a malformed id is a decision nothing can ever find again",
         );
       }
-      return `submission:${submission_id}:${fingerprintPart(fingerprint)}:${statePart(state)}`;
+      const first = `submission:${submission_id}:${fingerprintPart(fingerprint)}:${statePart(state)}`;
+      // A first entry: today's key, unchanged, so every record on `main` keeps its id.
+      if (after === undefined || after === null) return first;
+      return `${first}:after:${reentryPart(state, after)}`;
     },
   },
   // MIG-20's one record per version: unique by construction, because a
@@ -219,6 +241,34 @@ const DOMAINS = {
 
 /** Every domain BOT-35 knows, in the order the plan lists them. */
 export const KEY_DOMAINS = Object.freeze(Object.keys(DOMAINS));
+
+/**
+ * A re-entry's member: the `decided_at` of the approval the hold overrides.
+ *
+ * Only `held` is re-entered. An approval is the one act that takes a
+ * submission out of a state the bot can put it back into — `refused` and
+ * `stopped` are terminal, and nothing on the service path leaves `published`
+ * for `held` — so a re-entry key under any other state is a caller keying
+ * something BOT-34 does not describe. The member is a §0.7 time and nothing
+ * else, because it is what a re-run must derive again from the same gates
+ * answer: a run's own clock, or a value the service could re-spell, would give
+ * every re-run of one re-hold a record of its own.
+ */
+function reentryPart(state, after) {
+  if (state !== "held") {
+    throw new Error(
+      `a re-entry key names the approval a hold overrides, and this one is for \`${state}\`: only \`held\` is ` +
+      "re-entered (BOT-26 (4)), so a re-entry into anything else is a key no reader expects",
+    );
+  }
+  if (!isTime(after)) {
+    throw new Error(
+      `\`after\` ${JSON.stringify(after)} is not a §0.7 time. It is the \`decided_at\` of the approval the hold ` +
+      "overrides, which is what a re-run of the same re-hold derives again; anything else gives each re-run its own record",
+    );
+  }
+  return after;
+}
 
 /**
  * BOT-35's fingerprint member: 16 lowercase hex, or none.
@@ -295,7 +345,10 @@ export function decisionKey(domain, parts) {
   return entry.build(parts ?? {});
 }
 
-/** `submission:<submission_id>:<fingerprint>:<state>` (BOT-35, first tuple). */
+/**
+ * `submission:<submission_id>:<fingerprint>:<state>` (BOT-35, first tuple), or, with `after`,
+ * `submission:<submission_id>:<fingerprint>:held:after:<decided_at>` for a hold an aged approval sends back (BOT-34).
+ */
 export const submissionKey = (parts) => decisionKey("submission", parts);
 /** `migration:<owner/name>@<tag>` — MIG-20's baseline, one record per published version. */
 export const migrationKey = (parts) => decisionKey("migration", parts);

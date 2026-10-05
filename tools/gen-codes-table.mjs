@@ -189,9 +189,12 @@ const OWED = {
 // B.7's waits that the bot reports: the token file gives each of them the
 // registry as emitter. W_REGISTRY_UNACKNOWLEDGED is not here, because only the
 // service shows it, and it has a panel-only row (`PANEL_CODES`).
+// `W_APPROVAL_DEFERRED` is contract 3.10.0's: an approval TRUST-27 or MIG-31
+// defers is a wait, not a hold.
 const ABSENT_WAITS = [
   "W_LEASE_EXPIRED", "W_ELIGIBILITY_UNREADABLE", "W_NOTICE_PENDING", "W_GITHUB_RATE_LIMITED",
   "W_SERVICE_UNREACHABLE", "W_MODERATION_HOLD", "W_ALERT_UNDELIVERED", "W_OPERATOR_WINDOW",
+  "W_APPROVAL_DEFERRED",
 ];
 const ABSENT = {
   why:

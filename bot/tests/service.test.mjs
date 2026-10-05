@@ -2369,14 +2369,17 @@ test("BOT-26: no held record, a stale approval, and a first binding under 7 days
     ask: ask({ verdict: "pass", gates: { stop_status: "no_stop", decisions: [approval()] }, notice: { kind: "approved", status: "sent", accepted_at: "2026-09-20T00:00:00Z" } }),
     git: git({ existing: existing(), records: [baseline(), heldRecord({ reasons: ["R_FIRST_BINDING"], decided_at: hoursBefore(P.now, 24) })], alerts: new Map([[FP, rec]]) }),
   });
-  assert.equal(binding.state, "held", `TRUST-27: ${FIRST_BINDING_WAIT_DAYS} days from the held record`);
-  assert.ok(codes(binding).includes("R_FIRST_BINDING"), JSON.stringify(codes(binding)));
+  // TRUST-27 is a wait the approval outlives, not a refusal of it: until
+  // 2026-10-05 this run was planned `held` under the first hold's key, which
+  // took the approval back (the tests under "a deferred approval is a wait").
+  assert.equal(binding.kind, "wait", `TRUST-27: ${FIRST_BINDING_WAIT_DAYS} days from the held record: ${binding.kind} ${binding.state ?? ""}`);
+  assert.equal(binding.wait.code, "W_APPROVAL_DEFERRED");
+  assert.equal(binding.record, null);
   // (1) and TRUST-27 are not (4). Contract 3.7.0 puts `P_APPROVAL_STALE` in
   // the record of an approval refused for its AGE, and only there: (1) has no
-  // hold of this fingerprint for the approval to return to, and TRUST-27 is a
-  // wait the approval outlives, not a refusal of it.
+  // hold of this fingerprint for the approval to return to.
   assert.deepEqual(codes(noHold), ["R_IDENTITY_CHANGED"], `(1): ${JSON.stringify(codes(noHold))}`);
-  assert.deepEqual(codes(binding), ["R_FIRST_BINDING"], `TRUST-27: ${JSON.stringify(codes(binding))}`);
+  assert.ok(!binding.reasons.some((r) => r.code === "P_APPROVAL_STALE"), `TRUST-27: ${JSON.stringify(binding.reasons.map((r) => r.code))}`);
 });
 
 // Contract 3.7.0, BOT-26 (4). An approval older than the 7-day maximum clears
@@ -2922,6 +2925,301 @@ test("BOT-36: a record already on main is not written again, and the result name
     t.cleanup();
     fs.rmSync(reports, { recursive: true, force: true });
   }
+});
+
+// ── BOT-34: every entry into `held` has its record, a re-entry included ─────
+//
+// BOT-34 asks for one decision record "for every entry of a submission or
+// fingerprint into `held`". Since contract 3.7.0 BOT-26 (4) sends a submission
+// whose approval aged back into `held`, and on `main` that re-entry wrote no
+// record: its key was the first hold's, (`submission_id`, fingerprint,
+// `held`), so it derived the first hold's `decision_id`, BOT-36 found that
+// record already on `main` and dropped the write, and the result named the
+// FIRST hold — its codes without `P_APPROVAL_STALE`, its commit weeks old.
+// The plugins service treats a result naming a record it has already applied
+// as a repeat (BOT-17), so the hold would have been suppressed and the
+// submission parked, never returned to a moderator. #409's test passed
+// because its fixture tree held no earlier record; every tree below already
+// holds one, committed, before the run under test.
+//
+// Watched red (each by hand, restored after):
+//   * service-publish deriving the key without the overridden approval (main's
+//     line): the re-hold writes nothing and names the first hold — red at B;
+//   * the builder ignoring `after`: the same, and decisions.test.mjs's shape;
+//   * the re-entry keyed on the run's own clock instead of the approval's
+//     `decided_at`: red where B's id is held to the key over that approval,
+//     since every re-run of one re-hold would otherwise derive its own;
+//   * keyed on the OLDEST approval the gates answer carries instead of the one
+//     `honourApproval` judged: the second aged approval lands on B — red at C;
+//   * the first hold's key spelled any other way: red at A, and at the literal
+//     id in decisions.test.mjs;
+//   * the hold `honourApproval` counts from read as the newest `held` record
+//     of the fingerprint (main's selection): the re-hold restarts TRUST-27's
+//     wait and MIG-31's floor — red in the second test.
+
+import { readGitState } from "../lib/service-decide.mjs";
+import { decisionId, submissionKey } from "../lib/decisions.mjs";
+
+/** A registry tree whose `main` already holds MIG-20's baseline for the listing, which TRUST-23 holds against. */
+function treeWithBaseline() {
+  const t = registryTree();
+  const rec = { schema: "astra.registry.decision/1", ...transfer };
+  const rel = `log/decisions/2026/09/${rec.decision_id}.json`;
+  fs.mkdirSync(path.join(t.dir, path.dirname(rel)), { recursive: true });
+  fs.writeFileSync(path.join(t.dir, rel), `${JSON.stringify(rec, null, 2)}\n`);
+  t.g("add", "-A");
+  t.g("commit", "-q", "-m", "the baseline");
+  return t;
+}
+
+/**
+ * One run's publish leg against the tree, as `plugins-ingest.yml` runs it:
+ * compose into a fresh report directory, apply it to `main` as one commit
+ * with `bot/publish-apply.mjs` when there is anything to commit, and finish the
+ * result with the commit that landed.
+ */
+function publishOnto(t, plan, run) {
+  const reportsDir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-reports-"));
+  try {
+    const { pending } = composePublication({ plans: [plan], root: t.dir, listingsDir: reportsDir, reportsDir, run });
+    const report = path.join(reportsDir, "report-0");
+    const files = fs.readdirSync(report, { recursive: true }).map(String).filter((f) => fs.statSync(path.join(report, f)).isFile());
+    const before = t.g("rev-parse", "HEAD").trim();
+    const applied = publishApply({
+      root: t.dir, reports: reportsDir, watchState: path.join(reportsDir, "none"), base: before,
+      skipChecks: true, push: false, servicePath: true, message: "registry: publish (plugins ingest)",
+      trailer: commitTrailers({ pending, run }), log: () => {},
+    });
+    const head = t.g("rev-parse", "HEAD").trim();
+    const [result] = finalizeResults({
+      pending, applied: { outcome: applied.outcome, refused: (applied.refusals ?? []).map((r) => r.report), pushed: applied.outcome === "committed" }, mainCommit: head,
+    });
+    return { result, body: result.body, files, applied, committed: head !== before ? head : null };
+  } finally {
+    fs.rmSync(reportsDir, { recursive: true, force: true });
+  }
+}
+
+/** A record as `main` holds it at a commit, read through git rather than the working tree. */
+const recordAt = (t, commit, rel) => JSON.parse(t.g("show", `${commit}:${rel}`));
+
+test("BOT-34: a hold an aged approval sends back writes its own record over a tree that already holds the first, and a re-run of it writes nothing", async () => {
+  const { loadSchemas, REPO_ROOT } = await import("../../tools/lib/sources.mjs");
+  const { validate } = await import("../../tools/lib/jsonschema.mjs");
+  const decisionSchema = loadSchemas(REPO_ROOT).decision;
+  assert.ok(decisionSchema, "schema/decision-v1.json is not loaded, so the record checks below would check nothing");
+  const t = treeWithBaseline();
+  try {
+    const T0 = "2026-09-02T12:00:00Z"; // the first hold
+    const T1 = "2026-09-03T12:00:00Z"; // a moderator approves
+    const T2 = "2026-09-11T12:00:00Z"; // the bot claims it eight days later: aged
+    const T2b = "2026-09-11T12:10:00Z"; // a re-run of that same re-hold
+    const T3 = "2026-09-12T12:00:00Z"; // a moderator approves again
+    const T4 = "2026-09-20T12:00:00Z"; // and that one ages too
+    const onTree = (over = {}) => git({ existing: existing(), records: readGitState(t.dir).records, ...over });
+    const approvedAt = (now, decisions) => decideWith({
+      lease: { claimed_from: "approved" },
+      ask: ask({ gates: { stop_status: "no_stop", decisions }, notice: { kind: "approved", status: "sent", accepted_at: T0 } }),
+      git: onTree(),
+      now,
+    });
+
+    // 1. The first hold writes record A, under today's key.
+    const firstPlan = decideWith({ git: onTree(), now: T0 });
+    assert.equal(firstPlan.state, "held", `${firstPlan.kind} ${JSON.stringify(firstPlan.wait ?? firstPlan.why ?? codes(firstPlan))}`);
+    assert.deepEqual(codes(firstPlan), ["R_IDENTITY_CHANGED"]);
+    const A = publishOnto(t, firstPlan, "1/1");
+    assert.ok(A.committed, `the first hold committed nothing: ${JSON.stringify(A.applied.refusals ?? A.applied.outcome)}`);
+    assert.equal(A.body.decision_id, decisionId(`submission:${P.sid}:${FP}:held`), "a first hold keeps today's key");
+    const aPath = `log/decisions/2026/09/${A.body.decision_id}.json`;
+    const aBytes = t.g("show", `${A.committed}:${aPath}`);
+
+    // 2. The approval ages; the re-hold writes NEW record B, with the hold's
+    //    codes and `P_APPROVAL_STALE`, and the result agrees with B on `main`.
+    const agedPlan = approvedAt(T2, [approval({ decided_at: T1 })]);
+    assert.equal(agedPlan.state, "held", `${agedPlan.kind} ${JSON.stringify(agedPlan.wait ?? agedPlan.why)}`);
+    assert.deepEqual(codes(agedPlan), ["R_IDENTITY_CHANGED", "P_APPROVAL_STALE"]);
+    const B = publishOnto(t, agedPlan, "2/1");
+    assert.notEqual(B.body.decision_id, A.body.decision_id,
+      "the re-hold named the first hold's record: BOT-36 found it on main and wrote nothing, so no record exists for this entry into `held`");
+    assert.ok(B.result.needs_commit && B.committed, "the re-hold's record was not committed");
+    assert.equal(B.body.decision_id, decisionId(submissionKey({ submission_id: P.sid, fingerprint: FP, state: "held", after: T1 })),
+      "keyed after the approval it overrides");
+    const bPath = `log/decisions/2026/09/${B.body.decision_id}.json`;
+    assert.deepEqual(B.files.filter((f) => f.startsWith("log/")), [bPath], "one record, and only the new one");
+    const bOnMain = recordAt(t, B.body.main_commit, bPath);
+    assert.equal(B.body.main_commit, B.committed, "the result names the commit that holds B");
+    assert.deepEqual(bOnMain.reasons, ["R_IDENTITY_CHANGED", "P_APPROVAL_STALE"]);
+    assert.equal(bOnMain.state, "held");
+    assert.deepEqual(recordAgreement(B.body, bOnMain), [], "BOT-23: the result's DEC-7 members are B's, as main holds it");
+    assert.deepEqual(validate(decisionSchema, bOnMain), [], "B is a DEC-7 record like any other");
+    assert.ok(B.body.reasons.find((r) => r.code === "P_APPROVAL_STALE")?.message.includes(T1), "and it names the approval's decided_at");
+    assert.equal(t.g("show", `HEAD:${aPath}`), aBytes, "A is untouched");
+
+    // 3. A re-run of that re-hold names B again and writes nothing (BOT-36).
+    const rerunPlan = approvedAt(T2b, [approval({ decided_at: T1 })]);
+    const again = publishOnto(t, rerunPlan, "3/1");
+    assert.equal(again.body.decision_id, B.body.decision_id, "the re-run derived another id, so one entry into `held` has two records");
+    assert.equal(again.result.needs_commit, false);
+    assert.equal(again.committed, null, "a re-run committed something");
+    assert.deepEqual(again.files, [], "nothing was written a second time");
+    assert.equal(again.body.main_commit, B.committed, "the re-run names the commit that added B");
+    assert.deepEqual(recordAgreement(again.body, recordAt(t, again.body.main_commit, bPath)), [], "BOT-23, on the re-run");
+
+    // 4. A second approval, aged in its turn, is a third entry: new record C.
+    const secondPlan = approvedAt(T4, [approval({ decided_at: T1 }), approval({ decided_at: T3, moderator: "mod-9" })]);
+    assert.equal(secondPlan.state, "held");
+    assert.deepEqual(codes(secondPlan), ["R_IDENTITY_CHANGED", "P_APPROVAL_STALE"]);
+    const C = publishOnto(t, secondPlan, "4/1");
+    assert.ok(![A.body.decision_id, B.body.decision_id].includes(C.body.decision_id),
+      `the second aged approval landed on an earlier record (${C.body.decision_id})`);
+    assert.ok(C.committed, "C was not committed");
+    assert.equal(C.body.decision_id, decisionId(submissionKey({ submission_id: P.sid, fingerprint: FP, state: "held", after: T3 })));
+    const cPath = `log/decisions/2026/09/${C.body.decision_id}.json`;
+    assert.deepEqual(recordAgreement(C.body, recordAt(t, C.committed, cPath)), [], "BOT-23, on C");
+    assert.ok(C.body.reasons.find((r) => r.code === "P_APPROVAL_STALE")?.message.includes(T3), "C names the approval it overrides");
+
+    // Three entries into `held`, three records, and nothing else.
+    const held = readGitState(t.dir).records.filter((r) => r.state === "held" && r.submission_id === P.sid);
+    assert.equal(held.length, 3, `main holds ${held.length} held record(s) for the submission`);
+    assert.equal(new Set(held.map((r) => r.decision_id)).size, 3);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("BOT-34: with a re-hold on main, TRUST-27's wait and MIG-31's floor still count from the submission's first hold", () => {
+  // Until re-holds wrote records, the only `held` record of a fingerprint was
+  // the first hold, and TRUST-27's wait and MIG-31's 14-day floor counted from
+  // it (`honourApproval`'s `heldRecord`). A re-hold that now lands beside it
+  // must not restart either: each is the owner's time to see a first binding
+  // somebody else started, counted from when the hold became public, and both
+  // have passed here.
+  const line = { outcome: "one", token: "t".repeat(24), token_hash: "2".repeat(16), code: null, alert: false, reason: null };
+  const firstAt = hoursBefore(P.now, (ACTOR_MISMATCH_FLOOR_DAYS + APPROVAL_MAX_DAYS + 4) * 24);
+  const lapsedAt = hoursBefore(P.now, (ACTOR_MISMATCH_FLOOR_DAYS + APPROVAL_MAX_DAYS + 3) * 24);
+  const reheldAt = hoursBefore(P.now, 48);
+  const givenAt = hoursBefore(P.now, 24);
+  const A = { schema: "astra.registry.decision/1", submission_id: P.sid, fingerprint: FP, state: "held", reasons: ["R_FIRST_BINDING"], decided_at: firstAt,
+    decision_id: decisionId(submissionKey({ submission_id: P.sid, fingerprint: FP, state: "held" })) };
+  const B = { ...A, reasons: ["R_FIRST_BINDING", "P_APPROVAL_STALE"], decided_at: reheldAt,
+    decision_id: decisionId(submissionKey({ submission_id: P.sid, fingerprint: FP, state: "held", after: lapsedAt })) };
+  const run = (records) => decideWith({
+    lease: { claimed_from: "approved" },
+    verified: verified({ binding: line, owner_file: { commit: "9".repeat(40), pull_request: false }, actor: { triggering_actor_id: "700000555", floor_days: ACTOR_MISMATCH_FLOOR_DAYS } }),
+    ask: ask({ verdict: "pass", gates: { stop_status: "no_stop", decisions: [approval({ decided_at: givenAt })] }, notice: { kind: "approved", status: "sent", accepted_at: firstAt } }),
+    git: git({ existing: existing(), listingState: { state: "grandfathered" }, records }),
+  });
+  const before = run([baseline(), A]);
+  assert.notEqual(before.state, "held", `the fixture is wrong: with the first hold alone the approval is deferred (${JSON.stringify(codes(before))})`);
+  const after = run([baseline(), A, B]);
+  assert.notEqual(after.state, "held",
+    `the re-hold restarted the wait counted from the hold's record: ${JSON.stringify(after.reasons?.find((r) => r.code === "P_APPROVAL_STALE")?.message ?? codes(after))}`);
+  // Both runs honour the approval and stop at TRUST-14's alert, as a cleared
+  // change of hands does (DEC-6).
+  assert.equal(before.kind, "wait");
+  assert.equal(before.alert?.event, "approval", "the fixture's approval was not honoured with the first hold alone");
+  assert.equal(after.kind, before.kind);
+  assert.deepEqual(after.wait?.code, before.wait?.code);
+  assert.deepEqual(after.alert, before.alert);
+});
+
+// ── a deferred approval is a wait (MIG-31; TRUST-27) ────────────────────────
+//
+// An approval TRUST-27's wait or MIG-31's 14-day floor defers was planned as
+// `state: held` under the first hold's key, naming the first hold's record.
+// The approval came before the claim of the lease that run held, so under
+// contract 3.9.0 BOT-17's act clause made that result a NEW transition
+// `approved → held`: the approval was taken back, and since the bot never
+// claims `held`, nothing ever looked at it again. That is the opposite of
+// MIG-31's "deferred, not lost". Under 3.10.0's narrowing the same result is
+// a suppressed repeat, which BOT-15's brake counts toward a park, so a 14-day
+// floor would park the submission. A deferral is a wait: it writes no record
+// and no commit, and its earliest retry is the time the approval takes effect.
+//
+// Watched red: with the deferral planned `held` again (main's plan), the
+// first two tests are red on `kind`; with `P_APPROVAL_STALE` still pushed
+// for a deferral, the reasons assertions are red; with TRUST-27's 7-day end
+// answered while MIG-31's floor still runs past it, the first test is red on
+// `earliest_retry_at`; with MIG-31's age counted from `decided_at` alone, the
+// third test is red on `published`.
+
+const bindingLine = { outcome: "one", token: "t".repeat(24), token_hash: "2".repeat(16), code: null, alert: false, reason: null };
+/** An approved first binding, held at `heldAt` and approved at `givenAt`; `mig31` puts it behind MIG-31's floor. */
+const firstBindingRun = ({ heldAt, givenAt, mig31, now = P.now, alerts = new Map() }) => decideWith({
+  lease: { claimed_from: "approved" },
+  verified: verified({
+    binding: bindingLine, owner_file: { commit: "9".repeat(40), pull_request: false },
+    actor: mig31 ? { triggering_actor_id: "700000555", floor_days: ACTOR_MISMATCH_FLOOR_DAYS } : null,
+  }),
+  ask: ask({ verdict: "pass", gates: { stop_status: "no_stop", decisions: [approval({ decided_at: givenAt })] }, notice: { kind: "approved", status: "sent", accepted_at: heldAt } }),
+  git: git({
+    existing: existing(), listingState: mig31 ? { state: "grandfathered" } : null, alerts,
+    records: [baseline(), heldRecord({ reasons: ["R_FIRST_BINDING"], decided_at: heldAt })],
+  }),
+  now,
+});
+const plusDays = (at, d) => hoursBefore(at, -d * 24);
+
+test("MIG-31: a deferred approval is a wait `W_APPROVAL_DEFERRED` until the floor's end, and writes no record and no commit", () => {
+  const heldAt = hoursBefore(P.now, 3 * 24);
+  const givenAt = hoursBefore(P.now, 2 * 24);
+  const floorEnd = plusDays(heldAt, ACTOR_MISMATCH_FLOOR_DAYS);
+  const plan = firstBindingRun({ heldAt, givenAt, mig31: true });
+  assert.equal(plan.kind, "wait", `the deferred approval was planned ${plan.kind} ${plan.state ?? ""}: a held result takes the approval back`);
+  assert.equal(plan.wait.code, "W_APPROVAL_DEFERRED");
+  assert.equal(plan.wait.earliest_retry_at, floorEnd, `the earliest retry is the floor's end, ${ACTOR_MISMATCH_FLOOR_DAYS} days after the hold`);
+  assert.match(plan.wait.cause, /^MIG-31\b/, plan.wait.cause);
+  assert.ok(plan.wait.cause.includes(floorEnd) && plan.wait.cause.includes(heldAt), `the cause names when it takes effect and the hold it counts from: ${plan.wait.cause}`);
+  assert.ok(!plan.wait.cause.includes("700000555"), "the cause names no account");
+  assert.equal(plan.record, null, "a wait writes no record (FLOW-72)");
+  assert.equal(plan.alert, null, "no operator alert before the approval takes effect");
+  assert.ok(!plan.reasons.some((r) => r.code === "P_APPROVAL_STALE"), `a deferred approval is not stale: ${JSON.stringify(plan.reasons.map((r) => r.code))}`);
+
+  // What the service receives, and what the publish job commits: nothing.
+  const body = resultBody(plan);
+  assert.deepEqual(body.wait, plan.wait);
+  assert.ok(!("state" in body) && !("decision_id" in body), JSON.stringify(body));
+  const t = registryTree();
+  try {
+    const out = publishOnto(t, plan, "8/1");
+    assert.equal(out.committed, null, "a deferred approval committed something");
+    assert.deepEqual(out.files, [], "and wrote something into its report");
+    assert.equal(out.result.kind, "wait");
+    assert.equal(out.result.needs_commit, false);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("TRUST-27: a deferred approval is a wait `W_APPROVAL_DEFERRED` until the wait's end", () => {
+  const heldAt = hoursBefore(P.now, 24);
+  const givenAt = hoursBefore(P.now, 4);
+  const plan = firstBindingRun({ heldAt, givenAt, mig31: false });
+  assert.equal(plan.kind, "wait", `${plan.kind} ${plan.state ?? ""}`);
+  assert.equal(plan.wait.code, "W_APPROVAL_DEFERRED");
+  assert.equal(plan.wait.earliest_retry_at, plusDays(heldAt, FIRST_BINDING_WAIT_DAYS),
+    `the earliest retry is ${FIRST_BINDING_WAIT_DAYS} days after the hold, the code's current TRUST-27 value`);
+  assert.match(plan.wait.cause, /^TRUST-27\b/, plan.wait.cause);
+  assert.equal(plan.record, null);
+});
+
+test("MIG-31: after the floor ends the same approval publishes, its age counted from the floor's end and not from `decided_at`", () => {
+  const heldAt = hoursBefore(P.now, 16 * 24);
+  const givenAt = hoursBefore(P.now, 15 * 24); // fifteen days old by its own clock
+  const floorEnd = plusDays(heldAt, ACTOR_MISMATCH_FLOOR_DAYS); // two days ago
+  assert.ok(floorEnd < P.now && givenAt < hoursBefore(P.now, APPROVAL_MAX_DAYS * 24), "the fixture is wrong");
+  // TRUST-14's alert for this approval went out and its window has run.
+  const alert = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: givenAt, delivered_at: hoursBefore(P.now, OPERATOR_WINDOW_HOURS + 1), run: "1/1" };
+  const after = firstBindingRun({ heldAt, givenAt, mig31: true, alerts: new Map([[FP, alert]]) });
+  assert.equal(after.state, "published", `${after.kind} ${after.wait?.code ?? ""} ${JSON.stringify(after.reasons?.find((r) => r.code === "P_APPROVAL_STALE")?.message ?? codes(after))}`);
+  assert.equal(after.record.moderator, "mod-7", "the approval given fifteen days ago cleared the hold");
+  assert.ok(!codes(after).includes("P_APPROVAL_STALE"));
+  // The same approval with no floor in front of it is counted from
+  // `decided_at`, and it has aged: the contrast is what the floor buys.
+  const unfloored = firstBindingRun({ heldAt, givenAt, mig31: false, alerts: new Map([[FP, alert]]) });
+  assert.equal(unfloored.state, "held");
+  assert.deepEqual(codes(unfloored), ["R_FIRST_BINDING", "P_APPROVAL_STALE"]);
 });
 
 test("TRUST-14: the alert record lands with the delivery the channel reported, and not without one", () => {
