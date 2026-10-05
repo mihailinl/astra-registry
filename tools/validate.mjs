@@ -98,7 +98,7 @@ import { buildIndex, indexContent, publisherKeyProblems } from "./build-index.mj
 import { RESERVED_KEYS, SUPPORTED_KEYS } from "./lib/platform.mjs";
 import { isTime } from "./lib/time.mjs";
 import { reviewMarkFindings } from "./lib/review-mark.mjs";
-import { TREE_MODE_HINT, readTree, treeModeProblems, unaskableRoot } from "./lib/tree-modes.mjs";
+import { readTree, treeProblems, unaskableRoot } from "./lib/tree-modes.mjs";
 
 // `tools/lib/platform.mjs`'s table, not a copy of it. Until 2026-09-22 these
 // were two literals of this file's own, and platform.mjs's RESERVED_KEYS was
@@ -2917,9 +2917,12 @@ export function checkRecordStrings(ctx) {
 /**
  * Every entry in the tree at HEAD is a regular file (`100644`, `100755`) or a
  * non-empty directory (`040000`), as git's canonical modes read it — the whole
- * repository, B.4's record roots and TRUST-31's set among it.
- * `tools/lib/tree-modes.mjs` says why, and why from git and never from the
- * filesystem.
+ * repository, B.4's record roots and TRUST-31's set among it. Every tree object
+ * is within `max_tree_object_bytes`, every listing within
+ * `max_listing_tree_entries` (policy/limits.json, the policy this file judges
+ * by), and every pattern in `schema/**` within the schema lint's bound (ops
+ * couplings 215). `tools/lib/tree-modes.mjs` says why, and why from git and
+ * never from the filesystem.
  *
  * **HEAD, so what it judges is a commit.** In CI that is the pull request's
  * merge commit, and in the signer's catalogue gate it is the Source-Commit, so
@@ -2943,13 +2946,23 @@ export function checkTreeModes(ctx) {
     report.note("tree modes", `not asked: ${unaskable}`);
     return;
   }
-  const { at, rows } = readTree(root, "HEAD");
-  if (rows.length === 0) {
-    report.error("tree modes", `git ls-tree listed nothing at ${at}; a listing of nothing refuses nothing, so this is ` +
-      "a broken read, not a clean tree");
+  const made = readTree(root, "HEAD");
+  if (made.rows.length === 0) {
+    report.error("tree modes", `git ls-tree listed nothing at ${made.at}; a listing of nothing refuses nothing, so ` +
+      "this is a broken read, not a clean tree");
     return;
   }
-  for (const p of treeModeProblems(rows, at.slice(0, 12))) report.error(p.path, p.message, TREE_MODE_HINT);
+  let problems;
+  try {
+    // This file's own policy when it has loaded one, else the same file read
+    // by the rule itself: a caller handing over a bare `{report, root}` is
+    // still judged by this repository's bounds, never by none.
+    problems = treeProblems(made, { limits: ctx.policy?.limits });
+  } catch (e) {
+    report.error("tree modes", e.message);
+    return;
+  }
+  for (const p of problems) report.error(p.path, p.message, p.hint);
 }
 
 // ── driver ──────────────────────────────────────────────────────────────────
