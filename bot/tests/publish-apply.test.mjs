@@ -805,6 +805,31 @@ test("a link in the checkout is swept into the bot's commit, and the tree rule r
   assert.ok(!fs.existsSync(path.join(one, "plugins")), "the attempt was not undone: plugins/ is still in the checkout");
 });
 
+// The tree rule's entry bound (ops couplings 215): whatever stands under
+// `plugins/<id>/` in the checkout is swept in beside the publication, so the
+// count the plugins service's mirror holds a listing to is the commit's, and
+// only the commit can be asked it.
+test("files swept into the bot's commit past max_listing_tree_entries are refused before the commit is pushed", () => {
+  const { dir, one, bare } = estate();
+  const reports = report(dir, "ingest-report-0", { id: "alpha", version: "0.1.0" });
+  const base = git(one, "rev-parse", "HEAD");
+  // plugin.json, versions/, versions/0.1.0.json, junk/ and 1,997 files: 2,001.
+  for (let i = 0; i < 1997; i++) write(one, `plugins/alpha/junk/${i}.json`, "{}\n");
+
+  let err = null;
+  let result = null;
+  try {
+    result = run({ root: one, reports, watchState: path.join(dir, "none"), skipChecks: true, log: quiet });
+  } catch (e) {
+    err = e;
+  }
+  assert.ok(err && err.name === "ChecksFailed",
+    `a commit holding a listing of 2,001 entries was not refused: ${err ? err.message : JSON.stringify(result)}`);
+  assert.match(err.message, /plugins\/alpha: a listing whose tree holds 2001 entries .*over max_listing_tree_entries \(2000\)/);
+  assert.equal(git(bare, "rev-list", "--count", "main"), "1", "the commit past the bound reached the remote");
+  assert.equal(git(one, "rev-parse", "HEAD"), base, "the refused commit was left on the runner's branch");
+});
+
 // ── the tree rule, on the commit every OTHER writer makes (ops couplings 216) ──
 //
 // This file's own commit has been asked the rule since registry #392. Five
@@ -917,6 +942,10 @@ function writerEstate(w, { ghost = false } = {}) {
   git(work, "push", "--quiet", "-u", "origin", "HEAD:main");
   fs.cpSync(path.join(REPO, "tools", "lib"), path.join(work, "tools", "lib"), { recursive: true });
   fs.appendFileSync(path.join(work, ".git", "info", "exclude"), "/tools/lib/\n");
+  // The bounds the rule holds a tree to are this repository's policy, read
+  // from beside the module as `tools/validate.mjs` reads its own.
+  fs.cpSync(path.join(REPO, "policy", "limits.json"), path.join(work, "policy", "limits.json"));
+  fs.appendFileSync(path.join(work, ".git", "info", "exclude"), "/policy/limits.json\n");
   const temp = path.join(dir, "runner-temp");
   fs.mkdirSync(temp);
   return { dir, bare, work, temp, base: git(work, "rev-parse", "HEAD") };
@@ -1176,6 +1205,92 @@ test("every workflow line that pushes has the tree rule on HEAD before it, after
   // plugins-moderation and publisher-recheck, one push line each.
   assert.ok(pushes.length >= 5, `found ${pushes.length} workflow line(s) that push, and there were 5 on 2026-10-03: ${pushes.join(", ")}`);
   assert.deepEqual(problems, [], "a workflow pushes a commit the tree rule has not been asked about");
+});
+
+// ── the tree rule's two bounds, on the line every writer runs (ops couplings 215) ──
+//
+// The plugins service fails closed on a tree object over 8 MiB (its serial
+// reader) and on a listing's subtree over 400,000 entries (its mirror), and
+// one commit past either freezes its reading of every later commit. The rule
+// refuses 1 MiB and 2,000 entries before anything is pushed. The five writers
+// above all run the same line, which the census holds them to, so the line is
+// asked here over commits made with `git mktree`, at each bound and one past
+// it; and the writer that commits under `plugins/<id>/` is run whole over a
+// commit that tips a listing past its bound.
+
+/** `rows` (`<mode> <type> <id>\t<name>`) as a tree in `work`, by `git mktree -z`. */
+const mktree = (work, rows) => gitInput(work, rows.map((r) => `${r}\0`).join(""), "mktree", "-z");
+
+/**
+ * `n` names whose `100644` entries come to exactly `total` bytes as git stores
+ * the tree: an entry is `100644 <name>\0` and a 20-byte id.
+ */
+function namesFilling(n, total) {
+  const letters = total - 28 * n;
+  return Array.from({ length: n }, (_, i) =>
+    `${String(i).padStart(4, "0")}.`.padEnd(Math.floor(letters / n) + (i < letters % n ? 1 : 0), "x"));
+}
+
+/** A commit on `parent` holding a listing of `entries` entries and a tree object of `bytes` bytes, and nothing else new. */
+function boundsCommit(work, parent, { entries, bytes }) {
+  const blob = gitInput(work, "{}\n", "hash-object", "-w", "--stdin");
+  const file = (name) => `100644 blob ${blob}\t${name}`;
+  const dirRow = (name, tree) => `040000 tree ${tree}\t${name}`;
+  // plugin.json, versions/, versions/deep/ and the rest as files in deep/.
+  const deep = mktree(work, Array.from({ length: entries - 3 }, (_, i) => file(`${String(i).padStart(5, "0")}.json`)));
+  const listing = mktree(work, [file("plugin.json"), dirRow("versions", mktree(work, [dirRow("deep", deep)]))]);
+  const wide = mktree(work, namesFilling(256, bytes).map(file));
+  assert.equal(git(work, "cat-file", "-s", wide), String(bytes), "the wide tree is not the size the case needs");
+  const root = mktree(work, [
+    ...git(work, "ls-tree", "-z", parent).split("\0").filter(Boolean),
+    dirRow("plugins", mktree(work, [dirRow("big", listing)])),
+    dirRow("docs", mktree(work, [dirRow("wide", wide)])),
+  ]);
+  return git(work, "commit-tree", root, "-p", parent, "-m", `a listing of ${entries} entries and a tree of ${bytes} bytes`);
+}
+
+test("the line every writer runs refuses a commit one entry or one byte past either bound, names both, and passes one at them", () => {
+  const ask = (e, commit) => {
+    git(e.work, "update-ref", "HEAD", commit);
+    return spawnSync(process.execPath, ["tools/lib/tree-modes.mjs", "HEAD"], { cwd: e.work, encoding: "utf8", env: fixtureEnv(e.work) });
+  };
+  const e = writerEstate({ base: {} });
+  const over = ask(e, boundsCommit(e.work, e.base, { entries: 2001, bytes: 1048577 }));
+  assert.equal(over.status, 1, `the rule passed a commit past both bounds:\n${over.stdout}${over.stderr}`);
+  assert.match(over.stdout, /::error::plugins\/big: a listing whose tree holds 2001 entries .*over max_listing_tree_entries \(2000\)/, over.stdout);
+  assert.match(over.stdout, /::error::docs\/wide: a tree object of 1048577 bytes as git stores it, git mode 040000, over max_tree_object_bytes \(1048576\)/, over.stdout);
+
+  const at = ask(e, boundsCommit(e.work, e.base, { entries: 2000, bytes: 1048576 }));
+  assert.equal(at.status, 0, `the rule refused a commit at both bounds:\n${at.stdout}${at.stderr}`);
+});
+
+test("the moderation commit job's own commit, tipping a listing past max_listing_tree_entries, is refused before the push", () => {
+  const versions = Object.fromEntries(Array.from({ length: 1998 }, (_, i) => [`plugins/alpha/versions/0.0.${i}.json`, "{}\n"]));
+  const w = {
+    ...WRITERS.moderation,
+    // plugin.json, versions/ and 1,998 records: 2,000, at the bound.
+    base: { ...versions, "plugins/alpha/plugin.json": '{"id":"alpha"}\n' },
+    prepare(e) {
+      // The job's one new path, which is the 2,001st entry.
+      write(e.work, "plugins/alpha/identity.json", "{}\n");
+      write(e.work, "moderation/paths.txt", "plugins/alpha/identity.json\n");
+      write(e.work, "moderation/commit-message.txt", "registry: moderation (1 decision(s))\n");
+      write(e.work, "moderation/results.json", "{}\n");
+    },
+  };
+  const e = writerEstate(w);
+  w.prepare(e);
+  const r = runWriter(w, e);
+  assert.notEqual(r.status, 0, `the moderation commit job pushed a listing of 2,001 entries:\n${r.out}`);
+  assert.equal(git(e.bare, "rev-parse", "main"), e.base, "the commit past the bound reached the remote");
+  assert.notEqual(git(e.work, "rev-parse", "HEAD"), e.base, `the job stopped before it committed:\n${r.out}`);
+  assert.match(r.out, /plugins\/alpha: a listing whose tree holds 2001 entries .*over max_listing_tree_entries \(2000\)/, r.out);
+
+  const m = writerEstate(w);
+  w.prepare(m);
+  const mr = runWriter(w, m, { withoutCheck: true });
+  assert.equal(mr.status, 0, `with the rule's line deleted, the job failed for another reason:\n${mr.out}`);
+  assert.notEqual(git(m.bare, "rev-parse", "main"), m.base, "with the rule's line deleted, the job pushed nothing");
 });
 
 // ── this file, from outside ──────────────────────────────────────────────────

@@ -59,7 +59,7 @@ import path from "node:path";
 
 import { compareSemver, parseSemver } from "../tools/lib/semver.mjs";
 import { invalidId, unsafePathComponent } from "../tools/lib/ids.mjs";
-import { readTree, treeModeProblems } from "../tools/lib/tree-modes.mjs";
+import { readTree, treeProblems } from "../tools/lib/tree-modes.mjs";
 
 export const EXIT = { ok: 0, refused: 1, broke: 2, conflict: 3 };
 
@@ -811,17 +811,18 @@ export function run({
     // (`plugins/<id>/plugin.json`, `identity.json`). `git add -A` above then
     // takes whatever stands under the pathspecs, an untracked symlink
     // included, and only the commit says what was taken. So a bot commit can
-    // never carry a link, a gitlink or an empty directory to `main`: the
-    // attempt is undone as a failed check, whose outcome the author's comment
-    // already explains.
+    // never carry a link, a gitlink or an empty directory to `main`, nor a
+    // tree object or a listing past the two bounds the plugins service relies
+    // on (ops couplings 215): the attempt is undone as a failed check, whose
+    // outcome the author's comment already explains.
     //
     // Not behind `skipChecks`. That flag exists because this file's own toy
     // repositories hold no listings for the validator to judge; every
-    // repository has a tree, and this rule needs nothing else.
+    // repository has a tree, and this rule needs nothing else but this
+    // repository's policy/limits.json, which it reads from beside itself.
     let swept = [];
     try {
-      const made = readTree(root, "HEAD");
-      swept = treeModeProblems(made.rows, made.at.slice(0, 12));
+      swept = treeProblems(readTree(root, "HEAD"));
     } catch (err) {
       attemptFailed(err);
     }
