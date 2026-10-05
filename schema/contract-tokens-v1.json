@@ -1,6 +1,6 @@
 {
-  "contract_version": "3.10.0",
-  "source_commit": "b46c3ac27dbef86298ed093b02004b2d4bc5105a",
+  "contract_version": "3.11.0",
+  "source_commit": "d1fd442de1ff8e02c0e12fd7a7cb569f2ccb21ca",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -1362,6 +1362,26 @@
       "id": "wait:W_OPERATOR_WINDOW",
       "kind": "wait",
       "name": "W_OPERATOR_WINDOW",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "never_in_git": true,
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
+      ]
+    },
+    {
+      "id": "wait:W_APPROVAL_DEFERRED",
+      "kind": "wait",
+      "name": "W_APPROVAL_DEFERRED",
       "emitter": [
         "registry"
       ],
