@@ -1447,6 +1447,82 @@ export async function run() {
       "bound, and not `plugins`, whose 4,003 entries are two listings' and no one listing's");
   });
 
+  // ── a tree that names an entry twice, or out of git's order ───────────────
+  //
+  // The plugins service holds a TRUST-31 entry whose tree "names an entry
+  // twice or out of order" (its formal (f) line), and its mirror reads trees
+  // whole. git's own readers do not agree with each other about such a tree:
+  // `ls-tree` lists every entry in the order the bytes hold them, while a path
+  // lookup (`<commit>:<path>`, which `git show`, `cat-file` and the signer's
+  // `blobAt` all use) walks the entries in order, stops at the first name past
+  // the one it wants, and takes the first match. So each case below shows the
+  // disagreement on the fixture before it asks the rule. An array in a spec is
+  // written in its own order, duplicates and all (`rawTree`); nothing git
+  // writes itself looks like this, so `hash-object --literally` is the only
+  // way to make one.
+
+  await test("tree rule: a tree that names an entry twice is refused at that tree, and git's path lookup reads only the first of the two", async () => {
+    const dir = treeFixture("to-dup", {
+      plugins: { alpha: [["plugin.json", "{\"first\":1}\n"], ["plugin.json", "{\"second\":2}\n"], ["versions", { "1.0.0.json": "{}\n" }]] },
+    });
+    const listed = gitIn(dir, ["ls-tree", "-z", "HEAD:plugins/alpha"]).split("\0").filter((r) => r.endsWith("\tplugin.json"));
+    assertEqual(listed.length, 2, "the fixture's tree does not name plugin.json twice");
+    assertEqual(gitIn(dir, ["cat-file", "blob", "HEAD:plugins/alpha/plugin.json"]), "{\"first\":1}\n",
+      "git's path lookup no longer reads the first of two entries; the case no longer shows two readers disagreeing");
+    assertEqual(await refusedIn(dir), "plugins/alpha 040000",
+      "a tree that names plugin.json twice must be refused at the tree that holds both, and nothing else");
+  });
+
+  await test("tree rule: a name held twice in git's order, a file `foo` and a directory `foo` with `foo.bar` between them, is refused too", async () => {
+    // git sorts a directory as its name and a slash, so `foo`, `foo.bar`,
+    // `foo/` is git's order and the two `foo`s are not neighbours: a check
+    // that compares each entry with the one before it alone sees nothing.
+    const dir = treeFixture("to-dup-apart", {
+      docs: [["foo", "a file\n"], ["foo.bar", "x\n"], ["foo", { "x.md": "beneath the directory\n" }]],
+    });
+    const rows = readTree(dir).rows.map((r) => r.path);
+    assert(rows.includes("docs/foo/x.md"), "ls-tree no longer lists the file beneath the second `foo`");
+    assertEqual(gitMaybe(dir, ["rev-parse", "--verify", "--quiet", "HEAD:docs/foo/x.md"]), null,
+      "git's path lookup found docs/foo/x.md, so the case no longer shows it stopping at the file `foo`");
+    assertEqual(await refusedIn(dir), "docs 040000",
+      "a tree that holds `foo` twice, as a file and as a directory, must be refused even though its entries are in git's order");
+  });
+
+  await test("tree rule: a root tree out of git's order is refused, and an entry git's path lookup cannot find is listed by ls-tree", async () => {
+    const dir = treeFixture("to-unsorted-root", [
+      ["README.md", "x\n"],
+      ["plugins", { alpha: { "plugin.json": "{}\n" } }],
+      ["log", { "baseline.json": "{}\n" }],
+    ]);
+    assert(readTree(dir).rows.some((r) => r.path === "log/baseline.json"), "ls-tree no longer lists log/baseline.json");
+    assertEqual(gitMaybe(dir, ["rev-parse", "--verify", "--quiet", "HEAD:log/baseline.json"]), null,
+      "git's path lookup found log/baseline.json past `plugins`, so the case no longer shows it stopping early");
+    assertEqual(await refusedIn(dir), "(the root tree) 040000",
+      "a root tree with `plugins` before `log` must be refused, at the root tree, which no ls-tree row lists");
+  });
+
+  await test("tree rule: git's order compares a directory as its name and a slash, so `a.txt` before the directory `a` passes and the reverse is refused", async () => {
+    // Byte order alone says the opposite of git's for both trees: `a` < `a.txt`,
+    // but `a/` > `a.txt`, because `.` is 0x2e and `/` 0x2f.
+    const dir = treeFixture("to-slash", {
+      docs: [["a", { "x.md": "x\n" }], ["a.txt", "y\n"]],
+      site: [["a.txt", "y\n"], ["a", { "x.md": "x\n" }]],
+    });
+    assertEqual(gitMaybe(dir, ["rev-parse", "--verify", "--quiet", "HEAD:site/a/x.md"]) === null, false,
+      "git cannot find site/a/x.md, so `site` is not in git's order and is not the control it is meant to be");
+    assertEqual(await refusedIn(dir), "docs 040000",
+      "the directory `a` before the file `a.txt` is out of git's order and must be refused; the reverse is git's order and must pass");
+  });
+
+  await test("tree rule: order and duplicates are asked of every tree at every depth, not the root's alone", async () => {
+    const dir = treeFixture("to-deep", {
+      plugins: { alpha: { "plugin.json": "{}\n", versions: [["1.1.0.json", "{}\n"], ["1.0.0.json", "{}\n"]] } },
+      bot: { moderation: { queue: [["entry.json", "{}\n"], ["entry.json", "{}\n"]] } },
+    });
+    assertEqual(await refusedIn(dir), ["bot/moderation/queue 040000", "plugins/alpha/versions 040000"].join("\n"),
+      "a tree three levels down that is out of order, and one that names an entry twice, must each be named at its own path");
+  });
+
   await test("schema lint: a pattern under schema/ that repeats one atom more than 1,000 times, by one count or nested ones, is refused by file and pointer", async () => {
     const dir = treeFixture("sp-schemas", {
       schema: {
@@ -1547,12 +1623,15 @@ async function refusedIn(dir) {
  * directory under a raw mode of the caller's, `{raw}` a directory that is the
  * tree object already written under that id, and any other object a
  * directory. Entries are in git's order, a directory sorting as its name and a
- * slash.
+ * slash — except where `spec` is an ARRAY of `[name, value]` pairs, which is
+ * written in exactly its own order, a name repeated if it is repeated: the
+ * tree git never writes, for the order and duplicate cases.
  */
 function rawTree(dir, spec) {
   const put = (type, body) => execFileSync("git", ["-C", dir, "hash-object", "-t", type, "-w", "--literally", "--stdin"],
     { input: body, encoding: "utf8", env: fixtureEnv(dir) }).trim();
-  const entries = Object.entries(spec).map(([name, v]) => {
+  const asWritten = Array.isArray(spec);
+  const entries = (asWritten ? spec : Object.entries(spec)).map(([name, v]) => {
     if (typeof v === "string") return { name, mode: "100644", sha: put("blob", v) };
     if (v.exec !== undefined) return { name, mode: "100755", sha: put("blob", v.exec) };
     if (v.link !== undefined) return { name, mode: "120000", sha: put("blob", v.link) };
@@ -1561,7 +1640,7 @@ function rawTree(dir, spec) {
     return { name, mode: "40000", sha: rawTree(dir, v), dir: true };
   });
   const key = (e) => (e.mode === "40000" ? `${e.name}/` : e.name);
-  entries.sort((a, b) => (Buffer.compare(Buffer.from(key(a)), Buffer.from(key(b)))));
+  if (!asWritten) entries.sort((a, b) => (Buffer.compare(Buffer.from(key(a)), Buffer.from(key(b)))));
   return put("tree", Buffer.concat(entries.map((e) =>
     Buffer.concat([Buffer.from(`${e.mode} ${e.name}\0`), Buffer.from(e.sha, "hex")]))));
 }
