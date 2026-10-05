@@ -405,7 +405,10 @@ MIG-31's. Since contract 3.0.0 an approval there clears only a change of hands
   check in the run that acts on an approval, and it honours the approval only
   when a record on `main` shows the release held under exactly that
   fingerprint, nothing is blocking, and the approval was given within the last
-  **7 days** (BOT-26).
+  **7 days** (BOT-26). An approval that has aged past that clears nothing: the
+  release is held again, with `P_APPROVAL_STALE` beside the hold's own codes
+  and a message naming when the approval was given, so a moderator sees why
+  the hold came back and can approve it again (contract 3.7.0).
 - **An approved change of hands waits 6 hours after its author notice.** A
   change of hands is always an update, because it happens to a listing that
   already exists. It is published only once the service reports the author's

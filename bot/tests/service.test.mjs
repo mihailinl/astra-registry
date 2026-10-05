@@ -2360,6 +2360,8 @@ test("BOT-26: no held record, a stale approval, and a first binding under 7 days
   assert.equal(noHold.state, "held", "(1): an approval with no `held` record on main clears nothing");
   const stale = approvedRun({ approval: { decided_at: hoursBefore(P.now, APPROVAL_MAX_DAYS * 24 + 1) }, alerts: new Map([[FP, rec]]) });
   assert.equal(stale.state, "held", `(4): older than ${APPROVAL_MAX_DAYS} days`);
+  // Since contract 3.7.0 the hold that comes back says why (the tests below).
+  assert.deepEqual(codes(stale), ["R_IDENTITY_CHANGED", "P_APPROVAL_STALE"], `(4): ${JSON.stringify(codes(stale))}`);
   const line = { outcome: "one", token: "t".repeat(24), token_hash: "2".repeat(16), code: null, alert: false, reason: null };
   const binding = decideWith({
     lease: { claimed_from: "approved" },
@@ -2369,6 +2371,97 @@ test("BOT-26: no held record, a stale approval, and a first binding under 7 days
   });
   assert.equal(binding.state, "held", `TRUST-27: ${FIRST_BINDING_WAIT_DAYS} days from the held record`);
   assert.ok(codes(binding).includes("R_FIRST_BINDING"), JSON.stringify(codes(binding)));
+  // (1) and TRUST-27 are not (4). Contract 3.7.0 puts `P_APPROVAL_STALE` in
+  // the record of an approval refused for its AGE, and only there: (1) has no
+  // hold of this fingerprint for the approval to return to, and TRUST-27 is a
+  // wait the approval outlives, not a refusal of it.
+  assert.deepEqual(codes(noHold), ["R_IDENTITY_CHANGED"], `(1): ${JSON.stringify(codes(noHold))}`);
+  assert.deepEqual(codes(binding), ["R_FIRST_BINDING"], `TRUST-27: ${JSON.stringify(codes(binding))}`);
+});
+
+// Contract 3.7.0, BOT-26 (4). An approval older than the 7-day maximum clears
+// nothing, and the bot holds the release again. Until 3.7.0 that hold carried
+// the first hold's codes and nothing else: `honourApproval` said why in a
+// reason that the result composer then dropped, because a `held` result's
+// reasons are the record's (BOT-23) and the record's were the hold's own. A
+// moderator saw the same hold come back with no word about the approval they
+// had given, and the service's BOT-17 key (attempt, fingerprint, state) took
+// the result for a re-run of the first hold and suppressed it, so the
+// submission sat in `checking` until BOT-15 parked it.
+//
+// Watched: with `P_APPROVAL_STALE` left out of the held record's codes, the
+// first test is red on the record and again on the posted body; with it
+// written for every approval `honourApproval` does not honour, the TRUST-27
+// and (1) assertions above are red; with it raised as a hold inside
+// `decide()`, the way BOT-26 (2) raises it, the aged approval of a release
+// nothing holds is held and the third test is red; and with the age counted
+// from `decided_at` alone in the message, the MIG-31 half of the first test
+// is red.
+const agedAt = hoursBefore(P.now, APPROVAL_MAX_DAYS * 24 + 1);
+test("BOT-26 (4): an aged approval re-holds with `P_APPROVAL_STALE` beside the hold's codes, naming its `decided_at` and the maximum", () => {
+  const rec = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: agedAt, delivered_at: hoursBefore(P.now, APPROVAL_MAX_DAYS * 24), run: "1/1" };
+  const aged = approvedRun({
+    approval: { decided_at: agedAt },
+    held: { decided_at: hoursBefore(P.now, (APPROVAL_MAX_DAYS + 2) * 24) },
+    alerts: new Map([[FP, rec]]),
+  });
+  assert.equal(aged.kind, "state", JSON.stringify(aged.wait ?? aged.why));
+  assert.equal(aged.state, "held");
+  assert.deepEqual(codes(aged), ["R_IDENTITY_CHANGED", "P_APPROVAL_STALE"], "the hold's own codes, then why it came back");
+  assert.ok(!("moderator" in aged.record), "an approval that cleared nothing names no moderator");
+  // What the service receives: the record's codes in the record's order, and
+  // the sentence the moderator reads.
+  const body = resultBody(aged, { decisionId: "0".repeat(32) });
+  assert.deepEqual(recordAgreement(body, { ...aged.record, decision_id: "0".repeat(32) }), [], "BOT-23");
+  const why = body.reasons.find((r) => r.code === "P_APPROVAL_STALE");
+  assert.ok(why, `the posted result does not say why the hold came back: ${JSON.stringify(body.reasons)}`);
+  assert.equal(why.stage, "policy");
+  assert.match(why.message, /^BOT-26 \(4\)/, why.message);
+  assert.ok(why.message.includes(agedAt), `the message does not name the approval's decided_at: ${why.message}`);
+  assert.match(why.message, new RegExp(`\\b${APPROVAL_MAX_DAYS}-day maximum\\b`), `the message does not name the maximum: ${why.message}`);
+
+  // MIG-31 counts the age from its floor's end, so a message naming only
+  // `decided_at` would say "older than 7 days" of an approval that was
+  // deferred and then left to age: the floor's end is named too.
+  const line = { outcome: "one", token: "t".repeat(24), token_hash: "2".repeat(16), code: null, alert: false, reason: null };
+  const heldAt = hoursBefore(P.now, (ACTOR_MISMATCH_FLOOR_DAYS + APPROVAL_MAX_DAYS + 2) * 24);
+  const floorEnd = hoursBefore(P.now, (APPROVAL_MAX_DAYS + 2) * 24);
+  const givenAt = hoursBefore(P.now, (ACTOR_MISMATCH_FLOOR_DAYS + APPROVAL_MAX_DAYS + 1) * 24);
+  const deferred = decideWith({
+    lease: { claimed_from: "approved" },
+    verified: verified({ binding: line, owner_file: { commit: "9".repeat(40), pull_request: false }, actor: { triggering_actor_id: "700000555", floor_days: ACTOR_MISMATCH_FLOOR_DAYS } }),
+    ask: ask({ verdict: "pass", gates: { stop_status: "no_stop", decisions: [approval({ decided_at: givenAt })] }, notice: { kind: "approved", status: "sent", accepted_at: heldAt } }),
+    git: git({ existing: existing(), listingState: { state: "grandfathered" }, records: [baseline(), heldRecord({ reasons: ["R_FIRST_BINDING"], decided_at: heldAt })] }),
+  });
+  assert.equal(deferred.state, "held", JSON.stringify(deferred.wait ?? deferred.why));
+  assert.deepEqual(codes(deferred), ["R_FIRST_BINDING", "P_APPROVAL_STALE"]);
+  const floored = resultBody(deferred).reasons.find((r) => r.code === "P_APPROVAL_STALE")?.message ?? "";
+  assert.ok(floored.includes(givenAt) && floored.includes(floorEnd) && /MIG-31/.test(floored),
+    `the message does not say the age ran from MIG-31's floor end: ${floored}`);
+});
+
+test("BOT-26 (4): an approval younger than the maximum publishes as before, with no `P_APPROVAL_STALE`", () => {
+  const givenAt = hoursBefore(P.now, APPROVAL_MAX_DAYS * 24 - 1);
+  const rec = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: givenAt, delivered_at: hoursBefore(P.now, 24), run: "1/1" };
+  const fresh = approvedRun({
+    approval: { decided_at: givenAt },
+    held: { decided_at: hoursBefore(P.now, (APPROVAL_MAX_DAYS + 2) * 24) },
+    alerts: new Map([[FP, rec]]),
+  });
+  assert.equal(fresh.state, "published", `${fresh.kind} ${JSON.stringify(fresh.wait ?? fresh.reasons?.map((r) => r.code))}`);
+  assert.equal(fresh.record.moderator, "mod-7", "the approval cleared the hold");
+  assert.ok(!codes(fresh).includes("P_APPROVAL_STALE"), JSON.stringify(codes(fresh)));
+  assert.ok(!fresh.reasons.some((r) => r.code === "P_APPROVAL_STALE"), "an honoured approval is not explained away");
+});
+
+test("BOT-26 (4): an aged approval of a release nothing holds any more clears nothing and holds nothing (DEC-19)", () => {
+  const plan = decideWith({
+    lease: { claimed_from: "approved" },
+    ask: ask({ gates: { stop_status: "no_stop", decisions: [approval({ decided_at: agedAt })] }, notice: { kind: "approved", status: "pending" } }),
+    git: git({ records: [heldRecord({ reasons: ["R_FIRST_LISTING"], decided_at: hoursBefore(P.now, (APPROVAL_MAX_DAYS + 2) * 24) })] }),
+  });
+  assert.equal(plan.state, "published", `${plan.kind} ${JSON.stringify(codes(plan))}`);
+  assert.deepEqual(codes(plan), ["P_PUBLISHED", "P_REVIEW_PRIORITY"], "a refused approval changes nothing");
 });
 
 // Contract 3.0.0 (DEC-19): an approval clears a hold THIS run raises, and
