@@ -2369,14 +2369,17 @@ test("BOT-26: no held record, a stale approval, and a first binding under 7 days
     ask: ask({ verdict: "pass", gates: { stop_status: "no_stop", decisions: [approval()] }, notice: { kind: "approved", status: "sent", accepted_at: "2026-09-20T00:00:00Z" } }),
     git: git({ existing: existing(), records: [baseline(), heldRecord({ reasons: ["R_FIRST_BINDING"], decided_at: hoursBefore(P.now, 24) })], alerts: new Map([[FP, rec]]) }),
   });
-  assert.equal(binding.state, "held", `TRUST-27: ${FIRST_BINDING_WAIT_DAYS} days from the held record`);
-  assert.ok(codes(binding).includes("R_FIRST_BINDING"), JSON.stringify(codes(binding)));
+  // TRUST-27 is a wait the approval outlives, not a refusal of it: until
+  // 2026-10-05 this run was planned `held` under the first hold's key, which
+  // took the approval back (the tests under "a deferred approval is a wait").
+  assert.equal(binding.kind, "wait", `TRUST-27: ${FIRST_BINDING_WAIT_DAYS} days from the held record: ${binding.kind} ${binding.state ?? ""}`);
+  assert.equal(binding.wait.code, "W_APPROVAL_DEFERRED");
+  assert.equal(binding.record, null);
   // (1) and TRUST-27 are not (4). Contract 3.7.0 puts `P_APPROVAL_STALE` in
   // the record of an approval refused for its AGE, and only there: (1) has no
-  // hold of this fingerprint for the approval to return to, and TRUST-27 is a
-  // wait the approval outlives, not a refusal of it.
+  // hold of this fingerprint for the approval to return to.
   assert.deepEqual(codes(noHold), ["R_IDENTITY_CHANGED"], `(1): ${JSON.stringify(codes(noHold))}`);
-  assert.deepEqual(codes(binding), ["R_FIRST_BINDING"], `TRUST-27: ${JSON.stringify(codes(binding))}`);
+  assert.ok(!binding.reasons.some((r) => r.code === "P_APPROVAL_STALE"), `TRUST-27: ${JSON.stringify(binding.reasons.map((r) => r.code))}`);
 });
 
 // Contract 3.7.0, BOT-26 (4). An approval older than the 7-day maximum clears
@@ -3119,6 +3122,104 @@ test("BOT-34: with a re-hold on main, TRUST-27's wait and MIG-31's floor still c
   assert.equal(after.kind, before.kind);
   assert.deepEqual(after.wait?.code, before.wait?.code);
   assert.deepEqual(after.alert, before.alert);
+});
+
+// ── a deferred approval is a wait (MIG-31; TRUST-27) ────────────────────────
+//
+// An approval TRUST-27's wait or MIG-31's 14-day floor defers was planned as
+// `state: held` under the first hold's key, naming the first hold's record.
+// The approval came before the claim of the lease that run held, so under
+// contract 3.9.0 BOT-17's act clause made that result a NEW transition
+// `approved → held`: the approval was taken back, and since the bot never
+// claims `held`, nothing ever looked at it again. That is the opposite of
+// MIG-31's "deferred, not lost". Under 3.10.0's narrowing the same result is
+// a suppressed repeat, which BOT-15's brake counts toward a park, so a 14-day
+// floor would park the submission. A deferral is a wait: it writes no record
+// and no commit, and its earliest retry is the time the approval takes effect.
+//
+// Watched red: with the deferral planned `held` again (main's plan), the
+// first two tests are red on `kind`; with `P_APPROVAL_STALE` still pushed
+// for a deferral, the reasons assertions are red; with TRUST-27's 7-day end
+// answered while MIG-31's floor still runs past it, the first test is red on
+// `earliest_retry_at`; with MIG-31's age counted from `decided_at` alone, the
+// third test is red on `published`.
+
+const bindingLine = { outcome: "one", token: "t".repeat(24), token_hash: "2".repeat(16), code: null, alert: false, reason: null };
+/** An approved first binding, held at `heldAt` and approved at `givenAt`; `mig31` puts it behind MIG-31's floor. */
+const firstBindingRun = ({ heldAt, givenAt, mig31, now = P.now, alerts = new Map() }) => decideWith({
+  lease: { claimed_from: "approved" },
+  verified: verified({
+    binding: bindingLine, owner_file: { commit: "9".repeat(40), pull_request: false },
+    actor: mig31 ? { triggering_actor_id: "700000555", floor_days: ACTOR_MISMATCH_FLOOR_DAYS } : null,
+  }),
+  ask: ask({ verdict: "pass", gates: { stop_status: "no_stop", decisions: [approval({ decided_at: givenAt })] }, notice: { kind: "approved", status: "sent", accepted_at: heldAt } }),
+  git: git({
+    existing: existing(), listingState: mig31 ? { state: "grandfathered" } : null, alerts,
+    records: [baseline(), heldRecord({ reasons: ["R_FIRST_BINDING"], decided_at: heldAt })],
+  }),
+  now,
+});
+const plusDays = (at, d) => hoursBefore(at, -d * 24);
+
+test("MIG-31: a deferred approval is a wait `W_APPROVAL_DEFERRED` until the floor's end, and writes no record and no commit", () => {
+  const heldAt = hoursBefore(P.now, 3 * 24);
+  const givenAt = hoursBefore(P.now, 2 * 24);
+  const floorEnd = plusDays(heldAt, ACTOR_MISMATCH_FLOOR_DAYS);
+  const plan = firstBindingRun({ heldAt, givenAt, mig31: true });
+  assert.equal(plan.kind, "wait", `the deferred approval was planned ${plan.kind} ${plan.state ?? ""}: a held result takes the approval back`);
+  assert.equal(plan.wait.code, "W_APPROVAL_DEFERRED");
+  assert.equal(plan.wait.earliest_retry_at, floorEnd, `the earliest retry is the floor's end, ${ACTOR_MISMATCH_FLOOR_DAYS} days after the hold`);
+  assert.match(plan.wait.cause, /^MIG-31\b/, plan.wait.cause);
+  assert.ok(plan.wait.cause.includes(floorEnd) && plan.wait.cause.includes(heldAt), `the cause names when it takes effect and the hold it counts from: ${plan.wait.cause}`);
+  assert.ok(!plan.wait.cause.includes("700000555"), "the cause names no account");
+  assert.equal(plan.record, null, "a wait writes no record (FLOW-72)");
+  assert.equal(plan.alert, null, "no operator alert before the approval takes effect");
+  assert.ok(!plan.reasons.some((r) => r.code === "P_APPROVAL_STALE"), `a deferred approval is not stale: ${JSON.stringify(plan.reasons.map((r) => r.code))}`);
+
+  // What the service receives, and what the publish job commits: nothing.
+  const body = resultBody(plan);
+  assert.deepEqual(body.wait, plan.wait);
+  assert.ok(!("state" in body) && !("decision_id" in body), JSON.stringify(body));
+  const t = registryTree();
+  try {
+    const out = publishOnto(t, plan, "8/1");
+    assert.equal(out.committed, null, "a deferred approval committed something");
+    assert.deepEqual(out.files, [], "and wrote something into its report");
+    assert.equal(out.result.kind, "wait");
+    assert.equal(out.result.needs_commit, false);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("TRUST-27: a deferred approval is a wait `W_APPROVAL_DEFERRED` until the wait's end", () => {
+  const heldAt = hoursBefore(P.now, 24);
+  const givenAt = hoursBefore(P.now, 4);
+  const plan = firstBindingRun({ heldAt, givenAt, mig31: false });
+  assert.equal(plan.kind, "wait", `${plan.kind} ${plan.state ?? ""}`);
+  assert.equal(plan.wait.code, "W_APPROVAL_DEFERRED");
+  assert.equal(plan.wait.earliest_retry_at, plusDays(heldAt, FIRST_BINDING_WAIT_DAYS),
+    `the earliest retry is ${FIRST_BINDING_WAIT_DAYS} days after the hold, the code's current TRUST-27 value`);
+  assert.match(plan.wait.cause, /^TRUST-27\b/, plan.wait.cause);
+  assert.equal(plan.record, null);
+});
+
+test("MIG-31: after the floor ends the same approval publishes, its age counted from the floor's end and not from `decided_at`", () => {
+  const heldAt = hoursBefore(P.now, 16 * 24);
+  const givenAt = hoursBefore(P.now, 15 * 24); // fifteen days old by its own clock
+  const floorEnd = plusDays(heldAt, ACTOR_MISMATCH_FLOOR_DAYS); // two days ago
+  assert.ok(floorEnd < P.now && givenAt < hoursBefore(P.now, APPROVAL_MAX_DAYS * 24), "the fixture is wrong");
+  // TRUST-14's alert for this approval went out and its window has run.
+  const alert = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: givenAt, delivered_at: hoursBefore(P.now, OPERATOR_WINDOW_HOURS + 1), run: "1/1" };
+  const after = firstBindingRun({ heldAt, givenAt, mig31: true, alerts: new Map([[FP, alert]]) });
+  assert.equal(after.state, "published", `${after.kind} ${after.wait?.code ?? ""} ${JSON.stringify(after.reasons?.find((r) => r.code === "P_APPROVAL_STALE")?.message ?? codes(after))}`);
+  assert.equal(after.record.moderator, "mod-7", "the approval given fifteen days ago cleared the hold");
+  assert.ok(!codes(after).includes("P_APPROVAL_STALE"));
+  // The same approval with no floor in front of it is counted from
+  // `decided_at`, and it has aged: the contrast is what the floor buys.
+  const unfloored = firstBindingRun({ heldAt, givenAt, mig31: false, alerts: new Map([[FP, alert]]) });
+  assert.equal(unfloored.state, "held");
+  assert.deepEqual(codes(unfloored), ["R_FIRST_BINDING", "P_APPROVAL_STALE"]);
 });
 
 test("TRUST-14: the alert record lands with the delivery the channel reported, and not without one", () => {

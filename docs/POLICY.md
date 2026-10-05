@@ -431,6 +431,10 @@ MIG-31's. Since contract 3.0.0 an approval there clears only a change of hands
   **14 days** after the record of that hold reached `main`. The approval is
   deferred, not lost: the 7-day age above counts from the end of those 14 days
   (MIG-31).
+- **A deferred approval is a wait, not a hold.** While either wait above runs,
+  the author sees `W_APPROVAL_DEFERRED` with the time the approval takes
+  effect. Nothing is recorded and the approval stands; the release publishes
+  then, unless something about it changes (contract 3.10.0).
 
 There is no `/publish` on that path, and since contract 3.0.0 no first listing
 on it is held or delayed: it publishes at once, marked not reviewed (§2.1).
@@ -643,7 +647,7 @@ exists first; nothing downstream changes when it arrives.
 | `P_DELAY_BROUGHT_FORWARD` | A maintainer waived part of the window, on the record. |
 | `P_DELAY_BYTES_CHANGED` | The assets changed mid-window, so the clock restarted. |
 | `P_APPROVED` | A maintainer cleared the hold. Every check above it ran again from scratch in that same run. |
-| `P_APPROVAL_STALE` | An `/approve` named a different submission from this one — the release changed after the comment it answered. Nothing published; the hold stands. |
+| `P_APPROVAL_STALE` | The approval does not clear this hold: it named a different submission (the release changed after it was given), or it is older than the 7-day maximum. Nothing published; the hold stands. |
 | `P_UNKNOWN_PERMISSION` | A permission name this registry cannot describe. Reported, never blocking — the daemon default-denies, so it grants nothing. |
 | `P_SLA` | What happens next, and by when. |
 
@@ -683,8 +687,8 @@ above (FLOW-13).
 
 The waits the bot reports are not in this table: `W_LEASE_EXPIRED`,
 `W_ELIGIBILITY_UNREADABLE`, `W_NOTICE_PENDING`, `W_GITHUB_RATE_LIMITED`,
-`W_SERVICE_UNREACHABLE`, `W_MODERATION_HOLD`, `W_ALERT_UNDELIVERED` and
-`W_OPERATOR_WINDOW`. The panel shows each one from the bot's result, with when
+`W_SERVICE_UNREACHABLE`, `W_MODERATION_HOLD`, `W_ALERT_UNDELIVERED`,
+`W_OPERATOR_WINDOW` and `W_APPROVAL_DEFERRED`. The panel shows each one from the bot's result, with when
 it started, why, and the earliest retry (FLOW-10). Only
 `W_REGISTRY_UNACKNOWLEDGED`, which the service alone shows, has a row.
 

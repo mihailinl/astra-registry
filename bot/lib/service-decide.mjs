@@ -500,7 +500,12 @@ export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, 
   }
   if ((heldCodes ?? []).includes("R_FIRST_BINDING")) {
     const since = new Date(now).getTime() - new Date(heldRecord.decided_at).getTime();
-    if (since < FIRST_BINDING_WAIT_DAYS * DAY_MS) {
+    // When MIG-31's floor also stands and ends later, the floor is the answer:
+    // a deferral's `earliest` is when the approval takes effect, which the
+    // panel shows the author, and TRUST-27's earlier end would be a promise
+    // the next run breaks.
+    const floorOutlasts = floorEnd !== null && floorEnd >= new Date(heldRecord.decided_at).getTime() + FIRST_BINDING_WAIT_DAYS * DAY_MS;
+    if (since < FIRST_BINDING_WAIT_DAYS * DAY_MS && !floorOutlasts) {
       return {
         approval: null,
         why:
@@ -508,6 +513,10 @@ export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, 
           `record reached main (${heldRecord.decided_at}), not before`,
         decision,
         earliest: plusMs(heldRecord.decided_at, FIRST_BINDING_WAIT_DAYS * DAY_MS),
+        cause:
+          `TRUST-27: the approval stands and takes effect at ${plusMs(heldRecord.decided_at, FIRST_BINDING_WAIT_DAYS * DAY_MS)}. ` +
+          `An \`R_FIRST_BINDING\` approval is honoured ${FIRST_BINDING_WAIT_DAYS} days after its hold reached main ` +
+          `(${heldRecord.decided_at}). The release publishes then, unless something about it changes.`,
       };
     }
   }
@@ -520,6 +529,13 @@ export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, 
         `main (${heldRecord.decided_at}), at ${iso(new Date(floorEnd))}. It is deferred, not lost`,
       decision,
       earliest: iso(new Date(floorEnd)),
+      // The wait's cause names no account: it is what the panel shows the
+      // author (FLOW-10), and who started the build is the moderator's to see.
+      cause:
+        `MIG-31: the approval stands and takes effect at ${iso(new Date(floorEnd))}. This first binding's build was ` +
+        "started by an account other than the repository's owner, or by one nobody could read, so an approval is " +
+        `honoured ${actorFloor} days after its hold reached main (${heldRecord.decided_at}). The release publishes ` +
+        "then, unless something about it changes.",
     };
   }
   return {
@@ -1044,7 +1060,10 @@ export function decideSubmission(input) {
     if (r.level === "pass" && !/^P_/.test(r.code)) continue;
     push(r.code, { message: r.message });
   }
-  if (honoured.why) push("P_APPROVAL_STALE", { message: honoured.why });
+  // A deferred approval (TRUST-27's wait, MIG-31's floor) is not stale: it
+  // stands, and this run answers with `W_APPROVAL_DEFERRED` below.
+  const deferred = Boolean(honoured.earliest) && honoured.aged !== true;
+  if (honoured.why && !deferred) push("P_APPROVAL_STALE", { message: honoured.why });
 
   // A FLOW-72 wait from the checks themselves.
   if (decision.wait) {
@@ -1104,6 +1123,21 @@ export function decideSubmission(input) {
       record: { ...baseRecord, decided_at: startedAt, state: "refused", reasons: codesOf("refuse") },
       drop_queue: Boolean(queued),
     });
+  }
+
+  if (decision.outcome === "review" && deferred) {
+    // MIG-31's "deferred, not lost", and TRUST-27's wait. The approval came
+    // before this lease was claimed, so a `held` result here was a NEW
+    // transition `approved → held` under BOT-17's act clause (3.9.0), which
+    // took the approval back, and the bot never claims `held`; under 3.10.0
+    // it named the first hold's record and was a suppressed repeat, which
+    // BOT-15's brake counts toward a park. It is a wait instead: no record
+    // and no commit (FLOW-72), the submission stays approved, and the earliest
+    // retry is the moment the approval takes effect, which the panel shows.
+    // The hold it would otherwise have been is the one this approval clears:
+    // since contract 3.0.0 every service-path hold is a change of hands
+    // (DEC-19), and an approval clears exactly those (DEC-6).
+    return waitPlan("W_APPROVAL_DEFERRED", honoured.cause, { earliest: honoured.earliest, reasons, derived: derivedFacts });
   }
 
   if (decision.outcome === "review") {

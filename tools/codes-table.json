@@ -178,7 +178,8 @@
       "W_SERVICE_UNREACHABLE",
       "W_MODERATION_HOLD",
       "W_ALERT_UNDELIVERED",
-      "W_OPERATOR_WINDOW"
+      "W_OPERATOR_WINDOW",
+      "W_APPROVAL_DEFERRED"
     ],
     "each": {
       "W_LEASE_EXPIRED": "FLOW-10 renders it; B.7 gives the table only service-only waits",
@@ -188,7 +189,8 @@
       "W_SERVICE_UNREACHABLE": "FLOW-10 renders it; B.7 gives the table only service-only waits",
       "W_MODERATION_HOLD": "FLOW-10 renders it; B.7 gives the table only service-only waits",
       "W_ALERT_UNDELIVERED": "FLOW-10 renders it; B.7 gives the table only service-only waits",
-      "W_OPERATOR_WINDOW": "FLOW-10 renders it; B.7 gives the table only service-only waits"
+      "W_OPERATOR_WINDOW": "FLOW-10 renders it; B.7 gives the table only service-only waits",
+      "W_APPROVAL_DEFERRED": "FLOW-10 renders it; B.7 gives the table only service-only waits"
     }
   },
   "flow13_table": [
@@ -1206,8 +1208,8 @@
       "stage": "policy",
       "fix": "moderator",
       "panel_only": false,
-      "title": "The approval named a different submission from this one",
-      "remedy": "Nothing published and nothing was lost. An `/approve` carries the fingerprint printed in the comment it answers, and this run's fingerprint is different — the repository, the tag, the version or the release assets changed after that comment was written. Read the table above as it stands now and, if it is still a yes, copy the `/approve` line out of **this** comment. An approval has to be about something a person actually read."
+      "title": "The approval does not clear this hold: it named a different submission, or it is older than the maximum",
+      "remedy": "Nothing published and nothing was lost. Either the release changed after the approval was given (the repository, tag, version or assets), or the approval is older than the POLICY.md maximum of 7 days. The message names which, and when the approval was given. Read the release as it stands now and, if it is still a yes, approve it again."
     },
     {
       "code": "P_APPROVED",
