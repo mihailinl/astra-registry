@@ -428,6 +428,17 @@ export function id41({ identity, record, lineHash }) {
  * refuses before an approval is read; (4) `decided_at` is younger than the
  * committed maximum. ROLL-49: no approval carries a delay waiver.
  *
+ * **What a refusal leaves behind.** Every refusal below returns `why`, which
+ * the caller adds to the run's reasons as `P_APPROVAL_STALE`. A `held` result
+ * posts only its record's codes (BOT-23), so a `why` reaches the service only
+ * when the record carries the code too, and since contract 3.7.0 one refusal
+ * puts it there: (4), returned with `aged: true`. The hold that returns after
+ * an aged approval then reads `R_*…, P_APPROVAL_STALE`, its message naming
+ * the approval's `decided_at` and the maximum, and is a transition the
+ * service can tell from the first hold. (1) has no hold of this fingerprint
+ * to return to, and TRUST-27's and MIG-31's are waits the approval outlives,
+ * so theirs stay out of the record.
+ *
  * **MIG-31.** At a `grandfathered` or `frozen` listing's `R_FIRST_BINDING`
  * hold whose build was started by an account other than the repository's
  * owner, an approval is not honoured before `floorDays` (the identity
@@ -471,10 +482,19 @@ export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, 
   const countedFrom = Math.max(new Date(decision.decided_at).getTime(), floorEnd ?? 0);
   const age = new Date(now).getTime() - countedFrom;
   if (age > APPROVAL_MAX_DAYS * DAY_MS) {
+    // `aged`: the one refusal here whose hold carries `P_APPROVAL_STALE` in
+    // its record (contract 3.7.0). The approval was honourable once and has
+    // lapsed, so the hold that comes back is a moderator's again, and says so.
+    const floored = floorEnd !== null && floorEnd > new Date(decision.decided_at).getTime();
     return {
       approval: null,
-      why: `BOT-26 (4): the approval was decided at ${decision.decided_at}, more than ${APPROVAL_MAX_DAYS} days ago`,
+      why:
+        `BOT-26 (4): the approval decided at ${decision.decided_at}` +
+        (floored ? `, counted from the end of MIG-31's floor at ${iso(new Date(floorEnd))},` : "") +
+        ` is older than the ${APPROVAL_MAX_DAYS}-day maximum POLICY.md sets, so it clears nothing and the hold ` +
+        "is back with a moderator; a new approval clears it",
       decision,
+      aged: true,
     };
   }
   if ((heldCodes ?? []).includes("R_FIRST_BINDING")) {
@@ -1029,6 +1049,12 @@ export function decideSubmission(input) {
     const holds = [
       ...findings.filter(holding).map((f) => f.code),
       ...decision.reasons.filter((r) => r.level === "review" && r.code !== "R_CHECK_HELD").map((r) => r.code),
+      // BOT-26 (4), since contract 3.7.0: an aged approval's hold carries
+      // `P_APPROVAL_STALE` beside the hold's codes, as BOT-26 (2)'s does from
+      // `decide()`. Added here and not raised in `decide()`, because there it
+      // would be a hold of its own: an aged approval of a release nothing
+      // holds any more would hold it, and a refused approval changes nothing.
+      ...(honoured.aged ? ["P_APPROVAL_STALE"] : []),
     ];
     const pick = {
       refuse: errors.length ? errors : ["P_REFUSED"],
