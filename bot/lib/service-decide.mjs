@@ -106,8 +106,14 @@ export const APPROVAL_MAX_DAYS = 7;
 export const UPDATE_WINDOW_HOURS = 6;
 /** TRUST-32 / DEC-6: the operator objection window, counted from reported delivery. */
 export const OPERATOR_WINDOW_HOURS = 6;
-/** TRUST-27: an `R_FIRST_BINDING` approval waits this long after its `held` record reached `main`. */
-export const FIRST_BINDING_WAIT_DAYS = 7;
+/**
+ * TRUST-27: an `R_FIRST_BINDING` approval waits this long after its `held`
+ * record reached `main`. **0 since contract 2.1.0**, on the owner's "i allow
+ * to remove 7 days wait"; the code kept 7 until 2026-10-06, when the owner
+ * answered the inbox card by allowing the edit. The deferral path below stays
+ * for MIG-31's floor, which TRUST-27 at 0 does not touch.
+ */
+export const FIRST_BINDING_WAIT_DAYS = 0;
 /** BOT-51's interval, for the earliest retry of a wait no record dates. */
 export const NEXT_RUN_SECONDS = 600;
 /** §4.4: `wait.cause` is at most this many characters. */
