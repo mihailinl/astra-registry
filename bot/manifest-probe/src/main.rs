@@ -163,6 +163,24 @@ fn emit(response: Response) {
 fn probe(request: &Request) -> Response {
     let mut findings = Vec::new();
 
+    // ── `kind` and `requires`: reserved, and asked first ────────────────────
+    //
+    // The crate at the pin parses a manifest that says `kind =
+    // "game-integration"` as a plugin and says nothing, because its top level
+    // is permissive by design (manifest.rs, `PluginManifest`). So the question
+    // is asked here, of the text, before the crate's answer can make it moot.
+    // An item of another kind is not shaped like a plugin either, and its
+    // author needs to hear about the kind rather than about a missing `[entry]`.
+    if let Some(refusal) = reserved_item_keys(&request.plugin_toml) {
+        return Response {
+            schema: RESULT_SCHEMA,
+            ok: false,
+            findings: vec![refusal],
+            manifest: None,
+            known_capabilities: CAPABILITY_NAMES,
+        };
+    }
+
     // ── the parse, by the daemon's own code ─────────────────────────────────
     //
     // `from_str` is `toml::from_str` + `validate()`, and it is the constructor
@@ -323,6 +341,52 @@ fn probe(request: &Request) -> Response {
         manifest: Some(facts),
         known_capabilities: CAPABILITY_NAMES,
     }
+}
+
+/// `kind` and `requires`, reserved and failing closed (contract 3.14.0).
+///
+/// **The same rule as Astra's own `check_reserved_keys`** in
+/// `astra-rs/astra-plugin-manifest/src/manifest.rs`, so that the registry
+/// refuses exactly what Astra refuses, in the same order and with the same
+/// sentences, the subject changed from "this version of Astra" to "this
+/// registry":
+///
+///   * `kind` absent or the string `"plugin"` passes; another string is "this
+///     item is a <kind>", and anything that is not a string is refused by type;
+///   * `requires` absent, an empty array, an empty table or a string that is
+///     empty after trimming passes; anything else is refused;
+///   * both keys are top-level keys, and `kind` is asked first.
+///
+/// It is a copy only until the pin reaches a crate that has the function:
+/// `the_reservation_is_a_copy_only_until_the_pinned_crate_has_its_own` goes red
+/// on that bump. A file that is not TOML is not judged here; the crate names
+/// that below, exactly as it did before the reservation.
+fn reserved_item_keys(plugin_toml: &str) -> Option<Finding> {
+    let top = plugin_toml.parse::<toml::Table>().ok()?;
+    let refuse = |message: String| Some(Finding::error("E_KIND_UNSUPPORTED", message));
+    match top.get("kind") {
+        None => {}
+        Some(toml::Value::String(k)) if k == "plugin" => {}
+        Some(toml::Value::String(k)) => {
+            return refuse(format!("this item is a {k}; this registry lists plugins only for now."));
+        }
+        Some(other) => {
+            return refuse(format!("`kind` must be a string such as \"plugin\", not {}", other.type_str()));
+        }
+    }
+    let empty = match top.get("requires") {
+        None => true,
+        Some(toml::Value::Array(a)) => a.is_empty(),
+        Some(toml::Value::Table(t)) => t.is_empty(),
+        Some(toml::Value::String(s)) => s.trim().is_empty(),
+        Some(_) => false,
+    };
+    if !empty {
+        return refuse(
+            "this item requires other items, and this registry cannot list dependencies yet.".to_string(),
+        );
+    }
+    None
 }
 
 /// The crate's prose, mapped onto a code the docs describe and a stranger can
@@ -564,6 +628,165 @@ arch = ["x86_64"]
         let out = probe(&req(&toml));
         assert!(out.ok, "{:?}", out.findings);
         assert_eq!(out.manifest.expect("facts").platform_key, None);
+    }
+
+    // ── `kind` and `requires`: reserved, failing closed (contract 3.14.0) ───
+
+    /// `GOOD` with `lines` as top-level keys. TOML files a key under the last
+    /// table header above it, so a top-level key has to come before `[plugin]`.
+    fn top(lines: &str) -> String {
+        format!("{lines}\n{GOOD}")
+    }
+
+    fn refusal(toml: &str) -> String {
+        let r = probe(&req(toml));
+        assert!(!r.ok, "not refused: {toml}");
+        assert_eq!(codes(&r), vec!["E_KIND_UNSUPPORTED"], "{toml}");
+        assert!(r.manifest.is_none(), "a refused kind yields no facts to derive a listing from");
+        r.findings[0].message.clone()
+    }
+
+    const KIND_REFUSED: &str = "this item is a game-integration; this registry lists plugins only for now.";
+    const REQUIRES_REFUSED: &str =
+        "this item requires other items, and this registry cannot list dependencies yet.";
+
+    /// The reason the key is reserved and not merely documented: the crate at
+    /// the pin parses this manifest as a plugin and says nothing about `kind`,
+    /// so without the probe's question it would be listed as one.
+    #[test]
+    fn a_kind_other_than_plugin_is_refused_by_name() {
+        let toml = top(r#"kind = "game-integration""#);
+        assert!(
+            PluginManifest::from_str(&toml).is_ok(),
+            "the crate at the pin accepts this, which is why the probe has to ask: {toml}"
+        );
+        assert_eq!(refusal(&toml), KIND_REFUSED);
+        for kind in ["Plugin", "plugin ", "", "plugins"] {
+            assert_eq!(
+                refusal(&top(&format!("kind = {kind:?}"))),
+                format!("this item is a {kind}; this registry lists plugins only for now."),
+            );
+        }
+    }
+
+    #[test]
+    fn no_kind_and_kind_plugin_both_pass() {
+        for toml in [GOOD.to_string(), top(r#"kind = "plugin""#)] {
+            let r = probe(&req(&toml));
+            assert!(r.ok, "{toml}\n{:?}", r.findings);
+            assert!(r.findings.is_empty(), "{:?}", r.findings);
+            assert_eq!(r.manifest.expect("facts").id, "dice-roller");
+        }
+    }
+
+    /// A kind that is not a string is refused by its type, in the client's
+    /// own sentence, which names no party and so needs no adapting.
+    #[test]
+    fn a_kind_that_is_not_a_string_is_refused_by_type() {
+        for (value, ty) in [
+            (r#"["plugin"]"#, "array"),
+            ("[]", "array"),
+            ("5", "integer"),
+            ("1.5", "float"),
+            ("true", "boolean"),
+            (r#"{ name = "plugin" }"#, "table"),
+            ("1979-05-27", "datetime"),
+        ] {
+            assert_eq!(
+                refusal(&top(&format!("kind = {value}"))),
+                format!("`kind` must be a string such as \"plugin\", not {ty}"),
+                "kind = {value}"
+            );
+        }
+    }
+
+    /// Empty is what the client calls empty: an empty array, an empty table,
+    /// or a string with nothing in it but whitespace.
+    #[test]
+    fn requires_absent_or_empty_passes_and_anything_else_is_refused() {
+        for value in ["[]", "{}", r#""""#, r#""  ""#] {
+            for toml in [top(&format!("requires = {value}")), top(&format!("kind = \"plugin\"\nrequires = {value}"))] {
+                let r = probe(&req(&toml));
+                assert!(r.ok && r.findings.is_empty(), "{toml}\n{:?}", r.findings);
+            }
+        }
+        for value in [
+            r#"[{ id = "x", range = "^1" }]"#,
+            r#"["x"]"#,
+            r#""x""#,
+            r#"{ id = "x" }"#,
+            "1",
+            "false",
+        ] {
+            assert_eq!(refusal(&top(&format!("requires = {value}"))), REQUIRES_REFUSED, "requires = {value}");
+        }
+        // `[[requires]]` after every other table is the same top-level array,
+        // spelled the way a long list usually is.
+        let toml = format!("{GOOD}\n[[requires]]\nid = \"x\"\nrange = \"^1\"\n");
+        assert_eq!(refusal(&toml), REQUIRES_REFUSED);
+    }
+
+    /// The reservation is the client's, key for key: top-level keys, as the
+    /// crate reserves them. A `kind` inside `[plugin]` is a key the crate
+    /// ignores, and the registry judging it would be a second opinion about a
+    /// language that has one definition. Pinned, so widening it is a decision
+    /// taken on both sides and not on one.
+    #[test]
+    fn the_reservation_is_the_top_level_keys_as_the_client_reserves_them() {
+        let nested = GOOD.replacen("[plugin]\n", "[plugin]\nkind = \"game-integration\"\n", 1);
+        let r = probe(&req(&nested));
+        assert!(r.ok && r.findings.is_empty(), "{:?}", r.findings);
+
+        let mut with_json = req(GOOD);
+        with_json.manifest_json = Some(r#"{"plugin_id":"dice-roller","version":"0.2.0","kind":"game-integration"}"#.to_string());
+        assert!(probe(&with_json).findings.is_empty(), "MANIFEST.json is not where the keys are reserved");
+    }
+
+    /// The kind is the first question, and `kind` is asked before `requires`,
+    /// as the client asks them. An item of another kind is not shaped like a
+    /// plugin, and an author told about its missing `[entry]` has been told the
+    /// wrong thing. TOML that does not parse is still the crate's to name, so a
+    /// broken file reads exactly as it did before the reservation.
+    #[test]
+    fn the_kind_is_asked_before_the_plugin_shape() {
+        // The proposal's own example (astra-bepinex docs/GAME-INTEGRATIONS.md §4).
+        let item = r#"
+id = "astra.peak"
+kind = "game-integration"
+version = "1.0.0"
+requires = [{ id = "astra.unity-foundation", range = ">=1.2, <2" }]
+[target]
+game = { steam_appid = 3527290, product = "PEAK" }
+"#;
+        assert_eq!(refusal(item), KIND_REFUSED);
+        assert_eq!(refusal(&item.replace(r#"kind = "game-integration""#, "")), REQUIRES_REFUSED);
+
+        let broken = top("kind = ");
+        assert_eq!(codes(&probe(&req(&broken))), vec!["E_MANIFEST_INVALID"]);
+    }
+
+    /// The copy above is a copy of a function the pinned crate does not have
+    /// yet. The bump that brings it (Astra's `check_reserved_keys`, re-vendored
+    /// by AstraPlugins) is the moment to stop copying: call the crate's
+    /// function over the cases above and assert it agrees, then delete this
+    /// test. Until then a copy that outlived its reason would go on judging
+    /// manifests next to the definition it was copied from, unnoticed.
+    #[test]
+    fn the_reservation_is_a_copy_only_until_the_pinned_crate_has_its_own() {
+        let (pin, text) = pinned_file(
+            "astra-plugin-cli/vendor/astra-plugin-manifest/src/manifest.rs",
+            "the probe's reserved-key copy and the crate's own check",
+        );
+        assert!(
+            text.contains("pub struct PluginManifest"),
+            "{pin}'s manifest.rs does not define PluginManifest, so this read the wrong file"
+        );
+        assert!(
+            !text.contains("fn check_reserved_keys"),
+            "the crate at {pin} has its own `check_reserved_keys`. Make the probe's copy agree with it \
+             by calling it over the reserved-key cases, keep only the registry's sentences here, and \
+             delete this test."
+        );
     }
 
     /// The sections the CLI's fork silently dropped. If any of them stops

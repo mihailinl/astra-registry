@@ -16,6 +16,7 @@ dependencies = [
  "astra-plugin-manifest",
  "serde",
  "serde_json",
+ "toml",
 ]
 
 [[package]]

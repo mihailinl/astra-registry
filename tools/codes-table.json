@@ -59,6 +59,7 @@
     "E_ID_RESERVED_PREFIX",
     "E_INPUT_REPO",
     "E_INPUT_TAG",
+    "E_KIND_UNSUPPORTED",
     "E_LICENSE_MISSING",
     "E_LICENSE_NOT_ALLOWED",
     "E_LISTING_NOT_ENGLISH",
@@ -625,6 +626,15 @@
       "panel_only": false,
       "title": "The release tag is not a tag",
       "remedy": "Copy the tag from the release page — `v0.2.0`, not a commit SHA and not a branch name."
+    },
+    {
+      "code": "E_KIND_UNSUPPORTED",
+      "level": "error",
+      "stage": "manifest",
+      "fix": "new_tag",
+      "panel_only": false,
+      "title": "This item is not a plugin, or it requires other items",
+      "remedy": "This registry lists plugins only for now, and cannot list dependencies yet: `kind` and `requires` are reserved for a later version. Until then `kind` must be absent or `\"plugin\"`, and `requires` must be absent or empty. If this item is a plugin, remove both keys (or write `kind = \"plugin\"`) and publish a new tag. If it is another kind of item, or it needs other items, it cannot be listed here yet."
     },
     {
       "code": "E_LICENSE_MISSING",

@@ -40,7 +40,7 @@ const BINARY = Buffer.from("#!/usr/bin/env node\nprocess.exit(0);\n", "utf8");
  *          permissions?: object, os?: string, arch?: string,
  *          extraFiles?: {name: string, data: Buffer|string, mode?: number}[],
  *          command?: string, permissionsHash?: string,
- *          manifestBytes?: (bytes: Buffer) => Buffer}} spec
+ *          manifestBytes?: (bytes: Buffer) => Buffer, tomlTop?: string[]}} spec
  *
  * `permissionsHash` and `manifestBytes` are the two ways to build a manifest
  * no packer writes: a hand-made one, whose author computed the hash over
@@ -49,6 +49,10 @@ const BINARY = Buffer.from("#!/usr/bin/env node\nprocess.exit(0);\n", "utf8");
  * arrives with a matching hash; the second is how a literal lone surrogate
  * (`ED A0 80`) arrives at all, since encoding a JavaScript string never writes
  * those bytes.
+ *
+ * `tomlTop` is `plugin.toml` lines before `[plugin]`, where TOML makes them
+ * top-level keys. It is how a bundle declares the reserved `kind` and
+ * `requires` (contract 3.14.0), which the crate at the pin parses and ignores.
  */
 export function makeBundle(spec = {}) {
   const id = spec.id ?? "dice-roller";
@@ -63,6 +67,7 @@ export function makeBundle(spec = {}) {
 
   const toml = Buffer.from(
     [
+      ...(spec.tomlTop ?? []),
       "[plugin]",
       `id = ${JSON.stringify(id)}`,
       `name = ${JSON.stringify(name)}`,

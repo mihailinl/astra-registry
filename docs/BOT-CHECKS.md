@@ -336,6 +336,7 @@ Not by a second implementation. See `bot/manifest-probe/`.
 | `E_TOML_MANIFEST_DISAGREE` | error | `plugin.toml` and `MANIFEST.json` describe different plugins | Rebuild from one tree. The daemon installs under the manifest's id and runs what plugin.toml describes. |
 | `W_ENTRY_COMMAND_DISAGREE` | warn | The bundle runs a different command than `plugin.toml` declares | The daemon executes the manifest's. Usually a stale `plugin.toml`. |
 | `E_PLATFORM_UNSUPPORTED` | error | Astra ships no daemon for that platform | `linux-x64`, `windows-x64` and `noarch` are the hosts that exist. macOS and arm64 names are reserved and unusable. |
+| `E_KIND_UNSUPPORTED` | error | This item is not a plugin, or it requires other items | This registry lists plugins only for now, and cannot list dependencies yet: `kind` and `requires` are reserved for a later version. Until then `kind` must be absent or `"plugin"`, and `requires` must be absent or empty. If this item is a plugin, remove both keys (or write `kind = "plugin"`) and publish a new tag. If it is another kind of item, or it needs other items, it cannot be listed here yet. |
 | `E_PROBE_INPUT` | error | The manifest probe rejected the bot's own request | A bug in this registry, not in your plugin. Please leave the issue open. |
 | `E_PROBE_UNAVAILABLE` | error | The manifest probe could not be run | A bug in this registry, not in your plugin. `plugin.toml` was not validated by anything, so the run fails closed. |
 

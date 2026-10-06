@@ -1385,6 +1385,50 @@ await test("E_PLATFORM_UNSUPPORTED — a host Astra ships no daemon for", async 
   assertBlockedWith(r, "E_PLATFORM_UNSUPPORTED");
 });
 
+// Contract 3.14.0 reserves the manifest keys `kind` and `requires` for the item
+// kinds a later version lists, and reserves them FAILING CLOSED, by the same
+// rule as Astra's own `check_reserved_keys`: `kind` is absent or "plugin", and
+// `requires` is absent or empty (`[]`, `{}` or a blank string). The crate at the
+// pin ignores both keys, so a release that says it is a game integration would
+// otherwise be listed, and installed, as a plugin. These run the real probe,
+// because the probe is where the refusal lives, on the legacy path here and on
+// the service path below.
+const RESERVED_REFUSED = [
+  ["another kind of item", { tomlTop: ['kind = "game-integration"'] },
+    "this item is a game-integration; this registry lists plugins only for now."],
+  ["a kind that is not a string", { tomlTop: ["kind = 5"] },
+    '`kind` must be a string such as "plugin", not integer'],
+  ["a requirement on another item", { tomlTop: ['requires = [{ id = "x", range = "^1" }]'] },
+    "this item requires other items, and this registry cannot list dependencies yet."],
+];
+const RESERVED_ALLOWED = [
+  ["no kind and no requires", {}],
+  ["kind \"plugin\" and requires = []", { tomlTop: ['kind = "plugin"', "requires = []"] }],
+  ["requires = {}", { tomlTop: ["requires = {}"] }],
+  ["requires = \"\"", { tomlTop: ['requires = ""'] }],
+];
+
+await test("E_KIND_UNSUPPORTED — another kind of item, or one that requires others, is not listed as a plugin", async () => {
+  for (const [what, spec, sentence] of RESERVED_REFUSED) {
+    const r = await run({ assets: [conformingAsset(spec)], root: registryWith({}) });
+    assert(r.blocked, `${what} was not refused: ${JSON.stringify(r.findings.map((i) => `${i.level}:${i.code}`))}`);
+    assertEqual(errorCodes(r).join(","), "E_KIND_UNSUPPORTED", `${what}: the one refusal, and no other`);
+    assertEqual(r.findings.find((i) => i.code === "E_KIND_UNSUPPORTED").message, sentence,
+      `${what}: the client's sentence, with the registry as its subject`);
+    assertEqual(r.derived, null, `${what} derived a listing`);
+    assert(r.comment.includes(codeDef("E_KIND_UNSUPPORTED").remedy.slice(0, 40)), `${what}: the comment says what to do`);
+  }
+});
+
+await test("kind \"plugin\", no kind, and an empty requires list exactly as before", async () => {
+  for (const [what, spec] of RESERVED_ALLOWED) {
+    const r = await run({ assets: [conformingAsset(spec)], root: registryWith({}) });
+    assert(!r.blocked, `${what} was refused: ${JSON.stringify(errorCodes(r))}`);
+    assert(!r.needsReview, `${what} was held: ${JSON.stringify(r.findings.filter((i) => i.level === "review"))}`);
+    assertEqual(r.derived?.plugin?.id, "dice-roller", `${what}: the listing is derived`);
+  }
+});
+
 // Contract §0.7 since 2.16.0: every string of every record is valid Unicode.
 //
 // The fixture is the one minice-e4's review found, built the way an author
@@ -3074,6 +3118,29 @@ await test("check: a reserved id is refused on the service path too", async () =
   const { facts } = await checkFacts({ submissionId: SVC_SID, assetsDir: path.join(assetsDir, SVC_SID), verified: v, out, root: REPO_ROOT });
   assert(facts.findings.some((f) => f.level === "error" && f.code.startsWith("E_ID_RESERVED")), JSON.stringify(facts.findings));
   assert(fs.existsSync(path.join(out, "listing")), "the listing upload still has its directory");
+});
+
+await test("check: a reserved kind or a non-empty requires is refused on the service path too, and nothing is listed (3.14.0)", async () => {
+  for (const [what, spec] of RESERVED_REFUSED) {
+    const { v, assetsDir } = await verifyRun({ assets: [conformingAsset(spec)] });
+    assertEqual(v.outcome, "ok", `verify never unpacks, so it cannot refuse ${what}: ${JSON.stringify(v.findings)}`);
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-check-"));
+    scratch.push(out);
+    const { facts } = await checkFacts({ submissionId: SVC_SID, assetsDir: path.join(assetsDir, SVC_SID), verified: v, out, root: REPO_ROOT });
+    for (const f of facts.findings) emitted.add(f.code);
+    assertEqual(facts.findings.filter((f) => f.level === "error").map((f) => f.code).join(","), "E_KIND_UNSUPPORTED",
+      `${what}: the one refusal, and no other`);
+    assert(!fs.existsSync(path.join(out, "listing", "plugins")), `${what}: a listing was written for the publish job`);
+    assert(fs.existsSync(path.join(out, "listing", "NO-LISTING")), `${what}: the upload lost its marker`);
+  }
+  for (const [what, spec] of RESERVED_ALLOWED) {
+    const { v, assetsDir } = await verifyRun({ assets: [conformingAsset(spec)] });
+    const out = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-check-"));
+    scratch.push(out);
+    const { facts } = await checkFacts({ submissionId: SVC_SID, assetsDir: path.join(assetsDir, SVC_SID), verified: v, out, root: REPO_ROOT });
+    assertEqual(facts.findings.filter((f) => f.level === "error").length, 0, `${what}: ${JSON.stringify(facts.findings)}`);
+    assert(fs.existsSync(path.join(out, "listing", "plugins", "dice-roller", "plugin.json")), `${what}: no listing was written`);
+  }
 });
 
 // Contract §0.7 (2.16.0) on the service path. The check job writes the listing
