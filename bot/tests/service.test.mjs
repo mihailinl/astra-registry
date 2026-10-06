@@ -2354,7 +2354,7 @@ test("TRUST-14/TRUST-32: the three-run sequence — alert only, then the window,
   assert.equal(undelivered.wait.code, "W_ALERT_UNDELIVERED");
 });
 
-test("BOT-26: no held record, a stale approval, and a first binding under 7 days are each not honoured", () => {
+test("BOT-26: no held record and a stale approval are not honoured, and an owner-built first binding a day after its hold is (TRUST-27 at 0)", () => {
   const rec = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: approval().decided_at, delivered_at: "2026-09-20T00:00:00Z", run: "1/1" };
   const noHold = approvedRun({ git: { records: [transfer] }, alerts: new Map([[FP, rec]]) });
   assert.equal(noHold.state, "held", "(1): an approval with no `held` record on main clears nothing");
@@ -2369,12 +2369,13 @@ test("BOT-26: no held record, a stale approval, and a first binding under 7 days
     ask: ask({ verdict: "pass", gates: { stop_status: "no_stop", decisions: [approval()] }, notice: { kind: "approved", status: "sent", accepted_at: "2026-09-20T00:00:00Z" } }),
     git: git({ existing: existing(), records: [baseline(), heldRecord({ reasons: ["R_FIRST_BINDING"], decided_at: hoursBefore(P.now, 24) })], alerts: new Map([[FP, rec]]) }),
   });
-  // TRUST-27 is a wait the approval outlives, not a refusal of it: until
-  // 2026-10-05 this run was planned `held` under the first hold's key, which
-  // took the approval back (the tests under "a deferred approval is a wait").
-  assert.equal(binding.kind, "wait", `TRUST-27: ${FIRST_BINDING_WAIT_DAYS} days from the held record: ${binding.kind} ${binding.state ?? ""}`);
-  assert.equal(binding.wait.code, "W_APPROVAL_DEFERRED");
-  assert.equal(binding.record, null);
+  // TRUST-27 has been 0 in the contract since 2.1.0 and in this code since
+  // 2026-10-06. An owner-built first binding approved a day after its hold,
+  // with the operator window run and the notice accepted, publishes. Until
+  // then this run waited `W_APPROVAL_DEFERRED` for the rest of 7 days.
+  assert.equal(FIRST_BINDING_WAIT_DAYS, 0, "TRUST-27's period is the contract's 0 (2.1.0)");
+  assert.equal(binding.state, "published", `TRUST-27 at 0: ${binding.kind} ${binding.state ?? ""} ${binding.wait?.code ?? ""}`);
+  assert.equal(binding.record.moderator, "mod-7", "the approval cleared the first-binding hold");
   // (1) and TRUST-27 are not (4). Contract 3.7.0 puts `P_APPROVAL_STALE` in
   // the record of an approval refused for its AGE, and only there: (1) has no
   // hold of this fingerprint for the approval to return to.
@@ -3192,16 +3193,19 @@ test("MIG-31: a deferred approval is a wait `W_APPROVAL_DEFERRED` until the floo
   }
 });
 
-test("TRUST-27: a deferred approval is a wait `W_APPROVAL_DEFERRED` until the wait's end", () => {
+test("TRUST-27 at 0: an owner-built first binding's approval is never deferred, while MIG-31's floor still defers a non-owner's", () => {
   const heldAt = hoursBefore(P.now, 24);
   const givenAt = hoursBefore(P.now, 4);
-  const plan = firstBindingRun({ heldAt, givenAt, mig31: false });
-  assert.equal(plan.kind, "wait", `${plan.kind} ${plan.state ?? ""}`);
-  assert.equal(plan.wait.code, "W_APPROVAL_DEFERRED");
-  assert.equal(plan.wait.earliest_retry_at, plusDays(heldAt, FIRST_BINDING_WAIT_DAYS),
-    `the earliest retry is ${FIRST_BINDING_WAIT_DAYS} days after the hold, the code's current TRUST-27 value`);
-  assert.match(plan.wait.cause, /^TRUST-27\b/, plan.wait.cause);
-  assert.equal(plan.record, null);
+  // Watched failing at FIRST_BINDING_WAIT_DAYS = 7, which deferred this run to
+  // the seventh day after the hold.
+  const owner = firstBindingRun({ heldAt, givenAt, mig31: false });
+  assert.notEqual(owner.wait?.code, "W_APPROVAL_DEFERRED", `${owner.kind} ${owner.state ?? ""} ${owner.wait?.code ?? ""}`);
+  assert.ok(!(owner.reasons ?? []).some((r) => r.code === "P_APPROVAL_STALE"), JSON.stringify(owner.reasons));
+  // The deferral path stays for MIG-31, which TRUST-27 at 0 does not touch.
+  const other = firstBindingRun({ heldAt, givenAt, mig31: true });
+  assert.equal(other.kind, "wait", `${other.kind} ${other.state ?? ""}`);
+  assert.equal(other.wait.code, "W_APPROVAL_DEFERRED");
+  assert.match(other.wait.cause, /^MIG-31\b/, other.wait.cause);
 });
 
 test("MIG-31: after the floor ends the same approval publishes, its age counted from the floor's end and not from `decided_at`", () => {

@@ -420,10 +420,11 @@ MIG-31's. Since contract 3.0.0 an approval there clears only a change of hands
   and **6 hours** have passed since;
   a waiting author sees `W_OPERATOR_WINDOW` with the window's end, or
   `W_ALERT_UNDELIVERED` while no delivery is reported (TRUST-14, TRUST-32).
-- **A first binding waits 7 days after its hold.** An approval of
+- **A first binding the owner built waits no extra time.** An approval of
   `R_FIRST_BINDING` — the first release of a published listing that carries a
-  binding line — is honoured no earlier than **7 days** after the record of
-  that hold reached `main` (TRUST-27).
+  binding line — is honoured from **0 days** after the record of that hold
+  reached `main` (TRUST-27; 0 since contract 2.1.0, and in this code since
+  2026-10-06), so it waits only for the checks below.
 - **A first binding somebody other than the owner built waits 14 days.** When
   the account that started the release's build is not the repository's owner
   — or the bot could not read which account it was — an approval of a
@@ -431,7 +432,7 @@ MIG-31's. Since contract 3.0.0 an approval there clears only a change of hands
   **14 days** after the record of that hold reached `main`. The approval is
   deferred, not lost: the 7-day age above counts from the end of those 14 days
   (MIG-31).
-- **A deferred approval is a wait, not a hold.** While either wait above runs,
+- **A deferred approval is a wait, not a hold.** While MIG-31's floor runs,
   the author sees `W_APPROVAL_DEFERRED` with the time the approval takes
   effect. Nothing is recorded and the approval stands; the release publishes
   then, unless something about it changes (contract 3.10.0).
