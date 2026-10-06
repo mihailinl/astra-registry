@@ -30,6 +30,7 @@ A plugin is listed when all of the following hold.
 | Requirement | Enforced by |
 |---|---|
 | It is an Astra plugin: a valid `plugin.toml`, a working `.astraplugin` bundle, and at least one declared capability. | bot (bundle structure), maintainer |
+| **It is a plugin and nothing else, for now.** The manifest keys `kind` and `requires` are reserved for a later version that lists other kinds of item and their dependencies: until then `kind` is absent or `"plugin"`, and `requires` is absent or empty (`[]`, `{}` or `""`). Any other value is refused rather than ignored, by the same rule Astra itself applies, because an Astra that ignored it would install the item as a plugin. | bot (`E_KIND_UNSUPPORTED`, in the manifest probe, on both paths) |
 | Its source is a public GitHub repository. | `validate.mjs` (schema: `source.kind: github`) |
 | Every artifact is a GitHub Release asset **of that repository** (`release.kind: github_release`), pinned by SHA-256 and size. | `validate.mjs` (URL must sit under the declared release), bot (digest) |
 | Its licence is on the SPDX allowlist. | `validate.mjs` against `policy/spdx-allowlist.json` |

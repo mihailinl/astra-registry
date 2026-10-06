@@ -101,7 +101,10 @@ const tracked = (root) =>
 /** The bot's code: every tracked module under `bot/` and `tools/lib/`, tests and fixtures excluded. */
 export function botSources(root = REPO_ROOT) {
   return tracked(root)
-    .filter((f) => /\.mjs$/.test(f) && (f.startsWith("bot/") || f.startsWith("tools/lib/")))
+    // The manifest probe is bot code too: it emits its findings' codes from
+    // Rust (E_KIND_UNSUPPORTED is one only it emits, contract 3.14.0), so its
+    // sources count as a module that carries a code.
+    .filter((f) => (/\.mjs$/.test(f) && (f.startsWith("bot/") || f.startsWith("tools/lib/"))) || /^bot\/manifest-probe\/src\/[^/]+\.rs$/.test(f))
     .filter((f) => !f.startsWith("bot/tests/") && !f.startsWith("bot/fixtures/"))
     .map((f) => ({ file: f, text: fs.readFileSync(path.join(root, f), "utf8") }));
 }

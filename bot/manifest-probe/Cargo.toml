@@ -30,6 +30,10 @@ astra-plugin-manifest = { path = "_deps/AstraPlugins/astra-plugin-cli/vendor/ast
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# `kind` and `requires` are read as plain TOML, because the crate ignores both:
+# that is the whole reason they are refused here (contract 3.14.0). The same
+# 0.8 line the crate already links, so nothing new is compiled.
+toml = "0.8"
 
 [profile.release]
 # The bot runs this once per bundle. Compile time matters more than run time.
