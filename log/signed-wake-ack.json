@@ -1,0 +1,9 @@
+{
+  "schema": "astra.registry.signed-wake-ack/1",
+  "method": "POST",
+  "url": "https://api.minice.ai/plugins/v1/signed/wake",
+  "status": 202,
+  "body": "{\"schema\":\"astra.plugins.wake-ack/1\"}",
+  "read_at": "2026-10-06T00:40:38Z",
+  "read_from": "release-desk"
+}
