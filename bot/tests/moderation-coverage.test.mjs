@@ -1304,6 +1304,11 @@ function runRecheckCommit(f, log) {
     fs.cpSync(path.join(REPO, "tools", "lib"), path.join(f.dir, "tools", "lib"), { recursive: true });
     fs.appendFileSync(path.join(f.dir, ".git", "info", "exclude"), "/tools/lib/\n");
   }
+  // And the policy its bounds are read from, beside it (ops couplings 215).
+  if (!fs.existsSync(path.join(f.dir, "policy", "limits.json"))) {
+    fs.cpSync(path.join(REPO, "policy", "limits.json"), path.join(f.dir, "policy", "limits.json"));
+    fs.appendFileSync(path.join(f.dir, ".git", "info", "exclude"), "/policy/limits.json\n");
+  }
   execFileSync("bash", ["-c", recheckCommitStep()], {
     cwd: f.dir, encoding: "utf8", stdio: "pipe", env: { ...fixtureEnv(f.dir), RUNNER_TEMP: temp },
   });

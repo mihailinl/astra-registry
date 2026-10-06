@@ -48,12 +48,64 @@
 // pending count, detector A, TRUST-31's set hash), so each of them reads such
 // a commit as no change at all while the service's mirror reads a change.
 // Refusing the tree is what makes the two answers one.
+//
+// **Two bounds, and the schemas' patterns** (ops `dev/couplings.md` entry
+// 215, asked for by the plugins service, minice-e4, 2026-10-03). The service
+// reads every commit on `main` and fails closed on what it cannot hold: its
+// serial reader refuses a tree object over 8 MiB, after which `rev_list_count`
+// cannot be asked at that commit or any later one, and its mirror counts a
+// listing's whole subtree against a 400,000-entry cap. A refusal there is
+// correct and permanent, because `main` is never rewritten, so one commit past
+// either bound freezes the service's reading of every commit after it. So the
+// rule refuses, well short of both, a tree object over `max_tree_object_bytes`
+// (1 MiB) as git stores it, `git cat-file -s`, for EVERY tree at the commit,
+// the root tree included, which no `ls-tree` row lists; and more than
+// `max_listing_tree_entries` (2,000) entries beneath any `plugins/<id>/`, as
+// `LS_TREE` lists them, files and directories at every depth. Both numbers
+// live in policy/limits.json, and because the service relies on them the
+// contract names them too (B.4, from the version after 3.4.0);
+// `tools/selftest/validation.mjs` holds the file to them. On `main` at 8837648 the widest
+// tree object anywhere is `bot/lib` at 1,785 bytes, the widest under a B.4
+// record root is `plugins` at 869, and the largest listing holds 9 entries;
+// none of `main`'s history comes nearer either bound.
+//
+// And it reads every `schema/**/*.json` at the commit, the bytes the service
+// compiles, and refuses a pattern that asks for more repetition than
+// tools/lib/schema-patterns.mjs allows: each reader of a record compiles the
+// patterns of the schema that types it, and a count of 100,000 cost a
+// validation 16.6 s here and about 60 s there.
+//
+// **A tree that names an entry twice, or out of git's order, is refused**
+// (the plugins service's formal TRUST-31 (f) line holds an entry for the same,
+// 2026-10-03). git writes neither, but `hash-object --literally` does, and
+// git's own readers then disagree: `ls-tree` lists every entry as the bytes
+// hold them, while a path lookup (`<commit>:<path>`, which `git show`,
+// `cat-file` and the signer's `blobAt` use) walks the entries in order, stops
+// at the first name past the one it wants and takes the first match. Measured
+// on git 2.56: a tree holding `plugins` before `log` lists `log/baseline.json`
+// and `HEAD:log/baseline.json` does not exist; `foo`, `foo.bar`, `foo/` — git's
+// order, with `foo` twice — lists `foo/x` and cannot look it up; two
+// `plugin.json` entries list both and look up the first. A mirror that reads
+// trees whole is a third reader. GitHub's push-side fsck refuses a duplicate
+// (`duplicateEntries`, measured by the coordinator on 2026-10-03), but the
+// bot's commits, the canaries' and any later origin never pass through it, so
+// the rule asks it here. The entries are read by one decoder, `decodeTree`,
+// over the raw tree bytes `cat-file --batch` returns, never `ls-tree`'s
+// rows: on git 2.56 they hold the raw order and both duplicates too, but
+// their modes are canonicalised and their order is a property of a format
+// nobody promised. git's order is `gitEntryOrder`.
+//
+// One function, `treeProblems`, asks all of it, and every place the rule runs
+// asks that: `tools/validate.mjs` (CI and the Signer's catalogue gate),
+// `bot/publish-apply.mjs` on its own commit, and the five workflow writers'
+// `node tools/lib/tree-modes.mjs HEAD` before their push.
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import { cleanEnv } from "./git-env.mjs";
+import { MAX_PATTERN_REPETITION, SCHEMA_PATTERN_HINT, schemaPatternProblems } from "./schema-patterns.mjs";
 
 /** The modes an entry may have, as `git ls-tree` prints them, and what each is. */
 export const ACCEPTED_MODES = Object.freeze({
@@ -82,6 +134,124 @@ const git = (root, args) =>
     env: { ...cleanEnv(), GIT_PAGER: "cat", GIT_OPTIONAL_LOCKS: "0" },
     stdio: ["ignore", "pipe", "pipe"],
   });
+
+/** `git cat-file <mode>` over `ids`, one per line on stdin, as raw bytes. */
+const catFile = (root, mode, ids) =>
+  execFileSync("git", ["-C", root, "cat-file", mode], {
+    input: ids.map((id) => `${id}\n`).join(""),
+    maxBuffer: 256 * 1024 * 1024,
+    env: { ...cleanEnv(), GIT_PAGER: "cat", GIT_OPTIONAL_LOCKS: "0" },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+/**
+ * Every object in `ids`, read whole with `git cat-file --batch`, as raw bytes
+ * by id. Throws on an object that is missing or is not a `type`: git listed
+ * it, so a read that disagrees is a broken read and not an absence.
+ *
+ * @returns {Map<string, Buffer>}
+ */
+function readObjects(root, ids, type) {
+  const objects = new Map();
+  if (ids.length === 0) return objects;
+  // `--batch`: `<id> <type> <size>\n`, the object's bytes, then `\n`.
+  const out = catFile(root, "--batch", ids);
+  for (let i = 0; i < out.length;) {
+    const eol = out.indexOf(10, i);
+    const [object, got, size] = out.subarray(i, eol).toString("utf8").split(" ");
+    if (got !== type) throw new Error(`git listed ${object} as a ${type} and cat-file reads it as ${got}`);
+    objects.set(object, out.subarray(eol + 1, eol + 1 + Number(size)));
+    i = eol + 1 + Number(size) + 1;
+  }
+  return objects;
+}
+
+/**
+ * One tree object's entries, exactly as its bytes hold them: in their own
+ * order, a repeated name repeated, and each `mode` the octal string as
+ * written, which `ls-tree` would print canonicalised. An entry is
+ * `<mode> SP <name> NUL <id>`, the id `idBytes` long (20 under SHA-1, 32
+ * under SHA-256). Throws on bytes that are not that, since a tree git cannot
+ * decode is one nobody's reading of can be trusted.
+ *
+ * The rule's one decoder: the order and duplicate checks read these entries
+ * and nothing else, never `ls-tree`'s formatted rows.
+ *
+ * @returns {{mode: string, name: Buffer, object: string}[]}
+ */
+export function decodeTree(bytes, idBytes = 20) {
+  const entries = [];
+  for (let i = 0; i < bytes.length;) {
+    const sp = bytes.indexOf(0x20, i);
+    const nul = sp < 0 ? -1 : bytes.indexOf(0x00, sp + 1);
+    if (sp <= i || nul < 0 || nul + 1 + idBytes > bytes.length) {
+      throw new Error(`the entry at byte ${i} is not \`<mode> <name>\\0<${idBytes}-byte id>\``);
+    }
+    const mode = bytes.subarray(i, sp).toString("latin1");
+    if (!/^[0-7]+$/.test(mode)) throw new Error(`the entry at byte ${i} has the mode ${JSON.stringify(mode)}, which is not octal`);
+    entries.push({ mode, name: bytes.subarray(sp + 1, nul), object: bytes.subarray(nul + 1, nul + 1 + idBytes).toString("hex") });
+    i = nul + 1 + idBytes;
+  }
+  return entries;
+}
+
+/** Whether git reads a raw tree mode as a directory: `S_ISDIR`, so a raw `140000` is not one. */
+const isTreeMode = (mode) => (Number.parseInt(mode, 8) & 0o170000) === 0o040000;
+
+/**
+ * git's order between two entries of one tree: names compared byte by byte,
+ * a directory's name as though it ended in `/` (git's `base_name_compare`,
+ * and fsck's `treeNotSorted`). Negative when `a` sorts first.
+ */
+export function gitEntryOrder(a, b) {
+  const key = (e) => (isTreeMode(e.mode) ? Buffer.concat([e.name, Buffer.from("/")]) : e.name);
+  return Buffer.compare(key(a), key(b));
+}
+
+/** The top-level directory every listing stands in, compared with a path's first segment. */
+const LISTINGS_ROOT = "plugins";
+
+/** The top-level directory of the schemas the lint reads, compared the same way. */
+const SCHEMAS_ROOT = "schema";
+
+/** What a refusal calls the root tree, which no `ls-tree` row lists. */
+export const ROOT_TREE = "(the root tree)";
+
+/** The two bounds, as `policy/limits.json` names them. */
+export const TREE_BOUND_KEYS = Object.freeze({
+  treeObjectBytes: "max_tree_object_bytes",
+  listingEntries: "max_listing_tree_entries",
+});
+
+/**
+ * This repository's `policy/limits.json`, read from beside this module: the
+ * rule's bounds are this repository's policy, never the tree under test's,
+ * as `tools/validate.mjs` takes its own (`loadPolicy(REPO_ROOT)`). Read when
+ * asked, not at import, so a module that imports this one for its pure parts
+ * needs no policy beside it.
+ */
+export function loadLimits() {
+  return JSON.parse(fs.readFileSync(new URL("../../policy/limits.json", import.meta.url), "utf8"));
+}
+
+/**
+ * The bounds out of `limits`, each a positive integer, or a throw naming the
+ * key: a bound the rule cannot read is not a bound it may skip.
+ *
+ * @returns {{treeObjectBytes: number, listingEntries: number}}
+ */
+export function treeBounds(limits) {
+  const out = {};
+  for (const [name, key] of Object.entries(TREE_BOUND_KEYS)) {
+    const v = limits?.[key];
+    if (!Number.isSafeInteger(v) || v <= 0) {
+      throw new Error(`policy/limits.json ${key} is ${JSON.stringify(v)}, not a positive integer, so the tree rule ` +
+        "has no bound to hold the tree to");
+    }
+    out[name] = v;
+  }
+  return out;
+}
 
 /**
  * `git ls-tree -z` output as rows. A row is `<mode> SP <type> SP <object> TAB
@@ -154,12 +324,184 @@ export const TREE_MODE_HINT =
   "Commit the file or the directory itself, or remove the entry.";
 
 /**
- * The tree at `treeish` in `root`, as rows, with the commit it was read at.
- * Throws when git cannot list it; the caller decides what that means.
+ * Every tree object over its bound, and every listing over its bound,
+ * in `made` (what `readTree` read), as `{path, mode, message}` like
+ * `treeModeProblems`'s. The root tree is named `ROOT_TREE`; a listing is named
+ * at `plugins/<id>`. A tree whose size was not read is refused, never passed.
+ *
+ *   docs/wide: a tree object of 1048577 bytes as git stores it, git mode 040000, over max_tree_object_bytes (1048576) …
+ *   plugins/big: a listing whose tree holds 2001 entries beneath it, files and directories at every depth, git mode 040000, over …
+ *
+ * Pure. `bounds` is `treeBounds(limits)`.
+ */
+export function treeBoundProblems({ tree, rows, sizes }, bounds, at = "HEAD") {
+  const problems = [];
+  for (const t of [{ path: ROOT_TREE, object: tree }, ...rows.filter((r) => r.type === "tree")]) {
+    const size = sizes?.get(t.object);
+    if (size === undefined || size > bounds.treeObjectBytes) {
+      problems.push({
+        path: t.path,
+        mode: "040000",
+        message: (size === undefined ? `a tree object whose size was never read, git mode 040000,` :
+          `a tree object of ${size} bytes as git stores it, git mode 040000,`) +
+          ` over max_tree_object_bytes (${bounds.treeObjectBytes}) in policy/limits.json, in the tree at ${at}: the ` +
+          "plugins service refuses a tree object past its own larger bound and then cannot count history at this " +
+          "commit or any later one, so the registry refuses one well short of it",
+      });
+    }
+  }
+  // Every row beneath `plugins/<id>/` counts once for <id>, a directory as
+  // much as a file, at every depth: what the service's mirror counts.
+  const beneath = new Map();
+  for (const r of rows) {
+    const parts = r.path.split("/");
+    if (parts.length > 2 && parts[0] === LISTINGS_ROOT) beneath.set(parts[1], (beneath.get(parts[1]) ?? 0) + 1);
+  }
+  for (const r of rows) {
+    const parts = r.path.split("/");
+    if (r.mode !== "040000" || parts.length !== 2 || parts[0] !== LISTINGS_ROOT) continue;
+    const n = beneath.get(parts[1]) ?? 0;
+    if (n > bounds.listingEntries) {
+      problems.push({
+        path: r.path,
+        mode: r.mode,
+        message: `a listing whose tree holds ${n} entries beneath it, files and directories at every depth, git mode ` +
+          `040000, over max_listing_tree_entries (${bounds.listingEntries}) in policy/limits.json, in the tree at ` +
+          `${at}: the plugins service's mirror counts a listing's whole subtree against a cap of its own and refuses ` +
+          "past it, so the registry refuses well short of it",
+      });
+    }
+  }
+  return problems;
+}
+
+/** What to do about a tree past a bound; one sentence, so it can be a hint. */
+export const TREE_BOUND_HINT =
+  "A listing holds its records, its icon and its README, and a directory a few hundred names: split what grew, " +
+  "or remove it. Raising a bound is a contract change first, because the plugins service relies on it (B.4).";
+
+/** A name out of a raw tree, for a message: quoted, so a newline or a quote in it stays inside. */
+const shown = (name) => JSON.stringify(name.toString("utf8"));
+
+/**
+ * Every tree at `made` that names an entry twice, or holds its entries out of
+ * git's order (`gitEntryOrder`), as `{path, mode, message}` like the others':
+ * the root tree as `ROOT_TREE`, every other at its path, at every depth `LS_TREE`
+ * enters. Read from the raw bytes (`decodeTree`), and a tree whose bytes were
+ * not read, or do not decode, is refused, never passed.
+ *
+ *   docs: a tree that names "foo" 2 times, git mode 040000, in the tree at …
+ *   (the root tree): a tree whose entries are out of git's order, "plugins" before "log", git mode 040000, …
+ *
+ * A duplicate is a name held twice anywhere in the tree, not only beside
+ * itself: `foo`, `foo.bar`, `foo/` is git's order and holds `foo` twice.
+ *
+ * Pure. `treeBytes` is `readTree`'s.
+ */
+export function treeOrderProblems({ tree, rows, treeBytes }, at = "HEAD") {
+  const problems = [];
+  const refuse = (p, what, why) => problems.push({
+    path: p, mode: "040000", message: `${what}, git mode 040000, in the tree at ${at}: ${why}`,
+  });
+  for (const t of [{ path: ROOT_TREE, object: tree }, ...rows.filter((r) => r.type === "tree")]) {
+    const bytes = treeBytes?.get(t.object);
+    if (bytes === undefined) {
+      refuse(t.path, "a tree object whose bytes were never read", "the rule cannot say its entries are in git's order " +
+        "with no name twice, so it does not say so");
+      continue;
+    }
+    let entries;
+    try {
+      entries = decodeTree(bytes, t.object.length / 2);
+    } catch (e) {
+      refuse(t.path, `a tree object git's tree format does not decode (${e.message})`, "no reader of it can be trusted");
+      continue;
+    }
+    const seen = new Map();
+    for (const e of entries) {
+      const k = e.name.toString("latin1");
+      seen.set(k, (seen.get(k) ?? 0) + 1);
+    }
+    for (const [k, n] of seen) {
+      if (n < 2) continue;
+      refuse(t.path, `a tree that names ${shown(Buffer.from(k, "latin1"))} ${n} times`,
+        "git's path lookup (`<commit>:<path>`, `git show`, `cat-file`) reads the first and `ls-tree` lists every one, " +
+        "so two readers of this commit read two different entries under one name");
+    }
+    const late = [];
+    for (let i = 1; i < entries.length; i++) {
+      if (gitEntryOrder(entries[i - 1], entries[i]) >= 0 && !entries[i - 1].name.equals(entries[i].name)) late.push(i);
+    }
+    if (late.length) {
+      const i = late[0];
+      refuse(t.path, `a tree whose entries are out of git's order, ${shown(entries[i - 1].name)} before ` +
+        `${shown(entries[i].name)}${late.length > 1 ? `, and ${late.length - 1} more such pair(s)` : ""}`,
+        "git's path lookup stops at the first name past the one it wants, so an entry `ls-tree` lists can be one " +
+        "`git show` cannot find; git compares names byte by byte, a directory's as though it ended in `/`");
+    }
+  }
+  return problems;
+}
+
+/** What to do about a tree that names an entry twice or out of order; one sentence, so it can be a hint. */
+export const TREE_ORDER_HINT =
+  "No git command that writes a tree writes one like this, so something wrote the object by hand: remake the " +
+  "commit with git (`git add` and `git commit`, or `git mktree`, which sorts its input), keeping one entry per name.";
+
+/**
+ * Everything the registry's tree may not hold at `made`, each problem with
+ * the `hint` for its kind: `treeModeProblems`, `treeBoundProblems` against
+ * `limits` (this repository's `policy/limits.json` unless given),
+ * `treeOrderProblems`, and the schema lint over every `schema/**\/*.json`
+ * `readTree` read. The one question every place the rule runs asks. Throws
+ * only when the bounds cannot be read.
+ *
+ * @param {{at: string, tree: string, rows: object[], sizes: Map<string, number>,
+ *   treeBytes: Map<string, Buffer>, schemas: object[]}} made
+ * @returns {{path: string, mode: string, message: string, hint: string}[]}
+ */
+export function treeProblems(made, { limits = loadLimits() } = {}) {
+  const bounds = treeBounds(limits);
+  const at = made.at.slice(0, 12);
+  return [
+    ...treeModeProblems(made.rows, at).map((p) => ({ ...p, hint: TREE_MODE_HINT })),
+    ...treeBoundProblems(made, bounds, at).map((p) => ({ ...p, hint: TREE_BOUND_HINT })),
+    ...treeOrderProblems(made, at).map((p) => ({ ...p, hint: TREE_ORDER_HINT })),
+    ...(made.schemas ?? []).flatMap((f) => schemaPatternProblems(f.text).map((p) => ({
+      path: f.path,
+      mode: f.mode,
+      message: `${p.message} (in the tree at ${at})`,
+      hint: SCHEMA_PATTERN_HINT,
+    }))),
+  ];
+}
+
+/**
+ * The tree at `treeish` in `root`: its rows, the commit and root tree it was
+ * read at, every tree object in it as git stores it (its bytes, for the
+ * order and duplicate checks, and its size, for the bound), and the text of
+ * every `schema/**\/*.json` file. Throws when git cannot list it or read an
+ * object it listed; the caller decides what that means.
+ *
+ * @returns {{at: string, tree: string, rows: object[], sizes: Map<string, number>,
+ *   treeBytes: Map<string, Buffer>, schemas: {path: string, mode: string, text: string}[]}}
  */
 export function readTree(root, treeish = "HEAD") {
   const at = git(root, ["rev-parse", "--verify", "--quiet", `${treeish}^{commit}`]).trim();
-  return { at, rows: parseLsTree(git(root, [...LS_TREE, at])) };
+  const rows = parseLsTree(git(root, [...LS_TREE, at]));
+  const tree = git(root, ["rev-parse", "--verify", "--quiet", `${at}^{tree}`]).trim();
+
+  // Every tree object read whole, once: its size as git stores it is its
+  // length, which is what `cat-file -s` and `--batch-check` print.
+  const trees = [...new Set([tree, ...rows.filter((r) => r.type === "tree").map((r) => r.object)])];
+  const treeBytes = readObjects(root, trees, "tree");
+  const sizes = new Map([...treeBytes].map(([object, bytes]) => [object, bytes.length]));
+
+  const files = rows.filter((r) => (r.mode === "100644" || r.mode === "100755") &&
+    r.path.split("/")[0] === SCHEMAS_ROOT && r.path.endsWith(".json"));
+  const texts = readObjects(root, [...new Set(files.map((r) => r.object))], "blob");
+  const schemas = files.map((r) => ({ path: r.path, mode: r.mode, text: texts.get(r.object)?.toString("utf8") }));
+  return { at, tree, rows, sizes, treeBytes, schemas };
 }
 
 /**
@@ -203,7 +545,8 @@ export function unaskableRoot(root) {
 // the shell with nothing pushed. `bot/tests/publish-apply.test.mjs` runs each
 // writer's own steps over a commit holding a link and one holding an empty
 // directory, and holds every workflow line that pushes to having this line
-// before it.
+// before it. Since entry 215 the line asks `treeProblems`, the two bounds and
+// the schema lint with the modes, so no writer needed an edit to ask them.
 //
 // Asked from the top of the checkout, as `tools/validate.mjs` asks it: a
 // directory that is not the top of a work tree of its own would have git
@@ -238,14 +581,26 @@ export function main(argv, { root = process.cwd(), say = console.log } = {}) {
       "read, not a clean tree, and nothing may be pushed");
     return 1;
   }
-  const problems = treeModeProblems(made.rows, at);
+  let problems;
+  let bounds;
+  try {
+    const limits = loadLimits();
+    bounds = treeBounds(limits);
+    problems = treeProblems(made, { limits });
+  } catch (err) {
+    say(`::error::the tree rule's bounds could not be read, so nothing may be pushed: ${err?.message ?? err}`);
+    return 1;
+  }
   if (problems.length === 0) {
-    say(`ok    the tree at ${at}: ${made.rows.length} entries, each a regular file or a directory with a file beneath it`);
+    say(`ok    the tree at ${at}: ${made.rows.length} entries, each a regular file or a directory with a file beneath it; ` +
+      `every tree object at most ${bounds.treeObjectBytes} bytes, in git's order and naming no entry twice, ` +
+      `every listing at most ${bounds.listingEntries} ` +
+      `entries, and ${made.schemas.length} schema file(s) asking no pattern for more than ${MAX_PATTERN_REPETITION} copies`);
     return 0;
   }
   for (const p of problems) say(`::error::${p.path}: ${p.message}`);
   say(`::error::the commit at ${at} holds ${problems.length} entr${problems.length === 1 ? "y" : "ies"} the registry's ` +
-    `tree may not, and it is not pushed. ${TREE_MODE_HINT}`);
+    `tree may not, and it is not pushed. ${[...new Set(problems.map((p) => p.hint))].join(" ")}`);
   return 1;
 }
 

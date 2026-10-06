@@ -27,7 +27,7 @@
 // from that start; nothing here reads a clock, so a retry sends the same bytes
 // and a re-run of the report job re-sends the body the first attempt built.
 
-import { OPERATOR_WINDOW_HOURS, WAIT_CAUSE_MAX, reasonOf } from "./service-decide.mjs";
+import { OPERATOR_WINDOW_HOURS, WAIT_CAUSE_MAX, boundedEarliest, reasonOf } from "./service-decide.mjs";
 import { HOUR_MS, iso } from "./policy/time.mjs";
 import { isTime } from "../../tools/lib/time.mjs";
 
@@ -91,7 +91,9 @@ export function resultBody(plan, landed = {}) {
       code: wait.code,
       started_at: wait.started_at,
       cause: clip(wait.cause),
-      earliest_retry_at: wait.earliest_retry_at,
+      // §4.4 (3.12.0), at the last point before the wire: the composer can
+      // move the time (the operator window counts from reported delivery).
+      earliest_retry_at: boundedEarliest(wait.started_at, wait.earliest_retry_at),
     };
     body.reasons = (plan.reasons ?? []).map((r) => ({ code: r.code, stage: r.stage, location: r.location ?? null, message: clip(r.message) }));
     if (plan.derived) for (const m of DERIVED) if (plan.derived[m] !== undefined) body[m] = plan.derived[m];

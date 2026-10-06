@@ -78,6 +78,7 @@ import { listingStateAt } from "./listing-state.mjs";
 import { loadSources } from "../../tools/lib/sources.mjs";
 import { cleanEnv } from "../../tools/lib/git-env.mjs";
 import { isTime } from "../../tools/lib/time.mjs";
+import { decisionId, submissionKey } from "./decisions.mjs";
 import { ID_PATTERN } from "../../tools/lib/ids.mjs";
 import { SEMVER_PATTERN } from "../../tools/lib/semver.mjs";
 
@@ -113,6 +114,33 @@ export const NEXT_RUN_SECONDS = 600;
 export const WAIT_CAUSE_MAX = 512;
 
 const DAY_MS = 24 * HOUR_MS;
+
+/**
+ * §4.4 (contract 3.12.0): a wait's `earliest_retry_at` is at most this many
+ * days after the service receives the result, MIG-31's 14-day floor plus a
+ * day. The bot counts from its run's start, which is earlier than receipt, so
+ * holding itself to the same number never sends what the service refuses.
+ */
+export const MAX_WAIT_DAYS = 15;
+
+/**
+ * The earliest retry a wait may carry. Past §4.4's bound the service refuses
+ * the whole result as `invalid`. A value that far out would also leave the
+ * submission unclaimable (BOT-60) with no alarm, since FLOW-31 exempts the
+ * deferral and the operator window until it. So a defect that computes one
+ * fails this run loudly instead: the lease runs out, and BOT-15 counts it.
+ */
+export function boundedEarliest(startedAt, earliest) {
+  const bound = new Date(startedAt).getTime() + MAX_WAIT_DAYS * DAY_MS;
+  const at = new Date(earliest).getTime();
+  if (!Number.isFinite(at) || at > bound) {
+    throw new Error(
+      `§4.4: a wait's earliest retry (${earliest}) must be a time at most ${MAX_WAIT_DAYS} days after this run's start ` +
+      `(${startedAt}); the service refuses a later one as \`invalid\` (contract 3.12.0)`,
+    );
+  }
+  return earliest;
+}
 
 /** The five plan kinds, and only these. */
 export const PLAN_KINDS = Object.freeze(["state", "wait", "reported", "norecord", "none"]);
@@ -428,6 +456,17 @@ export function id41({ identity, record, lineHash }) {
  * refuses before an approval is read; (4) `decided_at` is younger than the
  * committed maximum. ROLL-49: no approval carries a delay waiver.
  *
+ * **What a refusal leaves behind.** Every refusal below returns `why`, which
+ * the caller adds to the run's reasons as `P_APPROVAL_STALE`. A `held` result
+ * posts only its record's codes (BOT-23), so a `why` reaches the service only
+ * when the record carries the code too, and since contract 3.7.0 one refusal
+ * puts it there: (4), returned with `aged: true`. The hold that returns after
+ * an aged approval then reads `R_*…, P_APPROVAL_STALE`, its message naming
+ * the approval's `decided_at` and the maximum, and is a transition the
+ * service can tell from the first hold. (1) has no hold of this fingerprint
+ * to return to, and TRUST-27's and MIG-31's are waits the approval outlives,
+ * so theirs stay out of the record.
+ *
  * **MIG-31.** At a `grandfathered` or `frozen` listing's `R_FIRST_BINDING`
  * hold whose build was started by an account other than the repository's
  * owner, an approval is not honoured before `floorDays` (the identity
@@ -471,15 +510,29 @@ export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, 
   const countedFrom = Math.max(new Date(decision.decided_at).getTime(), floorEnd ?? 0);
   const age = new Date(now).getTime() - countedFrom;
   if (age > APPROVAL_MAX_DAYS * DAY_MS) {
+    // `aged`: the one refusal here whose hold carries `P_APPROVAL_STALE` in
+    // its record (contract 3.7.0). The approval was honourable once and has
+    // lapsed, so the hold that comes back is a moderator's again, and says so.
+    const floored = floorEnd !== null && floorEnd > new Date(decision.decided_at).getTime();
     return {
       approval: null,
-      why: `BOT-26 (4): the approval was decided at ${decision.decided_at}, more than ${APPROVAL_MAX_DAYS} days ago`,
+      why:
+        `BOT-26 (4): the approval decided at ${decision.decided_at}` +
+        (floored ? `, counted from the end of MIG-31's floor at ${iso(new Date(floorEnd))},` : "") +
+        ` is older than the ${APPROVAL_MAX_DAYS}-day maximum POLICY.md sets, so it clears nothing and the hold ` +
+        "is back with a moderator; a new approval clears it",
       decision,
+      aged: true,
     };
   }
   if ((heldCodes ?? []).includes("R_FIRST_BINDING")) {
     const since = new Date(now).getTime() - new Date(heldRecord.decided_at).getTime();
-    if (since < FIRST_BINDING_WAIT_DAYS * DAY_MS) {
+    // When MIG-31's floor also stands and ends later, the floor is the answer:
+    // a deferral's `earliest` is when the approval takes effect, which the
+    // panel shows the author, and TRUST-27's earlier end would be a promise
+    // the next run breaks.
+    const floorOutlasts = floorEnd !== null && floorEnd >= new Date(heldRecord.decided_at).getTime() + FIRST_BINDING_WAIT_DAYS * DAY_MS;
+    if (since < FIRST_BINDING_WAIT_DAYS * DAY_MS && !floorOutlasts) {
       return {
         approval: null,
         why:
@@ -487,6 +540,10 @@ export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, 
           `record reached main (${heldRecord.decided_at}), not before`,
         decision,
         earliest: plusMs(heldRecord.decided_at, FIRST_BINDING_WAIT_DAYS * DAY_MS),
+        cause:
+          `TRUST-27: the approval stands and takes effect at ${plusMs(heldRecord.decided_at, FIRST_BINDING_WAIT_DAYS * DAY_MS)}. ` +
+          `An \`R_FIRST_BINDING\` approval is honoured ${FIRST_BINDING_WAIT_DAYS} days after its hold reached main ` +
+          `(${heldRecord.decided_at}). The release publishes then, unless something about it changes.`,
       };
     }
   }
@@ -499,6 +556,13 @@ export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, 
         `main (${heldRecord.decided_at}), at ${iso(new Date(floorEnd))}. It is deferred, not lost`,
       decision,
       earliest: iso(new Date(floorEnd)),
+      // The wait's cause names no account: it is what the panel shows the
+      // author (FLOW-10), and who started the build is the moderator's to see.
+      cause:
+        `MIG-31: the approval stands and takes effect at ${iso(new Date(floorEnd))}. This first binding's build was ` +
+        "started by an account other than the repository's owner, or by one nobody could read, so an approval is " +
+        `honoured ${actorFloor} days after its hold reached main (${heldRecord.decided_at}). The release publishes ` +
+        "then, unless something about it changes.",
     };
   }
   return {
@@ -684,7 +748,7 @@ export function decideSubmission(input) {
   const nextRun = () => plusMs(startedAt, NEXT_RUN_SECONDS * 1000);
   const waitPlan = (code, cause, { earliest = null, reasons = [], derived = null, operatorAlert = null } = {}) =>
     plan("wait", {
-      wait: { code, started_at: startedAt, cause: clip(cause), earliest_retry_at: earliest ?? nextRun() },
+      wait: { code, started_at: startedAt, cause: clip(cause), earliest_retry_at: boundedEarliest(startedAt, earliest ?? nextRun()) },
       reasons,
       derived,
       operator_alert: operatorAlert,
@@ -937,7 +1001,17 @@ export function decideSubmission(input) {
   }
 
   // 9 ── B-T3.3b: the approval, before the policy is asked ─────────────────
-  const heldRecord = [...records].reverse().find((r) => r?.fingerprint === verified.fingerprint && r?.state === "held") ?? null;
+  // The hold an approval clears, and the one TRUST-27's wait and MIG-31's
+  // floor count from: this submission's FIRST entry into `held`, found by the
+  // id BOT-35 derives for it. Since a hold an aged approval sends back writes
+  // a record of its own (BOT-34), `main` can hold several `held` records for
+  // one fingerprint, and the newest is the re-hold: counting from it would
+  // restart a 14-day floor that has already run, every time an approval aged.
+  // A tree with no such record (a hold written before this submission had an
+  // id of its own, or a test's) falls back to main's earlier reading.
+  const firstHoldId = decisionId(submissionKey({ submission_id: sid, fingerprint: verified.fingerprint, state: "held" }));
+  const heldRecord = records.find((r) => r?.decision_id === firstHoldId && r?.state === "held")
+    ?? [...records].reverse().find((r) => r?.fingerprint === verified.fingerprint && r?.state === "held") ?? null;
   const honoured = honourApproval({
     decisions: gates?.decisions ?? [],
     fingerprint: verified.fingerprint,
@@ -1013,7 +1087,10 @@ export function decideSubmission(input) {
     if (r.level === "pass" && !/^P_/.test(r.code)) continue;
     push(r.code, { message: r.message });
   }
-  if (honoured.why) push("P_APPROVAL_STALE", { message: honoured.why });
+  // A deferred approval (TRUST-27's wait, MIG-31's floor) is not stale: it
+  // stands, and this run answers with `W_APPROVAL_DEFERRED` below.
+  const deferred = Boolean(honoured.earliest) && honoured.aged !== true;
+  if (honoured.why && !deferred) push("P_APPROVAL_STALE", { message: honoured.why });
 
   // A FLOW-72 wait from the checks themselves.
   if (decision.wait) {
@@ -1029,6 +1106,12 @@ export function decideSubmission(input) {
     const holds = [
       ...findings.filter(holding).map((f) => f.code),
       ...decision.reasons.filter((r) => r.level === "review" && r.code !== "R_CHECK_HELD").map((r) => r.code),
+      // BOT-26 (4), since contract 3.7.0: an aged approval's hold carries
+      // `P_APPROVAL_STALE` beside the hold's codes, as BOT-26 (2)'s does from
+      // `decide()`. Added here and not raised in `decide()`, because there it
+      // would be a hold of its own: an aged approval of a release nothing
+      // holds any more would hold it, and a refused approval changes nothing.
+      ...(honoured.aged ? ["P_APPROVAL_STALE"] : []),
     ];
     const pick = {
       refuse: errors.length ? errors : ["P_REFUSED"],
@@ -1069,6 +1152,21 @@ export function decideSubmission(input) {
     });
   }
 
+  if (decision.outcome === "review" && deferred) {
+    // MIG-31's "deferred, not lost", and TRUST-27's wait. The approval came
+    // before this lease was claimed, so a `held` result here was a NEW
+    // transition `approved → held` under BOT-17's act clause (3.9.0), which
+    // took the approval back, and the bot never claims `held`; under 3.10.0
+    // it named the first hold's record and was a suppressed repeat, which
+    // BOT-15's brake counts toward a park. It is a wait instead: no record
+    // and no commit (FLOW-72), the submission stays approved, and the earliest
+    // retry is the moment the approval takes effect, which the panel shows.
+    // The hold it would otherwise have been is the one this approval clears:
+    // since contract 3.0.0 every service-path hold is a change of hands
+    // (DEC-19), and an approval clears exactly those (DEC-6).
+    return waitPlan("W_APPROVAL_DEFERRED", honoured.cause, { earliest: honoured.earliest, reasons, derived: derivedFacts });
+  }
+
   if (decision.outcome === "review") {
     const heldBy = codesOf("review");
     const extras = {};
@@ -1091,6 +1189,13 @@ export function decideSubmission(input) {
       reasons,
       derived: derivedFacts,
       record: { ...baseRecord, decided_at: startedAt, state: "held", reasons: heldBy },
+      // BOT-34: a hold an aged approval sends back is a second entry into
+      // `held`, and its record is keyed after that approval (BOT-35), so it is
+      // not the first hold's id that BOT-36 would find and drop. The approval
+      // is the one `honourApproval` judged, named by its `decided_at`: the
+      // same value on every re-run of this re-hold, and a new one for the next
+      // approval. Every other hold is a first entry and keeps the first key.
+      reentry: honoured.aged ? { after: honoured.decision.decided_at } : null,
       result_extra: extras,
       // A hold stops the queue clock for these bytes (bot/decide.mjs's rule).
       drop_queue: Boolean(queued),
@@ -1308,6 +1413,7 @@ function finishPlan(p, { shadowed, startedAt }) {
     operator_alert: null,
     result_extra: {},
     identity_records: [],
+    reentry: null,
     ...p,
     decided_at: startedAt,
     shadow: shadowed,

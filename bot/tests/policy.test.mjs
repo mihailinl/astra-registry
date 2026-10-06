@@ -4973,10 +4973,13 @@ await test("ROLL-59 (h) — a non-owner's grandfathered first binding is not app
   const inside = nonOwnerFirstBinding();
   assertEqual(inside.held.plan.result_extra.triggering_actor_is_owner, false,
     "MIG-31: the hold did not report that the build's triggering actor is not the owner");
-  assertEqual(inside.final.plan.state, "held",
+  // Deferred is a wait, not a hold (contract 3.10.0): a `held` result here
+  // took the approval back under BOT-17, and the bot never claims `held`.
+  assertEqual(inside.final.plan.kind === "wait" ? inside.final.plan.wait.code : inside.final.plan.state, "W_APPROVAL_DEFERRED",
     `a non-owner's first binding approved ${FIRST_BINDING_WAIT_DAYS + 1} day(s) after its hold was served: ${said(inside.final.plan)}`);
-  assert(inside.final.plan.reasons.some((r) => r.code === "P_APPROVAL_STALE" && /MIG-31/.test(r.message) && /deferred, not lost/.test(r.message)),
-    `the deferral does not say why, or when: ${JSON.stringify(inside.final.plan.reasons.map((r) => [r.code, r.message]))}`);
+  assertEqual(inside.final.plan.record, null, "a deferred approval wrote a record");
+  assert(/^MIG-31\b/.test(inside.final.plan.wait.cause) && inside.final.plan.wait.cause.includes(inside.final.plan.wait.earliest_retry_at),
+    `the deferral does not say why, or when: ${JSON.stringify(inside.final.plan.wait)}`);
 
   // The same approval, still the newest, read again after the 14 days: it
   // was deferred, not lost, and the walk's remaining gates run from there.
@@ -4991,8 +4994,37 @@ await test("ROLL-59 (h) — a non-owner's grandfathered first binding is not app
   const sub = svcSubmission({ id: "json-tools", version: "0.2.0", line: LINE_OWNER });
   sub.verified.actor = null;
   const unread = approvalWalk(serviceWorld(), sub);
-  assertEqual(unread.final.plan.state, "held",
+  assertEqual(unread.final.plan.kind === "wait" ? unread.final.plan.wait.code : unread.final.plan.state, "W_APPROVAL_DEFERRED",
     `a first binding whose build nobody could attribute was approved inside MIG-31's 14 days: ${said(unread.final.plan)}`);
+});
+
+// ── SECURITY.md §5.5 and contract 3.0.0 (DEC-19) ─────────────────────────────
+//
+// §5.5 said "the 24-hour publication delay on any release of a plugin holding a
+// high-risk permission", naming no path. Since contract 3.0.0 that is true of
+// the issue path alone: through the plugins service nothing is delayed, and a
+// release publishes at once, marked not reviewed (DEC-19). POLICY.md and
+// docs/POLICY.md were amended that day and SECURITY.md was not, and a security
+// document is the one a reader takes as the bound on what an attacker gets, so
+// a delay it promises where none exists is the costliest sentence to leave
+// stale. Held here: every paragraph or list item of SECURITY.md that speaks of
+// a publication delay names the issue path, and §5.5 says what the service path
+// does instead. Cutover C's rewrite of §5.5 (registry #396) passes it too: its
+// one paragraph names the delay as the issue path's, in the past tense.
+await test("SECURITY.md promises a publication delay only on the issue path, and its §5.5 says the service path publishes at once, not reviewed (DEC-19)", () => {
+  const doc = fs.readFileSync(path.join(REPO_ROOT, "SECURITY.md"), "utf8");
+  const blocks = doc.split(/\n\s*\n|\n(?=- )/);
+  const delays = blocks.filter((b) => /publication delay|\bP_DELAY_|\b\d+-hour delay/i.test(b));
+  const unscoped = delays.filter((b) => !/\bissue\b/i.test(b));
+  assertEqual(unscoped.map((b) => b.trim().split("\n")[0]).join(" | "), "",
+    "SECURITY.md promises a publication delay without saying it is the issue path's. Since contract 3.0.0 " +
+    "(DEC-19) a release through the plugins service publishes at once, marked not reviewed, and only the issue " +
+    "path, until the cutover, still delays one");
+  const s55 = /^### 5\.5 [^\n]*\n([\s\S]*?)(?=^### |^---)/m.exec(doc)?.[1] ?? "";
+  assert(s55.trim() !== "", "SECURITY.md has no §5.5, so nothing says what applies when an author's account is taken");
+  assert(/DEC-19/.test(s55) && /not reviewed/i.test(s55),
+    "SECURITY.md §5.5 does not say what the plugins service does in the delay's place: a release published at " +
+    "once, not reviewed by Astra moderators (DEC-19)");
 });
 
 // ── result ──────────────────────────────────────────────────────────────────

@@ -1658,9 +1658,15 @@ function readOutputs(file) {
  * refusing a bad commit; here it only has to pass a good one.
  */
 function withTreeRule(root) {
-  if (fs.existsSync(path.join(root, "tools", "lib", "tree-modes.mjs"))) return;
-  fs.cpSync(path.join(REPO, "tools", "lib"), path.join(root, "tools", "lib"), { recursive: true });
-  fs.appendFileSync(path.join(root, ".git", "info", "exclude"), "/tools/lib/\n");
+  if (!fs.existsSync(path.join(root, "tools", "lib", "tree-modes.mjs"))) {
+    fs.cpSync(path.join(REPO, "tools", "lib"), path.join(root, "tools", "lib"), { recursive: true });
+    fs.appendFileSync(path.join(root, ".git", "info", "exclude"), "/tools/lib/\n");
+  }
+  // And the policy its bounds are read from, beside it (ops couplings 215).
+  if (!fs.existsSync(path.join(root, "policy", "limits.json"))) {
+    fs.cpSync(path.join(REPO, "policy", "limits.json"), path.join(root, "policy", "limits.json"));
+    fs.appendFileSync(path.join(root, ".git", "info", "exclude"), "/policy/limits.json\n");
+  }
 }
 
 /**

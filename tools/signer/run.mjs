@@ -353,6 +353,29 @@ export async function signRun({
     }
   }
 
+  // TRUST-43a (contract 3.5.0, and bullet 4 since 2.21.1): the plugins service
+  // holds a `signed` commit whose Index-Source-Commit neither equals nor
+  // descends from the served one's, and a changed or re-signed catalogue names
+  // this run's Source-Commit. So a Source-Commit that does not equal or descend
+  // from `signed`'s Index-Source-Commit is refused here, not left to the
+  // caller: sign.yml passes main's head, which always does, and a shell, a
+  // rehearsal generator or a later edit of the workflow might not. A head with
+  // no such trailer has nothing to descend from, and neither has the first run.
+  if (head?.present && head.sha) {
+    const message = gitMaybe(["log", "-1", "--format=%B", head.sha], { root });
+    const served = message.ok ? trailersOf(message.out)["Index-Source-Commit"] : null;
+    if (/^[0-9a-f]{40}$/.test(String(served ?? "")) &&
+        !gitMaybe(["merge-base", "--is-ancestor", served, sourceCommit], { root }).ok) {
+      codes.push(CODES.blocked);
+      refusals.push(
+        `BLOCKED: the Source-Commit ${sourceCommit.slice(0, 12)} does not descend from \`signed\`'s ` +
+        `Index-Source-Commit ${served.slice(0, 12)}, and the plugins service holds a \`signed\` commit whose ` +
+        "Index-Source-Commit does not equal or descend from the served one's (TRUST-43a). The run commits nothing; " +
+        "sign it at main's head.",
+      );
+    }
+  }
+
   const commit =
     refusals.length === 0 &&
     ["index", "revocations"].every((n) => typeof documents[n]?.bytes === "string") &&

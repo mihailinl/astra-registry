@@ -222,15 +222,18 @@ export const POLICY_CODES = {
       "Nothing to do. The hold is gone; every check above was re-run from scratch in this run, " +
       "against the release as it is today, and what publishes is what this run verified.",
   },
+  // Two refusals since contract 3.7.0, and the title says both: BOT-26 (2),
+  // the release changed after the approval, and BOT-26 (4), the approval aged
+  // past the maximum. Until 2026-10-05 it said only the first, so the hold an
+  // aged approval sent back told the moderator the release had changed.
   P_APPROVAL_STALE: {
     level: "review", stage: "policy", fix: "moderator",
-    title: "The approval named a different submission from this one",
+    title: "The approval does not clear this hold: it named a different submission, or it is older than the maximum",
     remedy:
-      "Nothing published and nothing was lost. An `/approve` carries the fingerprint printed in " +
-      "the comment it answers, and this run's fingerprint is different — the repository, the tag, " +
-      "the version or the release assets changed after that comment was written. Read the table " +
-      "above as it stands now and, if it is still a yes, copy the `/approve` line out of **this** " +
-      "comment. An approval has to be about something a person actually read.",
+      "Nothing published and nothing was lost. Either the release changed after the approval was given " +
+      "(the repository, tag, version or assets), or the approval is older than the POLICY.md maximum of " +
+      "7 days. The message names which, and when the approval was given. Read the release as it stands " +
+      "now and, if it is still a yes, approve it again.",
   },
   R_CHECK_HELD: {
     level: "review", stage: "policy", fix: "moderator",
@@ -559,6 +562,11 @@ const BOUND_WORLD_CODES = {
   W_ELIGIBILITY_UNREADABLE: { level: "wait" },
   W_OPERATOR_WINDOW: { level: "wait" },
   W_REGISTRY_UNACKNOWLEDGED: { level: "wait" },
+  // An approval TRUST-27's wait or MIG-31's floor defers (contract 3.10.0):
+  // it stands and takes effect at the wait's earliest retry, and nothing is
+  // recorded until then. A wait the bot reports, so FLOW-13's table gives it
+  // no row (B.7); the panel shows it from the result (FLOW-10).
+  W_APPROVAL_DEFERRED: { level: "wait" },
 
   // FLOW-72 reclassifies these five ON THE SERVICE PATH ONLY, and the
   // qualifier is load-bearing in both directions. On the legacy path they are
