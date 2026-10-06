@@ -1,6 +1,6 @@
 {
-  "contract_version": "3.13.0",
-  "source_commit": "2f465a9e089042c3cbc5da740441d21cbbab7d95",
+  "contract_version": "3.14.0",
+  "source_commit": "1a78bdf4d6ae0b750a32bb0e7b7016cd2e524111",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -752,6 +752,26 @@
         "SCOPE-7",
         "SCOPE-8",
         "FLOW-35"
+      ]
+    },
+    {
+      "id": "code:E_KIND_UNSUPPORTED",
+      "kind": "reason_code",
+      "name": "E_KIND_UNSUPPORTED",
+      "emitter": [
+        "registry"
+      ],
+      "acceptor": [
+        "service",
+        "panel"
+      ],
+      "state": "live",
+      "source": "B.7",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8",
+        "FLOW-13"
       ]
     },
     {
@@ -5993,6 +6013,15 @@
       "remedy": "Copy the tag from the release page — `v0.2.0`, not a commit SHA and not a branch name."
     },
     {
+      "code": "E_KIND_UNSUPPORTED",
+      "level": "error",
+      "stage": "manifest",
+      "fix": "new_tag",
+      "panel_only": false,
+      "title": "This item is not a plugin, or it requires other items",
+      "remedy": "This registry lists plugins only for now, and cannot list dependencies yet: `kind` and `requires` are reserved for a later version. Until then `kind` must be absent or `\"plugin\"`, and `requires` must be absent or empty. If this item is a plugin, remove both keys (or write `kind = \"plugin\"`) and publish a new tag. If it is another kind of item, or it needs other items, it cannot be listed here yet."
+    },
+    {
       "code": "E_LICENSE_MISSING",
       "level": "error",
       "stage": "metadata",
@@ -6916,7 +6945,7 @@
       "bot/lib/codes.mjs",
       "bot/lib/policy/constants.mjs"
     ],
-    "codes": 150
+    "codes": 151
   },
   "fixed_reasons": {
     "A_YANK": "Yanked at its author's own request, made from the Astra plugins panel.",
