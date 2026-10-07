@@ -2,8 +2,25 @@
   "$comment": "GENERATED FILE — DO NOT EDIT. Source of truth: tools/revocations/<ADVISORY-ID>.json. Regenerate with `node tools/build-revocations.mjs`. Only the `signed` member is covered by the signatures below; nothing outside it is authenticated and nothing may be read out of it.",
   "signatures": [],
   "signed": {
-    "revocations": [],
+    "revocations": [
+      {
+        "action": "disable",
+        "id": "ASTRA-2026-0001",
+        "kind": "binary",
+        "reason": "A drill, not a real withdrawal: the registry's own test-client plugin, release-canary-c3f3424 0.20261005.1, is withdrawn to prove that a signed withdrawal reaches an installed copy, and the withdrawal will be lifted. No plugin for users is affected.",
+        "severity": "low",
+        "value": "e087fd46a359c616c433e2706069a6890f62f9dbe425f4350437584be0af6ab3"
+      },
+      {
+        "action": "disable",
+        "id": "ASTRA-2026-0001",
+        "kind": "digest",
+        "reason": "A drill, not a real withdrawal: the registry's own test-client plugin, release-canary-c3f3424 0.20261005.1, is withdrawn to prove that a signed withdrawal reaches an installed copy, and the withdrawal will be lifted. No plugin for users is affected.",
+        "severity": "low",
+        "value": "1d87c040eea4f08c61535483d474ad4fca16270b226b626be910bc83c14ee71f"
+      }
+    ],
     "schema": "astra.registry.revocations/1",
-    "serial": 1
+    "serial": 15
   }
 }
