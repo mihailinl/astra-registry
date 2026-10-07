@@ -3,14 +3,31 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "PwnUnIk+T9JEZwhIzKYdkcJ37A+rzB6dzc3ptNrETaFChmhKxbqYbvHEEr7SOZvz3chfCI9lLkWhOXSytTrECQ=="
+      "sig": "9VG7GhqppoTDsb3z1j+Uo8Fmpcux2B8JAUzP4hKtFzYadEF3bEQFRmjY2RLaE1VcXJlnbXIg1JOmQR4Wa2KZAg=="
     }
   ],
   "signed": {
-    "expires_at": "2026-10-13T23:53:47Z",
-    "issued_at": "2026-10-06T23:53:47Z",
-    "revocations": [],
+    "expires_at": "2026-10-14T04:44:12Z",
+    "issued_at": "2026-10-07T04:44:12Z",
+    "revocations": [
+      {
+        "action": "disable",
+        "id": "ASTRA-2026-0001",
+        "kind": "binary",
+        "reason": "A drill, not a real withdrawal: the registry's own test-client plugin, release-canary-c3f3424 0.20261005.1, is withdrawn to prove that a signed withdrawal reaches an installed copy, and the withdrawal will be lifted. No plugin for users is affected.",
+        "severity": "low",
+        "value": "e087fd46a359c616c433e2706069a6890f62f9dbe425f4350437584be0af6ab3"
+      },
+      {
+        "action": "disable",
+        "id": "ASTRA-2026-0001",
+        "kind": "digest",
+        "reason": "A drill, not a real withdrawal: the registry's own test-client plugin, release-canary-c3f3424 0.20261005.1, is withdrawn to prove that a signed withdrawal reaches an installed copy, and the withdrawal will be lifted. No plugin for users is affected.",
+        "severity": "low",
+        "value": "1d87c040eea4f08c61535483d474ad4fca16270b226b626be910bc83c14ee71f"
+      }
+    ],
     "schema": "astra.registry.revocations/1",
-    "serial": 14
+    "serial": 15
   }
 }
