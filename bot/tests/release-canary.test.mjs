@@ -319,7 +319,16 @@ test(`a newest release older than ${STALE_DAYS} days fails, RELEASE_CANARY_STALE
 test("the newest canary release per SHA is chosen by date and counter; drafts and other prefixes are not candidates", () => {
   // Watched failing: with the sort comparing tag names as strings,
   // `0.20260923.10` sorts before `0.20260923.9` and the older one is picked.
-  const [a, b] = SHAS;
+  //
+  // Every allowlisted commit past the first two gets one ordinary release.
+  // This test used to build releases for `a` and `b` only and then assert no
+  // findings at all, which held while trust.json allowlisted exactly two
+  // commits: the root ceremony that adds a third (ops owner-actions item 21)
+  // would have turned `Bot tests` red on its own pull request with
+  // RELEASE_CANARY_NO_RELEASE for the new SHA — a finding about the world
+  // this fixture builds, not about selection. The suite's own header says a
+  // ceremony's third SHA is "a third release this suite demands"; here it is.
+  const [a, b, ...rest] = SHAS;
   const releases = [
     release(a, { version: "0.20260916.1" }),
     release(a, { version: "0.20260923.9" }),
@@ -327,6 +336,7 @@ test("the newest canary release per SHA is chosen by date and counter; drafts an
     release(a, { version: "0.20260930.1", draft: true }),
     release(b),
     { ...release(b), tag_name: `release-canary-${sha7(b)}-v1.0.0` },
+    ...rest.map((s) => release(s)),
   ];
   const { selected, findings } = selectReleases({
     allowlist: SHAS,
