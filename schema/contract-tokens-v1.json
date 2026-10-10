@@ -1,6 +1,6 @@
 {
-  "contract_version": "3.15.0",
-  "source_commit": "7638e3be947ad215560d1f2a2e010428eb58b5e3",
+  "contract_version": "4.0.0",
+  "source_commit": "bd5551111aa2f6a1f0738a53e7e101a27aa07d8b",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -422,6 +422,42 @@
       "id": "token:decision_refused",
       "kind": "refusal_token",
       "name": "decision_refused",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:not_operator",
+      "kind": "refusal_token",
+      "name": "not_operator",
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "panel"
+      ],
+      "state": "live",
+      "source": "§0.8, the refusal-token table",
+      "requirements": [
+        "SCOPE-7",
+        "SCOPE-8",
+        "CLIENT-71"
+      ]
+    },
+    {
+      "id": "token:step_up_required",
+      "kind": "refusal_token",
+      "name": "step_up_required",
       "emitter": [
         "service"
       ],
