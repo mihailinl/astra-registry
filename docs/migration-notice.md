@@ -114,7 +114,7 @@ This issue only notifies you. Nothing written on it reaches the registry, and it
 
 **What binding needs.**
 
-1. A Minice account holding `astraUser`, which is an account that owns Astra. After a purchase the role can take up to 12 hours to reach the account.
+1. A Minice account carrying `publish:plugin`. Every account that owns Astra has it, and Minice can also grant it as the `publisher` role.
 2. A binding line in your repository: `astra-binding: <your token>` as the first line of `.well-known/astra-plugin-owner` at its root, with a token you mint in the panel. `astra-plugin init-ci --binding <your token>` writes the line.
 3. A new tag, released as usual.
 4. One `R_FIRST_BINDING` review: the first bound release of the listing waits for a moderator, once.
@@ -142,7 +142,7 @@ Your listing is `grandfathered` until the later of the two.
 
 **What binding needs.**
 
-1. A Minice account holding `astraUser`, which is an account that owns Astra. After a purchase the role can take up to 12 hours to reach the account.
+1. A Minice account carrying `publish:plugin`. Every account that owns Astra has it, and Minice can also grant it as the `publisher` role.
 2. A binding line in your repository: `astra-binding: <your token>` as the first line of `.well-known/astra-plugin-owner` at its root, with a token you mint in the panel. `astra-plugin init-ci --binding <your token>` writes the line.
 3. A new tag, released as usual.
 4. One `R_FIRST_BINDING` review: the first bound release of the listing waits for a moderator, once.
@@ -168,7 +168,7 @@ This is the last notice from the Astra plugin registry, at least 14 days before 
 
 **What binding needs.**
 
-1. A Minice account holding `astraUser`, which is an account that owns Astra. After a purchase the role can take up to 12 hours to reach the account.
+1. A Minice account carrying `publish:plugin`. Every account that owns Astra has it, and Minice can also grant it as the `publisher` role.
 2. A binding line in your repository: `astra-binding: <your token>` as the first line of `.well-known/astra-plugin-owner` at its root, with a token you mint in the panel. `astra-plugin init-ci --binding <your token>` writes the line.
 3. A new tag, released as usual.
 4. One `R_FIRST_BINDING` review: the first bound release of the listing waits for a moderator, once.

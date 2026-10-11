@@ -702,10 +702,11 @@ forged by a one-line edit. A badge is keyed on the GitHub owner of
 `source.repo`, because that is what the ownership check binds to, so that is
 what carries a tier.
 
-*Amended 2026-09-24, for rollout step R4a.* This section used to say that the
+*Amended 2026-09-24, for rollout step R4a, and since contract 4.0.0
+(2026-10-10) `publish:plugin`.* This section used to say that the
 GitHub owner was the only identity the registry proves. From R4a that is no
 longer the whole of it: binding a repository to its listing needs a Minice
-account holding `astraUser`, and that account is the one told about each of the
+account carrying `publish:plugin` (every Astra owner, or a `publisher`), and that account is the one told about each of the
 listing's releases, with the means to stop one. The registry itself still has no
 accounts, and a badge still names the GitHub owner — never the Minice account,
 which is not published here.

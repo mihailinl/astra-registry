@@ -132,8 +132,8 @@ export function planDeadline({ cutoverEstimate, round2Estimate = null, committed
     const gap = (deadlineMs - Date.parse(round2Estimate)) / DAY_MS;
     if (gap < ROUND2_FLOOR_DAYS) {
       problems.push(`${deadline} is ${gap.toFixed(1)} day(s) after the round-2 estimate ${round2Estimate}, and MIG-2 ` +
-        `keeps it at least ${ROUND2_FLOOR_DAYS}: an author told at round 2 must have that long to buy Astra, wait ` +
-        "for `astraUser` and clear `R_FIRST_BINDING`. Move the estimates, not the rule");
+        `keeps it at least ${ROUND2_FLOOR_DAYS}: an author told at round 2 must have that long to buy Astra, ` +
+        "get `publish:plugin` (own Astra or be made a `publisher`) and clear `R_FIRST_BINDING`. Move the estimates, not the rule");
     } else {
       notes.push(`${deadline} is ${gap.toFixed(1)} day(s) after the round-2 estimate ${round2Estimate} (MIG-2: at least ${ROUND2_FLOOR_DAYS})`);
     }
