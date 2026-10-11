@@ -185,10 +185,35 @@ export function run(repo, { now = new Date() } = {}) {
   const detail = [];
 
   // ── leg 1: is there a drain cron at all, and does the router still aim at it?
+  //
+  // **Retired by cutover commit E** (registry plan B-T5.2), and only on its
+  // own terms. E deletes ingest.yml after the drain's last run, and nothing
+  // else drains `state/queue/`: the service path reads a legacy entry and drops
+  // it when it publishes, and writes none. So with the cutover marker on the
+  // tree and the queue empty, a missing ingest.yml is the drain retired. With
+  // anything still queued it is a release promised a time with nothing left
+  // to publish it at that time, which is what this leg has always been red for.
   const ingestPath = path.join(repo, ...INGEST.split("/"));
-  if (!fs.existsSync(ingestPath)) {
+  const cutoverOnTree = fs.existsSync(path.join(repo, CUTOVER));
+  const queuedFiles = (() => {
+    try {
+      return fs.readdirSync(path.join(repo, ...QUEUE_DIR.split("/"))).filter((n) => n.endsWith(".json"));
+    } catch {
+      return [];
+    }
+  })();
+  if (!fs.existsSync(ingestPath) && cutoverOnTree && queuedFiles.length === 0) {
+    detail.push(
+      `leg 1 is retired: ${INGEST} is not in the tree, ${CUTOVER} is, and ${QUEUE_DIR}/ is empty — cutover commit ` +
+      "E deleted the drain after its last run (B-T5.2). A queue entry that appears now has no drain, and is red here",
+    );
+  } else if (!fs.existsSync(ingestPath)) {
     codes.push("DRAIN_WORKFLOW_ABSENT");
-    detail.push(`${INGEST} is not in the tree; the queue drain has no workflow to run in`);
+    detail.push(
+      `${INGEST} is not in the tree; the queue drain has no workflow to run in` +
+      (queuedFiles.length ? `, and ${QUEUE_DIR}/ holds ${queuedFiles.length} release(s) waiting for it` : "") +
+      (cutoverOnTree ? "" : `, and ${CUTOVER} is not on this tree, so the issue path it served is still live`),
+    );
   } else {
     const src = fs.readFileSync(ingestPath, "utf8");
     const live = liveCrons(src).map((c) => c.expr);
