@@ -1,30 +1,21 @@
 name: Ingest
 
-# The registry bot (PRODUCTION_PLAN tasks 3.3, 3.4 and 3.5), wired to every way
-# this repository can learn that a release exists:
+# The registry bot's first pipeline (PRODUCTION_PLAN tasks 3.3, 3.4 and 3.5).
+# A listing issue, a comment, a release ping, a dispatch and a daily backstop
+# each became a list of targets, and `check` verified every one from scratch.
 #
-#   * a listing issue is opened or edited (task 3.3's submission form);
-#   * somebody comments `/recheck` on one;
-#   * a maintainer comments **`/approve`** or **`/reject <reason>`** on one —
-#     the other half of `outcome: "review"`. `/approve` clears the hold and
-#     nothing else: it becomes an ordinary target carrying two extra fields, and
-#     the whole ingest runs again from scratch against the release as it is now.
-#     The permission is proved against the GitHub API in `triage`, which has no
-#     write access to anything, before a target is emitted at all;
-#   * a **release ping** — `/release v0.2.0` on a listing issue, or
-#     `/release you/plugin v0.2.0` as a new issue. Task 3.4's first layer: it
-#     carries owner/repo/tag and no authority whatsoever, which is what lets an
-#     author use it with no token for this repository. `bot/triage.mjs` honours
-#     an unlabelled one only for a repository that is already listed, so the
-#     worst a stranger achieves is a re-check of a listing that is already
-#     pinned to a repository identity;
-#   * a **cron backstop** for the ping that never arrived (task 3.4, layer 2):
-#     `releases.atom` with `If-None-Match`, over only the listings that have
-#     been quiet, so an unchanged repository costs one 304;
-#   * a **cron drain** for releases waiting out task 3.5's publication delay;
-#   * `repository_dispatch`, which is where the GitHub App upgrade lands when
-#     the maintainer's account can create one. Same payload, same verification.
+# ── what is left of it (registry plan B-T5.2, cutover commit D) ─────────────
 #
+# The cutover (ROLL-33; M-T6.2 commit B) removed every trigger but the hourly
+# drain and a no-input dispatch; commit C removed the issue forms once
+# `state/queue/` was empty. Commit D removes the code those triggers ran — the
+# issue router (`triage`), the reply job (`respond`), a maintainer's `/approve`
+# and `/reject`, and the release backstop — so that no workflow names a module
+# that no longer exists. What is left is the drain: a release that was waiting
+# out its publication delay was promised a time (MIG-23), and `drain` → `check`
+# → `publish` → `comment` still carries it there. Commit E deletes this file
+# after the drain's last run.
+
 # ── the permission split, which is the point ────────────────────────────────
 #
 # `check` runs a stranger's issue text through a parser, downloads a stranger's
@@ -34,15 +25,6 @@ name: Ingest
 # of submitter-controlled code: one posts a markdown file out of an artifact,
 # the other copies JSON files out of one, revalidates them with this
 # repository's own validator, and commits.
-#
-# `respond` is the same split applied to the reply an unlabelled submission
-# gets. `triage` — no write access, no downloads — decides what to say and
-# writes it to a FILE; `respond` has `issues: write`, reads that one file out of
-# an artifact, posts it, and closes the issue when the mode was `reject`. The
-# job that can write to an issue never parses a submission, and the job that
-# parses a submission can write nothing. That is the same rule as check/comment,
-# and it is why the fix for "an author heard nothing" did not become a fourth
-# job with a token and a parser in it.
 #
 # That split is the whole security design of this file. A single job with write
 # access that also downloads attacker-controlled archives is one sandbox escape
@@ -63,9 +45,10 @@ name: Ingest
 # the repository's own `GITHUB_TOKEN` do not start workflow runs.** Doing it that
 # way would need a personal access token with write access to this repository,
 # sitting in a secret, for a job whose entire purpose is to need no credentials.
-# So `triage` emits a JSON array of targets and `check` is a matrix over it —
-# one job definition serving the submission path, the ping, the backstop and the
-# queue drain, which also means all four are verified by exactly the same code.
+# So the first job emits a JSON array of targets and `check` is a matrix over
+# it — one job definition that served the submission path, the ping, the
+# backstop and the queue drain, all four verified by exactly the same code.
+# Since commit D the drain is the only one left, and the first job is `drain`.
 
 # ── cutover (ROLL-33; registry plan M-T6.2 commit B) ──────────────────────
 #
@@ -391,9 +374,9 @@ jobs:
             600-second schedule and the plugins service's BOT-47 as its
             watcher, which was plugins-ingest.yml's schedule and not this one.
 
-  # Does this event ask for an ingest at all, and of what? Runs no submitter
-  # code and touches no network beyond the public reads it was already given.
-  triage:
+  # Which queued releases have served their publication delay. Runs no
+  # submitter code and reads only files this repository wrote.
+  drain:
     # Every job in this file needs `roots`, explicitly and not through a
     # chain. A job that inherits the dependency through another one loses it
     # the day that other one's `needs` is edited, and nothing says so.
@@ -402,108 +385,37 @@ jobs:
     permissions:
       contents: read
     outputs:
-      # A JSON array of `{repo, tag, submitter}`. One entry for a submission or
-      # a ping, N for a cron run, `[]` for an event that asked for nothing.
+      # A JSON array of `{repo, tag, submitter}`: one entry per ripe queued
+      # release, `[]` when nothing is ripe.
       targets: ${{ steps.decide.outputs.targets }}
-      issue: ${{ steps.decide.outputs.issue }}
-      watch: ${{ steps.decide.outputs.watch }}
-      # `form`, `ping`, `approve`, `reject`, `reply` or `none`. Read by
-      # `respond`, which needs to know whether a reply also closes the issue —
-      # and reads it from HERE rather than from the reply file, because the
-      # instruction must not travel inside the text a stranger influenced.
-      mode: ${{ steps.decide.outputs.mode }}
-      # There is a markdown file waiting for somebody to read. Set on every path
-      # that decided not to start work: the whole point of this workflow's
-      # rewrite is that "decided not to start work" and "said nothing" stopped
-      # being the same thing.
-      reply: ${{ steps.decide.outputs.reply }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # Every job in this run reads the same tree. The commit that added
-          # this pin to `publish` said "every job" and pinned one, which is the
-          # class of claim this repository treats as a defect in its own right:
-          # a comment that describes a change nobody made.
+          # Every job in this run reads the same tree.
           ref: ${{ github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Which submission, if any
+      # Until commit D this step also routed `issues`, `issue_comment` and
+      # `repository_dispatch` through the issue router.
+      # The cutover removed those triggers, so the arms were unreachable; D
+      # removed them, and the modules they ran, together.
+      - name: Which queued releases are ripe
         id: decide
         env:
-          GITHUB_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
-          # `opened`, `edited`, `labeled`, `created`. It decides only how often
-          # the bot repeats itself, never whether it may act.
-          ACTION: ${{ github.event.action }}
-          REGISTRY: ${{ github.repository }}
           SCHEDULE: ${{ github.event.schedule }}
-          LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
-          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
-          # Whose control of THIS repository is proved before `/approve` or
-          # `/reject` is honoured. A login, never a claim: `bot/lib/maintainer.mjs`
-          # asks GitHub about it.
-          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
-          # There is no COMMENT_ASSOCIATION here, and that is a decision rather
-          # than an omission. `github.event.comment.author_association` used to
-          # travel to `bot/lib/maintainer.mjs`, which accepted `OWNER` when the
-          # collaborator-permission endpoint declined to answer — a fallback for
-          # a 403 nobody had ever observed, because this job's token holds
-          # `contents: read` and the endpoint is documented as needing push
-          # access. Run 35487527105 (issue #93, 2026-09-20) measured it:
-          # `collaborator-permission: answered=true outcome=role is 'admin'`.
-          # The endpoint answers, the fallback went, and no payload field is a
-          # permission in this pipeline any more (registry plan B-T0.4b).
-          # Stranger text. All three go to files, never into a command.
-          ISSUE_BODY: ${{ github.event.issue.body }}
-          ISSUE_TITLE: ${{ github.event.issue.title }}
-          COMMENT_BODY: ${{ github.event.comment.body }}
-          DISPATCH_REPO: ${{ github.event.client_payload.repo }}
-          DISPATCH_TAG: ${{ github.event.client_payload.tag }}
-          # `client_payload.submitter` is deliberately not read: a dispatch
-          # carries no authority, so the submitter is resolved from the release
-          # itself below (AV-5; INV-6).
         run: |
           set -euo pipefail
-          printf '%s' "$ISSUE_BODY" > issue-body.md
-          printf '%s' "$ISSUE_TITLE" > issue-title.md
-          printf '%s' "$COMMENT_BODY" > comment-body.md
           mkdir -p out
           echo 'targets=[]' >> "$GITHUB_OUTPUT"
 
-          one_target() {
-            # $1 repo, $2 tag, $3 submitter — as separate argv entries, never
-            # interpolated into a command line.
-            node -e '
-              const [repo, tag, submitter] = process.argv.slice(1);
-              process.stdout.write(JSON.stringify([{ repo, tag, submitter }]));
-            ' "$1" "$2" "$3" > targets.json
-            echo "targets=$(cat targets.json)" >> "$GITHUB_OUTPUT"
-          }
-
           case "$EVENT" in
             workflow_dispatch)
-              # The drain, exactly as the cron runs it. Since cutover there is
-              # no backstop to run beside it (ROLL-33).
+              # The drain, exactly as the cron runs it, reported and not
+              # dispatched: a no-input dispatch lists what is ripe.
               node bot/watch.mjs --drain --out out
-              ;;
-
-            repository_dispatch)
-              # Where the GitHub App upgrade lands. A dispatch carries
-              # owner/repo/tag and no authority; the submitter it names is the
-              # account that published the release, read from the release here
-              # rather than taken from the payload, and proved against GitHub
-              # downstream exactly like every other path's.
-              submitter="$(node -e '
-                const [repo, tag] = process.argv.slice(1);
-                Promise.all([import("./bot/lib/notify.mjs"), import("./bot/lib/github.mjs")])
-                  .then(([notify, gh]) => notify.resolveSubmitter(repo, tag, gh.fetchRelease))
-                  .then((login) => process.stdout.write(login))
-                  .catch((e) => { console.error(`::error::${e.message}`); process.exit(1); });
-              ' "$DISPATCH_REPO" "$DISPATCH_TAG")"
-              one_target "$DISPATCH_REPO" "$DISPATCH_TAG" "$submitter"
               ;;
 
             schedule)
@@ -513,23 +425,15 @@ jobs:
                   node bot/watch.mjs --drain --out out
                   ;;
                 *)
-                  # Since cutover this arm runs nothing. It used to run the
-                  # release backstop, so a cron the case above no longer names
-                  # — the drain's retimed, say — silently became a second
-                  # backstop. The backstop is paused (ROLL-33), so an unrouted
-                  # cron is now an error, which drain-age's leg 1 also names.
-                  echo "::error::schedule '$SCHEDULE' is routed to nothing: the backstop was paused at cutover (ROLL-33), and only '17 * * * *' drains"
+                  # An unrouted cron is an error, which drain-age's leg 1 also
+                  # names: the backstop that used to run here is gone.
+                  echo "::error::schedule '$SCHEDULE' is routed to nothing: only '17 * * * *' drains"
                   exit 1
                   ;;
               esac
-              # Three fields, and deliberately not an approval among them. A
-              # release that a maintainer approved and that then landed in the
-              # publication delay is re-ingested here with no comment behind it,
-              # and it must not raise the same hold again — so the approval is
-              # carried in the QUEUE ENTRY, which is a file in this repository
-              # that only the publish job can write, and `bot/lib/policy.mjs`
-              # reads it back. Passing it through a cron job's output instead
-              # would put a permission in a place a workflow input can reach.
+              # Three fields, and deliberately not an approval among them: an
+              # approval travels in the QUEUE ENTRY, a file only the publish job
+              # writes, never through a job output a workflow input can reach.
               echo "targets=$(node -e '
                 const fs = require("node:fs");
                 const list = JSON.parse(fs.readFileSync("out/dispatch.json", "utf8"));
@@ -537,152 +441,18 @@ jobs:
               ')" >> "$GITHUB_OUTPUT"
               ;;
 
-            issues|issue_comment)
-              # `bot/triage.mjs` answers form / ping / approve / reject / reply
-              # / none, resolves a ping's submitter from the release author, and
-              # — for `/approve` and `/reject` only — asks GitHub whether the
-              # commenter may decide. Its answers arrive as three files; nothing
-              # here sources a file written from stranger text.
-              #
-              # It also writes one line when it asks, to the log and to this
-              # job's summary: `collaborator-permission: answered=<bool>
-              # outcome=<token>`, with no login. That line was R0's measurement
-              # (registry plan B-T0.4a) and it stays after it. The measurement
-              # came back `answered=true outcome=role is 'admin'` on run
-              # 35487527105, which is why `bot/lib/maintainer.mjs` no longer
-              # carries an `OWNER` fallback and why no `--commenter-association`
-              # is passed below. "The endpoint answers" is a fact with a date on
-              # it; this line is what would notice the day it stops being one.
-              node bot/triage.mjs \
-                --event "$EVENT" --action "$ACTION" --labels "$LABELS" \
-                --repository "$REGISTRY" \
-                --issue-body issue-body.md --issue-title issue-title.md \
-                --comment-body comment-body.md \
-                --issue-author "$ISSUE_AUTHOR" --commenter "$COMMENT_AUTHOR" \
-                --mode-file mode.txt --targets-file targets.json \
-                --reply-file out/reply.md
-              mode="$(cat mode.txt)"
-              echo "mode=$mode" >> "$GITHUB_OUTPUT"
-              case "$mode" in
-                form)
-                  # The two facts out of the rendered form, with the
-                  # confirmations checked. The submitter is the issue author,
-                  # whose control of the repository is then proved against
-                  # GitHub — this is the path a first listing takes.
-                  #
-                  # `read-submission.mjs` exits 2 on a form it cannot read, and
-                  # `set -e` above would kill the step — no target, no comment,
-                  # a red X and silence for somebody who ticked one box instead
-                  # of two. It cannot get here any more: triage answers the same
-                  # question with the same parser first, and an unreadable form
-                  # leaves as `reply` with a comment naming the missing field.
-                  node bot/read-submission.mjs --body-file issue-body.md --output form.env
-                  one_target \
-                    "$(grep '^repo=' form.env | head -1 | cut -d= -f2-)" \
-                    "$(grep '^tag=' form.env | head -1 | cut -d= -f2-)" \
-                    "$ISSUE_AUTHOR"
-                  echo "issue=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
-                  ;;
-                ping|approve)
-                  # An approval is an ordinary target with `approved_by` and
-                  # `approved_at` alongside it. Everything downstream is
-                  # identical, which is the property that matters: there is no
-                  # second, shorter route into the catalogue for a release
-                  # somebody said yes to.
-                  echo "targets=$(cat targets.json)" >> "$GITHUB_OUTPUT"
-                  echo "issue=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
-                  ;;
-                reply|reject)
-                  # Nothing is downloaded, verified or published. One comment is
-                  # posted by `respond` — and for `reject`, the issue is closed
-                  # with the reason on the thread rather than in silence.
-                  echo "issue=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
-                  ;;
-                *)
-                  ;;
-              esac
+            *)
+              echo "::error::event '$EVENT' starts nothing here: since the cutover only the drain cron and a dispatch do"
+              exit 1
               ;;
           esac
-
-          # Every path above that refused to start work either produced a target
-          # or produced this file. An empty one means the event genuinely asked
-          # for nothing — an unrelated comment, one of the bot's own notices —
-          # and that is the only case in which nobody is told anything.
-          if [ -s out/reply.md ]; then echo "reply=true" >> "$GITHUB_OUTPUT"; fi
-
-      - uses: actions/upload-artifact@v4
-        if: steps.decide.outputs.watch == 'true'
-        with:
-          name: watch-state
-          path: out/state
-          if-no-files-found: ignore
-          retention-days: 7
-
-      # The markdown a human will read, handed to the job that may post it.
-      # An artifact rather than a job output for the same reason `comment` reads
-      # one: a workflow output is a string that gets expanded, and this text was
-      # composed with a stranger's repository name in it.
-      - uses: actions/upload-artifact@v4
-        if: steps.decide.outputs.reply == 'true'
-        with:
-          name: intake-reply
-          path: out/reply.md
-          retention-days: 7
-
-  # The answer to an event that started no verification.
-  #
-  # This job is the whole of defect 1. Two listing requests arrived carrying the
-  # rendered form and no labels; `triage` answered `none`, every later job was
-  # skipped, the run went green — it had succeeded at deciding to do nothing —
-  # and neither author was told anything at all. Not refused. Nothing.
-  #
-  # It runs no submitter code, downloads no archive and parses nothing. It reads
-  # one markdown file out of an artifact and posts it, which is exactly what
-  # `comment` does with the ingest report and for exactly the same reason.
-  #
-  # `mode` comes from the triage job's output rather than from inside the file,
-  # because "and also close the issue" is an instruction and instructions must
-  # not travel in text a stranger influenced.
-  respond:
-    needs: [roots, triage]
-    if: needs.triage.outputs.reply == 'true' && needs.triage.outputs.issue != ''
-    runs-on: ubuntu-24.04
-    permissions:
-      issues: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: intake-reply
-          path: reply
-
-      - uses: actions/github-script@v7
-        env:
-          ISSUE: ${{ needs.triage.outputs.issue }}
-          MODE: ${{ needs.triage.outputs.mode }}
-        with:
-          script: |
-            const fs = require("node:fs");
-            const issue_number = Number(process.env.ISSUE);
-            if (!issue_number) return;
-            const body = fs.readFileSync("reply/reply.md", "utf8");
-            const { owner, repo } = context.repo;
-            await github.rest.issues.createComment({ owner, repo, issue_number, body });
-
-            // A rejection closes the issue, and only after the reason is on the
-            // thread. In that order, always: a close that races the comment is
-            // the silent close this whole job exists to stop being possible.
-            if (process.env.MODE === "reject") {
-              await github.rest.issues.update({
-                owner, repo, issue_number, state: "closed", state_reason: "not_planned",
-              });
-            }
 
   # The bot that judges a stranger's release runs its own tests first. A suite
   # that only runs on pull requests is a suite that is green on the day it
   # matters and unverified on every other one.
   selftest:
-    needs: [roots, triage]
-    if: needs.triage.outputs.targets != '[]'
+    needs: [roots, drain]
+    if: needs.drain.outputs.targets != '[]'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -798,8 +568,8 @@ jobs:
           retention-days: 1
 
   check:
-    needs: [roots, triage, selftest]
-    if: needs.triage.outputs.targets != '[]'
+    needs: [roots, drain, selftest]
+    if: needs.drain.outputs.targets != '[]'
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -807,7 +577,7 @@ jobs:
       # unauthenticated GitHub reads well inside the rate limit.
       max-parallel: 3
       matrix:
-        include: ${{ fromJson(needs.triage.outputs.targets) }}
+        include: ${{ fromJson(needs.drain.outputs.targets) }}
     # Read, and nothing else. This job downloads a stranger's release asset.
     permissions:
       contents: read
@@ -845,7 +615,6 @@ jobs:
           REPO: ${{ matrix.repo }}
           TAG: ${{ matrix.tag }}
           SUBMITTER: ${{ matrix.submitter }}
-          ISSUE: ${{ needs.triage.outputs.issue }}
           # Present only on a target that came from `/approve`, and empty on
           # every other one. It says a hold was cleared by a named account at a
           # named moment — it carries no verdict, no digest and no listing, so
@@ -869,8 +638,8 @@ jobs:
           # --publish-now on every run and waived every delay silently.
           PUBLISH_NOW: ${{ matrix.publish_now }}
           # Where this run came from, which DEC-7 records as the decision's
-          # `trigger` (B-T3.7). `bot/triage.mjs` sets it on an issue target and
-          # `bot/watch.mjs` on a backstop or drain one; `bot/decide.mjs`
+          # `trigger` (B-T3.7). `bot/watch.mjs --drain` sets it (`queue`), the
+          # one source left since commit D; `bot/decide.mjs`
           # refuses a source it cannot map rather than recording `legacy`,
           # because "the backstop found it" and "nobody knows" are different
           # facts. Empty on a path that sets no source, which is the same
@@ -895,7 +664,6 @@ jobs:
           code=0
           node bot/decide.mjs \
             --repo "$REPO" --tag "$TAG" --submitter "$SUBMITTER" \
-            ${ISSUE:+--issue "$ISSUE"} \
             ${APPROVED_BY:+--approved-by "$APPROVED_BY"} \
             ${APPROVED_AT:+--approved-at "$APPROVED_AT"} \
             ${APPROVED_FOR:+--approved-for "$APPROVED_FOR"} \
@@ -952,12 +720,12 @@ jobs:
     # the only record of the release was a comment promising it would appear.
     # The promise is now made from `publish`'s `queued` output: the entries that
     # are in the pushed commit, not the ones the decision wanted.
-    needs: [roots, triage, check, publish]
-    # `always()` runs this job over a SKIPPED triage too, so the roots gate is
+    needs: [roots, drain, check, publish]
+    # `always()` runs this job over a SKIPPED drain too, so the roots gate is
     # spelled out here rather than left to the dependency. Without it a run
     # that stopped at the anchor would go on to post on the thread about a
     # decision no job took.
-    if: always() && needs.roots.result == 'success' && needs.triage.outputs.targets != '[]'
+    if: always() && needs.roots.result == 'success' && needs.drain.outputs.targets != '[]'
     runs-on: ubuntu-24.04
     permissions:
       issues: write
@@ -970,7 +738,6 @@ jobs:
 
       - uses: actions/github-script@v7
         env:
-          ISSUE: ${{ needs.triage.outputs.issue }}
           # What `publish` actually got onto `main`, and how it ended. Both are
           # read as facts about the repository, never as a restatement of the
           # decision: `outcome` is `committed`, `nothing`, `conflict` or
@@ -999,8 +766,8 @@ jobs:
                 : `the publish job ended as \`${process.env.PUBLISH_OUTCOME || process.env.PUBLISH_RESULT || "unknown"}\``;
             const refused = (process.env.REFUSED || "").split(" ").filter(Boolean);
             const committed = process.env.PUBLISH_OUTCOME === "committed";
-            // What to do about it, written once. `/recheck` is honoured only on
-            // an issue carrying the `listing` label (bot/triage.mjs), and the
+            // What to do about it, written once. `/recheck` was honoured only on
+            // an issue carrying the `listing` label (until commit D), and the
             // [notice] issues this same script opens carry no labels — so the
             // advice has to name both doors rather than the one that happens to
             // work on a submission thread.
@@ -1139,7 +906,7 @@ jobs:
   # already ran inside `bot/ingest.mjs`, and it runs again here because this is
   # the job with write access and the one that has to be right.
   publish:
-    needs: [roots, triage, check]
+    needs: [roots, drain, check]
     # Also on a backstop run that found nothing: the etag memory it just wrote
     # is the entire reason the next run is cheap, and a poll whose result is
     # never committed is a poll that happens again tomorrow.
@@ -1147,7 +914,7 @@ jobs:
     # failed roots check, and this is the job that commits.
     if: >-
       always() && !cancelled() && needs.roots.result == 'success' &&
-      (needs.triage.outputs.targets != '[]' || needs.triage.outputs.watch == 'true')
+      needs.drain.outputs.targets != '[]'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -1181,12 +948,6 @@ jobs:
         with:
           pattern: ingest-report-*
           path: reports
-        continue-on-error: true
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: watch-state
-          path: watch-state
         continue-on-error: true
 
       # One step, because the apply, the checks and the push are one decision:
@@ -1252,7 +1013,7 @@ jobs:
   # a listing that is not in the catalogue. `comment` was given the output that
   # says what actually landed, in the same change where this gate was not.
   close:
-    needs: [roots, triage, check, publish, comment]
+    needs: [roots, drain, check, publish, comment]
     if: needs.publish.outputs.outcome == 'committed'
     runs-on: ubuntu-24.04
     permissions:
@@ -1266,7 +1027,6 @@ jobs:
 
       - uses: actions/github-script@v7
         env:
-          ISSUE: ${{ needs.triage.outputs.issue }}
           # The reports publish-apply refused. The gate above says the RUN
           # committed; this says which releases in it did not, and a thread
           # closed over one of those tells its author to stop watching for a
