@@ -2999,7 +2999,7 @@ await test("MIG-14 — every round of the migration notice says what a notice mu
     const where = `${NOTICE_DOC} round ${round}`;
     const present = [
       ["the deadline value", (t) => t.includes("2031-05-06") && t.includes(values.deadline)],
-      ["`astraUser`", (t) => t.includes("`astraUser`")],
+      ["`publish:plugin`", (t) => t.includes("`publish:plugin`")],
       ["a binding line", (t) => /binding line/.test(t) && t.includes("astra-binding: <your token>")],
       ["a new tag", (t) => /\bnew tag\b/.test(t)],
       ["one `R_FIRST_BINDING` review", (t) => /One `R_FIRST_BINDING` review/.test(t)],
@@ -3025,6 +3025,7 @@ await test("MIG-14 — every round of the migration notice says what a notice mu
       ["an address", /@/],
       ["a request to reply", /\brepl(?:y|ies|ied|ying)\b/i],
       ["an `issues/` link", /issues\//i],
+      ["contract 4.0.0's retired `astraUser` prerequisite (ID-5, MIG-14)", /astraUser/],
     ];
     for (const [what, re] of absent) {
       const hit = re.exec(text);

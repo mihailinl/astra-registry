@@ -228,8 +228,9 @@ stays listed and installable, and takes no new version. From the cutover, a
 release of a `grandfathered` listing that was held and approved also waits
 until the listing is bound (contract MIG-12). A release of it that nothing
 holds is published at once, marked not reviewed by moderators, as on any
-listing (§8). Binding needs a Minice account holding `astraUser`, a binding
-line in the repository, a new tag, and one `R_FIRST_BINDING` hold that a
+listing (§8). Binding needs a Minice account carrying `publish:plugin` (every
+Astra owner, or a `publisher`), a binding line in the repository, a new tag,
+and one `R_FIRST_BINDING` hold that a
 moderator approves; a bound release unfreezes the listing, with no penalty
 (MIG-1, MIG-10). What the authors of these listings are told, and
 when, is `docs/migration-notice.md`. Enforced by
