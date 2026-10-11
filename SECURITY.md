@@ -4,9 +4,12 @@ This document describes the keys that make the Astra plugin catalogue
 trustworthy, who holds them, what happens when one is lost, and — the part most
 documents of this kind omit — what this design does **not** protect against.
 
-Reporting a vulnerability: open a private security advisory on this repository,
-or email the address in the repository profile. Please do not open a public
-issue for anything that would let someone ship code to a user.
+Reporting a vulnerability: e-mail **security@minice.ai**. It is read by the
+project owner, and it is **not encrypted** — say you have a report, without the
+details, if you want to agree a channel first. Since the cutover (ROLL-33) this
+registry offers no issue form and no GitHub private reporting for it (MOD-45),
+and an issue opened here reaches nobody. Please never put anything that would let
+someone ship code to a user into a public place.
 
 ---
 
@@ -275,24 +278,17 @@ Nothing a user holds becomes untrustworthy.
 The provenance will be **perfect** and will attest a malicious build. There is
 no cryptographic defence, and `POLICY.md` says so in the same words.
 
-What actually applies depends on the path a release arrives by, until the
-cutover (ROLL-33) leaves the plugins service as the only one:
-
-- **Through the plugins service, none is delayed** (contract 3.0.0, DEC-19).
-  Every new version publishes at once, not reviewed by Astra moderators, and from
-  the Astra release that shows the mark a user is warned before installing or
-  updating to it (`docs/POLICY.md` §2.1; Astra 0.2.x shows nothing). A
-  `notice.published` goes to the listing's bound Minice account on every
-  publish, by e-mail and in the panel (OD-17), so a takeover victim sees it
-  happen, after it has published — and none for a listing not yet bound, which
-  is one reason binding is mandatory by the deadline (OD-9).
-- **Through an issue here**, a release of a plugin holding a high-risk
-  permission still waits out a publication delay: 24 hours, or 6 for an author
-  with five clean releases here (`docs/POLICY.md` §4). The bot says so on the
-  listing's issue, or opens a `[notice]` issue, so a takeover victim can see it
-  before it reaches anybody.
-
-On either path: permission-diff re-consent, and revocation once it is noticed.
+What actually applies since the cutover (ROLL-33), when every release arrives
+through the plugins service and none is delayed (DEC-19): the review mark, since
+every new version publishes not reviewed by Astra moderators and, from the Astra
+release that shows the mark, a user is warned before installing or updating to
+it (`docs/POLICY.md` §2.1; Astra 0.2.x shows nothing); a `notice.published` to
+the listing's bound Minice account on every publish, by e-mail and in the panel
+(OD-17), so a takeover victim sees it happen, after it has published — and none
+for a listing not yet bound, which is one reason binding is mandatory by the
+deadline (OD-9); permission-diff re-consent; and revocation once it is noticed.
+Until the cutover a release through an issue here also waited out a 24-hour
+publication delay when its plugin held a high-risk permission.
 
 ### 5.6 This repository is compromised, but no key is
 
