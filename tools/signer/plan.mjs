@@ -44,6 +44,35 @@
 // publication rather than of the catalogue. An unchanged document is re-signed
 // only once the head's is 20 hours old (D4's cadence, inside the list's 7-day
 // TTL with room for a missed run); a changed one publishes at once.
+//
+// ── trust.json and root.json are changes too (2026-10-12) ──────────────────
+//
+// A `signed` commit holds FOUR documents (D2), and two of them are not this
+// file's to generate: trust.json and root.json are byte copies of the
+// Source-Commit's tree (TRUST-3), made by the root ceremony. Until 2026-10-12
+// `planRun` decided whether to commit from the catalogue and the list alone,
+// so a Source-Commit that changed only trust.json committed nothing. Measured
+// on the root ceremony: registry #426 merged trust.json serial 3 as `beedffa`,
+// and sign.yml's push run 38197920341 logged `catalogue 57 (unchanged), list
+// 16 (unchanged); commit=false` and then `nothing changed at this
+// Source-Commit, so there is nothing to commit (D4)`. `signed` held serial 2
+// until a hand dispatch at 03:48Z (run 38201228997) happened to find the list
+// past its 20-hour re-sign. A trust.json that adds a rotated index key or
+// drops a compromised one waits the same way.
+//
+// So `decideCopy` compares the Source-Commit's bytes of each with `signed`'s
+// head, and a difference is a reason to commit on its own. The catalogue and
+// the list keep their own decisions — an unchanged one is re-committed byte
+// for byte, a re-sign still waits for its cadence — and every check
+// `tools/signer/run.mjs` makes over the whole commit (§0.7, SERVE-95,
+// TRUST-43a, the fast-forward push) is made over this one too. The one that
+// refuses is SERVE-95: a trust.json that drops the key the unchanged
+// documents are signed by commits nothing, because they would not verify
+// beside it. That is D10's compromise with nothing else in the Source-Commit,
+// and D10 step 4 wants both documents re-signed in that run instead; this
+// plan does not do that yet, so that run is refused rather than published,
+// exactly as `tools/selftest/rehearsal-r2.mjs`'s "D10's own inputs alone
+// commit nothing" records.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -64,6 +93,9 @@ export const SIGNED_FILES = {
   trust: "registry/v1/trust.json",
   root: "registry/v1/root.json",
 };
+
+/** D2's two byte copies: never generated or signed here, compared with `signed`'s head. */
+export const COPIED_DOCUMENTS = Object.freeze(["trust", "root"]);
 
 /** D4's cadence: an unchanged document is re-signed once the head's is this old. */
 export const RESIGN_AFTER_HOURS = 20;
@@ -546,6 +578,59 @@ export function decideDocument({
   };
 }
 
+/**
+ * One of D2's byte copies, against `signed`'s head.
+ *
+ * trust.json and root.json are not generated, gated or signed by this job:
+ * the root ceremony made them, and the signer copies them from the
+ * Source-Commit's tree (TRUST-3) into every commit. So whether one changed is
+ * a comparison of bytes and nothing else — not of parsed content, because the
+ * client verifies the root signature over what it is served, and a copy that
+ * differs only in whitespace is still a different file on `main`.
+ *
+ * `bytes` is the Source-Commit's file as `blobAt` reads it, and the head's is
+ * `fetchSignedHead`'s `bytes[name]`, keyed by the `SIGNED_FILES` name (`trust`,
+ * `root`) and decoded by the same reader, so equal files compare equal. A file
+ * that is not UTF-8 decodes leniently on both sides; `signRun` refuses such a
+ * file at the Source-Commit (§0.7) whatever this says.
+ *
+ * `changed` is a reason to commit on its own. `absent` is a Source-Commit
+ * without the file, which D2 cannot commit; `signRun` makes that refusal, so
+ * the plan only declines to count it as a reason.
+ *
+ * @param {{name: string, file: string, bytes: string|null, head: object}} opts
+ */
+export function decideCopy({ name, file, bytes, head }) {
+  if (bytes === null) {
+    return { document: name, file, decision: "absent", reason: `${file} is not in the Source-Commit's tree` };
+  }
+  const headBytes = head?.present ? head.bytes?.[name] : null;
+  if (typeof headBytes !== "string") {
+    const why = head?.present ? `\`signed\`'s head has no ${file}` : "`signed` has no head yet";
+    return { document: name, file, decision: "changed", reason: `${file} is published for the first time: ${why}` };
+  }
+  if (headBytes !== bytes) {
+    return { document: name, file, decision: "changed", reason: `${file} changed at this Source-Commit` };
+  }
+  return { document: name, file, decision: "unchanged", reason: null };
+}
+
+/**
+ * What `planRun` would decide for D2's byte copies at `sourceCommit`.
+ *
+ * Exported so that `tools/signer/run.mjs` names them in its summary line
+ * with this function, over the same three inputs, rather than with a
+ * comparison of its own that could come to another answer.
+ *
+ * @param {{root: string, sourceCommit: string, head: object}} opts
+ */
+export function copiesAt({ root, sourceCommit, head }) {
+  return Object.fromEntries(COPIED_DOCUMENTS.map((name) => [
+    name,
+    decideCopy({ name, file: SIGNED_FILES[name], bytes: blobAt({ root, ref: sourceCommit, path: SIGNED_FILES[name] }), head }),
+  ]));
+}
+
 /** D4: every carry alerts, and the alert says what is being served meanwhile. */
 export function carryAlert(result) {
   const served = result.issued_at
@@ -569,6 +654,11 @@ export function carryAlert(result) {
  * compromise mode reaches here, as a boolean from
  * `tools/signer/key-window.mjs`, so that this file never has to know what a
  * key is.
+ *
+ * `commit` is true when nothing is refused and `commit_reasons` names at least
+ * one thing to publish: a changed or re-signed catalogue or list, or a changed
+ * trust.json or root.json (`copies`). Each reason is a sentence an operator
+ * reads in the run's summary line.
  *
  * @param {object} opts
  * @param {string} opts.root
@@ -628,10 +718,30 @@ export async function planRun({
     }
   }
 
-  const notes = [...gates.index.notes, ...gates.revocations.notes];
-  const commit =
-    refusals.length === 0 &&
-    Object.values(documents).some((d) => d.decision === "changed" || d.decision === "resign");
+  // D2's byte copies. A changed one commits on its own, beside the catalogue
+  // and the list exactly as decided above (see the header, 2026-10-12).
+  const copies = copiesAt({ root, sourceCommit, head });
 
-  return { source_commit: sourceCommit, head_sha: head?.sha ?? null, serials, gates, documents, alerts, notes, refusals, commit };
+  const notes = [...gates.index.notes, ...gates.revocations.notes];
+  const commitReasons = [
+    ...Object.values(documents)
+      .filter((d) => d.decision === "changed" || d.decision === "resign")
+      .map((d) => `${d.file} ${d.decision === "changed" ? "changed" : "is due its re-sign"}`),
+    ...Object.values(copies).filter((c) => c.decision === "changed").map((c) => c.reason),
+  ];
+  const commit = refusals.length === 0 && commitReasons.length > 0;
+
+  return {
+    source_commit: sourceCommit,
+    head_sha: head?.sha ?? null,
+    serials,
+    gates,
+    documents,
+    copies,
+    alerts,
+    notes,
+    refusals,
+    commit_reasons: commitReasons,
+    commit,
+  };
 }
