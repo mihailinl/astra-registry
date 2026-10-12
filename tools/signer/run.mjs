@@ -69,7 +69,8 @@ import {
   DOCUMENT_DOMAINS, keyPlan, readDelegationTimes, refusesDroppedKey, retirementRecordAt, trustAtCommit,
 } from "./key-window.mjs";
 import {
-  SIGNED_BRANCH, SIGNED_FILES, carryAlert, fetchSignedHead, indexSizeVerdict, maxIndexBytes, planRun, resignAfterHoursFor,
+  SIGNED_BRANCH, SIGNED_FILES, carryAlert, copiesAt, fetchSignedHead, indexSizeVerdict, maxIndexBytes, planRun,
+  resignAfterHoursFor,
 } from "./plan.mjs";
 import { armingState, pagesRegistryFiles, pagesTree } from "./pages.mjs";
 import { budgetLine, budgetWarning, indexBudget } from "../lib/index-budget.mjs";
@@ -376,11 +377,18 @@ export async function signRun({
     }
   }
 
+  // Something to publish: a document this run signed, or a trust.json or
+  // root.json the Source-Commit changed (plan.mjs, `decideCopy`). The second
+  // is asked of the plan and not of `documents`, because a byte copy's
+  // decision there is `copied` whether or not it moved. Every refusal above
+  // has already been made over the four documents as they would be committed,
+  // a copy-only commit included.
   const commit =
     refusals.length === 0 &&
     ["index", "revocations"].every((n) => typeof documents[n]?.bytes === "string") &&
     ["trust", "root"].every((n) => typeof documents[n]?.bytes === "string") &&
-    Object.values(documents).some((d) => d.decision === "changed" || d.decision === "resign");
+    (Object.values(documents).some((d) => d.decision === "changed" || d.decision === "resign") ||
+      Object.values(plan.copies).some((c) => c.decision === "changed"));
 
   // D4: a carried catalogue keeps the `Index-Source-Commit` it was published
   // with, because the tree it was generated from is that one and not this run's.
@@ -707,9 +715,19 @@ async function stepSign(args) {
   for (const alert of record.alerts) console.log(`::warning::${alert}`);
   for (const warning of record.warnings) console.log(`::warning::${warning}`);
   for (const refusal of record.refusals) console.error(`::error::${refusal}`);
+  // A trust.json or root.json that moved is named here, because it is the one
+  // reason to commit that the two decisions in this line cannot show: until
+  // 2026-10-12 a Source-Commit that changed only trust.json read `catalogue 57
+  // (unchanged), list 16 (unchanged); commit=false`, and nothing said what had
+  // been left unpublished (plan.mjs's header). The answer is `planRun`'s own
+  // function over the same three inputs.
+  const copied = Object.values(copiesAt({ root, sourceCommit, head }))
+    .filter((c) => c.decision === "changed")
+    .map((c) => `; ${c.reason}`)
+    .join("");
   console.log(
     `ok    ${record.key_mode} mode, catalogue ${record.serials.index} (${record.documents.index?.decision}), ` +
-    `list ${record.serials.revocations} (${record.documents.revocations?.decision}); commit=${record.commit}; ` +
+    `list ${record.serials.revocations} (${record.documents.revocations?.decision})${copied}; commit=${record.commit}; ` +
     `an unchanged document is re-signed at ${resignAfterHours} h on a ${event ?? "local"} run`,
   );
   output({
@@ -728,7 +746,10 @@ function stepCommit(args) {
   const root = args.root;
   const record = JSON.parse(fs.readFileSync(args.record, "utf8"));
   if (!record.commit) {
-    console.log("ok    nothing changed at this Source-Commit, so there is nothing to commit (D4)");
+    console.log(
+      "ok    nothing changed at this Source-Commit — not the catalogue, the list, trust.json or root.json — " +
+      "so there is nothing to commit (D4)",
+    );
     output({ committed: "false", signed_sha: "", receipt: "" });
     return 0;
   }

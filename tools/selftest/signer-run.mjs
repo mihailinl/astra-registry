@@ -40,7 +40,7 @@ import { signIndex } from "../../bot/sign-index.mjs";
 import { signRevocations } from "../sign-revocations.mjs";
 import { REVOCATIONS_SCHEMA, TRUST_SCHEMA } from "../../bot/lib/sign.mjs";
 import { RETIREMENTS_PATH, RETIREMENTS_SCHEMA, WINDOW_EXEMPT_KEY_IDS } from "../signer/key-window.mjs";
-import { RESIGN_AFTER_HOURS, SIGNED_FILES, fetchSignedHead, planRun, serialsAt } from "../signer/plan.mjs";
+import { RESIGN_AFTER_HOURS, RESIGN_HOURS_BY_EVENT, SIGNED_FILES, fetchSignedHead, planRun, serialsAt } from "../signer/plan.mjs";
 import { trailersOf } from "../served-set/provenance.mjs";
 import { buildSignedCommit, commitMessage, pushSigned, signRun, writeTree } from "../signer/run.mjs";
 import { test, assert, assertEqual, tmp } from "./harness.mjs";
@@ -692,6 +692,180 @@ export async function run() {
       `the refusal does not name the event: ${odd.said}`);
     const empty = cli("", 25);
     assertEqual(empty.status, 2, `an empty --event was planned as a shell run: ${empty.said}`);
+  });
+
+  // ── trust.json and root.json publish on their own (2026-10-12) ───────────
+  //
+  // Found doing the root ceremony for real: registry #426 merged trust.json
+  // serial 3 as `beedffa`, and sign.yml's push run 38197920341 logged
+  // `catalogue 57 (unchanged), list 16 (unchanged); commit=false`, then
+  // `nothing changed at this Source-Commit`. `planRun` decided from the
+  // catalogue and the list alone, and a `signed` commit carries four
+  // documents (D2), so a Source-Commit that changed only trust.json committed
+  // nothing until the list happened to cross its 20-hour re-sign. No test had
+  // a Source-Commit that changed only trust.json, and the dry run stops
+  // before publication, so this is asked through both steps `sign.yml` runs,
+  // on a `push`, the event whose re-sign waits 34 h.
+  await test("a Source-Commit that changes only trust.json, or only root.json, publishes at once on a push run with the catalogue and the list byte for byte; one that changes neither commits nothing", async () => {
+    const t = makeTree("copy-only", { trustKeys: [BOOTSTRAP] });
+    t.addListing("dice-roller");
+    const listed = t.commit("a listing");
+    const T0 = Date.parse("2026-10-12T00:00:00Z");
+    const at = (hours) => new Date(T0 + hours * 3600 * 1000).toISOString().replace(/\.\d+Z$/, "Z");
+    const opening = await signRun({
+      root: t.dir, sourceCommit: listed, head: { present: false }, now: at(0), available: [signerFor(BOOTSTRAP)],
+    });
+    assertEqual(opening.commit, true, "the opening run, which creates `signed`, committed nothing");
+    const openingSha = buildSignedCommit({
+      root: t.dir, files: opening.files, parent: null, message: commitMessage(opening, "https://example.invalid/runs/1"),
+    });
+    t.git("update-ref", "refs/heads/signed", openingSha);
+    t.git("remote", "add", "origin", t.dir);
+
+    const RUN = path.join(import.meta.dirname, "..", "signer", "run.mjs");
+    // Nothing of the job this suite runs in reaches the child: not its
+    // GITHUB_OUTPUT, not its event, and never a signing key.
+    const env = Object.fromEntries(Object.entries(fixtureEnv(t.dir)).filter(([k]) =>
+      !k.startsWith("GITHUB_") && !k.startsWith("ASTRA_INDEX_SIGNING_KEY")));
+    const node = (args) => {
+      const r = spawnSync(process.execPath, [RUN, ...args], { env, encoding: "utf8" });
+      return { status: r.status, said: `${r.stdout}${r.stderr}` };
+    };
+    const blob = (ref, rel) => t.git("show", `${ref}:${rel}`);
+    // `sign.yml`'s two steps, as it runs them on a push.
+    const publish = (label, sourceCommit, hours) => {
+      const out = path.join(tmp, `copy-only-${label}`);
+      const recordFile = `${out}.json`;
+      const before = t.git("rev-parse", "refs/heads/signed");
+      const sign = node([
+        "--step", "sign", "--root", t.dir, "--source-commit", sourceCommit, "--now", at(hours), "--event", "push",
+        "--test-key", `${BOOTSTRAP}=${KEY_A}`, "--out", out, "--record", recordFile,
+      ]);
+      assertEqual(sign.status, 0, `${label}: the sign step exited ${sign.status}: ${sign.said}`);
+      const commit = node(["--step", "commit", "--root", t.dir, "--record", recordFile, "--tree", out]);
+      assertEqual(commit.status, 0, `${label}: the commit step exited ${commit.status}: ${commit.said}`);
+      return {
+        before,
+        after: t.git("rev-parse", "refs/heads/signed"),
+        record: JSON.parse(fs.readFileSync(recordFile, "utf8")),
+        said: `${sign.said}${commit.said}`,
+      };
+    };
+    const carriedByteForByte = (label, r) => {
+      for (const name of ["index", "revocations"]) {
+        assertEqual(r.record.documents[name].decision, "unchanged", `${label}: the ${name} decision`);
+        assertEqual(blob(r.after, SIGNED_FILES[name]), blob(r.before, SIGNED_FILES[name]),
+          `${label}: ${SIGNED_FILES[name]} is not the previous \`signed\` commit's bytes`);
+      }
+      assertEqual(r.record.refusals.join(" | "), "", `${label}: the run was refused`);
+      assertEqual(r.record.status, "green", `${label}: a copy-only commit raised the alarm`);
+    };
+
+    // A root ceremony's trust.json, and nothing else.
+    t.write(SIGNED_FILES.trust, trustDelegating([BOOTSTRAP], 2));
+    const trustOnly = t.commit("the root ceremony: trust.json at serial 2, nothing else");
+    const trust = publish("trust", trustOnly, 1);
+    assertEqual(trust.record.commit, true, `a Source-Commit that changed only trust.json committed nothing: ${trust.said}`);
+    assert(trust.said.includes(`${SIGNED_FILES.trust} changed at this Source-Commit; commit=true`),
+      `the summary line does not say why an unchanged catalogue and list committed: ${trust.said}`);
+    assert(trust.after !== trust.before, "the commit step reported success and `signed` did not move");
+    assertEqual(t.git("rev-parse", `${trust.after}^`), trust.before, "the copy-only commit is not a child of the last (SERVE-18)");
+    assertEqual(blob(trust.after, SIGNED_FILES.trust), blob(trustOnly, SIGNED_FILES.trust),
+      "`signed`'s trust.json is not main's bytes at the Source-Commit (TRUST-3)");
+    assertEqual(trailersOf(t.git("log", "-1", "--format=%B", trust.after))["Source-Commit"], trustOnly,
+      "the copy-only commit names another Source-Commit");
+    carriedByteForByte("trust", trust);
+
+    // root.json alone.
+    t.write(SIGNED_FILES.root, { ...ROOT_DOC, $comment: "a root.json the ceremony rewrote" });
+    const rootOnly = t.commit("root.json, nothing else");
+    const rootRun = publish("root", rootOnly, 2);
+    assertEqual(rootRun.record.commit, true, `a Source-Commit that changed only root.json committed nothing: ${rootRun.said}`);
+    assert(rootRun.said.includes(`${SIGNED_FILES.root} changed at this Source-Commit; commit=true`), rootRun.said);
+    assert(!rootRun.said.includes(`${SIGNED_FILES.trust} changed`), `the unchanged trust.json is named as changed: ${rootRun.said}`);
+    assertEqual(blob(rootRun.after, SIGNED_FILES.root), blob(rootOnly, SIGNED_FILES.root), "`signed`'s root.json is not main's");
+    assertEqual(blob(rootRun.after, SIGNED_FILES.trust), blob(trust.after, SIGNED_FILES.trust), "trust.json moved with root.json");
+    carriedByteForByte("root", rootRun);
+
+    // Neither, and nothing else the signer publishes: still a no-op.
+    t.write("README.md", "a sentence that is not signed\n");
+    const neither = t.commit("a README, nothing signed");
+    const quiet = publish("neither", neither, 3);
+    assertEqual(quiet.record.commit, false, `a Source-Commit that changed nothing signed made a commit: ${quiet.said}`);
+    assertEqual(quiet.after, quiet.before, "`signed` moved on a Source-Commit that changed nothing it holds");
+    assert(!quiet.said.includes("changed at this Source-Commit;"), `an unchanged copy is named as changed: ${quiet.said}`);
+    assert(quiet.said.includes("nothing changed at this Source-Commit"), quiet.said);
+  });
+
+  await test("a trust.json that drops the key the unchanged documents are signed by still commits nothing, and a recorded retirement over a dual-signed head publishes", async () => {
+    // The one refusal on a copy-only commit, and it is SERVE-95's: the
+    // catalogue and the list are re-committed byte for byte, so beside a
+    // trust.json that no longer delegates their signer they are documents
+    // SERVE-15 refuses, and SERVE-91 would then refuse all four. D10 step 4
+    // wants both re-signed in that run instead (plan.mjs's header); until the
+    // plan does that, the run must be refused, not published.
+    const t = makeTree("copy-only-drop", { trustKeys: [KEY_A, KEY_B] });
+    t.addListing("dice-roller");
+    const first = t.commit("a listing, both keys delegated");
+    const issuedAt = new Date("2026-09-19T00:00:00Z");
+    const now = "2026-09-19T01:00:00Z";
+    const catalogue = buildIndex({ root: t.dir, serial: 1 });
+    const list = { signed: { schema: REVOCATIONS_SCHEMA, serial: 1, revocations: [] } };
+    const delegatedAt = new Map([[KEY_A, "2026-01-01T00:00:00Z"], [KEY_B, "2026-06-01T00:00:00Z"]]);
+    const push = RESIGN_HOURS_BY_EVENT.push;
+    const run = (head, sourceCommit) => signRun({
+      root: t.dir, sourceCommit, head, now, available: [signerFor(KEY_B)], delegatedAt, resignAfterHours: push,
+    });
+
+    t.write(SIGNED_FILES.trust, trustDelegating([KEY_B], 2));
+    const dropped = t.commit("trust.json drops KEY_A, and nothing else");
+
+    // KEY_A alone signed what `signed` holds, as it does inside SERVE-30's
+    // seven hours, or on any day before an incoming key exists.
+    const solo = headFrom({
+      index: signIndex(catalogue, { signer: signerFor(KEY_A), issuedAt }),
+      revocations: signRevocations(list, { signer: signerFor(KEY_A), issuedAt }),
+      trust: trustDelegating([KEY_A, KEY_B]),
+      sha: first,
+    });
+    // The plan has to want this commit, or the refusal below is the old
+    // silence and proves nothing about the guard.
+    const plan = await planRun({ root: t.dir, sourceCommit: dropped, head: solo, now, resignAfterHours: push });
+    assertEqual(`${plan.documents.index.decision} ${plan.documents.revocations.decision}`, "unchanged unchanged",
+      "the fixture changed a document, so this is not a copy-only commit");
+    assertEqual(plan.copies.trust.decision, "changed", "the plan did not see trust.json change");
+    assertEqual(plan.commit_reasons.join(" | "), `${SIGNED_FILES.trust} changed at this Source-Commit`, "the plan's reasons");
+    assertEqual(plan.commit, true, "the plan would not commit a changed trust.json");
+
+    const refused = await run(solo, dropped);
+    assertEqual(refused.key_mode, "compromise", "a drop no record names is not compromise mode");
+    assertEqual(refused.commit, false, "a trust.json was committed beside documents it cannot verify");
+    assert(refused.codes.includes("SIGNER_TRUST_REFUSED_DOCUMENT"), `the refusal is not SERVE-95's: ${refused.codes.join(" ")}`);
+    for (const rel of [SIGNED_FILES.index, SIGNED_FILES.revocations]) {
+      assert(refused.refusals.some((r) => r.includes(rel) && r.includes("SERVE-95")),
+        `${rel} is not named in a SERVE-95 refusal: ${refused.refusals.join(" | ")}`);
+    }
+    assertEqual(refused.status, "red", "a refused trust.json reported green");
+
+    // The same drop, recorded as SERVE-30's planned retirement, over a head
+    // both keys signed: the unchanged documents verify beside the new
+    // trust.json, so it publishes on a push, byte for byte.
+    t.write(RETIREMENTS_PATH, { schema: RETIREMENTS_SCHEMA, retirements: [{ key_id: KEY_A, retired_from: "2026-09-18T00:00:00Z" }] });
+    const recorded = t.commit("the retirement, recorded");
+    const both = [signerFor(KEY_A), signerFor(KEY_B)];
+    const dual = headFrom({
+      index: signIndex(catalogue, { signers: both, issuedAt }),
+      revocations: signRevocations(list, { signers: both, issuedAt }),
+      trust: trustDelegating([KEY_A, KEY_B]),
+      sha: first,
+    });
+    const retired = await run(dual, recorded);
+    assertEqual(retired.key_mode, "retirement", "a recorded retirement read as something else");
+    assertEqual(`${retired.commit} ${retired.refusals.join(" | ")}`, "true ", "a safe trust.json-only drop did not publish");
+    assertEqual(retired.files[SIGNED_FILES.index], dual.bytes.index, "the catalogue is not the head's bytes");
+    assertEqual(retired.files[SIGNED_FILES.revocations], dual.bytes.revocations, "the list is not the head's bytes");
+    assertEqual(retired.files[SIGNED_FILES.trust], fs.readFileSync(path.join(t.dir, SIGNED_FILES.trust), "utf8"),
+      "trust.json is not main's bytes");
   });
 
   // ── SERVE-49 on the bytes a client receives (ops couplings 155) ───────────

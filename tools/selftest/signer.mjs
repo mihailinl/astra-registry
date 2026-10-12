@@ -34,8 +34,8 @@ import {
   delegationTimes, keyPlan, readDelegationTimes, refusesDroppedKey,
 } from "../signer/key-window.mjs";
 import {
-  BACKSTOP_RESIGN_AFTER_HOURS, RESIGN_AFTER_HOURS, RESIGN_HOURS_BY_EVENT, SIGNED_FILES, catalogueGate, contentOf, decideDocument, fetchSignedHead,
-  gateVerdict, indexSizeVerdict, listGate, maxIndexBytes, planRun, resignAfterHoursFor, serialsAt,
+  BACKSTOP_RESIGN_AFTER_HOURS, RESIGN_AFTER_HOURS, RESIGN_HOURS_BY_EVENT, SIGNED_FILES, catalogueGate, contentOf, decideCopy, decideDocument,
+  fetchSignedHead, gateVerdict, indexSizeVerdict, listGate, maxIndexBytes, planRun, resignAfterHoursFor, serialsAt,
 } from "../signer/plan.mjs";
 import { armingState, pagesRegistryFiles, pagesTree } from "../signer/pages.mjs";
 import { budgetWarning, indexBudget, warnLine } from "../lib/index-budget.mjs";
@@ -884,6 +884,32 @@ export async function run() {
       assertEqual(head.bytes[name], wrote[rel], `${rel} did not round-trip byte for byte`);
     }
     assertEqual(head.parseErrors.join("; "), "", "the head did not parse");
+  });
+
+  await test("trust.json and root.json are compared with `signed`'s head byte for byte, and a change is a reason to commit on its own", () => {
+    // D2's byte copies (2026-10-12; plan.mjs's header). The comparison is of
+    // BYTES, not of parsed content: the client verifies the root signature
+    // over the file it is served, and TRUST-3 holds `signed`'s copy
+    // byte-identical to main's, so a copy that differs only in a trailing
+    // newline is a different file, and an equal one must not make a commit.
+    const trust = trustDelegating([KEY_A]);
+    const head = headFrom({
+      index: signIndex(fixtureCatalogue(3), { signer: signerFor(KEY_A) }),
+      revocations: { signatures: [], signed: { schema: REVOCATIONS_SCHEMA, serial: 1, revocations: [] } },
+      trust,
+    });
+    const at = (bytes, h = head) => decideCopy({ name: "trust", file: SIGNED_FILES.trust, bytes, head: h });
+    assertEqual(at(head.bytes.trust).decision, "unchanged", "the head's own bytes read as a change");
+    assertEqual(at(head.bytes.trust).reason, null, "an unchanged copy gave a reason to commit");
+    const newline = at(head.bytes.trust.replace(/\n$/, ""));
+    assertEqual(newline.decision, "changed", "a trust.json one byte shorter read as the head's");
+    assertEqual(newline.reason, `${SIGNED_FILES.trust} changed at this Source-Commit`, "the reason an operator reads");
+    assertEqual(at(stableStringify(trustDelegating([KEY_A], 2))).decision, "changed", "a new serial read as the head's");
+    assertEqual(at(head.bytes.trust, { present: false }).decision, "changed", "the first run's trust.json is not published");
+    const absent = at(null);
+    assertEqual(absent.decision, "absent", "a Source-Commit with no trust.json read as something to copy");
+    assertEqual(decideCopy({ name: "root", file: SIGNED_FILES.root, bytes: head.bytes.root, head }).decision, "unchanged",
+      "root.json is compared under another name than fetchSignedHead keys it by");
   });
 
   await test("the content projection is the catalogue's own, extended to the list", () => {
