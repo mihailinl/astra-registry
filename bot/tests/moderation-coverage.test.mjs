@@ -37,8 +37,9 @@ import {
 } from "../../tools/moderation-coverage.mjs";
 import {
   DOCUMENT_MEMBERS, HISTORY_FLOOR as PRIV_HISTORY_FLOOR, ROLLOUT_MARKER_RE, classify as privClassify, run as privScan,
-  scanDocument, withoutAuthorship,
+  scanDocument, shapeFindings, withoutAuthorship, withoutUuidTrailers,
 } from "../../tools/priv-scan.mjs";
+import { TRAILERS, UUID_OK_TRAILERS, trailerLine } from "../lib/decisions.mjs";
 import { isTime } from "../../tools/lib/time.mjs";
 import { ADVISORY_BASE, DOC as DOCS_DOC, run as docsRule } from "../../tools/coverage/docs-advisory-url.mjs";
 import { NAMED as ROLL47_NAMED, PROMISES as ROLL47_PROMISES, run as roll47Rule } from "../../tools/coverage/roll47-promises.mjs";
@@ -740,6 +741,100 @@ test("PRIV-2: git's authorship trailers and reserved TLDs are exempt, and a real
   const g = fixture("priv-trailers-moved").commit("seed").landTools();
   g.commit("a change\n\nAsk mishasamil32@gmail.com about it.");
   assert.match(codesOf(priv(g.dir)), /E_PRIV_EMAIL/);
+});
+
+// ── PRIV-2: the bot's own UUID trailers (68053dab) ──────────────────────────
+//
+// The first real panel publish, registry commit `68053dab`, carries exactly
+// this message — `Run:`, `Submission:` and `Decision:` trailers rendered by
+// `renderTrailers` — and went red as `E_PRIV_UUID` on its `Submission:` line,
+// because nothing before it had ever given this scan a bot publish commit to
+// read. `withoutUuidTrailers` is the fix, scoped to the two trailers
+// `bot/lib/decisions.mjs`'s `TRAILER_GRAMMAR` marks `uuidOk: true`.
+
+const REAL_PUBLISH_MESSAGE = [
+  "registry: publish (plugins ingest)",
+  "",
+  "Run: 38512117070/1",
+  "Submission: 40a99ccf-3656-4963-817f-ce9cd841671d",
+  "Decision: 3e93a222f8f9a3463ca7ad56cb848a73",
+].join("\n");
+const A_SUBMISSION_UUID = "40a99ccf-3656-4963-817f-ce9cd841671d";
+const A_UUID_V1 = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"; // valid UUID shape, wrong version for BOT-37's grammar
+
+test("PRIV-2: 68053dab's own message — exactly the real one — is green", () => {
+  const f = fixture("priv-trailer-uuid-real").commit("seed").landTools();
+  f.commit(REAL_PUBLISH_MESSAGE);
+  const r = priv(f.dir);
+  assert.equal(r.status, "green", r.detail.join("\n"));
+});
+
+test("PRIV-2: the same UUID in the subject or body is still a finding", () => {
+  const subj = fixture("priv-trailer-uuid-subject").commit("seed").landTools();
+  subj.commit([`registry: publish ${A_SUBMISSION_UUID}`, "", "Run: 1", `Submission: ${A_SUBMISSION_UUID}`].join("\n"));
+  assert.match(codesOf(priv(subj.dir)), /E_PRIV_UUID/);
+
+  const body = fixture("priv-trailer-uuid-body").commit("seed").landTools();
+  body.commit(["registry: publish", "", `Mentions ${A_SUBMISSION_UUID} in prose.`, "", "Run: 1",
+    `Submission: ${A_SUBMISSION_UUID}`].join("\n"));
+  assert.match(codesOf(priv(body.dir)), /E_PRIV_UUID/);
+});
+
+test("PRIV-2: a malformed trailer value, an unknown trailer name, and a Submission: outside the " +
+  "final paragraph are each still a finding", () => {
+  // (c)1: BOT-37's own grammar is a UUID v4/v7; a v1 UUID is still a UUID
+  // shape and still not what `Submission:` renders, so it is not exempted.
+  const badGrammar = fixture("priv-trailer-uuid-wrong-version").commit("seed").landTools();
+  badGrammar.commit(["a change", "", "Run: 1", `Submission: ${A_UUID_V1}`].join("\n"));
+  assert.match(codesOf(priv(badGrammar.dir)), /E_PRIV_UUID/);
+
+  // (c)2: a UUID under a trailer name `UUID_OK_TRAILERS` does not list.
+  const unknownName = fixture("priv-trailer-uuid-unknown-name").commit("seed").landTools();
+  unknownName.commit(["a change", "", "Run: 1", `Correlation: ${A_SUBMISSION_UUID}`].join("\n"));
+  assert.match(codesOf(priv(unknownName.dir)), /E_PRIV_UUID/);
+
+  // (c)3: a `Submission:`-shaped line that is its own paragraph, one blank
+  // line above the real trailer block, is not BOT-37's trailer block.
+  const outside = fixture("priv-trailer-uuid-outside-block").commit("seed").landTools();
+  outside.commit(["a change", "", `Submission: ${A_SUBMISSION_UUID}`, "", "Run: 1",
+    "Decision: 3e93a222f8f9a3463ca7ad56cb848a73"].join("\n"));
+  assert.match(codesOf(priv(outside.dir)), /E_PRIV_UUID/);
+});
+
+test("PRIV-2: the mutation this rule fixes — without the trailer exemption, 68053dab's own " +
+  "message is red", () => {
+  // Watched from the other direction, as `bot/tests/decisions.test.mjs`
+  // (~722-730) does for the member-name exemption: this suite does not get
+  // to delete the `withoutUuidTrailers` call inside `run`, so the proof is
+  // the same shape scan `run` makes on this exact message, with that one
+  // step left out.
+  const withoutTheFix = shapeFindings(withoutAuthorship(`${REAL_PUBLISH_MESSAGE}\n`), { roles: new Set() });
+  assert.deepEqual(withoutTheFix.map((f) => f.code), ["E_PRIV_UUID"],
+    "if this is empty, the trailer exemption is doing nothing and the green case above proves nothing");
+
+  // And the fix itself, applied directly, clears exactly that finding.
+  const withTheFix = shapeFindings(withoutUuidTrailers(withoutAuthorship(`${REAL_PUBLISH_MESSAGE}\n`)), { roles: new Set() });
+  assert.deepEqual(withTheFix, []);
+});
+
+test("PRIV-2: the trailers this scan strips a UUID from are exactly TRAILER_GRAMMAR's " +
+  "`uuidOk: true` names, not a hand-kept copy of them", () => {
+  assert.deepEqual(Object.keys(UUID_OK_TRAILERS).sort(), ["Service-Decision", "Submission"]);
+
+  // Proved against EVERY declared trailer, not just the two: a trailer whose
+  // own grammar accepts a bare UUID v4/v7 value is in `UUID_OK_TRAILERS`, and
+  // one whose grammar refuses that value is not — which is what would drift
+  // if `tools/priv-scan.mjs` ever named the two trailers itself instead of
+  // reading this set.
+  for (const name of TRAILERS) {
+    if (name in UUID_OK_TRAILERS) {
+      assert.equal(trailerLine(name, A_SUBMISSION_UUID), `${name}: ${A_SUBMISSION_UUID}`,
+        `${name} is in UUID_OK_TRAILERS but its own grammar refused a UUID`);
+    } else {
+      assert.throws(() => trailerLine(name, A_SUBMISSION_UUID), /is not/,
+        `${name} is not in UUID_OK_TRAILERS but its own grammar accepted a UUID`);
+    }
+  }
 });
 
 test("PRIV-2: the canary exempts the address the contact file publishes, and needs the file to", () => {

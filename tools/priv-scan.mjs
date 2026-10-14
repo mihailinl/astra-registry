@@ -61,9 +61,12 @@
 //   Telegram id        a `-100…` chat id, a `t.me/` or `tg://` link, or ANY
 //                      value under a member whose name says Telegram
 //   UUID               outside the `submission_id` and `service_decision_id`
-//                      members, which DEC-7 says hold one
+//                      members, which DEC-7 says hold one — or outside
+//                      BOT-37's `Submission:`/`Service-Decision:` trailers in
+//                      a commit message's final paragraph, which render the
+//                      same two ids as free text instead of a member
 //
-// The exemptions are three, each principled and each narrow:
+// The exemptions are four, each principled and each narrow:
 //
 //   **git's own authorship trailers** — `Co-authored-by:`, `Signed-off-by:`
 //   and their siblings. 51 of the 53 addresses in this repository's last sixty
@@ -97,6 +100,23 @@
 //   104). The rules themselves live in `tools/lib/priv-rules.mjs`, which reads
 //   no file; this module keeps the one read, and `run` is its only caller.
 //
+//   **the bot's own UUID trailers (BOT-37)** — `withoutUuidTrailers`, run
+//   before the shape scan exactly as `withoutAuthorship` is. `submission_id`
+//   and `service_decision_id` are exempt by MEMBER name in a decision record
+//   (DEC-7); the same two ids reach a commit MESSAGE as a `Submission:` or
+//   `Service-Decision:` trailer (`bot/lib/decisions.mjs`'s `renderTrailers`),
+//   which is free text the position rule cannot reach. The exemption is
+//   narrowed back to exactly that case by two conditions rather than by
+//   trusting the name alone: the line must be in the message's FINAL
+//   paragraph (BOT-37's trailer block, not a line that merely quotes a
+//   trailer's name in the subject or body), and its value must match that
+//   trailer's own grammar exactly (`bot/lib/decisions.mjs`'s
+//   `UUID_OK_TRAILERS`, derived from `TRAILER_GRAMMAR` so the set exempted
+//   here can never drift from the set that module marks safe). The first
+//   real panel publish, registry commit `68053dab`, is the commit that found
+//   this hole: its `Submission:` trailer was `E_PRIV_UUID` because no test
+//   before it had ever given this scan a bot publish commit to read.
+//
 // ── CLEARING A RED ONE ──────────────────────────────────────────────────────
 //
 // History is not rewritten to clear a canary. `tools/coverage/priv-scan-exempt.json`
@@ -123,6 +143,7 @@ import {
   mergeOwnChanges, mergesAfter,
 } from "./coverage/git.mjs";
 import { DOCUMENT_MEMBERS, EMAIL_RE, scanDocument, shapeFindings } from "./lib/priv-rules.mjs";
+import { UUID_OK_TRAILERS } from "../bot/lib/decisions.mjs";
 
 // Re-exported so that what this canary applies stays importable under the name
 // its tests and its readers already use. The definitions are in
@@ -227,6 +248,54 @@ export function withoutAuthorship(message) {
     .join("\n");
 }
 
+/**
+ * Strip the bot's own UUID-carrying trailers — `Submission:` and
+ * `Service-Decision:`, named by `bot/lib/decisions.mjs`'s `UUID_OK_TRAILERS`
+ * so this can never exempt a trailer that module did not also mark
+ * `uuidOk` — out of a commit message's FINAL paragraph (BOT-37's trailer
+ * block) before the shape scan runs.
+ *
+ * `registry: publish (plugins ingest)`'s real commit, `68053dab`, is exactly
+ * the case this exists for: its `Submission: 40a99ccf-…` trailer is
+ * `renderTrailers`'s rendering of a service-generated id DEC-7 already
+ * exempts by MEMBER name in a decision record, and PRIV-2's own exemption is
+ * "the exempt UUID members", not "the exempt UUID members, except when the
+ * same id is a commit trailer instead". No test had ever given this scanner
+ * a bot publish commit message carrying one before that commit was the
+ * first real one — which is why nothing caught it.
+ *
+ * Deliberately narrow, in the two directions a wider rule would have missed:
+ *
+ *   - only the message's FINAL paragraph. A `Submission:`-shaped line in the
+ *     subject or body is not a trailer BOT-37 rendered, and PRIV-2's stated
+ *     hole — a commit body has no members, so the position rule cannot
+ *     reach it — still applies there.
+ *   - only when the value matches THAT trailer's own grammar exactly. A
+ *     malformed value, or a UUID under a name `UUID_OK_TRAILERS` does not
+ *     list, is not the thing `renderTrailers` renders, and the shape scan
+ *     still needs to see it.
+ */
+export function withoutUuidTrailers(message) {
+  // `git log --format=%B` ends the message in a trailing newline (sometimes
+  // two), which a plain `split("\n\n")` reads as an empty FINAL paragraph —
+  // so the real trailer block, one paragraph earlier, was never the one this
+  // stripped. Trim the trailing newlines off before splitting into
+  // paragraphs, and put them back afterwards.
+  const [, body, trailingNewlines] = /^([\s\S]*?)(\n*)$/.exec(message);
+  const paragraphs = body.split("\n\n");
+  const last = paragraphs.length - 1;
+  paragraphs[last] = paragraphs[last]
+    .split("\n")
+    .filter((line) => {
+      const m = /^([A-Za-z-]+):\s(.*)$/.exec(line);
+      if (!m) return true;
+      const re = UUID_OK_TRAILERS[m[1]];
+      return !(re && re.test(m[2]));
+    })
+    .join("\n");
+  return paragraphs.join("\n\n") + trailingNewlines;
+}
+
 // ── exemptions ──────────────────────────────────────────────────────────────
 
 /** `{commit, where, code, reason}` entries. An entry matching nothing fails. */
@@ -290,7 +359,8 @@ export function run(repo, { from, historyFloor = HISTORY_FLOOR } = {}) {
 
   const scanMessage = (sha) => {
     const meta = commitMeta(sha, repo);
-    for (const f of shapeFindings(withoutAuthorship(meta.message), { roles })) {
+    const text = withoutUuidTrailers(withoutAuthorship(meta.message));
+    for (const f of shapeFindings(text, { roles })) {
       findings.push({ sha, where: "commit-message", code: f.code, what: f.what });
     }
   };
