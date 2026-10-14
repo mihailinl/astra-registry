@@ -38,6 +38,8 @@ import test from "node:test";
 
 import {
   AUTHOR_DENIED_MEMBERS,
+  LIST_OUTPUTS,
+  MAX_OUTPUT_BYTES,
   MODERATION_ALLOWLIST,
   MODERATION_INTERVAL_SECONDS,
   REFUSAL_BY_MEMBER,
@@ -57,6 +59,7 @@ import {
   entryCommit,
   holdDeletions,
   holdEntryPath,
+  listOutputs,
   listSummary,
   main,
   readShadow,
@@ -2179,6 +2182,148 @@ test("the commit step hands `report` and `settled` the commit it pushed and the 
   assert.deepEqual(shadowPosted.bodies, [], "report posted under a shadow answer (BOT-92)");
 });
 
+/**
+ * The `run: |` block of the step with this `id:` in `plugins-moderation.yml`,
+ * with its one `node bot/moderation-run.mjs …` line taken out and returned
+ * apart. The job itself runs in-process here, against a stub service — a
+ * bash subprocess cannot be handed one — and the step's remaining lines, the
+ * ones that copy what the job wrote into $GITHUB_OUTPUT, run under `bash -e`
+ * as the runner runs them, over exactly what the job left behind.
+ */
+function stepAround(id) {
+  const lines = read(".github/workflows/plugins-moderation.yml").split("\n");
+  const at = lines.flatMap((l, i) => (new RegExp(`^\\s+id: ${id}\\s*$`).test(l) ? [i] : []));
+  assert.equal(at.length, 1, `plugins-moderation.yml has ${at.length} steps with \`id: ${id}\``);
+  const indent = lines[at[0]].search(/\S/);
+  let run = -1;
+  for (let j = at[0] + 1; j < lines.length; j++) {
+    if (lines[j].trim() === "") continue;
+    if (lines[j].search(/\S/) < indent) break;
+    if (lines[j].search(/\S/) === indent && /^\s+run: \|\s*$/.test(lines[j])) { run = j; break; }
+  }
+  assert.ok(run > 0, `the \`${id}\` step has no \`run: |\` block`);
+  const body = [];
+  for (let j = run + 1; j < lines.length; j++) {
+    if (lines[j].trim() !== "" && lines[j].search(/\S/) <= indent) break;
+    body.push(lines[j].slice(indent + 2));
+  }
+  const calls = body.filter((l) => /^\s*node bot\/moderation-run\.mjs /.test(l));
+  assert.equal(calls.length, 1, `the \`${id}\` step runs ${calls.length} moderation-run lines; this reads exactly one`);
+  return { call: calls[0].trim(), script: `${body.map((l) => (l === calls[0] ? ":" : l)).join("\n").trimEnd()}\n` };
+}
+
+/** A step's remaining lines, in `dir`, with a `$GITHUB_OUTPUT` of its own, read back as the runner reads it. */
+function runAround(id, dir, env = {}) {
+  const { script } = stepAround(id);
+  const file = path.join(dir, `${id}.sh`);
+  const output = path.join(dir, `${id}-output`);
+  fs.writeFileSync(file, script);
+  fs.writeFileSync(output, "");
+  const step = spawnSync("bash", ["-e", file], { cwd: dir, encoding: "utf8", env: { PATH: process.env.PATH, ...env, GITHUB_OUTPUT: output } });
+  return { ...step, outputs: readOutputs(output) };
+}
+
+// B-T5.1, 2026-10-14: the path the owner's delist of `e2e-test` never got
+// down, because `list` and `report` were placeholders (run 38525175920). One
+// M_DELIST from a stub service through every hand-off the workflow makes —
+// the work step's five outputs, the history step's `settled`, the commit, the
+// push to a real `origin`, the posted `applied`, and `settled`'s comparison —
+// using the workflow's own step lines wherever a step has lines of its own.
+test("M_DELIST end to end: listed, committed, pushed, reported, settled, through the workflow's own steps", async () => {
+  const root = withDocuments(estate());
+  const origin = withRemote(root);
+  const before = headOf(origin);
+  assert.match(sh(["show", `${before}:registry/v1/index.json`], root), /"widgets"/,
+    "the fixture's index does not list the plugin, so its absence after the delist would prove nothing");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-e2e-"));
+  tmpRoots.push(dir);
+  const out = path.join(dir, "moderation");
+  const json = (status, b) => new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
+  const posted = [];
+  const fetchImpl = async (url, init = {}) => {
+    if (String(url).startsWith("https://token.invalid/")) return json(200, { value: fakeToken() });
+    if ((init.method ?? "GET") === "GET") return json(200, answer({ shadow: false, service_decisions: [delistOf(SDI)] }));
+    posted.push(JSON.parse(init.body));
+    return json(ack("accepted").status, ack("accepted").body);
+  };
+  const tokenEnv = {
+    ACTIONS_ID_TOKEN_REQUEST_URL: "https://token.invalid/token?api-version=2.0",
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN: "the-runner-secret",
+    GITHUB_SERVER_URL: "https://github.com",
+    GITHUB_REPOSITORY: "mihailinl/astra-registry",
+    GITHUB_RUN_ID: "35502265394",
+  };
+  const logs = [];
+  const log = { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) };
+
+  // `list`, work step: the job, then the step's own lines over its files.
+  assert.equal(stepAround("work").call, "node bot/moderation-run.mjs --job list --out moderation");
+  const saved = process.stdout.write;
+  process.stdout.write = () => true;
+  let listed;
+  try {
+    listed = await main(["--job", "list", "--registry-dir", root, "--out", out], { env: tokenEnv, log, fetchImpl });
+  } finally {
+    process.stdout.write = saved;
+  }
+  assert.equal(listed, 0, logs.join("\n"));
+  const work = runAround("work", dir);
+  assert.equal(work.status, 0, work.stderr + work.stdout);
+  assert.equal(work.outputs.shadow, "false");
+  assert.deepEqual(JSON.parse(work.outputs.listed), [SDI]);
+  assert.deepEqual(JSON.parse(work.outputs.entries).map((e) => [e.service_decision_id, e.code]), [[SDI, "M_DELIST"]]);
+
+  // `list`, history step, under the work step's shadow: nothing in history.
+  assert.equal(stepAround("history").call, "node bot/moderation-run.mjs --job history --out moderation");
+  const history = await main(["--job", "history", "--registry-dir", root, "--out", out], {
+    env: { ...tokenEnv, ASTRA_SHADOW: work.outputs.shadow }, log, fetchImpl, now: new Date("2026-09-20T12:30:00Z"),
+  });
+  assert.equal(history, 0, logs.join("\n"));
+  const settledStep = runAround("history", dir);
+  assert.equal(settledStep.status, 0, settledStep.stderr + settledStep.stdout);
+  assert.equal(settledStep.outputs.settled, "[]");
+  assert.deepEqual(posted, [], "the history step posted for a tree with no hold in its history");
+
+  // `alert`: a delist is no MOD-8 alarm, so the verdict is green.
+  assert.deepEqual(alarmsFor(JSON.parse(work.outputs.entries)), []);
+
+  // `commit`, over exactly `list`'s outputs, then the `apply` step's own lines.
+  const job = await commitJob(root, {
+    entries: [],
+    env: {
+      ASTRA_SHADOW: work.outputs.shadow,
+      ASTRA_ENTRIES: work.outputs.entries,
+      ASTRA_SUBMISSIONS: work.outputs.submissions,
+      ASTRA_SETTLED: settledStep.outputs.settled,
+    },
+  });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.compiled, [SDI]);
+  const step = runApply(root);
+  assert.equal(step.status, 0, step.stderr);
+  const landed = headOf(origin);
+  assert.equal(step.outputs.main_commit, landed, "the delist did not reach `main`");
+  const plugin = JSON.parse(sh(["show", `${landed}:plugins/widgets/plugin.json`], root));
+  assert.equal(plugin.unlisted, true, "the commit that landed does not delist the plugin");
+  const index = sh(["show", `${landed}:registry/v1/index.json`], root);
+  assert.ok(!/"widgets"/.test(index), "the index that landed beside the delist still lists the plugin");
+  assert.match(sh(["log", "-1", "--format=%B", landed], root), new RegExp(`^Service-Decision: ${SDI}$`, "m"));
+
+  // `report`, over the commit job's outputs: one `applied`, naming the push.
+  const report = await reportJob({ ASTRA_RESULTS: step.outputs.results, ASTRA_MAIN_COMMIT: step.outputs.main_commit });
+  assert.equal(report.code, 0, report.logs.join("\n"));
+  assert.deepEqual(report.bodies.map((b) => [b.service_decision_id, b.outcome, b.commit]), [[SDI, "applied", landed]]);
+
+  // `settled`: the one listed decision has its result.
+  const done = await settledJob({
+    ASTRA_LISTED_IDS: work.outputs.listed,
+    ASTRA_RESULTS: step.outputs.results,
+    ASTRA_MAIN_COMMIT: step.outputs.main_commit,
+    ASTRA_LIST_FAILED: "false",
+  });
+  assert.equal(done.code, 0, done.logs.join(" | "));
+});
+
 // ── the settled job ─────────────────────────────────────────────────────────
 
 test("a listed id with no result fails the run, and a failed `list` does too", () => {
@@ -2195,6 +2340,111 @@ test("a listed id with no result fails the run, and a failed `list` does too", (
 });
 
 // ── the alarms, and the verdict they are sent as ────────────────────────────
+
+/** `--job list`, as the `list` job's work step runs it, against a stub service that answers `body`. */
+async function listJob(root, body) {
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-list-"));
+  tmpRoots.push(out);
+  const calls = [];
+  const logs = [];
+  const json = (status, b) => new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
+  const fetchImpl = async (url, init = {}) => {
+    if (String(url).startsWith("https://token.invalid/")) return json(200, { value: fakeToken() });
+    calls.push({ url: String(url), method: init.method ?? "GET" });
+    return json(200, body);
+  };
+  const saved = process.stdout.write;
+  let printed = "";
+  process.stdout.write = (chunk) => { printed += String(chunk); return true; };
+  let code;
+  try {
+    code = await main(["--job", "list", "--registry-dir", root, "--out", out], {
+      env: {
+        ACTIONS_ID_TOKEN_REQUEST_URL: "https://token.invalid/token?api-version=2.0",
+        ACTIONS_ID_TOKEN_REQUEST_TOKEN: "the-runner-secret",
+      },
+      log: { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) },
+      fetchImpl,
+    });
+  } finally {
+    process.stdout.write = saved;
+  }
+  const files = {};
+  for (const name of LIST_OUTPUTS) {
+    const file = path.join(out, `${name}.json`);
+    if (fs.existsSync(file)) files[name] = fs.readFileSync(file, "utf8");
+  }
+  return { code, calls, logs, printed, files };
+}
+
+// B-T5.1, 2026-10-14. Until this date `--job list` printed its summary and
+// handed on nothing: the workflow step that would run it was a placeholder,
+// and the five outputs `list` declares had no writer. Each now has a file the
+// step copies into $GITHUB_OUTPUT by name. Watched failing by dropping a
+// refused id from `listed` (a refusal nobody posts then leaves BOT-80's list
+// unseen), by passing `why` through on a refusal, and by reading `shadow` as
+// `!shadow`.
+test("the list job hands on its five outputs, one line each, and `listed` names the refused decisions too", async () => {
+  const root = estate();
+  const delist = decision({ code: "M_DELIST", category: "broken", moderator: "amoderator" });
+  const refusedYank = decision({
+    service_decision_id: SDI2, code: "A_YANK", versions: ["1.0.0"], reason: FIXED_YANK, moderator: "amoderator",
+  });
+  const stop = { submission_id: SUB, repo: "acme/widgets", tag: "widgets-v1.0.0", code: "R_FIRST_LISTING" };
+  const job = await listJob(root, answer({ shadow: false, service_decisions: [delist, refusedYank], submissions: [stop] }));
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.calls.map((c) => [c.method, new URL(c.url).pathname.replace(/^.*\/bot\//, "bot/")]),
+    [["GET", "bot/moderation-work"]], "one GET of the work list, and nothing else");
+  assert.deepEqual(Object.keys(job.files).sort(), [...LIST_OUTPUTS].sort(), "a list output has no file to be copied from");
+  for (const [name, text] of Object.entries(job.files)) {
+    assert.match(text, /^[^\n\r]+\n$/, `${name}.json is not one line, so $GITHUB_OUTPUT's name=value would split it`);
+  }
+  const read = (name) => JSON.parse(job.files[name]);
+  assert.equal(read("shadow"), false);
+  assert.deepEqual(read("entries").map((e) => e.service_decision_id), [SDI]);
+  assert.deepEqual(read("submissions").map((e) => e.submission_id), [SUB]);
+  assert.deepEqual(read("refused"), [{ service_decision_id: SDI2, code: "kind_refused" }],
+    "a refusal hands on its id and its §0.8 code and nothing else; the reason text can quote a member's value");
+  assert.deepEqual(read("listed"), [SDI, SDI2],
+    "`listed` is every decision the answer named, refused ones included: `settled` is the only job that would " +
+    "notice a refusal that never reached the service");
+  assert.ok(!/amoderator|withdrawn/.test(job.printed), "the summary printed a member's value (PRIV-2)");
+  assert.match(job.printed, new RegExp(`refuse ${SDI2} kind_refused`));
+});
+
+test("a shadow answer hands on `true`, and a list with anything fatal in it hands on nothing", async () => {
+  const root = estate();
+  const delist = decision({ code: "M_DELIST", category: "broken", moderator: "amoderator" });
+  const shadowed = await listJob(root, answer({ shadow: true, service_decisions: [delist] }));
+  assert.equal(shadowed.code, 0, shadowed.logs.join("\n"));
+  assert.equal(shadowed.files.shadow, "true\n", "a shadow answer is handed on as shadow (BOT-92)");
+  assert.deepEqual(JSON.parse(shadowed.files.listed), [SDI], "and the work it names is still listed, for `settled`");
+
+  // An answer missing `shadow`, or carrying one that is not a boolean, is not
+  // the schema's body at all: the run fails, and nothing reads it as live.
+  const unstated = answer({ service_decisions: [delist] });
+  delete unstated.shadow;
+  for (const body of [unstated, answer({ shadow: "false", service_decisions: [delist] })]) {
+    const job = await listJob(root, body);
+    assert.equal(job.code, 1, `shadow ${JSON.stringify(body.shadow)} was accepted`);
+    assert.deepEqual(job.files, {}, `shadow ${JSON.stringify(body.shadow)} handed on outputs from a failed list`);
+  }
+
+  const fatal = await listJob(root, answer({ shadow: false, service_decisions: [{ code: "M_DELIST", plugin_id: "widgets" }] }));
+  assert.equal(fatal.code, 1);
+  assert.deepEqual(fatal.files, {},
+    "a list that failed wrote outputs anyway; every later job must read a failed `list`, never an empty one");
+});
+
+test("the list outputs are bounded as the summary is, and a cut-short output is refused before it is handed on", () => {
+  const big = { service_decision_id: SDI, code: "M_DELIST", plugin_id: "widgets", note: "x".repeat(MAX_OUTPUT_BYTES) };
+  assert.throws(
+    () => listOutputs({ shadow: false, entries: [big], submissions: [], refused: [] }),
+    /bound is/,
+  );
+  const fine = listOutputs({ shadow: true, entries: [], submissions: [], refused: [] });
+  assert.deepEqual(fine, { shadow: "true", entries: "[]", submissions: "[]", refused: "[]", listed: "[]" });
+});
 
 test("MOD-8's alarms are derivable from the list entry, before any compile", () => {
   const alarms = alarmsFor([

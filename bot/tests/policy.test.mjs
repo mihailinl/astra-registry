@@ -2460,21 +2460,15 @@ const INDEX_NOT_HEARD = new Map([
 // dormancy which outlives its cause fails here instead of sitting in a comment:
 // "it cannot go red yet" is one edit away from "it never goes red", and that
 // edit is invisible. When R3 lands these go red and the entries come out.
-const INDEX_DORMANT = new Map([
-  [
-    "Plugins moderation",
-    {
-      file: "plugins-moderation.yml",
-      // Until 2026-09-24 the reason was the commit job's compile step, which
-      // exited 1 on an ASTRA_OVER_BOUND nothing supplied. M-T3.4 made that step
-      // real and the job counts TRUST-26's bound itself, so the entry now rests
-      // on the reason that is left, read the way the ingest entry reads its own.
-      why: "its BOT-83 schedule is commented out until R3 (plan row reg.53, \"R2 exit, dark\") and its list " +
-        "job's call to the service is a placeholder until then, so a dispatch commits nothing but a due hold",
-      dormant: (src) => !/^\s{2}schedule:\s*$/m.test(topLevelBlock(src, "on") ?? ""),
-    },
-  ],
-]);
+//
+// Empty since B-T5.1 (2026-10-14). "Plugins moderation" was the last entry:
+// its list job's call to the service was a placeholder, so a dispatch could
+// commit nothing but a due hold. That call is live now, a dispatch commits a
+// moderator's decision, and the trigger's run-time effect is real — the
+// schedule being still commented changes WHEN it runs, not WHETHER what it
+// commits needs hearing. The mechanism stays for the next workflow that lands
+// heard and inert.
+const INDEX_DORMANT = new Map([]);
 
 await test("build-index.yml hears every workflow that commits, by the name in the file", async () => {
   // The coupling this has that nothing else would: `workflows: [...]` is matched

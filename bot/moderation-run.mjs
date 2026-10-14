@@ -3,7 +3,8 @@
 // The moderation run: what `.github/workflows/plugins-moderation.yml` executes
 // in each of its four jobs (registry plan M-T3.4).
 //
-//   node bot/moderation-run.mjs --job list      GET bot/moderation-work, check it
+//   node bot/moderation-run.mjs --job list      GET bot/moderation-work, check it,
+//                                               write the job's five outputs to --out
 //   node bot/moderation-run.mjs --job history   (in `list`) POST the results history
 //                                               decided; hand on what the service settled
 //   node bot/moderation-run.mjs --job commit    compile, walk the holds, write
@@ -537,6 +538,64 @@ export function listSummary(checked) {
     );
   }
   return text;
+}
+
+/** The five outputs the `list` job hands on, in the order its step writes them. */
+export const LIST_OUTPUTS = Object.freeze(["shadow", "entries", "submissions", "refused", "listed"]);
+
+/**
+ * What the `list` job hands on, one single-line JSON value per output.
+ *
+ * **`listed` is every `service_decisions[]` id this answer named with a
+ * readable id — the ones that survived AND the ones refused.** `settled`
+ * compares it with the results this run produced, and a refused decision is a
+ * decision the service listed: leaving it out is how a refusal that never got
+ * posted would leave BOT-80's list in nobody's sight, every ten minutes, for
+ * ever. Submissions are not in it: their results are not service-decision
+ * results, and `settled` reads only those.
+ *
+ * `refused` carries the id and the code and nothing else. The reason text
+ * `checkServiceDecision` composes can quote a member's value, and a job output
+ * is read by four other jobs; an id and a §0.8 code are what a result needs.
+ *
+ * `shadow` is `false` only when the answer said `false` (BOT-92): everything
+ * else is `true`, so the direction a lost or unreadable member takes is the
+ * one that writes and posts nothing.
+ *
+ * Each value is checked to hold no newline — `$GITHUB_OUTPUT`'s `name=value`
+ * form would read one as the start of another output — and the five together
+ * are held to MAX_OUTPUT_BYTES for `listSummary`'s reason: an output GitHub
+ * cut short is a shorter list than the one this run acted on.
+ */
+export function listOutputs(checked) {
+  const refused = checked.refused.map((r) => (r.service_decision_id !== undefined
+    ? { service_decision_id: r.service_decision_id, code: r.code }
+    : { submission_id: r.submission_id, code: r.code }));
+  const listed = [
+    ...checked.entries.map((e) => e.service_decision_id),
+    ...refused.filter((r) => r.service_decision_id !== undefined).map((r) => r.service_decision_id),
+  ];
+  const values = {
+    shadow: checked.shadow === false ? "false" : "true",
+    entries: JSON.stringify(checked.entries),
+    submissions: JSON.stringify(checked.submissions),
+    refused: JSON.stringify(refused),
+    listed: JSON.stringify(listed),
+  };
+  let bytes = 0;
+  for (const name of LIST_OUTPUTS) {
+    if (values[name].includes("\n") || values[name].includes("\r")) {
+      throw new Error(`the \`${name}\` output holds a line break, which $GITHUB_OUTPUT's name=value form cannot carry`);
+    }
+    bytes += Buffer.byteLength(values[name], "utf8");
+  }
+  if (bytes > MAX_OUTPUT_BYTES) {
+    throw new Error(
+      `the list job's outputs are ${bytes} bytes and the bound is ${MAX_OUTPUT_BYTES}. An output cut short is a ` +
+      "shorter list than the one this run acted on, and `settled` compares the two",
+    );
+  }
+  return values;
 }
 
 // ── the commit job ──────────────────────────────────────────────────────────
@@ -1614,7 +1673,16 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     process.stdout.write(listSummary(checked));
     for (const a of checked.alerts) log.error(`::warning::${a.cause}: ${a.detail}`);
     for (const f of checked.fatal) log.error(`::error::${f}`);
-    return checked.fatal.length ? 1 : 0;
+    if (checked.fatal.length) return 1;
+    // One file per output, which the workflow step copies into
+    // `$GITHUB_OUTPUT` by name. Written only for an answer with nothing fatal
+    // in it: a failed `list` hands on nothing, and every later job reads that
+    // as the list result it is (`needs.list.result`), never as an empty list.
+    const out = arg(argv, "--out") ?? "moderation";
+    const values = listOutputs(checked);
+    fs.mkdirSync(out, { recursive: true });
+    for (const name of LIST_OUTPUTS) fs.writeFileSync(path.join(out, `${name}.json`), `${values[name]}\n`);
+    return 0;
   }
 
   if (job === "history") {
