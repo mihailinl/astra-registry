@@ -1,0 +1,19 @@
+{
+  "$comment": "Derived from mihailinl/astra-e2e-test@v0.1.0 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "e2e-test",
+  "name": "E2E Test (do not install)",
+  "summary": "End-to-end test of the Astra plugins registry. Not a real plugin; it will be removed.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "mihailinl/astra-e2e-test"
+  },
+  "added_at": "2026-10-14",
+  "description": "End-to-end test of the Astra plugins registry. Not a real plugin; it will be removed.",
+  "author": {
+    "name": "mihailinl"
+  },
+  "icon": "icon.svg",
+  "readme": "README.md"
+}

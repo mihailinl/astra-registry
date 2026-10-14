@@ -1,0 +1,8 @@
+{
+  "schema": "astra.registry.identity/1",
+  "plugin_id": "e2e-test",
+  "repository_id": "1418150248",
+  "repository_owner_id": "193032699",
+  "repo": "mihailinl/astra-e2e-test",
+  "token_hash": "3ab635b233ba6805"
+}
