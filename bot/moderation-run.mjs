@@ -1658,6 +1658,65 @@ function parseSettled(text, log) {
   return [];
 }
 
+/**
+ * `list`'s `refused` output, re-checked as `entries` is: the refusals the list
+ * job judged, which this job hands to `report` through `results.json` so that
+ * each is POSTED. Until B-T5.1 nothing read the output, so a decision refused
+ * at the list never got its `refused` result, stayed on BOT-80's list and was
+ * refused again every run — the silent shape this file's header argues
+ * against, one job over.
+ *
+ * Empty — `list` failed, or found nothing to refuse — is no rows. Anything
+ * else must be a JSON array of `{service_decision_id | submission_id, code}`
+ * with a §0.8 refusal code, and a service decision refused here must not also
+ * be in `entries`: one decision cannot be both compiled and refused, and
+ * BOT-81 would then refuse to post two final results for it. A row that fails
+ * fails the job, as a malformed entry does, because a refusal is FINAL
+ * (BOT-81) and this job cannot re-derive it — it can only refuse to pass on
+ * one that is not even well formed.
+ */
+export function listRefusals(text, { entries = [] } = {}) {
+  const out = { decisions: [], submissions: [], fatal: [] };
+  if (typeof text !== "string" || text.trim() === "") return out;
+  let rows;
+  try {
+    rows = JSON.parse(text);
+  } catch {
+    rows = null;
+  }
+  if (!Array.isArray(rows)) {
+    out.fatal.push("`list`'s `refused` output is not a JSON array, so no refusal it names can be posted");
+    return out;
+  }
+  const compiled = new Set(entries.map((e) => e?.service_decision_id));
+  const seen = new Set();
+  for (const r of rows) {
+    const keys = r && typeof r === "object" ? Object.keys(r).sort() : [];
+    const kind = keys.join(",") === "code,service_decision_id" ? "decisions"
+      : keys.join(",") === "code,submission_id" ? "submissions" : null;
+    const id = kind === "decisions" ? r.service_decision_id : kind === "submissions" ? r.submission_id : null;
+    if (!kind || typeof id !== "string" || id === "") {
+      out.fatal.push(`a \`refused\` row is not {service_decision_id | submission_id, code}: ${JSON.stringify(keys)}`);
+      continue;
+    }
+    if (!REFUSALS.includes(r.code)) {
+      out.fatal.push(`${id} is refused \`${r.code}\`, which is not one of §0.8's seven service-decision refusals`);
+      continue;
+    }
+    if (seen.has(id)) {
+      out.fatal.push(`${id} is refused twice in one \`refused\` output`);
+      continue;
+    }
+    seen.add(id);
+    if (kind === "decisions" && compiled.has(id)) {
+      out.fatal.push(`${id} is in both \`entries\` and \`refused\`; one decision is compiled or refused, never both`);
+      continue;
+    }
+    out[kind].push(r);
+  }
+  return out;
+}
+
 export async function main(argv = [], { env = process.env, log = console, fetchImpl = fetch, now = new Date() } = {}) {
   const job = arg(argv, "--job");
   const root = arg(argv, "--registry-dir") ?? REPO_ROOT;
@@ -1767,6 +1826,19 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
       for (const f of recheck.fatal) log.error(`::error::${f}`);
       return 1;
     }
+    // The refusals `list` judged, re-checked, and handed to `report` with the
+    // compile's own below. A submission refused at the list is said and not
+    // posted: this run posts service-decision results only.
+    const listRefused = listRefusals(env.ASTRA_REFUSED, { entries });
+    if (listRefused.fatal.length) {
+      for (const f of listRefused.fatal) log.error(`::error::${f}`);
+      return 1;
+    }
+    for (const r of listRefused.submissions) {
+      log.error(`::warning::submission ${r.submission_id} was refused \`${r.code}\` at the list; this run posts no ` +
+        "submission result, so the service is not told");
+    }
+    const refusedAtList = listRefused.decisions.map((r) => ({ service_decision_id: r.service_decision_id, refusal: r.code }));
 
     // Compiled in both modes: in shadow for timing (OPEN-OPS-13), and so that a
     // compile that throws is red in shadow too rather than first at R3's exit.
@@ -1856,7 +1928,10 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     // and keeping it out of those members is what makes that structural.
     const shadowWithheld = live ? null : {
       compiled: compiledAll.compiled.map((r) => r.service_decision_id),
-      refused: compiledAll.refused.map((r) => ({ service_decision_id: r.service_decision_id, refusal: r.refusal })),
+      refused: [
+        ...refusedAtList,
+        ...compiledAll.refused.map((r) => ({ service_decision_id: r.service_decision_id, refusal: r.refusal })),
+      ],
       held: compiledAll.held.map((r) => ({ service_decision_id: r.service_decision_id, held_for: r.held_for })),
       submissions: recheck.submissions.map((s) => s.submission_id),
     };
@@ -1865,7 +1940,11 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     fs.writeFileSync(path.join(out, "results.json"), `${JSON.stringify({
       shadow,
       compiled: live ? compiledAll.compiled.map((r) => r.service_decision_id) : [],
-      refused: live ? compiledAll.refused.map((r) => ({ service_decision_id: r.service_decision_id, refusal: r.refusal })) : [],
+      // The list's refusals first, then the compile's: both are `refused`
+      // results `report` posts, and neither names a commit.
+      refused: live
+        ? [...refusedAtList, ...compiledAll.refused.map((r) => ({ service_decision_id: r.service_decision_id, refusal: r.refusal }))]
+        : [],
       // A kept entry's row carries the commit that entered it; an entered one's
       // carries none, and `report` names the commit the `apply` step pushed.
       held: live ? holdsEntered.results : [],
@@ -1917,6 +1996,7 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
       log.error(`::${level}::${a.kind} ${a.service_decision_id}${a.commit ? ` in ${a.commit}` : ""}: ${a.why}`);
     }
     log.log(`ok    ${compiledAll.compiled.length} compiled, ${compiledAll.refused.length} refused, ` +
+      `${refusedAtList.length} refused at the list, ` +
       `${compiledAll.held.length} held (${holdsEntered.written.length} entered, ${holdsEntered.kept.length} already on the tree), ` +
       `${holds.released.length} released, ${holds.cancelled.length} cancelled, ${holds.due.length} due and not built, ` +
       `${releases.compiled.length} reset(s) released, ${releases.refused.length} release(s) refused, ` +

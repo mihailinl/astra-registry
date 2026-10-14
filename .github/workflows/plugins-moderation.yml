@@ -358,6 +358,10 @@ jobs:
           ASTRA_SHADOW: ${{ needs.list.outputs.shadow }}
           ASTRA_ENTRIES: ${{ needs.list.outputs.entries }}
           ASTRA_SUBMISSIONS: ${{ needs.list.outputs.submissions }}
+          # The decisions `list` refused, re-checked and handed to `report` in
+          # `results` with the compile's own refusals, so each is posted once
+          # and leaves BOT-80's list; until B-T5.1 nothing read this output.
+          ASTRA_REFUSED: ${{ needs.list.outputs.refused }}
           # Ops entry 100: re-checked like `entries`, and recorded in
           # state/moderation-settled.json only under `shadow: false` and only
           # for a result this job's own walk derived.

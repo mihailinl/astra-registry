@@ -2893,6 +2893,21 @@ test("the moderation run's service calls are live: each runs its job, and only `
     "`report` does not run the report job, so no result this run produced reaches the service");
 });
 
+// B-T5.1 found the other half of an unwritten output: one written and read by
+// nobody. `list`'s `refused` was declared, and no job named
+// `needs.list.outputs.refused`, so a decision refused at the list never got
+// the `refused` result BOT-81 makes final and was re-refused every run. Every
+// output `list` hands on must have a reader. Watched failing by deleting the
+// commit job's ASTRA_REFUSED line.
+test("every output the moderation run's `list` hands on is read by a later job", () => {
+  const MODERATION = "plugins-moderation.yml";
+  const keys = blockKeys(jobOf(MODERATION, "list"), "outputs");
+  assert.ok(keys && keys.length >= 6, `\`list\` hands on ${keys?.length ?? 0} outputs and handed on 6 on 2026-10-14`);
+  const others = allJobs().filter((j) => j.file === MODERATION && j.job !== "list").map((j) => code(j).join("\n")).join("\n");
+  const unread = keys.filter((k) => !new RegExp(`needs\\.list\\.outputs\\.${k}\\b`).test(others));
+  assert.deepEqual(unread, [], "an output `list` hands on is read by no job, so whatever it carries reaches nothing");
+});
+
 // The separation the design above rests on, as a canary rather than a header
 // comment. Measured 2026-09-23 before this test existed: giving `commit`
 // `actions: read`, a named `actions/download-artifact` of another run, or a

@@ -60,6 +60,7 @@ import {
   holdDeletions,
   holdEntryPath,
   listOutputs,
+  listRefusals,
   listSummary,
   main,
   readShadow,
@@ -2322,6 +2323,118 @@ test("M_DELIST end to end: listed, committed, pushed, reported, settled, through
     ASTRA_LIST_FAILED: "false",
   });
   assert.equal(done.code, 0, done.logs.join(" | "));
+});
+
+/** `list`'s work step over a stub answer: the job in-process, then the step's own lines. Its outputs, as the runner reads them. */
+async function workOutputs(root, body) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-work-"));
+  tmpRoots.push(dir);
+  const job = await listJob(root, body);
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  fs.mkdirSync(path.join(dir, "moderation"));
+  for (const [name, text] of Object.entries(job.files)) fs.writeFileSync(path.join(dir, "moderation", `${name}.json`), text);
+  const step = runAround("work", dir);
+  assert.equal(step.status, 0, step.stderr + step.stdout);
+  return step.outputs;
+}
+
+/** The commit job's environment, exactly as the workflow maps it from `list`'s outputs. */
+const commitEnvFrom = (outputs) => ({
+  ASTRA_SHADOW: outputs.shadow,
+  ASTRA_ENTRIES: outputs.entries,
+  ASTRA_SUBMISSIONS: outputs.submissions,
+  ASTRA_REFUSED: outputs.refused,
+  ASTRA_SETTLED: outputs.settled ?? "",
+});
+
+// B-T5.1. `list`'s `refused` output was declared and read by nothing, so a
+// decision refused at the list — an `A_YANK` carrying a moderator is
+// `kind_refused` there, by name — never got the FINAL `refused` result BOT-81
+// gives it, stayed on BOT-80's list, and was refused again every run. Now
+// `commit` hands it to `report` in `results`, beside the compile's own.
+// Watched failing by dropping ASTRA_REFUSED from the commit job's read, and by
+// putting the list's refusals in `refused` only in shadow.
+test("a decision refused at the list is posted `refused` once, beside the compile's results, and `settled` counts it", async () => {
+  const root = withDocuments(estate());
+  const origin = withRemote(root);
+  const refusedYank = decision({
+    service_decision_id: SDI2, code: "A_YANK", versions: ["1.0.0"], reason: FIXED_YANK, moderator: "amoderator",
+  });
+  const outputs = await workOutputs(root, answer({ shadow: false, service_decisions: [delistOf(SDI), refusedYank] }));
+  assert.deepEqual(JSON.parse(outputs.listed), [SDI, SDI2]);
+
+  const job = await commitJob(root, { entries: [], env: commitEnvFrom(outputs) });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.refused, [{ service_decision_id: SDI2, refusal: "kind_refused" }]);
+  const step = runApply(root);
+  assert.equal(step.status, 0, step.stderr);
+  const landed = headOf(origin);
+
+  const report = await reportJob({ ASTRA_RESULTS: step.outputs.results, ASTRA_MAIN_COMMIT: step.outputs.main_commit });
+  assert.equal(report.code, 0, report.logs.join("\n"));
+  assert.deepEqual(
+    report.bodies.map((b) => `${b.service_decision_id} ${b.outcome} ${b.commit ?? "-"} ${b.refusal_code ?? "-"}`).sort(),
+    [`${SDI} applied ${landed} -`, `${SDI2} refused - kind_refused`].sort(),
+  );
+  const done = await settledJob({
+    ASTRA_LISTED_IDS: outputs.listed, ASTRA_RESULTS: step.outputs.results, ASTRA_MAIN_COMMIT: step.outputs.main_commit,
+  });
+  assert.equal(done.code, 0, done.logs.join(" | "));
+
+  // Shadow: the refusal is withheld like everything else the answer names,
+  // posted by nobody, and counted as answered by `settled` (BOT-84's split).
+  const shadowRoot = withDocuments(estate());
+  withRemote(shadowRoot);
+  const shadowOut = await workOutputs(shadowRoot, answer({ shadow: true, service_decisions: [delistOf(SDI), refusedYank] }));
+  const shadowJob = await commitJob(shadowRoot, { entries: [], env: commitEnvFrom(shadowOut) });
+  assert.equal(shadowJob.code, 0, shadowJob.logs.join("\n"));
+  assert.deepEqual(shadowJob.results.refused, []);
+  assert.deepEqual(shadowJob.results.shadow_withheld.refused, [{ service_decision_id: SDI2, refusal: "kind_refused" }]);
+  const shadowStep = runApply(shadowRoot);
+  assert.equal(shadowStep.status, 0, shadowStep.stderr);
+  const shadowReport = await reportJob({ ASTRA_RESULTS: shadowStep.outputs.results, ASTRA_MAIN_COMMIT: shadowStep.outputs.main_commit });
+  assert.deepEqual(shadowReport.bodies, [], "report posted a refusal under a shadow answer (BOT-92)");
+  const shadowDone = await settledJob({
+    ASTRA_LISTED_IDS: shadowOut.listed, ASTRA_RESULTS: shadowStep.outputs.results, ASTRA_MAIN_COMMIT: shadowStep.outputs.main_commit,
+  });
+  assert.equal(shadowDone.code, 0, shadowDone.logs.join(" | "));
+});
+
+test("the list's refusals are re-checked before they are handed on, and a malformed one fails the commit job", async () => {
+  assert.deepEqual(listRefusals(""), { decisions: [], submissions: [], fatal: [] }, "a failed or empty list refuses nothing");
+  const ok = listRefusals(JSON.stringify([{ service_decision_id: SDI2, code: "kind_refused" }, { submission_id: SUB, code: "kind_refused" }]));
+  assert.deepEqual(ok.fatal, []);
+  assert.equal(ok.decisions.length, 1);
+  assert.equal(ok.submissions.length, 1);
+  for (const [text, why] of [
+    ["{}", "not an array"],
+    [JSON.stringify([{ service_decision_id: SDI2, code: "not_a_refusal" }]), "a code outside §0.8"],
+    [JSON.stringify([{ service_decision_id: SDI2, code: "kind_refused", why: "a member's value" }]), "a member beyond id and code"],
+    [JSON.stringify([{ code: "kind_refused" }]), "no id"],
+    [JSON.stringify([{ service_decision_id: SDI2, code: "kind_refused" }, { service_decision_id: SDI2, code: "kind_refused" }]), "twice"],
+  ]) {
+    assert.ok(listRefusals(text).fatal.length > 0, `a \`refused\` output with ${why} was accepted`);
+  }
+  assert.ok(
+    listRefusals(JSON.stringify([{ service_decision_id: SDI, code: "kind_refused" }]), { entries: [delistOf(SDI)] }).fatal.length > 0,
+    "a decision both compiled and refused was accepted; BOT-81 gives it one final result",
+  );
+
+  const root = estate();
+  const logs = [];
+  const code = await main(["--job", "commit", "--registry-dir", root, "--out", path.join(root, "moderation")], {
+    env: {
+      ASTRA_SHADOW: "false",
+      ASTRA_ENTRIES: JSON.stringify([delistOf(SDI)]),
+      ASTRA_SUBMISSIONS: "[]",
+      ASTRA_REFUSED: JSON.stringify([{ service_decision_id: SDI, code: "kind_refused" }]),
+    },
+    log: { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) },
+    fetchImpl: () => { throw new Error("the commit job reached the network"); },
+    now: new Date("2026-09-20T12:30:00Z"),
+  });
+  assert.equal(code, 1, `the commit job accepted a decision both compiled and refused: ${logs.join(" | ")}`);
+  assert.ok(!fs.existsSync(path.join(root, "moderation", "paths.txt")), "and it listed paths for the apply step anyway");
 });
 
 // ── the settled job ─────────────────────────────────────────────────────────
