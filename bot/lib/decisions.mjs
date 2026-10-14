@@ -782,6 +782,26 @@ const TRAILER_GRAMMAR = {
 export const TRAILERS = Object.freeze(Object.keys(TRAILER_GRAMMAR));
 
 /**
+ * The trailers this grammar marks safe to hold a UUID, each with the exact
+ * pattern its own value must match — computed from `TRAILER_GRAMMAR` so that
+ * the set a reader strips can never name a trailer this module did not also
+ * mark `uuidOk`, by construction rather than by two lists kept in step.
+ *
+ * `tools/priv-scan.mjs`'s commit-message scan is the one reader: PRIV-2's
+ * UUID rule exempts `submission_id` and `service_decision_id` BY MEMBER NAME
+ * in a decision record (DEC-7), and the same two ids reach a commit MESSAGE
+ * as `Submission:`/`Service-Decision:` trailers (BOT-37) rather than record
+ * members — a shape the position rule cannot reach, because a commit message
+ * has no members. Exempting the trailer LINE, and only when its value is
+ * exactly what that trailer's own grammar renders, is the same exemption
+ * asked of the same two ids at the one place they are free text instead of a
+ * declared member.
+ */
+export const UUID_OK_TRAILERS = Object.freeze(
+  Object.fromEntries(Object.entries(TRAILER_GRAMMAR).filter(([, g]) => g.uuidOk).map(([name, g]) => [name, g.re])),
+);
+
+/**
  * One trailer line, held to the grammar its NAME declares.
  *
  * The one place a trailer's name is turned into a line, so that "every rendered
