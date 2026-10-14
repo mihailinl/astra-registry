@@ -72,6 +72,10 @@ name: Plugins moderation
 # nothing a moderator decided in the plugins service ever reached git — the
 # owner's delist of `e2e-test` sat unsettled through run 38525175920.
 #
+# `DRY_RUN` is committed "false" with it, so a dispatch pushes what it
+# compiles; the guard is the `apply` step's, and any other value withholds
+# the push (the comment at `env:` says how).
+#
 # **The `schedule:` block below is STILL COMMENTED OUT, and `workflow_dispatch`
 # is the trigger until the first post arms it.** BOT-83's receiver check,
 # `moderation-run` in bot/lib/alert-checks.mjs, is created disarmed and has
@@ -135,8 +139,14 @@ concurrency:
   group: registry-moderation
   cancel-in-progress: false
 
+# Committed "false" since B-T5.1 (2026-10-14), as `plugins-ingest.yml`'s was
+# by B-T3.6 the day before. It was "true" through R3 and read by no step, so
+# it withheld nothing: the `apply` step pushed whatever it was. It is read in
+# ONE place now, that step, and the guard errs in the withholding direction —
+# `!= "false"`, never `== "true"` — so "true", a typo or an unset value
+# commits on the runner and pushes nothing.
 env:
-  DRY_RUN: "true"
+  DRY_RUN: "false"
 
 jobs:
   # ── list: the only job that asks the service what there is to do ──────────
@@ -424,6 +434,13 @@ jobs:
       # wrote either, so `settled` was handed no results on every run and would
       # have paged for decisions that had landed (ops entry 102). Written after
       # the push, so a step that failed on the way hands on nothing at all.
+      #
+      # **`DRY_RUN` withholds the push and nothing else.** Under any value but
+      # exactly "false" the commit is made and checked here and stays on the
+      # runner, and `main_commit` is empty. `report` then refuses every result
+      # that would have named it (`resultsFor`) and `settled` pages for those
+      # decisions: a dry run that had a takedown to land is RED, because the
+      # takedown did not land, and that is what the alarm says.
       - name: "Commit once, with a Service-Decision: trailer per decision, and push"
         id: apply
         if: ${{ !cancelled() && steps.compile.conclusion == 'success' }}
@@ -450,8 +467,13 @@ jobs:
             # this job started from, and `git add` takes whatever stands at a
             # listed path, a link included; a refusal ends the step here.
             node tools/lib/tree-modes.mjs HEAD
-            git push origin HEAD:main
-            main_commit=$(git rev-parse HEAD)
+            if [ "${DRY_RUN:-}" != "false" ]; then
+              echo "::warning::DRY_RUN is '${DRY_RUN:-}', not exactly \"false\": this commit stays on the runner and nothing is pushed"
+              git show --stat --format='would push %H' HEAD
+            else
+              git push origin HEAD:main
+              main_commit=$(git rev-parse HEAD)
+            fi
           fi
           {
             echo "main_commit=${main_commit}"

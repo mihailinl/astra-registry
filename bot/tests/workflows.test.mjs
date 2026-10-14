@@ -3300,6 +3300,31 @@ test("`plugins-ingest.yml` never pushes while DRY_RUN is not exactly false", () 
   assert.match(body, /node bot\/publish-apply\.mjs[\s\S]*"\$\{dry\[@\]\}"/, "and publish-apply is not handed it");
 });
 
+// B-T5.1 (2026-10-14) does for `plugins-moderation.yml` what B-T3.6 did for
+// ingest, with one difference that is the reason for this test: there,
+// DRY_RUN was always read; here it was committed "true" through R3 and read by
+// no step, so it withheld nothing. The committed value is either of the two;
+// the `apply` step is its one reader, keyed `!= "false"` with an unset value
+// withholding too, and the push is inside that guard. The behaviour — every
+// value but "false" pushes nothing — is run in the moderation suite, against a
+// real `origin`. Watched failing by keying the guard on `== "true"`, and by
+// moving the push out of it.
+test("`plugins-moderation.yml` never pushes while DRY_RUN is not exactly false", () => {
+  const MODERATION = "plugins-moderation.yml";
+  const src = read(MODERATION);
+  assert.match(src, /^env:\n\s+DRY_RUN:\s*"(true|false)"\s*$/m, "DRY_RUN is not committed as \"true\" or \"false\" at workflow level");
+  const readers = allJobs().filter((j) => j.file === MODERATION && code(j).some((l) => /\bDRY_RUN\b/.test(l))).map((j) => j.job);
+  assert.deepEqual(readers, ["commit"], "DRY_RUN is read outside the commit job's apply step");
+  const body = code(jobOf(MODERATION, "commit")).join("\n");
+  const guard = body.indexOf('if [ "${DRY_RUN:-}" != "false" ]; then');
+  assert.ok(guard >= 0, "the apply step does not withhold the push whenever DRY_RUN is not exactly \"false\"");
+  const els = body.indexOf("\n            else\n", guard);
+  const push = body.indexOf("git push origin HEAD:main");
+  const end = body.indexOf("\n            fi\n", guard);
+  assert.ok(els > guard && push > els && push < end && body.indexOf("git push", end) < 0,
+    "the push is not inside the DRY_RUN guard's live branch");
+});
+
 // `--service-path` lets publish-apply write an identity record and an alert
 // record. The legacy path never binds a listing (BOT-77), so the flag belongs
 // to exactly one workflow. Watched failing by adding it to ingest.yml.

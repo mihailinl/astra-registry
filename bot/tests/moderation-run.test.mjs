@@ -1690,11 +1690,12 @@ function runApply(root, env = {}) {
   // gets a fixture's environment: under a hook's GIT_DIR it committed into the
   // repository that names (measured 2026-09-23, ops couplings 143), and
   // tools/selftest/git-env.mjs reads `git` spawns, not the git a shell runs.
-  const step = spawnSync("bash", ["-e", file], {
-    cwd: root,
-    encoding: "utf8",
-    env: { ...fixtureEnv(root), ...env, GITHUB_OUTPUT: output },
-  });
+  // `DRY_RUN` is the workflow's, and the live value is the default here so
+  // that every case below pushes as the committed file does; a case that
+  // passes `DRY_RUN: undefined` runs the step with it unset.
+  const stepEnv = { ...fixtureEnv(root), DRY_RUN: "false", ...env, GITHUB_OUTPUT: output };
+  for (const [k, v] of Object.entries(stepEnv)) if (v === undefined) delete stepEnv[k];
+  const step = spawnSync("bash", ["-e", file], { cwd: root, encoding: "utf8", env: stepEnv });
   return { ...step, outputs: readOutputs(output) };
 }
 
@@ -2435,6 +2436,44 @@ test("the list's refusals are re-checked before they are handed on, and a malfor
   });
   assert.equal(code, 1, `the commit job accepted a decision both compiled and refused: ${logs.join(" | ")}`);
   assert.ok(!fs.existsSync(path.join(root, "moderation", "paths.txt")), "and it listed paths for the apply step anyway");
+});
+
+// B-T5.1 commits `DRY_RUN: "false"`. It was "true" through R3 and no step read
+// it, so the `apply` step pushed whatever the committed value said. Now the
+// step pushes only under exactly "false", and every other value — a typo, a
+// case, an unset variable — commits on the runner and pushes nothing, which
+// `report` then refuses to describe as landed. Watched failing by keying the
+// guard on `== "true"` (the unset and "False" cases push) and by dropping it.
+test("the apply step pushes only under DRY_RUN exactly \"false\", and a withheld push is red at `report`", async () => {
+  for (const value of ["true", "", "False", "false ", "0", undefined]) {
+    const root = withDocuments(estate());
+    const origin = withRemote(root);
+    const before = headOf(origin);
+    const job = await commitJob(root, { entries: [delistOf(SDI)] });
+    assert.equal(job.code, 0, job.logs.join("\n"));
+    const step = runApply(root, { DRY_RUN: value });
+    const label = `DRY_RUN ${JSON.stringify(value)}`;
+    assert.equal(step.status, 0, `${label}: ${step.stderr}`);
+    assert.equal(headOf(origin), before, `${label} pushed to main`);
+    assert.equal(step.outputs.main_commit, "", `${label} named a commit nothing pushed`);
+    assert.match(step.stdout, /would push [0-9a-f]{40}/, `${label}: the step did not say what it withheld`);
+    assert.notEqual(sh(["rev-parse", "HEAD"], root).trim(), before, `${label}: the commit was not even made on the runner`);
+
+    // `report` refuses an `applied` that names no commit, so the run is red
+    // and `settled`, handed nothing by a failed `report`, pages for it.
+    const report = await reportJob({ ASTRA_RESULTS: step.outputs.results, ASTRA_MAIN_COMMIT: step.outputs.main_commit })
+      .catch((e) => ({ code: 2, bodies: [], logs: [e.message] }));
+    assert.notEqual(report.code, 0, `${label}: report posted a takedown that did not land`);
+    assert.deepEqual(report.bodies, [], `${label}: report posted`);
+    assert.equal((await settledJob({ ASTRA_LISTED_IDS: JSON.stringify([SDI]), ASTRA_RESULTS: "" })).code, 1);
+  }
+  const root = withDocuments(estate());
+  const origin = withRemote(root);
+  const job = await commitJob(root, { entries: [delistOf(SDI)] });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  const live = runApply(root, { DRY_RUN: "false" });
+  assert.equal(live.status, 0, live.stderr);
+  assert.equal(live.outputs.main_commit, headOf(origin), "DRY_RUN \"false\" did not push");
 });
 
 // ── the settled job ─────────────────────────────────────────────────────────
