@@ -68,8 +68,8 @@ name: Plugins ingest
 #
 # ── it is dark, and this is what dark means ────────────────────────────────
 #
-# The `schedule:` block below is COMMENTED OUT. This file lands at R2 exit with
-# no schedule, and the R3-open commit uncomments it (§2.5). `DRY_RUN` stays
+# The `schedule:` block below landed COMMENTED OUT at R2 exit, and the R3-open
+# commit uncommented it on 2026-10-13 (§2.5), after the owner's R3 acknowledgements. `DRY_RUN` stays
 # `"true"` through R3 and is turned off by B-T3.6's own commit, whose SHA the
 # operator acknowledgement names.
 #
@@ -128,8 +128,8 @@ on:
   # from it, and refuses anything but 600 s — so uncommenting it at R3 changes
   # when this file runs and nothing about what the test asserts.
   #
-  # schedule:
-  #   - cron: '3-59/10 * * * *'
+  schedule:
+    - cron: '3-59/10 * * * *'
 
   # No inputs, and there will never be any (BOT-4). A dispatch of a
   # token-holding workflow may mean exactly one thing — "pull now" — and an

@@ -392,12 +392,14 @@ export const CHECKS = [
     // could only page. The same run ended red, at `claim`, because the
     // service answered 404 (W_SERVICE_UNREACHABLE). A live schedule today
     // would therefore be a red run every ten minutes. The commit that
-    // uncomments the schedule records `armed_at` here, from its first
-    // scheduled post, in the same change.
+    // uncomments the schedule records `armed_at` here, in the same change.
+    // R3's open commit (2026-10-13) did: the receiver armed on that first
+    // dispatched post, 2026-09-24T11:22:44Z, which is the time recorded, and
+    // the schedule now posts every 600 s, so the check pages if it stops.
     source: "B-T5.0, B-T5.1 (BOT-87), .github/workflows/plugins-ingest.yml, the `poll-alert` job",
     interval_seconds: 600,
     created_disarmed: true,
-    armed_at: null,
+    armed_at: "2026-09-24T11:22:44Z",
     signals: ["success"],
   },
   {
