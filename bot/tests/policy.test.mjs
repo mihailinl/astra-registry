@@ -2462,15 +2462,6 @@ const INDEX_NOT_HEARD = new Map([
 // edit is invisible. When R3 lands these go red and the entries come out.
 const INDEX_DORMANT = new Map([
   [
-    "Plugins ingest",
-    {
-      file: "plugins-ingest.yml",
-      why: "its BOT-51 schedule is commented out until R3 (plan row reg.52, \"R2 exit, dark\") and its " +
-        "publish job's first step exits 1 on B-T3.4",
-      dormant: (src) => !/^\s{2}schedule:\s*$/m.test(topLevelBlock(src, "on") ?? ""),
-    },
-  ],
-  [
     "Plugins moderation",
     {
       file: "plugins-moderation.yml",

@@ -68,10 +68,10 @@ name: Plugins ingest
 #
 # ── it is dark, and this is what dark means ────────────────────────────────
 #
-# The `schedule:` block below is COMMENTED OUT. This file lands at R2 exit with
-# no schedule, and the R3-open commit uncomments it (§2.5). `DRY_RUN` stays
-# `"true"` through R3 and is turned off by B-T3.6's own commit, whose SHA the
-# operator acknowledgement names.
+# The `schedule:` block below landed COMMENTED OUT at R2 exit, and the R3-open
+# commit uncommented it on 2026-10-13 (§2.5), after the owner's R3 acknowledgements. `DRY_RUN` stayed
+# `"true"` through R3's shadow and is turned off by B-T3.6's own commit, whose
+# landed SHA the operator acknowledgement names.
 #
 # A step marked `(not built: <task>)` prints `::error::` and exits non-zero,
 # naming the task that replaces it: a placeholder that exits 0 is a job that
@@ -128,8 +128,8 @@ on:
   # from it, and refuses anything but 600 s — so uncommenting it at R3 changes
   # when this file runs and nothing about what the test asserts.
   #
-  # schedule:
-  #   - cron: '3-59/10 * * * *'
+  schedule:
+    - cron: '3-59/10 * * * *'
 
   # No inputs, and there will never be any (BOT-4). A dispatch of a
   # token-holding workflow may mean exactly one thing — "pull now" — and an
@@ -157,11 +157,12 @@ concurrency:
   group: plugins-ingest
   cancel-in-progress: false
 
-# Committed as `"true"`, and read by every job that could write or post. R3
-# runs in shadow with this on; B-T3.6's commit turns it off, and that commit's
-# SHA is what the operator acknowledgement names.
+# Committed as `"true"` through R3's shadow, and read by every job that could
+# write or post. B-T3.6's commit (2026-10-13) turns it off, and the job_workflow_sha
+# that commit lands as is what the operator acknowledgement names. The guard
+# stays `!= "false"`, so any other value withholds.
 env:
-  DRY_RUN: "true"
+  DRY_RUN: "false"
   # B-T5.0: `shadow` or `live`, and nothing else — `bot/lib/poll-run.mjs` and
   # `bot/lib/service-jobs.mjs` refuse
   # any other value rather than defaulting. In shadow `claim` registers no tag
