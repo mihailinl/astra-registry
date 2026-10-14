@@ -766,7 +766,12 @@ const held = (d, held_for, why) => ({
  * per run and records each compiled result into it.
  */
 export function newBatch() {
-  return { advisoryIds: new Set(), logFiles: new Set(), unlisted: new Set(), yanked: new Set(), reviewed: new Set() };
+  return {
+    advisoryIds: new Set(), logFiles: new Set(), unlisted: new Set(), yanked: new Set(), reviewed: new Set(),
+    // A released relist's listing and a released unrevoke's advisory (M-T3.3):
+    // a second release of either in the same run would undo nothing twice.
+    relisted: new Set(), unrevoked: new Set(),
+  };
 }
 
 /** Record one compiled result into the run's batch. */
@@ -784,7 +789,19 @@ export function recordInBatch(batch, result) {
     // batch would write the same edit and a second log entry for one mark.
     if (e.member === REVIEW_MEMBER && e.value === REVIEWED && version) batch.reviewed.add(`${version[1]}@${version[2]}`);
   }
+  for (const e of result.edits ?? []) {
+    const plugin = /^plugins\/([^/]+)\/plugin\.json$/.exec(String(e?.file));
+    if (e?.op === "unset" && e.member === "unlisted" && plugin) batch.relisted.add(plugin[1]);
+    const advisory = new RegExp(`^${REVOCATIONS_DIR}/([^/]+)\\.json$`).exec(String(e?.file));
+    if (e?.op === "delete" && advisory) batch.unrevoked.add(advisory[1]);
+  }
 }
+
+/**
+ * The hold kinds a MOD-52 confirmation releases (M-T3.3): every kind but
+ * `unbound_yank`, which nothing releases.
+ */
+export const RELEASABLE_KINDS = Object.freeze(["unbound_removal", "reversal", "disable_confirmation", "bound"]);
 
 /**
  * Compile one service decision.
@@ -799,9 +816,15 @@ export function recordInBatch(batch, result) {
  *                                  (`newBatch`); absent, the decision is compiled alone.
  * @returns {{outcome: "compiled"|"refused"|"held", ...}}
  */
-export function compileDecision(entry, { root = REPO_ROOT, overBound = false, batch = null } = {}) {
+export function compileDecision(entry, { root = REPO_ROOT, overBound = false, batch = null, release = null } = {}) {
   const d = allowlisted(entry);
   const code = d.code;
+  if (release !== null && !RELEASABLE_KINDS.includes(release)) {
+    throw new Error(
+      `a release of a \`${release}\` hold was asked for, and MOD-9 releases ${RELEASABLE_KINDS.join(", ")} only: ` +
+      "an unbound A_YANK is never applied (FLOW-79)",
+    );
+  }
 
   // ── the three things that are a fault of the run, not of the decision ────
   if (typeof code !== "string" || !Object.hasOwn(KNOWN_CODES, code)) {
@@ -983,8 +1006,16 @@ export function compileDecision(entry, { root = REPO_ROOT, overBound = false, ba
   }
 
   // ── MOD-9's holds, after the refusals and before any artefact ────────────
+  //
+  // `release` is the kind an operator's MOD-52 confirmation released (M-T3.3):
+  // the hold it names, and no other, is passed. Every refusal above was asked
+  // again first, because the hold waited and the tree may have moved; and a
+  // decision the tree would now hold for a DIFFERENT, stricter reason — a
+  // listing that lost its identity record under an `A_REMOVAL_REQUEST`
+  // confirmed as a bound takedown — is held for that reason, which the caller
+  // refuses to release rather than applying it on a confirmation for another.
   const kind = holdKindFor(d, { overBound, listingBound: listing.bound });
-  if (kind) {
+  if (kind && kind !== release) {
     return held(d, kind, holdWhy(kind, d, listing));
   }
 
@@ -994,13 +1025,19 @@ export function compileDecision(entry, { root = REPO_ROOT, overBound = false, ba
     case "delist": return compileDelist(root, d, listing, { decidedAt, date, reason, batch });
     case "advisory": return compileAdvisory(root, d, listing, { decidedAt, date, reason, batch });
     case "review": return compileReview(root, d, listing, { decidedAt, date, reason, batch });
+    case "reversal":
+      // Reached only on a release: `holdKindFor` holds every reversal code,
+      // and the line above passes the hold only when `release` names it.
+      if (code === "M_RELIST") return compileRelist(root, d, listing, { decidedAt, date, reason, batch });
+      if (code === "M_UNREVOKE") return compileUnrevoke(root, d, listing, { decidedAt, date, reason, batch });
+      throw new Error(`${code} is released by its own composer (compileIdentityReset), not through compileDecision`);
     default:
       // `reversal` with no hold cannot happen: `holdKindFor` returns "reversal"
       // for both reversal codes unconditionally. Said out loud rather than
       // fallen through, because a silent fall-through here would compile a
       // relist that MOD-9 requires an operator for.
       throw new Error(
-        `\`${code}\` reached the compile with no hold kind. MOD-9 holds every M_RELIST, M_UNREVOKE and ` +
+        `\`${code}\` reached the compile with no hold kind and no release. MOD-9 holds every M_RELIST, M_UNREVOKE and ` +
         "M_IDENTITY_RESET, so this is `holdKindFor` and this table disagreeing about the reversal codes",
       );
   }
@@ -1367,6 +1404,119 @@ function compileDelist(root, d, listing, { decidedAt, date, reason, batch = null
     advisories: [],
     records: [],
     alerts: [],
+    trailers: { "Service-Decision": d.service_decision_id, "Decided-At": decidedAt },
+  };
+}
+
+/**
+ * A released `M_RELIST` (§7.2; MOD-9; MOD-47): `unlisted` removed from the
+ * listing and the log entry `relist`, naming the decision it `reverses`.
+ *
+ * Composed only on a release — MOD-9 holds every relist for 24 hours and an
+ * operator's confirmation — and against the tree the release commit writes,
+ * so the three relist refusals in `compileDecision` were asked again first.
+ * What is left to ask is whether there is anything to give back: a listing
+ * already listed on this tree (relisted by a MOD-52 revert while the hold
+ * waited, say) is `target_changed`, because writing the edit again would log
+ * a relist that changed nothing.
+ */
+function compileRelist(root, d, listing, { decidedAt, date, reason, batch = null }) {
+  if (listing.listed) {
+    return refuse(d, "target_changed",
+      `${listing.id} is already listed on this tree, so there is nothing for this relist to give back`);
+  }
+  if (batch?.unlisted.has(listing.id) || batch?.relisted.has(listing.id)) {
+    return refuse(d, "target_changed",
+      `${listing.id} is ${batch.unlisted.has(listing.id) ? "delisted" : "relisted"} by another decision in this same ` +
+      "run, so this relist would undo or repeat it rather than the decision it names");
+  }
+  const entry = {
+    date,
+    action: "relist",
+    plugin: listing.id,
+    reason,
+    ...(d.category !== undefined ? { category: d.category } : {}),
+    ...(d.reverses !== undefined ? { reverses: d.reverses } : {}),
+    service_decision_id: d.service_decision_id,
+    ...(d.declared_interest !== undefined ? { declared_interest: d.declared_interest } : {}),
+  };
+  return {
+    outcome: "compiled",
+    code: d.code,
+    service_decision_id: d.service_decision_id,
+    edits: [{ op: "unset", file: `plugins/${listing.id}/plugin.json`, member: "unlisted" }],
+    log: [logEntry(root, entry, batch)],
+    advisories: [],
+    records: [],
+    alerts: [],
+    trailers: { "Service-Decision": d.service_decision_id, "Decided-At": decidedAt },
+  };
+}
+
+/**
+ * A released `M_UNREVOKE` (§7.2; MOD-9; MOD-47): the advisory the reversed
+ * decision published is deleted, and the log entry `unrevoke` names it and the
+ * decision it `reverses`.
+ *
+ * The advisory is found from git and from nothing else: the moderation log
+ * entry on this tree whose `service_decision_id` is the one `reverses` names,
+ * a `revoke` or a `deprecate` of THIS listing, names it. BOT-80 carries no
+ * advisory id for an unrevoke, and taking one from the payload would let the
+ * service name any advisory on the list. Each way there is nothing to lift is
+ * `target_changed`: no such entry, an entry for another listing, an advisory
+ * already gone, or one an earlier unrevoke already lifted.
+ */
+function compileUnrevoke(root, d, listing, { decidedAt, date, reason, batch = null }) {
+  if (typeof d.reverses !== "string" || d.reverses === "") {
+    return refuse(d, "target_changed",
+      "an M_UNREVOKE names the revoke or deprecate it reverses (`reverses`), and this one names none, so there is " +
+      "no advisory on this tree it can be said to lift");
+  }
+  const { entries } = loadEntries({ root });
+  const reversed = entries.filter((e) => e.service_decision_id === d.reverses && (e.action === "revoke" || e.action === "deprecate"));
+  if (reversed.length !== 1) {
+    return refuse(d, "target_changed",
+      reversed.length === 0
+        ? `no revoke or deprecate in the moderation log on this tree carries service_decision_id ${d.reverses}, so ` +
+          "there is no advisory this unrevoke can lift"
+        : `${reversed.length} log entries carry service_decision_id ${d.reverses}; lifting one of them is a guess`);
+  }
+  const target = reversed[0];
+  if (target.plugin !== listing.id) {
+    return refuse(d, "target_changed",
+      `the decision ${d.reverses} published ${target.advisory} for ${target.plugin}, not for ${listing.id}`);
+  }
+  const advisory = target.advisory;
+  if (entries.some((e) => e.action === "unrevoke" && (e.reverses === d.reverses || e.advisory === advisory))
+      || batch?.unrevoked.has(advisory)) {
+    return refuse(d, "target_changed", `${advisory} is already lifted by an unrevoke, so there is nothing left to lift`);
+  }
+  const file = `${REVOCATIONS_DIR}/${advisory}.json`;
+  if (!fs.existsSync(path.join(root, ...file.split("/")))) {
+    return refuse(d, "target_changed", `${file} is not on this tree, so the advisory is already gone`);
+  }
+  const entry = {
+    date,
+    action: "unrevoke",
+    plugin: listing.id,
+    reason,
+    advisory,
+    ...(d.category !== undefined ? { category: d.category } : {}),
+    reverses: d.reverses,
+    service_decision_id: d.service_decision_id,
+    ...(d.declared_interest !== undefined ? { declared_interest: d.declared_interest } : {}),
+  };
+  return {
+    outcome: "compiled",
+    code: d.code,
+    service_decision_id: d.service_decision_id,
+    edits: [{ op: "delete", file }],
+    log: [logEntry(root, entry, batch)],
+    advisories: [],
+    records: [],
+    // MOD-8 alerts on an advisory entered; lifting one reaches every installed
+    // copy too, so it is said before the push as well.
+    alerts: [{ kind: "unrevoke", advisory, service_decision_id: d.service_decision_id }],
     trailers: { "Service-Decision": d.service_decision_id, "Decided-At": decidedAt },
   };
 }
