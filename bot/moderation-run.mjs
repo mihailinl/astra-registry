@@ -207,6 +207,7 @@ import {
 } from "./lib/settled.mjs";
 import { POLICY_CODES } from "./lib/policy/constants.mjs";
 import { createClient } from "./lib/service.mjs";
+import { reasonOf } from "./lib/service-decide.mjs";
 import { buildIndex } from "../tools/build-index.mjs";
 import { stableStringify } from "../tools/lib/canonical.mjs";
 import { validate } from "../tools/lib/jsonschema.mjs";
@@ -792,7 +793,7 @@ export function terminalSubmissionRecord(entry, { root = REPO_ROOT, existing = n
       );
     }
   }
-  return writeDecisionRecord({
+  const placed = writeDecisionRecord({
     // BOT-35 derives over (`submission_id`, fingerprint, state): the record's own
     // two, so a stop and a later refusal of one submission are two ids.
     key: submissionKey({ submission_id: e.submission_id, fingerprint: record.fingerprint ?? null, state: record.state }),
@@ -800,6 +801,21 @@ export function terminalSubmissionRecord(entry, { root = REPO_ROOT, existing = n
     root,
     existing: existing ?? recordsOnMain(root),
   });
+  // What `report` needs to post this record's result (§4.4; BOT-23), and
+  // nothing else: the DEC-7 members a submission result carries are the
+  // record's own, so the result is composed from them and cannot disagree.
+  // No moderator, no category — a result carries neither.
+  return {
+    ...placed,
+    result: {
+      submission_id: record.submission_id,
+      state: record.state,
+      reasons: record.reasons,
+      tag: record.tag,
+      repository_id: record.repository_id,
+      ...(record.fingerprint !== undefined ? { fingerprint: record.fingerprint } : {}),
+    },
+  };
 }
 
 /**
@@ -881,7 +897,11 @@ export function composeCommit({ compiled, held = [], submissions = [], documents
   for (const h of held) {
     paths.add(holdEntryPath(h.service_decision_id));
   }
-  for (const s of submissions) if (s.path) paths.add(s.path);
+  // Only a record this run WROTE. One already on `main` (BOT-36) is the
+  // service re-listing a stop it has not confirmed yet: listing its path made
+  // `apply` run `git commit` over no change, which exits 1 — so every run
+  // between the record landing and the service confirming it went red.
+  for (const s of submissions) if (s.path && s.written !== false) paths.add(s.path);
   if (settled.length) paths.add(SETTLED_FILE);
   if (paths.size) for (const d of documents) paths.add(d);
 
@@ -1657,6 +1677,81 @@ export function resultBody(r) {
   };
 }
 
+/**
+ * The submission results a commit job's `results.json` owes (BOT-30's
+ * terminal records: a stop or an `M_REJECT`), as `astra.plugins.bot-result/1`
+ * bodies for `POST bot/results` (§4.4; registry plan M-T3.4's `report`).
+ *
+ * Every DEC-7 member the body carries is the record's own — `state`, the
+ * codes of `reasons`, `decision_id`, `tag`, `fingerprint`, `repository_id` —
+ * so the result equals the record at the commit it names (BOT-23); `reasons`
+ * are FLOW-11's objects for those codes. `main_commit` is the commit `apply`
+ * pushed for a record this run wrote, and the commit that already holds it for
+ * one found on `main` (BOT-36). `recorded[]` is every (`fingerprint`,
+ * `decision_id`) pair this run recorded, which is the record's own pair or
+ * none when the record names no fingerprint.
+ *
+ * BOT-82's key for a submission result is (`submission_id`, `state`,
+ * `main_commit`): a body is composed once per key and re-sent byte-identical,
+ * and the service answers a repeat `duplicate`. A body that would name no
+ * commit is refused here, with the reason, as `resultsFor` refuses an
+ * `applied` naming none: the service settles a result against `main`.
+ *
+ * Under anything but `shadow: false` the commit job wrote no terminal record,
+ * and nothing is posted (BOT-92).
+ *
+ * @returns {{key: string, body: object}[]}
+ */
+export function submissionResults(state, { commit = null } = {}) {
+  if (state?.shadow !== false) return [];
+  const pushed = typeof commit === "string" && FULL_SHA.test(commit) ? commit : null;
+  const out = [];
+  const keys = new Set();
+  const unnamed = [];
+  for (const t of state.terminal ?? []) {
+    const r = t?.result;
+    if (!r || typeof r.submission_id !== "string" || typeof t.decision_id !== "string") {
+      throw new Error(
+        "a terminal record in the commit job's `results` carries no result members, so its submission result " +
+        "cannot be composed; the record would be committed and the service never told",
+      );
+    }
+    const mainCommit = t.written ? pushed : (typeof t.commit === "string" && FULL_SHA.test(t.commit) ? t.commit : null);
+    if (!mainCommit) {
+      unnamed.push(`${r.submission_id} ${r.state}`);
+      continue;
+    }
+    const key = `${r.submission_id}|${r.state}|${mainCommit}`;
+    if (keys.has(key)) continue;
+    keys.add(key);
+    out.push({
+      key,
+      body: {
+        submission_id: r.submission_id,
+        state: r.state,
+        reasons: r.reasons.map((code) => reasonOf(code)),
+        decision_id: t.decision_id,
+        main_commit: mainCommit,
+        tag: r.tag,
+        repository_id: r.repository_id,
+        ...(r.fingerprint !== undefined ? { fingerprint: r.fingerprint } : {}),
+        recorded: r.fingerprint !== undefined ? [{ fingerprint: r.fingerprint, decision_id: t.decision_id }] : [],
+      },
+    });
+  }
+  if (unnamed.length) {
+    throw new Error(
+      `${unnamed.join(", ")} would be posted naming no commit. BOT-23 has a \`stopped\` or \`refused\` result name ` +
+      "the commit holding its record, and BOT-82 settles it against main; so this run posts none of them and " +
+      "fails, rather than tell the service a record landed nowhere",
+    );
+  }
+  return out;
+}
+
+/** Registry plan M-T3.4: `report` gives each call 20 seconds, inside its five-minute job. */
+export const REPORT_CALL_TIMEOUT_MS = 20_000;
+
 // ── the settled job ─────────────────────────────────────────────────────────
 
 /** Every listed id that got no result at all, which fails the run and alerts. */
@@ -1993,7 +2088,13 @@ export async function main(argv = [], {
     const terminal = [];
     if (live) {
       const existing = recordsOnMain(root);
-      for (const s of recheck.submissions) terminal.push(terminalSubmissionRecord(s, { root, existing }));
+      for (const s of recheck.submissions) {
+        const placed = terminalSubmissionRecord(s, { root, existing });
+        // A record already on `main` (BOT-36) is reported under the commit that
+        // holds it (BOT-23), which only this job's full history can name; a
+        // record written now is named by the commit `apply` pushes.
+        terminal.push({ ...placed, commit: placed.written ? null : entryCommit(root, placed.path) });
+      }
     }
 
     // Ops entry 100. The results from history that the service has already
@@ -2168,7 +2269,10 @@ export async function main(argv = [], {
     if (state.shadow !== false) {
       log.log(`note  shadow: ${post.length} result(s) posted, ${withheld.length} withheld (BOT-92)`);
     }
-    const client = createClient({ workflow: "moderation", env, log, fetchImpl });
+    // Composed before the first call, so a body that would name no commit
+    // fails the job before anything is posted rather than halfway through.
+    const submissions = submissionResults(state, { commit: env.ASTRA_MAIN_COMMIT ?? null });
+    const client = createClient({ workflow: "moderation", env, log, fetchImpl, callTimeoutMs: REPORT_CALL_TIMEOUT_MS });
     // The body carries `commit` or `refusal_code` and never a null of either:
     // the token file makes each member conditional on the outcome, both ways,
     // and a null is a member carried. Until 2026-09-22 every row passed both,
@@ -2178,13 +2282,21 @@ export async function main(argv = [], {
       const answer = await client.call("serviceDecisionResult", resultBody(r));
       if (!answer.ok) unaccepted.push(`${r.service_decision_id} ${r.outcome}`);
     }
+    // BOT-30's terminal records: a stop or an `M_REJECT`, to `bot/results`,
+    // with `recorded[]` (§4.4). Until 2026-10-14 nothing posted these, so a
+    // stop was committed and the service, which lists a stop until it has
+    // confirmed its record (BOT-80), never heard which commit holds it.
+    for (const { body } of submissions) {
+      const answer = await client.call("result", body);
+      if (!answer.ok) unaccepted.push(`${body.submission_id} ${body.state}`);
+    }
     if (unaccepted.length) {
       // `settled` counts this run's results only when this job succeeded, so a
       // result that did not arrive is a decision it pages for.
       log.error(`::error::${unaccepted.length} result(s) were not accepted: ${unaccepted.join(", ")}`);
       return 1;
     }
-    log.log(`ok    ${post.length} result(s) posted`);
+    log.log(`ok    ${post.length} service-decision result(s) and ${submissions.length} submission result(s) posted`);
     return 0;
   }
 

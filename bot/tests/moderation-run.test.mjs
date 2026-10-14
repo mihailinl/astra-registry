@@ -103,7 +103,7 @@ import { countWindow } from "../lib/takedown-bound.mjs";
 const settledLib = await import("../lib/settled.mjs").catch(() => null);
 import { CATEGORIES, TAKEDOWN_BOUND } from "../lib/moderation.mjs";
 import { BOT_AUDIENCE } from "../lib/oidc.mjs";
-import { BODIES } from "../lib/service.mjs";
+import { BODIES, CALL_TIMEOUT_MS } from "../lib/service.mjs";
 import { buildIndex } from "../../tools/build-index.mjs";
 import { stableStringify } from "../../tools/lib/canonical.mjs";
 import { ID_PATTERN } from "../../tools/lib/ids.mjs";
@@ -2115,12 +2115,14 @@ const fakeToken = () => [
 /** `--job report`, as the workflow runs it, against a stub service that records every body it is sent. */
 async function reportJob(env, { answer = () => ({ status: 200, body: { schema: "astra.plugins.bot-ack/1", shadow: false, outcome: "recorded" } }) } = {}) {
   const bodies = [];
+  const posts = [];
   const logs = [];
   const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   const fetchImpl = async (url, init = {}) => {
     if (String(url).startsWith("https://token.invalid/")) return json(200, { value: fakeToken() });
     const body = JSON.parse(init.body);
     bodies.push(body);
+    posts.push({ path: new URL(String(url)).pathname.replace(/^.*\/bot\//, "bot/"), bytes: init.body });
     const a = answer(body);
     return json(a.status, a.body);
   };
@@ -2133,7 +2135,7 @@ async function reportJob(env, { answer = () => ({ status: 200, body: { schema: "
     log: { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) },
     fetchImpl,
   });
-  return { code, bodies, logs };
+  return { code, bodies, posts, logs };
 }
 
 /** `--job settled`, as the workflow runs it. */
@@ -4148,4 +4150,105 @@ test("MOD-47's round trip: revoke → unrevoke → moderation log build → sign
     forged.signed.serial += 1;
     assert.equal(verifyEnvelope(forged, REVOCATIONS_SCHEMA, keys).ok, false, "a re-serialled list still verified");
   }
+});
+
+// ── BOT-30's submission results, posted (2026-10-14) ────────────────────────
+//
+// The commit job has written a stop's or an `M_REJECT`'s terminal record since
+// M-T3.4, and `report` posted only service-decision results: the record landed
+// and the service — which lists a stop until it has confirmed the record
+// (BOT-80) — was never told which commit holds it, so it listed it again every
+// run. M-T3.4's `report` posts "stop and `M_REJECT` results, with
+// `recorded[]`, to `POST bot/results`", 20 seconds per call. Watched failing
+// by dropping `recorded`, by naming the pushed commit for a record found
+// already on `main`, by leaving the client at its 30-second default, and by
+// not posting these at all.
+test("a stop and an M_REJECT are posted to bot/results with recorded[], equal to their records, and a re-post is byte-identical", async () => {
+  const SUB2 = "0192f3a4-5b6c-7d8e-9f01-2345678901ac";
+  const stop = {
+    submission_id: SUB, repo: "acme/widgets", tag: "widgets-v1.1.0", trigger: "panel",
+    service_repository_id: "912345678", stop_status: "stopped", fingerprints: ["0123456789abcdef"], code: "A_STOP",
+  };
+  const reject = {
+    submission_id: SUB2, repo: "acme/widgets", tag: "widgets-v1.2.0", trigger: "panel",
+    service_repository_id: "912345678", fingerprints: ["fedcba9876543210"], code: "M_REJECT",
+    category: "malicious", moderator: "amoderator", decided_at: "2026-09-20T12:00:00Z",
+  };
+  const root = withDocuments(estate());
+  const origin = withRemote(root);
+  const job = await commitJob(root, { entries: [], submissions: [stop, reject] });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.terminal.map((t) => t.written), [true, true], "the fixture wrote no terminal record");
+  const step = runApply(root);
+  assert.equal(step.status, 0, step.stderr);
+  const landed = headOf(origin);
+
+  const timeouts = [];
+  const saved = AbortSignal.timeout;
+  AbortSignal.timeout = (ms) => { timeouts.push(ms); return saved.call(AbortSignal, ms); };
+  let report;
+  try {
+    report = await reportJob({ ASTRA_RESULTS: step.outputs.results, ASTRA_MAIN_COMMIT: step.outputs.main_commit });
+  } finally {
+    AbortSignal.timeout = saved;
+  }
+  assert.equal(report.code, 0, report.logs.join("\n"));
+  const results = report.posts.filter((p) => p.path === "bot/results");
+  assert.equal(results.length, 2, `report posted ${results.length} submission result(s): ${report.posts.map((p) => p.path).join(", ")}`);
+  // Every abort timer the job armed, the token mint's included: none is the
+  // client's 30-second default, so each service call ran under 20 seconds.
+  assert.ok(timeouts.length >= 2 && !timeouts.includes(CALL_TIMEOUT_MS) && timeouts.includes(20_000),
+    `report's calls were given ${timeouts.join(", ")} ms, not 20 s each`);
+
+  for (const [entry, state] of [[stop, "stopped"], [reject, "refused"]]) {
+    const body = JSON.parse(results.find((p) => JSON.parse(p.bytes).submission_id === entry.submission_id).bytes);
+    const row = job.results.terminal.find((t) => t.result.submission_id === entry.submission_id);
+    const record = JSON.parse(sh(["show", `${landed}:${row.path}`], root));
+    assert.equal(body.schema, "astra.plugins.bot-result/1");
+    assert.equal(body.state, state);
+    assert.equal(body.main_commit, landed, `${state}: the result does not name the commit holding its record (BOT-23)`);
+    // BOT-23: every DEC-7 member the result carries equals the record's.
+    assert.deepEqual(
+      [body.state, body.reasons.map((r) => r.code), body.decision_id, body.tag, body.fingerprint, body.repository_id],
+      [record.state, record.reasons, record.decision_id, record.tag, record.fingerprint, record.repository_id],
+      `${state}: the result disagrees with the record at the commit it names`,
+    );
+    assert.deepEqual(body.recorded, [{ fingerprint: record.fingerprint, decision_id: record.decision_id }],
+      `${state}: recorded[] is not the (fingerprint, decision_id) pair this run recorded (§4.4)`);
+    for (const r of body.reasons) assert.deepEqual(Object.keys(r).sort(), ["code", "location", "message", "stage"]);
+    for (const m of ["moderator", "category", "declared_interest", "repo", "trigger"]) {
+      assert.ok(!Object.hasOwn(body, m), `${state}: the result carries \`${m}\`, which §4.4 does not give it`);
+    }
+  }
+
+  // The service lists both again until it has confirmed them. The next run
+  // finds each record already on `main`, commits nothing, and re-posts the
+  // same bytes under the same BOT-82 key, naming the commit that holds it.
+  const again = await commitJob(root, { entries: [], submissions: [stop, reject] });
+  assert.equal(again.code, 0, again.logs.join("\n"));
+  assert.deepEqual(again.paths, [], "a record already on main was committed again");
+  const quiet = runApply(root);
+  assert.equal(quiet.outputs.main_commit, "");
+  const repost = await reportJob(
+    { ASTRA_RESULTS: quiet.outputs.results, ASTRA_MAIN_COMMIT: "" },
+    { answer: () => ({ status: 200, body: { schema: "astra.plugins.bot-ack/1", shadow: false, outcome: "duplicate" } }) },
+  );
+  assert.equal(repost.code, 0, `a duplicate acknowledgement failed the job: ${repost.logs.join(" | ")}`);
+  assert.deepEqual(repost.posts.filter((p) => p.path === "bot/results").map((p) => p.bytes).sort(), results.map((p) => p.bytes).sort(),
+    "the re-post is not byte-identical, so BOT-82's key would record a second landing");
+
+  // A record written by a run that pushed nothing has no commit to name.
+  const dry = await reportJob({ ASTRA_RESULTS: step.outputs.results, ASTRA_MAIN_COMMIT: "" })
+    .catch((e) => ({ code: 2, posts: [], logs: [e.message] }));
+  assert.notEqual(dry.code, 0, "a stop was reported against no commit");
+  assert.deepEqual(dry.posts, [], "something was posted before the unnamed result was refused");
+
+  // Shadow: no terminal record, so no submission result (BOT-92).
+  const shadowRoot = withDocuments(estate());
+  withRemote(shadowRoot);
+  const shadowJob = await commitJob(shadowRoot, { entries: [], submissions: [stop, reject], shadow: true });
+  const shadowStep = runApply(shadowRoot);
+  const shadowReport = await reportJob({ ASTRA_RESULTS: shadowStep.outputs.results, ASTRA_MAIN_COMMIT: shadowStep.outputs.main_commit });
+  assert.equal(shadowJob.code, 0);
+  assert.deepEqual(shadowReport.posts, [], "report posted a submission result under a shadow answer");
 });

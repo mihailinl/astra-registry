@@ -132,7 +132,7 @@ export const WORKFLOWS = Object.freeze(["ingest", "moderation"]);
 /** BOT-63: at most 3 attempts per call per run. */
 export const MAX_ATTEMPTS = 3;
 
-const CALL_TIMEOUT_MS = 30_000;
+export const CALL_TIMEOUT_MS = 30_000;
 
 /**
  * The operations, keyed by workflow (BOT-91), each carrying the contract's own
@@ -632,7 +632,14 @@ export function createClient({
   mint = (opts) => mintToken(opts),
   env = process.env,
   log = console,
+  // Per attempt. A caller with a tighter budget says so (the moderation
+  // run's `report`: 20 seconds per call inside its five-minute job, registry
+  // plan M-T3.4); every other caller keeps the default.
+  callTimeoutMs = CALL_TIMEOUT_MS,
 } = {}) {
+  if (!Number.isInteger(callTimeoutMs) || callTimeoutMs <= 0) {
+    throw new Error(`a call timeout of ${JSON.stringify(callTimeoutMs)} ms is not a positive whole number of milliseconds`);
+  }
   if (!WORKFLOWS.includes(workflow)) {
     throw new Error(`${JSON.stringify(workflow)} is not a bot workflow; BOT-91 keys every operation by one`);
   }
@@ -663,7 +670,7 @@ export function createClient({
         headers,
         body: bytes ?? undefined,
         redirect: "manual",
-        signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+        signal: AbortSignal.timeout(callTimeoutMs),
       });
     } catch (e) {
       return { kind: "retry", cause: `the service could not be reached: ${String(e.message ?? e)}` };
