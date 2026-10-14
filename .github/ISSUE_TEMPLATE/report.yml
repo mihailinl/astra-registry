@@ -16,7 +16,7 @@ body:
         **Stop here if this is a security problem.** A hole in the verification
         chain, a way to get a listing past the checks, or a compromised
         publisher goes to a
-        [private report](https://github.com/mihailinl/astra-registry/blob/main/docs/POLICY.md#11-embargoed-reports),
+        [private report](https://github.com/mihailinl/astra-registry/blob/main/docs/POLICY.md#12-embargoed-reports),
         not to a public issue. This form is public the moment you submit it.
 
         **What you get:** a human reads this and says so on the thread within

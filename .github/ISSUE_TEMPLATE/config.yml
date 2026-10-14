@@ -53,7 +53,7 @@ blank_issues_enabled: false
 # the direct form work, and what to change here on the day it is flipped.
 contact_links:
   - name: A security problem — do not open an issue
-    url: https://github.com/mihailinl/astra-registry/blob/main/docs/POLICY.md#11-embargoed-reports
+    url: https://github.com/mihailinl/astra-registry/blob/main/docs/POLICY.md#12-embargoed-reports
     about: >-
       Anything that would let somebody ship code to a user: a hole in the
       verification chain, a way to get a listing past the checks, a compromised
