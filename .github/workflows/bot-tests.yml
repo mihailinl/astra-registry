@@ -505,9 +505,12 @@ jobs:
       # the contract adds at a token-moving version turns this red at the
       # moment it is added rather than turning every takedown into a silent
       # `kind_refused` in production. Real git repositories, because MOD-13's
-      # next advisory id is a statement about history. ~0.3 s, no probe, no
-      # network.
-      - name: The moderation run, and the member that must reach no file
+      # next advisory id is a statement about history. It also carries
+      # MOD-47's round trip, the CI check MOD-1 waits on before the panel may
+      # offer M_DEPRECATE, M_REVOKE or M_UNREVOKE: revoke → unrevoke → log
+      # build → sign, through the commit job, with a TEST index key, every
+      # signature verified. No probe, no network.
+      - name: The moderation run, the member that must reach no file, and MOD-47's round trip
         if: ${{ !cancelled() && steps.probe.conclusion == 'success' }}
         run: node --test bot/tests/moderation-run.test.mjs
 

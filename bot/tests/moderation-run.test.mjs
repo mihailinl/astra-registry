@@ -84,7 +84,10 @@ import { decisionId, recordPath } from "../lib/decisions.mjs";
 import { compareWithBaseline, identityFromCertificate } from "../lib/identity.mjs";
 import { baselineFor } from "../lib/service-decide.mjs";
 import { listingStateAt } from "../lib/listing-state.mjs";
-import { checkEntry } from "../lib/moderation.mjs";
+import { buildModerationLog, checkEntry } from "../lib/moderation.mjs";
+import { REVOCATIONS_SCHEMA, publicKeyFromBase64, verifyEnvelope } from "../lib/sign.mjs";
+import { signRevocations } from "../../tools/sign-revocations.mjs";
+import { loadTestRoot } from "../../tools/testkeys/regenerate.mjs";
 import { detect } from "../detectors.mjs";
 import { loadRecords } from "../../tools/lib/sources.mjs";
 // What ops entry 101 added, off the namespaces, so that this suite run against
@@ -4039,4 +4042,110 @@ test("MOD-46: a red coverage canary holds a confirmed reversal back and no taked
   const applied = await commitJob(takedown.root, { entries: [], now: new Date("2026-09-20T00:00:00Z"), coverage: counting });
   assert.deepEqual(applied.results.released_holds, [SDI2], "a red coverage canary held back a takedown (MOD-46 blocks reversals only)");
   assert.equal(asked, 0, "the canary was run with no confirmed reversal on the tree");
+});
+
+// ── MOD-47's round trip, in CI (MOD-1) ──────────────────────────────────────
+//
+// MOD-47: "CI runs revoke → unrevoke → log build → sign". MOD-1 keeps
+// `M_DEPRECATE`, `M_REVOKE` and `M_UNREVOKE` off the panel until, among other
+// things, that round trip passes. Until 2026-10-14 the nearest thing was
+// moderation.test.mjs's backing check over hand-written log entries, with the
+// signing half left to ROLL-1's walk with real keys — and no unrevoke could be
+// produced by the bot at all, because nothing released a held `M_UNREVOKE`.
+//
+// This is the whole trip on a fixture, through the code a production run
+// executes: the commit job compiles the revoke and the workflow's `apply`
+// step pushes it; the withdrawal list is rebuilt and signed with a TEST index
+// key and verified as a client verifies it; the moderation log is built
+// against that signed list; the `M_UNREVOKE` is listed, held as a reversal,
+// confirmed by the operator's act, released 24 hours later by the commit job
+// and pushed; and the list is rebuilt, re-signed at a higher serial, verified,
+// and the log built against it shows the revoke settled by the unrevoke. Never
+// a production act: a fixture repository, a bare `origin`, a committed key
+// that says TEST-ONLY in its id.
+test("MOD-47's round trip: revoke → unrevoke → moderation log build → sign, through the commit job, and every signature verifies", async () => {
+  const KEY = "TEST-ONLY-DO-NOT-TRUST-index-2026a";
+  const test = loadTestRoot(KEY);
+  const signer = { key_id: KEY, privateKey: test.privateKey, public_key: test.publicKeyB64 };
+  const keys = [{ key_id: KEY, publicKey: publicKeyFromBase64(test.publicKeyB64) }];
+  const committedList = (root, sha) => JSON.parse(sh(["show", `${sha}:${REVOCATIONS_FILE}`], root));
+
+  const root = withDocuments(estate({ at: "2026-09-17T09:00:00Z" }));
+  const origin = withRemote(root);
+
+  // ── revoke ──
+  const revoke = decision({
+    service_decision_id: SDI2, code: "M_REVOKE", category: "security_defect", severity: "high",
+    action: "block_install", moderator: "amoderator", versions: ["1.0.0"], decided_at: "2026-09-17T10:00:00Z",
+  });
+  const first = await commitJob(root, { entries: [revoke], now: new Date("2026-09-17T10:30:00Z") });
+  assert.equal(first.code, 0, first.logs.join("\n"));
+  assert.equal(runApply(root, dated("2026-09-17T10:45:00Z")).status, 0);
+  const revoked = headOf(origin);
+  const advisory = path.basename(first.results.written.find((p) => p.startsWith("tools/revocations/ASTRA-")), ".json");
+
+  // The document the commit carried is the generator's own, and it signs.
+  assert.equal(stableStringify(committedList(root, revoked)), stableStringify(buildRevocations({ root })),
+    "the withdrawal list the revoke commit carried is not what the generator builds from the tree it landed");
+  const list1 = signRevocations(committedList(root, revoked), { signer, issuedAt: new Date("2026-09-17T11:00:00Z") });
+  assert.deepEqual(verifyEnvelope(list1, REVOCATIONS_SCHEMA, keys), { ok: true, key_id: KEY });
+  assert.ok(list1.signed.revocations.some((r) => r.id === advisory), `the signed list does not carry ${advisory}`);
+
+  // ── log build, against the signed list ──
+  const log1 = buildModerationLog({ root, revocations: list1.signed.revocations, revocationsSerial: list1.signed.serial });
+  const revokeEntry = (log) => log.entries.find((e) => e.action === "revoke" && e.advisory === advisory);
+  assert.equal(revokeEntry(log1)?.backed, true, "the revoke is not backed by the signed advisory it names");
+
+  // ── unrevoke: listed, held, confirmed, released ──
+  const unrevoke = decision({
+    code: "M_UNREVOKE", category: "error", moderator: "amoderator", reverses: SDI2, decided_at: "2026-09-18T09:00:00Z",
+    reason: "The advisory named a bundle that was never shipped; the withdrawal is lifted and the listing stands.",
+  });
+  const second = await commitJob(root, { entries: [unrevoke], now: new Date("2026-09-18T09:30:00Z") });
+  assert.equal(second.code, 0, second.logs.join("\n"));
+  assert.deepEqual(second.results.held.map((h) => h.service_decision_id), [SDI], "MOD-9 holds every M_UNREVOKE");
+  assert.equal(runApply(root, dated("2026-09-18T09:45:00Z")).status, 0);
+
+  const act = operatorAct({ root, act: "confirm", serviceDecisionId: SDI, now: new Date("2026-09-18T10:00:00Z"), runId: "7" });
+  sh(["add", "--", ...act.paths], root);
+  sh(["commit", "-q", "-m", act.message], root, dated("2026-09-18T10:00:00Z"));
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+
+  const early = await commitJob(root, { entries: [], now: new Date("2026-09-19T09:30:00Z") });
+  assert.deepEqual(early.results.released_holds, [], "the unrevoke was released before 24 hours had run from its hold's commit");
+  const third = await commitJob(root, { entries: [], now: new Date("2026-09-19T10:00:00Z") });
+  assert.equal(third.code, 0, third.logs.join("\n"));
+  assert.deepEqual(third.results.released_holds, [SDI], third.logs.join(" | "));
+  const step = runApply(root, dated("2026-09-19T10:15:00Z"));
+  assert.equal(step.status, 0, step.stderr);
+  const lifted = headOf(origin);
+  assert.equal(step.outputs.main_commit, lifted);
+
+  // ── sign again: a higher serial, the advisory gone, the signature good ──
+  const committed2 = committedList(root, lifted);
+  assert.equal(stableStringify(committed2), stableStringify(buildRevocations({ root })),
+    "the withdrawal list the unrevoke commit carried is not what the generator builds from the tree it landed");
+  const list2 = signRevocations(committed2, { signer, issuedAt: new Date("2026-09-19T11:00:00Z") });
+  assert.deepEqual(verifyEnvelope(list2, REVOCATIONS_SCHEMA, keys), { ok: true, key_id: KEY });
+  assert.ok(list2.signed.serial > list1.signed.serial,
+    `the list lifting ${advisory} is serial ${list2.signed.serial}, not above ${list1.signed.serial}: a client holding the older list keeps the withdrawal`);
+  assert.ok(!list2.signed.revocations.some((r) => r.id === advisory), `the signed list still carries ${advisory}`);
+
+  // ── log build, against the re-signed list: the revoke settled, the unrevoke newest ──
+  const log2 = buildModerationLog({ root, revocations: list2.signed.revocations, revocationsSerial: list2.signed.serial });
+  assert.equal(revokeEntry(log2)?.backed, "settled", "an advisory lifted by an unrevoke is not read as settled (MOD-47)");
+  const top = log2.entries[0];
+  assert.deepEqual([top.action, top.advisory, top.reverses, top.service_decision_id], ["unrevoke", advisory, SDI2, SDI],
+    "the newest log entry is not the unrevoke naming the advisory and the decision it reverses");
+  // And against the OLD list the log would still claim the withdrawal: the
+  // signature is what makes the second build's answer the served one.
+  const stale = buildModerationLog({ root, revocations: list1.signed.revocations, revocationsSerial: list1.signed.serial });
+  assert.equal(revokeEntry(stale)?.backed, true, "against the list that still carries it, the advisory reads as in force");
+
+  // The signatures are real: one changed byte in either list fails verification.
+  for (const list of [list1, list2]) {
+    const forged = JSON.parse(JSON.stringify(list));
+    forged.signed.serial += 1;
+    assert.equal(verifyEnvelope(forged, REVOCATIONS_SCHEMA, keys).ok, false, "a re-serialled list still verified");
+  }
 });

@@ -497,11 +497,12 @@ test("fileNameFor is the one place a name is spelled", () => {
 // 7. MOD-47's round trip: revoke → log build → unrevoke → log build
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// The signing half of the round trip is ROLL-1's recorded walk with real keys,
-// not this suite's — what a signature adds is a statement about `tools/sign-*`,
-// which `tools/selftest/signer*.mjs` already holds. What MOD-47 asks HERE is
-// that the backing check survives the reversal, and that is a statement about
-// two log builds and the document between them.
+// The whole trip — the revoke and the unrevoke made by the commit job, the
+// withdrawal list signed with a test key and verified, the log built against
+// each signed list — is `bot/tests/moderation-run.test.mjs`'s "MOD-47's round
+// trip" (2026-10-14), which needs that suite's git fixtures. What this suite
+// asks is narrower: that the backing check survives the reversal, a statement
+// about two log builds and the document between them, over hand entries.
 
 test("a revoke is backed by its advisory, and stops being a throw once it is unrevoked", () => {
   const dir = root();
