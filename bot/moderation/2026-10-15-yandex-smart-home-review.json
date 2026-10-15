@@ -1,0 +1,13 @@
+{
+  "date": "2026-10-15",
+  "action": "review",
+  "plugin": "yandex-smart-home",
+  "versions": [
+    "0.1.4",
+    "0.1.3"
+  ],
+  "reason": "Проверено.",
+  "category": "review_passed",
+  "service_decision_id": "5253a16b-8bbb-489e-8d65-54e112bf6062",
+  "declared_interest": false
+}

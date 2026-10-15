@@ -1912,7 +1912,7 @@
               "repo": "Voltur792/Y-home-f-astra",
               "tag": "v0.1.4"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.1.4"
           },
           {
@@ -1937,7 +1937,7 @@
               "repo": "Voltur792/Y-home-f-astra",
               "tag": "v0.1.3"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.1.3"
           },
           {
@@ -2008,6 +2008,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 59
+    "serial": 60
   }
 }
