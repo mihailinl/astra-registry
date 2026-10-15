@@ -1,0 +1,9 @@
+{
+  "date": "2026-10-14",
+  "action": "delist",
+  "plugin": "e2e-test",
+  "reason": "E2E-тест: снятие плагина модератором",
+  "category": "broken",
+  "service_decision_id": "97635c74-878b-423c-a43d-6821b8ddc92c",
+  "declared_interest": false
+}

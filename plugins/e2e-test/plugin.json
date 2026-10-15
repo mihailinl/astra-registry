@@ -15,5 +15,6 @@
     "name": "mihailinl"
   },
   "icon": "icon.svg",
-  "readme": "README.md"
+  "readme": "README.md",
+  "unlisted": true
 }
