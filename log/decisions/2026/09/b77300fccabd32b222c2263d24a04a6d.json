@@ -1,0 +1,16 @@
+{
+  "actor": "system",
+  "commit": "4f672cbf3d193805a00741a13a54de4c1d474e97",
+  "decided_at": "2026-09-05T07:18:40Z",
+  "decision_id": "b77300fccabd32b222c2263d24a04a6d",
+  "fingerprint": "a4734e2d71071e08",
+  "plugin_id": "web-stt",
+  "repo": "LilKALINOV/Astra-Google-STT",
+  "repository_id": "1357861685",
+  "repository_owner_id": "150132236",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "tag": "v0.4.0",
+  "trigger": "migration",
+  "version": "0.4.0"
+}

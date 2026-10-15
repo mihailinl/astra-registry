@@ -1,0 +1,16 @@
+{
+  "actor": "system",
+  "commit": "839e56875bb4bae9f2c8611f36b17153ba6cdc98",
+  "decided_at": "2026-09-09T17:58:11Z",
+  "decision_id": "57390433b73ed66d85ec23e2ed5a42da",
+  "fingerprint": "41b214c8a7cbef0c",
+  "plugin_id": "knowledge-graph",
+  "repo": "Belnash3/knowledge-graph",
+  "repository_id": "1363040199",
+  "repository_owner_id": "209764128",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "tag": "v0.1.0",
+  "trigger": "migration",
+  "version": "0.1.0"
+}

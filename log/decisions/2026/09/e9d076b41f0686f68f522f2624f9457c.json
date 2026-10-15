@@ -1,0 +1,16 @@
+{
+  "actor": "system",
+  "commit": "8c2fa3a1114d7f369a62749f8ca21fddff53fabb",
+  "decided_at": "2026-09-17T23:38:12Z",
+  "decision_id": "e9d076b41f0686f68f522f2624f9457c",
+  "fingerprint": "e19bd373926a1b28",
+  "plugin_id": "voice-text-input",
+  "repo": "Voltur792/voice-text-input",
+  "repository_id": "1366640941",
+  "repository_owner_id": "232130437",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "tag": "v1.0.3",
+  "trigger": "migration",
+  "version": "1.0.3"
+}

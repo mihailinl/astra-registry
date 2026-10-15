@@ -1,0 +1,16 @@
+{
+  "actor": "system",
+  "commit": "cf347a05cfa3363253d08b8f2be5819b64fd0536",
+  "decided_at": "2026-09-07T16:01:40Z",
+  "decision_id": "d5e5905f12531e8803bcd97f00510f10",
+  "fingerprint": "bbad6727a5c8e165",
+  "plugin_id": "denchik-vroid-manager",
+  "repo": "denchik2444/vrm-manager",
+  "repository_id": "1360274968",
+  "repository_owner_id": "326081654",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "tag": "v1.1.7",
+  "trigger": "migration",
+  "version": "1.1.7"
+}

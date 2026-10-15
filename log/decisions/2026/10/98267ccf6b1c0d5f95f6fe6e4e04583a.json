@@ -1,0 +1,16 @@
+{
+  "actor": "system",
+  "commit": "34bad2eb56f21d7d689d7e1bebed067da7c89935",
+  "decided_at": "2026-10-14T00:08:28Z",
+  "decision_id": "98267ccf6b1c0d5f95f6fe6e4e04583a",
+  "fingerprint": "5d3c6f72eb9a1e5f",
+  "plugin_id": "e2e-test",
+  "repo": "mihailinl/astra-e2e-test",
+  "repository_id": "1418150248",
+  "repository_owner_id": "193032699",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "tag": "v0.1.0",
+  "trigger": "migration",
+  "version": "0.1.0"
+}

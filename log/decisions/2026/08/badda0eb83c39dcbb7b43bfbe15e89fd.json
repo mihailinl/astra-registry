@@ -1,0 +1,16 @@
+{
+  "actor": "system",
+  "commit": "f5a2656eb9eada0ab72e5ef752eaa61636b12b0c",
+  "decided_at": "2026-08-19T14:31:19Z",
+  "decision_id": "badda0eb83c39dcbb7b43bfbe15e89fd",
+  "fingerprint": "36b8ad7fd69350d8",
+  "plugin_id": "companion-cat",
+  "repo": "mihailinl/AstraPlugins",
+  "repository_id": "1203676452",
+  "repository_owner_id": "193032699",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "tag": "companion-cat-v0.1.7",
+  "trigger": "migration",
+  "version": "0.1.7"
+}

@@ -1,0 +1,16 @@
+{
+  "actor": "system",
+  "commit": "8c770edd32eb05ba71a81cc96537ea3e58b27b9e",
+  "decided_at": "2026-09-20T10:12:47Z",
+  "decision_id": "301baf09eab8d076c2cf88775096c2ff",
+  "fingerprint": "151064596e58ebe3",
+  "plugin_id": "sleep-pause-timer",
+  "repo": "Voltur792/SPT",
+  "repository_id": "1358860864",
+  "repository_owner_id": "232130437",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "tag": "v0.2.6",
+  "trigger": "migration",
+  "version": "0.2.6"
+}

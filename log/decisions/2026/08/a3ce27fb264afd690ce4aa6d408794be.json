@@ -1,0 +1,16 @@
+{
+  "actor": "system",
+  "commit": "1116e1af689dd36cd2f9a5ec92f2e3a66972e27e",
+  "decided_at": "2026-08-20T19:35:21Z",
+  "decision_id": "a3ce27fb264afd690ce4aa6d408794be",
+  "fingerprint": "7783a4582a79b10d",
+  "plugin_id": "text-utils",
+  "repo": "mihailinl/AstraPlugins",
+  "repository_id": "1203676452",
+  "repository_owner_id": "193032699",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "tag": "text-utils-v0.1.3",
+  "trigger": "migration",
+  "version": "0.1.3"
+}

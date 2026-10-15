@@ -1,0 +1,16 @@
+{
+  "actor": "system",
+  "commit": "e12b9e301a43bf5729c283d6179f012d32051a20",
+  "decided_at": "2026-08-19T14:58:06Z",
+  "decision_id": "dad0fabbe2203a5d8dd9e957af5932b7",
+  "fingerprint": "637e88d1ffb4aaf8",
+  "plugin_id": "doom",
+  "repo": "mihailinl/AstraPlugins",
+  "repository_id": "1203676452",
+  "repository_owner_id": "193032699",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "tag": "doom-v0.1.3",
+  "trigger": "migration",
+  "version": "0.1.3"
+}

@@ -1,0 +1,16 @@
+{
+  "actor": "system",
+  "commit": "13bc50105c97dbf6ba68fd66b7a41da8d5c131a9",
+  "decided_at": "2026-08-31T21:10:27Z",
+  "decision_id": "de6550fe217658cee76e6c0490c7c09d",
+  "fingerprint": "705c4af7308a43c6",
+  "plugin_id": "astra-chess",
+  "repo": "KNICE-TECH/astra-chess",
+  "repository_id": "1343092393",
+  "repository_owner_id": "280318216",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "tag": "v0.1.17",
+  "trigger": "migration",
+  "version": "0.1.17"
+}

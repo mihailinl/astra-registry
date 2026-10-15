@@ -1,0 +1,16 @@
+{
+  "actor": "system",
+  "commit": "270d471c0bffc93392da419558839e95a19b7a72",
+  "decided_at": "2026-09-04T14:56:20Z",
+  "decision_id": "c2a5f91fe7c3839faa5b68229abdca27",
+  "fingerprint": "f55d23b83e38fe69",
+  "plugin_id": "dwertyfa-astra-tg",
+  "repo": "dwertyfa288/dwertyfa-astra-tg",
+  "repository_id": "1353573628",
+  "repository_owner_id": "296277844",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "tag": "v0.1.13",
+  "trigger": "migration",
+  "version": "0.1.13"
+}

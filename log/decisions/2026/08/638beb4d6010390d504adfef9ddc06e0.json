@@ -1,0 +1,16 @@
+{
+  "actor": "system",
+  "commit": "5b5d2605961b54271b74304f6988972edb83d598",
+  "decided_at": "2026-08-19T06:45:43Z",
+  "decision_id": "638beb4d6010390d504adfef9ddc06e0",
+  "fingerprint": "c75d5f673358ea2c",
+  "plugin_id": "bad-apple",
+  "repo": "mihailinl/AstraPlugins",
+  "repository_id": "1203676452",
+  "repository_owner_id": "193032699",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "tag": "bad-apple-v0.1.1",
+  "trigger": "migration",
+  "version": "0.1.1"
+}

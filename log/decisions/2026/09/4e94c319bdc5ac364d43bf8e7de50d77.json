@@ -1,0 +1,16 @@
+{
+  "actor": "system",
+  "commit": "700ec6d01e06a397ece050e441beb6b2431b18dd",
+  "decided_at": "2026-09-02T21:04:37Z",
+  "decision_id": "4e94c319bdc5ac364d43bf8e7de50d77",
+  "fingerprint": "225aa398f4aca383",
+  "plugin_id": "telegram-client",
+  "repo": "mihailinl/AstraPlugins",
+  "repository_id": "1203676452",
+  "repository_owner_id": "193032699",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "tag": "telegram-client-v0.2.0",
+  "trigger": "migration",
+  "version": "0.2.0"
+}

@@ -1,0 +1,16 @@
+{
+  "actor": "system",
+  "commit": "f6204de3a9ba77b4eaceed863ae47e18dbd7f5dd",
+  "decided_at": "2026-09-10T13:54:16Z",
+  "decision_id": "618308e3519e269d91ba92b33a233efe",
+  "fingerprint": "f2f2ab7a7a490d0b",
+  "plugin_id": "yandex-smart-home",
+  "repo": "Voltur792/Y-home-f-astra",
+  "repository_id": "1364261342",
+  "repository_owner_id": "232130437",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "tag": "v0.1.0",
+  "trigger": "migration",
+  "version": "0.1.0"
+}

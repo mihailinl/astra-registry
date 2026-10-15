@@ -1,0 +1,16 @@
+{
+  "actor": "system",
+  "commit": "39df7257cae1310959a71877983c016a0c27cbfa",
+  "decided_at": "2026-08-19T17:01:13Z",
+  "decision_id": "8e71213d3821c85f237f0fedf4813208",
+  "fingerprint": "88a884e3829d3605",
+  "plugin_id": "minecraft-for-astra",
+  "repo": "teletemagame-dev/minecraft-for-astra",
+  "repository_id": "1339776999",
+  "repository_owner_id": "228949876",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "tag": "v0.3.1",
+  "trigger": "migration",
+  "version": "0.3.1"
+}

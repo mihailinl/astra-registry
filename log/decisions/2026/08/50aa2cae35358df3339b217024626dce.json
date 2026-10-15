@@ -1,0 +1,16 @@
+{
+  "actor": "system",
+  "commit": "69e05d20f5d4f4a8ae45226434f4a5e438d21da4",
+  "decided_at": "2026-08-11T23:18:07Z",
+  "decision_id": "50aa2cae35358df3339b217024626dce",
+  "fingerprint": "c5edac0aa28567ce",
+  "plugin_id": "dice-roller",
+  "repo": "mihailinl/astra-dice-roller",
+  "repository_id": "1331417619",
+  "repository_owner_id": "193032699",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "tag": "v0.1.1",
+  "trigger": "migration",
+  "version": "0.1.1"
+}

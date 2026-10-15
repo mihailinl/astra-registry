@@ -1,0 +1,16 @@
+{
+  "actor": "system",
+  "commit": "f168ffe7a5b66c27a6498e4f614256c8e0f9ca29",
+  "decided_at": "2026-08-20T19:00:29Z",
+  "decision_id": "7c7622e0a67e2282377abf4675de4fb2",
+  "fingerprint": "c2f090387771bb29",
+  "plugin_id": "sub-models-for-astra",
+  "repo": "teletemagame-dev/sub-models-for-astra",
+  "repository_id": "1341033032",
+  "repository_owner_id": "228949876",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "tag": "v0.14.0",
+  "trigger": "migration",
+  "version": "0.14.0"
+}

@@ -1,0 +1,16 @@
+{
+  "actor": "system",
+  "commit": "9e6bf28ddda656cb6015a1076284d51db119f4e4",
+  "decided_at": "2026-08-19T11:14:45Z",
+  "decision_id": "b322e9c1934c8b007c2d3540117d67f2",
+  "fingerprint": "a0810e588a28b7cf",
+  "plugin_id": "json-tools",
+  "repo": "mihailinl/AstraPlugins",
+  "repository_id": "1203676452",
+  "repository_owner_id": "193032699",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "tag": "json-tools-v0.1.2",
+  "trigger": "migration",
+  "version": "0.1.2"
+}
