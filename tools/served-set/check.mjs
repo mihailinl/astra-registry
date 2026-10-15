@@ -31,7 +31,7 @@ import { emit, finding, verdict } from "./report.mjs";
 import { SIGNER_WORKFLOW, gather, serve85 } from "./main-vs-signed.mjs";
 import { fetchServed, serve39 } from "./served-vs-signed.mjs";
 import {
-  CATALOGUE_HOSTS, artifactNameFrom, extraPathVerdict, fetchHosts, probeExtraPaths, probePaths, serve39Hosts,
+  CATALOGUE_HOSTS, artifactNameFrom, extraPathVerdict, fetchHosts, hostAgeVerdicts, probeExtraPaths, probePaths, serve39Hosts,
 } from "./host-vs-signed.mjs";
 import { runwayVerdict } from "./runway.mjs";
 import { actionsRunLookup, gitAncestry, provenance, runsInScope, signedCommits } from "./provenance.mjs";
@@ -135,12 +135,13 @@ async function servedVsSigned({ root, now, repo, token }) {
 
 /**
  * SERVE-39's catalogue-host half, over every host DEC-18 means by "the
- * catalogue host" (`CATALOGUE_HOSTS`, each reported on its own), and SERVE-52's
- * and INV-40's path probes (RC-R2-3, commit (i)), which stay sent to
- * `registry.minice.ai` alone (M-12). Its own job rather than a second base
- * handed to the Pages comparison, because the host has no latch and an
- * expired list is one it must NOT serve; and it holds no token at all, which
- * the Pages job cannot say, since SERVE-90's fallback needs `actions: read`.
+ * catalogue host" (`CATALOGUE_HOSTS`, each reported on its own), DEC-18's
+ * Age-vs-max-age bound on both, and SERVE-52's and INV-40's path probes
+ * (RC-R2-3, commit (i)), which stay sent to `registry.minice.ai` alone
+ * (M-12). Its own job rather than a second base handed to the Pages
+ * comparison, because the host has no latch and an expired list is one it
+ * must NOT serve; and it holds no token at all, which the Pages job cannot
+ * say, since SERVE-90's fallback needs `actions: read`.
  *
  * A refusal from `probeExtraPaths` — a base other than the host, a path that
  * resolves elsewhere — is thrown rather than reported, and `main` turns it into
@@ -152,13 +153,14 @@ async function hostVsSigned({ root, now }) {
   const headClock = head.present ? gitText(["log", "-1", "--format=%cI", head.sha], { root }) : null;
   const servedByHost = await fetchHosts({ hosts: CATALOGUE_HOSTS });
   const documents = serve39Hosts({ hosts: CATALOGUE_HOSTS, head, headClock, servedByHost, now });
+  const age = hostAgeVerdicts({ hosts: CATALOGUE_HOSTS, servedByHost });
   const probes = await probeExtraPaths({ paths: probePaths(artifactNameFrom(head.documents?.index)) });
   const paths = extraPathVerdict({ probes });
   return verdict({
-    findings: [...documents.findings, ...paths.findings],
+    findings: [...documents.findings, ...age.findings, ...paths.findings],
     waiting: documents.waiting,
     hexes: documents.hexes,
-    notes: [...documents.notes, ...paths.notes],
+    notes: [...documents.notes, ...age.notes, ...paths.notes],
   });
 }
 

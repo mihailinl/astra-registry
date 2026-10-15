@@ -36,6 +36,12 @@
 // through its CDN; the RU box is a different origin with no such history, and
 // DEC-18 does not ask for the probes to cover it.
 //
+// DEC-18 also binds a CDN's cache to the origin's own `max-age` ("MUST NOT
+// keep a copy past" it). `hostAgeVerdict`/`hostAgeVerdicts`, beside
+// `serve39Host`, check that bound from each host's `Age` and `Cache-Control`
+// response headers — as a warning that does not fail the job today (see
+// `AGE_OVER_MAX_AGE_IS_FATAL`).
+//
 // ── what the probes are for, and the one address they may be sent to ───────
 //
 // SERVE-52: nothing under `registry/v1/` but the four documents. INV-40: no
@@ -141,6 +147,11 @@ class Refused extends Error {}
  * a 3xx is the host sending the reader somewhere else, which is reported as
  * itself rather than followed into a comparison of someone else's bytes.
  *
+ * `age` and `cacheControl` are the raw `Age` and `Cache-Control` response
+ * headers on a 200, read for `hostAgeVerdict` (DEC-18); `null` where a header
+ * is absent, which the RU box's direct-from-origin answers may simply be —
+ * that is not itself a finding, only something that check cannot compare.
+ *
  * @param {{host?: string, fetchImpl?: typeof fetch}} opts
  */
 export async function fetchHost({ host = HOST, fetchImpl = fetch } = {}) {
@@ -156,12 +167,16 @@ export async function fetchHost({ host = HOST, fetchImpl = fetch } = {}) {
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
       if (res.status !== 200) {
-        served[name] = { ok: false, url, status: res.status, body: null, error: `HTTP ${res.status}` };
+        served[name] = { ok: false, url, status: res.status, body: null, error: `HTTP ${res.status}`, age: null, cacheControl: null };
         continue;
       }
-      served[name] = { ok: true, url, status: 200, body: await res.text(), error: null };
+      served[name] = {
+        ok: true, url, status: 200, body: await res.text(), error: null,
+        age: typeof res.headers?.get === "function" ? res.headers.get("age") : null,
+        cacheControl: typeof res.headers?.get === "function" ? res.headers.get("cache-control") : null,
+      };
     } catch (e) {
-      served[name] = { ok: false, url, status: null, body: null, error: String(e?.message ?? e) };
+      served[name] = { ok: false, url, status: null, body: null, error: String(e?.message ?? e), age: null, cacheControl: null };
     }
   }
   return served;
@@ -309,6 +324,94 @@ export function serve39Hosts({ hosts = CATALOGUE_HOSTS, head, headClock, servedB
     notes.push(...v.notes);
   }
   return verdict({ findings, waiting, hexes, notes });
+}
+
+/**
+ * DEC-18: "a CDN's cache MUST NOT keep a copy past the origin's `max-age`" —
+ * bytes that are correct (serve39Host already catches a BYTE difference) but
+ * STALE at the edge past the bound the origin set for them.
+ *
+ * `AGE_GRACE_SECONDS` is DEC-18's own 30 s grace on top of `max-age`.
+ */
+const AGE_GRACE_SECONDS = 30;
+
+/**
+ * The one constant that promotes `SERVE_39_HOST_AGE_OVER_MAX_AGE` from a
+ * warning (printed, job stays green) to a finding (job goes red).
+ *
+ * **2026-10-15: `false`, on purpose, and that is a known gap, not a design
+ * choice to keep.** Measured today, gcore serves `registry.minice.ai` with
+ * `Age` 190–1264 s against whatever `max-age` the origin sends — already well
+ * past any reasonable grace — so a failing version of this check would be red
+ * from the moment it merged, for a cause nobody has fixed yet: either gcore's
+ * cache configuration, or the already-planned move of that host's traffic
+ * behind Cloudflare (DEC-18). Flip this to `true` once one of those lands, or
+ * once the operator decides the warning has stood long enough on its own;
+ * nothing else in this file needs to change.
+ */
+export const AGE_OVER_MAX_AGE_IS_FATAL = false;
+
+function parseMaxAgeSeconds(cacheControl) {
+  const m = /(?:^|,)\s*max-age=(\d+)/i.exec(String(cacheControl ?? ""));
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * DEC-18's Age-vs-max-age bound, for one host's four documents.
+ *
+ * Silent (a note, never a finding) wherever `Age` or `max-age` is unreadable:
+ * a host served direct from its origin, with no CDN in front of it, may carry
+ * neither header at all, and that is correct, not a fault this check can see.
+ * `served` entries that `serve39Host` already reports as unreachable or
+ * redirected are skipped here too — one finding per cause, not two.
+ *
+ * @param {{host?: string, served: object}} o
+ */
+export function hostAgeVerdict({ host = HOST, served }) {
+  const findings = [];
+  const notes = [];
+  for (const [name, rel] of Object.entries(SIGNED_FILES)) {
+    const got = served?.[name];
+    if (!got?.ok) continue;
+    // `Number(null)` is 0, not NaN, and 0 is a finite age that would pass the
+    // check below for a header that was never there — so a null/absent `Age`
+    // is excluded before Number() ever sees it, not folded into the same
+    // "unreadable" branch by its arithmetic.
+    const ageSeconds = got.age == null ? NaN : Number(got.age);
+    const maxAge = parseMaxAgeSeconds(got.cacheControl);
+    if (!Number.isFinite(ageSeconds) || maxAge === null) {
+      notes.push(
+        `${host} ${rel}: no readable Age/max-age to hold to DEC-18's bound ` +
+        `(Age ${got.age ?? "absent"}, Cache-Control ${got.cacheControl ?? "absent"})`,
+      );
+      continue;
+    }
+    if (ageSeconds > maxAge + AGE_GRACE_SECONDS) {
+      const f = finding(
+        "SERVE_39_HOST_AGE_OVER_MAX_AGE",
+        `${got.url}: Age ${ageSeconds}s is past max-age ${maxAge}s plus DEC-18's ${AGE_GRACE_SECONDS}s grace — a CDN ` +
+        `cache held this document ${ageSeconds - maxAge}s longer than the origin allowed (warning only; see ` +
+        "AGE_OVER_MAX_AGE_IS_FATAL).",
+      );
+      if (AGE_OVER_MAX_AGE_IS_FATAL) findings.push(f);
+      else notes.push(`WARN  ${f.code}: ${f.message}`);
+    } else {
+      notes.push(`${host} ${rel}: Age ${ageSeconds}s is within max-age ${maxAge}s (+${AGE_GRACE_SECONDS}s grace)`);
+    }
+  }
+  return verdict({ findings, notes });
+}
+
+/** The Age-vs-max-age check, over every catalogue host, each reported on its own. */
+export function hostAgeVerdicts({ hosts = CATALOGUE_HOSTS, servedByHost }) {
+  const findings = [];
+  const notes = [];
+  for (const host of hosts) {
+    const v = hostAgeVerdict({ host, served: servedByHost?.[host] ?? {} });
+    findings.push(...v.findings);
+    notes.push(...v.notes);
+  }
+  return verdict({ findings, notes });
 }
 
 /**
