@@ -61,9 +61,12 @@
 // paragraph above is prose and stays out of its reach — which is exactly why
 // they lasted.
 //
-// @absent log/baseline.json (MIG-20)
+// LANDED 2026-10-15: `log/baseline.json` is on `main` (commit 768cead, dispatched
+// run 38741109221, 47 `migration` records over 8e017d2), so the `@absent`
+// marker that stood here came out in the next commit, as it was written to.
+// The four things that waited on it read the file from that commit on.
 //
-// That marker is the one absence here a machine can hold. `--write` refuses
+// That marker was the one absence here a machine could hold. `--write` refuses
 // when `log/baseline.json` already exists and `log/` is untracked today; the
 // day it is not, the marker goes red — which is the day "it is meant to run
 // ONCE" and "four things wait on that marker" both need re-reading, by whoever
