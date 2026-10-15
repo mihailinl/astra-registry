@@ -870,20 +870,19 @@ export async function run() {
   });
 
   // ── DEC-18: a CDN's cache MUST NOT keep a copy past the origin's max-age ───
-  console.log("\nDEC-18: Age vs max-age, a warning until AGE_OVER_MAX_AGE_IS_FATAL promotes it");
+  console.log("\nDEC-18: Age vs max-age, a finding since AGE_OVER_MAX_AGE_IS_FATAL was set");
 
   const ageServed = (age, cacheControl) => ({
     index: { ok: true, url: `${HOST_BASE}${SIGNED_FILES.index}`, status: 200, body: "x", error: null, age, cacheControl },
   });
 
-  await test("an Age past max-age plus the 30s grace is a warning today, and promotable by one constant", () => {
-    assertEqual(AGE_OVER_MAX_AGE_IS_FATAL, false, "flip this on only by editing host-vs-signed.mjs, not by a test override");
+  await test("an Age past max-age plus the 30s grace is a finding (promoted 2026-10-15)", () => {
+    assertEqual(AGE_OVER_MAX_AGE_IS_FATAL, true, "the promotion lives in host-vs-signed.mjs, not in a test override");
     const within = hostAgeVerdict({ host: HOST, served: ageServed(100, "max-age=90") });
     assertEqual(within.status, "green", "Age 100s against max-age 90s is inside the 30s grace");
     const over = hostAgeVerdict({ host: HOST, served: ageServed(1264, "max-age=300") });
-    assertEqual(over.status, "green", "a warning-level finding must not fail the job while AGE_OVER_MAX_AGE_IS_FATAL is false");
-    assert(over.notes.some((n) => n.includes("WARN") && n.includes("SERVE_39_HOST_AGE_OVER_MAX_AGE")),
-      "the over-grace case left no named, grep-able trace for the promotion constant to find");
+    assert(over.status !== "green", "an Age 934 s past max-age plus grace must fail the job now that the check is fatal");
+    assert(JSON.stringify(over).includes("SERVE_39_HOST_AGE_OVER_MAX_AGE"), "the over-grace finding does not name its code");
   });
 
   await test("Age or max-age that cannot be read is a note, not a finding: a direct-served host may send neither", () => {
@@ -899,8 +898,13 @@ export async function run() {
       hosts: [HOST, RU_HOST],
       servedByHost: { [HOST]: ageServed(1264, "max-age=300"), [RU_HOST]: ageServed(50, "max-age=60") },
     });
-    assertEqual(v.status, "green", "the over-grace host's warning must not redden the merged verdict either");
-    assert(v.notes.some((n) => n.includes(HOST)) && v.notes.some((n) => n.includes(RU_HOST)), "one of the two hosts left no note");
+    assert(v.status !== "green", "one host past max-age plus grace must redden the merged verdict now the check is fatal");
+    assert(JSON.stringify(v).includes(HOST) && JSON.stringify(v).includes(RU_HOST), "one of the two hosts left no trace in the merged verdict");
+    const fine = hostAgeVerdicts({
+      hosts: [HOST, RU_HOST],
+      servedByHost: { [HOST]: ageServed(31, "max-age=60"), [RU_HOST]: ageServed(50, "max-age=60") },
+    });
+    assertEqual(fine.status, "green", "two hosts inside max-age plus grace must stay green");
   });
 
   // The path probes, through a `fetchImpl` answering from a fixture map: the

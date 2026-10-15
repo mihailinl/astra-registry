@@ -348,8 +348,13 @@ const AGE_GRACE_SECONDS = 30;
  * behind Cloudflare (DEC-18). Flip this to `true` once one of those lands, or
  * once the operator decides the warning has stood long enough on its own;
  * nothing else in this file needs to change.
+ *
+ * **2026-10-15 ~21:25Z: `true`.** minice-e4 turned stale-while-updating off on
+ * gcore resource 1083314 and re-measured 24 reads across index, trust and root
+ * at `Age` 4–31 s against `max-age=60`, so DEC-18 holds on gcore today and a
+ * failing check is now a canary instead of a standing red.
  */
-export const AGE_OVER_MAX_AGE_IS_FATAL = false;
+export const AGE_OVER_MAX_AGE_IS_FATAL = true;
 
 function parseMaxAgeSeconds(cacheControl) {
   const m = /(?:^|,)\s*max-age=(\d+)/i.exec(String(cacheControl ?? ""));
