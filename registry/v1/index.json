@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "ZUgsRp9csxLQN1rWlfj0WZ4FFmotjjU6hhLNQl4bfaSko0OUbAPyRRO7WvUeWNHLq7HfxoOAwxyJ0l7UDOFVAA=="
+      "sig": "C5yBOKKvVADfRdXlFH6L2t26t7Xdupi+0YWqJq3kSi8qPWD//IAJ82Qagd/7/o0Pd7IzaBLAmT7g1EXtZk57BQ=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-14T05:56:29Z",
-    "issued_at": "2026-10-15T05:56:29Z",
+    "expires_at": "2026-11-14T14:00:33Z",
+    "issued_at": "2026-10-15T14:00:33Z",
     "plugins": [
       {
         "added_at": "2026-08-10",
@@ -860,74 +860,6 @@
         "stars": 0,
         "updated_at": "2026-09-04T15:39:43Z",
         "version": "0.1.14"
-      },
-      {
-        "added_at": "2026-10-14",
-        "author": "mihailinl",
-        "capabilities": [
-          "actions",
-          "tools",
-          "triggers"
-        ],
-        "description": "End-to-end test of the Astra plugins registry. Not a real plugin; it will be removed.",
-        "download_url": "",
-        "downloads": 0,
-        "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2IiB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgcm9sZT0iaW1nIiBhcmlhLWxhYmVsPSJEaWNlIFJvbGxlciI+CiAgPHRpdGxlPkRpY2UgUm9sbGVyPC90aXRsZT4KICA8IS0tIElzb21ldHJpYyBkNiBtaWQtdHVtYmxlIHdpdGggYSBjb2luIGZsaXBwaW5nIGJlc2lkZSBpdC4gUGxhaW4gc3RhdGljCiAgICAgICBtYXJrdXA6IG5vIHNjcmlwdCwgbm8gZXh0ZXJuYWwgcmVmZXJlbmNlcywgbm8gZW1iZWRkZWQgZm9udHMuIC0tPgoKICA8IS0tIHRoZSBjb2luLCBjYXVnaHQgZWRnZS1vbiBiZWhpbmQgdGhlIGRpZSAtLT4KICA8Zz4KICAgIDxlbGxpcHNlIGN4PSI3MCIgY3k9IjE5NiIgcng9IjQwIiByeT0iMjMiIGZpbGw9IiNiMDdkMTIiLz4KICAgIDxlbGxpcHNlIGN4PSI3MCIgY3k9IjE4OCIgcng9IjQwIiByeT0iMjMiIGZpbGw9IiNmMGI0MjkiLz4KICAgIDxlbGxpcHNlIGN4PSI3MCIgY3k9IjE4OCIgcng9IjI3IiByeT0iMTUuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjYTg2ZjBjIiBzdHJva2Utd2lkdGg9IjUiLz4KICA8L2c+CgogIDwhLS0gZGllOiB0b3AsIGxlZnQgYW5kIHJpZ2h0IGZhY2VzIG9mIGFuIGlzb21ldHJpYyBjdWJlIC0tPgogIDxnIHN0cm9rZT0iIzJjMWE2MyIgc3Ryb2tlLXdpZHRoPSI2IiBzdHJva2UtbGluZWpvaW49InJvdW5kIj4KICAgIDxwYXRoIGQ9Ik0xMjggMzQgTDE5NiA3MyBMMTI4IDExMiBMNjAgNzMgWiIgZmlsbD0iI2M0YjNmZiIvPgogICAgPHBhdGggZD0iTTYwIDczIEwxMjggMTEyIEwxMjggMTkwIEw2MCAxNTEgWiIgZmlsbD0iIzdhNWNmMCIvPgogICAgPHBhdGggZD0iTTEyOCAxMTIgTDE5NiA3MyBMMTk2IDE1MSBMMTI4IDE5MCBaIiBmaWxsPSIjNTMzNGM5Ii8+CiAgPC9nPgoKICA8IS0tIHBpcHMsIHNrZXdlZCBpbnRvIGVhY2ggZmFjZSdzIG93biBwbGFuZSAtLT4KICA8ZyBmaWxsPSIjMjQxMzU2Ij4KICAgIDxnIHRyYW5zZm9ybT0ibWF0cml4KDY4LDM5LC02OCwzOSwxMjgsMzQpIj4KICAgICAgPGNpcmNsZSBjeD0iMC41IiBjeT0iMC41IiByPSIwLjEiLz4KICAgIDwvZz4KICA8L2c+CiAgPGcgZmlsbD0iI2Y2ZjNmZiI+CiAgICA8ZyB0cmFuc2Zvcm09Im1hdHJpeCg2OCwzOSwwLDc4LDYwLDczKSI+CiAgICAgIDxjaXJjbGUgY3g9IjAuMjYiIGN5PSIwLjI0IiByPSIwLjA4NSIvPgogICAgICA8Y2lyY2xlIGN4PSIwLjUiIGN5PSIwLjUiIHI9IjAuMDg1Ii8+CiAgICAgIDxjaXJjbGUgY3g9IjAuNzQiIGN5PSIwLjc2IiByPSIwLjA4NSIvPgogICAgPC9nPgogICAgPGcgdHJhbnNmb3JtPSJtYXRyaXgoNjgsLTM5LDAsNzgsMTI4LDExMikiPgogICAgICA8Y2lyY2xlIGN4PSIwLjI3IiBjeT0iMC4yNiIgcj0iMC4wODUiLz4KICAgICAgPGNpcmNsZSBjeD0iMC43MyIgY3k9IjAuMjYiIHI9IjAuMDg1Ii8+CiAgICAgIDxjaXJjbGUgY3g9IjAuNSIgY3k9IjAuNSIgcj0iMC4wODUiLz4KICAgICAgPGNpcmNsZSBjeD0iMC4yNyIgY3k9IjAuNzQiIHI9IjAuMDg1Ii8+CiAgICAgIDxjaXJjbGUgY3g9IjAuNzMiIGN5PSIwLjc0IiByPSIwLjA4NSIvPgogICAgPC9nPgogIDwvZz4KCiAgPCEtLSBtb3Rpb24gdGlja3M6IGl0IGlzIHN0aWxsIGluIHRoZSBhaXIgLS0+CiAgPGcgc3Ryb2tlPSIjZjBiNDI5IiBzdHJva2Utd2lkdGg9IjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCI+CiAgICA8cGF0aCBkPSJNMjA4IDQ0IEwyMjYgMjYiLz4KICAgIDxwYXRoIGQ9Ik0yMjIgNjggTDI0NCA2MiIvPgogICAgPHBhdGggZD0iTTE4NiAyNCBMMTkyIDQiLz4KICA8L2c+Cjwvc3ZnPgo=",
-        "id": "e2e-test",
-        "license": "MIT",
-        "name": "E2E Test (do not install)",
-        "platform_downloads": {
-          "linux-x64": "https://github.com/mihailinl/astra-e2e-test/releases/download/v0.1.0/e2e-test-0.1.0-linux-x64.astraplugin",
-          "windows-x64": "https://github.com/mihailinl/astra-e2e-test/releases/download/v0.1.0/e2e-test-0.1.0-windows-x64.astraplugin"
-        },
-        "publisher": "mihailinl",
-        "readme": "# E2E Test (do not install)\n\nThis repository exists only to test the Astra plugins registry end to end (bind, publish, moderate, install, remove).\nIt is a copy of `astra-dice-roller` with a different id. It will be withdrawn and deleted after the test.\n",
-        "releases": [
-          {
-            "artifacts": {
-              "linux-x64": {
-                "filename": "e2e-test-0.1.0-linux-x64.astraplugin",
-                "sha256": "9efb15bb67382346680e07fe1be51b6083bc6b6f1bd502661fd518ec7ed78c73",
-                "size": 2885730,
-                "url": "https://github.com/mihailinl/astra-e2e-test/releases/download/v0.1.0/e2e-test-0.1.0-linux-x64.astraplugin"
-              },
-              "windows-x64": {
-                "filename": "e2e-test-0.1.0-windows-x64.astraplugin",
-                "sha256": "020d885b7bbfba7a1b14694482d9e7776cb9f7fd48f95b1160d85aab3e8a2bff",
-                "size": 2465212,
-                "url": "https://github.com/mihailinl/astra-e2e-test/releases/download/v0.1.0/e2e-test-0.1.0-windows-x64.astraplugin"
-              }
-            },
-            "capabilities": [
-              "actions",
-              "tools",
-              "triggers"
-            ],
-            "permissions": {
-              "fire_trigger": {
-                "reason": "Fires the on_roll_value trigger so your commands can react to what you rolled"
-              }
-            },
-            "protocol": 1,
-            "published_at": "2026-10-14T00:08:28Z",
-            "release": {
-              "commit": "34bad2eb56f21d7d689d7e1bebed067da7c89935",
-              "kind": "github_release",
-              "repo": "mihailinl/astra-e2e-test",
-              "tag": "v0.1.0"
-            },
-            "review": "unreviewed",
-            "version": "0.1.0"
-          }
-        ],
-        "repository_url": "https://github.com/mihailinl/astra-e2e-test",
-        "source": {
-          "kind": "github",
-          "repo": "mihailinl/astra-e2e-test"
-        },
-        "stars": 0,
-        "updated_at": "2026-10-14T00:08:28Z",
-        "version": "0.1.0"
       },
       {
         "added_at": "2026-08-10",
@@ -2083,6 +2015,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 58
+    "serial": 59
   }
 }
