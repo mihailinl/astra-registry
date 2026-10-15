@@ -2817,6 +2817,26 @@ test("claim: an answer with no `shadow` is read as shadow and alerts (BOT-92; B-
   }
 });
 
+test("claim: W_SERVICE_UNREACHABLE is logged as ambiguous with a TRUST-31 hold, never guessed at", async () => {
+  // A minimal fake client, not the HTTP stub: this is about the wording
+  // claimJob logs for an answer it already has, not about the wire.
+  const fakeClient = (answer) => ({ alerts: [], calls: [], async call(op) { return op === "claim" ? answer : { ok: true, body: {} }; } });
+  const lines = [];
+  const log = { log: (l) => lines.push(l), error: () => {} };
+
+  await claimJob({ client: fakeClient({ ok: false, wait: W_SERVICE_UNREACHABLE }), log });
+  assert.ok(lines.some((l) => l === "claim: no leases this run (unreachable or held for a TRUST-31 acknowledgement)"),
+    `W_SERVICE_UNREACHABLE did not get the ambiguous wording: ${JSON.stringify(lines)}`);
+
+  // A different wait or a refusal keeps its own word: the softened wording is
+  // specific to W_SERVICE_UNREACHABLE, the one code TRUST-31's "not yet
+  // judged" 503 and a plain outage are both folded into (service.mjs).
+  lines.length = 0;
+  await claimJob({ client: fakeClient({ ok: false, wait: "W_ELIGIBILITY_UNREADABLE" }), log });
+  assert.ok(lines.some((l) => l === "claim: no leases this run (W_ELIGIBILITY_UNREADABLE)"),
+    `a non-unreachable wait was rewritten too: ${JSON.stringify(lines)}`);
+});
+
 test("ask: ID-9 in four words, and no token state or eligibility value leaves the job (BOT-89)", async () => {
   const cases = [
     [{ token_state: "bound", minted_for_repository: true, eligibility: "eligible" }, "pass"],

@@ -172,7 +172,21 @@ export async function claimJob({ client, polled = [], mode = null, log = console
     // on; `lease_not_held`/`conflict` cannot answer a claim, and `invalid`
     // is this bot's own request being wrong, which must fail the run.
     if (answer.refused === "invalid") throw new ServiceRunFailure(`the service refused the claim as \`invalid\`: ${answer.message}`);
-    log.log(`claim: no leases this run (${answer.wait ?? answer.refused ?? "no answer"})`);
+    // `W_SERVICE_UNREACHABLE` here is NOT only "the service is down". TRUST-31
+    // holds bot calls in `shadow` — a 200 success with `shadow: true` — while
+    // code differs from the last operator acknowledgement (ID-71), so that
+    // state never reaches this branch at all; what DOES land here, under the
+    // same wait code, is the one TRUST-31 state the contract gives a 503 to:
+    // "a live call the service has not yet judged" against the last
+    // acknowledged version (dev/server-registry-contract.md, TRUST-31), which
+    // is self-resolving and pages on its own after 900s if it is not. Neither
+    // the HTTP status nor the refusal body (`{schema, error, message}`, §0.8)
+    // carries anything that tells one of these apart from a plain outage, so
+    // this says both rather than guessing which.
+    const cause = answer.wait === W_SERVICE_UNREACHABLE
+      ? "unreachable or held for a TRUST-31 acknowledgement"
+      : answer.wait ?? answer.refused ?? "no answer";
+    log.log(`claim: no leases this run (${cause})`);
     return { submissions: [], leases: {}, shadow: true, registered, wouldRegister, refused: [], alerts: client.alerts };
   }
   const shadow = answer.shadow === true;
