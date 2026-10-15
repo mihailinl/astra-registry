@@ -118,8 +118,12 @@ const DEFAULT_REPO = path.resolve(fileURLToPath(new URL("..", import.meta.url)))
 /** Measured 2026-09-22 with this file tracked: 515 tracked, 43 NUL-bearing (all images). */
 export const CORPUS_FLOOR = 450;
 
-/** Measured 2026-09-22: 1. See "the floors" above before lowering this. */
-export const MARKER_FLOOR = 1;
+/**
+ * Measured 2026-09-22: 1. Lowered to 0 on 2026-10-15 in the commit that filled the
+ * last one (`log/baseline.json`, MIG-20), as "the floors" above says to: the tree
+ * carries no `@absent` marker now, and the next one written raises this again.
+ */
+export const MARKER_FLOOR = 0;
 
 /** Repositories of this estate that are not this checkout. */
 export const FOREIGN_REPOS = ["AstraPlugins", "Astra", "astra-registry", "astra-plugins-ops", "astra-api"];
