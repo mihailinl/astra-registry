@@ -63,11 +63,27 @@ name: Plugins moderation
 # sent. An alarm that named the advisory id would have to wait for the compile,
 # which happens after this job, which is the ordering MOD-8 forbids.
 #
-# ── it is dark, and this is what dark means ────────────────────────────────
+# ── live on dispatch; the schedule waits for its first post ───────────────
 #
-# The `schedule:` block below is COMMENTED OUT. The file lands at R2 exit with
-# no schedule, and the R3-open commit uncomments it (§2.5). `DRY_RUN` stays
-# `"true"` through R3.
+# B-T5.1 turned the three service calls live on 2026-10-14: `list`'s work and
+# history steps and `report`'s post, each now the command its placeholder
+# named. Until then each printed `::error::` and exited 1, so a dispatch was
+# red at `list`, `settled` paged for the decision the service had listed, and
+# nothing a moderator decided in the plugins service ever reached git — the
+# owner's delist of `e2e-test` sat unsettled through run 38525175920.
+#
+# `DRY_RUN` is committed "false" with it, so a dispatch pushes what it
+# compiles; the guard is the `apply` step's, and any other value withholds
+# the push (the comment at `env:` says how).
+#
+# **The `schedule:` block below is STILL COMMENTED OUT, and `workflow_dispatch`
+# is the trigger until the first post arms it.** BOT-83's receiver check,
+# `moderation-run` in bot/lib/alert-checks.mjs, is created disarmed and has
+# never had a post; the workflow suite holds a live cron and an armed row to
+# one commit, because a poster that runs before its first heartbeat arrives
+# is one whose silence pages nobody. So a dispatched run's `settled` posts the
+# first heartbeat, and the commit that records that `armed_at` is the one that
+# uncomments the schedule.
 #
 # The workflow suite reads the cron line whether it is commented or not, and
 # this run's own suite compares its interval with the token file's
@@ -81,20 +97,23 @@ name: Plugins moderation
 # SCOPE-1 makes an edit to it a contract MINOR published BEFORE the line moves:
 # a cron edit here is not a cron edit.
 #
-# So a `workflow_dispatch` of this file today is RED at `list`, whose call to
-# the service is a placeholder until the R3-open commit (B-T5.1), and `commit`
-# runs over an empty list: it walks the holds and commits nothing. `commit`
-# measures TRUST-26's bound itself, out of its own full-history checkout
-# (`bot/lib/takedown-bound.mjs`, M-T3.2), and spends it entry by entry, so no
-# job hands it a bound and nothing outside the job can say "under the bound".
-# Until 2026-09-24 this job read the bound from an input nothing supplied and
-# was red here instead; contract 0.38.0 put the counter's imports inside
-# TRUST-31's set, which is what let the job import it.
+# `commit` measures TRUST-26's bound itself, out of its own full-history
+# checkout (`bot/lib/takedown-bound.mjs`, M-T3.2), and spends it entry by
+# entry, so no job hands it a bound and nothing outside the job can say "under
+# the bound". Until 2026-09-24 this job read the bound from an input nothing
+# supplied and was red here instead; contract 0.38.0 put the counter's imports
+# inside TRUST-31's set, which is what let the job import it.
+#
+# This file is in TRUST-31's hashed set: every edit here, this one included,
+# moves the set hash the owner's TRUST-42 acknowledgement names, and the
+# `job_workflow_sha` the service hashes is the commit the edit lands as.
 
 on:
-  # ── BOT-83's schedule, off until R3 opens ─────────────────────────────────
+  # ── BOT-83's schedule, off until a dispatch's first post arms it ─────────
   #
-  # Every 600 seconds, five minutes after the ingest run's `3-59/10`.
+  # Every 600 seconds, five minutes after the ingest run's `3-59/10`. It is
+  # uncommented in the commit that records `moderation-run`'s `armed_at` in
+  # bot/lib/alert-checks.mjs, and not before (the header says why).
   #
   # schedule:
   #   - cron: '8-59/10 * * * *'
@@ -120,8 +139,14 @@ concurrency:
   group: registry-moderation
   cancel-in-progress: false
 
+# Committed "false" since B-T5.1 (2026-10-14), as `plugins-ingest.yml`'s was
+# by B-T3.6 the day before. It was "true" through R3 and read by no step, so
+# it withheld nothing: the `apply` step pushed whatever it was. It is read in
+# ONE place now, that step, and the guard errs in the withholding direction —
+# `!= "false"`, never `== "true"` — so "true", a typo or an unset value
+# commits on the runner and pushes nothing.
 env:
-  DRY_RUN: "true"
+  DRY_RUN: "false"
 
 jobs:
   # ── list: the only job that asks the service what there is to do ──────────
@@ -169,12 +194,36 @@ jobs:
         with:
           node-version: '22'
 
-      - name: "List the moderation work, and check every entry against the schema (not built: B-T5.1)"
+      # One bot OIDC token per attempt, with the bot audience compiled in,
+      # masked before first use and refused outside `environment:
+      # plugins-service` (bot/lib/oidc.mjs) — the pattern `plugins-ingest.yml`'s
+      # `claim` job uses, through the same client. At most three GETs (BOT-63),
+      # then the answer and every entry against schema/moderation-work-v1.json.
+      #
+      # The script writes one single-line JSON file per output and this step
+      # copies each into $GITHUB_OUTPUT by name. A list with anything fatal in
+      # it writes none and fails here, so every later job reads a failed
+      # `list`, never an empty one.
+      - name: List the moderation work, and check every entry against the schema
         id: work
         run: |
           set -euo pipefail
-          echo "::error::B-T5.1 turns this call live. The step runs 'node bot/moderation-run.mjs --job list', which mints one bot OIDC token per attempt with the bot audience, masks it before first use, GETs bot/moderation-work at most three times, and checks the answer and every entry against schema/moderation-work-v1.json — writing shadow, entries, submissions, refused and listed to this job's outputs. It stays a placeholder while the file is dark: a step that called the service on a workflow_dispatch would be a live call from a workflow nobody has acknowledged (TRUST-42)."
-          exit 1
+          node bot/moderation-run.mjs --job list --out moderation
+          # Inside an `echo`, a `$(cat …)` of a missing file is an empty output
+          # and `set -e` does not see it; so every file is asked for first.
+          for name in shadow entries submissions refused listed; do
+            if [ ! -s "moderation/${name}.json" ]; then
+              echo "::error::the list job wrote no moderation/${name}.json, so this job has no ${name} output to hand on"
+              exit 1
+            fi
+          done
+          {
+            echo "shadow=$(cat moderation/shadow.json)"
+            echo "entries=$(cat moderation/entries.json)"
+            echo "submissions=$(cat moderation/submissions.json)"
+            echo "refused=$(cat moderation/refused.json)"
+            echo "listed=$(cat moderation/listed.json)"
+          } >> "$GITHUB_OUTPUT"
 
       # Ops entry 100. Before `commit`, and in this job because it holds the
       # token and `commit` may not: post each result a commit already on `main`
@@ -182,12 +231,22 @@ jobs:
       # service answered `accepted` or `duplicate`. Keyed on the answer — a
       # 5xx, a timeout or a shadow answer records nothing — and a result not
       # settled here is posted again by `report` after the commit.
-      - name: "Post the results history decided, and hand on what the service settled (not built: B-T5.1)"
+      #
+      # Under anything but the work step's `shadow` output being `false` it
+      # posts nothing and hands on `[]` (BOT-92); an answer to a post that is
+      # itself shadow settles nothing either (bot/lib/settled.mjs).
+      - name: Post the results history decided, and hand on what the service settled
         id: history
+        env:
+          ASTRA_SHADOW: ${{ steps.work.outputs.shadow }}
         run: |
           set -euo pipefail
-          echo "::error::B-T5.1 turns this step live with the list call. It runs 'node bot/moderation-run.mjs --job history --out moderation' with ASTRA_SHADOW set from the work step's shadow output: under anything but shadow false it posts nothing (BOT-92); otherwise it posts, to bot/service-decision-results, each applied or cancelled result a commit already on main decided that state/moderation-settled.json does not hold, and writes the rows the service answered accepted or duplicate — ids, outcomes, commits, the answer, its time and this run — from moderation/settled.json to this job's settled output. It stays a placeholder while the file is dark, for the work step's reason."
-          exit 1
+          node bot/moderation-run.mjs --job history --out moderation
+          if [ ! -s moderation/settled.json ]; then
+            echo "::error::the history job wrote no moderation/settled.json, so this job has no settled output to hand on"
+            exit 1
+          fi
+          echo "settled=$(cat moderation/settled.json)" >> "$GITHUB_OUTPUT"
 
   # ── alert: MOD-8's alarms, before anything is pushed ───────────────────────
   #
@@ -309,6 +368,10 @@ jobs:
           ASTRA_SHADOW: ${{ needs.list.outputs.shadow }}
           ASTRA_ENTRIES: ${{ needs.list.outputs.entries }}
           ASTRA_SUBMISSIONS: ${{ needs.list.outputs.submissions }}
+          # The decisions `list` refused, re-checked and handed to `report` in
+          # `results` with the compile's own refusals, so each is posted once
+          # and leaves BOT-80's list; until B-T5.1 nothing read this output.
+          ASTRA_REFUSED: ${{ needs.list.outputs.refused }}
           # Ops entry 100: re-checked like `entries`, and recorded in
           # state/moderation-settled.json only under `shadow: false` and only
           # for a result this job's own walk derived.
@@ -371,6 +434,13 @@ jobs:
       # wrote either, so `settled` was handed no results on every run and would
       # have paged for decisions that had landed (ops entry 102). Written after
       # the push, so a step that failed on the way hands on nothing at all.
+      #
+      # **`DRY_RUN` withholds the push and nothing else.** Under any value but
+      # exactly "false" the commit is made and checked here and stays on the
+      # runner, and `main_commit` is empty. `report` then refuses every result
+      # that would have named it (`resultsFor`) and `settled` pages for those
+      # decisions: a dry run that had a takedown to land is RED, because the
+      # takedown did not land, and that is what the alarm says.
       - name: "Commit once, with a Service-Decision: trailer per decision, and push"
         id: apply
         if: ${{ !cancelled() && steps.compile.conclusion == 'success' }}
@@ -397,8 +467,13 @@ jobs:
             # this job started from, and `git add` takes whatever stands at a
             # listed path, a link included; a refusal ends the step here.
             node tools/lib/tree-modes.mjs HEAD
-            git push origin HEAD:main
-            main_commit=$(git rev-parse HEAD)
+            if [ "${DRY_RUN:-}" != "false" ]; then
+              echo "::warning::DRY_RUN is '${DRY_RUN:-}', not exactly \"false\": this commit stays on the runner and nothing is pushed"
+              git show --stat --format='would push %H' HEAD
+            else
+              git push origin HEAD:main
+              main_commit=$(git rev-parse HEAD)
+            fi
           fi
           {
             echo "main_commit=${main_commit}"
@@ -448,14 +523,18 @@ jobs:
         with:
           node-version: '22'
 
-      - name: "Post each result once, and re-send it byte-identical (not built: B-T5.1)"
+      # One bot OIDC token per call, minted and masked as `list`'s are. At most
+      # one `held` and exactly one final result per decision, to
+      # bot/service-decision-results, 20 seconds per call; an identical re-post
+      # after a lost acknowledgement is answered `duplicate` under BOT-82's key.
+      # A result that would name no commit is refused here and fails the job
+      # (`resultsFor`), so `settled` pages for it rather than the service
+      # recording a takedown that landed nowhere.
+      - name: Post each result once, and re-send it byte-identical
         env:
           ASTRA_RESULTS: ${{ needs.commit.outputs.results }}
           ASTRA_MAIN_COMMIT: ${{ needs.commit.outputs.main_commit }}
-        run: |
-          set -euo pipefail
-          echo "::error::B-T5.1 turns this call live. The step runs 'node bot/moderation-run.mjs --job report', which POSTs at most one held and exactly one final result per decision to bot/service-decision-results, and stop and M_REJECT results with recorded[] to bot/results, 20 seconds per call. An identical re-post after a lost acknowledgement is answered duplicate under BOT-82's key. It stays a placeholder while the file is dark."
-          exit 1
+        run: node bot/moderation-run.mjs --job report
 
   # ── settled: every listed id got a result, and the run said it was alive ───
   #

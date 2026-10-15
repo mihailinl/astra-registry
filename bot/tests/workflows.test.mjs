@@ -2748,10 +2748,12 @@ test("every output a moderation job hands on is one a step of that job writes", 
       }
     }
   }
-  // The floor, counted after the repair on 2026-09-22: `alert`'s two, which
-  // the action declares, and `commit`'s two. `list`'s five are excused while
-  // its step is `not built`.
-  assert.ok(asked >= 4, `${asked} output(s) were asked about and there were 4 on 2026-09-22 (and ${excused} excused)`);
+  // The floor: `alert`'s two, which the action declares, `commit`'s two, and
+  // since B-T5.1 (2026-10-14) `list`'s six — the work step's five and the
+  // history step's `settled` — which were excused while both steps were
+  // placeholders. Ten asked and none excused; a step turned back into a
+  // placeholder drops the count below the floor.
+  assert.ok(asked >= 10, `${asked} output(s) were asked about and there were 10 on 2026-10-14 (and ${excused} excused)`);
   assert.equal(problems.join("\n"), "", "a moderation job hands on an output nothing writes");
 });
 
@@ -2829,6 +2831,81 @@ test("`list` hands the settled results to `commit` as a job output, from a histo
   const commit = code(jobOf(MODERATION, "commit")).join("\n");
   assert.match(commit, /^\s+ASTRA_SETTLED:\s*\$\{\{\s*needs\.list\.outputs\.settled\s*\}\}\s*$/m,
     "`commit` is not handed `list`'s settled rows, so nothing it writes records a result as settled");
+});
+
+// B-T5.1, 2026-10-14. The three steps that speak to the service — `list`'s
+// work and history steps and `report`'s post — printed `::error::` and exited
+// 1 for as long as this file was dark, and the owner's first delist in the
+// moderation console sat unsettled through run 38525175920 because of them.
+// Nothing here said they were still placeholders: the output check above
+// excuses one by design, and only a dispatch runs this file. So the file is
+// held to having none, to each call being the script's job by name, with the
+// outputs and the shadow it needs, and to the bot token being held by exactly
+// the two jobs that make those calls, both in `plugins-service`.
+test("the moderation run's service calls are live: each runs its job, and only `list` and `report` mint", () => {
+  const MODERATION = "plugins-moderation.yml";
+  const jobs = allJobs().filter((j) => j.file === MODERATION);
+  assert.ok(jobs.length >= 5, `${MODERATION} has ${jobs.length} jobs and the graph is 5; this would check nothing`);
+  assert.deepEqual(jobs.filter(mintsToken).map((j) => j.job).sort(), ["list", "report"],
+    "the jobs holding `id-token: write` are not exactly `list` and `report`, the two that call the service");
+  for (const job of jobs.filter(mintsToken)) {
+    assert.ok(code(job).some((l) => /^\s{4}environment:\s*plugins-service\s*$/.test(l)),
+      `${where(job)} mints a bot token outside \`environment: plugins-service\`, which bot/lib/oidc.mjs refuses`);
+  }
+
+  const dark = [];
+  for (const job of jobs) {
+    if (code(job).some((l) => /^\s{4}if:\s*(false|\$\{\{\s*false\s*\}\})\s*$/.test(l))) dark.push(`${where(job)} is \`if: false\``);
+    for (const step of stepsOf(job.body)) {
+      const lines = step.body.filter((l) => !l.trim().startsWith("#"));
+      const run = lines.findIndex((l) => /^\s+run:\s*\|\s*$/.test(l));
+      const script = run < 0 ? [] : lines.slice(run + 1).map((l) => l.trim()).filter(Boolean);
+      const label = `${MODERATION}:${job.line + step.line} (job ${job.job})`;
+      if (lines.some((l) => /\(not built:/.test(l))) dark.push(`${label} is marked \`not built\``);
+      if (lines.some((l) => /^\s+if:\s*(false|\$\{\{\s*false\s*\}\})\s*$/.test(l))) dark.push(`${label} is \`if: false\``);
+      // `settled`'s last step is this shape on purpose, under an `if:` that
+      // makes it the red of a run that lost a decision; a placeholder runs
+      // unconditionally.
+      const guarded = lines.some((l) => /^\s+if:/.test(l));
+      if (!guarded && script.length && script.every((l) => l === "set -euo pipefail" || l === "exit 1" || /^echo "::error::/.test(l))) {
+        dark.push(`${label} only prints an error and exits`);
+      }
+    }
+  }
+  assert.deepEqual(dark, [], "a step of the moderation run is still a placeholder, so a dispatch cannot settle a decision");
+
+  /** The non-comment text of the step with this id, in this job. */
+  const stepText = (jobName, id) => {
+    const step = stepsOf(jobOf(MODERATION, jobName).body)
+      .find((st) => st.body.some((l) => new RegExp(`^\\s+id:\\s*${id}\\s*$`).test(l)));
+    assert.ok(step, `${MODERATION}'s \`${jobName}\` has no step with \`id: ${id}\``);
+    return step.body.filter((l) => !l.trim().startsWith("#")).join("\n");
+  };
+  const work = stepText("list", "work");
+  assert.match(work, /^\s+node bot\/moderation-run\.mjs --job list --out moderation\s*$/m,
+    "`list`'s work step does not run the list job into the directory its outputs are read from");
+  const history = stepText("list", "history");
+  assert.match(history, /^\s+node bot\/moderation-run\.mjs --job history --out moderation\s*$/m);
+  assert.match(history, /^\s+ASTRA_SHADOW:\s*\$\{\{\s*steps\.work\.outputs\.shadow\s*\}\}\s*$/m,
+    "the history step does not read the work step's shadow, so it posts under a mode the list answer never gave");
+  const report = code(jobOf(MODERATION, "report")).join("\n");
+  assert.match(report, /^\s+run:\s*node bot\/moderation-run\.mjs --job report\s*$/m,
+    "`report` does not run the report job, so no result this run produced reaches the service");
+});
+
+// B-T5.1 found the other half of an unwritten output: one written and read by
+// nobody. `list`'s `refused` was declared, and no job named
+// `needs.list.outputs.refused`, so a decision refused at the list never got
+// the `refused` result BOT-81 makes final and was re-refused every run. Every
+// output `list` hands on must have a reader. Watched failing by deleting the
+// commit job's ASTRA_REFUSED line.
+test("every output the moderation run's `list` hands on is read by a later job", () => {
+  const MODERATION = "plugins-moderation.yml";
+  const keys = blockKeys(jobOf(MODERATION, "list"), "outputs");
+  assert.ok(keys && keys.length >= 6, `\`list\` hands on ${keys?.length ?? 0} outputs and handed on 6 on 2026-10-14`);
+  const others = allJobs().filter((j) => j.file === MODERATION && j.job !== "list").map((j) => code(j).join("\n")).join("\n");
+  const unread = keys.filter((k) => !new RegExp(`needs\\.list\\.outputs\\.${k}\\b`).test(others));
+  assert.deepEqual(unread, [], "an output `list` hands on is read by no job, so whatever it carries reaches nothing");
 });
 
 // The separation the design above rests on, as a canary rather than a header
@@ -3221,6 +3298,31 @@ test("`plugins-ingest.yml` never pushes while DRY_RUN is not exactly false", () 
   assert.match(body, /if \[ "\$DRY_RUN" != "false" \]; then dry=\(--dry-run\); fi/,
     "the apply step does not pass --dry-run whenever DRY_RUN is not exactly \"false\"");
   assert.match(body, /node bot\/publish-apply\.mjs[\s\S]*"\$\{dry\[@\]\}"/, "and publish-apply is not handed it");
+});
+
+// B-T5.1 (2026-10-14) does for `plugins-moderation.yml` what B-T3.6 did for
+// ingest, with one difference that is the reason for this test: there,
+// DRY_RUN was always read; here it was committed "true" through R3 and read by
+// no step, so it withheld nothing. The committed value is either of the two;
+// the `apply` step is its one reader, keyed `!= "false"` with an unset value
+// withholding too, and the push is inside that guard. The behaviour — every
+// value but "false" pushes nothing — is run in the moderation suite, against a
+// real `origin`. Watched failing by keying the guard on `== "true"`, and by
+// moving the push out of it.
+test("`plugins-moderation.yml` never pushes while DRY_RUN is not exactly false", () => {
+  const MODERATION = "plugins-moderation.yml";
+  const src = read(MODERATION);
+  assert.match(src, /^env:\n\s+DRY_RUN:\s*"(true|false)"\s*$/m, "DRY_RUN is not committed as \"true\" or \"false\" at workflow level");
+  const readers = allJobs().filter((j) => j.file === MODERATION && code(j).some((l) => /\bDRY_RUN\b/.test(l))).map((j) => j.job);
+  assert.deepEqual(readers, ["commit"], "DRY_RUN is read outside the commit job's apply step");
+  const body = code(jobOf(MODERATION, "commit")).join("\n");
+  const guard = body.indexOf('if [ "${DRY_RUN:-}" != "false" ]; then');
+  assert.ok(guard >= 0, "the apply step does not withhold the push whenever DRY_RUN is not exactly \"false\"");
+  const els = body.indexOf("\n            else\n", guard);
+  const push = body.indexOf("git push origin HEAD:main");
+  const end = body.indexOf("\n            fi\n", guard);
+  assert.ok(els > guard && push > els && push < end && body.indexOf("git push", end) < 0,
+    "the push is not inside the DRY_RUN guard's live branch");
 });
 
 // `--service-path` lets publish-apply write an identity record and an alert

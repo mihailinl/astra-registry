@@ -80,7 +80,7 @@ export const KNOWN = Object.freeze({
   "wait:W_MODERATION_HOLD": {
     gap: "unemitted",
     due: "R3",
-    closes: "the moderation run's `report` job (M-T3.4, BOT-81), a placeholder until the R3-open commit",
+    closes: "the moderation run's `report` job (M-T3.4, BOT-81), live since B-T5.1 (2026-10-14) and emitting no wait yet",
   },
   "code:B_BINDING_INVALID": {
     gap: "unemitted",

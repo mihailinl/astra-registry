@@ -5,9 +5,9 @@
 // imports it: its `commit` job enters a hold with `holdEntry`, walks every hold
 // here even when `list` failed — a hold's release is driven by a record in git
 // and not by anything the service answers — and reads each commit that deleted
-// an entry with `classifyHoldCommit`. That job is itself dark — its schedule is
-// commented out and its list call is a placeholder until the R3-open commit —
-// so none of this has run in a workflow yet.
+// an entry with `classifyHoldCommit`. That job runs on a dispatch since B-T5.1
+// (2026-10-14); its schedule stays commented until its first post arms BOT-83's
+// receiver.
 //
 // ── WHY A HOLD IS A FILE ────────────────────────────────────────────────────
 //
@@ -73,21 +73,23 @@
 //
 // ── SHADOW, AND WHAT A DUE HOLD BECOMES TODAY ───────────────────────────────
 //
-// **A due hold is not released and not committed, in shadow or out of it.**
-// M-T3.3's release commit — apply the held decision from the entry, write its
-// log entry, delete the entry and its confirm record under `Service-Decision:`
-// — and its cancel commit are not built, here or in `bot/moderation-run.mjs`.
-// So when `resolveHold` answers `release` or `cancel`, the commit job's
-// `walkHolds` files the hold as `due`, refuses it by name (`hold_end_not_built`,
-// every run), posts nothing for it and leaves the entry on the tree (ops entry
-// 99). This header said until 2026-09-22 that a confirmed hold "is released and
-// committed"; nothing ever did either.
+// **A due hold is released or cancelled by a commit, in shadow or out of it.**
+// When `resolveHold` answers `release`, the commit job's `releaseHolds`
+// composes M-T3.3's release commit — the held decision applied from the entry,
+// its log entry, the entry and its confirm record deleted, under
+// `Service-Decision:`; when it answers `cancel`, `cancelHolds` composes the
+// cancel commit — the entry and its records deleted under the trailer, and no
+// log entry. Both were built on 2026-10-14 (the reset's release on B-T4.2).
+// Until then a due hold was filed as `due`, refused by name
+// (`hold_end_not_built`) every run and left on the tree (ops entry 99), and
+// before 2026-09-22 this header claimed a confirmed hold "is released and
+// committed" when nothing did either.
 //
 // What this module decides is WHEN a hold is due, and that answer is the same
 // under a `shadow: true` list answer and with `list` down: a hold is not work
 // that answer names, the `held` result already took it off the list (BOT-81),
-// and the release is driven by the MOD-52 record in git — so the release
-// commit, once built, is meant to be made in shadow too. Its `applied` or
+// and the release is driven by the MOD-52 record in git — so the release and
+// cancel commits are made in shadow too. Its `applied` or
 // `cancelled` result, though, SETTLES a decision, which is what BOT-92 calls
 // state-setting, so it is posted only in a run whose list answer is `shadow:
 // false` — the next such run, not this one, re-posted until accepted. "Until
@@ -96,9 +98,9 @@
 // entry 100).
 // `resultsToPost` is where that split lives, and `resultKey` is BOT-82's
 // idempotency key, which answers a repeat `duplicate` with no time limit (so
-// there is no re-post window to expire). The only `applied` or `cancelled`
-// results posted today are for holds a commit in history already ended — a
-// hand deletion, or a release or cancel commit a person made — which
+// there is no re-post window to expire). Every `applied` or `cancelled`
+// result for a hold is posted from a commit in history that ended it — the
+// bot's own release or cancel commit, or a person's — which
 // `classifyHoldCommit` reads.
 //
 // ── WHEN A REVERSAL'S 24 HOURS START ────────────────────────────────────────
@@ -512,8 +514,8 @@ export function readHolds(root = REPO_ROOT, { schemaRoot = REPO_ROOT } = {}) {
  *
  * Whether a hold is due is NOT conditional on `post`: the release is driven by
  * a record in git, so it is due in a shadow run too, and only the posting
- * waits. (The release commit that would act on a `release` answer is not built
- * — the commit job refuses a due hold by name instead; see the header.)
+ * waits. (The commit job's `releaseHolds` and `cancelHolds` act on the answer;
+ * see the header.)
  *
  * `shadow` defaults to TRUE here for the same reason it does in
  * `resultsToPost`, and the two defaults have to be the same one: a caller that

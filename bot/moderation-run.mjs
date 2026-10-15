@@ -3,7 +3,8 @@
 // The moderation run: what `.github/workflows/plugins-moderation.yml` executes
 // in each of its four jobs (registry plan M-T3.4).
 //
-//   node bot/moderation-run.mjs --job list      GET bot/moderation-work, check it
+//   node bot/moderation-run.mjs --job list      GET bot/moderation-work, check it,
+//                                               write the job's five outputs to --out
 //   node bot/moderation-run.mjs --job history   (in `list`) POST the results history
 //                                               decided; hand on what the service settled
 //   node bot/moderation-run.mjs --job commit    compile, walk the holds, write
@@ -101,20 +102,23 @@
 // leaves it to be posted again. `bot/lib/settled.mjs` carries the argument
 // and what a forged row costs.
 //
-// **The release commit is built for one code, `M_IDENTITY_RESET`** (contract
-// 2.5.0; registry plan B-T4.2), and for no other yet (M-T3.3: "a release
-// commit applies the held decision from the hold entry, writes the log entry,
-// deletes the entry and its confirm record"). A reset's whole effect IS its
-// release commit — DEC-7's voiding record, the identity record deleted where
-// one exists, the log entry `reset` — so `walkHolds` hands a due reset to
-// `releaseHolds`, which composes it with `compileIdentityReset` and deletes
-// the entry and its confirm record in the same commit, under
-// `Service-Decision:`. Its `applied` result is not posted by this run: the
-// next live run reads that commit through `holdDeletions`, as it reads any
-// hold that left the tree. Every other due hold is still refused by name
-// (`walkHolds`'s `due`, alert `hold_end_not_built`) rather than reported
-// `applied` or `cancelled` against a commit that did neither — and it is not
-// released, in shadow or out of it (ops entry 99).
+// **Every hold MOD-9 makes ends in a commit** (M-T3.3: "a release commit
+// applies the held decision from the hold entry, writes the log entry,
+// deletes the entry and its confirm record"). `walkHolds` hands a due,
+// confirmed hold to `releaseHolds`, which compiles the held decision again
+// against this tree with the confirmed kind released (`compileDecision`'s
+// `release`; `compileIdentityReset` for a reset, B-T4.2) and deletes the entry
+// and its confirm record in the same commit, under `Service-Decision:`; a
+// relist lifts `unlisted`, an unrevoke deletes the advisory the reversed
+// decision published, and a `disable`, a takedown over the bound or an unbound
+// removal request is applied as it would have been unheld. A hold due to
+// cancel goes to `cancelHolds`: the entry and its records deleted under the
+// trailer, no log entry. Neither result is posted by this run: the next live
+// run reads the commit through `holdDeletions`, as it reads any hold that left
+// the tree. A release the tree has moved under writes nothing and alerts
+// `hold_release_refused` every run, the entry left for an operator's cancel.
+// Until 2026-10-14 only the reset was built, and every other due hold was
+// refused by name (`hold_end_not_built`) and sat at `held` (ops entry 99).
 //
 // **`M_REVIEW` (contract 3.0.0; MOD-56) needs nothing of its own here.** It
 // is listed, checked and compiled like any service decision, and its compiled
@@ -160,6 +164,7 @@ import {
   AUTHOR_CODES,
   REFUSALS,
   REJECT_CODE,
+  RELEASABLE_KINDS,
   allowlistedSubmission,
   compileDecision,
   compileIdentityReset,
@@ -188,9 +193,9 @@ import {
   resultsToPost,
 } from "./lib/holds.mjs";
 import { boundLedger, countWindow, headListing, withdrawnBy } from "./lib/takedown-bound.mjs";
-import { stagingListingId } from "../tools/moderation-coverage.mjs";
+import { run as coverageRun, stagingListingId } from "../tools/moderation-coverage.mjs";
 import { VERDICT_SCHEMA, runUrl, verdictProblems } from "./lib/alert-verdict.mjs";
-import { SOURCE_DIR as MODERATION_DIR } from "./lib/moderation.mjs";
+import { SOURCE_DIR as MODERATION_DIR, loadEntries as loadLogEntries } from "./lib/moderation.mjs";
 import {
   SETTLED_FILE,
   acceptRows,
@@ -202,6 +207,7 @@ import {
 } from "./lib/settled.mjs";
 import { POLICY_CODES } from "./lib/policy/constants.mjs";
 import { createClient } from "./lib/service.mjs";
+import { reasonOf } from "./lib/service-decide.mjs";
 import { buildIndex } from "../tools/build-index.mjs";
 import { stableStringify } from "../tools/lib/canonical.mjs";
 import { validate } from "../tools/lib/jsonschema.mjs";
@@ -539,6 +545,64 @@ export function listSummary(checked) {
   return text;
 }
 
+/** The five outputs the `list` job hands on, in the order its step writes them. */
+export const LIST_OUTPUTS = Object.freeze(["shadow", "entries", "submissions", "refused", "listed"]);
+
+/**
+ * What the `list` job hands on, one single-line JSON value per output.
+ *
+ * **`listed` is every `service_decisions[]` id this answer named with a
+ * readable id — the ones that survived AND the ones refused.** `settled`
+ * compares it with the results this run produced, and a refused decision is a
+ * decision the service listed: leaving it out is how a refusal that never got
+ * posted would leave BOT-80's list in nobody's sight, every ten minutes, for
+ * ever. Submissions are not in it: their results are not service-decision
+ * results, and `settled` reads only those.
+ *
+ * `refused` carries the id and the code and nothing else. The reason text
+ * `checkServiceDecision` composes can quote a member's value, and a job output
+ * is read by four other jobs; an id and a §0.8 code are what a result needs.
+ *
+ * `shadow` is `false` only when the answer said `false` (BOT-92): everything
+ * else is `true`, so the direction a lost or unreadable member takes is the
+ * one that writes and posts nothing.
+ *
+ * Each value is checked to hold no newline — `$GITHUB_OUTPUT`'s `name=value`
+ * form would read one as the start of another output — and the five together
+ * are held to MAX_OUTPUT_BYTES for `listSummary`'s reason: an output GitHub
+ * cut short is a shorter list than the one this run acted on.
+ */
+export function listOutputs(checked) {
+  const refused = checked.refused.map((r) => (r.service_decision_id !== undefined
+    ? { service_decision_id: r.service_decision_id, code: r.code }
+    : { submission_id: r.submission_id, code: r.code }));
+  const listed = [
+    ...checked.entries.map((e) => e.service_decision_id),
+    ...refused.filter((r) => r.service_decision_id !== undefined).map((r) => r.service_decision_id),
+  ];
+  const values = {
+    shadow: checked.shadow === false ? "false" : "true",
+    entries: JSON.stringify(checked.entries),
+    submissions: JSON.stringify(checked.submissions),
+    refused: JSON.stringify(refused),
+    listed: JSON.stringify(listed),
+  };
+  let bytes = 0;
+  for (const name of LIST_OUTPUTS) {
+    if (values[name].includes("\n") || values[name].includes("\r")) {
+      throw new Error(`the \`${name}\` output holds a line break, which $GITHUB_OUTPUT's name=value form cannot carry`);
+    }
+    bytes += Buffer.byteLength(values[name], "utf8");
+  }
+  if (bytes > MAX_OUTPUT_BYTES) {
+    throw new Error(
+      `the list job's outputs are ${bytes} bytes and the bound is ${MAX_OUTPUT_BYTES}. An output cut short is a ` +
+      "shorter list than the one this run acted on, and `settled` compares the two",
+    );
+  }
+  return values;
+}
+
 // ── the commit job ──────────────────────────────────────────────────────────
 
 /**
@@ -600,7 +664,7 @@ export function compileAll(entries, { root = REPO_ROOT, overBound = null, ledger
       if (ledger && takedown) ledger.spend(withdrawnBy(result, head));
     }
   }
-  return { compiled, refused, held };
+  return { compiled, refused, held, batch };
 }
 
 /**
@@ -648,7 +712,7 @@ export function applyCompiled(compiled, { root = REPO_ROOT } = {}) {
         touched.push(edit.file);
         continue;
       }
-      if (edit.op !== "set") throw new Error(`unknown edit op ${JSON.stringify(edit.op)}`);
+      if (edit.op !== "set" && edit.op !== "unset") throw new Error(`unknown edit op ${JSON.stringify(edit.op)}`);
       const full = path.join(root, ...edit.file.split("/"));
       const doc = readJson(full);
       if (doc === null) {
@@ -658,6 +722,17 @@ export function applyCompiled(compiled, { root = REPO_ROOT } = {}) {
         );
       }
       if (doc === undefined) throw new Error(`${edit.file} is unreadable`);
+      if (edit.op === "unset") {
+        // A released relist's one edit: the member goes, as MOD-52's revert
+        // takes it, rather than becoming `false` — the listing reads exactly
+        // as it did before the delist. Absent already is the tree having moved.
+        if (!Object.hasOwn(doc, edit.member)) {
+          throw new Error(`${edit.file} carries no \`${edit.member}\` and an \`unset\` edit was compiled for it; the tree moved`);
+        }
+        const { [edit.member]: _gone, ...rest } = doc;
+        write(edit.file, rest);
+        continue;
+      }
       write(edit.file, { ...doc, [edit.member]: edit.value });
     }
     for (const entry of result.log ?? []) write(entry.file, entry.doc);
@@ -718,7 +793,7 @@ export function terminalSubmissionRecord(entry, { root = REPO_ROOT, existing = n
       );
     }
   }
-  return writeDecisionRecord({
+  const placed = writeDecisionRecord({
     // BOT-35 derives over (`submission_id`, fingerprint, state): the record's own
     // two, so a stop and a later refusal of one submission are two ids.
     key: submissionKey({ submission_id: e.submission_id, fingerprint: record.fingerprint ?? null, state: record.state }),
@@ -726,6 +801,21 @@ export function terminalSubmissionRecord(entry, { root = REPO_ROOT, existing = n
     root,
     existing: existing ?? recordsOnMain(root),
   });
+  // What `report` needs to post this record's result (§4.4; BOT-23), and
+  // nothing else: the DEC-7 members a submission result carries are the
+  // record's own, so the result is composed from them and cannot disagree.
+  // No moderator, no category — a result carries neither.
+  return {
+    ...placed,
+    result: {
+      submission_id: record.submission_id,
+      state: record.state,
+      reasons: record.reasons,
+      tag: record.tag,
+      repository_id: record.repository_id,
+      ...(record.fingerprint !== undefined ? { fingerprint: record.fingerprint } : {}),
+    },
+  };
 }
 
 /**
@@ -807,7 +897,11 @@ export function composeCommit({ compiled, held = [], submissions = [], documents
   for (const h of held) {
     paths.add(holdEntryPath(h.service_decision_id));
   }
-  for (const s of submissions) if (s.path) paths.add(s.path);
+  // Only a record this run WROTE. One already on `main` (BOT-36) is the
+  // service re-listing a stop it has not confirmed yet: listing its path made
+  // `apply` run `git commit` over no change, which exits 1 — so every run
+  // between the record landing and the service confirming it went red.
+  for (const s of submissions) if (s.path && s.written !== false) paths.add(s.path);
   if (settled.length) paths.add(SETTLED_FILE);
   if (paths.size) for (const d of documents) paths.add(d);
 
@@ -1144,6 +1238,35 @@ export function holdDeletions(root = REPO_ROOT, { present = new Set() } = {}) {
 // ── holds, which run whether or not `list` answered ──────────────────────────
 
 /**
+ * MOD-46: is the moderation coverage canary red, for the one purpose it gates?
+ *
+ * A red canary blocks the release of a held reversal and NOTHING ELSE
+ * (`resolveHold`): giving something back while the registry cannot account
+ * for every withdrawal it has published is publishing a claim it cannot back,
+ * and blocking a takedown on it would be the opposite mistake. So it is asked
+ * only when a confirmed reversal is on the tree, and a canary that cannot be
+ * run reads as red — a reversal waits a run, which costs time and nothing
+ * else. `coverage` is `tools/moderation-coverage.mjs`'s `run`, already in this
+ * file's closure for `stagingListingId`; a test hands in its own, as it hands
+ * in `fetchImpl`.
+ */
+export function reversalCoverageRed(root, { coverage = coverageRun, log = console } = {}) {
+  const asked = readHolds(root).some((h) => h.entry?.held_for === "reversal" && h.confirm && !h.cancel);
+  if (!asked) return false;
+  let verdict;
+  try {
+    verdict = coverage(root);
+  } catch (e) {
+    log.error(`::warning::MOD-46: the coverage canary could not be run (${e.message}), so no reversal is released this run`);
+    return true;
+  }
+  if (verdict?.status === "green") return false;
+  log.error(`::warning::MOD-46: the coverage canary is ${verdict?.status ?? "unreadable"} ` +
+    `(${(verdict?.codes ?? []).join(", ") || "no codes"}), so no reversal is released this run; takedowns are not held by it`);
+  return true;
+}
+
+/**
  * Walk every hold under M-T3.3, even when `list` failed.
  *
  * A confirmed hold is not work the list answer names: a settled `held` result
@@ -1164,19 +1287,19 @@ export function holdDeletions(root = REPO_ROOT, { present = new Set() } = {}) {
  * as MOD-9 says, and not from its `held_at` (ops entry 101). An entry this
  * run has just written is in no commit yet, so its period has not started.
  *
- * **A hold still on the tree whose release or cancel is DUE goes to `due`,
- * not to `released` or `cancelled`, and gets no result.** M-T3.3's release
- * commit — apply the held decision from the entry, write its log entry,
- * delete the entry and its record, under `Service-Decision:` — and its cancel
- * commit are not built: nothing in this job applies a held decision or deletes
- * an entry. Until 2026-09-22 such a hold was reported `applied` (or
- * `cancelled`) with `commit: null`, which `resultsFor` filled with the run's
- * own commit — so the service would have been told a relist landed in a
- * commit that left `unlisted: true` and the entry where they were. BOT-81 has
- * `applied` name the commit that applies and `cancelled` the commit that
- * removes the entry, and there is no such commit. So it is refused by name: an
- * `::error::` (`hold_end_not_built`) every run, the entry left for the run
- * that can build the commit, and nothing posted.
+ * **A hold still on the tree whose release or cancel is DUE is handed on,
+ * and gets no result in this run.** A release goes to `releasable`, which
+ * `releaseHolds` composes as M-T3.3's release commit — the held decision
+ * applied from the entry, its log entry, the entry and its confirm record
+ * deleted, under `Service-Decision:` — and a cancel goes to `cancellable`,
+ * which `cancelHolds` composes as the cancel commit: the entry and its records
+ * deleted under the trailer, and no log entry. Neither is reported here:
+ * BOT-81 has `applied` name the commit that applies and `cancelled` the commit
+ * that removes the entry, which does not exist until the `apply` step pushes
+ * it. The next live run reads that commit through `holdDeletions` and posts
+ * the result naming it. Until 2026-10-14 neither commit was built, and a due
+ * hold was refused by name (`hold_end_not_built`) every run and sat at `held`
+ * for good; that refusal remains only for a code no release here composes.
  *
  * **A result from history the service has already settled is skipped** — not
  * posted, not alerted — when `settled` holds its BOT-82 key (ops entry 100).
@@ -1191,19 +1314,25 @@ export function walkHolds({
   root = REPO_ROOT,
   now = new Date(),
   shadow = true,
-  delistedPlugins = [],
+  delistedPlugins = null,
   coverageRed = false,
   settled = new Set(),
 } = {}) {
   const out = {
-    released: [], cancelled: [], waiting: [], due: [], releasable: [], unclear: [], alerts: [], pending: [], settled: [],
+    released: [], cancelled: [], waiting: [], due: [], releasable: [], cancellable: [], unclear: [], alerts: [],
+    pending: [], settled: [],
   };
   const onTree = readHolds(root);
   for (const hold of onTree) {
     // Where the entry landed: a reversal's 24 hours run from that commit, not
     // from `held_at` (MOD-9; ops entry 101).
     const landed = entryLanding(root, holdEntryPath(hold.id));
-    const verdict = resolveHold(hold, { now, shadow, delistedPlugins, coverageRed, landed });
+    // MOD-9's other end of a removal request: a bot-applied `author_request`
+    // delist of the listing, dated on or after the hold. Read off the log on
+    // this tree — which carries this run's own delists, written before the
+    // walk — unless the caller says which listings.
+    const delisted = delistedPlugins ?? authorRequestDelists(root, { since: hold.entry?.held_at ?? null });
+    const verdict = resolveHold(hold, { now, shadow, delistedPlugins: delisted, coverageRed, landed });
     const id = hold.entry?.service_decision_id ?? null;
     if (verdict.act === "wait" || !id) {
       out.waiting.push({ service_decision_id: id, reason: verdict.reason });
@@ -1212,11 +1341,15 @@ export function walkHolds({
     if (verdict.act !== "release" && verdict.act !== "cancel") {
       throw new Error(`resolveHold answered ${verdict.act} for the hold entry of ${id}`);
     }
-    // The one release this job builds (B-T4.2). Handed on rather than composed
-    // here: this walk reads and writes nothing, and the commit job composes
-    // the release against the tree it writes, with `releaseHolds`.
+    // Handed on rather than composed here: this walk reads and writes
+    // nothing, and the commit job composes the release (`releaseHolds`) or the
+    // cancel (`cancelHolds`) against the tree it writes.
     if (verdict.act === "release" && RELEASE_BUILT.includes(hold.entry?.decision?.code)) {
       out.releasable.push({ service_decision_id: id, hold, reason: verdict.reason });
+      continue;
+    }
+    if (verdict.act === "cancel") {
+      out.cancellable.push({ service_decision_id: id, hold, reason: verdict.reason });
       continue;
     }
     out.due.push({ service_decision_id: id, act: verdict.act, would_post: verdict.result, reason: verdict.reason });
@@ -1258,46 +1391,81 @@ export function walkHolds({
 }
 
 /**
- * The held codes whose release commit this job builds: `M_IDENTITY_RESET` alone
- * (B-T4.2). A due hold of any other code is still `hold_end_not_built`.
+ * The held codes whose release commit this job builds (M-T3.3): every code
+ * MOD-9 holds. `M_IDENTITY_RESET` since B-T4.2; the rest since 2026-10-14 —
+ * the reversals `M_RELIST` and `M_UNREVOKE`, an `M_REVOKE` held for its
+ * `disable` confirmation, and every takedown held by TRUST-26's bound or as
+ * an unbound removal request. An unbound `A_YANK` is in the list and is never
+ * released: `resolveHold` never answers `release` for an `unbound_yank`.
  */
-export const RELEASE_BUILT = Object.freeze([VOIDING_CODE]);
+export const RELEASE_BUILT = Object.freeze([
+  VOIDING_CODE, "M_RELIST", "M_UNREVOKE", "M_REVOKE", "M_DEPRECATE", "M_DELIST", "M_YANK",
+  "A_REMOVAL_REQUEST", "A_YANK",
+]);
 
 /**
- * Compose the release of each due, confirmed reset `walkHolds` handed on, as
- * the one commit M-T3.3 describes: the held decision applied from the entry
- * (`compileIdentityReset`: the voiding record, the log entry `reset`, the
- * identity record deleted where one exists), and the hold entry and its
- * confirm record deleted — all under the decision's `Service-Decision:`, which
- * `composeCommit` writes for every compiled result.
+ * The listings with a bot-applied `author_request` delist in the log on this
+ * tree, dated on or after `since` (a hold's `held_at`, or null for any date):
+ * MOD-9's cancellation of an unbound removal request. "Bot-applied" is a log
+ * entry carrying a `service_decision_id`; a hand entry does not end a hold.
+ */
+export function authorRequestDelists(root = REPO_ROOT, { since = null } = {}) {
+  const day = typeof since === "string" ? since.slice(0, 10) : null;
+  const { entries } = loadLogEntries({ root });
+  return [...new Set(entries
+    .filter((e) => e.action === "delist" && e.category === "author_request" && typeof e.service_decision_id === "string")
+    .filter((e) => day === null || String(e.date) >= day)
+    .map((e) => e.plugin))];
+}
+
+/**
+ * Compose the release of each due, confirmed hold `walkHolds` handed on, as
+ * the one commit M-T3.3 describes: the held decision applied from the entry,
+ * its log entry, and the hold entry and its confirm record deleted — all under
+ * the decision's `Service-Decision:`, which `composeCommit` writes for every
+ * compiled result.
  *
- * **A release the compile would now refuse writes nothing.** The hold waited
- * at least 24 hours and the tree may have moved — another reset voided the id,
- * the listing went — so `compileIdentityReset` asks every refusal again. One it
- * refuses stays on the tree, due, and alerts `hold_release_refused` every run:
- * BOT-81 gives a hold no `refused` end and no commit that could name one, so
- * the entry is left for a person to cancel (MOD-52) rather than settled here.
+ * The held decision is compiled again (`compileDecision` with `release` set to
+ * the kind the confirmation released; `compileIdentityReset` for a reset), so
+ * every refusal is asked against the tree the release commit writes — the hold
+ * waited, and another decision or a MOD-52 revert may have moved the listing.
+ * The confirmation releases the hold it answers and no other: over the bound
+ * it overrides TRUST-26 (MOD-9, "a takedown held only by the bound, on a
+ * confirmation at once"), and a decision the tree would now hold for a
+ * different reason stays held.
  *
- * Committed in shadow too, as the header says of every release: the hold is
- * not work a list answer names, and what releases it is the MOD-52 record in
- * git. Its `applied` result is posted by the next live run, from the commit,
- * through `holdDeletions` — never by this one.
+ * **A release the compile would now refuse writes nothing.** One it refuses,
+ * or would hold for another reason, stays on the tree, due, and alerts
+ * `hold_release_refused` every run: BOT-81 gives a hold no `refused` end and
+ * no commit that could name one, so the entry is left for a person to cancel
+ * (MOD-52) rather than settled here.
+ *
+ * Committed in shadow too: the hold is not work a list answer names, and what
+ * releases it is the MOD-52 record in git. Its `applied` result is posted by
+ * the next live run, from the commit, through `holdDeletions` — never by this
+ * one. `batch` is the run's (`compileAll`'s), so a release cannot take an
+ * advisory id or a log name a decision compiled earlier in the run took.
  *
  * @returns {{compiled: object[], refused: object[], alerts: object[]}}
  */
-export function releaseHolds(releasable, { root = REPO_ROOT } = {}) {
+export function releaseHolds(releasable, { root = REPO_ROOT, batch = newBatch() } = {}) {
   const out = { compiled: [], refused: [], alerts: [] };
-  const batch = newBatch();
   for (const { service_decision_id: id, hold } of releasable ?? []) {
     const decision = hold?.entry?.decision;
-    if (!RELEASE_BUILT.includes(decision?.code)) {
-      throw new Error(`releaseHolds was handed ${id}, an ${decision?.code}, and builds the release of ${RELEASE_BUILT.join(", ")} alone`);
+    const kind = hold?.entry?.held_for;
+    if (!RELEASE_BUILT.includes(decision?.code) || !RELEASABLE_KINDS.includes(kind)) {
+      throw new Error(
+        `releaseHolds was handed ${id}, an ${decision?.code} held as ${kind}, and builds the release of ` +
+        `${RELEASE_BUILT.join(", ")} held as ${RELEASABLE_KINDS.join(", ")} alone`,
+      );
     }
-    const result = compileIdentityReset(decision, { root, batch });
+    const result = decision.code === VOIDING_CODE
+      ? compileIdentityReset(decision, { root, batch })
+      : compileDecision(decision, { root, overBound: false, batch, release: kind });
     if (result.outcome !== "compiled") {
       const why = result.outcome === "refused"
         ? `\`${result.refusal}\`: ${result.why}`
-        : `the compile would now hold it as ${result.held_for}, not as a reversal`;
+        : `the compile would now hold it as ${result.held_for}, not as ${kind}`;
       out.refused.push({ service_decision_id: id, outcome: result.outcome, refusal: result.refusal ?? null, why });
       out.alerts.push({
         kind: "hold_release_refused",
@@ -1318,6 +1486,44 @@ export function releaseHolds(releasable, { root = REPO_ROOT } = {}) {
     };
     recordInBatch(batch, released);
     out.compiled.push(released);
+  }
+  return out;
+}
+
+/**
+ * Compose M-T3.3's cancel commit for each hold `walkHolds` found due to
+ * cancel: an operator's cancel record (MOD-52), or a removal request settled
+ * by an applied `author_request` delist (MOD-9). The entry and every record
+ * answering it are deleted, under the decision's `Service-Decision:` and with
+ * NO log entry — which is exactly what `classifyHoldCommit` reads as a cancel,
+ * so the next live run posts `cancelled` naming this commit. Nothing held is
+ * applied: a cancelled hold leaves the catalogue as it was.
+ *
+ * In shadow too, for `releaseHolds`'s reason.
+ *
+ * @returns {{compiled: object[]}} each shaped as a compiled result, so the
+ *   commit's paths and trailer are composed as every other decision's are.
+ */
+export function cancelHolds(cancellable, { root = REPO_ROOT } = {}) {
+  const out = { compiled: [] };
+  for (const { service_decision_id: id, hold } of cancellable ?? []) {
+    if (!id || hold?.entry?.service_decision_id !== id) {
+      throw new Error(`cancelHolds was handed ${id} with a hold entry for ${hold?.entry?.service_decision_id}`);
+    }
+    const records = ["cancel", "confirm"]
+      .filter((act) => fs.existsSync(path.join(root, HOLDS_DIR, `${id}.${act}.json`)))
+      .map((act) => ({ op: "delete", file: `${HOLDS_PREFIX}/${id}.${act}.json` }));
+    out.compiled.push({
+      outcome: "compiled",
+      code: hold.entry.decision?.code ?? null,
+      service_decision_id: id,
+      edits: [{ op: "delete", file: holdEntryPath(id) }, ...records],
+      log: [],
+      advisories: [],
+      records: [],
+      alerts: [],
+      trailers: { "Service-Decision": id },
+    });
   }
   return out;
 }
@@ -1471,6 +1677,81 @@ export function resultBody(r) {
   };
 }
 
+/**
+ * The submission results a commit job's `results.json` owes (BOT-30's
+ * terminal records: a stop or an `M_REJECT`), as `astra.plugins.bot-result/1`
+ * bodies for `POST bot/results` (§4.4; registry plan M-T3.4's `report`).
+ *
+ * Every DEC-7 member the body carries is the record's own — `state`, the
+ * codes of `reasons`, `decision_id`, `tag`, `fingerprint`, `repository_id` —
+ * so the result equals the record at the commit it names (BOT-23); `reasons`
+ * are FLOW-11's objects for those codes. `main_commit` is the commit `apply`
+ * pushed for a record this run wrote, and the commit that already holds it for
+ * one found on `main` (BOT-36). `recorded[]` is every (`fingerprint`,
+ * `decision_id`) pair this run recorded, which is the record's own pair or
+ * none when the record names no fingerprint.
+ *
+ * BOT-82's key for a submission result is (`submission_id`, `state`,
+ * `main_commit`): a body is composed once per key and re-sent byte-identical,
+ * and the service answers a repeat `duplicate`. A body that would name no
+ * commit is refused here, with the reason, as `resultsFor` refuses an
+ * `applied` naming none: the service settles a result against `main`.
+ *
+ * Under anything but `shadow: false` the commit job wrote no terminal record,
+ * and nothing is posted (BOT-92).
+ *
+ * @returns {{key: string, body: object}[]}
+ */
+export function submissionResults(state, { commit = null } = {}) {
+  if (state?.shadow !== false) return [];
+  const pushed = typeof commit === "string" && FULL_SHA.test(commit) ? commit : null;
+  const out = [];
+  const keys = new Set();
+  const unnamed = [];
+  for (const t of state.terminal ?? []) {
+    const r = t?.result;
+    if (!r || typeof r.submission_id !== "string" || typeof t.decision_id !== "string") {
+      throw new Error(
+        "a terminal record in the commit job's `results` carries no result members, so its submission result " +
+        "cannot be composed; the record would be committed and the service never told",
+      );
+    }
+    const mainCommit = t.written ? pushed : (typeof t.commit === "string" && FULL_SHA.test(t.commit) ? t.commit : null);
+    if (!mainCommit) {
+      unnamed.push(`${r.submission_id} ${r.state}`);
+      continue;
+    }
+    const key = `${r.submission_id}|${r.state}|${mainCommit}`;
+    if (keys.has(key)) continue;
+    keys.add(key);
+    out.push({
+      key,
+      body: {
+        submission_id: r.submission_id,
+        state: r.state,
+        reasons: r.reasons.map((code) => reasonOf(code)),
+        decision_id: t.decision_id,
+        main_commit: mainCommit,
+        tag: r.tag,
+        repository_id: r.repository_id,
+        ...(r.fingerprint !== undefined ? { fingerprint: r.fingerprint } : {}),
+        recorded: r.fingerprint !== undefined ? [{ fingerprint: r.fingerprint, decision_id: t.decision_id }] : [],
+      },
+    });
+  }
+  if (unnamed.length) {
+    throw new Error(
+      `${unnamed.join(", ")} would be posted naming no commit. BOT-23 has a \`stopped\` or \`refused\` result name ` +
+      "the commit holding its record, and BOT-82 settles it against main; so this run posts none of them and " +
+      "fails, rather than tell the service a record landed nowhere",
+    );
+  }
+  return out;
+}
+
+/** Registry plan M-T3.4: `report` gives each call 20 seconds, inside its five-minute job. */
+export const REPORT_CALL_TIMEOUT_MS = 20_000;
+
 // ── the settled job ─────────────────────────────────────────────────────────
 
 /** Every listed id that got no result at all, which fails the run and alerts. */
@@ -1599,7 +1880,68 @@ function parseSettled(text, log) {
   return [];
 }
 
-export async function main(argv = [], { env = process.env, log = console, fetchImpl = fetch, now = new Date() } = {}) {
+/**
+ * `list`'s `refused` output, re-checked as `entries` is: the refusals the list
+ * job judged, which this job hands to `report` through `results.json` so that
+ * each is POSTED. Until B-T5.1 nothing read the output, so a decision refused
+ * at the list never got its `refused` result, stayed on BOT-80's list and was
+ * refused again every run — the silent shape this file's header argues
+ * against, one job over.
+ *
+ * Empty — `list` failed, or found nothing to refuse — is no rows. Anything
+ * else must be a JSON array of `{service_decision_id | submission_id, code}`
+ * with a §0.8 refusal code, and a service decision refused here must not also
+ * be in `entries`: one decision cannot be both compiled and refused, and
+ * BOT-81 would then refuse to post two final results for it. A row that fails
+ * fails the job, as a malformed entry does, because a refusal is FINAL
+ * (BOT-81) and this job cannot re-derive it — it can only refuse to pass on
+ * one that is not even well formed.
+ */
+export function listRefusals(text, { entries = [] } = {}) {
+  const out = { decisions: [], submissions: [], fatal: [] };
+  if (typeof text !== "string" || text.trim() === "") return out;
+  let rows;
+  try {
+    rows = JSON.parse(text);
+  } catch {
+    rows = null;
+  }
+  if (!Array.isArray(rows)) {
+    out.fatal.push("`list`'s `refused` output is not a JSON array, so no refusal it names can be posted");
+    return out;
+  }
+  const compiled = new Set(entries.map((e) => e?.service_decision_id));
+  const seen = new Set();
+  for (const r of rows) {
+    const keys = r && typeof r === "object" ? Object.keys(r).sort() : [];
+    const kind = keys.join(",") === "code,service_decision_id" ? "decisions"
+      : keys.join(",") === "code,submission_id" ? "submissions" : null;
+    const id = kind === "decisions" ? r.service_decision_id : kind === "submissions" ? r.submission_id : null;
+    if (!kind || typeof id !== "string" || id === "") {
+      out.fatal.push(`a \`refused\` row is not {service_decision_id | submission_id, code}: ${JSON.stringify(keys)}`);
+      continue;
+    }
+    if (!REFUSALS.includes(r.code)) {
+      out.fatal.push(`${id} is refused \`${r.code}\`, which is not one of §0.8's seven service-decision refusals`);
+      continue;
+    }
+    if (seen.has(id)) {
+      out.fatal.push(`${id} is refused twice in one \`refused\` output`);
+      continue;
+    }
+    seen.add(id);
+    if (kind === "decisions" && compiled.has(id)) {
+      out.fatal.push(`${id} is in both \`entries\` and \`refused\`; one decision is compiled or refused, never both`);
+      continue;
+    }
+    out[kind].push(r);
+  }
+  return out;
+}
+
+export async function main(argv = [], {
+  env = process.env, log = console, fetchImpl = fetch, now = new Date(), coverage = coverageRun,
+} = {}) {
   const job = arg(argv, "--job");
   const root = arg(argv, "--registry-dir") ?? REPO_ROOT;
 
@@ -1614,7 +1956,16 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     process.stdout.write(listSummary(checked));
     for (const a of checked.alerts) log.error(`::warning::${a.cause}: ${a.detail}`);
     for (const f of checked.fatal) log.error(`::error::${f}`);
-    return checked.fatal.length ? 1 : 0;
+    if (checked.fatal.length) return 1;
+    // One file per output, which the workflow step copies into
+    // `$GITHUB_OUTPUT` by name. Written only for an answer with nothing fatal
+    // in it: a failed `list` hands on nothing, and every later job reads that
+    // as the list result it is (`needs.list.result`), never as an empty list.
+    const out = arg(argv, "--out") ?? "moderation";
+    const values = listOutputs(checked);
+    fs.mkdirSync(out, { recursive: true });
+    for (const name of LIST_OUTPUTS) fs.writeFileSync(path.join(out, `${name}.json`), `${values[name]}\n`);
+    return 0;
   }
 
   if (job === "history") {
@@ -1699,6 +2050,19 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
       for (const f of recheck.fatal) log.error(`::error::${f}`);
       return 1;
     }
+    // The refusals `list` judged, re-checked, and handed to `report` with the
+    // compile's own below. A submission refused at the list is said and not
+    // posted: this run posts service-decision results only.
+    const listRefused = listRefusals(env.ASTRA_REFUSED, { entries });
+    if (listRefused.fatal.length) {
+      for (const f of listRefused.fatal) log.error(`::error::${f}`);
+      return 1;
+    }
+    for (const r of listRefused.submissions) {
+      log.error(`::warning::submission ${r.submission_id} was refused \`${r.code}\` at the list; this run posts no ` +
+        "submission result, so the service is not told");
+    }
+    const refusedAtList = listRefused.decisions.map((r) => ({ service_decision_id: r.service_decision_id, refusal: r.code }));
 
     // Compiled in both modes: in shadow for timing (OPEN-OPS-13), and so that a
     // compile that throws is red in shadow too rather than first at R3's exit.
@@ -1724,7 +2088,13 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     const terminal = [];
     if (live) {
       const existing = recordsOnMain(root);
-      for (const s of recheck.submissions) terminal.push(terminalSubmissionRecord(s, { root, existing }));
+      for (const s of recheck.submissions) {
+        const placed = terminalSubmissionRecord(s, { root, existing });
+        // A record already on `main` (BOT-36) is reported under the commit that
+        // holds it (BOT-23), which only this job's full history can name; a
+        // record written now is named by the commit `apply` pushes.
+        terminal.push({ ...placed, commit: placed.written ? null : entryCommit(root, placed.path) });
+      }
     }
 
     // Ops entry 100. The results from history that the service has already
@@ -1734,13 +2104,18 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     // that is absent or unreadable skips nothing, and says so when unreadable.
     const record = readSettled(root);
     for (const p of record.problems) log.error(`::warning::settled_record_unreadable: ${p}`);
-    const holds = walkHolds({ root, now, shadow, settled: record.keys });
-    // B-T4.2: the one release this job builds, written in shadow or out of it
-    // (a hold is not work the list answer names), after this run's own
-    // artefacts so its log name and the documents see them.
-    const releases = releaseHolds(holds.releasable, { root });
+    const coverageRed = reversalCoverageRed(root, { coverage, log });
+    const holds = walkHolds({ root, now, shadow, settled: record.keys, coverageRed });
+    // M-T3.3's release and cancel commits, written in shadow or out of it (a
+    // hold is not work the list answer names), after this run's own artefacts
+    // so their log names, advisory ids and the documents see them. The run's
+    // batch is handed on only when those artefacts were written: a shadow
+    // compile wrote nothing, and its ids are not taken.
+    const releases = releaseHolds(holds.releasable, { root, batch: live ? compiledAll.batch : newBatch() });
     holds.alerts.push(...releases.alerts);
     written.push(...applyCompiled(releases.compiled, { root }));
+    const cancels = cancelHolds(holds.cancellable, { root });
+    written.push(...applyCompiled(cancels.compiled, { root }));
     const handed = parseSettled(env.ASTRA_SETTLED, log);
     let recorded = [];
     const refusedRows = [];
@@ -1765,7 +2140,7 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     }
     for (const p of refusedRows) log.error(`::warning::settled_row_refused: ${p}`);
     const composed = {
-      compiled: [...(live ? compiledAll.compiled : []), ...releases.compiled],
+      compiled: [...(live ? compiledAll.compiled : []), ...releases.compiled, ...cancels.compiled],
       held: holdsEntered.entered,
       submissions: terminal,
       settled: recorded,
@@ -1788,7 +2163,10 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     // and keeping it out of those members is what makes that structural.
     const shadowWithheld = live ? null : {
       compiled: compiledAll.compiled.map((r) => r.service_decision_id),
-      refused: compiledAll.refused.map((r) => ({ service_decision_id: r.service_decision_id, refusal: r.refusal })),
+      refused: [
+        ...refusedAtList,
+        ...compiledAll.refused.map((r) => ({ service_decision_id: r.service_decision_id, refusal: r.refusal })),
+      ],
       held: compiledAll.held.map((r) => ({ service_decision_id: r.service_decision_id, held_for: r.held_for })),
       submissions: recheck.submissions.map((s) => s.submission_id),
     };
@@ -1797,17 +2175,24 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     fs.writeFileSync(path.join(out, "results.json"), `${JSON.stringify({
       shadow,
       compiled: live ? compiledAll.compiled.map((r) => r.service_decision_id) : [],
-      refused: live ? compiledAll.refused.map((r) => ({ service_decision_id: r.service_decision_id, refusal: r.refusal })) : [],
+      // The list's refusals first, then the compile's: both are `refused`
+      // results `report` posts, and neither names a commit.
+      refused: live
+        ? [...refusedAtList, ...compiledAll.refused.map((r) => ({ service_decision_id: r.service_decision_id, refusal: r.refusal }))]
+        : [],
       // A kept entry's row carries the commit that entered it; an entered one's
       // carries none, and `report` names the commit the `apply` step pushed.
       held: live ? holdsEntered.results : [],
       holds_kept: holdsEntered.kept,
       holds,
-      // B-T4.2: the resets this commit releases. Not in `compiled`, so `report`
+      // M-T3.3 (B-T4.2 for resets): the holds this commit releases. Not in `compiled`, so `report`
       // posts no `applied` for them from this run; the next live run posts it
       // from the commit (`holdDeletions`).
       released_holds: releases.compiled.map((r) => r.service_decision_id),
       release_refused: releases.refused,
+      // M-T3.3: the holds this commit cancels. Like a release, posted by the
+      // next live run from the commit (`holdDeletions`), not by this one.
+      cancelled_holds: cancels.compiled.map((r) => r.service_decision_id),
       // Ops entry 100: what the record on this tree was, and the rows this
       // run added to it. `holds.settled` is what the walk passed over.
       settled: { record: record.state, recorded, problems: [...record.problems, ...refusedRows] },
@@ -1849,9 +2234,11 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
       log.error(`::${level}::${a.kind} ${a.service_decision_id}${a.commit ? ` in ${a.commit}` : ""}: ${a.why}`);
     }
     log.log(`ok    ${compiledAll.compiled.length} compiled, ${compiledAll.refused.length} refused, ` +
+      `${refusedAtList.length} refused at the list, ` +
       `${compiledAll.held.length} held (${holdsEntered.written.length} entered, ${holdsEntered.kept.length} already on the tree), ` +
-      `${holds.released.length} released, ${holds.cancelled.length} cancelled, ${holds.due.length} due and not built, ` +
-      `${releases.compiled.length} reset(s) released, ${releases.refused.length} release(s) refused, ` +
+      `${holds.released.length} released, ${holds.cancelled.length} cancelled in history, ${holds.due.length} due and not built, ` +
+      `${releases.compiled.length} hold(s) released, ${releases.refused.length} release(s) refused, ` +
+      `${cancels.compiled.length} hold(s) cancelled, ` +
       `${holds.unclear.length} unclear, ${holds.settled.length} already settled, ${recorded.length} recorded as settled`);
     if (!live) {
       // The sentence is now true because the code above makes it true, and the
@@ -1882,7 +2269,10 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     if (state.shadow !== false) {
       log.log(`note  shadow: ${post.length} result(s) posted, ${withheld.length} withheld (BOT-92)`);
     }
-    const client = createClient({ workflow: "moderation", env, log, fetchImpl });
+    // Composed before the first call, so a body that would name no commit
+    // fails the job before anything is posted rather than halfway through.
+    const submissions = submissionResults(state, { commit: env.ASTRA_MAIN_COMMIT ?? null });
+    const client = createClient({ workflow: "moderation", env, log, fetchImpl, callTimeoutMs: REPORT_CALL_TIMEOUT_MS });
     // The body carries `commit` or `refusal_code` and never a null of either:
     // the token file makes each member conditional on the outcome, both ways,
     // and a null is a member carried. Until 2026-09-22 every row passed both,
@@ -1892,13 +2282,21 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
       const answer = await client.call("serviceDecisionResult", resultBody(r));
       if (!answer.ok) unaccepted.push(`${r.service_decision_id} ${r.outcome}`);
     }
+    // BOT-30's terminal records: a stop or an `M_REJECT`, to `bot/results`,
+    // with `recorded[]` (§4.4). Until 2026-10-14 nothing posted these, so a
+    // stop was committed and the service, which lists a stop until it has
+    // confirmed its record (BOT-80), never heard which commit holds it.
+    for (const { body } of submissions) {
+      const answer = await client.call("result", body);
+      if (!answer.ok) unaccepted.push(`${body.submission_id} ${body.state}`);
+    }
     if (unaccepted.length) {
       // `settled` counts this run's results only when this job succeeded, so a
       // result that did not arrive is a decision it pages for.
       log.error(`::error::${unaccepted.length} result(s) were not accepted: ${unaccepted.join(", ")}`);
       return 1;
     }
-    log.log(`ok    ${post.length} result(s) posted`);
+    log.log(`ok    ${post.length} service-decision result(s) and ${submissions.length} submission result(s) posted`);
     return 0;
   }
 

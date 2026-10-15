@@ -994,6 +994,10 @@ const WRITERS = {
     base: { "plugins/alpha/plugin.json": '{"id":"alpha"}\n', "publishers/pub.json": '{"login":"pub"}\n' },
     link: "plugins/alpha/identity.json",
     ghost: "publishers/ghost",
+    // The workflow's own `env:` gives the step DRY_RUN, and since B-T5.1 the
+    // step pushes only under exactly "false"; the runner is handed the live
+    // value here, so the push this case refuses is one the step would make.
+    env: () => ({ DRY_RUN: "false" }),
     prepare(e, { bad }) {
       const listed = bad ? this.link : "plugins/alpha/plugin.json";
       if (bad) link(e.work, this.link, "plugin.json");

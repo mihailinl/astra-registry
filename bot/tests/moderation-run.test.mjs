@@ -38,6 +38,8 @@ import test from "node:test";
 
 import {
   AUTHOR_DENIED_MEMBERS,
+  LIST_OUTPUTS,
+  MAX_OUTPUT_BYTES,
   MODERATION_ALLOWLIST,
   MODERATION_INTERVAL_SECONDS,
   REFUSAL_BY_MEMBER,
@@ -57,6 +59,8 @@ import {
   entryCommit,
   holdDeletions,
   holdEntryPath,
+  listOutputs,
+  listRefusals,
   listSummary,
   main,
   readShadow,
@@ -80,13 +84,17 @@ import { decisionId, recordPath } from "../lib/decisions.mjs";
 import { compareWithBaseline, identityFromCertificate } from "../lib/identity.mjs";
 import { baselineFor } from "../lib/service-decide.mjs";
 import { listingStateAt } from "../lib/listing-state.mjs";
-import { checkEntry } from "../lib/moderation.mjs";
+import { buildModerationLog, checkEntry } from "../lib/moderation.mjs";
+import { REVOCATIONS_SCHEMA, publicKeyFromBase64, verifyEnvelope } from "../lib/sign.mjs";
+import { signRevocations } from "../../tools/sign-revocations.mjs";
+import { loadTestRoot } from "../../tools/testkeys/regenerate.mjs";
 import { detect } from "../detectors.mjs";
 import { loadRecords } from "../../tools/lib/sources.mjs";
 // What ops entry 101 added, off the namespaces, so that this suite run against
 // modules without them is red test by test rather than at import.
 import * as holdsModule from "../lib/holds.mjs";
 import * as moderationRun from "../moderation-run.mjs";
+import { operatorAct } from "../../tools/operator.mjs";
 // Contract 3.0.0's (MOD-56), off the namespaces for the same reason.
 import * as compiler from "../lib/compile-decision.mjs";
 import { countWindow } from "../lib/takedown-bound.mjs";
@@ -95,7 +103,7 @@ import { countWindow } from "../lib/takedown-bound.mjs";
 const settledLib = await import("../lib/settled.mjs").catch(() => null);
 import { CATEGORIES, TAKEDOWN_BOUND } from "../lib/moderation.mjs";
 import { BOT_AUDIENCE } from "../lib/oidc.mjs";
-import { BODIES } from "../lib/service.mjs";
+import { BODIES, CALL_TIMEOUT_MS } from "../lib/service.mjs";
 import { buildIndex } from "../../tools/build-index.mjs";
 import { stableStringify } from "../../tools/lib/canonical.mjs";
 import { ID_PATTERN } from "../../tools/lib/ids.mjs";
@@ -1200,16 +1208,16 @@ test("a stop's terminal record carries no moderator, whatever the entry carried"
 
 // Until 2026-09-22 this test was named "with `list` down a confirmed reversal
 // still releases, and posts next run", and it passed by asserting a REPORT:
-// `released` held one row with outcome `applied`, and a live `resultsFor`
-// posted it against the run's commit. Nothing released anything — the job
-// never applied the held decision nor deleted the entry, because M-T3.3's
-// release commit is not built — so the service would have been told a relist
-// landed in a commit that left `unlisted: true`. The plan's canary for M-T3.4
-// ("with `list` down, a confirmed reversal releases and posts next run") is
-// therefore NOT met today, and this test now asserts what is true instead: the
-// hold is due, it is refused by name, and nothing is posted for it. The builder
-// of the release commit turns this back into the plan's canary.
-test("a confirmed, due hold that nothing applies is refused by name, never reported `applied`", async () => {
+// nothing released anything. From then until 2026-10-14 it asserted the truth
+// of that day instead — the hold is due, refused by name (`hold_end_not_built`)
+// and nothing is posted — and said the builder of the release commit would
+// turn it back into the plan's canary. This is that canary (M-T3.4: "with
+// `list` down, a confirmed reversal releases and posts next run"), for both
+// ends a hold on the tree can come to: a confirmed reversal past its period
+// (the release commit) and a cancel record (the cancel commit). Watched failing
+// by handing the walk's `releasable` to nothing, and by writing a log entry in
+// the cancel commit — which `classifyHoldCommit` then reads as an `applied`.
+test("with `list` down, a confirmed reversal is released in one commit, and the next live run posts what that commit did", async () => {
   const held = {
     schema: "astra.registry.hold/1",
     held_for: "reversal",
@@ -1217,7 +1225,7 @@ test("a confirmed, due hold that nothing applies is refused by name, never repor
     held_at: "2026-09-18T12:00:00Z",
     release_after: "2026-09-19T12:00:00Z",
     decision: {
-      service_decision_id: SDI, code: "M_RELIST", plugin_id: "widgets",
+      service_decision_id: SDI, code: "M_RELIST", category: "error", plugin_id: "widgets",
       decided_at: "2026-09-18T11:00:00Z", reason: MODERATOR_REASON,
       moderator: "amoderator", reverses: SDI2,
     },
@@ -1229,46 +1237,62 @@ test("a confirmed, due hold that nothing applies is refused by name, never repor
   const cancel = { ...confirm, act: "cancel" };
   const delisted = { [`plugins/widgets/plugin.json`]: plugin("widgets", { unlisted: true }) };
 
-  // Both ends a hold can come to while its entry is still on the tree: a
-  // reversal confirmed past its period (release), and a cancel record
-  // (cancel). Neither commit is built, and each would have been reported.
-  for (const [end, record, wouldPost] of [["release", confirm, "applied"], ["cancel", cancel, "cancelled"]]) {
+  for (const [end, record, outcome] of [["release", confirm, "applied"], ["cancel", cancel, "cancelled"]]) {
     // Committed at `held_at`: a reversal's 24 hours run from the commit that
-    // added its entry (MOD-9, ops entry 101), so a fixture committed at the
-    // wall clock would be a hold entered in the future of `now` below.
-    const root = estate({
-      extra: {
-        ...delisted,
-        [`state/holds/${SDI}.json`]: held,
-        [`state/holds/${SDI}.${record.act}.json`]: record,
-      },
+    // added its entry (MOD-9, ops entry 101).
+    const root = withDocuments(estate({
+      extra: { ...delisted, [`state/holds/${SDI}.json`]: held, [`state/holds/${SDI}.${record.act}.json`]: record },
       at: held.held_at,
-    });
+    }));
+    const origin = withRemote(root);
+    const now = new Date("2026-09-20T00:00:00Z");
 
     for (const shadow of [true, false]) {
-      const walked = walkHolds({ root, now: new Date("2026-09-20T00:00:00Z"), shadow });
+      const walked = walkHolds({ root, now, shadow });
       // The satisfiable half first: the hold IS due, or this proves nothing.
-      assert.deepEqual(walked.due.map((d) => `${d.act} ${d.would_post}`), [`${end} ${wouldPost}`],
-        `the fixture's hold should be due to ${end} (shadow: ${shadow}): ${JSON.stringify(walked)}`);
-      assert.deepEqual(walked.released, [], `a ${end} nothing performed was reported as released`);
-      assert.deepEqual(walked.cancelled, [], `a ${end} nothing performed was reported as cancelled`);
-      assert.deepEqual(walked.pending, [], `a ${end} nothing performed was given a result to post`);
-      assert.deepEqual(walked.alerts.map((a) => `${a.kind} ${a.service_decision_id}`), [`hold_end_not_built ${SDI}`],
-        "a due hold nothing ends must be said, every run, or it waits in silence");
-      const posted = resultsFor({ holds: walked, shadow, commit: "c".repeat(40) });
-      assert.deepEqual(posted.post, [], `\`${wouldPost}\` was posted for a ${end} no commit performed (BOT-81)`);
+      assert.deepEqual(dueIds(walked), [`${SDI} ${end}`], `the fixture's hold should be due to ${end} (shadow: ${shadow})`);
+      assert.deepEqual(walked.due, [], `a due ${end} was refused as not built`);
+      assert.deepEqual(walked.pending, [], `a ${end} no commit has performed yet was given a result to post`);
+      assert.deepEqual(resultsFor({ holds: walked, shadow, commit: "c".repeat(40) }).post, [],
+        `\`${outcome}\` was posted for a ${end} before the commit that performs it (BOT-81)`);
     }
 
-    // Through the job, on the path the workflow runs: nothing listed, the
-    // listing and the entry exactly as they were, and the refusal in the log.
-    const job = await commitJob(root, { entries: [], now: new Date("2026-09-20T00:00:00Z") });
+    // `list` down: no entries, no shadow member. The hold ends anyway.
+    const job = await commitJob(root, {
+      entries: [], now, env: { ASTRA_SHADOW: "", ASTRA_ENTRIES: "", ASTRA_SUBMISSIONS: "" },
+    });
     assert.equal(job.code, 0, job.logs.join("\n"));
-    assert.deepEqual(job.paths, []);
-    assert.equal(JSON.parse(fs.readFileSync(path.join(root, "plugins/widgets/plugin.json"), "utf8")).unlisted, true);
-    assert.ok(fs.existsSync(path.join(root, holdEntryPath(SDI))), "the hold entry left the tree");
-    assert.ok(job.logs.some((l) => l.startsWith(`::error::hold_end_not_built ${SDI}:`)),
-      `the commit job did not refuse the due ${end} by name: ${job.logs.join(" | ")}`);
-    assert.deepEqual(resultsFor({ holds: job.results.holds, shadow: false, commit: "c".repeat(40) }).post, []);
+    assert.deepEqual(end === "release" ? job.results.released_holds : job.results.cancelled_holds, [SDI]);
+    assert.ok(!job.logs.some((l) => l.includes("hold_end_not_built")), `the ${end} was refused as not built`);
+    const step = runApply(root);
+    assert.equal(step.status, 0, step.stderr);
+    const landed = headOf(origin);
+    assert.equal(step.outputs.main_commit, landed);
+    const at = (rel) => {
+      try { return sh(["show", `${landed}:${rel}`], root); } catch { return null; }
+    };
+    assert.equal(at(holdEntryPath(SDI)), null, `the ${end} commit left the hold entry on main`);
+    assert.equal(at(`state/holds/${SDI}.${record.act}.json`), null, `the ${end} commit left the ${record.act} record`);
+    assert.match(sh(["log", "-1", "--format=%B", landed], root), new RegExp(`^Service-Decision: ${SDI}$`, "m"));
+    const added = sh(["show", "--name-status", "--format=", landed], root);
+    const unlisted = JSON.parse(at("plugins/widgets/plugin.json")).unlisted;
+    if (end === "release") {
+      assert.equal(unlisted, undefined, "the release commit did not relist the plugin");
+      const logFile = added.split("\n").find((l) => /^A\s+bot\/moderation\/.*-widgets-relist\.json$/.test(l))?.split(/\s+/)[1];
+      assert.ok(logFile, `the release commit wrote no relist log entry: ${added}`);
+      const entry = JSON.parse(at(logFile));
+      assert.deepEqual([entry.action, entry.reverses, entry.service_decision_id, entry.category], ["relist", SDI2, SDI, "error"]);
+      assert.match(at(INDEX_FILE), /"widgets"/, "the index that landed beside the relist does not list the plugin");
+    } else {
+      assert.equal(unlisted, true, "a cancelled relist relisted the plugin");
+      assert.ok(!/bot\/moderation\//.test(added), `the cancel commit wrote a log entry, which reads as an applied decision: ${added}`);
+    }
+
+    // The next live run reads that commit and posts exactly what it did.
+    const next = await historyJob(root, { now: new Date("2026-09-20T00:20:00Z") });
+    assert.equal(next.code, 0, next.logs.join("\n"));
+    assert.deepEqual(next.bodies.map((b) => [b.service_decision_id, b.outcome, b.commit]), [[SDI, outcome, landed]],
+      `the next live run did not post \`${outcome}\` naming the ${end} commit`);
   }
 });
 
@@ -1279,7 +1303,10 @@ test("a confirmed, due hold that nothing applies is refused by name, never repor
 // the tree had no such file, and `git add --pathspec-from-file` — the next
 // command the workflow runs — exits 128 on a path that does not exist. Measured
 // before the repair on this same shape: `main` returned 0, and the add died.
-async function commitJob(root, { entries, submissions = [], shadow = false, now = new Date("2026-09-20T12:30:00Z"), env = {} }) {
+async function commitJob(root, {
+  entries, submissions = [], shadow = false, now = new Date("2026-09-20T12:30:00Z"), env = {},
+  coverage = () => ({ status: "green", codes: [] }),
+}) {
   const out = path.join(root, "moderation");
   const logs = [];
   const saved = globalThis.fetch;
@@ -1300,6 +1327,10 @@ async function commitJob(root, { entries, submissions = [], shadow = false, now 
       log: { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) },
       fetchImpl: offline,
       now,
+      // MOD-46's canary, green: a fixture has neither the history nor the
+      // unlisted floor the real one is held to. The test that asks about it
+      // hands in a red one.
+      coverage,
     });
     const paths = fs.readFileSync(path.join(out, "paths.txt"), "utf8").split("\n").filter(Boolean);
     const results = JSON.parse(fs.readFileSync(path.join(out, "results.json"), "utf8"));
@@ -1686,11 +1717,12 @@ function runApply(root, env = {}) {
   // gets a fixture's environment: under a hook's GIT_DIR it committed into the
   // repository that names (measured 2026-09-23, ops couplings 143), and
   // tools/selftest/git-env.mjs reads `git` spawns, not the git a shell runs.
-  const step = spawnSync("bash", ["-e", file], {
-    cwd: root,
-    encoding: "utf8",
-    env: { ...fixtureEnv(root), ...env, GITHUB_OUTPUT: output },
-  });
+  // `DRY_RUN` is the workflow's, and the live value is the default here so
+  // that every case below pushes as the committed file does; a case that
+  // passes `DRY_RUN: undefined` runs the step with it unset.
+  const stepEnv = { ...fixtureEnv(root), DRY_RUN: "false", ...env, GITHUB_OUTPUT: output };
+  for (const [k, v] of Object.entries(stepEnv)) if (v === undefined) delete stepEnv[k];
+  const step = spawnSync("bash", ["-e", file], { cwd: root, encoding: "utf8", env: stepEnv });
   return { ...step, outputs: readOutputs(output) };
 }
 
@@ -1934,7 +1966,12 @@ const confirmOf = (id, at) => ({
   schema: "astra.registry.hold-record/1", act: "confirm", service_decision_id: id,
   at, actor: "operator", run: "https://github.com/a/b/actions/runs/1",
 });
-const dueIds = (walked) => walked.due.map((d) => `${d.service_decision_id} ${d.act}`);
+/** Every hold the walk found due, whether this job builds its end (`releasable`, `cancellable`) or refuses it (`due`). */
+const dueIds = (walked) => [
+  ...walked.due.map((d) => `${d.service_decision_id} ${d.act}`),
+  ...walked.releasable.map((d) => `${d.service_decision_id} release`),
+  ...walked.cancellable.map((d) => `${d.service_decision_id} cancel`),
+];
 const waitingFor = (walked, id) => walked.waiting.find((w) => w.service_decision_id === id)?.reason ?? "";
 
 test("a reversal compiled at T and landed at T + 15 min is not due at T + 24 h + 1 min, and is at T + 15 min + 24 h", async () => {
@@ -2078,12 +2115,14 @@ const fakeToken = () => [
 /** `--job report`, as the workflow runs it, against a stub service that records every body it is sent. */
 async function reportJob(env, { answer = () => ({ status: 200, body: { schema: "astra.plugins.bot-ack/1", shadow: false, outcome: "recorded" } }) } = {}) {
   const bodies = [];
+  const posts = [];
   const logs = [];
   const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   const fetchImpl = async (url, init = {}) => {
     if (String(url).startsWith("https://token.invalid/")) return json(200, { value: fakeToken() });
     const body = JSON.parse(init.body);
     bodies.push(body);
+    posts.push({ path: new URL(String(url)).pathname.replace(/^.*\/bot\//, "bot/"), bytes: init.body });
     const a = answer(body);
     return json(a.status, a.body);
   };
@@ -2096,7 +2135,7 @@ async function reportJob(env, { answer = () => ({ status: 200, body: { schema: "
     log: { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) },
     fetchImpl,
   });
-  return { code, bodies, logs };
+  return { code, bodies, posts, logs };
 }
 
 /** `--job settled`, as the workflow runs it. */
@@ -2179,6 +2218,298 @@ test("the commit step hands `report` and `settled` the commit it pushed and the 
   assert.deepEqual(shadowPosted.bodies, [], "report posted under a shadow answer (BOT-92)");
 });
 
+/**
+ * The `run: |` block of the step with this `id:` in `plugins-moderation.yml`,
+ * with its one `node bot/moderation-run.mjs …` line taken out and returned
+ * apart. The job itself runs in-process here, against a stub service — a
+ * bash subprocess cannot be handed one — and the step's remaining lines, the
+ * ones that copy what the job wrote into $GITHUB_OUTPUT, run under `bash -e`
+ * as the runner runs them, over exactly what the job left behind.
+ */
+function stepAround(id) {
+  const lines = read(".github/workflows/plugins-moderation.yml").split("\n");
+  const at = lines.flatMap((l, i) => (new RegExp(`^\\s+id: ${id}\\s*$`).test(l) ? [i] : []));
+  assert.equal(at.length, 1, `plugins-moderation.yml has ${at.length} steps with \`id: ${id}\``);
+  const indent = lines[at[0]].search(/\S/);
+  let run = -1;
+  for (let j = at[0] + 1; j < lines.length; j++) {
+    if (lines[j].trim() === "") continue;
+    if (lines[j].search(/\S/) < indent) break;
+    if (lines[j].search(/\S/) === indent && /^\s+run: \|\s*$/.test(lines[j])) { run = j; break; }
+  }
+  assert.ok(run > 0, `the \`${id}\` step has no \`run: |\` block`);
+  const body = [];
+  for (let j = run + 1; j < lines.length; j++) {
+    if (lines[j].trim() !== "" && lines[j].search(/\S/) <= indent) break;
+    body.push(lines[j].slice(indent + 2));
+  }
+  const calls = body.filter((l) => /^\s*node bot\/moderation-run\.mjs /.test(l));
+  assert.equal(calls.length, 1, `the \`${id}\` step runs ${calls.length} moderation-run lines; this reads exactly one`);
+  return { call: calls[0].trim(), script: `${body.map((l) => (l === calls[0] ? ":" : l)).join("\n").trimEnd()}\n` };
+}
+
+/** A step's remaining lines, in `dir`, with a `$GITHUB_OUTPUT` of its own, read back as the runner reads it. */
+function runAround(id, dir, env = {}) {
+  const { script } = stepAround(id);
+  const file = path.join(dir, `${id}.sh`);
+  const output = path.join(dir, `${id}-output`);
+  fs.writeFileSync(file, script);
+  fs.writeFileSync(output, "");
+  const step = spawnSync("bash", ["-e", file], { cwd: dir, encoding: "utf8", env: { PATH: process.env.PATH, ...env, GITHUB_OUTPUT: output } });
+  return { ...step, outputs: readOutputs(output) };
+}
+
+// B-T5.1, 2026-10-14: the path the owner's delist of `e2e-test` never got
+// down, because `list` and `report` were placeholders (run 38525175920). One
+// M_DELIST from a stub service through every hand-off the workflow makes —
+// the work step's five outputs, the history step's `settled`, the commit, the
+// push to a real `origin`, the posted `applied`, and `settled`'s comparison —
+// using the workflow's own step lines wherever a step has lines of its own.
+test("M_DELIST end to end: listed, committed, pushed, reported, settled, through the workflow's own steps", async () => {
+  const root = withDocuments(estate());
+  const origin = withRemote(root);
+  const before = headOf(origin);
+  assert.match(sh(["show", `${before}:registry/v1/index.json`], root), /"widgets"/,
+    "the fixture's index does not list the plugin, so its absence after the delist would prove nothing");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-e2e-"));
+  tmpRoots.push(dir);
+  const out = path.join(dir, "moderation");
+  const json = (status, b) => new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
+  const posted = [];
+  const fetchImpl = async (url, init = {}) => {
+    if (String(url).startsWith("https://token.invalid/")) return json(200, { value: fakeToken() });
+    if ((init.method ?? "GET") === "GET") return json(200, answer({ shadow: false, service_decisions: [delistOf(SDI)] }));
+    posted.push(JSON.parse(init.body));
+    return json(ack("accepted").status, ack("accepted").body);
+  };
+  const tokenEnv = {
+    ACTIONS_ID_TOKEN_REQUEST_URL: "https://token.invalid/token?api-version=2.0",
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN: "the-runner-secret",
+    GITHUB_SERVER_URL: "https://github.com",
+    GITHUB_REPOSITORY: "mihailinl/astra-registry",
+    GITHUB_RUN_ID: "35502265394",
+  };
+  const logs = [];
+  const log = { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) };
+
+  // `list`, work step: the job, then the step's own lines over its files.
+  assert.equal(stepAround("work").call, "node bot/moderation-run.mjs --job list --out moderation");
+  const saved = process.stdout.write;
+  process.stdout.write = () => true;
+  let listed;
+  try {
+    listed = await main(["--job", "list", "--registry-dir", root, "--out", out], { env: tokenEnv, log, fetchImpl });
+  } finally {
+    process.stdout.write = saved;
+  }
+  assert.equal(listed, 0, logs.join("\n"));
+  const work = runAround("work", dir);
+  assert.equal(work.status, 0, work.stderr + work.stdout);
+  assert.equal(work.outputs.shadow, "false");
+  assert.deepEqual(JSON.parse(work.outputs.listed), [SDI]);
+  assert.deepEqual(JSON.parse(work.outputs.entries).map((e) => [e.service_decision_id, e.code]), [[SDI, "M_DELIST"]]);
+
+  // `list`, history step, under the work step's shadow: nothing in history.
+  assert.equal(stepAround("history").call, "node bot/moderation-run.mjs --job history --out moderation");
+  const history = await main(["--job", "history", "--registry-dir", root, "--out", out], {
+    env: { ...tokenEnv, ASTRA_SHADOW: work.outputs.shadow }, log, fetchImpl, now: new Date("2026-09-20T12:30:00Z"),
+  });
+  assert.equal(history, 0, logs.join("\n"));
+  const settledStep = runAround("history", dir);
+  assert.equal(settledStep.status, 0, settledStep.stderr + settledStep.stdout);
+  assert.equal(settledStep.outputs.settled, "[]");
+  assert.deepEqual(posted, [], "the history step posted for a tree with no hold in its history");
+
+  // `alert`: a delist is no MOD-8 alarm, so the verdict is green.
+  assert.deepEqual(alarmsFor(JSON.parse(work.outputs.entries)), []);
+
+  // `commit`, over exactly `list`'s outputs, then the `apply` step's own lines.
+  const job = await commitJob(root, {
+    entries: [],
+    env: {
+      ASTRA_SHADOW: work.outputs.shadow,
+      ASTRA_ENTRIES: work.outputs.entries,
+      ASTRA_SUBMISSIONS: work.outputs.submissions,
+      ASTRA_SETTLED: settledStep.outputs.settled,
+    },
+  });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.compiled, [SDI]);
+  const step = runApply(root);
+  assert.equal(step.status, 0, step.stderr);
+  const landed = headOf(origin);
+  assert.equal(step.outputs.main_commit, landed, "the delist did not reach `main`");
+  const plugin = JSON.parse(sh(["show", `${landed}:plugins/widgets/plugin.json`], root));
+  assert.equal(plugin.unlisted, true, "the commit that landed does not delist the plugin");
+  const index = sh(["show", `${landed}:registry/v1/index.json`], root);
+  assert.ok(!/"widgets"/.test(index), "the index that landed beside the delist still lists the plugin");
+  assert.match(sh(["log", "-1", "--format=%B", landed], root), new RegExp(`^Service-Decision: ${SDI}$`, "m"));
+
+  // `report`, over the commit job's outputs: one `applied`, naming the push.
+  const report = await reportJob({ ASTRA_RESULTS: step.outputs.results, ASTRA_MAIN_COMMIT: step.outputs.main_commit });
+  assert.equal(report.code, 0, report.logs.join("\n"));
+  assert.deepEqual(report.bodies.map((b) => [b.service_decision_id, b.outcome, b.commit]), [[SDI, "applied", landed]]);
+
+  // `settled`: the one listed decision has its result.
+  const done = await settledJob({
+    ASTRA_LISTED_IDS: work.outputs.listed,
+    ASTRA_RESULTS: step.outputs.results,
+    ASTRA_MAIN_COMMIT: step.outputs.main_commit,
+    ASTRA_LIST_FAILED: "false",
+  });
+  assert.equal(done.code, 0, done.logs.join(" | "));
+});
+
+/** `list`'s work step over a stub answer: the job in-process, then the step's own lines. Its outputs, as the runner reads them. */
+async function workOutputs(root, body) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-work-"));
+  tmpRoots.push(dir);
+  const job = await listJob(root, body);
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  fs.mkdirSync(path.join(dir, "moderation"));
+  for (const [name, text] of Object.entries(job.files)) fs.writeFileSync(path.join(dir, "moderation", `${name}.json`), text);
+  const step = runAround("work", dir);
+  assert.equal(step.status, 0, step.stderr + step.stdout);
+  return step.outputs;
+}
+
+/** The commit job's environment, exactly as the workflow maps it from `list`'s outputs. */
+const commitEnvFrom = (outputs) => ({
+  ASTRA_SHADOW: outputs.shadow,
+  ASTRA_ENTRIES: outputs.entries,
+  ASTRA_SUBMISSIONS: outputs.submissions,
+  ASTRA_REFUSED: outputs.refused,
+  ASTRA_SETTLED: outputs.settled ?? "",
+});
+
+// B-T5.1. `list`'s `refused` output was declared and read by nothing, so a
+// decision refused at the list — an `A_YANK` carrying a moderator is
+// `kind_refused` there, by name — never got the FINAL `refused` result BOT-81
+// gives it, stayed on BOT-80's list, and was refused again every run. Now
+// `commit` hands it to `report` in `results`, beside the compile's own.
+// Watched failing by dropping ASTRA_REFUSED from the commit job's read, and by
+// putting the list's refusals in `refused` only in shadow.
+test("a decision refused at the list is posted `refused` once, beside the compile's results, and `settled` counts it", async () => {
+  const root = withDocuments(estate());
+  const origin = withRemote(root);
+  const refusedYank = decision({
+    service_decision_id: SDI2, code: "A_YANK", versions: ["1.0.0"], reason: FIXED_YANK, moderator: "amoderator",
+  });
+  const outputs = await workOutputs(root, answer({ shadow: false, service_decisions: [delistOf(SDI), refusedYank] }));
+  assert.deepEqual(JSON.parse(outputs.listed), [SDI, SDI2]);
+
+  const job = await commitJob(root, { entries: [], env: commitEnvFrom(outputs) });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.refused, [{ service_decision_id: SDI2, refusal: "kind_refused" }]);
+  const step = runApply(root);
+  assert.equal(step.status, 0, step.stderr);
+  const landed = headOf(origin);
+
+  const report = await reportJob({ ASTRA_RESULTS: step.outputs.results, ASTRA_MAIN_COMMIT: step.outputs.main_commit });
+  assert.equal(report.code, 0, report.logs.join("\n"));
+  assert.deepEqual(
+    report.bodies.map((b) => `${b.service_decision_id} ${b.outcome} ${b.commit ?? "-"} ${b.refusal_code ?? "-"}`).sort(),
+    [`${SDI} applied ${landed} -`, `${SDI2} refused - kind_refused`].sort(),
+  );
+  const done = await settledJob({
+    ASTRA_LISTED_IDS: outputs.listed, ASTRA_RESULTS: step.outputs.results, ASTRA_MAIN_COMMIT: step.outputs.main_commit,
+  });
+  assert.equal(done.code, 0, done.logs.join(" | "));
+
+  // Shadow: the refusal is withheld like everything else the answer names,
+  // posted by nobody, and counted as answered by `settled` (BOT-84's split).
+  const shadowRoot = withDocuments(estate());
+  withRemote(shadowRoot);
+  const shadowOut = await workOutputs(shadowRoot, answer({ shadow: true, service_decisions: [delistOf(SDI), refusedYank] }));
+  const shadowJob = await commitJob(shadowRoot, { entries: [], env: commitEnvFrom(shadowOut) });
+  assert.equal(shadowJob.code, 0, shadowJob.logs.join("\n"));
+  assert.deepEqual(shadowJob.results.refused, []);
+  assert.deepEqual(shadowJob.results.shadow_withheld.refused, [{ service_decision_id: SDI2, refusal: "kind_refused" }]);
+  const shadowStep = runApply(shadowRoot);
+  assert.equal(shadowStep.status, 0, shadowStep.stderr);
+  const shadowReport = await reportJob({ ASTRA_RESULTS: shadowStep.outputs.results, ASTRA_MAIN_COMMIT: shadowStep.outputs.main_commit });
+  assert.deepEqual(shadowReport.bodies, [], "report posted a refusal under a shadow answer (BOT-92)");
+  const shadowDone = await settledJob({
+    ASTRA_LISTED_IDS: shadowOut.listed, ASTRA_RESULTS: shadowStep.outputs.results, ASTRA_MAIN_COMMIT: shadowStep.outputs.main_commit,
+  });
+  assert.equal(shadowDone.code, 0, shadowDone.logs.join(" | "));
+});
+
+test("the list's refusals are re-checked before they are handed on, and a malformed one fails the commit job", async () => {
+  assert.deepEqual(listRefusals(""), { decisions: [], submissions: [], fatal: [] }, "a failed or empty list refuses nothing");
+  const ok = listRefusals(JSON.stringify([{ service_decision_id: SDI2, code: "kind_refused" }, { submission_id: SUB, code: "kind_refused" }]));
+  assert.deepEqual(ok.fatal, []);
+  assert.equal(ok.decisions.length, 1);
+  assert.equal(ok.submissions.length, 1);
+  for (const [text, why] of [
+    ["{}", "not an array"],
+    [JSON.stringify([{ service_decision_id: SDI2, code: "not_a_refusal" }]), "a code outside §0.8"],
+    [JSON.stringify([{ service_decision_id: SDI2, code: "kind_refused", why: "a member's value" }]), "a member beyond id and code"],
+    [JSON.stringify([{ code: "kind_refused" }]), "no id"],
+    [JSON.stringify([{ service_decision_id: SDI2, code: "kind_refused" }, { service_decision_id: SDI2, code: "kind_refused" }]), "twice"],
+  ]) {
+    assert.ok(listRefusals(text).fatal.length > 0, `a \`refused\` output with ${why} was accepted`);
+  }
+  assert.ok(
+    listRefusals(JSON.stringify([{ service_decision_id: SDI, code: "kind_refused" }]), { entries: [delistOf(SDI)] }).fatal.length > 0,
+    "a decision both compiled and refused was accepted; BOT-81 gives it one final result",
+  );
+
+  const root = estate();
+  const logs = [];
+  const code = await main(["--job", "commit", "--registry-dir", root, "--out", path.join(root, "moderation")], {
+    env: {
+      ASTRA_SHADOW: "false",
+      ASTRA_ENTRIES: JSON.stringify([delistOf(SDI)]),
+      ASTRA_SUBMISSIONS: "[]",
+      ASTRA_REFUSED: JSON.stringify([{ service_decision_id: SDI, code: "kind_refused" }]),
+    },
+    log: { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) },
+    fetchImpl: () => { throw new Error("the commit job reached the network"); },
+    now: new Date("2026-09-20T12:30:00Z"),
+  });
+  assert.equal(code, 1, `the commit job accepted a decision both compiled and refused: ${logs.join(" | ")}`);
+  assert.ok(!fs.existsSync(path.join(root, "moderation", "paths.txt")), "and it listed paths for the apply step anyway");
+});
+
+// B-T5.1 commits `DRY_RUN: "false"`. It was "true" through R3 and no step read
+// it, so the `apply` step pushed whatever the committed value said. Now the
+// step pushes only under exactly "false", and every other value — a typo, a
+// case, an unset variable — commits on the runner and pushes nothing, which
+// `report` then refuses to describe as landed. Watched failing by keying the
+// guard on `== "true"` (the unset and "False" cases push) and by dropping it.
+test("the apply step pushes only under DRY_RUN exactly \"false\", and a withheld push is red at `report`", async () => {
+  for (const value of ["true", "", "False", "false ", "0", undefined]) {
+    const root = withDocuments(estate());
+    const origin = withRemote(root);
+    const before = headOf(origin);
+    const job = await commitJob(root, { entries: [delistOf(SDI)] });
+    assert.equal(job.code, 0, job.logs.join("\n"));
+    const step = runApply(root, { DRY_RUN: value });
+    const label = `DRY_RUN ${JSON.stringify(value)}`;
+    assert.equal(step.status, 0, `${label}: ${step.stderr}`);
+    assert.equal(headOf(origin), before, `${label} pushed to main`);
+    assert.equal(step.outputs.main_commit, "", `${label} named a commit nothing pushed`);
+    assert.match(step.stdout, /would push [0-9a-f]{40}/, `${label}: the step did not say what it withheld`);
+    assert.notEqual(sh(["rev-parse", "HEAD"], root).trim(), before, `${label}: the commit was not even made on the runner`);
+
+    // `report` refuses an `applied` that names no commit, so the run is red
+    // and `settled`, handed nothing by a failed `report`, pages for it.
+    const report = await reportJob({ ASTRA_RESULTS: step.outputs.results, ASTRA_MAIN_COMMIT: step.outputs.main_commit })
+      .catch((e) => ({ code: 2, bodies: [], logs: [e.message] }));
+    assert.notEqual(report.code, 0, `${label}: report posted a takedown that did not land`);
+    assert.deepEqual(report.bodies, [], `${label}: report posted`);
+    assert.equal((await settledJob({ ASTRA_LISTED_IDS: JSON.stringify([SDI]), ASTRA_RESULTS: "" })).code, 1);
+  }
+  const root = withDocuments(estate());
+  const origin = withRemote(root);
+  const job = await commitJob(root, { entries: [delistOf(SDI)] });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  const live = runApply(root, { DRY_RUN: "false" });
+  assert.equal(live.status, 0, live.stderr);
+  assert.equal(live.outputs.main_commit, headOf(origin), "DRY_RUN \"false\" did not push");
+});
+
 // ── the settled job ─────────────────────────────────────────────────────────
 
 test("a listed id with no result fails the run, and a failed `list` does too", () => {
@@ -2195,6 +2526,111 @@ test("a listed id with no result fails the run, and a failed `list` does too", (
 });
 
 // ── the alarms, and the verdict they are sent as ────────────────────────────
+
+/** `--job list`, as the `list` job's work step runs it, against a stub service that answers `body`. */
+async function listJob(root, body) {
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), "moderation-run-list-"));
+  tmpRoots.push(out);
+  const calls = [];
+  const logs = [];
+  const json = (status, b) => new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
+  const fetchImpl = async (url, init = {}) => {
+    if (String(url).startsWith("https://token.invalid/")) return json(200, { value: fakeToken() });
+    calls.push({ url: String(url), method: init.method ?? "GET" });
+    return json(200, body);
+  };
+  const saved = process.stdout.write;
+  let printed = "";
+  process.stdout.write = (chunk) => { printed += String(chunk); return true; };
+  let code;
+  try {
+    code = await main(["--job", "list", "--registry-dir", root, "--out", out], {
+      env: {
+        ACTIONS_ID_TOKEN_REQUEST_URL: "https://token.invalid/token?api-version=2.0",
+        ACTIONS_ID_TOKEN_REQUEST_TOKEN: "the-runner-secret",
+      },
+      log: { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) },
+      fetchImpl,
+    });
+  } finally {
+    process.stdout.write = saved;
+  }
+  const files = {};
+  for (const name of LIST_OUTPUTS) {
+    const file = path.join(out, `${name}.json`);
+    if (fs.existsSync(file)) files[name] = fs.readFileSync(file, "utf8");
+  }
+  return { code, calls, logs, printed, files };
+}
+
+// B-T5.1, 2026-10-14. Until this date `--job list` printed its summary and
+// handed on nothing: the workflow step that would run it was a placeholder,
+// and the five outputs `list` declares had no writer. Each now has a file the
+// step copies into $GITHUB_OUTPUT by name. Watched failing by dropping a
+// refused id from `listed` (a refusal nobody posts then leaves BOT-80's list
+// unseen), by passing `why` through on a refusal, and by reading `shadow` as
+// `!shadow`.
+test("the list job hands on its five outputs, one line each, and `listed` names the refused decisions too", async () => {
+  const root = estate();
+  const delist = decision({ code: "M_DELIST", category: "broken", moderator: "amoderator" });
+  const refusedYank = decision({
+    service_decision_id: SDI2, code: "A_YANK", versions: ["1.0.0"], reason: FIXED_YANK, moderator: "amoderator",
+  });
+  const stop = { submission_id: SUB, repo: "acme/widgets", tag: "widgets-v1.0.0", code: "R_FIRST_LISTING" };
+  const job = await listJob(root, answer({ shadow: false, service_decisions: [delist, refusedYank], submissions: [stop] }));
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.calls.map((c) => [c.method, new URL(c.url).pathname.replace(/^.*\/bot\//, "bot/")]),
+    [["GET", "bot/moderation-work"]], "one GET of the work list, and nothing else");
+  assert.deepEqual(Object.keys(job.files).sort(), [...LIST_OUTPUTS].sort(), "a list output has no file to be copied from");
+  for (const [name, text] of Object.entries(job.files)) {
+    assert.match(text, /^[^\n\r]+\n$/, `${name}.json is not one line, so $GITHUB_OUTPUT's name=value would split it`);
+  }
+  const read = (name) => JSON.parse(job.files[name]);
+  assert.equal(read("shadow"), false);
+  assert.deepEqual(read("entries").map((e) => e.service_decision_id), [SDI]);
+  assert.deepEqual(read("submissions").map((e) => e.submission_id), [SUB]);
+  assert.deepEqual(read("refused"), [{ service_decision_id: SDI2, code: "kind_refused" }],
+    "a refusal hands on its id and its §0.8 code and nothing else; the reason text can quote a member's value");
+  assert.deepEqual(read("listed"), [SDI, SDI2],
+    "`listed` is every decision the answer named, refused ones included: `settled` is the only job that would " +
+    "notice a refusal that never reached the service");
+  assert.ok(!/amoderator|withdrawn/.test(job.printed), "the summary printed a member's value (PRIV-2)");
+  assert.match(job.printed, new RegExp(`refuse ${SDI2} kind_refused`));
+});
+
+test("a shadow answer hands on `true`, and a list with anything fatal in it hands on nothing", async () => {
+  const root = estate();
+  const delist = decision({ code: "M_DELIST", category: "broken", moderator: "amoderator" });
+  const shadowed = await listJob(root, answer({ shadow: true, service_decisions: [delist] }));
+  assert.equal(shadowed.code, 0, shadowed.logs.join("\n"));
+  assert.equal(shadowed.files.shadow, "true\n", "a shadow answer is handed on as shadow (BOT-92)");
+  assert.deepEqual(JSON.parse(shadowed.files.listed), [SDI], "and the work it names is still listed, for `settled`");
+
+  // An answer missing `shadow`, or carrying one that is not a boolean, is not
+  // the schema's body at all: the run fails, and nothing reads it as live.
+  const unstated = answer({ service_decisions: [delist] });
+  delete unstated.shadow;
+  for (const body of [unstated, answer({ shadow: "false", service_decisions: [delist] })]) {
+    const job = await listJob(root, body);
+    assert.equal(job.code, 1, `shadow ${JSON.stringify(body.shadow)} was accepted`);
+    assert.deepEqual(job.files, {}, `shadow ${JSON.stringify(body.shadow)} handed on outputs from a failed list`);
+  }
+
+  const fatal = await listJob(root, answer({ shadow: false, service_decisions: [{ code: "M_DELIST", plugin_id: "widgets" }] }));
+  assert.equal(fatal.code, 1);
+  assert.deepEqual(fatal.files, {},
+    "a list that failed wrote outputs anyway; every later job must read a failed `list`, never an empty one");
+});
+
+test("the list outputs are bounded as the summary is, and a cut-short output is refused before it is handed on", () => {
+  const big = { service_decision_id: SDI, code: "M_DELIST", plugin_id: "widgets", note: "x".repeat(MAX_OUTPUT_BYTES) };
+  assert.throws(
+    () => listOutputs({ shadow: false, entries: [big], submissions: [], refused: [] }),
+    /bound is/,
+  );
+  const fine = listOutputs({ shadow: true, entries: [], submissions: [], refused: [] });
+  assert.deepEqual(fine, { shadow: "true", entries: "[]", submissions: "[]", refused: "[]", listed: "[]" });
+});
 
 test("MOD-8's alarms are derivable from the list entry, before any compile", () => {
   const alarms = alarmsFor([
@@ -3352,4 +3788,467 @@ test("M_REVIEW over a full takedown bound is applied, the takedown beside it is 
   assert.equal(moderationRun.hasTakedown([reviewOf(SDI, ["1.1.0"])]), false);
   const alone = compileAll([reviewOf(SDI, ["1.1.0"])], { root });
   assert.deepEqual([alone.compiled.length, alone.held.length, alone.refused.length], [1, 0, 0]);
+});
+
+// ── M-T3.3: every hold MOD-9 makes ends in a commit (2026-10-14) ────────────
+//
+// Until this date the release commit was built for `M_IDENTITY_RESET` alone,
+// and the cancel commit for nothing: every other confirmed hold — a relist, an
+// unrevoke, a `disable`, a takedown over the bound, an unbound removal request
+// — was refused by name every run and sat at `held` for good. These run each
+// kind through the commit job and the workflow's own `apply` step against a
+// real `origin`, and read back what landed.
+
+const recordOf = (id, act, at = "2026-09-19T13:00:00Z") => ({
+  schema: "astra.registry.hold-record/1", act, service_decision_id: id,
+  at, actor: "operator", run: "https://github.com/a/b/actions/runs/1",
+});
+
+/**
+ * A tree with one hold on it and the record answering it (none for `act:
+ * null`), committed at `held_at` — a reversal's 24 hours run from that commit —
+ * with the generated documents and a bare `origin`.
+ */
+function oneHold(decisionDoc, { held_for, held_at = "2026-09-18T12:00:00Z", act = "confirm", extra = {}, root = null } = {}) {
+  const id = decisionDoc.service_decision_id;
+  const files = {
+    ...extra,
+    [holdEntryPath(id)]: holdEntry(decisionDoc, { held_for, held_at }),
+    ...(act ? { [`state/holds/${id}.${act}.json`]: recordOf(id, act) } : {}),
+  };
+  let tree = root;
+  if (tree) {
+    writeAll(tree, files);
+    commitAt(tree, held_at, `hold ${id}`);
+  } else {
+    tree = withDocuments(estate({ extra: files, at: held_at }));
+  }
+  const origin = root ? null : withRemote(tree);
+  return { root: tree, origin };
+}
+
+/** The commit job over no list work, then the `apply` step: what one run does to a tree holding only holds. */
+async function holdsRun(root, { now = new Date("2026-09-20T00:00:00Z"), shadow = false } = {}) {
+  const job = await commitJob(root, { entries: [], now, shadow });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  const step = runApply(root);
+  assert.equal(step.status, 0, step.stderr);
+  const landed = step.outputs.main_commit || null;
+  const show = (rel) => {
+    try { return landed ? sh(["show", `${landed}:${rel}`], root) : null; } catch { return null; }
+  };
+  const names = landed ? sh(["show", "--name-status", "--format=", landed], root).split("\n").filter(Boolean) : [];
+  const logs = names.filter((l) => /^A\s+bot\/moderation\//.test(l)).map((l) => JSON.parse(show(l.split(/\s+/)[1])));
+  return { job, landed, show, names, logs };
+}
+
+test("M-T3.3: a confirmed `disable`, a confirmed takedown over the bound and a confirmed unbound removal are each applied at once", async () => {
+  const cases = [
+    {
+      held_for: "disable_confirmation",
+      decision: decision({ code: "M_REVOKE", category: "malicious", severity: "high", action: "disable", moderator: "amoderator", versions: ["1.0.0"] }),
+      check: (run) => {
+        const added = run.names.filter((l) => /^A\s+tools\/revocations\//.test(l));
+        assert.equal(added.length, 1, `the release published ${added.length} advisories: ${run.names.join(" | ")}`);
+        const advisory = JSON.parse(run.show(added[0].split(/\s+/)[1]));
+        assert.equal(advisory.action, "disable");
+        assert.deepEqual(run.logs.map((e) => [e.action, e.advisory, e.service_decision_id]), [["revoke", advisory.id, SDI]]);
+        assert.match(run.show(REVOCATIONS_FILE), new RegExp(advisory.id), "the withdrawal list that landed does not carry the advisory");
+      },
+    },
+    {
+      held_for: "bound",
+      decision: delistOf(SDI),
+      check: (run) => {
+        assert.equal(JSON.parse(run.show("plugins/widgets/plugin.json")).unlisted, true, "the confirmed takedown did not delist");
+        assert.deepEqual(run.logs.map((e) => [e.action, e.service_decision_id]), [["delist", SDI]]);
+      },
+    },
+    {
+      held_for: "unbound_removal",
+      bound: false,
+      decision: decision({ code: "A_REMOVAL_REQUEST", reason: FIXED_REMOVAL }),
+      check: (run) => {
+        assert.equal(JSON.parse(run.show("plugins/widgets/plugin.json")).unlisted, true, "the confirmed removal did not delist");
+        assert.deepEqual(run.logs.map((e) => [e.action, e.category, e.service_decision_id]), [["delist", "author_request", SDI]]);
+      },
+    },
+  ];
+  for (const c of cases) {
+    const root = withDocuments(estate({
+      bound: c.bound ?? true,
+      extra: {
+        [holdEntryPath(SDI)]: holdEntry(c.decision, { held_for: c.held_for, held_at: "2026-09-18T12:00:00Z" }),
+        [`state/holds/${SDI}.confirm.json`]: recordOf(SDI, "confirm"),
+      },
+      at: "2026-09-18T12:00:00Z",
+    }));
+    const origin = withRemote(root);
+    const run = await holdsRun(root);
+    assert.deepEqual(run.job.results.released_holds, [SDI], `${c.held_for}: ${run.job.logs.join(" | ")}`);
+    assert.equal(run.landed, headOf(origin), `${c.held_for}: nothing was pushed`);
+    assert.equal(run.show(holdEntryPath(SDI)), null, `${c.held_for}: the entry stayed`);
+    assert.equal(run.show(`state/holds/${SDI}.confirm.json`), null, `${c.held_for}: the confirm record stayed`);
+    assert.match(sh(["log", "-1", "--format=%B", run.landed], root), new RegExp(`^Service-Decision: ${SDI}$`, "m"));
+    c.check(run);
+    const next = await historyJob(root, { now: new Date("2026-09-20T00:20:00Z") });
+    assert.deepEqual(next.bodies.map((b) => [b.service_decision_id, b.outcome, b.commit]), [[SDI, "applied", run.landed]],
+      `${c.held_for}: the next live run did not post \`applied\` naming the release commit`);
+  }
+});
+
+test("M-T3.3: a released unrevoke deletes the advisory the reversed decision published, and logs `unrevoke` naming both", async () => {
+  // Leg one: an `M_REVOKE` (block_install, so not held) applied and pushed.
+  const root = withDocuments(estate({ at: "2026-09-17T09:00:00Z" }));
+  const origin = withRemote(root);
+  const revoke = decision({
+    service_decision_id: SDI2, code: "M_REVOKE", category: "security_defect", severity: "high",
+    action: "block_install", moderator: "amoderator", versions: ["1.0.0"], decided_at: "2026-09-17T10:00:00Z",
+  });
+  const first = await commitJob(root, { entries: [revoke], now: new Date("2026-09-17T10:30:00Z") });
+  assert.equal(first.code, 0, first.logs.join("\n"));
+  assert.equal(runApply(root, dated("2026-09-17T10:45:00Z")).status, 0);
+  const advisory = first.results.written.find((p) => p.startsWith("tools/revocations/ASTRA-"));
+  assert.ok(advisory, `the revoke published no advisory: ${first.results.written.join(", ")}`);
+
+  // Leg two: the moderator's `M_UNREVOKE`, held as a reversal and confirmed.
+  const unrevoke = decision({
+    code: "M_UNREVOKE", category: "error", moderator: "amoderator", reverses: SDI2, decided_at: "2026-09-18T11:00:00Z",
+    reason: "The advisory named a bundle that was never shipped; the withdrawal is lifted and the listing stands.",
+  });
+  oneHold(unrevoke, { held_for: "reversal", root });
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+  const run = await holdsRun(root);
+  assert.deepEqual(run.job.results.released_holds, [SDI], run.job.logs.join(" | "));
+  assert.equal(run.landed, headOf(origin));
+  assert.ok(run.names.some((l) => l === `D\t${advisory}`), `the release did not delete ${advisory}: ${run.names.join(" | ")}`);
+  const id = path.basename(advisory, ".json");
+  assert.deepEqual(run.logs.map((e) => [e.action, e.advisory, e.reverses, e.service_decision_id]), [["unrevoke", id, SDI2, SDI]]);
+  assert.ok(!run.show(REVOCATIONS_FILE).includes(id), "the withdrawal list that landed still carries the lifted advisory");
+
+  // And the same decision released a second time — the entry restored by hand —
+  // finds nothing left to lift, and writes nothing.
+  const again = oneHold({ ...unrevoke, service_decision_id: SDI3 }, { held_for: "reversal", root });
+  const twice = await commitJob(again.root, { entries: [], now: new Date("2026-09-20T00:00:00Z") });
+  assert.equal(twice.code, 0, twice.logs.join("\n"));
+  assert.deepEqual(twice.results.released_holds, []);
+  assert.deepEqual(twice.results.release_refused.map((r) => [r.service_decision_id, r.refusal]), [[SDI3, "target_changed"]]);
+
+  // The advisory is found from git, by the decision `reverses` names, and only
+  // for the listing the unrevoke is about: one naming another listing's revoke
+  // lifts nothing. Watched failing by dropping the listing comparison.
+  const other = crowd({ at: "2026-09-17T09:00:00Z" });
+  withDocuments(other);
+  withRemote(other);
+  const otherRevoke = await commitJob(other, { entries: [revoke], now: new Date("2026-09-17T10:30:00Z") });
+  assert.equal(otherRevoke.code, 0, otherRevoke.logs.join("\n"));
+  assert.equal(runApply(other, dated("2026-09-17T10:45:00Z")).status, 0);
+  oneHold({ ...unrevoke, plugin_id: "gadgets" }, { held_for: "reversal", root: other });
+  const wrong = await commitJob(other, { entries: [], now: new Date("2026-09-20T00:00:00Z") });
+  assert.equal(wrong.code, 0, wrong.logs.join("\n"));
+  assert.deepEqual(wrong.paths, [], "an unrevoke of gadgets lifted the advisory widgets' revoke published");
+  assert.deepEqual(wrong.results.release_refused.map((r) => [r.service_decision_id, r.refusal]), [[SDI, "target_changed"]]);
+});
+
+test("M-T3.3: a release the tree has moved under writes nothing, keeps the entry, and alerts by name every run", async () => {
+  // A relist confirmed for a listing a MOD-52 revert has already relisted.
+  const { root } = oneHold(relistOf(SDI), { held_for: "reversal" });
+  const job = await commitJob(root, { entries: [], now: new Date("2026-09-20T00:00:00Z") });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.paths, [], "a refused release committed something");
+  assert.deepEqual(job.results.release_refused.map((r) => [r.service_decision_id, r.refusal]), [[SDI, "target_changed"]]);
+  assert.ok(job.logs.some((l) => l.startsWith(`::error::hold_release_refused ${SDI}:`)), job.logs.join(" | "));
+  assert.ok(fs.existsSync(path.join(root, holdEntryPath(SDI))), "the refused release deleted the entry anyway");
+
+  // And a takedown confirmed as `bound` whose listing has since lost its
+  // identity record is now an unbound case: the confirmation for the bound
+  // does not apply it. MOD-9's kinds are strictest first, and a confirmation
+  // releases the hold it answers.
+  const yank = decision({ code: "A_YANK", versions: ["1.0.0"], reason: FIXED_YANK });
+  const moved = withDocuments(estate({
+    bound: false,
+    extra: {
+      [holdEntryPath(SDI2)]: holdEntry({ ...yank, service_decision_id: SDI2 }, { held_for: "bound", held_at: "2026-09-18T12:00:00Z" }),
+      [`state/holds/${SDI2}.confirm.json`]: recordOf(SDI2, "confirm"),
+    },
+    at: "2026-09-18T12:00:00Z",
+  }));
+  const strict = await commitJob(moved, { entries: [], now: new Date("2026-09-20T00:00:00Z") });
+  assert.equal(strict.code, 0, strict.logs.join("\n"));
+  assert.deepEqual(strict.paths, [], "a yank confirmed under the bound was applied to a listing with no bound account");
+  assert.deepEqual(strict.results.release_refused.map((r) => [r.service_decision_id, r.outcome]), [[SDI2, "held"]]);
+});
+
+test("M-T3.3: an applied `author_request` delist cancels an unbound removal request in the same commit, with no log entry of its own", async () => {
+  const removal = decision({ service_decision_id: SDI2, code: "A_REMOVAL_REQUEST", reason: FIXED_REMOVAL });
+  const root = withDocuments(estate({
+    bound: false,
+    extra: { [holdEntryPath(SDI2)]: holdEntry(removal, { held_for: "unbound_removal", held_at: "2026-09-18T12:00:00Z" }) },
+    at: "2026-09-18T12:00:00Z",
+  }));
+  const origin = withRemote(root);
+  const delist = decision({ code: "M_DELIST", category: "author_request", moderator: "amoderator", decided_at: "2026-09-19T10:00:00Z" });
+  const job = await commitJob(root, { entries: [delist], now: new Date("2026-09-20T00:00:00Z") });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.compiled, [SDI]);
+  assert.deepEqual(job.results.cancelled_holds, [SDI2], "the removal request the delist settled was not cancelled (MOD-9)");
+  const step = runApply(root);
+  assert.equal(step.status, 0, step.stderr);
+  const landed = headOf(origin);
+  const message = sh(["log", "-1", "--format=%B", landed], root);
+  for (const id of [SDI, SDI2]) assert.match(message, new RegExp(`^Service-Decision: ${id}$`, "m"));
+  // One delist log entry, the moderator's: the cancel writes none, so the next
+  // run reads the removal request as cancelled and the delist as applied.
+  const next = await historyJob(root, { now: new Date("2026-09-20T00:20:00Z") });
+  assert.deepEqual(next.bodies.map((b) => [b.service_decision_id, b.outcome, b.commit]), [[SDI2, "cancelled", landed]]);
+});
+
+test("M-T3.3 and MOD-52: a takedown released over the bound is reverted by the operator, unheld, and logged as reversing it", async () => {
+  const { root, origin } = oneHold(delistOf(SDI), { held_for: "bound" });
+  const run = await holdsRun(root);
+  assert.deepEqual(run.job.results.released_holds, [SDI], run.job.logs.join(" | "));
+  assert.equal(JSON.parse(run.show("plugins/widgets/plugin.json")).unlisted, true);
+
+  // The operator's revert, as `operator.yml` runs it, over the tree that landed.
+  const act = operatorAct({ root, act: "revert", serviceDecisionId: SDI, now: new Date("2026-09-20T01:00:00Z"), runId: "9" });
+  assert.ok(act.paths.includes("plugins/widgets/plugin.json"), act.paths.join(", "));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "plugins/widgets/plugin.json"), "utf8")).unlisted, undefined,
+    "the revert did not relist the plugin the release delisted");
+  const logFile = act.paths.find((p) => /^bot\/moderation\/.*-widgets-relist\.json$/.test(p));
+  const entry = JSON.parse(fs.readFileSync(path.join(root, logFile), "utf8"));
+  assert.deepEqual([entry.action, entry.reverses, entry.category], ["relist", SDI, "error"]);
+  assert.match(act.message, new RegExp(`^Service-Decision: ${SDI}$`, "m"));
+  assert.equal(headOf(origin), run.landed);
+});
+
+// MOD-46, which the release commit made live: until 2026-10-14 nothing
+// released a relist or an unrevoke, so a canary that blocks only those blocked
+// nothing, and the commit job never asked it. Watched failing by not handing
+// the walk `coverageRed`, and by asking the canary when no reversal is due.
+test("MOD-46: a red coverage canary holds a confirmed reversal back and no takedown, and is asked only when a reversal is due", async () => {
+  const red = () => ({ status: "red", codes: ["MOD_UNLISTED_UNLOGGED"] });
+  const relist = oneHold(relistOf(SDI), { held_for: "reversal", extra: { "plugins/widgets/plugin.json": plugin("widgets", { unlisted: true }) } });
+  const blocked = await commitJob(relist.root, { entries: [], now: new Date("2026-09-20T00:00:00Z"), coverage: red });
+  assert.equal(blocked.code, 0, blocked.logs.join("\n"));
+  assert.deepEqual(blocked.paths, [], "a confirmed relist was released under a red coverage canary");
+  assert.match(waitingFor(blocked.results.holds, SDI), /MOD-46/);
+  assert.ok(blocked.logs.some((l) => l.includes("MOD-46: the coverage canary is red (MOD_UNLISTED_UNLOGGED)")), blocked.logs.join(" | "));
+  const broken = await commitJob(relist.root, { entries: [], now: new Date("2026-09-20T00:00:00Z"), coverage: () => { throw new Error("shallow"); } });
+  assert.deepEqual(broken.paths, [], "a canary that could not run released a reversal");
+  const green = await commitJob(relist.root, { entries: [], now: new Date("2026-09-20T00:00:00Z") });
+  assert.deepEqual(green.results.released_holds, [SDI], "and green, it is released: the block above is the canary's");
+
+  const takedown = oneHold(delistOf(SDI2), { held_for: "bound" });
+  let asked = 0;
+  const counting = () => { asked += 1; return red(); };
+  const applied = await commitJob(takedown.root, { entries: [], now: new Date("2026-09-20T00:00:00Z"), coverage: counting });
+  assert.deepEqual(applied.results.released_holds, [SDI2], "a red coverage canary held back a takedown (MOD-46 blocks reversals only)");
+  assert.equal(asked, 0, "the canary was run with no confirmed reversal on the tree");
+});
+
+// ── MOD-47's round trip, in CI (MOD-1) ──────────────────────────────────────
+//
+// MOD-47: "CI runs revoke → unrevoke → log build → sign". MOD-1 keeps
+// `M_DEPRECATE`, `M_REVOKE` and `M_UNREVOKE` off the panel until, among other
+// things, that round trip passes. Until 2026-10-14 the nearest thing was
+// moderation.test.mjs's backing check over hand-written log entries, with the
+// signing half left to ROLL-1's walk with real keys — and no unrevoke could be
+// produced by the bot at all, because nothing released a held `M_UNREVOKE`.
+//
+// This is the whole trip on a fixture, through the code a production run
+// executes: the commit job compiles the revoke and the workflow's `apply`
+// step pushes it; the withdrawal list is rebuilt and signed with a TEST index
+// key and verified as a client verifies it; the moderation log is built
+// against that signed list; the `M_UNREVOKE` is listed, held as a reversal,
+// confirmed by the operator's act, released 24 hours later by the commit job
+// and pushed; and the list is rebuilt, re-signed at a higher serial, verified,
+// and the log built against it shows the revoke settled by the unrevoke. Never
+// a production act: a fixture repository, a bare `origin`, a committed key
+// that says TEST-ONLY in its id.
+test("MOD-47's round trip: revoke → unrevoke → moderation log build → sign, through the commit job, and every signature verifies", async () => {
+  const KEY = "TEST-ONLY-DO-NOT-TRUST-index-2026a";
+  const test = loadTestRoot(KEY);
+  const signer = { key_id: KEY, privateKey: test.privateKey, public_key: test.publicKeyB64 };
+  const keys = [{ key_id: KEY, publicKey: publicKeyFromBase64(test.publicKeyB64) }];
+  const committedList = (root, sha) => JSON.parse(sh(["show", `${sha}:${REVOCATIONS_FILE}`], root));
+
+  const root = withDocuments(estate({ at: "2026-09-17T09:00:00Z" }));
+  const origin = withRemote(root);
+
+  // ── revoke ──
+  const revoke = decision({
+    service_decision_id: SDI2, code: "M_REVOKE", category: "security_defect", severity: "high",
+    action: "block_install", moderator: "amoderator", versions: ["1.0.0"], decided_at: "2026-09-17T10:00:00Z",
+  });
+  const first = await commitJob(root, { entries: [revoke], now: new Date("2026-09-17T10:30:00Z") });
+  assert.equal(first.code, 0, first.logs.join("\n"));
+  assert.equal(runApply(root, dated("2026-09-17T10:45:00Z")).status, 0);
+  const revoked = headOf(origin);
+  const advisory = path.basename(first.results.written.find((p) => p.startsWith("tools/revocations/ASTRA-")), ".json");
+
+  // The document the commit carried is the generator's own, and it signs.
+  assert.equal(stableStringify(committedList(root, revoked)), stableStringify(buildRevocations({ root })),
+    "the withdrawal list the revoke commit carried is not what the generator builds from the tree it landed");
+  const list1 = signRevocations(committedList(root, revoked), { signer, issuedAt: new Date("2026-09-17T11:00:00Z") });
+  assert.deepEqual(verifyEnvelope(list1, REVOCATIONS_SCHEMA, keys), { ok: true, key_id: KEY });
+  assert.ok(list1.signed.revocations.some((r) => r.id === advisory), `the signed list does not carry ${advisory}`);
+
+  // ── log build, against the signed list ──
+  const log1 = buildModerationLog({ root, revocations: list1.signed.revocations, revocationsSerial: list1.signed.serial });
+  const revokeEntry = (log) => log.entries.find((e) => e.action === "revoke" && e.advisory === advisory);
+  assert.equal(revokeEntry(log1)?.backed, true, "the revoke is not backed by the signed advisory it names");
+
+  // ── unrevoke: listed, held, confirmed, released ──
+  const unrevoke = decision({
+    code: "M_UNREVOKE", category: "error", moderator: "amoderator", reverses: SDI2, decided_at: "2026-09-18T09:00:00Z",
+    reason: "The advisory named a bundle that was never shipped; the withdrawal is lifted and the listing stands.",
+  });
+  const second = await commitJob(root, { entries: [unrevoke], now: new Date("2026-09-18T09:30:00Z") });
+  assert.equal(second.code, 0, second.logs.join("\n"));
+  assert.deepEqual(second.results.held.map((h) => h.service_decision_id), [SDI], "MOD-9 holds every M_UNREVOKE");
+  assert.equal(runApply(root, dated("2026-09-18T09:45:00Z")).status, 0);
+
+  const act = operatorAct({ root, act: "confirm", serviceDecisionId: SDI, now: new Date("2026-09-18T10:00:00Z"), runId: "7" });
+  sh(["add", "--", ...act.paths], root);
+  sh(["commit", "-q", "-m", act.message], root, dated("2026-09-18T10:00:00Z"));
+  sh(["push", "-q", "origin", "HEAD:main"], root);
+
+  const early = await commitJob(root, { entries: [], now: new Date("2026-09-19T09:30:00Z") });
+  assert.deepEqual(early.results.released_holds, [], "the unrevoke was released before 24 hours had run from its hold's commit");
+  const third = await commitJob(root, { entries: [], now: new Date("2026-09-19T10:00:00Z") });
+  assert.equal(third.code, 0, third.logs.join("\n"));
+  assert.deepEqual(third.results.released_holds, [SDI], third.logs.join(" | "));
+  const step = runApply(root, dated("2026-09-19T10:15:00Z"));
+  assert.equal(step.status, 0, step.stderr);
+  const lifted = headOf(origin);
+  assert.equal(step.outputs.main_commit, lifted);
+
+  // ── sign again: a higher serial, the advisory gone, the signature good ──
+  const committed2 = committedList(root, lifted);
+  assert.equal(stableStringify(committed2), stableStringify(buildRevocations({ root })),
+    "the withdrawal list the unrevoke commit carried is not what the generator builds from the tree it landed");
+  const list2 = signRevocations(committed2, { signer, issuedAt: new Date("2026-09-19T11:00:00Z") });
+  assert.deepEqual(verifyEnvelope(list2, REVOCATIONS_SCHEMA, keys), { ok: true, key_id: KEY });
+  assert.ok(list2.signed.serial > list1.signed.serial,
+    `the list lifting ${advisory} is serial ${list2.signed.serial}, not above ${list1.signed.serial}: a client holding the older list keeps the withdrawal`);
+  assert.ok(!list2.signed.revocations.some((r) => r.id === advisory), `the signed list still carries ${advisory}`);
+
+  // ── log build, against the re-signed list: the revoke settled, the unrevoke newest ──
+  const log2 = buildModerationLog({ root, revocations: list2.signed.revocations, revocationsSerial: list2.signed.serial });
+  assert.equal(revokeEntry(log2)?.backed, "settled", "an advisory lifted by an unrevoke is not read as settled (MOD-47)");
+  const top = log2.entries[0];
+  assert.deepEqual([top.action, top.advisory, top.reverses, top.service_decision_id], ["unrevoke", advisory, SDI2, SDI],
+    "the newest log entry is not the unrevoke naming the advisory and the decision it reverses");
+  // And against the OLD list the log would still claim the withdrawal: the
+  // signature is what makes the second build's answer the served one.
+  const stale = buildModerationLog({ root, revocations: list1.signed.revocations, revocationsSerial: list1.signed.serial });
+  assert.equal(revokeEntry(stale)?.backed, true, "against the list that still carries it, the advisory reads as in force");
+
+  // The signatures are real: one changed byte in either list fails verification.
+  for (const list of [list1, list2]) {
+    const forged = JSON.parse(JSON.stringify(list));
+    forged.signed.serial += 1;
+    assert.equal(verifyEnvelope(forged, REVOCATIONS_SCHEMA, keys).ok, false, "a re-serialled list still verified");
+  }
+});
+
+// ── BOT-30's submission results, posted (2026-10-14) ────────────────────────
+//
+// The commit job has written a stop's or an `M_REJECT`'s terminal record since
+// M-T3.4, and `report` posted only service-decision results: the record landed
+// and the service — which lists a stop until it has confirmed the record
+// (BOT-80) — was never told which commit holds it, so it listed it again every
+// run. M-T3.4's `report` posts "stop and `M_REJECT` results, with
+// `recorded[]`, to `POST bot/results`", 20 seconds per call. Watched failing
+// by dropping `recorded`, by naming the pushed commit for a record found
+// already on `main`, by leaving the client at its 30-second default, and by
+// not posting these at all.
+test("a stop and an M_REJECT are posted to bot/results with recorded[], equal to their records, and a re-post is byte-identical", async () => {
+  const SUB2 = "0192f3a4-5b6c-7d8e-9f01-2345678901ac";
+  const stop = {
+    submission_id: SUB, repo: "acme/widgets", tag: "widgets-v1.1.0", trigger: "panel",
+    service_repository_id: "912345678", stop_status: "stopped", fingerprints: ["0123456789abcdef"], code: "A_STOP",
+  };
+  const reject = {
+    submission_id: SUB2, repo: "acme/widgets", tag: "widgets-v1.2.0", trigger: "panel",
+    service_repository_id: "912345678", fingerprints: ["fedcba9876543210"], code: "M_REJECT",
+    category: "malicious", moderator: "amoderator", decided_at: "2026-09-20T12:00:00Z",
+  };
+  const root = withDocuments(estate());
+  const origin = withRemote(root);
+  const job = await commitJob(root, { entries: [], submissions: [stop, reject] });
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.deepEqual(job.results.terminal.map((t) => t.written), [true, true], "the fixture wrote no terminal record");
+  const step = runApply(root);
+  assert.equal(step.status, 0, step.stderr);
+  const landed = headOf(origin);
+
+  const timeouts = [];
+  const saved = AbortSignal.timeout;
+  AbortSignal.timeout = (ms) => { timeouts.push(ms); return saved.call(AbortSignal, ms); };
+  let report;
+  try {
+    report = await reportJob({ ASTRA_RESULTS: step.outputs.results, ASTRA_MAIN_COMMIT: step.outputs.main_commit });
+  } finally {
+    AbortSignal.timeout = saved;
+  }
+  assert.equal(report.code, 0, report.logs.join("\n"));
+  const results = report.posts.filter((p) => p.path === "bot/results");
+  assert.equal(results.length, 2, `report posted ${results.length} submission result(s): ${report.posts.map((p) => p.path).join(", ")}`);
+  // Every abort timer the job armed, the token mint's included: none is the
+  // client's 30-second default, so each service call ran under 20 seconds.
+  assert.ok(timeouts.length >= 2 && !timeouts.includes(CALL_TIMEOUT_MS) && timeouts.includes(20_000),
+    `report's calls were given ${timeouts.join(", ")} ms, not 20 s each`);
+
+  for (const [entry, state] of [[stop, "stopped"], [reject, "refused"]]) {
+    const body = JSON.parse(results.find((p) => JSON.parse(p.bytes).submission_id === entry.submission_id).bytes);
+    const row = job.results.terminal.find((t) => t.result.submission_id === entry.submission_id);
+    const record = JSON.parse(sh(["show", `${landed}:${row.path}`], root));
+    assert.equal(body.schema, "astra.plugins.bot-result/1");
+    assert.equal(body.state, state);
+    assert.equal(body.main_commit, landed, `${state}: the result does not name the commit holding its record (BOT-23)`);
+    // BOT-23: every DEC-7 member the result carries equals the record's.
+    assert.deepEqual(
+      [body.state, body.reasons.map((r) => r.code), body.decision_id, body.tag, body.fingerprint, body.repository_id],
+      [record.state, record.reasons, record.decision_id, record.tag, record.fingerprint, record.repository_id],
+      `${state}: the result disagrees with the record at the commit it names`,
+    );
+    assert.deepEqual(body.recorded, [{ fingerprint: record.fingerprint, decision_id: record.decision_id }],
+      `${state}: recorded[] is not the (fingerprint, decision_id) pair this run recorded (§4.4)`);
+    for (const r of body.reasons) assert.deepEqual(Object.keys(r).sort(), ["code", "location", "message", "stage"]);
+    for (const m of ["moderator", "category", "declared_interest", "repo", "trigger"]) {
+      assert.ok(!Object.hasOwn(body, m), `${state}: the result carries \`${m}\`, which §4.4 does not give it`);
+    }
+  }
+
+  // The service lists both again until it has confirmed them. The next run
+  // finds each record already on `main`, commits nothing, and re-posts the
+  // same bytes under the same BOT-82 key, naming the commit that holds it.
+  const again = await commitJob(root, { entries: [], submissions: [stop, reject] });
+  assert.equal(again.code, 0, again.logs.join("\n"));
+  assert.deepEqual(again.paths, [], "a record already on main was committed again");
+  const quiet = runApply(root);
+  assert.equal(quiet.outputs.main_commit, "");
+  const repost = await reportJob(
+    { ASTRA_RESULTS: quiet.outputs.results, ASTRA_MAIN_COMMIT: "" },
+    { answer: () => ({ status: 200, body: { schema: "astra.plugins.bot-ack/1", shadow: false, outcome: "duplicate" } }) },
+  );
+  assert.equal(repost.code, 0, `a duplicate acknowledgement failed the job: ${repost.logs.join(" | ")}`);
+  assert.deepEqual(repost.posts.filter((p) => p.path === "bot/results").map((p) => p.bytes).sort(), results.map((p) => p.bytes).sort(),
+    "the re-post is not byte-identical, so BOT-82's key would record a second landing");
+
+  // A record written by a run that pushed nothing has no commit to name.
+  const dry = await reportJob({ ASTRA_RESULTS: step.outputs.results, ASTRA_MAIN_COMMIT: "" })
+    .catch((e) => ({ code: 2, posts: [], logs: [e.message] }));
+  assert.notEqual(dry.code, 0, "a stop was reported against no commit");
+  assert.deepEqual(dry.posts, [], "something was posted before the unnamed result was refused");
+
+  // Shadow: no terminal record, so no submission result (BOT-92).
+  const shadowRoot = withDocuments(estate());
+  withRemote(shadowRoot);
+  const shadowJob = await commitJob(shadowRoot, { entries: [], submissions: [stop, reject], shadow: true });
+  const shadowStep = runApply(shadowRoot);
+  const shadowReport = await reportJob({ ASTRA_RESULTS: shadowStep.outputs.results, ASTRA_MAIN_COMMIT: shadowStep.outputs.main_commit });
+  assert.equal(shadowJob.code, 0);
+  assert.deepEqual(shadowReport.posts, [], "report posted a submission result under a shadow answer");
 });
