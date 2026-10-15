@@ -36,7 +36,8 @@ import { GRACE_MINUTES, emit, finding, minutesSince, verdict } from "../served-s
 import { gather, serve85, sourceOf } from "../served-set/main-vs-signed.mjs";
 import { serve39 } from "../served-set/served-vs-signed.mjs";
 import {
-  EXTRA_PATHS, EXTRA_PATHS_FLOOR, HOST, HOST_BASE, artifactNameFrom, extraPathVerdict, probeExtraPaths, probePaths, serve39Host,
+  CATALOGUE_HOSTS, EXTRA_PATHS, EXTRA_PATHS_FLOOR, HOST, HOST_BASE, RU_HOST,
+  artifactNameFrom, extraPathVerdict, fetchHost, fetchHosts, probeExtraPaths, probePaths, serve39Host, serve39Hosts,
 } from "../served-set/host-vs-signed.mjs";
 // PROVENANCE_WINDOW_DAYS is deliberately NOT imported. Both fixtures that used
 // to compute an age from it could not see it move (2026-09-22: 7 → 1, nothing
@@ -809,6 +810,57 @@ export async function run() {
       "an expired list the host does not serve is what TRUST-38 asks for");
     const before = serve39Host({ head, headClock: HEAD_CLOCK, served: gone, now: minutesAgo(HOST_LIST_EXPIRES, -60) });
     assertEqual(codesOf(before), "SERVE_39_HOST_UNREACHABLE", "a list not yet expired that the host does not serve is an outage");
+  });
+
+  // ── DEC-18: a second catalogue host, registry.knice.tech ───────────────────
+  console.log("\nDEC-18: both catalogue hosts, each reported on its own");
+
+  await test("CATALOGUE_HOSTS is both hosts DEC-18 means by \"the catalogue host\"", () => {
+    assertEqual(CATALOGUE_HOSTS.join(","), [HOST, RU_HOST].join(","),
+      "DEC-18 names registry.minice.ai and, from 2026-10-15, registry.knice.tech, and nothing else");
+  });
+
+  await test("serve39Hosts runs the unchanged byte-equality rule over each host, and reports them separately", () => {
+    const head = hostHead();
+    const ruStale = { ok: true, url: `https://${RU_HOST}/${SIGNED_FILES.index}`, status: 200, body: "{\"old\":true}\n", error: null };
+    const servedByHost = {
+      [HOST]: servedFrom(head),
+      [RU_HOST]: servedFrom(head, { index: ruStale }),
+    };
+    const v = serve39Hosts({ head, headClock: HEAD_CLOCK, servedByHost, now: minutesAgo(HEAD_CLOCK, 31) });
+    assertEqual(codesOf(v), "SERVE_39_HOST_DRIFT_RU",
+      "the primary host served signed's bytes and the RU host drifted, so only the RU-suffixed code fired");
+    assert(v.notes.some((n) => n.startsWith(HOST)), "the primary host's own note is missing");
+    assert(v.notes.some((n) => n.startsWith(RU_HOST)), "the RU host's own note is missing");
+
+    // Swap which host drifts: the primary host's code is unsuffixed, exactly
+    // as it was before DEC-18 added a second host (byte-equality rule kept).
+    const swapped = serve39Hosts({
+      head, headClock: HEAD_CLOCK,
+      servedByHost: { [HOST]: servedFrom(head, { index: ruStale }), [RU_HOST]: servedFrom(head) },
+      now: minutesAgo(HEAD_CLOCK, 31),
+    });
+    assertEqual(codesOf(swapped), "SERVE_39_HOST_DRIFT", "the primary host's code gained a suffix it never had before");
+
+    // Neither host drifting is green over both, and "no signed branch" is one
+    // finding, not one per host.
+    const clean = serve39Hosts({ head, headClock: HEAD_CLOCK, servedByHost: { [HOST]: servedFrom(head), [RU_HOST]: servedFrom(head) }, now: minutesAgo(HEAD_CLOCK, 600) });
+    assertEqual(clean.status, "green", `both hosts serving signed's bytes paged: ${codesOf(clean)}`);
+    const noBranch = serve39Hosts({ head: { present: false, reason: "no signed", sha: null, bytes: {}, documents: {} }, headClock: null, servedByHost: {}, now: HEAD_CLOCK });
+    assertEqual(codesOf(noBranch), "SERVE_39_NO_SIGNED_BRANCH", "no signed branch is one finding over both hosts, not two");
+  });
+
+  await test("fetchHost takes a host, and fetchHosts covers every catalogue host", async () => {
+    const seen = [];
+    const fetchImpl = async (url) => {
+      seen.push(url);
+      return { status: 200, headers: new Map(), text: async () => "{}" };
+    };
+    const served = await fetchHost({ host: RU_HOST, fetchImpl });
+    assert(seen.every((u) => new URL(u).hostname === RU_HOST), "fetchHost asked a host other than the one it was given");
+    assert(Object.keys(SIGNED_FILES).every((name) => served[name]?.ok), "fetchHost did not fetch all four documents");
+    const both = await fetchHosts({ hosts: [HOST, RU_HOST], fetchImpl });
+    assert(HOST in both && RU_HOST in both, "fetchHosts did not cover every host it was given");
   });
 
   // The path probes, through a `fetchImpl` answering from a fixture map: the

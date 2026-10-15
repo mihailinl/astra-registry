@@ -16,13 +16,16 @@
 #                     7 days, and always the head, shown to have been pushed by
 #                     a run of sign.yml that holds its receipt.
 #
-#   host-vs-signed    SERVE-39's catalogue-host half, from the day
-#                     `registry.minice.ai` first answers (RC-R2-3 commit (i)):
-#                     all four documents against `signed`'s head, with no latch
-#                     and with TRUST-38's expired list as one it must NOT serve;
-#                     and SERVE-52's and INV-40's named-path probes, sent to
-#                     that host through the CDN and to nothing else (attack
-#                     M-12). It holds no token at all.
+#   host-vs-signed    SERVE-39's catalogue-host half, from the day each
+#                     catalogue host first answers (RC-R2-3 commit (i)): all
+#                     four documents against `signed`'s head, with no latch
+#                     and with TRUST-38's expired list as one it must NOT
+#                     serve, over every host DEC-18 means by "the catalogue
+#                     host" — `registry.minice.ai` and, since 5.4.0,
+#                     `registry.knice.tech` — each reported on its own; and
+#                     SERVE-52's and INV-40's named-path probes, sent to
+#                     `registry.minice.ai` through the CDN and to nothing else
+#                     (attack M-12). It holds no token at all.
 #
 #   trust-runway      ROLL-45. How many days `registry/v1/trust.json` has left,
 #                     on main's copy and on the one `signed` publishes, and the
@@ -180,7 +183,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: SERVE-39, SERVE-52 and INV-40 — what the catalogue host serves
+      - name: SERVE-39, SERVE-52 and INV-40 — what the catalogue hosts serve
         id: check
         run: node tools/served-set/check.mjs --job host-vs-signed
 

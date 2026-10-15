@@ -20,6 +20,22 @@
 //     head carries a list whose `expires_at` has passed, the correct answer
 //     from the host is NOT those bytes, and a 200 carrying them is the breach.
 //
+// **Since 5.4.0 (DEC-18) there are two catalogue hosts, not one.**
+// `registry.minice.ai` is served through Cloudflare, proxied in front of the
+// same origin; from 2026-10-15 ~19:50Z, `registry.knice.tech` is a new RU
+// client's compiled URL, served direct from the RU box because Cloudflare is
+// throttled in Russia. DEC-18 says plainly that "from the day it serves, a
+// requirement on 'both hosts' or on the catalogue host reads it too", so the
+// byte-equality rule above runs unchanged over each of `CATALOGUE_HOSTS`,
+// each reported on its own: `serve39Host` takes a `host` and `serve39Hosts`
+// below runs it once per host and merges the findings, so one host being down
+// never hides what the other reports.
+//
+// **The path probes stay scoped to `registry.minice.ai` alone.** M-12's
+// refusal below is specific to that origin's own judgement of direct peers
+// through its CDN; the RU box is a different origin with no such history, and
+// DEC-18 does not ask for the probes to cover it.
+//
 // ── what the probes are for, and the one address they may be sent to ───────
 //
 // SERVE-52: nothing under `registry/v1/` but the four documents. INV-40: no
@@ -52,11 +68,30 @@
 import { SIGNED_FILES } from "../signer/plan.mjs";
 import { GRACE_MINUTES, finding, minutesSince, verdict, withinGrace } from "./report.mjs";
 
-/** The catalogue host's name (DEC-18). */
+/** The primary catalogue host's name (DEC-18). Also where SERVE-52's and INV-40's probes go, and nowhere else (M-12). */
 export const HOST = "registry.minice.ai";
 
 /** What a new client fetches, minus the file. The paths in SIGNED_FILES are relative to it. */
 export const HOST_BASE = `https://${HOST}/`;
+
+/** The RU edition's catalogue host (DEC-18), served direct from the RU box from 2026-10-15 ~19:50Z. */
+export const RU_HOST = "registry.knice.tech";
+
+/**
+ * Every host DEC-18 means by "both hosts" or "the catalogue host", from the
+ * day each one serves. `registry.minice.ai` is first; `registry.knice.tech`
+ * joins it in this list at the commit that adds it here, which is this one.
+ */
+export const CATALOGUE_HOSTS = Object.freeze([HOST, RU_HOST]);
+
+/**
+ * The suffix a non-primary catalogue host's codes carry, so the channel's
+ * compact (de-duplicated) code list still shows which host a finding was
+ * about, without changing `HOST`'s own codes at all — `serve39Host`'s default
+ * `host` is `HOST`, so every code `registry.minice.ai` can raise is spelled
+ * exactly as it was before DEC-18 added a second host.
+ */
+const HOST_CODE_SUFFIX = Object.freeze({ [HOST]: "", [RU_HOST]: "_RU" });
 
 const FETCH_TIMEOUT_MS = 20_000;
 
@@ -100,18 +135,19 @@ if (new Set(EXTRA_PATHS).size !== EXTRA_PATHS.length || EXTRA_PATHS.length < EXT
 class Refused extends Error {}
 
 /**
- * Fetch the four documents from the catalogue host.
+ * Fetch the four documents from a catalogue host.
  *
  * `redirect: "manual"`: INV-26 asks for the file's bytes at this address, and
  * a 3xx is the host sending the reader somewhere else, which is reported as
  * itself rather than followed into a comparison of someone else's bytes.
  *
- * @param {{fetchImpl?: typeof fetch}} opts
+ * @param {{host?: string, fetchImpl?: typeof fetch}} opts
  */
-export async function fetchHost({ fetchImpl = fetch } = {}) {
+export async function fetchHost({ host = HOST, fetchImpl = fetch } = {}) {
+  const base = `https://${host}/`;
   const served = {};
   for (const [name, rel] of Object.entries(SIGNED_FILES)) {
-    const url = new URL(rel, HOST_BASE).toString();
+    const url = new URL(rel, base).toString();
     try {
       const res = await fetchImpl(url, {
         cache: "no-store",
@@ -131,6 +167,13 @@ export async function fetchHost({ fetchImpl = fetch } = {}) {
   return served;
 }
 
+/** Fetch the four documents from every catalogue host, keyed by host. */
+export async function fetchHosts({ hosts = CATALOGUE_HOSTS, fetchImpl = fetch } = {}) {
+  const byHost = {};
+  for (const host of hosts) byHost[host] = await fetchHost({ host, fetchImpl });
+  return byHost;
+}
+
 /** The withdrawal list's `expires_at`, if `signed`'s head carries a readable one. */
 function listExpiry(head) {
   const at = head?.documents?.revocations?.signed?.expires_at;
@@ -138,20 +181,25 @@ function listExpiry(head) {
 }
 
 /**
- * SERVE-39 for the catalogue host, over facts and nothing else.
+ * SERVE-39 for one catalogue host, over facts and nothing else.
+ *
+ * Defaults to `HOST` (`registry.minice.ai`) so every call and test from
+ * before DEC-18's second host is unchanged, byte for byte, code for code.
  *
  * @param {object} o
+ * @param {string} [o.host]          which catalogue host this is (DEC-18)
  * @param {object} o.head           from fetchSignedHead
  * @param {string|null} o.headClock the `signed` head's committer time, RFC 3339
  * @param {object} o.served         from fetchHost
  * @param {string} o.now
  * @param {number} [o.graceMinutes]
  */
-export function serve39Host({ head, headClock, served, now, graceMinutes = GRACE_MINUTES }) {
+export function serve39Host({ host = HOST, head, headClock, served, now, graceMinutes = GRACE_MINUTES }) {
   const findings = [];
   const waiting = [];
   const notes = [];
   const hexes = [];
+  const suffix = HOST_CODE_SUFFIX[host] ?? "";
 
   if (!head?.present) {
     // Unlike Pages, there is no "before the signer" state to wait out: this
@@ -159,7 +207,7 @@ export function serve39Host({ head, headClock, served, now, graceMinutes = GRACE
     // is a finding.
     findings.push(finding(
       "SERVE_39_NO_SIGNED_BRANCH",
-      `there is no \`signed\` branch to compare ${HOST} with, so the catalogue host is serving bytes nothing publishes.`,
+      `there is no \`signed\` branch to compare ${host} with, so the catalogue host is serving bytes nothing publishes.`,
     ));
     return verdict({ findings, waiting, hexes, notes });
   }
@@ -170,7 +218,7 @@ export function serve39Host({ head, headClock, served, now, graceMinutes = GRACE
   const expiry = listExpiry(head);
   const expired = expiry !== null && Date.parse(expiry) <= Date.parse(now);
   notes.push(
-    `${HOST} against \`signed\`@${head.sha.slice(0, 12)}, committed ${headClock}, ` +
+    `${host} against \`signed\`@${head.sha.slice(0, 12)}, committed ${headClock}, ` +
     `${age === null ? "an unreadable time" : `${age.toFixed(1)} minutes`} ago; its list expires ${expiry ?? "at an unreadable time"}`,
   );
 
@@ -194,20 +242,20 @@ export function serve39Host({ head, headClock, served, now, graceMinutes = GRACE
       // trusting it.
       if (got?.ok && got.body === want) {
         findings.push(finding(
-          "SERVE_39_HOST_EXPIRED_LIST",
+          `SERVE_39_HOST_EXPIRED_LIST${suffix}`,
           `${got.url} still serves \`signed\`@${head.sha.slice(0, 12)}'s withdrawal list, whose expires_at ${expiry} ` +
           `has passed. TRUST-38 removes an expired list from the origin and TRUST-46 forbids the edge serving it stale.`,
         ));
       } else {
-        notes.push(`\`signed\`'s list expired at ${expiry} and ${HOST} does not serve it (${got?.error ?? "other bytes"}), as TRUST-38 asks`);
+        notes.push(`\`signed\`'s list expired at ${expiry} and ${host} does not serve it (${got?.error ?? "other bytes"}), as TRUST-38 asks`);
       }
       continue;
     }
 
     if (!got?.ok) {
       const code = typeof got?.status === "number" && got.status >= 300 && got.status < 400
-        ? "SERVE_39_HOST_REDIRECT"
-        : "SERVE_39_HOST_UNREACHABLE";
+        ? `SERVE_39_HOST_REDIRECT${suffix}`
+        : `SERVE_39_HOST_UNREACHABLE${suffix}`;
       findings.push(finding(
         code,
         `${got?.url ?? rel} could not be read as the document itself: ${got?.error ?? "no answer"}. Every new client ` +
@@ -217,16 +265,48 @@ export function serve39Host({ head, headClock, served, now, graceMinutes = GRACE
     }
     if (got.body === want) continue;
     if (excused) {
-      notes.push(`${rel} on ${HOST} is not \`signed\`'s yet, ${age?.toFixed(1)} minutes in; the service has ${graceMinutes}`);
+      notes.push(`${rel} on ${host} is not \`signed\`'s yet, ${age?.toFixed(1)} minutes in; the service has ${graceMinutes}`);
       continue;
     }
     findings.push(finding(
-      "SERVE_39_HOST_DRIFT",
-      `${HOST} serves a ${rel} that is not \`signed\`@${head.sha.slice(0, 12)}'s, ` +
+      `SERVE_39_HOST_DRIFT${suffix}`,
+      `${host} serves a ${rel} that is not \`signed\`@${head.sha.slice(0, 12)}'s, ` +
       `${age === null ? "at an unreadable time" : `${age.toFixed(0)} minutes`} after that commit (served ` +
       `${got.body.length} bytes, \`signed\` holds ${want.length}). A split view between the branch and the ` +
       "catalogue host is what SERVE-39 exists to find.",
     ));
+  }
+  return verdict({ findings, waiting, hexes, notes });
+}
+
+/**
+ * SERVE-39's catalogue-host half, over every host DEC-18 means by "the
+ * catalogue host" or "both hosts", each compared and reported on its own.
+ *
+ * `head.present` is checked once, not once per host: there being no `signed`
+ * branch is one finding, not a duplicate per host, since it says nothing
+ * about either host's serving and everything about `signed`.
+ *
+ * @param {object} o
+ * @param {string[]} [o.hosts]
+ * @param {object} o.head
+ * @param {string|null} o.headClock
+ * @param {Record<string, object>} o.servedByHost keyed by host, each from `fetchHost`
+ * @param {string} o.now
+ * @param {number} [o.graceMinutes]
+ */
+export function serve39Hosts({ hosts = CATALOGUE_HOSTS, head, headClock, servedByHost, now, graceMinutes = GRACE_MINUTES }) {
+  if (!head?.present) return serve39Host({ host: hosts[0] ?? HOST, head, headClock, served: {}, now, graceMinutes });
+  const findings = [];
+  const waiting = [];
+  const notes = [];
+  const hexes = [];
+  for (const host of hosts) {
+    const v = serve39Host({ host, head, headClock, served: servedByHost?.[host] ?? {}, now, graceMinutes });
+    findings.push(...v.findings);
+    waiting.push(...v.waiting);
+    hexes.push(...v.hexes);
+    notes.push(...v.notes);
   }
   return verdict({ findings, waiting, hexes, notes });
 }
