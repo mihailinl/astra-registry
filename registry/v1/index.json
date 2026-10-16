@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "zW81246WvLm8/rh/ElL8X8ak4HBwcZUQneJDZcyvtDt5E5Bs7bvroqFrZrUoERINAeLmFpBS7ac0yCHN47sxDQ=="
+      "sig": "DMQ/B0gJhzYS9Ok+xJq4FZpa7q2hmA48OgN7RVumkHz9+Jfd/IAkCQsDFUfZFuuu/VJb3WL545RXz1hu7IHTCQ=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-14T14:43:59Z",
-    "issued_at": "2026-10-15T14:43:59Z",
+    "expires_at": "2026-11-15T05:03:02Z",
+    "issued_at": "2026-10-16T05:03:02Z",
     "plugins": [
       {
         "added_at": "2026-08-10",
@@ -860,6 +860,73 @@
         "stars": 0,
         "updated_at": "2026-09-04T15:39:43Z",
         "version": "0.1.14"
+      },
+      {
+        "added_at": "2026-10-16",
+        "author": "astra-test-author",
+        "capabilities": [
+          "actions",
+          "tools",
+          "triggers"
+        ],
+        "description": "End-to-end test of the Astra plugins registry third-party publishing walk (ROLL-32). Not a real plugin; must not be installed; it will be withdrawn.",
+        "download_url": "",
+        "downloads": 0,
+        "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2IiB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgcm9sZT0iaW1nIiBhcmlhLWxhYmVsPSJEaWNlIFJvbGxlciI+CiAgPHRpdGxlPkRpY2UgUm9sbGVyPC90aXRsZT4KICA8IS0tIElzb21ldHJpYyBkNiBtaWQtdHVtYmxlIHdpdGggYSBjb2luIGZsaXBwaW5nIGJlc2lkZSBpdC4gUGxhaW4gc3RhdGljCiAgICAgICBtYXJrdXA6IG5vIHNjcmlwdCwgbm8gZXh0ZXJuYWwgcmVmZXJlbmNlcywgbm8gZW1iZWRkZWQgZm9udHMuIC0tPgoKICA8IS0tIHRoZSBjb2luLCBjYXVnaHQgZWRnZS1vbiBiZWhpbmQgdGhlIGRpZSAtLT4KICA8Zz4KICAgIDxlbGxpcHNlIGN4PSI3MCIgY3k9IjE5NiIgcng9IjQwIiByeT0iMjMiIGZpbGw9IiNiMDdkMTIiLz4KICAgIDxlbGxpcHNlIGN4PSI3MCIgY3k9IjE4OCIgcng9IjQwIiByeT0iMjMiIGZpbGw9IiNmMGI0MjkiLz4KICAgIDxlbGxpcHNlIGN4PSI3MCIgY3k9IjE4OCIgcng9IjI3IiByeT0iMTUuNSIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjYTg2ZjBjIiBzdHJva2Utd2lkdGg9IjUiLz4KICA8L2c+CgogIDwhLS0gZGllOiB0b3AsIGxlZnQgYW5kIHJpZ2h0IGZhY2VzIG9mIGFuIGlzb21ldHJpYyBjdWJlIC0tPgogIDxnIHN0cm9rZT0iIzJjMWE2MyIgc3Ryb2tlLXdpZHRoPSI2IiBzdHJva2UtbGluZWpvaW49InJvdW5kIj4KICAgIDxwYXRoIGQ9Ik0xMjggMzQgTDE5NiA3MyBMMTI4IDExMiBMNjAgNzMgWiIgZmlsbD0iI2M0YjNmZiIvPgogICAgPHBhdGggZD0iTTYwIDczIEwxMjggMTEyIEwxMjggMTkwIEw2MCAxNTEgWiIgZmlsbD0iIzdhNWNmMCIvPgogICAgPHBhdGggZD0iTTEyOCAxMTIgTDE5NiA3MyBMMTk2IDE1MSBMMTI4IDE5MCBaIiBmaWxsPSIjNTMzNGM5Ii8+CiAgPC9nPgoKICA8IS0tIHBpcHMsIHNrZXdlZCBpbnRvIGVhY2ggZmFjZSdzIG93biBwbGFuZSAtLT4KICA8ZyBmaWxsPSIjMjQxMzU2Ij4KICAgIDxnIHRyYW5zZm9ybT0ibWF0cml4KDY4LDM5LC02OCwzOSwxMjgsMzQpIj4KICAgICAgPGNpcmNsZSBjeD0iMC41IiBjeT0iMC41IiByPSIwLjEiLz4KICAgIDwvZz4KICA8L2c+CiAgPGcgZmlsbD0iI2Y2ZjNmZiI+CiAgICA8ZyB0cmFuc2Zvcm09Im1hdHJpeCg2OCwzOSwwLDc4LDYwLDczKSI+CiAgICAgIDxjaXJjbGUgY3g9IjAuMjYiIGN5PSIwLjI0IiByPSIwLjA4NSIvPgogICAgICA8Y2lyY2xlIGN4PSIwLjUiIGN5PSIwLjUiIHI9IjAuMDg1Ii8+CiAgICAgIDxjaXJjbGUgY3g9IjAuNzQiIGN5PSIwLjc2IiByPSIwLjA4NSIvPgogICAgPC9nPgogICAgPGcgdHJhbnNmb3JtPSJtYXRyaXgoNjgsLTM5LDAsNzgsMTI4LDExMikiPgogICAgICA8Y2lyY2xlIGN4PSIwLjI3IiBjeT0iMC4yNiIgcj0iMC4wODUiLz4KICAgICAgPGNpcmNsZSBjeD0iMC43MyIgY3k9IjAuMjYiIHI9IjAuMDg1Ii8+CiAgICAgIDxjaXJjbGUgY3g9IjAuNSIgY3k9IjAuNSIgcj0iMC4wODUiLz4KICAgICAgPGNpcmNsZSBjeD0iMC4yNyIgY3k9IjAuNzQiIHI9IjAuMDg1Ii8+CiAgICAgIDxjaXJjbGUgY3g9IjAuNzMiIGN5PSIwLjc0IiByPSIwLjA4NSIvPgogICAgPC9nPgogIDwvZz4KCiAgPCEtLSBtb3Rpb24gdGlja3M6IGl0IGlzIHN0aWxsIGluIHRoZSBhaXIgLS0+CiAgPGcgc3Ryb2tlPSIjZjBiNDI5IiBzdHJva2Utd2lkdGg9IjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCI+CiAgICA8cGF0aCBkPSJNMjA4IDQ0IEwyMjYgMjYiLz4KICAgIDxwYXRoIGQ9Ik0yMjIgNjggTDI0NCA2MiIvPgogICAgPHBhdGggZD0iTTE4NiAyNCBMMTkyIDQiLz4KICA8L2c+Cjwvc3ZnPgo=",
+        "id": "e2e-thirdparty",
+        "license": "MIT",
+        "name": "E2E Third-party (do not install)",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/astra-test-author/astra-e2e-thirdparty/releases/download/v0.1.0/e2e-thirdparty-0.1.0-linux-x64.astraplugin",
+          "windows-x64": "https://github.com/astra-test-author/astra-e2e-thirdparty/releases/download/v0.1.0/e2e-thirdparty-0.1.0-windows-x64.astraplugin"
+        },
+        "readme": "# E2E Third-party (do not install)\n\n**This is a test plugin. Do not install it.** It exists only to exercise the Astra plugins registry's\nthird-party publishing walk (ROLL-32) end to end — repository binding, release, ingest and serving — from\na third-party GitHub org. It is a copy of `astra-dice-roller` with a different id and is not a real\nplugin. It will be withdrawn after the test.\n",
+        "releases": [
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "e2e-thirdparty-0.1.0-linux-x64.astraplugin",
+                "sha256": "09d50de465b78f5be9ed345688fa45fc93b31db4d61c4a2175a59ddc5f3e45a0",
+                "size": 2885486,
+                "url": "https://github.com/astra-test-author/astra-e2e-thirdparty/releases/download/v0.1.0/e2e-thirdparty-0.1.0-linux-x64.astraplugin"
+              },
+              "windows-x64": {
+                "filename": "e2e-thirdparty-0.1.0-windows-x64.astraplugin",
+                "sha256": "6c1c687eb40f3cc442fba76151ca869b36522a2cb85ad85bbf067cf7037a19c7",
+                "size": 2463838,
+                "url": "https://github.com/astra-test-author/astra-e2e-thirdparty/releases/download/v0.1.0/e2e-thirdparty-0.1.0-windows-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "actions",
+              "tools",
+              "triggers"
+            ],
+            "permissions": {
+              "fire_trigger": {
+                "reason": "Fires the on_roll_value trigger so your commands can react to what you rolled"
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-10-16T04:38:29Z",
+            "release": {
+              "commit": "9666c39c240631aed0df5b1845d88df93a378459",
+              "kind": "github_release",
+              "repo": "astra-test-author/astra-e2e-thirdparty",
+              "tag": "v0.1.0"
+            },
+            "review": "unreviewed",
+            "version": "0.1.0"
+          }
+        ],
+        "repository_url": "https://github.com/astra-test-author/astra-e2e-thirdparty",
+        "source": {
+          "kind": "github",
+          "repo": "astra-test-author/astra-e2e-thirdparty"
+        },
+        "stars": 0,
+        "updated_at": "2026-10-16T04:38:29Z",
+        "version": "0.1.0"
       },
       {
         "added_at": "2026-08-10",
@@ -2015,6 +2082,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 60
+    "serial": 61
   }
 }
