@@ -1,0 +1,19 @@
+{
+  "$comment": "Derived from astra-test-author/astra-e2e-thirdparty@v0.1.0 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "e2e-thirdparty",
+  "name": "E2E Third-party (do not install)",
+  "summary": "End-to-end test of the Astra plugins registry third-party publishing walk (ROLL-32). Not a real plugin; must not be installed; it will be withdrawn.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "astra-test-author/astra-e2e-thirdparty"
+  },
+  "added_at": "2026-10-16",
+  "description": "End-to-end test of the Astra plugins registry third-party publishing walk (ROLL-32). Not a real plugin; must not be installed; it will be withdrawn.",
+  "author": {
+    "name": "astra-test-author"
+  },
+  "icon": "icon.svg",
+  "readme": "README.md"
+}

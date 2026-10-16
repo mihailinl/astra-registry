@@ -1,0 +1,39 @@
+{
+  "$comment": "Derived from astra-test-author/astra-e2e-thirdparty@v0.1.0. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "e2e-thirdparty",
+  "version": "0.1.0",
+  "published_at": "2026-10-16T04:38:29Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "astra-test-author/astra-e2e-thirdparty",
+    "tag": "v0.1.0",
+    "commit": "9666c39c240631aed0df5b1845d88df93a378459"
+  },
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/astra-test-author/astra-e2e-thirdparty/releases/download/v0.1.0/e2e-thirdparty-0.1.0-linux-x64.astraplugin",
+      "filename": "e2e-thirdparty-0.1.0-linux-x64.astraplugin",
+      "sha256": "09d50de465b78f5be9ed345688fa45fc93b31db4d61c4a2175a59ddc5f3e45a0",
+      "size": 2885486
+    },
+    "windows-x64": {
+      "url": "https://github.com/astra-test-author/astra-e2e-thirdparty/releases/download/v0.1.0/e2e-thirdparty-0.1.0-windows-x64.astraplugin",
+      "filename": "e2e-thirdparty-0.1.0-windows-x64.astraplugin",
+      "sha256": "6c1c687eb40f3cc442fba76151ca869b36522a2cb85ad85bbf067cf7037a19c7",
+      "size": 2463838
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "actions",
+    "tools",
+    "triggers"
+  ],
+  "permissions": {
+    "fire_trigger": {
+      "reason": "Fires the on_roll_value trigger so your commands can react to what you rolled"
+    }
+  }
+}

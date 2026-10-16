@@ -1,0 +1,26 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "linux-x64:09d50de465b78f5be9ed345688fa45fc93b31db4d61c4a2175a59ddc5f3e45a0",
+    "windows-x64:6c1c687eb40f3cc442fba76151ca869b36522a2cb85ad85bbf067cf7037a19c7"
+  ],
+  "commit": "9666c39c240631aed0df5b1845d88df93a378459",
+  "decided_at": "2026-10-16T05:00:13Z",
+  "decision_id": "0701284d493fbe3566a7ca93f3defb14",
+  "fingerprint": "2aa1cad712cf2f91",
+  "plugin_id": "e2e-thirdparty",
+  "reasons": [
+    "P_PUBLISHED",
+    "P_REVIEW_PRIORITY"
+  ],
+  "repo": "astra-test-author/astra-e2e-thirdparty",
+  "repository_id": "1421644766",
+  "repository_owner_id": "343316040",
+  "run": "38853329241/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "e4962db8-5802-4369-b157-fc7bd9b7e7b0",
+  "tag": "v0.1.0",
+  "trigger": "panel",
+  "version": "0.1.0"
+}

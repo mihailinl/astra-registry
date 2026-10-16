@@ -1,0 +1,8 @@
+{
+  "schema": "astra.registry.identity/1",
+  "plugin_id": "e2e-thirdparty",
+  "repository_id": "1421644766",
+  "repository_owner_id": "343316040",
+  "repo": "astra-test-author/astra-e2e-thirdparty",
+  "token_hash": "6e98bdb49699bc71"
+}
