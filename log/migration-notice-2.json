@@ -1,0 +1,6 @@
+{
+  "schema": "astra.registry.migration-notice/1",
+  "round": 2,
+  "sent_at": "2026-10-16T04:10:51Z",
+  "cutover_planned_at": "2026-10-16T06:00:00Z"
+}
