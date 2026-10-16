@@ -237,7 +237,7 @@ when, is `docs/migration-notice.md`. Enforced by
 the bot, which reads the deadline from `policy/binding-deadline.json` and from
 nowhere else (MIG-3).
 
-**Binding deadline:** not fixed yet. It is committed as `policy/binding-deadline.json` before third-party bindings open, and this line then states it.
+**Binding deadline:** 2026-12-15 (`2026-12-15T06:00:00Z`), the value committed in `policy/binding-deadline.json`, which is the one place the bot and the plugins service read it (contract MIG-2, MIG-3). It is never moved earlier (MIG-29).
 
 ## 7. Removal
 

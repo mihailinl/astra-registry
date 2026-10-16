@@ -628,7 +628,7 @@ const ROUTINE = [
   { p: "state/moderation-settled.json", why: "the results history decided that the service settled (ops entry 100)", exists: false, by: "the first live moderation run whose list job settles one, from R3" },
   { p: "state/deny/abc123.json", why: "an operator deny record (TRUST-33)", exists: false, by: "operator.yml's `act: deny`, M-T3.5" },
   { p: "state/alerts/abc123.json", why: "an alert record (TRUST-32); its delivery report is what the operator window counts from", exists: false, by: "the ingest run's alert job" },
-  { p: "policy/binding-deadline.json", why: "the binding deadline, which the OWNER commits by hand (MIG-2)", exists: false, by: "the owner, before R4b" },
+  { p: "policy/binding-deadline.json", why: "the binding deadline (MIG-2), committed 2026-10-16 for the R6 cutover the owner gave GO to", exists: true },
   // Until contract 0.38.0 two rows here held the update manifest signer and
   // `tools/signer/plan.mjs` OUTSIDE, as desk and ceremony tools the bot
   // never reaches — true of the bot's closure and false of its fifth gate,
