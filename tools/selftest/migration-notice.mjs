@@ -183,10 +183,19 @@ export async function run() {
   });
 
   await test("tools/validate.mjs judges each marker on a tree against the schema, and says when there is none", async () => {
-    // Nothing on this tree is a marker, so the absent state is asserted on the
-    // committed tree and the present one on a synthesised tree beside it.
+    // Since 2026-10-16 the committed tree carries rounds 1 and 2, so the
+    // committed tree is asserted present and clean, and the absent state on an
+    // empty synthesised tree beside it.
     const onTree = await validateTree(REPO_ROOT, { allowStaging: true });
-    const absent = onTree.report.items.filter((i) => i.where === "log/migration-notice-<n>.json");
+    assertEqual(onTree.report.items.filter((i) => i.where === "log/migration-notice-<n>.json").length, 0,
+      "the committed tree carries markers and was reported as carrying none");
+    const committedErrors = onTree.report.items.filter((i) => /^log\/migration-notice-\d+\.json$/.test(i.where) && i.level === "error");
+    assertEqual(committedErrors.map((i) => `${i.where}: ${i.message}`).join(" | "), "", "a committed marker was refused");
+
+    const emptyDir = path.join(tmp, "migration-notice-none");
+    fs.mkdirSync(path.join(emptyDir, "log"), { recursive: true });
+    const absent = (await validateTree(emptyDir, { allowStaging: true })).report.items
+      .filter((i) => i.where === "log/migration-notice-<n>.json");
     assertEqual(absent.map((i) => i.level).join(","), "note",
       "with no marker on the tree the validator must say it looked and found none, once, as a note");
 
