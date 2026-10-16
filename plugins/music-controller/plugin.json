@@ -1,0 +1,19 @@
+{
+  "$comment": "Derived from Voltur792/astra-music@v1.3.2 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "music-controller",
+  "name": "Music Controller",
+  "summary": "Search Yandex Music, VK and Spotify; play tracks and playlists inside Astra with voice controls.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "Voltur792/astra-music"
+  },
+  "added_at": "2026-10-16",
+  "description": "Search Yandex Music, VK and Spotify; play tracks and playlists inside Astra with voice controls.",
+  "author": {
+    "name": "Voltur"
+  },
+  "icon": "icon.png",
+  "readme": "README.md"
+}
