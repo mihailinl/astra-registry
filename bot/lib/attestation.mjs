@@ -226,7 +226,16 @@ export function classifyVerifyFailure(text) {
   const s = String(text ?? "");
   const missing = /no attestation|could not find any attestations|HTTP 404|404: Not Found/i.test(s);
   const policyRefusal = /verifying with issuer/i.test(s);
-  const unavailable = /verifier is not available|initializ|trust(ed)? root|tuf|timeout|timed out|connection|network|temporar/i.test(s);
+  // GitHub not answering the attestations read is the verifier not running
+  // too: a 5xx, a 403 or 429 rate limit, a dropped socket, a DNS miss. Until
+  // 2026-10-17 those fell through to `E_ATTESTATION_INVALID`, a refusal that
+  // is final for the tag, for an artifact nobody had looked at.
+  const unavailable = new RegExp(
+    "verifier is not available|initializ|trust(ed)? root|tuf|timeout|timed out|connection|network|temporar|" +
+    "HTTP 5\\d\\d|HTTP 429|HTTP 403|rate limit|bad gateway|service unavailable|gateway time-?out|" +
+    "ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|socket hang up",
+    "i",
+  ).test(s);
   // `missing` wins: a 404 is a fact about the artifact, and the word "network"
   // appearing somewhere in the same stderr does not make it less of one.
   return { missing, policyRefusal, unavailable: unavailable && !missing };

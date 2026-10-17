@@ -85,18 +85,66 @@ function assetHeaders() {
   return { "User-Agent": "astra-registry-bot" };
 }
 
-/** @returns {Promise<{tag_name: string, html_url: string, published_at: string, target_commitish: string, assets: {name: string, size: number, browser_download_url: string}[]}>} */
-export async function fetchRelease(repo, tag) {
+/**
+ * A read GitHub did not answer, as against one it answered "no" to.
+ *
+ * The by-id reads below say `found`, `not_found` or `transient`; the release
+ * and asset reads throw, so the third answer travels as this error, and
+ * `isUnanswered` is how a caller tells it apart. A caller maps it to
+ * `W_GITHUB_RATE_LIMITED` and waits (FLOW-72). Until 2026-10-17 every throw
+ * here read as absence: a 502, a reset connection or a rate limit on
+ * `releases/tags/<tag>` was refused `E_RELEASE_NOT_FOUND`, and on an asset
+ * `E_ASSET_HEAD_FAILED` — a permanent refusal, and a "your release is missing"
+ * notice to an author whose release was there all along.
+ */
+export class GitHubUnanswered extends Error {
+  constructor(message, status = null) {
+    super(message);
+    this.name = "GitHubUnanswered";
+    this.transient = true;
+    this.status = status;
+  }
+}
+
+/** True for a read GitHub did not answer; never for a 404, a 410 or a policy refusal of ours. */
+export function isUnanswered(e) {
+  return e?.transient === true;
+}
+
+/** `fetch`, with a request that never completed turned into `GitHubUnanswered`. */
+async function ask(fetchImpl, url, init) {
+  try {
+    return await fetchImpl(url, init);
+  } catch (e) {
+    throw new GitHubUnanswered(`GitHub did not answer ${url}: ${e.message}`);
+  }
+}
+
+/**
+ * Only a 404 says the release is not there. Any other refusal — a 5xx, a 403
+ * or 429 rate limit, a 401 from a token of ours — is GitHub not answering, and
+ * a body that does not parse is too.
+ *
+ * @returns {Promise<{tag_name: string, html_url: string, published_at: string, target_commitish: string, assets: {name: string, size: number, browser_download_url: string}[]}>}
+ */
+export async function fetchRelease(repo, tag, fetchImpl = fetch) {
   const url = `${API}/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`;
-  const res = await fetch(url, { headers: headers() });
+  const res = await ask(fetchImpl, url, { headers: headers() });
   if (res.status === 404) {
     throw new Error(`no release tagged ${tag} in ${repo} (404)`);
   }
   if (!res.ok) {
-    throw new Error(`GitHub returned HTTP ${res.status} for ${url}`);
+    throw new GitHubUnanswered(`GitHub returned HTTP ${res.status} for ${url}`, res.status);
   }
-  return res.json();
+  try {
+    return await res.json();
+  } catch (e) {
+    throw new GitHubUnanswered(`GitHub's answer for ${url} did not parse: ${e.message}`, res.status);
+  }
 }
+
+/** An asset answer that is a fact about the asset: it is gone. Anything else non-OK is GitHub not answering. */
+const assetGone = (status) => status === 404 || status === 410;
 
 /**
  * Download a release asset.
@@ -132,8 +180,11 @@ export async function fetchRelease(repo, tag) {
  * @param {typeof fetch} [fetchImpl]
  */
 export async function headAsset(url, fetchImpl = fetch) {
-  const res = await fetchImpl(url, { method: "HEAD", headers: assetHeaders(), redirect: "follow" });
-  if (!res.ok) throw new Error(`HTTP ${res.status} for HEAD ${url}`);
+  const res = await ask(fetchImpl, url, { method: "HEAD", headers: assetHeaders(), redirect: "follow" });
+  if (!res.ok) {
+    if (assetGone(res.status)) throw new Error(`HTTP ${res.status} for HEAD ${url}`);
+    throw new GitHubUnanswered(`HTTP ${res.status} for HEAD ${url}`, res.status);
+  }
   if (!String(res.url || url).startsWith("https://")) {
     throw new Error(`the redirect chain left https: ${res.url}`);
   }
@@ -145,12 +196,21 @@ export async function headAsset(url, fetchImpl = fetch) {
 }
 
 export async function downloadAsset(url, maxBytes, fetchImpl = fetch) {
-  const res = await fetchImpl(url, { headers: assetHeaders(), redirect: "follow" });
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+  const res = await ask(fetchImpl, url, { headers: assetHeaders(), redirect: "follow" });
+  if (!res.ok) {
+    if (assetGone(res.status)) throw new Error(`HTTP ${res.status} for ${url}`);
+    throw new GitHubUnanswered(`HTTP ${res.status} for ${url}`, res.status);
+  }
   if (!res.url.startsWith("https://")) throw new Error(`redirected off https: ${res.url}`);
   const declared = Number(res.headers.get("content-length") ?? "0");
   if (declared > maxBytes) throw new Error(`asset declares ${declared} bytes, over the ${maxBytes} cap`);
-  const buf = Buffer.from(await res.arrayBuffer());
+  let body;
+  try {
+    body = await res.arrayBuffer();
+  } catch (e) {
+    throw new GitHubUnanswered(`the download of ${url} broke off: ${e.message}`, res.status);
+  }
+  const buf = Buffer.from(body);
   if (buf.length > maxBytes) throw new Error(`asset is ${buf.length} bytes, over the ${maxBytes} cap`);
   return buf;
 }

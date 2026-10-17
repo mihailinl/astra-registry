@@ -3003,16 +3003,23 @@ const SVC_SID = "0192f1c2-3b4a-7c5d-8e6f-1a2b3c4d5e6f";
 const svcLease = { submission_id: SVC_SID, repo: REPO, tag: TAG, trigger: "poll", claimed_from: "received" };
 
 /** One `verify` run against a world assembled from the arguments. */
-async function verifyRun({ assets, certRepo = null, repoIds = null, ghFail = null, ownerFile = null, spy = null } = {}) {
+async function verifyRun({ assets, certRepo = null, repoIds = null, ghFail = null, ownerFile = null, spy = null, fail = {} } = {}) {
   const github = fakeGitHub({ repo: REPO, tag: TAG, assets });
   const assetsDir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-assets-"));
   scratch.push(assetsDir);
   const v = await verifyFacts({ lease: svcLease, root: REPO_ROOT, assetsDir, trustFile: TRUST_FILE }, {
     rootKeys: TEST_ROOT_KEYS,
-    fetchRelease: github.fetchRelease.bind(github),
-    headAsset: github.headAsset.bind(github),
+    fetchRelease: async (r, t) => {
+      if (fail.release) throw fail.release;
+      return github.fetchRelease(r, t);
+    },
+    headAsset: async (url) => {
+      if (fail.head) throw fail.head;
+      return github.headAsset(url);
+    },
     downloadAsset: async (url, max) => {
       spy?.downloads.push(url);
+      if (fail.download) throw fail.download;
       return github.downloadAsset(url, max);
     },
     ghRunner: (args) => {
@@ -3072,6 +3079,51 @@ await test("verify: no attestation is a refusal; a transient id read is a wait (
   assertEqual(transient.v.code, "W_GITHUB_RATE_LIMITED", "a read that did not happen is not a difference");
   const left = fs.readdirSync(path.join(missing.assetsDir, SVC_SID)).filter((n) => n.endsWith(".astraplugin"));
   assertEqual(left.join(","), "", "no unverified bytes are left for the check job to open");
+});
+
+// The plugins service's hotfix review, 2026-10-17: a refusal before a
+// fingerprint exists is final for the tag, and these four answered a GitHub
+// hiccup with one — "release not found" to an author whose release was there.
+await test("verify: GitHub not answering the release or an asset read is a wait; only a 404 or 410 refuses (FLOW-72)", async () => {
+  const gh = await import("../lib/github.mjs");
+  const cases = [
+    ["the release read gets a 502", { release: new gh.GitHubUnanswered("GitHub returned HTTP 502", 502) }],
+    ["the release read never completes", { release: new gh.GitHubUnanswered("GitHub did not answer: ECONNRESET") }],
+    ["an asset HEAD is rate limited", { head: new gh.GitHubUnanswered("HTTP 429 for HEAD", 429) }],
+    ["an asset download breaks off", { download: new gh.GitHubUnanswered("the download broke off") }],
+  ];
+  for (const [what, fail] of cases) {
+    const { v } = await verifyRun({ assets: [conformingAsset()], fail });
+    assertEqual(v.outcome, "wait", `${what}: ${JSON.stringify(v)}`);
+    assertEqual(v.code, "W_GITHUB_RATE_LIMITED", `${what}: a read that did not happen is not a refusal`);
+  }
+  const gone = await verifyRun({ assets: [conformingAsset()], fail: { release: new Error("no release tagged v0.2.0 in x/y (404)") } });
+  assertEqual(gone.v.outcome, "refuse", JSON.stringify(gone.v));
+  assertEqual(gone.v.code, "E_RELEASE_NOT_FOUND", "the positive control: a 404 is still the author's fact");
+  const deleted = await verifyRun({ assets: [conformingAsset()], fail: { head: new Error("HTTP 410 for HEAD") } });
+  assertEqual(deleted.v.code, "E_ASSET_HEAD_FAILED", "an asset that is gone is still refused");
+  const unattested = await verifyRun({ assets: [conformingAsset()], ghFail: "HTTP 502: Bad Gateway (attestations)" });
+  assertEqual(unattested.v.outcome, "wait", "a 502 from the attestations read is the verifier not running, never E_ATTESTATION_INVALID");
+  assertEqual(unattested.v.code, "E_ATTESTATION_UNCHECKED", JSON.stringify(unattested.v));
+});
+
+await test("github: release and asset reads throw GitHubUnanswered for everything but a 404 or 410", async () => {
+  const gh = await import("../lib/github.mjs");
+  const answer = (status, extra = {}) => async () => ({ status, ok: status >= 200 && status < 300, url: "https://objects.githubusercontent.com/x", headers: new Map(), json: async () => ({ tag_name: "v1" }), arrayBuffer: async () => new ArrayBuffer(1), ...extra });
+  const down = async () => { throw new Error("getaddrinfo EAI_AGAIN api.github.com"); };
+  const outcome = async (fn) => { try { await fn(); return "ok"; } catch (e) { return gh.isUnanswered(e) ? "unanswered" : "refused"; } };
+  for (const [status, want] of [[404, "refused"], [502, "unanswered"], [403, "unanswered"], [429, "unanswered"], [401, "unanswered"], [200, "ok"]]) {
+    assertEqual(await outcome(() => gh.fetchRelease("o/r", "v1", answer(status))), want, `release ${status}`);
+  }
+  assertEqual(await outcome(() => gh.fetchRelease("o/r", "v1", down)), "unanswered", "release: no network");
+  assertEqual(await outcome(() => gh.fetchRelease("o/r", "v1", answer(200, { json: async () => { throw new SyntaxError("Unexpected end of JSON"); } }))), "unanswered", "release: a truncated body");
+  for (const [status, want] of [[404, "refused"], [410, "refused"], [503, "unanswered"], [429, "unanswered"], [200, "ok"]]) {
+    assertEqual(await outcome(() => gh.headAsset("https://github.com/o/r/releases/download/v1/a", answer(status))), want, `HEAD ${status}`);
+    assertEqual(await outcome(() => gh.downloadAsset("https://github.com/o/r/releases/download/v1/a", 10, answer(status))), want, `GET ${status}`);
+  }
+  assertEqual(await outcome(() => gh.headAsset("https://github.com/o/r/releases/download/v1/a", down)), "unanswered", "HEAD: no network");
+  assertEqual(await outcome(() => gh.headAsset("https://github.com/o/r/releases/download/v1/a", answer(200, { url: "http://downgraded/x" }))), "refused", "a redirect off https is a finding, not a hiccup");
+  assertEqual(await outcome(() => gh.downloadAsset("https://github.com/o/r/releases/download/v1/a", 0, answer(200))), "refused", "over the cap is a finding, not a hiccup");
 });
 
 await test("verify: a binding line at the attested commit, with ID-63's and MIG-31's reads beside it", async () => {

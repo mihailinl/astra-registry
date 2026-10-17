@@ -1083,9 +1083,14 @@ export async function verifyFacts(opts, deps = {}) {
   }
 
   let release;
+  // FLOW-72: GitHub not answering is a wait. Only a 404 says the release is
+  // missing; everything else refused here before a fingerprint exists is
+  // final for the tag, so a 502 must never reach `refuse`.
+  const unanswered = (e) => out("wait", { code: "W_GITHUB_RATE_LIMITED", reason: e.message });
   try {
     release = await fetchRelease(lease.repo, lease.tag);
   } catch (e) {
+    if (gh.isUnanswered(e)) return unanswered(e);
     return refuse("E_RELEASE_NOT_FOUND", "release", e.message);
   }
   const bundles = (release.assets ?? []).filter((a) => typeof a?.name === "string" && a.name.endsWith(".astraplugin"));
@@ -1121,6 +1126,7 @@ export async function verifyFacts(opts, deps = {}) {
     try {
       head = await headAsset(url);
     } catch (e) {
+      if (gh.isUnanswered(e)) return unanswered(e);
       return refuse("E_ASSET_HEAD_FAILED", where, e.message);
     }
     if (head.size > policy.limits.max_artifact_bytes) {
@@ -1130,6 +1136,7 @@ export async function verifyFacts(opts, deps = {}) {
     try {
       bytes = await downloadAsset(url, policy.limits.max_artifact_bytes);
     } catch (e) {
+      if (gh.isUnanswered(e)) return unanswered(e);
       return refuse("E_ASSET_HEAD_FAILED", where, e.message);
     }
     if (asset.size !== undefined && bytes.length !== asset.size) {
