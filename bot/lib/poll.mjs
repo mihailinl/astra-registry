@@ -1020,7 +1020,9 @@ export function rememberPoll(memory, pollOutput, registered = [], now = pollOutp
     for (const t of Object.keys(prior)) {
       if (!prior[t].told || failed.has(t) || !Object.hasOwn(waiting, t)) continue;
       if (waiting[t].cause === "registry" || prior[t].cause === "registry") continue;
-      if (nowMs - Date.parse(prior[t].told) > TOLD_RECHECK_DAYS * DAY_MS) retired.push(t);
+      // Only on a poll that asked it and found it not ready: a throttled poll
+      // past the bound would retire a release published in its last day.
+      if (nowMs - Date.parse(prior[t].told) > TOLD_RECHECK_DAYS * DAY_MS && waiting[t].checked === cap(pollOutput.at)) retired.push(t);
     }
     const toldHere = new Set(Object.keys(waiting).filter((t) => done.includes(t) && waiting[t].told === iso(nowMs)));
     const keys = keepOrder(Object.fromEntries(Object.keys(waiting)
@@ -1105,10 +1107,15 @@ export function lsRemoteTags(repo, run = execFileSync) {
  * @returns {{tags: object, alerts: {id: string, repo: string, tag: string, sha: string}[]}}
  */
 export function sweepListing({ listing, known = {}, remote, sweepNo, seed, registered = [], deferred = [] }) {
-  const tags = {};
+  // Prototype-less, and read with hasOwn: a remote tag named `constructor`,
+  // `toString` or `valueOf` (each a usable tag) read Object.prototype's
+  // function from a plain object, was stored as `{sha}`, and every remember
+  // after it refused to seal the memory — frozen, for every repository, until
+  // the tag left the remote (the 2026-10-17 fifth verification).
+  const tags = Object.create(null);
   const alerts = [];
   for (const { tag, sha } of remote) {
-    const was = known[tag];
+    const was = Object.hasOwn(known, tag) ? known[tag] : undefined;
     if (!was) {
       tags[tag] = { sha, first_seen: sweepNo, seeded: seed === true };
       continue;

@@ -951,7 +951,7 @@ test("past DEFER_MAX_DAYS a waiting tag registers as `told`, stays out of `regis
   // Told and never ready: after TOLD_RECHECK_DAYS it is remembered as registered, which it was.
   const old = poll.newMemory("2026-08-01T00:00:00Z");
   old.repos[KEY] = { etag: null, last_success_at: null, registered: [], deferred: { "v0.5.0": W("2026-08-01T00:00:00Z", "author", { told: "2026-08-15T00:00:00Z", checked: "2026-09-23T00:00:00Z" }) } };
-  const quietOut = { at: day23, repos: { [KEY]: { ok: true, candidates: [], deferred: old.repos[KEY].deferred, etag: null } } };
+  const quietOut = { at: day23, repos: { [KEY]: { ok: true, candidates: [], deferred: { "v0.5.0": { ...old.repos[KEY].deferred["v0.5.0"], checked: day23 } }, etag: null } } };
   const retired = poll.rememberPoll(old, quietOut, [], day23);
   assert.deepEqual(retired.repos[KEY].registered, ["v0.5.0"]);
   assert.equal(retired.repos[KEY].deferred, undefined);
@@ -1084,6 +1084,29 @@ test("the bounds keep told tags over untold waits and drop without retiring; rem
   const o = await poll.runPoll({ listings, memory: flaky, now: new Date(T0), fetchImpl: queueFetch(NOT_MODIFIED).fetchImpl,
     checkRelease: async (_r, tag) => ({ state: "unknown", why: `${tag}: HTTP 502` }) });
   assert.equal(o.repos[KEY].deferred["v0.3.0"].checked, "2026-09-23T00:00:00Z", "GitHub did not answer, so it was not asked");
+});
+
+// The fifth verification round.
+test("a remote tag named after an Object.prototype member is swept, sealed and opened like any other", () => {
+  const [listing] = quietListings();
+  for (const tag of ["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__"]) {
+    const memory = poll.newMemory("2026-09-24T00:00:00Z");
+    const first = poll.runSweep({ memory, listings: [listing], lsRemote: () => [{ tag, sha: "b".repeat(40) }], now: new Date(T0) });
+    const second = poll.runSweep({ memory: first.memory, listings: [listing], lsRemote: () => [{ tag, sha: "b".repeat(40) }], now: new Date("2026-09-25T00:30:00Z") });
+    assert.equal(poll.memoryProblem(second.memory), null, `${tag}: the swept memory is one this module opens`);
+    const sealed = poll.sealMemory(second.memory, Buffer.alloc(32, 7));
+    assert.ok(poll.openMemory(JSON.parse(JSON.stringify(sealed)), Buffer.alloc(32, 7)).memory, `${tag}: and it seals and opens`);
+  }
+});
+
+test("a told tag retires at day 30 only on a poll that asked it", () => {
+  const memory = poll.newMemory("2026-08-01T00:00:00Z");
+  const wait = W("2026-08-01T00:00:00Z", "author", { told: "2026-08-20T00:00:00Z", checked: "2026-09-18T23:59:00Z" });
+  memory.repos[KEY] = { etag: null, last_success_at: null, registered: [], deferred: { "v1.0.0": wait } };
+  const throttled = poll.rememberPoll(memory, { at: T0, repos: { [KEY]: { ok: true, candidates: [], deferred: { "v1.0.0": wait }, etag: null } } }, [], T0);
+  assert.deepEqual(throttled.repos[KEY].registered, [], "not asked this poll: it keeps its last day");
+  const asked = poll.rememberPoll(memory, { at: T0, repos: { [KEY]: { ok: true, candidates: [], deferred: { "v1.0.0": { ...wait, checked: T0 } }, etag: null } } }, [], T0);
+  assert.deepEqual(asked.repos[KEY].registered, ["v1.0.0"], "asked and still not ready past the bound: remembered as registered");
 });
 
 test("the ask interval has scheduler slack: a wait asked 29 minutes ago is asked again", async () => {
