@@ -1,0 +1,12 @@
+{
+  "date": "2026-10-17",
+  "action": "review",
+  "plugin": "e2e-thirdparty",
+  "versions": [
+    "0.1.0"
+  ],
+  "reason": "checked...",
+  "category": "review_passed",
+  "service_decision_id": "980d2ecf-a439-4ed0-ab68-cf5245f705e7",
+  "declared_interest": false
+}

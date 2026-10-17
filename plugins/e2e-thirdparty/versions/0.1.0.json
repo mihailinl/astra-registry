@@ -4,7 +4,7 @@
   "id": "e2e-thirdparty",
   "version": "0.1.0",
   "published_at": "2026-10-16T04:38:29Z",
-  "review": "unreviewed",
+  "review": "reviewed",
   "release": {
     "kind": "github_release",
     "repo": "astra-test-author/astra-e2e-thirdparty",
