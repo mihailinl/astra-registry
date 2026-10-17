@@ -1,0 +1,13 @@
+{
+  "actor": "bot",
+  "decided_at": "2026-10-17T05:43:08Z",
+  "decision_id": "209913afb2efe42a45bdfe16f56ca64d",
+  "reasons": [
+    "E_ATTESTATION_MISSING"
+  ],
+  "run": "39007162250/1",
+  "schema": "astra.registry.decision/1",
+  "state": "refused",
+  "submission_id": "ae402306-c45f-4de4-b465-c8fbf55b8625",
+  "trigger": "panel"
+}
