@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "0cvEh7ywtgFDRNaSspYAa3f9Rvm/RUXkRYUUnH6eXuT3sNE58/47IhSbf12KuTxpiWb0d7w//7F2YlGKK+h7DQ=="
+      "sig": "uByoZHR7bgh4M2EQsaCJvfhp2KbsYIgFuH3t/oRVRRnKUHAlo6DswlGrWMzJzTRpjpe9h15QjST5UdTGmJP/CA=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-16T04:36:28Z",
-    "issued_at": "2026-10-17T04:36:28Z",
+    "expires_at": "2026-11-16T09:34:20Z",
+    "issued_at": "2026-10-17T09:34:20Z",
     "plugins": [
       {
         "added_at": "2026-08-10",
@@ -915,7 +915,7 @@
               "repo": "astra-test-author/astra-e2e-thirdparty",
               "tag": "v0.1.0"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "0.1.0"
           }
         ],
@@ -1287,7 +1287,7 @@
               "repo": "Voltur792/astra-music",
               "tag": "v1.3.2"
             },
-            "review": "unreviewed",
+            "review": "reviewed",
             "version": "1.3.2"
           }
         ],
@@ -2155,6 +2155,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 62
+    "serial": 63
   }
 }
