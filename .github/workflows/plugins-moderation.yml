@@ -63,7 +63,7 @@ name: Plugins moderation
 # sent. An alarm that named the advisory id would have to wait for the compile,
 # which happens after this job, which is the ordering MOD-8 forbids.
 #
-# ── live on dispatch; the schedule waits for its first post ───────────────
+# ── live on dispatch, and on the schedule as its floor ────────────────────
 #
 # B-T5.1 turned the three service calls live on 2026-10-14: `list`'s work and
 # history steps and `report`'s post, each now the command its placeholder
@@ -76,14 +76,20 @@ name: Plugins moderation
 # compiles; the guard is the `apply` step's, and any other value withholds
 # the push (the comment at `env:` says how).
 #
-# **The `schedule:` block below is STILL COMMENTED OUT, and `workflow_dispatch`
-# is the trigger until the first post arms it.** BOT-83's receiver check,
-# `moderation-run` in bot/lib/alert-checks.mjs, is created disarmed and has
-# never had a post; the workflow suite holds a live cron and an armed row to
-# one commit, because a poster that runs before its first heartbeat arrives
-# is one whose silence pages nobody. So a dispatched run's `settled` posts the
-# first heartbeat, and the commit that records that `armed_at` is the one that
-# uncomments the schedule.
+# **The plugins service's waker is the primary trigger**: it dispatches this
+# workflow when there is moderation work, about every five minutes on
+# 2026-10-17. **The `schedule:` below is the floor under it**, restored
+# 2026-10-17 (the plugins friction plan's item 13(d)): with the schedule
+# commented out, a waker that stopped dispatching left every decision a
+# moderator made unsettled, and nothing paged, because BOT-83's receiver check
+# `moderation-run` was disarmed. It was armed by its first post — the
+# `settled` job of dispatched run 38525175920, 2026-10-14T06:58:24Z — and the
+# commit that restores the schedule records that `armed_at` in
+# bot/lib/alert-checks.mjs: the workflow suite holds a live cron and an armed
+# row to one commit, because a poster that runs before its first heartbeat
+# arrives is one whose silence pages nobody. A scheduled run that finds no work
+# lists nothing and commits nothing; its heartbeat is what lets a silent
+# waker page.
 #
 # The workflow suite reads the cron line whether it is commented or not, and
 # this run's own suite compares its interval with the token file's
@@ -109,14 +115,13 @@ name: Plugins moderation
 # `job_workflow_sha` the service hashes is the commit the edit lands as.
 
 on:
-  # ── BOT-83's schedule, off until a dispatch's first post arms it ─────────
+  # ── BOT-83's schedule, the floor under the waker ─────────────────────────
   #
-  # Every 600 seconds, five minutes after the ingest run's `3-59/10`. It is
-  # uncommented in the commit that records `moderation-run`'s `armed_at` in
-  # bot/lib/alert-checks.mjs, and not before (the header says why).
-  #
-  # schedule:
-  #   - cron: '8-59/10 * * * *'
+  # Every 600 seconds, five minutes after the ingest run's `3-59/10`. Live
+  # since the commit that recorded `moderation-run`'s `armed_at` in
+  # bot/lib/alert-checks.mjs (the header says why the two are one commit).
+  schedule:
+    - cron: '8-59/10 * * * *'
 
   # No inputs, and there will never be any (BOT-4). A dispatch of a
   # token-holding workflow may mean exactly one thing — "pull now". The

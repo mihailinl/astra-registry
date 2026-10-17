@@ -424,31 +424,47 @@ a breach is loud rather than something a maintainer has to go and look for.
 
 From R3 a submission can also reach this registry through the plugins service
 (a panel request, an author's CI, or the release poll) rather than through an
-issue. On that path a moderator's approval arrives from the service, and five
-numbers bound what it can do. The first four are the owner's answers of
-2026-09-13, as contract 0.12.0 and 0.20.0 record them; the fifth is contract
-MIG-31's. Since contract 3.0.0 an approval there clears only a change of hands
+issue. On that path a moderator's approval arrives from the service, and four
+numbers bound what it can do. The first three are the owner's answers of
+2026-09-13, as contract 0.12.0 and 0.20.0 record them; the fourth is contract
+MIG-31's. There used to be a fifth, an approval maximum of 7 days, which
+contract 5.8.0 withdrew. Since contract 3.0.0 an approval there clears only a change of hands
 (§3), because nothing else is held on that path and nothing on it is delayed.
 `bot/lib/service-decide.mjs` enforces exactly these:
 
-- **An approval older than 7 days is not honoured.** The bot re-runs every
-  check in the run that acts on an approval, and it honours the approval only
-  when a record on `main` shows the release held under exactly that
-  fingerprint, nothing is blocking, and the approval was given within the last
-  **7 days** (BOT-26). An approval that has aged past that clears nothing: the
-  release is held again, with `P_APPROVAL_STALE` beside the hold's own codes
-  and a message naming when the approval was given, so a moderator sees why
-  the hold came back and can approve it again (contract 3.7.0).
-- **An approved change of hands waits 6 hours after its author notice.** A
-  change of hands is always an update, because it happens to a listing that
-  already exists. It is published only once the service reports the author's
-  notice was accepted at least **6 hours** earlier (BOT-28). An approval clears
-  a hold and nothing else.
+- **An approval does not expire.** The bot re-runs every check in the run
+  that acts on an approval, and it honours the approval only when a record on
+  `main` shows the release held under exactly that fingerprint and nothing is
+  blocking (BOT-26). How long ago it was given does not matter: if the release
+  changes, the fingerprint changes and the approval clears nothing
+  (`P_APPROVAL_STALE`), which is all an age limit ever guarded. From contract
+  3.7.0 to 5.7.0 an approval older than 7 days was refused and the release
+  held again with `P_APPROVAL_STALE`; those records stay on `main`, and no new
+  one is written.
+- **An approved change of hands that moves the binding waits 6 hours after
+  its notice.** A change of hands is always an update, because it happens to a
+  listing that already exists. When it changes which account the listing is
+  bound to (`R_BINDING_CHANGED`), or carries no binding line at all, it is
+  published only once the service reports the notice was accepted at least
+  **6 hours** earlier — for a changed binding, the notice to the account the
+  listing was bound to (BOT-28; ID-60). When the release carries exactly one
+  binding line and neither the hold nor this run names `R_BINDING_CHANGED` —
+  a renamed repository, a first binding — every notice goes to the one account
+  that made the release, and telling it about its own release protects
+  nobody: it waits for no notice, only for a stop, the operator window below
+  and the checks (since contract 5.8.0). An approval clears a hold and nothing
+  else.
 - **Every approval is shown to an operator first, and waits 6 hours after
-  that.** The alert goes out in the run that first reads the event, and the
-  release is published only once the channel has reported the alert delivered
-  and **6 hours** have passed since;
-  a waiting author sees `W_OPERATOR_WINDOW` with the window's end, or
+  that, or until an operator says OK.** The alert goes out in the run that
+  first reads the event, and the release is published only once the channel
+  has reported the alert delivered and **6 hours** have passed since, or an
+  operator OK record for that alert is on `main` (since contract 5.8.0).
+  The OK, `state/ok/<fingerprint>.json`, is written only by the operator
+  workflow's act `ok`, dispatched by the owner, and names the approval it
+  answers; it ends this window and nothing else — not an undelivered alert, a
+  deny record, a stop or any other wait. A waiting author sees
+  `W_OPERATOR_WINDOW` with the window's end and a retry time at most 15
+  minutes away, so an OK is read within a quarter of an hour, or
   `W_ALERT_UNDELIVERED` while no delivery is reported (TRUST-14, TRUST-32).
 - **A first binding the owner built waits no extra time.** An approval of
   `R_FIRST_BINDING` — the first release of a published listing that carries a
@@ -460,8 +476,7 @@ MIG-31's. Since contract 3.0.0 an approval there clears only a change of hands
   — or the bot could not read which account it was — an approval of a
   published listing's first binding is honoured no earlier than
   **14 days** after the record of that hold reached `main`. The approval is
-  deferred, not lost: the 7-day age above counts from the end of those 14 days
-  (MIG-31).
+  deferred, not lost (MIG-31).
 - **A deferred approval is a wait, not a hold.** While MIG-31's floor runs,
   the author sees `W_APPROVAL_DEFERRED` with the time the approval takes
   effect. Nothing is recorded and the approval stands; the release publishes
@@ -697,7 +712,7 @@ exists first; nothing downstream changes when it arrives.
 | `P_DELAY_BROUGHT_FORWARD` | A maintainer waived part of the window, on the record. |
 | `P_DELAY_BYTES_CHANGED` | The assets changed mid-window, so the clock restarted. |
 | `P_APPROVED` | A maintainer cleared the hold. Every check above it ran again from scratch in that same run. |
-| `P_APPROVAL_STALE` | The approval does not clear this hold: it named a different submission (the release changed after it was given), or it is older than the 7-day maximum. Nothing published; the hold stands. |
+| `P_APPROVAL_STALE` | The approval does not clear this hold: it named a different submission, because the release changed after it was given. Nothing published; the hold stands. |
 | `P_UNKNOWN_PERMISSION` | A permission name this registry cannot describe. Reported, never blocking — the daemon default-denies, so it grants nothing. |
 | `P_SLA` | What happens next, and by when. |
 

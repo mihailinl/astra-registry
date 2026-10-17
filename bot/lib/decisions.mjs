@@ -27,7 +27,9 @@
 //
 //   submission:<submission_id>:<fingerprint>:<state>
 //   submission:<submission_id>:<fingerprint>:held:after:<approval decided_at>
-//                                                    a re-entry into `held` (BOT-34)
+//                                                    a re-entry into `held` (BOT-34),
+//                                                    historical: read, never written
+//                                                    since contract 5.8.0
 //   migration:<owner/name>@<tag>                     B-T3.7b's baseline (MIG-20)
 //   legacy:<owner/name>@<tag>:<fingerprint>:<state>  B-T3.7's legacy path
 //   service-decision:<service_decision_id>:<plugin_id>:<version>:<state>
@@ -51,6 +53,14 @@
 // the first shape, byte for byte, so no record already on `main` moves; a
 // re-run of one re-hold derives one id; a second approval that ages too is a
 // third entry and a third record.
+//
+// **Historical since contract 5.8.0**, which removed BOT-26 (4) (OD-28): no
+// hold returns for an approval's age, so nothing on the bot's write path asks
+// for the `after` shape any more (bot/lib/service-publish.mjs keys every
+// record by the first). It stays here, in the domain, so that the re-hold
+// records written from 3.10.0 to 5.7.0 keep the ids they were written with and
+// BOT-36 still finds them; `bot/tests/decisions.test.mjs` pins the shape and
+// `bot/tests/service.test.mjs` reads such a record on a tree.
 //
 // The fifth is contract 2.5.0's (lane S3b's spelling). MIG-21 asks for one
 // record per historic decision. This registry decided some versions more than
