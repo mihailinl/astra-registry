@@ -4122,3 +4122,80 @@ test("BOT-23: a record that cannot be read at the commit that added it is held b
     fs.rmSync(reportsDir, { recursive: true, force: true });
   }
 });
+
+// ── BOT-23 on a BOT-36 dedupe: a `state` result over a record already on main ─
+//
+// The final adversarial check of #461: when a `state` plan's key is already
+// on `main`, the composer named that record's commit but built the body from
+// THIS run's record, and checked BOT-23 against this run's record too. Since
+// contract 5.8.0 every re-hold reuses the first hold's key, so a re-leased
+// submission holding again with other codes, or a fingerprinted refusal
+// re-decided with other codes, posted this run's codes against the first
+// record's commit: `record_mismatch`, re-leased for ever. The body is now the
+// record on `main`, read at the commit that added it, and a record with no
+// such commit is held back. Watched red: with the dedupe branch reading no
+// record, the first two tests are red (this run's codes) and the third posts
+// with no commit; with BOT-23 checked against `plan.record` again, the first
+// two throw.
+test("BOT-23: a re-hold whose codes differ from the first hold's echoes the first hold's record", () => {
+  const ident = { repo: P.repo, repository_id: P.rid, repository_owner_id: P.oid, token_hash: "1".repeat(16) };
+  const plan = decideWith({
+    verified: verified({ binding: lineOf("2".repeat(16)), owner_file: { commit: "9".repeat(40), pull_request: true } }),
+    ask: ask({ verdict: "pass" }),
+    git: git({ existing: existing({ identity: ident }), records: [baseline()] }),
+  });
+  assert.equal(plan.state, "held");
+  assert.deepEqual(plan.record.reasons, ["R_BINDING_CHANGED"], "the fixture: this run holds a changed binding");
+  assert.ok("objection_window" in plan.result_extra);
+  const first = {
+    submission_id: P.sid, actor: "bot", trigger: "poll", plugin_id: P.id, version: P.version, repo: P.repo,
+    repository_id: P.rid, repository_owner_id: P.oid, tag: P.tag, commit: P.commit, artifact_digests: DIGESTS, fingerprint: FP,
+    decided_at: "2026-09-20T00:00:00Z", state: "held", reasons: ["R_FIRST_BINDING"],
+    decision_id: decisionId(submissionKey({ submission_id: P.sid, fingerprint: FP, state: "held" })), run: "1/1",
+  };
+  const { body, head, pending } = composedBody(plan, [first]);
+  assert.equal(pending.held_back, undefined, `held back: ${pending.held_back}`);
+  assert.equal(pending.needs_commit, false, "a dedupe needs no commit of this run");
+  assert.equal(body.decision_id, first.decision_id);
+  assert.equal(body.main_commit, head);
+  assert.deepEqual(body.reasons.map((r) => r.code), ["R_FIRST_BINDING"], "the result carries this run's codes, not the record's");
+  assert.deepEqual(recordAgreement(body, first), [], "BOT-23 against the record on main");
+  assert.ok(!("objection_window" in body), "an `R_BINDING_CHANGED` member rode a result whose record holds none");
+  assert.equal(body.owner_file_commit, "9".repeat(40), "the owner file of a binding hold rides with it");
+});
+
+test("BOT-23: a fingerprinted refusal re-decided with other codes echoes the refusal on main", () => {
+  const plan = decideWith({ facts: facts({ findings: [{ code: "E_LICENSE_NOT_ALLOWED", level: "error" }] }) });
+  assert.equal(plan.state, "refused");
+  assert.equal(plan.record.fingerprint, FP);
+  assert.ok(plan.record.reasons.includes("E_LICENSE_NOT_ALLOWED"), "the fixture: this run refuses for the licence");
+  const onMain = {
+    ...plan.record, decided_at: "2026-09-20T00:00:00Z", reasons: ["E_ATTESTATION_INVALID"],
+    decision_id: decisionId(submissionKey({ submission_id: P.sid, fingerprint: FP, state: "refused" })), run: "1/1",
+  };
+  const { body, head } = composedBody(plan, [onMain]);
+  assert.equal(body.main_commit, head);
+  assert.deepEqual(body.reasons.map((r) => r.code), ["E_ATTESTATION_INVALID"]);
+  assert.deepEqual(recordAgreement(body, onMain), [], "BOT-23 against the record on main");
+});
+
+test("BOT-23: a deduped `state` result whose record no commit added is held back", () => {
+  const plan = decideWith({ facts: facts({ findings: [{ code: "E_LICENSE_NOT_ALLOWED", level: "error" }] }) });
+  const onMain = { ...plan.record, decision_id: decisionId(submissionKey({ submission_id: P.sid, fingerprint: FP, state: "refused" })), run: "1/1" };
+  const t = fixedTree([]);
+  const reportsDir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-nocommit-"));
+  try {
+    // On the tree, and so found by the walk, but added by no commit.
+    const rel = `log/decisions/2026/09/${onMain.decision_id}.json`;
+    fs.mkdirSync(path.join(t.dir, path.dirname(rel)), { recursive: true });
+    fs.writeFileSync(path.join(t.dir, rel), `${JSON.stringify({ schema: "astra.registry.decision/1", ...onMain }, null, 2)}\n`);
+    const { pending } = composePublication({ plans: [plan], root: t.dir, listingsDir: reportsDir, reportsDir, run: "1/1" });
+    assert.equal(pending[0].held_back, "record_unreadable");
+    assert.ok(!("main_commit" in pending[0].body), "a result named a commit for a record no commit added");
+    const [r] = finalizeResults({ pending, applied: { outcome: "nothing", refused: [], pushed: false }, mainCommit: null });
+    assert.equal(r.unposted, "record_unreadable");
+  } finally {
+    t.cleanup();
+    fs.rmSync(reportsDir, { recursive: true, force: true });
+  }
+});

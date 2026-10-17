@@ -137,8 +137,14 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
       if (!out.written) {
         // BOT-36: the record is already on `main`. The result names it and the
         // commit that added it, and nothing else of this plan is written: the
-        // decision it records was made, and applied, by an earlier run.
+        // decision it records was made, and applied, by an earlier run. BOT-23:
+        // the result's DEC-7 members are THAT record's, read at that commit —
+        // this run's plan may hold or refuse the same key with other codes.
+        // Without the commit or the record the result names nothing the
+        // service can confirm, and it is held back.
         landed.mainCommit = commitAdding(root, out.path);
+        landed.record = landed.mainCommit ? recordAt(root, landed.mainCommit, out.path, out.decision_id) : null;
+        if (!landed.record) landed.heldBack = "record_unreadable";
       } else {
         if (plan.queue_entry) {
           const entry = { ...plan.queue_entry, decision_id: out.decision_id };
@@ -224,8 +230,11 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
       // TRUST-32's retry hint counts from the report (contract 5.8.0).
       reportedAt: `${new Date(now).toISOString().slice(0, 19)}Z`,
     });
-    if (plan.kind === "state") {
-      const problems = recordAgreement(body, { ...plan.record, decision_id: landed.decisionId });
+    if (plan.kind === "state" && !landed.heldBack) {
+      // Against the record the result names: this run's when it wrote it, the
+      // one on `main` when BOT-36 found the key there.
+      const named = landed.written ? { ...plan.record, decision_id: landed.decisionId } : landed.record;
+      const problems = recordAgreement(body, named);
       if (problems.length) throw new Error(`BOT-23: ${plan.submission_id}'s result disagrees with its record: ${problems.join("; ")}`);
     }
     if (plan.kind === "reported" && landed.record) {

@@ -158,16 +158,42 @@ export function resultBody(plan, landed = {}) {
     return body;
   }
 
-  // kind === "state": the record's members, equal to the record.
-  const record = plan.record;
+  // kind === "state": the record's members, equal to the record. When BOT-36
+  // found the record's key already on `main` (`landed.record`, read at the
+  // commit that added it), that record IS the decision the result names, and
+  // its members are the result's — not this run's. Since contract 5.8.0 a
+  // re-hold reuses the first hold's key, so a re-leased submission that holds
+  // again with other codes (`R_FIRST_BINDING`, then `R_BINDING_CHANGED`), or a
+  // fingerprinted refusal re-decided with other codes, posted this run's codes
+  // against the first record's commit: a `record_mismatch` the service
+  // re-leases for ever, the ae402306 loop for fingerprinted records.
+  const onMain = landed.record ?? null;
+  const record = onMain ?? plan.record;
   if (!record) throw new Error(`a ${plan.state} plan carries no record`);
-  body.reasons = reasonsFor(record.reasons, plan.reasons);
+  if (onMain) body.state = onMain.state;
+  body.reasons = reasonsFor(Array.isArray(record.reasons) ? record.reasons : [], plan.reasons);
   if (landed.decisionId) body.decision_id = landed.decisionId;
   if (landed.mainCommit) body.main_commit = landed.mainCommit;
   for (const m of DERIVED) if (record[m] !== undefined) body[m] = record[m];
-  if (plan.state === "delayed") body.publish_after = record.publish_after;
-  for (const [k, v] of Object.entries(plan.result_extra ?? {})) body[k] = v;
+  if (onMain ? record.publish_after !== undefined : plan.state === "delayed") body.publish_after = record.publish_after;
+  // The hold's own members (§4.4: `objection_window` with an
+  // `R_BINDING_CHANGED` hold, the owner file with a binding hold, the actor
+  // with a first binding) describe these bytes, which the key's fingerprint
+  // fixes; over a record already on `main` they ride only where that
+  // record's codes are the hold they belong to.
+  for (const [k, v] of Object.entries(plan.result_extra ?? {})) {
+    if (!onMain || extraApplies(k, record.reasons)) body[k] = v;
+  }
   return body;
+}
+
+/** §4.4's conditions for the hold-only members, against a record's codes. */
+function extraApplies(member, codes) {
+  const has = (c) => Array.isArray(codes) && codes.includes(c);
+  if (member === "objection_window") return has("R_BINDING_CHANGED");
+  if (member === "owner_file_commit" || member === "owner_file_pull_request") return has("R_FIRST_BINDING") || has("R_BINDING_CHANGED");
+  if (member === "triggering_actor_id" || member === "triggering_actor_is_owner") return has("R_FIRST_BINDING");
+  return false;
 }
 
 /**
