@@ -675,6 +675,7 @@ whole interface:
 | `cancel` | `state/holds/<id>.cancel.json`. Ends the hold without applying the decision |
 | `revert` | Finds the log entry by `service_decision_id`; refuses unless it is a `delist`, `deprecate` or `revoke`; removes the `unlisted` flag or deletes the advisory; and writes a `relist` or `unrevoke` entry naming what it reverses |
 | `deny` | `state/deny/<fingerprint>.json` — §7.9. This one takes a `fingerprint` instead of a `service_decision_id` |
+| `ok` | `state/ok/<fingerprint>.json` — §7.9, the operator OK. Takes a `fingerprint`; **the owner's account only**, by numeric id (TRUST-32, contract 5.8.0) |
 
 It takes no free text. A revert logs one of two fixed public reasons — "made in
 error", or "a test of the withdrawal path" when the reverted decision was one —
@@ -766,6 +767,29 @@ the scan in §7.11 reads this directory.
 Use it when a release must not be published again however many times it is
 re-submitted. Anything short of that is a decision with a reason, and belongs in
 the log where a reader can find it.
+
+**The operator OK** (TRUST-32, since contract 5.8.0) is the opposite answer to
+the same alert. An approved change of hands waits 6 hours after its operator
+alert is delivered, so that an operator can object; an operator who has read
+the alert and has no objection ends that wait at once:
+
+    gh workflow run operator.yml -f act=ok -f fingerprint=<fingerprint>
+
+It writes `state/ok/<fingerprint>.json` — `schema`, `fingerprint`,
+`approval_decided_at`, `run`, `at` — copying `approval_decided_at` from
+`state/alerts/<fingerprint>.json`, so it answers that alert's approval and no
+other: a new approval of the same release raises a new alert and needs a new
+OK. It is refused unless the alert is on `main` with a reported delivery, for a
+denied fingerprint, twice for one alert, and for **any account but the
+owner's**: after `authority`, the workflow checks `github.actor_id` against the
+id pinned in `bot/lib/operator-role.mjs`. KNICE's OK is a condition, not a
+grant — his id is added only after the owner re-opens contract ID-39's premise
+for a second registry writer and a ruleset on `main` restricts its updates.
+The OK ends the operator window and nothing else: an undelivered alert still
+waits, a deny record still refuses, a stop still stops, and the notice and
+every other wait still stand. The bot reads it at the next claim, at most 15
+minutes later (the wait's `earliest_retry_at` is a retry hint; its
+`window_ends_at` is the window's end).
 
 ### 7.10 The takedown bound
 

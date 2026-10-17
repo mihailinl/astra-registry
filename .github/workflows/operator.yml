@@ -1,8 +1,22 @@
 name: Operator
 
-# The operator's four acts (registry plan M-T3.5; contract MOD-52, TRUST-33,
-# BOT-70): confirm or cancel a moderation hold, revert an applied delist,
-# deprecate or revoke, and deny a release by its fingerprint for ever.
+# The operator's five acts (registry plan M-T3.5; contract MOD-52, TRUST-33,
+# BOT-70, and TRUST-32 since contract 5.8.0): confirm or cancel a moderation
+# hold, revert an applied delist, deprecate or revoke, deny a release by its
+# fingerprint for ever, and `ok` an approved release's operator window.
+#
+# ── `ok`, and why it has a role check of its own ──────────────────────────
+#
+# An operator OK (`state/ok/<fingerprint>.json`) ends TRUST-32's 6-hour
+# operator objection window for the alert it answers, and nothing else. The
+# window exists so that an operator can object; one who answers OK has had
+# that chance. It comes only through this workflow, never through the plugins
+# service, so the party the window guards against cannot end it. `authority`
+# admits any admin or maintainer for every act; `ok` then admits only the
+# owner's numeric GitHub id, pinned in bot/lib/operator-role.mjs and never read
+# from a login. KNICE's OK is a condition, not a grant: his id joins that pin
+# only after the owner re-opens contract ID-39's premise for a second registry
+# writer and a ruleset on `main` restricts its updates (OPEN-OWNER-13(p)).
 #
 # ── what pins this workflow to `main`, and what does not ───────────────────
 #
@@ -39,16 +53,16 @@ on:
   workflow_dispatch:
     inputs:
       act:
-        description: "confirm or cancel a hold, revert an applied delist/deprecate/revoke, or deny a fingerprint"
+        description: "confirm or cancel a hold, revert an applied delist/deprecate/revoke, deny a fingerprint, or ok its operator window (owner only)"
         type: choice
         required: true
-        options: [confirm, cancel, revert, deny]
+        options: [confirm, cancel, revert, deny, ok]
       service_decision_id:
         description: "the decision the act names (confirm, cancel, revert)"
         type: string
         required: false
       fingerprint:
-        description: "the release fingerprint (deny only)"
+        description: "the release fingerprint (deny and ok only)"
         type: string
         required: false
 
@@ -88,6 +102,16 @@ jobs:
           ASTRA_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: node tools/operator.mjs --job authority
 
+      # TRUST-32 (contract 5.8.0): `ok` ends an operator window, and only the
+      # owner's pinned numeric id may. After `authority`, which every act
+      # passes; for any other act this step says so and passes. The act step
+      # checks the same pin again, so neither check alone is the boundary.
+      - name: An `ok` is the owner's alone, by numeric account id (TRUST-32)
+        env:
+          ASTRA_ACT: ${{ inputs.act }}
+          ASTRA_ACTOR_ID: ${{ github.actor_id }}
+        run: node tools/operator.mjs --job ok-authority
+
       # Through `env:`, never interpolated into the script: the inputs are
       # typed by a person, and a `${{ }}` in a `run:` is the injection.
       - name: The act, written to the tree and listed
@@ -95,6 +119,7 @@ jobs:
           ASTRA_ACT: ${{ inputs.act }}
           ASTRA_SERVICE_DECISION_ID: ${{ inputs.service_decision_id }}
           ASTRA_FINGERPRINT: ${{ inputs.fingerprint }}
+          ASTRA_ACTOR_ID: ${{ github.actor_id }}
         run: node tools/operator.mjs --job act --out operator
 
       - name: The documents are the generators' own

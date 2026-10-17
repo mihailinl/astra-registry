@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 //
-// The operator's four acts, as `.github/workflows/operator.yml` runs them
-// (registry plan M-T3.5; contract MOD-52, TRUST-33, BOT-70).
+// The operator's five acts, as `.github/workflows/operator.yml` runs them
+// (registry plan M-T3.5; contract MOD-52, TRUST-33, BOT-70; TRUST-32's `ok`
+// since contract 5.8.0).
 //
 //   node tools/operator.mjs --job authority          the dispatcher may act (MOD-52)
+//   node tools/operator.mjs --job ok-authority       an `ok` is the owner's (TRUST-32)
 //   node tools/operator.mjs --job act --out operator write the act, list its paths
 //   node tools/operator.mjs --job verdict --out f    the alert job's verdict
 //
@@ -27,6 +29,8 @@
 //             M_DELIST, M_DEPRECATE or M_REVOKE, its `relist` or `unrevoke`
 //             log entry, and the two regenerated documents (MOD-52)
 //   deny      state/deny/<fingerprint>.json   withholds a release for ever (TRUST-33)
+//   ok        state/ok/<fingerprint>.json     ends the operator window of the alert
+//             it answers, and nothing else (TRUST-32, contract 5.8.0)
 //
 // `operatorPath` is that list as a predicate, and every path an act would
 // write is checked against it before anything is opened. **It posts nothing to
@@ -45,7 +49,9 @@
 // a revert of anything but an applied delist, deprecate or revoke — a yank
 // included, which MOD-52 does not make reversible — or of one already
 // reverted; a deny of a fingerprint already denied, or of anything that is not
-// one.
+// one; an `ok` by anybody but the owner's pinned id, for a fingerprint whose
+// alert has no reported delivery or no record at all, beside a deny record, or
+// one already given for that alert's approval.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -63,11 +69,13 @@ import {
   loadEntries,
   suffixOf,
 } from "../bot/lib/moderation.mjs";
-import { operatorAuthority } from "../bot/lib/operator-role.mjs";
+import { okAuthority, operatorAuthority } from "../bot/lib/operator-role.mjs";
+import { OK_DIR, OK_SCHEMA, okRecordProblems } from "../bot/lib/service-decide.mjs";
+import { isTime } from "./lib/time.mjs";
 import { composeVerdict, regenerateDocuments } from "../bot/moderation-run.mjs";
 
-/** The four acts, and no fifth: `act` is a closed enum here and in the workflow. */
-export const ACTS = Object.freeze(["confirm", "cancel", "revert", "deny"]);
+/** The five acts, and no sixth: `act` is a closed enum here and in the workflow. */
+export const ACTS = Object.freeze(["confirm", "cancel", "revert", "deny", "ok"]);
 
 /** `astra.registry.deny/1`, TRUST-33's record: exactly these members (B.4). */
 export const DENY_SCHEMA = "astra.registry.deny/1";
@@ -97,6 +105,7 @@ export const REVERT_REASONS = Object.freeze({
 const HOLDS = HOLDS_DIR.split(path.sep).join("/");
 const HOLD_RECORD_RE = new RegExp(`^${HOLDS}/[0-9a-f-]{36}\\.(confirm|cancel)\\.json$`);
 const DENY_RE = new RegExp(`^${DENY_DIR}/[0-9a-f]{16}\\.json$`);
+const OK_RE = new RegExp(`^${OK_DIR}/[0-9a-f]{16}\\.json$`);
 // The id grammars are tools/lib/ids.mjs's and are never spelled here: the
 // selftest's "only tools/lib/ids.mjs says what a plugin id is" refuses a copy.
 const ID = ID_PATTERN.slice(1, -1);
@@ -107,7 +116,7 @@ const DOCUMENTS = new Set(["registry/v1/index.json", "registry/v1/revocations.js
 
 /** BOT-33's operator row: the only paths an operator act may write or delete. */
 export function operatorPath(rel) {
-  return HOLD_RECORD_RE.test(rel) || DENY_RE.test(rel) || PLUGIN_RE.test(rel) || LOG_RE.test(rel) ||
+  return HOLD_RECORD_RE.test(rel) || DENY_RE.test(rel) || OK_RE.test(rel) || PLUGIN_RE.test(rel) || LOG_RE.test(rel) ||
     ADVISORY_RE.test(rel) || DOCUMENTS.has(rel);
 }
 
@@ -246,17 +255,80 @@ function denyFingerprint(root, fingerprint, { at, run }) {
   return { touched, subject: `operator: deny a release by its fingerprint (TRUST-33)`, service_decision: null };
 }
 
+// ── ok ──────────────────────────────────────────────────────────────────────
+//
+// TRUST-32 since contract 5.8.0: the owner's answer to an alert he has read.
+// The record is tied to the alert it answers by copying that alert's
+// `approval_decided_at`, so a new approval of the same fingerprint — a new
+// alert — needs a new OK, and an OK given for the old one ends nothing
+// (`okAnswers` in bot/lib/service-decide.mjs). It ends the operator window
+// and nothing else: an alert never reported delivered is refused here, and a
+// deny record, a stop, a notice and every other wait are decided before the
+// window is ever read.
+
+function okFingerprint(root, fingerprint, { at, run, actorId }) {
+  // The pin, again, inside the act: the workflow's own step refuses first,
+  // and this makes the act refuse on its own wherever it is run from.
+  const who = okAuthority({ actorId });
+  if (!who.ok) refuse(who.why);
+  if (!FINGERPRINT_RE.test(String(fingerprint ?? ""))) {
+    refuse(`${JSON.stringify(fingerprint)} is not a submission fingerprint (16 lowercase hex), so no alert can be answered by it`);
+  }
+  const alertRel = `state/alerts/${fingerprint}.json`;
+  const alertFile = path.join(root, ...alertRel.split("/"));
+  if (!fs.existsSync(alertFile)) refuse(`${alertRel} is not on main: there is no operator alert for this fingerprint to answer`);
+  let alert;
+  try {
+    alert = readJson(alertFile);
+  } catch {
+    refuse(`${alertRel} is not readable JSON, so the approval it names cannot be copied`);
+  }
+  if (alert?.fingerprint !== fingerprint) refuse(`${alertRel} names ${JSON.stringify(alert?.fingerprint ?? null)}, not this fingerprint`);
+  if (alert.event !== "approval" || !isTime(alert.approval_decided_at)) {
+    refuse(`${alertRel} is not an approval's alert with a §0.7 \`approval_decided_at\`, so an OK could not name what it answers`);
+  }
+  if (!isTime(alert.delivered_at)) {
+    refuse(`${alertRel} has no reported delivery: an alert nobody received is answered by nobody, and the window it would open has not started (TRUST-32)`);
+  }
+  if (fs.existsSync(path.join(root, DENY_DIR, `${fingerprint}.json`))) {
+    refuse(`${DENY_DIR}/${fingerprint}.json is on main: this fingerprint is denied for ever, and an OK never overrides a deny (TRUST-33)`);
+  }
+  const rel = `${OK_DIR}/${fingerprint}.json`;
+  const full = path.join(root, ...rel.split("/"));
+  if (fs.existsSync(full)) {
+    let prior = null;
+    try {
+      prior = readJson(full);
+    } catch {
+      /* replaced below, as any record that is not one */
+    }
+    if (prior?.approval_decided_at === alert.approval_decided_at) {
+      refuse(`${rel} already answers the alert for the approval of ${alert.approval_decided_at}; an OK is given once per alert`);
+    }
+  }
+  if (!run) refuse("an OK record carries the run that wrote it, and this run has no run URL");
+  const record = { schema: OK_SCHEMA, fingerprint, approval_decided_at: alert.approval_decided_at, run, at };
+  const problems = okRecordProblems(record, { fingerprint });
+  if (problems.length) throw new Error(`the OK record this act composed is malformed: ${problems.join(", ")}`);
+  const touched = [];
+  write(root, rel, record, touched);
+  return { touched, subject: "operator: OK an approved release's operator window by its fingerprint (TRUST-32)", service_decision: null };
+}
+
 /**
  * Perform one act on the tree at `root`. Returns the paths it touched and the
  * commit message; throws a `Refusal` (red, nothing written) or an Error.
  */
-export function operatorAct({ root = REPO_ROOT, act, serviceDecisionId, fingerprint, now = new Date(), runId = null, run = null }) {
+export function operatorAct({ root = REPO_ROOT, act, serviceDecisionId, fingerprint, now = new Date(), runId = null, run = null, actorId = null }) {
   if (!ACTS.includes(act)) refuse(`${JSON.stringify(act)} is not one of the operator's acts (${ACTS.join(", ")})`);
   const at = wholeSeconds(now);
   let done;
   if (act === "deny") {
     if (serviceDecisionId) refuse("a deny names a fingerprint, not a service decision; leave service_decision_id empty");
     done = denyFingerprint(root, fingerprint, { at, run });
+  } else if (act === "ok") {
+    if (serviceDecisionId) refuse("an ok names a fingerprint, not a service decision; leave service_decision_id empty");
+    done = okFingerprint(root, fingerprint, { at, run, actorId });
   } else {
     if (fingerprint) refuse(`a ${act} names a service decision, not a fingerprint; leave fingerprint empty`);
     if (!SDI_RE.test(String(serviceDecisionId ?? ""))) {
@@ -305,6 +377,22 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     return 0;
   }
 
+  if (job === "ok-authority") {
+    // TRUST-32's own role check for the act `ok`, after `authority`. Any other
+    // act passes through: their check is `authority` alone.
+    if (env.ASTRA_ACT !== "ok") {
+      log.log(`ok    the act is ${JSON.stringify(env.ASTRA_ACT ?? null)}, not \`ok\`; TRUST-32's check does not apply`);
+      return 0;
+    }
+    const answer = okAuthority({ actorId: env.ASTRA_ACTOR_ID });
+    if (!answer.ok) {
+      log.error(`::error::refused: ${answer.why}`);
+      return 1;
+    }
+    log.log(`ok    ${answer.why}`);
+    return 0;
+  }
+
   if (job === "act") {
     const out = arg(argv, "--out") ?? "operator";
     fs.mkdirSync(out, { recursive: true });
@@ -317,6 +405,7 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
         now,
         runId: env.GITHUB_RUN_ID ?? null,
         run: runUrl,
+        actorId: env.ASTRA_ACTOR_ID ?? null,
       });
       fs.writeFileSync(path.join(out, "paths.txt"), paths.length ? `${paths.join("\n")}\n` : "");
       fs.writeFileSync(path.join(out, "commit-message.txt"), message);
@@ -350,7 +439,7 @@ export async function main(argv = [], { env = process.env, log = console, fetchI
     return 0;
   }
 
-  throw new Error(`\`--job ${JSON.stringify(job)}\` is not one of authority, act, verdict`);
+  throw new Error(`\`--job ${JSON.stringify(job)}\` is not one of authority, ok-authority, act, verdict`);
 }
 
 if (import.meta.url === new URL(`file://${process.argv[1]}`).href) {
