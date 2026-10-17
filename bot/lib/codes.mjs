@@ -157,13 +157,19 @@ export const CODES = {
   },
 
   // ── provenance ─────────────────────────────────────────────────────────────
+  // The remedy names the command and the step since 2026-10-17 (the plugins
+  // friction plan's WP5): it used to name only the GitHub action, and an
+  // author who read it re-ran nothing useful — this release stays refused, and
+  // what fixes the next one is the workflow `init-ci` writes, then a new tag.
   E_ATTESTATION_MISSING: {
     level: "error", stage: "attestation", fix: "new_tag",
     title: "The bundle has no build attestation",
     remedy:
-      "Build it in GitHub Actions with `actions/attest-build-provenance`, which the Astra reusable " +
-      "release workflow already does. A hand-built bundle is refused however good it is: CI is the " +
-      "only signer, so an author's compromised laptop cannot publish.",
+      "Run `astra-plugin init-ci` in the repository, commit the `.github/workflows/release.yml` it writes, " +
+      "and cut a new tag: that workflow is the Astra reusable release workflow, which builds the bundle in " +
+      "GitHub Actions and attests it with `actions/attest-build-provenance`. This tag stays refused. A " +
+      "hand-built bundle is refused however good it is: CI is the only signer, so an author's compromised " +
+      "laptop cannot publish.",
   },
   E_ATTESTATION_INVALID: {
     level: "error", stage: "attestation", fix: "new_tag",
