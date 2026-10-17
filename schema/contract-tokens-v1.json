@@ -1,6 +1,6 @@
 {
-  "contract_version": "5.6.0",
-  "source_commit": "052257bb3bd8237feaa976e070b4afec136c064d",
+  "contract_version": "5.7.0",
+  "source_commit": "caef84b663ddb775ea39185fd087158904562dec",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -3208,6 +3208,39 @@
       ]
     },
     {
+      "id": "schema:astra.plugins.catalogue-ticket/1",
+      "kind": "schema",
+      "name": "astra.plugins.catalogue-ticket/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true
+        },
+        {
+          "name": "ticket",
+          "required": true
+        },
+        {
+          "name": "expires_in",
+          "required": true
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "client"
+      ],
+      "source": "CLIENT-80's table",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
       "id": "schema:astra.plugins.error/1",
       "kind": "schema",
       "name": "astra.plugins.error/1",
@@ -4907,6 +4940,38 @@
       "idempotency": "—",
       "refusal_tokens": [
         "invalid",
+        "unauthenticated",
+        "not_owner",
+        "rate_limited",
+        "unavailable"
+      ],
+      "emitter": [
+        "client"
+      ],
+      "acceptor": [
+        "service"
+      ],
+      "state": "live",
+      "source": "CLIENT-80",
+      "requirements": [
+        "CLIENT-80",
+        "CLIENT-71",
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "operation:client:catalogue.ticket",
+      "kind": "operation",
+      "name": "catalogue.ticket",
+      "method": "POST",
+      "path": "catalogue/ticket",
+      "path_base": "the service API base (DEC-18)",
+      "request_schema": null,
+      "success_schema": "astra.plugins.catalogue-ticket/1",
+      "idempotency": "—",
+      "refusal_tokens": [
         "unauthenticated",
         "not_owner",
         "rate_limited",

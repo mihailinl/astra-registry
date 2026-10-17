@@ -868,11 +868,20 @@ test("the file's membered entries are four buckets, none of which may empty", ()
   // or after it — which no sibling member can name. That rule is held where a
   // commit can be seen, in tools/lib/review-mark.mjs, run by tools/validate.mjs
   // (tools/selftest/validation.mjs's "review mark" cases).
+  //
+  // Moved at contract 5.7.0, from 110 over 31, by exactly CLIENT-80's seventh
+  // operation's success body, `astra.plugins.catalogue-ticket/1` (SERVE-108):
+  // 3 members over one entry, `schema`, `ticket` and `expires_in`, all
+  // required with no condition. Read on arrival: the plugins service emits it,
+  // the client reads it, and nothing in this repository composes or reads it,
+  // so it belongs in this bucket.
   assert.deepEqual(
     { entries: unreadEntries.length, members: countMembers(unreadEntries) },
-    { entries: 31, members: 110 },
+    { entries: 32, members: 113 },
     `${countMembers(unreadEntries)} published members over ${unreadEntries.length} entries are outside every ` +
-    "comparison in this suite; there were 110 over 31 at contract 3.0.0, whose `astra.registry.version/1` gained the " +
+    "comparison in this suite; there were 113 over 32 at contract 5.7.0, whose success body of `catalogue.ticket`, " +
+    "`astra.plugins.catalogue-ticket/1` (`schema`, `ticket`, `expires_in`, each `true`; the plugins service emits " +
+    "it and the client reads it, and nothing here composes or reads it) added 3 over 1; 110 over 31 at contract 3.0.0, whose `astra.registry.version/1` gained the " +
     "optional `review` (B.4; unconditioned, because its absence depends on the commit that added the record, which " +
     "tools/lib/review-mark.mjs holds); " +
     `109 over 31 at contract 2.17.0, whose seventh guest-read body \`astra.plugins.reason-codes/1\` ` +
