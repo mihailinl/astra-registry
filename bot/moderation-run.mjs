@@ -1953,6 +1953,15 @@ export async function main(argv = [], {
       return 1;
     }
     const checked = checkWorkAnswer(answer.body, { root });
+    // The client returns an answer whose body failed its schema as `shadow:
+    // true, unreadable: true` and logs that it did; the body's own `shadow`
+    // may still say false. Read alone, it made this run compile and push
+    // takedowns under an answer the client had withheld — the class of the
+    // claim fix (cdddb28), found by the 2026-10-17 review. Withheld is shadow.
+    if (client.withheld(answer) && checked.shadow !== true) {
+      checked.shadow = true;
+      log.error("::warning::the service's moderation work answer was withheld by the client (shadow or unreadable); this run commits nothing");
+    }
     process.stdout.write(listSummary(checked));
     for (const a of checked.alerts) log.error(`::warning::${a.cause}: ${a.detail}`);
     for (const f of checked.fatal) log.error(`::error::${f}`);

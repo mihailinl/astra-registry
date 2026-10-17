@@ -230,15 +230,48 @@ export function classifyVerifyFailure(text) {
   // too: a 5xx, a 403 or 429 rate limit, a dropped socket, a DNS miss. Until
   // 2026-10-17 those fell through to `E_ATTESTATION_INVALID`, a refusal that
   // is final for the tag, for an artifact nobody had looked at.
+  // gh is a Go program, so its own transport failures read as Go's: `EOF`,
+  // `no such host`, `server misbehaving`, `i/o timeout`, `connection reset by
+  // peer` — and a 401 from GitHub is our token's problem, never the author's.
   const unavailable = new RegExp(
-    "verifier is not available|initializ|trust(ed)? root|tuf|timeout|timed out|connection|network|temporar|" +
-    "HTTP 5\\d\\d|HTTP 429|HTTP 403|rate limit|bad gateway|service unavailable|gateway time-?out|" +
+    "verifier is not available|initializ|trust(ed)? root|\\btuf\\b|timeout|timed out|connection|network|temporar|" +
+    "HTTP 5\\d\\d|HTTP 429|HTTP 403|HTTP 401|rate limit|bad gateway|service unavailable|gateway time-?out|" +
+    "\\bEOF\\b|no such host|server misbehaving|TLS handshake|" +
     "ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|socket hang up",
     "i",
   ).test(s);
   // `missing` wins: a 404 is a fact about the artifact, and the word "network"
-  // appearing somewhere in the same stderr does not make it less of one.
-  return { missing, policyRefusal, unavailable: unavailable && !missing };
+  // appearing somewhere in the same stderr does not make it less of one. A
+  // policy refusal wins over "unavailable" too: gh got as far as judging the
+  // certificate, so the verifier ran.
+  return { missing, policyRefusal, unavailable: unavailable && !missing && !policyRefusal };
+}
+
+/**
+ * `classifyVerifyFailure` over a failed `gh` run, read from gh's own words.
+ *
+ * Only `stderr` is gh's. `execFile`'s `message` is "Command failed: gh …",
+ * which echoes the argv, `--repo <owner>/<name>` included, so an author whose
+ * repository was called `acme/network-tools` or `acme/stuff-plugin` (`tuf`)
+ * turned every refusal of theirs into "the verifier could not run" — a wait
+ * that never ends, instead of `E_ATTESTATION_INVALID` (the 2026-10-17
+ * review). The argv's values are struck out of stderr too, in case gh quotes
+ * them. A run killed at its timeout or by a signal, or one that never started
+ * (a string `code`: `ENOENT`, a maxBuffer overflow), is the verifier not
+ * running, whatever it printed first — unless it had already said 404 or
+ * refused on policy.
+ *
+ * @param {any} e the error `execFile` rejected with
+ * @param {string[]} argvValues the values passed to gh, struck out before reading
+ */
+export function classifyGhFailure(e, argvValues = []) {
+  let said = String(e?.stderr ?? "");
+  for (const v of argvValues) {
+    if (typeof v === "string" && v.length) said = said.replace(new RegExp(v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), " ");
+  }
+  const c = classifyVerifyFailure(said);
+  const notRun = e?.killed === true || (e?.signal ?? null) !== null || typeof e?.code === "string";
+  return { ...c, unavailable: !c.missing && !c.policyRefusal && (c.unavailable || notRun) };
 }
 
 /**
@@ -287,7 +320,7 @@ export async function verifyAttestation(opts) {
     parsed = JSON.parse(stdout);
   } catch (e) {
     const text = `${e.stderr ?? ""}${e.message ?? ""}`;
-    const { missing, policyRefusal, unavailable } = classifyVerifyFailure(text);
+    const { missing, policyRefusal, unavailable } = classifyGhFailure(e, [file, repo, ...repo.split("/"), signerWorkflow]);
     // "no attestations found" is a different answer from "the attestation is
     // wrong", and an author fixes them differently.
     //

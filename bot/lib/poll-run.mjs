@@ -281,7 +281,9 @@ export function pollRows(memory, listings) {
   for (const l of listings) {
     const key = repoKey(l.repo);
     const row = memory.repos[key];
-    if (row) rows[key] = { etag: row.etag ?? null, registered: row.registered ?? [] };
+    // `deferred` travels to the poll so that it re-checks a waiting tag on
+    // every poll, not only when the feed changes (poll.mjs `publishedOnly`).
+    if (row) rows[key] = { etag: row.etag ?? null, registered: row.registered ?? [], ...(row.deferred ? { deferred: row.deferred } : {}) };
   }
   return rows;
 }
@@ -296,6 +298,16 @@ const parse = (text, what) => {
     throw new Error(`${what} is not JSON: ${e.message}`);
   }
 };
+
+/** A deferred set as the poll and the memory carry it: `{tag: first deferred at}`, or the first cut's list. */
+const MAX_DEFERRED = 200;
+function deferredOk(d) {
+  if (d === undefined) return true;
+  if (Array.isArray(d)) return d.length <= MAX_DEFERRED && d.every(isUsableTag);
+  if (!d || typeof d !== "object") return false;
+  const entries = Object.entries(d);
+  return entries.length <= MAX_DEFERRED && entries.every(([t, when]) => isUsableTag(t) && TIME_RE.test(String(when)));
+}
 
 /** `load`'s listings, which every other job reads. A malformed one is a defect upstream, not an empty catalogue. */
 export function readListings(text) {
@@ -316,8 +328,8 @@ export function readRows(text) {
   if (typeof rows !== "object" || Array.isArray(rows)) throw new Error("the rows `load` handed on are not an object");
   for (const [key, row] of Object.entries(rows)) {
     const ok = KEY_RE.test(key) && row && (row.etag === null || typeof row.etag === "string") &&
-      Array.isArray(row.registered) && row.registered.every(isUsableTag);
-    if (!ok) throw new Error(`the row for ${JSON.stringify(key)} is not {etag, registered}`);
+      Array.isArray(row.registered) && row.registered.every(isUsableTag) && deferredOk(row.deferred);
+    if (!ok) throw new Error(`the row for ${JSON.stringify(key)} is not {etag, registered, deferred?}`);
   }
   return rows;
 }
@@ -343,7 +355,7 @@ export function readPolled(text, listings) {
     if (!known.has(key)) throw new Error(`the poll answered for ${JSON.stringify(key)}, which load did not list`);
     const ok = res && typeof res.ok === "boolean" && Array.isArray(res.candidates) &&
       res.candidates.length <= MAX_CANDIDATES && res.candidates.every(isUsableTag) &&
-      (res.deferred === undefined || (Array.isArray(res.deferred) && res.deferred.length <= MAX_CANDIDATES && res.deferred.every(isUsableTag))) &&
+      deferredOk(res.deferred) &&
       (res.etag === null || (typeof res.etag === "string" && ETAG_RE.test(res.etag)));
     if (!ok) throw new Error(`the poll's answer for ${key} is not {ok, candidates, deferred, etag} of the grammar each must have`);
   }
@@ -393,7 +405,7 @@ export function pollOutputs(out, listings) {
   const polled = { at: out.at, repos: {} };
   const tags = [];
   for (const [key, res] of Object.entries(out.repos)) {
-    polled.repos[key] = { ok: res.ok, candidates: res.candidates, deferred: res.deferred ?? [], etag: res.etag ?? null };
+    polled.repos[key] = { ok: res.ok, candidates: res.candidates, deferred: res.deferred ?? {}, etag: res.etag ?? null };
     for (const tag of res.candidates) tags.push({ repo: repoOf.get(key), tag });
   }
   return { polled, tags };
@@ -532,10 +544,12 @@ async function cmdPoll(env) {
   const out = await runPoll({ listings, memory: { repos: rows }, now: new Date() });
   const lines = [];
   for (const [key, res] of Object.entries(out.repos)) {
-    const waiting = res.deferred?.length ? `, ${res.deferred.length} waiting for a published release` : "";
+    const nWaiting = Object.keys(res.deferred ?? {}).length;
+    const waiting = nWaiting ? `, ${nWaiting} waiting for a published release` : "";
     const state = !res.ok ? `ERR ${res.error}` : res.changed ? `200, ${res.candidates.length} candidate(s)${waiting}` : "304";
     lines.push(`${key} (${res.ids.join(", ")}): ${state}`);
     for (const s of res.skipped ?? []) console.log(`  skip ${key} ${s.why}`);
+    for (const n of res.notes ?? []) console.log(`  note ${key} ${n}`);
   }
   for (const l of lines) console.log(l);
   summary(["### the poll", "", ...lines.map((l) => `- ${l}`)], env);

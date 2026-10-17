@@ -122,7 +122,7 @@ import { resolveWriter } from "./export-issues.mjs";
 // `--verify` run met would have stopped it with `classifyVerifyFailure is not
 // defined`, exit 2 — never reached, because no version carries an
 // `artifact_url` for `verifyOne` to get as far as `gh`.
-import { classifyVerifyFailure } from "./lib/attestation.mjs";
+import { classifyGhFailure } from "./lib/attestation.mjs";
 import { decisionCommitMessage } from "./lib/decisions.mjs";
 import { artifactDigests, submissionFingerprint } from "./lib/policy/release.mjs";
 import { safeRepo, safeTag } from "./lib/safe.mjs";
@@ -1133,8 +1133,9 @@ async function verifyAsset(v, a, certificateIds, deps = {}) {
     // RUNNER into a record about the ARTIFACT, in a file that is written once
     // and can never be corrected. So the third is its own outcome and it stops
     // the run: `unchecked` never reaches a record.
-    const said = `${e?.stderr ?? ""}${e?.message ?? ""}`;
-    const { unavailable } = classifyVerifyFailure(said);
+    // gh's own words only: `message` echoes the argv, repository name
+    // included (attestation.mjs `classifyGhFailure`).
+    const { unavailable } = classifyGhFailure(e);
     return {
       outcome: unavailable ? "unchecked" : "unverified",
       why: (String(e?.stderr ?? e?.message ?? "").trim().split("\n")[0]) || "the verifier could not run",
