@@ -36,7 +36,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { ServiceRunFailure, W_SERVICE_UNREACHABLE, composeBody, createClient } from "./service.mjs";
-import { CLAIMED_FROM, VERDICT_OUTCOMES, noticeExempt } from "./service-decide.mjs";
+import { CLAIMED_FROM, VERDICT_OUTCOMES, heldReasonsFor, noticeExempt } from "./service-decide.mjs";
 import { safeRepo, safeTag } from "./safe.mjs";
 import { isUsableTag } from "./poll.mjs";
 import { isTime } from "../../tools/lib/time.mjs";
@@ -451,9 +451,14 @@ function identityHashOnTree(root) {
   };
 }
 
-/** Held reasons of the `held` record on the checked-out tree, by fingerprint, for the notice kind. */
-function heldReasonsOnTree(root) {
-  const byFp = new Map();
+/**
+ * Held reasons on the checked-out tree, by fingerprint, for the notice kind
+ * and BOT-28's exemption: `heldReasonsFor`'s union over every `held` record
+ * of the fingerprint, the rule `decide` applies, so the two never disagree
+ * about which hold they read.
+ */
+export function heldReasonsOnTree(root) {
+  const held = [];
   const walk = (d) => {
     let entries;
     try {
@@ -467,7 +472,7 @@ function heldReasonsOnTree(root) {
       else if (e.name.endsWith(".json")) {
         try {
           const r = JSON.parse(fs.readFileSync(full, "utf8"));
-          if (r?.state === "held" && typeof r.fingerprint === "string") byFp.set(r.fingerprint, r.reasons ?? []);
+          if (r?.state === "held" && typeof r.fingerprint === "string") held.push(r);
         } catch {
           /* not evidence */
         }
@@ -475,7 +480,7 @@ function heldReasonsOnTree(root) {
     }
   };
   walk(path.join(root, "log", "decisions"));
-  return (fp) => byFp.get(fp) ?? [];
+  return (fp) => heldReasonsFor(held, fp);
 }
 
 async function main(argv) {

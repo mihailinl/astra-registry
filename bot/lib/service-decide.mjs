@@ -648,6 +648,27 @@ export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, 
  * token hash, so an exempt hold is not asked at all and a failed notice read
  * cannot hold it.
  */
+/**
+ * The held reasons BOT-28's exemption reads for a fingerprint: the UNION of
+ * the codes of every `held` record of it on the tree, in a fixed order. One
+ * rule, read by `decide` here and by `ask` (bot/lib/service-jobs.mjs's
+ * `heldReasonsOnTree`) before it calls notice status. Until 2026-10-17 the
+ * two picked different records — `ask` whichever one `readdir` returned
+ * last, `decide` this submission's first hold — so with a historical
+ * `held:after:` re-hold beside a first hold the two could disagree about
+ * `R_BINDING_CHANGED`, and `ask` would skip a notice `decide` then waited
+ * for. A union errs toward the wait: any hold of these bytes that named a
+ * changed binding keeps ID-60's.
+ */
+export function heldReasonsFor(records, fingerprint) {
+  const out = new Set();
+  for (const r of records ?? []) {
+    if (r?.state !== "held" || r?.fingerprint !== fingerprint) continue;
+    for (const c of Array.isArray(r.reasons) ? r.reasons : []) if (typeof c === "string") out.add(c);
+  }
+  return [...out].sort();
+}
+
 export function noticeExempt({ heldReasons = [], runReasons = [], bindingOutcome }) {
   if (bindingOutcome !== "one") return false;
   return ![...(heldReasons ?? []), ...(runReasons ?? [])].includes("R_BINDING_CHANGED");
@@ -1376,9 +1397,10 @@ export function decideSubmission(input) {
     // for an approved change of hands, the POLICY.md number (DEC-19). Since
     // contract 5.8.0 a hold with one account in it waits for no notice: it
     // read stop status at step 6, and that is all it reads (`noticeExempt`).
-    // The held record's codes AND this run's are asked, and either naming
+    // The held records' codes (`heldReasonsFor`: every hold of these bytes,
+    // the rule `ask` uses too) AND this run's are asked, and either naming
     // `R_BINDING_CHANGED` keeps ID-60's wait on the previous account's notice.
-    const heldReasons = heldRecord?.reasons ?? [];
+    const heldReasons = heldReasonsFor(records, verified.fingerprint);
     const exempt = noticeExempt({ heldReasons, runReasons: heldCodes, bindingOutcome: binding.outcome });
     if (!exempt) {
       const window = UPDATE_WINDOW_HOURS * 3600;

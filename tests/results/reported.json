@@ -12,7 +12,7 @@
     }
   ],
   "decision_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "main_commit": "7777777777777777777777777777777777777777",
+  "main_commit": "2f696abb17da19023974f7891d32090db09333d6",
   "plugin_id": "dice-roller",
   "version": "0.2.0",
   "tag": "v0.2.0",

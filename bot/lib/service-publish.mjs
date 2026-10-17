@@ -102,7 +102,7 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
     if (plan.shadow === true || plan.kind === "none") continue;
     const dir = path.join(reportsDir, `report-${n++}`);
     fs.mkdirSync(dir, { recursive: true });
-    const landed = { decisionId: null, mainCommit: null, deliveredAt, recordPath: null, written: false };
+    const landed = { decisionId: null, mainCommit: null, deliveredAt, recordPath: null, written: false, heldBack: null };
 
     if (plan.kind === "state") {
       const { record } = plan;
@@ -163,6 +163,27 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
       }
     }
 
+    if (plan.kind === "reported" && plan.decision_id) {
+      // BOT-23: a result naming a record already on `main` carries the commit
+      // that holds it (`main_commit`, "when a record was found already on
+      // main"), so the service can confirm it under BOT-24. Until 2026-10-17
+      // only a `state` plan's BOT-36 dedupe set it, and every BOT-19, BOT-74
+      // and pre-fingerprint `reported` result posted a `decision_id` with no
+      // commit: the service could not confirm ae402306's refusal and leased it
+      // again. The record is found where `writeDecisionRecord` puts it,
+      // `log/decisions/**/<decision_id>.json`, through the same walk.
+      const found = existing.find((e) => e.decision_id === plan.decision_id) ?? null;
+      landed.decisionId = plan.decision_id;
+      landed.recordPath = found ? found.file : null;
+      landed.mainCommit = found ? commitAdding(root, found.file) : null;
+      // A record that is not on this tree, or that no commit added, is a
+      // result that names nothing the service can find: held back, never
+      // posted without its commit, and loud in the finalize step.
+      if (!landed.mainCommit) {
+        landed.heldBack = found ? "record_commit_unknown" : "record_not_on_main";
+      }
+    }
+
     if (plan.kind === "wait" && plan.alert && isTime(deliveredAt)) {
       // TRUST-14: the alert went out in this run and the channel reported
       // delivery, so the record TRUST-32's window counts from lands in this
@@ -198,6 +219,7 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
       record_path: landed.recordPath,
       // A result whose record is new names a commit this run has not made yet.
       needs_commit: plan.kind === "state" && landed.written,
+      ...(landed.heldBack ? { held_back: landed.heldBack } : {}),
       shadow: false,
       body,
     });
@@ -205,6 +227,9 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
   }
   return { pending, reports };
 }
+
+/** Why a `reported` result is held back rather than posted without its record's commit (BOT-23). */
+export const HELD_BACK = Object.freeze(["record_not_on_main", "record_commit_unknown"]);
 
 /**
  * BOT-37's trailer block for the run's one commit: `Run:`, then a
@@ -237,6 +262,9 @@ export function finalizeResults({ pending, applied, mainCommit }) {
   const pushed = applied?.pushed === true && applied?.outcome === "committed";
   return pending.map((r) => {
     if (refused.has(r.report)) return { ...r, unposted: "refused" };
+    // A `reported` result whose record composePublication could not find on
+    // `main`, or whose adding commit it could not name (BOT-23).
+    if (r.held_back) return { ...r, unposted: r.held_back };
     if (!r.needs_commit) return { ...r, unposted: null };
     if (!pushed) return { ...r, unposted: applied?.dry_run ? "dry_run" : "not_committed" };
     if (!/^[0-9a-f]{40}$/.test(String(mainCommit))) return { ...r, unposted: "no_commit" };
@@ -302,9 +330,12 @@ async function main(argv) {
     fs.writeFileSync(args.out, `${JSON.stringify({ results }, null, 2)}\n`);
     for (const r of results) {
       if (r.unposted === "refused") console.error(`::error::${r.submission_id}: publish-apply refused its report; no result is posted, and the lease expires under BOT-15`);
+      if (HELD_BACK.includes(r.unposted)) {
+        console.error(`::error::${r.submission_id}: its result names record ${r.body?.decision_id ?? "?"}, and ${r.unposted === "record_not_on_main" ? "that record is not on main" : "no commit on main added it"}; no result is posted without the commit that holds its record (BOT-23), and the lease expires under BOT-15`);
+      }
       console.log(`${r.submission_id}  ${r.kind}${r.unposted ? `  held (${r.unposted})` : ""}`);
     }
-    return results.some((r) => r.unposted === "refused") ? 1 : 0;
+    return results.some((r) => r.unposted === "refused" || HELD_BACK.includes(r.unposted)) ? 1 : 0;
   }
   throw new Error("--compose or --finalize");
 }

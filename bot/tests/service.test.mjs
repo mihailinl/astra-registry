@@ -2006,6 +2006,7 @@ import {
   CHECK_FACTS_SCHEMA,
   decideSubmission,
   id41,
+  heldReasonsFor,
   noticeExempt,
 } from "../lib/service-decide.mjs";
 import * as serviceDecide from "../lib/service-decide.mjs";
@@ -2017,9 +2018,9 @@ import * as serviceDecide from "../lib/service-decide.mjs";
  * have aged under it.
  */
 const WITHDRAWN_APPROVAL_MAX_DAYS = 7;
-import { askJob, claimJob, leaseProblems, reportJob, resultBytes, verdictOutcome } from "../lib/service-jobs.mjs";
+import { askJob, claimJob, heldReasonsOnTree, leaseProblems, reportJob, resultBytes, verdictOutcome } from "../lib/service-jobs.mjs";
 import { RESULT_KINDS, recordAgreement, resultBody } from "../lib/service-results.mjs";
-import { ALERT_MEMBERS, ALERT_SCHEMA, alertProblems, commitTrailers, composePublication, finalizeResults } from "../lib/service-publish.mjs";
+import { ALERT_MEMBERS, ALERT_SCHEMA, HELD_BACK, alertProblems, commitTrailers, composePublication, finalizeResults } from "../lib/service-publish.mjs";
 import { TRUST14_CODES, mergeAlerts } from "../lib/trust14.mjs";
 import { ACTED_OUTCOMES, VERDICT_VALUES, leaksIn, scanFiles } from "../lib/scan-verdict-leaks.mjs";
 import { submissionFingerprint } from "../lib/policy/release.mjs";
@@ -2910,10 +2911,60 @@ function delayedPlan() {
   };
 }
 
-const goldenBody = (kind, plan) => resultBody(plan, {
-  decisionId: plan.kind === "state" ? "0".repeat(32) : null,
-  mainCommit: plan.kind === "state" || plan.kind === "reported" ? "7".repeat(40) : null,
-});
+/**
+ * A registry tree whose commits are the same bytes on every machine: fixed
+ * author, committer and dates, and no global or system git configuration, so
+ * a commit id it makes can stand in a golden file. `records` land in its
+ * second commit, under `writeDecisionRecord`'s layout.
+ */
+function fixedTree(records) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-fixed-"));
+  const g = (...args) => execFileSync("git", ["-C", dir, ...args], {
+    encoding: "utf8",
+    env: {
+      ...cleanEnv(), GIT_CEILING_DIRECTORIES: os.tmpdir(), GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1",
+      GIT_AUTHOR_NAME: "registry fixture", GIT_AUTHOR_EMAIL: "fixture@example.invalid", GIT_AUTHOR_DATE: "2026-09-26T12:00:00Z",
+      GIT_COMMITTER_NAME: "registry fixture", GIT_COMMITTER_EMAIL: "fixture@example.invalid", GIT_COMMITTER_DATE: "2026-09-26T12:00:00Z",
+    },
+  });
+  g("init", "-q", "-b", "main");
+  fs.mkdirSync(path.join(dir, "plugins"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "plugins", ".keep"), "");
+  g("add", "-A");
+  g("commit", "-q", "-m", "init");
+  for (const r of records) {
+    const rel = `log/decisions/2026/09/${r.decision_id}.json`;
+    fs.mkdirSync(path.join(dir, path.dirname(rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), `${JSON.stringify({ schema: "astra.registry.decision/1", ...r }, null, 2)}\n`);
+  }
+  g("add", "-A");
+  g("commit", "-q", "--allow-empty", "-m", "the records on main");
+  return { dir, g, head: g("rev-parse", "HEAD").trim(), cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+}
+
+/**
+ * A `reported` body as the publish job composes it: over a tree that holds the
+ * record it names, so `main_commit` is the commit that added that record
+ * (BOT-23), never a value injected beside it.
+ */
+function composedBody(plan, records) {
+  const t = fixedTree(records);
+  const reportsDir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-golden-"));
+  try {
+    const { pending } = composePublication({ plans: [plan], root: t.dir, listingsDir: reportsDir, reportsDir, run: "1/1", now: P.now });
+    return { body: pending[0].body, pending: pending[0], head: t.head };
+  } finally {
+    t.cleanup();
+    fs.rmSync(reportsDir, { recursive: true, force: true });
+  }
+}
+
+const goldenBody = (kind, plan) => kind === "reported"
+  ? composedBody(plan, [mReject]).body
+  : resultBody(plan, {
+    decisionId: plan.kind === "state" ? "0".repeat(32) : null,
+    mainCommit: plan.kind === "state" ? "7".repeat(40) : null,
+  });
 
 test("B-T3.5: one golden file per result kind, each the body this module builds for it", () => {
   const plans = goldenPlans();
@@ -3850,4 +3901,118 @@ test("§4.4: the result composer refuses to post a wait past the bound, whatever
   // retry hint from the report time, capped at the window's end (which runs
   // from the reported delivery). Either moved far enough is past the bound.
   assert.throws(() => resultBodyForBound({ ...plan, alert: true }, { deliveredAt: "2026-10-25T12:00:00Z", reportedAt: "2026-10-25T12:00:00Z" }), /at most 15 days/);
+});
+
+
+// ── BOT-23: a `reported` result names the commit that holds its record ─────
+//
+// The adversarial review of #461: `composePublication` set `main_commit` only
+// for a `state` plan's BOT-36 dedupe, so every BOT-19, BOT-74 and
+// pre-fingerprint `reported` result posted a `decision_id` with no commit, and
+// the service could not confirm it under BOT-24 — ae402306 kept looping. The
+// publish job now finds the record where `writeDecisionRecord` puts it and
+// names the commit that added it, and holds a result back when it cannot.
+// Watched red: with the `reported` branch in `composePublication` removed, the
+// first test and the `reported` golden are red; with the hold-back removed,
+// the second is red.
+test("BOT-23: a pre-fingerprint refusal reported over a tree carries the commit that added its record", () => {
+  const refusedId = decisionId(submissionKey({ submission_id: P.sid, fingerprint: null, state: "refused" }));
+  const onMain = { submission_id: P.sid, actor: "bot", trigger: "panel", decided_at: "2026-10-16T09:00:00Z",
+    state: "refused", reasons: ["E_ATTESTATION_MISSING"], decision_id: refusedId, run: "1/1" };
+  const t = registryTree();
+  try {
+    const rel = `log/decisions/2026/10/${refusedId}.json`;
+    fs.mkdirSync(path.join(t.dir, path.dirname(rel)), { recursive: true });
+    fs.writeFileSync(path.join(t.dir, rel), `${JSON.stringify({ schema: "astra.registry.decision/1", ...onMain }, null, 2)}\n`);
+    t.g("add", "-A");
+    t.g("commit", "-q", "-m", "ae402306's refusal");
+    const added = t.g("rev-parse", "HEAD").trim();
+    t.g("commit", "-q", "--allow-empty", "-m", "a later commit");
+    const later = { submission_id: P.sid, outcome: "refuse", code: "E_RELEASE_NOT_FOUND", findings: [] };
+    const plan = decideWith({ verified: later, git: git({ records: readGitState(t.dir).records }) });
+    assert.equal(plan.kind, "reported");
+    const out = publishOnto(t, plan, "2/1");
+    assert.equal(out.committed, null, "a reported refusal committed something");
+    assert.equal(out.result.unposted, null, `the result was held back: ${out.result.unposted}`);
+    assert.equal(out.body.decision_id, refusedId);
+    assert.equal(out.body.main_commit, added, "the result does not name the commit that added the record on main");
+    assert.deepEqual(out.body.reasons.map((r) => r.code), ["E_ATTESTATION_MISSING"]);
+    assert.deepEqual(recordAgreement(out.body, onMain), [], "BOT-23, as posted");
+  } finally {
+    t.cleanup();
+  }
+});
+
+test("BOT-23: a `reported` result whose record is not on main is held back, never posted without its commit", () => {
+  const t = fixedTree([]);
+  const reportsDir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-held-"));
+  try {
+    const plan = decideWith({ git: git({ records: [mReject] }) }); // the record is in `git`, not on this tree
+    assert.equal(plan.kind, "reported");
+    const { pending } = composePublication({ plans: [plan], root: t.dir, listingsDir: reportsDir, reportsDir, run: "1/1" });
+    assert.equal(pending[0].held_back, "record_not_on_main");
+    assert.ok(!("main_commit" in pending[0].body), "a result named a commit for a record that is not on main");
+    const [r] = finalizeResults({ pending, applied: { outcome: "nothing", refused: [], pushed: false }, mainCommit: null });
+    assert.equal(r.unposted, "record_not_on_main", "finalize let it through to `report`");
+    assert.ok(HELD_BACK.includes(r.unposted));
+  } finally {
+    t.cleanup();
+    fs.rmSync(reportsDir, { recursive: true, force: true });
+  }
+});
+
+// ── BOT-28: `ask` and `decide` read the same held reasons ───────────────────
+//
+// The review of #461: `heldReasonsOnTree` kept whichever held record
+// `readdir` returned last, while `decide` read this submission's first hold,
+// so beside a historical re-hold the two could disagree about
+// `R_BINDING_CHANGED` — `ask` skipping the notice `decide` then waited for.
+// One rule now, `heldReasonsFor`: the union over every held record of the
+// fingerprint. Watched red: with `decide` reading the first hold again, the
+// decide half is red; with `heldReasonsOnTree` keeping the last file read, the
+// order half is red.
+test("BOT-28: `ask` and `decide` read one union of every held record of the fingerprint, whatever order the tree lists them in", () => {
+  const firstId = decisionId(submissionKey({ submission_id: P.sid, fingerprint: FP, state: "held" }));
+  const A = { submission_id: P.sid, fingerprint: FP, state: "held", reasons: ["R_IDENTITY_CHANGED"], decided_at: "2026-09-20T00:00:00Z", decision_id: firstId };
+  const B = { ...A, reasons: ["R_IDENTITY_CHANGED", "R_BINDING_CHANGED"], decided_at: "2026-09-22T00:00:00Z", decision_id: "0".repeat(32) };
+  const C = { ...A, decision_id: "f".repeat(32) };
+  const expected = ["R_BINDING_CHANGED", "R_IDENTITY_CHANGED"];
+  assert.deepEqual(heldReasonsFor([A, B], FP), expected);
+  assert.deepEqual(heldReasonsFor([B, A], FP), expected, "the union depends on the order");
+  assert.deepEqual(heldReasonsFor([A, B], "0".repeat(16)), [], "another fingerprint's holds");
+  for (const records of [[A, B], [B, C], [C, B, A]]) {
+    const t = fixedTree(records);
+    try {
+      assert.deepEqual(heldReasonsOnTree(t.dir)(FP), heldReasonsFor(readGitState(t.dir).records, FP),
+        `ask and decide read different held reasons over ${records.map((r) => r.decision_id.slice(0, 4)).join(", ")}`);
+      assert.deepEqual(heldReasonsOnTree(t.dir)(FP), expected);
+    } finally {
+      t.cleanup();
+    }
+  }
+  // Decide: the first hold alone would exempt this approved row-5 rename; a
+  // second hold of the same bytes naming a changed binding keeps the wait.
+  const plan = decideWith({
+    lease: { claimed_from: "approved" },
+    verified: verified({ binding: lineOf(H_OLD), owner_file: { commit: "9".repeat(40), pull_request: false } }),
+    ask: ask({ verdict: "pass", gates: { stop_status: "no_stop", decisions: [approval()] }, notice: { kind: "approved", status: "pending" } }),
+    git: git({ existing: existing({ identity: renamed().identity }), records: [baseline(), A, B], alerts: alertsFor() }),
+  });
+  assert.equal(plan.wait?.code, "W_NOTICE_PENDING", `${plan.kind} ${plan.state ?? ""}: decide read the first hold alone`);
+});
+
+// ── ID-60: an incoming-account notice never counts, for a run-only change ───
+//
+// BOT-28's run-only `R_BINDING_CHANGED` case was tested on `pending`; ID-60's
+// "an incoming-account notice never counts" was tested only with the code on
+// the held record. Watched red: with `noticeElapsed`'s `bindingChanged` read
+// off the held record alone, a `sent` notice seven hours old publishes.
+test("ID-60: with `R_BINDING_CHANGED` in this run alone, a `sent` notice older than the window still never counts", () => {
+  const { identity, heldReasons } = renamed();
+  const plan = boundRun({
+    identity, line: lineOf("2".repeat(16)), heldReasons,
+    notice: { kind: "binding_changed", status: "sent", accepted_at: hoursBefore(P.now, UPDATE_WINDOW_HOURS + 1) },
+  });
+  assert.equal(plan.wait?.code, "W_NOTICE_PENDING", `${plan.kind} ${plan.state ?? ""}`);
+  assert.match(plan.wait.cause, /ID-60/);
 });
