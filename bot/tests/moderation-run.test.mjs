@@ -3206,7 +3206,7 @@ test("M-T3.4: the staging listing costs the batch nothing, as it costs the windo
   assert.deepEqual(results.compiled, [SDIS[4], SDIS[0], SDIS[1], SDIS[2]]);
 });
 
-// ── M-T3.5: the operator's four acts (MOD-52, TRUST-33, BOT-70) ─────────────
+// ── M-T3.5: the operator's five acts (MOD-52, TRUST-33, BOT-70; TRUST-32's `ok`) ─
 //
 // `tools/operator.mjs` and `bot/lib/operator-role.mjs`, run the way
 // `.github/workflows/operator.yml` runs them. The workflow's own boundary —
@@ -3371,15 +3371,100 @@ test("M-T3.5: a deny is TRUST-33's four members, written once, and names a finge
   assert.equal((await operator(root, { ASTRA_ACT: "approve", ASTRA_SERVICE_DECISION_ID: SDIS[0] })).code, 1, "a fifth act ran");
 });
 
+// TRUST-32 since contract 5.8.0: the act `ok` writes `state/ok/<fp>.json`,
+// copying `approval_decided_at` from the alert record, and only for the
+// owner's pinned numeric id. Watched red (each by hand): the pin widened to
+// any id — the stranger's and KNICE's dispatches write a record; the delivery
+// check removed — the undelivered alert is answered; `approval_decided_at`
+// taken from anywhere but the alert — the record's value disagrees.
+const OWNER_ID = "193032699";
+function alertOnTree(root, fp, over = {}) {
+  const rec = { schema: "astra.registry.alert/1", fingerprint: fp, event: "approval", approval_decided_at: "2026-09-23T10:00:00Z",
+    delivered_at: "2026-09-23T10:01:00Z", run: "1/1", ...over };
+  fs.mkdirSync(path.join(root, "state", "alerts"), { recursive: true });
+  fs.writeFileSync(path.join(root, "state", "alerts", `${fp}.json`), `${JSON.stringify(rec, null, 2)}\n`);
+  return rec;
+}
+
+test("TRUST-32 (5.8.0): `ok` is the owner's alone, ties itself to the delivered alert's approval, and is written once per alert", async () => {
+  const { OK_ACTOR_IDS, okAuthority } = await import("../lib/operator-role.mjs");
+  const { okRecordProblems, OK_MEMBERS } = await import("../lib/service-decide.mjs");
+  assert.deepEqual([...OK_ACTOR_IDS], [OWNER_ID], "the act `ok` admits exactly the owner's id; a second id is OPEN-OWNER-13(p)'s decision, not an edit here");
+  const root = crowd();
+  const fp = "4f1c9a02be773d15";
+  const rec = alertOnTree(root, fp);
+
+  for (const [who, id] of [["a stranger", "700000555"], ["a login, not an id", "mihailinl"], ["nobody", undefined]]) {
+    const refused = await operator(root, { ASTRA_ACT: "ok", ASTRA_FINGERPRINT: fp, ...(id === undefined ? {} : { ASTRA_ACTOR_ID: id }) });
+    assert.equal(refused.code, 1, `${who} wrote an OK: ${refused.logs.join(" | ")}`);
+    assert.deepEqual(refused.paths, []);
+    assert.equal(okAuthority({ actorId: id }).ok, false, who);
+  }
+  assert.equal(fs.existsSync(path.join(root, "state", "ok", `${fp}.json`)), false, "a refused OK left a file");
+
+  const ok = await operator(root, { ASTRA_ACT: "ok", ASTRA_FINGERPRINT: fp, ASTRA_ACTOR_ID: OWNER_ID });
+  assert.equal(ok.code, 0, ok.logs.join("\n"));
+  assert.deepEqual(ok.paths, [`state/ok/${fp}.json`]);
+  const doc = JSON.parse(fs.readFileSync(path.join(root, ok.paths[0]), "utf8"));
+  assert.deepEqual(Object.keys(doc).sort(), [...OK_MEMBERS].sort());
+  assert.equal(doc.approval_decided_at, rec.approval_decided_at, "the OK names the approval its alert was raised for");
+  assert.equal(doc.fingerprint, fp);
+  assert.deepEqual(okRecordProblems(doc, { fingerprint: fp }), [], "the reader would not read what the writer wrote");
+  assert.match(ok.message, /TRUST-32/);
+  assert.equal((await operator(root, { ASTRA_ACT: "ok", ASTRA_FINGERPRINT: fp, ASTRA_ACTOR_ID: OWNER_ID })).code, 1, "an OK was given twice for one alert");
+
+  // A new approval of the same fingerprint is a new alert, and takes a new OK.
+  alertOnTree(root, fp, { approval_decided_at: "2026-09-25T09:00:00Z", delivered_at: "2026-09-25T09:01:00Z" });
+  const again = await operator(root, { ASTRA_ACT: "ok", ASTRA_FINGERPRINT: fp, ASTRA_ACTOR_ID: OWNER_ID });
+  assert.equal(again.code, 0, again.logs.join("\n"));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, again.paths[0]), "utf8")).approval_decided_at, "2026-09-25T09:00:00Z");
+
+  // Refusals: no alert, an undelivered alert, a denied fingerprint, a service decision named too.
+  const none = "5f1c9a02be773d15";
+  assert.equal((await operator(root, { ASTRA_ACT: "ok", ASTRA_FINGERPRINT: none, ASTRA_ACTOR_ID: OWNER_ID })).code, 1, "an OK with no alert on main");
+  const quiet = "6f1c9a02be773d15";
+  alertOnTree(root, quiet, { delivered_at: null });
+  const undelivered = await operator(root, { ASTRA_ACT: "ok", ASTRA_FINGERPRINT: quiet, ASTRA_ACTOR_ID: OWNER_ID });
+  assert.equal(undelivered.code, 1, "an OK for an alert nobody received");
+  assert.ok(undelivered.logs.some((l) => /no reported delivery/.test(l)), undelivered.logs.join(" | "));
+  const denied = "7f1c9a02be773d15";
+  alertOnTree(root, denied);
+  assert.equal((await operator(root, { ASTRA_ACT: "deny", ASTRA_FINGERPRINT: denied })).code, 0);
+  assert.equal((await operator(root, { ASTRA_ACT: "ok", ASTRA_FINGERPRINT: denied, ASTRA_ACTOR_ID: OWNER_ID })).code, 1, "an OK beside a deny record");
+  assert.equal((await operator(root, { ASTRA_ACT: "ok", ASTRA_FINGERPRINT: fp, ASTRA_ACTOR_ID: OWNER_ID, ASTRA_SERVICE_DECISION_ID: SDIS[0] })).code, 1,
+    "an ok naming a service decision too was accepted");
+});
+
+test("TRUST-32 (5.8.0): the workflow's own `ok` check runs after `authority`, reads the numeric id, and passes every other act", async () => {
+  const { main: operatorMain } = await import("../../tools/operator.mjs");
+  const run = async (env) => {
+    const logs = [];
+    const code = await operatorMain(["--job", "ok-authority"], { env, log: { log: (m) => logs.push(String(m)), error: (m) => logs.push(String(m)) } });
+    return { code, logs };
+  };
+  assert.equal((await run({ ASTRA_ACT: "ok", ASTRA_ACTOR_ID: OWNER_ID })).code, 0);
+  assert.equal((await run({ ASTRA_ACT: "ok", ASTRA_ACTOR_ID: "700000555" })).code, 1);
+  assert.equal((await run({ ASTRA_ACT: "ok" })).code, 1, "no id is no owner");
+  assert.equal((await run({ ASTRA_ACT: "deny", ASTRA_ACTOR_ID: "700000555" })).code, 0, "the check is `ok`'s alone");
+  const yml = fs.readFileSync(path.join(REPO, ".github", "workflows", "operator.yml"), "utf8");
+  const at = (needle) => yml.indexOf(needle);
+  assert.ok(at("--job authority") > 0 && at("--job ok-authority") > at("--job authority") && at("--job act") > at("--job ok-authority"),
+    "operator.yml must run `authority`, then `ok-authority`, then the act");
+  assert.match(yml, /ASTRA_ACTOR_ID: \$\{\{ github\.actor_id \}\}/, "the check reads github.actor_id, the numeric id");
+  assert.match(yml, /options: \[confirm, cancel, revert, deny, ok\]/);
+});
+
 test("M-T3.5: the operator's allowlist admits its records, its revert paths and the two documents, and nothing else", async () => {
   const { operatorPath } = await import("../../tools/operator.mjs");
   for (const good of [`state/holds/${SDIS[0]}.confirm.json`, `state/holds/${SDIS[0]}.cancel.json`, "state/deny/4f1c9a02be773d15.json",
+    "state/ok/4f1c9a02be773d15.json",
     "plugins/widgets/plugin.json", "bot/moderation/2026-09-24-widgets-relist.json", "bot/moderation/2026-09-24-widgets-unrevoke-2.json",
     "tools/revocations/ASTRA-2026-0001.json", "registry/v1/index.json", "registry/v1/revocations.json"]) {
     assert.equal(operatorPath(good), true, `${good} is a path an operator act writes`);
   }
   for (const bad of [`state/holds/${SDIS[0]}.json`, "state/queue/x.json", "plugins/widgets/versions/1.0.0.json",
     "bot/moderation/2026-09-24-widgets-delist.json", "policy/reserved-ids.json", "state/deny/../../x.json",
+    "state/ok/../../x.json", "state/ok/4f1c9a02be773d15.json.bak", "state/alerts/4f1c9a02be773d15.json",
     "bot/lib/operator-role.mjs", ".github/workflows/operator.yml", "tools/revocations/README.md"]) {
     assert.equal(operatorPath(bad), false, `${bad} passes the operator's allowlist`);
   }

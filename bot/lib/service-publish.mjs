@@ -74,6 +74,17 @@ export function alertProblems(doc) {
 
 const git = (root, args) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8", env: cleanEnv() }).trim();
 
+/** A decision record as the commit `sha` holds it, or null when it cannot be read there or names another id. */
+function recordAt(root, sha, rel, decisionId) {
+  try {
+    const doc = JSON.parse(git(root, ["show", `${sha}:${rel}`]));
+    if (!doc || typeof doc !== "object" || Array.isArray(doc) || doc.decision_id !== decisionId) return null;
+    return doc;
+  } catch {
+    return null;
+  }
+}
+
 /** The commit on `main` that added a file, or null (the result of a record found already there). */
 function commitAdding(root, rel) {
   try {
@@ -88,10 +99,10 @@ function commitAdding(root, rel) {
  * Compose the report directories and the pending results.
  *
  * @param {{plans: object[], root: string, listingsDir: string, reportsDir: string,
- *   deliveredAt?: string|null, run: string}} opts
+ *   deliveredAt?: string|null, run: string, now?: Date|string}} opts
  * @returns {{pending: object[], reports: string[]}}
  */
-export function composePublication({ plans, root, listingsDir, reportsDir, deliveredAt = null, run }) {
+export function composePublication({ plans, root, listingsDir, reportsDir, deliveredAt = null, run, now = new Date() }) {
   if (!RUN_RE.test(String(run))) throw new Error(`--run ${JSON.stringify(run)} is not §0.7's run_id[/run_attempt]`);
   const existing = recordsOnMain(root);
   const pending = [];
@@ -102,19 +113,19 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
     if (plan.shadow === true || plan.kind === "none") continue;
     const dir = path.join(reportsDir, `report-${n++}`);
     fs.mkdirSync(dir, { recursive: true });
-    const landed = { decisionId: null, mainCommit: null, deliveredAt, recordPath: null, written: false };
+    const landed = { decisionId: null, mainCommit: null, deliveredAt, recordPath: null, written: false, heldBack: null, record: null };
 
     if (plan.kind === "state") {
       const { record } = plan;
       const out = writeDecisionRecord({
-        // BOT-34/BOT-35: a hold an aged approval sends back carries the
-        // approval it overrides (`plan.reentry`), and is keyed after it; every
-        // other record is a first entry and keeps the first key.
+        // BOT-35: every record this writes is a first entry and keeps the
+        // first key. The `held:after:<decided_at>` shape is historical since
+        // contract 5.8.0, which removed the aged-approval re-hold (BOT-26 (4)):
+        // records on `main` that carry it are read, and none is written.
         key: submissionKey({
           submission_id: record.submission_id,
           fingerprint: record.fingerprint ?? null,
           state: record.state,
-          after: plan.reentry?.after ?? null,
         }),
         record: { ...record, run },
         root: dir,
@@ -126,8 +137,14 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
       if (!out.written) {
         // BOT-36: the record is already on `main`. The result names it and the
         // commit that added it, and nothing else of this plan is written: the
-        // decision it records was made, and applied, by an earlier run.
+        // decision it records was made, and applied, by an earlier run. BOT-23:
+        // the result's DEC-7 members are THAT record's, read at that commit —
+        // this run's plan may hold or refuse the same key with other codes.
+        // Without the commit or the record the result names nothing the
+        // service can confirm, and it is held back.
         landed.mainCommit = commitAdding(root, out.path);
+        landed.record = landed.mainCommit ? recordAt(root, landed.mainCommit, out.path, out.decision_id) : null;
+        if (!landed.record) landed.heldBack = "record_unreadable";
       } else {
         if (plan.queue_entry) {
           const entry = { ...plan.queue_entry, decision_id: out.decision_id };
@@ -163,6 +180,32 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
       }
     }
 
+    if (plan.kind === "reported" && plan.decision_id) {
+      // BOT-23: a result naming a record already on `main` carries the commit
+      // that holds it (`main_commit`, "when a record was found already on
+      // main"), so the service can confirm it under BOT-24. Until 2026-10-17
+      // only a `state` plan's BOT-36 dedupe set it, and every BOT-19, BOT-74
+      // and pre-fingerprint `reported` result posted a `decision_id` with no
+      // commit: the service could not confirm ae402306's refusal and leased it
+      // again. The record is found where `writeDecisionRecord` puts it,
+      // `log/decisions/**/<decision_id>.json`, through the same walk.
+      const found = existing.find((e) => e.decision_id === plan.decision_id) ?? null;
+      landed.decisionId = plan.decision_id;
+      landed.recordPath = found ? found.file : null;
+      landed.mainCommit = found ? commitAdding(root, found.file) : null;
+      // BOT-23: the result's DEC-7 members are the record's at the commit it
+      // names, so the record is read THERE, not from this run and not from
+      // the working tree (`resultBody` takes them from it).
+      landed.record = landed.mainCommit ? recordAt(root, landed.mainCommit, found.file, plan.decision_id) : null;
+      // A record that is not on this tree, that no commit added, or that
+      // cannot be read at that commit, is a result that names nothing the
+      // service can confirm: held back, never posted without its commit and
+      // its record's members, and loud in the finalize step.
+      if (!found) landed.heldBack = "record_not_on_main";
+      else if (!landed.mainCommit) landed.heldBack = "record_commit_unknown";
+      else if (!landed.record) landed.heldBack = "record_unreadable";
+    }
+
     if (plan.kind === "wait" && plan.alert && isTime(deliveredAt)) {
       // TRUST-14: the alert went out in this run and the channel reported
       // delivery, so the record TRUST-32's window counts from lands in this
@@ -182,10 +225,21 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
       fs.writeFileSync(path.join(dir, rel), stableStringify(doc));
     }
 
-    const body = resultBody(plan, { decisionId: landed.decisionId, mainCommit: landed.mainCommit, deliveredAt });
-    if (plan.kind === "state") {
-      const problems = recordAgreement(body, { ...plan.record, decision_id: landed.decisionId });
+    const body = resultBody(plan, {
+      decisionId: landed.decisionId, mainCommit: landed.mainCommit, deliveredAt, record: landed.record,
+      // TRUST-32's retry hint counts from the report (contract 5.8.0).
+      reportedAt: `${new Date(now).toISOString().slice(0, 19)}Z`,
+    });
+    if (plan.kind === "state" && !landed.heldBack) {
+      // Against the record the result names: this run's when it wrote it, the
+      // one on `main` when BOT-36 found the key there.
+      const named = landed.written ? { ...plan.record, decision_id: landed.decisionId } : landed.record;
+      const problems = recordAgreement(body, named);
       if (problems.length) throw new Error(`BOT-23: ${plan.submission_id}'s result disagrees with its record: ${problems.join("; ")}`);
+    }
+    if (plan.kind === "reported" && landed.record) {
+      const problems = recordAgreement(body, landed.record);
+      if (problems.length) throw new Error(`BOT-23: ${plan.submission_id}'s reported result disagrees with record ${plan.decision_id} at ${landed.mainCommit}: ${problems.join("; ")}`);
     }
     pending.push({
       submission_id: plan.submission_id,
@@ -194,6 +248,7 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
       record_path: landed.recordPath,
       // A result whose record is new names a commit this run has not made yet.
       needs_commit: plan.kind === "state" && landed.written,
+      ...(landed.heldBack ? { held_back: landed.heldBack } : {}),
       shadow: false,
       body,
     });
@@ -201,6 +256,9 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
   }
   return { pending, reports };
 }
+
+/** Why a `reported` result is held back rather than posted without its record's commit (BOT-23). */
+export const HELD_BACK = Object.freeze(["record_not_on_main", "record_commit_unknown", "record_unreadable"]);
 
 /**
  * BOT-37's trailer block for the run's one commit: `Run:`, then a
@@ -233,6 +291,9 @@ export function finalizeResults({ pending, applied, mainCommit }) {
   const pushed = applied?.pushed === true && applied?.outcome === "committed";
   return pending.map((r) => {
     if (refused.has(r.report)) return { ...r, unposted: "refused" };
+    // A `reported` result whose record composePublication could not find on
+    // `main`, or whose adding commit it could not name (BOT-23).
+    if (r.held_back) return { ...r, unposted: r.held_back };
     if (!r.needs_commit) return { ...r, unposted: null };
     if (!pushed) return { ...r, unposted: applied?.dry_run ? "dry_run" : "not_committed" };
     if (!/^[0-9a-f]{40}$/.test(String(mainCommit))) return { ...r, unposted: "no_commit" };
@@ -298,9 +359,12 @@ async function main(argv) {
     fs.writeFileSync(args.out, `${JSON.stringify({ results }, null, 2)}\n`);
     for (const r of results) {
       if (r.unposted === "refused") console.error(`::error::${r.submission_id}: publish-apply refused its report; no result is posted, and the lease expires under BOT-15`);
+      if (HELD_BACK.includes(r.unposted)) {
+        console.error(`::error::${r.submission_id}: its result names record ${r.body?.decision_id ?? "?"}, and ${{ record_not_on_main: "that record is not on main", record_commit_unknown: "no commit on main added it", record_unreadable: "it cannot be read at the commit that added it" }[r.unposted]}; no result is posted without the commit that holds its record (BOT-23), and the lease expires under BOT-15`);
+      }
       console.log(`${r.submission_id}  ${r.kind}${r.unposted ? `  held (${r.unposted})` : ""}`);
     }
-    return results.some((r) => r.unposted === "refused") ? 1 : 0;
+    return results.some((r) => r.unposted === "refused" || HELD_BACK.includes(r.unposted)) ? 1 : 0;
   }
   throw new Error("--compose or --finalize");
 }

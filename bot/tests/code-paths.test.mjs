@@ -630,6 +630,7 @@ const ROUTINE = [
   { p: "state/holds/0192.json", why: "a hold (MOD-9)", exists: false, by: "M-T3.3" },
   { p: "state/moderation-settled.json", why: "the results history decided that the service settled (ops entry 100)", exists: false, by: "the first live moderation run whose list job settles one, from R3" },
   { p: "state/deny/abc123.json", why: "an operator deny record (TRUST-33)", exists: false, by: "operator.yml's `act: deny`, M-T3.5" },
+  { p: "state/ok/abc123.json", why: "an operator OK record (TRUST-32, contract 5.8.0)", exists: false, by: "operator.yml's `act: ok`, at the owner's dispatch" },
   { p: "state/alerts/abc123.json", why: "an alert record (TRUST-32); its delivery report is what the operator window counts from", exists: false, by: "the ingest run's alert job" },
   { p: "policy/binding-deadline.json", why: "the binding deadline (MIG-2), committed 2026-10-16 for the R6 cutover the owner gave GO to", exists: true },
   // Until contract 0.38.0 two rows here held the update manifest signer and

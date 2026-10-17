@@ -36,10 +36,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { ServiceRunFailure, W_SERVICE_UNREACHABLE, composeBody, createClient } from "./service.mjs";
-import { CLAIMED_FROM, VERDICT_OUTCOMES } from "./service-decide.mjs";
+import { CLAIMED_FROM, VERDICT_OUTCOMES, heldReasonsFor, noticeExempt } from "./service-decide.mjs";
 import { safeRepo, safeTag } from "./safe.mjs";
 import { isUsableTag } from "./poll.mjs";
 import { isTime } from "../../tools/lib/time.mjs";
+import { ID_PATTERN } from "../../tools/lib/ids.mjs";
 
 const UUID_V47_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[47][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const BASE10_RE = /^[0-9]{1,20}$/;
@@ -257,10 +258,18 @@ export function noticeKind({ lease, heldReasons = [] }) {
  * `ask`: the verdict, the gates and the notice status for every verified
  * submission, reduced to what `decide` acts on.
  *
+ * `identityHash(pluginId)` is the `token_hash` of the listing's identity
+ * record on the tree, or null. With the held record's codes it answers, before
+ * notice status is asked, the question `decide` answers after: BOT-28 since
+ * contract 5.8.0 exempts an approved hold with one account in it from the
+ * notice wait, and such a hold reads stop status alone, so it is not asked
+ * for a notice at all (`noticeExempt`). ID-41 row 6 is the one run code this
+ * needs, `R_BINDING_CHANGED`, read exactly as `id41` reads it.
+ *
  * @param {{client: object, submissions: string[], leases: object, verified: object,
- *   heldReasons?: (fingerprint: string) => string[]}} opts
+ *   heldReasons?: (fingerprint: string) => string[], identityHash?: (pluginId: string) => string|null}} opts
  */
-export async function askJob({ client, submissions, leases, verified, heldReasons = () => [] }) {
+export async function askJob({ client, submissions, leases, verified, heldReasons = () => [], identityHash = () => null }) {
   const outcome = {};
   const ready = [];
   for (const id of submissions) {
@@ -327,7 +336,17 @@ export async function askJob({ client, submissions, leases, verified, heldReason
 
   // The notice status, for a publication that reads one (BOT-28; ID-60).
   for (const id of ready) {
-    const kind = noticeKind({ lease: leases[id], heldReasons: heldReasons(verified[id].fingerprint) });
+    const v = verified[id];
+    const held = heldReasons(v.fingerprint);
+    // ID-41 row 6 against the identity record on the tree, as `id41` reads it:
+    // a line whose hash differs from the record's is `R_BINDING_CHANGED`.
+    const recordHash = identityHash(v.plugin_id);
+    const lineHash = v.binding?.outcome === "one" ? v.binding.token_hash ?? null : null;
+    const run = recordHash && lineHash !== null && lineHash !== recordHash ? ["R_BINDING_CHANGED"] : [];
+    if (leases[id]?.claimed_from === "approved" && noticeExempt({ heldReasons: held, runReasons: run, bindingOutcome: v.binding?.outcome })) {
+      continue;
+    }
+    const kind = noticeKind({ lease: leases[id], heldReasons: [...held, ...run] });
     if (!kind) continue;
     const answer = await client.call("noticeStatus", { submission_id: id, fingerprint: verified[id].fingerprint, kind });
     if (!answer.ok) {
@@ -419,9 +438,27 @@ const parseJson = (text, fallback) => {
   return JSON.parse(String(text));
 };
 
-/** Held reasons of the `held` record on the checked-out tree, by fingerprint, for the notice kind. */
-function heldReasonsOnTree(root) {
-  const byFp = new Map();
+/** The `token_hash` of `plugins/<id>/identity.json` on the checked-out tree, or null (ID-41 row 6, for BOT-28's exemption). */
+function identityHashOnTree(root) {
+  return (pluginId) => {
+    if (!new RegExp(ID_PATTERN).test(String(pluginId ?? ""))) return null;
+    try {
+      const r = JSON.parse(fs.readFileSync(path.join(root, "plugins", pluginId, "identity.json"), "utf8"));
+      return typeof r?.token_hash === "string" ? r.token_hash : null;
+    } catch {
+      return null;
+    }
+  };
+}
+
+/**
+ * Held reasons on the checked-out tree, by fingerprint, for the notice kind
+ * and BOT-28's exemption: `heldReasonsFor`'s union over every `held` record
+ * of the fingerprint, the rule `decide` applies, so the two never disagree
+ * about which hold they read.
+ */
+export function heldReasonsOnTree(root) {
+  const held = [];
   const walk = (d) => {
     let entries;
     try {
@@ -435,7 +472,7 @@ function heldReasonsOnTree(root) {
       else if (e.name.endsWith(".json")) {
         try {
           const r = JSON.parse(fs.readFileSync(full, "utf8"));
-          if (r?.state === "held" && typeof r.fingerprint === "string") byFp.set(r.fingerprint, r.reasons ?? []);
+          if (r?.state === "held" && typeof r.fingerprint === "string") held.push(r);
         } catch {
           /* not evidence */
         }
@@ -443,7 +480,7 @@ function heldReasonsOnTree(root) {
     }
   };
   walk(path.join(root, "log", "decisions"));
-  return (fp) => byFp.get(fp) ?? [];
+  return (fp) => heldReasonsFor(held, fp);
 }
 
 async function main(argv) {
@@ -475,6 +512,7 @@ async function main(argv) {
       leases: parseJson(process.env.ASTRA_LEASES, {}),
       verified: parseJson(process.env.ASTRA_VERIFIED, {}),
       heldReasons: heldReasonsOnTree(args.root),
+      identityHash: identityHashOnTree(args.root),
     });
     output("outcome", out.outcome);
     // Counts, never values (BOT-89).

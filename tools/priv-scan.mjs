@@ -199,6 +199,7 @@ const COMPOSED = [
   { re: /^plugins\/[^/]+\/identity\.json$/, kind: "identity" },
   { re: /^state\/alerts\/[^/]+\.json$/, kind: "alert-record" },
   { re: /^state\/deny\/[^/]+\.json$/, kind: "deny-record" },
+  { re: /^state\/ok\/[^/]+\.json$/, kind: "ok-record" },
   { re: /^state\/queue\/[^/]+\.json$/, kind: "queue-entry" },
   { re: /^state\/queue\/.*$/, kind: null },            // anything else under the queue
   { re: /^bot\/moderation\/[^/]+\.json$/, kind: "moderation-entry" },

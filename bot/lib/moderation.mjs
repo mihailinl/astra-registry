@@ -206,35 +206,30 @@ export const APPEAL_RESPONSE_DAYS = 7;
 // half of it back.
 export const TAKEDOWN_BOUND = 3;
 
-// ── the owner's two approval numbers, which POLICY.md §8 publishes ──────────
+// ── the owner's approved-update window, which POLICY.md §8 publishes ───────
 //
-// reg.61a's other half (B-T3.3b; OPEN-OWNER-5 and OPEN-OWNER-6, both closed
-// 2026-09-13). They live here, beside the bound and the triage clock, because
-// they are the same kind of thing: a number the published policy promises and
-// the bot keeps, asserted against the document by `bot/tests/policy.test.mjs`.
+// reg.61a's other half (B-T3.3b; OPEN-OWNER-6, closed 2026-09-13). It lives
+// here, beside the bound and the triage clock, because it is the same kind of
+// thing: a number the published policy promises and the bot keeps, asserted
+// against the document by `bot/tests/policy.test.mjs`.
 //
-// Neither is read by any code on `main` yet. B-T3.3b's service-path decision
-// (BOT-26, BOT-28) is their reader, and it lands after this; it imports these
-// rather than typing a second 7 or 6, so that the document, this file and the
-// rule stay one number each. Until it lands, the service path decides nothing
-// and the promise costs nothing, which is what makes publishing it first safe.
+// There were two numbers here. The other, `APPROVAL_MAX_AGE_DAYS` (7,
+// OPEN-OWNER-5), was BOT-26 (4)'s approval maximum, and contract 5.8.0
+// withdrew it (OD-28): an approval no longer ages, so there is no number to
+// keep, and `bot/tests/policy.test.mjs` now holds every policy document to
+// stating none.
 //
-// **Not TRUST-27's 7 days or TRUST-32's 6-hour operator window.** Those are
-// B-T3.10's, they happen to be the same two numbers in the same units, and a
-// reader who reuses one of these for them has welded two policies together
-// that the owner answered separately.
-
-/**
- * BOT-26 (4): an approval is honoured only while its `decided_at` is younger
- * than this many days. With none committed no approval passes.
- */
-export const APPROVAL_MAX_AGE_DAYS = 7;
+// **Not TRUST-32's 6-hour operator window.** That is B-T3.10's, it happens to
+// be the same number in the same unit, and a reader who reuses this one for
+// it has welded two policies together that the owner answered separately.
 
 /**
  * BOT-28: the author objection window for an approved update with no delay
  * reason — the hours between the plugins service accepting the author's
  * notice (`accepted_at`, or `ended_at` for `previous_ended`) and the run that
- * may publish. With none committed such an update waits.
+ * may publish. With none committed such an update waits. Since contract
+ * 5.8.0 only an update a second account is in waits it (`R_BINDING_CHANGED`,
+ * or no binding line): `bot/lib/service-decide.mjs`'s `noticeExempt`.
  */
 export const APPROVED_UPDATE_WINDOW_HOURS = 6;
 

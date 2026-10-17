@@ -27,7 +27,7 @@
 // from that start; nothing here reads a clock, so a retry sends the same bytes
 // and a re-run of the report job re-sends the body the first attempt built.
 
-import { OPERATOR_WINDOW_HOURS, WAIT_CAUSE_MAX, boundedEarliest, reasonOf } from "./service-decide.mjs";
+import { OPERATOR_WINDOW_HOURS, WAIT_CAUSE_MAX, boundedEarliest, operatorRetryHint, reasonOf } from "./service-decide.mjs";
 import { HOUR_MS, iso } from "./policy/time.mjs";
 import { isTime } from "../../tools/lib/time.mjs";
 
@@ -63,8 +63,16 @@ function reasonsFor(codes, planReasons) {
 /**
  * One result body.
  *
+ * `landed.reportedAt` is when the publish job composed the result, which is
+ * what TRUST-32's retry hint counts from (contract 5.8.0): a `W_OPERATOR_WINDOW`
+ * wait asks to be claimed again at most 15 minutes after its report, and
+ * never later than the window's end, so an operator's OK is read within a
+ * quarter of an hour. Without it the hint counts from the wait's `started_at`,
+ * which is earlier, and so never later than the contract allows.
+ *
  * @param {object} plan a `decideSubmission` plan (not `none`)
- * @param {{decisionId?: string|null, mainCommit?: string|null, deliveredAt?: string|null}} landed
+ * @param {{decisionId?: string|null, mainCommit?: string|null, deliveredAt?: string|null, reportedAt?: string|null,
+ *   record?: object|null}} landed  `record`: for a `reported` plan, the record it names, as `main_commit` holds it
  * @returns {object} the body, without `schema` (the client stamps it)
  */
 export function resultBody(plan, landed = {}) {
@@ -80,12 +88,22 @@ export function resultBody(plan, landed = {}) {
       // channel reported delivery, and TRUST-32 names the two waits.
       if (isTime(landed.deliveredAt)) {
         wait.code = "W_OPERATOR_WINDOW";
-        wait.cause = `TRUST-32: the operator alert was delivered at ${landed.deliveredAt}; the ${OPERATOR_WINDOW_HOURS}-hour objection window runs from there`;
-        wait.earliest_retry_at = iso(new Date(new Date(landed.deliveredAt).getTime() + OPERATOR_WINDOW_HOURS * HOUR_MS));
+        wait.cause = `TRUST-32: the operator alert was delivered at ${landed.deliveredAt}; the ${OPERATOR_WINDOW_HOURS}-hour objection window runs from there, unless an operator answers it with an OK`;
+        wait.window_ends_at = iso(new Date(new Date(landed.deliveredAt).getTime() + OPERATOR_WINDOW_HOURS * HOUR_MS));
       } else {
         wait.code = "W_ALERT_UNDELIVERED";
         wait.cause = "TRUST-32: the channel reported no delivery of the operator alert, so nothing publishes";
       }
+    }
+    // §4.4 since contract 5.8.0: `window_ends_at` on every `W_OPERATOR_WINDOW`
+    // wait and on no other code, and `earliest_retry_at` beside it a retry
+    // hint, never the window's end unless the end is sooner.
+    const windowEndsAt = wait.code === "W_OPERATOR_WINDOW" && isTime(wait.window_ends_at) ? wait.window_ends_at : null;
+    if (windowEndsAt) {
+      wait.earliest_retry_at = operatorRetryHint({
+        windowEndsAt,
+        from: isTime(landed.reportedAt) ? landed.reportedAt : wait.started_at,
+      });
     }
     body.wait = {
       code: wait.code,
@@ -94,6 +112,7 @@ export function resultBody(plan, landed = {}) {
       // §4.4 (3.12.0), at the last point before the wire: the composer can
       // move the time (the operator window counts from reported delivery).
       earliest_retry_at: boundedEarliest(wait.started_at, wait.earliest_retry_at),
+      ...(windowEndsAt ? { window_ends_at: windowEndsAt } : {}),
     };
     body.reasons = (plan.reasons ?? []).map((r) => ({ code: r.code, stage: r.stage, location: r.location ?? null, message: clip(r.message) }));
     if (plan.derived) for (const m of DERIVED) if (plan.derived[m] !== undefined) body[m] = plan.derived[m];
@@ -110,7 +129,28 @@ export function resultBody(plan, landed = {}) {
   }
 
   if (plan.kind === "reported") {
-    // BOT-19 / BOT-74: the record already on `main`, under this submission's id.
+    // BOT-19 / BOT-74 / a pre-fingerprint refusal: the record already on
+    // `main`. BOT-23 makes the result's DEC-7 members — the state, the reason
+    // codes, `decision_id`, the derived members and `publish_after` — equal
+    // that record AT THE COMMIT THE RESULT NAMES, so when the publish job has
+    // read the record there (`landed.record`) they are the record's, never
+    // this run's. Until 2026-10-17 BOT-74 posted `[P_PUBLISHED]` and this
+    // run's facts against a record carrying `P_PUBLISHED, P_REVIEW_PRIORITY`,
+    // and a re-tag of identical bytes posted the new tag and commit: each a
+    // `record_mismatch` once the result named its commit. Only the
+    // submission and the attempt stay the result's own. A plan naming no
+    // record (BOT-74 over a version no record on `main` describes) keeps this
+    // run's facts, and carries no `decision_id` and no `main_commit`.
+    const record = landed.record ?? null;
+    if (record) {
+      body.state = record.state;
+      body.reasons = reasonsFor(Array.isArray(record.reasons) ? record.reasons : [], plan.reasons);
+      body.decision_id = record.decision_id;
+      if (landed.mainCommit) body.main_commit = landed.mainCommit;
+      for (const m of DERIVED) if (record[m] !== undefined) body[m] = record[m];
+      if (record.publish_after !== undefined) body.publish_after = record.publish_after;
+      return body;
+    }
     body.reasons = (plan.reasons ?? []).map((r) => ({ code: r.code, stage: r.stage, location: r.location ?? null, message: clip(r.message) }));
     if (plan.decision_id) body.decision_id = plan.decision_id;
     if (landed.mainCommit) body.main_commit = landed.mainCommit;
@@ -118,16 +158,42 @@ export function resultBody(plan, landed = {}) {
     return body;
   }
 
-  // kind === "state": the record's members, equal to the record.
-  const record = plan.record;
+  // kind === "state": the record's members, equal to the record. When BOT-36
+  // found the record's key already on `main` (`landed.record`, read at the
+  // commit that added it), that record IS the decision the result names, and
+  // its members are the result's — not this run's. Since contract 5.8.0 a
+  // re-hold reuses the first hold's key, so a re-leased submission that holds
+  // again with other codes (`R_FIRST_BINDING`, then `R_BINDING_CHANGED`), or a
+  // fingerprinted refusal re-decided with other codes, posted this run's codes
+  // against the first record's commit: a `record_mismatch` the service
+  // re-leases for ever, the ae402306 loop for fingerprinted records.
+  const onMain = landed.record ?? null;
+  const record = onMain ?? plan.record;
   if (!record) throw new Error(`a ${plan.state} plan carries no record`);
-  body.reasons = reasonsFor(record.reasons, plan.reasons);
+  if (onMain) body.state = onMain.state;
+  body.reasons = reasonsFor(Array.isArray(record.reasons) ? record.reasons : [], plan.reasons);
   if (landed.decisionId) body.decision_id = landed.decisionId;
   if (landed.mainCommit) body.main_commit = landed.mainCommit;
   for (const m of DERIVED) if (record[m] !== undefined) body[m] = record[m];
-  if (plan.state === "delayed") body.publish_after = record.publish_after;
-  for (const [k, v] of Object.entries(plan.result_extra ?? {})) body[k] = v;
+  if (onMain ? record.publish_after !== undefined : plan.state === "delayed") body.publish_after = record.publish_after;
+  // The hold's own members (§4.4: `objection_window` with an
+  // `R_BINDING_CHANGED` hold, the owner file with a binding hold, the actor
+  // with a first binding) describe these bytes, which the key's fingerprint
+  // fixes; over a record already on `main` they ride only where that
+  // record's codes are the hold they belong to.
+  for (const [k, v] of Object.entries(plan.result_extra ?? {})) {
+    if (!onMain || extraApplies(k, record.reasons)) body[k] = v;
+  }
   return body;
+}
+
+/** §4.4's conditions for the hold-only members, against a record's codes. */
+function extraApplies(member, codes) {
+  const has = (c) => Array.isArray(codes) && codes.includes(c);
+  if (member === "objection_window") return has("R_BINDING_CHANGED");
+  if (member === "owner_file_commit" || member === "owner_file_pull_request") return has("R_FIRST_BINDING") || has("R_BINDING_CHANGED");
+  if (member === "triggering_actor_id" || member === "triggering_actor_is_owner") return has("R_FIRST_BINDING");
+  return false;
 }
 
 /**

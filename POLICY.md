@@ -332,14 +332,19 @@ registry without the author holding any credential for it, and — stated there
 rather than left to be discovered — what happens when the SLA slips, which is
 that auto-publication widens rather than the queue rotting.
 
-**Two more numbers apply on the plugins-service path**, and both are the
-owner's (2026-09-13). A maintainer's **approval is honoured for 7 days** from
-the moment it was given; past that the release stays held until it is approved
-again. And an **approved update waits 6 hours** after the plugins service
-reports that its notice to the author was accepted, so that an author can stop
-a release they did not make before it reaches anybody. On that path every
-approved release is a change of hands, which is always an update, and nothing
-there carries a publication delay.
+**One more number applies on the plugins-service path**, and it is the
+owner's (2026-09-13). Only an update that changes which account the listing
+is bound to (`R_BINDING_CHANGED`), or one that carries no binding line, waits
+for a notice: such an **approved update waits 6 hours** after the plugins
+service reports that its notice was accepted, so that the account the listing
+was bound to can stop a release it did not make before it reaches anybody. An
+approved update made under the binding the listing already has waits for no
+notice, because that notice would only tell its author about their own
+release; it still waits for the operator alert's window. And a maintainer's
+approval does not expire: it clears the hold it was given for until the
+release it names changes (since contract 5.8.0; until then it lapsed after 7
+days). On that path every approved release is a change of hands, which is
+always an update, and nothing there carries a publication delay.
 
 **And here is what that apparatus buys, and exactly where it stops.** Every rule
 above is keyed on what a plugin *declares*, and a declaration is now enforced at

@@ -123,6 +123,12 @@ export const DOCUMENT_MEMBERS = {
     handleOk: [],
     source: "contract TRUST-33 (`astra.registry.deny/1`); registry plan M-T3.5",
   },
+  "ok-record": {
+    members: ["schema", "fingerprint", "approval_decided_at", "run", "at"],
+    uuidOk: [],
+    handleOk: [],
+    source: "contract 5.8.0 DEC-6 (`astra.registry.ok/1`, B.4's registry-only path); registry plan TRUST-32, BOT-33",
+  },
   cutover: {
     members: ["schema", "cutover_at"],
     uuidOk: [],

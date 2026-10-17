@@ -792,6 +792,7 @@ export function createClient({
         if (t === "unavailable" && outcome.retryAfter !== null) {
           // A stated wait. Not retried — the service said when to come back —
           // and silent the first time (attack m-1).
+          // TODO(contract 5.8.0, TRUST-31 4(d), BOT-63): wait out the job's first stated Retry-After of at most 30 s in-job and repeat once under a fresh token, once the service's 4(b) is live.
           state.statedWaits += 1;
           if (state.statedWaits > 1) {
             alert(
