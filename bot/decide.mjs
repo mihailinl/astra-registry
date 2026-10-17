@@ -56,7 +56,7 @@ import { loadSources, REPO_ROOT } from "../tools/lib/sources.mjs";
 import { markerOnMain, readDecisionRecords, runTrailer } from "./baseline.mjs";
 import { legacyKey, recordsOnMain, writeDecisionRecord } from "./lib/decisions.mjs";
 import { artifactDigests, submissionFingerprint } from "./lib/policy/release.mjs";
-import { safeRepo, safeTag } from "./lib/intake.mjs";
+import { safeRepo, safeTag } from "./lib/safe.mjs";
 import { ingest, writeListing } from "./ingest.mjs";
 import {
   decide,

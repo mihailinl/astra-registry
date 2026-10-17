@@ -73,10 +73,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { CODES } from "./lib/codes.mjs";
-import { LISTING_LABEL, looksLikeReleasePing, safeRepo, safeTag } from "./lib/intake.mjs";
+import { safeRepo, safeTag } from "./lib/safe.mjs";
 import { ID_PATTERN } from "../tools/lib/ids.mjs";
 import { SEMVER_PATTERN } from "../tools/lib/semver.mjs";
 import { isTime } from "../tools/lib/time.mjs";
+
+// The issue path's own grammar, which only this export still reads: the label
+// that made an issue a submission, and the title prefix of a `[release]` ping.
+// Cutover commit D (registry plan B-T5.2) deleted `bot/lib/intake.mjs`, where
+// both lived, with the rest of that path; the issues they describe stay on
+// GitHub until ROLL-42, and MIG-21 reads them until then.
+const LISTING_LABEL = "listing";
+const looksLikeReleasePing = (title) => /^\[release\]/i.test(String(title ?? "").trim());
 
 const ID_RE = new RegExp(ID_PATTERN);
 const SEMVER_RE = new RegExp(SEMVER_PATTERN);

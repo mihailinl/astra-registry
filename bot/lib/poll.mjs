@@ -147,6 +147,58 @@ export async function pollFeed(repo, etag, fetchImpl = fetch) {
   };
 }
 
+/**
+ * Whether `tag` has a published GitHub Release: one unauthenticated read of
+ * `GET /repos/{repo}/releases/tags/{tag}`.
+ *
+ * `releases.atom` lists a tag the moment it is pushed. The reusable release
+ * workflow (AstraPlugins `plugin-release.yml`) pushes the tag, builds for
+ * minutes behind a draft Release, and publishes it last. A tag registered in
+ * that window is leased, finds no release and is refused `E_RELEASE_NOT_FOUND`,
+ * and the poll, which remembers every tag it registered, never offers it
+ * again: the author's release never reaches the catalogue, and nothing is red.
+ * e2e-thirdparty v0.1.1 did exactly that on cutover day — registered at
+ * 09:30:38Z, its release published at 09:33:51Z (run 39021403114). A draft is
+ * invisible without push access, so it answers 404, as a bare tag does.
+ *
+ *   * `published` registers.
+ *   * `unpublished` (404, or a draft) waits. Publishing changes the tag's feed
+ *     entry — its `<updated>` becomes the publication time and its title the
+ *     release's — so the feed answers 200 again and the next poll asks again.
+ *   * `unknown` (a rate limit, a 5xx, no network, an answer not shaped like
+ *     GitHub's) waits too, and `runPoll` keeps the old ETag so that the next
+ *     poll asks whether or not the feed moved.
+ *
+ * No credential: the poll job holds none (BOT-1), and a public repository's
+ * release reads without one. Only a candidate — a tag no poll registered —
+ * costs a request, so a quiet feed costs none.
+ *
+ * @returns {Promise<{state: "published"|"unpublished"|"unknown", why: string}>}
+ */
+export async function releaseState(repo, tag, fetchImpl = fetch) {
+  const url = `https://api.github.com/repos/${repo}/releases/tags/${tag.split("/").map(encodeURIComponent).join("/")}`;
+  const headers = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "astra-registry-bot" };
+  const unknown = (what) => ({ state: "unknown", why: `${tag}: ${what}; the next poll asks again` });
+  let res;
+  try {
+    res = await fetchImpl(url, { headers, redirect: "follow" });
+  } catch (e) {
+    return unknown(`GitHub could not be asked whether its release is published (${String(e.message).slice(0, 120)})`);
+  }
+  const unpublished = { state: "unpublished", why: `${tag} has no published release yet (a draft, or a tag alone); it registers once the release is published` };
+  if (res.status === 404) return unpublished;
+  if (res.status !== 200) return unknown(`GitHub answered HTTP ${res.status} for its release`);
+  let body;
+  try {
+    body = JSON.parse(await res.text());
+  } catch {
+    return unknown("GitHub's answer for its release is not JSON");
+  }
+  if (!body || body.tag_name !== tag || typeof body.draft !== "boolean") return unknown("GitHub's answer is not a release of this tag");
+  if (body.draft) return unpublished;
+  return { state: "published", why: `${tag} has a published release` };
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // B-T2.6: which listings, which tags, the memory, the sweep, the alarm
 // ═══════════════════════════════════════════════════════════════════════════
@@ -195,8 +247,10 @@ export const BOT_87_CODES = Object.freeze({
  * One set, read by `bot/decide.mjs`'s `terminalOnMain` for BOT-19's search and
  * here for BOT-74's "no tag with a terminal record for its `repository_id`".
  * It lives in this module and not in `bot/lib/decisions.mjs` because
- * `decisions.mjs` imports `intake.mjs`, which imports `notify.mjs`, which
- * imports this file: the other direction is a cycle.
+ * `decisions.mjs` imported `intake.mjs`, which imported `notify.mjs`, which
+ * imports this file: the other direction was a cycle. Cutover commit D deleted
+ * `intake.mjs`, and `decisions.mjs` takes `safeRepo`/`safeTag` from
+ * `bot/lib/safe.mjs` since, so that cycle is gone.
  */
 export const TERMINAL_STATES = Object.freeze(["refused", "revoked", "yanked", "withdrawn", "deprecated"]);
 
@@ -376,6 +430,7 @@ export function memoryProblem(m) {
     if (row.etag !== null && typeof row.etag !== "string") return `repos.${k}.etag is neither null nor a string`;
     if (row.last_success_at !== null && !isTime(row.last_success_at)) return `repos.${k}.last_success_at is not a time`;
     if (!Array.isArray(row.registered) || !row.registered.every(isUsableTag)) return `repos.${k}.registered is not a list of tags`;
+    if (row.deferred !== undefined && (!Array.isArray(row.deferred) || !row.deferred.every(isUsableTag))) return `repos.${k}.deferred is not a list of tags`;
   }
   const s = m.sweep;
   if (!s || typeof s !== "object" || !Number.isSafeInteger(s.count) || s.count < 0) return "sweep.count is not a count";
@@ -567,9 +622,11 @@ function repoVerdict(listings, tag, memoryTags) {
  * `poll`: every pollable listing's feed, with no quiet filter (BOT-41).
  *
  * Takes an opened memory and never a key. What it returns is what `claim`
- * registers and what `remember` saves; nothing here writes memory.
+ * registers and what `remember` saves; nothing here writes memory. A
+ * candidate registers only once its release is published (`releaseState`);
+ * until then it is `deferred`, and skipped with the reason.
  */
-export async function runPoll({ listings, memory, now = new Date(), fetchImpl = fetch }) {
+export async function runPoll({ listings, memory, now = new Date(), fetchImpl = fetch, checkRelease = (repo, tag) => releaseState(repo, tag, fetchImpl) }) {
   const out = { at: iso(now), repos: {} };
   // By repository, not by listing: one conditional GET per feed, and one
   // result per repository that no other listing's result can overwrite.
@@ -585,14 +642,41 @@ export async function runPoll({ listings, memory, now = new Date(), fetchImpl = 
     try {
       const feed = await pollFeed(group[0].repo, row?.etag ?? null, fetchImpl);
       const judged = pollListing({ listings: group, row, feed });
-      out.repos[key] = { id: ids[0], ids, ok: true, changed: feed.changed, ...judged };
+      const ready = await publishedOnly(group[0].repo, judged, row, checkRelease);
+      out.repos[key] = { id: ids[0], ids, ok: true, changed: feed.changed, ...ready };
     } catch (e) {
       // One repository that 404s must not stop the walk; BOT-87's staleness
       // alarm is what notices it keeps failing.
-      out.repos[key] = { id: ids[0], ids, ok: false, error: String(e.message).slice(0, 200), candidates: [], skipped: [], etag: row?.etag ?? null };
+      out.repos[key] = { id: ids[0], ids, ok: false, error: String(e.message).slice(0, 200), candidates: [], deferred: [], skipped: [], etag: row?.etag ?? null };
     }
   }
   return out;
+}
+
+/**
+ * BOT-74's candidates, less each whose release is not published yet. A tag that
+ * waits is skipped with `releaseState`'s reason and never registered, so no
+ * memory holds it and a later poll offers it again. An `unpublished` tag is
+ * `deferred`: the new ETag is kept, because publishing changes the feed. An
+ * `unknown` answer keeps the old ETag, because nothing else would make the
+ * next poll read the feed again.
+ */
+async function publishedOnly(repo, judged, row, checkRelease) {
+  const candidates = [];
+  const deferred = [];
+  const skipped = [...judged.skipped];
+  let unsure = false;
+  for (const tag of judged.candidates) {
+    const r = await checkRelease(repo, tag);
+    if (r.state === "published") {
+      candidates.push(tag);
+      continue;
+    }
+    skipped.push({ tag, why: r.why });
+    if (r.state === "unpublished") deferred.push(tag);
+    else unsure = true;
+  }
+  return { candidates, deferred, skipped, etag: unsure ? (row?.etag ?? null) : judged.etag };
 }
 
 /**
@@ -614,6 +698,12 @@ export async function runPoll({ listings, memory, now = new Date(), fetchImpl = 
  * `last_success_at` moves whenever the feed answered, registered or not: it
  * is BOT-87's "last successful poll", and a failed register is claim's
  * failure, not the poll's.
+ *
+ * `deferred` holds the tags the poll saw waiting for their release
+ * (`releaseState`), so that BOT-87's sweep does not page about an author's
+ * unfinished release every day. A tag leaves it when it registers. The member
+ * is absent while it would be empty, so a memory with nothing deferred is
+ * byte for byte what it was before deferral existed.
  */
 export function rememberPoll(memory, pollOutput, registered = []) {
   const out = structuredClone(memory);
@@ -623,6 +713,10 @@ export function rememberPoll(memory, pollOutput, registered = []) {
     const row = out.repos[key] ?? { etag: null, last_success_at: null, registered: [] };
     const done = res.candidates.filter((t) => reg.has(`${key}\n${t}`));
     row.registered = [...new Set([...row.registered, ...done])].slice(-REGISTERED_KEEP);
+    const waiting = [...new Set([...(row.deferred ?? []), ...(res.deferred ?? [])])]
+      .filter((t) => !row.registered.includes(t)).slice(-REGISTERED_KEEP);
+    if (waiting.length) row.deferred = waiting;
+    else delete row.deferred;
     if (done.length === res.candidates.length) row.etag = res.etag ?? null;
     row.last_success_at = pollOutput.at;
     out.repos[key] = row;
@@ -683,12 +777,14 @@ export function lsRemoteTags(repo, run = execFileSync) {
  * the first sweep of a repository, records every tag that exists). A tag seen
  * at an EARLIER sweep that matches the prefix and that nothing handled alarms:
  * not the poll (its memory), not a version record, not any decision record.
+ * A tag the poll deferred is handled too: it saw the tag, and waits for its
+ * release to be published (`releaseState`), which is the author's to do.
  * `git ls-remote` gives names and SHAs with no dates, so age is counted in
  * sweeps (BOT-87's Why).
  *
  * @returns {{tags: object, alerts: {id: string, repo: string, tag: string, sha: string}[]}}
  */
-export function sweepListing({ listing, known = {}, remote, sweepNo, seed, registered = [] }) {
+export function sweepListing({ listing, known = {}, remote, sweepNo, seed, registered = [], deferred = [] }) {
   const tags = {};
   const alerts = [];
   for (const { tag, sha } of remote) {
@@ -700,7 +796,7 @@ export function sweepListing({ listing, known = {}, remote, sweepNo, seed, regis
     tags[tag] = { ...was, sha };
     if (was.seeded || was.first_seen >= sweepNo) continue;
     if (!matchesPrefix(listing.prefix, tag)) continue;
-    if (registered.includes(tag) || listing.recorded_tags.includes(tag) || listing.named_tags.includes(tag)) continue;
+    if (registered.includes(tag) || deferred.includes(tag) || listing.recorded_tags.includes(tag) || listing.named_tags.includes(tag)) continue;
     alerts.push({ id: listing.id, repo: listing.repo, tag, sha });
   }
   return { tags, alerts };
@@ -739,6 +835,7 @@ export function runSweep({ memory, listings, lsRemote = lsRemoteTags, now = new 
       // register, and alarming on them tomorrow would page for history.
       seed: seedAll || known === undefined,
       registered: out.repos[key]?.registered ?? [],
+      deferred: out.repos[key]?.deferred ?? [],
     });
     out.sweep.repos[key] = r.tags;
     alerts.push(...r.alerts);

@@ -61,6 +61,11 @@ export const ISSUE_TRIGGERS = ["issues", "issue_comment", "repository_dispatch"]
  */
 export const WORKFLOW_FLOOR = 10;
 
+// `ingest.yml` was exempt from the `issues: write` leg by name, from commit C
+// until commit E deleted it (registry plan M-T6.2, B-T5.2). The exemption went
+// with the file: a workflow named ingest.yml after E is a new file, and it is
+// held to the rule like any other.
+
 const unquote = (s) => s.trim().replace(/^['"]|['"]$/g, "");
 
 /**
@@ -166,11 +171,16 @@ export function run(repo, { workflowFloor = WORKFLOW_FLOOR } = {}) {
     );
   }
   const hits = [];
+  const writers = [];
   for (const name of files) {
     const src = fs.readFileSync(path.join(dir, name), "utf8");
     for (const { trigger, line } of triggersOf(src)) {
       if (ISSUE_TRIGGERS.includes(trigger)) hits.push(`.github/workflows/${name}:${line} ${trigger}`);
     }
+    src.split("\n").forEach((l, i) => {
+      if (/^\s*#/.test(l)) return;
+      if (/^\s+issues:\s*write\s*(#.*)?$/.test(l)) writers.push({ name, line: i + 1 });
+    });
   }
   const armed = fs.existsSync(path.join(repo, CUTOVER));
   if (armed) {
@@ -185,7 +195,18 @@ export function run(repo, { workflowFloor = WORKFLOW_FLOOR } = {}) {
       `not armed: ${CUTOVER} is not on this tree, so the issue channel is still the live path; ` +
       `${hits.length} trigger(s) of ${ISSUE_TRIGGERS.join(", ")} today${hits.length ? `: ${hits.join(", ")}` : ""}`,
     );
-  } else if (hits.length) {
+  } else if (writers.length) {
+    // Commit C's leg (M-T6.2, BOT-53): nothing writes an issue after cutover.
+    // Since commit E deleted ingest.yml, no workflow is exempt.
+    codes.push("ISSUE_CHANNEL_WRITE");
+    for (const w of writers) {
+      detail.push(
+        `.github/workflows/${w.name}:${w.line} grants \`issues: write\` after cutover: nothing may write an issue ` +
+        "on this repository any more (DEC-12, BOT-53); alert through environment `alerts` instead",
+      );
+    }
+  }
+  if (armed && hits.length) {
     codes.push("ISSUE_CHANNEL_TRIGGER");
     for (const h of hits) {
       detail.push(
@@ -194,7 +215,7 @@ export function run(repo, { workflowFloor = WORKFLOW_FLOOR } = {}) {
         "tells authors an issue reaches nobody",
       );
     }
-  } else {
+  } else if (armed) {
     detail.push(`${CUTOVER} is on this tree and no workflow of ${files.length} starts on ${ISSUE_TRIGGERS.join(", ")}`);
   }
   return { status: codes.length ? "red" : "green", codes, ids: [], hexes: [], detail };

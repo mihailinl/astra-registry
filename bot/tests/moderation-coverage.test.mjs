@@ -25,7 +25,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { fixtureEnv } from "../../tools/lib/git-env.mjs";
+import { cleanEnv, fixtureEnv } from "../../tools/lib/git-env.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -668,7 +668,8 @@ test("rollout markers: every reader that keys on one spells it in the kind's gra
   // grammar, the one the writer's marker must also match to be committed.
   const readers = {
     "bot/lib/service-decide.mjs": ["log/rollout/R3-exit.json"],
-    "bot/triage.mjs": ["log/rollout/R3-exit.json"],
+    // `bot/triage.mjs` read R3's exit marker too, until cutover commit D
+    // deleted it with the issue path it routed (B-T5.2).
     "site/successors.mjs": ["log/rollout/R5-exit.json", "log/rollout/R4b-open.json", "log/rollout/R9b-exit.json"],
     "tools/cutover-preflight.mjs": ["log/rollout/R4b-open.json"],
   };
@@ -1465,11 +1466,17 @@ const RETIRED_TEXT = {
     "the machine, because there is no sandbox: a plugin is a native process with the\n" +
     "user's full privileges, and Phase 7 is where that changes. Read the table above\n\n" +
     // Row E1 (contract 3.0.0), docs/POLICY.md's heading as it stood at b27c237.
-    "## 3. The three events that need a person\n",
+    "## 3. The three events that need a person\n" +
+    // Commit C's rows (M-T6.2), verbatim from the pre-cutover tree.
+    "and the answer arrives within **7 days**. Open an issue titled\n`[appeal] <plugin-id>` and use this template:\n" +
+    "**Yanking is the author's tool**, not a moderation action — it means \"do not use\n" +
+    "before they were ever listed (those are public issues), reports received and not\n" +
+    "3. Until then, ask for the channel in public and put nothing in it. Blank issues\n",
   "site/templates/pages.mjs":
     "released from. There are no registry accounts, no passwords and nothing to sign in to: the identity\n" +
     // Commit B's rows (M-T6.2, FLOW-64), verbatim from the pre-cutover tree.
-    "<p>Open an issue with the plugin id and what you observed. Behaviour reports beat every heuristic\n",
+    "<p>Open an issue with the plugin id and what you observed. Behaviour reports beat every heuristic\n" +
+    "action against a listed plugin. They are in the\nissue tracker, publicly, with the failing check named\n",
   // One key per file: a second "POLICY.md" key would silently replace the
   // first, and the fixture would stop carrying E1's sentence.
   "POLICY.md":
@@ -1479,7 +1486,17 @@ const RETIRED_TEXT = {
     // Commit B's row C1-appeal (M-T6.2, FLOW-64), verbatim from the pre-cutover tree.
     "## 9. Appeals and reports\n\n" +
     "Open an issue. A rejection names the check that failed and the file it failed\n" +
-    "in — if it does not, that is a bug in the bot and worth reporting on its own.\n",
+    "in — if it does not, that is a bug in the bot and worth reporting on its own.\n" +
+    "- An author may **yank** a version (`\"yanked\": true`). It leaves the index and\n",
+  "SECURITY.md":
+    "Reporting a vulnerability: open a private security advisory on this repository,\n" +
+    "or email the address in the repository profile.\n" +
+    "holding a high-risk permission, out-of-band notification to the author on every\n" +
+    "publish (so a takeover victim sees it happen), permission-diff re-consent, and\n",
+  "docs/RUNBOOK.md":
+    "Expect a new comment within minutes. For `/approve` it is a full check table\n",
+  "bot/moderation/README.md":
+    "A refusal is not in here. A submission that never got listed is a public issue\n",
   "README.md":
     "CI build and attest it, and the registry picks it up — by a `/release v0.2.0`\n" +
     "comment on your listing issue within minutes, or by a daily backstop that polls\n",
@@ -1510,10 +1527,10 @@ test("M-T4.2: the pre-amend tree is red, once per sentence, naming the file", ()
   assert.equal(r.status, "red");
   const said = r.detail.join("\n");
   for (const rel of Object.keys(RETIRED_TEXT)) assert.match(said, new RegExp(`^${rel.replace(/[.]/g, "\\.")} says`, "m"));
-  // Two A1 sentences, one A2, one sandbox, two E1 and commit B's three: nine
-  // findings, and none merged into another.
+  // Two A1 sentences, one A2, one sandbox, two E1, commit B's three and commit
+  // C's ten: nineteen findings, and none merged into another.
   assert.deepEqual([...new Set(r.codes)], ["ROLL47_PROMISE_RESTATED"]);
-  assert.equal(r.detail.filter((d) => / says "/.test(d)).length, 9);
+  assert.equal(r.detail.filter((d) => / says "/.test(d)).length, 19);
   for (const p of ROLL47_PROMISES) assert.match(said, new RegExp(`row ${p.row}\\b`), `row ${p.row} did not fire`);
 });
 
@@ -2818,15 +2835,54 @@ test("repo-settings: TRUST-44's read of what ROLL-7 pins fits the 12 calls the c
 
 // ── M-T6.2: no issue channel from cutover on (DEC-12, ROLL-33) ──────────────
 //
-// Armed by `log/cutover.json`, so these fixtures are the whole proof until the
-// cutover commit: the real tree is not armed, and the rule says so and names
-// `ingest.yml`'s three triggers.
-
-const INGEST_REAL = fs.readFileSync(path.join(REPO, ".github", "workflows", "ingest.yml"), "utf8");
+// Armed by `log/cutover.json`, so these fixtures were the whole proof until the
+// cutover commit.
+//
+// Cutover commit E (registry plan B-T5.2) deleted `ingest.yml`, which these
+// fixtures were built from, so the file is written out below, as commits B to
+// D left it. It carries what each rule reads: the drain cron routed to
+// `bot/watch.mjs --drain`, a no-input dispatch, and a `comment` job. The real
+// `comment` job granted `issues: write`, which commit C exempted by name until
+// E; that grant is put back only where the test is about it (INGEST_WRITES).
+const INGEST_REAL = [
+  "name: Ingest",
+  "",
+  "on:",
+  "  schedule:",
+  "    - cron: '17 * * * *'",
+  "  workflow_dispatch:",
+  "",
+  "permissions: {}",
+  "",
+  "jobs:",
+  "  drain:",
+  "    runs-on: ubuntu-24.04",
+  "    permissions:",
+  "      contents: read",
+  "    steps:",
+  "      - name: Which queued releases are ripe",
+  "        env:",
+  "          SCHEDULE: ${{ github.event.schedule }}",
+  "        run: |",
+  '          case "$SCHEDULE" in',
+  "            '17 * * * *')",
+  "              node bot/watch.mjs --drain --out out",
+  "              ;;",
+  "            *)",
+  "              exit 1",
+  "              ;;",
+  "          esac",
+  "  comment:",
+  "    needs: drain",
+  "    runs-on: ubuntu-24.04",
+  "    permissions:",
+  "      contents: read",
+  "    steps: []",
+  "",
+].join("\n");
 // The three trigger blocks as ingest.yml carried them until the cutover commit
-// (ROLL-33) removed them. Before that commit the real file IS the pre-cutover
-// shape; from it on, that shape is the real file with these put back, so both
-// fixtures stay built from committed material on either side of the cutover.
+// (ROLL-33) removed them. The pre-cutover shape is the file above with these
+// put back.
 const ISSUE_TRIGGER_BLOCKS = [
   /\n {2}issues:\n {4}types: \[[^\]]*\]/,
   /\n {2}issue_comment:\n {4}types: \[[^\]]*\]/,
@@ -2837,6 +2893,10 @@ const INGEST_PRE = INGEST_HAS_TRIGGERS ? INGEST_REAL : INGEST_REAL.replace(/^on:
   "on:\n  issues:\n    types: [opened, edited, labeled]\n  issue_comment:\n    types: [created]\n" +
   "  repository_dispatch:\n    types: [plugin-release]\n");
 const INGEST_CUT = ISSUE_TRIGGER_BLOCKS.reduce((t, b) => t.replace(b, ""), INGEST_PRE);
+// The cut file with its `comment` job's grant back, as commits B to D ran it.
+const COMMENT_GRANT = "  comment:\n    needs: drain\n    runs-on: ubuntu-24.04\n    permissions:\n      contents: read\n";
+if (INGEST_CUT.split(COMMENT_GRANT).length !== 2) throw new Error("the legacy ingest.yml has no comment job to grant from");
+const INGEST_WRITES = INGEST_CUT.replace(COMMENT_GRANT, COMMENT_GRANT.replace("contents: read", "issues: write"));
 // Stamped now: ROLL-33 makes cutover_at the commit time, and the rule holds the
 // marker to the commit that brought it (the stamp leg, below).
 const nowStamp = () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -2877,7 +2937,7 @@ test("no-issue-channel: the cutover commit's own shape — triggers dropped, dra
     assert.equal((cut.match(new RegExp(block.source, "g")) ?? []).length, 1, `${block} did not match exactly once in ingest.yml`);
     cut = cut.replace(block, "");
   }
-  // From the cutover commit on, the real file is that shape.
+  // From the cutover commit until commit E, the file was that shape.
   if (!INGEST_HAS_TRIGGERS) assert.equal(INGEST_REAL, cut, "ingest.yml carries no issue trigger, but is not the cutover shape");
   assert.ok(nicTriggers(cut).some((t) => t.trigger === "schedule"), "the edit removed the schedule too");
   const r = nic(channelFixture("nic-cut", { ingest: cut, cutover: true }).dir);
@@ -2935,6 +2995,30 @@ test("no-issue-channel: the marker's cutover_at is the time main acquired it, wi
   merged.checkout("main").git("merge", "-q", "--no-ff", "-m", "merge the cutover", "cutover");
   const m = nic(merged.dir);
   assert.equal(m.status, "green", m.detail.join("\n"));
+});
+
+test("no-issue-channel: from cutover no workflow grants `issues: write`, ingest.yml included since commit E", () => {
+  const writer = "name: w\non:\n  schedule:\n    - cron: '1 1 * * *'\njobs:\n  j:\n    runs-on: ubuntu-24.04\n    permissions:\n      contents: read\n      issues: write\n    steps: []\n";
+  const armed = nic(channelFixture("nic-writer", { ingest: INGEST_CUT, extra: { "writer.yml": writer }, cutover: true }).dir);
+  assert.equal(armed.status, "red");
+  assert.ok(armed.codes.includes("ISSUE_CHANNEL_WRITE"), armed.codes.join(" "));
+  assert.match(armed.detail.join("\n"), /writer\.yml:\d+ grants `issues: write`/);
+  // Before cutover an issue writer is the live path, not a finding.
+  const pre = nic(channelFixture("nic-writer-pre", { extra: { "writer.yml": writer } }).dir);
+  assert.equal(pre.status, "green", pre.detail.join("\n"));
+  // ingest.yml's own grants were exempt by name from commit C until E deleted
+  // the file. The exemption went with it: a workflow called ingest.yml after E
+  // is a new file, and its grant is red like any other.
+  assert.notEqual(INGEST_WRITES, INGEST_CUT, "the legacy file this proves on grants nothing");
+  const legacy = nic(channelFixture("nic-writer-legacy", { ingest: INGEST_WRITES, cutover: true }).dir);
+  assert.equal(legacy.status, "red", legacy.detail.join("\n"));
+  assert.match(legacy.detail.join("\n"), /ingest\.yml:\d+ grants `issues: write`/);
+  // A commented grant is not a grant.
+  const quiet = nic(channelFixture("nic-writer-commented", {
+    ingest: INGEST_WRITES.replace("      issues: write\n", "      # issues: write\n"),
+    extra: { "quiet.yml": writer.replace("      issues: write\n", "      # issues: write\n") }, cutover: true,
+  }).dir);
+  assert.equal(quiet.status, "green", quiet.detail.join("\n"));
 });
 
 // ── drain-age's leg 2 retires at cutover (M-T6.2 commit B, B-T5.1) ──────────
@@ -3016,4 +3100,93 @@ test("B-T3.7b: the privacy scan's marker members are exactly the ones bot/baseli
   const written = Object.keys(marker({ writtenAt: "2026-09-24T16:15:44Z", sourceCommit: "f".repeat(40), versionCount: 1, recordCount: 1 })).sort();
   assert.ok(written.length >= 5, `the marker has ${written.length} member(s); it had 5 when this was written`);
   assert.deepEqual([...DOCUMENT_MEMBERS.baseline.members].sort(), written);
+});
+
+// ── drain-age's leg 1 retires with commit E (B-T5.2) ────────────────────────
+//
+// E deletes ingest.yml after the drain's last run. With the cutover marker on
+// the tree and the queue empty that is the drain retired, and green. A queued
+// release with no drain left to publish it is red, and so is a missing file on
+// a tree the cutover never reached.
+function retiredDrainFixture(name, { cutover = true, queued = false } = {}) {
+  const f = fixture(name);
+  f.write("README.md", "a tree after commit E\n");
+  if (cutover) f.write(NIC_CUTOVER, CUTOVER_DOC);
+  if (queued) {
+    f.write("state/queue/dice-roller@0.3.0.json", {
+      id: "dice-roller", version: "0.3.0", repo: "someone/dice-roller", tag: "v0.3.0",
+      queued_at: "2026-09-27T00:00:00Z", publish_after: "2026-09-28T00:00:00Z", reason: "P_DELAY_HIGH_RISK",
+    });
+  }
+  return f.commit("fixture");
+}
+
+test("drain-age: after commit E the drain is retired, and a queued release with no drain is red", () => {
+  const now = new Date("2026-10-10T00:00:00Z");
+  const retired = drainAge(retiredDrainFixture("drain-e").dir, { now });
+  assert.equal(retired.status, "green", retired.detail.join("\n"));
+  assert.match(retired.detail.join("\n"), /leg 1 is retired/);
+
+  const stranded = drainAge(retiredDrainFixture("drain-e-queued", { queued: true }).dir, { now });
+  assert.equal(stranded.status, "red", stranded.detail.join("\n"));
+  assert.ok(stranded.codes.includes("DRAIN_WORKFLOW_ABSENT"), stranded.codes.join(" "));
+  assert.match(stranded.detail.join("\n"), /holds 1 release\(s\) waiting for it/);
+
+  const early = drainAge(retiredDrainFixture("drain-e-early", { cutover: false }).dir, { now });
+  assert.equal(early.status, "red", early.detail.join("\n"));
+  assert.ok(early.codes.includes("DRAIN_WORKFLOW_ABSENT"), early.codes.join(" "));
+});
+
+// ── MOD-54's report page, from commit C on (M-T6.2) ─────────────────────────
+//
+// Commit C sends every reporter to the panel. Until 2026-09-24 it sent them to
+// the panel's plugin list, because contract MOD-54 names the report page only
+// as "under /plugins/_/". minice-e4 then gave the path, and it is the one
+// minice-be's panel document cites and tools/cutover-preflight.mjs already
+// walks: `/plugins/_/report?plugin=<plugin_id>`, or bare, where the reporter
+// picks the plugin. Contract 3.1.0 records that path, as the token file's
+// `page:MOD-54`; tools/selftest/contract-tokens.mjs holds the record to the
+// preflight's REPORT_PAGE, and this test holds every link to the preflight.
+//
+// What this holds: the issue page's first link, and each page that tells a
+// reader how to report, name that page, bare where they know no plugin. Every
+// spelling of the path in the tree is one of those two forms, so a `/reports`,
+// a `/report/` or a stray `?id=` fails here, by file and line, and not after
+// cutover when a reporter follows it.
+const REPORT_PAGE = "https://astra.minice.ai/plugins/_/report";
+
+test("commit C: config.yml's first link and every how-to-report page name MOD-54's report page", () => {
+  const read = (f) => fs.readFileSync(path.join(REPO, f), "utf8");
+  const config = read(".github/ISSUE_TEMPLATE/config.yml");
+  const urls = [...config.matchAll(/^\s+url:\s*(\S+)\s*$/gm)].map((m) => m[1]);
+  assert.equal(urls[0], REPORT_PAGE, "the issue page's first link is MOD-54's report page, in its bare form");
+  const first = config.slice(config.indexOf("contact_links:")).split(/^  - name:/m)[1] ?? "";
+  for (const [what, re] of [
+    ["the vulnerability mailbox", /security@minice\.ai/],
+    ["who reads it", /project\s+owner/],
+    ["that it is not encrypted", /not\s+encrypted/],
+    ["that a report is not embargoed", /not\s+embargoed/],
+  ]) assert.match(first, re, `MOD-45: the report link's text names ${what}`);
+
+  for (const file of ["site/templates/pages.mjs", "site/build.mjs", "POLICY.md", "docs/POLICY.md"]) {
+    assert.ok(read(file).includes(REPORT_PAGE), `${file} tells a reader how to report and does not link ${REPORT_PAGE}`);
+  }
+  assert.ok(read("tools/cutover-preflight.mjs").includes(`"${REPORT_PAGE}?plugin=<id>"`),
+    "the preflight's MOD-54 walk and the links point at different pages");
+
+  const tracked = execFileSync("git", ["-C", REPO, "ls-files", "-z"], { encoding: "utf8", env: cleanEnv() }).split("\0").filter(Boolean)
+    .filter((f) => !f.startsWith("log/") && !/\.(png|ico|gz|wasm|sig|bin)$/.test(f));
+  const bad = [];
+  for (const f of tracked) {
+    let text;
+    try { text = read(f); } catch { continue; }
+    text.split("\n").forEach((line, i) => {
+      for (const m of line.matchAll(/astra\.minice\.ai\/plugins\/_\/report[^\s"'`)\]]*/g)) {
+        if (!/^astra\.minice\.ai\/plugins\/_\/report(\?plugin=(<id>|<plugin_id>|PLUGIN_ID|\$\{[^}]+\}))?(>|<\/a>)?[.,;:]?$/.test(m[0])) {
+          bad.push(`${f}:${i + 1} ${m[0]}`);
+        }
+      }
+    });
+  }
+  assert.equal(bad.join("\n"), "", "a spelling of MOD-54's report page that is neither the bare page nor ?plugin=");
 });

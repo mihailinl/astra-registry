@@ -574,24 +574,30 @@ function securityIntro(contact) {
   const fpr = typeof contact.pgp_fingerprint === "string" && contact.pgp_fingerprint.length ? contact.pgp_fingerprint : null;
   const keyFile = typeof contact.pgp_key_file === "string" && contact.pgp_key_file.length ? contact.pgp_key_file : null;
 
+  const reader = typeof contact.reader === "string" && contact.reader.length ? contact.reader : null;
+
+  // From the cutover (ROLL-33; MOD-45): the channel is the mailbox, read by the
+  // owner, and no page offers GitHub private reporting or an issue form for a
+  // vulnerability. Without a key the page says, in a box, that the mail is not
+  // encrypted, so the reporter decides how much to send knowing it.
   const embargo = fpr
     ? `<p><strong>Encrypted, for anything that would let somebody ship code to a user.</strong>
 Mail <code>${escapeText(mailbox ?? "")}</code>, encrypted to
 <code class="digest">${escapeText(fpr)}</code>${keyFile ? ` — <a href="${escapeText(keyFile)}">public key</a>` : ""}.</p>`
-    : `<p class="alert"><strong>There is no PGP key yet.</strong> The mailbox
-${mailbox ? `<code>${escapeText(mailbox)}</code>` : "in the repository profile"} exists and is read,
-but nothing published here can encrypt to it, so <em>do not send an unencrypted vulnerability report
-to it</em>. Use a <a href="${escapeText(contact.advisory_url ?? "")}">private GitHub security
-advisory</a> instead: it is end-to-end between you and the maintainer, it needs no key ceremony, and
-it is the path this registry can honestly offer today. This paragraph is generated from
-<code>bot/security-contact.json</code> and is replaced by the key&rsquo;s fingerprint the moment one
-is provisioned — see <code>docs/POLICY.md</code> for what provisioning involves.</p>`;
+    : `<p class="alert"><strong>For anything that would let somebody ship code to a user, mail
+${mailbox ? `<code>${escapeText(mailbox)}</code>` : "the address in the repository profile"}.</strong>
+It is read by ${escapeText(reader ?? "the project owner")}, and it is <em>not encrypted</em>: there is no
+PGP key yet, so say you have a report, without the details, if you want to agree a channel first.
+This registry offers no issue form and no GitHub private reporting for it. This paragraph is
+generated from <code>bot/security-contact.json</code> and is replaced by the key&rsquo;s fingerprint
+the moment one is provisioned.</p>`;
 
   return `${embargo}
-<p class="thin">Please do not open a public issue for anything that would let someone ship code to a
-user. Everything else &mdash; a plugin behaving differently from its description, a name that looks
-like impersonation &mdash; is a normal public issue, and those are the reports this registry
-actually relies on.</p>`;
+<p class="thin">Everything else &mdash; a plugin behaving differently from its description, a name
+that looks like impersonation &mdash; is a report, made on Minice&rsquo;s
+<a href="https://astra.minice.ai/plugins/_/report">report page</a> or from the plugin&rsquo;s page in
+the panel, and those are the reports this registry actually relies on. A report is not embargoed, so a
+vulnerability does not go there. An issue opened on this repository reaches nobody.</p>`;
 }
 
 /** Local escaping for the two strings above; the templates use `esc`. */
