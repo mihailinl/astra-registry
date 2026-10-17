@@ -2288,6 +2288,40 @@ test("verify's alert, wait and refusal each keep their own shape", () => {
   }
 });
 
+// A refusal before the fingerprint is keyed `submission:<id>::refused`
+// (BOT-35, the key bot/lib/service-publish.mjs derives for a record with no
+// fingerprint), so every later refusal of the same submission derives the same
+// id. Submission ae402306 was refused `E_ATTESTATION_MISSING` (record 209913af
+// on main), the service did not settle it, and three re-leases each refused
+// `E_RELEASE_NOT_FOUND` under that id: BOT-36 wrote nothing and the result
+// named the old record with the new reason, settled as `record_mismatch`.
+// Watched red: with the lookup removed, the plan is a new `state` refusal
+// naming `E_RELEASE_NOT_FOUND`; with the lookup keyed on the fingerprinted
+// shape, the same.
+test("BOT-19/BOT-23: a pre-fingerprint refusal already on main is reported with its own reason, never re-refused under the same id", () => {
+  const refusedId = decisionId(submissionKey({ submission_id: P.sid, fingerprint: null, state: "refused" }));
+  assert.equal(refusedId, decisionId(`submission:${P.sid}::refused`), "the id a fingerprint-less record is written under");
+  const onMain = { schema: "astra.registry.decision/1", submission_id: P.sid, actor: "bot", trigger: "poll", decided_at: "2026-10-16T09:00:00Z",
+    state: "refused", reasons: ["E_ATTESTATION_MISSING"], decision_id: refusedId, run: "1/1" };
+  const later = { submission_id: P.sid, outcome: "refuse", code: "E_RELEASE_NOT_FOUND", findings: [{ level: "error", code: "E_RELEASE_NOT_FOUND", where: null, message: "the release is gone" }] };
+  const plan = decideWith({ verified: later, git: git({ records: [baseline(), onMain] }) });
+  assert.equal(plan.kind, "reported", `${plan.kind} ${JSON.stringify(plan.record?.reasons ?? plan.reasons?.map((r) => r.code))}`);
+  assert.equal(plan.state, "refused");
+  assert.equal(plan.decision_id, refusedId, "the result names the record on main");
+  assert.deepEqual(plan.reasons.map((r) => r.code), ["E_ATTESTATION_MISSING"], "the result carries main's reason, not this run's");
+  assert.equal(plan.record, null, "nothing new is written");
+  assert.match(plan.why, /BOT-19\/BOT-23/);
+  const body = resultBody(plan, {});
+  assert.deepEqual(recordAgreement(body, onMain), [], "BOT-23: the posted result is the record on main");
+  // Positive control: with no refusal on main, the refusal is new, as before.
+  const fresh = decideWith({ verified: later, git: git({ records: [baseline()] }) });
+  assert.equal(fresh.kind, "state");
+  assert.deepEqual(fresh.record.reasons, ["E_RELEASE_NOT_FOUND"]);
+  // Another submission's pre-fingerprint refusal is not this one's.
+  const other = { ...onMain, submission_id: P.sid2, decision_id: decisionId(submissionKey({ submission_id: P.sid2, fingerprint: null, state: "refused" })) };
+  assert.equal(decideWith({ verified: later, git: git({ records: [other] }) }).kind, "state");
+});
+
 // ── B-T3.3c: the outcomes that write nothing ────────────────────────────────
 
 const mReject = { submission_id: P.sid2, fingerprint: FP, state: "refused", decision_id: "a".repeat(32), decided_at: "2026-09-20T00:00:00Z", reasons: ["M_REJECT"] };

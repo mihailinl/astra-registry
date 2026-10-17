@@ -887,6 +887,31 @@ export function decideSubmission(input) {
       verified.code,
       ...(verified.findings ?? []).filter((f) => f.level === "error").map((f) => f.code),
     ].filter((c) => /^[A-Z]_[A-Z0-9]+(?:_[A-Z0-9]+)*$/.test(String(c))))];
+    // BOT-19 / BOT-23 before anything new is planned. A refusal before the
+    // fingerprint is keyed by the submission and the state alone —
+    // `submission:<id>::refused`, the key service-publish.mjs derives for a
+    // record with no fingerprint (BOT-35) — so every later refusal of the same
+    // submission derives the SAME id, whatever its reason. Submission ae402306
+    // was refused `E_ATTESTATION_MISSING` (record 209913af on main); the
+    // service did not settle it, the bot leased it three more times, and each
+    // run refused `E_RELEASE_NOT_FOUND` (the release had since been deleted)
+    // under that id. BOT-36 found the id on main and wrote nothing, and the
+    // result named the old record with the new reason, which the service
+    // settles as `record_mismatch`. The record on main is the decision; the
+    // result reports it.
+    const refusedId = decisionId(submissionKey({ submission_id: sid, fingerprint: null, state: "refused" }));
+    const onMain = (input.git?.records ?? []).find((r) => r?.decision_id === refusedId && r?.state === "refused");
+    if (onMain) {
+      const mainCodes = Array.isArray(onMain.reasons) ? onMain.reasons : [];
+      return plan("reported", {
+        state: "refused",
+        decision_id: refusedId,
+        reasons: mainCodes.map((c) => reasonOf(c)),
+        why:
+          `BOT-19/BOT-23: main already carries this submission's refusal (${refusedId}, ${mainCodes.join(", ") || "no codes"}); ` +
+          `a second reason under the same id is a record mismatch, so this run's ${codes.join(", ") || "refusal"} is not recorded`,
+      });
+    }
     const trigger = lease.claimed_from === "approved" ? "approval" : lease.claimed_from === "delayed" ? "drain" : lease.trigger;
     return plan("state", {
       state: "refused",
