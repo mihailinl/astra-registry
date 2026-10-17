@@ -192,13 +192,19 @@ export const CHECKS = [
     // service's own moderation bound (BOT-84) is a different number and is
     // not this one.
     //
-    // Disarmed: its poster is the `settled` job, and the workflow's schedule
-    // is commented out until R3 opens (§2.5), so today it runs only on a
-    // dispatch. R3's open commit arms this row with the schedule.
+    // Created disarmed: its poster is the `settled` job, and the workflow's
+    // schedule was commented out until R3 opened, so it ran only on a
+    // dispatch. Armed by its first post, from the `settled` job of dispatched
+    // run 38525175920 ("success posted for receiver check moderation-run",
+    // 2026-10-14T06:58:24Z); the plugins service's waker has dispatched the
+    // workflow about every five minutes since 2026-10-15. Recorded here on
+    // 2026-10-17 in the commit that restores the schedule (the plugins
+    // friction plan's item 13(d)), which keeps the waker as the primary
+    // trigger and makes the schedule the floor under it.
     source: "M-T3.4 (BOT-83), .github/workflows/plugins-moderation.yml",
     interval_seconds: 600,
     created_disarmed: true,
-    armed_at: null,
+    armed_at: "2026-10-14T06:58:24Z",
     signals: ["success"],
   },
   {
