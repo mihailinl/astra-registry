@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "Y+1xNz22lozkI/Du1wUoHz0qAWuC2HzgPAsWNoH7WZQmBilKiNpOCbJUJcCxVr5wsr2K6LKpWaiwBj8o2PJ6Bw=="
+      "sig": "9vxDDieQd2tr93QXlZ2ISw364WXPP/0t24cURePQAYtdQffQj7e0IuXBahiDVNFetm0dwgNhs1SnKMbrV9ljAw=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-16T09:55:09Z",
-    "issued_at": "2026-10-17T09:55:09Z",
+    "expires_at": "2026-11-16T11:55:52Z",
+    "issued_at": "2026-10-17T11:55:52Z",
     "plugins": [
       {
         "added_at": "2026-08-10",
@@ -877,11 +877,47 @@
         "license": "MIT",
         "name": "E2E Third-party (do not install)",
         "platform_downloads": {
-          "linux-x64": "https://github.com/astra-test-author/astra-e2e-thirdparty/releases/download/v0.1.0/e2e-thirdparty-0.1.0-linux-x64.astraplugin",
-          "windows-x64": "https://github.com/astra-test-author/astra-e2e-thirdparty/releases/download/v0.1.0/e2e-thirdparty-0.1.0-windows-x64.astraplugin"
+          "linux-x64": "https://github.com/astra-test-author/astra-e2e-thirdparty/releases/download/v0.1.1/e2e-thirdparty-0.1.1-linux-x64.astraplugin",
+          "windows-x64": "https://github.com/astra-test-author/astra-e2e-thirdparty/releases/download/v0.1.1/e2e-thirdparty-0.1.1-windows-x64.astraplugin"
         },
         "readme": "# E2E Third-party (do not install)\n\n**This is a test plugin. Do not install it.** It exists only to exercise the Astra plugins registry's\nthird-party publishing walk (ROLL-32) end to end — repository binding, release, ingest and serving — from\na third-party GitHub org. It is a copy of `astra-dice-roller` with a different id and is not a real\nplugin. It will be withdrawn after the test.\n",
         "releases": [
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "e2e-thirdparty-0.1.1-linux-x64.astraplugin",
+                "sha256": "41b6f970f2244184a2ba4d985e872fdeb4a0e6f3da68709a2dc591ffcaf0874c",
+                "size": 2885504,
+                "url": "https://github.com/astra-test-author/astra-e2e-thirdparty/releases/download/v0.1.1/e2e-thirdparty-0.1.1-linux-x64.astraplugin"
+              },
+              "windows-x64": {
+                "filename": "e2e-thirdparty-0.1.1-windows-x64.astraplugin",
+                "sha256": "18a9a86f1d3acac3bce78e43fefa2b4b31ea4e16b68e7a99045e87eeb7bacb1b",
+                "size": 2463754,
+                "url": "https://github.com/astra-test-author/astra-e2e-thirdparty/releases/download/v0.1.1/e2e-thirdparty-0.1.1-windows-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "actions",
+              "tools",
+              "triggers"
+            ],
+            "permissions": {
+              "fire_trigger": {
+                "reason": "Fires the on_roll_value trigger so your commands can react to what you rolled"
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-10-17T09:33:51Z",
+            "release": {
+              "commit": "a9cd8b5538bcea802c73308d07154c722b61b6df",
+              "kind": "github_release",
+              "repo": "astra-test-author/astra-e2e-thirdparty",
+              "tag": "v0.1.1"
+            },
+            "review": "unreviewed",
+            "version": "0.1.1"
+          },
           {
             "artifacts": {
               "linux-x64": {
@@ -925,8 +961,8 @@
           "repo": "astra-test-author/astra-e2e-thirdparty"
         },
         "stars": 0,
-        "updated_at": "2026-10-16T04:38:29Z",
-        "version": "0.1.0"
+        "updated_at": "2026-10-17T09:33:51Z",
+        "version": "0.1.1"
       },
       {
         "added_at": "2026-08-10",
@@ -2195,6 +2231,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 64
+    "serial": 65
   }
 }
