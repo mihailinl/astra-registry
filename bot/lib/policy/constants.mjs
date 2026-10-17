@@ -222,18 +222,18 @@ export const POLICY_CODES = {
       "Nothing to do. The hold is gone; every check above was re-run from scratch in this run, " +
       "against the release as it is today, and what publishes is what this run verified.",
   },
-  // Two refusals since contract 3.7.0, and the title says both: BOT-26 (2),
-  // the release changed after the approval, and BOT-26 (4), the approval aged
-  // past the maximum. Until 2026-10-05 it said only the first, so the hold an
-  // aged approval sent back told the moderator the release had changed.
+  // One cause since contract 5.8.0: BOT-26 (2), the release changed after the
+  // approval. From 3.7.0 to 5.7.0 it had a second, BOT-26 (4), an approval
+  // older than the 7-day maximum, and the title and remedy said both; 5.8.0
+  // removed the maximum (OD-28), so they say only what can still happen.
   P_APPROVAL_STALE: {
     level: "review", stage: "policy", fix: "moderator",
-    title: "The approval does not clear this hold: it named a different submission, or it is older than the maximum",
+    title: "The approval does not clear this hold: it named a different submission",
     remedy:
-      "Nothing published and nothing was lost. Either the release changed after the approval was given " +
-      "(the repository, tag, version or assets), or the approval is older than the POLICY.md maximum of " +
-      "7 days. The message names which, and when the approval was given. Read the release as it stands " +
-      "now and, if it is still a yes, approve it again.",
+      "Nothing published and nothing was lost. The release changed after the approval was given (the " +
+      "repository, tag, version or assets), so the approval names a submission that is no longer the one " +
+      "here. The message names the submission that was approved and the one that is here now. Read the " +
+      "release as it stands now and, if it is still a yes, approve it again.",
   },
   R_CHECK_HELD: {
     level: "review", stage: "policy", fix: "moderator",
