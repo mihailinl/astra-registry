@@ -1390,6 +1390,18 @@ test("claim's register half, in shadow, prints what it would register, calls not
   assert.deepEqual(run.readRegistered(JSON.stringify(live.registered)),
     [{ repo: REPO, tag: "v0.3.0" }, { repo: "Some/Mono", tag: "alpha-v0.2.0" }]);
 
+  // A live register answered in shadow (TRUST-31's hold after a bot-code
+  // merge) registered nothing, so it must not reach the memory: e2e-thirdparty
+  // v0.1.2 did, on 2026-10-17, and the poll never offered it again.
+  for (const withheld of [{ ok: true, shadow: true, body: {} }, { ok: true, shadow: true, unreadable: true }]) {
+    const held = stubClient(withheld);
+    const q = quietLog();
+    const out = await claimJob({ client: held, polled: tags, mode: "live", log: q.log });
+    assert.equal(held.calls.filter((c) => c.op === "register").length, 2, "the register calls are still made");
+    assert.deepEqual(out.registered, [], `an answer ${JSON.stringify(withheld)} registered nothing`);
+    assert.ok(q.lines.some((l) => /answered in shadow/.test(l)), q.lines.join("\n"));
+  }
+
   for (const mode of [undefined, null, "", "Shadow", "dry"]) {
     const c = stubClient();
     await assert.rejects(claimJob({ client: c, polled: tags, mode, log: quietLog().log }), /POLL_MODE/,
@@ -1408,14 +1420,14 @@ test("claim's register half, in shadow, prints what it would register, calls not
 const pathToUrl = (p) => new URL(`file://${path.resolve(p)}`).href;
 
 /** A service client that answers `claim` with no lease and records every call. */
-function stubClient() {
+function stubClient(registerAnswer = { ok: true, body: {} }) {
   const calls = [];
   return {
     calls,
     alerts: [],
     async call(op, body) {
       calls.push({ op, body });
-      if (op === "register") return { ok: true, body: {} };
+      if (op === "register") return registerAnswer;
       return { ok: false, wait: "W_SERVICE_UNREACHABLE" };
     },
   };

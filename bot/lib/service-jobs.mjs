@@ -162,7 +162,16 @@ export async function claimJob({ client, polled = [], mode = null, log = console
       continue;
     }
     const answer = await client.call("register", { repo: t.repo, repository_id: t.repository_id ?? null, tag: t.tag, trigger: "poll" });
-    if (answer.ok && !answer.unreadable) registered.push(`${t.repo}@${t.tag}`);
+    // A `shadow: true` answer registered nothing: TRUST-31 holds every bot
+    // call in shadow between a bot-code merge and the operator's
+    // acknowledgement (ID-71), and the service answers 200 without creating a
+    // submission. Counted as registered, the tag entered the poll's memory and
+    // was never offered again — e2e-thirdparty v0.1.2, polled at 10:25:09Z on
+    // 2026-10-17 inside the hold #456 opened, has no submission at all. Left
+    // out, the feed's old ETag stays (rememberPoll) and the next poll after
+    // the acknowledgement offers it again.
+    if (answer.ok && answer.shadow !== true && !answer.unreadable) registered.push(`${t.repo}@${t.tag}`);
+    else if (answer.ok) log.log(`register ${t.repo}@${t.tag}: answered in shadow (TRUST-31 hold), so nothing was registered; the next poll offers it again`);
   }
   if (mode === "shadow" && polled.length === 0) log.log("would register nothing: the poll offered no tag this run");
 
