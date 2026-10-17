@@ -443,7 +443,8 @@ export function sweepRemote(listings, lsRemote = lsRemoteTags) {
  */
 export function composeRemember({ memory, discarded, listings, polled, registered, swept, sweepDue: due, sweepFailed, now, mode, run = null }) {
   let next = memory;
-  if (polled) next = rememberPoll(next, polled, registered, now);
+  const notes = [];
+  if (polled) next = rememberPoll(next, polled, registered, now, notes);
   let alerts = [];
   let failed = [];
   if (swept) {
@@ -473,6 +474,7 @@ export function composeRemember({ memory, discarded, listings, polled, registere
     alerts,
     stale,
     failed,
+    notes,
   };
 }
 
@@ -592,6 +594,7 @@ function cmdRemember(env) {
   if (mode === "live") for (const a of r.alerts) lines.push(`alarm ${BOT_87_CODES.unregistered}: ${a.id} ${a.sha}`);
   for (const s of r.stale) lines.push(`stale: ${s.id} (${s.repo}), last successful poll ${s.last_success_at ?? "never"}`);
   for (const f of r.failed) lines.push(`sweep failed: ${f.id} (${f.repo}): ${f.error}`);
+  for (const n of r.notes ?? []) lines.push(`note ${n}`);
   if (discarded) lines.push(`the cached memory was discarded: ${discarded}`);
   for (const l of lines) console.log(l);
   summary(["### remember", "", ...lines.map((l) => `- ${l}`)], env);

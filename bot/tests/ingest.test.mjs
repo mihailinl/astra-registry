@@ -3107,6 +3107,17 @@ await test("verify: GitHub not answering the release or an asset read is a wait;
   assertEqual(unattested.v.code, "E_ATTESTATION_UNCHECKED", JSON.stringify(unattested.v));
 });
 
+// The third verification round: a bundle whose upload never finished was
+// HEADed, 404'd and refused E_ASSET_HEAD_FAILED, which holds the tag for good;
+// it is not part of the release yet, so the refusal is FLOW-4(b)'s.
+await test("verify: a bundle whose upload never finished is not a bundle yet — E_NO_BUNDLE_ASSETS, a pre-release refusal", async () => {
+  const { v } = await verifyRun({ assets: [{ ...conformingAsset(), state: "open" }] });
+  assertEqual(v.outcome, "refuse", JSON.stringify(v));
+  assertEqual(v.code, "E_NO_BUNDLE_ASSETS", "FLOW-4(b)'s pre-release class, so a later register gets a fresh submission");
+  const done = await verifyRun({ assets: [{ ...conformingAsset(), state: "uploaded" }] });
+  assertEqual(done.v.outcome, "ok", "the positive control: an uploaded bundle verifies");
+});
+
 await test("github: release and asset reads throw GitHubUnanswered for everything but a 404 or 410", async () => {
   const gh = await import("../lib/github.mjs");
   const answer = (status, extra = {}) => async () => ({ status, ok: status >= 200 && status < 300, url: "https://objects.githubusercontent.com/x", headers: new Map(), json: async () => ({ tag_name: "v1" }), arrayBuffer: async () => new ArrayBuffer(1), ...extra });

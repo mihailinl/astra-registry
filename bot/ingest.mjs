@@ -1093,8 +1093,13 @@ export async function verifyFacts(opts, deps = {}) {
     if (gh.isUnanswered(e)) return unanswered(e);
     return refuse("E_RELEASE_NOT_FOUND", "release", e.message);
   }
-  const bundles = (release.assets ?? []).filter((a) => typeof a?.name === "string" && a.name.endsWith(".astraplugin"));
-  if (bundles.length === 0) return refuse("E_NO_BUNDLE_ASSETS", "release", `${lease.repo}@${lease.tag} carries no .astraplugin asset`);
+  // An asset whose upload never finished (`state` other than `uploaded`) is
+  // not part of the release: refused as a bundle that is not there yet,
+  // E_NO_BUNDLE_ASSETS, a pre-release refusal (FLOW-4(b)) — not as a HEAD
+  // that 404s, E_ASSET_HEAD_FAILED, which holds the tag for good.
+  const bundles = (release.assets ?? []).filter((a) => typeof a?.name === "string" && a.name.endsWith(".astraplugin") &&
+    (a.state === undefined || a.state === "uploaded"));
+  if (bundles.length === 0) return refuse("E_NO_BUNDLE_ASSETS", "release", `${lease.repo}@${lease.tag} carries no uploaded .astraplugin asset`);
   // Every name, before any asset is fetched: this job refuses a release whole
   // at its first refusal, so a name no release can carry is decided before a
   // byte of any bundle beside it reaches the disk.

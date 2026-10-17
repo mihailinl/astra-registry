@@ -282,8 +282,18 @@ export function classifyGhFailure(e, argvValues = []) {
   }
   const c = classifyVerifyFailure(said);
   const notRun = e?.killed === true || (e?.signal ?? null) !== null || typeof e?.code === "string";
-  return { ...c, unavailable: !c.missing && !c.policyRefusal && (c.unavailable || notRun) };
+  // Only gh's own verdicts refuse: a 404 (missing), a policy or certificate
+  // mismatch, or a failed signature or digest check. Anything else — and Go's
+  // transport failures are a long tail (`x509:`, `context deadline exceeded`,
+  // `stream error`, an HTML page where JSON was expected) — is the verifier
+  // not running, a wait. Waiting on an unknown failure never publishes
+  // (DEC-11) and pages after BOT-76's bound; refusing on one is final.
+  const judged = c.missing || c.policyRefusal || VERDICT_RE.test(said);
+  return { ...c, unavailable: !c.missing && !c.policyRefusal && (c.unavailable || notRun || !judged) };
 }
+
+/** gh's words for an attestation it checked and found wrong, other than a 404 or a policy refusal. */
+const VERDICT_RE = /failed to verify|verification failed|signature (?:is )?(?:invalid|mismatch)|digest (?:mismatch|does not match)|subject digest|\bdoes not match\b/i;
 
 /**
  * Run `gh attestation verify` and check what it says.

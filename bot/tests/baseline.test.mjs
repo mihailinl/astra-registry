@@ -356,7 +356,13 @@ test("a failed gh run is read from gh's own stderr, a policy refusal beats a net
   assert.equal(read(Object.assign(new Error("spawn gh ENOENT"), { code: "ENOENT" })).unavailable, true, "gh never started");
   assert.deepEqual(read(failed("HTTP 404: Not Found", { killed: true, signal: "SIGTERM", code: null })),
     { missing: true, policyRefusal: false, unavailable: false }, "a 404 already said is still the artifact's fact");
-  assert.equal(read(failed("something gh has never said before")).unavailable, false, "unknown text stays a refusal, as before");
+  assert.equal(read(failed("something gh has never said before")).unavailable, true,
+    "since 2026-10-17's third verification round: only gh's own verdicts refuse; an unknown failure waits, and waiting never publishes");
+  assert.equal(read(failed("Error: failed to verify signature")).unavailable, false, "a verdict gh gave still refuses");
+  for (const said of ["x509: certificate has expired or is not yet valid", 'Get "https://api.github.com/x": context deadline exceeded',
+    "stream error: stream ID 3; INTERNAL_ERROR; received from peer", "invalid character '<' looking for beginning of value"]) {
+    assert.equal(read(failed(said)).unavailable, true, `${said}: Go's transport failures are the verifier not running`);
+  }
   assert.equal(classifyVerifyFailure('Error: verifying with issuer "sigstore.dev"\nread: connection reset').unavailable, false,
     "and the pure reading agrees: a policy refusal is never 'could not run'");
   // The verification of 0736353: argv struck as bare substrings deleted gh's
@@ -366,8 +372,8 @@ test("a failed gh run is read from gh's own stderr, a policy refusal beats a net
   assert.equal(tiny('Get "https://api.github.com/x": dial tcp: i/o timeout').unavailable, true,
     "an author called t/timeout cannot delete gh's 'timeout'");
   assert.equal(tiny("lookup api.github.com: no such host").unavailable, true, "nor its 'host'");
-  assert.equal(tiny("failed for t/timeout: certificate rejected").unavailable, false, "the repository named whole is struck");
-  assert.equal(tiny("Error: certificate rejected for https://github.com/network-co/econnreset/.github/workflows/x.yml").unavailable, false,
+  assert.equal(tiny("t/timeout: failed to verify signature").unavailable, false, "the repository named whole is struck, and gh's verdict stands");
+  assert.equal(tiny("Error: failed to verify signature for https://github.com/network-co/econnreset/.github/workflows/x.yml").unavailable, false,
     "a URL is quoted data, never gh's word, whatever its path says");
   for (const said of [
     "Error: expected SourceRepositoryURI to be https://github.com/acme/x, got https://github.com/network-co/econnreset",
