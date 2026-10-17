@@ -1,0 +1,15 @@
+{
+  "schema": "astra.registry.rollout/1",
+  "$comment": [
+    "R4b's open marker. Name-free: SHAs, §0.7 times and counts. The walk is the note beside it."
+  ],
+  "step": "R4b",
+  "marker": "open",
+  "walked_from": "2026-10-14T04:38:57Z",
+  "walked_to": "2026-10-17T06:02:39Z",
+  "registry_commit": "53ef027a8f76876961bfb7e6944d1904a1648a93",
+  "ops_commit": "052257bb3bd8237feaa976e070b4afec136c064d",
+  "astraplugins_commit": "d3c63520bc2f9726b0fe27b0d834aad061f709d0",
+  "contract_version": "5.6.0",
+  "note": "log/rollout/R4b-open-note.md"
+}
