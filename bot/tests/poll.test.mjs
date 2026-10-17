@@ -1038,6 +1038,63 @@ test("the bound never drops a tag claim is about to register, and a tag the poll
   assert.equal(unasked.repos[KEY].deferred["v0.3.0"].cause, "registry");
 });
 
+// The fourth verification round.
+test("a told tag whose ready registration failed is not retired by a later poll that does not ask it", async () => {
+  const listings = quietListings();
+  const memory = poll.newMemory("2026-08-01T00:00:00Z");
+  memory.repos[KEY] = { etag: null, last_success_at: null, registered: [], deferred: { "v1.0.0": W("2026-08-01T00:00:00Z", "author", { told: "2026-08-15T00:00:00Z", checked: "2026-09-22T00:00:00Z" }) } };
+  const ready = await poll.runPoll({ listings, memory, now: new Date(T0), fetchImpl: queueFetch(NOT_MODIFIED).fetchImpl, checkRelease: published });
+  assert.deepEqual(ready.repos[KEY].candidates, ["v1.0.0"]);
+  let mem = poll.rememberPoll(memory, ready, [], T0);
+  assert.equal(mem.repos[KEY].deferred["v1.0.0"].cause, "registry");
+  const unasked = await poll.runPoll({ listings, memory: mem, now: new Date("2026-09-24T00:35:00Z"), checks: 0, fetchImpl: queueFetch(NOT_MODIFIED).fetchImpl, checkRelease: published });
+  mem = poll.rememberPoll(mem, unasked, [], "2026-09-24T00:35:00Z");
+  assert.deepEqual(mem.repos[KEY].registered, [], "last seen ready, never registered: it must not be filed as registered");
+  assert.ok(Object.hasOwn(mem.repos[KEY].deferred, "v1.0.0"));
+  assert.ok(!poll.sparedTags(mem.repos[KEY], new Date("2026-09-26T00:00:00Z")).includes("v1.0.0"), "and BOT-87 pages about it after a day");
+});
+
+test("a release with an uploaded bundle beside an upload abandoned for a day is ready", async () => {
+  const ask = async (assets, now) => (await poll.releaseState(REPO, "v0.3.0", queueFetch(apiRelease("v0.3.0", false, { assets, at: "2026-09-22T00:00:00Z" })).fetchImpl, new Date(now))).state;
+  const assets = [
+    { name: "quiet-0.3.0-linux-x64.astraplugin", state: "uploaded", updated_at: "2026-09-22T00:00:00Z" },
+    { name: "quiet-0.3.0-windows-x64.astraplugin", state: "open", updated_at: "2026-09-22T00:01:00Z" },
+  ];
+  assert.equal(await ask(assets, "2026-09-22T06:00:00Z"), "unpublished", "an upload in progress is waited for");
+  assert.equal(await ask(assets, T0), "published", "abandoned for over a day: ready with the bundles it has");
+  assert.equal(await ask([assets[1]], T0), "stale", "no uploaded bundle at all is still stale");
+});
+
+test("the bounds keep told tags over untold waits and drop without retiring; remember clamps last_success_at; an unanswered ask keeps its place", async () => {
+  const listings = quietListings();
+  const memory = poll.newMemory("2026-09-01T00:00:00Z");
+  const deferred = { "v1.1.0": W("2026-09-10T00:00:00Z", "author", { told: "2026-09-23T00:00:00Z", checked: "2026-09-24T00:20:00Z" }) };
+  for (let n = 0; n < 20; n++) deferred[`v0.1.${n}`] = W(`2026-09-1${n % 9}T00:00:00Z`, "author", { checked: "2026-09-24T00:20:00Z" });
+  memory.repos[KEY] = { etag: 'W/"x"', last_success_at: null, registered: [], deferred };
+  const out = await poll.runPoll({ listings, memory, now: new Date(T0), fetchImpl: queueFetch(NOT_MODIFIED).fetchImpl, checkRelease: unpublishedCheck });
+  assert.ok(Object.hasOwn(out.repos[KEY].deferred, "v1.1.0"), "the told tag keeps its place: only the waiting set remembers it is owed a second registration");
+  const notes = [];
+  const mem = poll.rememberPoll(memory, out, [], T0, notes);
+  assert.deepEqual(mem.repos[KEY].registered, [], "a drop never files a tag as registered");
+  assert.equal(Object.keys(mem.repos[KEY].deferred).length, poll.DEFER_KEEP);
+  const future = poll.rememberPoll(poll.newMemory("2026-09-24T00:00:00Z"), { at: "2099-01-01T00:00:00Z", repos: { [KEY]: { ok: true, candidates: [], deferred: {}, etag: null } } }, [], T0);
+  assert.equal(future.repos[KEY].last_success_at, T0, "a future poll time is clamped, so it cannot hold off later polls and BOT-87");
+  const flaky = poll.newMemory("2026-09-24T00:00:00Z");
+  flaky.repos[KEY] = { etag: null, last_success_at: null, registered: [], deferred: { "v0.3.0": W("2026-09-24T00:00:00Z", "author", { checked: "2026-09-23T00:00:00Z" }) } };
+  const o = await poll.runPoll({ listings, memory: flaky, now: new Date(T0), fetchImpl: queueFetch(NOT_MODIFIED).fetchImpl,
+    checkRelease: async (_r, tag) => ({ state: "unknown", why: `${tag}: HTTP 502` }) });
+  assert.equal(o.repos[KEY].deferred["v0.3.0"].checked, "2026-09-23T00:00:00Z", "GitHub did not answer, so it was not asked");
+});
+
+test("the ask interval has scheduler slack: a wait asked 29 minutes ago is asked again", async () => {
+  const listings = quietListings();
+  const memory = poll.newMemory("2026-09-24T00:00:00Z");
+  memory.repos[KEY] = { etag: null, last_success_at: null, registered: [], deferred: { "v0.3.0": W("2026-09-24T00:00:00Z", "author", { checked: "2026-09-24T00:01:00Z" }) } };
+  const asked = [];
+  await poll.runPoll({ listings, memory, now: new Date(T0), fetchImpl: queueFetch(NOT_MODIFIED).fetchImpl, checkRelease: async (r, tag) => { asked.push(tag); return unpublishedCheck(r, tag); } });
+  assert.deepEqual(asked, ["v0.3.0"]);
+});
+
 test("a told tag whose ready registration claim does not make is not retired, and a backdated told from the poll is not believed", () => {
   const memory = poll.newMemory("2026-08-01T00:00:00Z");
   memory.repos[KEY] = { etag: null, last_success_at: null, registered: [], deferred: { "v0.5.0": W("2026-08-01T00:00:00Z", "author", { told: "2026-08-15T00:00:00Z", checked: "2026-09-22T00:00:00Z" }) } };
@@ -1122,7 +1179,7 @@ test("remember: a since only moves earlier, no time is later than remember's clo
   assert.throws(() => run.readPolled(JSON.stringify({ at, repos: { [KEY]: { ok: true, candidates: [], deferred: { "../x": W(at) }, etag: null } } }), quietListings()), /grammar/);
 });
 
-test("BOT-87's sweep spares an author wait and a told tag, spares a registry wait for a day, then pages", () => {
+test("BOT-87's sweep spares an author wait, told or not, spares a registry wait for a day, then pages", () => {
   const [listing] = quietListings();
   const sha = "a".repeat(40);
   const known = { "v0.3.0": { sha, first_seen: 1, seeded: false } };
@@ -1130,7 +1187,9 @@ test("BOT-87's sweep spares an author wait and a told tag, spares a registry wai
   const sweep = (entry) => poll.sweepListing({ listing, known, remote, sweepNo: 2, seed: false, registered: [],
     deferred: poll.sparedTags({ deferred: { "v0.3.0": entry } }, new Date(T0)) }).alerts.length;
   assert.equal(sweep(W("2026-09-01T00:00:00Z", "author")), 0, "an author's unfinished release is not the operator's page");
-  assert.equal(sweep(W("2026-09-01T00:00:00Z", "registry", { told: "2026-09-20T00:00:00Z" })), 0, "its author was told");
+  assert.equal(sweep(W("2026-09-01T00:00:00Z", "author", { told: "2026-09-20T00:00:00Z" })), 0, "its author was told, and it waits on them");
+  assert.equal(sweep(W("2026-09-01T00:00:00Z", "registry", { told: "2026-09-20T00:00:00Z" })), 1,
+    "told, but its ready registration failed: a registry wait, and it pages after a day like any other");
   assert.equal(sweep(W("2026-09-24T00:00:00Z", "registry")), 0, "a registry wait under a day is spared");
   assert.equal(sweep(W("2026-09-22T00:00:00Z", "registry")), 1, "a registry wait over a day pages: the poll, GitHub or claim is broken");
   assert.equal(poll.sweepListing({ listing, known, remote, sweepNo: 2, seed: false, registered: [] }).alerts.length, 1,

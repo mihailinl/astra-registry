@@ -240,7 +240,7 @@ export function classifyVerifyFailure(text) {
   const unavailable = new RegExp(
     "verifier is not available|initializ|trust(ed)? root|\\btuf\\b|timeout|timed out|connection|network|temporar|" +
     "HTTP 5\\d\\d|HTTP 429|HTTP 403|HTTP 401|rate limit|bad gateway|service unavailable|gateway time-?out|" +
-    "\\bEOF\\b|no such host|server misbehaving|TLS handshake|" +
+    "\\bEOF\\b|no such host|server misbehaving|TLS handshake|\\btls:|\\bx509:|" +
     "ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|socket hang up",
     "i",
   ).test(s);

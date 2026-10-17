@@ -206,13 +206,22 @@ export async function releaseState(repo, tag, fetchImpl = fetch, now = new Date(
   const bundles = assets.filter((a) => typeof a?.name === "string" && a.name.endsWith(".astraplugin"));
   const publishedAt = Date.parse(body.published_at ?? "");
   const lastChange = Math.max(0, ...assets.map((a) => Date.parse(a?.updated_at ?? a?.created_at ?? "") || 0));
-  if (bundles.length === 0 || bundles.some((a) => a.state !== "uploaded")) {
+  const uploaded = bundles.filter((a) => a.state === "uploaded");
+  const quietSince = Math.max(Number.isFinite(publishedAt) ? publishedAt : 0, lastChange);
+  const quietLong = quietSince > 0 && new Date(now).getTime() - quietSince > BUNDLE_WAIT_HOURS * 3_600_000;
+  // A dead upload beside uploaded bundles, untouched for BUNDLE_WAIT_HOURS, is
+  // abandoned: the release is ready with the bundles it has (verifyFacts
+  // counts only uploaded ones). Read as not ready, a told tag in that state
+  // was never registered again (the 2026-10-17 fourth verification).
+  if (uploaded.length > 0 && uploaded.length < bundles.length && quietLong) {
+    return { state: "published", why: `${tag}'s release has uploaded bundles and an upload abandoned for over ${BUNDLE_WAIT_HOURS} h` };
+  }
+  if (uploaded.length === 0 || uploaded.length < bundles.length) {
     // Published for a day with no usable bundle and nothing uploaded since:
     // registering it gets its author E_NO_BUNDLE_ASSETS now, a pre-release
     // refusal (FLOW-4(b)), rather than DEFER_MAX_DAYS of silence; the poll
     // keeps asking and registers it again once a bundle arrives.
-    const quietSince = Math.max(Number.isFinite(publishedAt) ? publishedAt : 0, lastChange);
-    if (quietSince > 0 && new Date(now).getTime() - quietSince > BUNDLE_WAIT_HOURS * 3_600_000) {
+    if (uploaded.length === 0 && quietLong) {
       return {
         state: "stale",
         why: `${tag}'s release has had no usable .astraplugin asset for over ${BUNDLE_WAIT_HOURS} h; ` +
@@ -325,11 +334,15 @@ export function deferredOf(row, at) {
   return out;
 }
 
-/** The tags BOT-87's sweep spares: told, waiting on their author, or waiting on the registry for less than a day. */
+/**
+ * The tags BOT-87's sweep spares: waiting on their author (told or not), or
+ * on the registry for less than a day. A told tag whose ready registration
+ * claim did not make waits on the registry, and pages like any other.
+ */
 export function sparedTags(row, now) {
   const d = deferredOf(row, now);
   const t = new Date(now).getTime();
-  return Object.keys(d).filter((k) => d[k].told || d[k].cause === "author" ||
+  return Object.keys(d).filter((k) => d[k].cause === "author" ||
     t - Date.parse(d[k].cause_at) < REGISTRY_WAIT_SPARED_HOURS * HOUR_MS);
 }
 
@@ -823,6 +836,9 @@ export async function runPoll({ listings, memory, now = new Date(), fetchImpl = 
 /** An untold waiting tag is asked at most this often unless its feed offers it again; a told one at most daily. */
 export const ASK_EVERY_MINUTES = 30;
 
+/** Scheduler slack on both ask intervals: the waker and cron do not fire to the second. */
+const ASK_SLACK_MS = 2 * 60_000;
+
 /**
  * One tag, new from a feed or waiting, decided into the repository's
  * `candidates` (claim registers it) or `deferred` (it keeps waiting).
@@ -870,8 +886,9 @@ async function decideTag({ r, tag, feedTag, now, budget, checkRelease }) {
   const overBound = `waited for its release since ${was?.since}, over ${DEFER_MAX_DAYS} days`;
   const since = (x) => nowMs - (Date.parse(x ?? "") || 0);
   let notAsked = null;
-  if (was?.told && since(was.checked ?? was.told) < DAY_MS) notAsked = "throttled";
-  else if (!feedTag && was && !was.told && was.checked && since(was.checked) < ASK_EVERY_MINUTES * 60_000) notAsked = "throttled";
+  // Slack, so a poll that runs on time is not one minute early for its ask.
+  if (was?.told && since(was.checked ?? was.told) < DAY_MS - ASK_SLACK_MS) notAsked = "throttled";
+  else if (!feedTag && was && !was.told && was.checked && since(was.checked) < ASK_EVERY_MINUTES * 60_000 - ASK_SLACK_MS) notAsked = "throttled";
   else if (budget.left <= 0) notAsked = `the poll's release checks are spent (${RECHECK_BUDGET} a poll, or a rate limit)`;
   if (notAsked) {
     if (expired) return tell(overBound);
@@ -889,21 +906,32 @@ async function decideTag({ r, tag, feedTag, now, budget, checkRelease }) {
   if (!was?.told && (res.state === "stale" || expired)) return tell(res.state === "stale" ? res.why : overBound);
   r.skipped.push({ tag, why: res.why });
   // GitHub not answering says nothing new about an author's release, so an
-  // author wait stays one; a tag never answered for is the registry's.
-  r.deferred[tag] = wait(res.state === "unpublished" || res.state === "stale" ? "author" : (was?.cause ?? "registry"));
+  // author wait stays one; a tag never answered for is the registry's. An
+  // unanswered ask is not an ask: the tag keeps its last-asked time, and is
+  // first in line again next poll.
+  const answered = res.state === "unpublished" || res.state === "stale";
+  r.deferred[tag] = { ...wait(answered ? "author" : (was?.cause ?? "registry")), ...(answered ? {} : { checked: was?.checked ?? null }) };
 }
 
 /**
- * DEFER_KEEP waiting tags a repository. Never a tag claim is about to
- * register (a told candidate dropped here was filed as registered and lost);
- * then untold waits before told ones, oldest first, because a told tag's
- * author has already heard. Every drop is said.
+ * The order both bounds keep waiting tags in, best first: a tag claim is
+ * about to register (or just failed to), then told tags — each still owed a
+ * second registration once ready, which only the waiting set remembers —
+ * then untold waits, oldest first. A tag past DEFER_KEEP is dropped, never
+ * retired: unregistered, BOT-87's sweep pages about it, which is what the
+ * drop note says (the fourth verification found a dropped told tag filed as
+ * registered, and the note promising a page that never came).
  */
+function keepOrder(waits, protect) {
+  return Object.keys(waits).sort((a, b) =>
+    (protect.has(b) - protect.has(a)) ||
+    (Boolean(waits[b].told) - Boolean(waits[a].told)) ||
+    Date.parse(waits[a].since) - Date.parse(waits[b].since) || (a < b ? -1 : 1));
+}
+
+/** DEFER_KEEP waiting tags a repository, in `keepOrder`; every drop is said. */
 function boundWaits(r) {
-  const keys = Object.keys(r.deferred).sort((a, b) =>
-    (r.candidates.includes(b) - r.candidates.includes(a)) ||
-    (Boolean(r.deferred[a].told) - Boolean(r.deferred[b].told)) ||
-    Date.parse(r.deferred[a].since) - Date.parse(r.deferred[b].since) || (a < b ? -1 : 1));
+  const keys = keepOrder(r.deferred, new Set(r.candidates));
   for (const t of keys.slice(DEFER_KEEP)) {
     delete r.deferred[t];
     r.notes.push(`${t}: dropped from the waiting set, which keeps ${DEFER_KEEP} a repository; BOT-87's sweep pages about it while it stays unregistered`);
@@ -984,26 +1012,30 @@ export function rememberPoll(memory, pollOutput, registered = [], now = pollOutp
     // Registered for good: a candidate claim registered that is not a told one.
     const finished = done.filter((t) => !waiting[t]?.told || !Object.hasOwn(theirs, t));
     const failed = new Set(res.candidates.filter((t) => !done.includes(t)));
+    // A told tag retires after TOLD_RECHECK_DAYS — never while it waits on
+    // the registry (its ready registration failed, now or earlier: the fourth
+    // verification found one retired on the next poll that did not ask it),
+    // and never in a run claim failed to register it.
     const retired = [];
     for (const t of Object.keys(prior)) {
-      if (!prior[t].told || failed.has(t)) continue;
-      if (!Object.hasOwn(waiting, t) && !res.candidates.includes(t)) retired.push(t);
-      else if (Object.hasOwn(waiting, t) && nowMs - Date.parse(prior[t].told) > TOLD_RECHECK_DAYS * DAY_MS) retired.push(t);
+      if (!prior[t].told || failed.has(t) || !Object.hasOwn(waiting, t)) continue;
+      if (waiting[t].cause === "registry" || prior[t].cause === "registry") continue;
+      if (nowMs - Date.parse(prior[t].told) > TOLD_RECHECK_DAYS * DAY_MS) retired.push(t);
     }
-    const keys = Object.keys(waiting).filter((t) => !retired.includes(t) && !finished.includes(t)).sort((a, b) =>
-      (failed.has(b) - failed.has(a)) ||
-      (Boolean(waiting[a].told) - Boolean(waiting[b].told)) ||
-      Date.parse(waiting[a].since) - Date.parse(waiting[b].since) || (a < b ? -1 : 1));
+    const toldHere = new Set(Object.keys(waiting).filter((t) => done.includes(t) && waiting[t].told === iso(nowMs)));
+    const keys = keepOrder(Object.fromEntries(Object.keys(waiting)
+      .filter((t) => !retired.includes(t) && !finished.includes(t)).map((t) => [t, waiting[t]])), new Set([...failed, ...toldHere]));
     for (const t of keys.slice(DEFER_KEEP)) {
-      if (waiting[t].told) retired.push(t);
-      else notes.push(`${key} ${t}: dropped from the waiting set, which keeps ${DEFER_KEEP} a repository; BOT-87's sweep pages about it while it stays unregistered`);
+      notes.push(`${key} ${t}: dropped from the waiting set, which keeps ${DEFER_KEEP} a repository; BOT-87's sweep pages about it while it stays unregistered`);
     }
     row.registered = [...new Set([...row.registered, ...finished, ...retired])].slice(-REGISTERED_KEEP);
     const kept = keys.slice(0, DEFER_KEEP).filter((t) => !row.registered.includes(t));
     if (kept.length) row.deferred = Object.fromEntries(kept.map((t) => [t, waiting[t]]));
     else delete row.deferred;
     if (done.length === res.candidates.length) row.etag = res.etag ?? null;
-    row.last_success_at = pollOutput.at;
+    // The poll's clock is the poll job's: a future `at` would hold off every
+    // later poll and BOT-87's staleness alarm.
+    row.last_success_at = cap(pollOutput.at);
     out.repos[key] = row;
   }
   return out;

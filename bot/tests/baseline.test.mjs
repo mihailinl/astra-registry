@@ -360,7 +360,8 @@ test("a failed gh run is read from gh's own stderr, a policy refusal beats a net
     "since 2026-10-17's third verification round: only gh's own verdicts refuse; an unknown failure waits, and waiting never publishes");
   assert.equal(read(failed("Error: failed to verify signature")).unavailable, false, "a verdict gh gave still refuses");
   for (const said of ["x509: certificate has expired or is not yet valid", 'Get "https://api.github.com/x": context deadline exceeded',
-    "stream error: stream ID 3; INTERNAL_ERROR; received from peer", "invalid character '<' looking for beginning of value"]) {
+    "stream error: stream ID 3; INTERNAL_ERROR; received from peer", "invalid character '<' looking for beginning of value",
+    'Get "https://tuf-repo-cdn.sigstore.dev/x": tls: failed to verify certificate: x509: certificate signed by unknown authority']) {
     assert.equal(read(failed(said)).unavailable, true, `${said}: Go's transport failures are the verifier not running`);
   }
   assert.equal(classifyVerifyFailure('Error: verifying with issuer "sigstore.dev"\nread: connection reset').unavailable, false,
