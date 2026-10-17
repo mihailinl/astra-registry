@@ -5,7 +5,16 @@
     {
       "step": "R4b",
       "$comment": "RC-R4-1. `/p/<id>/` → https://astra.minice.ai/plugins/<id>, and `/` and `/search/` → https://astra.minice.ai/plugins (search at /plugins?q=). Committed only after a probe shows each successor answering 200 (SERVE-84) and after ROLL-54's adversarial edge review of guest browsing is recorded — these are the redirects that send Pages visitors into a zone whose responses reach crowdsec (SERVE-105).",
-      "paths": {}
+      "paths": {
+        "/": "https://astra.minice.ai/plugins",
+        "/search/": "https://astra.minice.ai/plugins",
+        "/p/<id>/": "https://astra.minice.ai/plugins/<id>"
+      },
+      "armed": {
+        "at": "2026-10-17T08:50:41Z",
+        "successors_answered_200": 19,
+        "edge_review": "minice plugins/deploy/prod/ROLL-54-GUEST-EDGE-2026-10-17.md@b17c2b6b (branch edge/plugins-zone; applied 2026-10-17T08:49:35Z at 86d87557)"
+      }
     },
     {
       "step": "R9a",
