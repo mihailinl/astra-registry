@@ -96,6 +96,7 @@ import {
   runSweep,
   seedFromReleasesSeen,
   staleListings,
+  deferredProblem,
 } from "./poll.mjs";
 import { jcs } from "../../tools/lib/canonical.mjs";
 
@@ -299,14 +300,12 @@ const parse = (text, what) => {
   }
 };
 
-/** A deferred set as the poll and the memory carry it: `{tag: first deferred at}`, or the first cut's list. */
+/** A waiting set as the poll and the memory carry it (poll.mjs `deferredProblem`), at most REGISTERED_KEEP tags. */
 const MAX_DEFERRED = 200;
 function deferredOk(d) {
   if (d === undefined) return true;
-  if (Array.isArray(d)) return d.length <= MAX_DEFERRED && d.every(isUsableTag);
-  if (!d || typeof d !== "object") return false;
-  const entries = Object.entries(d);
-  return entries.length <= MAX_DEFERRED && entries.every(([t, when]) => isUsableTag(t) && TIME_RE.test(String(when)));
+  const n = Array.isArray(d) ? d.length : d && typeof d === "object" ? Object.keys(d).length : Infinity;
+  return n <= MAX_DEFERRED && deferredProblem(d) === null;
 }
 
 /** `load`'s listings, which every other job reads. A malformed one is a defect upstream, not an empty catalogue. */
@@ -444,7 +443,7 @@ export function sweepRemote(listings, lsRemote = lsRemoteTags) {
  */
 export function composeRemember({ memory, discarded, listings, polled, registered, swept, sweepDue: due, sweepFailed, now, mode, run = null }) {
   let next = memory;
-  if (polled) next = rememberPoll(next, polled, registered);
+  if (polled) next = rememberPoll(next, polled, registered, now);
   let alerts = [];
   let failed = [];
   if (swept) {
@@ -546,7 +545,7 @@ async function cmdPoll(env) {
   for (const [key, res] of Object.entries(out.repos)) {
     const nWaiting = Object.keys(res.deferred ?? {}).length;
     const waiting = nWaiting ? `, ${nWaiting} waiting for a published release` : "";
-    const state = !res.ok ? `ERR ${res.error}` : res.changed ? `200, ${res.candidates.length} candidate(s)${waiting}` : "304";
+    const state = !res.ok ? `ERR ${res.error}` : `${res.changed ? "200" : "304"}, ${res.candidates.length} candidate(s)${waiting}`;
     lines.push(`${key} (${res.ids.join(", ")}): ${state}`);
     for (const s of res.skipped ?? []) console.log(`  skip ${key} ${s.why}`);
     for (const n of res.notes ?? []) console.log(`  note ${key} ${n}`);

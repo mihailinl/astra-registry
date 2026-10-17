@@ -359,6 +359,23 @@ test("a failed gh run is read from gh's own stderr, a policy refusal beats a net
   assert.equal(read(failed("something gh has never said before")).unavailable, false, "unknown text stays a refusal, as before");
   assert.equal(classifyVerifyFailure('Error: verifying with issuer "sigstore.dev"\nread: connection reset').unavailable, false,
     "and the pure reading agrees: a policy refusal is never 'could not run'");
+  // The verification of 0736353: argv struck as bare substrings deleted gh's
+  // own words, and the certificate's repository still reached the reading.
+  const tiny = (stderr, extra = {}) => classifyGhFailure(Object.assign(new Error("Command failed: gh ..."), { stderr, code: 1 }, extra),
+    ["/tmp/b", "t/timeout", "o/r/.github/workflows/w.yml"]);
+  assert.equal(tiny('Get "https://api.github.com/x": dial tcp: i/o timeout').unavailable, true,
+    "an author called t/timeout cannot delete gh's 'timeout'");
+  assert.equal(tiny("lookup api.github.com: no such host").unavailable, true, "nor its 'host'");
+  assert.equal(tiny("failed for t/timeout: certificate rejected").unavailable, false, "the repository named whole is struck");
+  assert.equal(tiny("Error: certificate rejected for https://github.com/network-co/econnreset/.github/workflows/x.yml").unavailable, false,
+    "a URL is quoted data, never gh's word, whatever its path says");
+  for (const said of [
+    "Error: expected SourceRepositoryURI to be https://github.com/acme/x, got https://github.com/network-co/econnreset",
+    "expected SourceRepositoryURI to be acme/x, got network-co/econnreset-timeout",
+    "Error: no matching CertificateIdentity found, the last error was: connection reset",
+  ]) {
+    assert.deepEqual(tiny(said), { missing: false, policyRefusal: true, unavailable: false }, `${said}: a certificate gh judged is a refusal`);
+  }
 });
 
 test("--write refuses a facts file that records anything as not checked", () => {

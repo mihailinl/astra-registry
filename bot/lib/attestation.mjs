@@ -225,7 +225,11 @@ export function extractSignerFacts(results, artifactSha256 = null) {
 export function classifyVerifyFailure(text) {
   const s = String(text ?? "");
   const missing = /no attestation|could not find any attestations|HTTP 404|404: Not Found/i.test(s);
-  const policyRefusal = /verifying with issuer/i.test(s);
+  // gh's certificate checks say `expected <Field> to be/match <value>, got
+  // <value>`, and the `got` side is the attested repository's own name —
+  // text its owner chose. Any such line means gh judged a certificate, so it
+  // is a policy refusal, and no word in it can make it "could not run".
+  const policyRefusal = /verifying with issuer|expected [\w .-]{1,60}? to (?:be|match)\b|no matching (?:certificate|CertificateIdentity)/i.test(s);
   // GitHub not answering the attestations read is the verifier not running
   // too: a 5xx, a 403 or 429 rate limit, a dropped socket, a DNS miss. Until
   // 2026-10-17 those fell through to `E_ATTESTATION_INVALID`, a refusal that
@@ -265,9 +269,16 @@ export function classifyVerifyFailure(text) {
  * @param {string[]} argvValues the values passed to gh, struck out before reading
  */
 export function classifyGhFailure(e, argvValues = []) {
-  let said = String(e?.stderr ?? "");
+  // URLs first: gh quotes the repository, the signer workflow and the
+  // certificate's values inside them. Then each argv value as a whole token
+  // only, never a bare owner or name: an owner called `t` or `timeout`
+  // struck as a substring deleted gh's own "timeout" and "host" (the
+  // 2026-10-17 verification of 0736353).
+  let said = String(e?.stderr ?? "").replace(/https?:\/\/\S+/gi, " ");
   for (const v of argvValues) {
-    if (typeof v === "string" && v.length) said = said.replace(new RegExp(v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), " ");
+    if (typeof v !== "string" || v.length < 3) continue;
+    const esc = v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    said = said.replace(new RegExp(`(?<![A-Za-z0-9._/-])${esc}(?![A-Za-z0-9._/-])`, "gi"), " ");
   }
   const c = classifyVerifyFailure(said);
   const notRun = e?.killed === true || (e?.signal ?? null) !== null || typeof e?.code === "string";
@@ -320,7 +331,7 @@ export async function verifyAttestation(opts) {
     parsed = JSON.parse(stdout);
   } catch (e) {
     const text = `${e.stderr ?? ""}${e.message ?? ""}`;
-    const { missing, policyRefusal, unavailable } = classifyGhFailure(e, [file, repo, ...repo.split("/"), signerWorkflow]);
+    const { missing, policyRefusal, unavailable } = classifyGhFailure(e, [file, repo, signerWorkflow]);
     // "no attestations found" is a different answer from "the attestation is
     // wrong", and an author fixes them differently.
     //

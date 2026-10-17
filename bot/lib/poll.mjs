@@ -190,7 +190,10 @@ export async function releaseState(repo, tag, fetchImpl = fetch, now = new Date(
   }
   const unpublished = { state: "unpublished", why: `${tag} has no published release yet (a draft, or a tag alone); it registers once the release is published` };
   if (res.status === 404) return unpublished;
-  if (res.status !== 200) return unknown(`GitHub answered HTTP ${res.status} for its release`);
+  if (res.status !== 200) {
+    // A 403 or 429 is the shared unauthenticated budget: the caller stops asking this poll.
+    return { ...unknown(`GitHub answered HTTP ${res.status} for its release`), rateLimited: res.status === 403 || res.status === 429 };
+  }
   let body;
   try {
     body = JSON.parse(await res.text());
@@ -201,14 +204,25 @@ export async function releaseState(repo, tag, fetchImpl = fetch, now = new Date(
   if (body.draft) return unpublished;
   const assets = Array.isArray(body.assets) ? body.assets : [];
   const bundles = assets.filter((a) => typeof a?.name === "string" && a.name.endsWith(".astraplugin"));
-  if (bundles.length === 0) {
-    return { state: "unpublished", why: `${tag}'s release is published but carries no .astraplugin asset yet; it registers once one is uploaded` };
-  }
-  if (bundles.some((a) => a.state !== "uploaded")) {
-    return { state: "unpublished", why: `${tag}'s release has a bundle still uploading; it registers once every one is uploaded` };
-  }
   const publishedAt = Date.parse(body.published_at ?? "");
   const lastChange = Math.max(0, ...assets.map((a) => Date.parse(a?.updated_at ?? a?.created_at ?? "") || 0));
+  if (bundles.length === 0 || bundles.some((a) => a.state !== "uploaded")) {
+    // Published for a day with no usable bundle and nothing uploaded since:
+    // registering it gets its author E_NO_BUNDLE_ASSETS now, a pre-release
+    // refusal (FLOW-4(b)), rather than DEFER_MAX_DAYS of silence; the poll
+    // keeps asking and registers it again once a bundle arrives.
+    const quietSince = Math.max(Number.isFinite(publishedAt) ? publishedAt : 0, lastChange);
+    if (quietSince > 0 && new Date(now).getTime() - quietSince > BUNDLE_WAIT_HOURS * 3_600_000) {
+      return {
+        state: "stale",
+        why: `${tag}'s release has had no usable .astraplugin asset for over ${BUNDLE_WAIT_HOURS} h; ` +
+          "it registers so its author is told, and registers again once a bundle is uploaded",
+      };
+    }
+    return bundles.length === 0
+      ? { state: "unpublished", why: `${tag}'s release is published but carries no .astraplugin asset yet; it registers once one is uploaded` }
+      : { state: "unpublished", why: `${tag}'s release has a bundle still uploading; it registers once every one is uploaded` };
+  }
   if (Number.isFinite(publishedAt) && lastChange > publishedAt &&
     new Date(now).getTime() - lastChange < UPLOAD_QUIET_SECONDS * 1000) {
     return {
@@ -224,25 +238,102 @@ export async function releaseState(repo, tag, fetchImpl = fetch, now = new Date(
  * How long a tag waits for its release before the poll registers it anyway.
  * Registered, an unpublished tag is refused `E_RELEASE_NOT_FOUND` or
  * `E_NO_BUNDLE_ASSETS`, a pre-release refusal that holds the tag against
- * nobody (FLOW-4(b)) and tells its author, rather than waiting unseen.
+ * nobody (FLOW-4(b)) and tells its author, rather than waiting unseen. The
+ * tag stays in the waiting set as `told`, is asked again about daily for
+ * TOLD_RECHECK_DAYS, and registers again once its release is ready.
  */
 export const DEFER_MAX_DAYS = 14;
 
-/** A repository's deferred tags re-checked per poll, oldest first; the rest wait for the next poll, and the log says so. */
+/** A published release with no usable bundle, untouched this long, registers so its author is told (`releaseState`'s `stale`). */
+export const BUNDLE_WAIT_HOURS = 24;
+
+/** After a `told` registration, the tag is asked again about daily for this long, then remembered as registered. */
+export const TOLD_RECHECK_DAYS = 30;
+
+/** A repository's waiting tags re-checked per poll, least recently asked first; the rest wait for the next poll, and the log says so. */
 export const DEFER_RECHECK_PER_REPO = 5;
+
+/** Release checks per poll across every repository, feed tags first; a 403 or 429 ends them for the poll. */
+export const RECHECK_BUDGET = 20;
+
+/** Waiting tags kept per repository, oldest first; one past it is not spared, so BOT-87's sweep pages about it. */
+export const DEFER_KEEP = 20;
+
+/** A tag that waits on the registry's side (GitHub did not answer, claim did not register) is spared by BOT-87 this long. */
+export const REGISTRY_WAIT_SPARED_HOURS = 24;
 
 /** A release whose assets changed after publication reads as still uploading until this long after the last change. */
 export const UPLOAD_QUIET_SECONDS = 120;
 
+const HOUR_MS = 3_600_000;
+const DAY_MS = 24 * HOUR_MS;
+const WAIT_CAUSES = Object.freeze(["author", "registry"]);
+
 /**
- * A row's deferred tags as `{tag: first deferred at}`. The list form, which
- * 2026-10-17's first cut (8690140) wrote, reads as deferred at `at`.
+ * One waiting tag:
+ *
+ *   * `since` — when it was first deferred; only ever moves earlier;
+ *   * `cause` — `author` (no release, a draft, no bundle, an upload in
+ *     progress) or `registry` (GitHub did not answer, the poll could not ask,
+ *     claim did not register it), and `cause_at`, since when;
+ *   * `checked` — when its release was last asked about, or null;
+ *   * `told` — when it was registered at DEFER_MAX_DAYS (or as `stale`) so its
+ *     author was told, or null.
+ *
+ * Read from the two earlier shapes too: 8690140's list of tags and 0736353's
+ * `{tag: first deferred at}`, both as author waits.
+ */
+function waitOf(v, at) {
+  if (typeof v === "string") return isTime(v) ? { since: v, cause: "author", cause_at: v, checked: null, told: null } : null;
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const opt = (x) => (x === null || x === undefined ? null : isTime(x) ? x : undefined);
+  const since = isTime(v.since) ? v.since : null;
+  const causeAt = v.cause_at === undefined ? since : opt(v.cause_at);
+  const checked = opt(v.checked);
+  const told = opt(v.told);
+  if (!since || !WAIT_CAUSES.includes(v.cause) || !causeAt || checked === undefined || told === undefined) return null;
+  return { since, cause: v.cause, cause_at: causeAt, checked, told };
+}
+
+/** Why a deferred set is not one this module reads, or null. */
+export function deferredProblem(d) {
+  if (d === undefined) return null;
+  if (Array.isArray(d)) return d.every(isUsableTag) ? null : "a listed tag is outside the grammar";
+  if (!d || typeof d !== "object") return "neither a list nor an object";
+  for (const [t, v] of Object.entries(d)) {
+    if (!isUsableTag(t)) return `${JSON.stringify(t.slice(0, 40))} is not a tag`;
+    if (!waitOf(v)) return `${t}'s entry is not {since, cause, cause_at, checked, told}`;
+  }
+  return null;
+}
+
+/**
+ * A row's waiting tags, as a prototype-less object of `waitOf` entries. A
+ * plain object would answer `before["valueOf"]` with a function, and a tag
+ * named `valueOf` matches the prefix `v` (the 2026-10-17 verification).
  */
 export function deferredOf(row, at) {
+  const out = Object.create(null);
   const d = row?.deferred;
-  if (Array.isArray(d)) return Object.fromEntries(d.filter(isUsableTag).map((t) => [t, iso(at)]));
-  if (!d || typeof d !== "object") return {};
-  return Object.fromEntries(Object.entries(d).filter(([t, when]) => isUsableTag(t) && isTime(when)));
+  if (Array.isArray(d)) {
+    for (const t of d) if (isUsableTag(t)) out[t] = { since: iso(at), cause: "author", cause_at: iso(at), checked: null, told: null };
+    return out;
+  }
+  if (!d || typeof d !== "object") return out;
+  for (const [t, v] of Object.entries(d)) {
+    if (!isUsableTag(t)) continue;
+    const w = waitOf(v, at);
+    if (w) out[t] = w;
+  }
+  return out;
+}
+
+/** The tags BOT-87's sweep spares: told, waiting on their author, or waiting on the registry for less than a day. */
+export function sparedTags(row, now) {
+  const d = deferredOf(row, now);
+  const t = new Date(now).getTime();
+  return Object.keys(d).filter((k) => d[k].told || d[k].cause === "author" ||
+    t - Date.parse(d[k].cause_at) < REGISTRY_WAIT_SPARED_HOURS * HOUR_MS);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -476,12 +567,8 @@ export function memoryProblem(m) {
     if (row.etag !== null && typeof row.etag !== "string") return `repos.${k}.etag is neither null nor a string`;
     if (row.last_success_at !== null && !isTime(row.last_success_at)) return `repos.${k}.last_success_at is not a time`;
     if (!Array.isArray(row.registered) || !row.registered.every(isUsableTag)) return `repos.${k}.registered is not a list of tags`;
-    if (row.deferred !== undefined) {
-      const d = row.deferred;
-      const list = Array.isArray(d) && d.every(isUsableTag);
-      const map = d && typeof d === "object" && !Array.isArray(d) && Object.entries(d).every(([t, when]) => isUsableTag(t) && isTime(when));
-      if (!list && !map) return `repos.${k}.deferred is not {tag: first deferred at}`;
-    }
+    const dp = deferredProblem(row.deferred);
+    if (dp) return `repos.${k}.deferred is not a waiting set: ${dp}`;
   }
   const s = m.sweep;
   if (!s || typeof s !== "object" || !Number.isSafeInteger(s.count) || s.count < 0) return "sweep.count is not a count";
@@ -679,6 +766,7 @@ function repoVerdict(listings, tag, memoryTags) {
  */
 export async function runPoll({ listings, memory, now = new Date(), fetchImpl = fetch, checkRelease = (repo, tag, at) => releaseState(repo, tag, fetchImpl, at) }) {
   const out = { at: iso(now), repos: {} };
+  const budget = { left: RECHECK_BUDGET };
   // By repository, not by listing: one conditional GET per feed, and one
   // result per repository that no other listing's result can overwrite.
   const byRepo = new Map();
@@ -692,8 +780,12 @@ export async function runPoll({ listings, memory, now = new Date(), fetchImpl = 
     const ids = group.map((l) => l.id);
     try {
       const feed = await pollFeed(group[0].repo, row?.etag ?? null, fetchImpl);
-      const judged = pollListing({ listings: group, row, feed });
-      const ready = await publishedOnly({ repo: group[0].repo, listings: group, judged, row, now, checkRelease });
+      // A `told` tag was registered once, so the feed must not offer it like a
+      // new one; the waiting set asks about it instead (`publishedOnly`).
+      const waits = deferredOf(row, now);
+      const told = Object.keys(waits).filter((t) => waits[t].told);
+      const judged = pollListing({ listings: group, row: row && { ...row, registered: [...(row.registered ?? []), ...told] }, feed });
+      const ready = await publishedOnly({ repo: group[0].repo, listings: group, judged, row, now, checkRelease, budget });
       out.repos[key] = { id: ids[0], ids, ok: true, changed: feed.changed, ...ready };
     } catch (e) {
       // One repository that 404s must not stop the walk; BOT-87's staleness
@@ -705,62 +797,106 @@ export async function runPoll({ listings, memory, now = new Date(), fetchImpl = 
 }
 
 /**
- * BOT-74's candidates and the tags deferred earlier, each asked whether its
- * release is ready (`releaseState`).
+ * BOT-74's candidates and the waiting tags, each asked whether its release is
+ * ready (`releaseState`).
  *
- * A tag that is not ready is deferred, skipped with the reason, and never
- * registered. It is re-checked on every poll, whether or not the feed moved
- * and whether or not it is still among the feed's ten entries. The first cut
- * (8690140) re-checked only when the feed changed while the tag was still
- * listed, so a release published after ten newer tags, or read from a lagging
- * API replica, was never offered again, and BOT-87's sweep, which spares a
- * deferred tag, stayed silent (the 2026-10-17 review). A tag deferred longer
- * than DEFER_MAX_DAYS registers anyway, so its author hears (FLOW-4(b)).
+ * A tag that is not ready waits: it is skipped with the reason, never
+ * registered, and asked again on later polls whether or not the feed moved or
+ * still lists it, least recently asked first (8690140 asked only when the
+ * feed changed while the tag was still listed, so a release published after
+ * ten newer tags was never offered again). A tag waiting longer than
+ * DEFER_MAX_DAYS, or a release `stale` without a bundle, registers so its
+ * author is told (FLOW-4(b)); it keeps waiting as `told`, is asked about
+ * daily, and registers again once ready. Release checks are bounded per
+ * repository and per poll, and a 403 or 429 ends them for the poll; nothing
+ * skipped is dropped silently.
  *
  * The new ETag is always kept: nothing depends on the feed changing any more.
  */
-async function publishedOnly({ repo, listings, judged, row, now, checkRelease }) {
+async function publishedOnly({ repo, listings, judged, row, now, checkRelease, budget }) {
+  const nowMs = new Date(now).getTime();
+  const at = iso(now);
   const before = deferredOf(row, now);
+  const has = (t) => Object.hasOwn(before, t);
   const memoryTags = row?.registered ?? [];
   const candidates = [];
-  const deferred = {};
+  const deferred = Object.create(null);
   const skipped = [...judged.skipped];
   const notes = [];
-  const fromFeed = judged.candidates.map((tag) => ({ tag, fromFeed: true }));
+  const asked = (t) => Date.parse(before[t].checked ?? "") || 0;
   const carried = Object.keys(before)
     .filter((t) => !judged.candidates.includes(t))
-    .sort((a, b) => Date.parse(before[a]) - Date.parse(before[b]) || (a < b ? -1 : 1))
-    .map((tag) => ({ tag, fromFeed: false }));
+    .sort((a, b) => asked(a) - asked(b) || Date.parse(before[a].since) - Date.parse(before[b].since) || (a < b ? -1 : 1));
+  const wait = (tag, was, cause) => ({
+    since: was?.since ?? at,
+    cause,
+    cause_at: was && was.cause === cause ? was.cause_at : at,
+    checked: at,
+    told: was?.told ?? null,
+  });
   let rechecked = 0;
-  for (const { tag, fromFeed: feedTag } of [...fromFeed, ...carried]) {
+  for (const [tag, feedTag] of [...judged.candidates.map((t) => [t, true]), ...carried.map((t) => [t, false])]) {
+    const was = has(tag) ? before[tag] : null;
     if (!feedTag) {
       // Still BOT-74's to register? A listed version or a terminal record may
-      // have arrived since it was deferred.
+      // have arrived since it began to wait.
       const v = repoVerdict(listings, tag, memoryTags);
       if (!v.register) {
         skipped.push({ tag, why: v.why });
         continue;
       }
-      if (rechecked >= DEFER_RECHECK_PER_REPO) {
-        deferred[tag] = before[tag];
-        notes.push(`${tag}: still waiting for its release; not re-checked this poll (at most ${DEFER_RECHECK_PER_REPO} per repository per poll)`);
-        continue;
-      }
-      rechecked += 1;
     }
-    const since = before[tag] ?? iso(now);
-    if (new Date(now).getTime() - Date.parse(since) > DEFER_MAX_DAYS * 86_400_000) {
-      candidates.push(tag);
-      notes.push(`${tag}: waited for its release since ${since}, over ${DEFER_MAX_DAYS} days; registered so its author is told (FLOW-4(b))`);
+    if (was?.told && nowMs - Date.parse(was.checked ?? was.told) < DAY_MS) {
+      deferred[tag] = was;
       continue;
     }
+    // Past DEFER_MAX_DAYS and not yet told: registered this poll whatever
+    // happens, as ready if its release answers ready, else so its author is
+    // told (FLOW-4(b)). Asked first when the budget allows, so a release that
+    // became ready at the bound registers as ready, not as a refusal.
+    const expired = !was?.told && nowMs - Date.parse(was?.since ?? at) > DEFER_MAX_DAYS * DAY_MS;
+    const tell = (why) => {
+      candidates.push(tag);
+      deferred[tag] = { ...wait(tag, was, was?.cause ?? "author"), told: at };
+      notes.push(`${tag}: ${why}; registered so its author is told (FLOW-4(b)), and asked again daily for ${TOLD_RECHECK_DAYS} days`);
+    };
+    const overBound = `waited for its release since ${was?.since}, over ${DEFER_MAX_DAYS} days`;
+    let skipWhy = null;
+    if (!feedTag && rechecked >= DEFER_RECHECK_PER_REPO) skipWhy = `at most ${DEFER_RECHECK_PER_REPO} waiting tags per repository per poll`;
+    else if (budget.left <= 0) skipWhy = `the poll's release checks are spent (${RECHECK_BUDGET} a poll, or a rate limit)`;
+    if (skipWhy) {
+      if (expired) tell(overBound);
+      else {
+        deferred[tag] = was ?? wait(tag, null, "registry");
+        notes.push(`${tag}: not asked this poll; ${skipWhy}`);
+      }
+      continue;
+    }
+    if (!feedTag) rechecked += 1;
+    budget.left -= 1;
     const r = await checkRelease(repo, tag, now);
+    if (r.rateLimited) budget.left = 0;
     if (r.state === "published") {
       candidates.push(tag);
       continue;
     }
+    if (r.state === "stale") {
+      tell(r.why);
+      continue;
+    }
+    if (expired) {
+      tell(overBound);
+      continue;
+    }
     skipped.push({ tag, why: r.why });
-    deferred[tag] = since;
+    // GitHub not answering says nothing new about an author's release, so an
+    // author wait stays one; a tag never answered for is the registry's.
+    deferred[tag] = wait(tag, was, r.state === "unpublished" ? "author" : (was?.cause ?? "registry"));
+  }
+  const keys = Object.keys(deferred).sort((a, b) => Date.parse(deferred[a].since) - Date.parse(deferred[b].since) || (a < b ? -1 : 1));
+  for (const t of keys.slice(DEFER_KEEP)) {
+    delete deferred[t];
+    notes.push(`${t}: dropped from the waiting set, which keeps ${DEFER_KEEP} a repository; BOT-87's sweep pages about it while it stays unregistered`);
   }
   return { candidates, deferred, skipped, notes, etag: judged.etag };
 }
@@ -792,29 +928,52 @@ async function publishedOnly({ repo, listings, judged, row, now, checkRelease })
  * deferred. The member is absent while it would be empty, so a memory with
  * nothing deferred is byte for byte what it was before deferral existed.
  */
-export function rememberPoll(memory, pollOutput, registered = []) {
+export function rememberPoll(memory, pollOutput, registered = [], now = pollOutput.at) {
   const out = structuredClone(memory);
   const reg = new Set((registered ?? []).map((r) => `${repoKey(r.repo)}\n${r.tag}`));
   for (const [key, res] of Object.entries(pollOutput.repos ?? {})) {
     if (!res.ok) continue;
     const row = out.repos[key] ?? { etag: null, last_success_at: null, registered: [] };
     const done = res.candidates.filter((t) => reg.has(`${key}\n${t}`));
-    row.registered = [...new Set([...row.registered, ...done])].slice(-REGISTERED_KEEP);
-    // The poll re-checked the deferred tags it carried, so its answer is the
-    // new set. A candidate claim did not register (a failure, or a TRUST-31
-    // shadow answer) waits too, so the next poll offers it again whatever the
-    // feed does. A first-deferred time only ever moves earlier: the poll job
-    // reads a stranger's feed, and must not be able to restart a wait.
+    // The poll asked about the waiting tags it carried, so its answer is the
+    // new waiting set, held to three rules, because the poll job reads a
+    // stranger's feed: a `since` only ever moves earlier, no time is later
+    // than this job's own clock, and a `told` tag that has waited
+    // TOLD_RECHECK_DAYS is remembered as registered, which it was.
+    const nowMs = Math.min(new Date(now).getTime(), Date.now());
+    const cap = (x) => (x && Date.parse(x) > nowMs ? iso(nowMs) : x);
     const prior = deferredOf(row, pollOutput.at);
-    const waiting = {};
-    const keep = (t, when) => {
-      const was = prior[t];
-      waiting[t] = was && Date.parse(was) < Date.parse(when) ? was : when;
+    const theirs = deferredOf({ deferred: res.deferred }, pollOutput.at);
+    const own = (o, t) => (Object.hasOwn(o, t) ? o[t] : null);
+    const waiting = Object.create(null);
+    const put = (t, w) => {
+      const p = own(prior, t);
+      const since = p && Date.parse(p.since) < Date.parse(w.since) ? p.since : w.since;
+      waiting[t] = { since: cap(since), cause: w.cause, cause_at: cap(w.cause_at), checked: cap(w.checked), told: cap(w.told) };
     };
-    for (const [t, when] of Object.entries(deferredOf({ deferred: res.deferred }, pollOutput.at))) keep(t, when);
-    for (const t of res.candidates) if (!done.includes(t)) keep(t, prior[t] ?? pollOutput.at);
+    for (const t of Object.keys(theirs)) put(t, theirs[t]);
+    // A candidate claim did not register (a failure, or a TRUST-31 shadow
+    // answer) waits on the registry, and a `told` registration that did not
+    // happen did not tell anyone.
+    for (const t of res.candidates) {
+      if (done.includes(t)) continue;
+      const w = own(theirs, t) ?? own(prior, t);
+      put(t, {
+        since: w?.since ?? pollOutput.at,
+        cause: "registry",
+        cause_at: w?.cause === "registry" ? w.cause_at : pollOutput.at,
+        checked: w?.checked ?? null,
+        told: own(prior, t)?.told ?? null,
+      });
+    }
+    // Registered for good: every registered candidate but a `told` one.
+    const finished = done.filter((t) => !own(theirs, t)?.told);
+    const retired = Object.keys(waiting).filter((t) => waiting[t].told && nowMs - Date.parse(waiting[t].told) > TOLD_RECHECK_DAYS * DAY_MS);
+    row.registered = [...new Set([...row.registered, ...finished, ...retired])].slice(-REGISTERED_KEEP);
     for (const t of row.registered) delete waiting[t];
-    const kept = Object.keys(waiting).sort((a, b) => Date.parse(waiting[a]) - Date.parse(waiting[b])).slice(-REGISTERED_KEEP);
+    const kept = Object.keys(waiting)
+      .sort((a, b) => Date.parse(waiting[a].since) - Date.parse(waiting[b].since) || (a < b ? -1 : 1))
+      .slice(0, DEFER_KEEP);
     if (kept.length) row.deferred = Object.fromEntries(kept.map((t) => [t, waiting[t]]));
     else delete row.deferred;
     if (done.length === res.candidates.length) row.etag = res.etag ?? null;
@@ -877,9 +1036,11 @@ export function lsRemoteTags(repo, run = execFileSync) {
  * the first sweep of a repository, records every tag that exists). A tag seen
  * at an EARLIER sweep that matches the prefix and that nothing handled alarms:
  * not the poll (its memory), not a version record, not any decision record.
- * A tag the poll deferred is handled too: it saw the tag, re-checks it on
- * every poll, and registers it within DEFER_MAX_DAYS whatever its release
- * does (`releaseState`; `publishedOnly`).
+ * A tag the poll is waiting on is handled too while it waits on its author,
+ * or was `told`, or has waited on the registry for less than a day
+ * (`sparedTags`): the poll asks about it, and registers it within
+ * DEFER_MAX_DAYS whatever its release does. A registry-side wait older than
+ * that pages, because then the poll, GitHub or claim is what is broken.
  * `git ls-remote` gives names and SHAs with no dates, so age is counted in
  * sweeps (BOT-87's Why).
  *
@@ -936,7 +1097,7 @@ export function runSweep({ memory, listings, lsRemote = lsRemoteTags, now = new 
       // register, and alarming on them tomorrow would page for history.
       seed: seedAll || known === undefined,
       registered: out.repos[key]?.registered ?? [],
-      deferred: Object.keys(deferredOf(out.repos[key], now)),
+      deferred: sparedTags(out.repos[key], now),
     });
     out.sweep.repos[key] = r.tags;
     alerts.push(...r.alerts);
