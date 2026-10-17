@@ -88,10 +88,10 @@ function commitAdding(root, rel) {
  * Compose the report directories and the pending results.
  *
  * @param {{plans: object[], root: string, listingsDir: string, reportsDir: string,
- *   deliveredAt?: string|null, run: string}} opts
+ *   deliveredAt?: string|null, run: string, now?: Date|string}} opts
  * @returns {{pending: object[], reports: string[]}}
  */
-export function composePublication({ plans, root, listingsDir, reportsDir, deliveredAt = null, run }) {
+export function composePublication({ plans, root, listingsDir, reportsDir, deliveredAt = null, run, now = new Date() }) {
   if (!RUN_RE.test(String(run))) throw new Error(`--run ${JSON.stringify(run)} is not §0.7's run_id[/run_attempt]`);
   const existing = recordsOnMain(root);
   const pending = [];
@@ -107,14 +107,14 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
     if (plan.kind === "state") {
       const { record } = plan;
       const out = writeDecisionRecord({
-        // BOT-34/BOT-35: a hold an aged approval sends back carries the
-        // approval it overrides (`plan.reentry`), and is keyed after it; every
-        // other record is a first entry and keeps the first key.
+        // BOT-35: every record this writes is a first entry and keeps the
+        // first key. The `held:after:<decided_at>` shape is historical since
+        // contract 5.8.0, which removed the aged-approval re-hold (BOT-26 (4)):
+        // records on `main` that carry it are read, and none is written.
         key: submissionKey({
           submission_id: record.submission_id,
           fingerprint: record.fingerprint ?? null,
           state: record.state,
-          after: plan.reentry?.after ?? null,
         }),
         record: { ...record, run },
         root: dir,
@@ -182,7 +182,11 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
       fs.writeFileSync(path.join(dir, rel), stableStringify(doc));
     }
 
-    const body = resultBody(plan, { decisionId: landed.decisionId, mainCommit: landed.mainCommit, deliveredAt });
+    const body = resultBody(plan, {
+      decisionId: landed.decisionId, mainCommit: landed.mainCommit, deliveredAt,
+      // TRUST-32's retry hint counts from the report (contract 5.8.0).
+      reportedAt: `${new Date(now).toISOString().slice(0, 19)}Z`,
+    });
     if (plan.kind === "state") {
       const problems = recordAgreement(body, { ...plan.record, decision_id: landed.decisionId });
       if (problems.length) throw new Error(`BOT-23: ${plan.submission_id}'s result disagrees with its record: ${problems.join("; ")}`);

@@ -91,3 +91,48 @@ export async function operatorAuthority({ repo, actor, triggeringActor, runAttem
   }
   return { ok: true, roles, why: `${logins.join(" and ")} ${logins.length === 1 ? "is" : "are"} ${CONTROL_ROLES.join(" or ")}` };
 }
+
+// ── who may end an operator window: the act `ok` (contract 5.8.0) ──────────
+//
+// TRUST-32 since contract 5.8.0 (DEC-6; OD-28): an operator OK record ends
+// the operator objection window of the alert it answers. The act that writes
+// one has a role check of its own, which runs AFTER `operatorAuthority` above
+// and admits exactly the accounts pinned here, by NUMERIC GitHub id: an id
+// is the account, and a login can be renamed and then re-registered by
+// somebody else.
+//
+// **The owner alone.** `193032699` is `mihailinl`, the account that publishes
+// Astra and this registry (publishers/mihailinl.json; measured against
+// `GET /users/mihailinl` on 2026-10-17). KNICE receives the alert's copies
+// (TRUST-14), and **his OK is a condition, not a grant**: his id joins this
+// list only after (a) the owner re-opens contract ID-39's premise
+// (OPEN-OWNER-13(p)) for a second registry writer, and (b) a ruleset on
+// registry `main` restricts its updates to the owner and the bot's own
+// identity. Until both hold, write access would not stay inside `ok`: `main`
+// refuses no writer's push (ROLL-5), so any writer can rewrite the bot and
+// mint its tokens (ID-39; §1 row 10). Adding an id here is that decision, and
+// `bot/tests/moderation-run.test.mjs` holds the list to exactly this one.
+export const OK_ACTOR_IDS = Object.freeze(["193032699"]);
+
+/**
+ * May this run write an operator OK? `actorId` is `github.actor_id`, the
+ * numeric id of the account that started the run; `operatorAuthority` has
+ * already refused any attempt but the first, so it is also this attempt's.
+ *
+ * @param {{actorId: string|number|undefined}} args
+ * @returns {{ok: boolean, why: string}}
+ */
+export function okAuthority({ actorId }) {
+  const id = String(actorId ?? "");
+  if (!/^[0-9]{1,20}$/.test(id)) {
+    return { ok: false, why: `${JSON.stringify(actorId ?? null)} is not a numeric GitHub account id, so nobody can be matched against the pin (TRUST-32)` };
+  }
+  if (!OK_ACTOR_IDS.includes(id)) {
+    return {
+      ok: false,
+      why: `account ${id} may not end an operator window: the act \`ok\` admits only the owner's pinned id (TRUST-32). ` +
+        "A second operator's OK waits on contract OPEN-OWNER-13(p) and a ruleset on `main`, never on this check",
+    };
+  }
+  return { ok: true, why: `account ${id} is the owner's pinned id (TRUST-32)` };
+}

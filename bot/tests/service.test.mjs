@@ -1998,14 +1998,25 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   ALERT_EVENTS,
-  APPROVAL_MAX_DAYS,
   FIRST_BINDING_WAIT_DAYS,
+  OK_SCHEMA,
+  OPERATOR_RETRY_HINT_MINUTES,
   OPERATOR_WINDOW_HOURS,
   UPDATE_WINDOW_HOURS,
   CHECK_FACTS_SCHEMA,
   decideSubmission,
   id41,
+  noticeExempt,
 } from "../lib/service-decide.mjs";
+import * as serviceDecide from "../lib/service-decide.mjs";
+
+/**
+ * BOT-26 (4)'s 7-day approval maximum, from contract 3.7.0 to 5.7.0. Contract
+ * 5.8.0 withdrew it (OD-28) and the constant went with it; the fixtures below
+ * still use the number, to date approvals and historical re-holds that would
+ * have aged under it.
+ */
+const WITHDRAWN_APPROVAL_MAX_DAYS = 7;
 import { askJob, claimJob, leaseProblems, reportJob, resultBytes, verdictOutcome } from "../lib/service-jobs.mjs";
 import { RESULT_KINDS, recordAgreement, resultBody } from "../lib/service-results.mjs";
 import { ALERT_MEMBERS, ALERT_SCHEMA, alertProblems, commitTrailers, composePublication, finalizeResults } from "../lib/service-publish.mjs";
@@ -2277,6 +2288,40 @@ test("verify's alert, wait and refusal each keep their own shape", () => {
   }
 });
 
+// A refusal before the fingerprint is keyed `submission:<id>::refused`
+// (BOT-35, the key bot/lib/service-publish.mjs derives for a record with no
+// fingerprint), so every later refusal of the same submission derives the same
+// id. Submission ae402306 was refused `E_ATTESTATION_MISSING` (record 209913af
+// on main), the service did not settle it, and three re-leases each refused
+// `E_RELEASE_NOT_FOUND` under that id: BOT-36 wrote nothing and the result
+// named the old record with the new reason, settled as `record_mismatch`.
+// Watched red: with the lookup removed, the plan is a new `state` refusal
+// naming `E_RELEASE_NOT_FOUND`; with the lookup keyed on the fingerprinted
+// shape, the same.
+test("BOT-19/BOT-23: a pre-fingerprint refusal already on main is reported with its own reason, never re-refused under the same id", () => {
+  const refusedId = decisionId(submissionKey({ submission_id: P.sid, fingerprint: null, state: "refused" }));
+  assert.equal(refusedId, decisionId(`submission:${P.sid}::refused`), "the id a fingerprint-less record is written under");
+  const onMain = { schema: "astra.registry.decision/1", submission_id: P.sid, actor: "bot", trigger: "poll", decided_at: "2026-10-16T09:00:00Z",
+    state: "refused", reasons: ["E_ATTESTATION_MISSING"], decision_id: refusedId, run: "1/1" };
+  const later = { submission_id: P.sid, outcome: "refuse", code: "E_RELEASE_NOT_FOUND", findings: [{ level: "error", code: "E_RELEASE_NOT_FOUND", where: null, message: "the release is gone" }] };
+  const plan = decideWith({ verified: later, git: git({ records: [baseline(), onMain] }) });
+  assert.equal(plan.kind, "reported", `${plan.kind} ${JSON.stringify(plan.record?.reasons ?? plan.reasons?.map((r) => r.code))}`);
+  assert.equal(plan.state, "refused");
+  assert.equal(plan.decision_id, refusedId, "the result names the record on main");
+  assert.deepEqual(plan.reasons.map((r) => r.code), ["E_ATTESTATION_MISSING"], "the result carries main's reason, not this run's");
+  assert.equal(plan.record, null, "nothing new is written");
+  assert.match(plan.why, /BOT-19\/BOT-23/);
+  const body = resultBody(plan, {});
+  assert.deepEqual(recordAgreement(body, onMain), [], "BOT-23: the posted result is the record on main");
+  // Positive control: with no refusal on main, the refusal is new, as before.
+  const fresh = decideWith({ verified: later, git: git({ records: [baseline()] }) });
+  assert.equal(fresh.kind, "state");
+  assert.deepEqual(fresh.record.reasons, ["E_RELEASE_NOT_FOUND"]);
+  // Another submission's pre-fingerprint refusal is not this one's.
+  const other = { ...onMain, submission_id: P.sid2, decision_id: decisionId(submissionKey({ submission_id: P.sid2, fingerprint: null, state: "refused" })) };
+  assert.equal(decideWith({ verified: later, git: git({ records: [other] }) }).kind, "state");
+});
+
 // ── B-T3.3c: the outcomes that write nothing ────────────────────────────────
 
 const mReject = { submission_id: P.sid2, fingerprint: FP, state: "refused", decision_id: "a".repeat(32), decided_at: "2026-09-20T00:00:00Z", reasons: ["M_REJECT"] };
@@ -2350,7 +2395,10 @@ test("TRUST-14/TRUST-32: the three-run sequence — alert only, then the window,
   const second = approvedRun({ alerts: new Map([[FP, rec]]) });
   assert.equal(second.kind, "wait");
   assert.equal(second.wait.code, "W_OPERATOR_WINDOW");
-  assert.equal(second.wait.earliest_retry_at, "2026-09-26T17:00:00Z", `the window's end, ${OPERATOR_WINDOW_HOURS} h after delivery`);
+  // Contract 5.8.0: the window's end travels as `window_ends_at`, and
+  // `earliest_retry_at` is a retry hint 15 minutes out, so an OK is read soon.
+  assert.equal(second.wait.window_ends_at, "2026-09-26T17:00:00Z", `the window's end, ${OPERATOR_WINDOW_HOURS} h after delivery`);
+  assert.equal(second.wait.earliest_retry_at, "2026-09-26T12:15:00Z", `${OPERATOR_RETRY_HINT_MINUTES} minutes after the run, sooner than the end`);
   const third = approvedRun({ alerts: new Map([[FP, rec]]), now: "2026-09-26T17:00:01Z" });
   assert.equal(third.state, "published", JSON.stringify(third.wait ?? third.reasons));
   assert.equal(third.record.trigger, "approval");
@@ -2363,14 +2411,15 @@ test("TRUST-14/TRUST-32: the three-run sequence — alert only, then the window,
   assert.equal(undelivered.wait.code, "W_ALERT_UNDELIVERED");
 });
 
-test("BOT-26: no held record and a stale approval are not honoured, and an owner-built first binding a day after its hold is (TRUST-27 at 0)", () => {
+test("BOT-26: no held record is not honoured, an approval of any age is (5.8.0), and an owner-built first binding a day after its hold is (TRUST-27 at 0)", () => {
   const rec = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: approval().decided_at, delivered_at: "2026-09-20T00:00:00Z", run: "1/1" };
   const noHold = approvedRun({ git: { records: [transfer] }, alerts: new Map([[FP, rec]]) });
   assert.equal(noHold.state, "held", "(1): an approval with no `held` record on main clears nothing");
-  const stale = approvedRun({ approval: { decided_at: hoursBefore(P.now, APPROVAL_MAX_DAYS * 24 + 1) }, alerts: new Map([[FP, rec]]) });
-  assert.equal(stale.state, "held", `(4): older than ${APPROVAL_MAX_DAYS} days`);
-  // Since contract 3.7.0 the hold that comes back says why (the tests below).
-  assert.deepEqual(codes(stale), ["R_IDENTITY_CHANGED", "P_APPROVAL_STALE"], `(4): ${JSON.stringify(codes(stale))}`);
+  // Contract 5.8.0 removed (4): an approval a month old clears the hold it
+  // names, as one given this morning does. Until then this was `held` again.
+  const oldAt = hoursBefore(P.now, 30 * 24);
+  const old = approvedRun({ approval: { decided_at: oldAt }, alerts: new Map([[FP, { ...rec, approval_decided_at: oldAt }]]) });
+  assert.equal(old.state, "published", `an approval no longer ages: ${old.kind} ${old.wait?.code ?? ""} ${JSON.stringify(codes(old))}`);
   const line = { outcome: "one", token: "t".repeat(24), token_hash: "2".repeat(16), code: null, alert: false, reason: null };
   const binding = decideWith({
     lease: { claimed_from: "approved" },
@@ -2385,96 +2434,53 @@ test("BOT-26: no held record and a stale approval are not honoured, and an owner
   assert.equal(FIRST_BINDING_WAIT_DAYS, 0, "TRUST-27's period is the contract's 0 (2.1.0)");
   assert.equal(binding.state, "published", `TRUST-27 at 0: ${binding.kind} ${binding.state ?? ""} ${binding.wait?.code ?? ""}`);
   assert.equal(binding.record.moderator, "mod-7", "the approval cleared the first-binding hold");
-  // (1) and TRUST-27 are not (4). Contract 3.7.0 puts `P_APPROVAL_STALE` in
-  // the record of an approval refused for its AGE, and only there: (1) has no
-  // hold of this fingerprint for the approval to return to.
+  // (1) and TRUST-27 never put `P_APPROVAL_STALE` in a record: (1) has no
+  // hold of this fingerprint for the approval to return to. From 3.7.0 to
+  // 5.7.0 only an approval refused for its age did.
   assert.deepEqual(codes(noHold), ["R_IDENTITY_CHANGED"], `(1): ${JSON.stringify(codes(noHold))}`);
   assert.ok(!binding.reasons.some((r) => r.code === "P_APPROVAL_STALE"), `TRUST-27: ${JSON.stringify(binding.reasons.map((r) => r.code))}`);
 });
 
-// Contract 3.7.0, BOT-26 (4). An approval older than the 7-day maximum clears
-// nothing, and the bot holds the release again. Until 3.7.0 that hold carried
-// the first hold's codes and nothing else: `honourApproval` said why in a
-// reason that the result composer then dropped, because a `held` result's
-// reasons are the record's (BOT-23) and the record's were the hold's own. A
-// moderator saw the same hold come back with no word about the approval they
-// had given, and the service's BOT-17 key (attempt, fingerprint, state) took
-// the result for a re-run of the first hold and suppressed it, so the
-// submission sat in `checking` until BOT-15 parked it.
+// Contract 5.8.0 (OD-28) removed BOT-26 (4). From 3.7.0 to 5.7.0 an approval
+// older than the 7-day maximum cleared nothing and the bot held the release
+// again, with `P_APPROVAL_STALE` beside the hold's codes. What that voided
+// were approvals of releases waiting on something else: Voltur792/SPT v1.2.1,
+// approved 2026-10-15, waited 46 hours on a notice nobody could receive, and
+// on 2026-10-22 its approval would have lapsed. An approval now clears the
+// hold it names whatever its age; BOT-26 (2) still voids it when the release
+// changes.
 //
-// Watched: with `P_APPROVAL_STALE` left out of the held record's codes, the
-// first test is red on the record and again on the posted body; with it
-// written for every approval `honourApproval` does not honour, the TRUST-27
-// and (1) assertions above are red; with it raised as a hold inside
-// `decide()`, the way BOT-26 (2) raises it, the aged approval of a release
-// nothing holds is held and the third test is red; and with the age counted
-// from `decided_at` alone in the message, the MIG-31 half of the first test
-// is red.
-const agedAt = hoursBefore(P.now, APPROVAL_MAX_DAYS * 24 + 1);
-test("BOT-26 (4): an aged approval re-holds with `P_APPROVAL_STALE` beside the hold's codes, naming its `decided_at` and the maximum", () => {
-  const rec = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: agedAt, delivered_at: hoursBefore(P.now, APPROVAL_MAX_DAYS * 24), run: "1/1" };
-  const aged = approvedRun({
-    approval: { decided_at: agedAt },
-    held: { decided_at: hoursBefore(P.now, (APPROVAL_MAX_DAYS + 2) * 24) },
-    alerts: new Map([[FP, rec]]),
-  });
-  assert.equal(aged.kind, "state", JSON.stringify(aged.wait ?? aged.why));
-  assert.equal(aged.state, "held");
-  assert.deepEqual(codes(aged), ["R_IDENTITY_CHANGED", "P_APPROVAL_STALE"], "the hold's own codes, then why it came back");
-  assert.ok(!("moderator" in aged.record), "an approval that cleared nothing names no moderator");
-  // What the service receives: the record's codes in the record's order, and
-  // the sentence the moderator reads.
-  const body = resultBody(aged, { decisionId: "0".repeat(32) });
-  assert.deepEqual(recordAgreement(body, { ...aged.record, decision_id: "0".repeat(32) }), [], "BOT-23");
-  const why = body.reasons.find((r) => r.code === "P_APPROVAL_STALE");
-  assert.ok(why, `the posted result does not say why the hold came back: ${JSON.stringify(body.reasons)}`);
-  assert.equal(why.stage, "policy");
-  assert.match(why.message, /^BOT-26 \(4\)/, why.message);
-  assert.ok(why.message.includes(agedAt), `the message does not name the approval's decided_at: ${why.message}`);
-  assert.match(why.message, new RegExp(`\\b${APPROVAL_MAX_DAYS}-day maximum\\b`), `the message does not name the maximum: ${why.message}`);
-
-  // MIG-31 counts the age from its floor's end, so a message naming only
-  // `decided_at` would say "older than 7 days" of an approval that was
-  // deferred and then left to age: the floor's end is named too.
-  const line = { outcome: "one", token: "t".repeat(24), token_hash: "2".repeat(16), code: null, alert: false, reason: null };
-  const heldAt = hoursBefore(P.now, (ACTOR_MISMATCH_FLOOR_DAYS + APPROVAL_MAX_DAYS + 2) * 24);
-  const floorEnd = hoursBefore(P.now, (APPROVAL_MAX_DAYS + 2) * 24);
-  const givenAt = hoursBefore(P.now, (ACTOR_MISMATCH_FLOOR_DAYS + APPROVAL_MAX_DAYS + 1) * 24);
-  const deferred = decideWith({
-    lease: { claimed_from: "approved" },
-    verified: verified({ binding: line, owner_file: { commit: "9".repeat(40), pull_request: false }, actor: { triggering_actor_id: "700000555", floor_days: ACTOR_MISMATCH_FLOOR_DAYS } }),
-    ask: ask({ verdict: "pass", gates: { stop_status: "no_stop", decisions: [approval({ decided_at: givenAt })] }, notice: { kind: "approved", status: "sent", accepted_at: heldAt } }),
-    git: git({ existing: existing(), listingState: { state: "grandfathered" }, records: [baseline(), heldRecord({ reasons: ["R_FIRST_BINDING"], decided_at: heldAt })] }),
-  });
-  assert.equal(deferred.state, "held", JSON.stringify(deferred.wait ?? deferred.why));
-  assert.deepEqual(codes(deferred), ["R_FIRST_BINDING", "P_APPROVAL_STALE"]);
-  const floored = resultBody(deferred).reasons.find((r) => r.code === "P_APPROVAL_STALE")?.message ?? "";
-  assert.ok(floored.includes(givenAt) && floored.includes(floorEnd) && /MIG-31/.test(floored),
-    `the message does not say the age ran from MIG-31's floor end: ${floored}`);
-});
-
-test("BOT-26 (4): an approval younger than the maximum publishes as before, with no `P_APPROVAL_STALE`", () => {
-  const givenAt = hoursBefore(P.now, APPROVAL_MAX_DAYS * 24 - 1);
+// Watched: with the age check restored in `honourApproval`, the first test is
+// red on `state` (held again) and the second on MIG-31's long-past floor.
+test("BOT-26 since 5.8.0: an approval far older than the withdrawn maximum clears its hold, with no `P_APPROVAL_STALE`", () => {
+  const givenAt = hoursBefore(P.now, (WITHDRAWN_APPROVAL_MAX_DAYS + 30) * 24);
   const rec = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: givenAt, delivered_at: hoursBefore(P.now, 24), run: "1/1" };
-  const fresh = approvedRun({
+  const plan = approvedRun({
     approval: { decided_at: givenAt },
-    held: { decided_at: hoursBefore(P.now, (APPROVAL_MAX_DAYS + 2) * 24) },
+    held: { decided_at: hoursBefore(P.now, (WITHDRAWN_APPROVAL_MAX_DAYS + 31) * 24) },
     alerts: new Map([[FP, rec]]),
   });
-  assert.equal(fresh.state, "published", `${fresh.kind} ${JSON.stringify(fresh.wait ?? fresh.reasons?.map((r) => r.code))}`);
-  assert.equal(fresh.record.moderator, "mod-7", "the approval cleared the hold");
-  assert.ok(!codes(fresh).includes("P_APPROVAL_STALE"), JSON.stringify(codes(fresh)));
-  assert.ok(!fresh.reasons.some((r) => r.code === "P_APPROVAL_STALE"), "an honoured approval is not explained away");
+  assert.equal(plan.state, "published", `${plan.kind} ${JSON.stringify(plan.wait ?? codes(plan))}`);
+  assert.equal(plan.record.moderator, "mod-7", "the approval cleared the hold");
+  assert.ok(!codes(plan).includes("P_APPROVAL_STALE"), JSON.stringify(codes(plan)));
+  assert.ok(!plan.reasons.some((r) => r.code === "P_APPROVAL_STALE"), "an honoured approval is not explained away");
+  assert.ok(!("reentry" in plan), "no plan names a re-entry into `held` any more (BOT-35: `held:after:` is never written)");
+  assert.equal("APPROVAL_MAX_DAYS" in serviceDecide, false, "the approval maximum is back in bot/lib/service-decide.mjs");
 });
 
-test("BOT-26 (4): an aged approval of a release nothing holds any more clears nothing and holds nothing (DEC-19)", () => {
+test("BOT-26 since 5.8.0 with MIG-31: an approval given in a floor that ended weeks ago still publishes", () => {
+  const line = { outcome: "one", token: "t".repeat(24), token_hash: "2".repeat(16), code: null, alert: false, reason: null };
+  const heldAt = hoursBefore(P.now, (ACTOR_MISMATCH_FLOOR_DAYS + WITHDRAWN_APPROVAL_MAX_DAYS + 20) * 24);
+  const givenAt = hoursBefore(P.now, (ACTOR_MISMATCH_FLOOR_DAYS + WITHDRAWN_APPROVAL_MAX_DAYS + 19) * 24);
+  const rec = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: givenAt, delivered_at: hoursBefore(P.now, 24), run: "1/1" };
   const plan = decideWith({
     lease: { claimed_from: "approved" },
-    ask: ask({ gates: { stop_status: "no_stop", decisions: [approval({ decided_at: agedAt })] }, notice: { kind: "approved", status: "pending" } }),
-    git: git({ records: [heldRecord({ reasons: ["R_FIRST_LISTING"], decided_at: hoursBefore(P.now, (APPROVAL_MAX_DAYS + 2) * 24) })] }),
+    verified: verified({ binding: line, owner_file: { commit: "9".repeat(40), pull_request: false }, actor: { triggering_actor_id: "700000555", floor_days: ACTOR_MISMATCH_FLOOR_DAYS } }),
+    ask: ask({ verdict: "pass", gates: { stop_status: "no_stop", decisions: [approval({ decided_at: givenAt })] }, notice: { kind: "approved", status: "pending" } }),
+    git: git({ existing: existing(), listingState: { state: "grandfathered" }, records: [baseline(), heldRecord({ reasons: ["R_FIRST_BINDING"], decided_at: heldAt })], alerts: new Map([[FP, rec]]) }),
   });
-  assert.equal(plan.state, "published", `${plan.kind} ${JSON.stringify(codes(plan))}`);
-  assert.deepEqual(codes(plan), ["P_PUBLISHED", "P_REVIEW_PRIORITY"], "a refused approval changes nothing");
+  assert.equal(plan.state, "published", `${plan.kind} ${JSON.stringify(plan.wait ?? codes(plan))}`);
+  assert.ok(!codes(plan).includes("P_APPROVAL_STALE"));
 });
 
 // Contract 3.0.0 (DEC-19): an approval clears a hold THIS run raises, and
@@ -2538,6 +2544,240 @@ test("MIG-12: after cutover a grandfathered listing's approved change of hands w
     assert.equal(plan.wait.code, "W_NOTICE_PENDING");
     assert.match(plan.wait.cause, /MIG-12/, "keyed on git, not on the service's answer");
   }
+});
+
+// ── BOT-28 since contract 5.8.0: an approved hold with one account in it ────
+//
+// DEC-8 (D2a, OD-28): an approved hold whose held record and run carry no
+// `R_BINDING_CHANGED`, and whose run read exactly one binding line (`one`),
+// sends its notices to the account that made the release; it reads stop
+// status alone and waits for no notice. Voltur792/SPT v1.2.1 (approved
+// 2026-10-15) sat 46 hours on 92 `pending` answers for an account with no
+// notice destination. `R_BINDING_CHANGED` keeps ID-60's wait; no line keeps
+// BOT-29's.
+//
+// Watched red (each by hand): `noticeExempt` returning true for every
+// outcome — the no-line case publishes; reading only the held record's codes
+// — the run-only `R_BINDING_CHANGED` case publishes; reading only the run's —
+// the row 1b case still waits (both codes are in both), so that one is held
+// by the record-only case; `askJob` asking notice status anyway — the stub
+// sees a notice call.
+const H_OLD = "1".repeat(16);
+const lineOf = (hash) => ({ outcome: "one", token: "t".repeat(24), token_hash: hash, code: null, alert: false, reason: null });
+const alertsFor = (decidedAt = approval().decided_at, deliveredAt = hoursBefore(P.now, OPERATOR_WINDOW_HOURS + 1)) =>
+  new Map([[FP, { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: decidedAt, delivered_at: deliveredAt, run: "1/1" }]]);
+const boundRun = ({ identity, line, heldReasons, notice = { kind: "approved", status: "pending" }, alerts = alertsFor(), oks = new Map(), denied = new Set(), stop = "no_stop", now } = {}) => decideWith({
+  lease: { claimed_from: "approved" },
+  verified: verified({ binding: line, owner_file: { commit: "9".repeat(40), pull_request: false } }),
+  ask: ask({ verdict: "pass", gates: { stop_status: stop, decisions: [approval()] }, notice }),
+  git: git({ existing: existing({ identity }), records: [baseline(), heldRecord({ reasons: heldReasons })], alerts, oks, denied }),
+  now,
+});
+/** ID-41 row 5: the repository was renamed; same id, same owner, same token. */
+const renamed = () => ({ identity: { repo: "a-stranger/dice-roller-old", repository_id: P.rid, repository_owner_id: P.oid, token_hash: H_OLD }, line: lineOf(H_OLD), heldReasons: ["R_IDENTITY_CHANGED"] });
+
+test("BOT-28 (5.8.0): `R_IDENTITY_CHANGED` alone (ID-41 row 5) with one line publishes once the operator window passes, whatever the notice says", () => {
+  const row5 = renamed();
+  assert.deepEqual(id41({ identity: { repo: P.repo, repository_id: P.rid, repository_owner_id: P.oid }, record: row5.identity, lineHash: H_OLD }).rows, ["5"], "the fixture is row 5");
+  for (const notice of [{ kind: "approved", status: "pending" }, { kind: "approved", status: "none_unbound" }, null]) {
+    const plan = boundRun({ ...row5, notice });
+    assert.equal(plan.state, "published", `${JSON.stringify(notice)}: ${plan.kind} ${plan.wait?.code ?? ""} ${plan.wait?.cause ?? ""}`);
+    assert.equal(plan.record.moderator, "mod-7");
+  }
+  // It still waits the operator window, and still names the alert first.
+  const first = boundRun({ ...row5, alerts: new Map() });
+  assert.equal(first.kind, "wait");
+  assert.equal(first.alert?.event, "approval", "the alert is still named before anything publishes");
+  const running = boundRun({ ...row5, alerts: alertsFor(approval().decided_at, hoursBefore(P.now, 1)) });
+  assert.equal(running.wait?.code, "W_OPERATOR_WINDOW");
+  // And a stop still publishes nothing.
+  assert.equal(boundRun({ ...row5, stop: "stopped" }).kind, "none", "a stop publishes nothing");
+  assert.equal(noticeExempt({ heldReasons: ["R_IDENTITY_CHANGED"], runReasons: ["R_IDENTITY_CHANGED"], bindingOutcome: "one" }), true);
+});
+
+test("BOT-28 (5.8.0): row 1b with a new line holds `R_BINDING_CHANGED` and keeps ID-60's wait", () => {
+  const identity = { repo: P.repo, repository_id: "999000111", repository_owner_id: P.oid, token_hash: H_OLD };
+  const line = lineOf("2".repeat(16));
+  assert.deepEqual(id41({ identity: { repo: P.repo, repository_id: P.rid, repository_owner_id: P.oid }, record: identity, lineHash: line.token_hash }).codes,
+    ["R_IDENTITY_CHANGED", "R_BINDING_CHANGED"], "the fixture is row 1b with a new line");
+  const heldReasons = ["R_IDENTITY_CHANGED", "R_BINDING_CHANGED"];
+  const pending = boundRun({ identity, line, heldReasons, notice: { kind: "binding_changed", status: "pending" } });
+  assert.equal(pending.wait?.code, "W_NOTICE_PENDING", `${pending.kind} ${pending.state ?? ""}`);
+  const incoming = boundRun({ identity, line, heldReasons, notice: { kind: "binding_changed", status: "sent", accepted_at: hoursBefore(P.now, 30) } });
+  assert.equal(incoming.wait?.code, "W_NOTICE_PENDING", "ID-60: an incoming-account notice never counts");
+  const previous = boundRun({ identity, line, heldReasons, notice: { kind: "binding_changed", status: "previous_sent", accepted_at: hoursBefore(P.now, UPDATE_WINDOW_HOURS + 1) } });
+  assert.equal(previous.state, "published", `the previous account's notice, older than the window: ${previous.kind} ${previous.wait?.code ?? ""}`);
+});
+
+test("BOT-28 (5.8.0): `R_BINDING_CHANGED` in this run alone, not in the held record, keeps the wait", () => {
+  // Renamed (row 5) on the record; this run's line is a new token (row 6).
+  const { identity, heldReasons } = renamed();
+  const plan = boundRun({ identity, line: lineOf("2".repeat(16)), heldReasons });
+  assert.equal(plan.wait?.code, "W_NOTICE_PENDING", `${plan.kind} ${plan.state ?? ""}: the run's own codes count (BOT-28's Why)`);
+});
+
+test("BOT-28 (5.8.0): `R_BINDING_CHANGED` on the held record alone, not in this run, keeps the wait", () => {
+  // Held as row 1b with a new line; since the hold, the identity record has
+  // come to name this line's token (a sibling's release bound it), so this
+  // run reads row 1b alone. The moderator approved a change of binding, and
+  // a second account is in play whatever the run reads now.
+  const identity = { repo: P.repo, repository_id: "999000111", repository_owner_id: P.oid, token_hash: "2".repeat(16) };
+  const line = lineOf("2".repeat(16));
+  assert.deepEqual(id41({ identity: { repo: P.repo, repository_id: P.rid, repository_owner_id: P.oid }, record: identity, lineHash: line.token_hash }).codes,
+    ["R_IDENTITY_CHANGED"], "the fixture's run reads no changed binding");
+  const plan = boundRun({ identity, line, heldReasons: ["R_IDENTITY_CHANGED", "R_BINDING_CHANGED"] });
+  assert.equal(plan.wait?.code, "W_NOTICE_PENDING", `${plan.kind} ${plan.state ?? ""}: the held record's codes count (BOT-28's Why)`);
+});
+
+test("BOT-28 (5.8.0) / BOT-29: an approved hold whose run read no binding line keeps waiting for its notice", () => {
+  // The transfer of `approvedRun` has no line: MIG-20's baseline holds it.
+  const plan = approvedRun({ notice: { kind: "approved", status: "pending" }, alerts: alertsFor() });
+  assert.equal(plan.wait?.code, "W_NOTICE_PENDING", `${plan.kind} ${plan.state ?? ""}`);
+  assert.equal(noticeExempt({ heldReasons: ["R_IDENTITY_CHANGED"], runReasons: [], bindingOutcome: "none" }), false);
+  for (const outcome of ["malformed", "wait", undefined]) {
+    assert.equal(noticeExempt({ heldReasons: [], runReasons: [], bindingOutcome: outcome }), false, String(outcome));
+  }
+});
+
+test("BOT-28 (5.8.0): `ask` does not ask notice status for an exempt hold, and asks it with the binding-changed kind for row 6", async () => {
+  const s = await stub((call) => {
+    if (call.url.endsWith("/verdicts")) return ok({ schema: "astra.plugins.bot-verdict/1", shadow: false, token_state: "bound", minted_for_repository: true, eligibility: "eligible" });
+    if (call.url.endsWith("/gates")) {
+      return ok({ schema: "astra.plugins.bot-gates/1", shadow: false, items: [{ submission_id: P.sid, fingerprint: FP, stop_status: "no_stop", decisions: [approval()] }] });
+    }
+    if (call.url.endsWith("/notice-status")) return { status: 503, body: {} };
+    return ok({});
+  });
+  try {
+    const run = (identityHash, heldReasons = ["R_IDENTITY_CHANGED"]) => askJob({
+      client: client(s), submissions: [P.sid],
+      leases: { [P.sid]: lease({ claimed_from: "approved" }) },
+      verified: { [P.sid]: verified({ binding: lineOf(H_OLD) }) },
+      heldReasons: () => heldReasons,
+      identityHash: () => identityHash,
+    });
+    const before = s.calls.length;
+    const exempt = await run(H_OLD);
+    const noticeCalls = s.calls.slice(before).filter((c) => c.url.endsWith("/notice-status"));
+    assert.equal(noticeCalls.length, 0, "an exempt hold was asked for a notice");
+    assert.equal(exempt.outcome[P.sid].wait, undefined, `a notice read that could not happen held an exempt hold: ${JSON.stringify(exempt.outcome[P.sid])}`);
+    assert.equal(exempt.outcome[P.sid].gates.stop_status, "no_stop", "it still read the stop status");
+
+    const mark = s.calls.length;
+    const changed = await run("9".repeat(16));
+    const asked = s.calls.slice(mark).filter((c) => c.url.endsWith("/notice-status"));
+    assert.ok(asked.length >= 1, "a row 6 line was not asked for a notice");
+    assert.match(asked[0].raw, /"kind":"binding_changed"/, `asked with the wrong kind: ${asked[0].raw}`);
+    assert.ok(changed.outcome[P.sid].wait, "a notice read that failed is a wait when the notice counts");
+
+    const mark2 = s.calls.length;
+    await run(H_OLD, ["R_IDENTITY_CHANGED", "R_BINDING_CHANGED"]);
+    assert.ok(s.calls.slice(mark2).some((c) => c.url.endsWith("/notice-status")), "a held record naming `R_BINDING_CHANGED` was not asked");
+  } finally {
+    await s.close();
+  }
+});
+
+// ── TRUST-32 since contract 5.8.0: the operator OK ──────────────────────────
+//
+// An operator OK record, `state/ok/<fingerprint>.json`, written only by
+// operator.yml's act `ok`, ends `W_OPERATOR_WINDOW` for the alert it answers
+// and nothing else. While the window runs the wait carries `window_ends_at`
+// and a retry hint at most 15 minutes away.
+//
+// Watched red (each by hand): `okAnswers` ignoring `approval_decided_at` —
+// the other-approval case publishes; ignoring `fingerprint` — the
+// other-fingerprint case publishes; the OK read before the delivery check —
+// the undelivered case publishes; `readGitState` keying an OK by its member
+// instead of its file name — the disagreeing file is honoured.
+const okFor = (over = {}) => ({
+  schema: OK_SCHEMA, fingerprint: FP, approval_decided_at: approval().decided_at,
+  run: "https://github.com/mihailinl/astra-registry/actions/runs/1", at: "2026-09-26T11:30:00Z", ...over,
+});
+const runningWindow = () => alertsFor(approval().decided_at, hoursBefore(P.now, 1));
+
+test("TRUST-32 (5.8.0): an operator OK for the alert's approval ends the operator window", () => {
+  const waiting = boundRun({ ...renamed(), alerts: runningWindow() });
+  assert.equal(waiting.wait?.code, "W_OPERATOR_WINDOW", "the fixture's window is running");
+  const okd = boundRun({ ...renamed(), alerts: runningWindow(), oks: new Map([[FP, okFor()]]) });
+  assert.equal(okd.state, "published", `${okd.kind} ${okd.wait?.code ?? ""}`);
+  // The same through the change of hands with no line, which also waits the
+  // notice: the OK ends the window, and the notice was read first.
+  const transfer = approvedRun({ alerts: runningWindow(), git: { oks: new Map([[FP, okFor()]]) } });
+  assert.equal(transfer.state, "published", `${transfer.kind} ${transfer.wait?.code ?? ""}`);
+});
+
+test("TRUST-32 (5.8.0): an OK for another fingerprint, or for another approval of this one, ends nothing", () => {
+  const otherApproval = boundRun({ ...renamed(), alerts: runningWindow(), oks: new Map([[FP, okFor({ approval_decided_at: "2026-09-20T00:00:00Z" })]]) });
+  assert.equal(otherApproval.wait?.code, "W_OPERATOR_WINDOW", "an OK given for an earlier approval ended the window of a new one");
+  const otherFp = boundRun({ ...renamed(), alerts: runningWindow(), oks: new Map([[FP, okFor({ fingerprint: "0".repeat(16) })]]) });
+  assert.equal(otherFp.wait?.code, "W_OPERATOR_WINDOW", "an OK naming another fingerprint ended this one's window");
+  const malformed = boundRun({ ...renamed(), alerts: runningWindow(), oks: new Map([[FP, { ...okFor(), extra: 1 }]]) });
+  assert.equal(malformed.wait?.code, "W_OPERATOR_WINDOW", "an OK with an unnamed member ended the window");
+  // On disk: a file whose name and member disagree is not read at all.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-ok-"));
+  try {
+    fs.mkdirSync(path.join(dir, "state", "ok"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "state", "ok", `${FP}.json`), JSON.stringify(okFor({ fingerprint: "0".repeat(16) })));
+    fs.writeFileSync(path.join(dir, "state", "ok", `${"0".repeat(16)}.json`), JSON.stringify(okFor()));
+    fs.writeFileSync(path.join(dir, "state", "ok", `${"a".repeat(16)}.json`), JSON.stringify(okFor({ fingerprint: "a".repeat(16) })));
+    const read = readGitState(dir).oks;
+    assert.deepEqual([...read.keys()], ["a".repeat(16)], "an OK whose file name and `fingerprint` disagree was read");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("TRUST-32 (5.8.0): an OK never ends `W_ALERT_UNDELIVERED`, a deny record, a stop or a notice wait", () => {
+  const oks = new Map([[FP, okFor()]]);
+  const undelivered = boundRun({ ...renamed(), alerts: new Map([[FP, { ...runningWindow().get(FP), delivered_at: null }]]), oks });
+  assert.equal(undelivered.wait?.code, "W_ALERT_UNDELIVERED");
+  const unnamed = boundRun({ ...renamed(), alerts: new Map(), oks });
+  assert.equal(unnamed.kind, "wait", "an OK before the alert was even raised published");
+  assert.ok(unnamed.alert, "the alert is still named");
+  const denied = boundRun({ ...renamed(), alerts: runningWindow(), oks, denied: new Set([FP]) });
+  assert.deepEqual(codes(denied), ["P_OPERATOR_DENIED"], "an OK overrode a deny record");
+  assert.equal(boundRun({ ...renamed(), alerts: runningWindow(), oks, stop: "stopped" }).kind, "none", "an OK overrode a stop");
+  const notice = approvedRun({ notice: { kind: "approved", status: "pending" }, alerts: runningWindow(), git: { oks } });
+  assert.equal(notice.wait?.code, "W_NOTICE_PENDING", "an OK ended a notice wait");
+});
+
+test("§4.4 (5.8.0): `window_ends_at` rides every `W_OPERATOR_WINDOW` wait and no other code, with a hint at most 15 minutes out", () => {
+  const plans = {
+    window: boundRun({ ...renamed(), alerts: runningWindow() }),
+    windowNearEnd: boundRun({ ...renamed(), alerts: alertsFor(approval().decided_at, hoursBefore(P.now, OPERATOR_WINDOW_HOURS - 0.1)) }),
+    undelivered: boundRun({ ...renamed(), alerts: new Map([[FP, { ...runningWindow().get(FP), delivered_at: null }]]) }),
+    named: boundRun({ ...renamed(), alerts: new Map() }),
+    notice: approvedRun({ notice: { kind: "approved", status: "pending" } }),
+    unreachable: decideWith({ ask: ask({ gates: null }) }),
+    checks: decideWith({ facts: facts({ findings: [{ code: "E_PROBE_UNAVAILABLE", level: "error" }] }) }),
+  };
+  for (const [name, plan] of Object.entries(plans)) {
+    assert.equal(plan.kind, "wait", `${name}: ${plan.kind}`);
+    const body = resultBody(plan, { reportedAt: P.now });
+    const isWindow = body.wait.code === "W_OPERATOR_WINDOW";
+    assert.equal("window_ends_at" in body.wait, isWindow, `${name}: ${body.wait.code} ${JSON.stringify(body.wait)}`);
+    assert.equal("window_ends_at" in plan.wait, isWindow, `${name}: the plan's wait`);
+  }
+  const end = plans.window.wait.window_ends_at;
+  assert.equal(end, hoursBefore(P.now, 1 - OPERATOR_WINDOW_HOURS), "the window's end, from the delivery");
+  const atReport = resultBody(plans.window, { reportedAt: "2026-09-26T12:02:00Z" });
+  assert.equal(atReport.wait.earliest_retry_at, "2026-09-26T12:17:00Z", "the hint counts from the report");
+  assert.equal(atReport.wait.window_ends_at, end);
+  const near = resultBody(plans.windowNearEnd, { reportedAt: P.now });
+  assert.equal(near.wait.earliest_retry_at, near.wait.window_ends_at, "never later than the window's end");
+  // The first read of an approval: the composer turns the named alert into
+  // the window from the delivery this run's alert job reported.
+  const first = resultBody(plans.named, { deliveredAt: "2026-09-26T12:01:00Z", reportedAt: "2026-09-26T12:03:00Z" });
+  assert.equal(first.wait.code, "W_OPERATOR_WINDOW");
+  assert.equal(first.wait.window_ends_at, "2026-09-26T18:01:00Z");
+  assert.equal(first.wait.earliest_retry_at, "2026-09-26T12:18:00Z");
+  const lost = resultBody(plans.named, { deliveredAt: null, reportedAt: P.now });
+  assert.equal(lost.wait.code, "W_ALERT_UNDELIVERED");
+  assert.ok(!("window_ends_at" in lost.wait));
+  // A forged member on another wait code never reaches the wire.
+  const forged = resultBody({ ...plans.notice, wait: { ...plans.notice.wait, window_ends_at: end } }, { reportedAt: P.now });
+  assert.ok(!("window_ends_at" in forged.wait), "`window_ends_at` reached the wire on a W_NOTICE_PENDING");
 });
 
 test("DEC-8 and TRUST-33: never before `publish_after`, and a deny record refuses", () => {
@@ -2877,6 +3117,9 @@ test("ask: ID-9 in four words, and no token state or eligibility value leaves th
       client: client(s), submissions: [P.sid, P.sid2],
       leases: { [P.sid]: lease({ claimed_from: "approved" }), [P.sid2]: lease({ submission_id: P.sid2 }) },
       verified: { [P.sid]: v, [P.sid2]: v2 },
+      // The identity record names another token, so the line is ID-41 row 6
+      // and this approved hold still reads a notice (BOT-28 since 5.8.0).
+      identityHash: () => "1".repeat(16),
     });
     assert.equal(out.outcome[P.sid].verdict, "B_BINDING_UNUSABLE");
     assert.equal(out.outcome[P.sid2].verdict, null, "FLOW-74: no line, no verdict asked");
@@ -2957,38 +3200,33 @@ test("BOT-36: a record already on main is not written again, and the result name
   }
 });
 
-// ── BOT-34: every entry into `held` has its record, a re-entry included ─────
+// ── BOT-34/BOT-35: the historical re-hold records, read and never written ──
 //
-// BOT-34 asks for one decision record "for every entry of a submission or
-// fingerprint into `held`". Since contract 3.7.0 BOT-26 (4) sends a submission
-// whose approval aged back into `held`, and on `main` that re-entry wrote no
-// record: its key was the first hold's, (`submission_id`, fingerprint,
-// `held`), so it derived the first hold's `decision_id`, BOT-36 found that
-// record already on `main` and dropped the write, and the result named the
-// FIRST hold — its codes without `P_APPROVAL_STALE`, its commit weeks old.
-// The plugins service treats a result naming a record it has already applied
-// as a repeat (BOT-17), so the hold would have been suppressed and the
-// submission parked, never returned to a moderator. #409's test passed
-// because its fixture tree held no earlier record; every tree below already
-// holds one, committed, before the run under test.
+// From contract 3.10.0 to 5.7.0 BOT-26 (4) sent a submission whose approval
+// had aged back into `held`, and BOT-34 gave that re-entry a record of its
+// own, keyed after the approval it overrode (`submission:<id>:<fp>:held:
+// after:<decided_at>`, BOT-35). Before 3.10.0 the re-hold derived the first
+// hold's id, BOT-36 dropped it as already on `main`, and the result named the
+// first hold; #409's test passed only because its fixture tree held no
+// earlier record. Contract 5.8.0 removed the age limit (OD-28): no hold
+// returns for an approval's age, and the bot derives no `held:after:` id. The
+// records already on `main` keep the ids they were written with, so the
+// tests that wrote aged re-holds are now fixtures that READ one: every tree
+// below already holds the first hold and a historical re-hold, committed,
+// before the run under test.
 //
 // Watched red (each by hand, restored after):
-//   * service-publish deriving the key without the overridden approval (main's
-//     line): the re-hold writes nothing and names the first hold — red at B;
-//   * the builder ignoring `after`: the same, and decisions.test.mjs's shape;
-//   * the re-entry keyed on the run's own clock instead of the approval's
-//     `decided_at`: red where B's id is held to the key over that approval,
-//     since every re-run of one re-hold would otherwise derive its own;
-//   * keyed on the OLDEST approval the gates answer carries instead of the one
-//     `honourApproval` judged: the second aged approval lands on B — red at C;
-//   * the first hold's key spelled any other way: red at A, and at the literal
-//     id in decisions.test.mjs;
+//   * the age check restored in `honourApproval`: the approved run re-holds
+//     instead of publishing, and writes a third `held` record — red at the
+//     approved run;
+//   * service-publish deriving the key with an `after` again: red where the
+//     re-run of the hold must name A;
 //   * the hold `honourApproval` counts from read as the newest `held` record
-//     of the fingerprint (main's selection): the re-hold restarts TRUST-27's
-//     wait and MIG-31's floor — red in the second test.
+//     of the fingerprint (the historical re-hold): the second test's floor
+//     restarts — red there.
 
 import { readGitState } from "../lib/service-decide.mjs";
-import { decisionId, submissionKey } from "../lib/decisions.mjs";
+import { decisionId, keyDomain as keyDomainOf, submissionKey } from "../lib/decisions.mjs";
 
 /** A registry tree whose `main` already holds MIG-20's baseline for the listing, which TRUST-23 holds against. */
 function treeWithBaseline() {
@@ -3033,7 +3271,7 @@ function publishOnto(t, plan, run) {
 /** A record as `main` holds it at a commit, read through git rather than the working tree. */
 const recordAt = (t, commit, rel) => JSON.parse(t.g("show", `${commit}:${rel}`));
 
-test("BOT-34: a hold an aged approval sends back writes its own record over a tree that already holds the first, and a re-run of it writes nothing", async () => {
+test("BOT-35: a historical `held:after:` re-hold on main is read, the approval that follows it publishes, and no run writes another", async () => {
   const { loadSchemas, REPO_ROOT } = await import("../../tools/lib/sources.mjs");
   const { validate } = await import("../../tools/lib/jsonschema.mjs");
   const decisionSchema = loadSchemas(REPO_ROOT).decision;
@@ -3041,78 +3279,62 @@ test("BOT-34: a hold an aged approval sends back writes its own record over a tr
   const t = treeWithBaseline();
   try {
     const T0 = "2026-09-02T12:00:00Z"; // the first hold
-    const T1 = "2026-09-03T12:00:00Z"; // a moderator approves
-    const T2 = "2026-09-11T12:00:00Z"; // the bot claims it eight days later: aged
-    const T2b = "2026-09-11T12:10:00Z"; // a re-run of that same re-hold
-    const T3 = "2026-09-12T12:00:00Z"; // a moderator approves again
-    const T4 = "2026-09-20T12:00:00Z"; // and that one ages too
+    const T1 = "2026-09-03T12:00:00Z"; // an approval, which aged under 5.7.0
+    const T2 = "2026-09-11T12:00:00Z"; // the re-hold 5.7.0 wrote for it
+    const T3 = "2026-09-12T12:00:00Z"; // a second approval, older than 7 days by T4
+    const T4 = "2026-09-26T12:00:00Z"; // the run under test
     const onTree = (over = {}) => git({ existing: existing(), records: readGitState(t.dir).records, ...over });
-    const approvedAt = (now, decisions) => decideWith({
-      lease: { claimed_from: "approved" },
-      ask: ask({ gates: { stop_status: "no_stop", decisions }, notice: { kind: "approved", status: "sent", accepted_at: T0 } }),
-      git: onTree(),
-      now,
-    });
 
-    // 1. The first hold writes record A, under today's key.
+    // The fixture: A, the first hold, written by today's code; and B, the
+    // re-hold a 5.7.0 run wrote, keyed after T1, committed as it was.
     const firstPlan = decideWith({ git: onTree(), now: T0 });
     assert.equal(firstPlan.state, "held", `${firstPlan.kind} ${JSON.stringify(firstPlan.wait ?? firstPlan.why ?? codes(firstPlan))}`);
-    assert.deepEqual(codes(firstPlan), ["R_IDENTITY_CHANGED"]);
     const A = publishOnto(t, firstPlan, "1/1");
     assert.ok(A.committed, `the first hold committed nothing: ${JSON.stringify(A.applied.refusals ?? A.applied.outcome)}`);
     assert.equal(A.body.decision_id, decisionId(`submission:${P.sid}:${FP}:held`), "a first hold keeps today's key");
     const aPath = `log/decisions/2026/09/${A.body.decision_id}.json`;
-    const aBytes = t.g("show", `${A.committed}:${aPath}`);
+    const aRecord = recordAt(t, A.committed, aPath);
+    const bId = decisionId(submissionKey({ submission_id: P.sid, fingerprint: FP, state: "held", after: T1 }));
+    assert.equal(keyDomainOf(submissionKey({ submission_id: P.sid, fingerprint: FP, state: "held", after: T1 })), "submission",
+      "the historical shape is the first domain's second shape (BOT-35: exactly five domains)");
+    const bRecord = { ...aRecord, decision_id: bId, decided_at: T2, reasons: ["R_IDENTITY_CHANGED", "P_APPROVAL_STALE"], run: "2/1" };
+    assert.deepEqual(validate(decisionSchema, bRecord), [], "the historical re-hold is a DEC-7 record like any other");
+    const bPath = `log/decisions/2026/09/${bId}.json`;
+    fs.writeFileSync(path.join(t.dir, bPath), `${JSON.stringify(bRecord, null, 2)}\n`);
+    t.g("add", "-A");
+    t.g("commit", "-q", "-m", "a 5.7.0 run's re-hold (BOT-26 (4), BOT-34)");
+    const bBytes = t.g("show", `HEAD:${bPath}`);
+    const aBytes = t.g("show", `HEAD:${aPath}`);
+    const heldOnMain = () => readGitState(t.dir).records.filter((r) => r.state === "held" && r.submission_id === P.sid);
+    assert.equal(heldOnMain().length, 2, "the fixture holds the first hold and one historical re-hold");
 
-    // 2. The approval ages; the re-hold writes NEW record B, with the hold's
-    //    codes and `P_APPROVAL_STALE`, and the result agrees with B on `main`.
-    const agedPlan = approvedAt(T2, [approval({ decided_at: T1 })]);
-    assert.equal(agedPlan.state, "held", `${agedPlan.kind} ${JSON.stringify(agedPlan.wait ?? agedPlan.why)}`);
-    assert.deepEqual(codes(agedPlan), ["R_IDENTITY_CHANGED", "P_APPROVAL_STALE"]);
-    const B = publishOnto(t, agedPlan, "2/1");
-    assert.notEqual(B.body.decision_id, A.body.decision_id,
-      "the re-hold named the first hold's record: BOT-36 found it on main and wrote nothing, so no record exists for this entry into `held`");
-    assert.ok(B.result.needs_commit && B.committed, "the re-hold's record was not committed");
-    assert.equal(B.body.decision_id, decisionId(submissionKey({ submission_id: P.sid, fingerprint: FP, state: "held", after: T1 })),
-      "keyed after the approval it overrides");
-    const bPath = `log/decisions/2026/09/${B.body.decision_id}.json`;
-    assert.deepEqual(B.files.filter((f) => f.startsWith("log/")), [bPath], "one record, and only the new one");
-    const bOnMain = recordAt(t, B.body.main_commit, bPath);
-    assert.equal(B.body.main_commit, B.committed, "the result names the commit that holds B");
-    assert.deepEqual(bOnMain.reasons, ["R_IDENTITY_CHANGED", "P_APPROVAL_STALE"]);
-    assert.equal(bOnMain.state, "held");
-    assert.deepEqual(recordAgreement(B.body, bOnMain), [], "BOT-23: the result's DEC-7 members are B's, as main holds it");
-    assert.deepEqual(validate(decisionSchema, bOnMain), [], "B is a DEC-7 record like any other");
-    assert.ok(B.body.reasons.find((r) => r.code === "P_APPROVAL_STALE")?.message.includes(T1), "and it names the approval's decided_at");
+    // 1. The hold decided again over that tree names A — the first key — and
+    //    writes nothing: no run derives a `held:after:` id any more.
+    const again = publishOnto(t, decideWith({ git: onTree(), now: T4 }), "3/1");
+    assert.equal(again.body.decision_id, A.body.decision_id, "a hold re-decided over a tree holding a re-hold named another record");
+    assert.equal(again.committed, null, "a re-run of the hold committed something");
+    assert.deepEqual(again.files, [], "nothing was written");
+
+    // 2. A second approval, older than the withdrawn 7 days, clears the hold:
+    //    it publishes, writes no third `held` record, and leaves A and B as
+    //    they were.
+    const alert = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: T3, delivered_at: "2026-09-25T00:00:00Z", run: "4/1" };
+    const approvedPlan = decideWith({
+      lease: { claimed_from: "approved" },
+      ask: ask({ gates: { stop_status: "no_stop", decisions: [approval({ decided_at: T1 }), approval({ decided_at: T3, moderator: "mod-9" })] }, notice: { kind: "approved", status: "sent", accepted_at: T0 } }),
+      git: onTree({ alerts: new Map([[FP, alert]]) }),
+      now: T4,
+    });
+    assert.equal(approvedPlan.state, "published", `${approvedPlan.kind} ${JSON.stringify(approvedPlan.wait ?? codes(approvedPlan))}`);
+    assert.equal(approvedPlan.record.moderator, "mod-9", "the newest approval cleared the hold");
+    assert.ok(!("reentry" in approvedPlan), "a plan names a re-entry into `held`");
+    const P1 = publishOnto(t, approvedPlan, "5/1");
+    assert.ok(P1.committed, `the publication committed nothing: ${JSON.stringify(P1.applied.refusals ?? P1.applied.outcome)}`);
+    assert.equal(heldOnMain().length, 2, "a run wrote another `held` record for the submission");
+    assert.ok(!P1.files.some((f) => f.startsWith("log/decisions/") && recordAt(t, P1.committed, f).state === "held"),
+      "the publication wrote a `held` record");
     assert.equal(t.g("show", `HEAD:${aPath}`), aBytes, "A is untouched");
-
-    // 3. A re-run of that re-hold names B again and writes nothing (BOT-36).
-    const rerunPlan = approvedAt(T2b, [approval({ decided_at: T1 })]);
-    const again = publishOnto(t, rerunPlan, "3/1");
-    assert.equal(again.body.decision_id, B.body.decision_id, "the re-run derived another id, so one entry into `held` has two records");
-    assert.equal(again.result.needs_commit, false);
-    assert.equal(again.committed, null, "a re-run committed something");
-    assert.deepEqual(again.files, [], "nothing was written a second time");
-    assert.equal(again.body.main_commit, B.committed, "the re-run names the commit that added B");
-    assert.deepEqual(recordAgreement(again.body, recordAt(t, again.body.main_commit, bPath)), [], "BOT-23, on the re-run");
-
-    // 4. A second approval, aged in its turn, is a third entry: new record C.
-    const secondPlan = approvedAt(T4, [approval({ decided_at: T1 }), approval({ decided_at: T3, moderator: "mod-9" })]);
-    assert.equal(secondPlan.state, "held");
-    assert.deepEqual(codes(secondPlan), ["R_IDENTITY_CHANGED", "P_APPROVAL_STALE"]);
-    const C = publishOnto(t, secondPlan, "4/1");
-    assert.ok(![A.body.decision_id, B.body.decision_id].includes(C.body.decision_id),
-      `the second aged approval landed on an earlier record (${C.body.decision_id})`);
-    assert.ok(C.committed, "C was not committed");
-    assert.equal(C.body.decision_id, decisionId(submissionKey({ submission_id: P.sid, fingerprint: FP, state: "held", after: T3 })));
-    const cPath = `log/decisions/2026/09/${C.body.decision_id}.json`;
-    assert.deepEqual(recordAgreement(C.body, recordAt(t, C.committed, cPath)), [], "BOT-23, on C");
-    assert.ok(C.body.reasons.find((r) => r.code === "P_APPROVAL_STALE")?.message.includes(T3), "C names the approval it overrides");
-
-    // Three entries into `held`, three records, and nothing else.
-    const held = readGitState(t.dir).records.filter((r) => r.state === "held" && r.submission_id === P.sid);
-    assert.equal(held.length, 3, `main holds ${held.length} held record(s) for the submission`);
-    assert.equal(new Set(held.map((r) => r.decision_id)).size, 3);
+    assert.equal(t.g("show", `HEAD:${bPath}`), bBytes, "B is untouched");
   } finally {
     t.cleanup();
   }
@@ -3121,13 +3343,14 @@ test("BOT-34: a hold an aged approval sends back writes its own record over a tr
 test("BOT-34: with a re-hold on main, TRUST-27's wait and MIG-31's floor still count from the submission's first hold", () => {
   // Until re-holds wrote records, the only `held` record of a fingerprint was
   // the first hold, and TRUST-27's wait and MIG-31's 14-day floor counted from
-  // it (`honourApproval`'s `heldRecord`). A re-hold that now lands beside it
-  // must not restart either: each is the owner's time to see a first binding
-  // somebody else started, counted from when the hold became public, and both
-  // have passed here.
+  // it (`honourApproval`'s `heldRecord`). A re-hold written beside it from
+  // 3.10.0 to 5.7.0, and still on `main`, must not restart either: each is the
+  // owner's time to see a first binding somebody else started, counted from
+  // when the hold became public, and both have passed here. B below is such a
+  // historical record, read and never written (BOT-35).
   const line = { outcome: "one", token: "t".repeat(24), token_hash: "2".repeat(16), code: null, alert: false, reason: null };
-  const firstAt = hoursBefore(P.now, (ACTOR_MISMATCH_FLOOR_DAYS + APPROVAL_MAX_DAYS + 4) * 24);
-  const lapsedAt = hoursBefore(P.now, (ACTOR_MISMATCH_FLOOR_DAYS + APPROVAL_MAX_DAYS + 3) * 24);
+  const firstAt = hoursBefore(P.now, (ACTOR_MISMATCH_FLOOR_DAYS + WITHDRAWN_APPROVAL_MAX_DAYS + 4) * 24);
+  const lapsedAt = hoursBefore(P.now, (ACTOR_MISMATCH_FLOOR_DAYS + WITHDRAWN_APPROVAL_MAX_DAYS + 3) * 24);
   const reheldAt = hoursBefore(P.now, 48);
   const givenAt = hoursBefore(P.now, 24);
   const A = { schema: "astra.registry.decision/1", submission_id: P.sid, fingerprint: FP, state: "held", reasons: ["R_FIRST_BINDING"], decided_at: firstAt,
@@ -3237,22 +3460,23 @@ test("TRUST-27 at 0: an owner-built first binding's approval is never deferred, 
   assert.match(other.wait.cause, /^MIG-31\b/, other.wait.cause);
 });
 
-test("MIG-31: after the floor ends the same approval publishes, its age counted from the floor's end and not from `decided_at`", () => {
+test("MIG-31: after the floor ends the same approval publishes, however old it is by its own clock", () => {
   const heldAt = hoursBefore(P.now, 16 * 24);
   const givenAt = hoursBefore(P.now, 15 * 24); // fifteen days old by its own clock
   const floorEnd = plusDays(heldAt, ACTOR_MISMATCH_FLOOR_DAYS); // two days ago
-  assert.ok(floorEnd < P.now && givenAt < hoursBefore(P.now, APPROVAL_MAX_DAYS * 24), "the fixture is wrong");
+  assert.ok(floorEnd < P.now && givenAt < hoursBefore(P.now, WITHDRAWN_APPROVAL_MAX_DAYS * 24), "the fixture is wrong");
   // TRUST-14's alert for this approval went out and its window has run.
   const alert = { schema: ALERT_SCHEMA, fingerprint: FP, event: "approval", approval_decided_at: givenAt, delivered_at: hoursBefore(P.now, OPERATOR_WINDOW_HOURS + 1), run: "1/1" };
   const after = firstBindingRun({ heldAt, givenAt, mig31: true, alerts: new Map([[FP, alert]]) });
   assert.equal(after.state, "published", `${after.kind} ${after.wait?.code ?? ""} ${JSON.stringify(after.reasons?.find((r) => r.code === "P_APPROVAL_STALE")?.message ?? codes(after))}`);
   assert.equal(after.record.moderator, "mod-7", "the approval given fifteen days ago cleared the hold");
   assert.ok(!codes(after).includes("P_APPROVAL_STALE"));
-  // The same approval with no floor in front of it is counted from
-  // `decided_at`, and it has aged: the contrast is what the floor buys.
+  // Until contract 5.8.0 the same approval with no floor in front of it was
+  // counted from `decided_at` and had aged, and the contrast was what the
+  // floor bought. With no age limit both publish.
   const unfloored = firstBindingRun({ heldAt, givenAt, mig31: false, alerts: new Map([[FP, alert]]) });
-  assert.equal(unfloored.state, "held");
-  assert.deepEqual(codes(unfloored), ["R_FIRST_BINDING", "P_APPROVAL_STALE"]);
+  assert.equal(unfloored.state, "published", `${unfloored.kind} ${JSON.stringify(codes(unfloored))}`);
+  assert.ok(!codes(unfloored).includes("P_APPROVAL_STALE"));
 });
 
 test("TRUST-14: the alert record lands with the delivery the channel reported, and not without one", () => {
@@ -3388,7 +3612,9 @@ test("docs/POLICY.md §3.2 states the numbers bot/lib/service-decide.mjs enforce
   const at = doc.indexOf("### 3.2 On the plugins-service path");
   assert.ok(at >= 0, "docs/POLICY.md has no §3.2 for the service path");
   const section = doc.slice(at, doc.indexOf("\n## ", at));
-  assert.ok(section.includes(`**${APPROVAL_MAX_DAYS} days** (BOT-26)`), "the approval maximum");
+  // Contract 5.8.0: no approval maximum, and the section says an approval
+  // does not expire (bot/tests/policy.test.mjs refuses the old sentence).
+  assert.ok(section.includes("**An approval does not expire.**"), "the approval maximum's withdrawal");
   assert.ok(section.includes(`**${UPDATE_WINDOW_HOURS} hours** earlier`), "the update window");
   assert.ok(section.includes(`**${OPERATOR_WINDOW_HOURS} hours** have passed`), "the operator window");
   assert.ok(section.includes(`**${FIRST_BINDING_WAIT_DAYS} days** after the record`), "TRUST-27's wait");
@@ -3620,6 +3846,8 @@ test("§4.4: the result composer refuses to post a wait past the bound, whatever
   };
   assert.equal(resultBodyForBound(plan).wait.earliest_retry_at, "2026-10-19T12:00:00Z");
   assert.throws(() => resultBodyForBound({ ...plan, wait: { ...plan.wait, earliest_retry_at: "2026-10-21T12:00:00Z" } }), /at most 15 days/);
-  // The operator window's time is the composer's own, from the reported delivery.
-  assert.throws(() => resultBodyForBound({ ...plan, alert: true }, { deliveredAt: "2026-10-25T12:00:00Z" }), /at most 15 days/);
+  // The operator window's time is the composer's own: since contract 5.8.0 a
+  // retry hint from the report time, capped at the window's end (which runs
+  // from the reported delivery). Either moved far enough is past the bound.
+  assert.throws(() => resultBodyForBound({ ...plan, alert: true }, { deliveredAt: "2026-10-25T12:00:00Z", reportedAt: "2026-10-25T12:00:00Z" }), /at most 15 days/);
 });
