@@ -130,6 +130,7 @@ const POLL_SURFACE = [
   "pollFeed",
   "pollListing",
   "pollableListings",
+  "releaseState",
   "rememberMemory",
   "rememberPoll",
   "runPoll",
@@ -662,6 +663,12 @@ function listingsOf(root, stateOf = grandfathered) {
   return poll.pollableListings({ sources, records: loadRecords(root, sources), stateOf });
 }
 
+/**
+ * `runPoll`'s release check, answering "published" for every tag: these tests
+ * are about the feed and BOT-74, and the release check has its own below.
+ */
+const published = async (_repo, tag) => ({ state: "published", why: `${tag} has a published release` });
+
 /** A fetch stub answering each call from a queue of responses, recording what it was sent. */
 function queueFetch(...responses) {
   const calls = [];
@@ -685,7 +692,7 @@ test("canary 1: a feed carrying the listed tag and a cli-v release registers not
     entry(tagUrl("cli-v1.2.0"), "2026-08-08T10:00:00Z"),
     entry(tagUrl("v0.2.0"), "2026-01-01T10:00:00Z"),
   )));
-  const out = await poll.runPoll({ listings, memory: poll.newMemory("2026-09-24T00:00:00Z"), now: new Date("2026-09-24T00:30:00Z"), fetchImpl });
+  const out = await poll.runPoll({ checkRelease: published, listings, memory: poll.newMemory("2026-09-24T00:00:00Z"), now: new Date("2026-09-24T00:30:00Z"), fetchImpl });
   const res = out.repos[REPO.toLowerCase()];
   assert.equal(res.ok, true);
   assert.deepEqual(res.candidates, [], `nothing registers, and ${JSON.stringify(res.candidates)} would`);
@@ -696,7 +703,7 @@ test("canary 1: a feed carrying the listed tag and a cli-v release registers not
   // The positive control, so that "registers nothing" is not a poll that
   // registers nothing ever: a new matching tag in the same feed registers.
   const again = queueFetch(ok(feed(entry(tagUrl("v0.3.0")), entry(tagUrl("cli-v1.2.0")))));
-  const out2 = await poll.runPoll({ listings, memory: poll.newMemory("2026-09-24T00:00:00Z"), fetchImpl: again.fetchImpl });
+  const out2 = await poll.runPoll({ checkRelease: published, listings, memory: poll.newMemory("2026-09-24T00:00:00Z"), fetchImpl: again.fetchImpl });
   assert.deepEqual(out2.repos[REPO.toLowerCase()].candidates, ["v0.3.0"]);
 });
 
@@ -782,7 +789,7 @@ test("canary 5: a failed register leaves the tag unseen, and the feed's ETag doe
   memory.repos[key] = { etag: 'W/"old"', last_success_at: null, registered: [] };
 
   const first = queueFetch(ok(feed(entry(tagUrl("v0.3.0"))), 'W/"new"'));
-  const polled = await poll.runPoll({ listings, memory, now: new Date("2026-09-24T00:30:00Z"), fetchImpl: first.fetchImpl });
+  const polled = await poll.runPoll({ checkRelease: published, listings, memory, now: new Date("2026-09-24T00:30:00Z"), fetchImpl: first.fetchImpl });
   assert.deepEqual(polled.repos[key].candidates, ["v0.3.0"]);
 
   // claim failed: it registered nothing.
@@ -793,7 +800,7 @@ test("canary 5: a failed register leaves the tag unseen, and the feed's ETag doe
   assert.equal(memory.repos[key].last_success_at, "2026-09-24T00:30:00Z", "the POLL succeeded; claim did not");
 
   const second = queueFetch(ok(feed(entry(tagUrl("v0.3.0"))), 'W/"new"'));
-  const again = await poll.runPoll({ listings, memory, fetchImpl: second.fetchImpl });
+  const again = await poll.runPoll({ checkRelease: published, listings, memory, fetchImpl: second.fetchImpl });
   assert.equal(second.calls[0].init.headers["If-None-Match"], 'W/"old"', "the next poll asks with the old ETag");
   assert.deepEqual(again.repos[key].candidates, ["v0.3.0"], "and the tag is offered again");
 
@@ -802,12 +809,113 @@ test("canary 5: a failed register leaves the tag unseen, and the feed's ETag doe
   assert.deepEqual(memory.repos[key].registered, ["v0.3.0"]);
   assert.equal(memory.repos[key].etag, 'W/"new"', "every tag the feed produced was registered, so the ETag moves");
   const third = queueFetch(ok(feed(entry(tagUrl("v0.3.0")))));
-  const done = await poll.runPoll({ listings, memory, fetchImpl: third.fetchImpl });
+  const done = await poll.runPoll({ checkRelease: published, listings, memory, fetchImpl: third.fetchImpl });
   assert.deepEqual(done.repos[key].candidates, [], "a registered tag is not registered twice");
 
   // claim cannot make remember save a tag the poll never produced.
   const forged = poll.rememberPoll(memory, again, [{ repo: REPO, tag: "v9.9.9" }]);
   assert.ok(!forged.repos[key].registered.includes("v9.9.9"));
+});
+
+/** A GitHub API answer for `GET /repos/{repo}/releases/tags/{tag}`. */
+const apiRelease = (tag, draft = false) => ({ status: 200, ok: true, headers: new Map(), text: async () => JSON.stringify({ tag_name: tag, draft }) });
+const apiStatus = (status) => ({ status, ok: false, headers: new Map(), text: async () => "{}" });
+
+test("releaseState: published registers, a draft or a bare tag waits, anything else is unknown, and no credential is sent", async () => {
+  const one = queueFetch(apiRelease("v0.3.0"));
+  assert.equal((await poll.releaseState(REPO, "v0.3.0", one.fetchImpl)).state, "published");
+  assert.equal(one.calls[0].url, `https://api.github.com/repos/${REPO}/releases/tags/v0.3.0`);
+  assert.ok(!Object.keys(one.calls[0].init.headers).some((h) => h.toLowerCase() === "authorization"), "the poll job holds no credential (BOT-1)");
+  const slash = queueFetch(apiRelease("plugin/v1"));
+  await poll.releaseState(REPO, "plugin/v1", slash.fetchImpl);
+  assert.equal(slash.calls[0].url, `https://api.github.com/repos/${REPO}/releases/tags/plugin/v1`, "each segment is encoded, the slash is kept");
+
+  for (const [what, res, want] of [
+    ["a draft", apiRelease("v0.3.0", true), "unpublished"],
+    ["a 404 (a draft without push access, or a tag alone)", apiStatus(404), "unpublished"],
+    ["a rate limit", apiStatus(403), "unknown"],
+    ["a 5xx", apiStatus(502), "unknown"],
+    ["a body that is not JSON", { status: 200, ok: true, headers: new Map(), text: async () => "<html>" }, "unknown"],
+    ["another tag's release", apiRelease("v0.2.0"), "unknown"],
+  ]) {
+    const r = await poll.releaseState(REPO, "v0.3.0", queueFetch(res).fetchImpl);
+    assert.equal(r.state, want, what);
+    assert.match(r.why, /v0\.3\.0/, `${what}: the reason names the tag`);
+  }
+  const down = await poll.releaseState(REPO, "v0.3.0", async () => { throw new Error("getaddrinfo ENOTFOUND"); });
+  assert.equal(down.state, "unknown", "no network is unknown, never a refusal");
+});
+
+// Cutover day, 2026-10-17: e2e-thirdparty v0.1.1 was pushed at 09:27, the
+// poll registered it at 09:30:38Z while its release was still a draft, ingest
+// refused it E_RELEASE_NOT_FOUND, and the release published at 09:33:51Z was
+// never offered again, because the poll remembered the tag as registered.
+test("a tag whose release is not published yet is deferred, never registered, and registers once the release is published", async () => {
+  const root = registryTree();
+  const { listings } = listingsOf(root);
+  const key = REPO.toLowerCase();
+  let memory = poll.newMemory("2026-09-24T00:00:00Z");
+
+  // The tag is in the feed, its release is a draft: nothing registers, the
+  // reason is printed, and the new ETag is kept — publishing moves the feed.
+  const draft = queueFetch(ok(feed(entry(tagUrl("v0.3.0"), "2026-09-24T00:27:00Z")), 'W/"tag"'), apiStatus(404));
+  const first = await poll.runPoll({ listings, memory, now: new Date("2026-09-24T00:30:00Z"), fetchImpl: draft.fetchImpl });
+  assert.deepEqual(first.repos[key].candidates, [], "a tag without a published release is not registered");
+  assert.deepEqual(first.repos[key].deferred, ["v0.3.0"]);
+  assert.match(first.repos[key].skipped.find((x) => x.tag === "v0.3.0").why, /no published release yet/);
+  assert.equal(first.repos[key].etag, 'W/"tag"');
+  memory = poll.rememberPoll(memory, first, []);
+  assert.deepEqual(memory.repos[key].registered, [], "and it is not remembered as registered");
+  assert.deepEqual(memory.repos[key].deferred, ["v0.3.0"]);
+  assert.equal(poll.memoryProblem(memory), null);
+
+  // Nothing moved: a 304, and no API request at all.
+  const quiet = queueFetch({ status: 304, ok: false, headers: new Map(), text: async () => "" });
+  const second = await poll.runPoll({ listings, memory, fetchImpl: quiet.fetchImpl });
+  assert.equal(quiet.calls.length, 1, "a quiet feed costs one conditional GET and nothing else");
+  assert.deepEqual(second.repos[key].candidates, []);
+
+  // The release is published: the feed's entry changes, the feed answers 200,
+  // and the tag registers.
+  const live = queueFetch(ok(feed(entry(tagUrl("v0.3.0"), "2026-09-24T00:33:51Z", "e2e 0.3.0")), 'W/"release"'), apiRelease("v0.3.0"));
+  const third = await poll.runPoll({ listings, memory, fetchImpl: live.fetchImpl });
+  assert.equal(live.calls[0].init.headers["If-None-Match"], 'W/"tag"');
+  assert.deepEqual(third.repos[key].candidates, ["v0.3.0"]);
+  assert.deepEqual(third.repos[key].deferred, []);
+  memory = poll.rememberPoll(memory, third, [{ repo: REPO, tag: "v0.3.0" }]);
+  assert.deepEqual(memory.repos[key].registered, ["v0.3.0"]);
+  assert.equal(memory.repos[key].deferred, undefined, "a registered tag leaves `deferred`, and an empty one is absent");
+});
+
+test("a release check that cannot answer keeps the old ETag, so the next poll asks again whether or not the feed moved", async () => {
+  const root = registryTree();
+  const { listings } = listingsOf(root);
+  const key = REPO.toLowerCase();
+  const memory = poll.newMemory("2026-09-24T00:00:00Z");
+  memory.repos[key] = { etag: 'W/"old"', last_success_at: null, registered: [] };
+  const limited = queueFetch(ok(feed(entry(tagUrl("v0.3.0"))), 'W/"new"'), apiStatus(403));
+  const out = await poll.runPoll({ listings, memory, fetchImpl: limited.fetchImpl });
+  assert.deepEqual(out.repos[key].candidates, []);
+  assert.deepEqual(out.repos[key].deferred, [], "unknown is not deferred: nothing says the release is missing");
+  assert.equal(out.repos[key].etag, 'W/"old"');
+  const next = poll.rememberPoll(memory, out, []);
+  assert.equal(next.repos[key].etag, 'W/"old"');
+  assert.match(out.repos[key].skipped.find((x) => x.tag === "v0.3.0").why, /HTTP 403.*asks again/);
+});
+
+test("BOT-87's sweep does not page about a tag the poll deferred, and still pages about one it never saw", () => {
+  const root = registryTree();
+  const [listing] = listingsOf(root).listings;
+  const sha = "a".repeat(40);
+  const known = { "v0.3.0": { sha, first_seen: 1, seeded: false } };
+  const remote = [{ tag: "v0.3.0", sha }];
+  const deferred = poll.sweepListing({ listing, known, remote, sweepNo: 2, seed: false, registered: [], deferred: ["v0.3.0"] });
+  assert.deepEqual(deferred.alerts, [], "an author's unfinished release is not the operator's page");
+  const missed = poll.sweepListing({ listing, known, remote, sweepNo: 2, seed: false, registered: [] });
+  assert.equal(missed.alerts.length, 1, "the positive control: the same tag, never seen by the poll, pages");
+  const bad = poll.newMemory("2026-09-24T00:00:00Z");
+  bad.repos["someone/quiet"] = { etag: null, last_success_at: null, registered: [], deferred: "v0.3.0" };
+  assert.match(poll.memoryProblem(bad), /deferred is not a list of tags/);
 });
 
 test("canary 4: an unsigned, altered or foreign-keyed cache entry is discarded, and a sealed one opens", () => {
@@ -928,7 +1036,7 @@ test("BOT-87: a listing whose last successful poll is older than three intervals
   const failing = { status: 500, ok: false, headers: new Map(), text: async () => "" };
   for (let i = 1; i <= 4; i++) {
     const at = new Date(start.getTime() + i * poll.POLL_INTERVAL_SECONDS * 1000);
-    const out = await poll.runPoll({ listings, memory, now: at, fetchImpl: async () => failing });
+    const out = await poll.runPoll({ checkRelease: published, listings, memory, now: at, fetchImpl: async () => failing });
     assert.equal(out.repos[key].ok, false);
     memory = poll.rememberPoll(memory, out, []);
     const stale = poll.staleListings(memory, listings, at);
@@ -941,7 +1049,7 @@ test("BOT-87: a listing whose last successful poll is older than three intervals
 
   // A successful poll resets it.
   const okAt = new Date(start.getTime() + 5 * 1800 * 1000);
-  const out = await poll.runPoll({ listings, memory, now: okAt, fetchImpl: async () => ok(feed()) });
+  const out = await poll.runPoll({ checkRelease: published, listings, memory, now: okAt, fetchImpl: async () => ok(feed()) });
   memory = poll.rememberPoll(memory, out, []);
   assert.deepEqual(poll.staleListings(memory, listings, okAt), []);
 });
@@ -998,7 +1106,7 @@ test("a monorepo's feed is read once and judged by every listing it hosts, none 
     entry(tagUrl("cli-v1.0.0", MONO)),
   );
   const { calls, fetchImpl } = queueFetch(ok(xml), ok(xml));
-  const out = await poll.runPoll({ listings, memory: poll.newMemory("2026-09-24T00:00:00Z"), now: new Date("2026-09-24T00:30:00Z"), fetchImpl });
+  const out = await poll.runPoll({ checkRelease: published, listings, memory: poll.newMemory("2026-09-24T00:00:00Z"), now: new Date("2026-09-24T00:30:00Z"), fetchImpl });
   const res = out.repos[MONO];
   assert.deepEqual(res.candidates, ["alpha-v0.2.0"],
     "alpha's new release is a candidate whichever listing of the repository was judged last");
@@ -1010,7 +1118,7 @@ test("a monorepo's feed is read once and judged by every listing it hosts, none 
   // BOT-74 gives it no prefix and it admits every tag, alpha's included.
   const mixed = [monoListing("alpha", "alpha-v", ["alpha-v0.1.0"]), monoListing("loose", null, [])];
   const again = queueFetch(ok(feed(entry(tagUrl("alpha-v0.1.0", MONO)), entry(tagUrl("gamma-1", MONO)))));
-  const out2 = await poll.runPoll({ listings: mixed, memory: poll.newMemory("2026-09-24T00:00:00Z"), fetchImpl: again.fetchImpl });
+  const out2 = await poll.runPoll({ checkRelease: published, listings: mixed, memory: poll.newMemory("2026-09-24T00:00:00Z"), fetchImpl: again.fetchImpl });
   assert.deepEqual(out2.repos[MONO].candidates, ["gamma-1"],
     "alpha-v0.1.0 is recorded by alpha's version, and BOT-74 registers no tag a listed version records, " +
     "whichever listing's prefix would have let it through");
@@ -1053,7 +1161,7 @@ test("B-T5.0's canary: a shadow run registers no tag releases-seen records, and 
   // shadow — with a client that records every call it is asked to make.
   const shadowRun = async (seenDoc) => {
     const { rows } = run.loadOutputs({ opened: poll.newMemory(NOW), seen: seenDoc, listings, now: NOW, dispatched: true });
-    const out = await poll.runPoll({ listings, memory: { repos: rows }, now: NOW, fetchImpl: async () => ok(xml) });
+    const out = await poll.runPoll({ checkRelease: published, listings, memory: { repos: rows }, now: NOW, fetchImpl: async () => ok(xml) });
     const { tags } = run.pollOutputs(out, listings);
     const client = stubClient();
     const { lines, log } = quietLog();
@@ -1541,7 +1649,7 @@ test("a release whose legacy listing request was withdrawn is not offered by the
 
     // The poll, as `load` seeds it and `poll` runs it.
     const { rows } = run.loadOutputs({ opened: poll.newMemory(NOW), seen, listings, now: NOW, dispatched: true });
-    const out = await poll.runPoll({ listings, memory: { repos: rows }, now: NOW, fetchImpl: async () => ok(xml) });
+    const out = await poll.runPoll({ checkRelease: published, listings, memory: { repos: rows }, now: NOW, fetchImpl: async () => ok(xml) });
     const offered = run.pollOutputs(out, listings).tags.map((t) => `${t.repo}@${t.tag}`);
     assert.ok(!offered.includes(`${w.repo}@${w.tag}`),
       `the poll offers ${w.repo}@${w.tag} (issue #${w.issue}, ${w.ended}); state/releases-seen.json must record it as seen`);

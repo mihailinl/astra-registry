@@ -343,8 +343,9 @@ export function readPolled(text, listings) {
     if (!known.has(key)) throw new Error(`the poll answered for ${JSON.stringify(key)}, which load did not list`);
     const ok = res && typeof res.ok === "boolean" && Array.isArray(res.candidates) &&
       res.candidates.length <= MAX_CANDIDATES && res.candidates.every(isUsableTag) &&
+      (res.deferred === undefined || (Array.isArray(res.deferred) && res.deferred.length <= MAX_CANDIDATES && res.deferred.every(isUsableTag))) &&
       (res.etag === null || (typeof res.etag === "string" && ETAG_RE.test(res.etag)));
-    if (!ok) throw new Error(`the poll's answer for ${key} is not {ok, candidates, etag} of the grammar each must have`);
+    if (!ok) throw new Error(`the poll's answer for ${key} is not {ok, candidates, deferred, etag} of the grammar each must have`);
   }
   return polled;
 }
@@ -392,7 +393,7 @@ export function pollOutputs(out, listings) {
   const polled = { at: out.at, repos: {} };
   const tags = [];
   for (const [key, res] of Object.entries(out.repos)) {
-    polled.repos[key] = { ok: res.ok, candidates: res.candidates, etag: res.etag ?? null };
+    polled.repos[key] = { ok: res.ok, candidates: res.candidates, deferred: res.deferred ?? [], etag: res.etag ?? null };
     for (const tag of res.candidates) tags.push({ repo: repoOf.get(key), tag });
   }
   return { polled, tags };
@@ -531,7 +532,8 @@ async function cmdPoll(env) {
   const out = await runPoll({ listings, memory: { repos: rows }, now: new Date() });
   const lines = [];
   for (const [key, res] of Object.entries(out.repos)) {
-    const state = !res.ok ? `ERR ${res.error}` : res.changed ? `200, ${res.candidates.length} candidate(s)` : "304";
+    const waiting = res.deferred?.length ? `, ${res.deferred.length} waiting for a published release` : "";
+    const state = !res.ok ? `ERR ${res.error}` : res.changed ? `200, ${res.candidates.length} candidate(s)${waiting}` : "304";
     lines.push(`${key} (${res.ids.join(", ")}): ${state}`);
     for (const s of res.skipped ?? []) console.log(`  skip ${key} ${s.why}`);
   }
