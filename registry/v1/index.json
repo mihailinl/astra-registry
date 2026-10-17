@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "uByoZHR7bgh4M2EQsaCJvfhp2KbsYIgFuH3t/oRVRRnKUHAlo6DswlGrWMzJzTRpjpe9h15QjST5UdTGmJP/CA=="
+      "sig": "Y+1xNz22lozkI/Du1wUoHz0qAWuC2HzgPAsWNoH7WZQmBilKiNpOCbJUJcCxVr5wsr2K6LKpWaiwBj8o2PJ6Bw=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-16T09:34:20Z",
-    "issued_at": "2026-10-17T09:34:20Z",
+    "expires_at": "2026-11-16T09:55:09Z",
+    "issued_at": "2026-10-17T09:55:09Z",
     "plugins": [
       {
         "added_at": "2026-08-10",
@@ -1670,9 +1670,19 @@
           "utilities"
         ],
         "description": "Word count, case conversion, regex matching — with actions and triggers",
-        "download_url": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.3/text-utils-0.1.3-noarch.astraplugin",
+        "download_url": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.4/text-utils-0.1.4-noarch.astraplugin",
         "downloads": 0,
         "homepage": "https://github.com/mihailinl/AstraPlugins/tree/master/examples/text-utils",
+        "i18n": {
+          "ru": {
+            "description": "Подсчёт слов, смена регистра, поиск по регулярным выражениям — с действиями и триггерами",
+            "name": "Текстовые утилиты"
+          },
+          "uk": {
+            "description": "Підрахунок слів, зміна регістру, пошук за регулярними виразами — з діями та тригерами",
+            "name": "Текстові утиліти"
+          }
+        },
         "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNTYgMjU2IiB3aWR0aD0iMjU2IiBoZWlnaHQ9IjI1NiIgcm9sZT0iaW1nIiBhcmlhLWxhYmVsPSJUZXh0IFV0aWxzIj4KICA8dGl0bGU+VGV4dCBVdGlsczwvdGl0bGU+CiAgPCEtLSBNb25vbGluZTogYSBwYWdlIG9mIHRleHQgd2l0aCBvbmUgbGluZSBwaWNrZWQgb3V0LCBhbmQgdGhlIGNsb2NrIHRoYXQKICAgICAgIGZpcmVzIG9uIGEgc2NoZWR1bGUuIFBsYWluIHN0YXRpYyBtYXJrdXA6IG5vIHNjcmlwdCwgbm8gZXh0ZXJuYWwKICAgICAgIHJlZmVyZW5jZXMsIG5vIGVtYmVkZGVkIGZvbnRzLiAtLT4KCiAgPGcgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjOTRhM2I4IiBzdHJva2Utd2lkdGg9IjEzIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPgogICAgPHBhdGggZD0iTTQwIDI4IGg5NiBsNTAgNTAgdjEzNiBINDAgWiIvPgogICAgPHBhdGggZD0iTTEzNiAyOCB2NTAgaDUwIi8+CiAgPC9nPgoKICA8ZyBzdHJva2Utd2lkdGg9IjEzIiBzdHJva2UtbGluZWNhcD0icm91bmQiIGZpbGw9Im5vbmUiPgogICAgPHBhdGggZD0iTTcwIDExMiBoODQiIHN0cm9rZT0iIzk0YTNiOCIvPgogICAgPHBhdGggZD0iTTcwIDE0NiBoNTQiIHN0cm9rZT0iI2Y1OWUwYiIvPgogICAgPHBhdGggZD0iTTcwIDE4MCBoNzAiIHN0cm9rZT0iIzk0YTNiOCIvPgogIDwvZz4KCiAgPCEtLSB0aGUgc2NoZWR1bGVkIHRyaWdnZXIsIHB1bmNoZWQgY2xlYXIgb2YgdGhlIHBhZ2UgLS0+CiAgPGNpcmNsZSBjeD0iMTg4IiBjeT0iMTkyIiByPSI1MCIgZmlsbD0iI2ZmZmZmZiIvPgogIDxjaXJjbGUgY3g9IjE4OCIgY3k9IjE5MiIgcj0iNDAiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2Y1OWUwYiIgc3Ryb2tlLXdpZHRoPSIxMyIvPgogIDxwYXRoIGQ9Ik0xODggMTcwIHYyNCBoMTkiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2Y1OWUwYiIgc3Ryb2tlLXdpZHRoPSIxMyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+Cjwvc3ZnPgo=",
         "id": "text-utils",
         "keywords": [
@@ -1685,13 +1695,43 @@
         "license": "MIT",
         "name": "Text Utils",
         "platform_downloads": {
-          "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.3/text-utils-0.1.3-noarch.astraplugin",
-          "noarch": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.3/text-utils-0.1.3-noarch.astraplugin",
-          "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.3/text-utils-0.1.3-noarch.astraplugin"
+          "linux-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.4/text-utils-0.1.4-noarch.astraplugin",
+          "noarch": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.4/text-utils-0.1.4-noarch.astraplugin",
+          "windows-x64": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.4/text-utils-0.1.4-noarch.astraplugin"
         },
         "publisher": "mihailinl",
-        "readme": "# Text Utils\n\nWord counts, case conversion, regex matching and a scheduled trigger.\n\n## What it does\n\nThree tools the assistant can use mid-conversation:\n\n- **`word_count`** — words, characters and lines in a piece of text.\n- **`case_convert`** — `upper`, `lower`, `title`, `snake` or `camel`.\n- **`regex_match`** — run a regular expression over text and return every match\n  with a count.\n\nOne **\"Transform Text\" action** for the command editor: uppercase, lowercase,\ntitle case, reverse, Base64 encode and Base64 decode, on text from an earlier\nstep, with the result optionally stored in a variable.\n\nOne **\"Scheduled Time\" trigger**. Give it a time in `HH:MM` and any command\nsubscribed to it runs when the machine's local clock reaches that minute. The\ncheck runs every 30 seconds and fires at most once per minute, so a command\nnever runs twice for the same tick. It only runs while Astra is running — this\nis not a cron replacement, and a machine that is asleep at 09:00 misses 09:00.\n\n## What it needs\n\n- **Python 3.10 or newer** on the machine running Astra. Astra ships no Python\n  runtime; the bundle declares `runtimes = [\"python\"]` so the daemon fails\n  clearly if there is no interpreter instead of dying at startup.\n- The dependencies in `requirements.txt` (`astra-plugin-sdk`, `grpcio`,\n  `protobuf`).\n\nNo network, no account.\n\n## Capabilities it asks for, and why\n\n| Capability | What it allows | Why this plugin asks |\n|---|---|---|\n| `tools` | Astra's assistant may call the plugin during a conversation | The three text tools |\n| `actions` | The plugin contributes steps to the command editor | \"Transform Text\" |\n| `triggers` | The plugin can start your commands | \"Scheduled Time\" |\n\nThe regex tool runs a pattern you supply against text you supply, in the plugin\nprocess. A pathological pattern can make that process spin — it will not take\nAstra down with it, but the plugin will stop answering until you restart it.\n\n## Configuration\n\n| Setting | Default | Meaning |\n|---|---|---|\n| Max Text Length | `10000` | every tool refuses text longer than this, so a pasted log file cannot stall the plugin |\n\nA value that is not a number is logged and ignored rather than fatal: a config\nhook has nowhere to report a failure, and refusing to start over one bad field\nwould take the whole plugin down.\n\n## Testing it — the reference suite\n\n`tests/test_text_utils.py` is the worked example for testing a Python Astra\nplugin, and is worth reading before writing tests for your own:\n\n```bash\npip install -e '.[dev]'      # astra-plugin-sdk[test] — pytest and the harness\npytest\n```\n\nIt uses both levels of `astra_plugin_sdk.testing`:\n\n- **Level 1**, `astra_harness`, drives the plugin through its own gRPC servicer\n  in-process. That is not the same as calling the method: it goes through tool\n  registration, the JSON round-trip, the schema, and the error taxonomy — which\n  is where plugins actually break. `RecordingHost` records everything the plugin\n  asked Astra for, and `fail_next` makes the \"Astra said no\" branch reachable at\n  all. Without it, the path a plugin takes when `fire_trigger` is denied for a\n  missing `[permissions]` entry is untested by construction.\n- **Level 2**, `astra_wire`, runs the plugin's real `run()` against a mock\n  daemon over loopback gRPC — registration, the protobuf descriptor, the\n  capability interceptor, the `x-session-token` on every host call. One test, at\n  the end, because it catches a class of bug level 1 structurally cannot see.\n\nThe last test in the file breaks the plugin on purpose — one tool loses its\n`@tool` decorator — and shows the suite catching it. A test suite nobody has\nwatched fail is a test suite nobody should trust.\n\n## Build it yourself\n\n```bash\ncd examples/text-utils\npip install -r requirements.txt\nastra-plugin build            # produces text-utils-<version>-noarch.astraplugin\n```\n\nThe bundle is `noarch`: the plugin is pure Python, and the platform-specific\npart is the interpreter, which comes from the user's machine.\n\n## Files\n\n- `src/plugin.py` — the whole plugin. The `@tool` / `@action` / `@trigger`\n  decorators register everything; there is no manual wiring to read.\n- `tests/test_text_utils.py` — the reference suite, above.\n- `conftest.py` — three lines, so `src.plugin` imports from `tests/` the same\n  way the daemon imports it.\n- `icon.svg` — the store icon, hand-drawn SVG.\n\nMIT licensed.\n",
+        "readme": "# Text Utils\n\nWord counts, case conversion, regex matching and a scheduled trigger.\n\n## What it does\n\nThree tools the assistant can use mid-conversation:\n\n- **`word_count`** — words, characters and lines in a piece of text.\n- **`case_convert`** — `upper`, `lower`, `title`, `snake` or `camel`.\n- **`regex_match`** — run a regular expression over text and return every match\n  with a count.\n\nOne **\"Transform Text\" action** for the command editor: uppercase, lowercase,\ntitle case, reverse, Base64 encode and Base64 decode, on text from an earlier\nstep, with the result optionally stored in a variable.\n\nOne **\"Scheduled Time\" trigger**. Give it a time in `HH:MM` and any command\nsubscribed to it runs when the machine's local clock reaches that minute. The\ncheck runs every 30 seconds and fires at most once per minute, so a command\nnever runs twice for the same tick. It only runs while Astra is running — this\nis not a cron replacement, and a machine that is asleep at 09:00 misses 09:00.\n\n## What it needs\n\n- **Python 3.10 or newer** on the machine running Astra. Astra ships no Python\n  runtime; the bundle declares `runtimes = [\"python\"]` so the daemon fails\n  clearly if there is no interpreter instead of dying at startup.\n- The dependencies in `requirements.txt` (`astra-plugin-sdk`, `grpcio`,\n  `protobuf`).\n\nNo network, no account.\n\n## Capabilities it asks for, and why\n\n| Capability | What it allows | Why this plugin asks |\n|---|---|---|\n| `tools` | Astra's assistant may call the plugin during a conversation | The three text tools |\n| `actions` | The plugin contributes steps to the command editor | \"Transform Text\" |\n| `triggers` | The plugin can start your commands | \"Scheduled Time\" |\n\nThe regex tool runs a pattern you supply against text you supply, in the plugin\nprocess. A pathological pattern can make that process spin — it will not take\nAstra down with it, but the plugin will stop answering until you restart it.\n\n## Configuration\n\n| Setting | Default | Meaning |\n|---|---|---|\n| Max text length | `10000` | every tool refuses text longer than this, so a pasted log file cannot stall the plugin |\n\nThat label is not written in `plugin.toml`. The schema carries\n`\"$config.max_text_length.title\"` and the daemon looks it up in `locales/` per\nrequest — see **Languages** below.\n\nA value that is not a number is logged and ignored rather than fatal: a config\nhook has nowhere to report a failure, and refusing to start over one bad field\nwould take the whole plugin down.\n\n## Languages\n\nShips **English, Russian and Ukrainian**, and is the worked example of `locales/`\nfrom Python. Two things are translated, by two different mechanisms, and which\none a string belongs to is decided by *who renders it*:\n\n| | Rendered by | Written as |\n|---|---|---|\n| The settings form's field label and help text | the **daemon**, per request, from the `locales/` copy it took at install | `\"$config.max_text_length.title\"` in `[config] schema` |\n| The health line — `ok — 3 operations processed` | **this process**, at the moment it produces the sentence | `self.i18n.tn(\"health.ok\", n, n=str(n))` |\n| The store card | the **registry**, out of the bundle | the reserved `listing.name` / `listing.description` keys |\n\nThe health line is the reason `tn` and not `t`: it carries a count, which the\ndaemon cannot know, and Russian and Ukrainian need **four** forms of the counted\nnoun where English needs two. `astra-plugin locale add ru` writes exactly the\nrows a language needs — `health.ok.one/few/many/other` for these two — and\n`locales.lock.json` records which English each translation was made against, so\nrewriting the English makes the translations report themselves stale instead of\nquietly describing a sentence that no longer exists.\n\nThe action label, its field labels and its dropdown options are **deliberately\nliteral English**. Astra's current release resolves `$keys` inside\n`[config] schema` and nowhere else, so a key there would reach the command\neditor as the text `$action.transform.label`; `src/plugin.py` says so where the\nlabels are written, and one test in the suite holds the line.\n\nThe other seven languages are not translated and do not need to be: lookup falls\nback per key to English, so a `de` user reads the English label and everything\nworks.\n\n```bash\nastra-plugin locale ls                 # what is shipped, and what is not\nastra-plugin locale render --lang uk   # the settings form, without a daemon\nastra-plugin locale check              # the locale rules alone\n```\n\n## Testing it — the reference suite\n\n`tests/test_text_utils.py` is the worked example for testing a Python Astra\nplugin, and is worth reading before writing tests for your own:\n\n```bash\npip install -e '.[dev]'      # astra-plugin-sdk[test] — pytest and the harness\npytest\n```\n\nIt uses both levels of `astra_plugin_sdk.testing`:\n\n- **Level 1**, `astra_harness`, drives the plugin through its own gRPC servicer\n  in-process. That is not the same as calling the method: it goes through tool\n  registration, the JSON round-trip, the schema, and the error taxonomy — which\n  is where plugins actually break. `RecordingHost` records everything the plugin\n  asked Astra for, and `fail_next` makes the \"Astra said no\" branch reachable at\n  all. Without it, the path a plugin takes when `fire_trigger` is denied for a\n  missing `[permissions]` entry is untested by construction.\n- **Level 2**, `astra_wire`, runs the plugin's real `run()` against a mock\n  daemon over loopback gRPC — registration, the protobuf descriptor, the\n  capability interceptor, the `x-session-token` on every host call. One test, at\n  the end, because it catches a class of bug level 1 structurally cannot see.\n\nThe last test in the file breaks the plugin on purpose — one tool loses its\n`@tool` decorator — and shows the suite catching it. A test suite nobody has\nwatched fail is a test suite nobody should trust.\n\n## Build it yourself\n\n```bash\ncd examples/text-utils\npip install -r requirements.txt\nastra-plugin build            # produces text-utils-<version>-noarch.astraplugin\n```\n\nThe bundle is `noarch`: the plugin is pure Python, and the platform-specific\npart is the interpreter, which comes from the user's machine.\n\n## Files\n\n- `src/plugin.py` — the whole plugin. The `@tool` / `@action` / `@trigger`\n  decorators register everything; there is no manual wiring to read.\n- `tests/test_text_utils.py` — the reference suite, above.\n- `conftest.py` — three lines, so `src.plugin` imports from `tests/` the same\n  way the daemon imports it.\n- `locales/en.json`, `locales/ru.json`, `locales/uk.json` — the translations:\n  the two reserved `listing.*` keys the store card is drawn from, the config\n  field's label and help text, and the `health.ok` plural family. Flat\n  `string → string`, one file per language, beside `plugin.toml` — the daemon\n  deserialises them into a string map and drops the whole file on a nested\n  object. Written with `astra-plugin locale add`, never by hand.\n- `locales.lock.json` — at the root and **not** inside `locales/`, because\n  everything in `locales/` that ends in `.json` is a language. It records, per\n  translated key, a digest of the English that translation was made against;\n  `astra-plugin locale sync` derives it and `astra-plugin locale check` reads it\n  back. See [the localisation page](../../docs/en/3-reference/localisation.md).\n- `icon.svg` — the store icon, hand-drawn SVG.\n\nMIT licensed.\n",
         "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "text-utils-0.1.4-noarch.astraplugin",
+                "sha256": "9cbde97b380003af82b9e92486c9747f0fec809b1143676a5be75ae5303ed7ae",
+                "size": 13376,
+                "url": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.4/text-utils-0.1.4-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "actions",
+              "tools",
+              "triggers"
+            ],
+            "permissions": {
+              "fire_trigger": {
+                "reason": "Fires the on_time trigger at the time you set, so your commands can run on a schedule"
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-10-17T09:49:30Z",
+            "release": {
+              "commit": "f7827b5dff8d6ad421adc25d9c06e83e3ea03330",
+              "kind": "github_release",
+              "repo": "mihailinl/AstraPlugins",
+              "tag": "text-utils-v0.1.4"
+            },
+            "review": "unreviewed",
+            "version": "0.1.4"
+          },
           {
             "artifacts": {
               "noarch": {
@@ -1780,8 +1820,8 @@
           "repo": "mihailinl/AstraPlugins"
         },
         "stars": 0,
-        "updated_at": "2026-08-20T19:35:21Z",
-        "version": "0.1.3"
+        "updated_at": "2026-10-17T09:49:30Z",
+        "version": "0.1.4"
       },
       {
         "added_at": "2026-09-12",
@@ -2155,6 +2195,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 63
+    "serial": 64
   }
 }
