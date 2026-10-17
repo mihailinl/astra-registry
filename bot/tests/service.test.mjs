@@ -4199,3 +4199,21 @@ test("BOT-23: a deduped `state` result whose record no commit added is held back
     fs.rmSync(reportsDir, { recursive: true, force: true });
   }
 });
+
+// ── the plugins friction plan's WP5: E_ATTESTATION_MISSING says what to do ──
+//
+// Until 2026-10-17 the remedy named only `actions/attest-build-provenance`,
+// and an author who read it had no command to run and did not learn that
+// this tag stays refused. It names `astra-plugin init-ci`, which writes the
+// reusable release workflow, and a new tag, which is what its `fix` says.
+// Watched red by restoring the old remedy.
+test("WP5: `E_ATTESTATION_MISSING`'s remedy names `astra-plugin init-ci` and a new tag, as its `fix` does", async () => {
+  const { CODES } = await import("../lib/codes.mjs");
+  const c = CODES.E_ATTESTATION_MISSING;
+  assert.equal(c.fix, "new_tag");
+  assert.match(c.remedy, /`astra-plugin init-ci`/, c.remedy);
+  assert.match(c.remedy, /\bnew tag\b/, c.remedy);
+  const table = JSON.parse(fs.readFileSync(path.join(REPO, "tools", "codes-table.json"), "utf8"));
+  const row = (table.flow13_table ?? []).find((r) => r.code === "E_ATTESTATION_MISSING");
+  assert.equal(row?.remedy, c.remedy, "tools/codes-table.json carries another remedy than bot/lib/codes.mjs (node tools/gen-codes-table.mjs)");
+});
