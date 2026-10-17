@@ -74,6 +74,17 @@ export function alertProblems(doc) {
 
 const git = (root, args) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8", env: cleanEnv() }).trim();
 
+/** A decision record as the commit `sha` holds it, or null when it cannot be read there or names another id. */
+function recordAt(root, sha, rel, decisionId) {
+  try {
+    const doc = JSON.parse(git(root, ["show", `${sha}:${rel}`]));
+    if (!doc || typeof doc !== "object" || Array.isArray(doc) || doc.decision_id !== decisionId) return null;
+    return doc;
+  } catch {
+    return null;
+  }
+}
+
 /** The commit on `main` that added a file, or null (the result of a record found already there). */
 function commitAdding(root, rel) {
   try {
@@ -102,7 +113,7 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
     if (plan.shadow === true || plan.kind === "none") continue;
     const dir = path.join(reportsDir, `report-${n++}`);
     fs.mkdirSync(dir, { recursive: true });
-    const landed = { decisionId: null, mainCommit: null, deliveredAt, recordPath: null, written: false, heldBack: null };
+    const landed = { decisionId: null, mainCommit: null, deliveredAt, recordPath: null, written: false, heldBack: null, record: null };
 
     if (plan.kind === "state") {
       const { record } = plan;
@@ -176,12 +187,17 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
       landed.decisionId = plan.decision_id;
       landed.recordPath = found ? found.file : null;
       landed.mainCommit = found ? commitAdding(root, found.file) : null;
-      // A record that is not on this tree, or that no commit added, is a
-      // result that names nothing the service can find: held back, never
-      // posted without its commit, and loud in the finalize step.
-      if (!landed.mainCommit) {
-        landed.heldBack = found ? "record_commit_unknown" : "record_not_on_main";
-      }
+      // BOT-23: the result's DEC-7 members are the record's at the commit it
+      // names, so the record is read THERE, not from this run and not from
+      // the working tree (`resultBody` takes them from it).
+      landed.record = landed.mainCommit ? recordAt(root, landed.mainCommit, found.file, plan.decision_id) : null;
+      // A record that is not on this tree, that no commit added, or that
+      // cannot be read at that commit, is a result that names nothing the
+      // service can confirm: held back, never posted without its commit and
+      // its record's members, and loud in the finalize step.
+      if (!found) landed.heldBack = "record_not_on_main";
+      else if (!landed.mainCommit) landed.heldBack = "record_commit_unknown";
+      else if (!landed.record) landed.heldBack = "record_unreadable";
     }
 
     if (plan.kind === "wait" && plan.alert && isTime(deliveredAt)) {
@@ -204,13 +220,17 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
     }
 
     const body = resultBody(plan, {
-      decisionId: landed.decisionId, mainCommit: landed.mainCommit, deliveredAt,
+      decisionId: landed.decisionId, mainCommit: landed.mainCommit, deliveredAt, record: landed.record,
       // TRUST-32's retry hint counts from the report (contract 5.8.0).
       reportedAt: `${new Date(now).toISOString().slice(0, 19)}Z`,
     });
     if (plan.kind === "state") {
       const problems = recordAgreement(body, { ...plan.record, decision_id: landed.decisionId });
       if (problems.length) throw new Error(`BOT-23: ${plan.submission_id}'s result disagrees with its record: ${problems.join("; ")}`);
+    }
+    if (plan.kind === "reported" && landed.record) {
+      const problems = recordAgreement(body, landed.record);
+      if (problems.length) throw new Error(`BOT-23: ${plan.submission_id}'s reported result disagrees with record ${plan.decision_id} at ${landed.mainCommit}: ${problems.join("; ")}`);
     }
     pending.push({
       submission_id: plan.submission_id,
@@ -229,7 +249,7 @@ export function composePublication({ plans, root, listingsDir, reportsDir, deliv
 }
 
 /** Why a `reported` result is held back rather than posted without its record's commit (BOT-23). */
-export const HELD_BACK = Object.freeze(["record_not_on_main", "record_commit_unknown"]);
+export const HELD_BACK = Object.freeze(["record_not_on_main", "record_commit_unknown", "record_unreadable"]);
 
 /**
  * BOT-37's trailer block for the run's one commit: `Run:`, then a
@@ -331,7 +351,7 @@ async function main(argv) {
     for (const r of results) {
       if (r.unposted === "refused") console.error(`::error::${r.submission_id}: publish-apply refused its report; no result is posted, and the lease expires under BOT-15`);
       if (HELD_BACK.includes(r.unposted)) {
-        console.error(`::error::${r.submission_id}: its result names record ${r.body?.decision_id ?? "?"}, and ${r.unposted === "record_not_on_main" ? "that record is not on main" : "no commit on main added it"}; no result is posted without the commit that holds its record (BOT-23), and the lease expires under BOT-15`);
+        console.error(`::error::${r.submission_id}: its result names record ${r.body?.decision_id ?? "?"}, and ${{ record_not_on_main: "that record is not on main", record_commit_unknown: "no commit on main added it", record_unreadable: "it cannot be read at the commit that added it" }[r.unposted]}; no result is posted without the commit that holds its record (BOT-23), and the lease expires under BOT-15`);
       }
       console.log(`${r.submission_id}  ${r.kind}${r.unposted ? `  held (${r.unposted})` : ""}`);
     }

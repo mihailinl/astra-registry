@@ -12,15 +12,8 @@
     }
   ],
   "decision_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "main_commit": "2f696abb17da19023974f7891d32090db09333d6",
-  "plugin_id": "dice-roller",
-  "version": "0.2.0",
+  "main_commit": "2f0f0f892d362f7cb7cc7952baca36b502df27c4",
   "tag": "v0.2.0",
-  "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "artifact_digests": [
-    "linux-x64:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-  ],
   "fingerprint": "476e6975802d8801",
-  "repository_id": "1203676452",
-  "repository_owner_id": "193032699"
+  "repository_id": "1203676452"
 }

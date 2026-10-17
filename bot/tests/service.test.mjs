@@ -2959,8 +2959,16 @@ function composedBody(plan, records) {
   }
 }
 
+/**
+ * `mReject` as the moderation run writes it on `main` (`terminalSubmissionRecord`,
+ * BOT-30): the repository, its id and the tag beside the fingerprint, and no
+ * plugin id, version, commit or digests. A `reported` result echoes exactly
+ * these (BOT-23), whatever this run derived.
+ */
+const mRejectOnMain = () => ({ ...mReject, actor: "moderator", trigger: "moderation", repo: P.repo, repository_id: P.rid, tag: P.tag });
+
 const goldenBody = (kind, plan) => kind === "reported"
-  ? composedBody(plan, [mReject]).body
+  ? composedBody(plan, [mRejectOnMain()]).body
   : resultBody(plan, {
     decisionId: plan.kind === "state" ? "0".repeat(32) : null,
     mainCommit: plan.kind === "state" ? "7".repeat(40) : null,
@@ -4015,4 +4023,102 @@ test("ID-60: with `R_BINDING_CHANGED` in this run alone, a `sent` notice older t
   });
   assert.equal(plan.wait?.code, "W_NOTICE_PENDING", `${plan.kind} ${plan.state ?? ""}`);
   assert.match(plan.wait.cause, /ID-60/);
+});
+
+// ── BOT-23: a `reported` result's DEC-7 members are the record's ───────────
+//
+// BOT-23: a result's DEC-7 members — state, reason codes, `decision_id`,
+// `plugin_id`, `version`, `tag`, `commit`, `artifact_digests`, `fingerprint`,
+// both ids, `publish_after` — equal the decision record at the main commit it
+// names, a result reporting a record already on `main` included. BOT-74
+// posted `[P_PUBLISHED]` and this run's derived facts, and BOT-19 the record's
+// reasons with this run's facts: against a published record carrying
+// `P_PUBLISHED, P_REVIEW_PRIORITY`, a re-tag of identical bytes, or a
+// moderator's refusal that names no plugin id, each was a `record_mismatch`
+// once the result named its commit. The publish job now reads the record at
+// that commit and the result echoes it; only `submission_id` and `attempt`
+// stay the result's own. Watched red: with `resultBody` taking this run's
+// facts again, all three are red; with the record read from the plan rather
+// than from the commit, the re-tag is red.
+const SID_EARLIER = "0192f1c2-3b4a-7c5d-8e6f-1a2b3c4d5e00";
+/** A `published` record as the publish job writes it, for the listed 0.2.0 with these bytes. */
+const publishedOnMain = (over = {}) => ({
+  actor: "bot", trigger: "panel", submission_id: SID_EARLIER, plugin_id: P.id, version: P.version, repo: P.repo,
+  repository_id: P.rid, repository_owner_id: P.oid, tag: P.tag, commit: P.commit, artifact_digests: DIGESTS, fingerprint: FP,
+  decided_at: "2026-09-25T00:00:00Z", state: "published", reasons: ["P_PUBLISHED", "P_REVIEW_PRIORITY"],
+  decision_id: "c".repeat(32), run: "1/1", ...over,
+});
+const listedWithBytes = () => {
+  const listed = existing({ versions: ["0.1.0"] });
+  listed.versions.push({ doc: versionDoc(P.version, { artifacts: { "linux-x64": { sha256: P.sha } } }) });
+  return listed;
+};
+
+test("BOT-23: BOT-74's result carries the published record's codes, `P_REVIEW_PRIORITY` included, and the record's members", () => {
+  // The same bytes, published from an earlier commit of the same tag: another
+  // fingerprint, so BOT-19 finds nothing and BOT-74 answers.
+  const fpEarlier = submissionFingerprint({ repo: P.repo, tag: P.tag, id: P.id, version: P.version, commit: "c".repeat(40), digests: DIGESTS });
+  const rec = publishedOnMain({ commit: "c".repeat(40), fingerprint: fpEarlier });
+  const plan = decideWith({ git: git({ existing: listedWithBytes(), records: [baseline(), rec] }) });
+  assert.equal(plan.kind, "reported");
+  assert.match(plan.why, /^BOT-74\b/, plan.why);
+  assert.deepEqual(plan.reasons.map((r) => r.code), ["P_PUBLISHED"], "the fixture: decide's own answer is `[P_PUBLISHED]`");
+  assert.equal(plan.decision_id, rec.decision_id);
+  const { body, head, pending } = composedBody(plan, [rec]);
+  assert.equal(pending.held_back, undefined, "held back");
+  assert.deepEqual(body.reasons.map((r) => r.code), ["P_PUBLISHED", "P_REVIEW_PRIORITY"], "the result's codes are not the record's");
+  assert.equal(body.main_commit, head);
+  assert.equal(body.submission_id, P.sid, "the result's own submission, not the record's");
+  assert.deepEqual(recordAgreement(body, rec), [], "BOT-23");
+});
+
+test("BOT-23: a re-tag of identical bytes reports the record's tag, commit and fingerprint, not this run's", () => {
+  const fpEarlier = submissionFingerprint({ repo: P.repo, tag: "v0.2.0-rc1", id: P.id, version: P.version, commit: "c".repeat(40), digests: DIGESTS });
+  const rec = publishedOnMain({ tag: "v0.2.0-rc1", commit: "c".repeat(40), fingerprint: fpEarlier, reasons: ["P_PUBLISHED"] });
+  const plan = decideWith({ git: git({ existing: listedWithBytes(), records: [baseline(), rec] }) });
+  assert.equal(plan.kind, "reported", `${plan.kind} ${plan.state ?? ""}`);
+  assert.match(plan.why, /^BOT-74\b/, plan.why);
+  assert.equal(plan.derived.tag, P.tag, "the fixture: this run is the re-tag");
+  const { body } = composedBody(plan, [rec]);
+  assert.equal(body.tag, "v0.2.0-rc1");
+  assert.equal(body.commit, "c".repeat(40));
+  assert.equal(body.fingerprint, fpEarlier);
+  assert.deepEqual(recordAgreement(body, rec), [], "BOT-23");
+});
+
+test("BOT-23: BOT-19's result reports the terminal record's members, and none it does not carry", () => {
+  const rec = mRejectOnMain();
+  const plan = decideWith({ git: git({ records: [rec] }) });
+  assert.equal(plan.kind, "reported");
+  assert.match(plan.why, /^BOT-19\b/, plan.why);
+  assert.ok(plan.derived?.plugin_id, "the fixture: this run derived a plugin id the record does not carry");
+  const { body } = composedBody(plan, [rec]);
+  assert.equal(body.state, "refused");
+  assert.deepEqual(body.reasons.map((r) => r.code), ["M_REJECT"]);
+  for (const m of ["plugin_id", "version", "commit", "artifact_digests", "repository_owner_id"]) {
+    assert.ok(!(m in body), `the result carries ${m}, which the moderator's record does not`);
+  }
+  assert.equal(body.tag, rec.tag);
+  assert.equal(body.repository_id, rec.repository_id);
+  assert.equal(body.fingerprint, rec.fingerprint);
+  assert.deepEqual(recordAgreement(body, rec), [], "BOT-23");
+});
+
+test("BOT-23: a record that cannot be read at the commit that added it is held back", () => {
+  const t = fixedTree([]);
+  const reportsDir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-svc-unreadable-"));
+  try {
+    const rel = `log/decisions/2026/09/${"a".repeat(32)}.json`;
+    fs.mkdirSync(path.join(t.dir, path.dirname(rel)), { recursive: true });
+    fs.writeFileSync(path.join(t.dir, rel), "{ not json");
+    t.g("add", "-A");
+    t.g("commit", "-q", "-m", "a broken record");
+    const plan = decideWith({ git: git({ records: [mReject] }) });
+    const { pending } = composePublication({ plans: [plan], root: t.dir, listingsDir: reportsDir, reportsDir, run: "1/1" });
+    assert.equal(pending[0].held_back, "record_unreadable");
+    assert.equal(finalizeResults({ pending, applied: { outcome: "nothing", refused: [], pushed: false }, mainCommit: null })[0].unposted, "record_unreadable");
+  } finally {
+    t.cleanup();
+    fs.rmSync(reportsDir, { recursive: true, force: true });
+  }
 });

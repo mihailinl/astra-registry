@@ -71,7 +71,8 @@ function reasonsFor(codes, planReasons) {
  * which is earlier, and so never later than the contract allows.
  *
  * @param {object} plan a `decideSubmission` plan (not `none`)
- * @param {{decisionId?: string|null, mainCommit?: string|null, deliveredAt?: string|null, reportedAt?: string|null}} landed
+ * @param {{decisionId?: string|null, mainCommit?: string|null, deliveredAt?: string|null, reportedAt?: string|null,
+ *   record?: object|null}} landed  `record`: for a `reported` plan, the record it names, as `main_commit` holds it
  * @returns {object} the body, without `schema` (the client stamps it)
  */
 export function resultBody(plan, landed = {}) {
@@ -128,7 +129,28 @@ export function resultBody(plan, landed = {}) {
   }
 
   if (plan.kind === "reported") {
-    // BOT-19 / BOT-74: the record already on `main`, under this submission's id.
+    // BOT-19 / BOT-74 / a pre-fingerprint refusal: the record already on
+    // `main`. BOT-23 makes the result's DEC-7 members — the state, the reason
+    // codes, `decision_id`, the derived members and `publish_after` — equal
+    // that record AT THE COMMIT THE RESULT NAMES, so when the publish job has
+    // read the record there (`landed.record`) they are the record's, never
+    // this run's. Until 2026-10-17 BOT-74 posted `[P_PUBLISHED]` and this
+    // run's facts against a record carrying `P_PUBLISHED, P_REVIEW_PRIORITY`,
+    // and a re-tag of identical bytes posted the new tag and commit: each a
+    // `record_mismatch` once the result named its commit. Only the
+    // submission and the attempt stay the result's own. A plan naming no
+    // record (BOT-74 over a version no record on `main` describes) keeps this
+    // run's facts, and carries no `decision_id` and no `main_commit`.
+    const record = landed.record ?? null;
+    if (record) {
+      body.state = record.state;
+      body.reasons = reasonsFor(Array.isArray(record.reasons) ? record.reasons : [], plan.reasons);
+      body.decision_id = record.decision_id;
+      if (landed.mainCommit) body.main_commit = landed.mainCommit;
+      for (const m of DERIVED) if (record[m] !== undefined) body[m] = record[m];
+      if (record.publish_after !== undefined) body.publish_after = record.publish_after;
+      return body;
+    }
     body.reasons = (plan.reasons ?? []).map((r) => ({ code: r.code, stage: r.stage, location: r.location ?? null, message: clip(r.message) }));
     if (plan.decision_id) body.decision_id = plan.decision_id;
     if (landed.mainCommit) body.main_commit = landed.mainCommit;
