@@ -27,7 +27,7 @@
 // from that start; nothing here reads a clock, so a retry sends the same bytes
 // and a re-run of the report job re-sends the body the first attempt built.
 
-import { OPERATOR_WINDOW_HOURS, WAIT_CAUSE_MAX, boundedEarliest, reasonOf } from "./service-decide.mjs";
+import { OPERATOR_WINDOW_HOURS, WAIT_CAUSE_MAX, boundedEarliest, operatorRetryHint, reasonOf } from "./service-decide.mjs";
 import { HOUR_MS, iso } from "./policy/time.mjs";
 import { isTime } from "../../tools/lib/time.mjs";
 
@@ -63,8 +63,15 @@ function reasonsFor(codes, planReasons) {
 /**
  * One result body.
  *
+ * `landed.reportedAt` is when the publish job composed the result, which is
+ * what TRUST-32's retry hint counts from (contract 5.8.0): a `W_OPERATOR_WINDOW`
+ * wait asks to be claimed again at most 15 minutes after its report, and
+ * never later than the window's end, so an operator's OK is read within a
+ * quarter of an hour. Without it the hint counts from the wait's `started_at`,
+ * which is earlier, and so never later than the contract allows.
+ *
  * @param {object} plan a `decideSubmission` plan (not `none`)
- * @param {{decisionId?: string|null, mainCommit?: string|null, deliveredAt?: string|null}} landed
+ * @param {{decisionId?: string|null, mainCommit?: string|null, deliveredAt?: string|null, reportedAt?: string|null}} landed
  * @returns {object} the body, without `schema` (the client stamps it)
  */
 export function resultBody(plan, landed = {}) {
@@ -80,12 +87,22 @@ export function resultBody(plan, landed = {}) {
       // channel reported delivery, and TRUST-32 names the two waits.
       if (isTime(landed.deliveredAt)) {
         wait.code = "W_OPERATOR_WINDOW";
-        wait.cause = `TRUST-32: the operator alert was delivered at ${landed.deliveredAt}; the ${OPERATOR_WINDOW_HOURS}-hour objection window runs from there`;
-        wait.earliest_retry_at = iso(new Date(new Date(landed.deliveredAt).getTime() + OPERATOR_WINDOW_HOURS * HOUR_MS));
+        wait.cause = `TRUST-32: the operator alert was delivered at ${landed.deliveredAt}; the ${OPERATOR_WINDOW_HOURS}-hour objection window runs from there, unless an operator answers it with an OK`;
+        wait.window_ends_at = iso(new Date(new Date(landed.deliveredAt).getTime() + OPERATOR_WINDOW_HOURS * HOUR_MS));
       } else {
         wait.code = "W_ALERT_UNDELIVERED";
         wait.cause = "TRUST-32: the channel reported no delivery of the operator alert, so nothing publishes";
       }
+    }
+    // §4.4 since contract 5.8.0: `window_ends_at` on every `W_OPERATOR_WINDOW`
+    // wait and on no other code, and `earliest_retry_at` beside it a retry
+    // hint, never the window's end unless the end is sooner.
+    const windowEndsAt = wait.code === "W_OPERATOR_WINDOW" && isTime(wait.window_ends_at) ? wait.window_ends_at : null;
+    if (windowEndsAt) {
+      wait.earliest_retry_at = operatorRetryHint({
+        windowEndsAt,
+        from: isTime(landed.reportedAt) ? landed.reportedAt : wait.started_at,
+      });
     }
     body.wait = {
       code: wait.code,
@@ -94,6 +111,7 @@ export function resultBody(plan, landed = {}) {
       // §4.4 (3.12.0), at the last point before the wire: the composer can
       // move the time (the operator window counts from reported delivery).
       earliest_retry_at: boundedEarliest(wait.started_at, wait.earliest_retry_at),
+      ...(windowEndsAt ? { window_ends_at: windowEndsAt } : {}),
     };
     body.reasons = (plan.reasons ?? []).map((r) => ({ code: r.code, stage: r.stage, location: r.location ?? null, message: clip(r.message) }));
     if (plan.derived) for (const m of DERIVED) if (plan.derived[m] !== undefined) body[m] = plan.derived[m];

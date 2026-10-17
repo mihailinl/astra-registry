@@ -2001,49 +2001,51 @@ await test("M-T3.2 — the takedown bound the code enforces is the one a documen
   }
 });
 
-// reg.61a's other two numbers — B-T3.3b's half of it — and the bot's copy.
+// reg.61a's other number — B-T3.3b's half of it — and the bot's copy.
 //
-// BOT-26 (4) honours an approval only while its `decided_at` is younger than
-// "the POLICY.md maximum, which the owner set at 7 days (OPEN-OWNER-5) … and
-// with none committed no approval passes". BOT-28 waits an approved update
-// with no delay reason for "the POLICY.md number, which the owner set at 6 h
-// (OPEN-OWNER-6) … without which it waits". Both rules are keyed on the
-// DOCUMENT, as TRUST-26's bound is: the number is a promise to authors first,
-// and the bot is what keeps it. So the three are held together here the same
-// way M-T3.2 holds the bound above:
+// BOT-28 waits an approved update with no delay reason for "the POLICY.md
+// number, which the owner set at 6 h (OPEN-OWNER-6) … without which it
+// waits". The rule is keyed on the DOCUMENT, as TRUST-26's bound is: the
+// number is a promise to authors first, and the bot is what keeps it. So the
+// two are held together here the same way M-T3.2 holds the bound above:
 //
-//   * the constants in `bot/lib/moderation.mjs` are the owner's 7 and 6. A
-//     different value is a policy change, which is his, and an edit to the
-//     contract's BOT-26 or BOT-28 — never a constant edit that a document
-//     edit in the same commit makes look consistent;
-//   * POLICY.md states each EXACTLY ONCE, in the form this check reads, and
+//   * the constant in `bot/lib/moderation.mjs` is the owner's 6. A different
+//     value is a policy change, which is his, and an edit to the contract's
+//     BOT-28 — never a constant edit that a document edit in the same commit
+//     makes look consistent;
+//   * POLICY.md states it EXACTLY ONCE, in the form this check reads, and
 //     that statement equals the constant;
-//   * no published policy document states either in another value.
+//   * no published policy document states it in another value.
 //
-// THE CANONICAL FORMS are this check's own requirement, as M-T3.2's and
-// MIG-3's are theirs: "approval is honoured for <n> days" and "approved update
-// waits <n> hours", a digit or the word. A machine can hold two documents and
-// a constant to one number only if it can find the number.
+// THE CANONICAL FORM is this check's own requirement, as M-T3.2's and MIG-3's
+// are theirs: "approved update waits <n> hours", a digit or the word. A
+// machine can hold two documents and a constant to one number only if it can
+// find the number.
 //
-// **These are not TRUST-27's 7 days or TRUST-32's 6-hour operator window**,
-// which are the same two numbers in the same units and are B-T3.10's: the
-// first is how long an `R_FIRST_BINDING` approval waits before it may be
-// honoured, the second how long a delivered operator alert waits before a
-// publication. A check that read "7 days" anywhere near "approval" would pin
-// all of them to one another and be green on the day one of them moved, which
-// is FLOW-42's lesson in M-T3.2's scan arriving again.
-await test("reg.61a — the approval maximum and the approved-update window are the owner's, and POLICY.md publishes each once", async () => {
+// **There was a second number here**, BOT-26 (4)'s approval maximum of 7 days
+// (OPEN-OWNER-5), pinned the same way as "approval is honoured for <n> days".
+// Contract 5.8.0 withdrew it (OD-28): an approval no longer ages. The pin is
+// turned round rather than deleted — no policy document may state an approval
+// maximum in that form any more, because a promise left in POLICY.md that the
+// bot no longer keeps is the exact drift this check exists to refuse, in the
+// direction that misleads a moderator into re-approving for nothing.
+//
+// **This is not TRUST-32's 6-hour operator window**, which is the same number
+// in the same unit and is B-T3.10's: how long a delivered operator alert waits
+// before a publication. A check that read "6 hours" anywhere near "approved"
+// would pin both to one another and be green on the day one of them moved,
+// which is FLOW-42's lesson in M-T3.2's scan arriving again.
+await test("reg.61a — the approved-update window is the owner's and POLICY.md publishes it once; no document states an approval maximum (5.8.0)", async () => {
   const m = await import("../lib/moderation.mjs");
   const { execFileSync } = await import("node:child_process");
   const WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9 };
   const N = "(\\d+|one|two|three|four|five|six|seven|eight|nine)";
+  // Contract 5.8.0 (OD-28): BOT-26 (4) is gone, and with it the constant.
+  assertEqual("APPROVAL_MAX_AGE_DAYS" in m, false,
+    "bot/lib/moderation.mjs exports APPROVAL_MAX_AGE_DAYS again; contract 5.8.0 removed BOT-26 (4), so an approval " +
+    "does not age and there is no maximum for the bot to keep");
+  const withdrawn = new RegExp(`\\bapprovals?\\s+(?:is|are)\\s+honoured\\s+for\\s+${N}\\s+days?\\b`, "gi");
   const numbers = [
-    {
-      name: "APPROVAL_MAX_AGE_DAYS", owner: 7, unit: "days", open: "OPEN-OWNER-5", rule: "BOT-26 (4)",
-      shut: "no approval passes",
-      re: new RegExp(`\\bapprovals?\\s+(?:is|are)\\s+honoured\\s+for\\s+${N}\\s+days?\\b`, "gi"),
-      form: "approval is honoured for <n> days",
-    },
     {
       name: "APPROVED_UPDATE_WINDOW_HOURS", owner: 6, unit: "hours", open: "OPEN-OWNER-6", rule: "BOT-28",
       shut: "an approved update with no delay reason waits for ever",
@@ -2059,6 +2061,14 @@ await test("reg.61a — the approval maximum and the approved-update window are 
   assertEqual(tracked.join(", "), "POLICY.md, docs/POLICY.md",
     "the published policy documents are not the two this check reads");
 
+  for (const rel of tracked) {
+    const text = read(rel);
+    const stated = [...text.matchAll(withdrawn)].map((c) => `${rel}:${text.slice(0, c.index).split("\n").length}`);
+    assertEqual(stated.join(", "), "",
+      "a policy document still promises an approval maximum (\"approval is honoured for <n> days\"). Contract 5.8.0 " +
+      "removed it (BOT-26; OD-28): an approval clears its hold whatever its age, so the sentence is a promise the bot " +
+      "no longer keeps");
+  }
   for (const n of numbers) {
     const value = m[n.name];
     assertEqual(value, n.owner,
@@ -3404,9 +3414,10 @@ await test("the decide job refuses to decide a listed plugin whose MIG-1 state i
 // ── ROLL-25 (3): text-utils held under MIG-10, approved, served ──────────────
 //
 // The approval comes a day after TRUST-27's period (whatever the module
-// enforces), and what then stands between it and the catalogue is BOT-28's
-// notice window, TRUST-14's alert, and TRUST-32's six hours from the alert's
-// reported delivery.
+// enforces), and what then stands between it and the catalogue is TRUST-14's
+// alert and TRUST-32's six hours from the alert's reported delivery. Until
+// contract 5.8.0 BOT-28's notice window stood first; a one-account first
+// binding now waits for no notice.
 //
 // Watched failing: with TRUST-27's comparison in `honourApproval` made two
 // days longer than the constant, the approval is not honoured and the walk is
@@ -3416,13 +3427,19 @@ await test("the decide job refuses to decide a listed plugin whose MIG-1 state i
 // publishes and is red; and with the identity records written for the plugin
 // alone (`ids = [verified.plugin_id]`), ID-64's siblings are unbound and it is
 // red.
-await test("ROLL-25 (3) — text-utils held `R_FIRST_BINDING`, approved, published only after TRUST-27's period, the notice window, the alert's delivery and the operator window, binding every sibling (DEC-6; TRUST-14; TRUST-32; ID-64)", () => {
+await test("ROLL-25 (3) — text-utils held `R_FIRST_BINDING`, approved, published only after TRUST-27's period, the alert's delivery and the operator window, with no notice wait since 5.8.0, binding every sibling (DEC-6; BOT-28; TRUST-14; TRUST-32; ID-64)", () => {
   const root = serviceWorld();
   const sub = svcSubmission({ id: "text-utils", version: "0.2.1", line: LINE_OWNER });
   const s = approvalWalk(root, sub);
   assertEqual(JSON.stringify(s.held.plan.record?.reasons), JSON.stringify(["R_FIRST_BINDING"]), `the hold: ${said(s.held.plan)}`);
-  assertEqual(`${s.noticeRunning.plan.kind} ${s.noticeRunning.plan.wait?.code}`, "wait W_NOTICE_PENDING",
-    `a minute after the approval the author notice window has not passed (BOT-28): ${said(s.noticeRunning.plan)}`);
+  // Contract 5.8.0 (BOT-28, OD-28): a first binding read with exactly one
+  // line and no `R_BINDING_CHANGED` sends its notices to the account that
+  // made the release, so it waits for no notice. A minute after the approval
+  // it is already at TRUST-14's alert. Until 5.8.0 this run waited
+  // `W_NOTICE_PENDING` for the rest of six hours.
+  assertEqual(`${s.noticeRunning.plan.kind} ${s.noticeRunning.plan.wait?.code}`, "wait W_ALERT_UNDELIVERED",
+    `a minute after the approval a one-account first binding waits for no notice (BOT-28 since 5.8.0): ${said(s.noticeRunning.plan)}`);
+  assertEqual(s.noticeRunning.plan.alert?.event, "approval", "the alert is named at once");
   assertEqual(`${s.undelivered.plan.kind} ${s.undelivered.plan.wait?.code}`, "wait W_ALERT_UNDELIVERED",
     `with the notice window passed, the approval raises TRUST-14's alert and publishes nothing: ${said(s.undelivered.plan)}`);
   assertEqual(JSON.stringify(s.undelivered.plan.alert),
@@ -3434,8 +3451,12 @@ await test("ROLL-25 (3) — text-utils held `R_FIRST_BINDING`, approved, publish
     "a reported delivery lands the alert record, and nothing else");
   assertEqual(`${s.windowRunning.plan.kind} ${s.windowRunning.plan.wait?.code}`, "wait W_OPERATOR_WINDOW",
     `an hour after delivery the operator window is still running (TRUST-32): ${said(s.windowRunning.plan)}`);
-  assertEqual(s.windowRunning.plan.wait.earliest_retry_at, at(s.deliveredAt, 6 * 60),
-    "W_OPERATOR_WINDOW's earliest retry is not the window's end");
+  // Contract 5.8.0: the window's end is `window_ends_at`, and the earliest
+  // retry a hint 15 minutes after the run, so an operator's OK is read soon.
+  assertEqual(s.windowRunning.plan.wait.window_ends_at, at(s.deliveredAt, 6 * 60),
+    "W_OPERATOR_WINDOW's `window_ends_at` is not the window's end");
+  assertEqual(s.windowRunning.plan.wait.earliest_retry_at, at(s.deliveredAt, 60 + 15),
+    "W_OPERATOR_WINDOW's earliest retry is not a 15-minute hint");
   assertEqual(s.final.plan.state, "published",
     `six hours after delivery, and a day after TRUST-27's ${FIRST_BINDING_WAIT_DAYS} days, the approved first binding is not served: ${said(s.final.plan)}`);
   assertEqual(s.final.plan.record.moderator, "the-owner", "DEC-7: the approving moderator is not on the record");

@@ -100,12 +100,31 @@ const DIGEST_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*:[0-9a-f]{64}$/;
 // (`tools/selftest/repo-rules.mjs`), and a new export there is a change to a
 // surface ten files import.
 
-/** BOT-26 (4): an approval older than this is not honoured (OPEN-OWNER-5). */
-export const APPROVAL_MAX_DAYS = 7;
-/** BOT-28: the author objection window for an approved change of hands (OPEN-OWNER-6; DEC-19 since 3.0.0). */
+// There is no approval maximum any more. From contract 3.7.0 to 5.7.0 BOT-26
+// (4) refused an approval older than 7 days (OPEN-OWNER-5) and re-held the
+// submission; 5.8.0 removed the condition (OD-28), because what it voided
+// were approvals of releases waiting on something else — Voltur792/SPT
+// v1.2.1's waited 46 hours on a notice nobody could receive, and would have
+// lost its approval on day 7. BOT-26 (2) still voids an approval the moment
+// the release it names changes, which is all an age limit ever guarded.
+
+/**
+ * BOT-28: the author objection window for an approved change of hands
+ * (OPEN-OWNER-6; DEC-19 since 3.0.0). Since contract 5.8.0 only a hold that
+ * a second account may be in — `R_BINDING_CHANGED` on the held record or in
+ * this run, or no binding line at all — waits it (`noticeExempt`).
+ */
 export const UPDATE_WINDOW_HOURS = 6;
 /** TRUST-32 / DEC-6: the operator objection window, counted from reported delivery. */
 export const OPERATOR_WINDOW_HOURS = 6;
+/**
+ * TRUST-32 since contract 5.8.0: while the operator window runs, the wait's
+ * `earliest_retry_at` is a retry hint at most this far after the report, and
+ * never later than the window's end, which travels as `window_ends_at`. BOT-60
+ * keeps a waiting submission unclaimable until its earliest retry, so the
+ * window's end there would leave an operator's OK unread for up to 6 hours.
+ */
+export const OPERATOR_RETRY_HINT_MINUTES = 15;
 /**
  * TRUST-27: an `R_FIRST_BINDING` approval waits this long after its `held`
  * record reached `main`. **0 since contract 2.1.0**, on the owner's "i allow
@@ -164,6 +183,34 @@ export const VERDICT_OUTCOMES = Object.freeze(["pass", "B_BINDING_UNUSABLE", "W_
  * delay (DEC-19): nothing there is delayed, so nothing is drained.
  */
 export const ALERT_EVENTS = Object.freeze(["approval"]);
+
+/**
+ * TRUST-32's operator OK record (contract 5.8.0; DEC-6; B.4 lists the path as
+ * registry-only, beside the deny record): `state/ok/<fingerprint>.json`,
+ * written by `operator.yml`'s act `ok` alone (BOT-33's operator row) and read
+ * here. Exactly these members. `approval_decided_at` is copied from the alert
+ * record the act answered, which ties the OK to that approval: a new approval
+ * of the same fingerprint raises a new alert and needs a new OK.
+ */
+export const OK_SCHEMA = "astra.registry.ok/1";
+export const OK_DIR = "state/ok";
+export const OK_MEMBERS = Object.freeze(["schema", "fingerprint", "approval_decided_at", "run", "at"]);
+const OK_RUN_RE = /^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9._-]+\/actions\/runs\/[0-9]+$/;
+
+/** Why `doc` is not an OK record for `fingerprint` (its file name's stem), or `[]`. */
+export function okRecordProblems(doc, { fingerprint }) {
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) return ["not an object"];
+  const p = [];
+  for (const k of Object.keys(doc)) if (!OK_MEMBERS.includes(k)) p.push(`an unnamed member \`${k}\``);
+  for (const k of OK_MEMBERS) if (!(k in doc)) p.push(`no \`${k}\``);
+  if (doc.schema !== OK_SCHEMA) p.push(`schema ${JSON.stringify(doc.schema)}`);
+  if (!FINGERPRINT_RE.test(String(fingerprint ?? ""))) p.push("the file name is not a fingerprint");
+  if (doc.fingerprint !== fingerprint) p.push("the `fingerprint` member is not the fingerprint the file name carries");
+  if (!isTime(doc.approval_decided_at)) p.push("approval_decided_at");
+  if (!isTime(doc.at)) p.push("at");
+  if (!OK_RUN_RE.test(String(doc.run ?? ""))) p.push("run");
+  return p;
+}
 
 // ── small grammar helpers ───────────────────────────────────────────────────
 
@@ -244,12 +291,22 @@ export function readGitState(root, { markersOverride = null } = {}) {
     if (FINGERPRINT_RE.test(stem)) denied.add(stem);
     if (doc && FINGERPRINT_RE.test(String(doc.fingerprint ?? ""))) denied.add(doc.fingerprint);
   }
+  // TRUST-32 since contract 5.8.0: an operator OK ends the operator window of
+  // the alert it answers. Unlike a deny record, an OK SHORTENS a wait, so the
+  // disagreement that errs safe is the opposite one: it counts only when its
+  // file name and its `fingerprint` member name the same fingerprint, and it
+  // is read whole or not at all.
+  const oks = new Map();
+  for (const { name, doc } of readJsonDir(path.join(root, ...OK_DIR.split("/")))) {
+    const stem = name.slice(0, -".json".length);
+    if (okRecordProblems(doc, { fingerprint: stem }).length === 0) oks.set(stem, doc);
+  }
   const markers = markersOverride ?? {
     r3_exit: fs.existsSync(path.join(root, "log", "rollout", "R3-exit.json")),
     cutover: fs.existsSync(path.join(root, "log", "cutover.json")),
     baseline: fs.existsSync(path.join(root, "log", "baseline.json")),
   };
-  return { root, records: records.map((r) => r.doc).filter(Boolean), alerts, denied, markers };
+  return { root, records: records.map((r) => r.doc).filter(Boolean), alerts, denied, oks, markers };
 }
 
 function readJsonDir(dir) {
@@ -452,26 +509,24 @@ export function id41({ identity, record, lineHash }) {
 // ── the approval (BOT-26) ───────────────────────────────────────────────────
 
 /**
- * The approval `ask` reported for this fingerprint, held to BOT-26's four
+ * The approval `ask` reported for this fingerprint, held to BOT-26's three
  * conditions and TRUST-27's wait. Returns what `decide()` should be given as
  * its approval, and why anything that arrived was not honoured.
  *
  * (1) a `main` record shows `held` for exactly this fingerprint; (2) the full
  * ingest recomputes the fingerprint — `decide()` asks that itself and answers
  * `P_APPROVAL_STALE`; (3) no `E_*` or `B_*` finding — `decide()`'s step 1
- * refuses before an approval is read; (4) `decided_at` is younger than the
- * committed maximum. ROLL-49: no approval carries a delay waiver.
+ * refuses before an approval is read. ROLL-49: no approval carries a delay
+ * waiver. An approval does not age (contract 5.8.0): from 3.7.0 to 5.7.0 a
+ * fourth condition refused one older than 7 days and re-held the submission
+ * with `P_APPROVAL_STALE` in the hold's record, keyed `held:after:` (BOT-35).
+ * Those records stay on `main` and are read like any other; none is written.
  *
  * **What a refusal leaves behind.** Every refusal below returns `why`, which
  * the caller adds to the run's reasons as `P_APPROVAL_STALE`. A `held` result
- * posts only its record's codes (BOT-23), so a `why` reaches the service only
- * when the record carries the code too, and since contract 3.7.0 one refusal
- * puts it there: (4), returned with `aged: true`. The hold that returns after
- * an aged approval then reads `R_*…, P_APPROVAL_STALE`, its message naming
- * the approval's `decided_at` and the maximum, and is a transition the
- * service can tell from the first hold. (1) has no hold of this fingerprint
- * to return to, and TRUST-27's and MIG-31's are waits the approval outlives,
- * so theirs stay out of the record.
+ * posts only its record's codes (BOT-23), so none of these reaches a record:
+ * (1) has no hold of this fingerprint to return to, and TRUST-27's and
+ * MIG-31's are waits the approval outlives.
  *
  * **MIG-31.** At a `grandfathered` or `frozen` listing's `R_FIRST_BINDING`
  * hold whose build was started by an account other than the repository's
@@ -485,11 +540,10 @@ export function id41({ identity, record, lineHash }) {
  * reported it (`triggering_actor_is_owner`) and nothing deferred an approval
  * by it; the canary walk ROLL-59 (h) found that (B-T4.1).
  *
- * "Deferred, not lost" (MIG-31): while a floor runs, BOT-26 (4)'s age is
- * counted from the floor's end rather than from `decided_at`, so an approval
- * given on the first day of a 14-day floor is still an approval on the
- * fifteenth. Without that, the committed maximum of 7 days would expire every
- * approval given in the first week, which is losing it.
+ * "Deferred, not lost" (MIG-31): an approval given on the first day of a
+ * 14-day floor is still an approval on the fifteenth. Until contract 5.8.0
+ * that took counting BOT-26 (4)'s age from the floor's end; with no age
+ * limit it is simply true.
  */
 export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, now, mig31 = null }) {
   const approvals = (decisions ?? []).filter((d) => d?.code === "M_APPROVE");
@@ -513,24 +567,9 @@ export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, 
     ? (Number.isInteger(mig31.floorDays) && mig31.floorDays >= 0 ? mig31.floorDays : ACTOR_MISMATCH_FLOOR_DAYS)
     : 0;
   const floorEnd = actorFloor > 0 ? new Date(heldRecord.decided_at).getTime() + actorFloor * DAY_MS : null;
-  const countedFrom = Math.max(new Date(decision.decided_at).getTime(), floorEnd ?? 0);
-  const age = new Date(now).getTime() - countedFrom;
-  if (age > APPROVAL_MAX_DAYS * DAY_MS) {
-    // `aged`: the one refusal here whose hold carries `P_APPROVAL_STALE` in
-    // its record (contract 3.7.0). The approval was honourable once and has
-    // lapsed, so the hold that comes back is a moderator's again, and says so.
-    const floored = floorEnd !== null && floorEnd > new Date(decision.decided_at).getTime();
-    return {
-      approval: null,
-      why:
-        `BOT-26 (4): the approval decided at ${decision.decided_at}` +
-        (floored ? `, counted from the end of MIG-31's floor at ${iso(new Date(floorEnd))},` : "") +
-        ` is older than the ${APPROVAL_MAX_DAYS}-day maximum POLICY.md sets, so it clears nothing and the hold ` +
-        "is back with a moderator; a new approval clears it",
-      decision,
-      aged: true,
-    };
-  }
+  // No age check (contract 5.8.0 removed BOT-26 (4)): an approval clears the
+  // hold it names whatever its `decided_at`, and (2) voids it the moment the
+  // release changes.
   if ((heldCodes ?? []).includes("R_FIRST_BINDING")) {
     const since = new Date(now).getTime() - new Date(heldRecord.decided_at).getTime();
     // When MIG-31's floor also stands and ends later, the floor is the answer:
@@ -586,6 +625,35 @@ export function honourApproval({ decisions, fingerprint, heldRecord, heldCodes, 
 // ── BOT-28 / ID-60: the notice ──────────────────────────────────────────────
 
 /**
+ * BOT-28 since contract 5.8.0 (DEC-8; OD-28): does this approved hold wait
+ * for no notice? Only when BOTH hold:
+ *
+ *   - neither the held record's codes nor this run's include
+ *     `R_BINDING_CHANGED` — the approval clears the hold a moderator saw, the
+ *     run publishes what it reads now, and either one naming a changed
+ *     binding means a second account is in play (ID-60's wait);
+ *   - this run's binding outcome is `one`: exactly one ID-23 line at the
+ *     attested commit, which ID-24 did not refuse. With no line BOT-29's wait
+ *     stands; only `one` gives FLOW-69 a single account to name.
+ *
+ * Then the notices go to one account, the one that made the release, and a
+ * notice telling it of its own release protects nobody: Voltur792/SPT
+ * v1.2.1 waited 46 hours on 92 `pending` answers for an account with no
+ * notice destination. What that notice would have caught — a stolen account
+ * with push access — the approving moderator and the operator window still
+ * catch. Such a hold reads stop status alone, which step 6 already did.
+ *
+ * `ask` (bot/lib/service-jobs.mjs) asks the same question before it calls
+ * notice status, from the tree's held record and the identity record's
+ * token hash, so an exempt hold is not asked at all and a failed notice read
+ * cannot hold it.
+ */
+export function noticeExempt({ heldReasons = [], runReasons = [], bindingOutcome }) {
+  if (bindingOutcome !== "one") return false;
+  return ![...(heldReasons ?? []), ...(runReasons ?? [])].includes("R_BINDING_CHANGED");
+}
+
+/**
  * Has the author objection window passed, by the notice status read in this
  * run? The bot compares; the service only reports when the notice was
  * accepted (BOT-28's Why).
@@ -633,7 +701,7 @@ export function noticeElapsed({ notice, windowSeconds, bindingChanged, now }) {
  *
  * @returns {{ok: boolean, name: object|null, wait: object|null}}
  */
-export function operatorWindow({ record, fingerprint, event, approvalDecidedAt, now }) {
+export function operatorWindow({ record, fingerprint, event, approvalDecidedAt, now, ok = null, hintFrom = now }) {
   if (!record || record.event !== event || (event === "approval" && record.approval_decided_at !== approvalDecidedAt)) {
     // First read of this event: TRUST-14 names it, and this run cannot publish
     // it — the window is counted from a delivery that has not happened yet.
@@ -650,6 +718,11 @@ export function operatorWindow({ record, fingerprint, event, approvalDecidedAt, 
       wait: { code: "W_ALERT_UNDELIVERED", cause: "TRUST-32: the alert record carries no reported delivery", earliest: null },
     };
   }
+  // Since contract 5.8.0 an operator OK ends the window — this one and nothing
+  // else: it is read only here, after the delivery check above, so it never
+  // ends `W_ALERT_UNDELIVERED`, and the deny record, the stop and every other
+  // wait are decided elsewhere and before.
+  if (okAnswers({ ok, record, fingerprint })) return { ok: true, name: null, wait: null, okd: true };
   const due = new Date(record.delivered_at).getTime() + OPERATOR_WINDOW_HOURS * HOUR_MS;
   if (due > new Date(now).getTime()) {
     return {
@@ -657,12 +730,32 @@ export function operatorWindow({ record, fingerprint, event, approvalDecidedAt, 
       name: null,
       wait: {
         code: "W_OPERATOR_WINDOW",
-        cause: `TRUST-32: the alert was delivered at ${record.delivered_at}; the ${OPERATOR_WINDOW_HOURS}-hour operator objection window is still running`,
-        earliest: iso(new Date(due)),
+        cause: `TRUST-32: the alert was delivered at ${record.delivered_at}; the ${OPERATOR_WINDOW_HOURS}-hour operator objection window is still running, unless an operator answers it with an OK`,
+        earliest: operatorRetryHint({ windowEndsAt: iso(new Date(due)), from: hintFrom }),
+        window_ends_at: iso(new Date(due)),
       },
     };
   }
   return { ok: true, name: null, wait: null };
+}
+
+/**
+ * Does this OK record end the window of this alert record? Its `fingerprint`
+ * names the fingerprint (`readGitState` has already held the file name to the
+ * same), and its `approval_decided_at` is the alert's: an OK given for an
+ * earlier approval of the same fingerprint answers an alert that is no longer
+ * the one on `main`.
+ */
+export function okAnswers({ ok, record, fingerprint }) {
+  if (!ok || !record) return false;
+  if (okRecordProblems(ok, { fingerprint }).length) return false;
+  return isTime(record.approval_decided_at) && ok.approval_decided_at === record.approval_decided_at;
+}
+
+/** TRUST-32's retry hint: 15 minutes after `from`, or the window's end if that is sooner. */
+export function operatorRetryHint({ windowEndsAt, from }) {
+  const hint = new Date(from).getTime() + OPERATOR_RETRY_HINT_MINUTES * 60_000;
+  return iso(new Date(Math.min(hint, new Date(windowEndsAt).getTime())));
 }
 
 // ── the input grammar ───────────────────────────────────────────────────────
@@ -752,9 +845,14 @@ export function decideSubmission(input) {
   }, { shadowed, startedAt });
 
   const nextRun = () => plusMs(startedAt, NEXT_RUN_SECONDS * 1000);
-  const waitPlan = (code, cause, { earliest = null, reasons = [], derived = null, operatorAlert = null } = {}) =>
+  const waitPlan = (code, cause, { earliest = null, reasons = [], derived = null, operatorAlert = null, windowEndsAt = null } = {}) =>
     plan("wait", {
-      wait: { code, started_at: startedAt, cause: clip(cause), earliest_retry_at: boundedEarliest(startedAt, earliest ?? nextRun()) },
+      wait: {
+        code, started_at: startedAt, cause: clip(cause), earliest_retry_at: boundedEarliest(startedAt, earliest ?? nextRun()),
+        // §4.4 since contract 5.8.0: the operator window's end, on every
+        // `W_OPERATOR_WINDOW` wait and on no other code.
+        ...(code === "W_OPERATOR_WINDOW" && windowEndsAt ? { window_ends_at: windowEndsAt } : {}),
+      },
       reasons,
       derived,
       operator_alert: operatorAlert,
@@ -1009,12 +1107,14 @@ export function decideSubmission(input) {
   // 9 ── B-T3.3b: the approval, before the policy is asked ─────────────────
   // The hold an approval clears, and the one TRUST-27's wait and MIG-31's
   // floor count from: this submission's FIRST entry into `held`, found by the
-  // id BOT-35 derives for it. Since a hold an aged approval sends back writes
-  // a record of its own (BOT-34), `main` can hold several `held` records for
-  // one fingerprint, and the newest is the re-hold: counting from it would
-  // restart a 14-day floor that has already run, every time an approval aged.
-  // A tree with no such record (a hold written before this submission had an
-  // id of its own, or a test's) falls back to main's earlier reading.
+  // id BOT-35 derives for it. From contract 3.10.0 to 5.7.0 a hold an aged
+  // approval sent back wrote a record of its own (BOT-34), keyed
+  // `held:after:`, and those records stay on `main`: a fingerprint can have
+  // several `held` records, and the newest may be such a re-hold. Counting
+  // from it would restart a 14-day floor that had already run. Nothing writes
+  // one since 5.8.0; this reads past them. A tree with no first-hold record
+  // (a hold written before this submission had an id of its own, or a
+  // test's) falls back to main's earlier reading.
   const firstHoldId = decisionId(submissionKey({ submission_id: sid, fingerprint: verified.fingerprint, state: "held" }));
   const heldRecord = records.find((r) => r?.decision_id === firstHoldId && r?.state === "held")
     ?? [...records].reverse().find((r) => r?.fingerprint === verified.fingerprint && r?.state === "held") ?? null;
@@ -1095,7 +1195,7 @@ export function decideSubmission(input) {
   }
   // A deferred approval (TRUST-27's wait, MIG-31's floor) is not stale: it
   // stands, and this run answers with `W_APPROVAL_DEFERRED` below.
-  const deferred = Boolean(honoured.earliest) && honoured.aged !== true;
+  const deferred = Boolean(honoured.earliest);
   if (honoured.why && !deferred) push("P_APPROVAL_STALE", { message: honoured.why });
 
   // A FLOW-72 wait from the checks themselves.
@@ -1112,12 +1212,10 @@ export function decideSubmission(input) {
     const holds = [
       ...findings.filter(holding).map((f) => f.code),
       ...decision.reasons.filter((r) => r.level === "review" && r.code !== "R_CHECK_HELD").map((r) => r.code),
-      // BOT-26 (4), since contract 3.7.0: an aged approval's hold carries
-      // `P_APPROVAL_STALE` beside the hold's codes, as BOT-26 (2)'s does from
-      // `decide()`. Added here and not raised in `decide()`, because there it
-      // would be a hold of its own: an aged approval of a release nothing
-      // holds any more would hold it, and a refused approval changes nothing.
-      ...(honoured.aged ? ["P_APPROVAL_STALE"] : []),
+      // From contract 3.7.0 to 5.7.0 an aged approval's hold carried
+      // `P_APPROVAL_STALE` here beside the hold's codes (BOT-26 (4)). 5.8.0
+      // removed the age limit, so nothing adds it to a hold any more; BOT-26
+      // (2) still raises it from `decide()`.
     ];
     const pick = {
       refuse: errors.length ? errors : ["P_REFUSED"],
@@ -1195,13 +1293,6 @@ export function decideSubmission(input) {
       reasons,
       derived: derivedFacts,
       record: { ...baseRecord, decided_at: startedAt, state: "held", reasons: heldBy },
-      // BOT-34: a hold an aged approval sends back is a second entry into
-      // `held`, and its record is keyed after that approval (BOT-35), so it is
-      // not the first hold's id that BOT-36 would find and drop. The approval
-      // is the one `honourApproval` judged, named by its `decided_at`: the
-      // same value on every re-run of this re-hold, and a new one for the next
-      // approval. Every other hold is a first entry and keeps the first key.
-      reentry: honoured.aged ? { after: honoured.decision.decided_at } : null,
       result_extra: extras,
       // A hold stops the queue clock for these bytes (bot/decide.mjs's rule).
       drop_queue: Boolean(queued),
@@ -1257,18 +1348,27 @@ export function decideSubmission(input) {
       });
     }
     // BOT-28 / ID-60 — the author objection window, from the service's time:
-    // for an approved change of hands, the POLICY.md number (DEC-19).
-    const window = UPDATE_WINDOW_HOURS * 3600;
-    const n = noticeElapsed({
-      notice: ask?.notice ?? null,
-      windowSeconds: window,
-      bindingChanged: (heldRecord?.reasons ?? []).includes("R_BINDING_CHANGED"),
-      now,
-    });
-    if (!n.ok) {
-      return waitPlan("W_NOTICE_PENDING", `BOT-28: ${n.why}`, { earliest: n.earliest, reasons, derived: derivedFacts });
+    // for an approved change of hands, the POLICY.md number (DEC-19). Since
+    // contract 5.8.0 a hold with one account in it waits for no notice: it
+    // read stop status at step 6, and that is all it reads (`noticeExempt`).
+    // The held record's codes AND this run's are asked, and either naming
+    // `R_BINDING_CHANGED` keeps ID-60's wait on the previous account's notice.
+    const heldReasons = heldRecord?.reasons ?? [];
+    const exempt = noticeExempt({ heldReasons, runReasons: heldCodes, bindingOutcome: binding.outcome });
+    if (!exempt) {
+      const window = UPDATE_WINDOW_HOURS * 3600;
+      const n = noticeElapsed({
+        notice: ask?.notice ?? null,
+        windowSeconds: window,
+        bindingChanged: heldReasons.includes("R_BINDING_CHANGED") || heldCodes.includes("R_BINDING_CHANGED"),
+        now,
+      });
+      if (!n.ok) {
+        return waitPlan("W_NOTICE_PENDING", `BOT-28: ${n.why}`, { earliest: n.earliest, reasons, derived: derivedFacts });
+      }
     }
-    // TRUST-14 / TRUST-32 — the operator alert and its window (decision D2).
+    // TRUST-14 / TRUST-32 — the operator alert and its window (decision D2),
+    // which an operator OK ends sooner (contract 5.8.0).
     const event = "approval";
     const w = operatorWindow({
       record: git.alerts?.get(verified.fingerprint) ?? null,
@@ -1276,6 +1376,8 @@ export function decideSubmission(input) {
       event,
       approvalDecidedAt: honoured.decision?.decided_at ?? null,
       now,
+      ok: git.oks?.get(verified.fingerprint) ?? null,
+      hintFrom: startedAt,
     });
     if (w.name) {
       return plan("wait", {
@@ -1288,7 +1390,9 @@ export function decideSubmission(input) {
       });
     }
     if (w.wait) {
-      return waitPlan(w.wait.code, w.wait.cause, { earliest: w.wait.earliest, reasons, derived: derivedFacts });
+      return waitPlan(w.wait.code, w.wait.cause, {
+        earliest: w.wait.earliest, windowEndsAt: w.wait.window_ends_at ?? null, reasons, derived: derivedFacts,
+      });
     }
   }
 
@@ -1419,7 +1523,6 @@ function finishPlan(p, { shadowed, startedAt }) {
     operator_alert: null,
     result_extra: {},
     identity_records: [],
-    reentry: null,
     ...p,
     decided_at: startedAt,
     shadow: shadowed,
