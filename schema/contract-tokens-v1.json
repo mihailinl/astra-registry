@@ -1,6 +1,6 @@
 {
-  "contract_version": "5.8.0",
-  "source_commit": "465f334734208151e0010a3c885a151f3d67755d",
+  "contract_version": "5.8.1",
+  "source_commit": "1d74cacc89a49af4a5af6eb85848d95be6949942",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -5887,7 +5887,7 @@
       "fix": "new_tag",
       "panel_only": false,
       "title": "The bundle has no build attestation",
-      "remedy": "Build it in GitHub Actions with `actions/attest-build-provenance`, which the Astra reusable release workflow already does. A hand-built bundle is refused however good it is: CI is the only signer, so an author's compromised laptop cannot publish."
+      "remedy": "Run `astra-plugin init-ci` in the repository, commit the `.github/workflows/release.yml` it writes, and cut a new tag: that workflow is the Astra reusable release workflow, which builds the bundle in GitHub Actions and attests it with `actions/attest-build-provenance`. This tag stays refused. A hand-built bundle is refused however good it is: CI is the only signer, so an author's compromised laptop cannot publish."
     },
     {
       "code": "E_ATTESTATION_REPO_MISMATCH",
@@ -6741,8 +6741,8 @@
       "stage": "policy",
       "fix": "moderator",
       "panel_only": false,
-      "title": "The approval does not clear this hold: it named a different submission, or it is older than the maximum",
-      "remedy": "Nothing published and nothing was lost. Either the release changed after the approval was given (the repository, tag, version or assets), or the approval is older than the POLICY.md maximum of 7 days. The message names which, and when the approval was given. Read the release as it stands now and, if it is still a yes, approve it again."
+      "title": "The approval does not clear this hold: it named a different submission",
+      "remedy": "Nothing published and nothing was lost. The release changed after the approval was given (the repository, tag, version or assets), so the approval names a submission that is no longer the one here. The message names the submission that was approved and the one that is here now. Read the release as it stands now and, if it is still a yes, approve it again."
     },
     {
       "code": "P_APPROVED",
