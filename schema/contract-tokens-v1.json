@@ -1,6 +1,6 @@
 {
-  "contract_version": "5.7.0",
-  "source_commit": "caef84b663ddb775ea39185fd087158904562dec",
+  "contract_version": "5.8.0",
+  "source_commit": "465f334734208151e0010a3c885a151f3d67755d",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -2933,7 +2933,8 @@
             "code",
             "started_at",
             "cause",
-            "earliest_retry_at"
+            "earliest_retry_at",
+            "window_ends_at"
           ],
           "when": {
             "iff": {
