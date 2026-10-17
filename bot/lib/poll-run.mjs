@@ -96,6 +96,7 @@ import {
   runSweep,
   seedFromReleasesSeen,
   staleListings,
+  deferredProblem,
 } from "./poll.mjs";
 import { jcs } from "../../tools/lib/canonical.mjs";
 
@@ -281,7 +282,9 @@ export function pollRows(memory, listings) {
   for (const l of listings) {
     const key = repoKey(l.repo);
     const row = memory.repos[key];
-    if (row) rows[key] = { etag: row.etag ?? null, registered: row.registered ?? [] };
+    // `deferred` travels to the poll so that it re-checks a waiting tag on
+    // every poll, not only when the feed changes (poll.mjs `publishedOnly`).
+    if (row) rows[key] = { etag: row.etag ?? null, registered: row.registered ?? [], ...(row.deferred ? { deferred: row.deferred } : {}) };
   }
   return rows;
 }
@@ -296,6 +299,14 @@ const parse = (text, what) => {
     throw new Error(`${what} is not JSON: ${e.message}`);
   }
 };
+
+/** A waiting set as the poll and the memory carry it (poll.mjs `deferredProblem`), at most REGISTERED_KEEP tags. */
+const MAX_DEFERRED = 200;
+function deferredOk(d) {
+  if (d === undefined) return true;
+  const n = Array.isArray(d) ? d.length : d && typeof d === "object" ? Object.keys(d).length : Infinity;
+  return n <= MAX_DEFERRED && deferredProblem(d) === null;
+}
 
 /** `load`'s listings, which every other job reads. A malformed one is a defect upstream, not an empty catalogue. */
 export function readListings(text) {
@@ -316,8 +327,8 @@ export function readRows(text) {
   if (typeof rows !== "object" || Array.isArray(rows)) throw new Error("the rows `load` handed on are not an object");
   for (const [key, row] of Object.entries(rows)) {
     const ok = KEY_RE.test(key) && row && (row.etag === null || typeof row.etag === "string") &&
-      Array.isArray(row.registered) && row.registered.every(isUsableTag);
-    if (!ok) throw new Error(`the row for ${JSON.stringify(key)} is not {etag, registered}`);
+      Array.isArray(row.registered) && row.registered.every(isUsableTag) && deferredOk(row.deferred);
+    if (!ok) throw new Error(`the row for ${JSON.stringify(key)} is not {etag, registered, deferred?}`);
   }
   return rows;
 }
@@ -343,7 +354,7 @@ export function readPolled(text, listings) {
     if (!known.has(key)) throw new Error(`the poll answered for ${JSON.stringify(key)}, which load did not list`);
     const ok = res && typeof res.ok === "boolean" && Array.isArray(res.candidates) &&
       res.candidates.length <= MAX_CANDIDATES && res.candidates.every(isUsableTag) &&
-      (res.deferred === undefined || (Array.isArray(res.deferred) && res.deferred.length <= MAX_CANDIDATES && res.deferred.every(isUsableTag))) &&
+      deferredOk(res.deferred) &&
       (res.etag === null || (typeof res.etag === "string" && ETAG_RE.test(res.etag)));
     if (!ok) throw new Error(`the poll's answer for ${key} is not {ok, candidates, deferred, etag} of the grammar each must have`);
   }
@@ -393,7 +404,7 @@ export function pollOutputs(out, listings) {
   const polled = { at: out.at, repos: {} };
   const tags = [];
   for (const [key, res] of Object.entries(out.repos)) {
-    polled.repos[key] = { ok: res.ok, candidates: res.candidates, deferred: res.deferred ?? [], etag: res.etag ?? null };
+    polled.repos[key] = { ok: res.ok, candidates: res.candidates, deferred: res.deferred ?? {}, etag: res.etag ?? null };
     for (const tag of res.candidates) tags.push({ repo: repoOf.get(key), tag });
   }
   return { polled, tags };
@@ -432,7 +443,8 @@ export function sweepRemote(listings, lsRemote = lsRemoteTags) {
  */
 export function composeRemember({ memory, discarded, listings, polled, registered, swept, sweepDue: due, sweepFailed, now, mode, run = null }) {
   let next = memory;
-  if (polled) next = rememberPoll(next, polled, registered);
+  const notes = [];
+  if (polled) next = rememberPoll(next, polled, registered, now, notes);
   let alerts = [];
   let failed = [];
   if (swept) {
@@ -462,6 +474,7 @@ export function composeRemember({ memory, discarded, listings, polled, registere
     alerts,
     stale,
     failed,
+    notes,
   };
 }
 
@@ -532,10 +545,12 @@ async function cmdPoll(env) {
   const out = await runPoll({ listings, memory: { repos: rows }, now: new Date() });
   const lines = [];
   for (const [key, res] of Object.entries(out.repos)) {
-    const waiting = res.deferred?.length ? `, ${res.deferred.length} waiting for a published release` : "";
-    const state = !res.ok ? `ERR ${res.error}` : res.changed ? `200, ${res.candidates.length} candidate(s)${waiting}` : "304";
+    const nWaiting = Object.keys(res.deferred ?? {}).length;
+    const waiting = nWaiting ? `, ${nWaiting} waiting for a published release` : "";
+    const state = !res.ok ? `ERR ${res.error}` : `${res.changed ? "200" : "304"}, ${res.candidates.length} candidate(s)${waiting}`;
     lines.push(`${key} (${res.ids.join(", ")}): ${state}`);
     for (const s of res.skipped ?? []) console.log(`  skip ${key} ${s.why}`);
+    for (const n of res.notes ?? []) console.log(`  note ${key} ${n}`);
   }
   for (const l of lines) console.log(l);
   summary(["### the poll", "", ...lines.map((l) => `- ${l}`)], env);
@@ -579,6 +594,7 @@ function cmdRemember(env) {
   if (mode === "live") for (const a of r.alerts) lines.push(`alarm ${BOT_87_CODES.unregistered}: ${a.id} ${a.sha}`);
   for (const s of r.stale) lines.push(`stale: ${s.id} (${s.repo}), last successful poll ${s.last_success_at ?? "never"}`);
   for (const f of r.failed) lines.push(`sweep failed: ${f.id} (${f.repo}): ${f.error}`);
+  for (const n of r.notes ?? []) lines.push(`note ${n}`);
   if (discarded) lines.push(`the cached memory was discarded: ${discarded}`);
   for (const l of lines) console.log(l);
   summary(["### remember", "", ...lines.map((l) => `- ${l}`)], env);

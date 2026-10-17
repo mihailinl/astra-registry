@@ -2598,6 +2598,22 @@ test("the list job hands on its five outputs, one line each, and `listed` names 
   assert.match(job.printed, new RegExp(`refuse ${SDI2} kind_refused`));
 });
 
+// The 2026-10-17 review: a body that fails its schema is returned by the
+// client as `shadow: true, unreadable: true`, while the body itself may say
+// `shadow: false`. Read alone, the body made the run live.
+test("a work answer the client withheld (its schema is not the one this bot reads) hands on shadow, whatever the body says", async () => {
+  const root = estate();
+  const delist = decision({ code: "M_DELIST", category: "broken", moderator: "amoderator" });
+  const body = answer({ shadow: false, service_decisions: [delist] });
+  body.schema = "astra.plugins.bot-moderation-work/99";
+  const job = await listJob(root, body);
+  assert.equal(job.code, 0, job.logs.join("\n"));
+  assert.equal(job.files.shadow, "true\n", "a withheld answer must never be handed on as live");
+  assert.ok(job.logs.some((l) => /withheld by the client/.test(l)), job.logs.join("\n"));
+  const live = await listJob(root, answer({ shadow: false, service_decisions: [delist] }));
+  assert.equal(live.files.shadow, "false\n", "the positive control: a conforming live answer is still live");
+});
+
 test("a shadow answer hands on `true`, and a list with anything fatal in it hands on nothing", async () => {
   const root = estate();
   const delist = decision({ code: "M_DELIST", category: "broken", moderator: "amoderator" });

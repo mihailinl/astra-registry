@@ -39,7 +39,7 @@ import {
   resolveNameReader,
   verificationFacts,
 } from "../baseline.mjs";
-import { classifyVerifyFailure } from "../lib/attestation.mjs";
+import { classifyGhFailure, classifyVerifyFailure } from "../lib/attestation.mjs";
 import { resolveWriter } from "../export-issues.mjs";
 import { submissionFingerprint } from "../lib/policy/release.mjs";
 import { REPO_ROOT } from "../../tools/lib/sources.mjs";
@@ -329,6 +329,60 @@ test("the three readings of a failed `gh attestation verify`, and which one wins
   // other way first, and this is the case that caught it.
   assert.equal(classifyVerifyFailure("connection reset\nHTTP 404: Not Found").missing, true);
   assert.equal(classifyVerifyFailure("connection reset\nHTTP 404: Not Found").unavailable, false);
+});
+
+// The 2026-10-17 review. `execFile`'s message echoes the argv, so the old
+// reading of stderr + message turned a repository called `acme/network-x`
+// into "the verifier could not run" on every refusal — a wait that never
+// ends. gh is a Go program, so a Node error code never matched its transport
+// failures, and a run killed at its timeout said no "timeout" at all.
+test("a failed gh run is read from gh's own stderr, a policy refusal beats a network word, and a killed or unstarted run never refuses", () => {
+  const failed = (stderr, extra = {}) => Object.assign(
+    new Error(`Command failed: gh attestation verify /tmp/b --repo acme/network-x --signer-workflow o/r/.github/workflows/w.yml\n${stderr}`),
+    { stderr, code: 1, killed: false, signal: null }, extra);
+  const argv = ["/tmp/b", "acme/network-x", "acme", "network-x"];
+  const read = (e) => classifyGhFailure(e, argv);
+  assert.deepEqual(read(failed('Error: verifying with issuer "sigstore.dev"')),
+    { missing: false, policyRefusal: true, unavailable: false }, "the repository's name in the echoed command is not gh's word");
+  assert.equal(read(failed("Error: certificate for acme/network-x does not match")).unavailable, false, "nor in gh's own text");
+  assert.equal(read(failed('Error: verifying with issuer "sigstore.dev": connection reset')).unavailable, false,
+    "gh judged the certificate, so the verifier ran");
+  for (const said of ["HTTP 401: Bad credentials (https://api.github.com/x)", 'Get "https://api.github.com/x": EOF',
+    "lookup api.github.com on 127.0.0.53:53: no such host", "HTTP 502: Bad Gateway", "API rate limit exceeded"]) {
+    assert.equal(read(failed(said)).unavailable, true, `${said}: GitHub not answering is the verifier not running`);
+  }
+  assert.equal(read(failed("Loaded digest sha256:ab for file:///tmp/b", { killed: true, signal: "SIGTERM", code: null })).unavailable, true,
+    "killed at the 120 s timeout, with no 'timeout' in what it printed");
+  assert.equal(read(Object.assign(new Error("spawn gh ENOENT"), { code: "ENOENT" })).unavailable, true, "gh never started");
+  assert.deepEqual(read(failed("HTTP 404: Not Found", { killed: true, signal: "SIGTERM", code: null })),
+    { missing: true, policyRefusal: false, unavailable: false }, "a 404 already said is still the artifact's fact");
+  assert.equal(read(failed("something gh has never said before")).unavailable, true,
+    "since 2026-10-17's third verification round: only gh's own verdicts refuse; an unknown failure waits, and waiting never publishes");
+  assert.equal(read(failed("Error: failed to verify signature")).unavailable, false, "a verdict gh gave still refuses");
+  for (const said of ["x509: certificate has expired or is not yet valid", 'Get "https://api.github.com/x": context deadline exceeded',
+    "stream error: stream ID 3; INTERNAL_ERROR; received from peer", "invalid character '<' looking for beginning of value",
+    'Get "https://tuf-repo-cdn.sigstore.dev/x": tls: failed to verify certificate: x509: certificate signed by unknown authority']) {
+    assert.equal(read(failed(said)).unavailable, true, `${said}: Go's transport failures are the verifier not running`);
+  }
+  assert.equal(classifyVerifyFailure('Error: verifying with issuer "sigstore.dev"\nread: connection reset').unavailable, false,
+    "and the pure reading agrees: a policy refusal is never 'could not run'");
+  // The verification of 0736353: argv struck as bare substrings deleted gh's
+  // own words, and the certificate's repository still reached the reading.
+  const tiny = (stderr, extra = {}) => classifyGhFailure(Object.assign(new Error("Command failed: gh ..."), { stderr, code: 1 }, extra),
+    ["/tmp/b", "t/timeout", "o/r/.github/workflows/w.yml"]);
+  assert.equal(tiny('Get "https://api.github.com/x": dial tcp: i/o timeout').unavailable, true,
+    "an author called t/timeout cannot delete gh's 'timeout'");
+  assert.equal(tiny("lookup api.github.com: no such host").unavailable, true, "nor its 'host'");
+  assert.equal(tiny("t/timeout: failed to verify signature").unavailable, false, "the repository named whole is struck, and gh's verdict stands");
+  assert.equal(tiny("Error: failed to verify signature for https://github.com/network-co/econnreset/.github/workflows/x.yml").unavailable, false,
+    "a URL is quoted data, never gh's word, whatever its path says");
+  for (const said of [
+    "Error: expected SourceRepositoryURI to be https://github.com/acme/x, got https://github.com/network-co/econnreset",
+    "expected SourceRepositoryURI to be acme/x, got network-co/econnreset-timeout",
+    "Error: no matching CertificateIdentity found, the last error was: connection reset",
+  ]) {
+    assert.deepEqual(tiny(said), { missing: false, policyRefusal: true, unavailable: false }, `${said}: a certificate gh judged is a refusal`);
+  }
 });
 
 test("--write refuses a facts file that records anything as not checked", () => {

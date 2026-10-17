@@ -225,21 +225,75 @@ export function extractSignerFacts(results, artifactSha256 = null) {
 export function classifyVerifyFailure(text) {
   const s = String(text ?? "");
   const missing = /no attestation|could not find any attestations|HTTP 404|404: Not Found/i.test(s);
-  const policyRefusal = /verifying with issuer/i.test(s);
+  // gh's certificate checks say `expected <Field> to be/match <value>, got
+  // <value>`, and the `got` side is the attested repository's own name —
+  // text its owner chose. Any such line means gh judged a certificate, so it
+  // is a policy refusal, and no word in it can make it "could not run".
+  const policyRefusal = /verifying with issuer|expected [\w .-]{1,60}? to (?:be|match)\b|no matching (?:certificate|CertificateIdentity)/i.test(s);
   // GitHub not answering the attestations read is the verifier not running
   // too: a 5xx, a 403 or 429 rate limit, a dropped socket, a DNS miss. Until
   // 2026-10-17 those fell through to `E_ATTESTATION_INVALID`, a refusal that
   // is final for the tag, for an artifact nobody had looked at.
+  // gh is a Go program, so its own transport failures read as Go's: `EOF`,
+  // `no such host`, `server misbehaving`, `i/o timeout`, `connection reset by
+  // peer` — and a 401 from GitHub is our token's problem, never the author's.
   const unavailable = new RegExp(
-    "verifier is not available|initializ|trust(ed)? root|tuf|timeout|timed out|connection|network|temporar|" +
-    "HTTP 5\\d\\d|HTTP 429|HTTP 403|rate limit|bad gateway|service unavailable|gateway time-?out|" +
+    "verifier is not available|initializ|trust(ed)? root|\\btuf\\b|timeout|timed out|connection|network|temporar|" +
+    "HTTP 5\\d\\d|HTTP 429|HTTP 403|HTTP 401|rate limit|bad gateway|service unavailable|gateway time-?out|" +
+    "\\bEOF\\b|no such host|server misbehaving|TLS handshake|\\btls:|\\bx509:|" +
     "ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|socket hang up",
     "i",
   ).test(s);
   // `missing` wins: a 404 is a fact about the artifact, and the word "network"
-  // appearing somewhere in the same stderr does not make it less of one.
-  return { missing, policyRefusal, unavailable: unavailable && !missing };
+  // appearing somewhere in the same stderr does not make it less of one. A
+  // policy refusal wins over "unavailable" too: gh got as far as judging the
+  // certificate, so the verifier ran.
+  return { missing, policyRefusal, unavailable: unavailable && !missing && !policyRefusal };
 }
+
+/**
+ * `classifyVerifyFailure` over a failed `gh` run, read from gh's own words.
+ *
+ * Only `stderr` is gh's. `execFile`'s `message` is "Command failed: gh …",
+ * which echoes the argv, `--repo <owner>/<name>` included, so an author whose
+ * repository was called `acme/network-tools` or `acme/stuff-plugin` (`tuf`)
+ * turned every refusal of theirs into "the verifier could not run" — a wait
+ * that never ends, instead of `E_ATTESTATION_INVALID` (the 2026-10-17
+ * review). The argv's values are struck out of stderr too, in case gh quotes
+ * them. A run killed at its timeout or by a signal, or one that never started
+ * (a string `code`: `ENOENT`, a maxBuffer overflow), is the verifier not
+ * running, whatever it printed first — unless it had already said 404 or
+ * refused on policy.
+ *
+ * @param {any} e the error `execFile` rejected with
+ * @param {string[]} argvValues the values passed to gh, struck out before reading
+ */
+export function classifyGhFailure(e, argvValues = []) {
+  // URLs first: gh quotes the repository, the signer workflow and the
+  // certificate's values inside them. Then each argv value as a whole token
+  // only, never a bare owner or name: an owner called `t` or `timeout`
+  // struck as a substring deleted gh's own "timeout" and "host" (the
+  // 2026-10-17 verification of 0736353).
+  let said = String(e?.stderr ?? "").replace(/https?:\/\/\S+/gi, " ");
+  for (const v of argvValues) {
+    if (typeof v !== "string" || v.length < 3) continue;
+    const esc = v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    said = said.replace(new RegExp(`(?<![A-Za-z0-9._/-])${esc}(?![A-Za-z0-9._/-])`, "gi"), " ");
+  }
+  const c = classifyVerifyFailure(said);
+  const notRun = e?.killed === true || (e?.signal ?? null) !== null || typeof e?.code === "string";
+  // Only gh's own verdicts refuse: a 404 (missing), a policy or certificate
+  // mismatch, or a failed signature or digest check. Anything else — and Go's
+  // transport failures are a long tail (`x509:`, `context deadline exceeded`,
+  // `stream error`, an HTML page where JSON was expected) — is the verifier
+  // not running, a wait. Waiting on an unknown failure never publishes
+  // (DEC-11) and pages after BOT-76's bound; refusing on one is final.
+  const judged = c.missing || c.policyRefusal || VERDICT_RE.test(said);
+  return { ...c, unavailable: !c.missing && !c.policyRefusal && (c.unavailable || notRun || !judged) };
+}
+
+/** gh's words for an attestation it checked and found wrong, other than a 404 or a policy refusal. */
+const VERDICT_RE = /failed to verify|verification failed|signature (?:is )?(?:invalid|mismatch)|digest (?:mismatch|does not match)|subject digest|\bdoes not match\b/i;
 
 /**
  * Run `gh attestation verify` and check what it says.
@@ -287,7 +341,7 @@ export async function verifyAttestation(opts) {
     parsed = JSON.parse(stdout);
   } catch (e) {
     const text = `${e.stderr ?? ""}${e.message ?? ""}`;
-    const { missing, policyRefusal, unavailable } = classifyVerifyFailure(text);
+    const { missing, policyRefusal, unavailable } = classifyGhFailure(e, [file, repo, signerWorkflow]);
     // "no attestations found" is a different answer from "the attestation is
     // wrong", and an author fixes them differently.
     //

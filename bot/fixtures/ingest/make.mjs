@@ -155,6 +155,9 @@ export function fakeGitHub({ repo, tag, assets, author = "a-stranger", commit = 
         // which is what an asset replaced after publication looks like.
         size: a.apiSize ?? a.bytes.length,
         browser_download_url: a.url ?? `${prefix}${a.name}`,
+        // GitHub's own `state`, only where a test sets it: `uploaded`, or
+        // `open` for an upload that never finished.
+        ...(a.state === undefined ? {} : { state: a.state }),
       })),
     },
     async fetchRelease(r, t) {
