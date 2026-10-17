@@ -810,6 +810,14 @@ const REAL = {
 };
 const TOKENS = JSON.parse(fs.readFileSync(path.join(REPO, "schema", "contract-tokens-v1.json"), "utf8"));
 const COMMITTED_REDIRECTS = JSON.parse(fs.readFileSync(path.join(REPO, "site", "redirects.json"), "utf8"));
+// Set R4b as it stood before the 2026-10-17 arming: empty, with no `armed`
+// record. The synthesised cases below start from it, so they keep holding the
+// legs now that the committed set is armed.
+const UNARMED_REDIRECTS = (() => {
+  const d = successors.withSet(COMMITTED_REDIRECTS, "R4b", {});
+  delete d.sets.find((x) => x.step === "R4b").armed;
+  return d;
+})();
 
 test("RC-R4-1 — Table 5-F's R4b set, over the committed catalogue, moves every plugin page and nothing a daemon reads", () => {
   const expected = successors.tableSet(TOKENS, "R4b");
@@ -863,20 +871,20 @@ test("the committed R4b set is armed only with its evidence, and is armed once R
   const marker = fs.existsSync(path.join(REPO, successors.R4B_MARKER));
   assert.deepEqual(successors.armedSetProblems({ doc: COMMITTED_REDIRECTS, markerPresent: marker, ...common }), []);
 
-  const empty = successors.withSet(COMMITTED_REDIRECTS, "R4b", {});
+  const empty = UNARMED_REDIRECTS;
   assert.deepEqual(successors.armedSetProblems({ doc: empty, markerPresent: false, ...common }), []);
   const opened = successors.armedSetProblems({ doc: empty, markerPresent: true, ...common });
   assert.equal(opened.length, 1);
   assert.match(opened[0], /R4b-open\.json is on the tree and set R4b is empty/);
 
   const expected = successors.tableSet(TOKENS, "R4b");
-  const byHand = successors.armedSetProblems({ doc: successors.withSet(COMMITTED_REDIRECTS, "R4b", expected), markerPresent: true, ...common });
+  const byHand = successors.armedSetProblems({ doc: successors.withSet(UNARMED_REDIRECTS, "R4b", expected), markerPresent: true, ...common });
   assert.equal(byHand.length, 1, byHand.join(" | "));
   assert.match(byHand[0], /carries paths and no `armed` record/);
 
   const record = { at: "2026-09-27T00:00:00Z", successors_answered_200: 17, edge_review: "minice docs/plans/…/roll-54.md" };
-  assert.deepEqual(successors.armedSetProblems({ doc: successors.withSet(COMMITTED_REDIRECTS, "R4b", expected, { armed: record }), markerPresent: true, ...common }), []);
-  const noReview = successors.armedSetProblems({ doc: successors.withSet(COMMITTED_REDIRECTS, "R4b", expected, { armed: { ...record, edge_review: " " } }), markerPresent: true, ...common });
+  assert.deepEqual(successors.armedSetProblems({ doc: successors.withSet(UNARMED_REDIRECTS, "R4b", expected, { armed: record }), markerPresent: true, ...common }), []);
+  const noReview = successors.armedSetProblems({ doc: successors.withSet(UNARMED_REDIRECTS, "R4b", expected, { armed: { ...record, edge_review: " " } }), markerPresent: true, ...common });
   assert.deepEqual(noReview, ["set R4b's armed.edge_review is empty; ROLL-55 does not redirect before ROLL-54's review is recorded"]);
 });
 
@@ -1035,12 +1043,15 @@ atest("the probe asks each successor once, with no credential and no redirect fo
 
 atest("--arm writes the set only when every successor answers 200 and ROLL-54's review is named, and writes nothing else", async () => {
   const file = scratch("arm-redirects.json");
-  const original = fs.readFileSync(path.join(REPO, "site", "redirects.json"));
+  const committed = fs.readFileSync(path.join(REPO, "site", "redirects.json"));
   // The edit is only one set if the file round-trips: the committed bytes ARE
   // JSON.stringify(doc, null, 2) and a newline, so re-serialising changes
   // nothing but what `arm` changed.
-  assert.equal(JSON.stringify(JSON.parse(original.toString("utf8")), null, 2) + "\n", original.toString("utf8"),
+  assert.equal(JSON.stringify(JSON.parse(committed.toString("utf8")), null, 2) + "\n", committed.toString("utf8"),
     "site/redirects.json no longer round-trips, so --arm would rewrite more than the set it arms");
+  // Since 2026-10-17 the committed set R4b is armed, and arming is one-time; the
+  // cases below arm the file as it stood before, set R4b empty and unarmed.
+  const original = Buffer.from(JSON.stringify(UNARMED_REDIRECTS, null, 2) + "\n");
   const common = { step: "R4b", redirectsFile: file, tokens: TOKENS, ...REAL, root: REPO, now: new Date("2026-09-27T01:02:03.456Z") };
   const reset = () => fs.writeFileSync(file, original);
 
