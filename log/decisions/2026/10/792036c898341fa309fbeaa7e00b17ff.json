@@ -1,0 +1,24 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:9cbde97b380003af82b9e92486c9747f0fec809b1143676a5be75ae5303ed7ae"
+  ],
+  "commit": "f7827b5dff8d6ad421adc25d9c06e83e3ea03330",
+  "decided_at": "2026-10-17T09:52:39Z",
+  "decision_id": "792036c898341fa309fbeaa7e00b17ff",
+  "fingerprint": "065e7eb4351f04b3",
+  "plugin_id": "text-utils",
+  "reasons": [
+    "P_PUBLISHED"
+  ],
+  "repo": "mihailinl/AstraPlugins",
+  "repository_id": "1203676452",
+  "repository_owner_id": "193032699",
+  "run": "39022677212/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "f08a9173-d669-4ee2-9d98-b8e6405fb5d2",
+  "tag": "text-utils-v0.1.4",
+  "trigger": "poll",
+  "version": "0.1.4"
+}

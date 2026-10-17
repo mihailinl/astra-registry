@@ -1,0 +1,33 @@
+{
+  "$comment": "Derived from mihailinl/AstraPlugins@text-utils-v0.1.4. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "text-utils",
+  "version": "0.1.4",
+  "published_at": "2026-10-17T09:49:30Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "mihailinl/AstraPlugins",
+    "tag": "text-utils-v0.1.4",
+    "commit": "f7827b5dff8d6ad421adc25d9c06e83e3ea03330"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/mihailinl/AstraPlugins/releases/download/text-utils-v0.1.4/text-utils-0.1.4-noarch.astraplugin",
+      "filename": "text-utils-0.1.4-noarch.astraplugin",
+      "sha256": "9cbde97b380003af82b9e92486c9747f0fec809b1143676a5be75ae5303ed7ae",
+      "size": 13376
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "actions",
+    "tools",
+    "triggers"
+  ],
+  "permissions": {
+    "fire_trigger": {
+      "reason": "Fires the on_time trigger at the time you set, so your commands can run on a schedule"
+    }
+  }
+}
