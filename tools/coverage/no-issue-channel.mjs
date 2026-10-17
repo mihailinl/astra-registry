@@ -38,6 +38,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { execFileSync } from "node:child_process";
+
+import { cleanEnv } from "../lib/git-env.mjs";
 import { report } from "./rules.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -93,6 +96,60 @@ export function triggersOf(src) {
   return out;
 }
 
+/**
+ * How far `cutover_at` may sit from the moment `main` acquired the marker.
+ * ROLL-33 and M-T6.2: `cutover_at` is the commit time. The cutover commit is
+ * prepared as a pull request days ahead and merged on the owner's approval, so
+ * the value is stamped just before the merge; a day covers the stamp-to-merge
+ * gap and still catches a stamp left from the day the branch was written.
+ */
+export const STAMP_TOLERANCE_HOURS = 24;
+
+/**
+ * The marker's `cutover_at` against the committer time of the first-parent
+ * commit on `main` that brought it — the moment the channel actually closed.
+ * MIG-1 and the appeal-URL rule read `cutover_at`; a stale stamp moves every
+ * listing's frozen date and every entry's appeal cut-off to a day nothing
+ * happened on.
+ *
+ * @returns {{code: string|null, detail: string}}
+ */
+export function cutoverStamp(repo, { toleranceHours = STAMP_TOLERANCE_HOURS } = {}) {
+  let doc;
+  try {
+    doc = JSON.parse(fs.readFileSync(path.join(repo, CUTOVER), "utf8"));
+  } catch (e) {
+    return { code: "CUTOVER_MARKER_UNREADABLE", detail: `${CUTOVER} is not readable JSON: ${e.message}` };
+  }
+  const at = Date.parse(doc?.cutover_at);
+  if (!Number.isFinite(at)) {
+    return { code: "CUTOVER_MARKER_UNREADABLE", detail: `${CUTOVER}'s cutover_at is ${JSON.stringify(doc?.cutover_at)}, not a time` };
+  }
+  const out = gitOut(repo, ["log", "--first-parent", "--diff-filter=A", "--format=%H %cI", "--", CUTOVER]);
+  const line = out.split("\n").map((l) => l.trim()).filter(Boolean).at(-1);
+  if (!line) {
+    return { code: null, detail: `${CUTOVER} is on the tree and not in git's history, so the stamp is not compared (an uncommitted tree)` };
+  }
+  const [sha, when] = line.split(" ");
+  const hours = Math.abs(at - Date.parse(when)) / 3_600_000;
+  if (hours > toleranceHours) {
+    return {
+      code: "CUTOVER_STAMP_STALE",
+      detail: `${CUTOVER} says cutover_at ${doc.cutover_at}, and main acquired it in ${sha.slice(0, 12)} at ${when}, ` +
+        `${hours.toFixed(1)} h apart. ROLL-33 makes cutover_at the commit time; restamp it in a commit that says why`,
+    };
+  }
+  return { code: null, detail: `${CUTOVER}'s cutover_at is ${hours.toFixed(1)} h from ${sha.slice(0, 12)}, the commit that brought it` };
+}
+
+function gitOut(repo, args) {
+  try {
+    return execFileSync("git", args, { cwd: repo, encoding: "utf8", env: cleanEnv(), stdio: ["ignore", "pipe", "pipe"] });
+  } catch {
+    return "";
+  }
+}
+
 /** @returns {{status: string, codes: string[], ids: string[], hexes: string[], detail: string[]}} */
 export function run(repo, { workflowFloor = WORKFLOW_FLOOR } = {}) {
   const codes = [];
@@ -116,6 +173,13 @@ export function run(repo, { workflowFloor = WORKFLOW_FLOOR } = {}) {
     }
   }
   const armed = fs.existsSync(path.join(repo, CUTOVER));
+  if (armed) {
+    const stamp = cutoverStamp(repo);
+    if (stamp.code) {
+      codes.push(stamp.code);
+    }
+    detail.push(stamp.detail);
+  }
   if (!armed) {
     detail.push(
       `not armed: ${CUTOVER} is not on this tree, so the issue channel is still the live path; ` +

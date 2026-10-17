@@ -67,29 +67,33 @@ name: Ingest
 # one job definition serving the submission path, the ping, the backstop and the
 # queue drain, which also means all four are verified by exactly the same code.
 
+# ── cutover (ROLL-33; registry plan M-T6.2 commit B) ──────────────────────
+#
+# This commit is the cutover. It drops the `issues`, `issue_comment` and
+# `repository_dispatch` triggers and the daily release backstop, and adds
+# `log/cutover.json`: from here the plugins service is the only channel
+# (DEC-12), and `plugins-ingest.yml`'s poll, live from this same commit
+# (B-T5.1), is the only release detection. What stays is the hourly drain,
+# because releases already waiting out their publication delay in
+# `state/queue/` were promised a time and must still publish at it (MIG-23).
+# Commit C removes the forms once that queue is empty; commits D and E remove
+# the issue path's code and then this file (B-T5.2).
+#
+# The coverage canary's `no-issue-channel` rule is red from this commit on if
+# any workflow starts on one of the three again (its script path is not written
+# here: the MOD-46 test refuses a rule's path in any workflow but the canary's).
 on:
-  issues:
-    types: [opened, edited, labeled]
-  issue_comment:
-    types: [created]
-  repository_dispatch:
-    types: [plugin-release]
   schedule:
     # The queue drain. Hourly, because that is the resolution a publication
     # delay is quoted at: a release that says it publishes at 14:00 should not
-    # appear at 20:00.
+    # appear at 20:00. The daily backstop cron (`41 5 * * *`) that stood beside
+    # it is gone with the cutover: the poll replaced it.
     - cron: '17 * * * *'
-    # The release backstop. Daily, and it polls only listings that have been
-    # quiet for a week — the ping is the fast path and this is the safety net,
-    # so paying for it more often would buy minutes on a path that is already
-    # measured in days.
-    - cron: '41 5 * * *'
   # No inputs, deliberately (registry plan B-T0.6). A dispatch used to take a
   # repository, a tag and a LOGIN whose ownership would then be re-proved — so
   # whoever could press the button chose whose authority the run would check.
-  # A no-input dispatch runs what the crons run: the publication drain and the
-  # release backstop. To re-ingest one release, ping it with a `[release]` issue
-  # or `/recheck` it, which both carry an author GitHub asserts.
+  # Since cutover a no-input dispatch runs the publication drain and nothing
+  # else: the backstop is paused (ROLL-33).
   workflow_dispatch:
 
 permissions: {}
@@ -296,10 +300,12 @@ jobs:
   # of coverage is worse than no claim, because it is what stops anybody
   # looking, and for eight weeks nobody did.
   #
-  # What watches it now is the `drain-age` rule of `moderation-coverage.yml`:
-  # it bounds the age of `state/releases-seen.json`, which the `41 5 * * *`
-  # half of this one `schedule:` block commits on every run, and it fails if no
-  # live cron here is still routed to `bot/watch.mjs --drain`. That is a red X
+  # What watches it now is the `drain-age` rule of `moderation-coverage.yml`.
+  # Until cutover it also bounded the age of `state/releases-seen.json`, which
+  # the daily backstop committed on every run; that leg retired with the
+  # backstop in the cutover commit. It still fails if no live cron here is
+  # routed to `bot/watch.mjs --drain`, and if a queued release is a day past
+  # its time. That is a red X
   # in the Actions tab. It is not a page, and the owner act that would make it
   # one is printed on every canary run as `ingest-schedule-receiver`.
   #
@@ -479,10 +485,9 @@ jobs:
 
           case "$EVENT" in
             workflow_dispatch)
-              # The drain and the backstop, exactly as the crons run them.
+              # The drain, exactly as the cron runs it. Since cutover there is
+              # no backstop to run beside it (ROLL-33).
               node bot/watch.mjs --drain --out out
-              node bot/watch.mjs --watch --out out
-              echo "watch=true" >> "$GITHUB_OUTPUT"
               ;;
 
             repository_dispatch)
@@ -508,10 +513,13 @@ jobs:
                   node bot/watch.mjs --drain --out out
                   ;;
                 *)
-                  # The release backstop. Polls the quiet listings, writes the
-                  # updated etag memory for `publish` to commit.
-                  node bot/watch.mjs --watch --out out
-                  echo "watch=true" >> "$GITHUB_OUTPUT"
+                  # Since cutover this arm runs nothing. It used to run the
+                  # release backstop, so a cron the case above no longer names
+                  # — the drain's retimed, say — silently became a second
+                  # backstop. The backstop is paused (ROLL-33), so an unrouted
+                  # cron is now an error, which drain-age's leg 1 also names.
+                  echo "::error::schedule '$SCHEDULE' is routed to nothing: the backstop was paused at cutover (ROLL-33), and only '17 * * * *' drains"
+                  exit 1
                   ;;
               esac
               # Three fields, and deliberately not an approval among them. A
@@ -1308,33 +1316,6 @@ jobs:
               }
             }
 
-  # The review queue, said out loud on every drain.
-  #
-  # A published SLA nobody measures is a wish. POLICY.md's answer to a breach is
-  # to widen auto-publication rather than let the queue rot, and that decision
-  # only ever gets made if the breach is visible without anybody going to look.
-  sla:
-    needs: roots
-    if: github.event_name == 'schedule' && github.event.schedule == '17 * * * *'
-    runs-on: ubuntu-24.04
-    permissions:
-      issues: read
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # Every job in this run reads the same tree. The commit that added
-          # this pin to `publish` said "every job" and pinned one, which is the
-          # class of claim this repository treats as a defect in its own right:
-          # a comment that describes a change nobody made.
-          ref: ${{ github.sha }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh api "repos/${{ github.repository }}/issues?state=open&labels=listing&per_page=100" \
-            --jq '[.[] | {number, title, created_at}]' > open-listings.json
-          node bot/watch.mjs --sla open-listings.json | tee -a "$GITHUB_STEP_SUMMARY"
+  # The review-queue SLA job (`sla`) went with the cutover: it measured the age of
+  # open `listing` issues, and from cutover no listing arrives as an issue (DEC-12).
+  # The panel's own queue is the plugins service's to measure.

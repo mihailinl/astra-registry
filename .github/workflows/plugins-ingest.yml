@@ -168,8 +168,10 @@ env:
   # any other value rather than defaulting. In shadow `claim` registers no tag
   # and BOT-87's unregistered-tag code is logged as `would alarm` and not sent,
   # because its premise ("the poll should have registered this") is false by
-  # construction while nothing registers. B-T5.1 sets `live`, in commit B.
-  POLL_MODE: shadow
+  # construction while nothing registers. B-T5.1 set `live` in the cutover
+  # commit B (M-T6.2), which also adds log/cutover.json: bot/tests/poll.test.mjs
+  # holds the two together, `live` exactly when the marker is on the tree.
+  POLL_MODE: live
 
 jobs:
   # ── roots: the anchor, before anything else ───────────────────────────────
