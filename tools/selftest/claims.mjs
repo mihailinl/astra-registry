@@ -756,12 +756,12 @@ export const CLAIMS = [
   },
   {
     id: "security/not-after-cutoff",
-    claim: "no delegated index key carries a `not_after`, so a compromise is cut off by a trust.json that DROPS " +
-      "the key and never by an expiry",
+    claim: "no delegated index key carries a `not_after` other than astra-index-2026a's planned end of life, " +
+      "so a compromise is cut off by a trust.json that DROPS the key and never by an expiry",
     source: {
       file: "SECURITY.md",
       line: /stop accepting anything the old key signs/,
-      hedge: /carries no `not_after`/,
+      hedge: /carries no `not_after` other than/,
       window: 6,
     },
     subject: {
@@ -770,13 +770,20 @@ export const CLAIMS = [
       under: ["registry/v1/trust.json"],
       exts: [".json"],
       floorFiles: 1,
-      needle: /"not_after"/,
+      // Any not_after but the one value §5.1 was re-read for. ABSENT both
+      // before the 5.8.0 ceremony (no not_after at all) and after it (exactly
+      // this one), so the ceremony's own pull request stays green; FOUND the
+      // day any other value appears, a rotation's outgoing key included.
+      needle: /"not_after": *"(?!2027-10-18T00:00:00Z")/,
     },
     expect: "absent",
     why: "§5.1 step 1 promised a cut-off nobody could perform: it told an operator to wait out a field that is " +
-      "not in the document. This row is also the re-read RC-RN-1 owes — the 2027 renewal ceremony adds a " +
-      "`not_after` for `astra-index-2026a` (ROLL-45), and on the day it appears this goes FOUND and red, which " +
-      "is the whole difference between a check and a promise to look again later",
+      "not in the document. Until 2026-10-17 this row's needle was any `not_after` at all, the re-read RC-RN-1 " +
+      "owed when the renewal added one (ROLL-45). Contract 5.8.0 (OD-29) brought that ceremony forward, and it " +
+      "would have turned this row red on the ceremony's own pull request, with the root-signed document already " +
+      "public on its branch. So §5.1 was re-read before it, for the value the ceremony writes (ops " +
+      "runbooks/root-ceremony.sh, INDEX_NOT_AFTER), and this row now goes FOUND and red the day a `not_after` " +
+      "with any other value appears, which is the whole difference between a check and a promise to look again later",
   },
   {
     id: "revocations/five-enforcement-points",
