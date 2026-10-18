@@ -3,26 +3,28 @@
   "signatures": [
     {
       "key_id": "astra-root-2026a",
-      "sig": "PoYq/D4Qu9/iQcqBqspKKQwiRHdLbIRapQEO4Zfn0vdm/6j//yKoBhhUgagPmwzbdGVx6PAHKX48Thu+bwrXDw=="
+      "sig": "IjePknMTCWk2SsqCIplXOuB9ZtGJM8fY7u2FCF6xPdp8ydlD281WKuuXn5w/aHkQoLNQ6mYFBIcr0KcNOdMcAw=="
     }
   ],
   "signed": {
-    "expires_at": "2027-08-19T11:00:49Z",
+    "expires_at": "2027-10-18T00:00:00Z",
     "index_keys": [
       {
         "key_id": "astra-index-2026a",
+        "not_after": "2027-10-18T00:00:00Z",
         "not_before": "2026-08-19T11:00:49Z",
         "public_key": "qrNK87ZsLPQQK9IUJYk+Q3nFUjBCDVTxD/DgPipcvK8="
       }
     ],
-    "issued_at": "2026-10-12T02:50:06Z",
+    "issued_at": "2026-10-18T19:36:40Z",
     "reusable_workflow_shas": [
       "e3329df252a46d747676cb540ae4b986af68a3ad",
       "c3f342469d186ef48458992930bf1b7c583c78d4",
-      "9864f03bafb52a7de5215ff92376eeefa7331431"
+      "9864f03bafb52a7de5215ff92376eeefa7331431",
+      "b6e9140d53060585c70280e979b58202f34966ba"
     ],
     "schema": "astra.registry.trust/1",
-    "serial": 3
+    "serial": 4
   }
 }
 
