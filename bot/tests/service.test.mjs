@@ -875,11 +875,23 @@ test("the file's membered entries are four buckets, none of which may empty", ()
   // required with no condition. Read on arrival: the plugins service emits it,
   // the client reads it, and nothing in this repository composes or reads it,
   // so it belongs in this bucket.
+  //
+  // Moved at contract 6.0.0, from 113 over 32, by exactly the catalogue
+  // host's witness, `astra.plugins.served/1` (SERVE-109, Table 5-N): 4
+  // top-level members over one entry, `schema`, `index` (of `serial` and
+  // `sha256`), `stats` (of `sha256`, or null) and `at`, all required with no
+  // condition. Read on arrival: the plugins service emits it and SCOPE-7's
+  // file names this repository as its acceptor, but nothing here reads it
+  // yet; registry plan SERVE-39's served-set comparison will, and the entry
+  // leaves this bucket in the change that makes it do so.
   assert.deepEqual(
     { entries: unreadEntries.length, members: countMembers(unreadEntries) },
-    { entries: 32, members: 113 },
+    { entries: 33, members: 117 },
     `${countMembers(unreadEntries)} published members over ${unreadEntries.length} entries are outside every ` +
-    "comparison in this suite; there were 113 over 32 at contract 5.7.0, whose success body of `catalogue.ticket`, " +
+    "comparison in this suite; there were 117 over 33 at contract 6.0.0, whose catalogue host's witness " +
+    "`astra.plugins.served/1` (Table 5-N: `schema`, `index`, `stats`, `at`, each `true`; the plugins service emits it, " +
+    "the registry is its acceptor, and nothing here reads it until served-set meets registry plan SERVE-39) added 4 over 1; " +
+    "113 over 32 at contract 5.7.0, whose success body of `catalogue.ticket`, " +
     "`astra.plugins.catalogue-ticket/1` (`schema`, `ticket`, `expires_in`, each `true`; the plugins service emits " +
     "it and the client reads it, and nothing here composes or reads it) added 3 over 1; 110 over 31 at contract 3.0.0, whose `astra.registry.version/1` gained the " +
     "optional `review` (B.4; unconditioned, because its absence depends on the commit that added the record, which " +
