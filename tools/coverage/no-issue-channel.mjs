@@ -111,11 +111,43 @@ export function triggersOf(src) {
 export const STAMP_TOLERANCE_HOURS = 24;
 
 /**
+ * The repository's shallow boundary commits (`git rev-parse --git-path
+ * shallow`'s file: one SHA per line when the repository is shallow, the
+ * file absent otherwise). A boundary commit has no parent as far as this
+ * clone can see, so `git log --diff-filter=A` reads every file already in
+ * its tree as "added" there — a file truly added generations earlier reads
+ * as added at the boundary's own, much later, commit time instead.
+ */
+function shallowBoundaries(repo) {
+  const file = gitOut(repo, ["rev-parse", "--git-path", "shallow"]).trim();
+  if (!file) return new Set();
+  try {
+    const text = fs.readFileSync(path.isAbsolute(file) ? file : path.join(repo, file), "utf8");
+    return new Set(text.split("\n").map((l) => l.trim()).filter(Boolean));
+  } catch {
+    return new Set();
+  }
+}
+
+/**
  * The marker's `cutover_at` against the committer time of the first-parent
  * commit on `main` that brought it — the moment the channel actually closed.
  * MIG-1 and the appeal-URL rule read `cutover_at`; a stale stamp moves every
  * listing's frozen date and every entry's appeal cut-off to a day nothing
  * happened on.
+ *
+ * **A shallow clone cannot answer this at all** (`.github/workflows/bot-tests.yml`'s
+ * default `fetch-depth: 1`, astra-registry run 39129793114): its one commit
+ * is a boundary with no parent, so `--diff-filter=A` reads it as the commit
+ * that added `log/cutover.json` even when the real add is generations
+ * earlier and the marker merely rode along in the boundary's tree. That
+ * misreads the PR's own synthetic merge commit as the add, which is always
+ * recent — so once a run lands more than `toleranceHours` after the real
+ * `cutover_at`, every shallow run goes red for a staleness that is an
+ * artifact of the clone, never of the marker. `bot-checks.yml` (production)
+ * clones with `fetch-depth: 0` and keeps the full comparison; this is the
+ * same kind of answer as the uncommitted-tree case below, and never raises
+ * `toleranceHours` to paper over it.
  *
  * @returns {{code: string|null, detail: string}}
  */
@@ -136,6 +168,13 @@ export function cutoverStamp(repo, { toleranceHours = STAMP_TOLERANCE_HOURS } = 
     return { code: null, detail: `${CUTOVER} is on the tree and not in git's history, so the stamp is not compared (an uncommitted tree)` };
   }
   const [sha, when] = line.split(" ");
+  if (gitOut(repo, ["rev-parse", "--is-shallow-repository"]).trim() === "true" && shallowBoundaries(repo).has(sha)) {
+    return {
+      code: null,
+      detail: `${CUTOVER}'s cutover_at is not compared: a shallow clone cannot see the commit that brought it ` +
+        `(git log names ${sha.slice(0, 12)}, this clone's own shallow boundary, not the real add)`,
+    };
+  }
   const hours = Math.abs(at - Date.parse(when)) / 3_600_000;
   if (hours > toleranceHours) {
     return {

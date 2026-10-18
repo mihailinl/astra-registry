@@ -57,7 +57,7 @@ import { githubGetter, localWorkflows, run as settingsRun } from "../../tools/co
 import { mergeOwnChanges } from "../../tools/coverage/git.mjs";
 import { RULES, outstandingActs, ruleNames } from "../../tools/coverage/rules.mjs";
 import {
-  CUTOVER as NIC_CUTOVER, ISSUE_TRIGGERS, WORKFLOW_FLOOR as NIC_FLOOR, run as noIssueChannel, triggersOf as nicTriggers,
+  CUTOVER as NIC_CUTOVER, ISSUE_TRIGGERS, WORKFLOW_FLOOR as NIC_FLOOR, cutoverStamp, run as noIssueChannel, triggersOf as nicTriggers,
 } from "../../tools/coverage/no-issue-channel.mjs";
 import { run as drainAge, SEEN as DRAIN_SEEN } from "../../tools/coverage/drain-age.mjs";
 import { compose } from "../../tools/coverage-verdict.mjs";
@@ -2995,6 +2995,42 @@ test("no-issue-channel: the marker's cutover_at is the time main acquired it, wi
   merged.checkout("main").git("merge", "-q", "--no-ff", "-m", "merge the cutover", "cutover");
   const m = nic(merged.dir);
   assert.equal(m.status, "green", m.detail.join("\n"));
+});
+
+test("cutoverStamp: a shallow clone cannot see the commit that brought the marker, so it is not compared there, and a full clone of the same repository is still red (bot-tests.yml's fetch-depth 1, run 39129793114)", () => {
+  // Three commits, not two: one unrelated, one that adds log/cutover.json
+  // with a stamp from weeks before the commit (a real stale stamp, as the
+  // test above makes), and a third, unrelated tip commit after it — so a
+  // one-commit shallow clone's boundary is NOT the commit that really added
+  // the marker. Without that third commit the boundary and the real add
+  // would be the same commit, and the bug this exists to catch could not
+  // show up at all.
+  const f = fixture("nic-shallow")
+    .write("README.md", "unrelated\n").commit("initial")
+    .write(NIC_CUTOVER, { schema: "astra.registry.cutover/1", cutover_at: "2026-09-20T00:00:00Z" }).commit("add the cutover marker")
+    .commit("a later, unrelated tip commit");
+
+  const full = cutoverStamp(f.dir);
+  assert.equal(full.code, "CUTOVER_STAMP_STALE", `a full clone must still see the real, stale add commit: ${full.detail}`);
+
+  const shallowDir = fs.mkdtempSync(path.join(os.tmpdir(), "astra-coverage-nic-shallow-clone-"));
+  tmpRoots.push(shallowDir);
+  execFileSync("git", ["clone", "-q", "--depth", "1", `file://${f.dir}`, shallowDir], { encoding: "utf8", env: fixtureEnv(shallowDir) });
+  assert.equal(
+    execFileSync("git", ["-C", shallowDir, "rev-parse", "--is-shallow-repository"], { encoding: "utf8", env: cleanEnv() }).trim(),
+    "true",
+    "the clone did not actually come out shallow, so this proves nothing",
+  );
+
+  const shallow = cutoverStamp(shallowDir);
+  assert.equal(shallow.code, null, `a shallow clone cannot see the real add commit and must not read as stale: ${shallow.detail}`);
+  assert.match(shallow.detail, /not compared/);
+  assert.match(shallow.detail, /shallow/);
+
+  // The same comparison through the full rule, workflows and all: the
+  // shallow clone must come out green and the full clone red, end to end.
+  assert.equal(nic(f.dir).status, "red");
+  assert.equal(nic(shallowDir).status, "green");
 });
 
 test("no-issue-channel: from cutover no workflow grants `issues: write`, ingest.yml included since commit E", () => {
