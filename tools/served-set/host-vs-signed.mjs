@@ -71,6 +71,8 @@
 //     these probes on the acquired log, and ops' prober is where that case
 //     pages.
 
+import { createHash } from "node:crypto";
+
 import { SIGNED_FILES } from "../signer/plan.mjs";
 import { GRACE_MINUTES, finding, minutesSince, verdict, withinGrace } from "./report.mjs";
 
@@ -100,6 +102,137 @@ export const CATALOGUE_HOSTS = Object.freeze([HOST, RU_HOST]);
 const HOST_CODE_SUFFIX = Object.freeze({ [HOST]: "", [RU_HOST]: "_RU" });
 
 const FETCH_TIMEOUT_MS = 20_000;
+
+// ── SERVE-39 on an armed host (registry plan SERVE-39; contract INV-30,
+// SERVE-108, SERVE-109, Table 5-N; since 6.0.0) ─────────────────────────────
+//
+// Since 6.0.0 a catalogue host MAY require a catalogue ticket for
+// `registry/v1/index.json` (INV-30) and for nothing else that this file
+// compares — `registry/v1/trust.json`, `registry/v1/revocations.json` and
+// `registry/v1/root.json` are never gated (OD-6), so a 422 on any of those is
+// still a failure, exactly as a 404 or a 500 always was.
+//
+// A ticketless read of `index.json` answering 422 with a JSON body whose
+// `error` is `"unauthenticated"` and a `Cache-Control` naming `no-store` is
+// the armed state SERVE-39 reads as "not a difference" rather than as the
+// unreachable/redirect finding below. Anything else — a 422 missing
+// `no-store`, a 422 naming another `error`, any other status — is not that
+// shape, so it falls straight through to the finding every other failure has
+// always gotten: SERVE-39 says plainly that "one answering it without
+// no-store is a failure", and "stays a failure, as today" needs no new code.
+//
+// On the armed state, `index.json`'s own bytes cannot be read ticketless, so
+// SERVE-39 compares the host with `signed` through its witness instead
+// (`registry/v1/served.json`, SERVE-109; Table 5-N): `index.sha256` against
+// the SHA-256 of `signed`'s head `index.json`, and `index.serial` against its
+// `signed.serial`. `stats` is in no `signed` commit and is not compared
+// (SERVE-39's own words) — this file never fetches `stats/v1/stats.json`,
+// since nothing here has ever compared it, armed or not.
+//
+// A witness SERVE-109 calls a failure — missing, unreadable, the wrong
+// schema or members, written more than 15 minutes before the read, or naming
+// bytes other than `signed`'s head — is read again once, after SERVE-109's
+// 60 s, before SERVE-39 reports it; the second read is final.
+
+/** `astra.plugins.served/1`'s path (SERVE-109), relative to the host's base. */
+export const SERVED_JSON_PATH = "registry/v1/served.json";
+
+/** SERVE-109's freshness bound: a witness written before this, read now, is a witness failure. */
+export const WITNESS_GRACE_MINUTES = 15;
+
+/** SERVE-109's "reads it again after 60 s before it alarms on a difference". */
+export const WITNESS_REREAD_MS = 60_000;
+
+const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Is `got` — an already-failed read of `index.json` — INV-30's armed state:
+ * 422, a JSON body whose `error` is `"unauthenticated"`, and a `Cache-Control`
+ * naming `no-store`? Anything else returns `false`, so the caller's existing
+ * unreachable/redirect branch reports it exactly as it always has — SERVE-39's
+ * "stays a failure, as today" needs no second code path.
+ */
+export function isArmedGateRefusal(got) {
+  if (!got || got.ok || got.status !== 422) return false;
+  let body;
+  try {
+    body = JSON.parse(got.body ?? "");
+  } catch {
+    return false;
+  }
+  return Boolean(body) && body.error === "unauthenticated" && /no-store/i.test(String(got.cacheControl ?? ""));
+}
+
+/**
+ * One read of `served.json`, judged against `signed`'s head. `null` means the
+ * witness checks out; otherwise the sentence SERVE-39 reports.
+ */
+function witnessProblem({ fetched, head, now, graceMinutes = WITNESS_GRACE_MINUTES }) {
+  if (!fetched?.ok) return `could not be read (${fetched?.error ?? "no answer"})`;
+  let doc;
+  try {
+    doc = JSON.parse(fetched.body);
+  } catch (e) {
+    return `is not readable JSON (${e.message})`;
+  }
+  if (doc?.schema !== "astra.plugins.served/1") {
+    return `names schema ${JSON.stringify(doc?.schema ?? null)}, not astra.plugins.served/1 (Table 5-N)`;
+  }
+  const serial = doc?.index?.serial;
+  const sha = doc?.index?.sha256;
+  const at = doc?.at;
+  if (!Number.isInteger(serial)) return "index.serial is missing or not an integer (Table 5-N)";
+  if (typeof sha !== "string" || !/^[0-9a-f]{64}$/.test(sha)) return "index.sha256 is missing or not 64 lowercase hex (Table 5-N)";
+  if (typeof at !== "string" || !Number.isFinite(Date.parse(at))) return "`at` is missing or unreadable (Table 5-N)";
+  const age = minutesSince(at, now);
+  if (age === null || age > graceMinutes) {
+    return `was written ${age === null ? "at an unreadable time" : `${age.toFixed(1)} minutes`} before this read, past SERVE-109's ${graceMinutes}-minute bound`;
+  }
+  const wantHex = createHash("sha256").update(String(head.bytes?.index ?? ""), "utf8").digest("hex");
+  if (sha !== wantHex) return `names index.sha256 ${sha}, not \`signed\`@${head.sha.slice(0, 12)}'s index.json (${wantHex})`;
+  const wantSerial = head.documents?.index?.signed?.serial;
+  if (Number.isInteger(wantSerial) && serial !== wantSerial) {
+    return `names index.serial ${serial}, not \`signed\`@${head.sha.slice(0, 12)}'s ${wantSerial}`;
+  }
+  return null;
+}
+
+/** Fetch `served.json` once. Never thrown: a network failure is `{ok: false}`, as `fetchHost` treats one. */
+export async function fetchWitness({ host = HOST, fetchImpl = fetch } = {}) {
+  const url = new URL(SERVED_JSON_PATH, `https://${host}/`).toString();
+  try {
+    const res = await fetchImpl(url, {
+      cache: "no-store",
+      redirect: "manual",
+      headers: { "Cache-Control": "no-cache", Pragma: "no-cache", "User-Agent": "astra-registry-served-set" },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (res.status !== 200) return { ok: false, url, status: res.status, body: null, error: `HTTP ${res.status}` };
+    return { ok: true, url, status: 200, body: await res.text(), error: null };
+  } catch (e) {
+    return { ok: false, url, status: null, body: null, error: String(e?.message ?? e) };
+  }
+}
+
+/**
+ * The armed-host comparison (SERVE-39; SERVE-109): `served.json` read once,
+ * and read again after `WITNESS_REREAD_MS` on any problem, with the second
+ * read final either way.
+ *
+ * @param {{host: string, head: object, now: string, fetchImpl?: typeof fetch, sleepImpl?: (ms: number) => Promise<void>}} o
+ */
+export async function armedWitnessVerdict({ host, head, now, fetchImpl = fetch, sleepImpl = defaultSleep }) {
+  let fetched = await fetchWitness({ host, fetchImpl });
+  let problem = witnessProblem({ fetched, head, now });
+  let rereadAttempted = false;
+  if (problem) {
+    rereadAttempted = true;
+    await sleepImpl(WITNESS_REREAD_MS);
+    fetched = await fetchWitness({ host, fetchImpl });
+    problem = witnessProblem({ fetched, head, now });
+  }
+  return { problem, fetched, rereadAttempted };
+}
 
 /**
  * The fixed names SERVE-52 and INV-40 are probed with. None may be served.
@@ -148,13 +281,24 @@ class Refused extends Error {}
  * itself rather than followed into a comparison of someone else's bytes.
  *
  * `age` and `cacheControl` are the raw `Age` and `Cache-Control` response
- * headers on a 200, read for `hostAgeVerdict` (DEC-18); `null` where a header
- * is absent, which the RU box's direct-from-origin answers may simply be —
- * that is not itself a finding, only something that check cannot compare.
+ * headers, read on every status (not only 200): `hostAgeVerdict` (DEC-18)
+ * only ever reads them off a 200, but `isArmedGateRefusal` (SERVE-39, since
+ * 6.0.0) reads `cacheControl` off a 422, and `null` where a header is absent
+ * is not itself a finding either way, only something that check cannot
+ * compare. `body` is likewise read on every status, since a gated refusal's
+ * JSON `error` is read from it too (INV-30; SERVE-108).
  *
- * @param {{host?: string, fetchImpl?: typeof fetch}} opts
+ * `head` and `now`, when given, let an armed `index.json` (SERVE-39's armed
+ * state; `isArmedGateRefusal`) be compared with `signed` through
+ * `served.json` instead (SERVE-109; Table 5-N): the result lands at
+ * `served.witness`, resolved — reread included — before this returns, so
+ * `serve39Host` stays a synchronous read of already-settled data like every
+ * other comparison in this file. Omitted (as every call before 6.0.0 omitted
+ * them), `served.witness` is simply never set, and nothing else changes.
+ *
+ * @param {{host?: string, fetchImpl?: typeof fetch, head?: object|null, now?: string, sleepImpl?: (ms: number) => Promise<void>}} opts
  */
-export async function fetchHost({ host = HOST, fetchImpl = fetch } = {}) {
+export async function fetchHost({ host = HOST, fetchImpl = fetch, head = null, now = new Date().toISOString(), sleepImpl = defaultSleep } = {}) {
   const base = `https://${host}/`;
   const served = {};
   for (const [name, rel] of Object.entries(SIGNED_FILES)) {
@@ -166,26 +310,31 @@ export async function fetchHost({ host = HOST, fetchImpl = fetch } = {}) {
         headers: { "Cache-Control": "no-cache", Pragma: "no-cache", "User-Agent": "astra-registry-served-set" },
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
-      if (res.status !== 200) {
-        served[name] = { ok: false, url, status: res.status, body: null, error: `HTTP ${res.status}`, age: null, cacheControl: null };
-        continue;
+      const age = typeof res.headers?.get === "function" ? res.headers.get("age") : null;
+      const cacheControl = typeof res.headers?.get === "function" ? res.headers.get("cache-control") : null;
+      let body = null;
+      try {
+        body = await res.text();
+      } catch {
+        body = null;
       }
-      served[name] = {
-        ok: true, url, status: 200, body: await res.text(), error: null,
-        age: typeof res.headers?.get === "function" ? res.headers.get("age") : null,
-        cacheControl: typeof res.headers?.get === "function" ? res.headers.get("cache-control") : null,
-      };
+      served[name] = res.status === 200
+        ? { ok: true, url, status: 200, body, error: null, age, cacheControl }
+        : { ok: false, url, status: res.status, body, error: `HTTP ${res.status}`, age, cacheControl };
     } catch (e) {
       served[name] = { ok: false, url, status: null, body: null, error: String(e?.message ?? e), age: null, cacheControl: null };
     }
+  }
+  if (head?.present && isArmedGateRefusal(served.index)) {
+    served.witness = await armedWitnessVerdict({ host, head, now, fetchImpl, sleepImpl });
   }
   return served;
 }
 
 /** Fetch the four documents from every catalogue host, keyed by host. */
-export async function fetchHosts({ hosts = CATALOGUE_HOSTS, fetchImpl = fetch } = {}) {
+export async function fetchHosts({ hosts = CATALOGUE_HOSTS, fetchImpl = fetch, head = null, now, sleepImpl } = {}) {
   const byHost = {};
-  for (const host of hosts) byHost[host] = await fetchHost({ host, fetchImpl });
+  for (const host of hosts) byHost[host] = await fetchHost({ host, fetchImpl, head, now, sleepImpl });
   return byHost;
 }
 
@@ -263,6 +412,30 @@ export function serve39Host({ host = HOST, head, headClock, served, now, graceMi
         ));
       } else {
         notes.push(`\`signed\`'s list expired at ${expiry} and ${host} does not serve it (${got?.error ?? "other bytes"}), as TRUST-38 asks`);
+      }
+      continue;
+    }
+
+    if (name === "index" && !got?.ok && isArmedGateRefusal(got)) {
+      // INV-30's armed state (since 6.0.0): a ticketless index.json refuses
+      // with 422 unauthenticated and Cache-Control: no-store, which is not a
+      // difference (SERVE-39) — the host is compared through served.json
+      // instead (SERVE-109; Table 5-N). trust.json, revocations.json and
+      // root.json never reach this branch (OD-6: they are never gated, so a
+      // 422 on one of them falls through to the finding below, as always).
+      const w = served?.witness;
+      if (!w || w.problem) {
+        findings.push(finding(
+          `SERVE_39_HOST_WITNESS_FAILS${suffix}`,
+          `${host} refuses a ticketless ${rel} as INV-30's armed state (422 unauthenticated, Cache-Control: ` +
+          `no-store), so SERVE-39 compares it through served.json instead — and that witness ${w?.problem ?? "was never read"} ` +
+          "(SERVE-109). A gate the registry cannot compare from outside is one the registry cannot vouch for.",
+        ));
+      } else {
+        notes.push(
+          `${host} is armed (INV-30): a ticketless ${rel} answers 422 unauthenticated with Cache-Control: no-store, ` +
+          `and served.json's witness names \`signed\`@${head.sha.slice(0, 12)}'s index.json, read ${w.rereadAttempted ? "on its reread" : "on the first read"}`,
+        );
       }
       continue;
     }

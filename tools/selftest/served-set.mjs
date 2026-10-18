@@ -22,6 +22,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fixtureEnv } from "../lib/git-env.mjs";
 
@@ -37,8 +38,9 @@ import { gather, serve85, sourceOf } from "../served-set/main-vs-signed.mjs";
 import { serve39 } from "../served-set/served-vs-signed.mjs";
 import {
   AGE_OVER_MAX_AGE_IS_FATAL, CATALOGUE_HOSTS, EXTRA_PATHS, EXTRA_PATHS_FLOOR, HOST, HOST_BASE, RU_HOST,
-  artifactNameFrom, extraPathVerdict, fetchHost, fetchHosts, hostAgeVerdict, hostAgeVerdicts, probeExtraPaths, probePaths,
-  serve39Host, serve39Hosts,
+  SERVED_JSON_PATH, WITNESS_GRACE_MINUTES, WITNESS_REREAD_MS,
+  armedWitnessVerdict, artifactNameFrom, extraPathVerdict, fetchHost, fetchHosts, fetchWitness, hostAgeVerdict,
+  hostAgeVerdicts, isArmedGateRefusal, probeExtraPaths, probePaths, serve39Host, serve39Hosts,
 } from "../served-set/host-vs-signed.mjs";
 // PROVENANCE_WINDOW_DAYS is deliberately NOT imported. Both fixtures that used
 // to compute an age from it could not see it move (2026-09-22: 7 → 1, nothing
@@ -811,6 +813,191 @@ export async function run() {
       "an expired list the host does not serve is what TRUST-38 asks for");
     const before = serve39Host({ head, headClock: HEAD_CLOCK, served: gone, now: minutesAgo(HOST_LIST_EXPIRES, -60) });
     assertEqual(codesOf(before), "SERVE_39_HOST_UNREACHABLE", "a list not yet expired that the host does not serve is an outage");
+  });
+
+  // ── SERVE-39 on an armed host (INV-30; SERVE-108; SERVE-109; Table 5-N;
+  //    since contract 6.0.0, registry plan ops #582) ────────────────────────
+  console.log("\nSERVE-39 on an armed host: index.json compared through served.json's witness");
+
+  const sha256 = (s) => createHash("sha256").update(String(s), "utf8").digest("hex");
+  const armedHead = () => headFrom({
+    revocations: {
+      signatures: [],
+      signed: { schema: REVOCATIONS_SCHEMA, serial: 2, revocations: [], issued_at: HEAD_CLOCK, expires_at: HOST_LIST_EXPIRES },
+    },
+    index: { signed: { schema: "x", serial: 42 } },
+  });
+  const armedIndexGot = (overrides = {}) => ({
+    ok: false, url: `${HOST_BASE}${SIGNED_FILES.index}`, status: 422,
+    body: JSON.stringify({ error: "unauthenticated" }), error: "HTTP 422", age: null,
+    cacheControl: "private, no-cache, no-store",
+    ...overrides,
+  });
+  const witnessFetchImpl = (responses) => {
+    let i = 0;
+    return async () => {
+      const r = responses[Math.min(i, responses.length - 1)];
+      i++;
+      if (typeof r === "number") return { status: r, headers: new Map(), text: async () => "" };
+      return { status: 200, headers: new Map(), text: async () => (typeof r === "string" ? r : JSON.stringify(r)) };
+    };
+  };
+  const noSleep = async () => {};
+
+  await test("isArmedGateRefusal matches INV-30's exact shape, and nothing looser", () => {
+    const armed = { ok: false, status: 422, body: JSON.stringify({ error: "unauthenticated" }), cacheControl: "private, no-cache, no-store" };
+    assert(isArmedGateRefusal(armed), "the exact armed shape was not recognised");
+    assert(!isArmedGateRefusal({ ...armed, cacheControl: "private, no-cache" }), "no-store missing must not read as armed");
+    assert(!isArmedGateRefusal({ ...armed, cacheControl: null }), "an absent Cache-Control must not read as armed");
+    assert(!isArmedGateRefusal({ ...armed, body: JSON.stringify({ error: "other" }) }), "a different error must not read as armed");
+    assert(!isArmedGateRefusal({ ...armed, body: "not json" }), "a 422 with an unparseable body must not read as armed");
+    assert(!isArmedGateRefusal({ ...armed, status: 401 }), "only 422 is the armed state");
+    assert(!isArmedGateRefusal({ ok: true, status: 200, body: "{}", cacheControl: "no-store" }), "a 200 is not a refusal at all");
+  });
+
+  await test("fetchWitness reads served.json's raw bytes, and a failed read never throws", async () => {
+    const ok = await fetchWitness({ host: HOST, fetchImpl: async () => ({ status: 200, headers: new Map(), text: async () => "{}" }) });
+    assertEqual(ok.ok, true, "a 200 must read as ok");
+    assertEqual(ok.url, `${HOST_BASE}${SERVED_JSON_PATH}`, "fetchWitness asked the wrong path");
+    const down = await fetchWitness({ host: HOST, fetchImpl: async () => { throw new Error("getaddrinfo ENOTFOUND"); } });
+    assertEqual(down.ok, false, "a network failure must not throw");
+  });
+
+  await test("a fresh, matching served.json witness passes the armed comparison with no reread", async () => {
+    const head = armedHead();
+    const doc = { schema: "astra.plugins.served/1", index: { serial: 42, sha256: sha256(head.bytes.index) }, stats: null, at: HEAD_CLOCK };
+    const v = await armedWitnessVerdict({ host: HOST, head, now: minutesAgo(HEAD_CLOCK, 2), fetchImpl: witnessFetchImpl([doc]), sleepImpl: noSleep });
+    assertEqual(v.problem, null, `a matching witness failed: ${v.problem}`);
+    assertEqual(v.rereadAttempted, false, "a passing witness must not be re-read");
+  });
+
+  await test("a witness naming a different hash or serial than signed's index.json fails, after one reread", async () => {
+    const head = armedHead();
+    const badHash = { schema: "astra.plugins.served/1", index: { serial: 42, sha256: "0".repeat(64) }, stats: null, at: HEAD_CLOCK };
+    const badSerial = { schema: "astra.plugins.served/1", index: { serial: 99, sha256: sha256(head.bytes.index) }, stats: null, at: HEAD_CLOCK };
+    let slept = null;
+    const hash = await armedWitnessVerdict({
+      host: HOST, head, now: minutesAgo(HEAD_CLOCK, 2), fetchImpl: witnessFetchImpl([badHash, badHash]),
+      sleepImpl: async (ms) => { slept = ms; },
+    });
+    assert(hash.problem && /index\.sha256/.test(hash.problem), `a mismatched hash passed: ${hash.problem}`);
+    assertEqual(hash.rereadAttempted, true, "a failing witness must be read again once");
+    assertEqual(slept, WITNESS_REREAD_MS, "the reread must wait SERVE-109's 60 s");
+    const serial = await armedWitnessVerdict({ host: HOST, head, now: minutesAgo(HEAD_CLOCK, 2), fetchImpl: witnessFetchImpl([badSerial, badSerial]), sleepImpl: noSleep });
+    assert(serial.problem && /index\.serial/.test(serial.problem), `a mismatched serial passed: ${serial.problem}`);
+  });
+
+  await test("a witness is read again once after a bad first read, and the second, good read is final", async () => {
+    const head = armedHead();
+    const bad = { schema: "astra.plugins.served/1", index: { serial: 42, sha256: "0".repeat(64) }, stats: null, at: HEAD_CLOCK };
+    const good = { schema: "astra.plugins.served/1", index: { serial: 42, sha256: sha256(head.bytes.index) }, stats: null, at: HEAD_CLOCK };
+    let slept = null;
+    const v = await armedWitnessVerdict({
+      host: HOST, head, now: minutesAgo(HEAD_CLOCK, 2), fetchImpl: witnessFetchImpl([bad, good]),
+      sleepImpl: async (ms) => { slept = ms; },
+    });
+    assertEqual(v.problem, null, `the second, good read was not taken as final: ${v.problem}`);
+    assertEqual(slept, WITNESS_REREAD_MS, "the reread must wait SERVE-109's 60 s");
+    assertEqual(v.rereadAttempted, true, "a reread that fixed the problem must still say it happened");
+  });
+
+  await test("a witness written more than 15 minutes before the read fails, and at 14 minutes it does not", async () => {
+    const head = armedHead();
+    const doc = { schema: "astra.plugins.served/1", index: { serial: 42, sha256: sha256(head.bytes.index) }, stats: null, at: HEAD_CLOCK };
+    const within = await armedWitnessVerdict({ host: HOST, head, now: minutesAgo(HEAD_CLOCK, WITNESS_GRACE_MINUTES - 1), fetchImpl: witnessFetchImpl([doc]), sleepImpl: noSleep });
+    assertEqual(within.problem, null, `${WITNESS_GRACE_MINUTES - 1} minutes old paged: ${within.problem}`);
+    const over = await armedWitnessVerdict({ host: HOST, head, now: minutesAgo(HEAD_CLOCK, WITNESS_GRACE_MINUTES + 1), fetchImpl: witnessFetchImpl([doc, doc]), sleepImpl: noSleep });
+    assert(over.problem && new RegExp(`${WITNESS_GRACE_MINUTES}-minute`).test(over.problem), `${WITNESS_GRACE_MINUTES + 1} minutes old did not fail: ${over.problem}`);
+  });
+
+  await test("a served.json that is missing, unreadable or the wrong schema fails the armed comparison", async () => {
+    const head = armedHead();
+    const missing = await armedWitnessVerdict({ host: HOST, head, now: HEAD_CLOCK, fetchImpl: witnessFetchImpl([404, 404]), sleepImpl: noSleep });
+    assert(missing.problem && /could not be read/.test(missing.problem), `a missing served.json passed: ${missing.problem}`);
+    const garbage = await armedWitnessVerdict({ host: HOST, head, now: HEAD_CLOCK, fetchImpl: witnessFetchImpl(["not json", "not json"]), sleepImpl: noSleep });
+    assert(garbage.problem && /readable JSON/.test(garbage.problem), `garbage bytes passed: ${garbage.problem}`);
+    const wrongSchema = await armedWitnessVerdict({ host: HOST, head, now: HEAD_CLOCK, fetchImpl: witnessFetchImpl([{ schema: "x" }, { schema: "x" }]), sleepImpl: noSleep });
+    assert(wrongSchema.problem && /schema/.test(wrongSchema.problem), `the wrong schema passed: ${wrongSchema.problem}`);
+  });
+
+  await test("serve39Host reads an armed index.json through its already-resolved witness, not as an unreachable document", () => {
+    const head = armedHead();
+    const armedPass = serve39Host({
+      head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, { index: armedIndexGot(), witness: { problem: null, fetched: {}, rereadAttempted: false } }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(armedPass.status, "green", `an armed host whose witness checks out paged: ${codesOf(armedPass)}`);
+    assert(armedPass.notes.some((n) => n.includes("is armed")), "the armed state left no note for the operator");
+
+    const armedFail = serve39Host({
+      head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, { index: armedIndexGot(), witness: { problem: "names index.sha256 ... not signed's", fetched: {}, rereadAttempted: true } }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(codesOf(armedFail), "SERVE_39_HOST_WITNESS_FAILS", "a witness that fails its own comparison must redden the job");
+
+    const armedNoWitness = serve39Host({
+      head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, { index: armedIndexGot() }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(codesOf(armedNoWitness), "SERVE_39_HOST_WITNESS_FAILS", "an armed index with no witness resolved at all must fail closed");
+  });
+
+  await test("a 422 that is not exactly INV-30's armed shape is a failure, as today", () => {
+    const head = armedHead();
+    const missingNoStore = serve39Host({
+      head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, { index: armedIndexGot({ cacheControl: "private, no-cache" }) }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(codesOf(missingNoStore), "SERVE_39_HOST_UNREACHABLE", "a 422 without Cache-Control: no-store must not be read as the armed state");
+
+    const otherError = serve39Host({
+      head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, { index: armedIndexGot({ body: JSON.stringify({ error: "something_else" }) }) }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(codesOf(otherError), "SERVE_39_HOST_UNREACHABLE", "a 422 naming another error must not be read as the armed state");
+  });
+
+  await test("trust.json, revocations.json and root.json are never gated, so a 422 on one is still a failure (OD-6)", () => {
+    const head = armedHead();
+    for (const name of ["trust", "revocations", "root"]) {
+      const v = serve39Host({
+        head, headClock: HEAD_CLOCK,
+        served: servedFrom(head, { [name]: armedIndexGot({ url: `${HOST_BASE}${SIGNED_FILES[name]}` }) }),
+        now: minutesAgo(HEAD_CLOCK, 2),
+      });
+      assertEqual(codesOf(v), "SERVE_39_HOST_UNREACHABLE", `${name} took the armed exception OD-6 forbids it from taking`);
+    }
+  });
+
+  await test("fetchHost never reads served.json unless index.json shows INV-30's armed shape", async () => {
+    const seen = [];
+    const normalFetch = async (url) => { seen.push(url); return { status: 200, headers: new Map(), text: async () => "{}" }; };
+    const head = armedHead();
+    await fetchHost({ host: HOST, fetchImpl: normalFetch, head, now: HEAD_CLOCK });
+    assert(!seen.some((u) => u.includes(SERVED_JSON_PATH)), "an unarmed host (every index.json read a 200) must not be read for served.json");
+    assertEqual(seen.length, Object.keys(SIGNED_FILES).length, "an unarmed host fetched more than the four signed documents");
+  });
+
+  await test("fetchHost resolves an armed host's witness itself, so served.witness is ready before serve39Host ever runs", async () => {
+    const head = armedHead();
+    const doc = { schema: "astra.plugins.served/1", index: { serial: 42, sha256: sha256(head.bytes.index) }, stats: null, at: HEAD_CLOCK };
+    const byPath = { [SIGNED_FILES.index]: null, [SERVED_JSON_PATH]: JSON.stringify(doc) };
+    for (const name of ["revocations", "trust", "root"]) byPath[SIGNED_FILES[name]] = head.bytes[name];
+    const fetchImpl = async (url) => {
+      const p = new URL(url).pathname.slice(1);
+      if (p === SIGNED_FILES.index) {
+        return { status: 422, headers: new Map([["cache-control", "private, no-cache, no-store"]]), text: async () => JSON.stringify({ error: "unauthenticated" }) };
+      }
+      return { status: 200, headers: new Map(), text: async () => byPath[p] ?? "{}" };
+    };
+    const served = await fetchHost({ host: HOST, fetchImpl, head, now: minutesAgo(HEAD_CLOCK, 2) });
+    assert(served.witness, "fetchHost did not resolve a witness for an armed host");
+    assertEqual(served.witness.problem, null, `a matching witness failed inside fetchHost: ${served.witness.problem}`);
   });
 
   // ── DEC-18: a second catalogue host, registry.knice.tech ───────────────────
