@@ -151,7 +151,12 @@ async function servedVsSigned({ root, now, repo, token }) {
 async function hostVsSigned({ root, now }) {
   const head = fetchSignedHead({ root });
   const headClock = head.present ? gitText(["log", "-1", "--format=%cI", head.sha], { root }) : null;
-  const servedByHost = await fetchHosts({ hosts: CATALOGUE_HOSTS });
+  // `head`, `headClock` and `now`: so an armed host's index.json (SERVE-39,
+  // since 6.0.0) is resolved through served.json's witness inside fetchHost,
+  // before serve39Hosts ever runs (host-vs-signed.mjs; SERVE-109).
+  // `headClock` is the same value serve39Hosts below is given, so the two
+  // agree on whether `signed`'s own head is still inside SERVE-39's grace.
+  const servedByHost = await fetchHosts({ hosts: CATALOGUE_HOSTS, head, headClock, now });
   const documents = serve39Hosts({ hosts: CATALOGUE_HOSTS, head, headClock, servedByHost, now });
   const age = hostAgeVerdicts({ hosts: CATALOGUE_HOSTS, servedByHost });
   const probes = await probeExtraPaths({ paths: probePaths(artifactNameFrom(head.documents?.index)) });

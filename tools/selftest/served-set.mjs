@@ -22,6 +22,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fixtureEnv } from "../lib/git-env.mjs";
 
@@ -37,8 +38,9 @@ import { gather, serve85, sourceOf } from "../served-set/main-vs-signed.mjs";
 import { serve39 } from "../served-set/served-vs-signed.mjs";
 import {
   AGE_OVER_MAX_AGE_IS_FATAL, CATALOGUE_HOSTS, EXTRA_PATHS, EXTRA_PATHS_FLOOR, HOST, HOST_BASE, RU_HOST,
-  artifactNameFrom, extraPathVerdict, fetchHost, fetchHosts, hostAgeVerdict, hostAgeVerdicts, probeExtraPaths, probePaths,
-  serve39Host, serve39Hosts,
+  SERVED_JSON_PATH, STATS_PATH, WITNESS_FORWARD_SKEW_MS, WITNESS_GRACE_MINUTES, WITNESS_REREAD_MS,
+  armedWitnessVerdict, artifactNameFrom, extraPathVerdict, fetchHost, fetchHosts, fetchWitness, hostAgeVerdict,
+  hostAgeVerdicts, isArmedGateRefusal, probeExtraPaths, probePaths, serve39Host, serve39Hosts,
 } from "../served-set/host-vs-signed.mjs";
 // PROVENANCE_WINDOW_DAYS is deliberately NOT imported. Both fixtures that used
 // to compute an age from it could not see it move (2026-09-22: 7 → 1, nothing
@@ -119,12 +121,18 @@ function headFrom({ revocations, trust = trustDelegating(), index = { signed: { 
   return { present: true, reason: null, sha, bytes, documents, parseErrors: [] };
 }
 
-/** A deployment that serves exactly what `signed`'s head holds. */
+/**
+ * A deployment that serves exactly what `signed`'s head holds, plus a
+ * passing `stats/v1/stats.json` (point 3: fetched, never compared) so every
+ * test that does not care about it — nearly all of them — stays green
+ * without naming it.
+ */
 const servedFrom = (head, overrides = {}) => {
   const served = {};
   for (const name of Object.keys(SIGNED_FILES)) {
     served[name] = { ok: true, url: `https://example.invalid/${name}`, status: 200, body: head.bytes[name], error: null };
   }
+  served.stats = { ok: true, url: "https://example.invalid/stats", status: 200, body: "{}", error: null };
   return { ...served, ...overrides };
 };
 
@@ -811,6 +819,504 @@ export async function run() {
       "an expired list the host does not serve is what TRUST-38 asks for");
     const before = serve39Host({ head, headClock: HEAD_CLOCK, served: gone, now: minutesAgo(HOST_LIST_EXPIRES, -60) });
     assertEqual(codesOf(before), "SERVE_39_HOST_UNREACHABLE", "a list not yet expired that the host does not serve is an outage");
+  });
+
+  // ── SERVE-39 on an armed host (INV-30; SERVE-108; SERVE-109; Table 5-N;
+  //    since contract 6.0.0, registry plan ops #582; review of PR #467
+  //    applied here, mirroring ops #583's fixes to the same gaps) ───────────
+  console.log("\nSERVE-39 on an armed host: index.json compared through served.json's witness");
+
+  const sha256 = (s) => createHash("sha256").update(String(s), "utf8").digest("hex");
+  const armedHead = () => headFrom({
+    revocations: {
+      signatures: [],
+      signed: { schema: REVOCATIONS_SCHEMA, serial: 2, revocations: [], issued_at: HEAD_CLOCK, expires_at: HOST_LIST_EXPIRES },
+    },
+    index: { signed: { schema: "x", serial: 42 } },
+  });
+  const ARMED_BODY = { schema: "astra.plugins.error/1", error: "unauthenticated", message: "a catalogue ticket is required" };
+  const armedIndexGot = (overrides = {}) => ({
+    ok: false, url: `${HOST_BASE}${SIGNED_FILES.index}`, status: 422,
+    body: JSON.stringify(ARMED_BODY), error: "HTTP 422", age: null,
+    cacheControl: "private, no-cache, no-store",
+    ...overrides,
+  });
+  // The witness's own clock (`at`, and `fetchWitness`'s `readAt`) is read
+  // against the real wall clock (point 1), never against HEAD_CLOCK — so
+  // fixtures that probe it are built from `Date.now()`, in seconds.
+  // `toISOString()` always carries milliseconds; WITNESS_AT_RE (point 4)
+  // does not, so every fixture built here is truncated to whole seconds —
+  // exactly what a §0.7 time looks like, and what HEAD_CLOCK already is.
+  const secondsFromNow = (s) => new Date(Date.now() + s * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const witnessDoc = (head, overrides = {}) => ({
+    schema: "astra.plugins.served/1",
+    index: { serial: 42, sha256: sha256(head.bytes.index) },
+    stats: null,
+    at: secondsFromNow(0),
+    ...overrides,
+  });
+  const witnessFetchImpl = (responses) => {
+    const calls = [];
+    let i = 0;
+    const impl = async (url) => {
+      calls.push(url);
+      const r = responses[Math.min(i, responses.length - 1)];
+      i++;
+      if (typeof r === "number") return { status: r, headers: new Map(), text: async () => "" };
+      return { status: 200, headers: new Map(), text: async () => (typeof r === "string" ? r : JSON.stringify(r)) };
+    };
+    impl.calls = calls;
+    return impl;
+  };
+  const noSleep = async () => {};
+
+  await test("isArmedGateRefusal matches INV-30's exact shape, and nothing looser (mirrors ops #583)", () => {
+    const armed = { ok: false, status: 422, body: JSON.stringify(ARMED_BODY), cacheControl: "private, no-cache, no-store" };
+    assert(isArmedGateRefusal(armed), "the exact armed shape was not recognised");
+    assert(isArmedGateRefusal({ ...armed, status: 401 }), "any 4xx is the armed state, not only 422 (point 6)");
+    assert(!isArmedGateRefusal({ ...armed, status: 503 }), "503 is Table 5-A's unavailable status, a 5xx the gate itself could not judge, never the armed state (mirrors ops #583's 400-499 range exactly)");
+    assert(!isArmedGateRefusal({ ...armed, status: 500 }), "a 5xx is not the armed state");
+    assert(!isArmedGateRefusal({ ...armed, status: 399 }), "a non-4xx status is not the armed state");
+    assert(!isArmedGateRefusal({ ...armed, cacheControl: "private, no-cache" }), "no-store missing must not read as armed");
+    assert(!isArmedGateRefusal({ ...armed, cacheControl: null }), "an absent Cache-Control must not read as armed");
+    assert(!isArmedGateRefusal({ ...armed, body: JSON.stringify({ ...ARMED_BODY, error: "other" }) }), "a different error must not read as armed");
+    assert(!isArmedGateRefusal({ ...armed, body: JSON.stringify({ error: "unauthenticated", message: "x" }) }), "a refusal body with no schema member must not read as armed");
+    assert(!isArmedGateRefusal({ ...armed, body: JSON.stringify({ schema: ARMED_BODY.schema, error: "unauthenticated" }) }), "a refusal body with no string message must not read as armed");
+    assert(!isArmedGateRefusal({ ...armed, body: "not json" }), "a 4xx with an unparseable body must not read as armed");
+    assert(!isArmedGateRefusal({ ok: true, status: 200, body: "{}", cacheControl: "no-store" }), "a 200 is not a refusal at all");
+    // Table 5-A: a gated document keeps "no edge copy" — a CDN's own cached
+    // copy of the refusal is evidence about the edge, never the origin's gate.
+    assert(!isArmedGateRefusal({ ...armed, age: "5" }), "an Age over zero is a CDN cache hit, not the armed state");
+    assert(isArmedGateRefusal({ ...armed, age: "0" }), "Age: 0 is not itself a cache hit");
+    assert(!isArmedGateRefusal({ ...armed, cfCacheStatus: "HIT" }), "Cloudflare's cf-cache-status: HIT is a CDN cache hit");
+    assert(!isArmedGateRefusal({ ...armed, cache: "HIT" }), "gcore's Cache: HIT is a CDN cache hit");
+    assert(!isArmedGateRefusal({ ...armed, xCache: "Hit from cloudfront" }), "x-cache naming a hit is a CDN cache hit");
+    // registry.knice.tech is served direct from the RU box with no CDN in
+    // front of it (DEC-18) — an Age header there answers a different
+    // question (or none at all), and is never evidence of a stale edge copy
+    // of a gated document the way it is on the CDN-fronted primary host.
+    assert(isArmedGateRefusal({ ...armed, age: "5" }, RU_HOST), "an RU refusal carrying Age: 5 is still armed: the RU host has no CDN to have cached it (point 4)");
+    assert(isArmedGateRefusal({ ...armed, cfCacheStatus: "HIT" }, RU_HOST), "a cf-cache-status on the RU host proves nothing either: it never sits behind Cloudflare");
+  });
+
+  await test("fetchWitness uses redirect: manual, gives ok:false on a 302 or 404, and keeps a 200's body byte-identical", async () => {
+    let seenInit = null;
+    const ok = await fetchWitness({
+      host: HOST,
+      fetchImpl: async (url, init) => { seenInit = init; return { status: 200, headers: new Map(), text: async () => "{\"exact\":true}\n" }; },
+    });
+    assertEqual(ok.ok, true, "a 200 must read as ok");
+    assertEqual(ok.url, `${HOST_BASE}${SERVED_JSON_PATH}`, "fetchWitness asked the wrong path");
+    assertEqual(ok.body, "{\"exact\":true}\n", "fetchWitness must not transform the body it read");
+    assertEqual(seenInit?.redirect, "manual", "fetchWitness must not let fetch follow a redirect itself");
+
+    const redirected = await fetchWitness({ host: HOST, fetchImpl: async () => ({ status: 302, headers: new Map(), text: async () => "" }) });
+    assertEqual(redirected.ok, false, "a 302 must not read as ok");
+    const missing = await fetchWitness({ host: HOST, fetchImpl: async () => ({ status: 404, headers: new Map(), text: async () => "" }) });
+    assertEqual(missing.ok, false, "a 404 must not read as ok");
+    const down = await fetchWitness({ host: HOST, fetchImpl: async () => { throw new Error("getaddrinfo ENOTFOUND"); } });
+    assertEqual(down.ok, false, "a network failure must not throw");
+  });
+
+  await test("the armed-host literals are SERVE-109's and the ops prober's (point 7)", () => {
+    assertEqual(WITNESS_REREAD_MS, 60_000, "SERVE-109's 60 s reread");
+    assertEqual(WITNESS_GRACE_MINUTES, 15, "SERVE-109's 15-minute staleness bound");
+    assertEqual(WITNESS_FORWARD_SKEW_MS, 60_000, "the forward clock-skew bound (point 1)");
+    assertEqual(SERVED_JSON_PATH, "registry/v1/served.json", "SERVE-109's witness path");
+    assertEqual(STATS_PATH, "stats/v1/stats.json", "the stats document's own path (point 3)");
+  });
+
+  await test("a fresh, matching served.json witness passes the armed comparison with no reread", async () => {
+    const head = armedHead();
+    const v = await armedWitnessVerdict({ host: HOST, head, excused: false, fetchImpl: witnessFetchImpl([witnessDoc(head)]), sleepImpl: noSleep });
+    assertEqual(v.problem, null, `a matching witness failed: ${JSON.stringify(v.problem)}`);
+    assertEqual(v.rereadAttempted, false, "a passing witness must not be re-read");
+  });
+
+  await test("a witness naming a different hash or serial than signed's index.json is a mismatch, read again once outside grace", async () => {
+    const head = armedHead();
+    const badHash = witnessDoc(head, { index: { serial: 42, sha256: "0".repeat(64) } });
+    const badSerial = witnessDoc(head, { index: { serial: 99, sha256: sha256(head.bytes.index) } });
+    let slept = null;
+    const hash = await armedWitnessVerdict({
+      host: HOST, head, excused: false, fetchImpl: witnessFetchImpl([badHash, badHash]),
+      sleepImpl: async (ms) => { slept = ms; },
+    });
+    assertEqual(hash.problem?.kind, "mismatch", `a mismatched hash did not read as a mismatch: ${JSON.stringify(hash.problem)}`);
+    assert(/index\.sha256/.test(hash.problem.message), `a mismatched hash passed: ${hash.problem.message}`);
+    assertEqual(hash.rereadAttempted, true, "a mismatch outside grace must be read again once");
+    assertEqual(slept, WITNESS_REREAD_MS, "the reread must wait SERVE-109's 60 s");
+    const serial = await armedWitnessVerdict({ host: HOST, head, excused: false, fetchImpl: witnessFetchImpl([badSerial, badSerial]), sleepImpl: noSleep });
+    assert(/index\.serial/.test(serial.problem?.message ?? ""), `a mismatched serial passed: ${JSON.stringify(serial.problem)}`);
+  });
+
+  await test("a mismatch is read only once while signed's own head is still within grace (point 5)", async () => {
+    const head = armedHead();
+    const badHash = witnessDoc(head, { index: { serial: 42, sha256: "0".repeat(64) } });
+    const impl = witnessFetchImpl([badHash, badHash]);
+    const v = await armedWitnessVerdict({
+      host: HOST, head, excused: true, fetchImpl: impl,
+      sleepImpl: async () => { throw new Error("a mismatch inside grace must not sleep for a reread"); },
+    });
+    assertEqual(v.problem?.kind, "mismatch", `a mismatch inside grace was not read as a mismatch: ${JSON.stringify(v.problem)}`);
+    assertEqual(v.rereadAttempted, false, "a mismatch inside grace must not be re-read");
+    assertEqual(impl.calls.length, 1, "a mismatch inside grace must fetch served.json only once");
+  });
+
+  await test("a malformed witness is read again once, and the reread is final: a third queued response is never fetched (point 7)", async () => {
+    const head = armedHead();
+    const impl = witnessFetchImpl(["not json", "not json", witnessDoc(head)]);
+    const v = await armedWitnessVerdict({ host: HOST, head, excused: false, fetchImpl: impl, sleepImpl: noSleep });
+    assertEqual(v.problem?.kind, "malformed", `a witness read as garbage twice should still fail: ${JSON.stringify(v.problem)}`);
+    assertEqual(v.rereadAttempted, true, "a malformed witness must be re-read once");
+    assertEqual(impl.calls.length, 2, "a third, queued-but-unneeded fetch must never be made: the reread is final");
+  });
+
+  await test("a malformed witness is read again regardless of grace, and stays an immediate failure (point 5)", async () => {
+    const head = armedHead();
+    const impl = witnessFetchImpl(["not json", "not json"]);
+    const v = await armedWitnessVerdict({ host: HOST, head, excused: true, fetchImpl: impl, sleepImpl: noSleep });
+    assertEqual(v.problem?.kind, "malformed", "a malformed witness must fail even while signed's head is within grace");
+    assertEqual(v.rereadAttempted, true, "a malformed witness is read again regardless of excused");
+    assertEqual(impl.calls.length, 2, "the reread happened");
+  });
+
+  await test("a witness is read again once after a bad first read, and the second, good read is final", async () => {
+    const head = armedHead();
+    const bad = witnessDoc(head, { index: { serial: 42, sha256: "0".repeat(64) } });
+    const good = witnessDoc(head);
+    let slept = null;
+    const v = await armedWitnessVerdict({
+      host: HOST, head, excused: false, fetchImpl: witnessFetchImpl([bad, good]),
+      sleepImpl: async (ms) => { slept = ms; },
+    });
+    assertEqual(v.problem, null, `the second, good read was not taken as final: ${JSON.stringify(v.problem)}`);
+    assertEqual(slept, WITNESS_REREAD_MS, "the reread must wait SERVE-109's 60 s");
+    assertEqual(v.rereadAttempted, true, "a reread that fixed the problem must still say it happened");
+  });
+
+  await test("a witness written more than 15 minutes before the read fails, and at 14 minutes it does not (point 1)", async () => {
+    const head = armedHead();
+    const within = await armedWitnessVerdict({
+      host: HOST, head, excused: false,
+      fetchImpl: witnessFetchImpl([witnessDoc(head, { at: secondsFromNow(-(WITNESS_GRACE_MINUTES - 1) * 60) })]),
+      sleepImpl: noSleep,
+    });
+    assertEqual(within.problem, null, `${WITNESS_GRACE_MINUTES - 1} minutes old paged: ${JSON.stringify(within.problem)}`);
+    const doc16 = witnessDoc(head, { at: secondsFromNow(-(WITNESS_GRACE_MINUTES + 1) * 60) });
+    const over = await armedWitnessVerdict({ host: HOST, head, excused: false, fetchImpl: witnessFetchImpl([doc16, doc16]), sleepImpl: noSleep });
+    assertEqual(over.problem?.kind, "malformed", `${WITNESS_GRACE_MINUTES + 1} minutes old must fail: ${JSON.stringify(over.problem)}`);
+    assert(new RegExp(`${WITNESS_GRACE_MINUTES}-minute`).test(over.problem.message), `${WITNESS_GRACE_MINUTES + 1} minutes old did not name the bound: ${over.problem.message}`);
+  });
+
+  await test("a witness ahead of its own read by more than 60 s fails; 10 s ahead does not (point 1)", async () => {
+    const head = armedHead();
+    const within = await armedWitnessVerdict({
+      host: HOST, head, excused: false, fetchImpl: witnessFetchImpl([witnessDoc(head, { at: secondsFromNow(10) })]), sleepImpl: noSleep,
+    });
+    assertEqual(within.problem, null, `10 s ahead paged: ${JSON.stringify(within.problem)}`);
+    const future = witnessDoc(head, { at: secondsFromNow(90) });
+    const over = await armedWitnessVerdict({ host: HOST, head, excused: false, fetchImpl: witnessFetchImpl([future, future]), sleepImpl: noSleep });
+    assertEqual(over.problem?.kind, "malformed", `90 s ahead must fail: ${JSON.stringify(over.problem)}`);
+    assert(/clock-skew/.test(over.problem.message), `a future \`at\` did not name the clock-skew bound: ${over.problem.message}`);
+  });
+
+  await test("a served.json that is missing, unreadable or the wrong schema fails the armed comparison", async () => {
+    const head = armedHead();
+    const missing = await armedWitnessVerdict({ host: HOST, head, excused: false, fetchImpl: witnessFetchImpl([404, 404]), sleepImpl: noSleep });
+    assert(missing.problem?.kind === "malformed" && /could not be read/.test(missing.problem.message), `a missing served.json passed: ${JSON.stringify(missing.problem)}`);
+    const garbage = await armedWitnessVerdict({ host: HOST, head, excused: false, fetchImpl: witnessFetchImpl(["not json", "not json"]), sleepImpl: noSleep });
+    assert(garbage.problem?.kind === "malformed" && /readable JSON/.test(garbage.problem.message), `garbage bytes passed: ${JSON.stringify(garbage.problem)}`);
+    const wrongSchema = await armedWitnessVerdict({ host: HOST, head, excused: false, fetchImpl: witnessFetchImpl([{ schema: "x" }, { schema: "x" }]), sleepImpl: noSleep });
+    assert(wrongSchema.problem?.kind === "malformed" && /schema/.test(wrongSchema.problem.message), `the wrong schema passed: ${JSON.stringify(wrongSchema.problem)}`);
+  });
+
+  await test("a missing stats member, a bad hex value, or a zone-less `at` fails the armed comparison (point 4)", async () => {
+    const head = armedHead();
+    const { stats, ...noStats } = witnessDoc(head);
+    const missingStats = await armedWitnessVerdict({ host: HOST, head, excused: false, fetchImpl: witnessFetchImpl([noStats, noStats]), sleepImpl: noSleep });
+    assert(missingStats.problem?.kind === "malformed" && /stats/.test(missingStats.problem.message), `a missing stats member passed: ${JSON.stringify(missingStats.problem)}`);
+
+    const badHex = witnessDoc(head, { index: { serial: 42, sha256: "not-64-hex" } });
+    const v2 = await armedWitnessVerdict({ host: HOST, head, excused: false, fetchImpl: witnessFetchImpl([badHex, badHex]), sleepImpl: noSleep });
+    assertEqual(v2.problem?.kind, "malformed", `a bad hex value should fail as malformed, never as a content mismatch: ${JSON.stringify(v2.problem)}`);
+
+    const zoneless = witnessDoc(head, { at: "2026-09-19T12:00:00" });
+    const v3 = await armedWitnessVerdict({ host: HOST, head, excused: false, fetchImpl: witnessFetchImpl([zoneless, zoneless]), sleepImpl: noSleep });
+    assert(v3.problem?.kind === "malformed" && /§0\.7 time/.test(v3.problem.message), `a zone-less \`at\` passed: ${JSON.stringify(v3.problem)}`);
+  });
+
+  await test("a serial that is not a non-negative integer fails as malformed, never as a content mismatch (point 5)", async () => {
+    const head = armedHead();
+    const notInteger = witnessDoc(head, { index: { serial: 42.5, sha256: sha256(head.bytes.index) } });
+    const v1 = await armedWitnessVerdict({ host: HOST, head, excused: false, fetchImpl: witnessFetchImpl([notInteger, notInteger]), sleepImpl: noSleep });
+    assertEqual(v1.problem?.kind, "malformed", `a non-integer serial should be malformed: ${JSON.stringify(v1.problem)}`);
+    const negative = witnessDoc(head, { index: { serial: -1, sha256: sha256(head.bytes.index) } });
+    const v2 = await armedWitnessVerdict({ host: HOST, head, excused: false, fetchImpl: witnessFetchImpl([negative, negative]), sleepImpl: noSleep });
+    assertEqual(v2.problem?.kind, "malformed", `a negative serial should be malformed: ${JSON.stringify(v2.problem)}`);
+  });
+
+  await test("an `at` the regex admits but names no real instant — T24:00:00Z, a rolled-over Feb 30 — fails the round trip (point 3)", async () => {
+    const head = armedHead();
+    const hour24 = witnessDoc(head, { at: "2026-01-01T24:00:00Z" });
+    const v1 = await armedWitnessVerdict({ host: HOST, head, excused: false, fetchImpl: witnessFetchImpl([hour24, hour24]), sleepImpl: noSleep });
+    assert(v1.problem?.kind === "malformed" && /real instant/.test(v1.problem.message), `T24:00:00Z passed: ${JSON.stringify(v1.problem)}`);
+    const feb30 = witnessDoc(head, { at: "2026-02-30T12:00:00Z" });
+    const v2 = await armedWitnessVerdict({ host: HOST, head, excused: false, fetchImpl: witnessFetchImpl([feb30, feb30]), sleepImpl: noSleep });
+    assert(v2.problem?.kind === "malformed" && /real instant/.test(v2.problem.message), `a rolled-over Feb 30 passed: ${JSON.stringify(v2.problem)}`);
+  });
+
+  await test("serve39Host reads an armed index.json through its already-resolved witness, not as an unreachable document", () => {
+    const head = armedHead();
+    const armedPass = serve39Host({
+      head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, { index: armedIndexGot(), witness: { problem: null, fetched: {}, rereadAttempted: false } }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(armedPass.status, "green", `an armed host whose witness checks out paged: ${codesOf(armedPass)}`);
+    assert(armedPass.notes.some((n) => n.includes("is armed")), "the armed state left no note for the operator");
+
+    const armedFail = serve39Host({
+      head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, {
+        index: armedIndexGot(),
+        witness: { problem: { kind: "malformed", message: "could not be read (no answer)" }, fetched: {}, rereadAttempted: true },
+      }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(codesOf(armedFail), "SERVE_39_HOST_WITNESS_FAILS", "a malformed witness must redden the job");
+
+    const armedNoWitness = serve39Host({
+      head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, { index: armedIndexGot() }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(codesOf(armedNoWitness), "SERVE_39_HOST_WITNESS_FAILS", "an armed index with no witness resolved at all must fail closed");
+  });
+
+  await test("a witness mismatch is a note inside signed's own grace, and a failure once that grace has passed (point 5)", () => {
+    const head = armedHead();
+    const served = servedFrom(head, {
+      index: armedIndexGot(),
+      witness: { problem: { kind: "mismatch", message: "names index.sha256 0000... not signed's" }, fetched: {}, rereadAttempted: false },
+    });
+    const within = serve39Host({ head, headClock: HEAD_CLOCK, served, now: minutesAgo(HEAD_CLOCK, 29) });
+    assertEqual(within.status, "green", `a mismatch inside grace must be a note, not a finding: ${codesOf(within)}`);
+    assert(within.notes.some((n) => n.includes("index.sha256")), "the mismatch note is missing");
+    const over = serve39Host({ head, headClock: HEAD_CLOCK, served, now: minutesAgo(HEAD_CLOCK, 31) });
+    assertEqual(codesOf(over), "SERVE_39_HOST_WITNESS_FAILS", "a mismatch must redden the job once signed's own grace has passed");
+  });
+
+  await test("a refusal that is not exactly INV-30's armed shape is a failure, as today", () => {
+    const head = armedHead();
+    const missingNoStore = serve39Host({
+      head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, { index: armedIndexGot({ cacheControl: "private, no-cache" }) }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(codesOf(missingNoStore), "SERVE_39_HOST_UNREACHABLE", "a 4xx without Cache-Control: no-store must not be read as the armed state");
+
+    const otherError = serve39Host({
+      head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, { index: armedIndexGot({ body: JSON.stringify({ ...ARMED_BODY, error: "something_else" }) }) }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(codesOf(otherError), "SERVE_39_HOST_UNREACHABLE", "a 4xx naming another error must not be read as the armed state");
+
+    const noSchema = serve39Host({
+      head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, { index: armedIndexGot({ body: JSON.stringify({ error: "unauthenticated", message: "x" }) }) }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(codesOf(noSchema), "SERVE_39_HOST_UNREACHABLE", "a refusal body with no schema member must not be read as armed (point 7)");
+
+    const cdnHit = serve39Host({
+      head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, { index: armedIndexGot({ age: "42" }) }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(codesOf(cdnHit), "SERVE_39_HOST_UNREACHABLE", "a CDN cache hit must not be read as the origin's own gate (point 7)");
+  });
+
+  await test("an RU refusal carrying Age: 5 is still armed: registry.knice.tech has no CDN to have cached it (point 4)", () => {
+    const head = armedHead();
+    const ruCdnHit = serve39Host({
+      host: RU_HOST, head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, {
+        index: armedIndexGot({ url: `https://${RU_HOST}/${SIGNED_FILES.index}`, age: "5" }),
+        witness: { problem: null, fetched: {}, rereadAttempted: false },
+      }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(ruCdnHit.status, "green", `an RU host's Age: 5 refusal was wrongly read as a CDN hit: ${codesOf(ruCdnHit)}`);
+  });
+
+  await test("trust.json, revocations.json and root.json are never gated, so a 4xx on one is still a failure (OD-6)", () => {
+    const head = armedHead();
+    for (const name of ["trust", "revocations", "root"]) {
+      const v = serve39Host({
+        head, headClock: HEAD_CLOCK,
+        served: servedFrom(head, { [name]: armedIndexGot({ url: `${HOST_BASE}${SIGNED_FILES[name]}` }) }),
+        now: minutesAgo(HEAD_CLOCK, 2),
+      });
+      assertEqual(codesOf(v), "SERVE_39_HOST_UNREACHABLE", `${name} took the armed exception OD-6 forbids it from taking`);
+    }
+  });
+
+  await test("stats/v1/stats.json: a 200 or an armed refusal is silent; a claimed-but-malformed refusal fails; everything else not serving it is only a note (point 1)", () => {
+    const head = armedHead();
+    const ok200 = serve39Host({ head, headClock: HEAD_CLOCK, served: servedFrom(head), now: minutesAgo(HEAD_CLOCK, 2) });
+    assertEqual(ok200.status, "green", `a 200 on stats.json paged: ${codesOf(ok200)}`);
+    assert(!ok200.notes.some((n) => n.includes(STATS_PATH)), "a 200 on stats.json must be silent, not even a note");
+
+    const armedStats = serve39Host({
+      head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, { stats: armedIndexGot({ url: `${HOST_BASE}${STATS_PATH}` }) }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(armedStats.status, "green", `an armed refusal on stats.json paged: ${codesOf(armedStats)}`);
+    assert(!armedStats.notes.some((n) => n.includes(STATS_PATH)), "an armed refusal on stats.json must be silent, not even a note");
+
+    // SERVE-109 allows a host with no stats document at all — a 404 (never
+    // served), a 500 (down) and a transport failure are all simply that, and
+    // none of them may fail the job; each is a note, not a finding.
+    const notServing = serve39Host({
+      head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, { stats: { ok: false, url: `${HOST_BASE}${STATS_PATH}`, status: 404, body: null, error: "HTTP 404" } }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(notServing.status, "green", `a 404 on stats.json (a host with no stats document) must not fail: ${codesOf(notServing)}`);
+    assert(notServing.notes.some((n) => n.includes(STATS_PATH)), "a host not serving stats.json at all should still leave a note");
+
+    const down500 = serve39Host({
+      head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, { stats: { ok: false, url: `${HOST_BASE}${STATS_PATH}`, status: 500, body: null, error: "HTTP 500" } }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(down500.status, "green", `a 500 on stats.json must be a note, not a failure (SERVE-109 allows a host with no stats): ${codesOf(down500)}`);
+    assert(down500.notes.some((n) => n.includes(STATS_PATH)), "a 500 on stats.json should still leave a note");
+
+    const transportFailure = serve39Host({
+      head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, { stats: { ok: false, url: `${HOST_BASE}${STATS_PATH}`, status: null, body: null, error: "getaddrinfo ENOTFOUND" } }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(transportFailure.status, "green", `a transport failure on stats.json must be a note, not a failure: ${codesOf(transportFailure)}`);
+
+    // But a 4xx body that CLAIMS unauthenticated and gets the shape wrong is
+    // a fault, not a silent absence: the gate cannot be told apart from a
+    // real refusal, so it is reported exactly as an unreadable document.
+    const noStoreMissing = serve39Host({
+      head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, { stats: armedIndexGot({ url: `${HOST_BASE}${STATS_PATH}`, cacheControl: "private, no-cache" }) }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(codesOf(noStoreMissing), "SERVE_39_HOST_UNREACHABLE", "an unauthenticated stats.json refusal missing no-store must fail, not just note");
+  });
+
+  await test("fetchHost also fetches stats/v1/stats.json, but only reads served.json when index.json shows INV-30's armed shape", async () => {
+    const seen = [];
+    const normalFetch = async (url) => { seen.push(url); return { status: 200, headers: new Map(), text: async () => "{}" }; };
+    const head = armedHead();
+    const served = await fetchHost({ host: HOST, fetchImpl: normalFetch, head, headClock: HEAD_CLOCK, now: HEAD_CLOCK });
+    assert(!seen.some((u) => u.includes(SERVED_JSON_PATH)), "an unarmed host (every index.json read a 200) must not be read for served.json");
+    assert(seen.some((u) => u.includes(STATS_PATH)), "stats/v1/stats.json must be fetched even when the host is unarmed (point 3)");
+    assertEqual(seen.length, Object.keys(SIGNED_FILES).length + 1, "an unarmed host must fetch exactly the four signed documents plus stats.json");
+    assertEqual(served.stats.ok, true, "a 200 on stats.json must read as ok");
+  });
+
+  await test("fetchHost resolves an armed host's witness itself, so served.witness is ready before serve39Host ever runs", async () => {
+    const head = armedHead();
+    const byPath = { [SERVED_JSON_PATH]: JSON.stringify(witnessDoc(head)) };
+    for (const name of ["revocations", "trust", "root"]) byPath[SIGNED_FILES[name]] = head.bytes[name];
+    const fetchImpl = async (url) => {
+      const p = new URL(url).pathname.slice(1);
+      if (p === SIGNED_FILES.index) {
+        return { status: 422, headers: new Map([["cache-control", "private, no-cache, no-store"]]), text: async () => JSON.stringify(ARMED_BODY) };
+      }
+      return { status: 200, headers: new Map(), text: async () => byPath[p] ?? "{}" };
+    };
+    const served = await fetchHost({ host: HOST, fetchImpl, head, headClock: HEAD_CLOCK, now: minutesAgo(HEAD_CLOCK, 2) });
+    assert(served.witness, "fetchHost did not resolve a witness for an armed host");
+    assertEqual(served.witness.problem, null, `a matching witness failed inside fetchHost: ${JSON.stringify(served.witness.problem)}`);
+  });
+
+  await test("fetchHost: a mismatched witness within signed's own grace is read only once (point 2)", async () => {
+    const head = armedHead();
+    const badWitness = witnessDoc(head, { index: { serial: 42, sha256: "0".repeat(64) } });
+    const witnessCalls = [];
+    const fetchImpl = async (url) => {
+      const p = new URL(url).pathname.slice(1);
+      if (p === SIGNED_FILES.index) {
+        return { status: 422, headers: new Map([["cache-control", "private, no-cache, no-store"]]), text: async () => JSON.stringify(ARMED_BODY) };
+      }
+      if (p === SERVED_JSON_PATH) {
+        witnessCalls.push(url);
+        return { status: 200, headers: new Map(), text: async () => JSON.stringify(badWitness) };
+      }
+      return { status: 200, headers: new Map(), text: async () => "{}" };
+    };
+    // `now` 2 minutes after HEAD_CLOCK is well inside SERVE-39's 30-minute
+    // grace, so this mismatch must be read as a note, once, with no reread.
+    const served = await fetchHost({ host: HOST, fetchImpl, head, headClock: HEAD_CLOCK, now: minutesAgo(HEAD_CLOCK, 2) });
+    assertEqual(served.witness.problem?.kind, "mismatch", `expected a mismatch: ${JSON.stringify(served.witness.problem)}`);
+    assertEqual(served.witness.rereadAttempted, false, "a mismatch within signed's own grace must not be re-read");
+    assertEqual(witnessCalls.length, 1, "exactly one served.json fetch");
+  });
+
+  await test("fetchHosts threads head, headClock and now to every host, and gives each its own witness — host, excused and the clock are all load-bearing (point 2)", async () => {
+    const head = armedHead();
+    const goodWitness = witnessDoc(head);
+    const badWitness = witnessDoc(head, { index: { serial: 42, sha256: "0".repeat(64) } });
+    const witnessCallsByHost = { [HOST]: [], [RU_HOST]: [] };
+    const fetchImpl = async (url) => {
+      const u = new URL(url);
+      const p = u.pathname.slice(1);
+      if (p === SIGNED_FILES.index) {
+        return { status: 422, headers: new Map([["cache-control", "private, no-cache, no-store"]]), text: async () => JSON.stringify(ARMED_BODY) };
+      }
+      if (p === SERVED_JSON_PATH) {
+        witnessCallsByHost[u.hostname]?.push(url);
+        // Each host's own witness: HOST's matches signed exactly, RU's does
+        // not — so a bug that fetches the wrong host's served.json (or none
+        // at all) shows up as the wrong host carrying the wrong verdict.
+        const doc = u.hostname === RU_HOST ? badWitness : goodWitness;
+        return { status: 200, headers: new Map(), text: async () => JSON.stringify(doc) };
+      }
+      return { status: 200, headers: new Map(), text: async () => "{}" };
+    };
+    // 2 minutes after HEAD_CLOCK is inside SERVE-39's 30-minute grace, so
+    // RU's mismatch must be read as a note, once — not reread, and not
+    // promoted to a finding — exactly like fetchHost's own grace case above.
+    const byHost = await fetchHosts({ hosts: [HOST, RU_HOST], fetchImpl, head, headClock: HEAD_CLOCK, now: minutesAgo(HEAD_CLOCK, 2) });
+    assertEqual(byHost[HOST].witness.problem, null, `${HOST}'s witness should match: ${JSON.stringify(byHost[HOST].witness.problem)}`);
+    assertEqual(byHost[RU_HOST].witness.problem?.kind, "mismatch", `${RU_HOST}'s witness should mismatch: ${JSON.stringify(byHost[RU_HOST].witness.problem)}`);
+    assert(witnessCallsByHost[RU_HOST].every((u) => new URL(u).hostname === RU_HOST), "a witness fetch meant for the RU host must go to the RU host's own URL");
+    // Each of these, on its own, would otherwise leave this test green for
+    // the wrong reason: fetchHosts dropping headClock or now (excused
+    // silently becomes false, so RU's mismatch is wrongly re-read), or
+    // fetchHost hard-coding `host: HOST` for the witness fetch (RU's own
+    // served.json is never asked for at all).
+    assertEqual(witnessCallsByHost[RU_HOST].length, 1, "a mismatch within signed's own grace must be read only once, for the RU host specifically (point 2's four mutations)");
+  });
+
+  await test("a body-read failure on a 200 propagates to the outer catch, giving ok:false, never a quiet false pass or a crash (point 2)", async () => {
+    const head = armedHead();
+    const relBy = {};
+    for (const [name, rel] of Object.entries(SIGNED_FILES)) relBy[rel] = name;
+    const throwing = async (url) => {
+      const p = new URL(url).pathname.slice(1);
+      if (p === SIGNED_FILES.index) return { status: 200, headers: new Map(), text: async () => { throw new Error("stream reset"); } };
+      return { status: 200, headers: new Map(), text: async () => (relBy[p] ? head.bytes[relBy[p]] : "{}") };
+    };
+    const served = await fetchHost({ host: HOST, fetchImpl: throwing, head, headClock: HEAD_CLOCK, now: HEAD_CLOCK });
+    assertEqual(served.index.ok, false, "a body-read failure on a 200 must not read as ok:true");
+    assertEqual(served.index.status, null, "it must reach the outer catch, which knows no HTTP status");
+
+    const within = serve39Host({ head, headClock: HEAD_CLOCK, served: servedFrom(head, { index: served.index }), now: minutesAgo(HEAD_CLOCK, 29) });
+    assertEqual(codesOf(within), "SERVE_39_HOST_UNREACHABLE", "a body-read failure inside grace must still be reported, not swallowed as a quiet note");
+    const over = serve39Host({ head, headClock: HEAD_CLOCK, served: servedFrom(head, { index: served.index }), now: minutesAgo(HEAD_CLOCK, 31) });
+    assertEqual(codesOf(over), "SERVE_39_HOST_UNREACHABLE", "a body-read failure past grace must not crash reading .length off a null body");
   });
 
   // ── DEC-18: a second catalogue host, registry.knice.tech ───────────────────
