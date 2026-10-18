@@ -4,7 +4,11 @@
 //   node tools/sign-trust.mjs --root-key ~/astra-root-ceremony-…/astra-root-2026a.private.pem \
 //     --index-key-file ~/astra-index-key-…/astra-index-2026a.pub.json \
 //     --workflow-sha 1111111111111111111111111111111111111111 \
+//     [--not-after astra-index-2026a=2027-10-18T00:00:00Z] \
 //     --out registry/v1/trust.json
+//
+// `--not-after` is repeatable and optional, and REQUIRED for a key whose
+// not_after the document at --out already carries: restate it to keep it.
 //
 //   node tools/sign-trust.mjs --verify registry/v1/trust.json
 //
@@ -189,6 +193,69 @@ function isFortyHex(s) {
   return /^[0-9a-f]{40}$/.test(s);
 }
 
+/**
+ * The `not_after` each index key carries in the document at `outPath`, by key
+ * id. Read so that re-signing cannot DROP one by omission: this tool rebuilds
+ * `signed` from flags, and before `--not-after` existed a re-sign through it
+ * (a rotation, `tools/ceremony-allowlist-workflow.sh`) wrote every key with no
+ * `not_after` at all — so the end of life a renewal ceremony gave
+ * `astra-index-2026a` (ops `runbooks/root-ceremony.sh`, contract 5.8.0) would
+ * have been erased by the next ceremony without anyone deciding it.
+ */
+function previousNotAfter(outPath) {
+  try {
+    const doc = JSON.parse(fs.readFileSync(outPath, "utf8"));
+    const out = new Map();
+    for (const k of doc?.signed?.index_keys ?? []) {
+      if (k && typeof k.key_id === "string" && k.not_after !== undefined) out.set(k.key_id, k.not_after);
+    }
+    return out;
+  } catch {
+    return new Map();
+  }
+}
+
+const TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+
+/** `YYYY-MM-DDTHH:MM:SSZ` and a real instant (no 30 February), or undefined. */
+function strictTime(s) {
+  if (!TIME_RE.test(s)) return undefined;
+  const t = new Date(s);
+  if (Number.isNaN(t.getTime()) || t.toISOString().replace(/\.\d{3}Z$/, "Z") !== s) return undefined;
+  return t;
+}
+
+/**
+ * `--not-after KEY_ID=YYYY-MM-DDTHH:MM:SSZ`, repeatable: the last instant the
+ * named delegated key may sign. Every reader judges it the same way — the
+ * daemon (`astra-daemon/src/plugins/trust/anchor.rs`, `now > not_after` puts
+ * the key out), the plugins service and the site — so a value here is a date
+ * on which every catalogue that key signed stops verifying. Refused rather
+ * than guessed at: a malformed time, a key this document does not delegate, a
+ * key named twice, and a time not after now (a key dead on arrival).
+ */
+function notAfterFlags(indexKeys, now) {
+  const delegated = new Set(indexKeys.map((k) => k.key_id));
+  const out = new Map();
+  for (const raw of args("--not-after")) {
+    const eq = raw.indexOf("=");
+    const keyId = eq > 0 ? raw.slice(0, eq) : "";
+    const value = eq > 0 ? raw.slice(eq + 1) : "";
+    if (!keyId || !value) die(`--not-after ${JSON.stringify(raw)} is not KEY_ID=YYYY-MM-DDTHH:MM:SSZ`);
+    if (!delegated.has(keyId)) {
+      die(`--not-after names ${keyId}, which this document does not delegate (it delegates ${[...delegated].join(", ")})`);
+    }
+    if (out.has(keyId)) die(`--not-after names ${keyId} twice`);
+    const t = strictTime(value);
+    if (!t) die(`--not-after ${keyId}=${JSON.stringify(value)} is not a real YYYY-MM-DDTHH:MM:SSZ instant`);
+    if (!(t > now)) {
+      die(`--not-after ${keyId}=${value} is not after now; the key would be refused by every reader on arrival`);
+    }
+    out.set(keyId, value);
+  }
+  return out;
+}
+
 /** The serial already published, so the default is "one more than that". */
 function previousSerial(outPath) {
   try {
@@ -256,6 +323,7 @@ function main() {
         "  sign-trust.mjs --root-key <root.private.pem>",
         "                 --index-key-file <index.pub.json>   (repeatable)",
         "                 --workflow-sha <40-hex>              (repeatable)",
+        "                 [--not-after <key_id>=<YYYY-MM-DDTHH:MM:SSZ>]  (repeatable)",
         "                 [--serial N] [--expires-days N] [--out <file>]",
         "  sign-trust.mjs --verify <file>",
       ].join("\n"),
@@ -315,6 +383,28 @@ function main() {
   const serial = serialArg !== undefined ? Number(serialArg) : previousSerial(outPath) + 1;
   if (!Number.isInteger(serial) || serial < 1) die("--serial must be an integer of at least 1");
 
+  const notAfter = notAfterFlags(indexKeys, now);
+  const carried = previousNotAfter(outPath);
+  for (const k of indexKeys) {
+    if (carried.has(k.key_id) && !notAfter.has(k.key_id)) {
+      die(
+        `${path.relative(REPO, outPath)} gives ${k.key_id} not_after ${carried.get(k.key_id)}, and no ` +
+          `--not-after ${k.key_id}=… was passed, so this document would drop it — an end of life ` +
+          `removed by omission. Pass --not-after ${k.key_id}=${carried.get(k.key_id)} to keep it, ` +
+          "or another value to change it.",
+      );
+    }
+  }
+  for (const [keyId, value] of notAfter) {
+    if (Date.parse(value) < expires.getTime()) {
+      console.error(
+        `sign-trust: WARNING — ${keyId} stops at ${value}, before this document expires ` +
+          `(${expires.toISOString().replace(/\.\d{3}Z$/, "Z")}). Right for the outgoing key of a ` +
+          "rotation; for any other key it is a second date on which the catalogue stops verifying.",
+      );
+    }
+  }
+
   const signed = {
     schema: TRUST_SCHEMA,
     serial,
@@ -324,11 +414,15 @@ function main() {
       key_id: k.key_id,
       public_key: k.public_key,
       not_before: now.toISOString().replace(/\.\d{3}Z$/, "Z"),
-      // No `not_after`. The document's own `expires_at` is the outer bound, and
-      // a second deadline on the key buys nothing except another date on which
-      // the catalogue can stop working for a reason nobody remembers. A
-      // rotation sets one explicitly, on the key being retired, so the two
-      // windows overlap while daemons refresh.
+      // A `not_after` only when one is asked for (--not-after), never by
+      // default. The document's own `expires_at` is the outer bound, and a
+      // deadline nobody chose is another date on which the catalogue can stop
+      // working for a reason nobody remembers. Two cases choose one: a
+      // rotation, on the key being retired, so the two windows overlap while
+      // daemons refresh; and a renewal giving a key an end of life (ROLL-45).
+      // A not_after the published document already carries is refused above
+      // unless restated, so it is never dropped by omission either.
+      ...(notAfter.has(k.key_id) ? { not_after: notAfter.get(k.key_id) } : {}),
     })),
     reusable_workflow_shas: workflowShas,
   };
@@ -361,7 +455,7 @@ function main() {
       `  signed by   ${signer.key_id} (${signer.role} root)`,
       `  serial      ${serial}`,
       `  expires     ${signed.expires_at}  — re-sign before this or the catalogue stops verifying`,
-      `  delegates   ${indexKeys.map((k) => k.key_id).join(", ")}`,
+      `  delegates   ${indexKeys.map((k) => `${k.key_id}${notAfter.has(k.key_id) ? ` (until ${notAfter.get(k.key_id)})` : ""}`).join(", ")}`,
       `  allows      ${workflowShas.length} reusable-workflow commit(s)`,
       "",
       "  Commit it, then make sure ASTRA_INDEX_SIGNING_KEY in the `publish`",

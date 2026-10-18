@@ -158,4 +158,87 @@ export async function run() {
     // halves of one key, or the catalogue is signed by a key nobody delegated to.
     assert(publicKeyBase64(privateKeyFromSeed(seed)) === pub.public_key, "seed and public key disagree");
   });
+
+  // ── --not-after (contract 5.8.0's renewal; ROLL-45) ────────────────────────
+  //
+  // The renewal gives `astra-index-2026a` a `not_after`. Every reader puts a
+  // key out at `now > not_after`, so a wrong value here is a date on which
+  // every catalogue stops verifying, and a DROPPED value is an end of life
+  // removed by a ceremony that never decided to.
+
+  const signTrust = (dir, extra) => {
+    try {
+      const stdout = execFileSync(
+        "node",
+        ["tools/sign-trust.mjs", "--root-key", TRUST_ROOT_A.file, "--index-key-file", INDEX_PUB,
+         "--workflow-sha", "1".repeat(40), "--out", path.join(dir, "registry", "v1", "trust.json"), ...extra],
+        { cwd: dir, stdio: "pipe" },
+      );
+      return { status: 0, stderr: "", stdout: String(stdout) };
+    } catch (e) {
+      return { status: e.status, stderr: String(e.stderr), stdout: String(e.stdout) };
+    }
+  };
+  const NOT_AFTER = "2099-01-02T03:04:05Z";
+
+  // Watched failing with the spread that writes the member removed: the
+  // document verified and carried no not_after.
+  await test("--not-after writes the window on the named key, and --verify shows it", () => {
+    const dir = sandboxWithRoot("trust-not-after", TRUST_ROOT_A.keyId, TRUST_ROOT_A.publicKey);
+    const r = signTrust(dir, ["--not-after", `selftest-index=${NOT_AFTER}`]);
+    assert(r.status === 0, r.stderr);
+    const out = path.join(dir, "registry", "v1", "trust.json");
+    const key = JSON.parse(fs.readFileSync(out, "utf8")).signed.index_keys[0];
+    assert(key.not_after === NOT_AFTER, `not_after ${key.not_after}`);
+    const v = String(execFileSync("node", ["tools/sign-trust.mjs", "--verify", out], { cwd: dir, stdio: "pipe" }));
+    assert(v.includes(`(until ${NOT_AFTER})`), v);
+  });
+
+  // Watched failing with each refusal in notAfterFlags commented out in turn.
+  await test("--not-after refuses a malformed time, an impossible date, an undelegated key, a key named twice, and a past instant", () => {
+    const cases = [
+      [["--not-after", "selftest-index=2099-01-02"], "not a real"],
+      [["--not-after", "selftest-index=2099-02-30T00:00:00Z"], "not a real"],
+      [["--not-after", "selftest-index=2099-01-02T03:04:05.000Z"], "not a real"],
+      [["--not-after", `somebody-else=${NOT_AFTER}`], "does not delegate"],
+      [["--not-after", `selftest-index=${NOT_AFTER}`, "--not-after", `selftest-index=${NOT_AFTER}`], "twice"],
+      [["--not-after", "selftest-index=2000-01-01T00:00:00Z"], "not after now"],
+      [["--not-after", NOT_AFTER], "is not KEY_ID="],
+    ];
+    for (const [extra, says] of cases) {
+      const dir = sandboxWithRoot(`trust-na-bad-${crypto.randomUUID()}`, TRUST_ROOT_A.keyId, TRUST_ROOT_A.publicKey);
+      const r = signTrust(dir, extra);
+      assert(r.status === 1, `${extra.join(" ")}: exit ${r.status}`);
+      assert(r.stderr.includes(says), `${extra.join(" ")}: ${r.stderr}`);
+      assert(!fs.existsSync(path.join(dir, "registry", "v1", "trust.json")), `${extra.join(" ")} wrote a document`);
+    }
+  });
+
+  // Watched failing with the `carried` loop removed: the second signing wrote a
+  // document whose key had no not_after, and exited 0.
+  await test("a not_after the published document carries is never dropped by omission", () => {
+    const dir = sandboxWithRoot("trust-na-carry", TRUST_ROOT_A.keyId, TRUST_ROOT_A.publicKey);
+    assert(signTrust(dir, ["--not-after", `selftest-index=${NOT_AFTER}`]).status === 0, "first signing");
+    const out = path.join(dir, "registry", "v1", "trust.json");
+    const before = fs.readFileSync(out, "utf8");
+    const dropped = signTrust(dir, []);
+    assert(dropped.status === 1, `exit ${dropped.status}`);
+    assert(dropped.stderr.includes(`--not-after selftest-index=${NOT_AFTER} to keep it`), dropped.stderr);
+    assert(fs.readFileSync(out, "utf8") === before, "the refused signing changed the published document");
+    const kept = signTrust(dir, ["--not-after", `selftest-index=${NOT_AFTER}`]);
+    assert(kept.status === 0, kept.stderr);
+    assert(JSON.parse(fs.readFileSync(out, "utf8")).signed.index_keys[0].not_after === NOT_AFTER, "restated value");
+  });
+
+  // Watched failing with the NOT_AFTER loop removed from the script: sign-trust
+  // refused the re-sign (the guard above), so the allowlist could not widen.
+  await test("ceremony-allowlist-workflow.sh carries a key's not_after forward while it widens the allowlist", () => {
+    const dir = sandboxWithRoot("trust-na-allowlist", TRUST_ROOT_A.keyId, TRUST_ROOT_A.publicKey);
+    fs.copyFileSync(path.join(REPO_ROOT, "tools", "ceremony-allowlist-workflow.sh"), path.join(dir, "tools", "ceremony-allowlist-workflow.sh"));
+    assert(signTrust(dir, ["--not-after", `selftest-index=${NOT_AFTER}`]).status === 0, "first signing");
+    execFileSync("bash", ["tools/ceremony-allowlist-workflow.sh", TRUST_ROOT_A.file, "2".repeat(40)], { cwd: dir, stdio: "pipe" });
+    const s = JSON.parse(fs.readFileSync(path.join(dir, "registry", "v1", "trust.json"), "utf8")).signed;
+    assert(s.index_keys[0].not_after === NOT_AFTER, `not_after ${s.index_keys[0].not_after}`);
+    assert(JSON.stringify(s.reusable_workflow_shas) === JSON.stringify(["1".repeat(40), "2".repeat(40)]), String(s.reusable_workflow_shas));
+  });
 }

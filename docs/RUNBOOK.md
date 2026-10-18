@@ -398,19 +398,31 @@ Now the record in §5.2 step 4 tells them apart, and the default — no record,
 a record naming another key, a time not yet reached, a malformed file — is the
 compromise, because that is the direction whose mistake is loud.
 
-### 5.6 Renewal, 2027 (ROLL-45)
+### 5.6 Renewal (ROLL-45), brought forward to 2026-10
 
-Today's `trust.json` expires **2027-08-19**. The owner's answer is **one
-batched ceremony**, carrying master's workflow SHA and a `not_after` for
-`astra-index-2026a`, together with his decision on the notify job:
+The owner's answer is **one batched ceremony**. On 2026-10-17 he approved the
+reusable workflow's notify job and brought the ceremony forward from 2027 to
+now (contract 5.8.0, OD-29). It is run by the operator with astra-plugins-ops
+`runbooks/root-ceremony.sh`, which builds the document from the committed one
+and changes only:
 
-- workflow frozen by **2027-04-01**;
-- rehearsed by **2027-05-01**;
-- held by **2027-06-15**;
-- published by **2027-07-20**.
+- `serial` (+1) and `issued_at`;
+- `reusable_workflow_shas`: every listed commit kept, and the commit that is
+  both master's `plugin-release.yml` and the one carrying the notify job
+  appended;
+- `expires_at`: the new expiry, a year out;
+- `astra-index-2026a`'s `not_after`: the same instant as the new `expires_at`,
+  so the key gains an end of life without gaining a second date on which the
+  catalogue can stop. `SECURITY.md` §5.1 was re-read for that value, and
+  `tools/selftest/claims.mjs` (`security/not-after-cutoff`) goes red if a
+  `not_after` with any other value appears.
 
-No notify job is planned. RC-R1-6's runway canary alerts while the expiry is
-less than 90 days away, which is the thing that will remind you.
+The script and its constants are the source of the values, not this page.
+`tools/sign-trust.mjs --verify` prints what was signed. The next renewal is due
+before the new expiry. RC-R1-6's runway canary alerts while the expiry, or a
+key's `not_after`, is less than 90 days away, and that alert is your reminder.
+Re-signing through `tools/sign-trust.mjs` (§4) has to restate the key's
+`not_after` with `--not-after`. The tool refuses to drop it by omission.
 
 ---
 

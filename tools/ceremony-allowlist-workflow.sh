@@ -85,6 +85,14 @@ for s in "${OLD[@]}"; do
 done
 ARGS+=(--workflow-sha "$NEW_SHA")
 for f in "$WORK"/*.pub.json; do ARGS+=(--index-key-file "$f"); done
+# A key's end of life is carried forward as it is: widening the allowlist is
+# not a decision about how long a key may sign. sign-trust.mjs refuses a
+# re-sign that would drop a not_after the replaced document carries.
+mapfile -t NOT_AFTER < <(node -e '
+  const t = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).signed;
+  for (const k of t.index_keys ?? []) if (k.not_after !== undefined) console.log(`${k.key_id}=${k.not_after}`);
+' "$TRUST")
+for na in "${NOT_AFTER[@]}"; do ARGS+=(--not-after "$na"); done
 
 printf '\n  keeping %d existing commit(s), adding 1, new serial %s\n\n' "${#OLD[@]}" "$SERIAL"
 

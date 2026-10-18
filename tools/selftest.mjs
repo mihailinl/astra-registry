@@ -1948,7 +1948,7 @@ const FLOORS = new Map(Object.entries({
   "served-set.mjs": 41,
   "revocations.mjs": 27,
   "cli.mjs": 14,
-  "root-delegation.mjs": 6,
+  "root-delegation.mjs": 10,
   "roots.mjs": 3,
   "trust-anchor.mjs": 4,
   "desk-moved.mjs": 5,
