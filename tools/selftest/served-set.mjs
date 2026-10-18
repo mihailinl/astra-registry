@@ -891,6 +891,12 @@ export async function run() {
     assert(!isArmedGateRefusal({ ...armed, cfCacheStatus: "HIT" }), "Cloudflare's cf-cache-status: HIT is a CDN cache hit");
     assert(!isArmedGateRefusal({ ...armed, cache: "HIT" }), "gcore's Cache: HIT is a CDN cache hit");
     assert(!isArmedGateRefusal({ ...armed, xCache: "Hit from cloudfront" }), "x-cache naming a hit is a CDN cache hit");
+    // registry.knice.tech is served direct from the RU box with no CDN in
+    // front of it (DEC-18) — an Age header there answers a different
+    // question (or none at all), and is never evidence of a stale edge copy
+    // of a gated document the way it is on the CDN-fronted primary host.
+    assert(isArmedGateRefusal({ ...armed, age: "5" }, RU_HOST), "an RU refusal carrying Age: 5 is still armed: the RU host has no CDN to have cached it (point 4)");
+    assert(isArmedGateRefusal({ ...armed, cfCacheStatus: "HIT" }, RU_HOST), "a cf-cache-status on the RU host proves nothing either: it never sits behind Cloudflare");
   });
 
   await test("fetchWitness uses redirect: manual, gives ok:false on a 302 or 404, and keeps a 200's body byte-identical", async () => {
@@ -1040,6 +1046,26 @@ export async function run() {
     assert(v3.problem?.kind === "malformed" && /§0\.7 time/.test(v3.problem.message), `a zone-less \`at\` passed: ${JSON.stringify(v3.problem)}`);
   });
 
+  await test("a serial that is not a non-negative integer fails as malformed, never as a content mismatch (point 5)", async () => {
+    const head = armedHead();
+    const notInteger = witnessDoc(head, { index: { serial: 42.5, sha256: sha256(head.bytes.index) } });
+    const v1 = await armedWitnessVerdict({ host: HOST, head, excused: false, fetchImpl: witnessFetchImpl([notInteger, notInteger]), sleepImpl: noSleep });
+    assertEqual(v1.problem?.kind, "malformed", `a non-integer serial should be malformed: ${JSON.stringify(v1.problem)}`);
+    const negative = witnessDoc(head, { index: { serial: -1, sha256: sha256(head.bytes.index) } });
+    const v2 = await armedWitnessVerdict({ host: HOST, head, excused: false, fetchImpl: witnessFetchImpl([negative, negative]), sleepImpl: noSleep });
+    assertEqual(v2.problem?.kind, "malformed", `a negative serial should be malformed: ${JSON.stringify(v2.problem)}`);
+  });
+
+  await test("an `at` the regex admits but names no real instant — T24:00:00Z, a rolled-over Feb 30 — fails the round trip (point 3)", async () => {
+    const head = armedHead();
+    const hour24 = witnessDoc(head, { at: "2026-01-01T24:00:00Z" });
+    const v1 = await armedWitnessVerdict({ host: HOST, head, excused: false, fetchImpl: witnessFetchImpl([hour24, hour24]), sleepImpl: noSleep });
+    assert(v1.problem?.kind === "malformed" && /real instant/.test(v1.problem.message), `T24:00:00Z passed: ${JSON.stringify(v1.problem)}`);
+    const feb30 = witnessDoc(head, { at: "2026-02-30T12:00:00Z" });
+    const v2 = await armedWitnessVerdict({ host: HOST, head, excused: false, fetchImpl: witnessFetchImpl([feb30, feb30]), sleepImpl: noSleep });
+    assert(v2.problem?.kind === "malformed" && /real instant/.test(v2.problem.message), `a rolled-over Feb 30 passed: ${JSON.stringify(v2.problem)}`);
+  });
+
   await test("serve39Host reads an armed index.json through its already-resolved witness, not as an unreachable document", () => {
     const head = armedHead();
     const armedPass = serve39Host({
@@ -1112,6 +1138,19 @@ export async function run() {
     assertEqual(codesOf(cdnHit), "SERVE_39_HOST_UNREACHABLE", "a CDN cache hit must not be read as the origin's own gate (point 7)");
   });
 
+  await test("an RU refusal carrying Age: 5 is still armed: registry.knice.tech has no CDN to have cached it (point 4)", () => {
+    const head = armedHead();
+    const ruCdnHit = serve39Host({
+      host: RU_HOST, head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, {
+        index: armedIndexGot({ url: `https://${RU_HOST}/${SIGNED_FILES.index}`, age: "5" }),
+        witness: { problem: null, fetched: {}, rereadAttempted: false },
+      }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(ruCdnHit.status, "green", `an RU host's Age: 5 refusal was wrongly read as a CDN hit: ${codesOf(ruCdnHit)}`);
+  });
+
   await test("trust.json, revocations.json and root.json are never gated, so a 4xx on one is still a failure (OD-6)", () => {
     const head = armedHead();
     for (const name of ["trust", "revocations", "root"]) {
@@ -1124,10 +1163,11 @@ export async function run() {
     }
   });
 
-  await test("stats/v1/stats.json: a 200 or INV-30's armed shape passes, anything else fails exactly as SERVE-39 reports an unreadable document (point 3)", () => {
+  await test("stats/v1/stats.json: a 200 or an armed refusal is silent; a claimed-but-malformed refusal fails; everything else not serving it is only a note (point 1)", () => {
     const head = armedHead();
     const ok200 = serve39Host({ head, headClock: HEAD_CLOCK, served: servedFrom(head), now: minutesAgo(HEAD_CLOCK, 2) });
     assertEqual(ok200.status, "green", `a 200 on stats.json paged: ${codesOf(ok200)}`);
+    assert(!ok200.notes.some((n) => n.includes(STATS_PATH)), "a 200 on stats.json must be silent, not even a note");
 
     const armedStats = serve39Host({
       head, headClock: HEAD_CLOCK,
@@ -1135,21 +1175,43 @@ export async function run() {
       now: minutesAgo(HEAD_CLOCK, 2),
     });
     assertEqual(armedStats.status, "green", `an armed refusal on stats.json paged: ${codesOf(armedStats)}`);
-    assert(armedStats.notes.some((n) => n.includes(STATS_PATH)), "the armed stats.json note is missing");
+    assert(!armedStats.notes.some((n) => n.includes(STATS_PATH)), "an armed refusal on stats.json must be silent, not even a note");
 
+    // SERVE-109 allows a host with no stats document at all — a 404 (never
+    // served), a 500 (down) and a transport failure are all simply that, and
+    // none of them may fail the job; each is a note, not a finding.
+    const notServing = serve39Host({
+      head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, { stats: { ok: false, url: `${HOST_BASE}${STATS_PATH}`, status: 404, body: null, error: "HTTP 404" } }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(notServing.status, "green", `a 404 on stats.json (a host with no stats document) must not fail: ${codesOf(notServing)}`);
+    assert(notServing.notes.some((n) => n.includes(STATS_PATH)), "a host not serving stats.json at all should still leave a note");
+
+    const down500 = serve39Host({
+      head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, { stats: { ok: false, url: `${HOST_BASE}${STATS_PATH}`, status: 500, body: null, error: "HTTP 500" } }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(down500.status, "green", `a 500 on stats.json must be a note, not a failure (SERVE-109 allows a host with no stats): ${codesOf(down500)}`);
+    assert(down500.notes.some((n) => n.includes(STATS_PATH)), "a 500 on stats.json should still leave a note");
+
+    const transportFailure = serve39Host({
+      head, headClock: HEAD_CLOCK,
+      served: servedFrom(head, { stats: { ok: false, url: `${HOST_BASE}${STATS_PATH}`, status: null, body: null, error: "getaddrinfo ENOTFOUND" } }),
+      now: minutesAgo(HEAD_CLOCK, 2),
+    });
+    assertEqual(transportFailure.status, "green", `a transport failure on stats.json must be a note, not a failure: ${codesOf(transportFailure)}`);
+
+    // But a 4xx body that CLAIMS unauthenticated and gets the shape wrong is
+    // a fault, not a silent absence: the gate cannot be told apart from a
+    // real refusal, so it is reported exactly as an unreadable document.
     const noStoreMissing = serve39Host({
       head, headClock: HEAD_CLOCK,
       served: servedFrom(head, { stats: armedIndexGot({ url: `${HOST_BASE}${STATS_PATH}`, cacheControl: "private, no-cache" }) }),
       now: minutesAgo(HEAD_CLOCK, 2),
     });
-    assertEqual(codesOf(noStoreMissing), "SERVE_39_HOST_UNREACHABLE", "an unauthenticated stats.json refusal missing no-store must fail");
-
-    const down = serve39Host({
-      head, headClock: HEAD_CLOCK,
-      served: servedFrom(head, { stats: { ok: false, url: `${HOST_BASE}${STATS_PATH}`, status: 500, body: null, error: "HTTP 500" } }),
-      now: minutesAgo(HEAD_CLOCK, 2),
-    });
-    assertEqual(codesOf(down), "SERVE_39_HOST_UNREACHABLE", "an unreachable stats.json must fail, just as the other documents do");
+    assertEqual(codesOf(noStoreMissing), "SERVE_39_HOST_UNREACHABLE", "an unauthenticated stats.json refusal missing no-store must fail, not just note");
   });
 
   await test("fetchHost also fetches stats/v1/stats.json, but only reads served.json when index.json shows INV-30's armed shape", async () => {
@@ -1179,22 +1241,63 @@ export async function run() {
     assertEqual(served.witness.problem, null, `a matching witness failed inside fetchHost: ${JSON.stringify(served.witness.problem)}`);
   });
 
-  await test("fetchHosts threads head, headClock and now to every host, so each host gets its own witness when armed (point 7)", async () => {
+  await test("fetchHost: a mismatched witness within signed's own grace is read only once (point 2)", async () => {
     const head = armedHead();
-    const byPath = { [SERVED_JSON_PATH]: JSON.stringify(witnessDoc(head)) };
-    for (const name of ["revocations", "trust", "root"]) byPath[SIGNED_FILES[name]] = head.bytes[name];
+    const badWitness = witnessDoc(head, { index: { serial: 42, sha256: "0".repeat(64) } });
+    const witnessCalls = [];
     const fetchImpl = async (url) => {
       const p = new URL(url).pathname.slice(1);
       if (p === SIGNED_FILES.index) {
         return { status: 422, headers: new Map([["cache-control", "private, no-cache, no-store"]]), text: async () => JSON.stringify(ARMED_BODY) };
       }
-      return { status: 200, headers: new Map(), text: async () => byPath[p] ?? "{}" };
+      if (p === SERVED_JSON_PATH) {
+        witnessCalls.push(url);
+        return { status: 200, headers: new Map(), text: async () => JSON.stringify(badWitness) };
+      }
+      return { status: 200, headers: new Map(), text: async () => "{}" };
     };
+    // `now` 2 minutes after HEAD_CLOCK is well inside SERVE-39's 30-minute
+    // grace, so this mismatch must be read as a note, once, with no reread.
+    const served = await fetchHost({ host: HOST, fetchImpl, head, headClock: HEAD_CLOCK, now: minutesAgo(HEAD_CLOCK, 2) });
+    assertEqual(served.witness.problem?.kind, "mismatch", `expected a mismatch: ${JSON.stringify(served.witness.problem)}`);
+    assertEqual(served.witness.rereadAttempted, false, "a mismatch within signed's own grace must not be re-read");
+    assertEqual(witnessCalls.length, 1, "exactly one served.json fetch");
+  });
+
+  await test("fetchHosts threads head, headClock and now to every host, and gives each its own witness — host, excused and the clock are all load-bearing (point 2)", async () => {
+    const head = armedHead();
+    const goodWitness = witnessDoc(head);
+    const badWitness = witnessDoc(head, { index: { serial: 42, sha256: "0".repeat(64) } });
+    const witnessCallsByHost = { [HOST]: [], [RU_HOST]: [] };
+    const fetchImpl = async (url) => {
+      const u = new URL(url);
+      const p = u.pathname.slice(1);
+      if (p === SIGNED_FILES.index) {
+        return { status: 422, headers: new Map([["cache-control", "private, no-cache, no-store"]]), text: async () => JSON.stringify(ARMED_BODY) };
+      }
+      if (p === SERVED_JSON_PATH) {
+        witnessCallsByHost[u.hostname]?.push(url);
+        // Each host's own witness: HOST's matches signed exactly, RU's does
+        // not — so a bug that fetches the wrong host's served.json (or none
+        // at all) shows up as the wrong host carrying the wrong verdict.
+        const doc = u.hostname === RU_HOST ? badWitness : goodWitness;
+        return { status: 200, headers: new Map(), text: async () => JSON.stringify(doc) };
+      }
+      return { status: 200, headers: new Map(), text: async () => "{}" };
+    };
+    // 2 minutes after HEAD_CLOCK is inside SERVE-39's 30-minute grace, so
+    // RU's mismatch must be read as a note, once — not reread, and not
+    // promoted to a finding — exactly like fetchHost's own grace case above.
     const byHost = await fetchHosts({ hosts: [HOST, RU_HOST], fetchImpl, head, headClock: HEAD_CLOCK, now: minutesAgo(HEAD_CLOCK, 2) });
-    for (const host of [HOST, RU_HOST]) {
-      assert(byHost[host]?.witness, `${host} did not get a witness`);
-      assertEqual(byHost[host].witness.problem, null, `${host}'s witness failed: ${JSON.stringify(byHost[host].witness.problem)}`);
-    }
+    assertEqual(byHost[HOST].witness.problem, null, `${HOST}'s witness should match: ${JSON.stringify(byHost[HOST].witness.problem)}`);
+    assertEqual(byHost[RU_HOST].witness.problem?.kind, "mismatch", `${RU_HOST}'s witness should mismatch: ${JSON.stringify(byHost[RU_HOST].witness.problem)}`);
+    assert(witnessCallsByHost[RU_HOST].every((u) => new URL(u).hostname === RU_HOST), "a witness fetch meant for the RU host must go to the RU host's own URL");
+    // Each of these, on its own, would otherwise leave this test green for
+    // the wrong reason: fetchHosts dropping headClock or now (excused
+    // silently becomes false, so RU's mismatch is wrongly re-read), or
+    // fetchHost hard-coding `host: HOST` for the witness fetch (RU's own
+    // served.json is never asked for at all).
+    assertEqual(witnessCallsByHost[RU_HOST].length, 1, "a mismatch within signed's own grace must be read only once, for the RU host specifically (point 2's four mutations)");
   });
 
   await test("a body-read failure on a 200 propagates to the outer catch, giving ok:false, never a quiet false pass or a crash (point 2)", async () => {

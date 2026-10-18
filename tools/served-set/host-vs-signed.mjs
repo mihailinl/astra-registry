@@ -180,15 +180,19 @@ function cdnCacheHit(got) {
 }
 
 /**
- * Is `got` — an already-failed read of `index.json` or `stats.json` —
- * INV-30's armed state (mirrors ops #583's `isArmedRefusal` exactly, so both
- * monitors agree)? All of these, never only the status:
+ * Is `got` — an already-failed read of `index.json` or `stats.json` on
+ * `host` — INV-30's armed state (mirrors ops #583's `isArmedRefusal`
+ * exactly, so both monitors agree)? All of these, never only the status:
  *
  *   * any 4xx (Table 5-A names 422 and 503 as today's statuses, not a closed
  *     list);
  *   * a `Cache-Control` naming `no-store`;
- *   * headers that are not a CDN's own cached copy of the refusal
- *     (`cdnCacheHit`);
+ *   * on `HOST` (`registry.minice.ai`) alone — the CDN-fronted host —
+ *     headers that are not a CDN's own cached copy of the refusal
+ *     (`cdnCacheHit`). `RU_HOST` is served direct from the RU box with no
+ *     CDN in front of it (DEC-18), so an `Age` header there answers a
+ *     different question (or none) and is never evidence of a stale edge
+ *     copy of a gated document;
  *   * a JSON body that is exactly §0.8's refusal shape: `schema`
  *     `"astra.plugins.error/1"`, `error` `"unauthenticated"`, and a string
  *     `message`.
@@ -196,12 +200,15 @@ function cdnCacheHit(got) {
  * Anything else returns `false`, so the caller's existing unreachable/
  * redirect branch reports it exactly as it always has — SERVE-39's "stays a
  * failure, as today" needs no second code path.
+ *
+ * @param {object} got
+ * @param {string} [host]
  */
-export function isArmedGateRefusal(got) {
+export function isArmedGateRefusal(got, host = HOST) {
   if (!got || got.ok) return false;
   if (!(got.status >= 400 && got.status <= 499)) return false;
   if (typeof got.cacheControl !== "string" || !got.cacheControl.toLowerCase().includes("no-store")) return false;
-  if (cdnCacheHit(got)) return false;
+  if (host === HOST && cdnCacheHit(got)) return false;
   if (!got.body) return false;
   let body;
   try {
@@ -210,6 +217,26 @@ export function isArmedGateRefusal(got) {
     return false;
   }
   return body?.schema === ERROR_SCHEMA && body?.error === "unauthenticated" && typeof body?.message === "string";
+}
+
+/**
+ * Does `got`'s body merely CLAIM `error: "unauthenticated"` on a 4xx,
+ * whether or not it is INV-30's exact armed shape? Point 1's stats.json
+ * rule needs this distinction: a host that tried to answer unauthenticated
+ * but got the shape wrong (no `no-store`, the wrong schema or message, a
+ * CDN's cached copy) is a fault worth a finding; a host that simply does
+ * not serve `stats/v1/stats.json` at all — SERVE-109 allows that — is not.
+ */
+function looksUnauthenticated(got) {
+  if (!got || got.ok) return false;
+  if (!(typeof got.status === "number" && got.status >= 400 && got.status <= 499)) return false;
+  let body;
+  try {
+    body = JSON.parse(got.body ?? "");
+  } catch {
+    return false;
+  }
+  return body?.error === "unauthenticated";
 }
 
 /**
@@ -263,6 +290,15 @@ function witnessProblem({ fetched, head }) {
   }
   if (typeof doc.at !== "string" || !WITNESS_AT_RE.test(doc.at)) {
     return { kind: "malformed", message: "`at` is missing or not a §0.7 time (Table 5-N)" };
+  }
+  // The regex alone admits calendar nonsense a Date happily normalises
+  // instead of rejecting — `T24:00:00Z`, or `02-30` rolled into March. A
+  // round trip through Date catches both: the instant it parses to must
+  // print back out, byte for byte, as the string that was sent.
+  const atMs = Date.parse(doc.at);
+  const roundTrip = Number.isFinite(atMs) ? new Date(atMs).toISOString().replace(".000Z", "Z") : null;
+  if (roundTrip !== doc.at) {
+    return { kind: "malformed", message: `names \`at\` ${JSON.stringify(doc.at)}, which is not a real instant (Table 5-N)` };
   }
   const clockProblem = witnessClockProblem(doc.at, fetched.readAt);
   if (clockProblem) return { kind: "malformed", message: clockProblem };
@@ -460,7 +496,7 @@ export async function fetchHost({ host = HOST, fetchImpl = fetch, head = null, h
       served.stats = fetchFailed(url, e);
     }
   }
-  if (head?.present && isArmedGateRefusal(served.index)) {
+  if (head?.present && isArmedGateRefusal(served.index, host)) {
     const excused = withinGrace(headClock, now, GRACE_MINUTES);
     served.witness = await armedWitnessVerdict({ host, head, excused, fetchImpl, sleepImpl });
   }
@@ -552,7 +588,7 @@ export function serve39Host({ host = HOST, head, headClock, served, now, graceMi
       continue;
     }
 
-    if (name === "index" && !got?.ok && isArmedGateRefusal(got)) {
+    if (name === "index" && !got?.ok && isArmedGateRefusal(got, host)) {
       // INV-30's armed state (since 6.0.0): a ticketless index.json refuses
       // with INV-30's shape, which is not a difference (SERVE-39) — the host
       // is compared through served.json instead (SERVE-109; Table 5-N).
@@ -612,28 +648,36 @@ export function serve39Host({ host = HOST, head, headClock, served, now, graceMi
   }
 
   // stats/v1/stats.json (point 3): fetched ticketless, never compared — it
-  // is in no `signed` commit (SERVE-39's own words) — but probed so an armed
-  // host's gate is told apart from an outage, the same shape INV-30's
-  // index.json armed state is. A 200 is fine (not yet armed, or armed only
-  // for index.json for now); INV-30's armed shape is fine; anything else —
-  // including an `unauthenticated` refusal missing `Cache-Control: no-store`
-  // — is reported exactly as SERVE-39 reports a host document it cannot read.
+  // is in no `signed` commit (SERVE-39's own words). SERVE-109 allows a host
+  // with no stats document at all, so this is deliberately not symmetric
+  // with index.json's gate:
+  //
+  //   * a 200, or INV-30's exact armed shape, is silent — both are the host
+  //     doing something SERVE-109 already accounts for;
+  //   * a 4xx whose body CLAIMS `error: "unauthenticated"` but fails
+  //     `isArmedGateRefusal` — missing `no-store`, the wrong schema or
+  //     message, or a CDN's cached copy — is a fault: a gate the registry
+  //     cannot tell apart from a real refusal is one it cannot read at all,
+  //     exactly as SERVE-39 reports a host document it cannot read;
+  //   * everything else not serving the document — a 404, a 5xx, a 3xx, a
+  //     transport failure — is simply a host with no stats document, which
+  //     SERVE-39 never required and logs as a note, not a finding.
   {
     const got = served?.stats;
-    if (got?.ok) {
-      notes.push(`${host} serves ${STATS_PATH}, never compared with \`signed\` (SERVE-39's own words)`);
-    } else if (isArmedGateRefusal(got)) {
-      notes.push(`${host} is armed for ${STATS_PATH} too (INV-30): a ticketless read answers ${got.status} unauthenticated with Cache-Control: no-store`);
-    } else {
-      const code = typeof got?.status === "number" && got.status >= 300 && got.status < 400
-        ? `SERVE_39_HOST_REDIRECT${suffix}`
-        : `SERVE_39_HOST_UNREACHABLE${suffix}`;
-      findings.push(finding(
-        code,
-        `${got?.url ?? `${host}/${STATS_PATH}`} could not be read as the document itself: ${got?.error ?? "no answer"}. ` +
-        "SERVE-39 never compares its bytes, but a host that cannot answer it, or refuses it as unauthenticated " +
-        "without Cache-Control: no-store, is not INV-30's armed state either.",
-      ));
+    if (!(got?.ok || isArmedGateRefusal(got, host))) {
+      if (looksUnauthenticated(got)) {
+        findings.push(finding(
+          `SERVE_39_HOST_UNREACHABLE${suffix}`,
+          `${got.url} answers unauthenticated on ${STATS_PATH} but not INV-30's exact armed shape (missing ` +
+          "Cache-Control: no-store, the wrong refusal body, or a CDN's own cached copy) — a gate the registry " +
+          "cannot tell apart from a real refusal is one it cannot read at all.",
+        ));
+      } else {
+        notes.push(
+          `${host}'s ${STATS_PATH} answered ${got?.error ?? `HTTP ${got?.status}`}; SERVE-109 allows a host with ` +
+          "no stats document, and SERVE-39 never compares its bytes.",
+        );
+      }
     }
   }
 
