@@ -1,0 +1,13 @@
+{
+  "actor": "bot",
+  "decided_at": "2026-10-18T18:10:27Z",
+  "decision_id": "caed61c563160cbc51eebbffbb10860b",
+  "reasons": [
+    "E_WORKFLOW_NOT_ALLOWED"
+  ],
+  "run": "39152807004/1",
+  "schema": "astra.registry.decision/1",
+  "state": "refused",
+  "submission_id": "006281d0-82d8-488e-9ef6-6c8c2d0bd66d",
+  "trigger": "poll"
+}
