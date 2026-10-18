@@ -1,6 +1,6 @@
 {
   "contract_version": "6.0.0",
-  "source_commit": "602a873de80f982c14871759ebe15a105ed7cb36",
+  "source_commit": "512882d43fe3592d450fafc8de564ecfcaac7aa5",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -3725,6 +3725,66 @@
         "service"
       ],
       "source": "CLIENT-60",
+      "requirements": [
+        "SCOPE-3",
+        "SCOPE-7",
+        "SCOPE-8"
+      ]
+    },
+    {
+      "id": "schema:astra.plugins.served/1",
+      "kind": "schema",
+      "name": "astra.plugins.served/1",
+      "state": "live",
+      "members": [
+        {
+          "name": "schema",
+          "required": true,
+          "source": "SERVE-109"
+        },
+        {
+          "name": "index",
+          "required": true,
+          "source": "SERVE-109",
+          "of": [
+            {
+              "name": "serial",
+              "required": true,
+              "source": "SERVE-109; DEC-9"
+            },
+            {
+              "name": "sha256",
+              "required": true,
+              "source": "SERVE-109; §0.7"
+            }
+          ]
+        },
+        {
+          "name": "stats",
+          "required": true,
+          "source": "SERVE-109",
+          "of": [
+            {
+              "name": "sha256",
+              "required": true,
+              "source": "SERVE-109; §0.7"
+            }
+          ]
+        },
+        {
+          "name": "at",
+          "required": true,
+          "source": "SERVE-109; §0.7"
+        }
+      ],
+      "members_recorded": true,
+      "emitter": [
+        "service"
+      ],
+      "acceptor": [
+        "registry"
+      ],
+      "source": "§5.3, Table 5-N",
       "requirements": [
         "SCOPE-3",
         "SCOPE-7",
