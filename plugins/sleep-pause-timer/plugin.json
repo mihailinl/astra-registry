@@ -1,16 +1,16 @@
 {
-  "$comment": "Derived from Voltur792/SPT@v0.4.0 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "$comment": "Derived from Voltur792/SPT@v1.2.1 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
   "schema": "astra.registry.plugin/1",
   "id": "sleep-pause-timer",
   "name": "Sleep Pause Timer",
-  "summary": "Pause timer with a Home-screen countdown widget. At zero it presses the media play/pause key (optionally activating a chosen window first), shuts the PC down, or puts it to sleep.",
+  "summary": "Independent countdowns with custom actions, music alarms, Smart Home schedules, desktop timer and alarm widgets, inactivity tracking, and optional screen comments.",
   "license": "MIT",
   "source": {
     "kind": "github",
     "repo": "Voltur792/SPT"
   },
   "added_at": "2026-09-06",
-  "description": "Pause timer with a Home-screen countdown widget. At zero it presses the media play/pause key (optionally activating a chosen window first), shuts the PC down, or puts it to sleep.",
+  "description": "Independent countdowns with custom actions, music alarms, Smart Home schedules, desktop timer and alarm widgets, inactivity tracking, and optional screen comments.",
   "author": {
     "name": "Voltur"
   },
@@ -19,7 +19,7 @@
   "i18n": {
     "ru": {
       "name": "Sleep Pause Timer",
-      "summary": "Таймер с виджетом отсчёта на главном экране. По завершении нажимает медиа-клавишу play/pause (опционально активировав выбранное окно), выключает ПК или усыпляет его."
+      "summary": "Независимые таймеры со своими действиями, музыкальные будильники, расписания умного дома, отдельные виджеты Windows, отслеживание бездействия и комментарии по экрану."
     }
   }
 }

@@ -1,0 +1,36 @@
+{
+  "$comment": "Derived from Voltur792/SPT@v1.2.1. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "sleep-pause-timer",
+  "version": "1.2.1",
+  "published_at": "2026-10-14T15:48:09Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "Voltur792/SPT",
+    "tag": "v1.2.1",
+    "commit": "1d5ad7600b76684216c318306f6b95b821c4906b"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/Voltur792/SPT/releases/download/v1.2.1/sleep-pause-timer-1.2.1-noarch.astraplugin",
+      "filename": "sleep-pause-timer-1.2.1-noarch.astraplugin",
+      "sha256": "c2781175bbbccd576f704204232d905d7e02e8a53fbffc3d828705bea4c0dec6",
+      "size": 174702
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "tools",
+    "triggers",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "fire_trigger": {
+      "reason": "Runs user-configured Astra automations when a named countdown completes"
+    },
+    "send_chat_message": {
+      "reason": "Lets Astra read a temporary screenshot of your selected monitors and speak a short activity comment at the interval you enable"
+    }
+  }
+}
