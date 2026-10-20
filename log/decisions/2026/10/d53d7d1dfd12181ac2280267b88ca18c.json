@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "linux-x64:f7f1a491ce431f13a6e0f550dd285598b377683ca279b8cd588e042675de696a",
+    "windows-x64:e9aa87078adf1c36378f8df5f7df201886990614dd1040ae35250e1c9520976c"
+  ],
+  "commit": "320f5849b873803ecbc18e2f85ea09811fa9097e",
+  "decided_at": "2026-10-20T14:15:05Z",
+  "decision_id": "d53d7d1dfd12181ac2280267b88ca18c",
+  "fingerprint": "051bc6ce9e9e6f44",
+  "plugin_id": "e2e-thirdparty",
+  "reasons": [
+    "P_PUBLISHED"
+  ],
+  "repo": "astra-test-author/astra-e2e-thirdparty",
+  "repository_id": "1421644766",
+  "repository_owner_id": "343316040",
+  "run": "39437260348/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "555dd8be-d972-4950-b6f1-18f085d8d206",
+  "tag": "v0.1.4",
+  "trigger": "poll",
+  "version": "0.1.4"
+}
