@@ -37,10 +37,7 @@
     "echo-stt": "3b3c210738bf1bb13a14a8980af69d125e7e39deedb9f356a208acd0d156d4ed",
     "minecraft-for-astra": "b16192260960a6a2d9ffa7c47f2914f6f99b70c2cdd69638c46b05b420af5ba8",
     "mock-stt": "231a99b6eec805918cea40acd53c4b97171b771aca497784803c3a2db39282e3",
-    "sleep-pause-timer": "9d43c526fd405d40bc043a08dcd151f1d936902e6c96d4b62cedd6091d2c5b0e",
-    "voice-text-input": "5235d5b95d46514662b199f37bfa2976bbda451854b652921b141fe2743604b8",
-    "web-stt": "9725e3411ca9a9041b0b12f61884673883dd73259d796cc0ac5c7b6227c7dd11",
-    "yandex-smart-home": "44ec73376dd6d1ed4d50c5a1fc89b8c45230afa339e5aea34fffa4f12373dd28"
+    "web-stt": "9725e3411ca9a9041b0b12f61884673883dd73259d796cc0ac5c7b6227c7dd11"
   },
   "max_listing_i18n_bytes": 8192,
   "max_listing_i18n_bytes_mirrored_by": "AstraPlugins/spec/listing-limits.yaml max_listing_i18n_bytes",

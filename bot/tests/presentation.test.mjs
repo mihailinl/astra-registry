@@ -23,15 +23,17 @@ import {
   MAX_README_BYTES,
   checkIcon,
   cutToBytes,
+  iconCapFor,
   iconDataUri,
   pickIcon,
   rewriteReadme,
+  sha256Hex,
 } from "../lib/assets.mjs";
 import { deriveListing } from "../lib/derive.mjs";
 import { stableStringify } from "../../tools/lib/canonical.mjs";
 import { buildIndex } from "../../tools/build-index.mjs";
-import { loadPolicy } from "../../tools/lib/sources.mjs";
-import { runValidation } from "../../tools/validate.mjs";
+import { loadPolicy, loadSources } from "../../tools/lib/sources.mjs";
+import { checkGrandfatheredIcons, runValidation } from "../../tools/validate.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -773,52 +775,97 @@ await test("a release's icon exactly at max_icon_bytes is carried", () => {
 await test("a grandfathered listing's next release meets the cap too, even with the very same icon", () => {
   // "Keeps its icon until its next release": the next release derives its icon
   // from the bundle, and the bundle's icon meets the cap whatever the list says.
-  const bytes = fs.readFileSync(path.join(REPO_ROOT, "plugins", "voice-text-input", "icon.png"));
+  // Built here rather than read off a real listing: a real grandfathered
+  // listing's icon shrinks to meet the cap the moment it releases again
+  // (exactly the scenario this test proves), so a fixture borrowed from one
+  // stops being over the cap the day that listing's own next release lands.
+  const bytes = pngOf(ICON_CAP + 1);
   assert(bytes.length > ICON_CAP, "the fixture is not over the cap");
+  const gfPolicy = {
+    ...policy,
+    limits: { ...policy.limits, max_icon_bytes_grandfathered: { "gf-fixture": sha256Hex(bytes) } },
+  };
   const derived = deriveListing({
     ...baseInput,
-    facts: { ...baseInput.facts, id: "voice-text-input" },
+    policy: gfPolicy,
+    facts: { ...baseInput.facts, id: "gf-fixture" },
     files: [{ name: "icon.png", bytes }],
-    existingPlugin: JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "plugins", "voice-text-input", "plugin.json"), "utf8")),
+    existingPlugin: { added_at: "2026-01-01" },
   });
   assertEqual(derived.plugin.icon, undefined, "the grandfathered icon was carried into a new release");
   assert(derived.findings.some((f) => f.code === "W_ICON_DROPPED"), "and the author was not told");
 });
 
-const iconErrors = async (root, name = "icon.png") =>
-  (await errorsFor(root)).filter((e) => (e.file ?? e.where ?? "").endsWith(name) || /icon/.test(e.message));
+/**
+ * `iconCapFor` and `checkIcon` directly — the two functions
+ * `tools/validate.mjs`'s own committed-icon check calls — with a POLICY the
+ * test controls. `runValidation` always reads policy/limits.json from this
+ * repository (deliberately: see its own comment on `ctx.policy`), so it
+ * cannot be handed a fixture's own grandfathered entry; calling the cap logic
+ * directly needs no change to that file at all.
+ */
+const capErrors = (limits, id, bytes) => {
+  const { maxBytes } = iconCapFor(limits, id, bytes);
+  return checkIcon({ name: "icon.png", bytes }, { maxBytes }).filter((f) => f.level === "error");
+};
 
-await test("a committed icon over max_icon_bytes is an error unless it is the grandfathered file on its own listing", async () => {
-  const theirs = fs.readFileSync(path.join(REPO_ROOT, "plugins", "voice-text-input", "icon.png"));
-  const own = await iconErrors(treeWith({ "icon.png": theirs }, { icon: "icon.png" }, { id: "voice-text-input" }));
+await test("a committed icon over max_icon_bytes is an error unless it is the grandfathered file on its own listing", () => {
+  const theirs = pngOf(ICON_CAP + 1);
+  // Same size as `theirs`, different bytes: proves the cap check is byte-for-
+  // byte, not fooled by a committed file merely being the same length.
+  const impostor = Buffer.concat([theirs.subarray(0, theirs.length - 1), Buffer.from([0x00])]);
+  const limits = { ...policy.limits, max_icon_bytes_grandfathered: { "gf-fixture": sha256Hex(theirs) } };
+
+  const own = capErrors(limits, "gf-fixture", theirs);
   assertEqual(own.length, 0, `the grandfathered icon on its own listing was refused: ${JSON.stringify(own)}`);
 
-  const moved = await iconErrors(treeWith({ "icon.png": theirs }, { icon: "icon.png" }));
+  const moved = capErrors(limits, "dice-roller", theirs);
   assert(moved.some((e) => e.message.includes(`${ICON_CAP}-byte cap`)),
     `the same bytes under another listing were allowed: ${JSON.stringify(moved)}`);
 
-  const replaced = await iconErrors(treeWith({ "icon.png": pngOf(ICON_CAP + 1) }, { icon: "icon.png" }, { id: "voice-text-input" }));
+  const replaced = capErrors(limits, "gf-fixture", impostor);
   assert(replaced.some((e) => e.message.includes(`${ICON_CAP}-byte cap`)),
     `a new oversized icon on a grandfathered listing was allowed: ${JSON.stringify(replaced)}`);
 
-  const small = await iconErrors(treeWith({ "icon.png": pngOf(ICON_CAP) }, { icon: "icon.png" }));
+  const small = capErrors(limits, "dice-roller", pngOf(ICON_CAP));
   assertEqual(small.length, 0, `an icon at the cap was refused: ${JSON.stringify(small)}`);
 });
 
-await test("the grandfathered icons are named on every run, and an entry that stopped matching is named as stale", async () => {
-  const notesFor = async (root) => {
-    const { report } = await runValidation({
-      root, allowStaging: true, allowDirect: false, online: false, artifactsDir: null, index: false,
-    });
+/** A minimal stand-in for `tools/validate.mjs`'s own `Report`, so this suite need not import it. */
+function fakeReport() {
+  const items = [];
+  return {
+    items,
+    note: (where, message, hint) => items.push({ level: "note", where, message, hint }),
+    error: (where, message, hint) => items.push({ level: "error", where, message, hint }),
+  };
+}
+
+await test("the grandfathered icons are named on every run, and an entry that stopped matching is named as stale", () => {
+  // `checkGrandfatheredIcons` directly, for the reason the previous test calls
+  // `iconCapFor`/`checkIcon` directly: `runValidation` always reads this
+  // repository's own policy/limits.json, so a listing that stopped matching
+  // its real entry (the exact failure this test exists to catch) would need a
+  // fixture whose staleness was true today and false the next time any
+  // grandfathered listing releases.
+  const theirs = pngOf(ICON_CAP + 1);
+  const gfPolicy = {
+    ...policy,
+    limits: { ...policy.limits, max_icon_bytes_grandfathered: { "gf-fixture": sha256Hex(theirs) } },
+  };
+  const notesFor = (root) => {
+    const { plugins } = loadSources(root);
+    const report = fakeReport();
+    checkGrandfatheredIcons({ report, root, policy: gfPolicy }, plugins);
     return report.items.filter((i) => i.level === "note").map((i) => `${i.where ?? ""} ${i.message}`);
   };
-  const theirs = fs.readFileSync(path.join(REPO_ROOT, "plugins", "voice-text-input", "icon.png"));
-  const carried = await notesFor(treeWith({ "icon.png": theirs }, { icon: "icon.png" }, { id: "voice-text-input" }));
-  assert(carried.some((n) => n.includes("voice-text-input") && n.includes(String(theirs.length)) && /next release/.test(n)),
+
+  const carried = notesFor(treeWith({ "icon.png": theirs }, { icon: "icon.png" }, { id: "gf-fixture" }));
+  assert(carried.some((n) => n.includes("gf-fixture") && n.includes(String(theirs.length)) && /next release/.test(n)),
     `the grandfathered icon was not named: ${JSON.stringify(carried)}`);
 
-  const released = await notesFor(treeWith({ "icon.png": pngOf(2000) }, { icon: "icon.png" }, { id: "voice-text-input" }));
-  assert(released.some((n) => n.includes("voice-text-input") && /stale/.test(n)),
+  const released = notesFor(treeWith({ "icon.png": pngOf(2000) }, { icon: "icon.png" }, { id: "gf-fixture" }));
+  assert(released.some((n) => n.includes("gf-fixture") && /stale/.test(n)),
     `an entry whose listing no longer carries that file was not named as stale: ${JSON.stringify(released)}`);
 });
 
