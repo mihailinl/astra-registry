@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:47d5a1e7b76e4650a4fc33bcef37d6b73f493782199d3422c9703b753a292e96"
+  ],
+  "commit": "a836ee313960626b62772085c6be662efde39e42",
+  "decided_at": "2026-10-21T09:52:33Z",
+  "decision_id": "b3e8dcebe0ec72a363c9b9279a875740",
+  "fingerprint": "b80d83b06e4471f4",
+  "plugin_id": "yandex-smart-home",
+  "reasons": [
+    "P_PUBLISHED",
+    "P_REVIEW_PRIORITY"
+  ],
+  "repo": "Voltur792/Y-home-f-astra",
+  "repository_id": "1364261342",
+  "repository_owner_id": "232130437",
+  "run": "39580089615/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "770ed8bb-4c8c-4cd5-b1fb-b49d36cc31e4",
+  "tag": "v0.6.0",
+  "trigger": "poll",
+  "version": "0.6.0"
+}
