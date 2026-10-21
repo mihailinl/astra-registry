@@ -1,0 +1,24 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:9b093606f62bc8adfc6d42d318840842c5de77b84ffe20d79dab9bee9da5054b"
+  ],
+  "commit": "cc06ddd9f3c58529dbc7abcda1723e4161b54ddb",
+  "decided_at": "2026-10-21T10:29:52Z",
+  "decision_id": "22db55d3cf01ad209b9437120e891758",
+  "fingerprint": "14047d35a467a860",
+  "plugin_id": "voice-text-input",
+  "reasons": [
+    "R_FIRST_BINDING"
+  ],
+  "repo": "Voltur792/voice-text-input",
+  "repository_id": "1366640941",
+  "repository_owner_id": "232130437",
+  "run": "39584806735/1",
+  "schema": "astra.registry.decision/1",
+  "state": "held",
+  "submission_id": "86a79845-bf88-4106-8234-0e916b679059",
+  "tag": "v1.2.1",
+  "trigger": "panel",
+  "version": "1.2.1"
+}
