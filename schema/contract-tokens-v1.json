@@ -1,6 +1,6 @@
 {
-  "contract_version": "6.1.0",
-  "source_commit": "fee0e32f6b6f372a2d4c4cbc84b56fcbf9b2c24e",
+  "contract_version": "6.2.0",
+  "source_commit": "161b23f8e878d3d33ffde142c81b2ff0f16d8b4b",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -5625,6 +5625,11 @@
         },
         {
           "name": "accepts.rating_issuers",
+          "required": true,
+          "source": "MOD-54"
+        },
+        {
+          "name": "accepts.install_event_issuers",
           "required": true,
           "source": "MOD-54"
         }
