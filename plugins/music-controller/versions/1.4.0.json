@@ -1,0 +1,43 @@
+{
+  "$comment": "Derived from Voltur792/astra-music@v1.4.0. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "music-controller",
+  "version": "1.4.0",
+  "published_at": "2026-10-21T09:41:38Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "Voltur792/astra-music",
+    "tag": "v1.4.0",
+    "commit": "e92e62ce06269ef8daab6d5cffcc96e401a5ce5c"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/Voltur792/astra-music/releases/download/v1.4.0/music-controller-1.4.0-noarch.astraplugin",
+      "filename": "music-controller-1.4.0-noarch.astraplugin",
+      "sha256": "7f7049b7b30d1574eaf2f709675fa7f7ecdf0873c93054d2ecac3e092e304533",
+      "size": 420128
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "actions",
+    "event_handlers",
+    "tools",
+    "ui_contributions"
+  ],
+  "permissions": {
+    "send_chat_message": {
+      "reason": "Optional radio presenter: announces songs using Astra's configured personality, model and voice only when enabled by the user"
+    },
+    "subscribe_events": {
+      "reason": "Temporarily lower the music player's volume while Astra listens or speaks, including optional radio announcements, then restore it",
+      "types": [
+        "state_changed",
+        "tts_started",
+        "tts_completed",
+        "tts_interrupted"
+      ]
+    }
+  }
+}

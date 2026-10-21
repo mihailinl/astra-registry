@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:7f7049b7b30d1574eaf2f709675fa7f7ecdf0873c93054d2ecac3e092e304533"
+  ],
+  "commit": "e92e62ce06269ef8daab6d5cffcc96e401a5ce5c",
+  "decided_at": "2026-10-21T09:47:45Z",
+  "decision_id": "79d884e7f5bfe257b8e8caeec1ddedf7",
+  "fingerprint": "77a73e931c7369e8",
+  "plugin_id": "music-controller",
+  "reasons": [
+    "P_PUBLISHED",
+    "P_REVIEW_PRIORITY"
+  ],
+  "repo": "Voltur792/astra-music",
+  "repository_id": "1394395108",
+  "repository_owner_id": "232130437",
+  "run": "39579454479/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "326d4f44-c69b-4930-929a-91c9e7d6b0a5",
+  "tag": "v1.4.0",
+  "trigger": "poll",
+  "version": "1.4.0"
+}
