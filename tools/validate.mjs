@@ -69,7 +69,7 @@ import {
 import { SOURCE_DIR as MODERATION_DIR, loadEntries as loadModerationEntries } from "../bot/lib/moderation.mjs";
 import { fixedReason } from "../bot/lib/compile-decision.mjs";
 import {
-  ALLOWED_IMAGE_HOSTS, ICON_NAMES, MAX_README_BYTES, checkIcon, grandfatheredIcons, iconCapFor, sha256Hex,
+  ALLOWED_IMAGE_HOSTS, ICON_NAMES, MAX_README_BYTES, checkIcon, grandfatheredIcons, iconCapFor, rawHtmlOutsideCode, sha256Hex,
 } from "../bot/lib/assets.mjs";
 import {
   CUTOVER_FILE,
@@ -381,8 +381,12 @@ function checkPresentationFiles(plugin, ctx) {
     // rather than by re-deriving: this file may have been hand-edited since the
     // bot wrote it, and what matters is what it says NOW.
     const prose = stripFences(text);
-    if (/<\/?[a-zA-Z][^>]*>/.test(prose)) {
-      report.error(`plugins/${plugin.dir}/${readme}`, "contains raw HTML outside a code fence",
+    // One rule with the bot's stripper (bot/lib/assets.mjs `rawHtmlOutsideCode`): inline code is
+    // code too, so `<version>` in backticks is text. A pattern of this file's own once refused the
+    // bot's own correct output (E_DERIVED_LISTING_INVALID, 2026-10-24).
+    const tags = rawHtmlOutsideCode(text);
+    if (tags.length > 0) {
+      report.error(`plugins/${plugin.dir}/${readme}`, `contains raw HTML outside code (${tags.slice(0, 3).join(" ")})`,
         "Astra renders this with raw HTML disabled, so the tags would silently vanish. Remove them.");
     }
     for (const m of prose.matchAll(/!\[[^\]]*\]\(\s*<?([^\s)>]+)>?[^)]*\)/g)) {
