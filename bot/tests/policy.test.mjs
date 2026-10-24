@@ -2402,6 +2402,34 @@ await test("FLOW-67 — a threadless submission no listing names writes nothing,
   }
 });
 
+// T2 (the 2026-10-24 incident): an author who re-read this message had
+// nothing to act on and no way to tell the registry's own commit from
+// theirs. `message` must name the one action, never cite `readCommit` (this
+// registry's own HEAD), and `why` stays the operator-only diagnostic that
+// still does.
+await test("FLOW-67 — the author-facing message names the AUTHOR's commit, never this registry's readCommit, and says the one action", () => {
+  const readCommit = "f".repeat(40);
+  const authorCommit = "a".repeat(40);
+  const withAuthor = noListingNoBinding({
+    source: "panel", listingNamesRepo: false, binding: { present: false }, readCommit, repo: "stranger/thing", authorCommit,
+  });
+  assertEqual(
+    withAuthor.record.message,
+    "This repository has no listing yet, and the binding line in the tagged commit (aaaaaaaaaaaa) cannot be used. " +
+    "Commit a current binding line, cut a new tag from that commit, and submit the new tag.",
+  );
+  assert(!withAuthor.record.message.includes(readCommit.slice(0, 12)), "the author-facing message named this registry's own read commit");
+  assert(/\bnew tag\b/.test(withAuthor.record.message) && /\bCommit\b/.test(withAuthor.record.message), "no concrete action");
+  assert(withAuthor.record.why.includes(readCommit), "the operator diagnostic (`why`) stopped carrying the read commit");
+  // Omitted when unknown, rather than printing `null` or the empty string at a reader.
+  const noAuthor = noListingNoBinding({ source: "panel", listingNamesRepo: false, binding: { present: false }, readCommit, repo: "stranger/thing" });
+  assertEqual(
+    noAuthor.record.message,
+    "This repository has no listing yet, and the binding line in the tagged commit cannot be used. " +
+    "Commit a current binding line, cut a new tag from that commit, and submit the new tag.",
+  );
+});
+
 await test("FLOW-65 — a new id from a listed monorepo meets the first-listing rules", () => {
   // The rule is a property of how `existing` is looked up: by plugin ID, never
   // by repository. Keyed on the repository, a monorepo's second plugin would

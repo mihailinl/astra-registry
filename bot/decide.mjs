@@ -192,15 +192,27 @@ export function alreadyPublished({ listed, digests }) {
  * legacy `issue` and `ping` paths have a thread to answer on, so a refusal
  * there is a sentence somebody reads.
  *
+ * **`why` and `message` are two different readers.** `why` is this run's own
+ * diagnostic — it names `readCommit`, which is THIS REGISTRY's own commit, the
+ * one the absence was read at (FLOW-78), and it is written to the decide job's
+ * `plan.json` for an operator, never posted. `message` is what reaches the
+ * author through `reasonOf`'s `message` and the notice: on 2026-10-24 an
+ * author read `why`'s sentence there instead, three times over eight days,
+ * because it cites `readCommit` where a stranger reads it as a claim about
+ * their own commit, and it names no action. `message` instead names the
+ * AUTHOR's own tagged commit (`authorCommit`, omitted where unknown) and says
+ * the one thing that clears this.
+ *
  * @param {{source: string|null, listingNamesRepo: boolean, binding: {present: boolean, code?: string|null}|null,
- *   readCommit: string|null, repo: string}} opts
+ *   readCommit: string|null, repo: string, authorCommit?: string|null}} opts
  */
-export function noListingNoBinding({ source, listingNamesRepo, binding, readCommit, repo }) {
+export function noListingNoBinding({ source, listingNamesRepo, binding, readCommit, repo, authorCommit = null }) {
   const THREADLESS = new Set(["panel", "ci"]);
   if (!THREADLESS.has(String(source))) return null;
   if (listingNamesRepo) return null;
   const unusable = !binding?.present || binding?.code === "B_BINDING_UNUSABLE";
   if (!unusable) return null;
+  const commitClause = authorCommit ? ` (${String(authorCommit).slice(0, 12)})` : "";
   return {
     reported: "refused",
     read_commit: readCommit ?? null,
@@ -210,6 +222,10 @@ export function noListingNoBinding({ source, listingNamesRepo, binding, readComm
         `FLOW-67: no listing names ${repo} at ${readCommit ?? "the read commit"} and its binding line is ` +
         `${binding?.present ? binding.code : "absent"}. A ${source} submission has no thread to answer on, so a ` +
         "recorded refusal would be a durable statement about a stranger's repository made on one unsolicited call",
+      message:
+        "This repository has no listing yet, and the binding line in the tagged commit" +
+        `${commitClause} cannot be used. Commit a current binding line, cut a new tag from that commit, and ` +
+        "submit the new tag.",
     },
   };
 }
