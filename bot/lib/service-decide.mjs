@@ -1059,13 +1059,21 @@ export function decideSubmission(input) {
       : { present: false, code: null },
     readCommit: input.readCommit ?? null,
     repo: verified.repo,
+    // T2 (2026-10-24 incident): the author's OWN tagged commit, never this
+    // registry's `readCommit`, so the message below cannot read to a
+    // stranger as a claim about their repository made from a commit of ours.
+    authorCommit: verified.commit ?? null,
   });
   if (flow67) {
     return plan("norecord", {
       state: flow67.reported,
       read_commit: flow67.read_commit,
-      // FLOW-78: the result that names no record carries a `B_*` reason.
-      reasons: [reasonOf(binding.outcome === "none" ? "B_UNBOUND" : "B_BINDING_UNUSABLE", { message: flow67.record.why })],
+      // FLOW-78: the result that names no record carries a `B_*` reason. The
+      // author-facing text is `record.message` (plain words, the author's own
+      // commit); `record.why` stays this run's own diagnostic, carried only
+      // in `why` below for the decide job's `plan.json` (an operator record,
+      // never posted).
+      reasons: [reasonOf(binding.outcome === "none" ? "B_UNBOUND" : "B_BINDING_UNUSABLE", { message: flow67.record.message })],
       derived: derivedFacts,
       why: flow67.record.why,
     });

@@ -8,7 +8,7 @@
       "code": "B_UNBOUND",
       "stage": "ownership",
       "location": null,
-      "message": "FLOW-67: no listing names a-stranger/dice-roller at ffffffffffffffffffffffffffffffffffffffff and its binding line is absent. A panel submission has no thread to answer on, so a recorded refusal would be a durable statement about a stranger's repository made on one unsolicited call"
+      "message": "This repository has no listing yet, and the binding line in the tagged commit (aaaaaaaaaaaa) cannot be used. Commit a current binding line, cut a new tag from that commit, and submit the new tag."
     }
   ],
   "read_commit": "ffffffffffffffffffffffffffffffffffffffff",
