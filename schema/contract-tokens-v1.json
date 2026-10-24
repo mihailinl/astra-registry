@@ -1,6 +1,6 @@
 {
-  "contract_version": "6.4.0",
-  "source_commit": "4804ec04d8adb42d47b9d2f1c8072107ec346408",
+  "contract_version": "6.4.1",
+  "source_commit": "2d09c510199a1cb5c0311fccf385cdfc53e16f00",
   "source_file": "astra-plugins-ops dev/server-registry-contract.md",
   "generated_by": "astra-plugins-ops tools/contract-tokens.mjs (registry plan RC-R2-1)",
   "readme": [
@@ -5794,8 +5794,8 @@
       "stage": "policy",
       "fix": "none",
       "panel_only": false,
-      "title": "Binding revoked by its bound account",
-      "remedy": "The listing's bound account revoked its binding token from the Astra plugins panel (ID-17). Nothing needs clearing. From the next verdict a release still carrying the old line is refused `B_BINDING_UNUSABLE`, and one carrying a fresh token's line is held for a moderator as a changed binding (`R_BINDING_CHANGED`)."
+      "title": "The binding token for this repository was revoked",
+      "remedy": "The account bound to this listing revoked its binding token from the Astra plugins panel. There is nothing to fix and nothing to clear. The next release: if it still carries the old token's line, it is refused as an unusable binding; if it carries a fresh token's line, it is held for a moderator as a changed binding."
     },
     {
       "code": "A_REMOVAL_REQUEST",
@@ -5803,8 +5803,8 @@
       "stage": "policy",
       "fix": "none",
       "panel_only": false,
-      "title": "Removal requested by its author",
-      "remedy": "The listing's author asked from the Astra plugins panel for it to be removed (FLOW-28). From the bound account it is delisted at once: it leaves the catalogue and gets no updates, and installed copies are not removed. For a listing with no bound account the request is held, and a moderator decides it (MOD-9). Only a moderator lists a plugin again; to ask for that, send a report from the panel's report page."
+      "title": "Removal requested by this listing's author",
+      "remedy": "The author asked, from the Astra plugins panel, for this listing to be removed. If the request came from the account bound to the listing, it is delisted immediately: it leaves the catalogue and stops getting updates, though copies already installed keep running. If the listing has no bound account, the request is held for a moderator to decide. Only a moderator can list a plugin again — to ask for that, send a report from the panel's report page (https://astra.minice.ai/plugins/_/report)."
     },
     {
       "code": "A_STOP",
@@ -5812,8 +5812,8 @@
       "stage": "policy",
       "fix": "new_tag",
       "panel_only": false,
-      "title": "Stopped by its author",
-      "remedy": "A stop was confirmed from this submission's notice link (TRUST-34), so none of its fingerprints publishes. A stop cannot be lifted, and this tag cannot be submitted again (FLOW-26): publish the release under a new tag."
+      "title": "This release was stopped by its author",
+      "remedy": "You confirmed a stop from this submission's notice link, so none of these bytes will be published. A stop cannot be undone, and this exact tag cannot be submitted again: to publish, cut a new tag and submit that one instead."
     },
     {
       "code": "A_WITHDRAW",
@@ -5821,8 +5821,8 @@
       "stage": "policy",
       "fix": "new_tag",
       "panel_only": false,
-      "title": "Withdrawn before it was checked",
-      "remedy": "The submission was withdrawn while it was `received` (FLOW-22), so nothing was checked or published. This tag cannot be submitted again (FLOW-26): publish the release under a new tag."
+      "title": "This submission was withdrawn before it was checked",
+      "remedy": "The submission was withdrawn while it was still waiting to be checked, so nothing was checked and nothing was published. This exact tag cannot be submitted again: cut a new tag and submit that one instead."
     },
     {
       "code": "A_YANK",
@@ -5830,8 +5830,8 @@
       "stage": "policy",
       "fix": "none",
       "panel_only": false,
-      "title": "Yanked at its author's own request",
-      "remedy": "The listing's bound account yanked these versions from the Astra plugins panel (FLOW-79). A yank cannot be undone by anyone, and installed copies keep running. A new version is listed as usual."
+      "title": "These versions were yanked at the author's own request",
+      "remedy": "The account bound to this listing yanked these versions from the Astra plugins panel. A yank cannot be undone by anyone — not even a moderator — though copies already installed keep running. A new version is listed the normal way, with no extra step because of this."
     },
     {
       "code": "B_ACCOUNT_INELIGIBLE",
@@ -5840,7 +5840,7 @@
       "fix": "recheck",
       "panel_only": true,
       "title": "The account holding the binding token is not eligible to bind",
-      "remedy": "Shown only to the token's owner and to moderators; everyone else sees `B_BINDING_UNUSABLE` (ID-9). The token is sound and the Minice account that holds it is not eligible (DEC-11). The account's own eligibility clears it: once the account is eligible again, a Recheck of the same tag reads it afresh."
+      "remedy": "Shown only to the token's owner and to moderators; everyone else sees a generic refusal that names neither the token nor the account. The token itself is fine; the Minice account that holds it is not currently eligible to publish. Once that account is eligible again, comment `/recheck` on this same submission — nothing needs to be rebuilt or retagged, because the token and the release were never the problem."
     },
     {
       "code": "B_BINDING_INVALID",
@@ -5849,7 +5849,7 @@
       "fix": "new_tag",
       "panel_only": true,
       "title": "The binding token cannot be used for this repository",
-      "remedy": "Shown only to the token's owner and to moderators; everyone else sees `B_BINDING_UNUSABLE` (ID-9). The token on the tagged commit is unknown, revoked, expired or superseded, or was minted for another repository. Mint a fresh token for this repository in the Astra plugins panel, commit its line and push a new tag: the line is read at the attested commit (ID-22), so this tag cannot change."
+      "remedy": "Shown only to the token's owner and to moderators; everyone else sees a generic refusal that names neither the token nor the account. The token on the tagged commit is unknown, revoked, expired or superseded, or was minted for another repository. Sign in at https://astra.minice.ai/plugins, mint a fresh token for this repository, commit `astra-binding: <token>` into `.well-known/astra-plugin-owner`, and cut a new tag from that commit — the line is read from the tagged commit, so re-submitting the old tag reads the same unusable token."
     },
     {
       "code": "B_BINDING_MALFORMED",
@@ -5857,8 +5857,8 @@
       "stage": "ownership",
       "fix": "new_tag",
       "panel_only": false,
-      "title": "The binding file is not one well-formed binding line",
-      "remedy": "`.well-known/astra-plugin-owner` must hold exactly one `astra-binding: <token>` line (ID-24). Fix the file and push a new tag: the line is read at the attested commit."
+      "title": "`.well-known/astra-plugin-owner` is not one well-formed binding line",
+      "remedy": "This file must hold exactly one line reading `astra-binding: <token>`, with the token the Astra plugins panel gave you when you minted it at https://astra.minice.ai/plugins. Fix the file so it holds exactly that one line, commit it, and cut a new tag from that commit — the line is read from the tagged commit, so re-submitting the same tag reads the same broken file."
     },
     {
       "code": "B_BINDING_UNUSABLE",
@@ -5866,8 +5866,8 @@
       "stage": "ownership",
       "fix": "new_tag",
       "panel_only": false,
-      "title": "The binding token on the tagged commit cannot bind this release",
-      "remedy": "The token in `.well-known/astra-plugin-owner` at the tagged commit cannot bind this repository (ID-9); the Astra plugins panel tells the token's owner why. Mint a fresh token there if you need one, commit its line and push a new tag."
+      "title": "The binding line in the tagged commit cannot be used",
+      "remedy": "Either the token in the tagged commit cannot be used, or the account cannot publish — the Astra plugins panel tells the token's owner which, and tells nobody else. Sign in at https://astra.minice.ai/plugins, mint a fresh binding token, commit the line `astra-binding: <token>` into `.well-known/astra-plugin-owner`, and cut a new tag from that commit: the line is read from the tagged commit, so re-submitting this same tag reads the same line and fails the same way."
     },
     {
       "code": "B_OWNER_CHANGED",
@@ -5875,8 +5875,8 @@
       "stage": "ownership",
       "fix": "moderator",
       "panel_only": false,
-      "title": "The repository's owner changed since it was bound",
-      "remedy": "The owner the build attestation names differs from the one this listing's identity record carries (ID-41). A moderator decides what happens next; a new tag or a Recheck does not clear it."
+      "title": "This repository's owner changed since it was bound to this listing",
+      "remedy": "The owner GitHub's build attestation names for this release is not the owner this listing is recorded under. A moderator has to decide what happens next — cutting a new tag or commenting `/recheck` will not clear this on its own. You will hear from a moderator through the Astra plugins panel."
     },
     {
       "code": "B_REPOSITORY_RECYCLED",
@@ -5884,8 +5884,8 @@
       "stage": "ownership",
       "fix": "moderator",
       "panel_only": false,
-      "title": "The repository was re-created under this name by another owner",
-      "remedy": "This refusal is permanent for the repository's recorded identity (ID-41): no Recheck, new tag or approval clears it. Only a moderator's identity reset (`M_IDENTITY_RESET`) does, after which the next release is reviewed as a first binding."
+      "title": "This repository was deleted and re-created under the same name by a different owner",
+      "remedy": "This refusal stands for as long as this listing's recorded identity does: no Recheck, new tag or approval clears it. Only a moderator can clear it, by resetting the listing's identity — after that, your next release is reviewed as if it were a first-time listing."
     },
     {
       "code": "B_UNBOUND",
@@ -5893,8 +5893,8 @@
       "stage": "ownership",
       "fix": "new_tag",
       "panel_only": false,
-      "title": "No binding line where the registry needs one",
-      "remedy": "From cutover, a first listing and a frozen listing's next release need an `astra-binding:` line in `.well-known/astra-plugin-owner` at the tagged commit (ID-25). Mint a token in the Astra plugins panel, commit its line and push a new tag: the line is read at the attested commit, so this tag cannot change."
+      "title": "No binding line where this listing needs one",
+      "remedy": "A first-time listing, and the next release of a listing that has none yet, needs an `astra-binding:` line in `.well-known/astra-plugin-owner`, committed on the commit you tag. Sign in at https://astra.minice.ai/plugins, mint a binding token for this repository, commit the line `astra-binding: <token>` into that file, and cut a new tag from that commit — the line is read from the tagged commit, so re-submitting this same tag will not pick it up."
     },
     {
       "code": "E_ARTIFACT_TOO_LARGE",
@@ -6092,7 +6092,7 @@
       "fix": "registry",
       "panel_only": false,
       "title": "The listing the bot derived does not pass this repository's own validator",
-      "remedy": "A bug in this registry, not in your plugin. Please leave the issue open."
+      "remedy": "A bug in this registry, not in your plugin. There is nothing further for you to do here. If you reported this on an issue, leave it open."
     },
     {
       "code": "E_DIGEST_MISMATCH",
@@ -6559,8 +6559,8 @@
       "stage": "bundle",
       "fix": "new_tag",
       "panel_only": false,
-      "title": "`permissions_hash` does not cover the declared permissions",
-      "remedy": "Rebuild with `astra-plugin build`, which derives the hash from the permissions and cannot emit a mismatch. Astra refuses to install this bundle (§5.3-D, block code PERMISSIONS_HASH_MISMATCH), so listing it would advertise a version nobody can have. The hash is what the consent sheet renders against and what the update gate compares: when it does not cover the permission map, a user can approve one list while the daemon enforces another."
+      "title": "The bundle's permissions hash does not match its permissions list",
+      "remedy": "Rebuild with `astra-plugin build`, which computes this hash for you and cannot produce a mismatch — a hand-edited bundle can. Astra itself refuses to install a bundle where the hash and the permissions disagree, so publishing this would list a version nobody could actually run. The hash is what a user's consent screen is checked against and what the update gate compares, so a mismatch means a user could approve one set of permissions while the daemon enforces another. Rebuild, then cut a new tag — the hash is read from the tagged commit's bytes, so re-submitting this same tag reads the same mismatch."
     },
     {
       "code": "E_PLATFORM_UNSUPPORTED",
@@ -6587,7 +6587,7 @@
       "fix": "registry",
       "panel_only": false,
       "title": "The manifest probe rejected the bot's own request",
-      "remedy": "A bug in this registry, not in your plugin. Please leave the issue open."
+      "remedy": "A bug in this registry, not in your plugin. There is nothing further for you to do here. If you reported this on an issue, leave it open."
     },
     {
       "code": "E_PROBE_UNAVAILABLE",
@@ -6685,8 +6685,8 @@
       "stage": "policy",
       "fix": "none",
       "panel_only": false,
-      "title": "An appeal was decided",
-      "remedy": "The outcome, `stands` or `reversed`, is recorded with the moderator's public reason and never the appeal's own text (MOD-32; MOD-33). A `reversed` appeal becomes a new decision; the one appealed stays in the log."
+      "title": "An appeal of an earlier decision was decided",
+      "remedy": "The outcome — upheld or reversed — is recorded with the moderator's public reason, never with the text of the appeal itself. If the appeal was reversed, that becomes a new decision; the original decision stays on the record as it was."
     },
     {
       "code": "M_APPROVE",
@@ -6695,7 +6695,7 @@
       "fix": "none",
       "panel_only": false,
       "title": "A moderator approved this submission",
-      "remedy": "Nothing to do. An approval clears holds and nothing else: every check runs again in the run that acts on it, and it never shortens a publication delay, a stop or a pending notice (DEC-6)."
+      "remedy": "Nothing to do. An approval clears the hold it answers and nothing else: every check still runs again, from scratch, in the run that publishes it, and an approval never shortens a publication delay, a stop, or a notice still pending."
     },
     {
       "code": "M_BINDING_REVOKE",
@@ -6704,7 +6704,7 @@
       "fix": "none",
       "panel_only": false,
       "title": "A moderator revoked this repository's binding token",
-      "remedy": "A moderator revoked the binding token this repository is bound with (ID-17). Listed versions are not touched. Nothing clears this code: the next release is refused `B_BINDING_UNUSABLE` (§7.2), and that code says what clears it."
+      "remedy": "A moderator revoked the binding token this repository was bound with. Versions already listed are not touched. Your next release will be refused as an unusable binding; mint a fresh token, commit its line, and cut a new tag to clear that."
     },
     {
       "code": "M_DELIST",
@@ -6713,7 +6713,7 @@
       "fix": "moderator",
       "panel_only": false,
       "title": "A moderator delisted this plugin",
-      "remedy": "The plugin leaves the catalogue and gets no updates, and installed copies keep running (§7.2). A new release does not list it again. You can appeal from the Astra plugins panel (MOD-31); only a moderator's relist (`M_RELIST`) brings it back."
+      "remedy": "The plugin leaves the catalogue and stops getting updates; copies already installed keep running. A new release does not bring it back. You can appeal from the Astra plugins panel — only a moderator relisting it does."
     },
     {
       "code": "M_DEPRECATE",
@@ -6722,7 +6722,7 @@
       "fix": "moderator",
       "panel_only": false,
       "title": "A moderator deprecated these versions",
-      "remedy": "A moderator published an advisory with action `warn` for these versions (§7.2). They stay listed and installable: Astra badges them and tells the user, and blocks and stops nothing. The advisory stands until a moderator lifts it (`M_UNREVOKE`). You can appeal from the Astra plugins panel (MOD-31)."
+      "remedy": "A moderator published a warning advisory for these versions. They stay listed and installable — Astra shows users a badge and a warning, and blocks nothing. The advisory stands until a moderator lifts it. You can appeal from the Astra plugins panel."
     },
     {
       "code": "M_IDENTITY_RESET",
@@ -6731,7 +6731,7 @@
       "fix": "none",
       "panel_only": false,
       "title": "A moderator reset this listing's recorded identity",
-      "remedy": "A moderator voided every identity this plugin id had recorded, and deleted its identity record where it had one (§7.2; ID-40). Like every reversal, it was held and confirmed by the registry's operator before it applied (MOD-9). It clears `B_REPOSITORY_RECYCLED` for the identities it voided, and nothing clears it. The listing is now frozen: its next release needs a binding line, and is held for a moderator as a first binding."
+      "remedy": "A moderator voided every repository identity this plugin id had on record. Like every reversal, this was held and confirmed by the registry's operator before it applied. This listing is now frozen: its next release needs a binding line — mint a token at https://astra.minice.ai/plugins, commit it, and tag — and that release is reviewed as a first binding."
     },
     {
       "code": "M_REJECT",
@@ -6740,7 +6740,7 @@
       "fix": "moderator",
       "panel_only": false,
       "title": "A moderator rejected this submission",
-      "remedy": "A Recheck does not reopen a rejection (FLOW-18). You can appeal it from the Astra plugins panel; if a moderator reverses the rejection on appeal, exactly one Recheck of this submission is opened (MOD-33)."
+      "remedy": "Commenting `/recheck` will not reopen a rejection. You can appeal from the Astra plugins panel; if a moderator reverses the rejection on appeal, this submission gets exactly one Recheck."
     },
     {
       "code": "M_RELIST",
@@ -6749,7 +6749,7 @@
       "fix": "none",
       "panel_only": false,
       "title": "A moderator listed this plugin again",
-      "remedy": "A moderator lifted the plugin's delisting (§7.2). Like every reversal, it was held and confirmed by the registry's operator before it applied (MOD-9). The plugin is back in the catalogue and gets updates again. Nothing to do."
+      "remedy": "A moderator lifted this plugin's delisting. Like every reversal, it was held and confirmed by the registry's operator before it applied. The plugin is back in the catalogue and gets updates again. Nothing to do."
     },
     {
       "code": "M_REVIEW",
@@ -6758,7 +6758,7 @@
       "fix": "none",
       "panel_only": false,
       "title": "A moderator reviewed these versions",
-      "remedy": "A moderator read these versions and marked them reviewed (§7.2), so Astra stops showing the \"not reviewed\" warning for them. A review is one person's reading, not a security audit or a guarantee (INV-1), and a later advisory, yank or delist overrides it. The next version starts unreviewed. Nothing to do."
+      "remedy": "A moderator read these versions and marked them reviewed, so Astra stops showing the \"not reviewed\" warning for them. A review is one person's reading, not a security audit or a guarantee, and a later advisory, yank or delisting overrides it. The next version you publish starts unreviewed again. Nothing to do."
     },
     {
       "code": "M_REVOKE",
@@ -6767,7 +6767,7 @@
       "fix": "moderator",
       "panel_only": false,
       "title": "A moderator revoked these versions",
-      "remedy": "A moderator published an advisory for these versions (§7.2). With action `block_install`, Astra refuses new installs and updates and leaves a running copy alone; with `disable`, it also stops installed copies, and they do not start again. The advisory stands until a moderator lifts it (`M_UNREVOKE`). You can appeal from the Astra plugins panel (MOD-31)."
+      "remedy": "A moderator published an advisory for these versions. If it blocks installs, Astra refuses new installs and updates but leaves a running copy alone; if it disables them, Astra also stops installed copies, and they will not start again. The advisory stands until a moderator lifts it. You can appeal from the Astra plugins panel."
     },
     {
       "code": "M_UNREVOKE",
@@ -6776,7 +6776,7 @@
       "fix": "none",
       "panel_only": false,
       "title": "A moderator lifted an advisory",
-      "remedy": "A moderator deleted the advisory that deprecated or revoked these versions (§7.2). Like every reversal, it was held and confirmed by the registry's operator before it applied (MOD-9). Its effect lifts on each machine at the withdrawal list's next higher serial. Nothing to do."
+      "remedy": "A moderator deleted the advisory that deprecated or revoked these versions. Like every reversal, it was held and confirmed by the registry's operator before it applied. Each user's Astra picks this up the next time it checks for advisories. Nothing to do."
     },
     {
       "code": "M_YANK",
@@ -6785,7 +6785,7 @@
       "fix": "none",
       "panel_only": false,
       "title": "A moderator yanked these versions",
-      "remedy": "These versions leave the catalogue and are no longer offered, and installed copies keep running (§7.2). A yank cannot be undone by anyone (B.3): an appeal is recorded, but no decision brings these versions back (MOD-10). A later release is judged like any other."
+      "remedy": "These versions leave the catalogue and are no longer offered; copies already installed keep running. A yank cannot be undone by anyone — you can file an appeal and it will be recorded, but no decision brings these exact versions back. A later release is judged on its own."
     },
     {
       "code": "N_HOST_RPC_SCAN_SCOPE",
@@ -6856,8 +6856,8 @@
       "stage": "policy",
       "fix": "none",
       "panel_only": false,
-      "title": "Held for the publication delay because the plugin holds a high-risk permission",
-      "remedy": "Nothing to do. Every auto-published release of a plugin holding any high-risk permission waits, whether or not this release changed anything — §5.5's realistic takeover case is a malicious version with *identical* permissions, and a delay that only fired on changes would never fire on it."
+      "title": "Held for the publication delay because this plugin holds a high-risk permission",
+      "remedy": "Nothing to do. Every release of a plugin holding a high-risk permission waits out the publication delay before it goes live, whether or not this release changed anything — the realistic attack here is a malicious version with the exact same permissions as the one before it, and a delay that only fired on a change would never catch that."
     },
     {
       "code": "P_DELAY_WAITING",
@@ -6901,8 +6901,8 @@
       "stage": "policy",
       "fix": "registry",
       "panel_only": false,
-      "title": "Not published: the registry's operator withheld this exact build",
-      "remedy": "An operator deny record on `main` names this fingerprint (TRUST-33). No Recheck, approval or moderator decision clears it; only the operator removing the record does. A new tag is a new fingerprint and is judged afresh."
+      "title": "Not published: this registry's operator withheld this exact build",
+      "remedy": "This registry's operator has a deny record naming this exact build. Nothing you do clears it — not a Recheck, not an approval, not a moderator's decision — only the operator removing that record does. A new tag is a different build and is judged on its own."
     },
     {
       "code": "P_PUBLISHED",
@@ -6929,7 +6929,7 @@
       "fix": "none",
       "panel_only": false,
       "title": "Published unreviewed, and first in the moderators' queue",
-      "remedy": "Nothing to do. This release was published at once and marked as not reviewed by Astra moderators, as every release is (DEC-19). Under the rules before contract 3.0.0 it would have waited for a person or a delay, as the message above says, so moderators read it first. New Astra clients show a \"not reviewed\" warning for this version until a moderator reviews it."
+      "remedy": "Nothing to do. This release published immediately and is marked as not yet reviewed by Astra moderators, as every release is until a moderator reads it. This one would once have waited for a person or a delay, as the message above says, so it jumps to the front of the moderators' queue. Astra shows users a \"not reviewed\" warning for this version until a moderator reviews it."
     },
     {
       "code": "P_SLA",
@@ -6965,7 +6965,7 @@
       "fix": "moderator",
       "panel_only": false,
       "title": "The binding token changed since this listing was bound",
-      "remedy": "The `astra-binding:` line at the tagged commit carries a different token from the one this listing's identity record holds (ID-41 row 6). The account that held the previous binding is told, and a moderator's approval publishes it only once the author objection window has passed since that account was told, or since its binding was revoked (ID-60; ID-61)."
+      "remedy": "The `astra-binding:` line at the tagged commit carries a different token than the one this listing is currently bound with. The account that held the previous binding has been told about the change. A moderator's approval publishes this only after the objection window has passed since that account was told, or since its binding was revoked — nothing to do but wait for that window and the moderator's decision."
     },
     {
       "code": "R_CHECK_HELD",
@@ -7001,7 +7001,7 @@
       "fix": "moderator",
       "panel_only": false,
       "title": "First binding line on a published listing — a moderator approves it once",
-      "remedy": "This listing was published before it had an identity record, and this release is the first to carry an `astra-binding:` line (MIG-10). A moderator approves it once; the approval then waits the operator's objection window like every approval (DEC-6). Once a release under this binding is published, later releases are not held for this again."
+      "remedy": "This listing was published before it had an identity record, and this release is the first of its releases to carry an `astra-binding:` line. A moderator approves it once; after that approval, this release still waits out the usual window before it publishes, the way every approval does. Once a release under this binding has published, later releases are not held for this again."
     },
     {
       "code": "R_FIRST_LISTING",
@@ -7019,7 +7019,7 @@
       "fix": "moderator",
       "panel_only": false,
       "title": "One of the four acting-outside-the-plugin RPCs is named inside a `generated/` or `vendor/` directory",
-      "remedy": "Held for a human. Those two directory names are chosen by whoever built the bundle, not by a toolchain, so the scan no longer skips them — but a real generated tree is a normal thing to ship. Declare the capability or permission if the call is yours, or say in the issue what wrote the file."
+      "remedy": "Held for a human. Those two directory names are chosen by whoever built the bundle, not by a toolchain, so the scan no longer skips them — but a real generated tree is a normal thing to ship. Declare the capability or permission if the call is yours; if you reported this on an issue, you can also say there what wrote the file."
     },
     {
       "code": "R_IDENTITY_CHANGED",
@@ -7028,7 +7028,7 @@
       "fix": "moderator",
       "panel_only": false,
       "title": "The repository this plugin is listed from changed",
-      "remedy": "Say in the issue what happened — a rename, a transfer, a fork taking over maintenance. Every installed copy carries a pin to the old repository, so this is an author change until somebody says otherwise."
+      "remedy": "Held for a human. Every installed copy carries a pin to the old repository, so this is treated as an author change until somebody says otherwise. A moderator reviews it against your repository's own history — a rename, a transfer, a fork taking over maintenance are all visible there."
     },
     {
       "code": "R_NEW_HIGH_RISK",
@@ -7046,7 +7046,7 @@
       "fix": "moderator",
       "panel_only": false,
       "title": "The id is one edit away from a listed plugin",
-      "remedy": "Held for a human, not rejected — plenty of honest names are near-misses. If it is deliberate, say so in the issue and it will be approved faster."
+      "remedy": "Held for a human, not rejected — plenty of honest names are near-misses. If it is deliberate and you reported this on an issue, say so there; it may be approved faster."
     },
     {
       "code": "W_BUNDLE_DUPLICATE_ENTRY_CASE",
@@ -7145,7 +7145,7 @@
       "fix": "registry",
       "panel_only": true,
       "title": "Awaiting an operator acknowledgement",
-      "remedy": "The registry changed its bot, and until an operator acknowledges that change the plugins service holds the bot's calls (TRUST-45). Nothing about this submission has been decided and nothing is lost; it continues once the change is acknowledged, with nothing for you to do."
+      "remedy": "This registry's bot recently changed, and until an operator acknowledges the change, the plugins service holds every one of the bot's calls. Nothing about this submission has been decided and nothing is lost — it continues automatically once the change is acknowledged, and there is nothing for you to do."
     }
   ],
   "flow13_source": {
