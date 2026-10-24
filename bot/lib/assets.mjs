@@ -309,6 +309,11 @@ function* linesOutsideFences(text) {
   }
 }
 
+/** What counts as a raw HTML tag in prose: the one pattern the stripper removes and the validator refuses. */
+const HTML_TAG = /<\/?[a-zA-Z][^>]*>/g;
+/** An inline-code span: its content is shown verbatim, so `<version>` in one is text, not a tag. */
+const INLINE_CODE = /(`+[^`]*`+)/;
+
 /** Strip HTML tags, leaving their text. Never inside a fence, never inside inline code. */
 function stripHtml(text) {
   const out = [];
@@ -319,10 +324,10 @@ function stripHtml(text) {
       continue;
     }
     // Split on inline-code spans and only rewrite what is between them.
-    const parts = line.split(/(`+[^`]*`+)/);
+    const parts = line.split(INLINE_CODE);
     const rebuilt = parts.map((part) => {
       if (part.startsWith("`")) return part;
-      return part.replace(/<\/?[a-zA-Z][^>]*>/g, () => {
+      return part.replace(HTML_TAG, () => {
         stripped += 1;
         return "";
       });
@@ -330,6 +335,30 @@ function stripHtml(text) {
     out.push(rebuilt.join(""));
   }
   return { text: out.join("\n"), stripped };
+}
+
+/**
+ * The raw HTML tags a README still carries where Astra would render them: outside fenced code and
+ * outside inline code, by exactly the rule `stripHtml` removes them by.
+ *
+ * `tools/validate.mjs` asks this instead of keeping its own pattern. On 2026-10-24 it kept one that
+ * skipped only fences, so `dwertyfa-prime-ai-<version>-noarch.astraplugin` in backticks, which the
+ * bot rightly kept, read to the validator as a tag. The bot's own derived listing then failed its
+ * own validator (`E_DERIVED_LISTING_INVALID`), and a correct release could not publish.
+ *
+ * @param {string} text
+ * @returns {string[]} the tags found, in order
+ */
+export function rawHtmlOutsideCode(text) {
+  const found = [];
+  for (const { line, inFence } of linesOutsideFences(text.replace(/\r\n?/g, "\n"))) {
+    if (inFence) continue;
+    for (const part of line.split(INLINE_CODE)) {
+      if (part.startsWith("`")) continue;
+      for (const m of part.matchAll(HTML_TAG)) found.push(m[0]);
+    }
+  }
+  return found;
 }
 
 /** Resolve one image URL, or return null to drop the image. */

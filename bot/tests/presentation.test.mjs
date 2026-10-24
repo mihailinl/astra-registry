@@ -26,6 +26,7 @@ import {
   iconCapFor,
   iconDataUri,
   pickIcon,
+  rawHtmlOutsideCode,
   rewriteReadme,
   sha256Hex,
 } from "../lib/assets.mjs";
@@ -606,6 +607,34 @@ await test("a listing naming an icon it did not commit is an error", async () =>
   const errors = await errorsFor(treeWith({}, { icon: "icon.png" }));
   assert(errors.some((e) => /not in plugins\//.test(e.message)),
     `a dangling icon reference has to fail the build, or the index generator throws instead: ${JSON.stringify(errors)}`);
+});
+
+await test("a placeholder in inline code is text, not raw HTML (2026-10-24)", async () => {
+  // The README of a real release (SpherePrime/PrimeAi v0.2.5) said, in backticks,
+  // `dwertyfa-prime-ai-<version>-noarch.astraplugin`. The bot kept it, rightly; the
+  // validator's own pattern skipped only fences, read `<version>` as a tag, and refused
+  // the bot's own derived listing (E_DERIVED_LISTING_INVALID), so the release could not publish.
+  const readme = "# Prime\n\nOutput: `prime-<version>-noarch.astraplugin`.\n\nTag ``v<version>`` and push.\n";
+  assert(rawHtmlOutsideCode(readme).length === 0, `inline code read as HTML: ${JSON.stringify(rawHtmlOutsideCode(readme))}`);
+  const errors = await errorsFor(treeWith({ "README.md": readme }, { readme: "README.md" }));
+  assert(!errors.some((e) => /raw HTML/.test(e.message)), `the validator refused inline code: ${JSON.stringify(errors)}`);
+  const real = await errorsFor(treeWith({ "README.md": "# Prime\n\nClick <b>here</b>.\n" }, { readme: "README.md" }));
+  assert(real.some((e) => /raw HTML/.test(e.message)), "a real tag outside code must still be refused");
+});
+
+await test("whatever the bot's README rewrite leaves, the validator accepts", () => {
+  // One rule, two readers: the stripper and the validator ask `rawHtmlOutsideCode`, so the
+  // bot's output can never fail the repository's own validator on raw HTML again.
+  for (const source of [
+    "Text <b>bold</b> and `code <i>kept</i>` and <img src=x>.",
+    "```html\n<div>fenced</div>\n```\nAfter <span>x</span>.",
+    "``a <tag> in a double span`` then <em>y</em>",
+    "Line one\r\nwith <u>crlf</u> and `<version>`",
+  ]) {
+    const { markdown } = rewriteReadme(source, at);
+    const left = rawHtmlOutsideCode(markdown);
+    assert(left.length === 0, `rewriteReadme left ${JSON.stringify(left)} in ${JSON.stringify(markdown)}`);
+  }
 });
 
 await test("a hand-dropped hostile icon does not get in behind the bot's back", async () => {
