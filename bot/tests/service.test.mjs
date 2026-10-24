@@ -4229,3 +4229,43 @@ test("WP5: `E_ATTESTATION_MISSING`'s remedy names `astra-plugin init-ci` and a n
   const row = (table.flow13_table ?? []).find((r) => r.code === "E_ATTESTATION_MISSING");
   assert.equal(row?.remedy, c.remedy, "tools/codes-table.json carries another remedy than bot/lib/codes.mjs (node tools/gen-codes-table.mjs)");
 });
+
+// ── the 2026-10-24 incident: no clause id reaches a reader ──────────────────
+//
+// An author got `B_BINDING_UNUSABLE` three times over eight days by e-mail
+// and in the panel, and the row and the bot's own message both cited a
+// clause id (ID-9, FLOW-67...) nobody outside this repository has read.
+//
+// FLOW-13 carries no member that marks a row "moderator-only", and that is
+// not an oversight to work around here: `B_BINDING_INVALID` and
+// `B_ACCOUNT_INELIGIBLE` are panel-only, but still read by the token's OWNER
+// — an author — and every `M_*`/`P_OPERATOR_DENIED`/`W_REGISTRY_UNACKNOWLEDGED`
+// row reports what happened to THE AUTHOR's own plugin, in a moderator's
+// tone. T1 (2026-10-23) stripped every one of those rows' clause ids too, for
+// exactly this reason. So rather than invent a filter this table cannot
+// justify, this holds every row to the same floor, and the FLOW-67
+// no-listing message (T2) to it as well.
+//
+// Watched red: restore a clause id to any row's `remedy` in `bot/lib/codes.mjs`
+// or `bot/lib/policy/constants.mjs`, regenerate with
+// `node tools/gen-codes-table.mjs --out tools/codes-table.json`, and this
+// fails naming that code; put back a `readCommit`-shaped sentence in
+// `noListingNoBinding`'s `record.message` and this fails naming it too.
+const CLAUSE_ID_RE = /\b(?:ID|DEC|FLOW|BOT|MIG|MOD|TRUST|SCOPE|ROLL|CLIENT|SERVE|PRIV|OD|INV)-\d+|§/;
+
+test("T1/T3: no FLOW-13 row, and no FLOW-67 no-listing message, cites a contract clause id", async () => {
+  const table = JSON.parse(fs.readFileSync(path.join(REPO, "tools", "codes-table.json"), "utf8")).flow13_table;
+  assert.ok(Array.isArray(table) && table.length >= 151,
+    `${table?.length} FLOW-13 row(s); there were 151 on 2026-10-24, so fewer is a broken read`);
+  const violations = table
+    .filter((r) => CLAUSE_ID_RE.test(r.title) || CLAUSE_ID_RE.test(r.remedy))
+    .map((r) => r.code);
+  assert.deepEqual(violations, [], "a clause id reached a FLOW-13 row a reader — an author, or a binding token's owner — sees");
+
+  const { noListingNoBinding } = await import("../decide.mjs");
+  const out = noListingNoBinding({
+    source: "panel", listingNamesRepo: false, binding: { present: false },
+    readCommit: "f".repeat(40), repo: "stranger/thing", authorCommit: "a".repeat(40),
+  });
+  assert.ok(!CLAUSE_ID_RE.test(out.record.message), `a clause id reached the FLOW-67 no-listing message: ${out.record.message}`);
+});
