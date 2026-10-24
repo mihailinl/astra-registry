@@ -136,7 +136,7 @@ export const CODES = {
   E_ASSET_HEAD_FAILED: {
     level: "error", stage: "release", fix: "recheck",
     title: "The asset could not be fetched",
-    remedy: "Re-upload it and comment `/recheck`. If the release is private or the asset was deleted, nothing downstream can run.",
+    remedy: "Re-upload it, then press Recheck on the submission's page in the Astra plugins panel (on a legacy issue, comment `/recheck`). If the release is private or the asset was deleted, nothing downstream can run.",
   },
   E_ASSET_SIZE: {
     level: "error", stage: "release", fix: "new_tag",
@@ -673,8 +673,8 @@ export const PANEL_CODES = {
     remedy:
       "Shown only to the token's owner and to moderators; everyone else sees a generic refusal that names " +
       "neither the token nor the account. The token itself is fine; the Minice account that holds it is not " +
-      "currently eligible to publish. Once that account is eligible again, comment `/recheck` on this same " +
-      "submission — nothing needs to be rebuilt or retagged, because the token and the release were never the " +
+      "currently eligible to publish. Once that account is eligible again, press Recheck on this same " +
+      "submission's page in the Astra plugins panel — nothing needs to be rebuilt or retagged, because the token and the release were never the " +
       "problem.",
   },
   W_REGISTRY_UNACKNOWLEDGED: {

@@ -106,7 +106,7 @@ export const POLICY_CODES = {
   P_REFUSED: {
     level: "error", stage: "policy", fix: "recheck",
     title: "Not published, because a check failed",
-    remedy: "Fix the blocking findings above and comment `/recheck`. The policy did not reject this; a check did.",
+    remedy: "Fix the blocking findings above, then press Recheck on the submission's page in the Astra plugins panel (on a legacy issue, comment `/recheck`). The policy did not reject this; a check did.",
   },
   // Contract 2.4.0 (registry plan TRUST-33). A deny record is the operator's
   // stop, outside the service and the moderators; until 2.4.0 it was reported
@@ -162,8 +162,8 @@ export const POLICY_CODES = {
     title: "This repository's owner changed since it was bound to this listing",
     remedy:
       "The owner GitHub's build attestation names for this release is not the owner this listing is " +
-      "recorded under. A moderator has to decide what happens next — cutting a new tag or commenting " +
-      "`/recheck` will not clear this on its own. You will hear from a moderator through the Astra " +
+      "recorded under. A moderator has to decide what happens next — cutting a new tag or pressing " +
+      "Recheck will not clear this on its own. You will hear from a moderator through the Astra " +
       "plugins panel.",
   },
   B_REPOSITORY_RECYCLED: {
@@ -379,7 +379,7 @@ export const POLICY_CODES = {
     level: "error", stage: "policy", fix: "moderator",
     title: "A moderator rejected this submission",
     remedy:
-      "Commenting `/recheck` will not reopen a rejection. You can appeal from the Astra plugins " +
+      "Pressing Recheck will not reopen a rejection. You can appeal from the Astra plugins " +
       "panel; if a moderator reverses the rejection on appeal, this submission gets exactly one " +
       "Recheck.",
   },
