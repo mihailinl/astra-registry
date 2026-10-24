@@ -113,11 +113,11 @@ export const POLICY_CODES = {
   // as `P_REFUSED`, whose `recheck` told the author a Recheck could clear it.
   P_OPERATOR_DENIED: {
     level: "error", stage: "policy", fix: "registry",
-    title: "Not published: the registry's operator withheld this exact build",
+    title: "Not published: this registry's operator withheld this exact build",
     remedy:
-      "An operator deny record on `main` names this fingerprint (TRUST-33). No Recheck, approval or " +
-      "moderator decision clears it; only the operator removing the record does. A new tag is a new " +
-      "fingerprint and is judged afresh.",
+      "This registry's operator has a deny record naming this exact build. Nothing you do clears it " +
+      "— not a Recheck, not an approval, not a moderator's decision — only the operator removing " +
+      "that record does. A new tag is a different build and is judged on its own.",
   },
   // The five binding refusals the bot emits (contract B.7; FLOW-13's `fix` per
   // contract 2.5.0, lane S6). They keep their BOUND_WORLD_CODES level below;
@@ -129,41 +129,50 @@ export const POLICY_CODES = {
   // name in this directory as a code the bot carries.)
   B_UNBOUND: {
     level: "error", stage: "ownership", fix: "new_tag",
-    title: "No binding line where the registry needs one",
+    title: "No binding line where this listing needs one",
     remedy:
-      "From cutover, a first listing and a frozen listing's next release need an `astra-binding:` line in " +
-      "`.well-known/astra-plugin-owner` at the tagged commit (ID-25). Mint a token in the Astra plugins panel, " +
-      "commit its line and push a new tag: the line is read at the attested commit, so this tag cannot change.",
+      "A first-time listing, and the next release of a listing that has none yet, needs an " +
+      "`astra-binding:` line in `.well-known/astra-plugin-owner`, committed on the commit you tag. " +
+      "Sign in at https://astra.minice.ai/plugins, mint a binding token for this repository, commit " +
+      "the line `astra-binding: <token>` into that file, and cut a new tag from that commit — the " +
+      "line is read from the tagged commit, so re-submitting this same tag will not pick it up.",
   },
   B_BINDING_MALFORMED: {
     level: "error", stage: "ownership", fix: "new_tag",
-    title: "The binding file is not one well-formed binding line",
+    title: "`.well-known/astra-plugin-owner` is not one well-formed binding line",
     remedy:
-      "`.well-known/astra-plugin-owner` must hold exactly one `astra-binding: <token>` line (ID-24). Fix the file " +
-      "and push a new tag: the line is read at the attested commit.",
+      "This file must hold exactly one line reading `astra-binding: <token>`, with the token the " +
+      "Astra plugins panel gave you when you minted it at https://astra.minice.ai/plugins. Fix the " +
+      "file so it holds exactly that one line, commit it, and cut a new tag from that commit — the " +
+      "line is read from the tagged commit, so re-submitting the same tag reads the same broken file.",
   },
   B_BINDING_UNUSABLE: {
     level: "error", stage: "ownership", fix: "new_tag",
-    title: "The binding token on the tagged commit cannot bind this release",
+    title: "The binding line in the tagged commit cannot be used",
     remedy:
-      "The token in `.well-known/astra-plugin-owner` at the tagged commit cannot bind this repository (ID-9); " +
-      "the Astra plugins panel tells the token's owner why. Mint a fresh token there if you need one, commit its " +
-      "line and push a new tag.",
+      "Either the token in the tagged commit cannot be used, or the account cannot publish — the " +
+      "Astra plugins panel tells the token's owner which, and tells nobody else. Sign in at " +
+      "https://astra.minice.ai/plugins, mint a fresh binding token, commit the line " +
+      "`astra-binding: <token>` into `.well-known/astra-plugin-owner`, and cut a new tag from that " +
+      "commit: the line is read from the tagged commit, so re-submitting this same tag reads the " +
+      "same line and fails the same way.",
   },
   B_OWNER_CHANGED: {
     level: "error", stage: "ownership", fix: "moderator",
-    title: "The repository's owner changed since it was bound",
+    title: "This repository's owner changed since it was bound to this listing",
     remedy:
-      "The owner the build attestation names differs from the one this listing's identity record carries " +
-      "(ID-41). A moderator decides what happens next; a new tag or a Recheck does not clear it.",
+      "The owner GitHub's build attestation names for this release is not the owner this listing is " +
+      "recorded under. A moderator has to decide what happens next — cutting a new tag or commenting " +
+      "`/recheck` will not clear this on its own. You will hear from a moderator through the Astra " +
+      "plugins panel.",
   },
   B_REPOSITORY_RECYCLED: {
     level: "error", stage: "ownership", fix: "moderator",
-    title: "The repository was re-created under this name by another owner",
+    title: "This repository was deleted and re-created under the same name by a different owner",
     remedy:
-      "This refusal is permanent for the repository's recorded identity (ID-41): no Recheck, new tag or approval " +
-      "clears it. Only a moderator's identity reset (`M_IDENTITY_RESET`) does, after which the next release is " +
-      "reviewed as a first binding.",
+      "This refusal stands for as long as this listing's recorded identity does: no Recheck, new tag " +
+      "or approval clears it. Only a moderator can clear it, by resetting the listing's identity — " +
+      "after that, your next release is reviewed as if it were a first-time listing.",
   },
   // The bound world's two holds (contract B.7; MIG-10; ID-41 row 6). They moved
   // here from BOUND_WORLD_CODES below on 2026-09-24 with their FLOW-13 rows:
@@ -175,19 +184,21 @@ export const POLICY_CODES = {
     level: "review", stage: "policy", fix: "moderator",
     title: "First binding line on a published listing — a moderator approves it once",
     remedy:
-      "This listing was published before it had an identity record, and this release is the first to carry an " +
-      "`astra-binding:` line (MIG-10). A moderator approves it once; the approval then waits the operator's " +
-      "objection window like every approval (DEC-6). Once a release under this binding is published, later " +
-      "releases are not held for this again.",
+      "This listing was published before it had an identity record, and this release is the first of " +
+      "its releases to carry an `astra-binding:` line. A moderator approves it once; after that " +
+      "approval, this release still waits out the usual window before it publishes, the way every " +
+      "approval does. Once a release under this binding has published, later releases are not held " +
+      "for this again.",
   },
   R_BINDING_CHANGED: {
     level: "review", stage: "policy", fix: "moderator",
     title: "The binding token changed since this listing was bound",
     remedy:
-      "The `astra-binding:` line at the tagged commit carries a different token from the one this listing's " +
-      "identity record holds (ID-41 row 6). The account that held the previous binding is told, and a " +
-      "moderator's approval publishes it only once the author objection window has passed since that account " +
-      "was told, or since its binding was revoked (ID-60; ID-61).",
+      "The `astra-binding:` line at the tagged commit carries a different token than the one this " +
+      "listing is currently bound with. The account that held the previous binding has been told " +
+      "about the change. A moderator's approval publishes this only after the objection window has " +
+      "passed since that account was told, or since its binding was revoked — nothing to do but " +
+      "wait for that window and the moderator's decision.",
   },
   // Held on the legacy issue path only since contract 3.0.0 (DEC-19; decision
   // D1): on the service path a first listing publishes at once with
@@ -203,9 +214,10 @@ export const POLICY_CODES = {
     level: "review", stage: "policy", fix: "moderator",
     title: "The repository this plugin is listed from changed",
     remedy:
-      "Say in the issue what happened — a rename, a transfer, a fork taking over maintenance. " +
-      "Every installed copy carries a pin to the old repository, so this is an author change " +
-      "until somebody says otherwise.",
+      "Held for a human. Every installed copy carries a pin to the old repository, so this is " +
+      "treated as an author change until somebody says otherwise. A moderator reviews it against " +
+      "your repository's own history — a rename, a transfer, a fork taking over maintenance are " +
+      "all visible there.",
   },
   R_NEW_HIGH_RISK: {
     level: "review", stage: "policy", fix: "moderator",
@@ -262,12 +274,12 @@ export const POLICY_CODES = {
   },
   P_DELAY_HIGH_RISK: {
     level: "note", stage: "policy", fix: "none",
-    title: "Held for the publication delay because the plugin holds a high-risk permission",
+    title: "Held for the publication delay because this plugin holds a high-risk permission",
     remedy:
-      "Nothing to do. Every auto-published release of a plugin holding any high-risk permission " +
-      "waits, whether or not this release changed anything — §5.5's realistic takeover case is a " +
-      "malicious version with *identical* permissions, and a delay that only fired on changes " +
-      "would never fire on it.",
+      "Nothing to do. Every release of a plugin holding a high-risk permission waits out the " +
+      "publication delay before it goes live, whether or not this release changed anything — the " +
+      "realistic attack here is a malicious version with the exact same permissions as the one " +
+      "before it, and a delay that only fired on a change would never catch that.",
   },
   P_DELAY_WIDENED: {
     level: "note", stage: "policy", fix: "none",
@@ -331,10 +343,11 @@ export const POLICY_CODES = {
     level: "note", stage: "policy", fix: "none",
     title: "Published unreviewed, and first in the moderators' queue",
     remedy:
-      "Nothing to do. This release was published at once and marked as not reviewed by Astra moderators, as every " +
-      "release is (DEC-19). Under the rules before contract 3.0.0 it would have waited for a person or a delay, as " +
-      "the message above says, so moderators read it first. New Astra clients show a \"not reviewed\" warning for " +
-      "this version until a moderator reviews it.",
+      "Nothing to do. This release published immediately and is marked as not yet reviewed by " +
+      "Astra moderators, as every release is until a moderator reads it. This one would once have " +
+      "waited for a person or a delay, as the message above says, so it jumps to the front of the " +
+      "moderators' queue. Astra shows users a \"not reviewed\" warning for this version until a " +
+      "moderator reviews it.",
   },
 
   // ── the decisions a moderator or an author makes through the panel ──────────
@@ -358,45 +371,49 @@ export const POLICY_CODES = {
     level: "pass", stage: "policy", fix: "none",
     title: "A moderator approved this submission",
     remedy:
-      "Nothing to do. An approval clears holds and nothing else: every check runs again in the run that acts on " +
-      "it, and it never shortens a publication delay, a stop or a pending notice (DEC-6).",
+      "Nothing to do. An approval clears the hold it answers and nothing else: every check still " +
+      "runs again, from scratch, in the run that publishes it, and an approval never shortens a " +
+      "publication delay, a stop, or a notice still pending.",
   },
   M_REJECT: {
     level: "error", stage: "policy", fix: "moderator",
     title: "A moderator rejected this submission",
     remedy:
-      "A Recheck does not reopen a rejection (FLOW-18). You can appeal it from the Astra plugins panel; if a " +
-      "moderator reverses the rejection on appeal, exactly one Recheck of this submission is opened (MOD-33).",
+      "Commenting `/recheck` will not reopen a rejection. You can appeal from the Astra plugins " +
+      "panel; if a moderator reverses the rejection on appeal, this submission gets exactly one " +
+      "Recheck.",
   },
   M_APPEAL: {
     level: "note", stage: "policy", fix: "none",
-    title: "An appeal was decided",
+    title: "An appeal of an earlier decision was decided",
     remedy:
-      "The outcome, `stands` or `reversed`, is recorded with the moderator's public reason and never the " +
-      "appeal's own text (MOD-32; MOD-33). A `reversed` appeal becomes a new decision; the one appealed stays " +
-      "in the log.",
+      "The outcome — upheld or reversed — is recorded with the moderator's public reason, never " +
+      "with the text of the appeal itself. If the appeal was reversed, that becomes a new decision; " +
+      "the original decision stays on the record as it was.",
   },
   A_STOP: {
     level: "error", stage: "policy", fix: "new_tag",
-    title: "Stopped by its author",
+    title: "This release was stopped by its author",
     remedy:
-      "A stop was confirmed from this submission's notice link (TRUST-34), so none of its fingerprints " +
-      "publishes. A stop cannot be lifted, and this tag cannot be submitted again (FLOW-26): publish the " +
-      "release under a new tag.",
+      "You confirmed a stop from this submission's notice link, so none of these bytes will be " +
+      "published. A stop cannot be undone, and this exact tag cannot be submitted again: to " +
+      "publish, cut a new tag and submit that one instead.",
   },
   A_WITHDRAW: {
     level: "error", stage: "policy", fix: "new_tag",
-    title: "Withdrawn before it was checked",
+    title: "This submission was withdrawn before it was checked",
     remedy:
-      "The submission was withdrawn while it was `received` (FLOW-22), so nothing was checked or published. " +
-      "This tag cannot be submitted again (FLOW-26): publish the release under a new tag.",
+      "The submission was withdrawn while it was still waiting to be checked, so nothing was " +
+      "checked and nothing was published. This exact tag cannot be submitted again: cut a new tag " +
+      "and submit that one instead.",
   },
   A_YANK: {
     level: "note", stage: "policy", fix: "none",
-    title: "Yanked at its author's own request",
+    title: "These versions were yanked at the author's own request",
     remedy:
-      "The listing's bound account yanked these versions from the Astra plugins panel (FLOW-79). A yank cannot " +
-      "be undone by anyone, and installed copies keep running. A new version is listed as usual.",
+      "The account bound to this listing yanked these versions from the Astra plugins panel. A " +
+      "yank cannot be undone by anyone — not even a moderator — though copies already installed " +
+      "keep running. A new version is listed the normal way, with no extra step because of this.",
   },
 
   // ── the acts on a listing or a binding, which the contract gives no fix ─────
@@ -420,87 +437,89 @@ export const POLICY_CODES = {
   // `A_REMOVAL_REQUEST`, whose `fix` is therefore `none`.
   A_BINDING_REVOKE: {
     level: "note", stage: "policy", fix: "none",
-    title: "Binding revoked by its bound account",
+    title: "The binding token for this repository was revoked",
     remedy:
-      "The listing's bound account revoked its binding token from the Astra plugins panel (ID-17). Nothing " +
-      "needs clearing. From the next verdict a release still carrying the old line is refused " +
-      "`B_BINDING_UNUSABLE`, and one carrying a fresh token's line is held for a moderator as a changed " +
-      "binding (`R_BINDING_CHANGED`).",
+      "The account bound to this listing revoked its binding token from the Astra plugins panel. " +
+      "There is nothing to fix and nothing to clear. The next release: if it still carries the old " +
+      "token's line, it is refused as an unusable binding; if it carries a fresh token's line, it " +
+      "is held for a moderator as a changed binding.",
   },
   A_REMOVAL_REQUEST: {
     level: "note", stage: "policy", fix: "none",
-    title: "Removal requested by its author",
+    title: "Removal requested by this listing's author",
     remedy:
-      "The listing's author asked from the Astra plugins panel for it to be removed (FLOW-28). From the bound " +
-      "account it is delisted at once: it leaves the catalogue and gets no updates, and installed copies are " +
-      "not removed. For a listing with no bound account the request is held, and a moderator decides it " +
-      "(MOD-9). Only a moderator lists a plugin again; to ask for that, send a report from the panel's report page.",
+      "The author asked, from the Astra plugins panel, for this listing to be removed. If the " +
+      "request came from the account bound to the listing, it is delisted immediately: it leaves " +
+      "the catalogue and stops getting updates, though copies already installed keep running. If " +
+      "the listing has no bound account, the request is held for a moderator to decide. Only a " +
+      "moderator can list a plugin again — to ask for that, send a report from the panel's report " +
+      "page (https://astra.minice.ai/plugins/_/report).",
   },
   M_YANK: {
     level: "error", stage: "policy", fix: "none",
     title: "A moderator yanked these versions",
     remedy:
-      "These versions leave the catalogue and are no longer offered, and installed copies keep running (§7.2). " +
-      "A yank cannot be undone by anyone (B.3): an appeal is recorded, but no decision brings these versions " +
-      "back (MOD-10). A later release is judged like any other.",
+      "These versions leave the catalogue and are no longer offered; copies already installed keep " +
+      "running. A yank cannot be undone by anyone — you can file an appeal and it will be recorded, " +
+      "but no decision brings these exact versions back. A later release is judged on its own.",
   },
   M_DELIST: {
     level: "error", stage: "policy", fix: "moderator",
     title: "A moderator delisted this plugin",
     remedy:
-      "The plugin leaves the catalogue and gets no updates, and installed copies keep running (§7.2). A new " +
-      "release does not list it again. You can appeal from the Astra plugins panel (MOD-31); only a " +
-      "moderator's relist (`M_RELIST`) brings it back.",
+      "The plugin leaves the catalogue and stops getting updates; copies already installed keep " +
+      "running. A new release does not bring it back. You can appeal from the Astra plugins panel " +
+      "— only a moderator relisting it does.",
   },
   M_RELIST: {
     level: "note", stage: "policy", fix: "none",
     title: "A moderator listed this plugin again",
     remedy:
-      "A moderator lifted the plugin's delisting (§7.2). Like every reversal, it was held and confirmed by the " +
-      "registry's operator before it applied (MOD-9). The plugin is back in the catalogue and gets updates " +
-      "again. Nothing to do.",
+      "A moderator lifted this plugin's delisting. Like every reversal, it was held and confirmed " +
+      "by the registry's operator before it applied. The plugin is back in the catalogue and gets " +
+      "updates again. Nothing to do.",
   },
   M_DEPRECATE: {
     level: "warn", stage: "policy", fix: "moderator",
     title: "A moderator deprecated these versions",
     remedy:
-      "A moderator published an advisory with action `warn` for these versions (§7.2). They stay listed and " +
-      "installable: Astra badges them and tells the user, and blocks and stops nothing. The advisory stands " +
-      "until a moderator lifts it (`M_UNREVOKE`). You can appeal from the Astra plugins panel (MOD-31).",
+      "A moderator published a warning advisory for these versions. They stay listed and " +
+      "installable — Astra shows users a badge and a warning, and blocks nothing. The advisory " +
+      "stands until a moderator lifts it. You can appeal from the Astra plugins panel.",
   },
   M_REVOKE: {
     level: "error", stage: "policy", fix: "moderator",
     title: "A moderator revoked these versions",
     remedy:
-      "A moderator published an advisory for these versions (§7.2). With action `block_install`, Astra refuses " +
-      "new installs and updates and leaves a running copy alone; with `disable`, it also stops installed " +
-      "copies, and they do not start again. The advisory stands until a moderator lifts it (`M_UNREVOKE`). " +
-      "You can appeal from the Astra plugins panel (MOD-31).",
+      "A moderator published an advisory for these versions. If it blocks installs, Astra refuses " +
+      "new installs and updates but leaves a running copy alone; if it disables them, Astra also " +
+      "stops installed copies, and they will not start again. The advisory stands until a " +
+      "moderator lifts it. You can appeal from the Astra plugins panel.",
   },
   M_UNREVOKE: {
     level: "note", stage: "policy", fix: "none",
     title: "A moderator lifted an advisory",
     remedy:
-      "A moderator deleted the advisory that deprecated or revoked these versions (§7.2). Like every reversal, " +
-      "it was held and confirmed by the registry's operator before it applied (MOD-9). Its effect lifts on each " +
-      "machine at the withdrawal list's next higher serial. Nothing to do.",
+      "A moderator deleted the advisory that deprecated or revoked these versions. Like every " +
+      "reversal, it was held and confirmed by the registry's operator before it applied. Each " +
+      "user's Astra picks this up the next time it checks for advisories. Nothing to do.",
   },
   M_BINDING_REVOKE: {
     level: "warn", stage: "policy", fix: "none",
     title: "A moderator revoked this repository's binding token",
     remedy:
-      "A moderator revoked the binding token this repository is bound with (ID-17). Listed versions are not " +
-      "touched. Nothing clears this code: the next release is refused `B_BINDING_UNUSABLE` (§7.2), and that " +
-      "code says what clears it.",
+      "A moderator revoked the binding token this repository was bound with. Versions already " +
+      "listed are not touched. Your next release will be refused as an unusable binding; mint a " +
+      "fresh token, commit its line, and cut a new tag to clear that.",
   },
   M_IDENTITY_RESET: {
     level: "note", stage: "policy", fix: "none",
     title: "A moderator reset this listing's recorded identity",
     remedy:
-      "A moderator voided every identity this plugin id had recorded, and deleted its identity record where it " +
-      "had one (§7.2; ID-40). Like every reversal, it was held and confirmed by the registry's operator before " +
-      "it applied (MOD-9). It clears `B_REPOSITORY_RECYCLED` for the identities it voided, and nothing clears " +
-      "it. The listing is now frozen: its next release needs a binding line, and is held for a moderator as a " +
+      "A moderator voided every repository identity this plugin id had on record. Like every " +
+      "reversal, this was held and confirmed by the registry's operator before it applied. This " +
+      "listing is now frozen: its next release needs a binding line — mint a token at " +
+      "https://astra.minice.ai/plugins, commit it, and tag — and that release is reviewed as a " +
       "first binding.",
   },
   // Contract 3.0.0 (§7.2; MOD-56). A service decision that sets `review` to
@@ -512,9 +531,10 @@ export const POLICY_CODES = {
     level: "pass", stage: "policy", fix: "none",
     title: "A moderator reviewed these versions",
     remedy:
-      "A moderator read these versions and marked them reviewed (§7.2), so Astra stops showing the \"not reviewed\" " +
-      "warning for them. A review is one person's reading, not a security audit or a guarantee (INV-1), and a later " +
-      "advisory, yank or delist overrides it. The next version starts unreviewed. Nothing to do.",
+      "A moderator read these versions and marked them reviewed, so Astra stops showing the \"not " +
+      "reviewed\" warning for them. A review is one person's reading, not a security audit or a " +
+      "guarantee, and a later advisory, yank or delisting overrides it. The next version you " +
+      "publish starts unreviewed again. Nothing to do.",
   },
 };
 

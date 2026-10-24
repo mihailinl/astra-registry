@@ -281,14 +281,15 @@ export const CODES = {
   },
   E_PERMISSIONS_HASH_MISMATCH: {
     level: "error", stage: "bundle", fix: "new_tag",
-    title: "`permissions_hash` does not cover the declared permissions",
+    title: "The bundle's permissions hash does not match its permissions list",
     remedy:
-      "Rebuild with `astra-plugin build`, which derives the hash from the permissions and cannot " +
-      "emit a mismatch. Astra refuses to install this bundle (§5.3-D, block code " +
-      "PERMISSIONS_HASH_MISMATCH), so listing it would advertise a version nobody can have. The " +
-      "hash is what the consent sheet renders against and what the update gate compares: when it " +
-      "does not cover the permission map, a user can approve one list while the daemon enforces " +
-      "another.",
+      "Rebuild with `astra-plugin build`, which computes this hash for you and cannot produce a " +
+      "mismatch — a hand-edited bundle can. Astra itself refuses to install a bundle where the hash " +
+      "and the permissions disagree, so publishing this would list a version nobody could actually " +
+      "run. The hash is what a user's consent screen is checked against and what the update gate " +
+      "compares, so a mismatch means a user could approve one set of permissions while the daemon " +
+      "enforces another. Rebuild, then cut a new tag — the hash is read from the tagged commit's " +
+      "bytes, so re-submitting this same tag reads the same mismatch.",
   },
   W_LEGACY_SIGNATURE_ENTRY: {
     level: "warn", stage: "bundle", fix: "none",
@@ -347,7 +348,13 @@ export const CODES = {
       "both keys (or write `kind = \"plugin\"`) and publish a new tag. If it is another kind of " +
       "item, or it needs other items, it cannot be listed here yet.",
   },
-  E_PROBE_INPUT: { level: "error", stage: "manifest", fix: "registry", title: "The manifest probe rejected the bot's own request", remedy: "A bug in this registry, not in your plugin. Please leave the issue open." },
+  E_PROBE_INPUT: {
+    level: "error", stage: "manifest", fix: "registry",
+    title: "The manifest probe rejected the bot's own request",
+    remedy:
+      "A bug in this registry, not in your plugin. There is nothing further for you to do here. If " +
+      "you reported this on an issue, leave it open.",
+  },
   E_PROBE_UNAVAILABLE: { level: "error", stage: "manifest", fix: "registry", title: "The manifest probe could not be run", remedy: "A bug in this registry, not in your plugin. `plugin.toml` was not validated by anything, so the run fails closed." },
 
   // ── names ──────────────────────────────────────────────────────────────────
@@ -373,8 +380,8 @@ export const CODES = {
     level: "review", stage: "names", fix: "moderator",
     title: "The id is one edit away from a listed plugin",
     remedy:
-      "Held for a human, not rejected — plenty of honest names are near-misses. If it is deliberate, " +
-      "say so in the issue and it will be approved faster.",
+      "Held for a human, not rejected — plenty of honest names are near-misses. If it is deliberate " +
+      "and you reported this on an issue, say so there; it may be approved faster.",
   },
   R_DISPLAY_NAME_COLLISION: {
     level: "review", stage: "names", fix: "moderator",
@@ -596,8 +603,8 @@ export const CODES = {
     remedy:
       "Held for a human. Those two directory names are chosen by whoever built the bundle, not by a " +
       "toolchain, so the scan no longer skips them — but a real generated tree is a normal thing to " +
-      "ship. Declare the capability or permission if the call is yours, or say in the issue what wrote " +
-      "the file.",
+      "ship. Declare the capability or permission if the call is yours; if you reported this on an " +
+      "issue, you can also say there what wrote the file.",
   },
   W_HOST_RPC_IN_VENDOR_DIR: {
     level: "warn", stage: "rpc-scan", fix: "none",
@@ -616,7 +623,9 @@ export const CODES = {
   E_DERIVED_LISTING_INVALID: {
     level: "error", stage: "derive", fix: "registry",
     title: "The listing the bot derived does not pass this repository's own validator",
-    remedy: "A bug in this registry, not in your plugin. Please leave the issue open.",
+    remedy:
+      "A bug in this registry, not in your plugin. There is nothing further for you to do here. If " +
+      "you reported this on an issue, leave it open.",
   },
 };
 
@@ -651,26 +660,31 @@ export const PANEL_CODES = {
     level: "error", stage: "ownership", fix: "new_tag",
     title: "The binding token cannot be used for this repository",
     remedy:
-      "Shown only to the token's owner and to moderators; everyone else sees `B_BINDING_UNUSABLE` (ID-9). " +
-      "The token on the tagged commit is unknown, revoked, expired or superseded, or was minted for another " +
-      "repository. Mint a fresh token for this repository in the Astra plugins panel, commit its line and push " +
-      "a new tag: the line is read at the attested commit (ID-22), so this tag cannot change.",
+      "Shown only to the token's owner and to moderators; everyone else sees a generic refusal that names " +
+      "neither the token nor the account. The token on the tagged commit is unknown, revoked, expired or " +
+      "superseded, or was minted for another repository. Sign in at https://astra.minice.ai/plugins, mint a " +
+      "fresh token for this repository, commit `astra-binding: <token>` into `.well-known/astra-plugin-owner`, " +
+      "and cut a new tag from that commit — the line is read from the tagged commit, so re-submitting the old " +
+      "tag reads the same unusable token.",
   },
   B_ACCOUNT_INELIGIBLE: {
     level: "error", stage: "ownership", fix: "recheck",
     title: "The account holding the binding token is not eligible to bind",
     remedy:
-      "Shown only to the token's owner and to moderators; everyone else sees `B_BINDING_UNUSABLE` (ID-9). " +
-      "The token is sound and the Minice account that holds it is not eligible (DEC-11). The account's own " +
-      "eligibility clears it: once the account is eligible again, a Recheck of the same tag reads it afresh.",
+      "Shown only to the token's owner and to moderators; everyone else sees a generic refusal that names " +
+      "neither the token nor the account. The token itself is fine; the Minice account that holds it is not " +
+      "currently eligible to publish. Once that account is eligible again, comment `/recheck` on this same " +
+      "submission — nothing needs to be rebuilt or retagged, because the token and the release were never the " +
+      "problem.",
   },
   W_REGISTRY_UNACKNOWLEDGED: {
     level: "wait", stage: "shadow", fix: "registry",
     title: "Awaiting an operator acknowledgement",
     remedy:
-      "The registry changed its bot, and until an operator acknowledges that change the plugins service holds " +
-      "the bot's calls (TRUST-45). Nothing about this submission has been decided and nothing is lost; it " +
-      "continues once the change is acknowledged, with nothing for you to do.",
+      "This registry's bot recently changed, and until an operator acknowledges the change, the plugins " +
+      "service holds every one of the bot's calls. Nothing about this submission has been decided and " +
+      "nothing is lost — it continues automatically once the change is acknowledged, and there is nothing " +
+      "for you to do.",
   },
 };
 
