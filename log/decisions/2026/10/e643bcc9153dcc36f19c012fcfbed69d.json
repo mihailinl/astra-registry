@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:c2ea7010aab7b460880034034b753dc4ae4902e9c242ab65de466502e1e35de7"
+  ],
+  "commit": "4dd9c89fee7540c11e62f85ede168a645455ce1e",
+  "decided_at": "2026-10-25T14:51:02Z",
+  "decision_id": "e643bcc9153dcc36f19c012fcfbed69d",
+  "fingerprint": "fb9c4ca6373d463b",
+  "plugin_id": "vc-discord",
+  "reasons": [
+    "P_PUBLISHED",
+    "P_REVIEW_PRIORITY"
+  ],
+  "repo": "Voltur792/VC-Discord",
+  "repository_id": "1406554535",
+  "repository_owner_id": "232130437",
+  "run": "40204014705/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "cfaac262-e42d-4731-ad70-d2c0cacbb5e7",
+  "tag": "v1.4.4",
+  "trigger": "panel",
+  "version": "1.4.4"
+}
