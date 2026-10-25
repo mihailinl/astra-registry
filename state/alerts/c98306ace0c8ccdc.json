@@ -1,0 +1,8 @@
+{
+  "approval_decided_at": "2026-10-25T08:37:12Z",
+  "delivered_at": "2026-10-25T08:45:54Z",
+  "event": "approval",
+  "fingerprint": "c98306ace0c8ccdc",
+  "run": "40177756100/1",
+  "schema": "astra.registry.alert/1"
+}
