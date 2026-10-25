@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:093943c61a16923928d6e35f43bce53bde07ea0e779a9de58ad41bcd81245ec9"
+  ],
+  "commit": "da0544a8a86597cc0869c831cf5707ac36430430",
+  "decided_at": "2026-10-25T14:44:30Z",
+  "decision_id": "de6706a96c7f2f35f5cfafec874bc3a0",
+  "fingerprint": "416673dbac57ca60",
+  "plugin_id": "sleep-pause-timer",
+  "reasons": [
+    "P_PUBLISHED",
+    "P_REVIEW_PRIORITY"
+  ],
+  "repo": "Voltur792/SPT",
+  "repository_id": "1358860864",
+  "repository_owner_id": "232130437",
+  "run": "40203286210/1",
+  "schema": "astra.registry.decision/1",
+  "state": "published",
+  "submission_id": "5ac61b77-4c36-420d-80ea-108032ae442a",
+  "tag": "v1.3.2",
+  "trigger": "poll",
+  "version": "1.3.2"
+}
