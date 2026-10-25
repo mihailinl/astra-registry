@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:a10fb573d63ddb2ad229a86f82c8b492659ba56e7edbac69e3811f48f4f5fc20"
+  ],
+  "commit": "1fa071464cb5b5ea7c93b87e8b69ffa07532ec82",
+  "decided_at": "2026-10-25T10:44:55Z",
+  "decision_id": "433e703e4283101c65739edbe1e51b27",
+  "fingerprint": "057b93b831a7fb6b",
+  "plugin_id": "discord-voice-bridge",
+  "reasons": [
+    "E_TRADEMARK",
+    "B_UNBOUND"
+  ],
+  "repo": "Voltur792/VC-Discord",
+  "repository_id": "1406554535",
+  "repository_owner_id": "232130437",
+  "run": "40185905982/1",
+  "schema": "astra.registry.decision/1",
+  "state": "refused",
+  "submission_id": "c847ecc0-8689-45e2-bc49-46db7e2d589e",
+  "tag": "v1.2.1",
+  "trigger": "poll",
+  "version": "1.2.1"
+}
