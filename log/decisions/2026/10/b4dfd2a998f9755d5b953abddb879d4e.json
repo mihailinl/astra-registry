@@ -1,0 +1,26 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:fb4f0b348e1e3fbc222ebfd7053114fa2e153ceebc1c0ae018d01510750879d2"
+  ],
+  "commit": "071c37a24d580ae9680f09987bf9f1175ad9c02c",
+  "decided_at": "2026-10-25T10:09:46Z",
+  "decision_id": "b4dfd2a998f9755d5b953abddb879d4e",
+  "fingerprint": "4a6a9ee8b70a689a",
+  "plugin_id": "auto-assistant",
+  "reasons": [
+    "E_VERSION_NOT_NEW",
+    "E_HOST_RPC_UNDECLARED",
+    "B_UNBOUND"
+  ],
+  "repo": "Voltur792/auto-assistant",
+  "repository_id": "1373577963",
+  "repository_owner_id": "232130437",
+  "run": "40183501518/1",
+  "schema": "astra.registry.decision/1",
+  "state": "refused",
+  "submission_id": "ddbd3e94-818d-4c58-9245-83c25892d298",
+  "tag": "v1.2.0",
+  "trigger": "poll",
+  "version": "1.2.0"
+}
