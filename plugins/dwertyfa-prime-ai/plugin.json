@@ -1,19 +1,25 @@
 {
-  "$comment": "Derived from SpherePrime/PrimeAi@v0.2.5 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "$comment": "Derived from SpherePrime/PrimeAi@v0.2.6 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
   "schema": "astra.registry.plugin/1",
   "id": "dwertyfa-prime-ai",
   "name": "PrimeAI",
-  "summary": "Automatic model routing, web search, image and video generation",
+  "summary": "A plugin for free access to AI models.",
   "license": "MIT",
   "source": {
     "kind": "github",
     "repo": "SpherePrime/PrimeAi"
   },
   "added_at": "2026-10-24",
-  "description": "Automatic model routing, web search, image and video generation",
+  "description": "A plugin for free access to AI models.",
   "author": {
     "name": "dwertyfa x Lil KALINOV"
   },
   "icon": "icon.svg",
-  "readme": "README.md"
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "PrimeAI",
+      "summary": "Плагин для бесплатного доступа к нейросетям."
+    }
+  }
 }
