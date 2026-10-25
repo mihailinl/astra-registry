@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "+nUw/DJ3AM8S+G7FV08b+FBPy9KDLkW4+xsAWojd9GBZvpXFKF3aVojVqi5YmTMYp80b3x+jEb/zOLv7KRosBg=="
+      "sig": "GLwH/DzQymT0eoXFb+voOawFJrXtnegDSDmCzSdzYH1ZVBA28kNxwH4vUKyGNf2Q0+wCcSly76kqck1UkTGYAg=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-24T19:49:24Z",
-    "issued_at": "2026-10-25T19:49:24Z",
+    "expires_at": "2026-11-24T20:23:10Z",
+    "issued_at": "2026-10-25T20:23:10Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -2042,19 +2042,59 @@
           "ui_contributions"
         ],
         "description": "Search Yandex Music, VK and Spotify; play tracks and playlists inside Astra with voice controls.",
-        "download_url": "https://github.com/Voltur792/astra-music/releases/download/v1.4.2/music-controller-1.4.2-noarch.astraplugin",
+        "download_url": "https://github.com/Voltur792/astra-music/releases/download/v1.4.3/music-controller-1.4.3-noarch.astraplugin",
         "downloads": 0,
         "icon_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAMAAAD04JH5AAAB/lBMVEVeI6dFHHtjaZ5Por8sHmNgJJ9GH4ASJEhVVVVFD3g/Pz9W0Ns+WY45QH9QIYszHWoAAAAkHFn28/4cG1BBHnpEIH3w6/ta6+s3IW5c9vKXh7hGGoIwDmodHU5aIpY5HnQAAFU3Hm8aDFNVAKoAAH8AAP/Z0udQVo9/AH9LOYjDutc7O3dWIZQAAD6wpslSIY5OSIpRHIxVIZFWy9ieiMB2VaRJOHojDlxXIZRLeqsaG0+kmcEpIF1LjLMaGk9wZJg/AH9Y2eEbG0+7tdEbG1BmV5FSrMfPyOJVvdGEeKhOnLwrGll7baKclLgaHFBgJKBVIZKFbK1SIpEoJVgaG04/AD8lG1pQRn0mHFtDH3wmG1oiHFgiG1YkHFg9MndIa6JfJKBMHodVAFVqSpp/AP9VVao9TIhHH4Lj3PD/AADLxd0tHGMrHGJLHohIH4FRnMA/AL9FIX5MJnthJZ1/P79PHotFH38/P4VwTaAsHWMsHWH/AP8AAKqmob5mM5lmM2YAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA3HeAXAAAAgHRSTlMUHv//bP+JDgP/BP////7+AP7//v7+///////+/xBDDwNA/wMCAf//Av//BNIE/7D/E2///////5L/sf///0r/BP9u/5H///////8T//8t/zb/Dw7OBNH/jUFPMW2w////awP/AgP/1P8B/zjJRKD/BDEKFQQtwf//s4kBA/8FBR3Osr8AAAjPSURBVHjaxZuJX9s4FsfdmZ3dmdldS46dIDuBUudOIBBoIUBLWiBtKUehUOj0oAfdXjM95tw59vjXV3Jsx7ElS3Zi72s/H9pE0u+r956ebGxJUMRK07OzpWkobKT9dEmoqcRvMj1r/2NS1P7i9iyNDNCfx+T6xtbqqipsx6urG+v7lstmRwEozVriW8dqLDve2tgnc5iOCUA6Tq6vqiPZ8cYkGSoGAMm5/S11DLa6HobAAsAdRp38MEKpFAVgbLP3IsyKA8zCybHKWwj7sCQKUILrx+r4bYOaCRLN/RtqIrY6SSGQKO5fVROy4/1gIkgB/X1VUROzjYAPJL/+epL6hKAUBjANNxKVV1Vly0cwBHAfPk5Y3yK4zwLA/lcSNz+B5F3+j5RU7LE3E70eOFJSsoceAsmTgE/SAlCOKB64Dx+kpq88GbhAcuf/UEnRHsMXPoDS0UmaAMojpxzYAP+CD0CqACfOlaI0ygq86vsZZyVIzgqI7ABVNc1+cTPxPyJTnByVBgDTkR1gmspZddtoNTbxnz2je4pUAhHBgF2OLIBiFAdcxXM/6/67kst4LdcwTpVIDCdHZQcgSgZcVcyrvU1LPOcxC6JiLKlqVBcQgOvCSwDLI6PSF88Mm/VBbrOqqoLJAE6sK3UrBDui01cVI2drUcz6vHFqiubjt8QFEinCD4Hg9KsVtrzLsIdUJOSCB7j8EICSWAoiBe1hBa+YLwf6n+JcqJpCAMpFOwQ7QAAAmacVz+z9fvBAECcQXj4BKUYS2Yb4+gCY3VzGq4En2jK2q9i6xl4j52XCPxsiYcAxuI4BrDUAOKYoxsD9JA83u0vAKYW4KqGqURlCqCypiDcmXgdlDFAufQe4pqy5oxN5vOBNBSCEgPUXYUAT9TYznka5UxNxh92xcmBHTN8jj/CU/aMjoCrVRibjIVC4BJfgfekFvMRrhkzDo98i8tRm2A/diocAcQl+h02pCf/E1d/1jNoz2cMinHotxwm5zDuuB36Dsxjgd46+Mj9I/necWSFgfjYgaPGS+7tmSZqGvBxEFXfENSLB89d8zm2/zUvEHYgBfuM4oDXQV/j5CtDy/KBizHPS4Aivgh3OcF1xj/oJcplbnLbfcgEAcgd7BwQNmQNoYxmFr0MOAFo2HP0cAkiYYLBus1wPXAxN6iV3AfQUUX3Sr+Fwt0K7XeIBOBmIE3BZXJ+AuxvXUpjjOACuA/Dmgli1hxG6bSFyHoDiZsAudRi0vPI31gTd6pEdJQRvbAc0WDKLd5YZG0PPYd8OcUE4AAK7ziA9KgACf9cXmZ1vWZ3DawEPYNMZgxHpwjV94hVAofS4HLLTkBOCJbems7y4qOvXCogTv71CPAAE3IK2xGjwSp9gx6Cwx48BB6Blj7DJ8DKJwITOjIGzjefqzBhwQlCxAXYZA6BFAsCMAbd/OICnmtUZa6CK9UNi4HpwrRAPoGf3r7Aa3CEAITHYtQdoxMoBVDDs/i1WBG70ARgxGCTBm2wsALBmAxgmjcCOADMGCBRQzs3CWAD2lpp5Y5xTrgUR+LwPMKHTKg0C2cNNp470WFkYAoAvP24NbgZb/qsRckc0YRuJQfA+pee5kzwsoBjLcKCf8xUTS66wojsAf0X+jRkVukN30F0GQR8AhWSAO4k1pxmylP65cntiYDfuVJH7ldW77rmXJtdzjJXMBPBe0mSccoy86rruAdB1fYgBFYbwmaUgDGB7aASyIdmDn60sDqvTGNybmfArqhCAguEHMAqgAM6e3qSp+xlANvBLtCxVJhrAvN/zdIabT89GB8jSAKo3efq2F+qiANloALi0VT/eCGHA6ovX5nGkEgLIWinG8oOt3q8ICQHY66AezMQhdTygHACQQwCywgDuQrcYPPoeddKbCpAdDwCRsWKRveOW4htVq487xcgAWsDoAJ7vs1lQd+f/sYD/7+1NBwiojABAmmi3ne34M98QEQG0mADA3Q7rWjwATR4JQLNjoN/0j5AOgBsD/Wl8gG9GA7BjUP+/AdTpEcD/pwBoIQAUA0EAEGhkxUBfCQ5ABwjayABWDOZHBPghK1O+oQEE2pEY6LcpIwsDfA+lF+VfYgOQGOAIBD6XqQDB7rJ2AQPA+AAyiUF9FICLUPoafpDzcsDAZT/AZRBspdX1RU2mfE4FCNrri2/x84KF+ACytvjxqxEA5uALqQi/oXwjDHCtGt8DefnP+JHNS3hhBIC8THMf/iwIkKe0eo4B4Nv/vo4PIOfzcmwAGa/ClxL8BzULRQHoJgjw+gfy3LAJn1O+1K74Aa5o4gCy1vDdmjVoKfABz16CL+EBdRKV4bvjSj6CvgwOfQCHgAIwhWePn5zWarQkyJ9nhh5Wn0cCkPMtz5Nk/Gsmau82JM+OGTGQtcOc844A/nmoydEA5IbzigF5rYKagnOwZj07LsM23Y3nDeeXTI1zIEe0fP5yxfZA5TJ9rbzHr+9YLzB8Cefoqzlfv2JZPZ+Xo5sm/2r1/lWme2+m/bbcByjC98xp9E2OZfmw7nl5Ab+6YL9FU8MuSN9ICtoATTiVvn6HZIDzMlvt+kz6DiiXBwDsLEjaAc4LjcW0s2DmXq3sBajBn9MFmLId4L5TWsQXRinaHN6GfK/1NtMMwkzbDoAHoPxHO72V8DPegwNvVhfp23IS9tyqgYF3y1NLg45Hf+jl9k94X041AQMHHJqwk0oCllgA5VryBDPt4TMew2dMMEHCeTDXHiwA6jGfhDOxQ4pu+EGnT0luzQuwWOMe9SrCdkI1cebAP336YTe8SywkFP5PgqftavBg3E54NjMFnQ1Q4MAjrlQL490ZOvdgsRzhyCferKSxITyTO2369MMOveL29zDCszHk3sI9XGTL0Y/9EuQDXBnvxte+e1eem8LyxXK8g8+k349THeyHu8/iiM90yOTD5LlHv4tW5DDEHEkIQV98Qfw+11mQfiLZVBzx8Hu52LRbtg+mBO2gLfVli9f/GMPpezyL5n+KMKIVf2rWRI7//w9HsMVMeZ6RSQAAAABJRU5ErkJggg==",
         "id": "music-controller",
         "license": "MIT",
         "name": "Music Controller",
         "platform_downloads": {
-          "linux-x64": "https://github.com/Voltur792/astra-music/releases/download/v1.4.2/music-controller-1.4.2-noarch.astraplugin",
-          "noarch": "https://github.com/Voltur792/astra-music/releases/download/v1.4.2/music-controller-1.4.2-noarch.astraplugin",
-          "windows-x64": "https://github.com/Voltur792/astra-music/releases/download/v1.4.2/music-controller-1.4.2-noarch.astraplugin"
+          "linux-x64": "https://github.com/Voltur792/astra-music/releases/download/v1.4.3/music-controller-1.4.3-noarch.astraplugin",
+          "noarch": "https://github.com/Voltur792/astra-music/releases/download/v1.4.3/music-controller-1.4.3-noarch.astraplugin",
+          "windows-x64": "https://github.com/Voltur792/astra-music/releases/download/v1.4.3/music-controller-1.4.3-noarch.astraplugin"
         },
         "readme": "# Astra Music\n\n> **Linux и macOS — экспериментальная поддержка.** Полная ручная проверка на этих ОС ещё не выполнена. Для macOS пока нет выпускаемого хоста Astra. Зависимости и ограничения: [PLATFORMS.md](PLATFORMS.md).\n\nМузыка и личная радиоведущая в [Astra](https://github.com/mihailinl/AstraPlugins) от **Voltur**. Яндекс Музыка, VK и Spotify, управление голосом и отдельный плеер на рабочем столе.\n\n[Скачать исходники ZIP — 1.4.0](https://github.com/Voltur792/astra-music/archive/refs/tags/v1.4.0.zip) · [Страница релиза](https://github.com/Voltur792/astra-music/releases/latest)\n\n## Загрузка и установка из исходников\n\nУстановите плагин вручную через режим разработки Astra:\n\n1. Нажмите **«Скачать исходники ZIP»** выше либо откройте Releases и выберите **Assets → Source code (zip)**. Распакуйте архив в постоянную папку.\n2. В настройках приватности Astra разрешите неподписанные плагины.\n3. Откройте **Плагины → Разработка → Загрузить плагин** и выберите распакованную папку, в которой лежит `plugin.toml` (не ZIP-архив и не внешнюю папку, содержащую папку проекта).\n4. Подтвердите разрешения, дождитесь подготовки зависимостей и включите плагин.\n\nДля установки нужен интернет и 64-разрядный Python 3.10 или новее. Архив исходников нельзя импортировать как `.astraplugin`.\n\nПри обновлении выключите старую копию и загрузите новую папку через **Разработка**. Настройки и входы хранятся на компьютере. Не удаляйте папку, из которой работает активный плагин. Если зависимости не установились, проверьте журнал в карточке плагина.\n\n## Возможности\n\nПлеер заранее готовит ссылку и начальный аудиобуфер следующего трека VK и Яндекса, чтобы сократить тишину при переключении. Переходы Spotify выполняет его собственный веб-плеер.\n\n- Поиск песен и исполнителей, личные плейлисты, «Моя волна», «Мои треки VK» и персональный микс Spotify.\n- Пауза, переключение треков, перемотка, лайки и громкость от 0 до 10.\n- Радиоведущая Astra: короткие подводки к песням с выбранной личностью и голосом.\n- Плеер в Astra и перемещаемый виджет Windows с прозрачностью и показом поверх окон.\n- 18 вариантов цветомузыки для плеера и фона Astra. Для каждого можно настроить цвета, размер, яркость, толщину и мягкость линий, скорость и плотность.\n- Музыка в Discord через [VC-Discord](https://github.com/Voltur792/VC-Discord), музыкальные будильники в [Таймере паузы](https://github.com/Voltur792/SPT) и заказы зрителей через Stream Companion (пока не выпущен).\n- Музыкальный мост Discord принимает ссылки на плейлисты Яндекса любого владельца: новые `/playlists/UUID` и старые `/users/владелец/playlists/номер`. Сохранять плейлист в свою медиатеку не нужно; он должен быть доступен подключённому аккаунту. В обновлённом VC-Discord используйте `!playlist ссылка` или «Астра включи плейлист ссылка». После обновления кода перезапустите оба плагина.\n\n## Подключение сервисов\n\nОткройте **Музыка → Подключения**.\n\n- **Яндекс Музыка:** введите токен аккаунта Музыки по подсказке в карточке. Для прослушивания нужна подписка Яндекс Плюс.\n- **VK:** нажмите **«Войти через VK»** и авторизуйтесь в открывшемся окне.\n- **Spotify:** нажмите **«Войти в Spotify»**, войдите в отдельном окне Edge, закройте его и нажмите **«Управлять из Astra»**. В карточке появится состояние входа. Сохранённая сессия используется при следующем запуске; если сервис её отзовёт, потребуется повторный вход.\n\nSpotify может работать **без окна браузера**. Для этого способа не нужны API-ключ и Premium; реклама и ограничения бесплатного тарифа сохраняются. Доступны поиск, плейлисты и запуск по ссылке. Кнопка **«Включить мой микс Spotify»** находится во вкладке **«Музыка»**. Если Spotify ещё не создал персональную подборку, сначала послушайте музыку в самом сервисе.\n\nВ Windows для Spotify и встроенного плеера нужен Microsoft Edge; для Spotify также нужен Node.js 22 или новее. Музыка продолжает играть при переключении вкладок, пока запущены Astra и плагин.\n\n## Astra — радиоведущая\n\nВ **Музыка → Настройки** включите отдельный режим радиоведущей. Он выключен по умолчанию.\n\n- Выберите частоту: каждую песню, раз в 3 или раз в 5 песен. Начальный вариант — раз в 3.\n- Выберите момент: в начале песни или ближе к её окончанию.\n- Включите **«Объявлять следующую песню»**, если хотите услышать анонс следующего трека. Он доступен, когда сервис сообщает очередь.\n\nAstra представляет песню и может добавить короткий рассказ о ней или исполнителе. Используются модель, личность и голос, выбранные в Astra. Достоверность рассказа зависит от модели; неизвестную следующую песню плагин не угадывает.\n\nНа время подводки музыка становится тише, затем возвращается выбранная громкость. Для озвучки подтвердите доступ к чату и событиям речи Astra, если она запросит эти разрешения.\n\n## Виджет и цветомузыка\n\nВ настройках включите виджет рабочего стола и выберите прозрачность и показ поверх окон. Его можно перетащить в удобное место; положение сохраняется.\n\nЦветомузыка включается отдельно для плеера и фона Astra. Выберите источник **«Только музыка»** или **«Все звуки»**, затем эффект и его параметры. Настройки каждого эффекта сохраняются отдельно.\n\nПока она включена, размытие страницы отключается: линии остаются чёткими, а чат и управление доступны поверх визуализации. При отключении возвращается обычное оформление.\n\nРежим «Только музыка» работает и со Spotify: анализируется звук его вкладки. В режиме «Все звуки» усилена реакция на звук компьютера, чтобы визуализация была ярче.\n\n## Discord, расписание эфиров и будильники\n\nПодключите сервис в Astra Music, затем откройте **VC-Discord → Музыка**. Выбранная там музыка звучит в голосовом канале, с отдельной громкостью. Во время трансляции Spotify локальное звучание отключается; остановка трансляции ставит его на паузу. Выбор песни и переключение Spotify общие с плеером Astra.\n\nРадиоведущая для Discord включается отдельно в VC-Discord. Во время трансляции Spotify подводки звучат только в канале.\n\nВ текстовом канале VC-Discord команда **`!playlist https://open.spotify.com/playlist/…`** или **«Астра включи плейлист ссылка»** запускает доступный плейлист Spotify, включая чужой плейлист по полной ссылке. **`!wave spotify`** или **«Астра включи мой микс»** выбирает персональную подборку подключённого аккаунта (daylist / Daily Mix). Для обоих способов Spotify должен быть подключён в Astra Music в режиме без окна браузера. Микс принадлежит владельцу подключённого аккаунта Astra Music; если Spotify ещё не показал персональных подборок, откройте в нём раздел «Для тебя» и повторите.\n\nДля автоматических эфиров обновите все три плагина: **Astra Music 1.3.0**, **VC-Discord 1.3.5** и **Таймер паузы 1.2.0**. Во вкладке **«Радио»** таймера выберите канал, музыку, дни и время начала и окончания. Astra и все три плагина должны работать в это время. Для Spotify включите режим без окна браузера.\n\nДля музыкального будильника выберите **«Музыка из Astra Music»** в таймере. Заказы зрителей и их одобрение настраиваются в Stream Companion; для трансляции музыки зрителям настройте захват звука в OBS.\n\n## Голосовое управление\n\n- «Астра, включи песню Кино Группа крови».\n- «Астра, включи мою волну».\n- «Астра, следующий трек».\n- «Астра, громкость музыки 5».\n- «Астра, останови музыку».\n\nФразы можно произносить или писать в чате Astra. Собственные команды настраиваются в её редакторе команд.\n\n## Лицензия и поддержка\n\nMIT © Voltur\n\n[Поддержать разработку на Boosty](https://boosty.to/voltur/donate)\n",
         "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "music-controller-1.4.3-noarch.astraplugin",
+                "sha256": "fa02cc3b119dce453767925163a36bab041a66bc4cabef14434dc40d4bb36294",
+                "size": 418114,
+                "url": "https://github.com/Voltur792/astra-music/releases/download/v1.4.3/music-controller-1.4.3-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "actions",
+              "event_handlers",
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "send_chat_message": {
+                "reason": "Optional radio presenter: announces songs using Astra's configured personality, model and voice only when enabled by the user"
+              },
+              "subscribe_events": {
+                "reason": "Temporarily lower the music player's volume while Astra listens or speaks, including optional radio announcements, then restore it",
+                "types": [
+                  "state_changed",
+                  "tts_started",
+                  "tts_completed",
+                  "tts_interrupted"
+                ]
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-10-25T20:17:10Z",
+            "release": {
+              "commit": "509c6a2471fb9732520354f13d48361ab6d70527",
+              "kind": "github_release",
+              "repo": "Voltur792/astra-music",
+              "tag": "v1.4.3"
+            },
+            "review": "unreviewed",
+            "version": "1.4.3"
+          },
           {
             "artifacts": {
               "noarch": {
@@ -2222,8 +2262,8 @@
           "repo": "Voltur792/astra-music"
         },
         "stars": 0,
-        "updated_at": "2026-10-25T14:34:05Z",
-        "version": "1.4.2"
+        "updated_at": "2026-10-25T20:17:10Z",
+        "version": "1.4.3"
       },
       {
         "added_at": "2026-10-25",
@@ -3089,7 +3129,7 @@
           "ui_contributions"
         ],
         "description": "Voice conversations, music and participant moderation in Discord; PC commands from the accounts you allow.",
-        "download_url": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.4/vc-discord-1.4.4-noarch.astraplugin",
+        "download_url": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.5/vc-discord-1.4.5-noarch.astraplugin",
         "downloads": 0,
         "i18n": {
           "ru": {
@@ -3102,12 +3142,40 @@
         "license": "MIT",
         "name": "Voice communication-Discord",
         "platform_downloads": {
-          "linux-x64": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.4/vc-discord-1.4.4-noarch.astraplugin",
-          "noarch": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.4/vc-discord-1.4.4-noarch.astraplugin",
-          "windows-x64": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.4/vc-discord-1.4.4-noarch.astraplugin"
+          "linux-x64": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.5/vc-discord-1.4.5-noarch.astraplugin",
+          "noarch": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.5/vc-discord-1.4.5-noarch.astraplugin",
+          "windows-x64": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.5/vc-discord-1.4.5-noarch.astraplugin"
         },
         "readme": "# Voice communication-Discord\n\n> **Linux и macOS — экспериментальная поддержка.** Полная ручная проверка на этих ОС ещё не выполнена. Для macOS пока нет выпускаемого хоста Astra. Зависимости и ограничения: [PLATFORMS.md](PLATFORMS.md).\n\nГолосовое общение, музыка и радиоведущая в Discord для [Astra](https://github.com/mihailinl/AstraPlugins) от **Voltur**. Страница плагина в Astra — **VC-Discord**. Работает в Windows.\n\n[Скачать исходники ZIP — 1.3.5](https://github.com/Voltur792/VC-Discord/archive/refs/tags/v1.3.5.zip) · [Страница релиза](https://github.com/Voltur792/VC-Discord/releases/latest)\n\n## Загрузка и установка из исходников\n\nУстановите плагин вручную через режим разработки Astra. Этот способ даёт доступ ко всем возможностям, включая команды ПК:\n\n1. Нажмите **«Скачать исходники ZIP»** выше либо откройте Releases и выберите **Assets → Source code (zip)**. Распакуйте архив в постоянную папку.\n2. Установите Node.js 22.12 или новее. Откройте терминал в папке проекта и выполните:\n\n   ```powershell\n   npm ci\n   npm run build\n   ```\n\n3. В настройках приватности Astra разрешите неподписанные плагины.\n4. В **Плагины → Разработка → Загрузить плагин** выберите распакованную папку, в которой лежит `plugin.toml` (не ZIP-архив и не внешнюю папку, содержащую папку проекта), подтвердите разрешения и включите плагин.\n\nИсходники требуют сборки перед загрузкой в Astra. При обновлении выключите старую копию, соберите новую и загрузите её папку. Не удаляйте папку работающего плагина.\n\nЕсли подключение или звук не работают, откройте **«Диагностика»**, выполните проверки и используйте предложенные кнопки подготовки. Для проверки голоса бот должен находиться в канале.\n\n## Возможности\n\n- Голосовой разговор с участниками канала после реплики или обращения по имени.\n- Личность, модель, распознавание речи и голос Astra либо собственные настройки.\n- Музыка из Яндекс Музыки, VK и Spotify через [Astra Music](https://github.com/Voltur792/astra-music).\n- Поиск, плейлисты, персональные подборки, очередь и отдельная громкость Discord.\n- Радиоведущая: подводки к песням, анонс следующего трека и приглушение музыки во время речи.\n- Автоматические эфиры по расписанию из [Таймера паузы](https://github.com/Voltur792/SPT).\n- Обсуждение выбранного окна или экрана с моделью, поддерживающей изображения.\n- Команды компьютеру и управление участниками с разрешённых Discord-аккаунтов.\n- Проверка подключения, голоса и необходимых компонентов во вкладке диагностики.\n\n## Подключение\n\n1. Установите плагин из [Releases](https://github.com/Voltur792/VC-Discord/releases/latest) и откройте **VC-Discord**.\n2. В [Discord Developer Portal](https://discord.com/developers/applications) создайте приложение и бота. Получите токен в разделе **Bot**.\n3. Пригласите бота на сервер с правами просматривать канал, подключаться и говорить. Для обычного приглашения отключите **Requires OAuth2 Code Grant**, если он включён.\n4. Во вкладке **«Подключение»** укажите токен и нажмите **«Найти серверы и голосовые каналы»**. Выберите канал по названию.\n5. Нажмите **«Использовать всё из Astra»** либо настройте голос и модель отдельно. Сохраните настройки и нажмите **«Войти в канал»**.\n\nКнопка **«Проверить голос»** произнесёт тестовую фразу в канале. Токен вводится только в плагине. Astra и плагин должны работать во время разговора и эфира.\n\n## Текстовый канал: музыка и отдельный ИИ-чат\n\nВ **«Подключение → Текстовый канал»** выберите общий канал для заказов и общения. Включите **Message Content Intent** в Discord Developer Portal → Bot и выдайте боту **View Channel, Send Messages, Read Message History** в этом канале. Кнопка поиска серверов также показывает подходящие текстовые каналы.\n\nПодключение текста, общение, музыкальные заказы для всех и призыв в голосовые каналы включаются отдельно. По умолчанию эти возможности выключены. Управление ПК и экраном сохраняет прежние ограничения; общий текстовый канал не передаёт запросы в командный чат Astra.\n\n- **«Астра, зайди ко мне»**, **«Астра зайди ко мне»** или **`!join`** — войти в обычный голосовой канал автора. У бота должны быть права View Channel, Connect, Speak. Занятый бот не переходит в другой канал по публичному призыву.\n- **`!play исполнитель — песня`** или **«Астра включи песню …»** — включить песню. Можно добавить **«в VK»**, **«в Spotify»** или **«в Яндексе»**; иначе используется сервис по умолчанию из настроек. Новый заказ включает выбранную музыку сразу.\n- **`!find название`** — показать до пяти результатов. **`!play 2`** выбирает второй результат собственного поиска; выбор действует пять минут.\n- **«Астра пауза» / `!pause`**, **«Астра продолжи музыку» / `!resume`** — поставить музыку на паузу или продолжить. Повтор команды сохраняет нужное состояние; `!continue` — вариант продолжения. «Астра включи музыку» продолжает уже запущенную трансляцию; для нового заказа укажите песню после `!play`.\n- **«Астра выключи музыку» / `!stop`** — остановить музыку в Discord. Бот остаётся в голосовом канале; для выхода используется отдельная команда `!leave`.\n- **«Астра следующий трек» / `!next`** и **«Астра предыдущий трек» / `!prev`** — переключить песню. Поддерживаются `!skip`, `!previous`, фразы «включи следующую песню», «верни предыдущую песню». Если очередь закончилась или мост вернул ошибку, ответ сообщает результат вместо подтверждения переключения.\n- **«Астра что играет?» / `!now`** — показать текущие название, исполнителя и паузу. Есть варианты `!np` и `!current`. Просмотр доступен и во время смены радиоведущей; команды изменения музыки эфир не прерывают. Все эти команды доступны при включённых музыкальных заказах, независимо от списка доступа к ПК.\n- **«Астра громкость 5»**, **«Астра, громкость на пять»** или **`!volume 5`** — изменить громкость музыки именно в Discord, по шкале 0–10. **«Астра громче / тише»** меняет её на один шаг; `!volume 50%` задаёт 5 из 10. Доступно участникам при включённых музыкальных заказах; смену радиоведущей эти команды не меняют. Подтверждение отправляется после изменения, ползунок показывает ту же громкость.\n- **`!playlist https://vk.com/music/playlist/-123_456`** или **«Астра включи плейлист ссылка»** — включить плейлист VK любого владельца, доступный подключённому аккаунту. Для чужих плейлистов используется браузерное подключение VK в Astra Music. Сохранять его в свою медиатеку не нужно. Поддерживаются также полные ссылки `audio_playlist…`, `music/album/…`, `vk.ru` и ссылки с `z=audio_playlist…`; access hash сохраняется. Короткие ссылки и закрытые недоступные плейлисты не поддерживаются.\n- **`!playlist ссылка_Яндекса`** или **«Астра включи плейлист ссылка_Яндекса»** — включить доступный плейлист любого владельца из Яндекс Музыки. Поддерживаются новые ссылки `https://music.yandex.ru/playlists/UUID` и старые `/users/владелец/playlists/номер`, включая ссылки с параметрами `utm_*`. Сохранение в свою медиатеку не требуется. Для этого способа обновите и перезапустите оба плагина — VC-Discord и Astra Music; Яндекс должен быть подключён в Astra Music.\n- **`!wave yandex`**, **«Астра включи мою волну»**, **`!wave spotify`** или **«Астра включи мой микс»** — включить волну Яндекса или персональную подборку подключённого Spotify.\n- **`!playlist https://open.spotify.com/playlist/5KafKeLCCXVTEywG5NhPPq`**, **`!play ссылка_плейлиста`** или **«Астра включи плейлист ссылка_плейлиста»** — включить доступный плейлист Spotify любого владельца. Параметр `si` и другие параметры ссылки не передаются в плеер; поддерживаются и ссылки вида `/intl-ru/playlist/…`. Сохранение плейлиста в медиатеку не требуется. Для Spotify войдите в свой аккаунт в Astra Music и включите режим без окна браузера.\n- **`!help`** — справка в канале.\n\nПерсональный микс Spotify работает и в Discord: **«Астра включи мой микс»**, **«Астра включи мой микс в Spotify»**, **`!wave spotify`** или кнопка **«Включить мой микс Spotify»**. Astra Music выбирает доступную персональную подборку (daylist / Daily Mix и другие миксы) подключённого аккаунта. Если аккаунт ещё не получил подборок, откройте раздел «Для тебя» в Spotify и повторите. Текстовый заказ использует аккаунт владельца Astra Music, а не аккаунт автора сообщения в Discord. Звук Spotify во время трансляции идёт в Discord; управление треком общее с плеером Astra.\n\nВо время смены призыв, выход и изменение музыки объясняют причину отказа: работа по расписанию, название смены, голосовой канал и дата/время окончания **по Екатеринбургу (UTC+5)**. Сведения о смене проверяются до общего ответа о занятом канале. После подтверждённого запуска музыки Астра пишет в выбранный текстовый канал о начале работы, указывает фактическое время начала и окончание смены. Переключатель **«Писать о начале смены и времени окончания в текстовый канал»** находится в разделе «Музыка» и по умолчанию включён. Нужен включённый текстовый канал из вкладки «Подключение»; ИИ-чат и музыкальные заказы могут быть выключены. Повторный запрос таймера на ту же работающую смену не дублирует уведомление. Ошибка отправки сообщения не останавливает эфир; при неудавшемся запуске музыки уведомление о начале не отправляется.\n\n---\n\n*This README was truncated. [Read the rest on GitHub](https://github.com/Voltur792/VC-Discord).*\n",
         "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "vc-discord-1.4.5-noarch.astraplugin",
+                "sha256": "0bbe1cbe3f7a9a5050d28ec692aae6c7501baa9ee1c5c134d7654df606ae3d21",
+                "size": 5160087,
+                "url": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.5/vc-discord-1.4.5-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "ui_contributions"
+            ],
+            "permissions": {
+              "send_chat_message": {
+                "reason": "Forwards explicitly addressed PC commands only from the Discord accounts you allow to Astra's command chat"
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-10-25T20:16:44Z",
+            "release": {
+              "commit": "38dfc12b5ef1f3fd93fb01234b2b7b86c4a43562",
+              "kind": "github_release",
+              "repo": "Voltur792/VC-Discord",
+              "tag": "v1.4.5"
+            },
+            "review": "unreviewed",
+            "version": "1.4.5"
+          },
           {
             "artifacts": {
               "noarch": {
@@ -3171,8 +3239,8 @@
           "repo": "Voltur792/VC-Discord"
         },
         "stars": 0,
-        "updated_at": "2026-10-25T14:34:16Z",
-        "version": "1.4.4"
+        "updated_at": "2026-10-25T20:16:44Z",
+        "version": "1.4.5"
       },
       {
         "added_at": "2026-09-12",
@@ -3598,6 +3666,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 89
+    "serial": 90
   }
 }
