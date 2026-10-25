@@ -1,0 +1,28 @@
+{
+  "$comment": "Derived from FluffyTaill/astra-anim-studio@v1.0.5. Digests are of the bytes the bot downloaded and the attestation covers. Ownership proved by: unrecorded.",
+  "schema": "astra.registry.version/1",
+  "id": "anim-studio",
+  "version": "1.0.5",
+  "published_at": "2026-10-25T08:20:06Z",
+  "review": "unreviewed",
+  "release": {
+    "kind": "github_release",
+    "repo": "FluffyTaill/astra-anim-studio",
+    "tag": "v1.0.5",
+    "commit": "75c141a442d8db5159861dcd2cb62beaaa6afd99"
+  },
+  "artifacts": {
+    "noarch": {
+      "url": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.0.5/anim-studio-1.0.5-noarch.astraplugin",
+      "filename": "anim-studio-1.0.5-noarch.astraplugin",
+      "sha256": "1badc3de9460b7514236d2dd3a48e82e106ef8e1678d8580d261013df2459bfc",
+      "size": 241355
+    }
+  },
+  "protocol": 1,
+  "capabilities": [
+    "tools",
+    "ui_contributions"
+  ],
+  "permissions": {}
+}
