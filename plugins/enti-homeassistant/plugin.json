@@ -1,0 +1,24 @@
+{
+  "$comment": "Derived from entiedvard/enti-homeassistant@v0.1.3 by bot/ingest.mjs. Every field below is read out of the attested bundle except source.repo, which is taken from the build certificate's .12 (BOT-21) and the ownership check proves the submitter controls.",
+  "schema": "astra.registry.plugin/1",
+  "id": "enti-homeassistant",
+  "name": "Home Assistant Connector",
+  "summary": "Connect Astra to Home Assistant to read entity states, control devices, and call services.",
+  "license": "MIT",
+  "source": {
+    "kind": "github",
+    "repo": "entiedvard/enti-homeassistant"
+  },
+  "added_at": "2026-10-25",
+  "description": "Connect Astra to Home Assistant to read entity states, control devices, and call services.",
+  "author": {
+    "name": "Enti_Edvard"
+  },
+  "readme": "README.md",
+  "i18n": {
+    "ru": {
+      "name": "Home Assistant Connector",
+      "summary": "Подключает Astra к Home Assistant для чтения состояний сущностей, управления устройствами и вызова сервисов."
+    }
+  }
+}

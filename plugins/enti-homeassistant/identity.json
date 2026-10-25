@@ -1,0 +1,8 @@
+{
+  "schema": "astra.registry.identity/1",
+  "plugin_id": "enti-homeassistant",
+  "repository_id": "1384665715",
+  "repository_owner_id": "209273457",
+  "repo": "entiedvard/enti-homeassistant",
+  "token_hash": "0cf1bde3694c1b2f"
+}
