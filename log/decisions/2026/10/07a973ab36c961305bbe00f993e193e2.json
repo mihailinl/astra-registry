@@ -1,0 +1,28 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "linux-x64:f997ada0d9ec967f162e69cfd829bcb0bc02830b9766344d3d59ddec20e57d58",
+    "windows-x64:64e259fe18c9555aef6dbac0869d56e249fcaeb9d441bc3acca59e529357ca77"
+  ],
+  "commit": "af39f244d9ca995060d43f1ccc31b1ce7db6881f",
+  "decided_at": "2026-10-25T08:21:08Z",
+  "decision_id": "07a973ab36c961305bbe00f993e193e2",
+  "fingerprint": "0c963812267ea0fc",
+  "plugin_id": "enti-homeassistant",
+  "reasons": [
+    "E_TRADEMARK",
+    "E_VERSION_NOT_NEW",
+    "E_LISTING_NOT_ENGLISH",
+    "B_UNBOUND"
+  ],
+  "repo": "entiedvard/enti-homeassistant",
+  "repository_id": "1384665715",
+  "repository_owner_id": "209273457",
+  "run": "40176150850/1",
+  "schema": "astra.registry.decision/1",
+  "state": "refused",
+  "submission_id": "cfa7bbe4-cd0c-4ff8-bdd2-d3723a0d2a18",
+  "tag": "v0.1.1",
+  "trigger": "poll",
+  "version": "0.1.1"
+}
