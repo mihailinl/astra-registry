@@ -3,13 +3,75 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "UvLo0NIUO7cOea8O/jbF5fG9YcRn+FWCJ67+dYd42M/BZVRTuOVzxImoq7o2fWm7YHaDlWc6JrAYr75tmX5OCQ=="
+      "sig": "YIixd1Y+JQhtsmfv7EcKl162JCGdmxlEIR2ecOME0dYmUXl540pG52kH04n/R/oXpbPwscmPc5qmz0Xnx9AjDw=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-24T03:25:10Z",
-    "issued_at": "2026-10-25T03:25:10Z",
+    "expires_at": "2026-11-24T08:13:44Z",
+    "issued_at": "2026-10-25T08:13:44Z",
     "plugins": [
+      {
+        "added_at": "2026-10-25",
+        "author": "Taill",
+        "capabilities": [
+          "tools",
+          "ui_contributions"
+        ],
+        "description": "Add your own avatar animations (VRMA, Mixamo FBX, GLB) and choose when she plays them: when bored, to music, or on a trigger.",
+        "download_url": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.0.4/anim-studio-1.0.4-noarch.astraplugin",
+        "downloads": 0,
+        "i18n": {
+          "ru": {
+            "description": "Добавляй аватару свои анимации (VRMA, FBX из Mixamo, GLB) и выбирай, когда она их играет: от скуки, под музыку или по триггеру.",
+            "name": "Anim Studio"
+          }
+        },
+        "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJnIiB4MT0iMCIgeTE9IjAiIHgyPSIxIiB5Mj0iMSI+PHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjOGI3Y2ZmIi8+PHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjZmY3YWI2Ii8+PC9saW5lYXJHcmFkaWVudD48L2RlZnM+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTYiIGZpbGw9IiMxNTE5MjUiLz48ZyBmaWxsPSJub25lIiBzdHJva2U9InVybCgjZykiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48Y2lyY2xlIGN4PSIzMiIgY3k9IjE0IiByPSI1Ii8+PHBhdGggZD0iTTMyIDIwdjE2bC04IDE0TTMyIDM2bDggMTRNMjAgMjhsMTItNiAxMiA2Ii8+PC9nPjxwYXRoIGQ9Ik00OCA0NGwyIDQgNCAyLTQgMi0yIDQtMi00LTQtMiA0LTJ6IiBmaWxsPSIjZmY3YWI2Ii8+PC9zdmc+Cg==",
+        "id": "anim-studio",
+        "license": "MIT",
+        "name": "Anim Studio",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.0.4/anim-studio-1.0.4-noarch.astraplugin",
+          "noarch": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.0.4/anim-studio-1.0.4-noarch.astraplugin",
+          "windows-x64": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.0.4/anim-studio-1.0.4-noarch.astraplugin"
+        },
+        "readme": "# Anim Studio — плагин для Astra\n\nДобавляй аватару Astra свои анимации без ручной правки файлов и выбирай, когда она их играет.\n\n## Установка\n\n1. Скачай `anim-studio.astraplugin`.\n2. Astra → **Мастерская** → **Разработка** → **Импорт плагина** → **Выбрать файл…** → выбери файл → **Установить**.\n3. Страница плагина: меню **☰ (Навигация)** справа вверху → **Плагины** → **Anim Studio**.\n\n## Как пользоваться\n\n1. **＋ Добавить анимацию** → выбери файл:\n   - `.vrma` — VRM Animation (VRoid, BOOTH);\n   - `.fbx` — из [Mixamo](https://www.mixamo.com): Download → *FBX Binary, Without Skin, 30 fps*;\n   - `.glb` — паки вроде Quaternius Universal Animation Library (при добавлении выбери нужные анимации).\n2. У каждой анимации выбери, когда её играть:\n   - **Сама, от скуки** — иногда играет, когда стоит без дела (ползунок «редко — часто»);\n   - **Под музыку** — медленная / средняя / быстрая музыка;\n   - **На месте** (для FBX) — убирает скольжение в сторону, чтобы она не уходила за край окна;\n   - **Скорость**.\n3. Нажми **Применить** — аватар перезапустится на пару секунд.\n\nКаждая анимация получает своё состояние `as_…`:\n- посмотреть: Astra → **Модель** → **Анимации** → **Показать**;\n- реакция на событие: **Модель** → **Триггеры**;\n- голосовая команда: создай команду с действием «Анимация компаньона», режим **state**, имя `as_…`.\n\n## Как это устроено\n\nПлагин ведёт отдельный набор-дополнение `animpacks/anim-studio` и подключает его к отмеченным персонажам строкой\n`addons = [\"anim-studio\"]` в их `character.toml` (копия до изменения сохраняется как `character.toml.before-anim-studio`).\nСобственный набор анимаций персонажа не меняется. Встроенные персонажи дополнения не поддерживают — сделай копию персонажа\n(Модель → Персонажи → Добавить персонажа) и отметь её.\n\n## Сборка из исходников\n\nНужны [bun](https://bun.sh) и [astra-plugin](https://github.com/mihailinl/AstraPlugins/blob/HEAD/docs/en/install-cli.md) 0.5.0+.\n\n```\nbun install\nbun run test\nastra-plugin check . --strict\nastra-plugin test .\nastra-plugin build .\n```\n\nРелизы собирает и подписывает GitHub Actions (`.github/workflows/release.yml`) по тегу `vX.Y.Z`.\n\n---\n\n# Anim Studio — an Astra plugin\n\nAdd your own animations to the Astra avatar without editing files by hand, and choose when she plays them:\nwhen bored (idle), to music (slow / mid / fast), or as her own state `as_…` that you can bind to triggers and\ncommands. Supports `.vrma`, Mixamo `.fbx` (with an *in place* option) and multi-animation `.glb`.\nInstall: Astra → Workshop → Development → Import plugin → choose `anim-studio.astraplugin`.\nThe page lives in the ☰ Navigation menu → Plugins → Anim Studio.\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "anim-studio-1.0.4-noarch.astraplugin",
+                "sha256": "925a93972fed221b7b8e8daba28b0256ad09f5dd81a2c19c3f99fe89225776d2",
+                "size": 240810,
+                "url": "https://github.com/FluffyTaill/astra-anim-studio/releases/download/v1.0.4/anim-studio-1.0.4-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {},
+            "protocol": 1,
+            "published_at": "2026-10-25T08:03:07Z",
+            "release": {
+              "commit": "1a3dedb948e95ee2afc867dcd6bb86762d565ba6",
+              "kind": "github_release",
+              "repo": "FluffyTaill/astra-anim-studio",
+              "tag": "v1.0.4"
+            },
+            "review": "unreviewed",
+            "version": "1.0.4"
+          }
+        ],
+        "repository_url": "https://github.com/FluffyTaill/astra-anim-studio",
+        "source": {
+          "kind": "github",
+          "repo": "FluffyTaill/astra-anim-studio"
+        },
+        "stars": 0,
+        "updated_at": "2026-10-25T08:03:07Z",
+        "version": "1.0.4"
+      },
       {
         "added_at": "2026-08-10",
         "author": "Mihailin",
@@ -1089,6 +1151,79 @@
         "stars": 0,
         "updated_at": "2026-10-18T20:16:31Z",
         "version": "0.1.4"
+      },
+      {
+        "added_at": "2026-10-25",
+        "author": "Enti_Edvard",
+        "capabilities": [
+          "dom_access",
+          "tools",
+          "ui_contributions"
+        ],
+        "description": "Connect Astra to Home Assistant to read entity states, control devices, and call services.",
+        "download_url": "",
+        "downloads": 0,
+        "i18n": {
+          "ru": {
+            "description": "Подключает Astra к Home Assistant для чтения состояний сущностей, управления устройствами и вызова сервисов.",
+            "name": "Home Assistant Connector"
+          }
+        },
+        "icon_url": "",
+        "id": "enti-homeassistant",
+        "license": "MIT",
+        "name": "Home Assistant Connector",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/entiedvard/enti-homeassistant/releases/download/v0.1.3/enti-homeassistant-0.1.3-linux-x64.astraplugin",
+          "windows-x64": "https://github.com/entiedvard/enti-homeassistant/releases/download/v0.1.3/enti-homeassistant-0.1.3-windows-x64.astraplugin"
+        },
+        "readme": "# Home Assistant Connector\n\n© 2026 Enti_Edvard\n\nПлагин для подключения Astra к Home Assistant: чтение состояний устройств и вызов сервисов.\n\n## Возможности\n\n- поиск сущностей по имени или `entity_id`;\n- получение показаний датчиков через `get_sensor_readings` — температура, влажность, давление, освещённость, заряд батареи и другие значения;\n- просмотр полного состояния сущности;\n- включение, выключение и переключение сущностей;\n- вызов произвольного сервиса с JSON-данными.\n- постоянная подписка на события `state_changed` с автоматическим переподключением;\n- просмотр до 100 последних изменений через `get_recent_state_changes`.\n- встроенная панель Astra со списком сущностей, поиском, состояниями и управлением `light`/`switch`.\n\n## Настройка\n\nВ Astra откройте настройки плагина и заполните:\n\n1. **Home Assistant WebSocket URL**, например `ws://homeassistant.local:8123/api/websocket` или `wss://example.duckdns.org/api/websocket`. Адрес должен оканчиваться строго на `/api/websocket`;\n2. **Long-Lived Access Token** — создайте его в профиле Home Assistant.\n\nТокен хранится в настройках Astra и не должен попадать в `config.toml`, Git или логи.\n\nДля запросов о текущей температуре, влажности, давлении, освещённости или заряде батареи используйте инструмент `get_sensor_readings`. Он читает только сущности `sensor` и `binary_sensor` Home Assistant и не управляет устройствами. `search_entities` предназначен для общего поиска, а `get_entity_state` — для чтения одной заранее известной сущности по точному `entity_id`.\n\nПлагин ожидает весь ответ Home Assistant (подключение, авторизацию и команду) не более 20 секунд. Для `wss://` используются системные доверенные сертификаты Windows.\n\nПо умолчанию плагин не создаёт постоянных фоновых подключений. Если нужен журнал последних изменений, включите настройку **«Проверять изменения для журнала раз в 10 минут»**: плагин раз в 10 минут запросит текущие состояния и сравнит их с предыдущим снимком. Это не создаёт постоянного потока `state_changed`, но журнал обновляется с задержкой до 10 минут и не содержит промежуточных изменений между проверками.\n\n## Панель\n\nВ навигации Astra появится страница **Home Assistant** в стиле Overview. Она получает комнаты, распределение сущностей и заданные в Home Assistant MDI-иконки непосредственно из `area_registry`, `entity_registry` и `device_registry`. Комнаты отображаются отдельными вкладками; внутри активной вкладки показываются только её выбранные устройства. Автоматизации, недоступные, скрытые и диагностические сущности, а также служебные сущности платформы `homeassistant` не показываются в панели. Набор устройств можно изменить кнопкой **«Настроить устройства»** — выбор сохраняется локально. Для `light` доступны быстрые переключатели и яркость, для `cover` — открытие, остановка и закрытие штор. Датчики показываются компактно. Журнал отображает последние события `state_changed`.\n\n## Разработка\n\nТребуются Rust и `protoc`.\n\n```powershell\ncargo test\nastra-plugin check . --strict\nastra-plugin test .\nastra-plugin dev .\n```\n\n## Сборка\n\n```powershell\nastra-plugin build\n```\n\nКоманда создаёт распространяемый файл `.astraplugin`.\n",
+        "releases": [
+          {
+            "artifacts": {
+              "linux-x64": {
+                "filename": "enti-homeassistant-0.1.3-linux-x64.astraplugin",
+                "sha256": "e9beb4e53c9f9a150fb704fcc4771e02e69020ae0db070d306db4bfda22ad91d",
+                "size": 3594189,
+                "url": "https://github.com/entiedvard/enti-homeassistant/releases/download/v0.1.3/enti-homeassistant-0.1.3-linux-x64.astraplugin"
+              },
+              "windows-x64": {
+                "filename": "enti-homeassistant-0.1.3-windows-x64.astraplugin",
+                "sha256": "6afb59fc1993eab9e67320ed6a79b554fd9da5371791bc3a008d82af5a7c6a44",
+                "size": 3103311,
+                "url": "https://github.com/entiedvard/enti-homeassistant/releases/download/v0.1.3/enti-homeassistant-0.1.3-windows-x64.astraplugin"
+              }
+            },
+            "capabilities": [
+              "dom_access",
+              "tools",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "dom_access": {
+                "reason": "Shows the interactive Home Assistant panel inside the Astra interface."
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-10-25T08:05:18Z",
+            "release": {
+              "commit": "4697eed3db04c898fbb7bafa8e273b09a1a88f90",
+              "kind": "github_release",
+              "repo": "entiedvard/enti-homeassistant",
+              "tag": "v0.1.3"
+            },
+            "review": "unreviewed",
+            "version": "0.1.3"
+          }
+        ],
+        "repository_url": "https://github.com/entiedvard/enti-homeassistant",
+        "source": {
+          "kind": "github",
+          "repo": "entiedvard/enti-homeassistant"
+        },
+        "stars": 0,
+        "updated_at": "2026-10-25T08:05:18Z",
+        "version": "0.1.3"
       },
       {
         "added_at": "2026-08-10",
@@ -2516,6 +2651,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 71
+    "serial": 72
   }
 }
