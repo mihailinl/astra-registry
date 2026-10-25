@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:6ef5c9c6ce83001c9e44a63f2812a5669f4ddbfc21134284ac48cc4972db4f65"
+  ],
+  "commit": "a10c6d48ce9d7f2da6ec4b463d842ec00e4bb5db",
+  "decided_at": "2026-10-25T09:43:36Z",
+  "decision_id": "9047d903d19b2425616d0289d54f3a61",
+  "fingerprint": "890c104bad545cf8",
+  "plugin_id": "browser-control",
+  "reasons": [
+    "E_VERSION_NOT_NEW",
+    "B_UNBOUND"
+  ],
+  "repo": "Voltur792/browser-control",
+  "repository_id": "1390309413",
+  "repository_owner_id": "232130437",
+  "run": "40181678011/1",
+  "schema": "astra.registry.decision/1",
+  "state": "refused",
+  "submission_id": "dbf46707-0d1e-4a2f-8145-fde97d61baca",
+  "tag": "v1.1.0",
+  "trigger": "poll",
+  "version": "1.1.0"
+}
