@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "KOIYGAVaHlLhoIvIxiT0IxWAIgVRLdq4DdKenfXgOAioEbSKImGzh42PXstjdVbFUgk49BTYCgx6//S2cOQVBQ=="
+      "sig": "uFtt21Waca6XbxLQ+wtAsi+LR6MR82g1m+h5S4mx1ciA5nwfBvuETu+My79JIdbcTw0lCWbU/wnX73mVFDfIDg=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-24T10:42:55Z",
-    "issued_at": "2026-10-25T10:42:55Z",
+    "expires_at": "2026-11-24T10:56:23Z",
+    "issued_at": "2026-10-25T10:56:23Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -1523,6 +1523,79 @@
         "stars": 0,
         "updated_at": "2026-10-25T08:05:18Z",
         "version": "0.1.3"
+      },
+      {
+        "added_at": "2026-10-25",
+        "author": "iaroslaviskendirov-alt",
+        "capabilities": [
+          "tools",
+          "triggers",
+          "ui_contributions"
+        ],
+        "description": "Astra notices which game you are playing and keeps you company: comments, break and bedtime reminders, session summaries, Steam achievements and play stats.",
+        "download_url": "https://github.com/iaroslaviskendirov-alt/game-companion/releases/download/v0.1.1/game-companion-0.1.1-noarch.astraplugin",
+        "downloads": 0,
+        "homepage": "https://github.com/iaroslaviskendirov-alt/game-companion",
+        "i18n": {
+          "ru": {
+            "description": "Астра понимает, во что ты играешь, и составляет компанию: комментирует запуск, напоминает о перерыве и сне, подводит итог сессии, радуется ачивкам Steam и ведёт статистику.",
+            "name": "Игровой компаньон"
+          }
+        },
+        "icon_url": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IkdhbWUgQ29tcGFuaW9uIj4KICA8dGl0bGU+R2FtZSBDb21wYW5pb248L3RpdGxlPgogIDxyZWN0IHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCIgcng9IjE0IiBmaWxsPSIjNmQ0YWZmIi8+CiAgPHBhdGggZD0iTTIwIDIyaDI0YTExIDExIDAgMCAxIDExIDExdjRhOSA5IDAgMCAxLTE2LjIgNS40TDM2IDM5aC04bC0yLjggMy40QTkgOSAwIDAgMSA5IDM3di00YTExIDExIDAgMCAxIDExLTExeiIgZmlsbD0iI2Y4ZmFmYyIvPgogIDxyZWN0IHg9IjE3IiB5PSIyOSIgd2lkdGg9IjEwIiBoZWlnaHQ9IjMuNSIgcng9IjEuMiIgZmlsbD0iIzZkNGFmZiIvPgogIDxyZWN0IHg9IjIwLjI1IiB5PSIyNS43NSIgd2lkdGg9IjMuNSIgaGVpZ2h0PSIxMCIgcng9IjEuMiIgZmlsbD0iIzZkNGFmZiIvPgogIDxjaXJjbGUgY3g9IjQxIiBjeT0iMjguNSIgcj0iMi40IiBmaWxsPSIjZmY1YzhhIi8+CiAgPGNpcmNsZSBjeD0iNDYiIGN5PSIzMy41IiByPSIyLjQiIGZpbGw9IiMyOWM3YTUiLz4KICA8cGF0aCBkPSJNNDUgMTFsMS40IDMuNkw1MCAxNmwtMy42IDEuNEw0NSAyMWwtMS40LTMuNkw0MCAxNmwzLjYtMS40eiIgZmlsbD0iI2ZmZDE2NiIvPgo8L3N2Zz4K",
+        "id": "game-companion",
+        "license": "MIT",
+        "name": "Game Companion",
+        "platform_downloads": {
+          "linux-x64": "https://github.com/iaroslaviskendirov-alt/game-companion/releases/download/v0.1.1/game-companion-0.1.1-noarch.astraplugin",
+          "noarch": "https://github.com/iaroslaviskendirov-alt/game-companion/releases/download/v0.1.1/game-companion-0.1.1-noarch.astraplugin",
+          "windows-x64": "https://github.com/iaroslaviskendirov-alt/game-companion/releases/download/v0.1.1/game-companion-0.1.1-noarch.astraplugin"
+        },
+        "readme": "# Game Companion\n\nAstra notices which game you are playing and keeps you company like a gamer friend sitting next to you.\n\n## What it does\n\n- **Knows what you play.** Every few seconds it checks running processes against about 60 popular games, your local Steam library, and games you add by hand (process name + title). Desktop apps from Steam such as Bongo Cat or Wallpaper Engine are not counted as games.\n- **Reacts out loud** (each reaction can be switched off):\n  - a short line when a game starts, written by Astra's AI so it does not repeat itself;\n  - a gentle stretch-and-water reminder after a long session (2 hours by default, then at most once an hour);\n  - a caring bedtime hint once per session when you play past night time (01:00 by default);\n  - a short summary when the game closes (\"2 hours 15 minutes in Elden Ring, not bad\").\n- **Answers game questions.** Ask \"how do I beat this boss?\" or \"which build is best?\" and Astra puts the current game's name into her web search and answers briefly, without story spoilers unless you ask for them.\n- **Cheers Steam achievements** (optional). Enter a Steam Web API key and your SteamID64 and Astra checks the current game for new achievements every 2 minutes. Your Steam profile must be public.\n- **Keeps play statistics** locally: ask \"how much did I play today?\" or \"what did I play most this week?\".\n- **Fires automation triggers**: Game started, Game closed, Steam achievement unlocked.\n\n## The Games tab\n\n- **Now**: the current game, a session timer and a box to ask a question about the game.\n- **Statistics**: time today and this week, the last 7 days as bars, top games of the week and recent sessions.\n- **Settings**: tracked games (add, remove, Steam library on/off), a switch for every reaction, break and night times, speaking aloud, and the Steam achievement fields.\n\n## Recommended: one line in Astra's AI instruction\n\nAstra shows the AI only some of the installed tools at a time, so for a vague voice question like \"which truck is best?\" she may not realise you mean the game. Adding this line to the end of Astra's AI instruction (the character text in Astra's AI settings) makes her check the current game first:\n\n```text\nIf the user asks anything that could be about a computer game (bosses, builds, mods, items, quests, vehicles, \"which truck / car / weapon is best\", \"how do I pass\", \"where do I find\"), first find and call the get_current_game tool of the Game Companion plugin to learn what the user is playing right now, and answer about that game.\n```\n\nThe \"Ask about this game\" box on the Games tab works without it.\n\n## Permissions\n\n- **Send chat messages**: Astra's comments, reminders, summaries and answers are written in the plugin's own chat thread, and spoken when voice is on.\n- **Fire triggers**: so your own automations can react to a game starting or closing, or to an achievement.\n\n## Privacy\n\nPlay history, settings and the Steam key are stored only on your computer, in `%APPDATA%\\astra-game-companion\\data.json`. The plugin reads the list of running processes, the Steam folders and Steam's registry entries; it sends nothing anywhere except Steam Web API requests when you enter a key, and the messages it asks Astra to say.\n\nWindows only.\n\n## Development\n\n```bash\nbun install\nbun run pretest && node --test test/plugin.test.mjs\nastra-plugin check . --strict\nastra-plugin test .\n```\n\n## License\n\nMIT\n",
+        "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "game-companion-0.1.1-noarch.astraplugin",
+                "sha256": "6dd0d947271c7c5d40fbcd2907c3b7aee581ab029b918ad3640c76a8baeac513",
+                "size": 246378,
+                "url": "https://github.com/iaroslaviskendirov-alt/game-companion/releases/download/v0.1.1/game-companion-0.1.1-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "tools",
+              "triggers",
+              "ui_contributions"
+            ],
+            "min_astra_version": "0.2.7",
+            "permissions": {
+              "fire_trigger": {
+                "reason": "Fires Game started, Game closed and Achievement unlocked so your own automations can react"
+              },
+              "send_chat_message": {
+                "reason": "Lets Astra comment on game start, breaks, bedtime, session end and achievements, and answer questions from the Games tab"
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-10-25T10:25:40Z",
+            "release": {
+              "commit": "06930d2f76791b64b6d74a82868147c1198a37c8",
+              "kind": "github_release",
+              "repo": "iaroslaviskendirov-alt/game-companion",
+              "tag": "v0.1.1"
+            },
+            "review": "unreviewed",
+            "version": "0.1.1"
+          }
+        ],
+        "repository_url": "https://github.com/iaroslaviskendirov-alt/game-companion",
+        "source": {
+          "kind": "github",
+          "repo": "iaroslaviskendirov-alt/game-companion"
+        },
+        "stars": 0,
+        "updated_at": "2026-10-25T10:25:40Z",
+        "version": "0.1.1"
       },
       {
         "added_at": "2026-08-10",
@@ -3224,6 +3297,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 82
+    "serial": 83
   }
 }
