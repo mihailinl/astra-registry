@@ -3,12 +3,12 @@
   "signatures": [
     {
       "key_id": "astra-index-2026a",
-      "sig": "IUE+X4cbGGIzZhiXQZYB4GfGu14mJUfAlo4H60ABCnDPkC9gr4uj5pdtF7EnawEvjjiB3ItCjBfpapEin3foBA=="
+      "sig": "O4sG8HxiDNHHBbefY7nr0yLZflg7fsaPkZCPZk9eK8OteLZBZjz8CVDwc57ysN9o486wlCWja3j1aupsC4kFDg=="
     }
   ],
   "signed": {
-    "expires_at": "2026-11-24T14:42:29Z",
-    "issued_at": "2026-10-25T14:42:29Z",
+    "expires_at": "2026-11-24T14:53:32Z",
+    "issued_at": "2026-10-25T14:53:32Z",
     "plugins": [
       {
         "added_at": "2026-10-25",
@@ -963,17 +963,16 @@
         "author": "dwertyfa",
         "capabilities": [
           "actions",
-          "event_handlers",
           "tools",
           "triggers",
           "ui_contributions"
         ],
-        "description": "Announce selected Telegram chats with Astra and send voice-dictated replies",
-        "download_url": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.14/dwertyfa-astra-tg-0.1.14-noarch.astraplugin",
+        "description": "Reads messages from selected Telegram chats with Astra's voice and plays voice messages. Lets you reply and message contacts by voice, find recipients by name, send one message to several chats or a…",
+        "download_url": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.20/dwertyfa-astra-tg-0.1.20-noarch.astraplugin",
         "downloads": 0,
         "i18n": {
           "ru": {
-            "description": "Озвучивает выбранные Telegram-чаты голосом Astra и отправляет продиктованные ответы",
+            "description": "Озвучивает сообщения из выбранных Telegram-чатов голосом Astra и проигрывает голосовые. Позволяет отвечать и писать контактам голосом, находить получателей по имени, делать рассылки в несколько…",
             "name": "TG for Astra"
           }
         },
@@ -982,12 +981,46 @@
         "license": "MIT",
         "name": "TG for Astra",
         "platform_downloads": {
-          "linux-x64": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.14/dwertyfa-astra-tg-0.1.14-noarch.astraplugin",
-          "noarch": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.14/dwertyfa-astra-tg-0.1.14-noarch.astraplugin",
-          "windows-x64": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.14/dwertyfa-astra-tg-0.1.14-noarch.astraplugin"
+          "linux-x64": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.20/dwertyfa-astra-tg-0.1.20-noarch.astraplugin",
+          "noarch": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.20/dwertyfa-astra-tg-0.1.20-noarch.astraplugin",
+          "windows-x64": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.20/dwertyfa-astra-tg-0.1.20-noarch.astraplugin"
         },
-        "readme": "# TG for Astra\n\nTG for Astra connects a personal Telegram account to Astra. The plugin monitors selected chats, announces new messages with Astra's voice, plays voice messages, and sends replies dictated by the user.\n\n## Features\n\n- Login with a phone number, Telegram verification code, and two-step verification password.\n- Support for private chats, groups, and channels.\n- Monitoring of up to 1000 chats at the same time, with a one-click \"monitor every chat\" action.\n- A privacy toggle that masks the account name and phone number; the state is kept in the plugin's own state file.\n- A panel that lists the chats currently being monitored.\n- A button that writes the two ready-made Astra commands out as an `astra-commands` file to import.\n- Customizable notification and reply-confirmation messages.\n- Playback of Telegram voice messages in their original audio.\n- Automatic transport selection: Telegram WSS first, followed by a fallback WSS relay.\n- Text replies after a command word, for example `Astra, write I will be there soon`.\n- New Telegram messages through Astra AI tools: say, for example, `Astra, write to Andrey that I will be there soon`; Astra shows the resolved chat and draft first, then sends only after a separate confirmation.\n- A customizable phrase for tool-based sending, such as `write` or `write in Telegram`. No Astra command-editor nodes are required for this feature.\n- Concise tool responses: Astra asks only for the final send confirmation and reports only the final result, without narrating tool lookup or intermediate steps.\n\nThe two-step verification password is not stored after login.\n\n## Development\n\nRequirements: Node.js 20+ and the `astra-plugin` CLI.\n\n```bash\nnpm install\nnpm run typecheck\nnpm run build\nastra-plugin check --strict .\n```\n\nTo run the plugin in development mode:\n\n```bash\nastra-plugin dev .\n```\n\n## License\n\nMIT\n",
+        "readme": "# TG for Astra\n\nReads messages from selected Telegram chats with Astra's voice and plays voice messages. Lets you reply and message contacts by voice, find recipients by name, send one message to several chats or a Telegram folder, and set up rule-based auto-replies. Announcement templates and reply phrases are customizable. Works without a VPN through the built-in proxy.\n\n## Features\n\n- Login with a phone number, Telegram verification code, and two-step verification password. Russian numbers may start with +7, 7 or 8; spaces, parentheses and hyphens are accepted and normalized automatically.\n- Support for private chats, groups, and channels.\n- Monitoring of up to 1000 chats at the same time, with a one-click \"monitor every chat\" action.\n- A privacy toggle that masks the account name and phone number; the state is kept in the plugin's own state file.\n- A panel that lists the chats currently being monitored.\n- A button that writes the ready-made Astra announcement command out as an `astra-commands` file to import.\n- Customizable notification and reply-confirmation messages.\n- Playback of Telegram voice messages in their original audio.\n- All Telegram connections use the configured authenticated WSS relay, including login, reconnections and media downloads. The plugin never tries a direct Telegram connection.\n- Immediate replies to incoming messages through an AI tool, for example `Astra, tell him I will be there soon`. No separate reply command or send confirmation is needed. The reply phrase and reply window are configurable in the plugin.\n- AI chooses recipients from real Telegram contacts, using names and usernames to interpret inflections, nicknames, Russian/English spellings and speech recognition errors. Ambiguous recipients are clarified; selected chats are addressed by ID.\n- Recent incoming messages have individual reply IDs, so another incoming message cannot redirect a reply that is already being sent.\n- New Telegram messages through Astra AI tools: say, for example, `Astra, write to Andrey that I will be there soon`; Astra shows the resolved chat and draft first, then sends only after a separate confirmation.\n- A customizable phrase for tool-based sending, such as `write` or `write in Telegram`. No Astra command-editor nodes are required for this feature.\n- A separate AI-tool flow for sending one identical message to several existing chats, `@usernames`, Telegram folders, or a mixture of them.\n- One confirmation for the entire broadcast, automatic folder expansion and duplicate removal, with a hard limit of 10 final recipients.\n- A customizable broadcast phrase and a random delay range between individual sends. Ordinary per-chat errors do not stop the remaining queue, while Telegram flood-wait responses pause and retry it.\n- An optional campaign auto-responder for private recipients of the latest confirmed broadcast. It stays active until disabled and each saved rule can answer each recipient only once per campaign.\n- Unlimited auto-reply rule cards with editable trigger chips. Triggers may be full phrases and are committed with a comma or Enter; every rule sends one saved response verbatim.\n- If one rule matches, it is selected locally. If several match, Astra silently receives the full incoming message and chooses one matching rule ID; the plugin never sends generated or rewritten model text.\n- A short Astra voice confirmation after a successful background auto-reply, without speaking the recipient's message or the saved response.\n- Concise tool responses: Astra asks only for the final send confirmation and reports only the final result, without narrating tool lookup or intermediate steps.\n\nThe two-step verification password is not stored after login.\n\nTelegram chooses where login codes are delivered. An accepted code request does not prove delivery. If a code does not arrive, the retry button waits for Telegram’s cooldown and uses its offered next delivery method within the same login attempt. The plugin never restarts login just to resend a code; diagnostics record delivery types and delays, without recording codes or login hashes.\n\nNeural selection between several matching auto-reply rules uses Astra's `send_chat_message` permission. Astra may restrict this permission for an unsigned file import; test that branch through Developer Mode/source sideload or install a verified catalog release. Single-rule auto-replies do not need neural selection.\n\n## Setting up announcements and replies\n\n1. Connect your Telegram account and select the chats to monitor.\n2. In **Команды Astra**, prepare and import the command file, then enable the single **тг** command.\n3. To set it up manually, create **тг** and connect these nodes: **Новое сообщение Telegram → Произнести → Проиграть голосовое Telegram**. Set the spoken text to `{announcement}` and use the voice from Astra settings.\n4. Configure announcement templates, the reply phrase and the reply window in **Озвучивание и быстрый ответ** below the command instructions.\n5. Ask Astra to reply to an incoming message, for example **«Ответь ему, что буду через час»**. It uses an AI tool and sends immediately without confirmation. No reply command or text trigger is required.\n6. For a new message, say **«Напиши Андрюхе, что скоро буду»**. AI chooses from actual Telegram contacts and clarifies ambiguous names. New messages and broadcasts still require draft confirmation.\n\n## Updating from command-based replies\n\nDisable or delete the old `тг ответ` command in Astra. Import the updated command file if needed; it contains only `тг` for announcements and voice playback. Replying, sending new messages and broadcasts use AI tools. Ordinary speech is never automatically captured as reply text.\n\n## Development\n\nRequirements: Node.js 20+ and the `astra-plugin` CLI.\n\n```bash\nnpm install\nnpm run typecheck\nnpm run build\nastra-plugin check --strict .\n```\n\nTo run the plugin in development mode:\n\n```bash\nastra-plugin dev .\n```\n\n## License\n\nMIT\n",
         "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "dwertyfa-astra-tg-0.1.20-noarch.astraplugin",
+                "sha256": "6db854eb0fabc921dd4ca4071f3bdbbf229fb9f9cd606a8c771314ed6138e85d",
+                "size": 3883583,
+                "url": "https://github.com/dwertyfa288/dwertyfa-astra-tg/releases/download/v0.1.20/dwertyfa-astra-tg-0.1.20-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "actions",
+              "tools",
+              "triggers",
+              "ui_contributions"
+            ],
+            "permissions": {
+              "fire_trigger": {
+                "reason": "Starts your Telegram announcement command when a selected chat receives a message"
+              },
+              "send_chat_message": {
+                "reason": "Chooses one of your saved auto-replies when an incoming Telegram message matches multiple rules"
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-10-25T08:00:48Z",
+            "release": {
+              "commit": "5779f238ea61115abf3d8da1bf16021864fc6783",
+              "kind": "github_release",
+              "repo": "dwertyfa288/dwertyfa-astra-tg",
+              "tag": "v0.1.20"
+            },
+            "review": "unreviewed",
+            "version": "0.1.20"
+          },
           {
             "artifacts": {
               "noarch": {
@@ -1141,8 +1174,8 @@
           "repo": "dwertyfa288/dwertyfa-astra-tg"
         },
         "stars": 0,
-        "updated_at": "2026-09-04T15:39:43Z",
-        "version": "0.1.14"
+        "updated_at": "2026-10-25T08:00:48Z",
+        "version": "0.1.20"
       },
       {
         "added_at": "2026-10-24",
@@ -2961,7 +2994,7 @@
           "ui_contributions"
         ],
         "description": "Voice conversations, music and participant moderation in Discord; PC commands from the accounts you allow.",
-        "download_url": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.3/vc-discord-1.4.3-noarch.astraplugin",
+        "download_url": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.4/vc-discord-1.4.4-noarch.astraplugin",
         "downloads": 0,
         "i18n": {
           "ru": {
@@ -2974,12 +3007,40 @@
         "license": "MIT",
         "name": "Voice communication-Discord",
         "platform_downloads": {
-          "linux-x64": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.3/vc-discord-1.4.3-noarch.astraplugin",
-          "noarch": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.3/vc-discord-1.4.3-noarch.astraplugin",
-          "windows-x64": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.3/vc-discord-1.4.3-noarch.astraplugin"
+          "linux-x64": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.4/vc-discord-1.4.4-noarch.astraplugin",
+          "noarch": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.4/vc-discord-1.4.4-noarch.astraplugin",
+          "windows-x64": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.4/vc-discord-1.4.4-noarch.astraplugin"
         },
         "readme": "# Voice communication-Discord\n\n> **Linux и macOS — экспериментальная поддержка.** Полная ручная проверка на этих ОС ещё не выполнена. Для macOS пока нет выпускаемого хоста Astra. Зависимости и ограничения: [PLATFORMS.md](PLATFORMS.md).\n\nГолосовое общение, музыка и радиоведущая в Discord для [Astra](https://github.com/mihailinl/AstraPlugins) от **Voltur**. Страница плагина в Astra — **VC-Discord**. Работает в Windows.\n\n[Скачать исходники ZIP — 1.3.5](https://github.com/Voltur792/VC-Discord/archive/refs/tags/v1.3.5.zip) · [Страница релиза](https://github.com/Voltur792/VC-Discord/releases/latest)\n\n## Загрузка и установка из исходников\n\nУстановите плагин вручную через режим разработки Astra. Этот способ даёт доступ ко всем возможностям, включая команды ПК:\n\n1. Нажмите **«Скачать исходники ZIP»** выше либо откройте Releases и выберите **Assets → Source code (zip)**. Распакуйте архив в постоянную папку.\n2. Установите Node.js 22.12 или новее. Откройте терминал в папке проекта и выполните:\n\n   ```powershell\n   npm ci\n   npm run build\n   ```\n\n3. В настройках приватности Astra разрешите неподписанные плагины.\n4. В **Плагины → Разработка → Загрузить плагин** выберите распакованную папку, в которой лежит `plugin.toml` (не ZIP-архив и не внешнюю папку, содержащую папку проекта), подтвердите разрешения и включите плагин.\n\nИсходники требуют сборки перед загрузкой в Astra. При обновлении выключите старую копию, соберите новую и загрузите её папку. Не удаляйте папку работающего плагина.\n\nЕсли подключение или звук не работают, откройте **«Диагностика»**, выполните проверки и используйте предложенные кнопки подготовки. Для проверки голоса бот должен находиться в канале.\n\n## Возможности\n\n- Голосовой разговор с участниками канала после реплики или обращения по имени.\n- Личность, модель, распознавание речи и голос Astra либо собственные настройки.\n- Музыка из Яндекс Музыки, VK и Spotify через [Astra Music](https://github.com/Voltur792/astra-music).\n- Поиск, плейлисты, персональные подборки, очередь и отдельная громкость Discord.\n- Радиоведущая: подводки к песням, анонс следующего трека и приглушение музыки во время речи.\n- Автоматические эфиры по расписанию из [Таймера паузы](https://github.com/Voltur792/SPT).\n- Обсуждение выбранного окна или экрана с моделью, поддерживающей изображения.\n- Команды компьютеру и управление участниками с разрешённых Discord-аккаунтов.\n- Проверка подключения, голоса и необходимых компонентов во вкладке диагностики.\n\n## Подключение\n\n1. Установите плагин из [Releases](https://github.com/Voltur792/VC-Discord/releases/latest) и откройте **VC-Discord**.\n2. В [Discord Developer Portal](https://discord.com/developers/applications) создайте приложение и бота. Получите токен в разделе **Bot**.\n3. Пригласите бота на сервер с правами просматривать канал, подключаться и говорить. Для обычного приглашения отключите **Requires OAuth2 Code Grant**, если он включён.\n4. Во вкладке **«Подключение»** укажите токен и нажмите **«Найти серверы и голосовые каналы»**. Выберите канал по названию.\n5. Нажмите **«Использовать всё из Astra»** либо настройте голос и модель отдельно. Сохраните настройки и нажмите **«Войти в канал»**.\n\nКнопка **«Проверить голос»** произнесёт тестовую фразу в канале. Токен вводится только в плагине. Astra и плагин должны работать во время разговора и эфира.\n\n## Текстовый канал: музыка и отдельный ИИ-чат\n\nВ **«Подключение → Текстовый канал»** выберите общий канал для заказов и общения. Включите **Message Content Intent** в Discord Developer Portal → Bot и выдайте боту **View Channel, Send Messages, Read Message History** в этом канале. Кнопка поиска серверов также показывает подходящие текстовые каналы.\n\nПодключение текста, общение, музыкальные заказы для всех и призыв в голосовые каналы включаются отдельно. По умолчанию эти возможности выключены. Управление ПК и экраном сохраняет прежние ограничения; общий текстовый канал не передаёт запросы в командный чат Astra.\n\n- **«Астра, зайди ко мне»**, **«Астра зайди ко мне»** или **`!join`** — войти в обычный голосовой канал автора. У бота должны быть права View Channel, Connect, Speak. Занятый бот не переходит в другой канал по публичному призыву.\n- **`!play исполнитель — песня`** или **«Астра включи песню …»** — включить песню. Можно добавить **«в VK»**, **«в Spotify»** или **«в Яндексе»**; иначе используется сервис по умолчанию из настроек. Новый заказ включает выбранную музыку сразу.\n- **`!find название`** — показать до пяти результатов. **`!play 2`** выбирает второй результат собственного поиска; выбор действует пять минут.\n- **«Астра пауза» / `!pause`**, **«Астра продолжи музыку» / `!resume`** — поставить музыку на паузу или продолжить. Повтор команды сохраняет нужное состояние; `!continue` — вариант продолжения. «Астра включи музыку» продолжает уже запущенную трансляцию; для нового заказа укажите песню после `!play`.\n- **«Астра выключи музыку» / `!stop`** — остановить музыку в Discord. Бот остаётся в голосовом канале; для выхода используется отдельная команда `!leave`.\n- **«Астра следующий трек» / `!next`** и **«Астра предыдущий трек» / `!prev`** — переключить песню. Поддерживаются `!skip`, `!previous`, фразы «включи следующую песню», «верни предыдущую песню». Если очередь закончилась или мост вернул ошибку, ответ сообщает результат вместо подтверждения переключения.\n- **«Астра что играет?» / `!now`** — показать текущие название, исполнителя и паузу. Есть варианты `!np` и `!current`. Просмотр доступен и во время смены радиоведущей; команды изменения музыки эфир не прерывают. Все эти команды доступны при включённых музыкальных заказах, независимо от списка доступа к ПК.\n- **«Астра громкость 5»**, **«Астра, громкость на пять»** или **`!volume 5`** — изменить громкость музыки именно в Discord, по шкале 0–10. **«Астра громче / тише»** меняет её на один шаг; `!volume 50%` задаёт 5 из 10. Доступно участникам при включённых музыкальных заказах; смену радиоведущей эти команды не меняют. Подтверждение отправляется после изменения, ползунок показывает ту же громкость.\n- **`!playlist https://vk.com/music/playlist/-123_456`** или **«Астра включи плейлист ссылка»** — включить плейлист VK любого владельца, доступный подключённому аккаунту. Для чужих плейлистов используется браузерное подключение VK в Astra Music. Сохранять его в свою медиатеку не нужно. Поддерживаются также полные ссылки `audio_playlist…`, `music/album/…`, `vk.ru` и ссылки с `z=audio_playlist…`; access hash сохраняется. Короткие ссылки и закрытые недоступные плейлисты не поддерживаются.\n- **`!playlist ссылка_Яндекса`** или **«Астра включи плейлист ссылка_Яндекса»** — включить доступный плейлист любого владельца из Яндекс Музыки. Поддерживаются новые ссылки `https://music.yandex.ru/playlists/UUID` и старые `/users/владелец/playlists/номер`, включая ссылки с параметрами `utm_*`. Сохранение в свою медиатеку не требуется. Для этого способа обновите и перезапустите оба плагина — VC-Discord и Astra Music; Яндекс должен быть подключён в Astra Music.\n- **`!wave yandex`**, **«Астра включи мою волну»**, **`!wave spotify`** или **«Астра включи мой микс»** — включить волну Яндекса или персональную подборку подключённого Spotify.\n- **`!playlist https://open.spotify.com/playlist/5KafKeLCCXVTEywG5NhPPq`**, **`!play ссылка_плейлиста`** или **«Астра включи плейлист ссылка_плейлиста»** — включить доступный плейлист Spotify любого владельца. Параметр `si` и другие параметры ссылки не передаются в плеер; поддерживаются и ссылки вида `/intl-ru/playlist/…`. Сохранение плейлиста в медиатеку не требуется. Для Spotify войдите в свой аккаунт в Astra Music и включите режим без окна браузера.\n- **`!help`** — справка в канале.\n\nПерсональный микс Spotify работает и в Discord: **«Астра включи мой микс»**, **«Астра включи мой микс в Spotify»**, **`!wave spotify`** или кнопка **«Включить мой микс Spotify»**. Astra Music выбирает доступную персональную подборку (daylist / Daily Mix и другие миксы) подключённого аккаунта. Если аккаунт ещё не получил подборок, откройте раздел «Для тебя» в Spotify и повторите. Текстовый заказ использует аккаунт владельца Astra Music, а не аккаунт автора сообщения в Discord. Звук Spotify во время трансляции идёт в Discord; управление треком общее с плеером Astra.\n\nВо время смены призыв, выход и изменение музыки объясняют причину отказа: работа по расписанию, название смены, голосовой канал и дата/время окончания **по Екатеринбургу (UTC+5)**. Сведения о смене проверяются до общего ответа о занятом канале. После подтверждённого запуска музыки Астра пишет в выбранный текстовый канал о начале работы, указывает фактическое время начала и окончание смены. Переключатель **«Писать о начале смены и времени окончания в текстовый канал»** находится в разделе «Музыка» и по умолчанию включён. Нужен включённый текстовый канал из вкладки «Подключение»; ИИ-чат и музыкальные заказы могут быть выключены. Повторный запрос таймера на ту же работающую смену не дублирует уведомление. Ошибка отправки сообщения не останавливает эфир; при неудавшемся запуске музыки уведомление о начале не отправляется.\n\n---\n\n*This README was truncated. [Read the rest on GitHub](https://github.com/Voltur792/VC-Discord).*\n",
         "releases": [
+          {
+            "artifacts": {
+              "noarch": {
+                "filename": "vc-discord-1.4.4-noarch.astraplugin",
+                "sha256": "c2ea7010aab7b460880034034b753dc4ae4902e9c242ab65de466502e1e35de7",
+                "size": 5160037,
+                "url": "https://github.com/Voltur792/VC-Discord/releases/download/v1.4.4/vc-discord-1.4.4-noarch.astraplugin"
+              }
+            },
+            "capabilities": [
+              "ui_contributions"
+            ],
+            "permissions": {
+              "send_chat_message": {
+                "reason": "Forwards explicitly addressed PC commands only from the Discord accounts you allow to Astra's command chat"
+              }
+            },
+            "protocol": 1,
+            "published_at": "2026-10-25T14:34:16Z",
+            "release": {
+              "commit": "4dd9c89fee7540c11e62f85ede168a645455ce1e",
+              "kind": "github_release",
+              "repo": "Voltur792/VC-Discord",
+              "tag": "v1.4.4"
+            },
+            "review": "unreviewed",
+            "version": "1.4.4"
+          },
           {
             "artifacts": {
               "noarch": {
@@ -3015,8 +3076,8 @@
           "repo": "Voltur792/VC-Discord"
         },
         "stars": 0,
-        "updated_at": "2026-10-25T09:42:53Z",
-        "version": "1.4.3"
+        "updated_at": "2026-10-25T14:34:16Z",
+        "version": "1.4.4"
       },
       {
         "added_at": "2026-09-12",
@@ -3442,6 +3503,6 @@
       }
     },
     "schema": "astra.registry.index/1",
-    "serial": 85
+    "serial": 86
   }
 }
