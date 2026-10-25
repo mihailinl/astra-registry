@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:e531e02328a9939796260f6b3f737a417dd5436f279cb895d17660f4f1eb4651"
+  ],
+  "commit": "d73526d6dbcb102e3a5a65d024582603045a9e09",
+  "decided_at": "2026-10-25T02:53:51Z",
+  "decision_id": "7e5eca6c0f67d620983a3a56fc2f799d",
+  "fingerprint": "d1caa08618ff2462",
+  "plugin_id": "dwertyfa-prime-ai",
+  "reasons": [
+    "E_VERSION_NOT_NEW",
+    "B_BINDING_UNUSABLE"
+  ],
+  "repo": "SpherePrime/PrimeAi",
+  "repository_id": "1368572489",
+  "repository_owner_id": "332264680",
+  "run": "40156089906/1",
+  "schema": "astra.registry.decision/1",
+  "state": "refused",
+  "submission_id": "e6c4c89e-54fb-426e-9011-49ea1dee22e3",
+  "tag": "v0.2.4",
+  "trigger": "poll",
+  "version": "0.2.4"
+}
