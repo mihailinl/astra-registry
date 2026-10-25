@@ -1,0 +1,25 @@
+{
+  "actor": "bot",
+  "artifact_digests": [
+    "noarch:6d3c5c6816720590a741b2ee71e6344ee5a45ebb0b451bfdf6750d57bee4d958"
+  ],
+  "commit": "2c5a4f92da37278d096de3983d242369291df097",
+  "decided_at": "2026-10-25T10:59:36Z",
+  "decision_id": "cc54d8031bfa2d8e22e0d16c15a1b942",
+  "fingerprint": "e602d2fc7ffdfc1b",
+  "plugin_id": "detective-game",
+  "reasons": [
+    "E_VERSION_NOT_NEW",
+    "B_UNBOUND"
+  ],
+  "repo": "Voltur792/detective-game",
+  "repository_id": "1389133420",
+  "repository_owner_id": "232130437",
+  "run": "40186881830/1",
+  "schema": "astra.registry.decision/1",
+  "state": "refused",
+  "submission_id": "ff076e36-1ead-40e5-ab39-1114edebca56",
+  "tag": "v0.4.0",
+  "trigger": "poll",
+  "version": "0.4.0"
+}
